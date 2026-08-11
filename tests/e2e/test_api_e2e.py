@@ -840,6 +840,7 @@ class TestSyntheticDataAPI:
             "target_count": 2,
             "vespa_sample_size": 2,
         }
+        assert len(data["data"]) == 2
         profile_fields = {
             "query",
             "available_profiles",
@@ -851,9 +852,37 @@ class TestSyntheticDataAPI:
             "complexity",
         }
         assert all(set(example) == profile_fields for example in data["data"])
-        assert {example["query"] for example in data["data"]} == {
-            f"find a video frame showing {SAMPLE_VIDEO_CONTENT_ID}"
-        }
+
+        query_prefix = "find a video frame showing "
+        topics = []
+        for example in data["data"]:
+            assert example["query"].startswith(query_prefix), example["query"]
+            topic = example["query"].removeprefix(query_prefix)
+            assert 1 <= len(topic.split()) <= 20, example["query"]
+            topics.append(topic)
+        assert len(set(topics)) == 2
+
+        with httpx.Client(base_url=RUNTIME, timeout=900.0) as client:
+            for topic in topics:
+                search = client.post(
+                    "/search/",
+                    json={
+                        "query": topic,
+                        "profile": PROFILE,
+                        "strategy": "default",
+                        "top_k": 1000,
+                        "tenant_id": TENANT_ID,
+                    },
+                )
+                assert search.status_code == 200, search.text
+                ingested_topics = {
+                    " ".join(result["metadata"]["description"].split()[:20])
+                    for result in search.json()["results"]
+                    if isinstance(result.get("metadata"), dict)
+                    and isinstance(result["metadata"].get("description"), str)
+                }
+                assert topic in ingested_topics, topic
+
         assert {example["available_profiles"] for example in data["data"]} == {PROFILE}
         assert {example["selected_profile"] for example in data["data"]} == {PROFILE}
         assert {example["modality"] for example in data["data"]} == {"video"}
@@ -1016,7 +1045,6 @@ class TestSyntheticDataAPI:
 
     def test_generate_synthetic_data_cross_modal(self):
         """POST /synthetic/generate with cross_modal optimizer."""
-        image_content_id = _content_sha256(_sample_frame_path())
         with httpx.Client(base_url=RUNTIME, timeout=900.0) as client:
             resp = client.post(
                 "/synthetic/generate",
@@ -1052,16 +1080,27 @@ class TestSyntheticDataAPI:
             "target_count": 2,
             "vespa_sample_size": 2,
         }
-        expected_queries = {
-            (
-                f"find {SAMPLE_VIDEO_CONTENT_ID} in video content together with "
-                f"{image_content_id} in image content"
-            ),
-            (
-                f"find {image_content_id} in image content together with "
-                f"{SAMPLE_VIDEO_CONTENT_ID} in video content"
-            ),
-        }
+        video_first_pattern = re.compile(
+            r"^find (?P<video_topic>.+) in video content together with "
+            r"(?P<image_topic>[0-9a-f]{64}) in image content$"
+        )
+        image_first_pattern = re.compile(
+            r"^find (?P<image_topic>[0-9a-f]{64}) in image content together with "
+            r"(?P<video_topic>.+) in video content$"
+        )
+        orderings = {}
+        for example in data["data"]:
+            video_first = video_first_pattern.match(example["query"])
+            image_first = image_first_pattern.match(example["query"])
+            assert (video_first is None) != (image_first is None), example["query"]
+            match = video_first or image_first
+            ordering = "video_first" if video_first else "image_first"
+            assert ordering not in orderings, example["query"]
+            orderings[ordering] = (match["video_topic"], match["image_topic"])
+        assert set(orderings) == {"video_first", "image_first"}
+        video_topic, image_topic = orderings["video_first"]
+        assert orderings["image_first"] == (video_topic, image_topic)
+        assert 1 <= len(video_topic.split()) <= 20, video_topic
         profile_fields = {
             "query",
             "available_profiles",
@@ -1074,7 +1113,6 @@ class TestSyntheticDataAPI:
         }
         for example in data["data"]:
             assert set(example) == profile_fields
-            assert example["query"] in expected_queries
             available_profiles = example["available_profiles"].split(",")
             assert available_profiles == [PROFILE, IMAGE_PROFILE]
             assert (
@@ -1088,7 +1126,7 @@ class TestSyntheticDataAPI:
             assert example["complexity"] == "complex"
             assert "chosen_agent" not in example
             assert "workflow_id" not in example
-        assert {example["query"] for example in data["data"]} == expected_queries
+        assert len({example["query"] for example in data["data"]}) == 2
         assert {example["modality"] for example in data["data"]} == {
             "video+image",
             "image+video",
