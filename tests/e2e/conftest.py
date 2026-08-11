@@ -273,6 +273,28 @@ def _clear_thread_event_loop() -> None:
     asyncio.set_event_loop(None)
 
 
+def _clear_stale_running_loop() -> None:
+    """Detach a leaked *running-loop* thread-local left by a dead loop.
+
+    ``set_event_loop(None)`` clears the policy slot read by
+    ``get_event_loop()``. ``Runner.run()`` reads a different thread-local
+    via ``events._get_running_loop()``, so a leaker that dies without
+    unwinding leaves that slot pointing at a closed loop and every later
+    pytest-asyncio test raises ``RuntimeError: Runner.run() cannot be
+    called from a running event loop`` before its body runs.
+
+    Only stale state is cleared: a loop that is genuinely running owns the
+    slot and is left attached.
+    """
+    import asyncio
+
+    leaked = asyncio.events._get_running_loop()
+    if leaked is None:
+        return
+    if leaked.is_closed() or not leaked.is_running():
+        asyncio.events._set_running_loop(None)
+
+
 @pytest.fixture(autouse=True)
 def _reset_event_loop_state_before_each_test():
     """Clear thread-attached event-loop state before every test.
@@ -295,6 +317,7 @@ def _reset_event_loop_state_before_each_test():
     clean thread when it constructs its per-test runner.
     """
     _clear_thread_event_loop()
+    _clear_stale_running_loop()
     yield
 
 
