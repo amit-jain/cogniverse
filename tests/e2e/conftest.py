@@ -756,6 +756,7 @@ def _matching_sample_results(
     assert search_body.get("results_count") == len(results), search_body
 
     expected_document_prefix = f"{content_id}_seg_"
+    identity_field = "image_id" if profile.startswith("image_") else "video_id"
     matches = []
     for result in results:
         if not isinstance(result, dict):
@@ -765,7 +766,7 @@ def _matching_sample_results(
             continue
         if (
             result.get("source_id") == content_id
-            and metadata.get("video_id") == content_id
+            and metadata.get(identity_field) == content_id
             and isinstance(result.get("document_id"), str)
             and result["document_id"].startswith(expected_document_prefix)
             and _source_url_matches(
@@ -804,7 +805,9 @@ def _validate_sample_ingestion_result(
 
 def _search_sample_content(
     *, content_id: str, tenant_id: str, profile: str, suffix: str
-) -> list[dict] | None:
+) -> tuple[list[dict] | None, str | None]:
+    """Return (matches, error). A search-API failure is reported as an
+    error string, never flattened into 'no matches'."""
     try:
         response = httpx.post(
             f"{RUNTIME}/search/",
@@ -817,17 +820,18 @@ def _search_sample_content(
             },
             timeout=60,
         )
-    except (httpx.HTTPError, OSError):
-        return None
+    except (httpx.HTTPError, OSError) as exc:
+        return None, f"search request failed: {exc!r}"
     if response.status_code != 200:
-        return None
-    return _matching_sample_results(
+        return None, (f"search returned {response.status_code}: {response.text[:500]}")
+    matches = _matching_sample_results(
         response.json(),
         content_id=content_id,
         tenant_id=tenant_id,
         profile=profile,
         suffix=suffix,
     )
+    return matches, None
 
 
 def _ensure_sample_content_ingested(
@@ -840,7 +844,7 @@ def _ensure_sample_content_ingested(
         pytest.fail(f"Tracked sample content not found: {path}")
 
     content_id = _content_sha256(path)
-    existing_matches = _search_sample_content(
+    existing_matches, _ = _search_sample_content(
         content_id=content_id,
         tenant_id=TENANT_ID,
         profile=profile,
@@ -863,6 +867,11 @@ def _ensure_sample_content_ingested(
                     "backend": "vespa",
                     "tenant_id": TENANT_ID,
                 },
+                # The search above proved these documents are absent, so this
+                # call needs real work done. A done marker outliving the
+                # documents it describes (Vespa redeployed, Redis kept) would
+                # otherwise satisfy the submit without re-ingesting anything.
+                params={"force": "true"},
                 timeout=60,
             )
     except (httpx.HTTPError, OSError) as exc:
@@ -875,6 +884,7 @@ def _ensure_sample_content_ingested(
 
     submission = response.json()
     assert submission.get("filename") == path.name, submission
+    assert submission.get("existing") is False, submission
     assert _source_url_matches(
         submission.get("source_url"),
         content_id=content_id,
@@ -927,16 +937,15 @@ def _ensure_sample_content_ingested(
 
     search_deadline = _time.monotonic() + 120
     matches: list[dict] = []
+    search_error: str | None = None
     while _time.monotonic() < search_deadline:
-        matches = (
-            _search_sample_content(
-                content_id=content_id,
-                tenant_id=TENANT_ID,
-                profile=profile,
-                suffix=path.suffix,
-            )
-            or []
+        found, search_error = _search_sample_content(
+            content_id=content_id,
+            tenant_id=TENANT_ID,
+            profile=profile,
+            suffix=path.suffix,
         )
+        matches = found or []
         if len(matches) == documents_fed:
             print(
                 f"Sample {content_id} persisted {documents_fed} exact documents "
@@ -945,10 +954,13 @@ def _ensure_sample_content_ingested(
             return content_id
         _time.sleep(2)
 
-    pytest.fail(
+    failure = (
         f"Sample {content_id} reported {documents_fed} documents_fed but search "
         f"found {len(matches)} exact persisted documents in {profile} for {TENANT_ID}"
     )
+    if search_error:
+        failure += f"; last search error: {search_error}"
+    pytest.fail(failure)
 
 
 def _ingest_sample_video() -> None:

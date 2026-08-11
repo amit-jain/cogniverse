@@ -846,6 +846,9 @@ inference:
     enabled: false
     engine: vllm_token_embed
     model: TomoroAI/tomoro-colqwen3-embed-4b
+    # Immutable artifact the pod serves and reports on /v1/models. Must match
+    # INFERENCE_SERVICE_SPECS["vllm_colpali"].model_revision.
+    revision: bf790bd8780b098b86453444632a184bb770be1a
     type: multi_vector
     device: cpu                    # cpu | cuda | rocm
     gpuCount: 1
@@ -1027,6 +1030,8 @@ inference:
     enabled: true
     engine: vllm_embed
     model: lightonai/DenseOn       # ModernBERT-base, 768-dim, CLS pooling, 512 ctx
+    # Must match INFERENCE_SERVICE_SPECS["denseon"].model_revision.
+    revision: cb9947ebccb33862d24e3c7ca2edb25e51acd887
     type: single_vector
     device: cpu                    # cpu | cuda | rocm | mps
     gpuCount: 1
@@ -1188,6 +1193,8 @@ inference:
     engine: vllm_chat
     type: chat
     model: google/gemma-4-e4b-it
+    # Must match INFERENCE_SERVICE_SPECS["vllm_llm_student"].model_revision.
+    revision: ee0ef6023621cff504d758262d4e04895a5af4a2
     device: cpu                    # cpu | cuda | rocm
     gpuCount: 1
     nodeSelector: {}
@@ -1305,6 +1312,8 @@ inference:
     engine: vllm_transcription
     type: transcription
     model: openai/whisper-large-v3-turbo
+    # Must match INFERENCE_SERVICE_SPECS["vllm_asr"].model_revision.
+    revision: 41f01f3fe87f28c78e2fbf8b568835947dd65ed9
     device: cpu                    # cpu | cuda | rocm
     gpuCount: 1
     nodeSelector: {}

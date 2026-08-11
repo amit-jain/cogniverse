@@ -9,10 +9,14 @@ field set, the embedding field NAMES, and a millisecond ``creation_timestamp``.
 The video family carries two metadata keys whose names differ from the schema
 fields (``segment_index`` -> ``segment_id``, ``description`` ->
 ``segment_description``); those renames are declared in the schema's
-``document_mapping.metadata_fields`` and applied by process(). The remaining
-families key their metadata to the exact schema field names, so process()'s
-schema-gated passthrough carries them unchanged. Editing a video mapping's
-metadata_fields must change process()'s output — the liveness test pins that.
+``document_mapping.metadata_fields`` and applied by process(). The image
+family rides the same keyframe builder, so its identity metadata arrives
+under the video names (``video_id``/``video_title``) and the image mapping
+renames them to ``image_id``/``image_title``/``image_description``. The
+remaining families key their metadata to the exact schema field names, so
+process()'s schema-gated passthrough carries them unchanged. Editing a
+mapping's metadata_fields must change process()'s output — the liveness test
+pins that.
 """
 
 from pathlib import Path
@@ -66,6 +70,33 @@ def _video_doc(doc_id: str, segment_index: int, description: str | None) -> Docu
     doc.add_metadata("video_id", "vid123")
     doc.add_metadata("video_title", "vid123")
     doc.add_metadata("source_url", "s3://b/v.mp4")
+    if description is not None:
+        doc.add_metadata("description", description)
+    return doc
+
+
+def _image_doc(image_id: str, description: str | None) -> Document:
+    """Build an image segment Document exactly as the ingestion builder does:
+    images ride the keyframe path, so identity metadata arrives under the
+    video names and the composite doc id carries a ``_seg_`` suffix."""
+    doc = Document(
+        id=f"{image_id}_seg_0",
+        content_type=ContentType.VIDEO,
+        content_id=image_id,
+        status=ProcessingStatus.COMPLETED,
+    )
+    doc.add_embedding(
+        "embedding",
+        np.zeros((4, 128), dtype=np.float32),
+        {"type": "float", "raw": True},
+    )
+    doc.add_metadata("start_time", 0.0)
+    doc.add_metadata("end_time", 1.0)
+    doc.add_metadata("segment_index", 0)
+    doc.add_metadata("total_segments", 1)
+    doc.add_metadata("video_id", image_id)
+    doc.add_metadata("video_title", image_id)
+    doc.add_metadata("source_url", "s3://b/i.jpg")
     if description is not None:
         doc.add_metadata("description", description)
     return doc
@@ -128,6 +159,35 @@ class TestProcessFieldOutput:
             "end_time": 30.0,
             "segment_id": 1,
             "audio_transcript": "hello world",
+        }
+
+    def test_image_scalars_land_under_image_field_names(self):
+        out = _client("image_colpali_mv").process(
+            _image_doc("img123", "a red kite"), "feed"
+        )
+        assert out["put"] == "id:content:image_colpali_mv::img123_seg_0"
+        fields = out["fields"]
+        assert set(fields["embedding"].keys()) == {"0", "1", "2", "3"}
+        assert set(fields["embedding_binary"].keys()) == {"0", "1", "2", "3"}
+        scalars = _split_timestamp(fields, schema_has_ts=True)
+        scalars.pop("embedding")
+        scalars.pop("embedding_binary")
+        assert scalars == {
+            "image_id": "img123",
+            "image_title": "img123",
+            "image_description": "a red kite",
+            "source_url": "s3://b/i.jpg",
+        }
+
+    def test_image_drops_absent_description(self):
+        out = _client("image_colpali_mv").process(_image_doc("img123", None), "feed")
+        scalars = _split_timestamp(out["fields"], schema_has_ts=True)
+        scalars.pop("embedding")
+        scalars.pop("embedding_binary")
+        assert scalars == {
+            "image_id": "img123",
+            "image_title": "img123",
+            "source_url": "s3://b/i.jpg",
         }
 
     def test_audio_scalars(self):

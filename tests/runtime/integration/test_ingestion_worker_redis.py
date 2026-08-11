@@ -783,6 +783,179 @@ class TestEnqueueCompensation:
         assert await redis.ttl(f"{queue.ACTIVE_KEY_PREFIX}{tenant}") > 0
 
 
+class TestDedupeStatusSurface:
+    @pytest.mark.asyncio
+    async def test_done_dedupe_restores_expired_status_stream(self, redis):
+        """A duplicate submit whose done run outlived its status stream must
+        hand back a pollable id: the status read yields exactly one terminal
+        snapshot, not the empty history /status turns into a permanent 404.
+
+        The done marker lives for the idempotency TTL (days); the status
+        stream expires after STATUS_STREAM_TTL_SECONDS (hours). In that
+        window the dedupe hit used to return a dead handle."""
+        from cogniverse_runtime.ingestion_worker.submit_api import enqueue_ingestion
+
+        src, profile, tenant = (
+            "s3://bucket/dedupe-expired.md",
+            "image_colpali_mv",
+            "acme:acme",
+        )
+        sha = idempotency.compute_sha(src, profile, tenant)
+
+        first = await enqueue_ingestion(
+            redis, source_url=src, profile=profile, tenant_id=tenant
+        )
+        assert first.existing is False
+        depth_after_first = await queue.queue_depth(redis)
+
+        await idempotency.mark_done(
+            redis, sha, first.ingest_id, ttl_seconds=7 * 24 * 3600
+        )
+        await idempotency.clear_inflight(redis, sha)
+        assert await redis.delete(f"ingest:status:{first.ingest_id}") == 1
+
+        second = await enqueue_ingestion(
+            redis, source_url=src, profile=profile, tenant_id=tenant
+        )
+
+        assert second.existing is True
+        assert second.ingest_id == first.ingest_id
+        assert await queue.queue_depth(redis) == depth_after_first
+        events = await queue.read_status_since(redis, second.ingest_id)
+        assert [event for _, event in events] == [
+            {
+                "state": "complete",
+                "ingest_id": first.ingest_id,
+                "source_url": src,
+                "profile": profile,
+                "tenant_id": tenant,
+                "existing": True,
+            }
+        ]
+
+    @pytest.mark.asyncio
+    async def test_done_dedupe_with_live_stream_appends_nothing(self, redis):
+        """While the done run's stream is still readable, a dedupe hit returns
+        the id without appending a synthetic event over the real history."""
+        from cogniverse_runtime.ingestion_worker.submit_api import enqueue_ingestion
+
+        src, profile, tenant = (
+            "s3://bucket/dedupe-live.md",
+            "image_colpali_mv",
+            "acme:acme",
+        )
+        sha = idempotency.compute_sha(src, profile, tenant)
+
+        first = await enqueue_ingestion(
+            redis, source_url=src, profile=profile, tenant_id=tenant
+        )
+        await idempotency.mark_done(
+            redis, sha, first.ingest_id, ttl_seconds=7 * 24 * 3600
+        )
+        await idempotency.clear_inflight(redis, sha)
+
+        second = await enqueue_ingestion(
+            redis, source_url=src, profile=profile, tenant_id=tenant
+        )
+
+        assert second.ingest_id == first.ingest_id
+        events = await queue.read_status_since(redis, second.ingest_id)
+        assert [event for _, event in events] == [
+            {
+                "state": "queued",
+                "ingest_id": first.ingest_id,
+                "source_url": src,
+                "profile": profile,
+                "tenant_id": tenant,
+            }
+        ]
+
+    @pytest.mark.asyncio
+    async def test_concurrent_dedupes_restore_exactly_one_event(self, redis):
+        """Concurrency invariant: N simultaneous resubmits against a reclaimed
+        stream seed it once, not once per caller. Every caller still gets the
+        same pollable id and nothing is re-enqueued."""
+        from cogniverse_runtime.ingestion_worker.submit_api import enqueue_ingestion
+
+        src, profile, tenant = (
+            "s3://bucket/dedupe-race.md",
+            "image_colpali_mv",
+            "acme:acme",
+        )
+        sha = idempotency.compute_sha(src, profile, tenant)
+
+        first = await enqueue_ingestion(
+            redis, source_url=src, profile=profile, tenant_id=tenant
+        )
+        depth_after_first = await queue.queue_depth(redis)
+        await idempotency.mark_done(
+            redis, sha, first.ingest_id, ttl_seconds=7 * 24 * 3600
+        )
+        await idempotency.clear_inflight(redis, sha)
+        assert await redis.delete(f"ingest:status:{first.ingest_id}") == 1
+
+        racers = 8
+        rendezvous = asyncio.Barrier(racers)
+
+        async def _resubmit():
+            await rendezvous.wait()
+            return await enqueue_ingestion(
+                redis, source_url=src, profile=profile, tenant_id=tenant
+            )
+
+        results = await asyncio.gather(*(_resubmit() for _ in range(racers)))
+
+        assert [r.ingest_id for r in results] == [first.ingest_id] * racers
+        assert [r.existing for r in results] == [True] * racers
+        assert [r.state for r in results] == ["complete"] * racers
+        assert await queue.queue_depth(redis) == depth_after_first
+        events = await queue.read_status_since(redis, first.ingest_id)
+        assert [event for _, event in events] == [
+            {
+                "state": "complete",
+                "ingest_id": first.ingest_id,
+                "source_url": src,
+                "profile": profile,
+                "tenant_id": tenant,
+                "existing": True,
+            }
+        ]
+
+    @pytest.mark.asyncio
+    async def test_status_restore_failure_surfaces(self, redis, monkeypatch):
+        """Fault contract: a status store that fails the restore must raise, so
+        the caller never receives an accepted-looking id whose every poll 404s.
+        The idempotency record survives for the retry."""
+        from cogniverse_runtime.ingestion_worker.submit_api import enqueue_ingestion
+
+        src, profile, tenant = (
+            "s3://bucket/dedupe-fault.md",
+            "image_colpali_mv",
+            "acme:acme",
+        )
+        sha = idempotency.compute_sha(src, profile, tenant)
+
+        first = await enqueue_ingestion(
+            redis, source_url=src, profile=profile, tenant_id=tenant
+        )
+        await idempotency.mark_done(
+            redis, sha, first.ingest_id, ttl_seconds=7 * 24 * 3600
+        )
+        await idempotency.clear_inflight(redis, sha)
+        assert await redis.delete(f"ingest:status:{first.ingest_id}") == 1
+
+        async def _boom_restore(*args, **kwargs):
+            raise ConnectionError("status stream eval reset")
+
+        monkeypatch.setattr(queue, "publish_status_if_absent", _boom_restore)
+        with pytest.raises(ConnectionError, match="status stream eval reset"):
+            await enqueue_ingestion(
+                redis, source_url=src, profile=profile, tenant_id=tenant
+            )
+
+        assert await idempotency.get_done_ingest_id(redis, sha) == first.ingest_id
+
+
 class TestSubmitActiveCounterOrdering:
     @pytest.mark.asyncio
     async def test_worker_decrement_in_submit_window_does_not_stick_counter(
