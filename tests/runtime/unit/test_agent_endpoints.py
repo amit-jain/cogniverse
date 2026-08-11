@@ -1121,3 +1121,130 @@ class TestGetAgentCard:
         resp = client.get("/agents/ghost_agent/card")
         assert resp.status_code == 404
         assert resp.json() == {"detail": "Agent 'ghost_agent' not found"}
+
+
+@pytest.mark.unit
+class TestUnconfiguredInferenceServiceContract:
+    """An unprovisioned inference sidecar must not surface as an opaque 500.
+
+    A gateway query whose modality is audio routes to audio_analysis_agent,
+    whose hybrid search encodes the query with CLAP. With no ``clap_embed``
+    URL configured the encode falls to the in-process branch, which the
+    runtime image cannot run. The caller must be told which service is
+    missing instead of receiving a bodyless 500.
+    """
+
+    def test_audio_dispatch_raises_named_error_when_clap_unconfigured(
+        self, dispatcher, monkeypatch
+    ):
+        """Root cause: real dispatcher + real audio agent, no clap_embed URL.
+
+        Nothing is mocked at the failing boundary -- the real
+        AudioAnalysisAgent and the real AudioEmbeddingGenerator run until
+        the missing in-process backend is detected. ``find_spec`` is forced
+        to report torch absent so the assertion holds on a developer box
+        that has torch installed; the deployed runtime image ships none.
+        """
+        import importlib.util as _importlib_util
+
+        from cogniverse_foundation.config.inference_service import (
+            InferenceServiceUnavailableError,
+        )
+
+        real_find_spec = _importlib_util.find_spec
+
+        def _no_torch(name, *args, **kwargs):
+            if name == "torch":
+                return None
+            return real_find_spec(name, *args, **kwargs)
+
+        monkeypatch.setattr(_importlib_util, "find_spec", _no_torch)
+
+        # The deployed runtime carried no clap_embed entry at all.
+        assert (
+            dispatcher._config_manager.get_system_config().inference_service_urls or {}
+        ).get("clap_embed") is None
+
+        with pytest.raises(InferenceServiceUnavailableError) as excinfo:
+            import asyncio as _asyncio
+
+            _asyncio.get_event_loop().run_until_complete(
+                dispatcher._execute_audio_search_task(
+                    "listen to podcasts about deep learning run 4", "acme:prod", 3
+                )
+            )
+
+        exc = excinfo.value
+        assert exc.service == "clap_embed"
+        assert exc.module == "torch"
+        assert "INFERENCE_SERVICE_URLS['clap_embed']" in str(exc)
+
+    def test_process_route_maps_unconfigured_service_to_503(self, monkeypatch):
+        """The route names the missing service instead of a bare 500."""
+        from cogniverse_foundation.config.inference_service import (
+            InferenceServiceUnavailableError,
+        )
+
+        stub_dispatcher = MagicMock()
+        stub_dispatcher.dispatch = AsyncMock(
+            side_effect=InferenceServiceUnavailableError("clap_embed", "torch")
+        )
+        monkeypatch.setattr(
+            agents_router, "_ensure_dispatcher", lambda: stub_dispatcher
+        )
+
+        test_app = FastAPI()
+        test_app.include_router(agents_router.router, prefix="/agents")
+        with TestClient(test_app, raise_server_exceptions=False) as client:
+            resp = client.post(
+                "/agents/gateway_agent/process",
+                json={
+                    "agent_name": "gateway_agent",
+                    "query": "listen to podcasts about deep learning run 4",
+                    "context": {"tenant_id": "acme:prod"},
+                    "top_k": 3,
+                },
+            )
+
+        assert resp.status_code == 503
+        detail = resp.json()["detail"]
+        assert "clap_embed" in detail
+        assert "torch" in detail
+
+    def test_process_route_500_names_stage_without_leaking_detail(self, monkeypatch):
+        """An unexpected failure returns a JSON body naming agent + error type.
+
+        The raw exception text may carry a backend URL with credentials, so
+        it must not reach the client; the request id ties the response to the
+        server-side traceback.
+        """
+        stub_dispatcher = MagicMock()
+        stub_dispatcher.dispatch = AsyncMock(
+            side_effect=RuntimeError(
+                "connect to http://admin:sekrit@vespa:8080 refused"
+            )
+        )
+        monkeypatch.setattr(
+            agents_router, "_ensure_dispatcher", lambda: stub_dispatcher
+        )
+
+        test_app = FastAPI()
+        test_app.include_router(agents_router.router, prefix="/agents")
+        with TestClient(test_app, raise_server_exceptions=False) as client:
+            resp = client.post(
+                "/agents/gateway_agent/process",
+                json={
+                    "agent_name": "gateway_agent",
+                    "query": "listen to podcasts about deep learning run 4",
+                    "context": {"tenant_id": "acme:prod"},
+                    "session_id": "sess-42",
+                },
+            )
+
+        assert resp.status_code == 500
+        detail = resp.json()["detail"]
+        assert "gateway_agent" in detail
+        assert "RuntimeError" in detail
+        assert "sess-42" in detail
+        assert "sekrit" not in resp.text
+        assert "Traceback" not in resp.text
