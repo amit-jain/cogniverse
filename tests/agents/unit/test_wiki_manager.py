@@ -10,7 +10,13 @@ from unittest.mock import MagicMock, patch
 
 import pytest
 
-from cogniverse_agents.wiki.wiki_schema import WikiIndex, WikiPage, generate_slug
+from cogniverse_agents.wiki.wiki_schema import (
+    InvalidWikiTitleError,
+    WikiIndex,
+    WikiPage,
+    entity_titles,
+    generate_slug,
+)
 
 
 def _wiki_mapping():
@@ -1337,3 +1343,59 @@ class TestFedDocumentTimestamps:
         assert fields["updated_at"] == "2026-05-25T10:30:00+00:00"
         assert fields["created_at"] == "2026-05-25T10:30:00+00:00"
         assert fields["embedding"] == [0.3] * 768
+
+
+class TestEntityTitleContract:
+    """The wiki's one definition of a title. Slug generation used to accept
+    anything and fail inside unicodedata four frames below the caller."""
+
+    def test_extraction_records_project_to_their_text(self):
+        records = [
+            {"text": "Barack Obama", "type": "PERSON", "confidence": 0.9},
+            {"text": "Chicago", "type": "PLACE", "confidence": 0.8},
+        ]
+        assert entity_titles(records) == ["Barack Obama", "Chicago"]
+
+    def test_plain_titles_pass_through(self):
+        assert entity_titles(["Machine Learning", "Chicago"]) == [
+            "Machine Learning",
+            "Chicago",
+        ]
+
+    def test_mixed_shapes_project_in_order(self):
+        assert entity_titles(["Alpha", {"text": "Beta", "type": "ORG"}]) == [
+            "Alpha",
+            "Beta",
+        ]
+
+    def test_record_without_text_names_the_index_and_keys(self):
+        with pytest.raises(InvalidWikiTitleError) as excinfo:
+            entity_titles([{"text": "ok"}, {"name": "Chicago", "type": "PLACE"}])
+
+        assert str(excinfo.value) == (
+            "entities[1] must be a wiki title str or an entity record with a "
+            "'text' str, got dict with keys ['name', 'type']"
+        )
+
+    def test_non_string_text_is_rejected(self):
+        with pytest.raises(InvalidWikiTitleError) as excinfo:
+            entity_titles([{"text": None, "type": "PLACE"}])
+
+        assert str(excinfo.value) == (
+            "entities[0] must be a wiki title str or an entity record with a "
+            "'text' str, got dict with keys ['text', 'type']"
+        )
+
+    def test_generate_slug_rejects_a_record_by_name(self):
+        with pytest.raises(InvalidWikiTitleError) as excinfo:
+            generate_slug({"text": "Chicago", "type": "PLACE"})
+
+        assert str(excinfo.value) == (
+            "wiki title must be a str, got dict with keys ['text', 'type']"
+        )
+
+    def test_generate_slug_error_is_still_a_type_error(self):
+        assert issubclass(InvalidWikiTitleError, TypeError)
+
+    def test_empty_entities_project_to_empty(self):
+        assert entity_titles([]) == []

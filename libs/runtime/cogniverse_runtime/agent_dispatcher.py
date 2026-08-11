@@ -227,6 +227,18 @@ def _flatten_search_hit(hit: Dict[str, Any]) -> Dict[str, Any]:
     return flat
 
 
+def _describe_entity_shape(entities: Any) -> str:
+    """Describe an entity payload's shape (never its content) for a log line."""
+    items = list(entities or [])
+    types = sorted({type(item).__name__ for item in items})
+    rendered = "{" + ", ".join(repr(name) for name in types) + "}"
+    shape = f"{len(items)} items, item types={rendered}"
+    keys = sorted({key for item in items if isinstance(item, dict) for key in item})
+    if keys:
+        shape += ", dict keys={" + ", ".join(repr(key) for key in keys) + "}"
+    return shape
+
+
 class AgentDispatcher:
     """Routes agent tasks to the correct in-process agent implementation.
 
@@ -1260,9 +1272,11 @@ class AgentDispatcher:
         """Fire-and-forget wiki auto-filing. Non-fatal: logs and returns on any error.
 
         Resolves the per-tenant WikiManager via the router factory so each
-        tenant's auto-filed pages land in their own wiki.
+        tenant's auto-filed pages land in their own wiki. Entity records from
+        the extraction agent are projected to wiki titles first.
         """
         try:
+            from cogniverse_agents.wiki.wiki_schema import entity_titles
             from cogniverse_runtime.routers import wiki as wiki_router
 
             if wiki_router._wiki_manager_factory is None:
@@ -1272,7 +1286,8 @@ class AgentDispatcher:
             if wm is None:
                 return
 
-            if not wm._should_auto_file(entities, agent_name, turn_count):
+            titles = entity_titles(entities)
+            if not wm._should_auto_file(titles, agent_name, turn_count):
                 return
 
             response_text = str(response.get("answer", response))
@@ -1281,12 +1296,22 @@ class AgentDispatcher:
                 lambda: wm.save_session(
                     query=query,
                     response=response_text,
-                    entities=entities,
+                    entities=titles,
                     agent_name=agent_name,
                 ),
             )
-        except Exception:
-            logger.warning("Wiki auto-filing failed (non-fatal)", exc_info=True)
+        except Exception as exc:
+            # Fire-and-forget: raising here reaches no caller, so the shape of
+            # what failed has to be in the record or a dead hook stays dead.
+            logger.error(
+                "Wiki auto-filing failed for %s (tenant=%s): %s: %s; entities=%s",
+                agent_name,
+                tenant_id,
+                type(exc).__name__,
+                exc,
+                _describe_entity_shape(entities),
+                exc_info=True,
+            )
 
     async def _build_generic_agent(
         self,
