@@ -554,34 +554,98 @@ class TestSyntheticRuntimeConfig:
             f"{detail}"
         )
 
-    @pytest.mark.parametrize(
-        ("target", "unknown_key", "source"),
-        [
-            ("profile", "silent_profile_typo", "backend.profiles.video_fixture"),
-            ("agent", "silent_agent_typo", "agents.search_agent"),
-        ],
-    )
-    def test_rejects_unknown_profile_and_agent_keys(
-        self,
-        target,
-        unknown_key,
-        source,
-    ):
+    def test_rejects_unknown_agent_keys(self):
         from cogniverse_runtime.synthetic_config import parse_synthetic_runtime_config
 
         sections = _synthetic_runtime_sections()
-        if target == "profile":
-            sections["backend"]["profiles"]["video_fixture"][unknown_key] = True
-        else:
-            sections["agents"]["search_agent"][unknown_key] = True
+        sections["agents"]["search_agent"]["silent_agent_typo"] = True
 
         with pytest.raises(ValueError) as error:
             parse_synthetic_runtime_config(sections, tenant_id="acme:invalid")
 
         assert str(error.value) == (
             "Invalid synthetic runtime configuration for tenant='acme:invalid': "
-            f"{source} has invalid keys: missing=[] unknown=['{unknown_key}']"
+            "agents.search_agent has invalid keys: missing=[] "
+            "unknown=['silent_agent_typo']"
         )
+
+    @pytest.mark.parametrize("field_name", ["type", "schema_name"])
+    def test_rejects_profile_missing_a_required_field(self, field_name):
+        from cogniverse_runtime.synthetic_config import parse_synthetic_runtime_config
+
+        sections = _synthetic_runtime_sections()
+        del sections["backend"]["profiles"]["video_fixture"][field_name]
+
+        with pytest.raises(ValueError) as error:
+            parse_synthetic_runtime_config(sections, tenant_id="acme:invalid")
+
+        assert str(error.value) == (
+            "Invalid synthetic runtime configuration for tenant='acme:invalid': "
+            f"backend.profiles.video_fixture is missing required key {field_name!r}"
+        )
+
+    @pytest.mark.parametrize(
+        ("field_name", "bad_value", "expected_type", "got_type"),
+        [
+            ("embedding_model", 123, "str", "int"),
+            ("pipeline_config", [1, 2], "dict", "list"),
+            ("strategies", "segmentation", "dict", "str"),
+            ("schema_config", 5, "dict", "int"),
+        ],
+    )
+    def test_rejects_profile_field_of_the_wrong_type(
+        self,
+        field_name,
+        bad_value,
+        expected_type,
+        got_type,
+    ):
+        from cogniverse_runtime.synthetic_config import parse_synthetic_runtime_config
+
+        sections = _synthetic_runtime_sections()
+        sections["backend"]["profiles"]["video_fixture"][field_name] = bad_value
+
+        with pytest.raises(ValueError) as error:
+            parse_synthetic_runtime_config(sections, tenant_id="acme:invalid")
+
+        assert str(error.value) == (
+            "Invalid synthetic runtime configuration for tenant='acme:invalid': "
+            f"backend.profiles.video_fixture.{field_name} must be "
+            f"{expected_type}, got {got_type}"
+        )
+
+    def test_accepts_profile_keys_outside_the_typed_set(self):
+        """Profiles registered at runtime carry keys the parser never names.
+
+        ``build_memory_profile`` registers ``agent_memories`` with ``model``,
+        ``encoder``, ``strategy`` and ``embedding_dims``; the Vespa search
+        backend then reads ``encoder`` and ``strategy`` back by name. The
+        parser must hand those through to ``extra_config`` untouched.
+        """
+        from cogniverse_runtime.synthetic_config import parse_synthetic_runtime_config
+
+        sections = _synthetic_runtime_sections()
+        sections["backend"]["profiles"]["video_fixture"].update(
+            {
+                "model": "lightonai/DenseOn",
+                "encoder": "denseon",
+                "strategy": "semantic_search",
+                "embedding_dims": 768,
+            }
+        )
+
+        config = parse_synthetic_runtime_config(sections, tenant_id="acme:invalid")
+
+        profile = config.backend_config.profiles["video_fixture"]
+        assert profile.extra_config == {
+            "model": "lightonai/DenseOn",
+            "encoder": "denseon",
+            "strategy": "semantic_search",
+            "embedding_dims": 768,
+        }
+        assert profile.schema_name == "video_fixture"
+        assert profile.type == "video"
+        assert profile.embedding_model == "TomoroAI/tomoro-colqwen3-embed-4b"
 
     @pytest.mark.parametrize(
         ("mutate", "detail"),
