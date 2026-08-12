@@ -20,6 +20,7 @@ import re
 import shlex
 import subprocess
 import tempfile
+import threading
 import time as _time
 import uuid
 from datetime import datetime, timezone
@@ -59,9 +60,7 @@ def _telegram_real_flow_deselections(items):
     if token and chat_id:
         return [], None
     deselected = [
-        item
-        for item in items
-        if any(item.iter_markers(name="requires_telegram_bot"))
+        item for item in items if any(item.iter_markers(name="requires_telegram_bot"))
     ]
     if not deselected:
         return [], None
@@ -547,7 +546,10 @@ def register_tenant_and_wait(
     )
 
 
-def run_async(coro):
+RUN_ASYNC_TIMEOUT_S = 600.0
+
+
+def run_async(coro, timeout_s: float | None = None):
     """Run a coroutine to completion in a fresh OS thread.
 
     pytest.ini sets ``asyncio_mode = auto`` so pytest-asyncio enters an
@@ -564,10 +566,16 @@ def run_async(coro):
     pytest-asyncio's loop — ``asyncio.run`` in the worker creates a
     fresh loop, runs the coroutine, closes the loop, returns the result
     (or re-raises the exception) on the calling thread.
+
+    The join is bounded by ``timeout_s`` (default ``RUN_ASYNC_TIMEOUT_S``):
+    a coroutine that outlives it raises ``TimeoutError`` naming the
+    coroutine, and the daemon worker is abandoned — the pytest main
+    thread must never block forever in ``Thread.join``.
     """
     import asyncio
-    import threading
 
+    if timeout_s is None:
+        timeout_s = RUN_ASYNC_TIMEOUT_S
     box: dict = {}
 
     def _runner():
@@ -578,7 +586,13 @@ def run_async(coro):
 
     t = threading.Thread(target=_runner, daemon=True)
     t.start()
-    t.join()
+    t.join(timeout_s)
+    if t.is_alive():
+        name = getattr(coro, "__qualname__", repr(coro))
+        raise TimeoutError(
+            f"run_async: coroutine {name!r} did not complete within "
+            f"{timeout_s:g}s; abandoning its daemon worker thread"
+        )
     if "error" in box:
         raise box["error"]
     return box["value"]
@@ -1740,6 +1754,55 @@ _TEST_TENANT_PREFIXES = (
 )
 
 
+def _sweep_tenant_deletes(
+    tenants: set[str],
+    *,
+    budget_s: float = 180.0,
+    delete_one=None,
+) -> None:
+    """Serially delete test tenants via the runtime under a hard budget.
+
+    Serial (one worker) because each delete undeploys a Vespa schema,
+    which redeploys the WHOLE application package; concurrent undeploys
+    race on that shared rebuild — the loser sees a stale survivor set and
+    Vespa rejects it. The budget bounds both the completed-work loop and
+    the wait itself, so a hung delete cannot block session teardown; the
+    sweep reports what it left behind, and the next run picks it up.
+    """
+    from concurrent.futures import ThreadPoolExecutor, as_completed
+
+    if delete_one is None:
+
+        def delete_one(tid: str) -> None:
+            try:
+                with httpx.Client(timeout=20.0) as client:
+                    client.delete(f"{RUNTIME}/admin/tenants/{tid}")
+            except (httpx.HTTPError, OSError) as exc:
+                print(f"Cleanup failed for tenant {tid}: {exc}")
+
+    sweep_deadline = _time.monotonic() + budget_s
+    pool = ThreadPoolExecutor(max_workers=1)
+    try:
+        futures = [pool.submit(delete_one, tid) for tid in sorted(tenants)]
+        try:
+            for _fut in as_completed(futures, timeout=budget_s):
+                if _time.monotonic() > sweep_deadline:
+                    print(
+                        "Tenant cleanup budget exhausted; remainder left for next run"
+                    )
+                    break
+        except TimeoutError:
+            pending = sum(1 for f in futures if not f.done())
+            print(
+                f"Tenant cleanup budget exhausted after {budget_s:g}s with "
+                f"{pending} deletes still pending; remainder left for next run"
+            )
+    finally:
+        # Don't block on the queued/in-flight deletes — cancel the rest so a
+        # large backlog can't hang session setup/teardown past the budget.
+        pool.shutdown(wait=False, cancel_futures=True)
+
+
 def _cleanup_test_tenants() -> None:
     """Delete every test-prefixed tenant AND parent org so the next run starts clean.
 
@@ -1788,34 +1851,7 @@ def _cleanup_test_tenants() -> None:
         if tid and any(tid.startswith(p) for p in _TEST_TENANT_PREFIXES):
             tenants_seen.add(tid)
 
-    # Delete serially (one worker) under a total budget. Each delete undeploys
-    # a Vespa schema, which redeploys the WHOLE application package; concurrent
-    # undeploys race on that shared package rebuild — the loser sees a stale
-    # survivor set and Vespa rejects it ("services.xml does not exist" /
-    # "schema-removal ... loss of all data"). Serial avoids the race; the
-    # budget keeps a large backlog from hanging setup/teardown, and what isn't
-    # reaped this run is picked up by the next sweep.
-    from concurrent.futures import ThreadPoolExecutor, as_completed
-
-    def _delete_one(tid: str) -> None:
-        try:
-            with httpx.Client(timeout=20.0) as client:
-                client.delete(f"{RUNTIME}/admin/tenants/{tid}")
-        except (httpx.HTTPError, OSError) as exc:
-            print(f"Cleanup failed for tenant {tid}: {exc}")
-
-    sweep_deadline = _t.monotonic() + 180.0
-    pool = ThreadPoolExecutor(max_workers=1)
-    try:
-        futures = [pool.submit(_delete_one, tid) for tid in sorted(tenants_seen)]
-        for _fut in as_completed(futures):
-            if _t.monotonic() > sweep_deadline:
-                print("Tenant cleanup budget exhausted; remainder left for next run")
-                break
-    finally:
-        # Don't block on the queued/in-flight deletes — cancel the rest so a
-        # large backlog can't hang session setup/teardown past the budget.
-        pool.shutdown(wait=False, cancel_futures=True)
+    _sweep_tenant_deletes(tenants_seen)
 
     # 2. Org sweep — DELETE /admin/organizations/{org_id}. Tenants
     # have been removed above so org delete is unblocked. Skip orgs
@@ -2514,14 +2550,32 @@ class E2EReportCollector:
     Automatically captures every httpx call to the runtime (localhost:33000)
     by monkeypatching httpx.Client.send. Groups operations by test name
     and writes JSON + markdown reports at session end.
+
+    The in-memory operation log is hard-capped at ``MAX_OPERATIONS``;
+    overflow is counted and surfaced in the report, never silently
+    discarded.
     """
+
+    # One record deep-sizes at ~2.7 KiB (polling loops record every poll,
+    # so an hours-long sweep reaches 10^5-10^6 ops unbounded); 50k ops
+    # holds the resident log near 135 MiB.
+    MAX_OPERATIONS = 50_000
 
     def __init__(self):
         self.operations: list[dict] = []
+        self.operations_dropped = 0
         self.test_results: dict[str, dict] = {}
         self._current_test: str | None = None
         self._original_send = None
         self._session_start = datetime.now(timezone.utc)
+        self._ops_lock = threading.Lock()
+
+    def _append_op(self, op: dict) -> None:
+        with self._ops_lock:
+            if len(self.operations) >= self.MAX_OPERATIONS:
+                self.operations_dropped += 1
+                return
+            self.operations.append(op)
 
     def start_test(self, nodeid: str):
         self._current_test = nodeid
@@ -2537,7 +2591,7 @@ class E2EReportCollector:
         self, action: str, target: str, value: str = "", elapsed_ms: float = 0
     ):
         """Record a Playwright browser interaction (tab click, input fill, button click)."""
-        self.operations.append(
+        self._append_op(
             {
                 "test": self._current_test or "unknown",
                 "timestamp": datetime.now(timezone.utc).isoformat(),
@@ -2566,7 +2620,7 @@ class E2EReportCollector:
         # Parse response body
         resp_body = self._safe_json(response)
 
-        self.operations.append(
+        self._append_op(
             {
                 "test": self._current_test or "unknown",
                 "timestamp": datetime.now(timezone.utc).isoformat(),
@@ -2844,6 +2898,7 @@ class E2EReportCollector:
                 "failed": failed,
                 "skipped": skipped,
                 "total_http_operations": len(self.operations),
+                "operations_dropped": self.operations_dropped,
                 "total_http_time_ms": round(
                     sum(op["elapsed_ms"] for op in self.operations), 1
                 ),
@@ -2886,6 +2941,13 @@ class E2EReportCollector:
         lines.append(f"| HTTP Operations | {s['total_http_operations']} |")
         lines.append(f"| Total HTTP Time | {s['total_http_time_ms']:.0f}ms |")
         lines.append("")
+        if s["operations_dropped"]:
+            lines.append(
+                f"**OPERATION LOG TRUNCATED**: {s['operations_dropped']} "
+                f"operations dropped after cap of {self.MAX_OPERATIONS}; "
+                "per-test operation tables are incomplete."
+            )
+            lines.append("")
 
         # Per-class sections
         for cls, tests in report["tests_by_class"].items():
