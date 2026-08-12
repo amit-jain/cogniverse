@@ -436,10 +436,14 @@ def up(
     # 5c. Bootstrap secrets the chart references by name. Must happen
     # BEFORE helm install so gated-model pods (e.g. the vLLM Gemma LLM
     # student/teacher pods) find hf-token at startup.
-    from cogniverse_cli.secrets import sync_hf_token_to_cluster
+    from cogniverse_cli.secrets import (
+        sync_hf_token_to_cluster,
+        sync_inference_api_key_to_cluster,
+    )
 
     console.print("[cyan]Syncing cluster secrets...[/cyan]")
     sync_hf_token_to_cluster(required=False)
+    sync_inference_api_key_to_cluster(required=False)
 
     # 6. Install Argo controller FIRST so its CRDs exist before the main chart
     # renders CronWorkflow/WorkflowTemplate manifests. The main chart then opts
@@ -880,23 +884,32 @@ def secrets_sync(required: bool) -> None:
     hf-token comes from HF_TOKEN, HUGGING_FACE_HUB_TOKEN, or
     ~/.cache/huggingface/token (populated by `huggingface-cli login`).
     The messaging Secret holding the Telegram bot token comes from
-    TELEGRAM_BOT_TOKEN or .env/TELEGRAM_BOT_TOKEN.env. Both are applied
-    into the cogniverse namespace.
+    TELEGRAM_BOT_TOKEN or .env/TELEGRAM_BOT_TOKEN.env. The inference
+    Secret holding the Modal bearer key comes from
+    COGNIVERSE_INFERENCE_API_KEY or .env/COGNIVERSE_INFERENCE_API_KEY.env.
+    All are applied into the cogniverse namespace.
     """
     from cogniverse_cli.secrets import (
         sync_hf_token_to_cluster,
+        sync_inference_api_key_to_cluster,
         sync_telegram_token_to_cluster,
     )
 
     hf_ok = sync_hf_token_to_cluster(required=required)
-    # Messaging is optional in the chart, so a missing bot token is only fatal
-    # when --required asks for a fully-provisioned cluster.
+    # Messaging and Modal-hosted inference are optional in the chart, so a
+    # missing bot token or bearer key is only fatal when --required asks for
+    # a fully-provisioned cluster.
     telegram_ok = sync_telegram_token_to_cluster(required=required)
+    inference_ok = sync_inference_api_key_to_cluster(required=required)
 
-    if required and not (hf_ok and telegram_ok):
+    if required and not (hf_ok and telegram_ok and inference_ok):
         failed = ", ".join(
             name
-            for name, ok in (("hf-token", hf_ok), ("telegram-bot-token", telegram_ok))
+            for name, ok in (
+                ("hf-token", hf_ok),
+                ("telegram-bot-token", telegram_ok),
+                ("cogniverse-inference-api-key", inference_ok),
+            )
             if not ok
         )
         raise click.ClickException(f"Failed to sync: {failed}")

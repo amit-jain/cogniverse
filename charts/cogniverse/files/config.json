@@ -264,8 +264,6 @@
   },
   "search_backend": "vespa",
   "byaldi_index_name": ".byaldi/my_video_index",
-  "vlm_endpoint_url": "",
-  "auto_start_vlm_service": true,
   "colpali_model": "TomoroAI/tomoro-colqwen3-embed-4b",
   "embedding_model": "lightonai/DenseOn",
   "prompts": {
@@ -773,8 +771,7 @@
             "params": {
               "vlm_endpoint": "{{ include "cogniverse.llmStudentEndpoint" . }}",
               "batch_size": 500,
-              "timeout": 10800,
-              "auto_start": false
+              "timeout": 10800
             }
           },
           "embedding": {

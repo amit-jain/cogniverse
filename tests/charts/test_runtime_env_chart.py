@@ -209,3 +209,61 @@ class TestWorkflowApiUrlTargetsTheDeployedArgo:
         host = env["WORKFLOW_API_URL"].split("://", 1)[1]
         assert "argo-server.argo.svc.cluster.local:2746" == host
         assert f"https://{host}" in rendered
+
+
+def _runtime_container_env_entries(manifests: list) -> list[dict]:
+    deployments = [
+        m
+        for m in manifests
+        if m.get("kind") == "Deployment"
+        and m.get("metadata", {}).get("name") == "cogniverse-runtime"
+    ]
+    assert len(deployments) == 1
+    containers = deployments[0]["spec"]["template"]["spec"]["containers"]
+    runtime = [c for c in containers if c["name"] == "runtime"]
+    assert len(runtime) == 1
+    return runtime[0].get("env", [])
+
+
+def _ingestor_container_env_entries(manifests: list) -> list[dict]:
+    deployments = [
+        m
+        for m in manifests
+        if m.get("kind") == "Deployment"
+        and m.get("metadata", {}).get("name") == "cogniverse-ingestor"
+    ]
+    assert len(deployments) == 1
+    containers = deployments[0]["spec"]["template"]["spec"]["containers"]
+    ingestor = [c for c in containers if c["name"] == "ingestor"]
+    assert len(ingestor) == 1
+    return ingestor[0].get("env", [])
+
+
+@pytest.mark.unit
+@pytest.mark.ci_fast
+class TestInferenceApiKeyDelivery:
+    """Pods that dial INFERENCE_SERVICE_URLS endpoints authenticate to
+    https://*.modal.run via COGNIVERSE_INFERENCE_API_KEY. The CLI syncs the
+    key into Secret cogniverse-inference-api-key; the secretKeyRef is
+    optional so a fully-local stack starts without it."""
+
+    EXPECTED_ENTRY = {
+        "name": "COGNIVERSE_INFERENCE_API_KEY",
+        "valueFrom": {
+            "secretKeyRef": {
+                "name": "cogniverse-inference-api-key",
+                "key": "COGNIVERSE_INFERENCE_API_KEY",
+                "optional": True,
+            }
+        },
+    }
+
+    def test_runtime_receives_the_key_from_the_synced_secret(self):
+        entries = _runtime_container_env_entries(_render_chart())
+        matches = [e for e in entries if e["name"] == "COGNIVERSE_INFERENCE_API_KEY"]
+        assert matches == [self.EXPECTED_ENTRY]
+
+    def test_ingestor_receives_the_key_from_the_synced_secret(self):
+        entries = _ingestor_container_env_entries(_render_chart())
+        matches = [e for e in entries if e["name"] == "COGNIVERSE_INFERENCE_API_KEY"]
+        assert matches == [self.EXPECTED_ENTRY]

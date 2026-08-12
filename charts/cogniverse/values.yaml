@@ -870,6 +870,12 @@ inferenceStartup:
   # deadline, covering image pull plus this pod's own model load.
   progressAllowanceSeconds: 900
 
+# Each entry deploys one in-cluster pod plus one {service_key: url} entry in
+# the INFERENCE_SERVICE_URLS map. A non-empty externalUrl (absolute https URL,
+# e.g. a Modal endpoint) keeps the map entry, points it at the external
+# endpoint, and skips the local Deployment/Service/model-cache PVC and image
+# build. Unsupported on vllm_llm_student / vllm_llm_teacher — override the LLM
+# endpoint via runtime.primaryLLM instead.
 inference:
   # vLLM-served visual multi-vector retrieval (ColPali family). Replaces
   # the legacy custom FastAPI sidecar (deploy/colpali). Uses vLLM's
@@ -878,6 +884,7 @@ inference:
   # here via ``inference_service: "vllm_colpali"``.
   vllm_colpali:
     enabled: false
+    externalUrl: ""
     engine: vllm_token_embed
     model: TomoroAI/tomoro-colqwen3-embed-4b
     # Immutable artifact the pod serves and reports on /v1/models. Must match
@@ -964,6 +971,7 @@ inference:
   # distinct key.
   colbert_pylate:
     enabled: true
+    externalUrl: ""
     engine: pylate
     model: lightonai/LateOn
     modelRevision: c01907b70557ee5c7753680d4819a5cce1674b83
@@ -1022,6 +1030,7 @@ inference:
   # via ``inference_service: "code_colbert_pylate"``.
   code_colbert_pylate:
     enabled: false
+    externalUrl: ""
     engine: pylate
     model: lightonai/LateOn-Code-edge
     modelRevision: 07ef20f406c86badca122464808f4cac2f6e4b25
@@ -1072,6 +1081,7 @@ inference:
   # ``inference_service: "denseon"``.
   denseon:
     enabled: true
+    externalUrl: ""
     engine: vllm_embed
     model: lightonai/DenseOn       # ModernBERT-base, 768-dim, CLS pooling, 512 ctx
     # Must match INFERENCE_SERVICE_SPECS["denseon"].model_revision.
@@ -1126,6 +1136,7 @@ inference:
   # this sidecar. Every caller uses the same pinned production model.
   gliner:
     enabled: true
+    externalUrl: ""
     engine: gliner
     model: urchade/gliner_large-v2.1
     type: ner
@@ -1177,6 +1188,7 @@ inference:
   # ``VideoPrismModelLoader`` is no longer wired by default.
   videoprism_jax:
     enabled: false
+    externalUrl: ""
     engine: videoprism_jax
     model: videoprism_public_v1_base_hf
     type: multi_vector
@@ -1353,6 +1365,7 @@ inference:
   # lighter than those pods.
   vllm_asr:
     enabled: true
+    externalUrl: ""
     engine: vllm_transcription
     type: transcription
     model: openai/whisper-large-v3-turbo
@@ -1476,6 +1489,7 @@ inference:
   # CPU-only; /health loads the pinned model before reporting readiness.
   clap_embed:
     enabled: false
+    externalUrl: ""
     engine: fastapi
     replicaCount: 1
     image:
@@ -1520,6 +1534,7 @@ inference:
   # artifact installed in the image before reporting readiness.
   face_embed:
     enabled: false
+    externalUrl: ""
     engine: fastapi
     replicaCount: 1
     image:

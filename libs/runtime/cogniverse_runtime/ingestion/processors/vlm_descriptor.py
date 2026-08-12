@@ -2,17 +2,14 @@
 """
 VLM Description Generation Step
 
-Generates visual descriptions for keyframes using Modal VLM service.
+Generates visual descriptions for keyframes via an OpenAI-compatible
+``/v1`` vision chat endpoint (e.g. an in-cluster vLLM vision model).
 """
 
 import base64
 import json
 import logging
-import os
-import subprocess
-import tempfile
 import time
-import zipfile
 from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 from typing import Any
@@ -38,107 +35,32 @@ class VLMDescriptor:
         vlm_endpoint: str,
         batch_size: int = 500,
         timeout: int = 10800,
-        auto_start: bool = True,
         vlm_concurrency: int = 8,
     ):
+        if "/v1" not in vlm_endpoint:
+            raise ValueError(
+                "VLM endpoint must be an OpenAI-compatible /v1 URL "
+                f"(e.g. http://host:8000/v1), got {vlm_endpoint!r}"
+            )
         self.vlm_endpoint = vlm_endpoint
         self.batch_size = batch_size
         self.timeout = timeout  # 3 hours default
-        self.auto_start = auto_start
-        # How many keyframe describe-requests to keep in flight against an
-        # OpenAI-compatible ``/v1`` endpoint. Concurrent requests are what feed
-        # vLLM's continuous batching (there is no single-request multi-image
-        # describe API), so this is the throughput lever: raise it on a GPU that
-        # can serve a bigger batch, keep it low on a small one.
+        # How many keyframe describe-requests to keep in flight. Concurrent
+        # requests are what feed vLLM's continuous batching (there is no
+        # single-request multi-image describe API), so this is the throughput
+        # lever: raise it on a GPU that can serve a bigger batch, keep it low
+        # on a small one.
         self.vlm_concurrency = max(1, vlm_concurrency)
-        self._service_started = False
-        # An OpenAI-compatible ``/v1`` endpoint (e.g. the deployed vLLM vision
-        # model) speaks chat/completions with image_url parts; a Modal endpoint
-        # takes a base64 zip of frames. Detect which so one descriptor serves
-        # both a hosted Modal service and an in-cluster vLLM.
-        self._openai_mode = "/v1" in vlm_endpoint
         self._openai_model: str | None = None
 
-        # Setup logging
         self.logger = logging.getLogger("VLMDescriptor")
         self.logger.info(f"Initialized VLMDescriptor with endpoint: {vlm_endpoint}")
-        self.logger.info(
-            f"Batch size: {batch_size}, Timeout: {timeout}s, Auto-start: {auto_start}"
-        )
-
-        # Don't auto-start service in __init__ - only start when actually needed
-
-    def _ensure_service_running(self):
-        """Ensure the Modal VLM service is running"""
-        # An in-cluster vLLM ``/v1`` endpoint is always up; nothing to start.
-        if self._openai_mode:
-            return
-        # Check if service is already running
-        try:
-            response = requests.get(self.vlm_endpoint, timeout=5)
-            if response.status_code != 404:
-                self.logger.info("VLM service is already running")
-                return
-        except Exception as e:
-            self.logger.debug(f"Service check failed: {e}")
-            pass
-
-        # Try to start Modal service
-        self.logger.info("Starting Modal VLM service...")
-        try:
-            # Check if modal_vlm_service.py exists
-            service_file = Path("scripts/modal_vlm_service.py")
-            if not service_file.exists():
-                self.logger.warning(
-                    "scripts/modal_vlm_service.py not found, cannot auto-start service"
-                )
-                return
-
-            # Deploy the Modal service
-            result = subprocess.run(
-                ["modal", "deploy", "scripts/modal_vlm_service.py"],
-                capture_output=True,
-                text=True,
-            )
-
-            if result.returncode == 0:
-                self.logger.info("Modal VLM service started successfully")
-                # Wait a bit for service to be ready
-                time.sleep(5)  # Wait for Modal VLM service startup
-            else:
-                self.logger.error(f"Failed to start Modal service: {result.stderr}")
-
-        except Exception as e:
-            self.logger.error(f"Error starting Modal service: {e}")
-
-    def stop_service(self):
-        """Stop the Modal VLM service if it was started"""
-        if self._service_started:
-            self.logger.info("Modal VLM service will auto-stop after inactivity")
-            # Modal serverless functions automatically stop after ~5-10 minutes of inactivity
-            # The 'modal app stop' command is primarily for long-running services, not serverless functions
-            # Optionally try to stop it explicitly
-            try:
-                result = subprocess.run(
-                    ["modal", "app", "stop", "cogniverse-vlm"],
-                    capture_output=True,
-                    text=True,
-                    timeout=5,
-                )
-                if "stopped" in result.stdout.lower() or result.returncode == 0:
-                    self.logger.info("Modal VLM service stop command sent")
-            except Exception as e:
-                self.logger.debug(f"Modal stop command failed: {e}")
-                # It's okay if this fails - serverless functions auto-stop anyway
-                pass
-            self._service_started = False
-        else:
-            self.logger.info("Modal VLM service was not started by this pipeline")
+        self.logger.info(f"Batch size: {batch_size}, Timeout: {timeout}s")
 
     def generate_descriptions(
         self, keyframes_metadata: dict[str, Any], output_dir: Path = None
     ) -> dict[str, Any]:
-        """Generate VLM descriptions for keyframes using Modal service"""
+        """Generate VLM descriptions for keyframes."""
         # Check if keyframes_metadata is empty or doesn't have required data
         if not keyframes_metadata or "video_id" not in keyframes_metadata:
             self.logger.info("No keyframes to generate descriptions for")
@@ -158,13 +80,6 @@ class VLMDescriptor:
         else:
             # For testing - should migrate tests to use OutputManager
             descriptions_file = output_dir / "descriptions" / f"{video_id}.json"
-
-        # Remove caching - always regenerate descriptions
-
-        # Only start service when we actually need to generate descriptions
-        if self.auto_start and not self._service_started:
-            self._ensure_service_running()
-            self._service_started = True
 
         keyframes = keyframes_metadata["keyframes"]
         if not keyframes:
@@ -208,109 +123,6 @@ class VLMDescriptor:
             "total_descriptions": len(descriptions),
             "created_at": time.time(),
         }
-
-    def _process_vlm_batch(self, keyframes: list[dict]) -> dict[str, str]:
-        """Process a batch of keyframes through the VLM service."""
-        if self._openai_mode:
-            return self._process_vlm_batch_openai(keyframes)
-
-        # Create frame mapping for batch processing
-        frame_mapping = {}
-        frame_paths = []
-
-        for keyframe in keyframes:
-            frame_path = Path(keyframe["path"])
-            if not frame_path.exists():
-                continue
-            # The keyframe-processor writes ``frame_number``; older /
-            # downstream code reads ``frame_id``. Accept either so the
-            # VLM doesn't crash on the field-name mismatch.
-            frame_ref = keyframe.get("frame_id")
-            if frame_ref is None:
-                frame_ref = keyframe.get("frame_number")
-            if frame_ref is None:
-                # Last resort — derive from filename so the response
-                # mapping still has a stable key per frame.
-                frame_ref = frame_path.stem
-            frame_mapping[frame_path.name] = str(frame_ref)
-            frame_paths.append(frame_path)
-
-        if not frame_paths:
-            self.logger.warning("No valid frame paths found in batch")
-            return {}
-
-        self.logger.debug(f"Processing batch of {len(frame_paths)} frames")
-
-        # Create temporary zip file
-        with tempfile.NamedTemporaryFile(suffix=".zip", delete=False) as temp_zip:
-            with zipfile.ZipFile(temp_zip.name, "w") as zf:
-                for frame_path in frame_paths:
-                    zf.write(frame_path, frame_path.name)
-
-            # Upload and process batch
-            with open(temp_zip.name, "rb") as f:
-                zip_data = f.read()
-
-                payload = {
-                    "zip_data": base64.b64encode(zip_data).decode("utf-8"),
-                    "frame_mapping": frame_mapping,
-                }
-
-                batch_endpoint = self.vlm_endpoint.replace(
-                    "generate-description", "upload-and-process-frames"
-                )
-
-                try:
-                    self.logger.info(
-                        f"Uploading batch of {len(frame_mapping)} frames..."
-                    )
-                    response = requests.post(
-                        batch_endpoint,
-                        json=payload,
-                        headers={"Content-Type": "application/json"},
-                        timeout=self.timeout,
-                    )
-
-                    self.logger.info(
-                        f"Batch request completed with status: {response.status_code}"
-                    )
-
-                    if response.status_code == 200:
-                        result = response.json()
-                        descriptions_returned = result.get("descriptions", {})
-                        self.logger.info(
-                            f"Batch processing successful: {len(descriptions_returned)} descriptions returned"
-                        )
-                        return descriptions_returned
-                    else:
-                        self.logger.error(
-                            f"Batch processing failed: {response.status_code} - {response.text}"
-                        )
-                        return {}
-
-                except Exception as e:
-                    self.logger.error(f"Batch processing error: {e}")
-                    # If service is not running, try to start it
-                    if "Connection" in str(e) and self.auto_start:
-                        self._ensure_service_running()
-                        # Retry once after starting service
-                        try:
-                            response = requests.post(
-                                batch_endpoint,
-                                json=payload,
-                                headers={"Content-Type": "application/json"},
-                                timeout=self.timeout,
-                            )
-                            if response.status_code == 200:
-                                result = response.json()
-                                return result.get("descriptions", {})
-                        except Exception as retry_e:
-                            self.logger.error(f"Retry also failed: {retry_e}")
-                            pass
-                    return {}
-                finally:
-                    # Cleanup temp file
-                    os.unlink(temp_zip.name)
 
     def _openai_base(self) -> str:
         """The ``/v1`` root of the configured endpoint (accepts either a bare
@@ -368,7 +180,7 @@ class VLMDescriptor:
         content = resp.json()["choices"][0]["message"]["content"]
         return str(frame_ref), (content or "").strip()
 
-    def _process_vlm_batch_openai(self, keyframes: list[dict]) -> dict[str, str]:
+    def _process_vlm_batch(self, keyframes: list[dict]) -> dict[str, str]:
         """Describe each keyframe via an OpenAI-compatible vision chat model.
 
         Frames are described concurrently (up to ``vlm_concurrency`` in flight)
@@ -427,40 +239,3 @@ class VLMDescriptor:
             f"VLM (vision chat) described {len(descriptions)}/{len(keyframes)} frames"
         )
         return descriptions
-
-    def process_single_frame(self, frame_path: Path) -> str:
-        """Process a single frame (fallback method)"""
-        try:
-            self.logger.debug(f"Processing single frame: {frame_path}")
-            with open(frame_path, "rb") as f:
-                frame_data = f.read()
-            frame_base64 = base64.b64encode(frame_data).decode("utf-8")
-
-            payload = {
-                "frame_base64": frame_base64,
-                "prompt": "Provide a detailed description of this video frame, including objects, people, actions, scene setting, and visual details.",
-            }
-
-            response = requests.post(
-                self.vlm_endpoint,
-                json=payload,
-                headers={"Content-Type": "application/json"},
-                timeout=300,  # 5 minute timeout for single frames
-            )
-
-            if response.status_code == 200:
-                result = response.json()
-                description = result.get("description", "")
-                self.logger.debug(
-                    f"Single frame processed successfully: {len(description)} chars"
-                )
-                return description
-            else:
-                error_msg = f"Error: VLM API error {response.status_code}"
-                self.logger.error(error_msg)
-                return error_msg
-
-        except Exception as e:
-            error_msg = f"Error: {e}"
-            self.logger.error(f"Single frame processing failed: {e}")
-            return error_msg
