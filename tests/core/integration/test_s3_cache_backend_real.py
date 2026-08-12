@@ -189,3 +189,178 @@ class TestS3CacheBackendReal:
         assert rules[0]["Status"] == "Enabled"
         assert rules[0]["Expiration"]["Days"] == 7
         assert rules[0]["Filter"]["Prefix"] == "pipeline/"
+
+
+# Exact logical key the ingestor builds for VLM descriptions (from the live
+# pipeline: profile + video digest + artifact params, model = VLM endpoint URL).
+URL_BEARING_KEY = (
+    "video_colpali_smol500_mv_frame:video:5888308d42343af3:descriptions"
+    ":batch_size=500:model=http://cogniverse-vllm-llm-student:8000/v1"
+)
+
+_OBJECT_NAME_ALLOWED = set(
+    "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789._-"
+)
+
+
+def _expected_object_name(key_prefix: str, logical_key: str) -> str:
+    """Independent statement of the object-name contract the backend owes."""
+    import hashlib
+
+    readable = "".join(c if c in _OBJECT_NAME_ALLOWED else "-" for c in logical_key)[
+        :160
+    ]
+    digest = hashlib.sha256(logical_key.encode("utf-8")).hexdigest()
+    return f"{key_prefix}{readable}.{digest}"
+
+
+def _raw_backend(instance, bucket):
+    from cogniverse_core.common.cache.backends.s3 import (
+        S3CacheBackend,
+        S3CacheBackendConfig,
+    )
+
+    return S3CacheBackend(
+        S3CacheBackendConfig(
+            endpoint=instance.endpoint,
+            access_key=instance.access_key,
+            secret_key=instance.secret_key,
+            bucket=bucket,
+            key_prefix="pipeline/",
+        )
+    )
+
+
+def _bucket_object_names(instance, bucket):
+    resp = instance.boto3_client().list_objects_v2(Bucket=bucket)
+    return sorted(o["Key"] for o in resp.get("Contents", []) or [])
+
+
+@pytest.mark.requires_docker
+class TestS3KeySanitization:
+    async def test_url_bearing_descriptions_key_round_trips(self, minio):
+        bucket = f"cache-{uuid.uuid4().hex[:8]}"
+        backend = _raw_backend(minio, bucket)
+        payload = {
+            "descriptions": {"0": "a red car", "1": "a street at night"},
+            "model": "http://cogniverse-vllm-llm-student:8000/v1",
+            "batch_size": 500,
+        }
+
+        assert await backend.set(URL_BEARING_KEY, payload) is True
+        assert await backend.get(URL_BEARING_KEY) == payload
+
+        names = _bucket_object_names(minio, bucket)
+        assert names == [_expected_object_name("pipeline/", URL_BEARING_KEY)]
+        assert "//" not in names[0]
+        assert "\\" not in names[0]
+        assert not names[0].endswith("/")
+        assert names[0].isascii()
+
+    async def test_bytes_round_trip_byte_exact_under_url_key(self, minio):
+        bucket = f"cache-{uuid.uuid4().hex[:8]}"
+        backend = _raw_backend(minio, bucket)
+        raw = bytes(range(256)) * 4
+
+        assert await backend.set(f"{URL_BEARING_KEY}:frame_7", raw) is True
+        got = await backend.get(f"{URL_BEARING_KEY}:frame_7")
+
+        assert isinstance(got, bytes)
+        assert got == raw
+
+    async def test_sanitization_never_merges_distinct_keys(self, minio):
+        bucket = f"cache-{uuid.uuid4().hex[:8]}"
+        backend = _raw_backend(minio, bucket)
+        # ':' and '/' both fold to '-': identical readable part, distinct keys.
+        key_colon = "prof:video:aaaa:descriptions:model=a:b"
+        key_slash = "prof:video:aaaa:descriptions:model=a/b"
+
+        assert await backend.set(key_colon, {"v": "colon"}) is True
+        assert await backend.set(key_slash, {"v": "slash"}) is True
+        assert await backend.get(key_colon) == {"v": "colon"}
+        assert await backend.get(key_slash) == {"v": "slash"}
+
+        names = _bucket_object_names(minio, bucket)
+        assert len(names) == 2
+        assert names[0] != names[1]
+        assert names[0].rsplit(".", 1)[0] == names[1].rsplit(".", 1)[0]
+
+    async def test_concurrent_url_key_writes_are_isolated(self, minio):
+        import asyncio
+
+        bucket = f"cache-{uuid.uuid4().hex[:8]}"
+        backend = _raw_backend(minio, bucket)
+        n = 12
+        barrier = asyncio.Barrier(n)
+
+        async def worker(i: int):
+            key = f"prof:video:{i:04x}:descriptions:model=http://host-{i}:8000/v1"
+            payload = {"frames": [i], "model_index": i}
+            await barrier.wait()
+            assert await backend.set(key, payload) is True
+            return await backend.get(key), payload
+
+        results = await asyncio.gather(*(worker(i) for i in range(n)))
+        for got, expected in results:
+            assert got == expected
+
+        names = _bucket_object_names(minio, bucket)
+        assert len(names) == n
+        assert len(set(names)) == n
+        for name in names:
+            assert "//" not in name
+            assert name.isascii()
+
+
+class TestS3OutageFaultContract:
+    async def test_outage_read_write_return_miss_and_log_reason(self, caplog):
+        import logging
+        import socket
+
+        from cogniverse_core.common.cache.backends.s3 import (
+            S3CacheBackend,
+            S3CacheBackendConfig,
+        )
+
+        with socket.socket() as s:
+            s.bind(("127.0.0.1", 0))
+            dead_port = s.getsockname()[1]
+
+        backend = S3CacheBackend(
+            S3CacheBackendConfig(
+                endpoint=f"http://127.0.0.1:{dead_port}",
+                access_key="k",
+                secret_key="s",
+                bucket="never-created",
+                key_prefix="pipeline/",
+            )
+        )
+        s3_logger = "cogniverse_core.common.cache.backends.s3"
+        with caplog.at_level(logging.WARNING, logger=s3_logger):
+            assert await backend.get(URL_BEARING_KEY) is None
+            assert await backend.set(URL_BEARING_KEY, {"x": 1}) is False
+
+        expected_name = _expected_object_name("pipeline/", URL_BEARING_KEY)
+        cache_records = [
+            r
+            for r in caplog.records
+            if r.name == s3_logger and r.levelno >= logging.WARNING
+        ]
+        read_logs = [
+            r
+            for r in cache_records
+            if r.getMessage().startswith(f"Error reading cache object {expected_name}")
+        ]
+        write_logs = [
+            r
+            for r in cache_records
+            if r.getMessage().startswith(f"Error writing cache object {expected_name}")
+        ]
+        assert len(read_logs) == 1
+        assert len(write_logs) == 1
+        assert f"127.0.0.1:{dead_port}" in read_logs[0].getMessage()
+        assert f"127.0.0.1:{dead_port}" in write_logs[0].getMessage()
+
+        stats = await backend.get_stats()
+        assert stats["errors"] == 2
+        assert stats["misses"] == 1
