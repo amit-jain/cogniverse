@@ -37,6 +37,18 @@ LLM_TIMEOUT = 60_000
 DATA_ROOT = Path(__file__).resolve().parent.parent.parent / "data"
 CONFIG_PATH = Path(__file__).resolve().parent.parent.parent / "configs" / "config.json"
 
+# Second tracked clip: video_id is the content sha256, so the same file
+# yields the same id in every tenant. Isolation tests therefore give each
+# tenant DISTINCT content — disjoint ids then prove isolation (a leak would
+# surface the other tenant's content id in the results).
+SECOND_VIDEO_PATH = (
+    Path(__file__).resolve().parent.parent
+    / "system"
+    / "resources"
+    / "videos"
+    / "v_-6dz6tBH77I.mp4"
+)
+
 
 def _get_profile_def(profile_name: str) -> dict:
     """Read profile definition from configs/config.json."""
@@ -521,7 +533,7 @@ class TestCrossTenantIsolation:
                 )
                 data_b = _upload_file(
                     client,
-                    real_video_path,
+                    SECOND_VIDEO_PATH,
                     "video_colpali_smol500_mv_frame",
                     tenant_b,
                 )
@@ -557,8 +569,9 @@ class TestCrossTenantIsolation:
                 assert results_a["results_count"] >= 1, "Tenant A must see its data"
                 assert results_b["results_count"] >= 1, "Tenant B must see its data"
 
-                # Results should reference different video_ids (same source but
-                # different ingestion runs produce different IDs)
+                # video_id is the content sha256 and each tenant
+                # ingested a different clip, so disjoint ids prove
+                # tenant isolation
                 ids_a = {
                     r.get("metadata", {}).get("video_id") for r in results_a["results"]
                 }
@@ -669,11 +682,17 @@ class TestConcurrentMultiTenantSearch:
                     _create_tenant(client, t)
                     _deploy_schema(client, "video_colpali_smol500_mv_frame", t)
 
+                # Distinct content per tenant: content-addressed
+                # video_ids from the same file would collide across
+                # tenants.
+                tenant_videos = dict(
+                    zip(tenants, (real_video_path, SECOND_VIDEO_PATH))
+                )
                 fed_tenants = []
                 for t in tenants:
                     data = _upload_file(
                         client,
-                        real_video_path,
+                        tenant_videos[t],
                         "video_colpali_smol500_mv_frame",
                         t,
                     )
@@ -912,7 +931,7 @@ class TestLoadTesting:
                 time.sleep(3)
                 data_b = _upload_file(
                     client,
-                    real_video_path,
+                    SECOND_VIDEO_PATH,
                     "video_colpali_smol500_mv_frame",
                     tenant_b,
                 )
