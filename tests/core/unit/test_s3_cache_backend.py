@@ -156,16 +156,21 @@ async def test_image_bytes_round_trip_not_deserialized(fake):
     assert isinstance(out, bytes)
     assert out == jpeg
     # envelope records raw so get() does not attempt to deserialize
-    _body, md = fake.objects["pipeline/p:video:abc:keyframes:strategy=fps:frame_5"]
+    _body, md = fake.objects[
+        backend._s3_key("p:video:abc:keyframes:strategy=fps:frame_5")
+    ]
     assert json.loads(md[_META_KEY])["format"] == "raw"
 
 
 async def test_put_uses_exact_prefixed_key_and_bucket(fake):
+    import hashlib
+
     backend = _backend(fake)
     await backend.set("p:video:abc:transcript", {"x": 1})
 
+    digest = hashlib.sha256(b"p:video:abc:transcript").hexdigest()
     assert len(fake.put_calls) == 1
-    assert fake.put_calls[0]["Key"] == "pipeline/p:video:abc:transcript"
+    assert fake.put_calls[0]["Key"] == f"pipeline/p-video-abc-transcript.{digest}"
     assert fake.put_calls[0]["Bucket"] == "test-bucket"
 
 
@@ -176,7 +181,7 @@ async def test_expired_entry_is_a_miss(fake):
     await backend.set("p:video:abc:transcript", {"x": 1}, ttl=1)
 
     # force expiry by rewriting the stored envelope into the past
-    key = "pipeline/p:video:abc:transcript"
+    key = backend._s3_key("p:video:abc:transcript")
     body, md = fake.objects[key]
     env = json.loads(md[_META_KEY])
     env["expires_at"] = time.time() - 10
@@ -212,6 +217,7 @@ async def test_stats_counters_match_op_sequence(fake):
     assert stats["hits"] == 1
     assert stats["misses"] == 1
     assert stats["deletes"] == 1
+    assert stats["errors"] == 0
 
 
 @pytest.mark.unit

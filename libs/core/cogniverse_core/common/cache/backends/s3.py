@@ -12,6 +12,7 @@ the cache stays drop-in compatible with the async ``CacheBackend`` contract.
 
 import asyncio
 import gzip
+import hashlib
 import json
 import logging
 import pickle
@@ -28,6 +29,17 @@ logger = logging.getLogger(__name__)
 # Single S3 user-metadata key holding the cache envelope (format + expiry).
 # One JSON blob avoids per-field header-name pitfalls (underscores, casing).
 _META_KEY = "cache-meta"
+
+# Characters stored verbatim in an object name; anything else folds to "-"
+# and the full logical key's SHA-256 is appended (see _s3_key).
+_OBJECT_KEY_ALLOWED = frozenset(
+    "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789._-"
+)
+_OBJECT_KEY_READABLE_MAX = 160
+
+
+def _sanitize_fragment(fragment: str) -> str:
+    return "".join(c if c in _OBJECT_KEY_ALLOWED else "-" for c in fragment)
 
 
 @dataclass
@@ -72,6 +84,7 @@ class S3CacheBackend(CacheBackend):
             "sets": 0,
             "deletes": 0,
             "evictions": 0,
+            "errors": 0,
         }
 
     # -- client / key helpers ------------------------------------------------
@@ -156,7 +169,17 @@ class S3CacheBackend(CacheBackend):
             )
 
     def _s3_key(self, key: str) -> str:
-        return f"{self.key_prefix}{key}"
+        """Map a logical cache key to a valid, collision-free object name.
+
+        Logical keys embed raw parameter values (a model endpoint URL
+        contains ``//``, which MinIO rejects in object names). The folded
+        readable prefix keeps names debuggable and prefix-clearable; the
+        full-key SHA-256 suffix guarantees distinct keys never map to the
+        same object.
+        """
+        readable = _sanitize_fragment(key)[:_OBJECT_KEY_READABLE_MAX]
+        digest = hashlib.sha256(key.encode("utf-8")).hexdigest()
+        return f"{self.key_prefix}{readable}.{digest}"
 
     @staticmethod
     def _is_not_found(exc) -> bool:
@@ -251,6 +274,7 @@ class S3CacheBackend(CacheBackend):
                 self._stats["misses"] += 1
                 return None
             logger.error("Error reading cache object %s: %s", s3_key, e)
+            self._stats["errors"] += 1
             self._stats["misses"] += 1
             return None
 
@@ -285,6 +309,7 @@ class S3CacheBackend(CacheBackend):
             return True
         except Exception as e:
             logger.error("Error writing cache object %s: %s", s3_key, e)
+            self._stats["errors"] += 1
             return False
 
     async def delete(self, key: str) -> bool:
@@ -300,6 +325,7 @@ class S3CacheBackend(CacheBackend):
             return True
         except Exception as e:
             logger.error("Error deleting cache object %s: %s", s3_key, e)
+            self._stats["errors"] += 1
             return False
 
     async def exists(self, key: str) -> bool:
@@ -310,6 +336,7 @@ class S3CacheBackend(CacheBackend):
             if self._is_not_found(e):
                 return False
             logger.error("Error heading cache object %s: %s", s3_key, e)
+            self._stats["errors"] += 1
             return False
         if self.config.enable_ttl and self._expired(envelope):
             return False
@@ -317,7 +344,7 @@ class S3CacheBackend(CacheBackend):
 
     async def clear(self, pattern: Optional[str] = None) -> int:
         if pattern and pattern.endswith("*"):
-            prefix = f"{self.key_prefix}{pattern[:-1]}"
+            prefix = f"{self.key_prefix}{_sanitize_fragment(pattern[:-1])}"
         else:
             prefix = self.key_prefix
         try:
