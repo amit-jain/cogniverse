@@ -1,21 +1,13 @@
 #!/usr/bin/env python3
-"""VLM caption bake-off for the Modal frame/segment description model.
+"""VLM caption bake-off for the frame/segment description model.
 
-Cogniverse's Modal VLM service (``scripts/modal_vlm_service.py``) was bumped
-to ``Qwen/Qwen3-VL-8B-Instruct`` as the default frame-caption model. This
-harness decides that choice EMPIRICALLY by captioning real cogniverse frames
-with three Apache-2.0, vLLM-servable candidates and ranking them with an
-LLM-as-judge:
+This harness ranks frame-caption candidates EMPIRICALLY by captioning real
+cogniverse frames with three Apache-2.0, vLLM-servable candidates and
+ranking them with an LLM-as-judge:
 
-    - Qwen/Qwen3-VL-8B-Instruct   (current default, pending this bake-off)
+    - Qwen/Qwen3-VL-8B-Instruct
     - OpenGVLab/InternVL3_5-8B
     - openbmb/MiniCPM-V-4_5
-
-It uses the EXACT caption prompt the production Modal service sends so the
-bake-off matches what ingestion actually produces (see CAPTION_PROMPT below;
-sourced from ``scripts/modal_vlm_service.py`` and the ``VLMDescriptor``
-fallback in
-``libs/runtime/cogniverse_runtime/ingestion/processors/vlm_descriptor.py``).
 
 ------------------------------------------------------------------------------
 THIS SCRIPT CANNOT RUN END-TO-END ON A CPU-ONLY / NO-MODAL BOX.
@@ -65,7 +57,7 @@ EXAMPLE (on a GPU box)
         --out outputs/vlm_bakeoff/run1.json
 
     # 3. Inspect outputs/vlm_bakeoff/run1.json and the sibling
-    #    outputs/vlm_bakeoff/run1.md summary; the winner is the Modal model.
+    #    outputs/vlm_bakeoff/run1.md summary.
 """
 
 from __future__ import annotations
@@ -83,17 +75,12 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
 
-# The EXACT caption prompt the production Modal VLM service sends for every
-# frame (scripts/modal_vlm_service.py:314 batch path + :150 single-frame
-# default, and the VLMDescriptor.process_single_frame fallback). Keep these
-# byte-for-byte identical so the bake-off captions match production captions.
 CAPTION_PROMPT = (
     "Provide a detailed description of this video frame, including objects, "
     "people, actions, scene setting, and visual details."
 )
 
-# Candidate caption VLMs. All Apache-2.0, all vLLM-servable. The first entry
-# is the current Modal default (pending this bake-off).
+# Candidate caption VLMs. All Apache-2.0, all vLLM-servable.
 CANDIDATE_MODELS = [
     "Qwen/Qwen3-VL-8B-Instruct",
     "OpenGVLab/InternVL3_5-8B",

@@ -57,8 +57,7 @@ scripts/
 │   ├── deploy_json_schema.py         # Deploy single JSON schema
 │   ├── provision_tenant.py           # Cold-bootstrap tenant resources (memory/telemetry)
 │   ├── setup_ollama.py               # Ollama model setup
-│   ├── setup_gliner.py               # GLiNER setup
-│   └── setup_video_processing.py    # Video processing setup
+│   └── setup_gliner.py               # GLiNER setup
 │   (bulk schema deploy flows through the runtime admin API:
 │    POST /admin/profiles/{profile}/deploy — see charts/cogniverse/
 │    templates/init-jobs.yaml for the in-cluster init job.)
@@ -88,7 +87,6 @@ scripts/
 │   ├── discover_tenants.py           # Tenant discovery
 │   ├── export_backend_embeddings.py  # Backend embedding export (tenant-aware)
 │   ├── manage_phoenix_data.py        # Phoenix data management
-│   ├── modal_vlm_service.py          # Modal VLM service
 │   ├── prune_config_metadata.py      # Config metadata pruning
 │   ├── start_phoenix.py              # Start Phoenix service
 │   └── version_bump.py               # Version management
@@ -1585,12 +1583,6 @@ for i in range(0, len(videos), videos_per_batch):
 # Solution: Ensure Vespa is running
 docker ps | grep vespa  # Check Vespa container
 cogniverse up  # Start Vespa if not running
-```
-
-**Issue: "Experiment failed: Text encoder not available"**
-```bash
-# Solution: Ensure required models are downloaded
-python scripts/setup_video_processing.py  # Download models
 ```
 
 **Issue: "Dashboard not loading: ModuleNotFoundError"**

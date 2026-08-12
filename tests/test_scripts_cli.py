@@ -11,7 +11,6 @@ in-process tests with those boundaries stubbed.
 from __future__ import annotations
 
 import importlib.util
-import json
 import logging
 import subprocess
 import sys
@@ -356,43 +355,6 @@ class TestSetupOllama:
         assert mod.pull_deepseek_model() is True
         run.assert_called_once()
         assert run.call_args[0][0] == ["ollama", "list"]
-
-
-class TestSetupVideoProcessing:
-    """Tests for setup_video_processing config/CLI helpers."""
-
-    @pytest.fixture()
-    def mod(self):
-        return _load("setup_video_processing")
-
-    def test_update_config_writes_endpoint(self, mod, monkeypatch, tmp_path):
-        monkeypatch.chdir(tmp_path)
-        (tmp_path / "config.json").write_text(
-            json.dumps({"pipeline_config": {"generate_descriptions": False}})
-        )
-        assert mod.update_config_with_endpoint("https://x.modal.run") is True
-        config = json.loads((tmp_path / "config.json").read_text())
-        assert config["vlm_endpoint_url"] == "https://x.modal.run"
-        assert config["pipeline_config"]["generate_descriptions"] is True
-
-    def test_update_config_missing_file(self, mod, monkeypatch, tmp_path):
-        monkeypatch.chdir(tmp_path)
-        assert mod.update_config_with_endpoint("https://x.modal.run") is False
-
-    def test_check_modal_setup_found(self, mod, monkeypatch):
-        run = MagicMock(
-            return_value=subprocess.CompletedProcess(
-                args=[], returncode=0, stdout="modal client 0.64.0\n", stderr=""
-            )
-        )
-        monkeypatch.setattr(mod.subprocess, "run", run)
-        assert mod.check_modal_setup() is True
-        assert run.call_args[0][0] == ["modal", "--version"]
-
-    def test_check_modal_setup_missing(self, mod, monkeypatch):
-        run = MagicMock(side_effect=FileNotFoundError("modal"))
-        monkeypatch.setattr(mod.subprocess, "run", run)
-        assert mod.check_modal_setup() is False
 
 
 class TestSeedBrightCorpus:

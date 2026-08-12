@@ -264,7 +264,6 @@
   },
   "search_backend": "vespa",
   "byaldi_index_name": ".byaldi/my_video_index",
-  "vlm_endpoint_url": "https://amit-jain--cogniverse-vlm-vlmmodel-generate-description.modal.run/",
   "colpali_model": "TomoroAI/tomoro-colqwen3-embed-4b",
   "embedding_model": "lightonai/DenseOn",
   "prompts": {
