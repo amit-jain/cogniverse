@@ -258,13 +258,108 @@ Cogniverse supports multiple deployment methods depending on your needs:
 
 ### Unified Deployment (k3d/Helm)
 
-```bash
-# Start all services (Vespa, Phoenix, Ollama, Runtime, Dashboard)
-cogniverse up
+Full-stack bring-up on a fresh machine. Two strategies share the same
+cluster deploy: **A** — all inference served by local cluster pods;
+**B** — selected inference services on Modal, called by the cluster over
+`https://*.modal.run`.
 
-# Check status
+#### Prerequisites
+
+- `docker`, `kubectl`, `helm` (checked by `cogniverse up`; it offers to
+  install what is missing), plus `k3d` when no existing Kubernetes cluster
+  is reachable.
+- `uv` with the workspace synced (see
+  [Setup & Installation](setup-installation.md)); `cogniverse` is the CLI
+  entry point.
+
+#### Credentials
+
+The secret syncs resolve each value in this order: the environment
+variable, then `./.env`, then `~/.env` (each may be a directory holding one
+`<VAR>.env` file per secret, or a single file of `KEY=value` lines), then
+any tool-specific location.
+
+| Value | Cluster Secret | Needed for |
+|---|---|---|
+| `HF_TOKEN` / `HUGGING_FACE_HUB_TOKEN`, else `~/.cache/huggingface/token` | `hf-token` | Gated HuggingFace models (e.g. the Gemma LLM) |
+| `TELEGRAM_BOT_TOKEN` | `cogniverse-messaging-secrets` | `--messaging` only |
+| `COGNIVERSE_INFERENCE_API_KEY` | `cogniverse-inference-api-key` | Strategy B only |
+
+#### Strategy A — fully local
+
+```bash
+cogniverse up          # flags: --llm auto|builtin|external, --llm-url,
+                       # --image-source, --messaging, --sandbox, --sandbox-endpoint
 cogniverse status
 ```
+
+`cogniverse up` runs, in order: environment detection (a running k3d
+cluster counts as local); prerequisite check; host-LLM probe on `:11434`
+(`--llm auto`); k3d cluster create with NodePort range `1-65535`, workspace
+/ HF-cache / host-storage mounts and AMD GPU device mounts, then CoreDNS
+upstreams pinned to `1.1.1.1 8.8.8.8` (cluster start fails if pinning
+fails); image build + `k3d image import` + prune of the superseded
+generation; values composition (`values.k3s.yaml` plus
+`values.<backend>.yaml` for the detected torch backend); third-party image
+pre-pull; secret syncs (`hf-token`, `cogniverse-inference-api-key` — each a
+warn-and-skip when the local value is absent); Argo controller install;
+sandbox wiring; `helm install/upgrade` of release `cogniverse` into
+namespace `cogniverse`; workflow-template deploy; `kubectl wait` for pod
+readiness (300s); port-forwards and HTTP health checks (Vespa `:19071`,
+Runtime `:28000`, Dashboard `:28501`, Phoenix `:26006`, LLM `:11434`, Argo
+`:2746`).
+
+Re-sync cluster Secrets later with `cogniverse secrets sync`
+(`--required` fails instead of warning).
+
+#### Strategy B — local cluster + Modal-hosted inference
+
+Modal credentials stay on the control plane — they are never synced to the
+cluster. `modal token new` writes `~/.modal.toml`; `MODAL_TOKEN_ID` /
+`MODAL_TOKEN_SECRET` override it per-process.
+
+1. Generate the shared bearer key and store it where the sync reads it:
+
+   ```bash
+   mkdir -p ~/.env
+   openssl rand -hex 32 > ~/.env/COGNIVERSE_INFERENCE_API_KEY.env
+   ```
+
+2. Create the Modal-side secrets the apps require:
+
+   ```bash
+   modal secret create cogniverse-inference-api-key \
+     COGNIVERSE_INFERENCE_API_KEY=$(cat ~/.env/COGNIVERSE_INFERENCE_API_KEY.env)
+   modal secret create hf-token HF_TOKEN=<token>   # vllm_llm_student only
+   ```
+
+3. Deploy and warm the Modal services (canonical names: `vllm_colpali`,
+   `colbert_pylate`, `code_colbert_pylate`, `denseon`, `gliner`,
+   `videoprism_jax`, `vllm_llm_student`, `vllm_asr`, `clap_embed`,
+   `face_embed`):
+
+   ```bash
+   cogniverse inference modal deploy denseon colbert_pylate
+   cogniverse inference modal warm denseon colbert_pylate   # prints each base URL
+   ```
+
+4. Point the chart at the printed endpoints: set
+   `inference.<svc>.externalUrl` in the values overlay the deploy applies
+   (`values.k3s.yaml` + `values.<backend>.yaml` for `cogniverse up`;
+   `values.prod.yaml` for prod), or `--set` it on a manual `helm upgrade`.
+   The service keeps its `INFERENCE_SERVICE_URLS` entry, pointed at Modal,
+   and its local pod, Service, model-cache PVC, and image build are
+   skipped — see
+   [Models and Inference](models-and-inference.md#modal-hosted-services-inferencesvcexternalurl).
+   `externalUrl` is rejected on `vllm_llm_student` / `vllm_llm_teacher`;
+   the LLM endpoint is overridden via `runtime.primaryLLM` instead.
+
+5. `cogniverse up`. The sync places the key in
+   `cogniverse-inference-api-key`; the runtime and ingestor resolve the
+   Modal URLs from `INFERENCE_SERVICE_URLS` and attach
+   `Authorization: Bearer $COGNIVERSE_INFERENCE_API_KEY` to
+   `https://*.modal.run` calls. After rotating the key, re-run
+   `cogniverse secrets sync` and recreate the Modal secret.
 
 **See detailed guides:**
 
@@ -278,109 +373,13 @@ cogniverse status
 
 ## Modal Deployment (Serverless GPU)
 
-Modal provides serverless GPU infrastructure for VLM-based video frame description generation. See [docs/modal/deployment_guide.md](../modal/deployment_guide.md) for detailed setup.
-
-### Modal App Structure
-
-The actual Modal service (`scripts/modal_vlm_service.py`) provides VLM description generation using Qwen3-VL-8B-Instruct:
-
-```python
-# scripts/modal_vlm_service.py (simplified overview)
-import modal
-
-app = modal.App("cogniverse-vlm")
-
-# GPU-optimized image with SGLang and Qwen3-VL-8B model
-image = (
-    modal.Image.from_registry(f"nvidia/cuda:{tag}", add_python="3.11")
-    .pip_install(
-        "transformers>=4.52.0",
-        "sglang[all]==0.5.13",
-        # ... other dependencies
-    )
-    .run_function(download_model, volumes=volumes)
-)
-
-@app.cls(
-    gpu="h100:1",
-    timeout=180 * 60,  # 3 hours
-    image=image,
-    volumes=volumes,
-)
-@modal.concurrent(max_inputs=50)
-class VLMModel:
-    @modal.enter()
-    def start_runtime(self):
-        """Starts SGLang runtime for VLM inference."""
-        import sglang as sgl
-        self.runtime = sgl.Runtime(
-            model_path="Qwen/Qwen3-VL-8B-Instruct",
-            tokenizer_path="Qwen/Qwen3-VL-8B-Instruct",
-            tp_size=GPU_COUNT,
-            log_level=SGL_LOG_LEVEL,
-        )
-        sgl.set_default_backend(self.runtime)
-
-    @modal.fastapi_endpoint(method="POST", docs=True)
-    def generate_description(self, request: dict) -> dict:
-        """
-        Generate description for a video frame.
-
-        Args:
-            request: {
-                "frame_base64": "base64 encoded frame data",
-                "frame_path": "optional local path",
-                "remote_frame_path": "optional remote path",
-                "prompt": "optional custom prompt"
-            }
-
-        Returns:
-            {"description": "generated text", "duration_seconds": 1.23}
-        """
-        # Frame description generation using SGLang
-        # See actual implementation in scripts/modal_vlm_service.py
-
-    @modal.fastapi_endpoint(method="POST", docs=True)
-    def upload_and_process_frames(self, request: dict) -> dict:
-        """
-        Upload zip of frames and process them all in batch.
-
-        Args:
-            request: {
-                "zip_data": "base64 encoded zip",
-                "frame_mapping": {filename: frame_key}
-            }
-
-        Returns:
-            {"descriptions": {frame_key: description}, "processed_frames": N}
-        """
-        # Batch frame processing
-        # See actual implementation in scripts/modal_vlm_service.py
-```
-
-**Note:** The Modal service provides VLM description generation for video frames. For full video processing pipelines (keyframe extraction, transcription, embeddings, ingestion), use the local pipeline with `scripts/run_ingestion.py`.
-
-### Deploy to Modal
-
-```bash
-# Deploy to Modal
-modal deploy scripts/modal_vlm_service.py
-
-# Test VLM description generation with a local frame
-modal run scripts/modal_vlm_service.py::test_vlm --frame-path /path/to/frame.jpg
-
-# Production usage: Call the FastAPI endpoints
-# - VLMModel.generate_description (POST) - Single frame description
-# - VLMModel.upload_and_process_frames (POST) - Batch processing
-```
-
-For detailed Modal setup, GPU recommendations, and deployment guides, see:
-
-- [docs/modal/deployment_guide.md](../modal/deployment_guide.md) - Complete Modal deployment guide
-
-- [docs/modal/gpu_recommendations.md](../modal/gpu_recommendations.md) - GPU selection and configuration
-
-- [scripts/modal_vlm_service.py](../../scripts/modal_vlm_service.py) - Modal VLM service implementation
+Heavy inference services run on Modal via the `cogniverse inference modal`
+lifecycle (`deploy` / `warm` / `release` / `status` / `qualify` /
+`undeploy`), authenticated with `COGNIVERSE_INFERENCE_API_KEY`. Setup,
+service names, and the per-service `inference.<svc>.externalUrl` chart
+override are covered in
+[Unified Deployment — Strategy B](#strategy-b--local-cluster--modal-hosted-inference)
+and [Models and Inference](models-and-inference.md#modal-hosted-services-inferencesvcexternalurl).
 
 ---
 

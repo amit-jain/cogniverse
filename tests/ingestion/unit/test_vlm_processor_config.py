@@ -46,9 +46,8 @@ def test_get_descriptor_builds_once_under_concurrency(monkeypatch):
 
     Description runs per-video on worker threads while videos process
     concurrently, so an unguarded lazy-init would construct one descriptor per
-    racing first-touch — in Modal auto_start mode each independently deploys the
-    service and the discarded ones are never stopped. The double-checked lock
-    must serialize the build to exactly one, shared by every caller.
+    racing first-touch. The double-checked lock must serialize the build to
+    exactly one, shared by every caller.
     """
     n_threads = 8
     construction_count = 0

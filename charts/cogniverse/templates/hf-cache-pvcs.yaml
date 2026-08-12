@@ -72,7 +72,7 @@ spec:
 {{- end }}
 
 {{- range $name, $cfg := .Values.inference }}
-{{- if $cfg.enabled }}
+{{- if and $cfg.enabled (not $cfg.externalUrl) }}
 ---
 apiVersion: v1
 kind: PersistentVolumeClaim

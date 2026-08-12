@@ -1662,7 +1662,6 @@ After optimization, artifacts are persisted to the telemetry store via `Artifact
 - **Agents Module Study Guide**: `docs/modules/agents.md` - OrchestratorAgent integration, full agent roster
 - **Telemetry Module Study Guide**: `docs/modules/telemetry.md` - Phoenix span collection
 - **Evaluation Module Study Guide**: `docs/modules/evaluation.md` - `QualityMonitor`, `RoutingEvaluator`
-- **Modal Deployment Guide**: `docs/modal/deployment_guide.md` - Modal infrastructure setup
 
 ---
 

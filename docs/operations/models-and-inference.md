@@ -428,6 +428,28 @@ into the k3d cluster. They are NOT published to a public registry —
 they're loaded from the host docker daemon into the cluster's
 containerd via `k3d image import`.
 
+### Modal-hosted services (`inference.<svc>.externalUrl`)
+
+Any non-LLM service can be served from Modal instead of an in-cluster pod.
+Setting a non-empty `inference.<svc>.externalUrl` (an absolute https URL, e.g.
+`https://<workspace>--cogniverse-<svc>.modal.run`):
+
+- keeps the service's entry in `INFERENCE_SERVICE_URLS`, pointed at the
+  external URL (for denseon, `COGNIVERSE_SEMANTIC_EMBED_URL` follows too);
+- skips the local Deployment, Service, and model-cache PVC, drops the service
+  from the local image build, and removes it as a startup-sequence gate;
+- leaves every other service's rendering unchanged.
+
+Callers authenticate to `https://*.modal.run` endpoints with
+`COGNIVERSE_INFERENCE_API_KEY`, delivered to the runtime and ingestor pods
+from Secret `cogniverse-inference-api-key` (synced by
+`cogniverse secrets sync`). Deploy and warm the Modal side with
+`cogniverse inference modal deploy/warm <svc>`.
+
+`externalUrl` is rejected at render time on `vllm_llm_student` and
+`vllm_llm_teacher`: the LLM endpoints are derived by their own chart helpers
+and are overridden via `runtime.primaryLLM.apiBase`/`model`/`apiKey` instead.
+
 ---
 
 ## Device selection (`device:` per service)

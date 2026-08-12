@@ -797,7 +797,7 @@ profile_config = {
         "description": {
             "class": "VLMDescriptionStrategy",
             "params": {
-                "vlm_endpoint": "https://user--cogniverse-vlm-vlmmodel-generate-description.modal.run/",
+                "vlm_endpoint": "http://cogniverse-vllm-llm-student:8000/v1",
                 "batch_size": 500
             }
         },
@@ -1135,20 +1135,19 @@ strategy = AudioTranscriptionStrategy(model="whisper-large-v3", language="auto")
 
 ### 5. VLMDescriptionStrategy
 
-**Purpose**: Generate descriptions using Vision-Language Models via Modal service
+**Purpose**: Generate descriptions using a Vision-Language Model behind an OpenAI-compatible `/v1` endpoint
 
 **Parameters**:
 
-- `vlm_endpoint`: URL of the Modal VLM service endpoint (required)
+- `vlm_endpoint`: OpenAI-compatible `/v1` VLM endpoint URL (required)
 - `batch_size`: Batch size for frame processing (default 500)
 - `timeout`: Request timeout in seconds (default 10800 / 3 hours)
-- `auto_start`: Whether to auto-start Modal service if not running (default True)
-- `vlm_concurrency`: Keyframe describe-requests kept in flight against an OpenAI-compatible `/v1` (vLLM) endpoint (default 8). Concurrent requests are what feed vLLM's continuous batching — the chat API returns one completion per request, so there is no single-request multi-image describe. Raise it on a GPU that can serve a bigger batch; keep it low on a small one. Ignored by the Modal zip-batch path.
+- `vlm_concurrency`: Keyframe describe-requests kept in flight (default 8). Concurrent requests are what feed vLLM's continuous batching — the chat API returns one completion per request, so there is no single-request multi-image describe. Raise it on a GPU that can serve a bigger batch; keep it low on a small one.
 
 **Usage**:
 ```python
 strategy = VLMDescriptionStrategy(
-    vlm_endpoint="https://user--cogniverse-vlm-vlmmodel-generate-description.modal.run/",
+    vlm_endpoint="http://cogniverse-vllm-llm-student:8000/v1",
     batch_size=500
 )
 ```
@@ -1484,7 +1483,7 @@ result = processor.transcribe_audio(
 
 ### 4. VLMProcessor
 
-**Purpose**: Generate frame descriptions via a remote Vision-Language Model, delegating the actual HTTP/Modal-service communication to `VLMDescriptor`.
+**Purpose**: Generate frame descriptions via a remote Vision-Language Model, delegating the OpenAI-compatible `/v1` HTTP communication to `VLMDescriptor`.
 
 **Methods**:
 
@@ -1493,7 +1492,7 @@ result = processor.transcribe_audio(
 ```python
 processor = VLMProcessor(
     logger,
-    vlm_endpoint="https://user--cogniverse-vlm-vlmmodel-generate-description.modal.run/",
+    vlm_endpoint="http://cogniverse-vllm-llm-student:8000/v1",
     batch_size=500,
 )
 result = processor.generate_descriptions(frames_data)
@@ -1555,7 +1554,7 @@ These plain classes back the processors above and are not auto-discovered by
 
 - `AudioTranscriber` (`audio_transcriber.py`) — Whisper model loading and the core transcription call; used by `AudioProcessor`.
 - `AudioEmbeddingGenerator` (`audio_embedding_generator.py`) — lazy CLAP loading and acoustic embedding generation; used by `EmbeddingGeneratorImpl._process_audio_segments()`. Remote (`clap_endpoint_url`) calls reuse one pooled `httpx.Client` across the instance instead of opening a connection per segment; `close()` releases that pooled client.
-- `VLMDescriptor` (`vlm_descriptor.py`) — Modal VLM service HTTP client and auto-start logic; used by `VLMProcessor`.
+- `VLMDescriptor` (`vlm_descriptor.py`) — HTTP client for an OpenAI-compatible `/v1` vision chat endpoint; used by `VLMProcessor`.
 - `EmbeddingGeneratorFactory` (`embedding_generator/embedding_generator_factory.py`) — exposes `create_embedding_generator(...)`, the factory function used to construct `EmbeddingGeneratorImpl`.
 - `BackendFactory` (`embedding_generator/backend_factory.py`) — `BackendFactory.create(backend_type, tenant_id, config, ...)` builds the `IngestionBackend` (Vespa) client fed to `EmbeddingGeneratorImpl`.
 
@@ -1891,7 +1890,7 @@ async def ingest_with_custom_strategy():
             "description": {
                 "class": "VLMDescriptionStrategy",
                 "params": {
-                    "vlm_endpoint": "https://user--cogniverse-vlm-vlmmodel-generate-description.modal.run/",
+                    "vlm_endpoint": "http://cogniverse-vllm-llm-student:8000/v1",
                     "batch_size": 500
                 }
             },
