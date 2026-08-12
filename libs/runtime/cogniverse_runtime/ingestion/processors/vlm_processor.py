@@ -2,8 +2,8 @@
 """
 VLM Processor - Pluggable VLM description generation.
 
-Generates descriptions for video frames using VLM models.
-Delegates to VLMDescriptor for actual Modal VLM service communication.
+Generates descriptions for video frames by delegating to VLMDescriptor,
+which speaks to an OpenAI-compatible ``/v1`` vision chat endpoint.
 """
 
 import logging
@@ -24,7 +24,6 @@ class VLMProcessor(BaseProcessor):
         vlm_endpoint: str,
         batch_size: int = 500,
         timeout: int = 10800,
-        auto_start: bool = True,
         vlm_concurrency: int = 8,
     ):
         """
@@ -32,16 +31,14 @@ class VLMProcessor(BaseProcessor):
 
         Args:
             logger: Logger instance
-            vlm_endpoint: URL of the Modal VLM service endpoint
+            vlm_endpoint: OpenAI-compatible ``/v1`` VLM endpoint URL
             batch_size: Batch size for frame processing
             timeout: Request timeout in seconds (default 3 hours)
-            auto_start: Whether to auto-start the Modal service if not running
         """
         super().__init__(logger)
         self.vlm_endpoint = vlm_endpoint
         self.batch_size = batch_size
         self.timeout = timeout
-        self.auto_start = auto_start
         self.vlm_concurrency = vlm_concurrency
         self._descriptor = None
         self._descriptor_lock = threading.Lock()
@@ -50,9 +47,8 @@ class VLMProcessor(BaseProcessor):
         """Lazy-init VLMDescriptor on first use (thread-safe).
 
         Description runs per-video on a worker thread while videos process
-        concurrently, so an unguarded check-then-set would build one descriptor
-        per racing first-touch — in Modal auto_start mode each independently
-        deploys the service and the discarded ones are never stopped.
+        concurrently, so an unguarded check-then-set would build one
+        descriptor per racing first-touch.
         """
         if self._descriptor is None:
             with self._descriptor_lock:
@@ -63,7 +59,6 @@ class VLMProcessor(BaseProcessor):
                         vlm_endpoint=self.vlm_endpoint,
                         batch_size=self.batch_size,
                         timeout=self.timeout,
-                        auto_start=self.auto_start,
                         vlm_concurrency=self.vlm_concurrency,
                     )
                     self.logger.info(
@@ -87,7 +82,6 @@ class VLMProcessor(BaseProcessor):
             vlm_endpoint=vlm_endpoint,
             batch_size=config.get("batch_size", 500),
             timeout=config.get("timeout", 10800),
-            auto_start=config.get("auto_start", True),
             vlm_concurrency=config.get("vlm_concurrency", 8),
         )
 
@@ -103,7 +97,5 @@ class VLMProcessor(BaseProcessor):
         return descriptor.generate_descriptions(frames_data)
 
     def cleanup(self):
-        """Clean up VLM resources and stop service if needed."""
-        if self._descriptor is not None:
-            self._descriptor.stop_service()
-            self._descriptor = None
+        """Drop the descriptor so the next use re-initializes it."""
+        self._descriptor = None

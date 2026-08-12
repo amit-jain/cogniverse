@@ -593,10 +593,10 @@ manager.list_processors()
 | `KeyframeProcessor` | `keyframe` | Extract frames using similarity |
 | `ChunkProcessor` | `chunk` | Extract video chunks |
 | `AudioProcessor` | `audio` | Audio processing utilities |
-| `VLMProcessor` | `vlm` | Generate frame descriptions via Modal VLM service |
+| `VLMProcessor` | `vlm` | Generate frame descriptions via an OpenAI-compatible `/v1` VLM endpoint |
 | `SingleVectorProcessor` | `single_vector` | Process for single-vector embeddings |
 
-`AudioProcessor` and `VLMProcessor` are thin `BaseProcessor` wrappers that delegate to internal helper classes: `AudioTranscriber` (Whisper transcription), `AudioEmbeddingGenerator` (CLAP acoustic/semantic embeddings), and `VLMDescriptor` (Modal VLM service communication). These helpers are not `BaseProcessor` subclasses themselves and are not addressable by name through `ProcessorManager`.
+`AudioProcessor` and `VLMProcessor` are thin `BaseProcessor` wrappers that delegate to internal helper classes: `AudioTranscriber` (Whisper transcription), `AudioEmbeddingGenerator` (CLAP acoustic/semantic embeddings), and `VLMDescriptor` (OpenAI-compatible `/v1` VLM endpoint client). These helpers are not `BaseProcessor` subclasses themselves and are not addressable by name through `ProcessorManager`.
 
 ---
 

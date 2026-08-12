@@ -34,23 +34,9 @@ class TestVLMDescriptor:
             mock_logger = Mock()
             mock_get_logger.return_value = mock_logger
             return VLMDescriptor(
-                vlm_endpoint="http://test-endpoint.com/generate-description",
+                vlm_endpoint="http://test-endpoint.com/v1",
                 batch_size=100,
                 timeout=300,
-                auto_start=False,
-            )
-
-    @pytest.fixture
-    def vlm_descriptor_auto_start(self):
-        """Create a VLMDescriptor instance with auto_start enabled."""
-        with patch("logging.getLogger") as mock_get_logger:
-            mock_logger = Mock()
-            mock_get_logger.return_value = mock_logger
-            return VLMDescriptor(
-                vlm_endpoint="http://test-endpoint.com/generate-description",
-                batch_size=50,
-                timeout=600,
-                auto_start=True,
             )
 
     @pytest.fixture
@@ -81,14 +67,12 @@ class TestVLMDescriptor:
             mock_logger = Mock()
             mock_get_logger.return_value = mock_logger
 
-            descriptor = VLMDescriptor(vlm_endpoint="http://test.com")
+            descriptor = VLMDescriptor(vlm_endpoint="http://test.com/v1")
 
-            assert descriptor.vlm_endpoint == "http://test.com"
+            assert descriptor.vlm_endpoint == "http://test.com/v1"
             assert descriptor.batch_size == 500
             assert descriptor.timeout == 10800
-            assert descriptor.auto_start is True
             assert descriptor.vlm_concurrency == 8
-            assert descriptor._service_started is False
 
     def test_initialization_custom_values(self):
         """Test VLMDescriptor initialization with custom values."""
@@ -97,135 +81,14 @@ class TestVLMDescriptor:
             mock_get_logger.return_value = mock_logger
 
             descriptor = VLMDescriptor(
-                vlm_endpoint="http://custom.com/api",
+                vlm_endpoint="http://custom.com/v1",
                 batch_size=200,
                 timeout=1800,
-                auto_start=False,
             )
 
-            assert descriptor.vlm_endpoint == "http://custom.com/api"
+            assert descriptor.vlm_endpoint == "http://custom.com/v1"
             assert descriptor.batch_size == 200
             assert descriptor.timeout == 1800
-            assert descriptor.auto_start is False
-
-    @patch("requests.get")
-    def test_ensure_service_running_already_running(self, mock_get, vlm_descriptor):
-        """Test _ensure_service_running when service is already running."""
-        mock_response = Mock()
-        mock_response.status_code = 200
-        mock_get.return_value = mock_response
-
-        vlm_descriptor._ensure_service_running()
-
-        mock_get.assert_called_once_with(vlm_descriptor.vlm_endpoint, timeout=5)
-
-    @patch("subprocess.run")
-    @patch("pathlib.Path.exists")
-    @patch("requests.get")
-    @patch("time.sleep")
-    def test_ensure_service_running_start_success(
-        self, mock_sleep, mock_get, mock_exists, mock_run, vlm_descriptor
-    ):
-        """Test successful Modal service startup."""
-        # Service not running initially
-        mock_get.side_effect = Exception("Connection failed")
-
-        # Modal service file exists
-        mock_exists.return_value = True
-
-        # Successful modal deploy
-        mock_result = Mock()
-        mock_result.returncode = 0
-        mock_run.return_value = mock_result
-
-        vlm_descriptor._ensure_service_running()
-
-        mock_run.assert_called_once_with(
-            ["modal", "deploy", "scripts/modal_vlm_service.py"],
-            capture_output=True,
-            text=True,
-        )
-        mock_sleep.assert_called_once_with(5)
-
-    @patch("subprocess.run")
-    @patch("pathlib.Path.exists")
-    @patch("requests.get")
-    def test_ensure_service_running_start_failure(
-        self, mock_get, mock_exists, mock_run, vlm_descriptor
-    ):
-        """Test Modal service startup failure."""
-        # Service not running initially
-        mock_get.side_effect = Exception("Connection failed")
-
-        # Modal service file exists
-        mock_exists.return_value = True
-
-        # Failed modal deploy
-        mock_result = Mock()
-        mock_result.returncode = 1
-        mock_result.stderr = "Modal deploy error"
-        mock_run.return_value = mock_result
-
-        vlm_descriptor._ensure_service_running()
-
-        mock_run.assert_called_once()
-
-    @patch("pathlib.Path.exists")
-    @patch("requests.get")
-    def test_ensure_service_running_no_service_file(
-        self, mock_get, mock_exists, vlm_descriptor
-    ):
-        """Test _ensure_service_running when service file doesn't exist."""
-        # Service not running initially
-        mock_get.side_effect = Exception("Connection failed")
-
-        # Modal service file doesn't exist
-        mock_exists.return_value = False
-
-        vlm_descriptor._ensure_service_running()
-
-        # Should not try to run subprocess.run
-
-    @patch("subprocess.run")
-    def test_stop_service_started_by_pipeline(self, mock_run, vlm_descriptor):
-        """Test stopping service that was started by this pipeline."""
-        vlm_descriptor._service_started = True
-
-        mock_result = Mock()
-        mock_result.returncode = 0
-        mock_result.stdout = "Service stopped"
-        mock_run.return_value = mock_result
-
-        vlm_descriptor.stop_service()
-
-        mock_run.assert_called_once_with(
-            ["modal", "app", "stop", "cogniverse-vlm"],
-            capture_output=True,
-            text=True,
-            timeout=5,
-        )
-        assert vlm_descriptor._service_started is False
-
-    @patch("subprocess.run")
-    def test_stop_service_stop_command_fails(self, mock_run, vlm_descriptor):
-        """Test stopping service when stop command fails."""
-        vlm_descriptor._service_started = True
-
-        mock_run.side_effect = Exception("Stop command failed")
-
-        vlm_descriptor.stop_service()
-
-        # Should handle exception gracefully
-        assert vlm_descriptor._service_started is False
-
-    def test_stop_service_not_started_by_pipeline(self, vlm_descriptor):
-        """Test stopping service that was not started by this pipeline."""
-        vlm_descriptor._service_started = False
-
-        vlm_descriptor.stop_service()
-
-        # Should not try to stop anything
-        assert vlm_descriptor._service_started is False
 
     def test_generate_descriptions_empty_metadata(self, vlm_descriptor):
         """Test generate_descriptions with empty metadata."""
@@ -330,301 +193,6 @@ class TestVLMDescriptor:
     @patch("builtins.open", new_callable=mock_open)
     @patch("json.dump")
     @patch("time.time")
-    def test_generate_descriptions_auto_start(
-        self,
-        mock_time,
-        mock_json_dump,
-        mock_file,
-        mock_mkdir,
-        mock_get_output_manager,
-        vlm_descriptor_auto_start,
-        sample_keyframes_metadata,
-    ):
-        """Test description generation with auto_start enabled."""
-        # Mock output manager
-        mock_output_manager = Mock()
-        mock_processing_dir = Mock()
-        mock_processing_dir.__truediv__ = Mock(
-            return_value=Path("/test/descriptions/test_video_123.json")
-        )
-        mock_output_manager.get_processing_dir.return_value = mock_processing_dir
-        mock_get_output_manager.return_value = mock_output_manager
-
-        mock_time.return_value = 1234567890.0
-
-        with patch.object(
-            vlm_descriptor_auto_start, "_ensure_service_running"
-        ) as mock_ensure:
-            with patch.object(
-                vlm_descriptor_auto_start, "_process_vlm_batch"
-            ) as mock_batch:
-                mock_batch.return_value = {"frame_001": "Auto-started description"}
-
-                vlm_descriptor_auto_start.generate_descriptions(
-                    sample_keyframes_metadata
-                )
-
-                mock_ensure.assert_called_once()
-                assert vlm_descriptor_auto_start._service_started is True
-
-    @patch("tempfile.NamedTemporaryFile")
-    @patch("zipfile.ZipFile")
-    @patch("requests.post")
-    @patch("os.unlink")
-    def test_process_vlm_batch_success(
-        self,
-        mock_unlink,
-        mock_post,
-        mock_zipfile,
-        mock_tempfile,
-        vlm_descriptor,
-        tmp_path,
-    ):
-        """Test successful batch processing."""
-        # Create mock frame files
-        frame1_path = tmp_path / "frame_001.jpg"
-        frame2_path = tmp_path / "frame_002.jpg"
-        frame1_path.write_bytes(b"fake image data 1")
-        frame2_path.write_bytes(b"fake image data 2")
-
-        keyframes = [
-            {"frame_id": "frame_001", "path": str(frame1_path)},
-            {"frame_id": "frame_002", "path": str(frame2_path)},
-        ]
-
-        # Mock temporary file
-        mock_temp = Mock()
-        mock_temp.name = "/tmp/test.zip"
-        mock_tempfile.return_value.__enter__.return_value = mock_temp
-
-        # Mock zipfile
-        mock_zip = Mock()
-        mock_zipfile.return_value.__enter__.return_value = mock_zip
-
-        # Mock successful API response
-        mock_response = Mock()
-        mock_response.status_code = 200
-        mock_response.json.return_value = {
-            "descriptions": {
-                "frame_001": "Batch description 1",
-                "frame_002": "Batch description 2",
-            }
-        }
-        mock_post.return_value = mock_response
-
-        # Mock reading zip file
-        with patch("builtins.open", mock_open(read_data=b"mock zip data")):
-            result = vlm_descriptor._process_vlm_batch(keyframes)
-
-            expected = {
-                "frame_001": "Batch description 1",
-                "frame_002": "Batch description 2",
-            }
-            assert result == expected
-
-    @patch("tempfile.NamedTemporaryFile")
-    @patch("zipfile.ZipFile")
-    @patch("requests.post")
-    @patch("os.unlink")
-    def test_process_vlm_batch_api_error(
-        self,
-        mock_unlink,
-        mock_post,
-        mock_zipfile,
-        mock_tempfile,
-        vlm_descriptor,
-        tmp_path,
-    ):
-        """Test batch processing with API error."""
-        # Create mock frame files
-        frame1_path = tmp_path / "frame_001.jpg"
-        frame1_path.write_bytes(b"fake image data")
-
-        keyframes = [{"frame_id": "frame_001", "path": str(frame1_path)}]
-
-        # Mock temporary file
-        mock_temp = Mock()
-        mock_temp.name = "/tmp/test.zip"
-        mock_tempfile.return_value.__enter__.return_value = mock_temp
-
-        # Mock zipfile
-        mock_zip = Mock()
-        mock_zipfile.return_value.__enter__.return_value = mock_zip
-
-        # Mock API error response
-        mock_response = Mock()
-        mock_response.status_code = 500
-        mock_response.text = "Internal Server Error"
-        mock_post.return_value = mock_response
-
-        with patch("builtins.open", mock_open(read_data=b"mock zip data")):
-            result = vlm_descriptor._process_vlm_batch(keyframes)
-
-            assert result == {}
-
-    @patch("tempfile.NamedTemporaryFile")
-    @patch("zipfile.ZipFile")
-    @patch("requests.post")
-    @patch("os.unlink")
-    def test_process_vlm_batch_connection_error(
-        self,
-        mock_unlink,
-        mock_post,
-        mock_zipfile,
-        mock_tempfile,
-        vlm_descriptor,
-        tmp_path,
-    ):
-        """Test batch processing with connection error."""
-        # Create mock frame files
-        frame1_path = tmp_path / "frame_001.jpg"
-        frame1_path.write_bytes(b"fake image data")
-
-        keyframes = [{"frame_id": "frame_001", "path": str(frame1_path)}]
-
-        # Mock temporary file
-        mock_temp = Mock()
-        mock_temp.name = "/tmp/test.zip"
-        mock_tempfile.return_value.__enter__.return_value = mock_temp
-
-        # Mock zipfile
-        mock_zip = Mock()
-        mock_zipfile.return_value.__enter__.return_value = mock_zip
-
-        # Mock connection error
-        mock_post.side_effect = Exception("Connection error")
-
-        with patch("builtins.open", mock_open(read_data=b"mock zip data")):
-            result = vlm_descriptor._process_vlm_batch(keyframes)
-
-            assert result == {}
-
-    @patch("tempfile.NamedTemporaryFile")
-    @patch("zipfile.ZipFile")
-    @patch("requests.post")
-    @patch("os.unlink")
-    def test_process_vlm_batch_connection_error_auto_start_retry(
-        self,
-        mock_unlink,
-        mock_post,
-        mock_zipfile,
-        mock_tempfile,
-        vlm_descriptor_auto_start,
-        tmp_path,
-    ):
-        """Test batch processing with connection error and auto_start retry."""
-        # Create mock frame files
-        frame1_path = tmp_path / "frame_001.jpg"
-        frame1_path.write_bytes(b"fake image data")
-
-        keyframes = [{"frame_id": "frame_001", "path": str(frame1_path)}]
-
-        # Mock temporary file
-        mock_temp = Mock()
-        mock_temp.name = "/tmp/test.zip"
-        mock_tempfile.return_value.__enter__.return_value = mock_temp
-
-        # Mock zipfile
-        mock_zip = Mock()
-        mock_zipfile.return_value.__enter__.return_value = mock_zip
-
-        # First call fails, second succeeds
-        mock_response_success = Mock()
-        mock_response_success.status_code = 200
-        mock_response_success.json.return_value = {
-            "descriptions": {"frame_001": "Retry success"}
-        }
-
-        mock_post.side_effect = [
-            Exception("Connection error"),  # First call fails
-            mock_response_success,  # Retry succeeds
-        ]
-
-        with patch.object(
-            vlm_descriptor_auto_start, "_ensure_service_running"
-        ) as mock_ensure:
-            with patch("builtins.open", mock_open(read_data=b"mock zip data")):
-                result = vlm_descriptor_auto_start._process_vlm_batch(keyframes)
-
-                mock_ensure.assert_called_once()
-                assert result == {"frame_001": "Retry success"}
-
-    def test_process_vlm_batch_no_valid_frames(self, vlm_descriptor):
-        """Test batch processing with no valid frame paths."""
-        keyframes = [
-            {"frame_id": "frame_001", "path": "/nonexistent/frame1.jpg"},
-            {"frame_id": "frame_002", "path": "/nonexistent/frame2.jpg"},
-        ]
-
-        result = vlm_descriptor._process_vlm_batch(keyframes)
-
-        assert result == {}
-
-    @patch("requests.post")
-    def test_process_single_frame_success(self, mock_post, vlm_descriptor, tmp_path):
-        """Test successful single frame processing."""
-        frame_path = tmp_path / "test_frame.jpg"
-        frame_path.write_bytes(b"fake image data")
-
-        mock_response = Mock()
-        mock_response.status_code = 200
-        mock_response.json.return_value = {"description": "Single frame description"}
-        mock_post.return_value = mock_response
-
-        result = vlm_descriptor.process_single_frame(frame_path)
-
-        assert result == "Single frame description"
-
-        # Verify the request was made correctly
-        mock_post.assert_called_once()
-        call_args = mock_post.call_args
-        assert call_args[0][0] == vlm_descriptor.vlm_endpoint
-
-        payload = call_args[1]["json"]
-        assert "frame_base64" in payload
-        assert "prompt" in payload
-
-    @patch("requests.post")
-    def test_process_single_frame_api_error(self, mock_post, vlm_descriptor, tmp_path):
-        """Test single frame processing with API error."""
-        frame_path = tmp_path / "test_frame.jpg"
-        frame_path.write_bytes(b"fake image data")
-
-        mock_response = Mock()
-        mock_response.status_code = 500
-        mock_post.return_value = mock_response
-
-        result = vlm_descriptor.process_single_frame(frame_path)
-
-        assert result == "Error: VLM API error 500"
-
-    @patch("requests.post")
-    def test_process_single_frame_connection_error(
-        self, mock_post, vlm_descriptor, tmp_path
-    ):
-        """Test single frame processing with connection error."""
-        frame_path = tmp_path / "test_frame.jpg"
-        frame_path.write_bytes(b"fake image data")
-
-        mock_post.side_effect = Exception("Connection failed")
-
-        result = vlm_descriptor.process_single_frame(frame_path)
-
-        assert result.startswith("Error: Connection failed")
-
-    def test_process_single_frame_file_not_found(self, vlm_descriptor):
-        """Test single frame processing with non-existent file."""
-        frame_path = Path("/nonexistent/frame.jpg")
-
-        result = vlm_descriptor.process_single_frame(frame_path)
-
-        assert result.startswith("Error:")
-
-    @patch("cogniverse_core.common.utils.output_manager.get_output_manager")
-    @patch("pathlib.Path.mkdir")
-    @patch("builtins.open", new_callable=mock_open)
-    @patch("json.dump")
-    @patch("time.time")
     def test_generate_descriptions_large_batch(
         self,
         mock_time,
@@ -678,21 +246,6 @@ class TestVLMDescriptor:
             # Verify we called batch processing 3 times (250 frames / 100 batch_size = 3 batches)
             assert vlm_descriptor._process_vlm_batch.call_count == 3
 
-    def test_batch_endpoint_url_transformation(self, vlm_descriptor):
-        """Test that batch endpoint URL is correctly transformed."""
-        # This tests the URL transformation logic in _process_vlm_batch
-        original_endpoint = "http://test.com/generate-description"
-        vlm_descriptor.vlm_endpoint = original_endpoint
-
-        expected_batch_endpoint = "http://test.com/upload-and-process-frames"
-
-        # We can't easily test this directly without calling the full method,
-        # but we can verify the transformation logic
-        batch_endpoint = original_endpoint.replace(
-            "generate-description", "upload-and-process-frames"
-        )
-        assert batch_endpoint == expected_batch_endpoint
-
 
 @pytest.mark.unit
 class TestVLMProcessor:
@@ -716,29 +269,26 @@ class TestVLMProcessor:
         from cogniverse_runtime.ingestion.processors.vlm_processor import VLMProcessor
 
         config = {
-            "vlm_endpoint": "http://test.com/generate-description",
+            "vlm_endpoint": "http://test.com/v1",
             "batch_size": 200,
             "timeout": 600,
-            "auto_start": False,
         }
         processor = VLMProcessor.from_config(config, mock_logger)
 
-        assert processor.vlm_endpoint == "http://test.com/generate-description"
+        assert processor.vlm_endpoint == "http://test.com/v1"
         assert processor.batch_size == 200
         assert processor.timeout == 600
-        assert processor.auto_start is False
         assert processor._descriptor is None  # lazy init
 
     def test_from_config_defaults(self, mock_logger):
         """from_config uses sensible defaults for optional params."""
         from cogniverse_runtime.ingestion.processors.vlm_processor import VLMProcessor
 
-        config = {"vlm_endpoint": "http://test.com/generate-description"}
+        config = {"vlm_endpoint": "http://test.com/v1"}
         processor = VLMProcessor.from_config(config, mock_logger)
 
         assert processor.batch_size == 500
         assert processor.timeout == 10800
-        assert processor.auto_start is True
         assert processor.vlm_concurrency == 8
 
     def test_from_config_threads_vlm_concurrency(self, mock_logger):
@@ -746,7 +296,7 @@ class TestVLMProcessor:
         from cogniverse_runtime.ingestion.processors.vlm_processor import VLMProcessor
 
         config = {
-            "vlm_endpoint": "http://test.com/generate-description",
+            "vlm_endpoint": "http://test.com/v1",
             "vlm_concurrency": 24,
         }
         processor = VLMProcessor.from_config(config, mock_logger)
@@ -758,8 +308,7 @@ class TestVLMProcessor:
 
         processor = VLMProcessor(
             logger=mock_logger,
-            vlm_endpoint="http://test.com/generate-description",
-            auto_start=False,
+            vlm_endpoint="http://test.com/v1",
         )
         assert processor._descriptor is None
 
@@ -777,10 +326,9 @@ class TestVLMProcessor:
             )
 
             mock_cls.assert_called_once_with(
-                vlm_endpoint="http://test.com/generate-description",
+                vlm_endpoint="http://test.com/v1",
                 batch_size=500,
                 timeout=10800,
-                auto_start=False,
                 vlm_concurrency=8,
             )
             mock_descriptor.generate_descriptions.assert_called_once()
@@ -792,8 +340,7 @@ class TestVLMProcessor:
 
         processor = VLMProcessor(
             logger=mock_logger,
-            vlm_endpoint="http://test.com/generate-description",
-            auto_start=False,
+            vlm_endpoint="http://test.com/v1",
         )
 
         mock_descriptor = Mock()
@@ -811,22 +358,19 @@ class TestVLMProcessor:
         assert result == expected_result
         mock_descriptor.generate_descriptions.assert_called_once_with(frames_data)
 
-    def test_cleanup_stops_service(self, mock_logger):
-        """cleanup stops VLMDescriptor service."""
+    def test_cleanup_resets_descriptor(self, mock_logger):
+        """cleanup drops the descriptor so the next use re-initializes it."""
         from cogniverse_runtime.ingestion.processors.vlm_processor import VLMProcessor
 
         processor = VLMProcessor(
             logger=mock_logger,
-            vlm_endpoint="http://test.com/generate-description",
-            auto_start=False,
+            vlm_endpoint="http://test.com/v1",
         )
 
-        mock_descriptor = Mock()
-        processor._descriptor = mock_descriptor
+        processor._descriptor = Mock()
 
         processor.cleanup()
 
-        mock_descriptor.stop_service.assert_called_once()
         assert processor._descriptor is None
 
     def test_cleanup_noop_when_no_descriptor(self, mock_logger):
@@ -835,8 +379,7 @@ class TestVLMProcessor:
 
         processor = VLMProcessor(
             logger=mock_logger,
-            vlm_endpoint="http://test.com/generate-description",
-            auto_start=False,
+            vlm_endpoint="http://test.com/v1",
         )
 
         processor.cleanup()  # Should not raise
@@ -847,8 +390,7 @@ class TestVLMProcessor:
 
         processor = VLMProcessor(
             logger=mock_logger,
-            vlm_endpoint="http://test.com/generate-description",
-            auto_start=False,
+            vlm_endpoint="http://test.com/v1",
         )
 
         mock_descriptor = Mock()
@@ -870,22 +412,17 @@ class TestVLMDescriptionStrategyWiring:
         from cogniverse_runtime.ingestion.strategies import VLMDescriptionStrategy
 
         strategy = VLMDescriptionStrategy(
-            vlm_endpoint="http://modal.run/generate-description",
+            vlm_endpoint="http://vlm.internal:8000/v1",
             batch_size=300,
             timeout=1800,
-            auto_start=False,
         )
 
         requirements = strategy.get_required_processors()
 
         assert "vlm" in requirements
-        assert (
-            requirements["vlm"]["vlm_endpoint"]
-            == "http://modal.run/generate-description"
-        )
+        assert requirements["vlm"]["vlm_endpoint"] == "http://vlm.internal:8000/v1"
         assert requirements["vlm"]["batch_size"] == 300
         assert requirements["vlm"]["timeout"] == 1800
-        assert requirements["vlm"]["auto_start"] is False
 
     def test_processor_created_from_strategy_requirements(self):
         """VLMProcessor can be created from VLMDescriptionStrategy requirements."""
@@ -893,14 +430,14 @@ class TestVLMDescriptionStrategyWiring:
         from cogniverse_runtime.ingestion.strategies import VLMDescriptionStrategy
 
         strategy = VLMDescriptionStrategy(
-            vlm_endpoint="http://modal.run/generate-description",
+            vlm_endpoint="http://vlm.internal:8000/v1",
             batch_size=250,
         )
 
         requirements = strategy.get_required_processors()
         processor = VLMProcessor.from_config(requirements["vlm"], Mock())
 
-        assert processor.vlm_endpoint == "http://modal.run/generate-description"
+        assert processor.vlm_endpoint == "http://vlm.internal:8000/v1"
         assert processor.batch_size == 250
 
     def test_full_round_trip_strategy_to_descriptor(self):
@@ -909,9 +446,8 @@ class TestVLMDescriptionStrategyWiring:
         from cogniverse_runtime.ingestion.strategies import VLMDescriptionStrategy
 
         strategy = VLMDescriptionStrategy(
-            vlm_endpoint="http://modal.run/generate-description",
+            vlm_endpoint="http://vlm.internal:8000/v1",
             batch_size=100,
-            auto_start=False,
         )
 
         requirements = strategy.get_required_processors()
@@ -932,105 +468,12 @@ class TestVLMDescriptionStrategyWiring:
             result = processor.generate_descriptions(frames_data)
 
             mock_cls.assert_called_once_with(
-                vlm_endpoint="http://modal.run/generate-description",
+                vlm_endpoint="http://vlm.internal:8000/v1",
                 batch_size=100,
                 timeout=10800,
-                auto_start=False,
                 vlm_concurrency=8,
             )
             assert result["descriptions"]["f1"] == "a person walking"
-
-
-@pytest.mark.unit
-class TestVLMEndpointContract:
-    """Assert the HTTP contract VLMDescriptor sends to vlm_endpoint_url.
-
-    The Modal server-side model (Qwen2-VL or Qwen3-VL) is irrelevant here:
-    the client payload shape must remain stable regardless of model generation.
-    """
-
-    @pytest.fixture
-    def descriptor(self):
-        return VLMDescriptor(
-            vlm_endpoint="http://modal.run/generate-description",
-            batch_size=100,
-            timeout=300,
-            auto_start=False,
-        )
-
-    @patch("requests.post")
-    def test_single_frame_request_payload_structure(
-        self, mock_post, descriptor, tmp_path
-    ):
-        """process_single_frame sends {frame_base64, prompt} to vlm_endpoint_url."""
-        import base64
-
-        raw_bytes = b"\xff\xd8\xff\xe0" + b"\x00" * 12  # minimal JPEG magic
-        frame_path = tmp_path / "frame.jpg"
-        frame_path.write_bytes(raw_bytes)
-
-        mock_response = Mock()
-        mock_response.status_code = 200
-        mock_response.json.return_value = {
-            "description": "A person walks across a sunlit courtyard carrying a bag.",
-            "request_id": "abc-123",
-            "duration_seconds": 1.5,
-        }
-        mock_post.return_value = mock_response
-
-        result = descriptor.process_single_frame(frame_path)
-
-        mock_post.assert_called_once()
-        call_args = mock_post.call_args
-        assert call_args[0][0] == "http://modal.run/generate-description"
-        assert call_args[1]["headers"] == {"Content-Type": "application/json"}
-
-        payload = call_args[1]["json"]
-        assert set(payload.keys()) >= {"frame_base64", "prompt"}
-        assert payload["frame_base64"] == base64.b64encode(raw_bytes).decode("utf-8")
-        assert isinstance(payload["prompt"], str) and len(payload["prompt"]) > 10
-
-        assert isinstance(result, str)
-        assert 5 <= len(result) <= 2000
-        assert "courtyard" in result
-
-    @patch("requests.post")
-    def test_single_frame_response_description_is_parsed(
-        self, mock_post, descriptor, tmp_path
-    ):
-        """Description field is extracted from the JSON envelope, not the raw body."""
-        frame_path = tmp_path / "frame.jpg"
-        frame_path.write_bytes(b"data")
-
-        mock_response = Mock()
-        mock_response.status_code = 200
-        mock_response.json.return_value = {
-            "description": "Two cyclists ride past a café terrace.",
-            "request_id": "xyz-999",
-            "duration_seconds": 0.8,
-        }
-        mock_post.return_value = mock_response
-
-        result = descriptor.process_single_frame(frame_path)
-
-        assert result == "Two cyclists ride past a café terrace."
-
-    @patch("requests.post")
-    def test_single_frame_api_non200_returns_error_string(
-        self, mock_post, descriptor, tmp_path
-    ):
-        """Non-200 status produces an error string, not an exception."""
-        frame_path = tmp_path / "frame.jpg"
-        frame_path.write_bytes(b"data")
-
-        mock_response = Mock()
-        mock_response.status_code = 503
-        mock_post.return_value = mock_response
-
-        result = descriptor.process_single_frame(frame_path)
-
-        assert isinstance(result, str)
-        assert "503" in result
 
 
 @pytest.mark.unit
@@ -1051,10 +494,9 @@ class TestProgressFlushCadence:
         assert mod._PROGRESS_FLUSH_EVERY == 10
 
         descriptor = VLMDescriptor(
-            vlm_endpoint="http://test.com/generate-description",
+            vlm_endpoint="http://test.com/v1",
             batch_size=1,
             timeout=30,
-            auto_start=False,
         )
         keyframes = []
         for i in range(25):
@@ -1104,10 +546,9 @@ class TestProgressFlushCadence:
 
     def test_short_run_writes_once_after_the_loop(self, tmp_path):
         descriptor = VLMDescriptor(
-            vlm_endpoint="http://test.com/generate-description",
+            vlm_endpoint="http://test.com/v1",
             batch_size=1,
             timeout=30,
-            auto_start=False,
         )
         keyframes = []
         for i in range(3):
@@ -1208,10 +649,9 @@ class TestVLMOpenAIConcurrency:
                 vlm_endpoint=f"http://127.0.0.1:{port}/v1",
                 batch_size=500,
                 timeout=30,
-                auto_start=False,
             )
             start = time.monotonic()
-            result = descriptor._process_vlm_batch_openai(keyframes)
+            result = descriptor._process_vlm_batch(keyframes)
             elapsed = time.monotonic() - start
         finally:
             server.shutdown()
@@ -1243,10 +683,9 @@ class TestVLMOpenAIConcurrency:
                 vlm_endpoint=f"http://127.0.0.1:{port}/v1",
                 batch_size=500,
                 timeout=30,
-                auto_start=False,
                 vlm_concurrency=3,
             )
-            result = descriptor._process_vlm_batch_openai(keyframes)
+            result = descriptor._process_vlm_batch(keyframes)
         finally:
             server.shutdown()
             server.server_close()
@@ -1258,7 +697,7 @@ class TestVLMOpenAIConcurrency:
         assert set(result.keys()) == {f"f{i}" for i in range(12)}
 
     def _openai_descriptor(self, monkeypatch) -> VLMDescriptor:
-        d = VLMDescriptor(vlm_endpoint="http://vlm/v1", auto_start=False)
+        d = VLMDescriptor(vlm_endpoint="http://vlm/v1")
         monkeypatch.setattr(d, "_resolve_openai_model", lambda: "m")
         monkeypatch.setattr(d, "_openai_base", lambda: "http://vlm/v1")
         return d
@@ -1283,7 +722,7 @@ class TestVLMOpenAIConcurrency:
             {"frame_id": "f2", "path": "/x/f2.jpg"},
             {"frame_id": "f3", "path": "/x/f3.jpg"},
         ]
-        out = d._process_vlm_batch_openai(keyframes)
+        out = d._process_vlm_batch(keyframes)
 
         assert out == {"f1": "desc-f1", "f3": "desc-f3"}  # f2 dropped, rest kept
 
@@ -1304,4 +743,18 @@ class TestVLMOpenAIConcurrency:
             {"frame_id": "f2", "path": "/x/f2.jpg"},
         ]
         with pytest.raises(RuntimeError, match="all 2 keyframes"):
-            d._process_vlm_batch_openai(keyframes)
+            d._process_vlm_batch(keyframes)
+
+
+@pytest.mark.unit
+class TestNonV1EndpointRejected:
+    """The descriptor speaks only the OpenAI-compatible /v1 protocol; any
+    other endpoint shape must fail at construction, not silently no-op."""
+
+    def test_legacy_style_endpoint_is_rejected_loudly(self):
+        with pytest.raises(ValueError, match="/v1"):
+            VLMDescriptor(vlm_endpoint="https://x--generate-description.modal.run/")
+
+    def test_empty_endpoint_is_rejected_loudly(self):
+        with pytest.raises(ValueError, match="/v1"):
+            VLMDescriptor(vlm_endpoint="")
