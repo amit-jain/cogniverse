@@ -490,12 +490,13 @@ cogniverse up
 cogniverse status
 ```
 
-### Modal (VLM Sidecar)
+### Modal (Serverless Inference)
 ```bash
-# Deploy the serverless VLM sidecar used by the video processing pipeline
-modal deploy scripts/modal_vlm_service.py
+# Deploy and warm Modal-hosted inference services
+cogniverse inference modal deploy denseon colbert_pylate
+cogniverse inference modal warm denseon colbert_pylate
 ```
-See [docs/modal/deploy_modal_vlm.md](docs/modal/deploy_modal_vlm.md) for the full setup — Modal serves an image-description VLM sidecar for ingestion, not the whole application.
+See [docs/operations/deployment.md](docs/operations/deployment.md) (Unified Deployment, Strategy B) — Modal serves individual inference services called by the cluster, not the whole application.
 
 ## 🔐 Security
 
