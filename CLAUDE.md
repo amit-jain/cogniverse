@@ -166,6 +166,9 @@ phase".
 - **Parallelize wide work.** >5 independent files → parallel sub-agents, 5–8
   files each.
 - **"yes" / "do it" / "push" means execute.** No restating the plan.
+- **Commit WIP; never leave a dirty tree.** Incomplete work ships as a `WIP:`
+  commit and is amended when it completes. Uncommitted work is lost to a crash
+  and is invisible to anything that reads the tree by SHA.
 
 **Code quality.** Override the instinct to do the minimum: if architecture is
 flawed, state duplicated, or patterns inconsistent, fix it — what would a
