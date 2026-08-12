@@ -508,20 +508,18 @@ def _rendered_chart_config() -> dict:
 
 
 def _normalize_profiles(profiles: dict) -> dict:
-    """Strip the deploy-specific VLM description fields before comparing. The
-    chart's config.json is ``tpl``-rendered: ``vlm_endpoint`` is injected as the
-    in-cluster vLLM URL and ``auto_start`` is false (the cluster runs the VLM as
-    its own pod), while local uses an empty endpoint + ``auto_start`` true
-    (auto-start the local sidecar). Those two fields differ by design; every
-    other field (models, inference_services, all other strategies) stays strict,
-    so real profile/model drift is still caught."""
+    """Strip the deploy-specific VLM endpoint before comparing. The chart's
+    config.json is ``tpl``-rendered: ``vlm_endpoint`` is injected as the
+    in-cluster vLLM ``/v1`` URL, while local leaves it empty for the operator
+    to set. That field differs by design; every other field (models,
+    inference_services, all other strategies) stays strict, so real
+    profile/model drift is still caught."""
     normalized = copy.deepcopy(profiles)
     for profile in normalized.values():
         params = (profile.get("strategies", {}).get("description", {}) or {}).get(
             "params", {}
         )
         params.pop("vlm_endpoint", None)
-        params.pop("auto_start", None)
     return normalized
 
 
