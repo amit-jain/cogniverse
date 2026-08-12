@@ -21,6 +21,7 @@ import subprocess
 import threading
 import time
 import warnings
+from pathlib import Path
 from types import SimpleNamespace
 
 import pytest
@@ -32,6 +33,12 @@ from tests.e2e.conftest import (
     unique_id,
     wait_for_span,
 )
+
+
+@pytest.fixture(scope="module", autouse=True)
+def e2e_stack():
+    yield
+
 
 _NEW_PREFIXES = (
     "know_",
@@ -424,110 +431,444 @@ class TestSharedClusterOwnership:
             assert image.size == (640, 480)
 
     @staticmethod
-    def _deployment_input_tree(tmp_path):
-        for directory in ("libs", "configs", "charts", "deploy", "scripts"):
-            (tmp_path / directory).mkdir()
-        helper = tmp_path / "tests" / "e2e" / "deployment" / "conftest.py"
-        helper.parent.mkdir(parents=True)
-        helper.write_text("DEPLOYMENT_HELPER = 'first'\n")
-        for file_name in ("pyproject.toml", "uv.lock", ".dockerignore"):
-            (tmp_path / file_name).write_text(f"initial {file_name}\n")
-        return tmp_path
+    def _git(repo_root: Path, *args: str) -> str:
+        result = subprocess.run(
+            ["git", "-C", str(repo_root), *args],
+            capture_output=True,
+            text=True,
+            check=True,
+        )
+        return (result.stdout or "").strip()
 
     @staticmethod
-    def _fingerprint(repo_root, deployment_identity=None):
-        return e2e_conftest._e2e_deploy_fingerprint(
-            repo_root,
-            deployment_identity=deployment_identity
-            or {
-                "backend": "rocm",
-                "values": ["values.k3s.yaml", "values.rocm.yaml"],
-                "set": {"devMode.enabled": "false"},
-            },
+    def _seed_git_repo(tmp_path: Path) -> tuple[Path, str]:
+        repo_root = tmp_path / "repo"
+        for relative_path, content in {
+            "libs/runtime/module.py": "value = 'base'\n",
+            "configs/app.yaml": "backend: rocm\n",
+            "charts/cogniverse/values.yaml": "replicaCount: 1\n",
+            "deploy/app/Dockerfile": "FROM python:3.12-slim\n",
+            "scripts/deploy.sh": "#!/bin/sh\necho base\n",
+            "pyproject.toml": "[project]\nname = 'demo'\nversion = '0.1.0'\n",
+            "uv.lock": "lock-version = 1\n",
+            ".dockerignore": "__pycache__\n",
+            "docs/guide.md": "# docs\n",
+            "tests/e2e/guide.py": "VALUE = 'base'\n",
+        }.items():
+            path = repo_root / relative_path
+            path.parent.mkdir(parents=True, exist_ok=True)
+            path.write_text(content)
+
+        repo_root.mkdir(parents=True, exist_ok=True)
+        TestSharedClusterOwnership._git(repo_root, "init")
+        TestSharedClusterOwnership._git(
+            repo_root, "config", "user.email", "tests@example.com"
+        )
+        TestSharedClusterOwnership._git(repo_root, "config", "user.name", "Tests")
+        TestSharedClusterOwnership._git(repo_root, "add", "-A")
+        TestSharedClusterOwnership._git(repo_root, "commit", "-m", "base")
+        return repo_root, TestSharedClusterOwnership._git(
+            repo_root, "rev-parse", "HEAD"
         )
 
-    def test_same_path_untracked_build_input_content_changes_fingerprint(
+    @staticmethod
+    def _commit_change(
+        repo_root: Path, relative_path: str, content: str, message: str
+    ) -> str:
+        path = repo_root / relative_path
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text(content)
+        TestSharedClusterOwnership._git(repo_root, "add", "-A")
+        TestSharedClusterOwnership._git(repo_root, "commit", "-m", message)
+        return TestSharedClusterOwnership._git(repo_root, "rev-parse", "HEAD")
+
+    @staticmethod
+    def _current_identity(
+        *,
+        backend: str = "rocm",
+        values_files: list[str] | None = None,
+        set_overrides: dict[str, str] | None = None,
+        image_repository: str = "cogniverse/runtime-rocm",
+    ) -> dict[str, object]:
+        return {
+            "backend": backend,
+            "values_files": values_files
+            or [
+                "charts/cogniverse/values.k3s.yaml",
+                "charts/cogniverse/values.rocm.yaml",
+            ],
+            "set_overrides": set_overrides
+            or {
+                "devMode.enabled": "false",
+                "runtime.backend": backend,
+                "dashboard.backend": backend,
+            },
+            "image_repository": image_repository,
+        }
+
+    def test_tests_only_commit_between_deployed_sha_and_head_is_not_stale(
         self, tmp_path
     ):
-        repo_root = self._deployment_input_tree(tmp_path)
-        source = repo_root / "libs" / "runtime" / "new_module.py"
-        source.parent.mkdir(parents=True)
-        source.write_text("value = 'first'\n")
-        first = self._fingerprint(repo_root)
+        repo_root, deployed_sha = self._seed_git_repo(tmp_path)
+        current_identity = self._current_identity()
+        deployed_stamp = {"sha": deployed_sha, **current_identity}
 
-        source.write_text("value = 'other'\n")
+        self._commit_change(
+            repo_root,
+            "tests/e2e/new_check.py",
+            "VALUE = 'tests-only'\n",
+            "tests-only",
+        )
 
-        assert self._fingerprint(repo_root) != first
+        assert e2e_conftest._e2e_deploy_reuse_state(
+            repo_root, deployed_stamp, current_identity=current_identity
+        ) == ("reusable", "")
 
-    def test_uv_lock_content_changes_fingerprint(self, tmp_path):
-        repo_root = self._deployment_input_tree(tmp_path)
-        first = self._fingerprint(repo_root)
+    def test_docs_only_commit_between_deployed_sha_and_head_is_not_stale(
+        self, tmp_path
+    ):
+        repo_root, deployed_sha = self._seed_git_repo(tmp_path)
+        current_identity = self._current_identity()
+        deployed_stamp = {"sha": deployed_sha, **current_identity}
 
-        (repo_root / "uv.lock").write_text("updated dependency graph\n")
+        self._commit_change(
+            repo_root,
+            "docs/guide.md",
+            "# docs updated\n",
+            "docs-only",
+        )
 
-        assert self._fingerprint(repo_root) != first
+        assert e2e_conftest._e2e_deploy_reuse_state(
+            repo_root, deployed_stamp, current_identity=current_identity
+        ) == ("reusable", "")
 
-    def test_deploy_recipe_content_changes_fingerprint(self, tmp_path):
-        repo_root = self._deployment_input_tree(tmp_path)
-        recipe = repo_root / "deploy" / "gliner" / "Dockerfile"
-        recipe.parent.mkdir()
-        recipe.write_text("FROM python:3.12-slim\n")
-        first = self._fingerprint(repo_root)
+    def test_change_under_libs_is_stale(self, tmp_path):
+        repo_root, deployed_sha = self._seed_git_repo(tmp_path)
+        current_identity = self._current_identity()
+        deployed_stamp = {"sha": deployed_sha, **current_identity}
 
-        recipe.write_text("FROM python:3.13-slim\n")
+        self._commit_change(
+            repo_root,
+            "libs/runtime/module.py",
+            "value = 'changed'\n",
+            "libs-change",
+        )
 
-        assert self._fingerprint(repo_root) != first
+        assert e2e_conftest._e2e_deploy_reuse_state(
+            repo_root, deployed_stamp, current_identity=current_identity
+        ) == ("stale", "tracked deploy inputs changed")
 
-    def test_generated_runtime_artifacts_do_not_change_fingerprint(self, tmp_path):
-        repo_root = self._deployment_input_tree(tmp_path)
-        cache = repo_root / "libs" / "runtime" / "__pycache__" / "module.pyc"
-        cache.parent.mkdir(parents=True)
-        cache.write_bytes(b"first generated bytecode")
-        first = self._fingerprint(repo_root)
+    def test_change_under_configs_is_stale(self, tmp_path):
+        repo_root, deployed_sha = self._seed_git_repo(tmp_path)
+        current_identity = self._current_identity()
+        deployed_stamp = {"sha": deployed_sha, **current_identity}
 
-        cache.write_bytes(b"different generated bytecode")
+        self._commit_change(
+            repo_root,
+            "configs/app.yaml",
+            "backend: cuda\n",
+            "configs-change",
+        )
 
-        assert self._fingerprint(repo_root) == first
+        assert e2e_conftest._e2e_deploy_reuse_state(
+            repo_root, deployed_stamp, current_identity=current_identity
+        ) == ("stale", "tracked deploy inputs changed")
 
-    def test_deployment_helper_content_changes_fingerprint(self, tmp_path):
-        repo_root = self._deployment_input_tree(tmp_path)
-        helper = repo_root / "tests" / "e2e" / "deployment" / "conftest.py"
-        first = self._fingerprint(repo_root)
+    def test_change_under_charts_is_stale(self, tmp_path):
+        repo_root, deployed_sha = self._seed_git_repo(tmp_path)
+        current_identity = self._current_identity()
+        deployed_stamp = {"sha": deployed_sha, **current_identity}
 
-        helper.write_text("DEPLOYMENT_HELPER = 'second'\n")
+        self._commit_change(
+            repo_root,
+            "charts/cogniverse/values.yaml",
+            "replicaCount: 2\n",
+            "charts-change",
+        )
 
-        assert self._fingerprint(repo_root) != first
+        assert e2e_conftest._e2e_deploy_reuse_state(
+            repo_root, deployed_stamp, current_identity=current_identity
+        ) == ("stale", "tracked deploy inputs changed")
 
-    def test_effective_backend_overlay_and_overrides_change_fingerprint(self, tmp_path):
-        repo_root = self._deployment_input_tree(tmp_path)
-        rocm = {
-            "backend": "rocm",
-            "values": ["values.k3s.yaml", "values.rocm.yaml"],
-            "set": {
+    def test_change_under_deploy_is_stale(self, tmp_path):
+        repo_root, deployed_sha = self._seed_git_repo(tmp_path)
+        current_identity = self._current_identity()
+        deployed_stamp = {"sha": deployed_sha, **current_identity}
+
+        self._commit_change(
+            repo_root,
+            "deploy/app/Dockerfile",
+            "FROM python:3.13-slim\n",
+            "deploy-change",
+        )
+
+        assert e2e_conftest._e2e_deploy_reuse_state(
+            repo_root, deployed_stamp, current_identity=current_identity
+        ) == ("stale", "tracked deploy inputs changed")
+
+    def test_change_under_scripts_is_stale(self, tmp_path):
+        repo_root, deployed_sha = self._seed_git_repo(tmp_path)
+        current_identity = self._current_identity()
+        deployed_stamp = {"sha": deployed_sha, **current_identity}
+
+        self._commit_change(
+            repo_root,
+            "scripts/deploy.sh",
+            "#!/bin/sh\necho changed\n",
+            "scripts-change",
+        )
+
+        assert e2e_conftest._e2e_deploy_reuse_state(
+            repo_root, deployed_stamp, current_identity=current_identity
+        ) == ("stale", "tracked deploy inputs changed")
+
+    def test_change_under_pyproject_is_stale(self, tmp_path):
+        repo_root, deployed_sha = self._seed_git_repo(tmp_path)
+        current_identity = self._current_identity()
+        deployed_stamp = {"sha": deployed_sha, **current_identity}
+
+        self._commit_change(
+            repo_root,
+            "pyproject.toml",
+            "[project]\nname = 'demo'\nversion = '0.2.0'\n",
+            "pyproject-change",
+        )
+
+        assert e2e_conftest._e2e_deploy_reuse_state(
+            repo_root, deployed_stamp, current_identity=current_identity
+        ) == ("stale", "tracked deploy inputs changed")
+
+    def test_change_under_uv_lock_is_stale(self, tmp_path):
+        repo_root, deployed_sha = self._seed_git_repo(tmp_path)
+        current_identity = self._current_identity()
+        deployed_stamp = {"sha": deployed_sha, **current_identity}
+
+        self._commit_change(
+            repo_root,
+            "uv.lock",
+            "lock-version = 2\n",
+            "uv-lock-change",
+        )
+
+        assert e2e_conftest._e2e_deploy_reuse_state(
+            repo_root, deployed_stamp, current_identity=current_identity
+        ) == ("stale", "tracked deploy inputs changed")
+
+    def test_change_under_dockerignore_is_stale(self, tmp_path):
+        repo_root, deployed_sha = self._seed_git_repo(tmp_path)
+        current_identity = self._current_identity()
+        deployed_stamp = {"sha": deployed_sha, **current_identity}
+
+        self._commit_change(
+            repo_root,
+            ".dockerignore",
+            "__pycache__\n*.tmp\n",
+            "dockerignore-change",
+        )
+
+        assert e2e_conftest._e2e_deploy_reuse_state(
+            repo_root, deployed_stamp, current_identity=current_identity
+        ) == ("stale", "tracked deploy inputs changed")
+
+    def test_backend_differs_is_stale(self, tmp_path):
+        repo_root, deployed_sha = self._seed_git_repo(tmp_path)
+        deployed_identity = self._current_identity(backend="rocm")
+        current_identity = self._current_identity(
+            backend="cuda", image_repository="cogniverse/runtime-cuda"
+        )
+        deployed_stamp = {"sha": deployed_sha, **deployed_identity}
+
+        assert e2e_conftest._e2e_deploy_reuse_state(
+            repo_root, deployed_stamp, current_identity=current_identity
+        ) == ("stale", "deployment identity changed")
+
+    def test_values_files_list_differs_is_stale(self, tmp_path):
+        repo_root, deployed_sha = self._seed_git_repo(tmp_path)
+        deployed_identity = self._current_identity()
+        current_identity = self._current_identity(
+            values_files=[
+                "charts/cogniverse/values.k3s.yaml",
+                "charts/cogniverse/values.cuda.yaml",
+            ],
+            image_repository="cogniverse/runtime-cuda",
+        )
+        deployed_stamp = {"sha": deployed_sha, **deployed_identity}
+
+        assert e2e_conftest._e2e_deploy_reuse_state(
+            repo_root, deployed_stamp, current_identity=current_identity
+        ) == ("stale", "deployment identity changed")
+
+    def test_set_overrides_differ_is_stale(self, tmp_path):
+        repo_root, deployed_sha = self._seed_git_repo(tmp_path)
+        deployed_identity = self._current_identity()
+        current_identity = self._current_identity(
+            set_overrides={
                 "devMode.enabled": "false",
-                "inference.vllm_llm_teacher.enabled": "false",
-            },
-        }
-        cuda = {
-            "backend": "cuda",
-            "values": ["values.k3s.yaml", "values.cuda.yaml"],
-            "set": {
-                "devMode.enabled": "false",
-                "inference.vllm_llm_teacher.enabled": "false",
-            },
-        }
-        changed_override = {
-            **rocm,
-            "set": {
-                **rocm["set"],
+                "runtime.backend": "rocm",
+                "dashboard.backend": "rocm",
                 "inference.vllm_asr.livenessProbe.failureThreshold": "60",
+            }
+        )
+        deployed_stamp = {"sha": deployed_sha, **deployed_identity}
+
+        assert e2e_conftest._e2e_deploy_reuse_state(
+            repo_root, deployed_stamp, current_identity=current_identity
+        ) == ("stale", "deployment identity changed")
+
+    def test_image_repository_differs_is_stale(self, tmp_path):
+        repo_root, deployed_sha = self._seed_git_repo(tmp_path)
+        deployed_identity = self._current_identity()
+        current_identity = self._current_identity(
+            image_repository="cogniverse/runtime-cuda"
+        )
+        deployed_stamp = {"sha": deployed_sha, **deployed_identity}
+
+        assert e2e_conftest._e2e_deploy_reuse_state(
+            repo_root, deployed_stamp, current_identity=current_identity
+        ) == ("stale", "deployment identity changed")
+
+    def test_image_version_tag_difference_is_not_stale(self, monkeypatch, tmp_path):
+        repo_root, deployed_sha = self._seed_git_repo(tmp_path)
+        deployment_inputs = {
+            "backend": "rocm",
+            "image_version": "build-abc",
+            "helm_values": [
+                repo_root / "charts" / "cogniverse" / "values.k3s.yaml",
+                repo_root / "charts" / "cogniverse" / "values.rocm.yaml",
+            ],
+            "helm_set_overrides": {
+                "devMode.enabled": "false",
+                "runtime.backend": "rocm",
+                "dashboard.backend": "rocm",
             },
+            "image_repository": "cogniverse/runtime-rocm",
         }
+        from tests.e2e.deployment import conftest as deployment_conftest
 
-        rocm_fingerprint = self._fingerprint(repo_root, rocm)
+        monkeypatch.setattr(
+            deployment_conftest,
+            "deployment_helm_inputs",
+            lambda project_root, extra_set=None: deployment_inputs,
+        )
+        current_identity = e2e_conftest._effective_e2e_deployment_identity(repo_root)
+        deployed_stamp = {"sha": deployed_sha, **current_identity}
 
-        assert self._fingerprint(repo_root, cuda) != rocm_fingerprint
-        assert self._fingerprint(repo_root, changed_override) != rocm_fingerprint
+        assert current_identity == {
+            "backend": "rocm",
+            "values_files": [
+                "charts/cogniverse/values.k3s.yaml",
+                "charts/cogniverse/values.rocm.yaml",
+            ],
+            "set_overrides": {
+                "devMode.enabled": "false",
+                "runtime.backend": "rocm",
+                "dashboard.backend": "rocm",
+            },
+            "image_repository": "cogniverse/runtime-rocm",
+        }
+        assert e2e_conftest._e2e_deploy_reuse_state(
+            repo_root, deployed_stamp, current_identity=current_identity
+        ) == ("reusable", "")
+
+    def test_missing_stamped_sha_is_stale(self, tmp_path):
+        repo_root, _ = self._seed_git_repo(tmp_path)
+        current_identity = self._current_identity()
+        deployed_stamp = {**current_identity}
+
+        assert e2e_conftest._e2e_deploy_reuse_state(
+            repo_root, deployed_stamp, current_identity=current_identity
+        ) == ("stale", "deployed SHA is missing or malformed")
+
+    def test_garbage_stamped_sha_is_stale(self, tmp_path):
+        repo_root, _ = self._seed_git_repo(tmp_path)
+        current_identity = self._current_identity()
+        deployed_stamp = {"sha": "not-a-sha", **current_identity}
+
+        assert e2e_conftest._e2e_deploy_reuse_state(
+            repo_root, deployed_stamp, current_identity=current_identity
+        ) == ("stale", "deployed SHA is missing or malformed")
+
+    def test_unknown_stamped_sha_is_stale(self, tmp_path):
+        repo_root, _ = self._seed_git_repo(tmp_path)
+        current_identity = self._current_identity()
+        deployed_stamp = {"sha": "f" * 40, **current_identity}
+
+        assert e2e_conftest._e2e_deploy_reuse_state(
+            repo_root, deployed_stamp, current_identity=current_identity
+        ) == ("stale", "deployed SHA is not a reachable commit")
+
+    def test_dirty_worktree_at_deploy_time_raises_and_skips_deploy(
+        self, monkeypatch, tmp_path
+    ):
+        repo_root, _ = self._seed_git_repo(tmp_path)
+        (repo_root / "libs" / "runtime" / "module.py").write_text("value = 'dirty'\n")
+
+        import cogniverse_cli.cluster as cluster_cli
+
+        from tests.e2e.deployment import conftest as deployment_conftest
+
+        calls = {"create": [], "deploy": []}
+        monkeypatch.setattr(e2e_conftest, "_e2e_repo_root", lambda: repo_root)
+        monkeypatch.setattr(cluster_cli, "list_cluster_states", lambda: [])
+        monkeypatch.setattr(
+            e2e_conftest,
+            "_e2e_cluster_state",
+            lambda: ("absent", ""),
+        )
+        monkeypatch.setattr(
+            e2e_conftest,
+            "_effective_e2e_deployment_identity",
+            lambda repo_root: {
+                "backend": "rocm",
+                "values_files": [
+                    "charts/cogniverse/values.k3s.yaml",
+                    "charts/cogniverse/values.rocm.yaml",
+                ],
+                "set_overrides": {
+                    "devMode.enabled": "false",
+                    "runtime.backend": "rocm",
+                    "dashboard.backend": "rocm",
+                },
+                "image_repository": "cogniverse/runtime-rocm",
+            },
+        )
+        monkeypatch.setattr(
+            deployment_conftest,
+            "create_test_cluster",
+            lambda *args, **kwargs: calls["create"].append((args, kwargs)),
+        )
+        monkeypatch.setattr(
+            deployment_conftest,
+            "deploy_stack",
+            lambda *args, **kwargs: calls["deploy"].append((args, kwargs)),
+        )
+        monkeypatch.setattr(e2e_conftest, "runtime_available", lambda: True)
+        monkeypatch.setattr(
+            e2e_conftest, "_required_e2e_models_ready", lambda: (True, "")
+        )
+        monkeypatch.setattr(
+            e2e_conftest,
+            "_stop_dev_cluster_and_free_ports",
+            lambda: None,
+        )
+        monkeypatch.setattr(e2e_conftest, "_ensure_stack_running", lambda: True)
+        monkeypatch.setattr(e2e_conftest, "_stamp_e2e_deploy_state", lambda value: None)
+        monkeypatch.setattr(e2e_conftest, "_suspend_cronworkflows_for_session", list)
+        monkeypatch.setattr(e2e_conftest, "_bootstrap_tenant_and_schemas", lambda: None)
+        monkeypatch.setattr(e2e_conftest, "_ingest_sample_video", lambda: None)
+        monkeypatch.setattr(e2e_conftest, "_ingest_sample_frame", lambda: None)
+        monkeypatch.setattr(e2e_conftest, "_ensure_sandbox_gateway", lambda: None)
+        monkeypatch.setattr(
+            e2e_conftest, "_restore_cronworkflows", lambda cron_restore: None
+        )
+
+        with pytest.raises(RuntimeError, match="commit first"):
+            stack = e2e_conftest.e2e_stack.__wrapped__(
+                SimpleNamespace(session=SimpleNamespace(items=[])), {}
+            )
+            next(stack)
+
+        assert calls == {"create": [], "deploy": []}
 
     def test_required_model_probe_checks_exact_tomoro_and_backend_asr(
         self, monkeypatch
@@ -592,7 +933,15 @@ class TestSharedClusterOwnership:
             lambda *args, **kwargs: subprocess.CompletedProcess(args, 0),
         )
         monkeypatch.setattr(
-            e2e_conftest, "_read_e2e_fingerprint", lambda: "current-build"
+            e2e_conftest, "_read_e2e_deploy_state", lambda: {"sha": "c" * 40}
+        )
+        monkeypatch.setattr(
+            e2e_conftest,
+            "_e2e_deploy_reuse_state",
+            lambda repo_root, deployed_state, current_identity=None: (
+                "reusable",
+                "",
+            ),
         )
         monkeypatch.setattr(e2e_conftest, "runtime_available", lambda: True)
         monkeypatch.setattr(
@@ -605,13 +954,13 @@ class TestSharedClusterOwnership:
             ),
         )
 
-        assert e2e_conftest._e2e_cluster_state("current-build") == (
+        assert e2e_conftest._e2e_cluster_state() == (
             "unhealthy",
             "openai/whisper-large-v3-turbo is not served exactly at "
             "http://127.0.0.1:33905/v1/models",
         )
 
-    def test_started_cluster_waits_for_cluster_runtime_models_and_stamp(
+    def test_started_cluster_waits_for_cluster_runtime_models_and_state(
         self, monkeypatch
     ):
         states = iter(
@@ -626,12 +975,12 @@ class TestSharedClusterOwnership:
         monkeypatch.setattr(
             e2e_conftest,
             "_e2e_cluster_state",
-            lambda fingerprint: next(states),
+            lambda: next(states),
         )
         monkeypatch.setattr(e2e_conftest._time, "sleep", sleeps.append)
 
         assert e2e_conftest._wait_for_e2e_reuse_convergence(
-            "current-build", timeout_s=60, poll_interval_s=2
+            timeout_s=60, poll_interval_s=2
         ) == ("reusable", "")
         assert sleeps == [2, 2, 2]
 
@@ -641,13 +990,13 @@ class TestSharedClusterOwnership:
         monkeypatch.setattr(
             e2e_conftest,
             "_e2e_cluster_state",
-            lambda fingerprint: ("unhealthy", "required model is still loading"),
+            lambda: ("unhealthy", "required model is still loading"),
         )
         monkeypatch.setattr(e2e_conftest._time, "monotonic", lambda: next(times))
         monkeypatch.setattr(e2e_conftest._time, "sleep", sleeps.append)
 
         assert e2e_conftest._wait_for_e2e_reuse_convergence(
-            "current-build", timeout_s=2, poll_interval_s=0.5
+            timeout_s=2, poll_interval_s=0.5
         ) == (
             "unhealthy",
             "cluster did not converge within 2s; last state was unhealthy: "
@@ -669,18 +1018,16 @@ class TestSharedClusterOwnership:
         monkeypatch.setattr(
             e2e_conftest,
             "_e2e_cluster_state",
-            lambda fingerprint: next(states),
+            lambda: next(states),
         )
         monkeypatch.setattr(e2e_conftest._time, "sleep", sleeps.append)
 
         assert e2e_conftest._wait_for_e2e_reuse_convergence(
-            "current-build", timeout_s=60, poll_interval_s=2
+            timeout_s=60, poll_interval_s=2
         ) == ("reusable", "")
         assert sleeps == [2, 2]
 
-    def test_fingerprint_stamp_render_failure_reports_command_and_stderr(
-        self, monkeypatch
-    ):
+    def test_deploy_stamp_render_failure_reports_command_and_stderr(self, monkeypatch):
         monkeypatch.setattr(
             e2e_conftest,
             "_kubectl_e2e",
@@ -697,18 +1044,16 @@ class TestSharedClusterOwnership:
         )
 
         with pytest.raises(RuntimeError) as raised:
-            e2e_conftest._stamp_e2e_fingerprint("build-abc")
+            e2e_conftest._stamp_e2e_deploy_state({"sha": "b" * 40})
 
         assert str(raised.value) == (
             "kubectl command failed with exit 17: kubectl --context "
             "k3d-cogniverse-e2e -n cogniverse create configmap "
-            "e2e-build-fingerprint --from-literal=fingerprint=build-abc "
+            'e2e-deploy-state \'--from-literal=stamp={"sha":"bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"}\' '
             "--dry-run=client -o yaml\nstderr: render denied"
         )
 
-    def test_fingerprint_stamp_apply_failure_reports_command_and_stderr(
-        self, monkeypatch
-    ):
+    def test_deploy_stamp_apply_failure_reports_command_and_stderr(self, monkeypatch):
         manifest = "apiVersion: v1\nkind: ConfigMap\n"
         monkeypatch.setattr(
             e2e_conftest,
@@ -727,14 +1072,14 @@ class TestSharedClusterOwnership:
         monkeypatch.setattr(e2e_conftest.subprocess, "run", fail_apply)
 
         with pytest.raises(RuntimeError) as raised:
-            e2e_conftest._stamp_e2e_fingerprint("build-abc")
+            e2e_conftest._stamp_e2e_deploy_state({"sha": "b" * 40})
 
         assert str(raised.value) == (
             "kubectl command failed with exit 23: kubectl --context "
             "k3d-cogniverse-e2e apply -f -\nstderr: apply denied"
         )
 
-    def test_fingerprint_stamp_applies_rendered_manifest_once(self, monkeypatch):
+    def test_deploy_stamp_applies_rendered_manifest_once(self, monkeypatch):
         manifest = "apiVersion: v1\nkind: ConfigMap\n"
         applied: list[tuple[list[str], dict]] = []
         monkeypatch.setattr(
@@ -753,7 +1098,7 @@ class TestSharedClusterOwnership:
 
         monkeypatch.setattr(e2e_conftest.subprocess, "run", apply)
 
-        e2e_conftest._stamp_e2e_fingerprint("build-abc")
+        e2e_conftest._stamp_e2e_deploy_state({"sha": "b" * 40})
 
         assert len(applied) == 1
         assert applied[0][0] == [
@@ -772,14 +1117,15 @@ class TestSharedClusterOwnership:
         *,
         cluster_states,
         force_fresh,
-        fingerprints=("current-build", "current-build"),
+        deploy_shas=("current-build", "current-build"),
     ):
         import cogniverse_cli.cluster as cluster_cli
 
         from tests.e2e.deployment import conftest as deployment_conftest
 
         calls = {
-            "fingerprint": [],
+            "sha": [],
+            "identity": [],
             "start": [],
             "stop_dev": [],
             "create": [],
@@ -793,11 +1139,39 @@ class TestSharedClusterOwnership:
             monkeypatch.setenv("E2E_FRESH", "1")
         else:
             monkeypatch.delenv("E2E_FRESH", raising=False)
-        fingerprint_values = iter(fingerprints)
+        sha_values = iter(deploy_shas)
+        if cluster_states:
+            cluster_state_values = iter(
+                [
+                    (
+                        "stopped" if state["servers_running"] == 0 else "reusable",
+                        "",
+                    )
+                    for state in cluster_states
+                ]
+            )
+        else:
+            cluster_state_values = iter([("absent", "")])
+        deployment_identity = {
+            "backend": "rocm",
+            "values_files": [
+                "charts/cogniverse/values.k3s.yaml",
+                "charts/cogniverse/values.rocm.yaml",
+            ],
+            "set_overrides": {
+                "argo-workflows.crds.install": "false",
+                "runtime.backend": "rocm",
+                "dashboard.backend": "rocm",
+                "devMode.enabled": "false",
+                "runtime.sandbox.enabled": "false",
+                **e2e_conftest._e2e_deployment_overrides(),
+            },
+            "image_repository": "cogniverse/runtime-rocm",
+        }
         monkeypatch.setattr(
             e2e_conftest,
-            "_e2e_deploy_fingerprint",
-            lambda: calls["fingerprint"].append(None) or next(fingerprint_values),
+            "_current_e2e_deploy_sha",
+            lambda repo_root=None: calls["sha"].append(None) or next(sha_values),
         )
         monkeypatch.setattr(cluster_cli, "list_cluster_states", lambda: cluster_states)
         monkeypatch.setattr(
@@ -805,8 +1179,8 @@ class TestSharedClusterOwnership:
         )
         monkeypatch.setattr(
             e2e_conftest,
-            "_kubectl_e2e",
-            lambda *args, **kwargs: type("Result", (), {"returncode": 0})(),
+            "_e2e_cluster_state",
+            lambda: next(cluster_state_values),
         )
         monkeypatch.setattr(e2e_conftest, "runtime_available", lambda: True)
         monkeypatch.setattr(
@@ -815,7 +1189,9 @@ class TestSharedClusterOwnership:
             lambda: calls["models"].append(None) or (True, ""),
         )
         monkeypatch.setattr(
-            e2e_conftest, "_read_e2e_fingerprint", lambda: "current-build"
+            e2e_conftest,
+            "_effective_e2e_deployment_identity",
+            lambda repo_root: calls["identity"].append(None) or deployment_identity,
         )
         monkeypatch.setattr(
             e2e_conftest,
@@ -839,7 +1215,7 @@ class TestSharedClusterOwnership:
         )
         monkeypatch.setattr(
             e2e_conftest,
-            "_stamp_e2e_fingerprint",
+            "_stamp_e2e_deploy_state",
             lambda value: calls["stamp"].append(value),
         )
         monkeypatch.setattr(
@@ -921,8 +1297,33 @@ class TestSharedClusterOwnership:
         ]
         assert calls["healthy"] == [None]
         assert calls["models"] == [None]
-        assert calls["fingerprint"] == [None, None]
-        assert calls["stamp"] == ["current-build"]
+        assert calls["sha"] == [None, None]
+        assert calls["identity"] == [None]
+        assert calls["stamp"] == [
+            {
+                "sha": "current-build",
+                "backend": "rocm",
+                "values_files": [
+                    "charts/cogniverse/values.k3s.yaml",
+                    "charts/cogniverse/values.rocm.yaml",
+                ],
+                "set_overrides": {
+                    "argo-workflows.crds.install": "false",
+                    "runtime.backend": "rocm",
+                    "dashboard.backend": "rocm",
+                    "devMode.enabled": "false",
+                    "runtime.sandbox.enabled": "false",
+                    "inference.vllm_llm_teacher.enabled": "false",
+                    "inference.vllm_colpali.livenessProbe.initialDelaySeconds": "1200",
+                    "inference.vllm_colpali.livenessProbe.failureThreshold": "60",
+                    "inference.vllm_asr.livenessProbe.initialDelaySeconds": "1200",
+                    "inference.vllm_asr.livenessProbe.failureThreshold": "60",
+                    "inference.vllm_llm_student.livenessProbe.initialDelaySeconds": "1200",
+                    "inference.vllm_llm_student.livenessProbe.failureThreshold": "60",
+                },
+                "image_repository": "cogniverse/runtime-rocm",
+            }
+        ]
         stack.close()
 
     def test_deploy_rejects_working_tree_changes_during_image_build(self, monkeypatch):
@@ -931,7 +1332,7 @@ class TestSharedClusterOwnership:
                 monkeypatch,
                 cluster_states=[],
                 force_fresh=False,
-                fingerprints=("before-build", "after-build"),
+                deploy_shas=("before-build", "after-build"),
             )
 
         assert str(raised.value) == (
@@ -980,9 +1381,9 @@ class TestSharedClusterOwnership:
         assert calls["delete"] == ["cogniverse-e2e"]
 
     @pytest.mark.parametrize(
-        ("force_fresh", "runtime_ready", "deployed_fingerprint", "reason"),
+        ("force_fresh", "runtime_ready", "cluster_state", "reason"),
         [
-            (False, True, "stale-build", "deploy fingerprint is stale"),
+            (False, True, "stale", "state is stale"),
             (False, False, "current-build", "is unhealthy"),
             (True, True, "current-build", "E2E_FRESH cannot replace"),
         ],
@@ -992,7 +1393,7 @@ class TestSharedClusterOwnership:
         monkeypatch,
         force_fresh,
         runtime_ready,
-        deployed_fingerprint,
+        cluster_state,
         reason,
     ):
         """A session may reject shared state, but it must never destroy it."""
@@ -1013,16 +1414,29 @@ class TestSharedClusterOwnership:
             ],
         )
         monkeypatch.setattr(
-            e2e_conftest, "_e2e_deploy_fingerprint", lambda: "current-build"
+            e2e_conftest,
+            "_current_e2e_deploy_sha",
+            lambda repo_root=None: "current-build",
+        )
+        monkeypatch.setattr(
+            e2e_conftest,
+            "_e2e_cluster_state",
+            lambda: (
+                "stale"
+                if cluster_state == "stale"
+                else ("unhealthy" if not runtime_ready else "reusable"),
+                "deployment identity changed"
+                if cluster_state == "stale"
+                else (
+                    "runtime readiness failed at http://127.0.0.1:28000/health/live"
+                    if not runtime_ready
+                    else ""
+                ),
+            ),
         )
         monkeypatch.setattr(e2e_conftest, "runtime_available", lambda: runtime_ready)
         monkeypatch.setattr(
             e2e_conftest, "_required_e2e_models_ready", lambda: (True, "")
-        )
-        monkeypatch.setattr(
-            e2e_conftest,
-            "_read_e2e_fingerprint",
-            lambda: deployed_fingerprint,
         )
         monkeypatch.setattr(
             e2e_conftest, "_stop_dev_cluster_and_free_ports", lambda: None
@@ -1077,51 +1491,28 @@ class TestSharedClusterOwnership:
         from tests.e2e.deployment import conftest as deployment_conftest
 
         inspections: list[None] = []
-        states = iter(
-            [
-                [
-                    {
-                        "name": "cogniverse-e2e",
-                        "servers_running": 0,
-                        "servers_count": 1,
-                    }
-                ],
-                [
-                    {
-                        "name": "cogniverse-e2e",
-                        "servers_running": 1,
-                        "servers_count": 1,
-                    }
-                ],
-            ]
-        )
+        states = iter([("stopped", ""), ("reusable", "")])
         started: list[str] = []
         created: list[str] = []
         deleted: list[str] = []
 
-        def list_states():
+        def cluster_state():
             inspections.append(None)
             return next(states)
 
         monkeypatch.delenv("E2E_FRESH", raising=False)
         monkeypatch.setattr(
-            e2e_conftest, "_e2e_deploy_fingerprint", lambda: "current-build"
+            e2e_conftest,
+            "_current_e2e_deploy_sha",
+            lambda repo_root=None: "current-build",
         )
-        monkeypatch.setattr(cluster_cli, "list_cluster_states", list_states)
         monkeypatch.setattr(
             cluster_cli, "start_cluster", lambda name: started.append(name)
         )
-        monkeypatch.setattr(
-            e2e_conftest,
-            "_kubectl_e2e",
-            lambda *args, **kwargs: type("Result", (), {"returncode": 0})(),
-        )
+        monkeypatch.setattr(e2e_conftest, "_e2e_cluster_state", cluster_state)
         monkeypatch.setattr(e2e_conftest, "runtime_available", lambda: True)
         monkeypatch.setattr(
             e2e_conftest, "_required_e2e_models_ready", lambda: (True, "")
-        )
-        monkeypatch.setattr(
-            e2e_conftest, "_read_e2e_fingerprint", lambda: "current-build"
         )
         monkeypatch.setattr(
             deployment_conftest,
@@ -1140,14 +1531,7 @@ class TestSharedClusterOwnership:
             e2e_conftest, "_stop_dev_cluster_and_free_ports", lambda: None
         )
         monkeypatch.setattr(e2e_conftest, "_ensure_stack_running", lambda: True)
-        monkeypatch.setattr(e2e_conftest, "_stamp_e2e_fingerprint", lambda value: None)
-        monkeypatch.setattr(
-            e2e_conftest.subprocess,
-            "run",
-            lambda *args, **kwargs: type(
-                "Result", (), {"returncode": 0, "stdout": "", "stderr": ""}
-            )(),
-        )
+        monkeypatch.setattr(e2e_conftest, "_stamp_e2e_deploy_state", lambda value: None)
         monkeypatch.setattr(e2e_conftest, "_suspend_cronworkflows_for_session", list)
         monkeypatch.setattr(e2e_conftest, "_bootstrap_tenant_and_schemas", lambda: None)
         monkeypatch.setattr(e2e_conftest, "_ingest_sample_video", lambda: None)

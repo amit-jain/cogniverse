@@ -382,6 +382,7 @@ def deployment_helm_inputs(
     """Resolve the exact backend, overlays, image tags, and Helm overrides."""
     from cogniverse_cli.config import get_device_values_file
     from cogniverse_cli.images import (
+        RUNTIME_REPOS_BY_BACKEND,
         detect_torch_backend,
         dev_image_set_values,
         dev_version,
@@ -423,6 +424,7 @@ def deployment_helm_inputs(
     return {
         "backend": backend,
         "image_version": image_version,
+        "image_repository": RUNTIME_REPOS_BY_BACKEND[backend],
         "helm_values": helm_values,
         "helm_set_overrides": helm_set_overrides,
     }
