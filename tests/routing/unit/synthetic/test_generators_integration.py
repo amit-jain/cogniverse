@@ -183,7 +183,11 @@ async def _extract_boundary_entity(text: str, tenant_id: str):
 
 
 def _label_callback_query(kind: str, topic: str) -> str:
-    return f"find {topic}" if kind == "routing" else topic
+    if kind == "routing":
+        return f"find {topic}"
+    if kind == "profile":
+        return f"find {topic} in document content"
+    return topic
 
 
 def _label_callback_result(kind: str, query: str) -> dict[str, Any]:
@@ -402,7 +406,7 @@ class TestProfileGeneratorIntegration:
             assert ex.selected_profile in available
             assert ex.modality == "video"
             assert ex.query_intent == "video_search"
-            assert ex.query == "Machine Learning Tutorial"
+            assert ex.query == "find a video frame showing Machine Learning Tutorial"
             assert ex.complexity == "medium"
 
     @pytest.mark.asyncio
@@ -418,7 +422,7 @@ class TestProfileGeneratorIntegration:
         )
 
         assert examples[0].model_dump() == {
-            "query": "Curie lecture",
+            "query": "find Curie lecture in an audio transcript",
             "available_profiles": "audio_semantic",
             "selected_profile": "audio_semantic",
             "reasoning": "Production selector chose audio_semantic.",
