@@ -170,10 +170,13 @@ class TestUpCommand:
 
     @pytest.fixture(autouse=True)
     def _no_live_secret_sync(self):
-        # up() imports sync_hf_token_to_cluster from cogniverse_cli.secrets and
-        # kubectl-applies the HF token; without this, the full-flow tests
-        # mutate a live k3d cluster's hf-token Secret on a dev box.
-        with patch("cogniverse_cli.secrets.sync_hf_token_to_cluster"):
+        # up() imports the sync helpers from cogniverse_cli.secrets and
+        # kubectl-applies the HF token and inference API key; without this,
+        # the full-flow tests mutate a live k3d cluster's Secrets on a dev box.
+        with (
+            patch("cogniverse_cli.secrets.sync_hf_token_to_cluster"),
+            patch("cogniverse_cli.secrets.sync_inference_api_key_to_cluster"),
+        ):
             yield
 
     @patch("cogniverse_cli.main.check_prerequisites", return_value=["docker"])
@@ -241,6 +244,55 @@ class TestUpCommand:
         assert set_vals["dashboard.backend"] == set_vals["runtime.backend"]
         assert "llm.builtin.enabled" not in set_vals
         assert "llm.external.enabled" not in set_vals
+
+    @patch("cogniverse_cli.main._print_status_table")
+    @patch("cogniverse_cli.main.deploy_workflow_templates")
+    @patch("cogniverse_cli.main.install_argo_controller")
+    @patch("cogniverse_cli.main.subprocess.run")
+    @patch("cogniverse_cli.main.wait_for_url", return_value=True)
+    @patch("cogniverse_cli.main.helm_install")
+    @patch("cogniverse_cli.main.pull_and_import_third_party")
+    @patch("cogniverse_cli.main.get_values_file", return_value=Path("/v.yaml"))
+    @patch("cogniverse_cli.main.get_chart_path", return_value=Path("/chart"))
+    @patch("cogniverse_cli.main.get_workflows_path", return_value=Path("/wf"))
+    @patch("cogniverse_cli.main._probe_host_llm", return_value=False)
+    @patch("cogniverse_cli.main.has_workspace_source", return_value=False)
+    @patch("cogniverse_cli.main.resolve_project_root", return_value=Path("/root"))
+    @patch("cogniverse_cli.main.cluster_exists", return_value=True)
+    @patch("cogniverse_cli.main.check_prerequisites", return_value=[])
+    @patch("cogniverse_cli.main.has_existing_k8s", return_value=False)
+    @patch("cogniverse_cli.main.start_port_forwards")
+    def test_up_syncs_hf_token_and_inference_api_key(
+        self,
+        mock_start_pf: MagicMock,
+        mock_k8s: MagicMock,
+        mock_prereq: MagicMock,
+        mock_cluster: MagicMock,
+        mock_root: MagicMock,
+        mock_ws: MagicMock,
+        mock_probe: MagicMock,
+        mock_wf_path: MagicMock,
+        mock_chart: MagicMock,
+        mock_values: MagicMock,
+        mock_pull: MagicMock,
+        mock_helm: MagicMock,
+        mock_wait: MagicMock,
+        mock_subprocess: MagicMock,
+        mock_argo: MagicMock,
+        mock_deploy_wf: MagicMock,
+        mock_status: MagicMock,
+    ) -> None:
+        """up() bootstraps both chart-referenced Secrets before helm install."""
+        with (
+            patch("cogniverse_cli.secrets.sync_hf_token_to_cluster") as mock_hf,
+            patch(
+                "cogniverse_cli.secrets.sync_inference_api_key_to_cluster"
+            ) as mock_inference,
+        ):
+            result = CliRunner().invoke(cli, ["up"])
+        assert result.exit_code == 0
+        mock_hf.assert_called_once_with(required=False)
+        mock_inference.assert_called_once_with(required=False)
 
     @patch("cogniverse_cli.main._print_status_table")
     @patch("cogniverse_cli.main.deploy_workflow_templates")
@@ -480,9 +532,12 @@ class TestUpImagePrune:
             for name in no_return:
                 stack.enter_context(patch(f"cogniverse_cli.main.{name}"))
             # Sourced from cogniverse_cli.secrets (local import in up()); patch
-            # it there so the test never kubectl-applies to a live cluster.
+            # them there so the test never kubectl-applies to a live cluster.
             stack.enter_context(
                 patch("cogniverse_cli.secrets.sync_hf_token_to_cluster")
+            )
+            stack.enter_context(
+                patch("cogniverse_cli.secrets.sync_inference_api_key_to_cluster")
             )
             mock_prune = stack.enter_context(
                 patch(

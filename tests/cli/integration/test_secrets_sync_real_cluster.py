@@ -20,8 +20,11 @@ import uuid
 import pytest
 from cogniverse_cli.constants import NAMESPACE
 from cogniverse_cli.secrets import (
+    INFERENCE_API_KEY_KEY,
+    INFERENCE_API_KEY_SECRET,
     MESSAGING_SECRET,
     TELEGRAM_TOKEN_KEY,
+    sync_inference_api_key_to_cluster,
     sync_telegram_token_to_cluster,
 )
 
@@ -189,3 +192,168 @@ class TestTelegramSecretSync:
         assert sync_telegram_token_to_cluster(required=True) is False
 
         assert _read_secret_value(MESSAGING_SECRET, TELEGRAM_TOKEN_KEY) == before
+
+
+@pytest.fixture
+def restore_inference_secret(_use_test_owned_cluster):
+    """Preserve and restore whatever the cluster already had."""
+    original = _read_secret_value(INFERENCE_API_KEY_SECRET, INFERENCE_API_KEY_KEY)
+    yield
+    if original is None:
+        subprocess.run(
+            ["kubectl", "delete", "secret", INFERENCE_API_KEY_SECRET, "-n", NAMESPACE],
+            capture_output=True,
+            check=False,
+            timeout=30,
+        )
+    else:
+        rendered = subprocess.run(
+            [
+                "kubectl",
+                "create",
+                "secret",
+                "generic",
+                INFERENCE_API_KEY_SECRET,
+                "-n",
+                NAMESPACE,
+                f"--from-literal={INFERENCE_API_KEY_KEY}={original}",
+                "--dry-run=client",
+                "-o",
+                "yaml",
+            ],
+            capture_output=True,
+            text=True,
+            timeout=30,
+            check=False,
+        )
+        subprocess.run(
+            ["kubectl", "apply", "-f", "-"],
+            input=rendered.stdout,
+            capture_output=True,
+            text=True,
+            timeout=30,
+            check=False,
+        )
+
+
+class TestInferenceApiKeySecretSync:
+    def test_sync_stores_the_key_the_chart_mounts(
+        self, monkeypatch, restore_inference_secret
+    ):
+        key = f"infkey-TEST{uuid.uuid4().hex}"
+        monkeypatch.setenv("COGNIVERSE_INFERENCE_API_KEY", key)
+
+        assert sync_inference_api_key_to_cluster(required=True) is True
+
+        # Exactly what the runtime/ingestor secretKeyRef resolves.
+        assert (
+            _read_secret_value(INFERENCE_API_KEY_SECRET, INFERENCE_API_KEY_KEY) == key
+        )
+
+    def test_resync_replaces_a_rotated_key(self, monkeypatch, restore_inference_secret):
+        first = f"infkey-OLD{uuid.uuid4().hex}"
+        second = f"infkey-NEW{uuid.uuid4().hex}"
+
+        monkeypatch.setenv("COGNIVERSE_INFERENCE_API_KEY", first)
+        assert sync_inference_api_key_to_cluster(required=True) is True
+        assert (
+            _read_secret_value(INFERENCE_API_KEY_SECRET, INFERENCE_API_KEY_KEY) == first
+        )
+
+        monkeypatch.setenv("COGNIVERSE_INFERENCE_API_KEY", second)
+        assert sync_inference_api_key_to_cluster(required=True) is True
+        assert (
+            _read_secret_value(INFERENCE_API_KEY_SECRET, INFERENCE_API_KEY_KEY)
+            == second
+        )
+
+    def test_key_read_from_the_project_env_directory(
+        self, monkeypatch, tmp_path, restore_inference_secret
+    ):
+        """The gitignored ./.env/COGNIVERSE_INFERENCE_API_KEY.env is the dev
+        source."""
+        monkeypatch.delenv("COGNIVERSE_INFERENCE_API_KEY", raising=False)
+        key = f"infkey-FILE{uuid.uuid4().hex}"
+        env_dir = tmp_path / "project"
+        env_dir.mkdir()
+        (env_dir / "COGNIVERSE_INFERENCE_API_KEY.env").write_text(
+            f"COGNIVERSE_INFERENCE_API_KEY={key}\n"
+        )
+        monkeypatch.setattr("cogniverse_cli.secrets.PROJECT_ENV", env_dir)
+        monkeypatch.setattr("cogniverse_cli.secrets.HOME_ENV", tmp_path / "absent")
+
+        assert sync_inference_api_key_to_cluster(required=True) is True
+        assert (
+            _read_secret_value(INFERENCE_API_KEY_SECRET, INFERENCE_API_KEY_KEY) == key
+        )
+
+    def test_home_env_is_used_when_the_project_has_no_copy(
+        self, monkeypatch, tmp_path, restore_inference_secret
+    ):
+        monkeypatch.delenv("COGNIVERSE_INFERENCE_API_KEY", raising=False)
+        key = f"infkey-HOME{uuid.uuid4().hex}"
+        home_env = tmp_path / "home.env"
+        home_env.write_text(f"# shared\nCOGNIVERSE_INFERENCE_API_KEY={key}\n")
+        monkeypatch.setattr("cogniverse_cli.secrets.PROJECT_ENV", tmp_path / "absent")
+        monkeypatch.setattr("cogniverse_cli.secrets.HOME_ENV", home_env)
+
+        assert sync_inference_api_key_to_cluster(required=True) is True
+        assert (
+            _read_secret_value(INFERENCE_API_KEY_SECRET, INFERENCE_API_KEY_KEY) == key
+        )
+
+    def test_project_env_overrides_home_env(
+        self, monkeypatch, tmp_path, restore_inference_secret
+    ):
+        """Both present: the project copy wins, per-variable."""
+        monkeypatch.delenv("COGNIVERSE_INFERENCE_API_KEY", raising=False)
+        project_key = f"infkey-PROJ{uuid.uuid4().hex}"
+        home_key = f"infkey-HOME{uuid.uuid4().hex}"
+
+        env_dir = tmp_path / "project"
+        env_dir.mkdir()
+        (env_dir / "COGNIVERSE_INFERENCE_API_KEY.env").write_text(project_key)
+        home_env = tmp_path / "home.env"
+        home_env.write_text(f"COGNIVERSE_INFERENCE_API_KEY={home_key}\n")
+        monkeypatch.setattr("cogniverse_cli.secrets.PROJECT_ENV", env_dir)
+        monkeypatch.setattr("cogniverse_cli.secrets.HOME_ENV", home_env)
+
+        assert sync_inference_api_key_to_cluster(required=True) is True
+        assert (
+            _read_secret_value(INFERENCE_API_KEY_SECRET, INFERENCE_API_KEY_KEY)
+            == project_key
+        )
+
+    def test_environment_variable_beats_both_files(
+        self, monkeypatch, tmp_path, restore_inference_secret
+    ):
+        env_key = f"infkey-ENV{uuid.uuid4().hex}"
+        env_dir = tmp_path / "project"
+        env_dir.mkdir()
+        (env_dir / "COGNIVERSE_INFERENCE_API_KEY.env").write_text("infkey-FROMPROJECT")
+        home_env = tmp_path / "home.env"
+        home_env.write_text("COGNIVERSE_INFERENCE_API_KEY=infkey-FROMHOME\n")
+        monkeypatch.setattr("cogniverse_cli.secrets.PROJECT_ENV", env_dir)
+        monkeypatch.setattr("cogniverse_cli.secrets.HOME_ENV", home_env)
+        monkeypatch.setenv("COGNIVERSE_INFERENCE_API_KEY", env_key)
+
+        assert sync_inference_api_key_to_cluster(required=True) is True
+        assert (
+            _read_secret_value(INFERENCE_API_KEY_SECRET, INFERENCE_API_KEY_KEY)
+            == env_key
+        )
+
+    def test_missing_key_reports_failure_and_writes_nothing(
+        self, monkeypatch, tmp_path
+    ):
+        monkeypatch.delenv("COGNIVERSE_INFERENCE_API_KEY", raising=False)
+        monkeypatch.setattr("cogniverse_cli.secrets.PROJECT_ENV", tmp_path / "absent")
+        monkeypatch.setattr("cogniverse_cli.secrets.HOME_ENV", tmp_path / "gone")
+        before = _read_secret_value(INFERENCE_API_KEY_SECRET, INFERENCE_API_KEY_KEY)
+
+        assert sync_inference_api_key_to_cluster(required=True) is False
+
+        assert (
+            _read_secret_value(INFERENCE_API_KEY_SECRET, INFERENCE_API_KEY_KEY)
+            == before
+        )
