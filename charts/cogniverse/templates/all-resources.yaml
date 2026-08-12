@@ -331,7 +331,11 @@ spec:
         # via the colbert_pylate sidecar in mode=dense).
         {{- if .Values.inference.denseon.enabled }}
         - name: COGNIVERSE_SEMANTIC_EMBED_URL
+          {{- if .Values.inference.denseon.externalUrl }}
+          value: {{ .Values.inference.denseon.externalUrl | quote }}
+          {{- else }}
           value: "http://{{ $fullName }}-denseon:{{ .Values.inference.denseon.service.port }}"
+          {{- end }}
         - name: COGNIVERSE_SEMANTIC_EMBED_MODEL
           value: {{ .Values.inference.denseon.model | quote }}
         {{- end }}
@@ -391,16 +395,7 @@ spec:
         # from this JSON dict.
         - name: INFERENCE_SERVICE_URLS
           value: |-
-            {
-            {{- $first := true -}}
-            {{- range $name, $cfg := .Values.inference -}}
-            {{- if $cfg.enabled }}
-            {{- if not $first }},{{ end -}}
-            {{- $first = false }}
-              "{{ $name }}": "http://{{ $fullName }}-{{ $name | kebabcase }}:{{ $cfg.service.port }}"
-            {{- end -}}
-            {{- end -}}
-            }
+            {{- include "cogniverse.inferenceServiceUrls" $ | nindent 12 }}
         # Bearer key for Modal-hosted entries in the URL map; synced by
         # `cogniverse secrets sync`, optional so a fully-local stack starts
         # without it.
@@ -1334,7 +1329,7 @@ spec:
     app.kubernetes.io/component: llm
 {{- end }}
 {{- range $name, $cfg := .Values.inference }}
-{{- if $cfg.enabled }}
+{{- if and $cfg.enabled (not $cfg.externalUrl) }}
 {{- $engine := default "vllm" $cfg.engine }}
 {{- $device := default "cpu" $cfg.device }}
 {{- /*
@@ -1365,7 +1360,7 @@ spec:
 {{- if gt $seqIndex 0 }}{{ $predecessor = index $sequence (sub $seqIndex 1) }}{{ end }}
 {{- $predecessorCfg := dict }}
 {{- if $predecessor }}{{ $predecessorCfg = (index $.Values.inference $predecessor) | default dict }}{{ end }}
-{{- $gateOn := and (ne $predecessor "") $predecessorCfg.enabled }}
+{{- $gateOn := and (ne $predecessor "") $predecessorCfg.enabled (not $predecessorCfg.externalUrl) }}
 {{- /*
      Each pod's gate deadline is its own clock: every init container starts
      when the release is applied, so a flat deadline would release the whole

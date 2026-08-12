@@ -102,16 +102,7 @@ spec:
               key: rootPassword
         - name: INFERENCE_SERVICE_URLS
           value: |-
-            {
-            {{- $first := true -}}
-            {{- range $name, $cfg := .Values.inference -}}
-            {{- if $cfg.enabled }}
-            {{- if not $first }},{{ end -}}
-            {{- $first = false }}
-              "{{ $name }}": "http://{{ $fullName }}-{{ $name | kebabcase }}:{{ $cfg.service.port }}"
-            {{- end -}}
-            {{- end -}}
-            }
+            {{- include "cogniverse.inferenceServiceUrls" $ | nindent 12 }}
         # Bearer key for Modal-hosted entries in the URL map; synced by
         # `cogniverse secrets sync`, optional so a fully-local stack starts
         # without it.

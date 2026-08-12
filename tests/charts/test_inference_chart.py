@@ -757,6 +757,8 @@ def test_cpu_overlay_swaps_whisper_without_inheriting_the_turbo_revision():
     assert "exec vllm serve 'openai/whisper-tiny' \\\n" in script
     assert "--revision" not in script
     assert "41f01f3fe87f28c78e2fbf8b568835947dd65ed9" not in script
+
+
 def _runtime_container(docs: list[dict]) -> dict:
     for doc in docs:
         if doc.get("kind") != "Deployment":
@@ -804,3 +806,102 @@ def test_k3s_rocm_clap_embed_pod_is_cpu_only():
         "PORT": "8000",
     }
     assert "--gpu-memory-utilization" not in container.get("args", [])
+
+
+def _ingestor_env(docs: list[dict]) -> dict[str, str]:
+    for d in docs:
+        if (
+            d.get("kind") == "Deployment"
+            and d.get("metadata", {}).get("name") == "cogniverse-ingestor"
+        ):
+            container = d["spec"]["template"]["spec"]["containers"][0]
+            return {e["name"]: e.get("value") for e in container.get("env", [])}
+    raise AssertionError("ingestor Deployment not found")
+
+
+_COLBERT_MODAL_URL = "https://amit--cogniverse-colbert-pylate.modal.run"
+
+
+def test_external_url_replaces_the_cluster_internal_url_in_both_url_maps():
+    """Strategy B: a Modal-hosted service keeps its key in the URL map but
+    resolves to the external endpoint, for the runtime and the ingestor."""
+    docs = _render(f"inference.colbert_pylate.externalUrl={_COLBERT_MODAL_URL}")
+    expected = {
+        "colbert_pylate": _COLBERT_MODAL_URL,
+        "denseon": "http://cogniverse-denseon:8000",
+        "gliner": "http://cogniverse-gliner:8080",
+        "vllm_asr": "http://cogniverse-vllm-asr:8000",
+    }
+    assert _service_urls(docs) == expected
+    assert json.loads(_ingestor_env(docs)["INFERENCE_SERVICE_URLS"]) == expected
+
+
+def test_external_url_skips_the_local_deployment_and_service():
+    docs = _render(f"inference.colbert_pylate.externalUrl={_COLBERT_MODAL_URL}")
+    assert set(_inference_deployments(docs)) == {"denseon", "gliner", "vllm_asr"}
+    assert set(_inference_services(docs)) == {"denseon", "gliner", "vllm_asr"}
+
+
+def test_no_external_url_renders_the_default_env_byte_identical():
+    """Strategy A: without externalUrl the rendered env value is exactly the
+    pre-externalUrl form, byte for byte, in both consumers."""
+    docs = _render()
+    expected = (
+        "{\n"
+        '  "colbert_pylate": "http://cogniverse-colbert-pylate:8000",\n'
+        '  "denseon": "http://cogniverse-denseon:8000",\n'
+        '  "gliner": "http://cogniverse-gliner:8080",\n'
+        '  "vllm_asr": "http://cogniverse-vllm-asr:8000"}'
+    )
+    assert _runtime_env(docs)["INFERENCE_SERVICE_URLS"] == expected
+    assert _ingestor_env(docs)["INFERENCE_SERVICE_URLS"] == expected
+
+
+def test_external_url_skips_the_model_cache_pvc():
+    docs = _render(
+        "hfCache.persistence.enabled=true",
+        f"inference.colbert_pylate.externalUrl={_COLBERT_MODAL_URL}",
+    )
+    pvcs = {
+        d["metadata"]["name"] for d in docs if d.get("kind") == "PersistentVolumeClaim"
+    }
+    assert "cogniverse-colbert-pylate-model-cache" not in pvcs
+    assert "cogniverse-denseon-model-cache" in pvcs
+
+
+def test_external_url_predecessor_does_not_gate_its_successor():
+    """In the rocm startup chain denseon waits on vllm_asr; a Modal-hosted
+    vllm_asr deploys no local Service, so denseon must start ungated instead
+    of waiting on a /health that can never answer."""
+    docs = _render(
+        "inference.vllm_asr.externalUrl=https://amit--cogniverse-vllm-asr.modal.run",
+        values="values.rocm.yaml",
+    )
+    deps = _inference_deployments(docs)
+    assert "vllm_asr" not in deps
+    inits = deps["denseon"]["spec"]["template"]["spec"].get("initContainers", [])
+    assert [c["name"] for c in inits if c["name"] == "startup-gate"] == []
+
+
+def test_external_url_on_denseon_redirects_the_semantic_embed_url():
+    """COGNIVERSE_SEMANTIC_EMBED_URL is derived from the same service; a
+    Modal-hosted denseon must not leave it pointing at the skipped pod."""
+    modal_url = "https://amit--cogniverse-denseon.modal.run"
+    docs = _render(f"inference.denseon.externalUrl={modal_url}")
+    assert _runtime_env(docs)["COGNIVERSE_SEMANTIC_EMBED_URL"] == modal_url
+
+
+def test_external_url_on_the_llm_services_fails_the_render():
+    """The primary/teacher LLM endpoints are derived by their own helpers
+    with their own override (runtime.primaryLLM.*); externalUrl on the LLM
+    services would skip the pod while LLM_ENDPOINT still points at it."""
+    for service in ("vllm_llm_student", "vllm_llm_teacher"):
+        with pytest.raises(AssertionError, match="runtime.primaryLLM"):
+            _render(
+                f"inference.{service}.enabled=true",
+                f"inference.{service}.externalUrl=https://amit--llm.modal.run",
+            )
+    # Invalid even while the service is disabled: the key would silently
+    # start lying the moment the service is enabled.
+    with pytest.raises(AssertionError, match="runtime.primaryLLM"):
+        _render("inference.vllm_llm_student.externalUrl=https://amit--llm.modal.run")

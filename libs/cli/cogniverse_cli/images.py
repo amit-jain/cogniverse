@@ -177,13 +177,15 @@ def _merged_inference(project_root: Path, values_files: list[Path] | None) -> di
 def enabled_sidecars(project_root: Path, values_files: list[Path] | None) -> list[str]:
     """Sidecar services whose ``inference.<svc>.enabled`` resolves true after
     merging the chart defaults with the deploy overlays helm will apply, in
-    ``SIDECAR_BUILDS`` order."""
+    ``SIDECAR_BUILDS`` order. Services with a non-empty ``externalUrl`` are
+    Modal-hosted — no local pod, so no build."""
     inference = _merged_inference(project_root, values_files)
     return [
         svc
         for svc in SIDECAR_BUILDS
         if isinstance(inference.get(svc), dict)
         and inference[svc].get("enabled") is True
+        and not inference[svc].get("externalUrl")
     ]
 
 
@@ -203,6 +205,9 @@ def first_party_services(
     required: dict[str, str] = {}
     for svc, cfg in inference.items():
         if not isinstance(cfg, dict) or cfg.get("enabled") is not True:
+            continue
+        if cfg.get("externalUrl"):
+            # Modal-hosted: the deploy renders no pod, so no image is needed.
             continue
         # Chart image-resolution order: imagesByDevice[device] -> image.
         device = cfg.get("device")

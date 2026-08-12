@@ -343,3 +343,29 @@ restarts and rollouts. Call with (dict "device" $device "name" $name "root" $).
   value: /root/.cache/huggingface/tunableop_{{ .name | kebabcase }}_%d.csv
 {{- end }}
 {{- end -}}
+
+{{/*
+INFERENCE_SERVICE_URLS JSON body — one {service_key: url} entry per enabled
+inference service. A non-empty ``externalUrl`` (an absolute https URL, e.g. a
+Modal endpoint) replaces the cluster-internal Service URL. The LLM services
+are excluded: their endpoints are derived by their own helpers and overridden
+via ``runtime.primaryLLM``.
+*/}}
+{{- define "cogniverse.inferenceServiceUrls" -}}
+{{- $fullName := include "cogniverse.fullname" . -}}
+{{- range $name, $cfg := .Values.inference -}}
+{{- if and $cfg.externalUrl (or (eq $name "vllm_llm_student") (eq $name "vllm_llm_teacher")) -}}
+{{- fail (printf "inference.%s.externalUrl is unsupported: the LLM endpoint is derived by its own helper; set runtime.primaryLLM.apiBase/model/apiKey instead" $name) -}}
+{{- end -}}
+{{- end -}}
+{
+{{- $first := true -}}
+{{- range $name, $cfg := .Values.inference -}}
+{{- if $cfg.enabled }}
+{{- if not $first }},{{ end -}}
+{{- $first = false }}
+  "{{ $name }}": "{{ if $cfg.externalUrl }}{{ $cfg.externalUrl }}{{ else }}http://{{ $fullName }}-{{ $name | kebabcase }}:{{ $cfg.service.port }}{{ end }}"
+{{- end -}}
+{{- end -}}
+}
+{{- end -}}
