@@ -373,109 +373,13 @@ cluster. `modal token new` writes `~/.modal.toml`; `MODAL_TOKEN_ID` /
 
 ## Modal Deployment (Serverless GPU)
 
-Modal provides serverless GPU infrastructure for VLM-based video frame description generation. See [docs/modal/deployment_guide.md](../modal/deployment_guide.md) for detailed setup.
-
-### Modal App Structure
-
-The actual Modal service (`scripts/modal_vlm_service.py`) provides VLM description generation using Qwen3-VL-8B-Instruct:
-
-```python
-# scripts/modal_vlm_service.py (simplified overview)
-import modal
-
-app = modal.App("cogniverse-vlm")
-
-# GPU-optimized image with SGLang and Qwen3-VL-8B model
-image = (
-    modal.Image.from_registry(f"nvidia/cuda:{tag}", add_python="3.11")
-    .pip_install(
-        "transformers>=4.52.0",
-        "sglang[all]==0.5.13",
-        # ... other dependencies
-    )
-    .run_function(download_model, volumes=volumes)
-)
-
-@app.cls(
-    gpu="h100:1",
-    timeout=180 * 60,  # 3 hours
-    image=image,
-    volumes=volumes,
-)
-@modal.concurrent(max_inputs=50)
-class VLMModel:
-    @modal.enter()
-    def start_runtime(self):
-        """Starts SGLang runtime for VLM inference."""
-        import sglang as sgl
-        self.runtime = sgl.Runtime(
-            model_path="Qwen/Qwen3-VL-8B-Instruct",
-            tokenizer_path="Qwen/Qwen3-VL-8B-Instruct",
-            tp_size=GPU_COUNT,
-            log_level=SGL_LOG_LEVEL,
-        )
-        sgl.set_default_backend(self.runtime)
-
-    @modal.fastapi_endpoint(method="POST", docs=True)
-    def generate_description(self, request: dict) -> dict:
-        """
-        Generate description for a video frame.
-
-        Args:
-            request: {
-                "frame_base64": "base64 encoded frame data",
-                "frame_path": "optional local path",
-                "remote_frame_path": "optional remote path",
-                "prompt": "optional custom prompt"
-            }
-
-        Returns:
-            {"description": "generated text", "duration_seconds": 1.23}
-        """
-        # Frame description generation using SGLang
-        # See actual implementation in scripts/modal_vlm_service.py
-
-    @modal.fastapi_endpoint(method="POST", docs=True)
-    def upload_and_process_frames(self, request: dict) -> dict:
-        """
-        Upload zip of frames and process them all in batch.
-
-        Args:
-            request: {
-                "zip_data": "base64 encoded zip",
-                "frame_mapping": {filename: frame_key}
-            }
-
-        Returns:
-            {"descriptions": {frame_key: description}, "processed_frames": N}
-        """
-        # Batch frame processing
-        # See actual implementation in scripts/modal_vlm_service.py
-```
-
-**Note:** The Modal service provides VLM description generation for video frames. For full video processing pipelines (keyframe extraction, transcription, embeddings, ingestion), use the local pipeline with `scripts/run_ingestion.py`.
-
-### Deploy to Modal
-
-```bash
-# Deploy to Modal
-modal deploy scripts/modal_vlm_service.py
-
-# Test VLM description generation with a local frame
-modal run scripts/modal_vlm_service.py::test_vlm --frame-path /path/to/frame.jpg
-
-# Production usage: Call the FastAPI endpoints
-# - VLMModel.generate_description (POST) - Single frame description
-# - VLMModel.upload_and_process_frames (POST) - Batch processing
-```
-
-For detailed Modal setup, GPU recommendations, and deployment guides, see:
-
-- [docs/modal/deployment_guide.md](../modal/deployment_guide.md) - Complete Modal deployment guide
-
-- [docs/modal/gpu_recommendations.md](../modal/gpu_recommendations.md) - GPU selection and configuration
-
-- [scripts/modal_vlm_service.py](../../scripts/modal_vlm_service.py) - Modal VLM service implementation
+Heavy inference services run on Modal via the `cogniverse inference modal`
+lifecycle (`deploy` / `warm` / `release` / `status` / `qualify` /
+`undeploy`), authenticated with `COGNIVERSE_INFERENCE_API_KEY`. Setup,
+service names, and the per-service `inference.<svc>.externalUrl` chart
+override are covered in
+[Unified Deployment — Strategy B](#strategy-b--local-cluster--modal-hosted-inference)
+and [Models and Inference](models-and-inference.md#modal-hosted-services-inferencesvcexternalurl).
 
 ---
 
