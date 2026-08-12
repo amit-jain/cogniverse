@@ -381,6 +381,26 @@ class TestEnabledSidecars:
         )
         assert enabled_sidecars(root, [overlay]) == ["videoprism_jax", "clap_embed"]
 
+    def test_external_url_excludes_the_sidecar_build(self, tmp_path: Path) -> None:
+        """A Modal-hosted service deploys no local pod, so its sidecar image
+        must not enter the build set."""
+        root = _make_project_root(tmp_path, face_embed=True)
+        overlay = tmp_path / "o.yaml"
+        overlay.write_text(
+            yaml.safe_dump(
+                {
+                    "inference": {
+                        "face_embed": {
+                            "externalUrl": (
+                                "https://amit--cogniverse-face-embed.modal.run"
+                            )
+                        }
+                    }
+                }
+            )
+        )
+        assert enabled_sidecars(root, [overlay]) == []
+
 
 class TestImportImages:
     """Tests for :func:`import_images`."""
@@ -1026,6 +1046,41 @@ class TestFirstPartyImageCoverage:
 
         assert "denseon" not in required
         assert "vllm_asr" not in required
+
+    def test_external_url_excludes_the_first_party_image(self, tmp_path: Path) -> None:
+        """A Modal-hosted first-party service renders no pod, so its image is
+        not required for the deploy."""
+        from cogniverse_cli.images import first_party_services
+
+        root = _make_project_root(tmp_path, face_embed=True)
+        assert first_party_services(root, None) == {}
+
+        chart_dir = root / "charts" / "cogniverse"
+        values = yaml.safe_load((chart_dir / "values.yaml").read_text())
+        values["inference"]["face_embed"]["image"] = {
+            "repository": "cogniverse/face-embed",
+            "tag": "0.1.0",
+        }
+        (chart_dir / "values.yaml").write_text(yaml.safe_dump(values))
+        assert first_party_services(root, None) == {
+            "face_embed": "cogniverse/face-embed"
+        }
+
+        overlay = tmp_path / "o.yaml"
+        overlay.write_text(
+            yaml.safe_dump(
+                {
+                    "inference": {
+                        "face_embed": {
+                            "externalUrl": (
+                                "https://amit--cogniverse-face-embed.modal.run"
+                            )
+                        }
+                    }
+                }
+            )
+        )
+        assert first_party_services(root, [overlay]) == {}
 
     @patch("subprocess.run")
     def test_verification_fails_when_build_skipped_a_deploy_overlay(
