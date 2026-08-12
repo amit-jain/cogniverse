@@ -142,3 +142,38 @@ class TestDailyGatewayHasNoRestartStep:
             t["name"] for t in weekly["spec"]["workflowSpec"]["templates"]
         }
         assert "restart-deployment" in weekly_templates
+
+
+class TestSyntheticGenerationUsesOnlyApprovedOptimizers:
+    """The synthetic-generation CronWorkflow must only request optimizer
+    types that have an approved training-data consumer. The optimization
+    CLI hard-fails on any other type (b15 e2e sweep: ``--agents
+    workflow,profile`` failed the whole workflow with "synthetic optimizer
+    types have no approved training-data consumer: ['workflow']").
+    """
+
+    def test_agents_arg_subset_of_approved_optimizers(self):
+        from cogniverse_synthetic.registry import (
+            APPROVED_TRAINING_AGENT_BY_OPTIMIZER,
+        )
+
+        docs = _render()
+        cron = _find_cron_workflow(docs, "synthetic-generation")
+        templates = cron["spec"]["workflowSpec"]["templates"]
+        agents_values = []
+        for tpl in templates:
+            container = tpl.get("container") or {}
+            args = container.get("args") or []
+            for i, arg in enumerate(args):
+                if arg == "--agents" and i + 1 < len(args):
+                    agents_values.append(args[i + 1])
+        assert agents_values, (
+            "no --agents arg found in the synthetic-generation CronWorkflow"
+        )
+        for value in agents_values:
+            requested = {a.strip() for a in value.split(",") if a.strip()}
+            unapproved = requested - set(APPROVED_TRAINING_AGENT_BY_OPTIMIZER)
+            assert not unapproved, (
+                "synthetic-generation requests optimizer types with no "
+                f"approved training-data consumer: {sorted(unapproved)}"
+            )

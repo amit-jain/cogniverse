@@ -320,11 +320,13 @@ spec:
           # populate; including it produced a per-mode failure in the
           # workflow result. ``simba`` is an agent-optimization mode,
           # not a synthetic generator. ``unified`` / ``cross_modal``
-          # also need extra config. workflow + profile run clean
-          # against an empty cluster — the working set the cron should
-          # produce until query_templates land in values.yaml.
+          # also need extra config. ``workflow`` has no approved
+          # training-data consumer (APPROVED_TRAINING_AGENT_BY_OPTIMIZER),
+          # so the optimization CLI hard-rejects it. ``profile`` is the
+          # working set the cron can produce until query_templates land
+          # in values.yaml.
           - "--agents"
-          - "workflow,profile"
+          - "profile"
         env:
         - name: BACKEND_URL
           value: "http://{{ $fullName }}-vespa"
