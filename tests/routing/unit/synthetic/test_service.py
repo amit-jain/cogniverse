@@ -1121,7 +1121,7 @@ class TestServiceWithBackendConfig:
         )
 
         assert examples[0].model_dump() == {
-            "query": "Curie lecture",
+            "query": "find Curie lecture in an audio transcript",
             "available_profiles": "audio_semantic",
             "selected_profile": "audio_semantic",
             "reasoning": "Production selector chose audio_semantic.",
@@ -1371,7 +1371,7 @@ async def test_live_backend_samples_a_deployed_configured_profile_schema():
     assert backend.query_calls == [
         {
             "schema": schema_name,
-            "yql": f"select * from sources {schema_name} where true limit 1",
+            "yql": f"select * from sources {schema_name} where true limit 5",
             "tenant_id": tenant_id,
         }
     ]
@@ -1413,14 +1413,19 @@ async def test_generation_uses_only_each_tenants_deployed_profiles_concurrently(
         assert response.data[0]["selected_profile"] == expected_profile
         assert response.data[0]["modality"] == expected_modality
         assert response.data[0]["query_intent"] == f"{expected_modality}_search"
-        assert f"grounded content for {tenant}" in response.data[0]["query"]
+        expected_query = (
+            f"find grounded content for {tenant} in an audio transcript"
+            if expected_profile == "profile_a"
+            else f"find grounded content for {tenant} in document content"
+        )
+        assert response.data[0]["query"] == expected_query
     expected_query_calls = []
     for tenant in tenants:
         expected_schema = next(iter(deployed[tenant]))
         expected_query_calls.append(
             {
                 "schema": expected_schema,
-                "yql": f"select * from sources {expected_schema} where true limit 1",
+                "yql": f"select * from sources {expected_schema} where true limit 5",
                 "tenant_id": tenant,
             }
         )
