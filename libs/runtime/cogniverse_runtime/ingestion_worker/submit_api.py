@@ -209,11 +209,23 @@ async def enqueue_ingestion(
                 profile=profile,
                 tenant_id=tenant_id,
             )
+            # wait=True must surface the run's terminal event exactly like a
+            # fresh enqueue: a completed run resolves immediately from the
+            # status stream (or the snapshot _restore_status_trail seeded),
+            # an in-flight run long-polls to terminal within wait_timeout.
+            final = (
+                await _wait_for_terminal(redis, existing_id, wait_timeout)
+                if wait
+                else None
+            )
+            if final is not None:
+                state = final.get("state", state)
             return EnqueueResult(
                 ingest_id=existing_id,
                 sha=sha,
                 state=state,
                 existing=True,
+                final_event=final,
             )
         if existing_id:
             # The inflight marker exists but the run never reached the work
