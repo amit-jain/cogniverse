@@ -35,6 +35,13 @@ HF_CACHE_TOKEN_PATH = Path.home() / ".cache" / "huggingface" / "token"
 MESSAGING_SECRET = f"{RELEASE_NAME}-messaging-secrets"
 TELEGRAM_TOKEN_KEY = "telegram-bot-token"
 
+# Bearer key for Modal-hosted inference endpoints. The runtime and
+# ingestor read COGNIVERSE_INFERENCE_API_KEY from this Secret (optional
+# secretKeyRef); the Modal apps pin the same value via the Modal secret
+# of the same name, so one key authenticates both sides.
+INFERENCE_API_KEY_SECRET = "cogniverse-inference-api-key"
+INFERENCE_API_KEY_KEY = "COGNIVERSE_INFERENCE_API_KEY"
+
 # Every secret resolves the same way, most specific first:
 #   1. the environment variable          (CI, or an explicit one-off override)
 #   2. ./.env                            (project-local, gitignored)
@@ -255,5 +262,75 @@ def sync_telegram_token_to_cluster(required: bool = False) -> bool:
 
     console.print(
         f"[green]Telegram bot token synced to {NAMESPACE}/{MESSAGING_SECRET}[/green]"
+    )
+    return True
+
+
+def _read_inference_api_key() -> Optional[str]:
+    """Inference bearer key via the shared lookup order."""
+    return read_secret(INFERENCE_API_KEY_KEY)
+
+
+def sync_inference_api_key_to_cluster(required: bool = False) -> bool:
+    """Create or update the Secret holding the inference bearer key.
+
+    The runtime and ingestor read COGNIVERSE_INFERENCE_API_KEY from
+    ``cogniverse-inference-api-key`` key ``COGNIVERSE_INFERENCE_API_KEY``
+    to authenticate outbound calls to ``https://*.modal.run`` inference
+    endpoints. Safe no-op when no key is available unless ``required=True``
+    (callers set that when Modal-hosted inference is being enabled).
+    """
+    key = _read_inference_api_key()
+    if not key:
+        message = (
+            f"{INFERENCE_API_KEY_KEY} not found. Export it, or put it in "
+            f"{PROJECT_ENV}/{INFERENCE_API_KEY_KEY}.env or {HOME_ENV}, "
+            "before enabling Modal-hosted inference."
+        )
+        if required:
+            console.print(f"[red]{message}[/red]")
+            return False
+        console.print(
+            f"[yellow]{message} Skipping — calls to Modal-hosted inference "
+            f"endpoints will fail without it.[/yellow]"
+        )
+        return False
+
+    ns_check = _kubectl(["get", "namespace", NAMESPACE])
+    if ns_check.returncode != 0:
+        _kubectl(["create", "namespace", NAMESPACE])
+
+    rendered = _kubectl(
+        [
+            "create",
+            "secret",
+            "generic",
+            INFERENCE_API_KEY_SECRET,
+            "-n",
+            NAMESPACE,
+            f"--from-literal={INFERENCE_API_KEY_KEY}={key}",
+            "--dry-run=client",
+            "-o",
+            "yaml",
+        ]
+    )
+    if rendered.returncode != 0:
+        console.print(
+            f"[red]Failed to render {INFERENCE_API_KEY_SECRET} Secret: "
+            f"{rendered.stderr}[/red]"
+        )
+        return False
+
+    applied = _kubectl(["apply", "-f", "-"], input_data=rendered.stdout)
+    if applied.returncode != 0:
+        console.print(
+            f"[red]Failed to apply {INFERENCE_API_KEY_SECRET} Secret: "
+            f"{applied.stderr}[/red]"
+        )
+        return False
+
+    console.print(
+        f"[green]Inference API key synced to "
+        f"{NAMESPACE}/{INFERENCE_API_KEY_SECRET}[/green]"
     )
     return True

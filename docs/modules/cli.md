@@ -26,7 +26,7 @@ Key responsibilities:
 - **Stack lifecycle** — `up` / `down` / `start` / `stop` / `status` / `logs` for the full Helm release (Vespa, runtime, dashboard, Phoenix, LLM, Argo)
 - **Cluster bootstrap** — creates/deletes a local k3d cluster, checks and installs prerequisites (`docker`, `kubectl`, `helm`)
 - **Image handling** — detects the host's torch backend (cpu/cuda/rocm), builds workspace images, pre-pulls third-party images one at a time, and imports every image into k3d independently with `k3d image import --mode direct` to bound peak memory; any failed pull or import stops the remaining image operations and aborts deployment
-- **Secrets sync** — pushes the local HuggingFace and Telegram tokens into cluster Secrets
+- **Secrets sync** — pushes the local HuggingFace token, Telegram token, and inference API key into cluster Secrets
 - **Client commands** — `code` (interactive coding agent REPL), `index` (index a directory into Vespa for agent context search), `graph` (query the knowledge graph), `admin` (tenant/orphan reconciliation), `sandbox` (OpenShell gateway management), `inference modal` (Modal service lifecycle)
 
 ---
@@ -44,7 +44,7 @@ graph TD
     Root --> Images["<span style='color:#000'>images.py<br/>Backend detection, image build/import</span>"]
     Root --> Argo["<span style='color:#000'>argo.py<br/>Argo Workflows controller + templates</span>"]
     Root --> Health["<span style='color:#000'>health.py<br/>Service health polling</span>"]
-    Root --> Secrets["<span style='color:#000'>secrets.py<br/>HuggingFace + Telegram Secret sync</span>"]
+    Root --> Secrets["<span style='color:#000'>secrets.py<br/>HuggingFace + Telegram + inference-key Secret sync</span>"]
     Root --> Sandbox["<span style='color:#000'>sandbox.py<br/>OpenShell sandbox gateway</span>"]
     Root --> Admin["<span style='color:#000'>admin.py<br/>Orphan reconciliation + messaging invites</span>"]
     Root --> Graph["<span style='color:#000'>graph.py<br/>Knowledge graph CLI commands</span>"]
@@ -207,6 +207,7 @@ Syncs the cluster Secrets the chart mounts but does not create:
 |---|---|---|
 | `hf-token` | `HF_TOKEN` | `HF_TOKEN` / `HUGGING_FACE_HUB_TOKEN`, else `~/.cache/huggingface/token` |
 | `cogniverse-messaging-secrets` | `telegram-bot-token` | `TELEGRAM_BOT_TOKEN` |
+| `cogniverse-inference-api-key` | `COGNIVERSE_INFERENCE_API_KEY` | `COGNIVERSE_INFERENCE_API_KEY` |
 
 Every secret resolves through the same order, most specific first:
 
@@ -223,7 +224,10 @@ home copy and override just one of them per checkout.
 
 The messaging deployment reads `TELEGRAM_BOT_TOKEN` from
 `cogniverse-messaging-secrets`; without this sync the gateway pod cannot start
-when `messaging.enabled=true`.
+when `messaging.enabled=true`. The runtime and ingestor read
+`COGNIVERSE_INFERENCE_API_KEY` from `cogniverse-inference-api-key` (an
+optional secretKeyRef, so a fully-local stack starts without it) to
+authenticate outbound calls to `https://*.modal.run` inference endpoints.
 
 ### Sandbox
 
@@ -243,6 +247,7 @@ Environment variables read across CLI commands:
 | Variable | Used by | Purpose |
 |---|---|---|
 | `TELEGRAM_BOT_TOKEN` | `up --messaging`, `secrets sync` | Required to enable the messaging gateway |
+| `COGNIVERSE_INFERENCE_API_KEY` | `up`, `secrets sync`, `inference modal` | Bearer key pushed to the cluster as `Secret/cogniverse-inference-api-key`; authenticates Modal-hosted inference endpoints |
 | `COGNIVERSE_TENANT_ID` | `graph`, `code`, `index` | Default tenant when `--tenant` is omitted |
 | `HF_TOKEN` / `HUGGING_FACE_HUB_TOKEN` | `up`, `secrets sync` | HuggingFace token pushed to the cluster as `Secret/hf-token`; also checked from `~/.cache/huggingface/token` |
 | `COGNIVERSE_TORCH_BACKEND` | `up` | Overrides host torch-backend auto-detection (`cpu`/`cuda`/`rocm`) used to pick image tags and device-values overlays |
@@ -260,7 +265,7 @@ Environment variables read across CLI commands:
 uv run pytest tests/cli/unit/ -v --tb=long
 ```
 
-One test module per source module: `test_main.py` (`up`/`down`/`status`/`logs`/`start`/`stop`, host-LLM probing, port-forward start/reap wiring), `test_cluster.py` (prerequisite checks, k3d lifecycle, orphan-free port-forward restart/stop), `test_config.py` (chart/workflow path resolution in dev vs. installed mode), `test_deploy.py` (Helm install/upgrade/uninstall, release-existence classification), `test_images.py` (torch-backend detection, image build/import), `test_argo.py` (WorkflowTemplate/CronWorkflow filtering), `test_health.py` (URL polling and health snapshots), `test_secrets_sync.py` (hf-token sync), `test_sandbox_cli.py` (OpenShell gateway install/sync/status), `test_code_cli.py` (A2A request building, SSE event parsing, the REPL session, slash commands, and `index.py`'s `collect_files` filtering), and `test_admin_and_graph_cli.py` (orphan reconciliation, graph stats/search/upsert payloads) — each against a mocked `subprocess`/`kubectl`/`helm`/`httpx` boundary.
+One test module per source module: `test_main.py` (`up`/`down`/`status`/`logs`/`start`/`stop`, host-LLM probing, port-forward start/reap wiring), `test_cluster.py` (prerequisite checks, k3d lifecycle, orphan-free port-forward restart/stop), `test_config.py` (chart/workflow path resolution in dev vs. installed mode), `test_deploy.py` (Helm install/upgrade/uninstall, release-existence classification), `test_images.py` (torch-backend detection, image build/import), `test_argo.py` (WorkflowTemplate/CronWorkflow filtering), `test_health.py` (URL polling and health snapshots), `test_secrets_sync.py` (hf-token + inference-key sync), `test_sandbox_cli.py` (OpenShell gateway install/sync/status), `test_code_cli.py` (A2A request building, SSE event parsing, the REPL session, slash commands, and `index.py`'s `collect_files` filtering), and `test_admin_and_graph_cli.py` (orphan reconciliation, graph stats/search/upsert payloads) — each against a mocked `subprocess`/`kubectl`/`helm`/`httpx` boundary.
 
 `tests/e2e/test_coding_cli_e2e.py` and `tests/e2e/test_graph_cli_e2e.py` exercise the `index`, `code`, and `graph` commands against a real running runtime (upload → ingest → graph upsert round-trip).
 

@@ -112,6 +112,15 @@ spec:
             {{- end -}}
             {{- end -}}
             }
+        # Bearer key for Modal-hosted entries in the URL map; synced by
+        # `cogniverse secrets sync`, optional so a fully-local stack starts
+        # without it.
+        - name: COGNIVERSE_INFERENCE_API_KEY
+          valueFrom:
+            secretKeyRef:
+              name: cogniverse-inference-api-key
+              key: COGNIVERSE_INFERENCE_API_KEY
+              optional: true
         livenessProbe:
           {{- toYaml .Values.ingestor.livenessProbe | nindent 10 }}
         readinessProbe:
