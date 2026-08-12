@@ -1187,7 +1187,13 @@ class TestUnconfiguredInferenceServiceContract:
 
         stub_dispatcher = MagicMock()
         stub_dispatcher.dispatch = AsyncMock(
-            side_effect=InferenceServiceUnavailableError("clap_embed", "torch")
+            side_effect=InferenceServiceUnavailableError(
+                "clap_embed",
+                "clap_embed inference service is not configured and its "
+                "in-process backend is unavailable in this image (no module "
+                "named 'torch').",
+                module="torch",
+            )
         )
         monkeypatch.setattr(
             agents_router, "_ensure_dispatcher", lambda: stub_dispatcher
@@ -1210,6 +1216,40 @@ class TestUnconfiguredInferenceServiceContract:
         detail = resp.json()["detail"]
         assert "clap_embed" in detail
         assert "torch" in detail
+
+    def test_process_route_maps_unreachable_pooling_sidecar_to_503(self, monkeypatch):
+        """A configured sidecar that died mid-request surfaces as 503, not 500."""
+        from cogniverse_foundation.config.inference_service import (
+            InferenceServiceUnavailableError,
+        )
+
+        message = (
+            "remote ColBERT pooling sidecar unreachable for model "
+            "'lightonai/LateOn' at http://cogniverse-colbert-pylate:8000"
+        )
+        stub_dispatcher = MagicMock()
+        stub_dispatcher.dispatch = AsyncMock(
+            side_effect=InferenceServiceUnavailableError("colbert_pooling", message)
+        )
+        monkeypatch.setattr(
+            agents_router, "_ensure_dispatcher", lambda: stub_dispatcher
+        )
+
+        test_app = FastAPI()
+        test_app.include_router(agents_router.router, prefix="/agents")
+        with TestClient(test_app, raise_server_exceptions=False) as client:
+            resp = client.post(
+                "/agents/gateway_agent/process",
+                json={
+                    "agent_name": "gateway_agent",
+                    "query": "find PDF documents about Python run 5",
+                    "context": {"tenant_id": "acme:prod"},
+                    "top_k": 3,
+                },
+            )
+
+        assert resp.status_code == 503
+        assert resp.json()["detail"] == message
 
     def test_process_route_500_names_stage_without_leaking_detail(self, monkeypatch):
         """An unexpected failure returns a JSON body naming agent + error type.

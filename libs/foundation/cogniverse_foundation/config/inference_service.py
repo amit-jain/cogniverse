@@ -14,17 +14,13 @@ __all__ = ["InferenceServiceUnavailableError", "require_in_process_backend"]
 
 
 class InferenceServiceUnavailableError(RuntimeError):
-    """A service has no configured sidecar and cannot run in-process."""
+    """An inference service cannot serve: it has no configured sidecar and no
+    in-process backend, or its configured sidecar is unreachable."""
 
-    def __init__(self, service: str, module: str):
+    def __init__(self, service: str, message: str, *, module: str | None = None):
         self.service = service
         self.module = module
-        super().__init__(
-            f"{service} inference service is not configured and its in-process "
-            f"backend is unavailable in this image (no module named {module!r}). "
-            f"Set INFERENCE_SERVICE_URLS[{service!r}] to the {service} sidecar "
-            f"URL, or install {module!r} to run {service} in-process."
-        )
+        super().__init__(message)
 
 
 def require_in_process_backend(service: str, *, module: str) -> None:
@@ -34,4 +30,11 @@ def require_in_process_backend(service: str, *, module: str) -> None:
     except (ImportError, ValueError):
         found = False
     if not found:
-        raise InferenceServiceUnavailableError(service, module)
+        raise InferenceServiceUnavailableError(
+            service,
+            f"{service} inference service is not configured and its in-process "
+            f"backend is unavailable in this image (no module named {module!r}). "
+            f"Set INFERENCE_SERVICE_URLS[{service!r}] to the {service} sidecar "
+            f"URL, or install {module!r} to run {service} in-process.",
+            module=module,
+        )

@@ -1547,3 +1547,103 @@ def test_remote_lateon_non_list_embedding_is_rejected():
         ),
     ):
         wrapper.encode(["a document"], is_query=False)
+
+
+def _dead_port() -> int:
+    import socket
+
+    sock = socket.socket()
+    sock.bind(("127.0.0.1", 0))
+    port = sock.getsockname()[1]
+    sock.close()
+    return port
+
+
+def _remote_lateon_at(url: str):
+    from cogniverse_core.common.models.model_loaders import RemoteColBERTLoader
+
+    wrapper, processor = RemoteColBERTLoader(
+        model_name="lightonai/LateOn",
+        config={"remote_inference_url": url},
+    ).load_model()
+    assert processor is None
+    return wrapper
+
+
+@pytest.mark.unit
+def test_remote_lateon_unreachable_sidecar_raises_service_unavailable():
+    import requests
+
+    from cogniverse_foundation.config.inference_service import (
+        InferenceServiceUnavailableError,
+    )
+
+    port = _dead_port()
+    wrapper = _remote_lateon_at(f"http://127.0.0.1:{port}")
+
+    with pytest.raises(InferenceServiceUnavailableError) as excinfo:
+        wrapper.encode(["first query"], is_query=True)
+
+    exc = excinfo.value
+    assert exc.service == "colbert_pooling"
+    assert str(exc) == (
+        "remote ColBERT pooling sidecar unreachable for model "
+        f"'lightonai/LateOn' at http://127.0.0.1:{port}"
+    )
+    assert isinstance(exc.__cause__, requests.ConnectionError)
+
+
+@pytest.mark.unit
+def test_remote_lateon_http_error_is_not_service_unavailable():
+    import requests
+
+    from cogniverse_foundation.config.inference_service import (
+        InferenceServiceUnavailableError,
+    )
+
+    wrapper = _remote_lateon()
+
+    class Session:
+        def post(self, url, *, json, timeout):
+            return _PoolingResponse(
+                {},
+                requests.HTTPError("400 Bad Request"),
+            )
+
+    wrapper.session = Session()
+
+    with pytest.raises(RuntimeError) as excinfo:
+        wrapper.encode(["first query"], is_query=True)
+
+    assert not isinstance(excinfo.value, InferenceServiceUnavailableError)
+    assert str(excinfo.value) == (
+        "remote ColBERT pooling failed for model 'lightonai/LateOn' "
+        "at http://lateon.test:8000"
+    )
+
+
+@pytest.mark.unit
+def test_remote_lateon_unreachable_sidecar_concurrent_encodes_all_raise():
+    import threading
+    from concurrent.futures import ThreadPoolExecutor
+
+    from cogniverse_foundation.config.inference_service import (
+        InferenceServiceUnavailableError,
+    )
+
+    port = _dead_port()
+    wrapper = _remote_lateon_at(f"http://127.0.0.1:{port}")
+    barrier = threading.Barrier(4)
+
+    def encode_after_barrier(text: str) -> Exception:
+        barrier.wait(timeout=5)
+        try:
+            wrapper.encode([text], is_query=True)
+        except Exception as exc:
+            return exc
+        raise AssertionError("encode against a dead port must raise")
+
+    with ThreadPoolExecutor(max_workers=4) as pool:
+        errors = list(pool.map(encode_after_barrier, ["a", "b", "c", "d"]))
+
+    assert [type(e) for e in errors] == [InferenceServiceUnavailableError] * 4

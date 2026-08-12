@@ -37,6 +37,9 @@ import requests
 
 from cogniverse_core.common.utils.retry import RetryConfig, retry_with_backoff
 from cogniverse_foundation.config.inference_auth import inference_headers
+from cogniverse_foundation.config.inference_service import (
+    InferenceServiceUnavailableError,
+)
 
 
 @runtime_checkable
@@ -726,10 +729,16 @@ class RemoteColBERTLoader(ModelLoader):
                             timeout=120,
                         )
                         resp.raise_for_status()
-                    except requests.RequestException as exc:
+                    except requests.HTTPError as exc:
                         raise RuntimeError(
                             "remote ColBERT pooling failed for model "
                             f"{self.model_name!r} at {self.endpoint_url}"
+                        ) from exc
+                    except requests.RequestException as exc:
+                        raise InferenceServiceUnavailableError(
+                            "colbert_pooling",
+                            "remote ColBERT pooling sidecar unreachable for "
+                            f"model {self.model_name!r} at {self.endpoint_url}",
                         ) from exc
                     try:
                         response_payload = resp.json()

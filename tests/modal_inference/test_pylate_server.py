@@ -443,6 +443,9 @@ def test_remote_colbert_loader_reaches_authenticated_modal_route(monkeypatch):
 
 def test_remote_colbert_loader_names_model_and_endpoint_on_dead_port():
     from cogniverse_core.common.models.model_loaders import RemoteColBERTLoader
+    from cogniverse_foundation.config.inference_service import (
+        InferenceServiceUnavailableError,
+    )
 
     with socket.socket() as reservation:
         reservation.bind(("127.0.0.1", 0))
@@ -455,15 +458,16 @@ def test_remote_colbert_loader_names_model_and_endpoint_on_dead_port():
     ).load_model()
     try:
         with pytest.raises(
-            RuntimeError,
+            InferenceServiceUnavailableError,
             match=(
-                f"remote ColBERT pooling failed for model '{SPEC.model_id}' "
-                f"at {dead_endpoint}"
+                f"remote ColBERT pooling sidecar unreachable for model "
+                f"'{SPEC.model_id}' at {dead_endpoint}"
             ),
-        ):
+        ) as excinfo:
             wrapper.encode(["alpha"], is_query=False)
     finally:
         wrapper._close()
+    assert excinfo.value.service == "colbert_pooling"
 
 
 def test_modal_wrapper_requires_bearer_and_serves_exact_pooling(monkeypatch):
