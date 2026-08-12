@@ -1053,10 +1053,14 @@ for src in graph.primary_sources:
     print("source:", src.ref_kind, src.ref_id)
 ```
 
-**Storage**: provenance lives inside `metadata["provenance"]` on the same
-memory record (no separate Vespa schema in V1). Walker traversal is O(N)
-in chain length; cycle and depth limits (`max_depth`, `max_nodes`) protect
-against runaway chains.
+**Storage**: provenance is attached in-band in `metadata["provenance"]` on
+the memory record and indexed as one row per memory in the per-tenant
+`provenance` Vespa schema (`ProvenanceStore`). Walker traversal batches
+each BFS level into one indexed query; cycle and depth limits
+(`max_depth`, `max_nodes`) protect against runaway chains. A failed
+provenance query raises — a memory with no indexed record is a terminal
+leaf, so a swallowed failure would truncate the graph and read as
+success.
 
 Contradiction detection and trust ranking both read this provenance graph
 to score conflicting claims.
