@@ -18,6 +18,7 @@ from __future__ import annotations
 import asyncio
 import json
 import subprocess
+import threading
 import time
 import warnings
 from types import SimpleNamespace
@@ -1267,3 +1268,116 @@ def test_conftest_helpers_self_check(phoenix_client_session):
         f"wait_for_span timeout drifted: elapsed={elapsed:.2f}s "
         f"(expected ~3s with 0.5s poll). Polling deadline contract broken."
     )
+
+
+def test_run_async_bounded_join_raises_timeout_error_with_context(monkeypatch):
+    """A never-completing coroutine must surface as a loud TimeoutError,
+    never as an unbounded Thread.join that freezes the caller."""
+    monkeypatch.setattr(e2e_conftest, "RUN_ASYNC_TIMEOUT_S", 1.0, raising=False)
+
+    async def _never_completes():
+        await asyncio.Event().wait()
+
+    outcome: dict = {}
+
+    def _call():
+        try:
+            e2e_conftest.run_async(_never_completes())
+        except BaseException as exc:  # noqa: BLE001 - assertions inspect it
+            outcome["error"] = exc
+        else:
+            outcome["returned"] = True
+
+    caller = threading.Thread(target=_call, daemon=True)
+    caller.start()
+    caller.join(timeout=15.0)
+    assert not caller.is_alive(), (
+        "timed out waiting: run_async blocked its caller for >15s on a "
+        "never-completing coroutine (unbounded Thread.join)"
+    )
+    err = outcome.get("error")
+    assert isinstance(err, TimeoutError), f"expected TimeoutError, got {outcome!r}"
+    assert str(err) == (
+        f"run_async: coroutine {_never_completes.__qualname__!r} did not "
+        f"complete within 1s; abandoning its daemon worker thread"
+    )
+
+
+def test_tenant_sweep_budget_bounds_a_hung_delete(capsys):
+    """One hung delete must not block session teardown past the budget;
+    the sweep must report exactly what it left behind."""
+    release = threading.Event()
+
+    def _hang_until_released(tid: str) -> None:
+        release.wait()
+
+    outcome: dict = {}
+
+    def _call():
+        e2e_conftest._sweep_tenant_deletes(
+            {"del_hang_a", "del_hang_b"}, budget_s=1.0, delete_one=_hang_until_released
+        )
+        outcome["returned"] = True
+
+    caller = threading.Thread(target=_call, daemon=True)
+    caller.start()
+    try:
+        caller.join(timeout=15.0)
+        assert not caller.is_alive(), (
+            "timed out waiting: tenant sweep blocked >15s past its 1s budget "
+            "on a hung delete (unbounded as_completed wait)"
+        )
+        assert outcome.get("returned") is True
+    finally:
+        release.set()
+    out = capsys.readouterr().out
+    assert (
+        "Tenant cleanup budget exhausted after 1s with 2 deletes still "
+        "pending; remainder left for next run"
+    ) in out
+
+
+def test_report_collector_hard_cap_reports_dropped_operations():
+    collector = e2e_conftest.E2EReportCollector()
+    collector.MAX_OPERATIONS = 10
+    collector.start_test("tests/e2e/test_x.py::TestCap::test_y")
+    for i in range(15):
+        collector.record_browser_op("click_top_tab", f"tab-{i}", elapsed_ms=2.0)
+
+    assert len(collector.operations) == 10
+    assert [op["request"]["target"] for op in collector.operations] == [
+        f"tab-{i}" for i in range(10)
+    ]
+    assert collector.operations_dropped == 5
+
+    report = collector._build_report()
+    assert report["summary"]["total_http_operations"] == 10
+    assert report["summary"]["operations_dropped"] == 5
+
+    md = collector._render_markdown(report)
+    assert (
+        "**OPERATION LOG TRUNCATED**: 5 operations dropped after cap of 10; "
+        "per-test operation tables are incomplete." in md
+    )
+
+
+def test_report_collector_cap_is_exact_under_concurrent_appends():
+    collector = e2e_conftest.E2EReportCollector()
+    collector.MAX_OPERATIONS = 100
+    collector.start_test("tests/e2e/test_x.py::test_concurrent")
+    n_threads, per_thread = 8, 50
+    barrier = threading.Barrier(n_threads)
+
+    def _worker(k: int) -> None:
+        barrier.wait()
+        for i in range(per_thread):
+            collector.record_browser_op("click_sub_tab", f"t{k}-{i}", elapsed_ms=0.1)
+
+    threads = [threading.Thread(target=_worker, args=(k,)) for k in range(n_threads)]
+    for t in threads:
+        t.start()
+    for t in threads:
+        t.join(timeout=30.0)
+    assert not any(t.is_alive() for t in threads), "worker threads still alive"
+    assert len(collector.operations) == 100
+    assert collector.operations_dropped == 300
