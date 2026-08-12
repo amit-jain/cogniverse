@@ -25,6 +25,7 @@ from cogniverse_sdk.interfaces.config_store import ConfigEntry, ConfigScope
 from cogniverse_sdk.interfaces.workflow_store import (
     AgentPerformance,
     WorkflowExecution,
+    WorkflowLearningState,
     WorkflowStore,
     WorkflowTemplate,
 )
@@ -659,6 +660,7 @@ class _CorpusStore(WorkflowStore):
         self.executions = {}
         self.profiles = {}
         self.patterns = {}
+        self.templates = {}
         self.a_profile_written = asyncio.Event()
         self.release_a = asyncio.Event()
         self.b_complete = asyncio.Event()
@@ -701,8 +703,32 @@ class _CorpusStore(WorkflowStore):
     async def load_query_patterns(self, tenant_id):
         return dict(self.patterns.get(tenant_id, {}))
 
+    async def replace_learning_state(
+        self, tenant_id, executions, profiles, patterns, templates
+    ):
+        self.executions[tenant_id] = list(executions)
+        self.profiles[tenant_id] = list(profiles)
+        self.patterns[tenant_id] = dict(patterns)
+        self.templates[tenant_id] = {
+            template.template_id: template for template in templates
+        }
+
+    async def load_learning_state(self, tenant_id):
+        return WorkflowLearningState(
+            executions=list(self.executions.get(tenant_id, [])),
+            profiles=list(self.profiles.get(tenant_id, [])),
+            patterns=dict(self.patterns.get(tenant_id, {})),
+            templates=list(self.templates.get(tenant_id, {}).values()),
+        )
+
     async def save_template(self, tenant_id, template):
         raise NotImplementedError
+
+    async def save_generated_templates(self, tenant_id, templates):
+        stored = self.templates.setdefault(tenant_id, {})
+        for template in templates:
+            stored[template.template_id] = template
+        return [template.template_id for template in templates]
 
     async def load_templates(self, tenant_id):
         raise NotImplementedError
