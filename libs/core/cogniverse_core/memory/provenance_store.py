@@ -178,7 +178,10 @@ class ProvenanceStore:
         Returns a dict keyed by ``memory_id``. Memories that were
         written without a ``Provenance`` block (legitimate for kinds
         whose schema sets ``provenance_required=False``) simply have no
-        record and appear as terminal nodes in any walk.
+        record and appear as terminal nodes in any walk. A failed query
+        raises — the walk treats a missing record as a legitimate leaf,
+        so a swallowed failure would truncate the citation graph and be
+        served as success.
         """
         if not memory_ids:
             return {}
@@ -196,8 +199,10 @@ class ProvenanceStore:
                 hits=max(len(memory_ids), 100),
             )
         except Exception as exc:
-            logger.debug("ProvenanceStore.fetch query failed: %s", exc)
-            return {}
+            raise RuntimeError(
+                f"provenance fetch failed for schema {self.schema_name!r} "
+                f"({len(memory_ids)} memory ids): {exc}"
+            ) from exc
         out: Dict[str, ProvenanceRecord] = {}
         for row in rows:
             try:

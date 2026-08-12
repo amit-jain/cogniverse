@@ -396,3 +396,76 @@ class TestSchemaIntegration:
         schema = KnowledgeSchema(kind="entity_fact", provenance_required=True)
         with pytest.raises(SchemaViolationError):
             schema.validate_provenance(prov)
+
+
+class _FailingQueryBackend:
+    """Backend stub whose metadata query raises — the rejected-query seam."""
+
+    def get_tenant_schema_name(self, tenant_id: str, base_schema_name: str) -> str:
+        return f"{base_schema_name}_{tenant_id}"
+
+    def query_metadata_documents(self, **kwargs):
+        raise RuntimeError("Could not resolve source ref 'provenance_t1'")
+
+
+class _EmptyQueryBackend:
+    """Backend stub whose metadata query succeeds with zero rows."""
+
+    def __init__(self) -> None:
+        self.queries: list[dict] = []
+
+    def get_tenant_schema_name(self, tenant_id: str, base_schema_name: str) -> str:
+        return f"{base_schema_name}_{tenant_id}"
+
+    def query_metadata_documents(self, **kwargs):
+        self.queries.append(kwargs)
+        return []
+
+
+class TestProvenanceStoreFaultContract:
+    """A failed provenance query must raise — never read as "no provenance".
+
+    The BFS walk treats a missing record as a legitimate leaf, so a
+    swallowed query failure truncates every citation graph to a single
+    node and the trace is served as success.
+    """
+
+    def test_fetch_raises_with_schema_context_on_query_failure(self):
+        from cogniverse_core.memory.provenance_store import ProvenanceStore
+
+        store = ProvenanceStore(backend=_FailingQueryBackend(), tenant_id="t1")
+        with pytest.raises(RuntimeError) as excinfo:
+            store.fetch(["m_child"])
+        assert "provenance_t1" in str(excinfo.value)
+        assert "Could not resolve source ref" in str(excinfo.value.__cause__)
+
+    def test_get_raises_on_query_failure(self):
+        from cogniverse_core.memory.provenance_store import ProvenanceStore
+
+        store = ProvenanceStore(backend=_FailingQueryBackend(), tenant_id="t1")
+        with pytest.raises(RuntimeError):
+            store.get("m_child")
+
+    def test_walk_propagates_query_failure_instead_of_single_node_graph(self):
+        from cogniverse_core.memory.provenance_store import ProvenanceStore
+
+        store = ProvenanceStore(backend=_FailingQueryBackend(), tenant_id="t1")
+        with pytest.raises(RuntimeError):
+            store.walk("m_child", max_depth=5, max_nodes=10)
+
+    def test_clean_empty_result_keeps_leaf_semantics(self):
+        from cogniverse_core.memory.provenance_store import ProvenanceStore
+
+        backend = _EmptyQueryBackend()
+        store = ProvenanceStore(backend=backend, tenant_id="t1")
+        assert store.fetch(["m_child"]) == {}
+        ordered, primary, truncated, records = store.walk(
+            "m_child", max_depth=5, max_nodes=10
+        )
+        assert ordered == [("m_child", 0)]
+        assert [(r.ref_kind, r.ref_id) for r in primary] == [("memory", "m_child")]
+        assert truncated is False
+        assert records == {}
+        # One query from the explicit fetch above, one from the walk's
+        # level-0 batch fetch.
+        assert len(backend.queries) == 2
