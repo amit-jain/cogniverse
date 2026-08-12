@@ -256,18 +256,31 @@ class TestGraphEndpoints:
                     "source": "Foo",
                     "target": "Bar",
                     "relation": "refs",
+                    # EdgeDoc requires the evidence anchor (the KG
+                    # provenance invariant); a bare edge is rejected 422.
+                    "evidence_span": "Foo refs Bar",
+                    "segment_id": "seg_0",
+                    "ts_start": 0.0,
+                    "ts_end": 0.0,
+                    "modality": "text",
                     "provenance": "INFERRED",
                 },
             ],
         }
         with httpx.Client(timeout=60.0) as client:
-            client.post(GRAPH_UPSERT_URL, json=payload)
+            up1 = client.post(GRAPH_UPSERT_URL, json=payload)
+            assert up1.status_code == 200, up1.text[:500]
             time.sleep(3)
-            first = client.get(GRAPH_STATS_URL, params={"tenant_id": tenant}).json()
+            first_resp = client.get(GRAPH_STATS_URL, params={"tenant_id": tenant})
+            assert first_resp.status_code == 200, first_resp.text[:500]
+            first = first_resp.json()
 
-            client.post(GRAPH_UPSERT_URL, json=payload)
+            up2 = client.post(GRAPH_UPSERT_URL, json=payload)
+            assert up2.status_code == 200, up2.text[:500]
             time.sleep(3)
-            second = client.get(GRAPH_STATS_URL, params={"tenant_id": tenant}).json()
+            second_resp = client.get(GRAPH_STATS_URL, params={"tenant_id": tenant})
+            assert second_resp.status_code == 200, second_resp.text[:500]
+            second = second_resp.json()
 
             assert first["node_count"] == second["node_count"]
             assert first["edge_count"] == second["edge_count"]
