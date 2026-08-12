@@ -1741,22 +1741,16 @@ async def promote_to_org_trunk(
             400, f"invalid actor_role {body.actor_role!r}; expected one of: {valid}"
         ) from exc
 
-    # Locate the source memory in the tenant's store. We don't know
-    # which agent_name owns it, so go through the tenant-wide get_all
-    # (Mem0 doesn't require agent_id when user_id is given).
     tenant_id = canonical_tenant_id(tenant_id)
     source_mm = (await _pin_service_for(tenant_id))._mm  # reuse the lazy-init path
+    # Document point-GET: read-your-writes. The search-backed get_all lags
+    # index visibility, so a freshly written memory would 404 here.
     try:
-        rows_blob = source_mm.memory.get_all(user_id=tenant_id)
+        src = await asyncio.to_thread(source_mm.memory.get, memory_id)
     except Exception as exc:
-        raise HTTPException(503, f"could not list tenant memories: {exc}") from exc
-    rows = (
-        rows_blob.get("results", [])
-        if isinstance(rows_blob, dict)
-        else (rows_blob or [])
-    )
-    src = next((r for r in rows if str(r.get("id")) == memory_id), None)
-    if src is None:
+        raise HTTPException(503, f"could not read memory {memory_id}: {exc}") from exc
+    row_tenant = (src or {}).get("user_id")
+    if src is None or (row_tenant is not None and row_tenant != tenant_id):
         raise HTTPException(404, f"memory {memory_id} not found in tenant {tenant_id}")
 
     svc = FederationService(
@@ -1836,17 +1830,14 @@ async def endorse_memory(
 
     tenant_id = canonical_tenant_id(tenant_id)
     source_mm = (await _pin_service_for(tenant_id))._mm  # reuse the lazy-init path
+    # Document point-GET: read-your-writes. The search-backed get_all lags
+    # index visibility, so a freshly written memory would 404 here.
     try:
-        rows_blob = source_mm.memory.get_all(user_id=tenant_id)
+        src = await asyncio.to_thread(source_mm.memory.get, memory_id)
     except Exception as exc:
-        raise HTTPException(503, f"could not list tenant memories: {exc}") from exc
-    rows = (
-        rows_blob.get("results", [])
-        if isinstance(rows_blob, dict)
-        else (rows_blob or [])
-    )
-    src = next((r for r in rows if str(r.get("id")) == memory_id), None)
-    if src is None:
+        raise HTTPException(503, f"could not read memory {memory_id}: {exc}") from exc
+    row_tenant = (src or {}).get("user_id")
+    if src is None or (row_tenant is not None and row_tenant != tenant_id):
         raise HTTPException(404, f"memory {memory_id} not found in tenant {tenant_id}")
 
     trust = extract_trust(src)
@@ -1862,7 +1853,8 @@ async def endorse_memory(
 
     new_metadata = attach_trust_to_metadata(src.get("metadata") or {}, new_trust)
     try:
-        source_mm.memory.update(
+        await asyncio.to_thread(
+            source_mm.memory.update,
             memory_id=memory_id,
             data=src.get("memory") or src.get("text") or "",
             metadata=new_metadata,
