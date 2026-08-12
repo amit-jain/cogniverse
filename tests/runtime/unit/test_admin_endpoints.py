@@ -486,10 +486,12 @@ def _trusted_row(memory_id: str, score: float = 0.5, endorsements: int = 2):
 
 
 def _pin_service_with_mm(monkeypatch, rows):
-    """Patch _get_pin_service with a stub whose ._mm serves ``rows`` and
-    records memory.update calls — the exact seam the endorse/promote/restore
-    handlers reuse."""
+    """Patch _get_pin_service with a stub whose ._mm serves ``rows`` via the
+    document point-get seam the endorse handler reads and records
+    memory.update calls."""
     mm = MagicMock(name="memory_manager")
+    by_id = {str(r.get("id")): r for r in rows}
+    mm.memory.get.side_effect = lambda memory_id: by_id.get(str(memory_id))
     mm.memory.get_all.return_value = {"results": rows}
     svc = SimpleNamespace(_mm=mm)
     monkeypatch.setattr(admin_router, "_get_pin_service", lambda tenant_id: svc)
@@ -527,7 +529,41 @@ class TestEndorseMemoryRoute:
         )
         assert resp.status_code == 400
         assert "superuser" in resp.json()["detail"]
+        mm.memory.get.assert_not_called()
+
+    def test_endorse_reads_by_point_get_not_lagged_search(self, client, monkeypatch):
+        """A memory fed but not yet search-visible must still be endorsable.
+
+        Vespa document GETs are read-your-writes; the search-backed
+        get_all lags index visibility on a loaded single-node cluster.
+        The handler must resolve the exact id via the point get and never
+        consult the lagged listing."""
+        mm = _pin_service_with_mm(monkeypatch, [_trusted_row("mem-1")])
+        mm.memory.get_all.return_value = {"results": []}
+
+        resp = client.post(
+            "/admin/tenants/acme:prod/memories/mem-1/endorse",
+            json={"endorser_role": "org_admin", "actor_id": "ops@acme"},
+        )
+
+        assert resp.status_code == 200
+        assert resp.json() == {
+            "memory_id": "mem-1",
+            "new_score": 0.7,
+            "endorsements": 3,
+        }
         mm.memory.get_all.assert_not_called()
+
+    def test_cross_tenant_row_returns_404(self, client, monkeypatch):
+        row = _trusted_row("mem-1")
+        row["user_id"] = "other:tenant"
+        _pin_service_with_mm(monkeypatch, [row])
+        resp = client.post(
+            "/admin/tenants/acme:prod/memories/mem-1/endorse",
+            json={"endorser_role": "user", "actor_id": "ops"},
+        )
+        assert resp.status_code == 404
+        assert "not found in tenant acme:prod" in resp.json()["detail"]
 
     def test_unknown_memory_404(self, client, monkeypatch):
         _pin_service_with_mm(monkeypatch, [_trusted_row("other")])
@@ -539,7 +575,7 @@ class TestEndorseMemoryRoute:
 
     def test_backend_outage_maps_to_503_not_success(self, client, monkeypatch):
         mm = _pin_service_with_mm(monkeypatch, [])
-        mm.memory.get_all.side_effect = ConnectionError("vespa down")
+        mm.memory.get.side_effect = ConnectionError("vespa down")
         resp = client.post(
             "/admin/tenants/acme:prod/memories/mem-1/endorse",
             json={"endorser_role": "user", "actor_id": "ops"},

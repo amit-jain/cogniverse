@@ -920,7 +920,7 @@ Response: `{tenant_id, quotas: {"user": int, "tenant_admin": int, "org_admin": i
 
 **POST /admin/tenants/{tenant_id}/memories/{memory_id}/endorse** — Bump a memory's trust score.
 Body: `EndorseRequest { endorser_role: "user"|"tenant_admin"|"org_admin", actor_id: str }`. Deltas: user `+0.05`, tenant_admin `+0.10`, org_admin `+0.20` (from `cogniverse_core.memory.trust._ENDORSEMENT_DELTA`).
-Response: `{memory_id, new_score: float, endorsements: int}`. 422 if no trust record attached (schema-enforcement path never ran on the original write).
+Response: `{memory_id, new_score: float, endorsements: int}`. The target is resolved by document point-get (read-your-writes), so an endorsement immediately after the write succeeds. 404 when the id is absent from the tenant's partition, 422 if no trust record attached (schema-enforcement path never ran on the original write), 503 when the backend read fails.
 
 **POST /admin/tenants/{tenant_id}/memories/{memory_id}/promote_to_org_trunk** — Copy a memory into the org trunk so every tenant in the same org sees it (federation).
 Body: `{"actor_role": "tenant_admin"|"org_admin", "actor_id": str}`. Sensitivity-gated: `tenant_private` kinds always refused; other kinds require `Pinnable` role authority. 403 on `FederationDeniedError`.
