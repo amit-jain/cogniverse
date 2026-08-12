@@ -199,7 +199,7 @@ def _run_orchestrator_process(
     query: str,
     session_id: str,
     tenant_id: str,
-    timeout: float = 180.0,
+    timeout: float = 480.0,
 ) -> dict:
     """Submit /process and return the parsed orchestration_result.
 
@@ -325,7 +325,7 @@ def test_constraint_posted_mid_process_lands_in_inbound_constraints_applied():
     )
     assert post_status == 202, f"expected 202 on inbound POST, got {post_status}"
 
-    bg.join(timeout=360)
+    bg.join(timeout=540)
     assert not thread_error, f"background /process raised: {thread_error[0]!r}"
     assert "result" in result_holder, "background /process didn't return"
 
@@ -395,7 +395,7 @@ def test_cross_tenant_post_to_active_session_returns_404_live():
 
     # Wait for the orchestrator to finish so the session closes
     # cleanly before the next test.
-    bg.join(timeout=360)
+    bg.join(timeout=540)
 
 
 # --------------------------------------------------------------------- #

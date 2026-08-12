@@ -1778,17 +1778,23 @@ class TestManualOptimizationTrigger:
             "Refresh status button must appear after a successful submit"
         )
         refresh_btn.first.click()
-        page.wait_for_load_state("networkidle", timeout=20_000)
-        page.wait_for_timeout(3_000)
 
         # After refresh, the UI renders `Phase: <phase>` in an info box.
         # The phase must be one of the known Argo terminal/in-flight
-        # phases — never blank (blank = Argo didn't respond).
-        body_text = page.inner_text("body")
-        phase_ok = any(
-            f"Phase: {p}" in body_text
-            for p in ("Pending", "Running", "Succeeded", "Failed", "Error")
-        )
+        # phases — never blank (blank = Argo didn't respond). The
+        # refresh-triggered rerun repaints over the websocket after the
+        # full dashboard script (incl. live agent health checks) runs,
+        # so networkidle can't observe it — poll the body for the Phase
+        # line instead of sleeping a fixed interval.
+        phases = ("Pending", "Running", "Succeeded", "Failed", "Error")
+        deadline = time.monotonic() + 60
+        body_text = ""
+        while time.monotonic() < deadline:
+            body_text = page.inner_text("body")
+            if any(f"Phase: {p}" in body_text for p in phases):
+                break
+            page.wait_for_timeout(1_000)
+        phase_ok = any(f"Phase: {p}" in body_text for p in phases)
         assert phase_ok, (
             "Refresh status must render `Phase: <Pending|Running|...>` "
             f"from Argo. Body tail:\n{body_text[-1500:]}"
