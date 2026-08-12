@@ -1019,8 +1019,13 @@ MinIO deployment as media uploads but a **different bucket / prefix**.
 
 **Key Features:**
 
-- Object key is `{key_prefix}{cache_key}` (the cache key already namespaces by
-  profile, so no extra tenant segment is added).
+- Object key is `{key_prefix}{folded_key}.{sha256(cache_key)}`: characters
+  outside `[A-Za-z0-9._-]` fold to `-` (capped at 160 chars) and the full
+  logical key's SHA-256 hex digest is appended. Any logical key — including
+  ones embedding model endpoint URLs — maps to a valid MinIO/S3 object name,
+  and distinct keys never collide. The cache key already namespaces by
+  profile, so no extra tenant segment is added. Prefix patterns passed to
+  `clear()` are folded the same way, so `clear("p:video:abc:*")` still matches.
 
 - One JSON envelope in S3 user metadata carries `format` (`raw` for image bytes,
   else the serialization format) and `expires_at`; `get`/`exists` honor TTL
