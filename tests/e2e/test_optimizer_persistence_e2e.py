@@ -18,14 +18,14 @@ telemetry or operator-supplied config:
        ``/agents/orchestrator_agent/process`` traffic so
        ``cogniverse.orchestration`` spans accumulate, then wait long
        enough for the BatchSpanProcessor + Phoenix ingest to catch up.
-     - synthetic generator: write a minimal ``synthetic`` block into
-       a per-test config.json and point ``COGNIVERSE_CONFIG`` at it.
+     - synthetic generator: run against the chart-shipped
+       ``synthetic`` config block the runtime validates at startup.
   2. *Run*: invoke the optimizer (via ``optimization_cli`` or a tiny
      inline wrapper) inside the runtime pod over kubectl exec.
   3. *Assert*: the optimizer rc == 0 AND it actually produced a
-     non-trivial artifact (non-empty pattern dict, non-empty demo
-     with parseable input/output). A run that "succeeds" with empty
-     output is a bug.
+     non-trivial artifact (non-empty pattern dict, or a pending-review
+     batch that round-trips through ApprovalStorage with the exact
+     example schema). A run that "succeeds" with empty output is a bug.
 
 Marked ``slow`` and ``requires_optimizer_data`` to identify its runtime cost.
 The tests provision the optimizer inputs and configuration they consume.
@@ -57,6 +57,11 @@ RUNTIME_CONTAINER = "runtime"
 # hanging the suite forever. Tighter than the router test because
 # these don't run a 23-trial MIPROv2 loop.
 OPTIMIZER_TIMEOUT_S = int(os.environ.get("OPTIMIZER_TIMEOUT_S", "1800"))
+
+# Single orchestrator /process calls on the cluster LM routinely
+# overshoot 240s; use the same endpoint budget as
+# test_inbound_lm_output_approximations.
+ORCHESTRATOR_PROCESS_TIMEOUT_S = 480.0
 
 
 def _kubectl_exec(*shell_argv: str, timeout: int = OPTIMIZER_TIMEOUT_S):
@@ -138,7 +143,7 @@ def _drive_orchestrator_traffic(queries: list[str], wait_for_spans_s: int = 8) -
     # AgentTask schema: agent_name in body, tenant_id under context.
     # The runtime refuses requests without tenant_id in context (no
     # bootstrap-tenant fallback), so omitting it 422s every call.
-    with httpx.Client(timeout=120.0) as client:
+    with httpx.Client(timeout=ORCHESTRATOR_PROCESS_TIMEOUT_S) as client:
         for q in queries:
             try:
                 response = client.post(
@@ -164,7 +169,8 @@ def _drive_orchestrator_traffic(queries: list[str], wait_for_spans_s: int = 8) -
     if success == 0:
         pytest.fail(
             "orchestrator traffic prerequisite produced no successful requests; "
-            f"method='POST'; url={endpoint!r}; timeout=120.0s; "
+            f"method='POST'; url={endpoint!r}; "
+            f"timeout={ORCHESTRATOR_PROCESS_TIMEOUT_S}s; "
             f"tenant_id={TENANT_ID!r}; attempts={len(queries)}; "
             f"failures={json.dumps(failures, default=str)}",
             pytrace=False,
@@ -314,93 +320,138 @@ class TestWorkflowOptimizationPersistence:
             )
 
 
+_SYNTHETIC_EXAMPLE_FIELDS = {
+    "query_enhancement": {
+        "query",
+        "enhanced_query",
+        "expansion_terms",
+        "synonyms",
+        "context",
+        "reasoning",
+    },
+    "profile": {
+        "query",
+        "available_profiles",
+        "selected_profile",
+        "reasoning",
+        "query_intent",
+        "modality",
+        "complexity",
+    },
+}
+
+
+def _load_review_batch(batch_id: str) -> dict:
+    """Load a persisted approval batch back through the pod's
+    ApprovalStorage, mirroring the CLI's own storage wiring."""
+    probe_code = (
+        "import asyncio, json\n"
+        "from cogniverse_agents.approval.approval_storage import (\n"
+        "    ApprovalStorageImpl,\n"
+        ")\n"
+        "from cogniverse_foundation.config.utils import (\n"
+        "    create_default_config_manager,\n"
+        ")\n"
+        "from cogniverse_foundation.telemetry.manager import (\n"
+        "    get_telemetry_manager,\n"
+        ")\n"
+        "system_config = create_default_config_manager().get_system_config()\n"
+        "grpc_endpoint = system_config.telemetry_collector_endpoint\n"
+        "if not grpc_endpoint.startswith('http'):\n"
+        "    grpc_endpoint = f'http://{grpc_endpoint}'\n"
+        "storage = ApprovalStorageImpl(\n"
+        "    grpc_endpoint=grpc_endpoint,\n"
+        "    http_endpoint=system_config.telemetry_url,\n"
+        f"    tenant_id={TENANT_ID!r},\n"
+        "    telemetry_manager=get_telemetry_manager(),\n"
+        "    redis_url=system_config.redis_url,\n"
+        ")\n"
+        f"batch = asyncio.run(storage.get_batch({batch_id!r}))\n"
+        "assert batch is not None, 'approval batch not found'\n"
+        "print('__REVIEW_BATCH__' + json.dumps({\n"
+        "    'batch_id': batch.batch_id,\n"
+        "    'context': batch.context,\n"
+        "    'items': [\n"
+        "        {\n"
+        "            'item_id': item.item_id,\n"
+        "            'status': item.status.value,\n"
+        "            'metadata': item.metadata,\n"
+        "            'data': item.data,\n"
+        "        }\n"
+        "        for item in batch.items\n"
+        "    ],\n"
+        "}, default=str))\n"
+    )
+    probe = _kubectl_exec("python3", "-c", probe_code, timeout=240)
+    if probe.returncode != 0:
+        pytest.fail(
+            f"review batch probe failed for {batch_id!r}: "
+            f"rc={probe.returncode}\n"
+            f"--- stdout ---\n{probe.stdout[-2000:]}\n"
+            f"--- stderr ---\n{probe.stderr[-2000:]}"
+        )
+    for line in probe.stdout.splitlines():
+        if line.startswith("__REVIEW_BATCH__"):
+            return json.loads(line[len("__REVIEW_BATCH__") :])
+    pytest.fail(
+        f"review batch probe emitted no batch for {batch_id!r}; "
+        f"stdout: {probe.stdout[-500:]}"
+    )
+
+
+def _assert_review_batch(
+    batch: dict,
+    *,
+    batch_id: str,
+    optimizer_type: str,
+    agent_type: str,
+    expected_items: int,
+) -> None:
+    assert batch["batch_id"] == batch_id
+    context = batch["context"]
+    assert context["tenant_id"] == TENANT_ID, context
+    assert context["agent_type"] == agent_type, context
+    assert context["optimizer"] == optimizer_type, context
+    assert context["purpose"] == "optimizer_training", context
+    items = batch["items"]
+    assert len(items) == expected_items, (
+        f"CLI reported {expected_items} pending items but the persisted "
+        f"batch holds {len(items)}"
+    )
+    assert [item["item_id"] for item in items] == [
+        f"{batch_id}_{index}" for index in range(expected_items)
+    ]
+    for item in items:
+        assert item["status"] == "pending_review", item
+        metadata = item["metadata"]
+        assert metadata["agent_type"] == agent_type, metadata
+        assert metadata["optimizer_type"] == optimizer_type, metadata
+        assert metadata["synthetic"] is True, metadata
+        assert set(item["data"]) == _SYNTHETIC_EXAMPLE_FIELDS[optimizer_type], (
+            f"example fields diverge from the {optimizer_type} schema: "
+            f"{sorted(item['data'])}"
+        )
+
+
 @pytest.mark.e2e
 class TestSyntheticGenerationPersistence:
-    """Run synthetic data generation end-to-end and verify the demos
-    land in the per-tenant demos dataset.
+    """Run ``--mode synthetic`` end-to-end and verify generated examples
+    persist as a pending-review approval batch.
 
-    ``optimization_cli --mode synthetic`` reads
-    ``config.get("synthetic")`` from the tenant's ConfigManager
-    (Vespa-backed) and expects an ``optimizer_configs.<type>`` block
-    with the DSPy module + agent mapping rules the generator needs.
-    The default chart does not ship such a block — it's an
-    operator-supplied tuning config — so this test pushes a minimal
-    one to Vespa via the in-cluster ConfigManager BEFORE invoking
-    the CLI, mirroring what an operator would do. This also exercises
-    the otherwise-untouched ``ConfigManager.set_config`` path for
-    ``SyntheticGeneratorConfig``.
+    The chart ships the canonical ``synthetic`` config block and every
+    runtime pod validates it at startup via
+    ``parse_synthetic_runtime_config``, so the CLI runs against the
+    pod's own ``/app/configs/config.json``. Generation drives the
+    production per-tenant agents and persists a pending-review batch
+    through ``ApprovalStorageImpl.save_batch``; optimizers train only
+    on items a human later approves. Each test round-trips the
+    persisted batch through ``ApprovalStorage.get_batch`` and asserts
+    the exact example schema.
     """
 
-    def test_synthetic_demos_land_in_dataset(self):
-        # ConfigUtils.get("synthetic") reads from the runtime pod's
-        # /app/configs/config.json (chart-mounted ConfigMap). Production
-        # operators ship a synthetic block in their tenant's config; the
-        # default chart doesn't. To exercise the CLI end-to-end without
-        # a chart change, write the block straight into a per-test copy
-        # of config.json and point ``COGNIVERSE_CONFIG`` at it for the
-        # CLI subprocess. The subprocess inherits ``COGNIVERSE_CONFIG``
-        # via kubectl exec --env (handled by ``_kubectl_exec_with_env``
-        # wrapper below).
-        setup = (
-            "import json, os\n"
-            "src = '/app/configs/config.json'\n"
-            "dst = '/tmp/cogniverse-config-with-synthetic.json'\n"
-            "with open(src) as f: blob = json.load(f)\n"
-            "blob['synthetic'] = {\n"
-            f"    'tenant_id': {TENANT_ID!r},\n"
-            "    'optimizer_configs': {\n"
-            "        'modality': {\n"
-            "            'optimizer_type': 'modality',\n"
-            "            'dspy_modules': {\n"
-            "                'query_generator': {\n"
-            "                    'signature_class': "
-            "'cogniverse_synthetic.dspy_signatures.GenerateModalityQuery',\n"
-            "                    'module_type': 'Predict',\n"
-            "                    'lm_config': {},\n"
-            "                    'metadata': {},\n"
-            "                }\n"
-            "            },\n"
-            "            'profile_scoring_rules': [],\n"
-            "            'agent_mappings': [\n"
-            "                {'modality': 'VIDEO', "
-            "'agent_name': 'video_search_agent', "
-            "'confidence_threshold': 0.7},\n"
-            "                {'modality': 'DOCUMENT', "
-            "'agent_name': 'document_search_agent', "
-            "'confidence_threshold': 0.7},\n"
-            "            ],\n"
-            "            'num_examples_target': 5,\n"
-            "            'metadata': {},\n"
-            "        }\n"
-            "    },\n"
-            "    'sampling_config': {},\n"
-            "    'metadata': {},\n"
-            "}\n"
-            "with open(dst, 'w') as f: json.dump(blob, f)\n"
-            "print('__SYNTHETIC_CONFIG_PATH__' + dst)\n"
-        )
-        seed = _kubectl_exec("python3", "-c", setup, timeout=120)
-        if seed.returncode != 0:
-            pytest.fail(
-                f"failed to seed synthetic config: rc={seed.returncode}\n"
-                f"--- stdout ---\n{seed.stdout[-2000:]}\n"
-                f"--- stderr ---\n{seed.stderr[-2000:]}"
-            )
-        config_path = None
-        for line in seed.stdout.splitlines():
-            if line.startswith("__SYNTHETIC_CONFIG_PATH__"):
-                config_path = line[len("__SYNTHETIC_CONFIG_PATH__") :]
-                break
-        if not config_path:
-            pytest.fail(f"setup did not emit config path; stdout: {seed.stdout[-500:]}")
-
-        # Now run the synthetic CLI with COGNIVERSE_CONFIG pointed at
-        # the patched file so its ConfigManager loads our synthetic
-        # block. ``env`` invocation through kubectl exec sets the var
-        # only for this subprocess.
-        result = _kubectl_exec(
-            "env",
-            f"COGNIVERSE_CONFIG={config_path}",
+    @staticmethod
+    def _run_synthetic_cli(agents: str):
+        return _kubectl_exec(
             "python3",
             "-m",
             "cogniverse_runtime.optimization_cli",
@@ -409,261 +460,108 @@ class TestSyntheticGenerationPersistence:
             "--tenant-id",
             TENANT_ID,
             "--agents",
-            "modality",
-            timeout=900,
+            agents,
         )
+
+    @staticmethod
+    def _successful_outcome(result, optimizer_type: str) -> dict:
+        """Parse the CLI's single JSON result document and return the
+        per-optimizer outcome, failing with diagnostics otherwise."""
         if result.returncode != 0:
             pytest.fail(
-                f"synthetic generation failed: rc={result.returncode}\n"
+                f"synthetic generation for {optimizer_type!r} failed: "
+                f"rc={result.returncode}\n"
                 f"--- stdout (tail) ---\n{result.stdout[-3000:]}\n"
                 f"--- stderr (tail) ---\n{result.stderr[-3000:]}"
             )
-        # The CLI prints a JSON result block at the end; the
-        # rc=0-with-failed-status pattern (run_synthetic_generation
-        # exits 0 even when every optimizer failed) was the trap that
-        # caused earlier silent passes. Inspect the JSON.
-        cli_status = None
-        json_start = result.stdout.rfind("{")
-        if json_start != -1:
-            try:
-                cli_status = json.loads(result.stdout[json_start:])
-            except json.JSONDecodeError:
-                cli_status = None
-        if cli_status and cli_status.get("status") != "success":
-            pytest.fail(
-                f"synthetic CLI exited 0 but reported failure:\n"
-                f"{json.dumps(cli_status, indent=2)[:2000]}\n"
-                f"--- stdout (tail) ---\n{result.stdout[-2000:]}"
-            )
-
-        # Demos land under ``synthetic_<optimizer_type>``; load via
-        # ArtifactManager and assert at least one row.
-        probe_code = (
-            "import asyncio\n"
-            "from cogniverse_foundation.telemetry import get_telemetry_manager\n"
-            "from cogniverse_agents.optimizer.artifact_manager import "
-            "ArtifactManager\n"
-            f"prov = get_telemetry_manager().get_provider(tenant_id={TENANT_ID!r})\n"
-            f"mgr = ArtifactManager(prov, {TENANT_ID!r})\n"
-            "out = asyncio.run(mgr.load_demonstrations('synthetic_modality'))\n"
-            "print('__DEMO_COUNT__', len(out) if out else 0)\n"
-        )
-        probe = _kubectl_exec("python3", "-c", probe_code, timeout=120)
-        if probe.returncode != 0:
-            pytest.fail(
-                f"demos load probe failed: rc={probe.returncode}\n"
-                f"{probe.stderr[-2000:]}"
-            )
-        # Inspect the loaded demos to confirm structure + non-empty
-        # input/output, not just row count. A bug that wrote N empty
-        # rows would otherwise pass this check.
-        probe_content = (
-            "import asyncio, json\n"
-            "from cogniverse_foundation.telemetry import get_telemetry_manager\n"
-            "from cogniverse_agents.optimizer.artifact_manager import "
-            "ArtifactManager\n"
-            f"prov = get_telemetry_manager().get_provider(tenant_id={TENANT_ID!r})\n"
-            f"mgr = ArtifactManager(prov, {TENANT_ID!r})\n"
-            "out = asyncio.run(mgr.load_demonstrations('synthetic_modality')) or []\n"
-            "print('__COUNT__', len(out))\n"
-            "if out:\n"
-            "    print('__SAMPLE__' + json.dumps(out[0], default=str))\n"
-        )
-        probe2 = _kubectl_exec("python3", "-c", probe_content, timeout=120)
-        if probe2.returncode != 0:
-            pytest.fail(
-                f"demo content probe failed: rc={probe2.returncode}\n"
-                f"{probe2.stderr[-2000:]}"
-            )
-        count = None
-        sample = None
-        for line in probe2.stdout.splitlines():
-            if line.startswith("__COUNT__"):
-                count = int(line.split()[-1])
-            elif line.startswith("__SAMPLE__"):
-                sample = json.loads(line[len("__SAMPLE__") :])
-        assert count is not None and count > 0, (
-            f"synthetic CLI claimed success but Phoenix demos dataset is "
-            f"empty (count={count}). save_demonstrations dropped them."
-        )
-        assert sample is not None, "first row probe missing"
-        # input/output are JSON-string-serialised dicts in the demos
-        # dataset; both must be present and non-empty so a downstream
-        # optimizer can actually train on them.
-        assert sample.get("input"), f"first synthetic demo has empty input: {sample}"
-        assert sample.get("output"), f"first synthetic demo has empty output: {sample}"
         try:
-            json.loads(sample["input"])
+            payload = json.loads(result.stdout)
         except json.JSONDecodeError as exc:
             pytest.fail(
-                f"synthetic demo input is not valid JSON: {exc}\n"
-                f"value: {sample['input'][:300]}"
+                f"synthetic CLI must print exactly one JSON result: {exc}\n"
+                f"--- stdout (tail) ---\n{result.stdout[-3000:]}"
+            )
+        assert payload["status"] == "success", (
+            f"synthetic CLI exited 0 but reported failure for "
+            f"{optimizer_type!r}:\n{json.dumps(payload, indent=2)[:2000]}\n"
+            f"--- stderr (tail) ---\n{result.stderr[-2000:]}"
+        )
+        assert set(payload["results"]) == {optimizer_type}, payload
+        outcome = payload["results"][optimizer_type]
+        assert outcome["status"] == "success", outcome
+        generated = outcome["examples_generated"]
+        assert generated >= 1, outcome
+        assert outcome["pending_review"] == generated, outcome
+        assert outcome["batch_id"].startswith(f"synthetic_{optimizer_type}_"), outcome
+        return outcome
+
+    def test_query_enhancement_demos_persist_as_review_batch(self):
+        """``--agents query_enhancement``: the DSPy-LM-backed generator
+        runs the production QueryEnhancementAgent per sampled document
+        and the examples land in a pending-review batch."""
+        result = self._run_synthetic_cli("query_enhancement")
+        outcome = self._successful_outcome(result, "query_enhancement")
+
+        batch = _load_review_batch(outcome["batch_id"])
+        _assert_review_batch(
+            batch,
+            batch_id=outcome["batch_id"],
+            optimizer_type="query_enhancement",
+            agent_type="query_enhancement",
+            expected_items=outcome["examples_generated"],
+        )
+        for item in batch["items"]:
+            data = item["data"]
+            assert data["query"].strip(), data
+            assert data["enhanced_query"].strip(), data
+            assert data["enhanced_query"] != data["query"], (
+                f"enhanced_query must differ from the original query: {data}"
+            )
+            assert data["reasoning"].strip(), data
+
+    def test_profile_demos_persist_as_review_batch(self):
+        """``--agents profile``: ProfileGenerator labels sampled content
+        via the production ProfileSelectionAgent; the examples land in a
+        pending-review batch with the exact profile-selection schema."""
+        result = self._run_synthetic_cli("profile")
+        outcome = self._successful_outcome(result, "profile")
+
+        batch = _load_review_batch(outcome["batch_id"])
+        _assert_review_batch(
+            batch,
+            batch_id=outcome["batch_id"],
+            optimizer_type="profile",
+            agent_type="profile_selection",
+            expected_items=outcome["examples_generated"],
+        )
+        for item in batch["items"]:
+            data = item["data"]
+            assert data["query"].strip(), data
+            for field in ("query_intent", "modality", "complexity", "reasoning"):
+                assert data[field].strip(), f"empty {field!r}: {data}"
+            available = [
+                profile.strip() for profile in data["available_profiles"].split(",")
+            ]
+            assert data["selected_profile"] in available, (
+                f"selected_profile {data['selected_profile']!r} not in "
+                f"available_profiles {available}"
             )
 
-    def test_profile_synthetic_demos_land_in_dataset(self):
-        """Run --mode synthetic --agents profile and verify the
-        ProfileGenerator's output reaches the synthetic_profile demos
-        dataset. ProfileGenerator is pattern-based (no DSPy LM
-        required), so the synthetic config block can be minimal — just
-        enough to satisfy the CLI's ConfigManager.
-        """
-        setup = (
-            "import json\n"
-            "src = '/app/configs/config.json'\n"
-            "dst = '/tmp/cogniverse-config-with-profile-synthetic.json'\n"
-            "with open(src) as f: blob = json.load(f)\n"
-            "blob['synthetic'] = {\n"
-            f"    'tenant_id': {TENANT_ID!r},\n"
-            "    'optimizer_configs': {},\n"
-            "    'sampling_config': {},\n"
-            "    'metadata': {},\n"
-            "}\n"
-            "with open(dst, 'w') as f: json.dump(blob, f)\n"
-            "print('__SYNTHETIC_CONFIG_PATH__' + dst)\n"
+        # Optimizer types outside the approved-consumer contract are
+        # refused before any generation runs.
+        mixed = self._run_synthetic_cli("profile,missing_optimizer")
+        assert mixed.returncode == 1, (
+            "synthetic CLI must exit 1 for an optimizer type without an "
+            "approved training-data consumer\n"
+            f"--- stdout ---\n{mixed.stdout[-2000:]}\n"
+            f"--- stderr ---\n{mixed.stderr[-2000:]}"
         )
-        seed = _kubectl_exec("python3", "-c", setup, timeout=120)
-        if seed.returncode != 0:
-            pytest.fail(
-                f"failed to seed profile synthetic config: rc={seed.returncode}\n"
-                f"--- stdout ---\n{seed.stdout[-2000:]}\n"
-                f"--- stderr ---\n{seed.stderr[-2000:]}"
-            )
-        config_path = None
-        for line in seed.stdout.splitlines():
-            if line.startswith("__SYNTHETIC_CONFIG_PATH__"):
-                config_path = line[len("__SYNTHETIC_CONFIG_PATH__") :]
-                break
-        if not config_path:
-            pytest.fail(f"setup did not emit config path; stdout: {seed.stdout[-500:]}")
-
-        result = _kubectl_exec(
-            "env",
-            f"COGNIVERSE_CONFIG={config_path}",
-            "python3",
-            "-m",
-            "cogniverse_runtime.optimization_cli",
-            "--mode",
-            "synthetic",
-            "--tenant-id",
-            TENANT_ID,
-            "--agents",
-            "profile",
-            timeout=900,
+        assert mixed.stdout.strip() == "", (
+            "the consumer gate must reject the request before any "
+            "generation output is produced; got stdout:\n"
+            f"{mixed.stdout[-2000:]}"
         )
-        if result.returncode != 0:
-            pytest.fail(
-                f"profile synthetic generation failed: rc={result.returncode}\n"
-                f"--- stdout (tail) ---\n{result.stdout[-3000:]}\n"
-                f"--- stderr (tail) ---\n{result.stderr[-3000:]}"
-            )
-        cli_status = None
-        json_start = result.stdout.rfind("{")
-        if json_start != -1:
-            try:
-                cli_status = json.loads(result.stdout[json_start:])
-            except json.JSONDecodeError:
-                cli_status = None
-        if cli_status and cli_status.get("status") != "success":
-            pytest.fail(
-                f"profile synthetic CLI exited 0 but reported failure:\n"
-                f"{json.dumps(cli_status, indent=2)[:2000]}\n"
-                f"--- stdout (tail) ---\n{result.stdout[-2000:]}"
-            )
-
-        probe_content = (
-            "import asyncio, json\n"
-            "from cogniverse_foundation.telemetry import get_telemetry_manager\n"
-            "from cogniverse_agents.optimizer.artifact_manager import "
-            "ArtifactManager\n"
-            f"prov = get_telemetry_manager().get_provider(tenant_id={TENANT_ID!r})\n"
-            f"mgr = ArtifactManager(prov, {TENANT_ID!r})\n"
-            "out = asyncio.run(mgr.load_demonstrations('synthetic_profile')) or []\n"
-            "print('__COUNT__', len(out))\n"
-            "if out:\n"
-            "    print('__SAMPLE__' + json.dumps(out[0], default=str))\n"
-        )
-        probe = _kubectl_exec("python3", "-c", probe_content, timeout=120)
-        if probe.returncode != 0:
-            pytest.fail(
-                f"profile demo content probe failed: rc={probe.returncode}\n"
-                f"{probe.stderr[-2000:]}"
-            )
-        count = None
-        sample = None
-        for line in probe.stdout.splitlines():
-            if line.startswith("__COUNT__"):
-                count = int(line.split()[-1])
-            elif line.startswith("__SAMPLE__"):
-                sample = json.loads(line[len("__SAMPLE__") :])
-        assert count is not None and count > 0, (
-            f"profile synthetic CLI claimed success but synthetic_profile "
-            f"demos dataset is empty (count={count})"
-        )
-        assert sample is not None, "first profile row probe missing"
-        assert sample.get("input"), f"first profile demo has empty input: {sample}"
-        # The optimizer reads demo.input as JSON-encoded ProfileSelection
-        # fields. Confirm structure so a downstream
-        # run_profile_optimization can actually consume them.
-        try:
-            inp = json.loads(sample["input"])
-        except json.JSONDecodeError as exc:
-            pytest.fail(
-                f"profile demo input is not valid JSON: {exc}\n"
-                f"value: {sample['input'][:300]}"
-            )
-        for required in (
-            "query",
-            "available_profiles",
-            "selected_profile",
-            "modality",
-            "complexity",
-            "query_intent",
-            "confidence",
-        ):
-            assert required in inp, (
-                f"profile demo input missing required field {required!r}: {inp}"
-            )
-        available = [p.strip() for p in inp["available_profiles"].split(",")]
-        assert inp["selected_profile"] in available, (
-            f"selected_profile {inp['selected_profile']!r} not in "
-            f"available_profiles {available}"
-        )
-
-        controlled_optimizer = "missing_optimizer"
-        mixed_result = _kubectl_exec(
-            "env",
-            f"COGNIVERSE_CONFIG={config_path}",
-            "python3",
-            "-m",
-            "cogniverse_runtime.optimization_cli",
-            "--mode",
-            "synthetic",
-            "--tenant-id",
-            TENANT_ID,
-            "--agents",
-            f"profile,{controlled_optimizer}",
-            timeout=900,
-        )
-        assert mixed_result.returncode == 1, (
-            "synthetic CLI must exit 1 when one requested optimizer fails\n"
-            f"stdout:\n{mixed_result.stdout[-3000:]}\n"
-            f"stderr:\n{mixed_result.stderr[-3000:]}"
-        )
-        try:
-            mixed_payload = json.loads(mixed_result.stdout)
-        except json.JSONDecodeError as exc:
-            pytest.fail(
-                f"synthetic CLI did not emit one JSON result: {exc}\n"
-                f"stdout:\n{mixed_result.stdout[-3000:]}"
-            )
-        assert mixed_payload["status"] == "failed"
-        assert set(mixed_payload["results"]) == {"profile", controlled_optimizer}
-        assert mixed_payload["results"]["profile"]["status"] == "success"
-        assert mixed_payload["results"][controlled_optimizer] == {
-            "status": "failed",
-            "error": (
-                "Unknown optimizer: 'missing_optimizer'. Available: "
-                "entity_extraction, query_enhancement, routing, workflow, "
-                "profile, unified, cross_modal"
-            ),
-        }
+        assert (
+            "Error: synthetic optimizer types have no approved "
+            "training-data consumer: ['missing_optimizer']"
+        ) in mixed.stderr, mixed.stderr[-2000:]
