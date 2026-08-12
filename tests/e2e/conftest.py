@@ -1196,8 +1196,8 @@ def _stop_dev_cluster_and_free_ports() -> None:
     )
 
 
-_E2E_FINGERPRINT_CM = "e2e-build-fingerprint"
-_E2E_DEPLOY_INPUTS = (
+_E2E_DEPLOY_STATE_CM = "e2e-deploy-state"
+_E2E_DEPLOY_DIFF_PATHS = (
     "libs",
     "configs",
     "charts",
@@ -1206,55 +1206,44 @@ _E2E_DEPLOY_INPUTS = (
     "pyproject.toml",
     "uv.lock",
     ".dockerignore",
-    "tests/e2e/deployment/conftest.py",
 )
-_E2E_FINGERPRINT_EXCLUDED_DIRECTORIES = frozenset(
-    {
-        "__pycache__",
-        ".eggs",
-        ".hypothesis",
-        ".mypy_cache",
-        ".pytest_cache",
-        ".ruff_cache",
-        ".venv",
-        "build",
-        "dist",
-        "htmlcov",
-        "node_modules",
-        "venv",
-    }
-)
-_E2E_FINGERPRINT_EXCLUDED_FILES = frozenset({".coverage", ".DS_Store"})
-_E2E_FINGERPRINT_EXCLUDED_SUFFIXES = (".log", ".pyc", ".pyo", ".swp", ".swo")
 
 
-def _fingerprint_path_is_generated(relative_path: Path) -> bool:
-    return any(
-        part in _E2E_FINGERPRINT_EXCLUDED_DIRECTORIES or part.endswith(".egg-info")
-        for part in relative_path.parts
-    ) or (
-        relative_path.name in _E2E_FINGERPRINT_EXCLUDED_FILES
-        or relative_path.name.endswith(_E2E_FINGERPRINT_EXCLUDED_SUFFIXES)
-        or relative_path.name.endswith("~")
+def _e2e_repo_root() -> Path:
+    return Path(__file__).resolve().parents[2]
+
+
+def _git_e2e_command(repo_root: Path, *args: str) -> list[str]:
+    return ["git", "-C", str(repo_root), *args]
+
+
+def _git_e2e(
+    repo_root: Path, *args: str, timeout: int = 30
+) -> subprocess.CompletedProcess:
+    return subprocess.run(
+        _git_e2e_command(repo_root, *args),
+        capture_output=True,
+        text=True,
+        timeout=timeout,
     )
 
 
-def _add_fingerprint_entry(
-    digest,
-    *,
-    relative_path: Path,
-    kind: str,
-    mode: int,
-    content: bytes = b"",
+def _require_git_success(
+    result: subprocess.CompletedProcess, command: list[str]
 ) -> None:
-    for value in (
-        relative_path.as_posix().encode(),
-        kind.encode(),
-        oct(mode).encode(),
-        content,
-    ):
-        digest.update(len(value).to_bytes(8, "big"))
-        digest.update(value)
+    if result.returncode == 0:
+        return
+    raise RuntimeError(
+        f"git command failed with exit {result.returncode}: "
+        f"{shlex.join(command)}\nstderr: {(result.stderr or '').strip()}"
+    )
+
+
+def _current_e2e_deploy_sha(repo_root: Path | None = None) -> str:
+    repo_root = repo_root or _e2e_repo_root()
+    result = _git_e2e(repo_root, "rev-parse", "HEAD")
+    _require_git_success(result, _git_e2e_command(repo_root, "rev-parse", "HEAD"))
+    return result.stdout.strip()
 
 
 def _effective_e2e_deployment_identity(repo_root: Path) -> dict:
@@ -1266,122 +1255,132 @@ def _effective_e2e_deployment_identity(repo_root: Path) -> dict:
     )
     return {
         "backend": inputs["backend"],
-        "image_version": inputs["image_version"],
-        "values": [os.path.relpath(path, repo_root) for path in inputs["helm_values"]],
-        "set": inputs["helm_set_overrides"],
+        "values_files": [
+            os.path.relpath(path, repo_root) for path in inputs["helm_values"]
+        ],
+        "set_overrides": inputs["helm_set_overrides"],
+        "image_repository": inputs["image_repository"],
     }
 
 
-def _e2e_deploy_fingerprint(
-    repo_root: Path | None = None,
-    *,
-    deployment_identity: dict | None = None,
-) -> str:
-    """Hash the working-tree bytes and modes that determine the e2e deploy.
+def _current_e2e_deploy_state(repo_root: Path | None = None) -> dict:
+    repo_root = repo_root or _e2e_repo_root()
+    return {
+        "sha": _current_e2e_deploy_sha(repo_root),
+        **_effective_e2e_deployment_identity(repo_root),
+    }
 
-    Direct filesystem hashing includes tracked, modified, and untracked build
-    inputs uniformly. Only generated caches and local runtime artifacts are
-    excluded, so editing an untracked file at the same path still invalidates
-    a warm cluster.
-    """
-    repo_root = repo_root or Path(__file__).resolve().parents[2]
-    digest = hashlib.sha256()
-    identity = deployment_identity or _effective_e2e_deployment_identity(repo_root)
-    _add_fingerprint_entry(
-        digest,
-        relative_path=Path("<effective-deployment>"),
-        kind="json",
-        mode=0,
-        content=json.dumps(identity, sort_keys=True, separators=(",", ":")).encode(),
-    )
 
-    for input_name in _E2E_DEPLOY_INPUTS:
-        input_path = repo_root / input_name
-        if not input_path.exists() and not input_path.is_symlink():
-            _add_fingerprint_entry(
-                digest,
-                relative_path=Path(input_name),
-                kind="missing",
-                mode=0,
-            )
-            continue
-        if input_path.is_symlink():
-            _add_fingerprint_entry(
-                digest,
-                relative_path=Path(input_name),
-                kind="symlink",
-                mode=input_path.lstat().st_mode & 0o7777,
-                content=os.readlink(input_path).encode(),
-            )
-            continue
-        if input_path.is_file():
-            _add_fingerprint_entry(
-                digest,
-                relative_path=Path(input_name),
-                kind="file",
-                mode=input_path.stat().st_mode & 0o7777,
-                content=input_path.read_bytes(),
-            )
-            continue
-
-        _add_fingerprint_entry(
-            digest,
-            relative_path=Path(input_name),
-            kind="directory",
-            mode=input_path.stat().st_mode & 0o7777,
+def _require_clean_e2e_worktree(repo_root: Path | None = None) -> None:
+    repo_root = repo_root or _e2e_repo_root()
+    result = _git_e2e(repo_root, "status", "--porcelain")
+    _require_git_success(result, _git_e2e_command(repo_root, "status", "--porcelain"))
+    if result.stdout.strip():
+        raise RuntimeError(
+            "refusing to deploy from a dirty git tree; commit first "
+            "(a WIP commit is fine, amend it later), then rerun"
         )
-        for directory, child_directories, file_names in os.walk(input_path):
-            directory_path = Path(directory)
-            retained_directories: list[str] = []
-            for child_name in sorted(child_directories):
-                child_path = directory_path / child_name
-                relative_path = child_path.relative_to(repo_root)
-                if _fingerprint_path_is_generated(relative_path):
-                    continue
-                if child_path.is_symlink():
-                    _add_fingerprint_entry(
-                        digest,
-                        relative_path=relative_path,
-                        kind="symlink",
-                        mode=child_path.lstat().st_mode & 0o7777,
-                        content=os.readlink(child_path).encode(),
-                    )
-                    continue
-                retained_directories.append(child_name)
-                _add_fingerprint_entry(
-                    digest,
-                    relative_path=relative_path,
-                    kind="directory",
-                    mode=child_path.stat().st_mode & 0o7777,
-                )
-            child_directories[:] = retained_directories
 
-            for file_name in sorted(file_names):
-                file_path = directory_path / file_name
-                relative_path = file_path.relative_to(repo_root)
-                if _fingerprint_path_is_generated(relative_path):
-                    continue
-                if file_path.is_symlink():
-                    kind = "symlink"
-                    content = os.readlink(file_path).encode()
-                    mode = file_path.lstat().st_mode & 0o7777
-                elif file_path.is_file():
-                    kind = "file"
-                    content = file_path.read_bytes()
-                    mode = file_path.stat().st_mode & 0o7777
-                else:
-                    kind = "special"
-                    content = b""
-                    mode = file_path.lstat().st_mode & 0o7777
-                _add_fingerprint_entry(
-                    digest,
-                    relative_path=relative_path,
-                    kind=kind,
-                    mode=mode,
-                    content=content,
-                )
 
-    return digest.hexdigest()[:16]
+def _read_e2e_deploy_state() -> dict | None:
+    got = _kubectl_e2e(
+        "-n",
+        "cogniverse",
+        "get",
+        "configmap",
+        _E2E_DEPLOY_STATE_CM,
+        "-o",
+        "jsonpath={.data.stamp}",
+    )
+    if got.returncode != 0:
+        return None
+    raw = got.stdout.strip()
+    if not raw:
+        return None
+    try:
+        payload = json.loads(raw)
+    except json.JSONDecodeError:
+        return None
+    return payload if isinstance(payload, dict) else None
+
+
+def _stamp_e2e_deploy_state(deploy_state: dict) -> None:
+    render_args = (
+        "-n",
+        "cogniverse",
+        "create",
+        "configmap",
+        _E2E_DEPLOY_STATE_CM,
+        f"--from-literal=stamp={json.dumps(deploy_state, sort_keys=True, separators=(',', ':'))}",
+        "--dry-run=client",
+        "-o",
+        "yaml",
+    )
+    rendered = _kubectl_e2e(*render_args)
+    _require_kubectl_success(rendered, _kubectl_e2e_command(*render_args))
+
+    apply_command = _kubectl_e2e_command("apply", "-f", "-")
+    applied = subprocess.run(
+        apply_command,
+        input=rendered.stdout,
+        capture_output=True,
+        text=True,
+        timeout=30,
+    )
+    _require_kubectl_success(applied, apply_command)
+
+
+def _e2e_deploy_reuse_state(
+    repo_root: Path,
+    deployed_state: dict | None,
+    *,
+    current_identity: dict | None = None,
+) -> tuple[str, str]:
+    if not isinstance(deployed_state, dict):
+        return "stale", "deploy stamp is missing or malformed"
+    deployed_sha = deployed_state.get("sha")
+    if not isinstance(deployed_sha, str) or not re.fullmatch(
+        r"[0-9a-f]{40}", deployed_sha
+    ):
+        return "stale", "deployed SHA is missing or malformed"
+
+    resolved = _git_e2e(
+        repo_root,
+        "rev-parse",
+        "--verify",
+        "--quiet",
+        f"{deployed_sha}^{{commit}}",
+    )
+    if resolved.returncode != 0:
+        return "stale", "deployed SHA is not a reachable commit"
+
+    deployed_identity = {
+        "backend": deployed_state.get("backend"),
+        "values_files": deployed_state.get("values_files"),
+        "set_overrides": deployed_state.get("set_overrides"),
+        "image_repository": deployed_state.get("image_repository"),
+    }
+    current_identity = current_identity or _effective_e2e_deployment_identity(repo_root)
+    if deployed_identity != current_identity:
+        return "stale", "deployment identity changed"
+
+    diff = _git_e2e(
+        repo_root,
+        "diff",
+        "--quiet",
+        deployed_sha,
+        "HEAD",
+        "--",
+        *_E2E_DEPLOY_DIFF_PATHS,
+    )
+    if diff.returncode == 0:
+        return "reusable", ""
+    if diff.returncode == 1:
+        return "stale", "tracked deploy inputs changed"
+    return (
+        "stale",
+        f"git diff --quiet failed: {(diff.stderr or '').strip() or (diff.stdout or '').strip() or 'unknown error'}",
+    )
 
 
 def _kubectl_e2e_command(*args: str) -> list[str]:
@@ -1408,45 +1407,6 @@ def _require_kubectl_success(
     )
 
 
-def _read_e2e_fingerprint() -> str:
-    got = _kubectl_e2e(
-        "-n",
-        "cogniverse",
-        "get",
-        "configmap",
-        _E2E_FINGERPRINT_CM,
-        "-o",
-        "jsonpath={.data.fingerprint}",
-    )
-    return got.stdout.strip() if got.returncode == 0 else ""
-
-
-def _stamp_e2e_fingerprint(fingerprint: str) -> None:
-    render_args = (
-        "-n",
-        "cogniverse",
-        "create",
-        "configmap",
-        _E2E_FINGERPRINT_CM,
-        f"--from-literal=fingerprint={fingerprint}",
-        "--dry-run=client",
-        "-o",
-        "yaml",
-    )
-    rendered = _kubectl_e2e(*render_args)
-    _require_kubectl_success(rendered, _kubectl_e2e_command(*render_args))
-
-    apply_command = _kubectl_e2e_command("apply", "-f", "-")
-    applied = subprocess.run(
-        apply_command,
-        input=rendered.stdout,
-        capture_output=True,
-        text=True,
-        timeout=30,
-    )
-    _require_kubectl_success(applied, apply_command)
-
-
 def _required_e2e_models_ready(backend: str | None = None) -> tuple[bool, str]:
     from cogniverse_cli.images import detect_torch_backend
 
@@ -1471,7 +1431,7 @@ def _required_e2e_models_ready(backend: str | None = None) -> tuple[bool, str]:
     return True, ""
 
 
-def _e2e_cluster_state(fingerprint: str) -> tuple[str, str]:
+def _e2e_cluster_state() -> tuple[str, str]:
     """Inspect the shared cluster without changing its lifecycle."""
     from cogniverse_cli.cluster import list_cluster_states
 
@@ -1502,12 +1462,10 @@ def _e2e_cluster_state(fingerprint: str) -> tuple[str, str]:
         != 0
     ):
         return "unhealthy", "the cogniverse namespace is unreachable"
-    deployed_fingerprint = _read_e2e_fingerprint()
-    if deployed_fingerprint != fingerprint:
-        return (
-            "stale",
-            f"found {deployed_fingerprint or '<missing>'!r}, expected {fingerprint!r}",
-        )
+    deployed_state = _read_e2e_deploy_state()
+    state, detail = _e2e_deploy_reuse_state(_e2e_repo_root(), deployed_state)
+    if state == "stale":
+        return state, detail
     if not runtime_available():
         return "unhealthy", f"runtime readiness failed at {RUNTIME}"
     models_ready, model_detail = _required_e2e_models_ready()
@@ -1517,7 +1475,6 @@ def _e2e_cluster_state(fingerprint: str) -> tuple[str, str]:
 
 
 def _wait_for_e2e_reuse_convergence(
-    fingerprint: str,
     *,
     timeout_s: float = 2400,
     poll_interval_s: float = 5,
@@ -1526,7 +1483,7 @@ def _wait_for_e2e_reuse_convergence(
     state = "unhealthy"
     detail = "cluster did not report state"
     while True:
-        state, detail = _e2e_cluster_state(fingerprint)
+        state, detail = _e2e_cluster_state()
         if state in {"reusable", "stale"}:
             return state, detail
         if _time.monotonic() >= deadline:
@@ -1551,11 +1508,11 @@ def e2e_stack(request, resolved_inference_endpoints):
 
     Lifecycle:
       * REUSE — if a running ``cogniverse-e2e`` whose stamped deploy
-        fingerprint matches the current ``libs``/``configs``/``charts`` is
-        already up, reuse it (~seconds). Editing only ``tests/`` keeps the
-        fingerprint, so assertion iteration is fast.
+        SHA and deploy identity match the current repo state, reuse it
+        (~seconds). Editing only ``tests/`` keeps the SHA diff clean, so
+        assertion iteration is fast.
       * CREATE — only when no ``cogniverse-e2e`` cluster exists, stop any dev
-        cluster (RAM + ports), build, deploy, wait, and stamp the fingerprint.
+        cluster (RAM + ports), build, deploy, wait, and stamp the deploy state.
       * START — resume a stopped shared cluster through the supported project
         lifecycle, then inspect it again before reuse.
       * REJECT — a stale or unhealthy existing shared cluster is never
@@ -1585,9 +1542,10 @@ def e2e_stack(request, resolved_inference_endpoints):
         deploy_stack,
     )
 
-    fingerprint = _e2e_deploy_fingerprint()
+    repo_root = _e2e_repo_root()
+    deploy_sha = _current_e2e_deploy_sha(repo_root)
     force_fresh = os.environ.get("E2E_FRESH", "").lower() in ("1", "true", "yes")
-    cluster_state, state_detail = _e2e_cluster_state(fingerprint)
+    cluster_state, state_detail = _e2e_cluster_state()
     created_this_session = False
     reset_command = f"k3d cluster delete {E2E_CLUSTER_NAME}"
 
@@ -1600,7 +1558,7 @@ def e2e_stack(request, resolved_inference_endpoints):
     if cluster_state == "stopped":
         _stop_dev_cluster_and_free_ports()
         start_cluster(E2E_CLUSTER_NAME)
-        cluster_state, state_detail = _wait_for_e2e_reuse_convergence(fingerprint)
+        cluster_state, state_detail = _wait_for_e2e_reuse_convergence()
     if cluster_state == "unhealthy":
         pytest.fail(
             f"Existing shared e2e cluster {E2E_CLUSTER_NAME!r} is unhealthy "
@@ -1610,16 +1568,18 @@ def e2e_stack(request, resolved_inference_endpoints):
     if cluster_state == "stale":
         pytest.fail(
             f"Existing shared e2e cluster {E2E_CLUSTER_NAME!r} deploy "
-            f"fingerprint is stale ({state_detail}). Delete it explicitly with "
+            f"state is stale ({state_detail}). Delete it explicitly with "
             f"`{reset_command}`, then rerun."
         )
 
     if cluster_state == "reusable":
         print(
             f"Reusing warm e2e cluster {E2E_CLUSTER_NAME} "
-            f"(deploy fingerprint {fingerprint} unchanged)"
+            f"(deploy SHA {deploy_sha} unchanged)"
         )
     else:
+        _require_clean_e2e_worktree(repo_root)
+        deploy_identity = _effective_e2e_deployment_identity(repo_root)
         _stop_dev_cluster_and_free_ports()
 
         create_test_cluster(
@@ -1684,16 +1644,15 @@ def e2e_stack(request, resolved_inference_endpoints):
                 "e2e stack required model identity did not converge after deploy: "
                 f"{model_detail}"
             )
-        finished_fingerprint = _e2e_deploy_fingerprint()
-        if finished_fingerprint != fingerprint:
+        finished_sha = _current_e2e_deploy_sha(repo_root)
+        if finished_sha != deploy_sha:
             pytest.fail(
                 "working-tree deployment inputs changed while the e2e stack was "
-                f"being built: started with {fingerprint!r}, finished with "
-                f"{finished_fingerprint!r}; rerun against a stable tree"
+                f"being built: started with {deploy_sha!r}, finished with "
+                f"{finished_sha!r}; rerun against a stable tree"
             )
-        # Stamp the deployed content so the next session can reuse this
-        # cluster iff the deployed code is still identical.
-        _stamp_e2e_fingerprint(fingerprint)
+        # Stamp the deployed git SHA and the non-tree-derived deploy identity.
+        _stamp_e2e_deploy_state({"sha": deploy_sha, **deploy_identity})
 
     try:
         cron_restore = _suspend_cronworkflows_for_session()
