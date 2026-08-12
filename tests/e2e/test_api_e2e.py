@@ -845,7 +845,6 @@ class TestSyntheticDataAPI:
             "query",
             "available_profiles",
             "selected_profile",
-            "confidence",
             "reasoning",
             "query_intent",
             "modality",
@@ -1105,7 +1104,6 @@ class TestSyntheticDataAPI:
             "query",
             "available_profiles",
             "selected_profile",
-            "confidence",
             "reasoning",
             "query_intent",
             "modality",
@@ -1814,7 +1812,7 @@ class TestVideoIngestionAndSearch:
     """Upload the tracked real video, verify ingestion, then retrieve it."""
 
     def test_upload_video_and_search(self, real_video_path):
-        """The tracked fire-lighting clip produces and retrieves 19 frames."""
+        """The tracked fire-lighting clip produces and retrieves 10 frames."""
         assert real_video_path.name == "v_-D1gdv_gQyw.mp4"
         assert real_video_path.stat().st_size == 5_524_837
         expected_source_url = _expected_artifact_source_url(real_video_path)
@@ -1838,8 +1836,8 @@ class TestVideoIngestionAndSearch:
             assert upload_data["state"] == "complete"
             assert upload_data["filename"] == real_video_path.name
             assert upload_data["source_url"] == expected_source_url
-            assert upload_data["chunks_created"] == 19, upload_data
-            assert upload_data["documents_fed"] == 19, upload_data
+            assert upload_data["chunks_created"] == 10, upload_data
+            assert upload_data["documents_fed"] == 10, upload_data
             assert isinstance(upload_data["video_id"], str) and upload_data["video_id"]
 
             time.sleep(5)

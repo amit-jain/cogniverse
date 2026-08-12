@@ -1850,3 +1850,78 @@ class TestGraphStageDurability:
                 namespace="content",
                 data_id=doc_id,
             )
+
+
+class TestEnqueueDedupWait:
+    """``wait=True`` on an idempotency hit must surface the run's terminal
+    event, exactly as it does for a fresh enqueue.
+
+    Regression (b15 e2e sweep, 2026-08-12): the existing-run branch of
+    ``enqueue_ingestion`` returned ``final_event=None`` regardless of
+    ``wait``, so ``POST /ingestion/upload?wait=true`` answered an
+    already-complete upload with the async ``status='queued'`` envelope.
+    """
+
+    @pytest.mark.asyncio
+    async def test_wait_on_completed_dedup_returns_terminal_event(self, redis):
+        from cogniverse_runtime.ingestion_worker.submit_api import enqueue_ingestion
+
+        first = await enqueue_ingestion(
+            redis,
+            source_url="s3://b/dedup.mp4",
+            profile="video",
+            tenant_id="acme",
+        )
+        assert first.existing is False
+
+        # Worker terminal path: publish the terminal event, mark done,
+        # clear the inflight marker.
+        sha = idempotency.compute_sha("s3://b/dedup.mp4", "video", "acme")
+        await queue.publish_status(
+            redis,
+            first.ingest_id,
+            {
+                "state": "complete",
+                "ingest_id": first.ingest_id,
+                "result": {"video_id": "vid", "chunks": 10, "documents_fed": 10},
+            },
+        )
+        await idempotency.mark_done(redis, sha, first.ingest_id, ttl_seconds=60)
+        await idempotency.clear_inflight(redis, sha)
+
+        second = await enqueue_ingestion(
+            redis,
+            source_url="s3://b/dedup.mp4",
+            profile="video",
+            tenant_id="acme",
+            wait=True,
+            wait_timeout=5,
+        )
+        assert second.existing is True
+        assert second.ingest_id == first.ingest_id
+        assert second.state == "complete"
+        assert second.final_event is not None
+        assert second.final_event["state"] == "complete"
+        assert second.final_event["result"] == {
+            "video_id": "vid",
+            "chunks": 10,
+            "documents_fed": 10,
+        }
+
+    @pytest.mark.asyncio
+    async def test_wait_false_dedup_keeps_fast_no_event_envelope(self, redis):
+        from cogniverse_runtime.ingestion_worker.submit_api import enqueue_ingestion
+
+        first = await enqueue_ingestion(
+            redis, source_url="s3://b/fast.mp4", profile="video", tenant_id="acme"
+        )
+        sha = idempotency.compute_sha("s3://b/fast.mp4", "video", "acme")
+        await idempotency.mark_done(redis, sha, first.ingest_id, ttl_seconds=60)
+        await idempotency.clear_inflight(redis, sha)
+
+        second = await enqueue_ingestion(
+            redis, source_url="s3://b/fast.mp4", profile="video", tenant_id="acme"
+        )
+        assert second.existing is True
+        assert second.state == "complete"
+        assert second.final_event is None
