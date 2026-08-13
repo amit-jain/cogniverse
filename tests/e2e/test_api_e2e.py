@@ -1830,11 +1830,19 @@ class TestIngestionAPI:
 
 
 def _expected_artifact_source_url(path: Path, tenant_id: str = TENANT_ID) -> str:
-    """Return the exact content-addressed MinIO URL used by upload."""
+    """Return the exact content-addressed MinIO URL used by upload.
+
+    Upload partitions the object key by the canonical tenant id, so a
+    caller passing the simple form still reads back the ``org:tenant``
+    partition.
+    """
     import hashlib
 
+    from cogniverse_foundation.common.tenant_utils import canonical_tenant_id
+
     digest = hashlib.sha256(path.read_bytes()).hexdigest()
-    return f"s3://cogniverse-ingest/{tenant_id}/{digest}{path.suffix}"
+    partition = canonical_tenant_id(tenant_id)
+    return f"s3://cogniverse-ingest/{partition}/{digest}{path.suffix}"
 
 
 def _expected_available_profile_names(tenant_id: str) -> list[str]:
