@@ -6,6 +6,7 @@ from unittest.mock import MagicMock, patch
 
 import pytest
 
+from cogniverse_core.common.tenant_utils import canonical_tenant_id
 from cogniverse_core.memory.manager import Mem0MemoryManager
 
 pytestmark = [pytest.mark.unit, pytest.mark.ci_fast]
@@ -110,11 +111,22 @@ class TestMem0MemoryManager:
 
         assert manager.memory is not None
         assert manager.config is not None
+        assert manager._storage_tenant_id == canonical_tenant_id("test_tenant")
+        mock_registry.get_ingestion_backend.assert_called_once()
+        assert mock_registry.get_ingestion_backend.call_args.kwargs[
+            "tenant_id"
+        ] == canonical_tenant_id("test_tenant")
+        mock_backend.get_tenant_schema_name.assert_called_once_with(
+            canonical_tenant_id("test_tenant"), "agent_memories"
+        )
         # Verify tenant-specific schema was used
         assert (
             manager.config["vector_store"]["config"]["collection_name"]
             == "agent_memories_test_tenant"
         )
+        assert manager.config["vector_store"]["config"][
+            "tenant_id"
+        ] == canonical_tenant_id("test_tenant")
         # Default embedding dimension is DenseOn's 768.
         assert manager.config["vector_store"]["config"]["embedding_model_dims"] == 768
 
@@ -179,7 +191,7 @@ class TestMem0MemoryManager:
         assert memory_id == "mem_123"
         mock_memory.add.assert_called_once_with(
             "Test content",
-            user_id="tenant1",
+            user_id=manager._storage_tenant_id,
             agent_id="test_agent",
             metadata={},
             infer=True,
@@ -207,7 +219,7 @@ class TestMem0MemoryManager:
         assert len(results) == 2
         mock_memory.search.assert_called_once_with(
             "test query",
-            user_id="tenant1",
+            user_id=canonical_tenant_id("tenant1"),
             agent_id="test_agent",
             limit=5,
             filters=None,
@@ -248,7 +260,7 @@ class TestMem0MemoryManager:
 
         assert len(memories) == 2
         mock_memory.get_all.assert_called_once_with(
-            user_id="tenant1",
+            user_id=canonical_tenant_id("tenant1"),
             agent_id="test_agent",
             filters=None,
             limit=100,
@@ -270,7 +282,7 @@ class TestMem0MemoryManager:
         )
 
         mock_memory.get_all.assert_called_once_with(
-            user_id="tenant1",
+            user_id=canonical_tenant_id("tenant1"),
             agent_id="test_agent",
             filters=None,
             limit=None,

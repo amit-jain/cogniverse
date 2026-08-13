@@ -21,7 +21,10 @@ os.environ["MEM0_TELEMETRY"] = "False"
 
 from mem0 import Memory
 
-from cogniverse_core.common.tenant_utils import SYSTEM_TENANT_ID
+from cogniverse_core.common.tenant_utils import (
+    SYSTEM_TENANT_ID,
+    canonical_tenant_id,
+)
 from cogniverse_core.memory._timestamps import to_epoch_seconds
 from cogniverse_foundation.caching import TenantLRUCache
 
@@ -188,6 +191,7 @@ class Mem0MemoryManager:
             raise ValueError("tenant_id is required - no default tenant")
 
         self.tenant_id = tenant_id
+        self._storage_tenant_id = canonical_tenant_id(tenant_id)
         self.memory: Optional[Memory] = None
         self.config: Optional[Dict[str, Any]] = None
         # knowledge schema registry. When set (via initialize),
@@ -253,6 +257,7 @@ class Mem0MemoryManager:
             raise ValueError(
                 f"embedding_dims must be a positive int, got {embedding_dims!r}"
             )
+        storage_tenant_id = self._storage_tenant_id
 
         # Idempotency: the dispatcher runs initialize_memory per dispatched
         # request (via MemoryAwareMixin), and this manager is a per-tenant
@@ -298,6 +303,7 @@ class Mem0MemoryManager:
                 embedding_dims=embedding_dims,
                 knowledge_registry=knowledge_registry,
                 fingerprint=fingerprint,
+                storage_tenant_id=storage_tenant_id,
             )
 
     def _build_and_store_memory(
@@ -318,6 +324,7 @@ class Mem0MemoryManager:
         embedding_dims: int,
         knowledge_registry: Optional[object],
         fingerprint: tuple,
+        storage_tenant_id: str,
     ) -> None:
         """Build the Mem0 stack and store it. Callers must hold ``_init_lock``."""
         # Get backend instance for memory operations
@@ -404,7 +411,7 @@ class Mem0MemoryManager:
         # Each tenant gets their own memory schema (agent_memories_{tenant_id})
         backend = registry.get_ingestion_backend(
             backend_type,
-            tenant_id=self.tenant_id,
+            tenant_id=storage_tenant_id,
             config=backend_config_dict,
             config_manager=config_manager,
             schema_loader=schema_loader,
@@ -416,13 +423,13 @@ class Mem0MemoryManager:
 
         # Get tenant-specific schema name
         tenant_schema_name = backend.get_tenant_schema_name(
-            self.tenant_id, base_schema_name
+            storage_tenant_id, base_schema_name
         )
 
         # Deploy tenant schema if needed
         if auto_create_schema:
             backend.schema_registry.deploy_schema(
-                tenant_id=self.tenant_id, base_schema_name=base_schema_name
+                tenant_id=storage_tenant_id, base_schema_name=base_schema_name
             )
             logger.info(f"Ensured tenant schema exists: {tenant_schema_name}")
             # Deploy the per-tenant provenance schema alongside the
@@ -430,11 +437,11 @@ class Mem0MemoryManager:
             # a deploy failure here breaks every audit / citation
             # path so it must surface, not be swallowed.
             backend.schema_registry.deploy_schema(
-                tenant_id=self.tenant_id, base_schema_name="provenance"
+                tenant_id=storage_tenant_id, base_schema_name="provenance"
             )
             logger.info(
                 "Ensured tenant provenance schema exists: provenance_%s",
-                self.tenant_id,
+                storage_tenant_id,
             )
 
         # Strip any litellm-style "provider/" prefix from model names — the
@@ -497,7 +504,7 @@ class Mem0MemoryManager:
                     "collection_name": tenant_schema_name,  # Tenant-specific schema
                     "backend_client": backend,  # Pre-configured backend instance
                     "embedding_model_dims": embedding_dims,  # embedder output dim
-                    "tenant_id": self.tenant_id,  # Pass tenant_id directly
+                    "tenant_id": storage_tenant_id,  # storage tenant id
                     "profile": base_schema_name,  # Pass base schema/profile name
                 },
             },
@@ -531,7 +538,7 @@ class Mem0MemoryManager:
             from cogniverse_core.memory.provenance_store import ProvenanceStore
 
             self._provenance_store = ProvenanceStore(
-                backend=self._backend, tenant_id=self.tenant_id
+                backend=self._backend, tenant_id=self._storage_tenant_id
             )
         return self._provenance_store
 
@@ -623,6 +630,7 @@ class Mem0MemoryManager:
         """
         if not self.memory:
             raise RuntimeError("Mem0MemoryManager not initialized")
+        storage_tenant_id = self._storage_tenant_id
 
         # schema enforcement. When a registry is wired, every write
         # is checked against the schema for the metadata.kind:
@@ -635,7 +643,7 @@ class Mem0MemoryManager:
 
         result = self.memory.add(
             content,
-            user_id=tenant_id,
+            user_id=storage_tenant_id,
             agent_id=agent_name,
             metadata=metadata,
             infer=infer,
@@ -690,7 +698,7 @@ class Mem0MemoryManager:
         try:
             self._detect_and_persist_contradictions(
                 memory_id=memory_id,
-                tenant_id=tenant_id,
+                tenant_id=storage_tenant_id,
                 agent_name=agent_name,
                 metadata=metadata,
                 content=content,
@@ -751,6 +759,7 @@ class Mem0MemoryManager:
             return  # detector is opt-in; skipped until a registry is wired
         if not isinstance(metadata, dict):
             return
+        storage_tenant_id = canonical_tenant_id(tenant_id)
         kind = metadata.get("kind")
         if kind == "conflict_set":
             return  # writing a conflict_set itself — don't recurse
@@ -770,7 +779,7 @@ class Mem0MemoryManager:
         # also miss same-subject peers past the cap) and filtering in Python.
         try:
             raw = self.memory.get_all(
-                user_id=tenant_id, filters={"subject_key": subject_key}
+                user_id=storage_tenant_id, filters={"subject_key": subject_key}
             )
         except Exception as exc:
             logger.warning("get_all for contradiction scan failed: %s", exc)
@@ -813,7 +822,7 @@ class Mem0MemoryManager:
             # subject_key is a promoted Vespa field — filter server-side
             # instead of pulling every conflict record per memory write.
             existing_blob = self.memory.get_all(
-                user_id=tenant_id,
+                user_id=storage_tenant_id,
                 agent_id=CONFLICT_AGENT_NAME,
                 filters={"subject_key": subject_key},
             )
@@ -850,14 +859,14 @@ class Mem0MemoryManager:
             try:
                 self.memory.add(
                     conflict.to_memory_content(),
-                    user_id=tenant_id,
+                    user_id=storage_tenant_id,
                     agent_id=CONFLICT_AGENT_NAME,
                     metadata=conflict.to_metadata_payload(),
                     infer=False,
                 )
                 logger.info(
                     "Persisted conflict_set for tenant=%s subject=%s members=%s",
-                    tenant_id,
+                    storage_tenant_id,
                     subject_key,
                     list(conflict.conflicting_memory_ids),
                 )
@@ -896,9 +905,10 @@ class Mem0MemoryManager:
             return []
 
         try:
+            storage_tenant_id = canonical_tenant_id(tenant_id)
             results = self.memory.search(
                 query,
-                user_id=tenant_id,
+                user_id=storage_tenant_id,
                 agent_id=agent_name,
                 limit=top_k,
                 filters=filters,
@@ -908,11 +918,11 @@ class Mem0MemoryManager:
             if isinstance(results, dict):
                 actual_results = results.get("results", [])
                 logger.info(
-                    f"Found {len(actual_results)} memories for {tenant_id}/{agent_name} (from dict)"
+                    f"Found {len(actual_results)} memories for {storage_tenant_id}/{agent_name} (from dict)"
                 )
             else:
                 logger.info(
-                    f"Found {len(results)} memories for {tenant_id}/{agent_name}"
+                    f"Found {len(results)} memories for {storage_tenant_id}/{agent_name}"
                 )
                 actual_results = results
 
@@ -1055,8 +1065,9 @@ class Mem0MemoryManager:
             return []
 
         try:
+            storage_tenant_id = canonical_tenant_id(tenant_id)
             result = self.memory.get_all(
-                user_id=tenant_id,
+                user_id=storage_tenant_id,
                 agent_id=agent_name,
                 filters=filters,
                 limit=limit,
@@ -1071,7 +1082,7 @@ class Mem0MemoryManager:
                 ]
 
             logger.info(
-                f"Retrieved {len(memories)} total memories for {tenant_id}/{agent_name}"
+                f"Retrieved {len(memories)} total memories for {storage_tenant_id}/{agent_name}"
             )
             return memories
 
@@ -1207,7 +1218,7 @@ class Mem0MemoryManager:
         now_epoch = int(time.time())
         deleted_by_kind: Dict[str, int] = {}
 
-        result = self.memory.get_all(user_id=self.tenant_id)
+        result = self.memory.get_all(user_id=self._storage_tenant_id)
         memories = result.get("results", []) if isinstance(result, dict) else result
 
         for memory in memories:
@@ -1280,7 +1291,7 @@ class Mem0MemoryManager:
         if deleted_by_kind:
             logger.info(
                 "Schema-driven cleanup for tenant %s: %s",
-                self.tenant_id,
+                self._storage_tenant_id,
                 deleted_by_kind,
             )
         return deleted_by_kind
@@ -1331,11 +1342,11 @@ class Mem0MemoryManager:
         # before this optimization too.
         deleted_by_kind: Dict[str, int] = {}
         result = self.memory.get_all(
-            user_id=self.tenant_id, filters={"session_id": session_id}
+            user_id=self._storage_tenant_id, filters={"session_id": session_id}
         )
         memories = result.get("results", []) if isinstance(result, dict) else result
         if not memories:
-            result = self.memory.get_all(user_id=self.tenant_id)
+            result = self.memory.get_all(user_id=self._storage_tenant_id)
             memories = result.get("results", []) if isinstance(result, dict) else result
             if any(
                 self._read_metadata(m).get("session_id") == session_id
@@ -1348,7 +1359,7 @@ class Mem0MemoryManager:
                     "schema for %s likely predates the session_id field; "
                     "redeploy it to restore filtered cleanup.",
                     session_id,
-                    self.tenant_id,
+                    self._storage_tenant_id,
                 )
 
         for memory in memories:
@@ -1374,7 +1385,7 @@ class Mem0MemoryManager:
             logger.info(
                 "drop_session(%s) for tenant %s: %s",
                 session_id,
-                self.tenant_id,
+                self._storage_tenant_id,
                 deleted_by_kind,
             )
         return deleted_by_kind
@@ -1471,7 +1482,7 @@ class Mem0MemoryManager:
         if not self.memory:
             return False
         try:
-            blob = self.memory.get_all(user_id=self.tenant_id)
+            blob = self.memory.get_all(user_id=self._storage_tenant_id)
         except Exception as exc:
             logger.warning("restore: get_all failed: %s", exc)
             return False
@@ -1492,7 +1503,9 @@ class Mem0MemoryManager:
             logger.warning("restore: update failed for %s: %s", memory_id, exc)
             return False
         logger.info(
-            "Restored archived memory %s for tenant %s", memory_id, self.tenant_id
+            "Restored archived memory %s for tenant %s",
+            memory_id,
+            self._storage_tenant_id,
         )
         return True
 
