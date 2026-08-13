@@ -770,6 +770,37 @@ class TestSharedClusterOwnership:
             repo_root, deployed_stamp, current_identity=current_identity
         ) == ("reusable", "")
 
+    def test_tag_only_identity_difference_is_reusable(self, tmp_path):
+        repo_root, deployed_sha = self._seed_git_repo(tmp_path)
+        deployed_identity = self._current_identity(
+            set_overrides={
+                "devMode.enabled": "false",
+                "runtime.backend": "rocm",
+                "dashboard.backend": "rocm",
+                "runtime.imagesByBackend.rocm.tag": "0.1.dev3019-g51f8bee27",
+            }
+        )
+        current_identity = self._current_identity(
+            set_overrides={
+                "devMode.enabled": "false",
+                "runtime.backend": "rocm",
+                "dashboard.backend": "rocm",
+                "runtime.imagesByBackend.rocm.tag": "0.1.dev3020-gabcdef1234",
+            }
+        )
+        deployed_stamp = {"sha": deployed_sha, **deployed_identity}
+
+        self._commit_change(
+            repo_root,
+            "tests/e2e/new_check.py",
+            "VALUE = 'tests-only'\n",
+            "tests-only",
+        )
+
+        assert e2e_conftest._e2e_deploy_reuse_state(
+            repo_root, deployed_stamp, current_identity=current_identity
+        ) == ("reusable", "")
+
     def test_missing_stamped_sha_is_stale(self, tmp_path):
         repo_root, _ = self._seed_git_repo(tmp_path)
         current_identity = self._current_identity()
