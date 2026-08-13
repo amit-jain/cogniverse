@@ -38,6 +38,7 @@ from tests.e2e.conftest import (
     _ensure_sample_content_ingested,
     _matching_sample_results,
     _sample_frame_path,
+    _vespa_deployed_schema_names,
     unique_id,
 )
 
@@ -934,10 +935,10 @@ class TestSyntheticDataAPI:
                 )
                 assert search.status_code == 200, search.text
                 ingested_topics = {
-                    " ".join(result["metadata"]["description"].split()[:20])
+                    " ".join(result["metadata"]["segment_description"].split()[:20])
                     for result in search.json()["results"]
                     if isinstance(result.get("metadata"), dict)
-                    and isinstance(result["metadata"].get("description"), str)
+                    and isinstance(result["metadata"].get("segment_description"), str)
                 }
                 assert topic in ingested_topics, topic
 
@@ -1132,6 +1133,7 @@ class TestSyntheticDataAPI:
         assert data["count"] == 2
         assert len(data["data"]) == 2
         assert data["selected_profiles"] == [PROFILE, IMAGE_PROFILE]
+        expected_available_profiles = _expected_available_profile_names(TENANT_ID)
         assert data["metadata"] == {
             "backend_query_strategy": "multi_modal_sequences",
             "sampled_content_count": 2,
@@ -1171,7 +1173,7 @@ class TestSyntheticDataAPI:
         for example in data["data"]:
             assert set(example) == profile_fields
             available_profiles = example["available_profiles"].split(",")
-            assert available_profiles == [PROFILE, IMAGE_PROFILE]
+            assert available_profiles == expected_available_profiles
             assert (
                 example["selected_profile"]
                 == {
@@ -1827,12 +1829,30 @@ class TestIngestionAPI:
 # - Document: dataset_summary.md (real markdown about the evaluation set)
 
 
-def _expected_artifact_source_url(path: Path) -> str:
+def _expected_artifact_source_url(path: Path, tenant_id: str = TENANT_ID) -> str:
     """Return the exact content-addressed MinIO URL used by upload."""
     import hashlib
 
     digest = hashlib.sha256(path.read_bytes()).hexdigest()
-    return f"s3://cogniverse-ingest/{TENANT_ID}/{digest}{path.suffix}"
+    return f"s3://cogniverse-ingest/{tenant_id}/{digest}{path.suffix}"
+
+
+def _expected_available_profile_names(tenant_id: str) -> list[str]:
+    """Return the deployed sampleable backend profiles for a tenant."""
+    config = json.loads(CONFIG_PATH.read_text())
+    deployed_schemas = _vespa_deployed_schema_names()
+    tenant_suffix = "_" + tenant_id.replace(":", "_")
+    profiles = config.get("backend", {}).get("profiles", {})
+
+    expected = []
+    for profile_name, profile_config in profiles.items():
+        schema_name = profile_config.get("schema_name")
+        if (
+            isinstance(schema_name, str)
+            and f"{schema_name}{tenant_suffix}" in deployed_schemas
+        ):
+            expected.append(profile_name)
+    return expected
 
 
 def _assert_artifact_search_hit(
@@ -1874,8 +1894,8 @@ class TestVideoIngestionAndSearch:
         """The tracked fire-lighting clip produces and retrieves 10 frames."""
         assert real_video_path.name == "v_-D1gdv_gQyw.mp4"
         assert real_video_path.stat().st_size == 5_524_837
-        expected_source_url = _expected_artifact_source_url(real_video_path)
         tenant_id = unique_id("ingest_e2e")
+        expected_source_url = _expected_artifact_source_url(real_video_path, tenant_id)
         with httpx.Client(base_url=RUNTIME, timeout=1800.0) as client:
             resp = client.post(
                 "/admin/tenants",
