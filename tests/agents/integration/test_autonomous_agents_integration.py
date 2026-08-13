@@ -410,7 +410,11 @@ class TestQueryEnhancementAgentIntegration:
         """CORRECTNESS: Validate query enhancement actually improves query"""
         original_query = "ML tutorials"
         result = await query_agent_with_real_lm._process_impl(
-            QueryEnhancementInput(query=original_query, tenant_id="test:unit")
+            QueryEnhancementInput(
+                query=original_query,
+                source_text="ML tutorials source text about machine learning",
+                tenant_id="test:unit",
+            )
         )
 
         # VALIDATE: Original query preserved
@@ -468,7 +472,11 @@ class TestQueryEnhancementAgentIntegration:
     ):
         """CORRECTNESS: Validate acronym expansion works"""
         result = await query_agent_with_real_lm._process_impl(
-            QueryEnhancementInput(query="NLP and AI", tenant_id="test:unit")
+            QueryEnhancementInput(
+                query="NLP and AI",
+                source_text="NLP and AI source text about language processing",
+                tenant_id="test:unit",
+            )
         )
 
         # VALIDATE: Acronyms should be recognized
@@ -495,7 +503,11 @@ class TestQueryEnhancementAgentIntegration:
     async def test_empty_query_no_enhancement(self, query_agent_with_real_lm):
         """CORRECTNESS: Empty query should produce empty enhancement"""
         result = await query_agent_with_real_lm._process_impl(
-            QueryEnhancementInput(query="", tenant_id="test:unit")
+            QueryEnhancementInput(
+                query="",
+                source_text="empty source text",
+                tenant_id="test:unit",
+            )
         )
 
         # VALIDATE CORRECTNESS: Empty input = empty output
@@ -774,7 +786,11 @@ class TestAgentCoordinationIntegration:
 
         # Step 1: Enhance query
         query_result = await query_agent_with_real_lm._process_impl(
-            QueryEnhancementInput(query=original_query, tenant_id="test:unit")
+            QueryEnhancementInput(
+                query=original_query,
+                source_text="ML videos source text about machine learning videos",
+                tenant_id="test:unit",
+            )
         )
 
         # VALIDATE: Enhancement produces output

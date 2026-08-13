@@ -1442,6 +1442,7 @@ class TestEnhancedQueryEnhancementAgent:
         ]
         inp = QueryEnhancementInput(
             query="show me robots playing soccer",
+            source_text="show me robots playing soccer source text",
             entities=entities,
             relationships=relationships,
             tenant_id="acme",
@@ -1452,7 +1453,11 @@ class TestEnhancedQueryEnhancementAgent:
 
     def test_input_defaults_entities_to_none(self):
         """When omitted, entities/relationships default to None."""
-        inp = QueryEnhancementInput(query="hello", tenant_id=TEST_TENANT_ID)
+        inp = QueryEnhancementInput(
+            query="hello",
+            source_text="hello source text",
+            tenant_id=TEST_TENANT_ID,
+        )
         assert inp.entities is None
         assert inp.relationships is None
 
@@ -1616,6 +1621,7 @@ class TestEnhancedQueryEnhancementAgent:
 
         inp = QueryEnhancementInput(
             query="show me robots playing soccer",
+            source_text="show me robots playing soccer source text",
             entities=[{"text": "robots", "label": "TECH", "confidence": 0.9}],
             relationships=[
                 {"subject": "robots", "relation": "playing", "object": "soccer"}
@@ -1635,7 +1641,11 @@ class TestEnhancedQueryEnhancementAgent:
     async def test_process_empty_query(self, qe_agent):
         """Empty query returns zero-state output with empty variants."""
         output = await qe_agent._process_impl(
-            QueryEnhancementInput(query="", tenant_id=TEST_TENANT_ID)
+            QueryEnhancementInput(
+                query="",
+                source_text="empty source text",
+                tenant_id=TEST_TENANT_ID,
+            )
         )
         assert output.original_query == ""
         assert output.enhanced_query == ""
@@ -1651,7 +1661,9 @@ class TestEnhancedQueryEnhancementAgent:
         qe_agent.call_dspy = AsyncMock(side_effect=RuntimeError("LLM down"))
 
         inp = QueryEnhancementInput(
-            query="show me AI tutorials", tenant_id=TEST_TENANT_ID
+            query="show me AI tutorials",
+            source_text="show me AI tutorials source text",
+            tenant_id=TEST_TENANT_ID,
         )
         output = await qe_agent._process_impl(inp)
 
@@ -1685,7 +1697,11 @@ class TestEnhancedQueryEnhancementAgent:
         qe_agent.telemetry_manager = mock_tm
 
         await qe_agent._process_impl(
-            QueryEnhancementInput(query="test", tenant_id="acme")
+            QueryEnhancementInput(
+                query="test",
+                source_text="test source text",
+                tenant_id="acme",
+            )
         )
 
         mock_tm.span.assert_called_once()

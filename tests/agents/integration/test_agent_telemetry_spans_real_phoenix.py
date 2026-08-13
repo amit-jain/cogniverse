@@ -427,6 +427,7 @@ class TestA2ACustomTelemetrySpansRealPhoenix:
             await agent.process(
                 QueryEnhancementInput(
                     query="ML tutorials",
+                    source_text="ML tutorials source text about machine learning",
                     tenant_id="telemetry_real_test",
                 )
             )

@@ -690,9 +690,15 @@ class TestProductionLabelCallbackBoundary:
         result = await invoke("solar flares")
 
         assert result == _expected_label(kind, "solar flares")
-        expected_args = (
-            (["documents"], "tenant-a") if kind == "profile" else ("tenant-a",)
-        )
+        if kind == "profile":
+            expected_args = (["documents"], "tenant-a")
+        elif kind == "query_enhancement":
+            expected_args = (
+                "tenant-a",
+                "solar flares\nsolar flares magnetic eruptions",
+            )
+        else:
+            expected_args = ("tenant-a",)
         assert calls == [(_label_callback_query(kind, "solar flares"), expected_args)]
 
     @pytest.mark.asyncio
@@ -794,8 +800,9 @@ class TestProductionLabelCallbackBoundary:
 
     @pytest.mark.asyncio
     async def test_query_enhancement_rejects_term_absent_from_sampled_source(self):
-        async def unrelated_enhancement(query, tenant_id):
+        async def unrelated_enhancement(query, tenant_id, source_text):
             assert tenant_id == "tenant-a"
+            assert source_text == "solar flares\nsolar flares magnetic eruptions"
             result = _label_callback_result("query_enhancement", query)
             result["expansion_terms"] = ["volcano"]
             return result
