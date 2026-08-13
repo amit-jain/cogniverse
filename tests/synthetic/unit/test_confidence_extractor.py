@@ -163,8 +163,9 @@ async def test_pattern_generators_emit_unobserved_targets_requiring_review(
         tenant_id="acme:synthetic",
     )
 
-    async def enhance_query(query: str, tenant_id: str):
+    async def enhance_query(query: str, tenant_id: str, source_text: str):
         assert tenant_id == "acme:synthetic"
+        assert source_text == "quantum computing applications\ndeployment guide"
         return {
             "original_query": query,
             "enhanced_query": f"{query} deployment guide",

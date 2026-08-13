@@ -558,7 +558,11 @@ class TestQueryEnhancementAgentStreaming:
 
         events = _collect_stream_events(
             agent,
-            QueryEnhancementInput(query="ML videos", tenant_id="test:unit"),
+            QueryEnhancementInput(
+                query="ML videos",
+                source_text="ML videos source text about machine learning clips",
+                tenant_id="test:unit",
+            ),
         )
 
         _assert_no_errors(events, "QueryEnhancementAgent")

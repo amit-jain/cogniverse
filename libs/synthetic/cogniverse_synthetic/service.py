@@ -104,7 +104,8 @@ class SyntheticDataService:
             entity_extractor: Production entity-agent call used to label
                 entity-extraction examples
             routing_decider: Production gateway/routing call used to label routes
-            query_enhancer: Production query-enhancement call used for labels
+            query_enhancer: Production query-enhancement call used for
+                source-grounded labels
             profile_labeler: Production profile-selection call used for labels
         """
         if backend is None:

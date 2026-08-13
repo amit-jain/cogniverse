@@ -2854,9 +2854,10 @@ class TestSyntheticGeneration:
             }
             return profile_labeler
 
-        async def query_enhancer(query, tenant_id):
+        async def query_enhancer(query, tenant_id, source_text):
             raise AssertionError(
-                f"fixture enhancer must not be invoked directly: {query} {tenant_id}"
+                "fixture enhancer must not be invoked directly: "
+                f"{query} {tenant_id} {source_text}"
             )
 
         async def build_query_enhancer(**kwargs):

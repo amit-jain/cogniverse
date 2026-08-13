@@ -2540,7 +2540,7 @@ for result in results:
 
 **Location:** `libs/agents/cogniverse_agents/query_enhancement_agent.py`
 
-Enhances user queries by adding synonyms, context, and related terms to improve search recall. Runs a DSPy `QueryEnhancementModule` and returns the enhanced query alongside the expansion terms it generated.
+Enhances user queries by adding synonyms, context, and related terms to improve search recall. It takes the sampled source text alongside the query, and the DSPy prompt requires `expansion_terms` to be literal terms drawn from that text while synonyms remain free-form. Runs a DSPy `QueryEnhancementModule` and returns the enhanced query alongside the expansion terms it generated.
 
 **Constructor:** `QueryEnhancementAgent(deps: QueryEnhancementDeps, port: int = 8012)` (standalone A2A server default; runs in-process on port 8000 in `cogniverse_runtime`)
 
@@ -2553,7 +2553,13 @@ from cogniverse_agents.query_enhancement_agent import (
 )
 
 agent = QueryEnhancementAgent(deps=QueryEnhancementDeps())
-output = await agent.process(QueryEnhancementInput(query="find cooking videos", tenant_id="acme"))
+output = await agent.process(
+    QueryEnhancementInput(
+        query="find cooking videos",
+        source_text="cooking videos source text",
+        tenant_id="acme",
+    )
+)
 print(output.enhanced_query, output.expansion_terms)
 ```
 

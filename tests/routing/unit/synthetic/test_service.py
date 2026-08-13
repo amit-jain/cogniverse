@@ -242,8 +242,9 @@ async def _label_grounded_profile(
     }
 
 
-async def _enhance_grounded_query(query: str, tenant_id: str) -> dict:
+async def _enhance_grounded_query(query: str, tenant_id: str, source_text: str) -> dict:
     assert tenant_id == "test:unit"
+    assert query in source_text
     return {
         "original_query": query,
         "enhanced_query": f"{query} mission",
