@@ -626,12 +626,12 @@ def _dispatcher_routing_decider(dispatcher):
 def _dispatcher_query_enhancer(dispatcher):
     """Label generated queries through the production enhancement agent."""
 
-    async def enhance_query(query: str, tenant_id: str):
+    async def enhance_query(query: str, tenant_id: str, source_text: str):
         try:
             return await dispatcher.dispatch(
                 agent_name="query_enhancement_agent",
                 query=query,
-                context={"tenant_id": tenant_id},
+                context={"tenant_id": tenant_id, "source_text": source_text},
             )
         except Exception as exc:
             raise RuntimeError(

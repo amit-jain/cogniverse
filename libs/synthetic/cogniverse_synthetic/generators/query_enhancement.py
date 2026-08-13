@@ -20,7 +20,7 @@ from cogniverse_synthetic.schemas import QueryEnhancementExampleSchema
 
 logger = logging.getLogger(__name__)
 
-QueryEnhancer = Callable[[str, str], Awaitable[Any]]
+QueryEnhancer = Callable[[str, str, str], Awaitable[Any]]
 DEFAULT_PRODUCTION_LABEL_TIMEOUT_SECONDS = 300.0
 
 
@@ -60,15 +60,15 @@ class QueryEnhancementGenerator(BaseGenerator):
 
         sources = self._source_records(sampled_content)
 
-        grounded_queries: list[tuple[str, List[str], str]] = []
+        grounded_queries: list[tuple[str, List[str], str, str]] = []
         seen_queries: set[str] = set()
-        for topic, allowed_terms, context in sources:
+        for topic, allowed_terms, context, source_text in sources:
             for template in self.QUERY_TEMPLATES:
                 query = template.format(topic=topic)
                 if query in seen_queries:
                     continue
                 seen_queries.add(query)
-                grounded_queries.append((query, allowed_terms, context))
+                grounded_queries.append((query, allowed_terms, context, source_text))
 
         self.require_exact_target_count(
             grounded_queries[:target_count],
@@ -77,8 +77,12 @@ class QueryEnhancementGenerator(BaseGenerator):
         )
 
         examples: List[BaseModel] = []
-        for query, allowed_terms, context in grounded_queries[:target_count]:
-            result = await self._request_enhancement_label(query, tenant_id)
+        for query, allowed_terms, context, source_text in grounded_queries[
+            :target_count
+        ]:
+            result = await self._request_enhancement_label(
+                query, tenant_id, source_text
+            )
             if isinstance(result, BaseModel):
                 result = result.model_dump()
             if not isinstance(result, dict):
@@ -132,10 +136,12 @@ class QueryEnhancementGenerator(BaseGenerator):
         logger.info(f"Generated {len(examples)} QueryEnhancementExample examples")
         return examples
 
-    async def _request_enhancement_label(self, query: str, tenant_id: str) -> Any:
+    async def _request_enhancement_label(
+        self, query: str, tenant_id: str, source_text: str
+    ) -> Any:
         async def invoke_callback() -> Any:
             try:
-                return await self.query_enhancer(query, tenant_id)
+                return await self.query_enhancer(query, tenant_id, source_text)
             except Exception as exc:
                 raise RuntimeError(
                     "query_enhancement optimizer callback query_enhancer failed for "
@@ -166,7 +172,7 @@ class QueryEnhancementGenerator(BaseGenerator):
 
     def _source_records(
         self, sampled_content: List[Dict[str, Any]]
-    ) -> List[tuple[str, List[str], str]]:
+    ) -> List[tuple[str, List[str], str, str]]:
         records = []
         for item in sampled_content[:50]:
             topic = self._extract_topic(item)
@@ -177,6 +183,7 @@ class QueryEnhancementGenerator(BaseGenerator):
                     topic,
                     self._expansion_terms(topic, item),
                     self._context(item),
+                    self._source_text(item),
                 )
             )
         if not records:
@@ -232,6 +239,28 @@ class QueryEnhancementGenerator(BaseGenerator):
         if isinstance(content_type, str) and content_type.strip():
             return content_type.strip()
         raise ValueError("sampled_content contains no content context")
+
+    @staticmethod
+    def _source_text(item: Dict[str, Any]) -> str:
+        parts: list[str] = []
+        for field in (
+            "title",
+            "topic",
+            "content",
+            "description",
+            "video_title",
+            "segment_description",
+            "transcript",
+            "audio_transcript",
+        ):
+            value = item.get(field)
+            if isinstance(value, str):
+                text = " ".join(value.split())
+                if text and text not in parts:
+                    parts.append(text)
+        if not parts:
+            raise ValueError("sampled_content contains no source text")
+        return "\n".join(parts)
 
     # Optional config parameter accepted for parity with other generators.
     def __init__(

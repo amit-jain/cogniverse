@@ -307,7 +307,13 @@ class TestOrchestratorWithRealAgents:
         original = "find videos about robotic arm assembly in manufacturing"
         with dspy.context(lm=dspy_lm):
             result = await query_agent._process_impl(
-                QueryEnhancementInput(query=original, tenant_id="test:unit")
+                QueryEnhancementInput(
+                    query=original,
+                    source_text=(
+                        "find videos about robotic arm assembly in manufacturing"
+                    ),
+                    tenant_id="test:unit",
+                )
             )
 
         assert result is not None

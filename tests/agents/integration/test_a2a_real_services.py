@@ -391,7 +391,11 @@ class TestQueryEnhancementRealDSPy:
         from cogniverse_agents.query_enhancement_agent import QueryEnhancementInput
 
         result = await enhancement_agent.process(
-            QueryEnhancementInput(query="TensorFlow tutorial", tenant_id="test:unit")
+            QueryEnhancementInput(
+                query="TensorFlow tutorial",
+                source_text="TensorFlow tutorial source text about training guides",
+                tenant_id="test:unit",
+            )
         )
 
         assert result.enhanced_query, "Should produce enhanced query without entities"
@@ -406,7 +410,11 @@ class TestQueryEnhancementRealDSPy:
         from cogniverse_agents.query_enhancement_agent import QueryEnhancementInput
 
         result = await enhancement_agent.process(
-            QueryEnhancementInput(query="", tenant_id="test:unit")
+            QueryEnhancementInput(
+                query="",
+                source_text="empty source text",
+                tenant_id="test:unit",
+            )
         )
 
         assert result.enhanced_query == ""

@@ -114,19 +114,25 @@ def qe_service(shared_vespa):
         pytest.fail("Transformer source document was not indexed by Vespa")
 
     enhancement_agent = QueryEnhancementAgent(deps=QueryEnhancementDeps())
-    enhancement_agent.dspy_module.enhancer = lambda query: dspy.Prediction(
-        enhanced_query=f"{query} encoder decoder architecture",
-        expansion_terms="encoder, decoder, architecture",
-        synonyms="",
-        context="",
-        confidence="0.91",
-        reasoning="Production enhancement preserved the exact source terms.",
+    enhancement_agent.dspy_module.enhancer = (
+        lambda query, source_text, grounding_context="": dspy.Prediction(
+            enhanced_query=f"{query} encoder decoder architecture",
+            expansion_terms="encoder, decoder, architecture",
+            synonyms="",
+            context="",
+            confidence="0.91",
+            reasoning="Production enhancement preserved the exact source terms.",
+        )
     )
 
-    async def enhance_query(query: str, request_tenant_id: str):
+    async def enhance_query(query: str, request_tenant_id: str, source_text: str):
         assert request_tenant_id == tenant_id
         return await enhancement_agent.process(
-            QueryEnhancementInput(query=query, tenant_id=request_tenant_id)
+            QueryEnhancementInput(
+                query=query,
+                source_text=source_text,
+                tenant_id=request_tenant_id,
+            )
         )
 
     agents_config = json.loads(Path("configs/config.json").read_text())["agents"]
@@ -207,9 +213,13 @@ async def test_real_lm_query_agent_rejects_non_source_expansion_terms(
     _ = ensure_host_ollama
     agent = QueryEnhancementAgent(deps=QueryEnhancementDeps())
 
-    async def enhance_query(query, tenant_id):
+    async def enhance_query(query, tenant_id, source_text):
         return await agent.process(
-            QueryEnhancementInput(query=query, tenant_id=tenant_id)
+            QueryEnhancementInput(
+                query=query,
+                source_text=source_text,
+                tenant_id=tenant_id,
+            )
         )
 
     service = SyntheticDataService(
@@ -235,15 +245,14 @@ async def test_real_lm_query_agent_rejects_non_source_expansion_terms(
         "query_enhancement optimizer callback query_enhancer returned "
         "expansion_terms absent from sampled source for "
         f"tenant={qe_service.tenant_id!r} "
-        "query='transformer attention mechanism': ['self-attention', "
-        "'multi-head attention', 'feed-forward network', "
-        "'encoder-decoder structure', 'sequence modeling']"
+        "query='transformer attention mechanism': ['encoder decoder architecture', "
+        "'context windows']"
     )
 
 
 @pytest.mark.asyncio
 async def test_generator_keeps_expansion_terms_with_their_source_item():
-    async def enhance_query(query: str, tenant_id: str):
+    async def enhance_query(query: str, tenant_id: str, source_text: str):
         assert tenant_id == "acme:synthetic"
         terms = (
             ["encoder", "decoder", "architecture"]
@@ -314,6 +323,42 @@ async def test_generator_keeps_expansion_terms_with_their_source_item():
         assert ex.context == expected["context"]
         assert "confidence" not in ex.model_dump()
         assert ex.reasoning == ("Production enhancement returned exact grounded terms.")
+
+
+@pytest.mark.asyncio
+async def test_generator_passes_exact_source_text_to_labeler():
+    captured_source_texts = []
+
+    async def enhance_query(query: str, tenant_id: str, source_text: str):
+        assert tenant_id == "acme:synthetic"
+        captured_source_texts.append(source_text)
+        return {
+            "original_query": query,
+            "enhanced_query": f"{query} encoder decoder architecture",
+            "expansion_terms": ["encoder", "decoder", "architecture"],
+            "synonyms": [],
+            "reasoning": "Production enhancement returned exact grounded terms.",
+        }
+
+    generator = QueryEnhancementGenerator(query_enhancer=enhance_query)
+    sampled = [
+        {
+            "title": "transformer attention mechanism",
+            "description": "encoder decoder architecture improves context windows",
+            "content_type": "video",
+        }
+    ]
+    examples = await generator.generate(
+        sampled_content=sampled,
+        target_count=1,
+        tenant_id="acme:synthetic",
+    )
+
+    assert captured_source_texts == [
+        "transformer attention mechanism\n"
+        "encoder decoder architecture improves context windows"
+    ]
+    assert examples[0].expansion_terms == ["encoder", "decoder", "architecture"]
 
 
 @pytest.mark.asyncio

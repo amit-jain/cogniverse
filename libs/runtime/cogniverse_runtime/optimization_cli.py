@@ -2826,7 +2826,7 @@ async def _build_cli_query_enhancer(
     agent._artifact_tenant_id = tenant_id
     agent._load_artifact()
 
-    async def enhance_query(query: str, request_tenant_id: str):
+    async def enhance_query(query: str, request_tenant_id: str, source_text: str):
         if request_tenant_id != tenant_id:
             raise ValueError(
                 "Query enhancement agent tenant mismatch: "
@@ -2834,7 +2834,11 @@ async def _build_cli_query_enhancer(
             )
         try:
             return await agent.process(
-                QueryEnhancementInput(query=query, tenant_id=request_tenant_id)
+                QueryEnhancementInput(
+                    query=query,
+                    source_text=source_text,
+                    tenant_id=request_tenant_id,
+                )
             )
         except Exception as exc:
             raise RuntimeError(

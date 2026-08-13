@@ -103,7 +103,7 @@ Everything below is importable directly from `cogniverse_synthetic` (see `__init
 |--------|------------|
 | `SyntheticDataService` | Main orchestrator (`service.py`) |
 | `router` | FastAPI `APIRouter`, prefix `/synthetic` (`api.py`) |
-| `configure_service(backend, backend_config, generator_config, agents_config, entity_extractor, routing_decider, query_enhancer, profile_labeler, llm_client)` | Replaces the router's module-level service singleton and binds production labeling boundaries |
+| `configure_service(backend, backend_config, generator_config, agents_config, entity_extractor, routing_decider, query_enhancer, profile_labeler, llm_client)` | Replaces the router's module-level service singleton and binds production labeling boundaries; `query_enhancer` receives `(query, tenant_id, source_text)` |
 | `OPTIMIZER_REGISTRY`, `OptimizerConfig` | Optimizer-to-generator/schema mapping (`registry.py`) |
 | `SyntheticDataRequest`, `SyntheticDataResponse` | API request/response schemas |
 | `ProfileSelectionExampleSchema`, `RoutingExperienceSchema`, `WorkflowExecutionSchema` | Per-optimizer training-example schemas |
@@ -248,10 +248,9 @@ Query-enhancement examples deliberately omit `confidence` because it is not a
 training target. The approval extractor assigns the review sentinel `0.0` and
 requires human review. The generator preserves the production agent's synonyms
 instead of inventing them from source text. Expansion terms are different: each
-one must occur among the normalized non-topic terms computed from that example's
-sampled record. A production response containing an unrelated expansion term
-raises with the tenant and query instead of creating self-fulfilling training
-data.
+one must be a literal term drawn from the sampled source text for that example.
+A production response containing an unrelated expansion term raises with the
+tenant and query instead of creating self-fulfilling training data.
 
 ### ProfileGenerator
 
