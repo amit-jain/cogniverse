@@ -176,20 +176,8 @@ class SyntheticDataService:
             "config: configured)"
         )
 
-    def _require_agent_timeout(
-        self,
-        optimizer_name: str,
-        agent_name: str,
-    ) -> float:
-        agent_config = self.agents_config.get(agent_name)
-        timeout = (
-            agent_config.get("timeout") if isinstance(agent_config, dict) else None
-        )
-        if timeout is None:
-            raise ValueError(
-                f"{optimizer_name} generation requires "
-                f"agents_config['{agent_name}'].timeout"
-            )
+    def _synthetic_generation_timeout(self) -> float:
+        timeout = self.generator_config.synthetic_generation_timeout_seconds
         if (
             isinstance(timeout, bool)
             or not isinstance(timeout, (int, float))
@@ -197,7 +185,8 @@ class SyntheticDataService:
             or timeout <= 0
         ):
             raise ValueError(
-                f"agents_config['{agent_name}'].timeout must be finite and positive"
+                "SyntheticGeneratorConfig.synthetic_generation_timeout_seconds "
+                "must be finite and positive"
             )
         return float(timeout)
 
@@ -223,15 +212,9 @@ class SyntheticDataService:
             if cached is not None:
                 return cached
 
+            synthetic_generation_timeout = self._synthetic_generation_timeout()
+
             if optimizer_name == "routing":
-                routing_timeout = self._require_agent_timeout(
-                    optimizer_name,
-                    "gateway_agent",
-                )
-                entity_timeout = self._require_agent_timeout(
-                    optimizer_name,
-                    "entity_extraction_agent",
-                )
                 if self.entity_extractor is None:
                     raise ValueError(
                         "entity_extractor is required for routing generation"
@@ -247,53 +230,37 @@ class SyntheticDataService:
                     routing_decider=self.routing_decider,
                     pattern_extractor=self.pattern_extractor,
                     optimizer_config=routing_config,
-                    production_label_timeout_seconds=routing_timeout,
-                    entity_extraction_timeout_seconds=entity_timeout,
+                    production_label_timeout_seconds=synthetic_generation_timeout,
+                    entity_extraction_timeout_seconds=synthetic_generation_timeout,
                 )
             elif optimizer_name == "query_enhancement":
-                query_enhancement_timeout = self._require_agent_timeout(
-                    optimizer_name,
-                    "query_enhancement_agent",
-                )
                 generator = QueryEnhancementGenerator(
                     query_enhancer=self.query_enhancer,
-                    production_label_timeout_seconds=query_enhancement_timeout,
+                    production_label_timeout_seconds=synthetic_generation_timeout,
                 )
             elif optimizer_name == "entity_extraction":
-                entity_timeout = self._require_agent_timeout(
-                    optimizer_name,
-                    "entity_extraction_agent",
-                )
                 if self.entity_extractor is None:
                     raise ValueError(
                         "entity_extractor is required for entity_extraction generation"
                     )
                 generator = EntityExtractionGenerator(
                     entity_extractor=self.entity_extractor,
-                    extraction_timeout_seconds=entity_timeout,
+                    extraction_timeout_seconds=synthetic_generation_timeout,
                 )
             elif optimizer_name == "workflow":
                 generator = WorkflowGenerator(agent_inferrer=self.agent_inferrer)
             elif optimizer_name == "profile":
-                profile_timeout = self._require_agent_timeout(
-                    optimizer_name,
-                    "profile_selection_agent",
-                )
                 generator = ProfileGenerator(
                     profile_labeler=self.profile_labeler,
-                    production_label_timeout_seconds=profile_timeout,
+                    production_label_timeout_seconds=synthetic_generation_timeout,
                 )
             elif optimizer_name == "cross_modal":
                 # cross_modal generation produces profile-selection examples
                 # over multi-modal content; reuse ProfileGenerator with the
                 # multi_modal_sequences sampling strategy from the registry.
-                profile_timeout = self._require_agent_timeout(
-                    optimizer_name,
-                    "profile_selection_agent",
-                )
                 generator = ProfileGenerator(
                     profile_labeler=self.profile_labeler,
-                    production_label_timeout_seconds=profile_timeout,
+                    production_label_timeout_seconds=synthetic_generation_timeout,
                 )
             elif optimizer_name == "unified":
                 # unified shares the workflow generator path (registry maps

@@ -356,7 +356,11 @@ def _validate_synthetic(
 ) -> SyntheticGeneratorConfig:
     _require_keys(
         raw,
-        required={"field_mappings", "optimizer_configs"},
+        required={
+            "field_mappings",
+            "optimizer_configs",
+            "synthetic_generation_timeout_seconds",
+        },
         source="synthetic",
     )
     _validate_field_mappings(raw["field_mappings"])

@@ -1141,6 +1141,7 @@ class SyntheticGeneratorConfig:
     - Query template generation per optimizer type
     - Agent mapping rules
     - Profile selection scoring
+    - Shared synthetic-generation timeout for callback supervision
 
     ``tenant_id`` is required; the ``None`` default is only a
     dataclass-ordering placeholder. ``__post_init__`` raises via
@@ -1152,11 +1153,21 @@ class SyntheticGeneratorConfig:
     optimizer_configs: Dict[str, OptimizerGenerationConfig] = field(
         default_factory=dict
     )
+    synthetic_generation_timeout_seconds: float = 300.0
 
     def __post_init__(self) -> None:
         from cogniverse_foundation.common.tenant_utils import require_tenant_id
 
         require_tenant_id(self.tenant_id, source="SyntheticGeneratorConfig")
+        if (
+            isinstance(self.synthetic_generation_timeout_seconds, bool)
+            or not isinstance(self.synthetic_generation_timeout_seconds, (int, float))
+            or not math.isfinite(self.synthetic_generation_timeout_seconds)
+            or self.synthetic_generation_timeout_seconds <= 0
+        ):
+            raise ValueError(
+                "synthetic_generation_timeout_seconds must be finite and positive"
+            )
         configured_types = set(self.optimizer_configs)
         if configured_types != SYNTHETIC_GENERATOR_CONFIG_TYPES:
             required = ", ".join(sorted(SYNTHETIC_GENERATOR_CONFIG_TYPES))
@@ -1201,6 +1212,7 @@ class SyntheticGeneratorConfig:
         return {
             "tenant_id": self.tenant_id,
             "field_mappings": self.field_mappings.to_dict(),
+            "synthetic_generation_timeout_seconds": self.synthetic_generation_timeout_seconds,
             "optimizer_configs": {
                 key: config.to_dict() for key, config in self.optimizer_configs.items()
             },
@@ -1211,7 +1223,12 @@ class SyntheticGeneratorConfig:
         """Create from dictionary. Raises if tenant_id is absent."""
         from cogniverse_foundation.common.tenant_utils import require_tenant_id
 
-        allowed_fields = {"tenant_id", "field_mappings", "optimizer_configs"}
+        allowed_fields = {
+            "tenant_id",
+            "field_mappings",
+            "optimizer_configs",
+            "synthetic_generation_timeout_seconds",
+        }
         if set(data) != allowed_fields:
             missing = sorted(allowed_fields - data.keys())
             unknown = sorted(data.keys() - allowed_fields)
@@ -1233,6 +1250,9 @@ class SyntheticGeneratorConfig:
             tenant_id=tenant_id,
             field_mappings=field_mappings,
             optimizer_configs=optimizer_configs,
+            synthetic_generation_timeout_seconds=data.get(
+                "synthetic_generation_timeout_seconds", 300.0
+            ),
         )
 
     def get_optimizer_config(
