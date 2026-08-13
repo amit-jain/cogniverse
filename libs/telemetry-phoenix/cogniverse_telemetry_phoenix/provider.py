@@ -939,6 +939,8 @@ class PhoenixProvider(TelemetryProvider):
                 protocol="grpc",
                 auto_instrument=False,
                 set_global_tracer_provider=False,
+                # Phoenix prints its setup banner to stdout unless silenced.
+                verbose=False,
                 **register_kwargs,
             )
 

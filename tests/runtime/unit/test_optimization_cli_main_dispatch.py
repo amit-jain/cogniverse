@@ -10,6 +10,7 @@ dispatch wiring with the workers stubbed so no Argo/Phoenix/Vespa/LM is touched.
 
 from __future__ import annotations
 
+import json
 import sys
 
 import pytest
@@ -39,6 +40,32 @@ class _Recorder:
         return self._coro()
 
     async def _coro(self):
+        return self._result
+
+
+class _NoisyRecorder(_Recorder):
+    """Worker stub that prints to stdout before returning a result."""
+
+    def __init__(self, result, noise: str = "setup noise"):
+        super().__init__(result)
+        self.noise = noise
+
+    async def _coro(self):
+        print(self.noise)
+        return self._result
+
+
+class _NoisySyncRecorder:
+    """Sync worker stub that prints to stdout before returning a result."""
+
+    def __init__(self, result, noise: str = "setup noise"):
+        self._result = result
+        self.noise = noise
+        self.calls = 0
+
+    def __call__(self, *args, **kwargs):
+        self.calls += 1
+        print(self.noise)
         return self._result
 
 
@@ -352,6 +379,70 @@ def test_non_dict_result_exits_0(monkeypatch):
         ["--mode", "online-eval", "--tenant-id", "acme", "--lookback-hours", "1"],
     )
     assert code == 0
+
+
+@pytest.mark.parametrize(
+    ("mode", "worker_attr", "argv", "recorder_cls"),
+    [
+        (
+            "synthetic",
+            "run_synthetic_generation",
+            ["--mode", "synthetic", "--tenant-id", "acme"],
+            _NoisyRecorder,
+        ),
+        (
+            "profile",
+            "run_profile_optimization",
+            ["--mode", "profile", "--tenant-id", "acme"],
+            _NoisyRecorder,
+        ),
+        (
+            "cleanup",
+            "run_cleanup",
+            ["--mode", "cleanup"],
+            _NoisyRecorder,
+        ),
+        (
+            "monthly-reports",
+            "run_monthly_reports",
+            ["--mode", "monthly-reports"],
+            _NoisyRecorder,
+        ),
+        (
+            "egress-netpol",
+            "run_egress_netpol",
+            [
+                "--mode",
+                "egress-netpol",
+                "--output-dir",
+                "/tmp/cogniverse-egress-test",
+                "--service-map",
+                "vespa=cogniverse/vespa-service:8080",
+            ],
+            _NoisySyncRecorder,
+        ),
+    ],
+    ids=[
+        "synthetic",
+        "profile",
+        "cleanup",
+        "monthly-reports",
+        "egress-netpol",
+    ],
+)
+def test_main_keeps_setup_stdout_off_stdout(
+    monkeypatch, capfd, mode, worker_attr, argv, recorder_cls
+):
+    """Noisy setup output stays on stderr and stdout remains one JSON document."""
+    rec = recorder_cls(_OK, noise=f"{mode} setup banner")
+    monkeypatch.setattr(oc, worker_attr, rec)
+    code = _run_main(monkeypatch, argv)
+    assert code == 0
+
+    captured = capfd.readouterr()
+    assert json.loads(captured.out) == _OK
+    assert captured.out.strip() == json.dumps(_OK, indent=2, default=str)
+    assert f"{mode} setup banner" in captured.err
 
 
 class TestConfigErrorExitsCleanly:
