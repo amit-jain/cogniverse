@@ -332,9 +332,17 @@ candidates once per shape and reuses the winner. The results file lives in
 the persistent model-cache mount (per-service name avoids collisions when
 services share one hostPath cache; %d is the device id) so tuning survives
 restarts and rollouts. Call with (dict "device" $device "name" $name "root" $).
+
+Services on the pylate engine are excluded: their server faults the GPU
+(exit 139) while TunableOp benchmarks an untuned GEMM shape, and real
+traffic supplies a new shape on nearly every request. An individual
+service overrides the engine-derived default with `tunableOp`.
 */}}
 {{- define "cogniverse.tunableOpEnv" -}}
-{{- if and (eq .device "rocm") .root.Values.runtime.tunableOp }}
+{{- $svc := (index .root.Values.inference .name) | default dict -}}
+{{- $enabled := ne ($svc.engine | default "") "pylate" -}}
+{{- if hasKey $svc "tunableOp" -}}{{- $enabled = $svc.tunableOp -}}{{- end -}}
+{{- if and (eq .device "rocm") .root.Values.runtime.tunableOp $enabled }}
 - name: PYTORCH_TUNABLEOP_ENABLED
   value: "1"
 - name: PYTORCH_TUNABLEOP_TUNING
