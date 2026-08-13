@@ -51,5 +51,6 @@ def video_synthetic_generator_config(tenant_id: str) -> SyntheticGeneratorConfig
     )
     return SyntheticGeneratorConfig(
         tenant_id=tenant_id,
+        synthetic_generation_timeout_seconds=300.0,
         optimizer_configs=scoring_configs,
     )

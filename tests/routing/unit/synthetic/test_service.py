@@ -43,7 +43,7 @@ def create_test_agent_mappings() -> list[AgentMappingRule]:
     ]
 
 
-def create_test_generator_config():
+def create_test_generator_config(*, synthetic_generation_timeout_seconds: float = 23.0):
     """Create test generator configuration with all required optimizer configs"""
     scoring_configs = {
         optimizer_name: OptimizerGenerationConfig(
@@ -72,6 +72,7 @@ def create_test_generator_config():
     )
     return SyntheticGeneratorConfig(
         tenant_id="test:unit",
+        synthetic_generation_timeout_seconds=synthetic_generation_timeout_seconds,
         optimizer_configs=scoring_configs,
     )
 
@@ -252,11 +253,19 @@ async def _enhance_grounded_query(query: str, tenant_id: str) -> dict:
     }
 
 
-def create_test_service(*, agents_config: dict | None = None) -> SyntheticDataService:
+def create_test_service(
+    *,
+    agents_config: dict | None = None,
+    generator_config: SyntheticGeneratorConfig | None = None,
+) -> SyntheticDataService:
     return SyntheticDataService(
         backend=_GroundedBackend(),
         backend_config=create_test_backend_config(),
-        generator_config=create_test_generator_config(),
+        generator_config=(
+            create_test_generator_config()
+            if generator_config is None
+            else generator_config
+        ),
         agents_config=(
             create_test_agents_config() if agents_config is None else agents_config
         ),
@@ -281,7 +290,7 @@ class TestSyntheticDataService:
         # Generators are initialized lazily, so check starts empty
         assert isinstance(service.generators, dict)
 
-    def test_callback_generators_use_exact_active_agent_timeouts(self):
+    def test_callback_generators_use_synthetic_generation_timeout(self):
         agents_config = create_test_agents_config()
         service = create_test_service(agents_config=agents_config)
 
@@ -292,11 +301,12 @@ class TestSyntheticDataService:
         cross_modal = service._get_generator("cross_modal")
 
         assert service.agents_config is agents_config
-        assert routing.production_label_timeout_seconds == 11.0
-        assert routing.entity_labeler.extraction_timeout_seconds == 13.0
-        assert entity.extraction_timeout_seconds == 13.0
-        assert query_enhancement.production_label_timeout_seconds == 17.0
-        assert profile.production_label_timeout_seconds == 19.0
+        assert service.generator_config.synthetic_generation_timeout_seconds == 23.0
+        assert routing.production_label_timeout_seconds == 23.0
+        assert routing.entity_labeler.extraction_timeout_seconds == 23.0
+        assert entity.extraction_timeout_seconds == 23.0
+        assert query_enhancement.production_label_timeout_seconds == 23.0
+        assert profile.production_label_timeout_seconds == 23.0
         assert cross_modal is profile
 
     @pytest.mark.parametrize(
@@ -310,7 +320,7 @@ class TestSyntheticDataService:
             ("profile_selection_agent", "cross_modal"),
         ],
     )
-    def test_callback_generator_missing_timeout_is_not_cached(
+    def test_callback_generators_ignore_missing_agent_timeout(
         self,
         agent_name,
         optimizer_name,
@@ -319,31 +329,30 @@ class TestSyntheticDataService:
         del agents_config[agent_name]["timeout"]
         service = create_test_service(agents_config=agents_config)
 
-        with pytest.raises(ValueError) as raised:
-            service._get_generator(optimizer_name)
+        generator = service._get_generator(optimizer_name)
 
-        assert str(raised.value) == (
-            f"{optimizer_name} generation requires "
-            f"agents_config['{agent_name}'].timeout"
-        )
-        assert service.generators == {}
+        assert service.generator_config.synthetic_generation_timeout_seconds == 23.0
+        if optimizer_name == "routing":
+            assert generator.production_label_timeout_seconds == 23.0
+            assert generator.entity_labeler.extraction_timeout_seconds == 23.0
+        elif optimizer_name == "entity_extraction":
+            assert generator.extraction_timeout_seconds == 23.0
+        else:
+            assert generator.production_label_timeout_seconds == 23.0
+        assert service.generators
+        assert service.generators == {generator.__class__.__name__: generator}
 
     @pytest.mark.parametrize(
         "timeout",
         [True, "15", 0, -1, float("nan"), float("inf")],
     )
-    def test_callback_generator_rejects_invalid_active_agent_timeout(self, timeout):
-        agents_config = create_test_agents_config()
-        agents_config["gateway_agent"]["timeout"] = timeout
-        service = create_test_service(agents_config=agents_config)
-
+    def test_synthetic_generation_timeout_rejects_invalid_values(self, timeout):
         with pytest.raises(ValueError) as raised:
-            service._get_generator("routing")
+            create_test_generator_config(synthetic_generation_timeout_seconds=timeout)
 
         assert str(raised.value) == (
-            "agents_config['gateway_agent'].timeout must be finite and positive"
+            "synthetic_generation_timeout_seconds must be finite and positive"
         )
-        assert service.generators == {}
 
     @pytest.mark.asyncio
     async def test_service_gateway_timeout_bounds_hung_routing_callback(self):
@@ -370,12 +379,14 @@ class TestSyntheticDataService:
                 assert records == [{"title": "Saturn V launch"}]
                 return {"topics": ["Saturn V launch"]}
 
+        generator_config = create_test_generator_config(
+            synthetic_generation_timeout_seconds=0.02
+        )
         agents_config = create_test_agents_config()
-        agents_config["gateway_agent"]["timeout"] = 0.02
         service = SyntheticDataService(
             backend=_GroundedBackend(),
             backend_config=create_test_backend_config(),
-            generator_config=create_test_generator_config(),
+            generator_config=generator_config,
             agents_config=agents_config,
             entity_extractor=_extract_grounded_entities,
             routing_decider=hung_routing_decider,
@@ -1571,7 +1582,7 @@ def test_generator_cache_constructs_once_under_concurrent_cold_start(
         generators = list(pool.map(lambda _: get_generator(), range(worker_count)))
 
     assert constructor_calls == 1
-    assert observed_timeouts == [19.0]
+    assert observed_timeouts == [23.0]
     assert len({id(generator) for generator in generators}) == 1
 
 
@@ -1588,7 +1599,7 @@ def test_generator_cache_recovers_after_constructor_failure(monkeypatch) -> None
             production_label_timeout_seconds=None,
         ) -> None:
             nonlocal constructor_calls
-            assert production_label_timeout_seconds == 19.0
+            assert production_label_timeout_seconds == 23.0
             with count_lock:
                 constructor_calls += 1
                 call_number = constructor_calls

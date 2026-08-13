@@ -39,9 +39,11 @@ def test_deployable_synthetic_config_has_exact_routing_contract():
 
     assert set(section) == {
         "field_mappings",
+        "synthetic_generation_timeout_seconds",
         "optimizer_configs",
     }
     assert "tenant_id" not in section
+    assert section["synthetic_generation_timeout_seconds"] == 300.0
     assert section["optimizer_configs"]["routing"]["dspy_modules"] == {
         "query_generator": {
             "signature_class": (

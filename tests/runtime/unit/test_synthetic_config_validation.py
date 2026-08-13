@@ -92,6 +92,7 @@ def test_deployable_field_mappings_cover_code_and_wiki_content() -> None:
         _deployable_config(), tenant_id="acme:strict"
     )
 
+    assert parsed.generator_config.synthetic_generation_timeout_seconds == 300.0
     assert parsed.generator_config.field_mappings.topic_fields == [
         "video_title",
         "audio_title",

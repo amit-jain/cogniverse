@@ -246,6 +246,7 @@ def _synthetic_runtime_sections(*, marker: str = "fixture") -> dict[str, Any]:
                 "temporal_fields": {"start": "start_time", "end": "end_time"},
                 "metadata_fields": {"source": "source_uri"},
             },
+            "synthetic_generation_timeout_seconds": 300.0,
             "optimizer_configs": {
                 "modality": {
                     "optimizer_type": "modality",

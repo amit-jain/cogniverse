@@ -151,22 +151,24 @@ Direct construction of routing, profile-selection, and query-enhancement
 generators exposes a positive, finite `production_label_timeout_seconds`
 setting. Direct entity-extraction construction uses the equivalent
 `extraction_timeout_seconds` setting. `SyntheticDataService` does not use those
-constructor defaults: it retains the validated active `agents_config` and wires
-the exact configured deadlines below when each generator is first requested.
+constructor defaults for synthetic generation: it retains the validated active
+`agents_config` for normal agent requests, but wires the shared
+`synthetic_generation_timeout_seconds` deadline below when each synthetic
+generator is first requested.
 
-| Active agent | Bounded work |
+| Config source | Bounded work |
 |--------------|--------------|
-| `gateway_agent.timeout` | Routing decision callback and synchronous DSPy query generation |
-| `entity_extraction_agent.timeout` | Direct entity generation and routing's nested entity generation |
-| `query_enhancement_agent.timeout` | Query-enhancement callback |
-| `profile_selection_agent.timeout` | Profile and cross-modal selection callbacks |
+| `synthetic_generation_timeout_seconds` | Routing decision callback and synchronous DSPy query generation |
+| `synthetic_generation_timeout_seconds` | Direct entity generation and routing's nested entity generation |
+| `synthetic_generation_timeout_seconds` | Query-enhancement callback |
+| `synthetic_generation_timeout_seconds` | Profile and cross-modal selection callbacks |
 
-A required agent or timeout that is missing, non-numeric, non-finite, boolean,
-or non-positive fails before the generator is published to the service cache.
-Each production callback runs under its configured deadline. A hung callback
-raises with its operation and source context; callback exceptions retain their
-original cause. No path returns a default label or partial dataset after a
-callback failure.
+A missing, non-numeric, non-finite, boolean, or non-positive synthetic
+generation timeout fails before the generator is published to the service
+cache. Each production callback runs under that shared deadline. A hung
+callback raises with its operation and source context; callback exceptions
+retain their original cause. No path returns a default label or partial
+dataset after a callback failure.
 
 ### EntityExtractionGenerator
 

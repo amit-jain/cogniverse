@@ -301,7 +301,9 @@ every canonical key they declare; any further key passes through to
 such as `agent_memories` carry the `encoder` and `strategy` values the Vespa
 search backend reads back by name. The validated enabled-agent object is passed
 unchanged to `SyntheticDataService`; there is no embedded mapping, empty-object
-default, or configuration fallback.
+default, or configuration fallback. `SyntheticGeneratorConfig` also carries the
+shared `synthetic_generation_timeout_seconds` budget that synthetic generator
+callbacks use instead of the normal per-agent request timeout.
 Routing and entity-extraction example labels use the registered production
 `entity_extraction_agent`: the runtime adapter calls `AgentDispatcher.dispatch`
 with the source text and request tenant, preserving the dispatcher result for

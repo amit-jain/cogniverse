@@ -491,8 +491,8 @@ async def test_routing_service_keeps_real_vespa_sources_and_agents_aligned(
         routing_decider=decide_route,
     )
     routing_generator = service._get_generator("routing")
-    assert routing_generator.production_label_timeout_seconds == 10.0
-    assert routing_generator.entity_labeler.extraction_timeout_seconds == 15.0
+    assert routing_generator.production_label_timeout_seconds == 300.0
+    assert routing_generator.entity_labeler.extraction_timeout_seconds == 300.0
 
     response = await service.generate(
         SyntheticDataRequest(
