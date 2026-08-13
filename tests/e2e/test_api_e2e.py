@@ -1849,6 +1849,12 @@ def _expected_available_profile_names(tenant_id: str) -> list[str]:
     """Return the deployed sampleable backend profiles for a tenant."""
     config = json.loads(CONFIG_PATH.read_text())
     deployed_schemas = _vespa_deployed_schema_names()
+    if not deployed_schemas:
+        pytest.fail(
+            "Vespa deployed-schema probe returned nothing; the expected "
+            "profile list would be empty and the comparison would pass "
+            "vacuously against an equally empty response"
+        )
     tenant_suffix = "_" + tenant_id.replace(":", "_")
     profiles = config.get("backend", {}).get("profiles", {})
 
