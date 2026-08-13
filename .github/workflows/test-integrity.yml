@@ -1,0 +1,61 @@
+name: Test Integrity
+
+on:
+  push:
+    branches: [ main, develop, 'feature/*' ]
+    paths:
+      - 'tests/**'
+      - '.github/workflows/test-integrity.yml'
+  pull_request:
+    branches: [ main, develop ]
+    paths:
+      - 'tests/**'
+      - '.github/workflows/test-integrity.yml'
+
+jobs:
+  assertion-strength:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+
+    steps:
+    - uses: actions/checkout@v4
+      with:
+        fetch-depth: 0
+
+    - name: Set up Python 3.12
+      uses: actions/setup-python@v4
+      with:
+        python-version: '3.12'
+
+    - name: Install uv
+      uses: astral-sh/setup-uv@v4
+      with:
+        version: "latest"
+
+    - name: Install dependencies
+      run: uv sync --all-packages --all-extras --no-extra cuda --no-extra rocm
+
+    - name: Resolve comparison base
+      id: base
+      run: |
+        set -euo pipefail
+        if [ "${{ github.event_name }}" = "pull_request" ]; then
+          BASE="${{ github.event.pull_request.base.sha }}"
+        else
+          BASE="${{ github.event.before }}"
+          case "$BASE" in
+            ""|0000000000000000000000000000000000000000)
+              BASE="$(git rev-parse HEAD~1)"
+              ;;
+          esac
+        fi
+        git cat-file -e "$BASE^{commit}"
+        echo "sha=$BASE" >> "$GITHUB_OUTPUT"
+        echo "comparing HEAD against $BASE"
+
+    - name: Assertion-strength guard
+      env:
+        ASSERTION_GUARD_BASE: ${{ steps.base.outputs.sha }}
+      run: |
+        uv run pytest tests/common/unit/test_assertion_strength_guard.py \
+          --tb=long -v
