@@ -844,6 +844,35 @@ def _source_url_matches(
     return source_url.rsplit("/", 2)[-2:] == [tenant_id, f"{content_id}{suffix}"]
 
 
+def _sample_source_location_matches(
+    metadata: dict,
+    *,
+    content_id: str,
+    tenant_id: str,
+    suffix: str,
+    family: str,
+) -> bool:
+    """Prove the hit carries the tenant-scoped location of the exact fixture.
+
+    Media fixtures record an S3 ``source_url``; text fixtures record the
+    tenant-partitioned ``document_path`` of the cached original.
+    """
+    if family in ("image", "video"):
+        return _source_url_matches(
+            metadata.get("source_url"),
+            content_id=content_id,
+            tenant_id=tenant_id,
+            suffix=suffix,
+        )
+    document_path = metadata.get("document_path")
+    if not isinstance(document_path, str):
+        return False
+    tenant_segments = f"/{tenant_id.replace(':', '/')}/"
+    return tenant_segments in document_path and document_path.endswith(
+        f"/{content_id}{suffix}"
+    )
+
+
 def _matching_sample_results(
     search_body: dict,
     *,
@@ -851,6 +880,7 @@ def _matching_sample_results(
     tenant_id: str,
     profile: str,
     suffix: str,
+    media_type: str,
 ) -> list[dict]:
     """Return only hits that prove the exact tenant-scoped fixture identity."""
     assert search_body.get("query") == content_id, search_body
@@ -860,8 +890,16 @@ def _matching_sample_results(
     assert isinstance(results, list), search_body
     assert search_body.get("results_count") == len(results), search_body
 
-    expected_document_prefix = f"{content_id}_seg_"
-    identity_field = "image_id" if profile.startswith("image_") else "video_id"
+    family = media_type.split("/", 1)[0]
+    if family == "image":
+        identity_field, expected_document_prefix = "image_id", f"{content_id}_seg_"
+    elif family == "video":
+        identity_field, expected_document_prefix = "video_id", f"{content_id}_seg_"
+    elif family == "text":
+        identity_field, expected_document_prefix = "document_id", f"{content_id}_"
+    else:
+        raise AssertionError(f"unsupported sample media_type {media_type!r}")
+
     matches = []
     for result in results:
         if not isinstance(result, dict):
@@ -874,11 +912,12 @@ def _matching_sample_results(
             and metadata.get(identity_field) == content_id
             and isinstance(result.get("document_id"), str)
             and result["document_id"].startswith(expected_document_prefix)
-            and _source_url_matches(
-                metadata.get("source_url"),
+            and _sample_source_location_matches(
+                metadata,
                 content_id=content_id,
                 tenant_id=tenant_id,
                 suffix=suffix,
+                family=family,
             )
         ):
             matches.append(result)
@@ -909,7 +948,7 @@ def _validate_sample_ingestion_result(
 
 
 def _search_sample_content(
-    *, content_id: str, tenant_id: str, profile: str, suffix: str
+    *, content_id: str, tenant_id: str, profile: str, suffix: str, media_type: str
 ) -> tuple[list[dict] | None, str | None]:
     """Return (matches, error). A search-API failure is reported as an
     error string, never flattened into 'no matches'."""
@@ -935,6 +974,7 @@ def _search_sample_content(
         tenant_id=tenant_id,
         profile=profile,
         suffix=suffix,
+        media_type=media_type,
     )
     return matches, None
 
@@ -954,6 +994,7 @@ def _ensure_sample_content_ingested(
         tenant_id=TENANT_ID,
         profile=profile,
         suffix=path.suffix,
+        media_type=media_type,
     )
     if existing_matches:
         print(
@@ -1049,6 +1090,7 @@ def _ensure_sample_content_ingested(
             tenant_id=TENANT_ID,
             profile=profile,
             suffix=path.suffix,
+            media_type=media_type,
         )
         matches = found or []
         if len(matches) == documents_fed:
