@@ -18,6 +18,11 @@ FROM ${CPU_BASE} AS cpu-base
 # Hop to the variant matching the build arg.
 FROM ${TORCH_BACKEND}-base AS final
 
+# Bound pip network behaviour: the PyTorch/PyPI CDNs stall intermittently and
+# pip's defaults (5 retries, 15s socket timeout) abort a multi-GB wheel fetch.
+ENV PIP_DEFAULT_TIMEOUT=300 \
+    PIP_RETRIES=10
+
 # python:3.12-slim has no curl; rocm/pytorch and nvidia/cuda do.
 # apt-get may already be unavailable on slim if it's been stripped —
 # the install only runs when needed.

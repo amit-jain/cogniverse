@@ -4,6 +4,11 @@
 #   docker build -f deploy/face_embed/Dockerfile -t cogniverse-face-embed .
 FROM python:3.12-slim AS final
 
+# Bound pip network behaviour: the PyTorch/PyPI CDNs stall intermittently and
+# pip's defaults (5 retries, 15s socket timeout) abort a multi-GB wheel fetch.
+ENV PIP_DEFAULT_TIMEOUT=300 \
+    PIP_RETRIES=10
+
 ARG FACE_MODEL_URL=https://github.com/deepinsight/insightface/releases/download/v0.7/buffalo_l.zip
 ARG FACE_MODEL_SHA256=80ffe37d8a5940d59a7384c201a2a38d4741f2f3c51eef46ebb28218a7b0ca2f
 
@@ -25,7 +30,7 @@ RUN apt-get update \
 WORKDIR /app
 
 COPY deploy/face_embed/requirements.txt ./
-RUN pip install --no-cache-dir --retries 10 --timeout 120 -r requirements.txt
+RUN pip install --no-cache-dir -r requirements.txt
 
 ENV FACE_EMBED_MODEL_ROOT=/opt/insightface
 
