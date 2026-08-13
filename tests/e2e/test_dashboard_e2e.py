@@ -1717,7 +1717,7 @@ class TestManualOptimizationTrigger:
         page.get_by_role(
             "heading", name="🚀 Optimization Controls", exact=True
         ).wait_for(state="visible", timeout=INTERACTION_TIMEOUT)
-        page.get_by_text("Run Optimization", exact=True).wait_for(
+        page.get_by_text("🚀 Run Optimization", exact=True).wait_for(
             state="visible", timeout=INTERACTION_TIMEOUT
         )
         body_text = page.inner_text("body")

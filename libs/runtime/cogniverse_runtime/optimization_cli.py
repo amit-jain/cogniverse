@@ -19,6 +19,8 @@ Usage:
 
 import argparse
 import asyncio
+import contextlib
+import io
 import json
 import logging
 import os
@@ -35,6 +37,34 @@ from cogniverse_core.durable import (
 from cogniverse_foundation.telemetry.span_contract import read_span_io
 
 logger = logging.getLogger(__name__)
+
+
+@contextlib.contextmanager
+def _redirect_stdout_to_stderr():
+    """Keep stdout reserved for the final JSON document.
+
+    Library setup code can still emit human diagnostics, but they must land on
+    stderr so callers can json.loads(stdout) reliably.
+    """
+    try:
+        stdout_fd = sys.stdout.fileno()
+        stderr_fd = sys.stderr.fileno()
+    except (AttributeError, io.UnsupportedOperation):
+        with contextlib.redirect_stdout(sys.stderr):
+            yield
+        return
+
+    saved_stdout_fd = os.dup(stdout_fd)
+    try:
+        sys.stdout.flush()
+        os.dup2(stderr_fd, stdout_fd)
+        yield
+    finally:
+        try:
+            sys.stdout.flush()
+        finally:
+            os.dup2(saved_stdout_fd, stdout_fd)
+            os.close(saved_stdout_fd)
 
 
 class _TriggeredOptCheckpointer:
@@ -3851,158 +3881,160 @@ def main():
 
         args.tenant_id = canonical_tenant_id(args.tenant_id)
 
-    if args.mode == "cleanup":
-        result = asyncio.run(
-            run_cleanup(
-                args.tenant_id, args.log_retention_days, args.memory_retention_days
+    # Keep stdout reserved for the final JSON document.
+    with _redirect_stdout_to_stderr():
+        if args.mode == "cleanup":
+            result = asyncio.run(
+                run_cleanup(
+                    args.tenant_id, args.log_retention_days, args.memory_retention_days
+                )
             )
-        )
-    elif args.mode == "monthly-reports":
-        result = asyncio.run(
-            run_monthly_reports(
-                output_dir=args.reports_output_dir,
-                lookback_hours=args.lookback_hours,
+        elif args.mode == "monthly-reports":
+            result = asyncio.run(
+                run_monthly_reports(
+                    output_dir=args.reports_output_dir,
+                    lookback_hours=args.lookback_hours,
+                )
             )
-        )
-    elif args.mode == "triggered":
-        if not args.agents or not args.trigger_dataset:
-            parser.error(
-                "--agents and --trigger-dataset are required for triggered mode"
+        elif args.mode == "triggered":
+            if not args.agents or not args.trigger_dataset:
+                parser.error(
+                    "--agents and --trigger-dataset are required for triggered mode"
+                )
+            agents = [a.strip() for a in args.agents.split(",")]
+            result = asyncio.run(
+                run_triggered_optimization(
+                    tenant_id=args.tenant_id,
+                    agents=agents,
+                    trigger_dataset=args.trigger_dataset,
+                )
             )
-        agents = [a.strip() for a in args.agents.split(",")]
-        result = asyncio.run(
-            run_triggered_optimization(
-                tenant_id=args.tenant_id,
-                agents=agents,
-                trigger_dataset=args.trigger_dataset,
+        elif args.mode == "simba":
+            result = asyncio.run(
+                run_simba_optimization(
+                    tenant_id=args.tenant_id,
+                    lookback_hours=args.lookback_hours,
+                )
             )
-        )
-    elif args.mode == "simba":
-        result = asyncio.run(
-            run_simba_optimization(
-                tenant_id=args.tenant_id,
-                lookback_hours=args.lookback_hours,
+        elif args.mode == "workflow":
+            result = asyncio.run(
+                run_workflow_optimization(
+                    tenant_id=args.tenant_id,
+                    lookback_hours=args.lookback_hours,
+                )
             )
-        )
-    elif args.mode == "workflow":
-        result = asyncio.run(
-            run_workflow_optimization(
-                tenant_id=args.tenant_id,
-                lookback_hours=args.lookback_hours,
+        elif args.mode == "gateway-thresholds":
+            result = asyncio.run(
+                run_gateway_thresholds_optimization(
+                    tenant_id=args.tenant_id,
+                    lookback_hours=args.lookback_hours,
+                )
             )
-        )
-    elif args.mode == "gateway-thresholds":
-        result = asyncio.run(
-            run_gateway_thresholds_optimization(
-                tenant_id=args.tenant_id,
-                lookback_hours=args.lookback_hours,
+        elif args.mode == "online-routing-eval":
+            result = asyncio.run(
+                run_online_routing_evaluation(
+                    tenant_id=args.tenant_id,
+                    lookback_hours=args.lookback_hours,
+                )
             )
-        )
-    elif args.mode == "online-routing-eval":
-        result = asyncio.run(
-            run_online_routing_evaluation(
-                tenant_id=args.tenant_id,
-                lookback_hours=args.lookback_hours,
+        elif args.mode == "online-eval":
+            result = asyncio.run(
+                run_online_evaluation(
+                    tenant_id=args.tenant_id,
+                    lookback_hours=args.lookback_hours,
+                )
             )
-        )
-    elif args.mode == "online-eval":
-        result = asyncio.run(
-            run_online_evaluation(
-                tenant_id=args.tenant_id,
-                lookback_hours=args.lookback_hours,
+        elif args.mode == "profile":
+            result = asyncio.run(
+                run_profile_optimization(
+                    tenant_id=args.tenant_id,
+                    lookback_hours=args.lookback_hours,
+                )
             )
-        )
-    elif args.mode == "profile":
-        result = asyncio.run(
-            run_profile_optimization(
-                tenant_id=args.tenant_id,
-                lookback_hours=args.lookback_hours,
+        elif args.mode == "entity-extraction":
+            result = asyncio.run(
+                run_entity_extraction_optimization(
+                    tenant_id=args.tenant_id,
+                    lookback_hours=args.lookback_hours,
+                )
             )
-        )
-    elif args.mode == "entity-extraction":
-        result = asyncio.run(
-            run_entity_extraction_optimization(
-                tenant_id=args.tenant_id,
-                lookback_hours=args.lookback_hours,
+        elif args.mode == "rollback":
+            if not args.agent or (
+                args.prompts_version is None and args.demos_version is None
+            ):
+                parser.error(
+                    "--agent is required for rollback mode, plus at least one of "
+                    "--prompts-version or --demos-version"
+                )
+            result = asyncio.run(
+                run_rollback(
+                    tenant_id=args.tenant_id,
+                    agent_type=args.agent,
+                    prompts_version=args.prompts_version,
+                    demos_version=args.demos_version,
+                )
             )
-        )
-    elif args.mode == "rollback":
-        if not args.agent or (
-            args.prompts_version is None and args.demos_version is None
-        ):
-            parser.error(
-                "--agent is required for rollback mode, plus at least one of "
-                "--prompts-version or --demos-version"
-            )
-        result = asyncio.run(
-            run_rollback(
-                tenant_id=args.tenant_id,
-                agent_type=args.agent,
-                prompts_version=args.prompts_version,
-                demos_version=args.demos_version,
-            )
-        )
-    elif args.mode == "egress-netpol":
-        if not args.output_dir:
-            parser.error("--output-dir is required for egress-netpol mode")
-        if not args.service_map:
-            parser.error(
-                "at least one --service-map is required for egress-netpol mode"
-            )
-        # Parse `name=ns/svc:port` pairs into a dict.
-        sm: Dict[str, str] = {}
-        for pair in args.service_map:
-            if "=" not in pair:
-                parser.error(f"--service-map {pair!r} missing '=' separator")
-            k, v = pair.split("=", 1)
-            sm[k.strip()] = v.strip()
-        unified_selectors: Optional[Dict[str, str]] = None
-        if args.unified_pod_selector:
-            unified_selectors = {}
-            for pair in args.unified_pod_selector:
+        elif args.mode == "egress-netpol":
+            if not args.output_dir:
+                parser.error("--output-dir is required for egress-netpol mode")
+            if not args.service_map:
+                parser.error(
+                    "at least one --service-map is required for egress-netpol mode"
+                )
+            # Parse `name=ns/svc:port` pairs into a dict.
+            sm: Dict[str, str] = {}
+            for pair in args.service_map:
                 if "=" not in pair:
-                    parser.error(
-                        f"--unified-pod-selector {pair!r} missing '=' separator"
-                    )
+                    parser.error(f"--service-map {pair!r} missing '=' separator")
                 k, v = pair.split("=", 1)
-                unified_selectors[k.strip()] = v.strip()
-        result = run_egress_netpol(
-            policy_dir=args.policy_dir,
-            output_dir=args.output_dir,
-            service_map=sm,
-            namespace=args.netpol_namespace,
-            pod_app_label=args.netpol_app_label,
-            helm_conditional=args.helm_conditional,
-            unified_pod_selector=unified_selectors,
-        )
-    elif args.mode == "ab-compare":
-        if not args.queries_dataset:
-            parser.error("--queries-dataset is required for ab-compare mode")
-        result = asyncio.run(
-            run_ab_compare(
-                tenant_id=args.tenant_id,
-                queries_dataset=args.queries_dataset,
-                judge_substring=args.judge_substring,
-                rlm_max_iterations=args.rlm_max_iterations,
-                rlm_max_llm_calls=args.rlm_max_llm_calls,
+                sm[k.strip()] = v.strip()
+            unified_selectors: Optional[Dict[str, str]] = None
+            if args.unified_pod_selector:
+                unified_selectors = {}
+                for pair in args.unified_pod_selector:
+                    if "=" not in pair:
+                        parser.error(
+                            f"--unified-pod-selector {pair!r} missing '=' separator"
+                        )
+                    k, v = pair.split("=", 1)
+                    unified_selectors[k.strip()] = v.strip()
+            result = run_egress_netpol(
+                policy_dir=args.policy_dir,
+                output_dir=args.output_dir,
+                service_map=sm,
+                namespace=args.netpol_namespace,
+                pod_app_label=args.netpol_app_label,
+                helm_conditional=args.helm_conditional,
+                unified_pod_selector=unified_selectors,
             )
-        )
-    elif args.mode == "synthetic":
-        from cogniverse_synthetic.registry import (
-            APPROVED_TRAINING_AGENT_BY_OPTIMIZER,
-        )
+        elif args.mode == "ab-compare":
+            if not args.queries_dataset:
+                parser.error("--queries-dataset is required for ab-compare mode")
+            result = asyncio.run(
+                run_ab_compare(
+                    tenant_id=args.tenant_id,
+                    queries_dataset=args.queries_dataset,
+                    judge_substring=args.judge_substring,
+                    rlm_max_iterations=args.rlm_max_iterations,
+                    rlm_max_llm_calls=args.rlm_max_llm_calls,
+                )
+            )
+        elif args.mode == "synthetic":
+            from cogniverse_synthetic.registry import (
+                APPROVED_TRAINING_AGENT_BY_OPTIMIZER,
+            )
 
-        optimizer_types = list(APPROVED_TRAINING_AGENT_BY_OPTIMIZER)
-        if args.agents:
-            optimizer_types = [a.strip() for a in args.agents.split(",")]
-        result = asyncio.run(
-            run_synthetic_generation(
-                tenant_id=args.tenant_id,
-                optimizer_types=optimizer_types,
+            optimizer_types = list(APPROVED_TRAINING_AGENT_BY_OPTIMIZER)
+            if args.agents:
+                optimizer_types = [a.strip() for a in args.agents.split(",")]
+            result = asyncio.run(
+                run_synthetic_generation(
+                    tenant_id=args.tenant_id,
+                    optimizer_types=optimizer_types,
+                )
             )
-        )
-    else:
-        raise ValueError(f"Unknown mode: {args.mode}")
+        else:
+            raise ValueError(f"Unknown mode: {args.mode}")
 
     print(json.dumps(result, indent=2, default=str))
     sys.exit(1 if _run_failed(result) else 0)
