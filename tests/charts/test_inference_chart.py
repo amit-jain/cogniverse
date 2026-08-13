@@ -594,13 +594,21 @@ def _is_rocm(dep: dict) -> bool:
 
 def test_rocm_overlay_wires_tunableop_env_on_rocm_pods_only():
     """The ROCm overlay sets runtime.tunableOp, so every rocm-device
-    inference pod gets PyTorch TunableOp pointed at a per-service results
-    file inside the persistent model-cache mount. CPU sidecars in the same
-    render (e.g. gliner) carry none."""
+    inference pod that does not opt out gets PyTorch TunableOp pointed at a
+    per-service results file inside the persistent model-cache mount. The
+    PyLate sidecars opt out explicitly, and CPU sidecars in the same render
+    (e.g. gliner) carry none."""
     deps = _inference_deployments(_render(values="values.rocm.yaml"))
     rocm_pods = [k for k, d in deps.items() if _is_rocm(d)]
-    assert set(rocm_pods) >= {"vllm_colpali", "denseon", "colbert_pylate"}, rocm_pods
-    for key in rocm_pods:
+    assert set(rocm_pods) == {
+        "vllm_colpali",
+        "vllm_asr",
+        "vllm_llm_student",
+        "denseon",
+        "colbert_pylate",
+        "code_colbert_pylate",
+    }, rocm_pods
+    for key in ("vllm_colpali", "vllm_asr", "vllm_llm_student", "denseon"):
         env = _inference_env(deps, key)
         assert env["PYTORCH_TUNABLEOP_ENABLED"] == "1", key
         assert env["PYTORCH_TUNABLEOP_TUNING"] == "1", key
@@ -608,6 +616,8 @@ def test_rocm_overlay_wires_tunableop_env_on_rocm_pods_only():
             env["PYTORCH_TUNABLEOP_FILENAME"]
             == f"/root/.cache/huggingface/tunableop_{key.replace('_', '-')}_%d.csv"
         ), key
+    for key in ("colbert_pylate", "code_colbert_pylate"):
+        assert not (set(_inference_env(deps, key)) & _TUNABLEOP_VARS), key
     for key, dep in deps.items():
         if not _is_rocm(dep):
             assert not (set(_inference_env(deps, key)) & _TUNABLEOP_VARS), key
@@ -635,6 +645,21 @@ def test_tunableop_requires_both_rocm_device_and_toggle():
         _inference_deployments(_render("runtime.tunableOp=true")), "denseon"
     )
     assert not (set(toggle_no_rocm) & _TUNABLEOP_VARS)
+
+
+def test_cpu_overlay_keeps_tunableop_env_off_even_when_global_toggle_is_on():
+    deps = _inference_deployments(
+        _render("runtime.tunableOp=true", values="values.cpu.yaml")
+    )
+
+    for key, deployment in deps.items():
+        names = {
+            e["name"]
+            for e in deployment["spec"]["template"]["spec"]["containers"][0].get(
+                "env", []
+            )
+        }
+        assert not (names & _TUNABLEOP_VARS), key
 
 
 # Chart-served vLLM services whose artifact is pinned in INFERENCE_SERVICE_SPECS.
