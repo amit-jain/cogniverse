@@ -12,6 +12,12 @@ RUN apt-get update && apt-get install -y \
 # Install uv for faster dependency management
 COPY --from=ghcr.io/astral-sh/uv:latest /uv /usr/local/bin/uv
 
+# Bound uv's network behaviour: the default concurrency equals the CPU count, and
+# that many simultaneous DNS lookups exhaust small upstream resolvers, surfacing as
+# `dns error: Try again` (EAI_AGAIN) mid-download.
+ENV UV_CONCURRENT_DOWNLOADS=4 \
+    UV_HTTP_TIMEOUT=300
+
 # Set working directory
 WORKDIR /app
 
@@ -33,12 +39,13 @@ COPY libs/runtime ./libs/runtime
 # host passes the git-derived version in (build_images / release-images.yml).
 ARG SETUPTOOLS_SCM_PRETEND_VERSION
 ENV SETUPTOOLS_SCM_PRETEND_VERSION=${SETUPTOOLS_SCM_PRETEND_VERSION}
-RUN uv sync --package cogniverse-runtime --extra all --no-dev --frozen && \
+RUN --mount=type=cache,target=/root/.cache/uv,sharing=locked \
+    uv sync --package cogniverse-runtime --extra all --no-dev --frozen && \
     uv pip install pylate --no-deps && \
     uv pip install datasets && \
     uv pip install "arize-phoenix-evals<3" && \
     uv pip install -e ./libs/telemetry-phoenix && \
-    rm -rf /root/.cache/uv /root/.cache/pip
+    rm -rf /root/.cache/pip
 
 # spaCy model wheel — venv-side install, not HF cache (so the chart's
 # model-cache volume mount can't shadow it). HF Hub models like GLiNER
