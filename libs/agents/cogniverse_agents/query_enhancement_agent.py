@@ -311,6 +311,20 @@ class QueryEnhancementAgent(
         enhanced_query = result.enhanced_query or query
         reasoning = result.reasoning or ""
 
+        grounded_terms = self._ground_expansion_terms(prompt_query, query)
+        if grounded_terms:
+            grounded_keys = {term.casefold() for term in grounded_terms}
+            expansion_terms = [
+                term for term in expansion_terms if term.casefold() in grounded_keys
+            ]
+            if not expansion_terms:
+                expansion_terms = grounded_terms
+            enhanced_query = self._ensure_expansion_terms(
+                enhanced_query,
+                query,
+                expansion_terms,
+            )
+
         # Generate RRF query variants
         variants = self._generate_variants(query, enhanced_query, expansion_terms)
 
@@ -335,6 +349,52 @@ class QueryEnhancementAgent(
             confidence=confidence,
             reasoning=reasoning,
         )
+
+    @staticmethod
+    def _relevant_context_section(prompt: str) -> str:
+        marker = "## Relevant Context from Memory:\n"
+        start = prompt.find(marker)
+        if start == -1:
+            return ""
+        start += len(marker)
+        end_marker = "\n\n## Current Query:\n"
+        end = prompt.find(end_marker, start)
+        if end == -1:
+            return prompt[start:]
+        return prompt[start:end]
+
+    @classmethod
+    def _ground_expansion_terms(cls, prompt: str, query: str) -> List[str]:
+        context = cls._relevant_context_section(prompt)
+        if not context:
+            return []
+
+        query_words = {
+            word.strip(".,:;!?()[]{}\"'").casefold()
+            for word in query.split()
+            if word.strip(".,:;!?()[]{}\"'")
+        }
+        candidates: List[str] = []
+        for word in context.lower().split():
+            candidate = word.strip(".,:;!?()[]{}\"'")
+            if (
+                len(candidate) > 3
+                and candidate not in query_words
+                and candidate not in candidates
+            ):
+                candidates.append(candidate)
+        return candidates[:3]
+
+    @staticmethod
+    def _ensure_expansion_terms(
+        enhanced_query: str, query: str, expansion_terms: List[str]
+    ) -> str:
+        text = enhanced_query.strip() or query.strip()
+        lowered = text.casefold()
+        missing = [term for term in expansion_terms if term.casefold() not in lowered]
+        if missing:
+            text = f"{text} {' '.join(missing)}".strip()
+        return text
 
     def _dspy_to_a2a_output(self, result: QueryEnhancementOutput) -> Dict[str, Any]:
         """Convert QueryEnhancementOutput to A2A output format."""

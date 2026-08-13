@@ -1,6 +1,6 @@
 """Unit tests for QueryEnhancementAgent"""
 
-from unittest.mock import Mock, patch
+from unittest.mock import AsyncMock, Mock, patch
 
 import dspy
 import pytest
@@ -246,6 +246,47 @@ class TestQueryEnhancementAgent:
         assert len(result.context_additions) == 3
         assert "beginner" in result.context_additions
         assert "introduction" in result.context_additions
+
+    @pytest.mark.asyncio
+    async def test_process_grounds_expansion_terms_from_memory_context(
+        self, query_agent
+    ):
+        query_agent.inject_context_into_prompt_async = AsyncMock(
+            return_value=(
+                "transformer attention mechanism\n\n"
+                "## Relevant Context from Memory:\n"
+                "1. encoder decoder architecture improves context windows\n\n"
+                "## Current Query:\n"
+                "transformer attention mechanism"
+            )
+        )
+        query_agent.dspy_module.forward = Mock(
+            return_value=dspy.Prediction(
+                enhanced_query=(
+                    "transformer attention mechanism self-attention "
+                    "multi-head attention"
+                ),
+                expansion_terms=(
+                    "self-attention, multi-head attention, feed-forward network"
+                ),
+                synonyms="ML",
+                context="",
+                confidence="0.9",
+                reasoning="Expanded with generic attention terms",
+            )
+        )
+
+        result = await query_agent._process_impl(
+            QueryEnhancementInput(
+                query="transformer attention mechanism",
+                tenant_id=TEST_TENANT_ID,
+            )
+        )
+
+        assert result.original_query == "transformer attention mechanism"
+        assert result.expansion_terms == ["encoder", "decoder", "architecture"]
+        assert result.enhanced_query.endswith("encoder decoder architecture")
+        assert result.confidence == 0.9
 
     def test_dspy_to_a2a_output(self, query_agent):
         """Test conversion to A2A output format"""

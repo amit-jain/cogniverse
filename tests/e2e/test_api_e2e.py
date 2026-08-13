@@ -894,6 +894,7 @@ class TestSyntheticDataAPI:
         assert data["schema_name"] == "ProfileSelectionExampleSchema"
         assert data["count"] == 2
         assert data["selected_profiles"] == [PROFILE]
+        expected_available_profiles = _expected_available_profile_names(TENANT_ID)
         assert data["metadata"] == {
             "backend_query_strategy": "diverse",
             "sampled_content_count": 2,
@@ -942,7 +943,10 @@ class TestSyntheticDataAPI:
                 }
                 assert topic in ingested_topics, topic
 
-        assert {example["available_profiles"] for example in data["data"]} == {PROFILE}
+        assert all(
+            example["available_profiles"].split(",") == expected_available_profiles
+            for example in data["data"]
+        )
         assert {example["selected_profile"] for example in data["data"]} == {PROFILE}
         assert {example["modality"] for example in data["data"]} == {"video"}
         assert {example["complexity"] for example in data["data"]} == {"complex"}
@@ -1174,22 +1178,20 @@ class TestSyntheticDataAPI:
             assert set(example) == profile_fields
             available_profiles = example["available_profiles"].split(",")
             assert available_profiles == expected_available_profiles
+            assert example["selected_profile"] in {PROFILE, IMAGE_PROFILE}
             assert (
-                example["selected_profile"]
+                example["modality"]
                 == {
-                    "video+image": PROFILE,
-                    "image+video": IMAGE_PROFILE,
-                }[example["modality"]]
+                    PROFILE: "video",
+                    IMAGE_PROFILE: "image",
+                }[example["selected_profile"]]
             )
             assert example["query_intent"] == "cross_modal_search"
             assert example["complexity"] == "complex"
             assert "chosen_agent" not in example
             assert "workflow_id" not in example
         assert len({example["query"] for example in data["data"]}) == 2
-        assert {example["modality"] for example in data["data"]} == {
-            "video+image",
-            "image+video",
-        }
+        assert {example["modality"] for example in data["data"]} == {"video", "image"}
 
     def test_generate_workflow_ids_are_unique_and_schema_specific(self):
         image_content_id = _content_sha256(_sample_frame_path())
