@@ -1246,6 +1246,20 @@ def _current_e2e_deploy_sha(repo_root: Path | None = None) -> str:
     return result.stdout.strip()
 
 
+def _normalize_e2e_deployment_identity(
+    identity: dict[str, object],
+) -> dict[str, object]:
+    normalized = dict(identity)
+    set_overrides = normalized.get("set_overrides")
+    if isinstance(set_overrides, dict):
+        normalized["set_overrides"] = {
+            key: value
+            for key, value in set_overrides.items()
+            if key.rsplit(".", 1)[-1] != "tag"
+        }
+    return normalized
+
+
 def _effective_e2e_deployment_identity(repo_root: Path) -> dict:
     from tests.e2e.deployment.conftest import deployment_helm_inputs
 
@@ -1253,14 +1267,16 @@ def _effective_e2e_deployment_identity(repo_root: Path) -> dict:
         repo_root,
         extra_set=_e2e_deployment_overrides(),
     )
-    return {
-        "backend": inputs["backend"],
-        "values_files": [
-            os.path.relpath(path, repo_root) for path in inputs["helm_values"]
-        ],
-        "set_overrides": inputs["helm_set_overrides"],
-        "image_repository": inputs["image_repository"],
-    }
+    return _normalize_e2e_deployment_identity(
+        {
+            "backend": inputs["backend"],
+            "values_files": [
+                os.path.relpath(path, repo_root) for path in inputs["helm_values"]
+            ],
+            "set_overrides": inputs["helm_set_overrides"],
+            "image_repository": inputs["image_repository"],
+        }
+    )
 
 
 def _current_e2e_deploy_state(repo_root: Path | None = None) -> dict:
@@ -1360,7 +1376,10 @@ def _e2e_deploy_reuse_state(
         "set_overrides": deployed_state.get("set_overrides"),
         "image_repository": deployed_state.get("image_repository"),
     }
-    current_identity = current_identity or _effective_e2e_deployment_identity(repo_root)
+    deployed_identity = _normalize_e2e_deployment_identity(deployed_identity)
+    if current_identity is None:
+        current_identity = _effective_e2e_deployment_identity(repo_root)
+    current_identity = _normalize_e2e_deployment_identity(current_identity)
     if deployed_identity != current_identity:
         return "stale", "deployment identity changed"
 
@@ -1651,7 +1670,7 @@ def e2e_stack(request, resolved_inference_endpoints):
                 f"being built: started with {deploy_sha!r}, finished with "
                 f"{finished_sha!r}; rerun against a stable tree"
             )
-        # Stamp the deployed git SHA and the non-tree-derived deploy identity.
+        # Stamp the deployed git SHA and normalized deploy identity.
         _stamp_e2e_deploy_state({"sha": deploy_sha, **deploy_identity})
 
     try:
