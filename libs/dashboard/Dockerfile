@@ -12,6 +12,13 @@ RUN apt-get update && apt-get install -y \
 # Install uv for faster dependency management
 COPY --from=ghcr.io/astral-sh/uv:latest /uv /usr/local/bin/uv
 
+# Bound uv's network behaviour: the default concurrency equals the CPU count, and
+# that many simultaneous DNS lookups exhaust small upstream resolvers, surfacing as
+# `dns error: Try again` (EAI_AGAIN) mid-download.
+ENV UV_CONCURRENT_DOWNLOADS=4 \
+    UV_HTTP_TIMEOUT=300
+
+
 # Set working directory
 WORKDIR /app
 
