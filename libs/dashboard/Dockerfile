@@ -44,7 +44,8 @@ ARG TORCH_BACKEND
 # host passes the git-derived version in (build_images / release-images.yml).
 ARG SETUPTOOLS_SCM_PRETEND_VERSION
 ENV SETUPTOOLS_SCM_PRETEND_VERSION=${SETUPTOOLS_SCM_PRETEND_VERSION}
-RUN if [ -z "$TORCH_BACKEND" ]; then \
+RUN --mount=type=cache,target=/root/.cache/uv,sharing=locked \
+    if [ -z "$TORCH_BACKEND" ]; then \
         echo "ERROR: TORCH_BACKEND build-arg is required (cpu|cuda|rocm)." >&2; \
         exit 1; \
     fi && \
@@ -70,7 +71,7 @@ RUN if [ -z "$TORCH_BACKEND" ]; then \
                /app/.venv/lib/python3.12/site-packages/triton \
                /app/.venv/lib/python3.12/site-packages/triton-*-dist-info; \
     fi && \
-    rm -rf /root/.cache/uv /root/.cache/pip
+    rm -rf /root/.cache/pip
 
 # Runtime stage
 FROM python:3.12-slim
