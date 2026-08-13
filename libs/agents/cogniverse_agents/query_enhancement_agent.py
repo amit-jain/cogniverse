@@ -33,6 +33,9 @@ class QueryEnhancementInput(AgentInput):
     """Type-safe input for query enhancement"""
 
     query: str = Field(..., description="Query to enhance")
+    source_text: str = Field(
+        ..., description="Sampled source text used to ground expansion terms"
+    )
     entities: Optional[List[Dict[str, Any]]] = Field(
         None, description="Entities from EntityExtractionAgent"
     )
@@ -71,9 +74,18 @@ class QueryEnhancementDeps(AgentDeps):
 
 
 class QueryEnhancementSignature(dspy.Signature):
-    """Enhance query with synonyms, context, and related terms"""
+    """Enhance query with source-grounded expansions, synonyms, and context."""
 
     query: str = dspy.InputField(desc="Original user query")
+    source_text: str = dspy.InputField(
+        desc=(
+            "Sampled source text. Every expansion_terms entry must be a "
+            "literal term drawn from this text. Synonyms stay free-form."
+        )
+    )
+    grounding_context: str = dspy.InputField(
+        desc="Optional entity and relationship context from upstream extraction"
+    )
 
     enhanced_query: str = dspy.OutputField(desc="Enhanced version of query")
     expansion_terms: str = dspy.OutputField(
@@ -92,7 +104,9 @@ class QueryEnhancementModule(dspy.Module):
         super().__init__()
         self.enhancer = dspy.ChainOfThought(QueryEnhancementSignature)
 
-    def forward(self, query: str) -> dspy.Prediction:
+    def forward(
+        self, query: str, source_text: str, grounding_context: str = ""
+    ) -> dspy.Prediction:
         """Enhance query using DSPy.
 
         Treats three shapes as LLM failure and falls through to the
@@ -106,7 +120,11 @@ class QueryEnhancementModule(dspy.Module):
              (SIMBA trains on identity pairs and learns nothing).
         """
         try:
-            result = self.enhancer(query=query)
+            result = self.enhancer(
+                query=query,
+                source_text=source_text,
+                grounding_context=grounding_context,
+            )
         except Exception as e:
             logger.warning(f"Query enhancement failed: {e}, using fallback")
             return self._fallback_enhancement(query)
@@ -278,16 +296,19 @@ class QueryEnhancementAgent(
             prompt_query = await self.inject_context_into_prompt_async(query, query)
 
         # Build entity context from upstream EntityExtractionAgent
-        entity_context = self._build_entity_context(input.entities, input.relationships)
-        dspy_query = (
-            f"{prompt_query}\n{entity_context}" if entity_context else prompt_query
+        grounding_context = self._build_entity_context(
+            input.entities, input.relationships
         )
 
         # Enhance query using DSPy (with fallback on failure)
         self.emit_progress("enhancement", "Enhancing query with DSPy...")
         try:
             result = await self.call_dspy(
-                self.dspy_module, output_field="enhanced_query", query=dspy_query
+                self.dspy_module,
+                output_field="enhanced_query",
+                query=prompt_query,
+                source_text=input.source_text,
+                grounding_context=grounding_context,
             )
         except Exception as e:
             logger.warning("DSPy enhancement failed, using fallback: %s", e)

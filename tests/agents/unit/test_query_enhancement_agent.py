@@ -56,7 +56,10 @@ class TestQueryEnhancementModule:
         module = QueryEnhancementModule()
         module.enhancer = mock_dspy_lm
 
-        result = module.forward(query="ML tutorials")
+        result = module.forward(
+            query="ML tutorials",
+            source_text="ML tutorials source text about machine learning and AI",
+        )
 
         assert (
             result.enhanced_query
@@ -76,7 +79,10 @@ class TestQueryEnhancementModule:
         module = QueryEnhancementModule()
         module.enhancer = Mock(side_effect=Exception("DSPy failed"))
 
-        result = module.forward(query="Show me ML videos")
+        result = module.forward(
+            query="Show me ML videos",
+            source_text="Show me ML videos source text about machine learning clips",
+        )
 
         assert result.enhanced_query != "Show me ML videos"
         assert result.enhanced_query.startswith("Show me ML videos")
@@ -88,7 +94,10 @@ class TestQueryEnhancementModule:
         module = QueryEnhancementModule()
         module.enhancer = Mock(side_effect=Exception("DSPy failed"))
 
-        result = module.forward(query="AI tutorials")
+        result = module.forward(
+            query="AI tutorials",
+            source_text="AI tutorials source text about artificial intelligence",
+        )
 
         assert "artificial intelligence" in result.expansion_terms.lower()
 
@@ -97,7 +106,10 @@ class TestQueryEnhancementModule:
         module = QueryEnhancementModule()
         module.enhancer = Mock(side_effect=Exception("DSPy failed"))
 
-        result = module.forward(query="Show videos about Python")
+        result = module.forward(
+            query="Show videos about Python",
+            source_text="Show videos about Python source text with tutorial clips",
+        )
 
         expansions_lower = result.expansion_terms.lower()
         assert any(
@@ -128,7 +140,11 @@ class TestQueryEnhancementAgent:
         )
 
         result = await query_agent._process_impl(
-            QueryEnhancementInput(query="ML tutorials", tenant_id=TEST_TENANT_ID)
+            QueryEnhancementInput(
+                query="ML tutorials",
+                source_text="ML tutorials source text about machine learning and AI",
+                tenant_id=TEST_TENANT_ID,
+            )
         )
 
         assert isinstance(result, QueryEnhancementOutput)
@@ -155,7 +171,11 @@ class TestQueryEnhancementAgent:
         )
 
         result = await query_agent._process_impl(
-            QueryEnhancementInput(query="ML tutorials", tenant_id=TEST_TENANT_ID)
+            QueryEnhancementInput(
+                query="ML tutorials",
+                source_text="ML tutorials source text about machine learning and AI",
+                tenant_id=TEST_TENANT_ID,
+            )
         )
 
         assert result.confidence == 0.9
@@ -164,7 +184,11 @@ class TestQueryEnhancementAgent:
     async def test_process_empty_query(self, query_agent):
         """Test processing empty query"""
         result = await query_agent._process_impl(
-            QueryEnhancementInput(query="", tenant_id=TEST_TENANT_ID)
+            QueryEnhancementInput(
+                query="",
+                source_text="empty source text",
+                tenant_id=TEST_TENANT_ID,
+            )
         )
 
         assert result.original_query == ""
@@ -177,7 +201,11 @@ class TestQueryEnhancementAgent:
     async def test_process_missing_query(self, query_agent):
         """Test processing with missing query field (empty string equivalent)"""
         result = await query_agent._process_impl(
-            QueryEnhancementInput(query="", tenant_id=TEST_TENANT_ID)
+            QueryEnhancementInput(
+                query="",
+                source_text="empty source text",
+                tenant_id=TEST_TENANT_ID,
+            )
         )
 
         assert result.original_query == ""
@@ -198,7 +226,11 @@ class TestQueryEnhancementAgent:
         )
 
         result = await query_agent._process_impl(
-            QueryEnhancementInput(query="test", tenant_id=TEST_TENANT_ID)
+            QueryEnhancementInput(
+                query="test",
+                source_text="test source text for invalid confidence",
+                tenant_id=TEST_TENANT_ID,
+            )
         )
 
         assert result.confidence == 0.7  # Default fallback
@@ -218,7 +250,11 @@ class TestQueryEnhancementAgent:
         )
 
         result = await query_agent._process_impl(
-            QueryEnhancementInput(query="simple query", tenant_id=TEST_TENANT_ID)
+            QueryEnhancementInput(
+                query="simple query",
+                source_text="simple query source text",
+                tenant_id=TEST_TENANT_ID,
+            )
         )
 
         assert len(result.expansion_terms) == 0
@@ -240,7 +276,11 @@ class TestQueryEnhancementAgent:
         )
 
         result = await query_agent._process_impl(
-            QueryEnhancementInput(query="Python tutorials", tenant_id=TEST_TENANT_ID)
+            QueryEnhancementInput(
+                query="Python tutorials",
+                source_text="Python tutorials source text with coding guides",
+                tenant_id=TEST_TENANT_ID,
+            )
         )
 
         assert len(result.context_additions) == 3

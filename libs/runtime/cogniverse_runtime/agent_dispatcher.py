@@ -1489,6 +1489,13 @@ class AgentDispatcher:
         input_kwargs = {"query": query}
         if "tenant_id" in input_cls.model_fields:
             input_kwargs["tenant_id"] = tenant_id
+        if "source_text" in input_cls.model_fields:
+            source_text = context.get("source_text")
+            if not isinstance(source_text, str) or not source_text.strip():
+                raise ValueError(
+                    f"Agent '{agent_name}' requires source_text in context"
+                )
+            input_kwargs["source_text"] = source_text
 
         # Forward upstream agent results from context (e.g., entities from entity extraction)
         for key in ("entities", "relationships", "enhanced_query"):
@@ -1667,7 +1674,9 @@ class AgentDispatcher:
         # extraction, query enhancement, profile selection, …) streams via the
         # base framework. Construct it exactly as the non-streaming generic
         # path does so streaming and non-streaming stay in lockstep.
-        agent_input = self._build_generic_streaming_agent(agent_name, query, tenant_id)
+        agent_input = self._build_generic_streaming_agent(
+            agent_name, query, tenant_id, context
+        )
         if agent_input is not None:
             return agent_input
 
@@ -1677,7 +1686,11 @@ class AgentDispatcher:
         )
 
     def _build_generic_streaming_agent(
-        self, agent_name: str, query: str, tenant_id: str
+        self,
+        agent_name: str,
+        query: str,
+        tenant_id: str,
+        context: Optional[Dict[str, Any]] = None,
     ) -> Optional[tuple]:
         """Build (agent, typed_input) for a registered agent via the
         Agent/Deps/Input naming convention. Returns None when the agent isn't
@@ -1732,6 +1745,13 @@ class AgentDispatcher:
         input_kwargs: Dict[str, Any] = {"query": query}
         if "tenant_id" in input_cls.model_fields:
             input_kwargs["tenant_id"] = tenant_id
+        if "source_text" in input_cls.model_fields:
+            source_text = (context or {}).get("source_text")
+            if not isinstance(source_text, str) or not source_text.strip():
+                raise ValueError(
+                    f"Agent '{agent_name}' requires source_text in context"
+                )
+            input_kwargs["source_text"] = source_text
         return agent, input_cls(**input_kwargs)
 
     async def _execute_search_task(

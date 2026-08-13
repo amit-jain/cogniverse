@@ -1473,7 +1473,11 @@ class TestArtifactAffectsBehavior:
         # Process with real LLM
         with dspy.context(lm=lm):
             result = await agent._process_impl(
-                QueryEnhancementInput(query="ML papers", tenant_id="test:unit")
+                QueryEnhancementInput(
+                    query="ML papers",
+                    source_text="ML papers source text about machine learning",
+                    tenant_id="test:unit",
+                )
             )
 
         # The demos teach: "ML papers" → "machine learning research papers and publications"

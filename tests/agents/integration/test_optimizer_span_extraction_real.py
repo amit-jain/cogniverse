@@ -75,7 +75,11 @@ async def test_query_enhancement_span_yields_simba_training_pair(real_telemetry)
 
     with patch.object(agent, "call_dspy", return_value=mock_result):
         await agent.process(
-            QueryEnhancementInput(query="ML tutorials", tenant_id=tenant_id)
+            QueryEnhancementInput(
+                query="ML tutorials",
+                source_text="ML tutorials source text about machine learning",
+                tenant_id=tenant_id,
+            )
         )
 
     spans = await _fetch_named_spans(

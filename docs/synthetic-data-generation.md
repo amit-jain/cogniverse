@@ -327,8 +327,11 @@ Five concrete generators implement the `BaseGenerator` interface.
 
 **QueryEnhancementGenerator** (`generators/query_enhancement.py`) enumerates
 unique source-template queries and invokes the production query-enhancement
-callback for each one. It copies the changed enhanced query, expansion terms,
-synonyms, and reasoning exactly, and rejects malformed or mismatched output.
+callback for each one with the query, tenant, and exact sampled source text.
+It copies the changed enhanced query, expansion terms, synonyms, and reasoning
+exactly, and rejects malformed or mismatched output. `expansion_terms` must be
+literal terms drawn from the supplied source text, while synonyms remain
+free-form.
 
 **EntityExtractionGenerator** (`generators/entity_extraction.py`) produces
 typed entity and relationship examples from sampled content.
@@ -1211,7 +1214,7 @@ tests/
 | `cogniverse_synthetic` | `OPTIMIZER_REGISTRY`, `OptimizerConfig`, `ProfileSelectionExampleSchema`, `RoutingExperienceSchema`, `WorkflowExecutionSchema`, `SyntheticDataRequest`, `SyntheticDataResponse`, `SyntheticDataService`, `router`, `configure_service` |
 | `schemas` | The five optimizer schemas above, `SyntheticDataRequest`, `SyntheticDataResponse`, and `SAMPLING_STRATEGIES` |
 | `registry` | `OptimizerConfig`, `OPTIMIZER_REGISTRY`, `get_optimizer_config`, `list_optimizers`, `get_optimizer_schema`, `validate_optimizer_exists` |
-| `service` | `SyntheticDataService(backend, backend_config, generator_config, agents_config, llm_client=None, entity_extractor=None, routing_decider=None, query_enhancer=None, profile_labeler=None)`, where `backend` is live and `backend_config.profiles` is non-empty; exposes async `generate(request)` and synchronous `get_optimizer_info(name)` / `list_all_optimizers()` |
+| `service` | `SyntheticDataService(backend, backend_config, generator_config, agents_config, llm_client=None, entity_extractor=None, routing_decider=None, query_enhancer=None, profile_labeler=None)`, where `query_enhancer` receives `(query, tenant_id, source_text)` and `backend` is live with a non-empty `backend_config.profiles`; exposes async `generate(request)` and synchronous `get_optimizer_info(name)` / `list_all_optimizers()` |
 | `api` | `router`, `get_service`, `configure_service`, and endpoint callables `generate_synthetic_data`, `list_available_optimizers`, `get_optimizer_details`, `health_check`, `generate_batch_synthetic_data` |
 | `generators` | `BaseGenerator`, `QueryEnhancementGenerator`, `EntityExtractionGenerator`, `ProfileGenerator`, `RoutingGenerator`, `WorkflowGenerator`; each exposes async `generate`, `validate_inputs`, and `get_generator_info` |
 | `profile_selector` | `ProfileSelector(llm_client=None, generator_config=None)` and async `select_profiles(optimizer_name, optimizer_task, available_profiles, max_profiles=3)` |
