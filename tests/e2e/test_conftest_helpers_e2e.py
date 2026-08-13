@@ -833,6 +833,26 @@ class TestSharedClusterOwnership:
             repo_root, deployed_stamp, current_identity=current_identity
         ) == ("stale", "tracked deploy inputs changed")
 
+    def test_unknown_future_tag_key_is_normalized(self, tmp_path):
+        repo_root, deployed_sha = self._seed_git_repo(tmp_path)
+        deployed_identity = self._current_identity(
+            set_overrides={
+                "runtime.backend": "rocm",
+                "somefuture.imagesByBackend.rocm.tag": "0.1.dev1-gaaaaaaa",
+            }
+        )
+        current_identity = self._current_identity(
+            set_overrides={
+                "runtime.backend": "rocm",
+                "somefuture.imagesByBackend.rocm.tag": "0.1.dev2-gbbbbbbb",
+            }
+        )
+        deployed_stamp = {"sha": deployed_sha, **deployed_identity}
+
+        assert e2e_conftest._e2e_deploy_reuse_state(
+            repo_root, deployed_stamp, current_identity=current_identity
+        ) == ("reusable", "")
+
     def test_key_merely_ending_in_tag_substring_still_invalidates(self, tmp_path):
         repo_root, deployed_sha = self._seed_git_repo(tmp_path)
         deployed_identity = self._current_identity(
