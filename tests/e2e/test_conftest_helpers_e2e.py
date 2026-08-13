@@ -741,7 +741,6 @@ class TestSharedClusterOwnership:
                 "runtime.backend": "rocm",
                 "dashboard.backend": "rocm",
                 "somefuture.imagesByBackend.rocm.tag": "0.1.dev9999-gdeadbeef00",
-                "inference.vllm_asr.livenessProbe.failureThreshold": "60",
             },
             "image_repository": "cogniverse/runtime-rocm",
         }
@@ -803,25 +802,36 @@ class TestSharedClusterOwnership:
             repo_root, deployed_stamp, current_identity=current_identity
         ) == ("reusable", "")
 
-    def test_unknown_future_tag_key_is_normalized(self, tmp_path):
+    def test_tag_only_identity_difference_reaches_tracked_input_diff(self, tmp_path):
         repo_root, deployed_sha = self._seed_git_repo(tmp_path)
         deployed_identity = self._current_identity(
             set_overrides={
+                "devMode.enabled": "false",
                 "runtime.backend": "rocm",
-                "somefuture.imagesByBackend.rocm.tag": "0.1.dev1-gaaaaaaa",
+                "dashboard.backend": "rocm",
+                "runtime.imagesByBackend.rocm.tag": "0.1.dev3019-g51f8bee27",
             }
         )
         current_identity = self._current_identity(
             set_overrides={
+                "devMode.enabled": "false",
                 "runtime.backend": "rocm",
-                "somefuture.imagesByBackend.rocm.tag": "0.1.dev2-gbbbbbbb",
+                "dashboard.backend": "rocm",
+                "runtime.imagesByBackend.rocm.tag": "0.1.dev3020-gabcdef1234",
             }
         )
         deployed_stamp = {"sha": deployed_sha, **deployed_identity}
 
+        self._commit_change(
+            repo_root,
+            "libs/runtime/module.py",
+            "value = 'changed'\n",
+            "libs-change",
+        )
+
         assert e2e_conftest._e2e_deploy_reuse_state(
             repo_root, deployed_stamp, current_identity=current_identity
-        ) == ("reusable", "")
+        ) == ("stale", "tracked deploy inputs changed")
 
     def test_key_merely_ending_in_tag_substring_still_invalidates(self, tmp_path):
         repo_root, deployed_sha = self._seed_git_repo(tmp_path)
