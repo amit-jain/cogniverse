@@ -32,6 +32,59 @@ def _described_profiles(*names: str) -> dict[str, dict[str, str]]:
     }
 
 
+def _live_cross_modal_profiles() -> dict[str, dict[str, object]]:
+    return {
+        "audio_clap_semantic": {
+            "description": "Audio ingestion with CLAP acoustic embeddings.",
+            "embedding_type": "multi_vector",
+            "schema_name": "audio_content",
+            "type": "audio",
+            "pipeline_config": {"transcribe_audio": True},
+            "schema_config": {"semantic_embedding_dim": 128},
+        },
+        "video_colpali_smol500_mv_frame": {
+            "description": "Frame-based ColPali visual search.",
+            "embedding_type": "multi_vector",
+            "schema_name": "video_colpali_smol500_mv_frame",
+            "type": "video",
+            "pipeline_config": {"transcribe_audio": True},
+            "schema_config": {"embedding_dim": 320},
+        },
+        "image_colpali_mv": {
+            "description": "ColPali multi-vector image search.",
+            "embedding_type": "multi_vector",
+            "schema_name": "image_colpali_mv",
+            "type": "image",
+            "pipeline_config": {"transcribe_audio": False},
+            "schema_config": {"embedding_dim": 320},
+        },
+        "document_text_semantic": {
+            "description": "LateOn semantic document search.",
+            "embedding_type": "multi_vector",
+            "schema_name": "document_text",
+            "type": "document",
+            "pipeline_config": {"transcribe_audio": False},
+            "schema_config": {"embedding_dim": 128},
+        },
+        "document_visual_colpali": {
+            "description": "ColPali document page image search.",
+            "embedding_type": "multi_vector",
+            "schema_name": "document_visual",
+            "type": "document",
+            "pipeline_config": {"transcribe_audio": False},
+            "schema_config": {"embedding_dim": 320},
+        },
+        "wiki_semantic": {
+            "description": "Wiki page hybrid search.",
+            "embedding_type": "single_vector",
+            "schema_name": "wiki_pages",
+            "type": "wiki",
+            "pipeline_config": {"transcribe_audio": False},
+            "schema_config": {"embedding_dims": 768},
+        },
+    }
+
+
 def _generator_config() -> SyntheticGeneratorConfig:
     scoring_configs = {
         name: OptimizerGenerationConfig(
@@ -63,6 +116,13 @@ def _generator_config() -> SyntheticGeneratorConfig:
     )
 
 
+def _live_generator_config() -> SyntheticGeneratorConfig:
+    payload = json.loads((_REPO_ROOT / "configs" / "config.json").read_text())
+    synthetic = dict(payload["synthetic"])
+    synthetic["tenant_id"] = "flywheel_org:production"
+    return SyntheticGeneratorConfig.from_dict(synthetic)
+
+
 async def test_rule_selection_uses_only_configured_optimizer_rules() -> None:
     selector = ProfileSelector(generator_config=_generator_config())
     profiles = {
@@ -78,6 +138,31 @@ async def test_rule_selection_uses_only_configured_optimizer_rules() -> None:
     )
 
     assert selected == ["beta"]
+
+
+async def test_cross_modal_selection_prefers_sampleable_modalities() -> None:
+    selector = ProfileSelector(generator_config=_live_generator_config())
+
+    selected, _ = await selector.select_profiles(
+        optimizer_name="cross_modal",
+        optimizer_task="choose a cross-modal search profile",
+        available_profiles=_live_cross_modal_profiles(),
+        max_profiles=6,
+    )
+
+    assert selected[:2] == [
+        "video_colpali_smol500_mv_frame",
+        "image_colpali_mv",
+    ]
+    assert len(selected) == 6
+    assert set(selected) == {
+        "audio_clap_semantic",
+        "video_colpali_smol500_mv_frame",
+        "image_colpali_mv",
+        "document_text_semantic",
+        "document_visual_colpali",
+        "wiki_semantic",
+    }
 
 
 def test_rule_selection_rejects_missing_generator_config() -> None:
@@ -225,6 +310,28 @@ def test_selection_prompt_rejects_a_profile_without_description() -> None:
             },
             max_profiles=1,
         )
+
+
+def test_model_family_matches_only_delimited_tokens() -> None:
+    assert ProfileSelector._model_family("video_colpali_smol500_mv_frame") == "colpali"
+    assert ProfileSelector._model_family("video_colpaliish_mv_frame") == (
+        "video_colpaliish_mv_frame"
+    )
+
+
+def test_profile_name_contains_matches_only_delimited_tokens() -> None:
+    selector = ProfileSelector()
+
+    assert selector._check_condition(
+        {"profile_name_contains": "colpali"},
+        "video_colpali_smol500_mv_frame",
+        {},
+    )
+    assert not selector._check_condition(
+        {"profile_name_contains": "colpali"},
+        "video_colpaliish_mv_frame",
+        {},
+    )
 
 
 @pytest.mark.parametrize(

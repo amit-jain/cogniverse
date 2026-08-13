@@ -520,7 +520,9 @@ corresponding production callbacks.
 The router replaces its configured service under a lock, so concurrent readers
 observe one fully constructed instance. Unexpected server exceptions are
 logged with their traceback but the HTTP response contains only
-`{"detail": "Internal server error"}`.
+`{"detail": "Internal server error"}`. A timeout from the production
+profile-selection callback returns HTTP `504` with a
+`profile_selection timeout:` detail instead of a bare `500`.
 
 **Example:**
 
@@ -656,7 +658,11 @@ profiles to sample from for a given optimizer — via LM reasoning when
 scoring keyed on optimizer name and profile characteristics through the
 configured `ProfileScoringRule`s in `SyntheticGeneratorConfig`. Rule selection
 takes the highest-scoring member of each model family before filling remaining
-slots.
+slots; `cross_modal` first prefers profiles with an explicit
+`schema_config.embedding_dim` and then keeps one profile per modality before
+backfilling the remaining slots.
+`profile_name_contains` and `_model_family` match delimiter-bounded tokens, so
+`colpali` does not match `colpaliish`.
 When an LM is explicitly configured, a transport failure or malformed response
 raises with optimizer context; it does not silently switch algorithms. The
 selected list must contain only available profile names, contain no duplicates,

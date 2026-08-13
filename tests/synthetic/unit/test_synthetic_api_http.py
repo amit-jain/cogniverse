@@ -626,6 +626,53 @@ def test_generate_500_does_not_expose_internal_exception(
 
 
 @pytest.mark.parametrize(
+    ("path", "request_kwargs"),
+    [
+        (
+            "/synthetic/generate",
+            {
+                "json": {
+                    "optimizer": "profile",
+                    "count": 1,
+                    "tenant_id": "acme",
+                }
+            },
+        ),
+        (
+            "/synthetic/batch/generate",
+            {
+                "params": {
+                    "optimizer": "profile",
+                    "count_per_batch": 1,
+                    "num_batches": 1,
+                    "tenant_id": "acme",
+                }
+            },
+        ),
+    ],
+)
+def test_generate_timeout_surfaces_as_typed_504(
+    client: TestClient,
+    monkeypatch: pytest.MonkeyPatch,
+    path: str,
+    request_kwargs: dict,
+) -> None:
+    fake = MagicMock()
+    fake.generate = AsyncMock(
+        side_effect=TimeoutError(
+            "profile optimizer callback profile_labeler timed out after 15 seconds"
+        )
+    )
+    monkeypatch.setattr(synthetic_api, "_service", fake)
+
+    response = client.post(path, **request_kwargs)
+
+    assert response.status_code == 504
+    assert response.json()["detail"].startswith("profile_selection timeout:")
+    fake.generate.assert_awaited_once()
+
+
+@pytest.mark.parametrize(
     ("method", "path", "request_kwargs"),
     [
         (

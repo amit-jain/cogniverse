@@ -170,6 +170,15 @@ async def generate_synthetic_data(
         raise HTTPException(status_code=422, detail=str(e))
     except ValueError as e:
         raise HTTPException(status_code=400, detail=str(e))
+    except TimeoutError as e:
+        logger.error(
+            f"Error generating synthetic data: profile_selection timeout: {e}",
+            exc_info=True,
+        )
+        raise HTTPException(
+            status_code=504,
+            detail=f"profile_selection timeout: {e}",
+        ) from e
     except Exception as e:
         logger.error(f"Error generating synthetic data: {e}", exc_info=True)
         raise HTTPException(status_code=500, detail="Internal server error") from e
@@ -386,6 +395,15 @@ async def generate_batch_synthetic_data(
         raise RequestValidationError(errors) from e
     except ValueError as e:
         raise HTTPException(status_code=400, detail=str(e))
+    except TimeoutError as e:
+        logger.error(
+            f"Error in batch generation: profile_selection timeout: {e}",
+            exc_info=True,
+        )
+        raise HTTPException(
+            status_code=504,
+            detail=f"profile_selection timeout: {e}",
+        ) from e
     except Exception as e:
         logger.error(f"Error in batch generation: {e}", exc_info=True)
         raise HTTPException(status_code=500, detail="Internal server error") from e

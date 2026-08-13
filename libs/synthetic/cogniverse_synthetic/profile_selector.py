@@ -8,6 +8,7 @@ Configuration-driven profile descriptions and scoring rules.
 
 import json
 import logging
+import re
 from typing import Any, Dict, List, Optional
 
 from cogniverse_foundation.config.unified_config import SyntheticGeneratorConfig
@@ -191,7 +192,12 @@ class ProfileSelector:
 
         profile_scores.sort(key=lambda x: x[1], reverse=True)
 
-        selected = self._select_diverse_profiles(profile_scores, max_profiles)
+        if optimizer_name == "cross_modal":
+            selected = self._select_cross_modal_profiles(
+                profile_scores, available_profiles, max_profiles
+            )
+        else:
+            selected = self._select_diverse_profiles(profile_scores, max_profiles)
         selected_names = [p[0] for p in selected]
 
         reasoning_parts = []
@@ -291,9 +297,9 @@ class ProfileSelector:
         """
         if "profile_name_contains" in condition:
             pattern = condition["profile_name_contains"]
-            if pattern is None:
+            if not isinstance(pattern, str) or not pattern.strip():
                 return False
-            return pattern.lower() in profile_name.lower()
+            return self._contains_token(profile_name, pattern)
 
         if "field" in condition:
             field_path = condition["field"].split(".")
@@ -352,13 +358,85 @@ class ProfileSelector:
 
         return selected
 
+    def _select_cross_modal_profiles(
+        self,
+        scored_profiles: List[tuple[str, float, List[str]]],
+        available_profiles: Dict[str, Dict[str, Any]],
+        max_profiles: int,
+    ) -> List[tuple[str, float, List[str]]]:
+        """
+        Select cross-modal profiles from scored list.
+
+        Cross-modal selection prefers profiles that advertise an explicit
+        embedding_dim because those are the ones the backend sampling path can
+        actually query, then keeps the first profile for each modality.
+        """
+        ranked_profiles = sorted(
+            scored_profiles,
+            key=lambda item: (
+                0 if self._has_embedding_dim(available_profiles[item[0]]) else 1,
+                -item[1],
+            ),
+        )
+
+        selected = []
+        seen_modalities = set()
+
+        for profile_name, score, reasons in ranked_profiles:
+            if len(selected) >= max_profiles:
+                break
+
+            modality = self._profile_modality(available_profiles[profile_name])
+            if modality in seen_modalities:
+                continue
+
+            selected.append((profile_name, score, reasons))
+            seen_modalities.add(modality)
+
+        if len(selected) < max_profiles:
+            selected_names = {profile[0] for profile in selected}
+            for profile in ranked_profiles:
+                if len(selected) >= max_profiles:
+                    break
+                if profile[0] not in selected_names:
+                    selected.append(profile)
+                    selected_names.add(profile[0])
+
+        return selected
+
+    @staticmethod
+    def _profile_modality(profile_config: Dict[str, Any]) -> str:
+        modality = profile_config.get("type")
+        if isinstance(modality, str):
+            normalized = modality.strip().lower()
+            if normalized:
+                return normalized
+        return ""
+
+    @staticmethod
+    def _has_embedding_dim(profile_config: Dict[str, Any]) -> bool:
+        schema_config = profile_config.get("schema_config")
+        if not isinstance(schema_config, dict):
+            return False
+        embedding_dim = schema_config.get("embedding_dim")
+        return isinstance(embedding_dim, int) and not isinstance(embedding_dim, bool)
+
     @staticmethod
     def _model_family(profile_name: str) -> str:
         normalized = profile_name.lower()
         for family in ("colpali", "colqwen", "videoprism"):
-            if family in normalized:
+            if ProfileSelector._contains_token(normalized, family):
                 return family
         return profile_name
+
+    @staticmethod
+    def _contains_token(haystack: str, needle: str) -> bool:
+        return bool(
+            re.search(
+                rf"(?<![a-z0-9]){re.escape(needle.lower())}(?![a-z0-9])",
+                haystack.lower(),
+            )
+        )
 
     def _build_selection_prompt(
         self,
