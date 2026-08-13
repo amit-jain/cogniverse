@@ -35,6 +35,7 @@ from tests.e2e.conftest import (
     SAMPLE_VIDEO_CONTENT_ID,
     TENANT_ID,
     _content_sha256,
+    _ensure_sample_content_ingested,
     _matching_sample_results,
     _sample_frame_path,
     unique_id,
@@ -42,6 +43,14 @@ from tests.e2e.conftest import (
 
 PROFILE = "video_colpali_smol500_mv_frame"
 IMAGE_PROFILE = "image_colpali_mv"
+CAPTION_CORPUS_DIR = (
+    Path(__file__).resolve().parents[2]
+    / "data"
+    / "testset"
+    / "Test_Human_Annotated_Captions"
+)
+CAPTION_CORPUS_LIMIT = 50
+CONFIG_PATH = Path(__file__).resolve().parents[2] / "configs" / "config.json"
 CANONICAL_WORKFLOW_AGENTS = {
     "search_agent",
     "text_analysis_agent",
@@ -54,6 +63,41 @@ PRIMARY_AGENT_BY_QUERY_TYPE = {
     "DOCUMENT": "text_analysis_agent",
     "IMAGE": "image_search_agent",
 }
+
+
+def _deploy_profile_for_tenant(
+    client: httpx.Client, profile_name: str, tenant_id: str
+) -> None:
+    config = json.loads(CONFIG_PATH.read_text())
+    profile_def = config.get("backend", {}).get("profiles", {}).get(profile_name, {})
+    assert profile_def, f"missing profile definition for {profile_name!r}"
+
+    resp = client.post(
+        "/admin/profiles",
+        json={
+            "profile_name": profile_name,
+            "tenant_id": tenant_id,
+            "type": profile_def.get("type", "video"),
+            "description": profile_def.get("description", ""),
+            "schema_name": profile_def.get("schema_name", profile_name),
+            "embedding_model": profile_def.get("embedding_model", ""),
+            "pipeline_config": profile_def.get("pipeline_config", {}),
+            "strategies": profile_def.get("strategies", {}),
+            "embedding_type": profile_def.get("embedding_type", "multi_vector"),
+            "schema_config": profile_def.get("schema_config", {}),
+            "model_specific": profile_def.get("model_specific"),
+            "deploy_schema": True,
+        },
+        timeout=60,
+    )
+    assert resp.status_code in (200, 201, 409), resp.text
+
+    resp = client.post(
+        f"/admin/profiles/{profile_name}/deploy",
+        json={"tenant_id": tenant_id, "force": False},
+        timeout=60,
+    )
+    assert resp.status_code == 200, resp.text
 
 
 @pytest.mark.e2e
@@ -702,6 +746,21 @@ class TestAgentOperations:
 @pytest.mark.e2e
 class TestSyntheticDataAPI:
     """Synthetic data generation endpoints."""
+
+    @pytest.fixture(scope="class", autouse=True)
+    def _seed_document_corpus(self):
+        caption_paths = sorted(CAPTION_CORPUS_DIR.glob("*.txt"))[:CAPTION_CORPUS_LIMIT]
+        assert len(caption_paths) >= CAPTION_CORPUS_LIMIT, (
+            f"expected at least {CAPTION_CORPUS_LIMIT} caption fixtures in "
+            f"{CAPTION_CORPUS_DIR}, found {len(caption_paths)}"
+        )
+
+        for caption_path in caption_paths:
+            _ensure_sample_content_ingested(
+                caption_path,
+                profile="document_text_semantic",
+                media_type="text/plain",
+            )
 
     @staticmethod
     def _exact_video_fixture_results(client: httpx.Client) -> list[dict]:
@@ -1816,7 +1875,17 @@ class TestVideoIngestionAndSearch:
         assert real_video_path.name == "v_-D1gdv_gQyw.mp4"
         assert real_video_path.stat().st_size == 5_524_837
         expected_source_url = _expected_artifact_source_url(real_video_path)
+        tenant_id = unique_id("ingest_e2e")
         with httpx.Client(base_url=RUNTIME, timeout=1800.0) as client:
+            resp = client.post(
+                "/admin/tenants",
+                json={"tenant_id": tenant_id, "created_by": "e2e-test"},
+                timeout=30,
+            )
+            assert resp.status_code in (200, 201, 409), resp.text
+            _deploy_profile_for_tenant(
+                client, "video_colpali_smol500_mv_frame", tenant_id
+            )
             with open(real_video_path, "rb") as f:
                 # wait=true keeps the synchronous response shape
                 # (status, chunks_created, ...); the default async
@@ -1826,7 +1895,7 @@ class TestVideoIngestionAndSearch:
                     files={"file": (real_video_path.name, f, "video/mp4")},
                     data={
                         "profile": "video_colpali_smol500_mv_frame",
-                        "tenant_id": TENANT_ID,
+                        "tenant_id": tenant_id,
                     },
                 )
 
@@ -1849,7 +1918,7 @@ class TestVideoIngestionAndSearch:
                     "query": query,
                     "profile": "video_colpali_smol500_mv_frame",
                     "top_k": 1,
-                    "tenant_id": TENANT_ID,
+                    "tenant_id": tenant_id,
                     "filters": {"source_url": expected_source_url},
                 },
             )
