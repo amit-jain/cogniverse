@@ -489,14 +489,20 @@ waiting through an additional fixed delay.
 ### GEMM auto-tuning on ROCm (`runtime.tunableOp`)
 
 `runtime.tunableOp` (`false` in `values.yaml`, `true` in
-`values.rocm.yaml`) enables PyTorch TunableOp on every rocm-device
-inference pod. On gfx1151 the default hipBLASLt kernel heuristic
-mistunes many GEMM shapes; TunableOp benchmarks the candidate kernels
-once per shape and reuses the fastest. The key only takes effect when a
-pod's `device` is `rocm` — the `cogniverse.tunableOpEnv` helper gates on
-both the device and the toggle, so CPU/CUDA pods are unaffected.
+`values.rocm.yaml`) enables PyTorch TunableOp on rocm-device inference
+pods. On gfx1151 the default hipBLASLt kernel heuristic mistunes many
+GEMM shapes; TunableOp benchmarks the candidate kernels once per shape
+and reuses the fastest. The key only takes effect when a pod's `device`
+is `rocm` — the `cogniverse.tunableOpEnv` helper gates on both the
+device and the toggle, so CPU/CUDA pods are unaffected.
 
-Each rocm pod gets `PYTORCH_TUNABLEOP_ENABLED=1`,
+Services on the `pylate` engine are excluded: their server faults the
+GPU (exit 139, `Memory access fault by GPU node-1`) while TunableOp
+benchmarks an untuned GEMM shape, and each new batch size or sequence
+length is a new shape. Set `inference.<service>.tunableOp` to override
+the engine-derived default in either direction.
+
+Each participating rocm pod gets `PYTORCH_TUNABLEOP_ENABLED=1`,
 `PYTORCH_TUNABLEOP_TUNING=1`, and a per-service
 `PYTORCH_TUNABLEOP_FILENAME=/root/.cache/huggingface/tunableop_<svc>_%d.csv`.
 The results file lives in the persistent `model-cache` volume, so tuning
