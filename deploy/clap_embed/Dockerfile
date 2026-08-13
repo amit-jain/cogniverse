@@ -4,6 +4,11 @@
 #   docker build -f deploy/clap_embed/Dockerfile -t cogniverse/clap-embed .
 FROM python:3.12-slim AS final
 
+# Bound pip network behaviour: the PyTorch/PyPI CDNs stall intermittently and
+# pip's defaults (5 retries, 15s socket timeout) abort a multi-GB wheel fetch.
+ENV PIP_DEFAULT_TIMEOUT=300 \
+    PIP_RETRIES=10
+
 RUN apt-get update \
     && apt-get install -y --no-install-recommends \
         curl \
