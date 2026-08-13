@@ -54,6 +54,16 @@ ships two more tests in that same commit:**
 Fix commits are not exempt. Deferring these is what makes the next audit find
 the bugs this one introduced.
 
+**A fix may not reduce what a test proves.** Never delete an assertion, relax an
+exact comparison to a bound, or add a skip/xfail to turn a failing test green.
+When an expectation is genuinely stale, replace it with an equally exact one
+pinning the new contract and state in the commit message what the contract
+changed to and why. When a test fails, first decide product-bug vs stale-test
+and name the file:line that settles it — a test edit without that verdict is a
+cover-up. `tests/common/unit/test_assertion_strength_guard.py` enforces this in
+CI: it fails any change with a net assertion loss in a `tests/` file, or a newly
+added skip, xfail, `is not None`, `>= 1`, or `> 0`.
+
 ---
 
 ## Running Tests
