@@ -1713,9 +1713,8 @@ class TestManualOptimizationTrigger:
         click_top_tab(page, "Optimization")
         page.wait_for_load_state("networkidle")
 
-        # The Run Optimization subsection must be rendered under
-        # Optimization Controls.
-        page.get_by_text("Optimization Controls", exact=True).wait_for(
+        # The visible subheader includes the rocket emoji prefix.
+        page.get_by_role("heading", name="🚀 Optimization Controls").wait_for(
             state="visible", timeout=INTERACTION_TIMEOUT
         )
         page.get_by_text("Run Optimization", exact=True).wait_for(
