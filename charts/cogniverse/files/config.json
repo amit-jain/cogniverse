@@ -575,6 +575,7 @@
       },
       "metadata_fields": {}
     },
+    "synthetic_generation_timeout_seconds": 300.0,
     "optimizer_configs": {
       "modality": {
         "optimizer_type": "modality",
