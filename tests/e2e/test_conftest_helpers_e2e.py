@@ -727,7 +727,7 @@ class TestSharedClusterOwnership:
             repo_root, deployed_stamp, current_identity=current_identity
         ) == ("stale", "deployment identity changed")
 
-    def test_image_version_tag_difference_is_not_stale(self, monkeypatch, tmp_path):
+    def test_hypothetical_new_tag_key_is_normalized(self, monkeypatch, tmp_path):
         repo_root, deployed_sha = self._seed_git_repo(tmp_path)
         deployment_inputs = {
             "backend": "rocm",
@@ -740,6 +740,8 @@ class TestSharedClusterOwnership:
                 "devMode.enabled": "false",
                 "runtime.backend": "rocm",
                 "dashboard.backend": "rocm",
+                "somefuture.imagesByBackend.rocm.tag": "0.1.dev9999-gdeadbeef00",
+                "inference.vllm_asr.livenessProbe.failureThreshold": "60",
             },
             "image_repository": "cogniverse/runtime-rocm",
         }
@@ -801,6 +803,40 @@ class TestSharedClusterOwnership:
             repo_root, deployed_stamp, current_identity=current_identity
         ) == ("reusable", "")
 
+    def test_unknown_future_tag_key_is_normalized(self, tmp_path):
+        repo_root, deployed_sha = self._seed_git_repo(tmp_path)
+        deployed_identity = self._current_identity(
+            set_overrides={
+                "runtime.backend": "rocm",
+                "somefuture.imagesByBackend.rocm.tag": "0.1.dev1-gaaaaaaa",
+            }
+        )
+        current_identity = self._current_identity(
+            set_overrides={
+                "runtime.backend": "rocm",
+                "somefuture.imagesByBackend.rocm.tag": "0.1.dev2-gbbbbbbb",
+            }
+        )
+        deployed_stamp = {"sha": deployed_sha, **deployed_identity}
+
+        assert e2e_conftest._e2e_deploy_reuse_state(
+            repo_root, deployed_stamp, current_identity=current_identity
+        ) == ("reusable", "")
+
+    def test_key_merely_ending_in_tag_substring_still_invalidates(self, tmp_path):
+        repo_root, deployed_sha = self._seed_git_repo(tmp_path)
+        deployed_identity = self._current_identity(
+            set_overrides={"runtime.image.tagline": "alpha"}
+        )
+        current_identity = self._current_identity(
+            set_overrides={"runtime.image.tagline": "beta"}
+        )
+        deployed_stamp = {"sha": deployed_sha, **deployed_identity}
+
+        assert e2e_conftest._e2e_deploy_reuse_state(
+            repo_root, deployed_stamp, current_identity=current_identity
+        ) == ("stale", "deployment identity changed")
+
     def test_missing_stamped_sha_is_stale(self, tmp_path):
         repo_root, _ = self._seed_git_repo(tmp_path)
         current_identity = self._current_identity()
@@ -859,6 +895,7 @@ class TestSharedClusterOwnership:
                     "devMode.enabled": "false",
                     "runtime.backend": "rocm",
                     "dashboard.backend": "rocm",
+                    "inference.vllm_asr.livenessProbe.failureThreshold": "60",
                 },
                 "image_repository": "cogniverse/runtime-rocm",
             },
