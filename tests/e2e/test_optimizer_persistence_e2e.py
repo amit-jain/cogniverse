@@ -37,11 +37,17 @@ import json
 import os
 import subprocess
 import time
+from pathlib import Path
 
 import httpx
 import pytest
 
-from tests.e2e.conftest import KUBECTL_CONTEXT, RUNTIME, TENANT_ID
+from tests.e2e.conftest import (
+    KUBECTL_CONTEXT,
+    RUNTIME,
+    TENANT_ID,
+    _ensure_sample_content_ingested,
+)
 
 pytestmark = [
     pytest.mark.slow,
@@ -57,6 +63,14 @@ RUNTIME_CONTAINER = "runtime"
 # hanging the suite forever. Tighter than the router test because
 # these don't run a 23-trial MIPROv2 loop.
 OPTIMIZER_TIMEOUT_S = int(os.environ.get("OPTIMIZER_TIMEOUT_S", "1800"))
+
+CAPTION_CORPUS_DIR = (
+    Path(__file__).resolve().parents[2]
+    / "data"
+    / "testset"
+    / "Test_Human_Annotated_Captions"
+)
+CAPTION_CORPUS_LIMIT = 50
 
 # Single orchestrator /process calls on the cluster LM routinely
 # overshoot 240s; use the same endpoint budget as
@@ -122,6 +136,32 @@ def optimizer_runtime_ready() -> None:
         f"context={KUBECTL_CONTEXT!r}; stdout={probe.stdout!r}; "
         f"stderr={probe.stderr!r}"
     )
+
+
+@pytest.fixture(scope="module", autouse=True)
+def optimizer_corpus_ready(optimizer_runtime_ready) -> None:
+    """Seed enough real document content for 50-example optimizer runs."""
+
+    if not CAPTION_CORPUS_DIR.exists():
+        pytest.fail(
+            f"caption corpus directory not found: {CAPTION_CORPUS_DIR}",
+            pytrace=False,
+        )
+
+    caption_paths = sorted(CAPTION_CORPUS_DIR.glob("*.txt"))[:CAPTION_CORPUS_LIMIT]
+    if len(caption_paths) < CAPTION_CORPUS_LIMIT:
+        pytest.fail(
+            f"expected at least {CAPTION_CORPUS_LIMIT} caption fixtures in "
+            f"{CAPTION_CORPUS_DIR}, found {len(caption_paths)}",
+            pytrace=False,
+        )
+
+    for caption_path in caption_paths:
+        _ensure_sample_content_ingested(
+            caption_path,
+            profile="document_text_semantic",
+            media_type="text/plain",
+        )
 
 
 def _drive_orchestrator_traffic(queries: list[str], wait_for_spans_s: int = 8) -> int:

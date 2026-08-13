@@ -1701,12 +1701,26 @@ class TestManualOptimizationTrigger:
 
     def test_run_optimization_submits_workflow_and_status_reflects_argo(self, page):
         _nav(page)
-        set_tenant(page, TENANT_ID)
+        tenant_id = unique_id("opt")
+        with httpx.Client(base_url=RUNTIME, timeout=30.0) as client:
+            resp = client.post(
+                "/admin/tenants",
+                json={"tenant_id": tenant_id, "created_by": "e2e-test"},
+            )
+        assert resp.status_code in (200, 201, 409), resp.text
+
+        set_tenant(page, tenant_id)
         click_top_tab(page, "Optimization")
         page.wait_for_load_state("networkidle")
 
         # The Run Optimization subsection must be rendered under
         # Optimization Controls.
+        page.get_by_text("Optimization Controls", exact=True).wait_for(
+            state="visible", timeout=INTERACTION_TIMEOUT
+        )
+        page.get_by_text("Run Optimization", exact=True).wait_for(
+            state="visible", timeout=INTERACTION_TIMEOUT
+        )
         body_text = page.inner_text("body")
         assert "Run Optimization" in body_text, (
             "Optimization tab must expose the 'Run Optimization' section "
@@ -1745,7 +1759,7 @@ class TestManualOptimizationTrigger:
         page.wait_for_timeout(500)
 
         # Click Run. The button is disabled unless a tenant is set — we
-        # set TENANT_ID above, so it must be enabled.
+        # set a real tenant above, so it must be enabled.
         run_btn = page.locator('button:has-text("▶️ Run")')
         assert run_btn.count() > 0, "Run button must exist"
         assert run_btn.first.is_enabled(), (
