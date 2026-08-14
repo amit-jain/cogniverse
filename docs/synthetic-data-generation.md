@@ -22,7 +22,7 @@ of another entry rather than shipping a dedicated generator:
 
 1. **query_enhancement** (`QueryEnhancementGenerator` / `QueryEnhancementExampleSchema`) - Query expansions, synonyms, and reasoning
 2. **entity_extraction** (`EntityExtractionGenerator` / `EntityExtractionExampleSchema`) - Typed entities and relationships
-3. **profile** (`ProfileGenerator` / `ProfileSelectionExampleSchema`) - Per-query backend profile classification (modality, complexity, intent) for `ProfileSelectionAgent`
+3. **profile** (`ProfileGenerator` / `ProfileSelectionExampleSchema`) - Per-query backend profile classification (modality, complexity, canonical intent) for `ProfileSelectionAgent`
 4. **routing** (`RoutingGenerator` / `RoutingExperienceSchema`) - Entity-based advanced routing
 5. **workflow** (`WorkflowGenerator` / `WorkflowExecutionSchema`) - Multi-agent workflow orchestration
 6. **unified** (`WorkflowGenerator` / `WorkflowExecutionSchema`, same as `workflow`) - Combines routing decisions with workflow planning for end-to-end optimization

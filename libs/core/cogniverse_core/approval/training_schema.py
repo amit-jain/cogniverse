@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from typing import Any, Mapping
+from typing import Any, Literal, Mapping, get_args
 
 APPROVED_SYNTHETIC_AGENT_TYPES = frozenset(
     {
@@ -22,6 +22,21 @@ APPROVED_SYNTHETIC_OUTPUT_FIELDS = {
 PROFILE_TRAINING_MODALITIES = frozenset(
     {"audio", "code", "document", "image", "text", "video", "wiki"}
 )
+
+ProfileQueryIntent = Literal[
+    "multi_modal_search",
+    "video_search",
+    "image_search",
+    "text_search",
+    "audio_search",
+    "document_search",
+    "relationship_aware_search",
+    "ensemble_search",
+    "code_search",
+    "wiki_search",
+]
+
+PROFILE_QUERY_INTENT_VALUES = get_args(ProfileQueryIntent)
 
 
 def _non_empty_string(values: Mapping[str, Any], field: str, context: str) -> str:
@@ -62,7 +77,9 @@ def _validate_profile(values: Mapping[str, Any], context: str) -> None:
             f"{context} selected_profile {selected!r} is absent from available_profiles"
         )
     _non_empty_string(values, "reasoning", context)
-    _non_empty_string(values, "query_intent", context)
+    query_intent = _non_empty_string(values, "query_intent", context)
+    if query_intent not in PROFILE_QUERY_INTENT_VALUES:
+        raise ValueError(f"{context} has unsupported query_intent {query_intent!r}")
     modality = _non_empty_string(values, "modality", context)
     if modality not in PROFILE_TRAINING_MODALITIES:
         raise ValueError(f"{context} has unsupported modality {modality!r}")

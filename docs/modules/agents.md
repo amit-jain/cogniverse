@@ -701,11 +701,11 @@ class ProfileSelectionSignature(dspy.Signature):
     reasoning: str = dspy.OutputField(
         desc="Explanation for profile selection"
     )
-    query_intent: str = dspy.OutputField(
-        desc="Detected intent: text_search, video_search, image_search, etc."
+    query_intent: ProfileQueryIntent = dspy.OutputField(
+        desc="Detected intent: multi_modal_search, video_search, image_search, text_search, audio_search, document_search, relationship_aware_search, ensemble_search, code_search, wiki_search"
     )
     modality: str = dspy.OutputField(
-        desc="Target modality: video, image, text, audio"
+        desc="Target modality: audio, code, document, image, text, video, wiki"
     )
     complexity: Literal["simple", "medium", "complex"] = dspy.OutputField(
         desc="Query complexity: simple, medium, complex"
@@ -739,7 +739,10 @@ class ProfileSelectionOutput(AgentOutput):
     selected_profile: str = Field(..., description="Selected profile")
     confidence: float = Field(0.0, ge=0.0, le=1.0, description="Confidence score")
     reasoning: str = Field("", description="Selection reasoning")
-    query_intent: str = Field("", description="Detected query intent")
+    query_intent: str = Field(
+        "",
+        description="Detected query intent: multi_modal_search, video_search, image_search, text_search, audio_search, document_search, relationship_aware_search, ensemble_search, code_search, wiki_search",
+    )
     modality: str = Field("video", description="Target modality")
     complexity: str = Field("simple", description="Query complexity")
     alternatives: List[ProfileCandidate] = Field(default_factory=list, description="Alternative profiles")

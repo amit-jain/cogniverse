@@ -311,7 +311,7 @@ flowchart TD
 **Profile Selection Factors**:
 
 - Query complexity (simple/medium/complex)
-- Query intent (text_search, video_search, image_search, etc.)
+- Query intent (multi_modal_search, video_search, image_search, text_search, audio_search, document_search, relationship_aware_search, ensemble_search, code_search, wiki_search)
 - Target modality (video, image, text, audio)
 - Entity count and types
 - LLM confidence score (0.0-1.0)

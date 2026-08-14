@@ -16,7 +16,11 @@ from cogniverse_agents._confidence import parse_confidence
 from cogniverse_agents.memory_aware_mixin import MemoryAwareMixin
 from cogniverse_core.agents.a2a_agent import A2AAgent, A2AAgentConfig
 from cogniverse_core.agents.base import AgentDeps, AgentInput, AgentOutput
-from cogniverse_core.approval.training_schema import PROFILE_TRAINING_MODALITIES
+from cogniverse_core.approval.training_schema import (
+    PROFILE_QUERY_INTENT_VALUES,
+    PROFILE_TRAINING_MODALITIES,
+    ProfileQueryIntent,
+)
 from cogniverse_core.common.tenant_utils import require_tenant_id
 from cogniverse_foundation.telemetry.span_contract import (
     OP_PROFILE_SELECTION,
@@ -91,10 +95,12 @@ class ProfileSelectionSignature(dspy.Signature):
     selected_profile: str = dspy.OutputField(desc="Best matching profile name")
     confidence: str = dspy.OutputField(desc="Confidence score 0.0-1.0")
     reasoning: str = dspy.OutputField(desc="Explanation for profile selection")
-    query_intent: str = dspy.OutputField(
-        desc="Detected intent: text_search, video_search, image_search, etc."
+    query_intent: ProfileQueryIntent = dspy.OutputField(
+        desc=f"Detected intent: {', '.join(PROFILE_QUERY_INTENT_VALUES)}"
     )
-    modality: str = dspy.OutputField(desc="Target modality: video, image, text, audio")
+    modality: str = dspy.OutputField(
+        desc=f"Target modality: {', '.join(sorted(PROFILE_TRAINING_MODALITIES))}"
+    )
     complexity: Literal["simple", "medium", "complex"] = dspy.OutputField(
         desc="Query complexity: simple, medium, complex"
     )
@@ -335,7 +341,7 @@ class ProfileSelectionAgent(
             selected_profile = profiles[0]
         modality = result.modality or "text"
         reasoning = result.reasoning or ""
-        query_intent = result.query_intent or "text_search"
+        query_intent = result.query_intent
         complexity = result.complexity or "medium"
 
         profile_modality = await asyncio.to_thread(
