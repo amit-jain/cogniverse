@@ -4,8 +4,11 @@ Agent Inference Utilities
 Infer correct agents for synthetic examples based on modality and content characteristics.
 """
 
+import json
 import logging
 import re
+from functools import lru_cache
+from pathlib import Path
 from typing import Any, Dict, List, Optional
 
 from cogniverse_foundation.config.unified_config import AgentMappingRule
@@ -427,16 +430,101 @@ class AgentInferrer:
         return True
 
 
+_SCHEMA_DIR = Path(__file__).resolve().parents[4] / "configs" / "schemas"
+_GROUNDABLE_SCHEMA_ROLES = ("text_content", "content", "transcript")
+
+
 def profile_modality(profile: Any) -> Optional[str]:
     """Canonical uppercase modality a backend profile declares, if any."""
-    modality = getattr(profile, "type", None)
-    if modality is None and hasattr(profile, "to_dict"):
-        modality = profile.to_dict().get("type")
+    try:
+        modality = profile.type
+    except AttributeError as exc:
+        raise ValueError("Backend profile requires a non-empty string type") from exc
     if modality is None or modality == "":
         return None
     if not isinstance(modality, str) or not modality.strip():
         raise ValueError("Backend profile requires a non-empty string type")
     return modality.upper()
+
+
+@lru_cache(maxsize=None)
+def _schema_document_mapping(
+    schema_name: str,
+    schema_dir: Path = _SCHEMA_DIR,
+) -> Optional[Dict[str, Any]]:
+    schema_path = schema_dir / f"{schema_name}_schema.json"
+    if not schema_path.exists():
+        return None
+
+    try:
+        schema = json.loads(schema_path.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError) as exc:
+        raise ValueError(
+            f"Backend profile schema '{schema_name}' could not be loaded"
+        ) from exc
+
+    document_mapping = schema.get("document_mapping")
+    if not isinstance(document_mapping, dict):
+        return None
+    return document_mapping
+
+
+def profile_can_ground_topic(
+    profile: Any,
+    *,
+    schema_dir: Path = _SCHEMA_DIR,
+) -> bool:
+    """Return True when a profile can yield a non-hash topic for synthetic data."""
+    try:
+        schema_name = profile.schema_name
+    except AttributeError as exc:
+        raise ValueError(
+            "Backend profile requires a non-empty string schema_name"
+        ) from exc
+    if not isinstance(schema_name, str) or not schema_name.strip():
+        raise ValueError("Backend profile requires a non-empty string schema_name")
+    schema_name = schema_name.strip()
+
+    try:
+        pipeline_config = profile.pipeline_config or {}
+    except AttributeError as exc:
+        raise ValueError("Backend profile pipeline_config must be a mapping") from exc
+    if not isinstance(pipeline_config, dict):
+        raise ValueError("Backend profile pipeline_config must be a mapping")
+
+    document_mapping = _schema_document_mapping(schema_name, schema_dir=schema_dir)
+    if document_mapping is not None:
+        for role in _GROUNDABLE_SCHEMA_ROLES:
+            field_name = document_mapping.get(role)
+            if isinstance(field_name, str) and field_name.strip():
+                return True
+
+        description_field = document_mapping.get("description")
+        if isinstance(description_field, str) and description_field.strip():
+            return pipeline_config.get("generate_descriptions") is True
+        return False
+    return False
+
+
+def partition_profiles_by_groundability(
+    profiles: Dict[str, Any],
+    *,
+    schema_dir: Path = _SCHEMA_DIR,
+) -> tuple[Dict[str, Any], Dict[str, Any]]:
+    """Split backend profiles into groundable and ungroundable sets."""
+    groundable: Dict[str, Any] = {}
+    ungroundable: Dict[str, Any] = {}
+    for profile_name, profile in profiles.items():
+        try:
+            if profile_can_ground_topic(profile, schema_dir=schema_dir):
+                groundable[profile_name] = profile
+            else:
+                ungroundable[profile_name] = profile
+        except ValueError as exc:
+            raise ValueError(
+                f"Backend profile '{profile_name}' cannot be assessed for groundability: {exc}"
+            ) from exc
+    return groundable, ungroundable
 
 
 def partition_profiles_by_sampleability(
