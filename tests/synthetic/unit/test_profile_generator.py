@@ -44,7 +44,7 @@ async def _select_document(query: str, profiles: list[str], tenant_id: str):
         "selected_profile": "document_semantic",
         "confidence": 0.97,
         "reasoning": "The production selector chose the document index.",
-        "query_intent": "research_lookup",
+        "query_intent": "document_search",
         "modality": "document",
         "complexity": "medium",
         "alternatives": [],
@@ -117,7 +117,7 @@ class TestProfileGenerator:
                 "query": query,
                 "selected_profile": "document_semantic",
                 "reasoning": "The production selector chose document retrieval.",
-                "query_intent": "cross_source_research",
+                "query_intent": "multi_modal_search",
                 "modality": "document",
                 "complexity": "complex",
             }
@@ -158,7 +158,7 @@ class TestProfileGenerator:
             selected_profile="document_semantic",
             confidence="0.93",
             reasoning="The deployed selector chose document retrieval.",
-            query_intent="fact_research",
+            query_intent="document_search",
             modality="document",
             complexity="complex",
         )
@@ -185,7 +185,7 @@ class TestProfileGenerator:
             "selected_profile": "document_semantic",
             "modality": "document",
             "complexity": "complex",
-            "query_intent": "fact_research",
+            "query_intent": "document_search",
             "reasoning": "The deployed selector chose document retrieval.",
         }
 
@@ -270,7 +270,7 @@ class TestProfileGenerator:
                 "query": query,
                 "selected_profile": selected,
                 "reasoning": f"Selected for {tenant_id}",
-                "query_intent": f"{tenant_id}_lookup",
+                "query_intent": f"{PROFILE_CONFIGS[selected]['type']}_search",
                 "modality": PROFILE_CONFIGS[selected]["type"],
                 "complexity": "simple",
             }
@@ -332,7 +332,7 @@ class TestProfileGenerator:
                 "query": query,
                 "selected_profile": "document_semantic",
                 "reasoning": "The production selector chose document retrieval.",
-                "query_intent": "cross_source_research",
+                "query_intent": "multi_modal_search",
                 "modality": "document",
                 "complexity": "complex",
             }
@@ -359,7 +359,7 @@ class TestProfileGenerator:
                 "selected_profile": "document_semantic",
                 "modality": "document",
                 "complexity": "complex",
-                "query_intent": "cross_source_research",
+                "query_intent": "multi_modal_search",
                 "reasoning": "The production selector chose document retrieval.",
             },
             {
@@ -371,7 +371,7 @@ class TestProfileGenerator:
                 "selected_profile": "document_semantic",
                 "modality": "document",
                 "complexity": "complex",
-                "query_intent": "cross_source_research",
+                "query_intent": "multi_modal_search",
                 "reasoning": "The production selector chose document retrieval.",
             },
         ]

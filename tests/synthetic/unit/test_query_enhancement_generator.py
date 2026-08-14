@@ -7,6 +7,14 @@ from cogniverse_synthetic.generators.query_enhancement import (
 )
 
 HASH_VALUE = "dd95bb382700f5aa2f17a1d6a8163ffd6ce4057b3c108e077ed34efb08e67691"
+MORPHOLOGY_SOURCE_TEXT = (
+    "This video frame captures an outdoor event, likely a rodeo or similar "
+    "competition, viewed through a wire mesh fence. **People:** * In the "
+    "center-left, a man is standing, facing slightly toward the right. * To "
+    "the right, a man is seated on a low object (possibly a stool or chair). "
+    "* The overall scene suggests spectators watching an activity taking place "
+    "in the arena."
+)
 
 
 @pytest.mark.asyncio
@@ -64,6 +72,49 @@ async def test_generator_accepts_grounded_multi_word_expansion_terms():
 
 
 @pytest.mark.asyncio
+async def test_generator_accepts_grounded_morphological_variants():
+    async def enhance_query(query: str, tenant_id: str, source_text: str):
+        assert tenant_id == "acme:synthetic"
+        assert source_text == MORPHOLOGY_SOURCE_TEXT
+        return {
+            "original_query": query,
+            "enhanced_query": (f"{query} wire mesh fence view men watching event"),
+            "expansion_terms": [
+                "wire mesh fence view",
+                "men watching event",
+            ],
+            "synonyms": [],
+            "reasoning": "Production enhancement returned grounded morphology variants.",
+        }
+
+    generator = QueryEnhancementGenerator(query_enhancer=enhance_query)
+    examples = await generator.generate(
+        sampled_content=[
+            {
+                "description": MORPHOLOGY_SOURCE_TEXT,
+                "content_type": "video",
+            }
+        ],
+        target_count=1,
+        tenant_id="acme:synthetic",
+    )
+
+    assert examples[0].query == "This video frame captures"
+    assert examples[0].enhanced_query == (
+        "This video frame captures wire mesh fence view men watching event"
+    )
+    assert examples[0].expansion_terms == [
+        "wire mesh fence view",
+        "men watching event",
+    ]
+    assert examples[0].synonyms == []
+    assert examples[0].context == "video"
+    assert examples[0].reasoning == (
+        "Production enhancement returned grounded morphology variants."
+    )
+
+
+@pytest.mark.asyncio
 async def test_generator_rejects_ungrounded_expansion_phrase():
     async def enhance_query(query: str, tenant_id: str, source_text: str):
         assert tenant_id == "acme:synthetic"
@@ -93,6 +144,40 @@ async def test_generator_rejects_ungrounded_expansion_phrase():
             target_count=1,
             tenant_id="acme:synthetic",
         )
+
+
+@pytest.mark.asyncio
+async def test_generator_rejects_all_stopword_expansion_phrase():
+    async def enhance_query(query: str, tenant_id: str, source_text: str):
+        assert tenant_id == "acme:synthetic"
+        assert source_text == MORPHOLOGY_SOURCE_TEXT
+        return {
+            "original_query": query,
+            "enhanced_query": f"{query} the this",
+            "expansion_terms": ["the this"],
+            "synonyms": [],
+            "reasoning": "Production enhancement returned a stopword-only phrase.",
+        }
+
+    generator = QueryEnhancementGenerator(query_enhancer=enhance_query)
+
+    with pytest.raises(ValueError) as error:
+        await generator.generate(
+            sampled_content=[
+                {
+                    "description": MORPHOLOGY_SOURCE_TEXT,
+                    "content_type": "video",
+                }
+            ],
+            target_count=1,
+            tenant_id="acme:synthetic",
+        )
+
+    assert str(error.value) == (
+        "query_enhancement optimizer callback query_enhancer returned "
+        "expansion_terms absent from sampled source for "
+        "tenant='acme:synthetic' query='This video frame captures': ['the this']"
+    )
 
 
 def test_generator_rejects_hash_only_title_when_building_expansion_terms():

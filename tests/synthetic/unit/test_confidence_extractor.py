@@ -144,7 +144,7 @@ async def test_pattern_generators_emit_unobserved_targets_requiring_review(
             "query": query,
             "selected_profile": "document_semantic",
             "reasoning": "Production selector chose document retrieval.",
-            "query_intent": "research_lookup",
+            "query_intent": "document_search",
             "modality": "document",
             "complexity": "medium",
         }

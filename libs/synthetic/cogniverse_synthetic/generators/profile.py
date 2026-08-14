@@ -182,17 +182,18 @@ class ProfileGenerator(BaseGenerator):
                 )
             output_fields[field_name] = value
 
-        example = ProfileSelectionExampleSchema(
-            query=query,
-            available_profiles=",".join(profiles),
-            selected_profile=selected_profile,
+        example_data = {
+            "query": query,
+            "available_profiles": ",".join(profiles),
+            "selected_profile": selected_profile,
             **output_fields,
-        )
+        }
         validate_approved_training_values(
-            example.model_dump(),
+            example_data,
             "profile_selection",
             context=(f"profile selection tenant={tenant_id!r} query={query!r}"),
         )
+        example = ProfileSelectionExampleSchema(**example_data)
         configured_modality = profile_configs[selected_profile]["type"]
         if example.modality != configured_modality:
             raise ValueError(
