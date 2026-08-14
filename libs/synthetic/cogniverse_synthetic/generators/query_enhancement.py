@@ -16,7 +16,11 @@ from typing import Any, Dict, List, Optional
 
 from pydantic import BaseModel
 
-from cogniverse_synthetic.generators.base import BaseGenerator, extract_topic
+from cogniverse_synthetic.generators.base import (
+    BaseGenerator,
+    extract_topic,
+    is_content_hash_topic,
+)
 from cogniverse_synthetic.schemas import QueryEnhancementExampleSchema
 
 logger = logging.getLogger(__name__)
@@ -264,7 +268,10 @@ class QueryEnhancementGenerator(BaseGenerator):
         ):
             text = item.get(field)
             if isinstance(text, str):
-                for word in text.lower().split():
+                normalized = " ".join(text.split())
+                if is_content_hash_topic(normalized):
+                    continue
+                for word in normalized.lower().split():
                     candidate = word.strip(".,:;!?()")
                     if (
                         len(candidate) > 3
@@ -306,6 +313,8 @@ class QueryEnhancementGenerator(BaseGenerator):
             value = item.get(field)
             if isinstance(value, str):
                 text = " ".join(value.split())
+                if is_content_hash_topic(text):
+                    continue
                 if text and text not in parts:
                     parts.append(text)
         if not parts:

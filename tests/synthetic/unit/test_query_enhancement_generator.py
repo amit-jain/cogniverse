@@ -6,6 +6,8 @@ from cogniverse_synthetic.generators.query_enhancement import (
     QueryEnhancementGenerator,
 )
 
+HASH_VALUE = "dd95bb382700f5aa2f17a1d6a8163ffd6ce4057b3c108e077ed34efb08e67691"
+
 
 @pytest.mark.asyncio
 async def test_generator_accepts_grounded_multi_word_expansion_terms():
@@ -91,3 +93,21 @@ async def test_generator_rejects_ungrounded_expansion_phrase():
             target_count=1,
             tenant_id="acme:synthetic",
         )
+
+
+def test_generator_rejects_hash_only_title_when_building_expansion_terms():
+    generator = QueryEnhancementGenerator()
+
+    with pytest.raises(
+        ValueError,
+        match="sampled_content contains no expansion terms outside topic 'animal rodeo'",
+    ):
+        generator._expansion_terms("animal rodeo", {"title": HASH_VALUE})
+
+
+def test_generator_rejects_hash_only_source_text():
+    with pytest.raises(
+        ValueError,
+        match="sampled_content contains no source text",
+    ):
+        QueryEnhancementGenerator._source_text({"title": HASH_VALUE})

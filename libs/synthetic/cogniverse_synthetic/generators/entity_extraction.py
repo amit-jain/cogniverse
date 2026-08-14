@@ -9,7 +9,10 @@ from typing import Any, Dict, List, Optional
 
 from pydantic import BaseModel
 
-from cogniverse_synthetic.generators.base import BaseGenerator
+from cogniverse_synthetic.generators.base import (
+    BaseGenerator,
+    is_content_hash_topic,
+)
 from cogniverse_synthetic.schemas import EntityExtractionExampleSchema
 
 logger = logging.getLogger(__name__)
@@ -92,6 +95,8 @@ class EntityExtractionGenerator(BaseGenerator):
                 if not isinstance(text, str) or not text.strip():
                     continue
                 normalized = text.strip()
+                if is_content_hash_topic(normalized):
+                    continue
                 if normalized not in seen_texts:
                     seen_texts.add(normalized)
                     texts.append(normalized)
