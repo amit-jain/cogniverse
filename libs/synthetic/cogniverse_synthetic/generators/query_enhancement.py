@@ -16,13 +16,14 @@ from typing import Any, Dict, List, Optional
 
 from pydantic import BaseModel
 
-from cogniverse_synthetic.generators.base import BaseGenerator
+from cogniverse_synthetic.generators.base import BaseGenerator, extract_topic
 from cogniverse_synthetic.schemas import QueryEnhancementExampleSchema
 
 logger = logging.getLogger(__name__)
 
 QueryEnhancer = Callable[[str, str, str], Awaitable[Any]]
 DEFAULT_PRODUCTION_LABEL_TIMEOUT_SECONDS = 300.0
+TOPIC_WORD_BUDGET = 4
 GROUNDING_STOPWORDS = frozenset(
     {
         "a",
@@ -245,11 +246,7 @@ class QueryEnhancementGenerator(BaseGenerator):
 
     @staticmethod
     def _extract_topic(item: Dict[str, Any]) -> str | None:
-        for field in ("title", "topic", "content", "video_title"):
-            value = item.get(field)
-            if isinstance(value, str) and value.strip():
-                return " ".join(value.split()[:4])
-        return None
+        return extract_topic(item, max_words=TOPIC_WORD_BUDGET)
 
     def _expansion_terms(self, topic: str, item: Dict[str, Any]) -> List[str]:
         """Return expansion terms grounded in the topic's source item."""

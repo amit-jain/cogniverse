@@ -43,9 +43,10 @@ async def test_generator_accepts_grounded_multi_word_expansion_terms():
         tenant_id="acme:synthetic",
     )
 
-    assert examples[0].query == "animal rodeo"
+    assert examples[0].query == "livestock competition agricultural fair"
     assert examples[0].enhanced_query == (
-        "animal rodeo animal rodeo livestock competition agricultural fair "
+        "livestock competition agricultural fair animal rodeo livestock "
+        "competition agricultural fair "
         "spectator viewing area dirt arena"
     )
     assert examples[0].expansion_terms == [

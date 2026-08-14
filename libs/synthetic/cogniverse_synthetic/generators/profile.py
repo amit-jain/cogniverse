@@ -20,7 +20,7 @@ from cogniverse_core.approval.training_schema import (
     PROFILE_TRAINING_MODALITIES,
     validate_approved_training_values,
 )
-from cogniverse_synthetic.generators.base import BaseGenerator
+from cogniverse_synthetic.generators.base import BaseGenerator, extract_topic
 from cogniverse_synthetic.schemas import ProfileSelectionExampleSchema
 
 logger = logging.getLogger(__name__)
@@ -335,11 +335,7 @@ class ProfileGenerator(BaseGenerator):
         return examples
 
     def _extract_topic(self, item: Dict[str, Any]) -> str | None:
-        for field in ("description", "transcript", "topic", "title", "video_title"):
-            value = item.get(field)
-            if isinstance(value, str) and value.strip():
-                return " ".join(value.split()[:TOPIC_WORD_BUDGET])
-        return None
+        return extract_topic(item, max_words=TOPIC_WORD_BUDGET)
 
     def _source_profile_config(
         self,

@@ -9,7 +9,7 @@ from typing import Any, Dict, List
 
 from pydantic import BaseModel
 
-from cogniverse_synthetic.generators.base import BaseGenerator
+from cogniverse_synthetic.generators.base import BaseGenerator, extract_topic
 from cogniverse_synthetic.schemas import WorkflowExecutionSchema
 
 logger = logging.getLogger(__name__)
@@ -119,10 +119,9 @@ class WorkflowGenerator(BaseGenerator):
 
     @staticmethod
     def _extract_topic(content: Dict[str, Any]) -> str:
-        for field in ("topic", "title", "video_title", "description", "transcript"):
-            value = content.get(field)
-            if isinstance(value, str) and value.strip():
-                return value.strip()
+        topic = extract_topic(content)
+        if topic is not None:
+            return topic
         raise ValueError("sampled workflow content requires a non-empty topic")
 
     @staticmethod
