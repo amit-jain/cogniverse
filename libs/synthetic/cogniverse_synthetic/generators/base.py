@@ -6,12 +6,49 @@ Defines common interface and shared functionality.
 """
 
 import logging
+import re
 from abc import ABC, abstractmethod
+from collections.abc import Mapping, Sequence
 from typing import Any, Dict, List, Optional
 
 from pydantic import BaseModel
 
 logger = logging.getLogger(__name__)
+
+CANONICAL_TOPIC_FIELDS = (
+    "description",
+    "segment_description",
+    "transcript",
+    "topic",
+    "title",
+    "video_title",
+)
+_CONTENT_HASH_TOPIC_RE = re.compile(r"^[0-9a-f]{32,}(?:_seg_\d+)?$", re.IGNORECASE)
+
+
+def is_content_hash_topic(value: str) -> bool:
+    """Return True when a topic is only an identifier-like content hash."""
+    return bool(_CONTENT_HASH_TOPIC_RE.fullmatch(value.strip()))
+
+
+def extract_topic(
+    item: Mapping[str, Any],
+    *,
+    field_order: Sequence[str] = CANONICAL_TOPIC_FIELDS,
+    max_words: int | None = None,
+) -> str | None:
+    """Return the first descriptive topic-like value from ``item``."""
+    for field_name in field_order:
+        value = item.get(field_name)
+        if not isinstance(value, str):
+            continue
+        topic = " ".join(value.split())
+        if not topic or is_content_hash_topic(topic):
+            continue
+        if max_words is not None:
+            topic = " ".join(topic.split()[:max_words])
+        return topic
+    return None
 
 
 class BaseGenerator(ABC):

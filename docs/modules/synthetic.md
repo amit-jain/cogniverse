@@ -253,6 +253,11 @@ non-stopword alphanumeric token in an expansion term must appear in the source
 text; multi-word phrases are allowed when each substantive token is grounded.
 A production response containing an unrelated expansion term raises with the
 tenant and query instead of creating self-fulfilling training data.
+Topic extraction uses the shared helper and prefers `description`,
+`segment_description`, `transcript`, `topic`, `title`, then `video_title`.
+Bare identifier-like hex strings, including `_seg_` suffixed forms, are
+ignored. The query-enhancement generator then truncates the surviving topic to
+four words before building its query set.
 
 ### ProfileGenerator
 
@@ -297,9 +302,13 @@ modality, and complexity. `complexity` is the literal three-value contract
 fields centrally and requires the returned modality to equal the selected
 profile's configured type; it never infers a training label from a profile
 name or substitutes video traits. An empty profile universe is invalid.
-Each grounded query is built from a single sampled document. The topic is that
-document's own `description` or `transcript` when present, falling back to
-`topic`, `title`, then `video_title`, truncated to 20 words, and rendered
+The backend querier already normalizes configured description fields into
+`description`, and `segment_description` is part of the default description
+field list, so generator inputs usually see `description` even when the stored
+field name was `segment_description`. Each grounded query is built from a
+single sampled document. The topic helper prefers `description`,
+`segment_description`, `transcript`, `topic`, `title`, then `video_title`,
+ignores bare identifier-like hex strings, truncates to 20 words, and renders
 through the query template for the source profile's type (a video source yields
 `find a video frame showing {topic}`). Distinct segments of one source are
 therefore distinct grounded examples. A sampled document carrying a
@@ -467,7 +476,10 @@ The supported pairs are `video`/`VIDEO`, `document`/`DOCUMENT`, `image`/`IMAGE`,
 types are opaque storage identifiers and never participate in modality
 inference. Agent sequences use only enabled agent IDs from configuration;
 missing, malformed, mismatched, unsupported, or unmapped modalities raise.
-Each sample also requires a non-empty topic or title.
+Each sample also requires a non-empty topic or title. The shared topic helper
+uses the same descriptive-first order as the other generators, ignores bare
+identifier-like hex strings, and keeps the workflow contract by raising
+`ValueError` when no descriptive text exists.
 Each source yields at most three unique plans: search, summarize, and analyze.
 Requests above the unique source-plan capacity fail instead of duplicating a
 query with a different workflow identifier.
