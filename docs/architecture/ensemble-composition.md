@@ -265,7 +265,9 @@ class ProfileSelectionSignature(dspy.Signature):
         desc="Detected intent: text_search, video_search, image_search, etc."
     )
     modality: str = dspy.OutputField(desc="Target modality: video, image, text, audio")
-    complexity: str = dspy.OutputField(desc="Query complexity: simple, medium, complex")
+    complexity: Literal["simple", "medium", "complex"] = dspy.OutputField(
+        desc="Query complexity: simple, medium, complex"
+    )
 ```
 
 Note: ProfileSelectionAgent currently selects a single profile. When the orchestrator chains `profile_selection_agent` ahead of `search_agent`, `_merge_enrichment()` wraps the winning `selected_profile` as a single-element `SearchInput.profiles` list (a single-profile override, not ensemble). For ensemble search, explicitly provide multiple profiles via the `profiles` parameter in SearchInput.

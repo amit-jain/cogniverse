@@ -10,6 +10,7 @@ so approved examples retain their source boundary.
 import asyncio
 import logging
 import math
+import re
 from collections.abc import Awaitable, Callable
 from typing import Any, Dict, List, Optional
 
@@ -22,6 +23,41 @@ logger = logging.getLogger(__name__)
 
 QueryEnhancer = Callable[[str, str, str], Awaitable[Any]]
 DEFAULT_PRODUCTION_LABEL_TIMEOUT_SECONDS = 300.0
+GROUNDING_STOPWORDS = frozenset(
+    {
+        "a",
+        "an",
+        "and",
+        "are",
+        "as",
+        "at",
+        "be",
+        "but",
+        "by",
+        "for",
+        "from",
+        "in",
+        "into",
+        "is",
+        "it",
+        "of",
+        "on",
+        "or",
+        "so",
+        "than",
+        "that",
+        "the",
+        "these",
+        "this",
+        "those",
+        "to",
+        "via",
+        "was",
+        "were",
+        "with",
+        "without",
+    }
+)
 
 
 class QueryEnhancementGenerator(BaseGenerator):
@@ -77,7 +113,7 @@ class QueryEnhancementGenerator(BaseGenerator):
         )
 
         examples: List[BaseModel] = []
-        for query, allowed_terms, context, source_text in grounded_queries[
+        for query, _allowed_terms, context, source_text in grounded_queries[
             :target_count
         ]:
             result = await self._request_enhancement_label(
@@ -103,11 +139,11 @@ class QueryEnhancementGenerator(BaseGenerator):
             expansion_terms = self._output_terms(
                 result.get("expansion_terms"), "expansion_terms"
             )
-            allowed_term_keys = {term.casefold() for term in allowed_terms}
+            source_term_keys = self._source_term_keys(source_text)
             unrelated_terms = [
                 term
                 for term in expansion_terms
-                if term.casefold() not in allowed_term_keys
+                if not self._term_is_grounded(term, source_term_keys)
             ]
             if unrelated_terms:
                 raise ValueError(
@@ -169,6 +205,23 @@ class QueryEnhancementGenerator(BaseGenerator):
                 f"query enhancement {field_name} must be a list of non-empty strings"
             )
         return [term.strip() for term in value]
+
+    @staticmethod
+    def _source_term_keys(source_text: str) -> set[str]:
+        return {
+            token
+            for token in re.findall(r"[A-Za-z0-9]+", source_text.casefold())
+            if token
+        }
+
+    @classmethod
+    def _term_is_grounded(cls, term: str, source_term_keys: set[str]) -> bool:
+        term_tokens = {
+            token
+            for token in re.findall(r"[A-Za-z0-9]+", term.casefold())
+            if token and token not in GROUNDING_STOPWORDS
+        }
+        return bool(term_tokens) and term_tokens <= source_term_keys
 
     def _source_records(
         self, sampled_content: List[Dict[str, Any]]

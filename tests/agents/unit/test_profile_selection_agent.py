@@ -3,6 +3,7 @@
 import asyncio
 import time
 from types import SimpleNamespace
+from typing import Literal, get_args, get_origin
 from unittest.mock import AsyncMock, Mock, patch
 
 import dspy
@@ -15,6 +16,7 @@ from cogniverse_agents.profile_selection_agent import (
     ProfileSelectionInput,
     ProfileSelectionModule,
     ProfileSelectionOutput,
+    ProfileSelectionSignature,
 )
 
 
@@ -127,6 +129,15 @@ class TestProfileSelectionModule:
         )
 
         assert result.complexity == "complex"
+
+    def test_complexity_contract_is_literal(self):
+        expected = ("simple", "medium", "complex")
+        for annotation in (
+            ProfileSelectionSignature.__annotations__["complexity"],
+            ProfileSelectionOutput.model_fields["complexity"].annotation,
+        ):
+            assert get_origin(annotation) is Literal
+            assert get_args(annotation) == expected
 
 
 class TestProfileSelectionAgent:

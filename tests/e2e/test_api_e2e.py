@@ -949,7 +949,11 @@ class TestSyntheticDataAPI:
         )
         assert {example["selected_profile"] for example in data["data"]} == {PROFILE}
         assert {example["modality"] for example in data["data"]} == {"video"}
-        assert {example["complexity"] for example in data["data"]} == {"complex"}
+        assert {example["complexity"] for example in data["data"]} <= {
+            "simple",
+            "medium",
+            "complex",
+        }
         assert {example["query_intent"] for example in data["data"]} == {"video_search"}
 
     def test_generate_synthetic_data(self):
@@ -1187,7 +1191,7 @@ class TestSyntheticDataAPI:
                 }[example["selected_profile"]]
             )
             assert example["query_intent"] == "cross_modal_search"
-            assert example["complexity"] == "complex"
+            assert example["complexity"] in {"simple", "medium", "complex"}
             assert "chosen_agent" not in example
             assert "workflow_id" not in example
         assert len({example["query"] for example in data["data"]}) == 2

@@ -4,6 +4,7 @@ Unit tests for synthetic data schemas
 
 import asyncio
 from types import SimpleNamespace
+from typing import Literal, get_args, get_origin
 
 import pytest
 from fastapi import FastAPI
@@ -184,6 +185,11 @@ class TestProfileSelectionExampleSchema:
         assert example.selected_profile == "video_colqwen_omni_mv_chunk_30s"
         assert example.modality == "video"
         assert "confidence" not in example.model_dump()
+
+    def test_complexity_contract_is_literal(self):
+        annotation = ProfileSelectionExampleSchema.model_fields["complexity"].annotation
+        assert get_origin(annotation) is Literal
+        assert get_args(annotation) == ("simple", "medium", "complex")
 
     @pytest.mark.parametrize("confidence", [0.0, 0.85, 1.0])
     def test_rejects_unobserved_confidence_target(self, confidence):

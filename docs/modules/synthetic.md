@@ -248,7 +248,9 @@ Query-enhancement examples deliberately omit `confidence` because it is not a
 training target. The approval extractor assigns the review sentinel `0.0` and
 requires human review. The generator preserves the production agent's synonyms
 instead of inventing them from source text. Expansion terms are different: each
-one must be a literal term drawn from the sampled source text for that example.
+one must be token-grounded in the sampled source text for that example. Every
+non-stopword alphanumeric token in an expansion term must appear in the source
+text; multi-word phrases are allowed when each substantive token is grounded.
 A production response containing an unrelated expansion term raises with the
 tenant and query instead of creating self-fulfilling training data.
 
@@ -290,10 +292,11 @@ operation. The service never substitutes `profile_name` for invalid configuratio
 Generation also requires a canonical profile `type`: `audio`, `code`,
 `document`, `image`, `text`, `video`, or `wiki`. The production
 profile-selection agent supplies the selected profile, reasoning, query intent,
-modality, and complexity. The generator validates those categorical fields
-centrally and requires the returned modality to equal the selected profile's
-configured type; it never infers a training label from a profile name or
-substitutes video traits. An empty profile universe is invalid.
+modality, and complexity. `complexity` is the literal three-value contract
+`simple`, `medium`, or `complex`. The generator validates those categorical
+fields centrally and requires the returned modality to equal the selected
+profile's configured type; it never infers a training label from a profile
+name or substitutes video traits. An empty profile universe is invalid.
 Each grounded query is built from a single sampled document. The topic is that
 document's own `description` or `transcript` when present, falling back to
 `topic`, `title`, then `video_title`, truncated to 20 words, and rendered
