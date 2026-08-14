@@ -783,6 +783,7 @@ class TestSyntheticDataAPI:
             tenant_id=TENANT_ID,
             profile=PROFILE,
             suffix=".mp4",
+            media_type="video",
         )
 
     def test_synthetic_health(self):
