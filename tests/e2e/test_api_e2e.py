@@ -30,6 +30,7 @@ from pathlib import Path
 import httpx
 import pytest
 
+from cogniverse_synthetic.schemas import ProfileSelectionExampleSchema
 from tests.e2e.conftest import (
     RUNTIME,
     SAMPLE_VIDEO_CONTENT_ID,
@@ -949,9 +950,14 @@ class TestSyntheticDataAPI:
         )
         assert {example["selected_profile"] for example in data["data"]} == {PROFILE}
         assert {example["modality"] for example in data["data"]} == {"video"}
-        assert [example["complexity"] for example in data["data"]] == [
-            "complex",
-        ] * len(data["data"])
+        # complexity is an LM judgment, so no single value is pinnable. The
+        # vocabulary contract is enforced at the HTTP boundary: the schema
+        # forbids extras and types complexity as a Literal, so a value outside
+        # {simple, medium, complex} or any field drift raises here.
+        assert [
+            ProfileSelectionExampleSchema.model_validate(example).complexity
+            for example in data["data"]
+        ] == [example["complexity"] for example in data["data"]]
         assert {example["query_intent"] for example in data["data"]} == {"video_search"}
 
     def test_generate_synthetic_data(self):
@@ -1193,9 +1199,14 @@ class TestSyntheticDataAPI:
             assert "workflow_id" not in example
         assert len({example["query"] for example in data["data"]}) == 2
         assert {example["modality"] for example in data["data"]} == {"video", "image"}
-        assert [example["complexity"] for example in data["data"]] == [
-            "complex",
-        ] * len(data["data"])
+        # complexity is an LM judgment, so no single value is pinnable. The
+        # vocabulary contract is enforced at the HTTP boundary: the schema
+        # forbids extras and types complexity as a Literal, so a value outside
+        # {simple, medium, complex} or any field drift raises here.
+        assert [
+            ProfileSelectionExampleSchema.model_validate(example).complexity
+            for example in data["data"]
+        ] == [example["complexity"] for example in data["data"]]
 
     def test_generate_workflow_ids_are_unique_and_schema_specific(self):
         image_content_id = _content_sha256(_sample_frame_path())
