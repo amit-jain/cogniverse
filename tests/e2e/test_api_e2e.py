@@ -1144,7 +1144,7 @@ class TestSyntheticDataAPI:
         assert data["schema_name"] == "ProfileSelectionExampleSchema"
         assert data["count"] == 2
         assert len(data["data"]) == 2
-        assert data["selected_profiles"] == [PROFILE, IMAGE_PROFILE]
+        assert data["selected_profiles"] == [PROFILE, "document_text_semantic"]
         expected_available_profiles = _expected_available_profile_names(TENANT_ID)
         assert data["metadata"] == {
             "backend_query_strategy": "multi_modal_sequences",
@@ -1154,25 +1154,26 @@ class TestSyntheticDataAPI:
         }
         video_first_pattern = re.compile(
             r"^find (?P<video_topic>.+) in video content together with "
-            r"(?P<image_topic>[0-9a-f]{64}) in image content$"
+            r"(?P<document_topic>.+) in document content$"
         )
-        image_first_pattern = re.compile(
-            r"^find (?P<image_topic>[0-9a-f]{64}) in image content together with "
+        document_first_pattern = re.compile(
+            r"^find (?P<document_topic>.+) in document content together with "
             r"(?P<video_topic>.+) in video content$"
         )
         orderings = {}
         for example in data["data"]:
             video_first = video_first_pattern.match(example["query"])
-            image_first = image_first_pattern.match(example["query"])
-            assert (video_first is None) != (image_first is None), example["query"]
-            match = video_first or image_first
-            ordering = "video_first" if video_first else "image_first"
+            document_first = document_first_pattern.match(example["query"])
+            assert (video_first is None) != (document_first is None), example["query"]
+            match = video_first or document_first
+            ordering = "video_first" if video_first else "document_first"
             assert ordering not in orderings, example["query"]
-            orderings[ordering] = (match["video_topic"], match["image_topic"])
-        assert set(orderings) == {"video_first", "image_first"}
-        video_topic, image_topic = orderings["video_first"]
-        assert orderings["image_first"] == (video_topic, image_topic)
+            orderings[ordering] = (match["video_topic"], match["document_topic"])
+        assert set(orderings) == {"video_first", "document_first"}
+        video_topic, document_topic = orderings["video_first"]
+        assert orderings["document_first"] == (video_topic, document_topic)
         assert 1 <= len(video_topic.split()) <= 20, video_topic
+        assert 1 <= len(document_topic.split()) <= 20, document_topic
         profile_fields = {
             "query",
             "available_profiles",
@@ -1186,19 +1187,25 @@ class TestSyntheticDataAPI:
             assert set(example) == profile_fields
             available_profiles = example["available_profiles"].split(",")
             assert available_profiles == expected_available_profiles
-            assert example["selected_profile"] in {PROFILE, IMAGE_PROFILE}
+            assert example["selected_profile"] in {
+                PROFILE,
+                "document_text_semantic",
+            }
             assert (
                 example["modality"]
                 == {
                     PROFILE: "video",
-                    IMAGE_PROFILE: "image",
+                    "document_text_semantic": "document",
                 }[example["selected_profile"]]
             )
             assert example["query_intent"] == "multi_modal_search"
             assert "chosen_agent" not in example
             assert "workflow_id" not in example
         assert len({example["query"] for example in data["data"]}) == 2
-        assert {example["modality"] for example in data["data"]} == {"video", "image"}
+        assert {example["modality"] for example in data["data"]} == {
+            "video",
+            "document",
+        }
         # complexity is an LM judgment, so no single value is pinnable. The
         # vocabulary contract is enforced at the HTTP boundary: the schema
         # forbids extras and types complexity as a Literal, so a value outside
