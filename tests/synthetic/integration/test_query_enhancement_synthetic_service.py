@@ -149,6 +149,8 @@ def qe_service(shared_vespa):
             tenant_id=tenant_id,
             profile_name=profile_name,
             title=title,
+            expected_query="encoder decoder architecture improves",
+            source_text=f"{title}\n{description}",
             expansion_terms=["encoder", "decoder", "architecture"],
             agents_config=agents_config,
         )
@@ -175,18 +177,18 @@ async def test_service_generates_query_enhancement_examples(qe_service):
     assert response.metadata["sampled_content_count"] == 1
 
     possible_queries = {
-        qe_service.title,
-        f"find {qe_service.title}",
-        f"show me {qe_service.title}",
-        f"{qe_service.title} tutorial",
-        f"explain {qe_service.title}",
+        qe_service.expected_query,
+        f"find {qe_service.expected_query}",
+        f"show me {qe_service.expected_query}",
+        f"{qe_service.expected_query} tutorial",
+        f"explain {qe_service.expected_query}",
     }
     assert [item["query"] for item in response.data] == [
-        qe_service.title,
-        f"find {qe_service.title}",
-        f"show me {qe_service.title}",
-        f"{qe_service.title} tutorial",
-        f"explain {qe_service.title}",
+        qe_service.expected_query,
+        f"find {qe_service.expected_query}",
+        f"show me {qe_service.expected_query}",
+        f"{qe_service.expected_query} tutorial",
+        f"explain {qe_service.expected_query}",
     ]
 
     for item in response.data:
@@ -205,7 +207,7 @@ async def test_service_generates_query_enhancement_examples(qe_service):
 
 @pytest.mark.requires_lm
 @pytest.mark.asyncio
-async def test_real_lm_query_agent_rejects_non_source_expansion_terms(
+async def test_real_lm_query_agent_labels_grounded_terms(
     qe_service,
     ensure_host_ollama,
     dspy_test_lm,
@@ -229,25 +231,37 @@ async def test_real_lm_query_agent_rejects_non_source_expansion_terms(
         agents_config=qe_service.agents_config,
         query_enhancer=enhance_query,
     )
-    with pytest.raises(ValueError) as raised:
-        with dspy.context(lm=dspy_test_lm):
-            await service.generate(
-                SyntheticDataRequest(
-                    tenant_id=qe_service.tenant_id,
-                    optimizer="query_enhancement",
-                    count=1,
-                    vespa_sample_size=1,
-                    max_profiles=1,
-                )
+    with dspy.context(lm=dspy_test_lm):
+        response = await service.generate(
+            SyntheticDataRequest(
+                tenant_id=qe_service.tenant_id,
+                optimizer="query_enhancement",
+                count=1,
+                vespa_sample_size=1,
+                max_profiles=1,
             )
+        )
 
-    assert str(raised.value) == (
-        "query_enhancement optimizer callback query_enhancer returned "
-        "expansion_terms absent from sampled source for "
-        f"tenant={qe_service.tenant_id!r} "
-        "query='transformer attention mechanism': ['encoder decoder architecture', "
-        "'context windows']"
+    assert response.optimizer == "query_enhancement"
+    assert response.schema_name == QueryEnhancementExampleSchema.__name__
+    assert response.count == 1
+    assert len(response.data) == 1
+    assert response.selected_profiles == [qe_service.profile_name]
+    assert response.metadata["sampled_content_count"] == 1
+
+    item = response.data[0]
+    source_term_keys = QueryEnhancementGenerator._source_term_keys(
+        qe_service.source_text
     )
+    assert item["query"] == qe_service.expected_query
+    assert item["enhanced_query"] != item["query"]
+    assert item["context"] == qe_service.profile_name
+    assert all(
+        QueryEnhancementGenerator._term_is_grounded(term, source_term_keys)
+        for term in item["expansion_terms"]
+    )
+    assert all(isinstance(s, str) and s.strip() for s in item["synonyms"])
+    assert item["reasoning"].strip() == item["reasoning"]
 
 
 @pytest.mark.asyncio
@@ -256,7 +270,7 @@ async def test_generator_keeps_expansion_terms_with_their_source_item():
         assert tenant_id == "acme:synthetic"
         terms = (
             ["encoder", "decoder", "architecture"]
-            if "transformer attention" in query
+            if "encoder decoder architecture" in query
             else ["chemistry", "isolation", "laboratory"]
         )
         return {
@@ -289,12 +303,12 @@ async def test_generator_keeps_expansion_terms_with_their_source_item():
     assert len(examples) == 10
     assert len({example.query for example in examples}) == 10
     expected_terms = {
-        "transformer attention": {
+        "encoder decoder architecture": {
             "terms": ["encoder", "decoder", "architecture"],
             "context": "video",
             "unrelated": {"chemistry", "isolation", "laboratory"},
         },
-        "radium discovery": {
+        "chemistry isolation laboratory": {
             "terms": ["chemistry", "isolation", "laboratory"],
             "context": "document",
             "unrelated": {"encoder", "decoder", "architecture"},

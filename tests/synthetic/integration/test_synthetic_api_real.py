@@ -163,7 +163,10 @@ def real_service(shared_vespa):
             service=service,
             tenant_id=tenant_id,
             profile_name=profile_name,
-            expected_queries={record["title"] for record in records},
+            expected_queries={
+                f"find a video frame showing {record['description']}"
+                for record in records
+            },
         )
     finally:
         backend.close()
