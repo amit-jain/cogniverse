@@ -46,6 +46,27 @@ def _render(*set_args: str) -> list[dict]:
     return [d for d in yaml.safe_load_all(result.stdout) if d is not None]
 
 
+def _render_with_values(*values_files: str) -> list[dict]:
+    cmd = [
+        "helm",
+        "template",
+        "cogniverse",
+        str(CHART_PATH),
+        "--set",
+        "runtime.qualityMonitor.tenantId=test-tenant",
+        "--set",
+        "semanticRouter.enabled=true",
+    ]
+    for values_file in values_files:
+        cmd.extend(["-f", str(CHART_PATH / values_file)])
+    result = subprocess.run(cmd, capture_output=True, text=True, check=False)
+    if result.returncode != 0:
+        raise AssertionError(
+            f"helm template failed (exit {result.returncode}):\n{result.stderr}"
+        )
+    return [d for d in yaml.safe_load_all(result.stdout) if d is not None]
+
+
 def _sr_config(docs: list[dict]) -> dict:
     for d in docs:
         if (
@@ -54,6 +75,20 @@ def _sr_config(docs: list[dict]) -> dict:
         ):
             return yaml.safe_load(d["data"]["config.yaml"])
     raise AssertionError("semantic-router-config ConfigMap not rendered")
+
+
+def _container_env_entries(
+    docs: list[dict], deployment_name: str, container_name: str
+) -> list[dict]:
+    for d in docs:
+        if (
+            d.get("kind") == "Deployment"
+            and d.get("metadata", {}).get("name") == deployment_name
+        ):
+            containers = d["spec"]["template"]["spec"]["containers"]
+            container = next(c for c in containers if c["name"] == container_name)
+            return container.get("env", [])
+    raise AssertionError(f"{deployment_name}/{container_name} not rendered")
 
 
 def _backend_endpoints(cfg: dict) -> set[str]:
@@ -79,6 +114,16 @@ def _envoy_upstream(docs: list[dict]) -> str:
                     ]["endpoint"]["address"]["socket_address"]
                     return f"{sock['address']}:{sock['port_value']}"
     raise AssertionError("llm_upstream cluster not found in envoy config")
+
+
+def _envoy_service(docs: list[dict]) -> dict:
+    for d in docs:
+        if (
+            d.get("kind") == "Service"
+            and d.get("metadata", {}).get("name") == "cogniverse-semantic-router-envoy"
+        ):
+            return d
+    raise AssertionError("semantic-router envoy Service not rendered")
 
 
 def test_vllm_engine_routes_to_student_service():
@@ -188,3 +233,43 @@ def test_router_cold_download_has_thirty_minute_startup_budget():
     assert probe["httpGet"] == {"path": "/metrics", "port": "metrics"}
     assert probe["periodSeconds"] == 10
     assert probe["failureThreshold"] == 180
+
+
+def test_router_receives_the_optional_hf_token_secret():
+    entries = _container_env_entries(
+        _render(), "cogniverse-semantic-router", "semantic-router"
+    )
+    matches = [e for e in entries if e["name"] == "HF_TOKEN"]
+    assert matches == [
+        {
+            "name": "HF_TOKEN",
+            "valueFrom": {
+                "secretKeyRef": {
+                    "name": "hf-token",
+                    "key": "HF_TOKEN",
+                    "optional": True,
+                }
+            },
+        }
+    ]
+
+
+def test_envoy_does_not_receive_the_hf_token_env():
+    entries = _container_env_entries(
+        _render(), "cogniverse-semantic-router-envoy", "envoy"
+    )
+    assert [e for e in entries if e["name"] == "HF_TOKEN"] == []
+
+
+def test_k3s_overlay_exposes_semantic_router_envoy_on_a_nodeport():
+    service = _envoy_service(_render_with_values("values.k3s.yaml"))
+    assert service["spec"]["type"] == "NodePort"
+    assert service["spec"]["ports"] == [
+        {
+            "name": "http",
+            "nodePort": 28081,
+            "port": 8801,
+            "protocol": "TCP",
+            "targetPort": "http",
+        }
+    ]

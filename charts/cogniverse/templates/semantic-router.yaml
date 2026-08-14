@@ -55,6 +55,14 @@ spec:
         env:
         - name: HF_HOME
           value: /models-cache
+        # Optional HF token speeds up gated model pulls; the pod still starts
+        # when the synced secret is absent.
+        - name: HF_TOKEN
+          valueFrom:
+            secretKeyRef:
+              name: hf-token
+              key: HF_TOKEN
+              optional: true
         ports:
         - name: grpc
           containerPort: {{ int .Values.semanticRouter.router.grpcPort }}
@@ -217,6 +225,9 @@ spec:
     targetPort: http
     protocol: TCP
     name: http
+    {{- if eq .Values.semanticRouter.envoy.service.type "NodePort" }}
+    nodePort: {{ int .Values.semanticRouter.envoy.service.nodePort }}
+    {{- end }}
   selector:
     {{- include "cogniverse.selectorLabels" . | nindent 4 }}
     app.kubernetes.io/component: semantic-router-envoy
