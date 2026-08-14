@@ -1009,6 +1009,19 @@ class TestSharedClusterOwnership:
             "http://127.0.0.1:33905/v1/models",
         )
 
+    def test_semantic_router_probe_rejects_a_dead_port(self, monkeypatch):
+        def _dead_port(*args, **kwargs):
+            request = e2e_conftest.httpx.Request("GET", args[0])
+            raise e2e_conftest.httpx.ConnectError("boom", request=request)
+
+        monkeypatch.setattr(e2e_conftest.httpx, "get", _dead_port)
+
+        assert e2e_conftest._required_e2e_semantic_router_ready() == (
+            False,
+            "semantic-router envoy readiness failed at "
+            "http://localhost:33881/v1/models; error=boom",
+        )
+
     def test_running_cluster_is_not_reused_with_a_wrong_required_model(
         self, monkeypatch
     ):
@@ -1050,6 +1063,11 @@ class TestSharedClusterOwnership:
                 "openai/whisper-large-v3-turbo is not served exactly at "
                 "http://127.0.0.1:33905/v1/models",
             ),
+        )
+        monkeypatch.setattr(
+            e2e_conftest,
+            "_required_e2e_semantic_router_ready",
+            lambda: (True, ""),
         )
 
         assert e2e_conftest._e2e_cluster_state() == (
