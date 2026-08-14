@@ -11,7 +11,9 @@ from pydantic import BaseModel
 
 from cogniverse_synthetic.generators.base import (
     BaseGenerator,
+    entity_candidate_text_fields,
     is_content_hash_topic,
+    normalize_text,
 )
 from cogniverse_synthetic.schemas import EntityExtractionExampleSchema
 
@@ -90,11 +92,11 @@ class EntityExtractionGenerator(BaseGenerator):
         texts: List[str] = []
         seen_texts = set()
         for item in sampled_content:
-            for field in ("title", "content", "description", "topic"):
+            for field in entity_candidate_text_fields():
                 text = item.get(field)
                 if not isinstance(text, str) or not text.strip():
                     continue
-                normalized = text.strip()
+                normalized = normalize_text(text)
                 if is_content_hash_topic(normalized):
                     continue
                 if normalized not in seen_texts:
