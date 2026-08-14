@@ -1194,7 +1194,7 @@ class TestSyntheticDataAPI:
                     IMAGE_PROFILE: "image",
                 }[example["selected_profile"]]
             )
-            assert example["query_intent"] == "cross_modal_search"
+            assert example["query_intent"] == "multi_modal_search"
             assert "chosen_agent" not in example
             assert "workflow_id" not in example
         assert len({example["query"] for example in data["data"]}) == 2

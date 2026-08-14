@@ -626,7 +626,7 @@ json.dump(result, open("synthetic_data.json", "w"))
 
 **Output Schemas**:
 
-- `ProfileSelectionExampleSchema`: Query, profile, modality, complexity, intent
+- `ProfileSelectionExampleSchema`: Query, profile, modality, complexity, canonical intent
 - `RoutingExperienceSchema`: Query, entities, relationships, agent
 - `WorkflowExecutionSchema`: Multi-step workflow patterns
 

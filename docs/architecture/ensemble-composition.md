@@ -261,10 +261,12 @@ class ProfileSelectionSignature(dspy.Signature):
     selected_profile: str = dspy.OutputField(desc="Best matching profile name")
     confidence: str = dspy.OutputField(desc="Confidence score 0.0-1.0")
     reasoning: str = dspy.OutputField(desc="Explanation for profile selection")
-    query_intent: str = dspy.OutputField(
-        desc="Detected intent: text_search, video_search, image_search, etc."
+    query_intent: ProfileQueryIntent = dspy.OutputField(
+        desc="Detected intent: multi_modal_search, video_search, image_search, text_search, audio_search, document_search, relationship_aware_search, ensemble_search, code_search, wiki_search"
     )
-    modality: str = dspy.OutputField(desc="Target modality: video, image, text, audio")
+    modality: str = dspy.OutputField(
+        desc="Target modality: audio, code, document, image, text, video, wiki"
+    )
     complexity: Literal["simple", "medium", "complex"] = dspy.OutputField(
         desc="Query complexity: simple, medium, complex"
     )

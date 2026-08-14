@@ -10,6 +10,10 @@ from typing import Any, Dict, List, Literal, Optional
 
 from pydantic import BaseModel, ConfigDict, Field, field_validator
 
+from cogniverse_core.approval.training_schema import (
+    PROFILE_QUERY_INTENT_VALUES,
+    ProfileQueryIntent,
+)
 from cogniverse_foundation.common.tenant_utils import (
     require_tenant_id,
     validate_tenant_id,
@@ -42,8 +46,8 @@ class ProfileSelectionExampleSchema(BaseModel):
         ..., description="Profile that should be selected for the query"
     )
     reasoning: str = Field(..., description="Reason for the selection")
-    query_intent: str = Field(
-        ..., description="text_search, video_search, image_search, etc."
+    query_intent: ProfileQueryIntent = Field(
+        ..., description=f"Detected intent: {', '.join(PROFILE_QUERY_INTENT_VALUES)}"
     )
     modality: str = Field(
         ...,
