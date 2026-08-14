@@ -202,6 +202,7 @@ class TestSharedClusterOwnership:
             tenant_id=e2e_conftest.TENANT_ID,
             profile="video_colpali_smol500_mv_frame",
             suffix=".mp4",
+            media_type="video",
         )
 
         assert matches == []
@@ -244,6 +245,7 @@ class TestSharedClusterOwnership:
             tenant_id=e2e_conftest.TENANT_ID,
             profile="video_colpali_smol500_mv_frame",
             suffix=".mp4",
+            media_type="video",
         )
 
         assert matches == [expected]
@@ -270,6 +272,7 @@ class TestSharedClusterOwnership:
             tenant_id=e2e_conftest.TENANT_ID,
             profile="image_colpali_mv",
             suffix=".jpg",
+            media_type="image",
         )
 
         assert matches == [expected]
@@ -299,6 +302,7 @@ class TestSharedClusterOwnership:
             tenant_id=e2e_conftest.TENANT_ID,
             profile="image_colpali_mv",
             suffix=".jpg",
+            media_type="image",
         )
 
         assert matches == []
