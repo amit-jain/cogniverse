@@ -2,10 +2,11 @@
 
 Multipart uploads land in MinIO under
 ``s3://{default_bucket}/{tenant_id}/{sha256(content)}.{ext}`` — content
-addressable so identical bytes dedupe to one object. The
-ingestion queue then carries the resulting ``s3://`` URL — workers
-fetch via ``MediaLocator`` which already speaks ``s3://`` against the
-same MinIO endpoint.
+addressable so identical bytes dedupe to one object. The basename of the
+original upload is preserved as object metadata so downstream ingestion can
+restore it into document titles. The ingestion queue then carries the
+resulting ``s3://`` URL — workers fetch via ``MediaLocator`` which already
+speaks ``s3://`` against the same MinIO endpoint.
 
 Reading credentials at function-call time (not module-import time)
 keeps the module loadable in test environments that don't have
@@ -19,6 +20,7 @@ import hashlib
 import os
 from pathlib import Path
 from typing import Optional
+from urllib.parse import urlsplit
 
 
 def _client():
@@ -56,6 +58,43 @@ def _default_bucket() -> str:
     return bucket
 
 
+def _original_filename(filename: Optional[str]) -> str:
+    """Return the upload basename or an empty string."""
+    if not filename:
+        return ""
+    return Path(str(filename)).name
+
+
+def _s3_object_location(source_url: str) -> tuple[str, str]:
+    """Split an ``s3://`` URL into bucket and key components."""
+    parsed = urlsplit(source_url)
+    if parsed.scheme != "s3" or not parsed.netloc:
+        return "", ""
+    return parsed.netloc, parsed.path.lstrip("/")
+
+
+def get_original_filename(source_url: str) -> str:
+    """Read the preserved upload basename from MinIO object metadata.
+
+    Returns ``""`` when the object is missing metadata, the URL is not an
+    ``s3://`` URL, or the lookup fails. The pipeline falls back to the
+    localized object basename in that case.
+    """
+    bucket_name, key = _s3_object_location(source_url)
+    if not bucket_name or not key:
+        return ""
+
+    client = _client()
+    try:
+        head = client.head_object(Bucket=bucket_name, Key=key)
+    except Exception:
+        return ""
+
+    metadata = head.get("Metadata") or {}
+    original = metadata.get("original_filename", "")
+    return _original_filename(original)
+
+
 def upload_bytes(
     content: bytes,
     *,
@@ -70,16 +109,31 @@ def upload_bytes(
     addressable, so identical bytes resubmitted (the same file re-uploaded)
     map to ONE object and ONE idempotency sha. A uuid key made every upload
     unique, defeating dedup: re-uploads re-ran the whole pipeline and doubled
-    the index. ``filename`` is only used to derive the suffix.
+    the index. ``filename`` is used to derive the suffix and, when present, is
+    preserved as object metadata for downstream title reconstruction.
     """
     bucket_name = bucket or _default_bucket()
     suffix = Path(filename).suffix if filename else ""
     key = f"{tenant_id}/{hashlib.sha256(content).hexdigest()}{suffix}"
 
     client = _client()
+    try:
+        client.head_object(Bucket=bucket_name, Key=key)
+        return f"s3://{bucket_name}/{key}"
+    except Exception as exc:
+        from botocore.exceptions import ClientError
+
+        if not isinstance(exc, ClientError):
+            raise
+        code = str(exc.response.get("Error", {}).get("Code", ""))
+        if code not in {"404", "NoSuchKey", "NotFound"}:
+            raise
     extra: dict = {}
     if content_type:
         extra["ContentType"] = content_type
+    original_filename = _original_filename(filename)
+    if original_filename:
+        extra["Metadata"] = {"original_filename": original_filename}
     client.put_object(Bucket=bucket_name, Key=key, Body=content, **extra)
     return f"s3://{bucket_name}/{key}"
 
