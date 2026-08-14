@@ -7,7 +7,6 @@ Defines common interface and shared functionality.
 
 import json
 import logging
-import os
 import re
 from abc import ABC, abstractmethod
 from collections.abc import Mapping, Sequence
@@ -22,12 +21,7 @@ from cogniverse_foundation.config.unified_config import FieldMappingConfig
 logger = logging.getLogger(__name__)
 
 _ZERO_WIDTH_TRANSLATION = str.maketrans("", "", "\ufeff\u200b\u200c\u200d\u2060")
-_SCHEMA_DIR = Path(
-    os.environ.get(
-        "COGNIVERSE_SCHEMAS_DIR",
-        Path(__file__).resolve().parents[4] / "configs" / "schemas",
-    )
-)
+_SCHEMA_DIR = Path(__file__).resolve().parents[4] / "configs" / "schemas"
 _CONTENT_HASH_TOPIC_RE = re.compile(r"^[0-9a-f]{32,}(?:_seg_\d+)?$", re.IGNORECASE)
 _TEXT_DOCUMENT_MAPPING_ROLES = (
     "title",
