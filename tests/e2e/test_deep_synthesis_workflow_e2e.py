@@ -197,7 +197,9 @@ class TestDeepSynthesisOverHundredDocuments:
         Mem0MemoryManager._instances.clear()
         tenant_id = unique_id("rlm_deep") + ":t1"
         cm = ConfigManager(
-            store=VespaConfigStore(backend_url="http://localhost", backend_port=VESPA_HTTP_PORT)
+            store=VespaConfigStore(
+                backend_url="http://localhost", backend_port=VESPA_HTTP_PORT
+            )
         )
         # In-memory only: cm.set_system_config would persist a denseon-only
         # localhost URL map into config_metadata and starve the in-cluster
