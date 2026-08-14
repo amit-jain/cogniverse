@@ -825,6 +825,39 @@ def _vespa_source_urls(http_port: int, base_schema_name: str, tenant_id: str) ->
     }
 
 
+def _vespa_video_titles(
+    http_port: int, base_schema_name: str, tenant_id: str, wait_seconds: int = 60
+) -> set[str]:
+    """Return the distinct video_title values for the tenant's video docs."""
+    from cogniverse_core.common.tenant_utils import canonical_tenant_id
+
+    canonical_suffix = canonical_tenant_id(tenant_id).replace(":", "_")
+    schema_name = f"{base_schema_name}_{canonical_suffix}"
+    yql = f"select video_title from {schema_name} where true"
+    deadline = time.time() + wait_seconds
+    titles: set[str] = set()
+    while time.time() < deadline:
+        try:
+            r = requests.get(
+                f"http://localhost:{http_port}/search/",
+                params={"yql": yql, "hits": 100},
+                timeout=15,
+            )
+            if r.ok:
+                children = r.json().get("root", {}).get("children", []) or []
+                titles = {
+                    (c.get("fields") or {}).get("video_title")
+                    for c in children
+                    if (c.get("fields") or {}).get("video_title")
+                }
+                if titles:
+                    return titles
+        except Exception:
+            pass
+        time.sleep(2)
+    return titles
+
+
 def _vespa_graph_documents(
     http_port: int,
     tenant_id: str,
@@ -979,6 +1012,14 @@ class TestUploadRealStack:
         )
         assert vespa_doc_count == EXPECTED_CHUNKS
 
+        indexed_titles = _vespa_video_titles(
+            real_stack["vespa_http_port"], PROFILE, TENANT_ID
+        )
+        assert indexed_titles == {UPLOAD_FILENAME}, (
+            f"indexed video_title(s) {indexed_titles} should equal the upload "
+            f"filename {UPLOAD_FILENAME!r}"
+        )
+
         # Every indexed document records the canonical s3:// source_url the
         # upload wrote to MinIO — NOT the file:// temp path the worker localized
         # to. Answer-time keyframe resolution derives the object-store bucket
@@ -1059,6 +1100,13 @@ class TestUploadRealStack:
             "source_url": expected_source_url,
             "status": "queued",
         }
+        indexed_titles_2 = _vespa_video_titles(
+            real_stack["vespa_http_port"], PROFILE, TENANT_ID
+        )
+        assert indexed_titles_2 == {UPLOAD_FILENAME}, (
+            f"re-upload with a different filename must not change the persisted "
+            f"title; got {indexed_titles_2}"
+        )
         vespa_doc_count_2 = _vespa_visit_count(
             real_stack["vespa_http_port"], PROFILE, TENANT_ID
         )
