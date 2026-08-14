@@ -36,6 +36,8 @@ from tests.utils.vespa_test_helpers import make_config_manager
 
 pytestmark = pytest.mark.integration
 
+HASH_VALUE = "dd95bb382700f5aa2f17a1d6a8163ffd6ce4057b3c108e077ed34efb08e67691"
+
 
 @pytest.fixture(scope="module")
 def ee_service(shared_vespa):
@@ -235,6 +237,15 @@ async def test_generator_extracts_entities_from_content():
         ("PyTorch was released by Meta AI", "acme:synthetic"),
         ("TensorFlow is maintained by Google", "acme:synthetic"),
     ]
+
+
+def test_generator_ignores_hash_only_candidate_texts():
+    async def noop_extractor(text: str, tenant_id: str):
+        return {"query": text, "entities": [], "relationships": []}
+
+    generator = EntityExtractionGenerator(entity_extractor=noop_extractor)
+
+    assert generator._candidate_texts([{"title": HASH_VALUE}]) == []
 
 
 @pytest.mark.asyncio
