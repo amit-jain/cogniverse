@@ -21,6 +21,35 @@ RODEO_TEXT = (
     "This video frame captures an outdoor event, likely a rodeo or similar "
     "competition, viewed through a wire mesh fence..."
 )
+DOCUMENT_TOPIC = "v_-6dz6tBH77I.txt"
+DOCUMENT_BODY = (
+    "\ufeffThe video is of a man in athletic clothes standing in a net. He is "
+    "holding a disk in his right hand. There are people sitting and standing "
+    "right outside the net. There are also several people sitting on bleachers. "
+    "It is sunny. There are several hills visible in the distance. The man spins "
+    "a few times and throws the disk from the open end of the net. He looks "
+    "toward the direction where he threw the disk. People applaude"
+)
+LIVE_DOCUMENT_SAMPLE = {
+    "topic": DOCUMENT_TOPIC,
+    "description": DOCUMENT_BODY,
+    "start_time": 0.0,
+    "end_time": 0.0,
+    "video_id": "",
+    "segment_id": 0,
+    "creation_timestamp": 1786726986553,
+    "schema_name": "document_text",
+    "profile_name": "document_text_semantic",
+    "embedding_type": "multi_vector",
+    "profile_type": "document",
+    "modality": "DOCUMENT",
+    "profile_metadata": {
+        "schema_name": "document_text",
+        "embedding_model": "lightonai/LateOn",
+        "embedding_type": "multi_vector",
+        "type": "document",
+    },
+}
 
 
 def _profile_topic(item):
@@ -108,27 +137,68 @@ def test_workflow_extract_topic_rejects_hash_only_item():
 
 
 def test_extract_topic_uses_document_body_and_strips_bom():
-    item = {
-        "schema_name": "document_text",
-        "document_title": "Annual report",
-        "full_text": "\ufeffThe video is of people applaud in the arena",
-    }
+    item = LIVE_DOCUMENT_SAMPLE
 
     assert extract_topic(item, max_words=4) == "The video is of"
 
 
-def test_canonical_topic_fields_cover_all_shipped_schema_fieldsets():
+def test_extract_topic_refuses_metadata_only_fallback():
+    item = {
+        "tenant_id": "tenant-123",
+        "org_id": "org-456",
+        "org_name": "org-name",
+        "status": "active",
+        "config_id": "cfg-789",
+        "config_key": "query_enhancement",
+        "scope": "tenant",
+        "service": "optimizer",
+        "adapter_id": "adapter-1",
+        "derivation_kind": "derived",
+        "written_by": "system",
+        "tenant_full_id": "tenant-123:prod",
+        "tenant_name": "tenant-name",
+        "signature": "sig-1",
+        "name": "metadata-only",
+        "agent_type": "query_enhancement",
+    }
+
+    assert extract_topic(item) is None
+
+
+def test_canonical_topic_fields_cover_all_shipped_schema_text_roles():
     canonical_fields = set(CANONICAL_TOPIC_FIELDS)
+    assert canonical_fields.isdisjoint(
+        {
+            "tenant_id",
+            "org_id",
+            "org_name",
+            "status",
+            "config_id",
+            "config_key",
+            "scope",
+            "service",
+            "adapter_id",
+            "derivation_kind",
+            "written_by",
+            "tenant_full_id",
+            "tenant_name",
+            "signature",
+            "name",
+            "agent_type",
+        }
+    )
     for schema_path in sorted(Path("configs/schemas").glob("*_schema.json")):
         schema = json.loads(schema_path.read_text(encoding="utf-8"))
-        default_fieldset = next(
-            fieldset
-            for fieldset in schema["fieldsets"]
-            if fieldset["name"] == "default"
-        )
+        document_mapping = schema.get("document_mapping") or {}
         missing_fields = [
             field_name
-            for field_name in default_fieldset["fields"]
-            if field_name not in canonical_fields
+            for field_name in (
+                document_mapping.get("title"),
+                document_mapping.get("description"),
+                document_mapping.get("content"),
+                document_mapping.get("text_content"),
+                document_mapping.get("transcript"),
+            )
+            if isinstance(field_name, str) and field_name not in canonical_fields
         ]
         assert missing_fields == [], schema_path.name

@@ -1,5 +1,7 @@
 """Unit tests for QueryEnhancementGenerator grounding."""
 
+from typing import Any
+
 import pytest
 
 from cogniverse_synthetic.generators.query_enhancement import (
@@ -15,16 +17,31 @@ MORPHOLOGY_SOURCE_TEXT = (
     "* The overall scene suggests spectators watching an activity taking place "
     "in the arena."
 )
-DOCUMENT_TITLE = "Annual report"
-DOCUMENT_BODY = "\ufeffThe video is of people applaud in the arena"
+DOCUMENT_TOPIC = "v_-6dz6tBH77I.txt"
+DOCUMENT_BODY = "\ufeffThe video is of a man. People applaud loudly."
+DOCUMENT_SOURCE_TEXT = DOCUMENT_BODY.lstrip("\ufeff") + "\n" + DOCUMENT_TOPIC
 
 
-def _document_sample() -> dict[str, str]:
+def _document_sample() -> dict[str, Any]:
     return {
+        "topic": DOCUMENT_TOPIC,
+        "description": DOCUMENT_BODY,
+        "start_time": 0.0,
+        "end_time": 0.0,
+        "video_id": "",
+        "segment_id": 0,
+        "creation_timestamp": 1786726986553,
         "schema_name": "document_text",
-        "content_type": "document",
-        "document_title": DOCUMENT_TITLE,
-        "full_text": DOCUMENT_BODY,
+        "profile_name": "document_text_semantic",
+        "embedding_type": "multi_vector",
+        "profile_type": "document",
+        "modality": "DOCUMENT",
+        "profile_metadata": {
+            "schema_name": "document_text",
+            "embedding_model": "lightonai/LateOn",
+            "embedding_type": "multi_vector",
+            "type": "document",
+        },
     }
 
 
@@ -130,9 +147,7 @@ async def test_generator_accepts_grounded_document_body_terms():
     async def enhance_query(query: str, tenant_id: str, source_text: str):
         assert tenant_id == "acme:synthetic"
         assert query == "The video is of"
-        assert (
-            source_text == "Annual report\nThe video is of people applaud in the arena"
-        )
+        assert source_text == DOCUMENT_SOURCE_TEXT
         return {
             "original_query": query,
             "enhanced_query": f"{query} people applaud",
@@ -152,7 +167,7 @@ async def test_generator_accepts_grounded_document_body_terms():
     assert examples[0].enhanced_query == "The video is of people applaud"
     assert examples[0].expansion_terms == ["people applaud"]
     assert examples[0].synonyms == []
-    assert examples[0].context == "document"
+    assert examples[0].context == "document_text_semantic"
     assert examples[0].reasoning == (
         "Production enhancement returned grounded document terms."
     )
@@ -205,9 +220,7 @@ async def test_generator_rejects_document_body_ungrounded_terms(
     async def enhance_query(query: str, tenant_id: str, source_text: str):
         assert tenant_id == "acme:synthetic"
         assert query == "The video is of"
-        assert (
-            source_text == "Annual report\nThe video is of people applaud in the arena"
-        )
+        assert source_text == DOCUMENT_SOURCE_TEXT
         return {
             "original_query": query,
             "enhanced_query": f"{query} {term}",
@@ -231,6 +244,34 @@ async def test_generator_rejects_document_body_ungrounded_terms(
         "tenant='acme:synthetic' query='The video is of': "
         f"['{term}']"
     )
+
+
+def test_generator_rejects_metadata_only_source_text():
+    with pytest.raises(
+        ValueError,
+        match="^sampled_content contains no source text$",
+    ):
+        QueryEnhancementGenerator._source_text(
+            {
+                "tenant_id": "tenant-123",
+                "org_id": "org-456",
+                "org_name": "org-name",
+                "status": "active",
+                "config_id": "cfg-789",
+                "config_key": "query_enhancement",
+                "scope": "tenant",
+                "service": "optimizer",
+                "adapter_id": "adapter-1",
+                "derivation_kind": "derived",
+                "written_by": "system",
+                "tenant_full_id": "tenant-123:prod",
+                "tenant_name": "tenant-name",
+                "signature": "sig-1",
+                "name": "metadata-only",
+                "agent_type": "query_enhancement",
+                "text": "ignored",
+            }
+        )
 
 
 @pytest.mark.asyncio

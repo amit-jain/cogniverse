@@ -29,6 +29,13 @@ _SCHEMA_DIR = Path(
     )
 )
 _CONTENT_HASH_TOPIC_RE = re.compile(r"^[0-9a-f]{32,}(?:_seg_\d+)?$", re.IGNORECASE)
+_TEXT_DOCUMENT_MAPPING_ROLES = (
+    "title",
+    "description",
+    "content",
+    "text_content",
+    "transcript",
+)
 
 
 def normalize_text(value: str) -> str:
@@ -71,17 +78,14 @@ def _schema_text_extras() -> tuple[str, ...]:
             schema = json.loads(schema_path.read_text(encoding="utf-8"))
         except (OSError, json.JSONDecodeError):
             continue
-        fieldsets = schema.get("fieldsets") or []
-        default_fieldset = next(
-            (fieldset for fieldset in fieldsets if fieldset.get("name") == "default"),
-            None,
-        )
-        if default_fieldset is None:
+        document_mapping = schema.get("document_mapping")
+        if not isinstance(document_mapping, dict):
             continue
-        fields = default_fieldset.get("fields")
-        if not isinstance(fields, list):
-            continue
-        for field_name in fields:
+        # Document mappings declare the text-bearing source fields. Default
+        # fieldsets also carry metadata, so only mapping roles widen the
+        # candidate list.
+        for role in _TEXT_DOCUMENT_MAPPING_ROLES:
+            field_name = document_mapping.get(role)
             if (
                 isinstance(field_name, str)
                 and field_name.strip()
