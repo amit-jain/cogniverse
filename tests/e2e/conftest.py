@@ -1159,6 +1159,7 @@ E2E_HOST_PORTS = {
     33317: 4317,  # otel grpc
     33434: 11434,  # llm (ollama-compat)
     33746: 2746,  # argo server
+    33881: 28081,  # semantic-router envoy
     33901: 29001,  # inference sidecars
     33902: 29002,
     33903: 29003,
@@ -1178,6 +1179,7 @@ _E2E_ASR_MODELS = {
     "cuda": "openai/whisper-large-v3-turbo",
     "rocm": "openai/whisper-large-v3-turbo",
 }
+SEMANTIC_ROUTER_ENVOY = "http://localhost:33881"
 
 
 def _e2e_deployment_overrides() -> dict[str, str]:
@@ -1492,6 +1494,29 @@ def _required_e2e_models_ready(backend: str | None = None) -> tuple[bool, str]:
     return True, ""
 
 
+def _required_e2e_semantic_router_ready() -> tuple[bool, str]:
+    # GET /v1/models, not a chat completion: the completion path requires the
+    # caller identity headers the runtime injects (x-authz-user-id and friends),
+    # so a bare probe returns 403 and never reaches the router. /v1/models needs
+    # no headers and still separates the states we care about -- it answers 500
+    # while the routing classifier model is missing and 200 once it is loaded.
+    url = f"{SEMANTIC_ROUTER_ENVOY}/v1/models"
+    try:
+        response = httpx.get(url, timeout=10.0)
+    except (httpx.HTTPError, OSError) as exc:
+        return (
+            False,
+            f"semantic-router envoy readiness failed at {url}; error={exc}",
+        )
+    if response.status_code != 200:
+        return (
+            False,
+            "semantic-router envoy readiness failed at "
+            f"{url}; status={response.status_code}; body={response.text[:200]!r}",
+        )
+    return True, ""
+
+
 def _e2e_cluster_state() -> tuple[str, str]:
     """Inspect the shared cluster without changing its lifecycle."""
     from cogniverse_cli.cluster import list_cluster_states
@@ -1532,6 +1557,11 @@ def _e2e_cluster_state() -> tuple[str, str]:
     models_ready, model_detail = _required_e2e_models_ready()
     if not models_ready:
         return "unhealthy", model_detail
+    semantic_router_ready, semantic_router_detail = (
+        _required_e2e_semantic_router_ready()
+    )
+    if not semantic_router_ready:
+        return "unhealthy", semantic_router_detail
     return "reusable", ""
 
 
