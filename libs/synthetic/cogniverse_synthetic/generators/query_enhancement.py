@@ -18,8 +18,10 @@ from pydantic import BaseModel
 
 from cogniverse_synthetic.generators.base import (
     BaseGenerator,
+    entity_candidate_text_fields,
     extract_topic,
     is_content_hash_topic,
+    normalize_text,
 )
 from cogniverse_synthetic.schemas import QueryEnhancementExampleSchema
 
@@ -225,7 +227,9 @@ class QueryEnhancementGenerator(BaseGenerator):
     def _source_term_keys(source_text: str) -> set[str]:
         return {
             QueryEnhancementGenerator._normalize_grounding_token(token)
-            for token in re.findall(r"[A-Za-z0-9]+", source_text.casefold())
+            for token in re.findall(
+                r"[A-Za-z0-9]+", normalize_text(source_text).casefold()
+            )
             if token
         }
 
@@ -233,7 +237,7 @@ class QueryEnhancementGenerator(BaseGenerator):
     def _term_is_grounded(cls, term: str, source_term_keys: set[str]) -> bool:
         term_tokens = {
             cls._normalize_grounding_token(token)
-            for token in re.findall(r"[A-Za-z0-9]+", term.casefold())
+            for token in re.findall(r"[A-Za-z0-9]+", normalize_text(term).casefold())
             if token and token not in GROUNDING_STOPWORDS
         }
         return bool(term_tokens) and term_tokens <= source_term_keys
@@ -298,19 +302,10 @@ class QueryEnhancementGenerator(BaseGenerator):
         """Return expansion terms grounded in the topic's source item."""
         topic_words = set(topic.lower().split())
         candidates: List[str] = []
-        for field in (
-            "title",
-            "topic",
-            "content",
-            "description",
-            "video_title",
-            "segment_description",
-            "transcript",
-            "audio_transcript",
-        ):
+        for field in entity_candidate_text_fields():
             text = item.get(field)
             if isinstance(text, str):
-                normalized = " ".join(text.split())
+                normalized = normalize_text(text)
                 if is_content_hash_topic(normalized):
                     continue
                 for word in normalized.lower().split():
@@ -342,19 +337,10 @@ class QueryEnhancementGenerator(BaseGenerator):
     @staticmethod
     def _source_text(item: Dict[str, Any]) -> str:
         parts: list[str] = []
-        for field in (
-            "title",
-            "topic",
-            "content",
-            "description",
-            "video_title",
-            "segment_description",
-            "transcript",
-            "audio_transcript",
-        ):
+        for field in entity_candidate_text_fields():
             value = item.get(field)
             if isinstance(value, str):
-                text = " ".join(value.split())
+                text = normalize_text(value)
                 if is_content_hash_topic(text):
                     continue
                 if text and text not in parts:

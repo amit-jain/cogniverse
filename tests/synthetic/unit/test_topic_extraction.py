@@ -1,8 +1,15 @@
 """Topic extraction uses descriptive fields before identifier-like titles."""
 
+import json
+from pathlib import Path
+
 import pytest
 
-from cogniverse_synthetic.generators.base import is_content_hash_topic
+from cogniverse_synthetic.generators.base import (
+    CANONICAL_TOPIC_FIELDS,
+    extract_topic,
+    is_content_hash_topic,
+)
 from cogniverse_synthetic.generators.profile import ProfileGenerator
 from cogniverse_synthetic.generators.query_enhancement import (
     QueryEnhancementGenerator,
@@ -98,3 +105,30 @@ def test_workflow_extract_topic_rejects_hash_only_item():
         ValueError, match="sampled workflow content requires a non-empty topic"
     ):
         _workflow_topic({"video_title": HASH_VALUE})
+
+
+def test_extract_topic_uses_document_body_and_strips_bom():
+    item = {
+        "schema_name": "document_text",
+        "document_title": "Annual report",
+        "full_text": "\ufeffThe video is of people applaud in the arena",
+    }
+
+    assert extract_topic(item, max_words=4) == "The video is of"
+
+
+def test_canonical_topic_fields_cover_all_shipped_schema_fieldsets():
+    canonical_fields = set(CANONICAL_TOPIC_FIELDS)
+    for schema_path in sorted(Path("configs/schemas").glob("*_schema.json")):
+        schema = json.loads(schema_path.read_text(encoding="utf-8"))
+        default_fieldset = next(
+            fieldset
+            for fieldset in schema["fieldsets"]
+            if fieldset["name"] == "default"
+        )
+        missing_fields = [
+            field_name
+            for field_name in default_fieldset["fields"]
+            if field_name not in canonical_fields
+        ]
+        assert missing_fields == [], schema_path.name
