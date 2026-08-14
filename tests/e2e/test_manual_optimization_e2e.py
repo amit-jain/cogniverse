@@ -85,7 +85,9 @@ def require_argo_workflows() -> None:
         ],
         timeout=15,
     )
-    controller_command = argo_workflow_controller_probe_command(namespace=ARGO_NAMESPACE)
+    controller_command = argo_workflow_controller_probe_command(
+        namespace=ARGO_NAMESPACE
+    )
     controller = _run_stack_command(controller_command, timeout=15)
     if not controller.stdout.strip():
         pytest.fail(

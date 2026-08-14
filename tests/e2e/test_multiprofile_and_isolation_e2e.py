@@ -685,9 +685,7 @@ class TestConcurrentMultiTenantSearch:
                 # Distinct content per tenant: content-addressed
                 # video_ids from the same file would collide across
                 # tenants.
-                tenant_videos = dict(
-                    zip(tenants, (real_video_path, SECOND_VIDEO_PATH))
-                )
+                tenant_videos = dict(zip(tenants, (real_video_path, SECOND_VIDEO_PATH)))
                 fed_tenants = []
                 for t in tenants:
                     data = _upload_file(
