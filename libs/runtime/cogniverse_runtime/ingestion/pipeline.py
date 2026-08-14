@@ -180,6 +180,7 @@ class _VideoProcessingContext:
         # builds documents from, so the emitted source_url can't be read off
         # a sibling video's identity mid-flight.
         results["source_url"] = self.video_uri
+        results.setdefault("original_filename", getattr(self, "original_filename", ""))
         return await self._pipeline.generate_embeddings(results)
 
 
@@ -257,6 +258,7 @@ class VideoIngestionPipeline:
             self.app_config = app_config
         self.schema_name = schema_name
         self.debug_mode = debug_mode
+        self.original_filename: str = ""
 
         # Initialize logging with unique logger per profile
         logger_name = (
@@ -696,6 +698,9 @@ class VideoIngestionPipeline:
             # (visual evaluators / frame extractors resolve bytes from it).
             "source_url": results.get("source_url")
             or (self._canonical_uri(video_path) if video_path else ""),
+            "original_filename": results.get("original_filename")
+            or getattr(self, "original_filename", "")
+            or "",
             "duration": results.get("duration", 0),
             "output_dir": str(self.profile_output_dir),
         }
