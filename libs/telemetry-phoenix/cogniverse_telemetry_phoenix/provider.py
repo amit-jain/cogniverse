@@ -385,12 +385,15 @@ class PhoenixTraceStore(TraceStore):
                     continue
                 try:
                     frame[timestamp_column] = pd.to_datetime(
-                        frame[timestamp_column], utc=True, errors="raise"
+                        frame[timestamp_column],
+                        format="ISO8601",
+                        utc=True,
+                        errors="raise",
                     )
                 except (TypeError, ValueError) as exc:
                     raise RuntimeError(
                         f"Phoenix project {project} returned an invalid "
-                        f"{timestamp_column} column"
+                        f"ISO-8601 timestamp in {timestamp_column}: {exc}"
                     ) from exc
 
             from phoenix.trace.attributes import unflatten

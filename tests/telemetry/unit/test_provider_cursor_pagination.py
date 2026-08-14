@@ -77,6 +77,49 @@ async def test_get_all_spans_returns_records_beyond_one_page():
 
 
 @pytest.mark.asyncio
+async def test_get_all_spans_parses_mixed_iso8601_precision_and_offsets():
+    class Spans:
+        async def get_spans(self, **kwargs):
+            return [
+                {
+                    "name": "approval_batch",
+                    "context": {
+                        "trace_id": "trace-0",
+                        "span_id": "span-0",
+                    },
+                    "attributes": {"batch_id": "batch-0"},
+                    "start_time": "2026-08-14T18:55:30.123456+00:00",
+                    "end_time": "2026-08-14T18:55:31.123456+00:00",
+                    "status_code": "OK",
+                    "span_kind": "CHAIN",
+                },
+                {
+                    "name": "approval_batch",
+                    "context": {
+                        "trace_id": "trace-1",
+                        "span_id": "span-1",
+                    },
+                    "attributes": {"batch_id": "batch-1"},
+                    "start_time": "2026-08-14T18:55:30+05:30",
+                    "end_time": "2026-08-14T18:55:31+05:30",
+                    "status_code": "OK",
+                    "span_kind": "CHAIN",
+                },
+            ]
+
+    frame = await _store(Spans()).get_all_spans(project="cogniverse-acme")
+
+    assert frame["start_time"].tolist() == [
+        pd.Timestamp("2026-08-14T18:55:30.123456+00:00"),
+        pd.Timestamp("2026-08-14T13:25:30+00:00"),
+    ]
+    assert frame["end_time"].tolist() == [
+        pd.Timestamp("2026-08-14T18:55:31.123456+00:00"),
+        pd.Timestamp("2026-08-14T13:25:31+00:00"),
+    ]
+
+
+@pytest.mark.asyncio
 async def test_get_all_spans_keeps_concurrent_queries_isolated():
     entered = 0
     both_entered = asyncio.Event()
@@ -183,7 +226,11 @@ async def test_get_all_spans_rejects_invalid_timestamp_with_project_context():
 
     with pytest.raises(
         RuntimeError,
-        match=("Phoenix project cogniverse-acme returned an invalid start_time column"),
+        match=(
+            "Phoenix project cogniverse-acme returned an invalid "
+            "ISO-8601 timestamp in start_time: Time data not-a-timestamp is not "
+            "ISO8601 format, at position 0"
+        ),
     ) as captured:
         await _store(Spans()).get_all_spans(project="cogniverse-acme")
 
