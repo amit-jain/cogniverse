@@ -7,7 +7,7 @@ backend profile based on query characteristics, modality, and complexity.
 
 import asyncio
 import logging
-from typing import Any, Dict, List, Optional
+from typing import Any, Dict, List, Literal, Optional
 
 import dspy
 from pydantic import BaseModel, Field
@@ -58,7 +58,9 @@ class ProfileSelectionOutput(AgentOutput):
     reasoning: str = Field("", description="Selection reasoning")
     query_intent: str = Field("", description="Detected query intent")
     modality: str = Field("video", description="Target modality")
-    complexity: str = Field("simple", description="Query complexity")
+    complexity: Literal["simple", "medium", "complex"] = Field(
+        "simple", description="Query complexity"
+    )
     alternatives: List[ProfileCandidate] = Field(
         default_factory=list, description="Alternative profiles"
     )
@@ -93,7 +95,9 @@ class ProfileSelectionSignature(dspy.Signature):
         desc="Detected intent: text_search, video_search, image_search, etc."
     )
     modality: str = dspy.OutputField(desc="Target modality: video, image, text, audio")
-    complexity: str = dspy.OutputField(desc="Query complexity: simple, medium, complex")
+    complexity: Literal["simple", "medium", "complex"] = dspy.OutputField(
+        desc="Query complexity: simple, medium, complex"
+    )
 
 
 class ProfileSelectionModule(dspy.Module):

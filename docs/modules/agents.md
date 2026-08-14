@@ -707,7 +707,7 @@ class ProfileSelectionSignature(dspy.Signature):
     modality: str = dspy.OutputField(
         desc="Target modality: video, image, text, audio"
     )
-    complexity: str = dspy.OutputField(
+    complexity: Literal["simple", "medium", "complex"] = dspy.OutputField(
         desc="Query complexity: simple, medium, complex"
     )
 ```
@@ -882,7 +882,7 @@ deps = ProfileSelectionDeps(
 - `selected_profile` — single best-matching profile name
 - `query_intent` — intent classification: `text_search`, `video_search`, `image_search`, etc.
 - `modality` — target modality: `video`, `image`, `text`, `audio`
-- `complexity` — query complexity: `simple`, `medium`, `complex`
+- `complexity` — literal query complexity: `simple`, `medium`, `complex`
 - `alternatives` — top 3 alternative profiles with scores and reasoning
 
 #### API Usage
@@ -2540,7 +2540,7 @@ for result in results:
 
 **Location:** `libs/agents/cogniverse_agents/query_enhancement_agent.py`
 
-Enhances user queries by adding synonyms, context, and related terms to improve search recall. It takes the sampled source text alongside the query, and the DSPy prompt requires `expansion_terms` to be literal terms drawn from that text while synonyms remain free-form. Runs a DSPy `QueryEnhancementModule` and returns the enhanced query alongside the expansion terms it generated.
+Enhances user queries by adding synonyms, context, and related terms to improve search recall. It takes the sampled source text alongside the query, and the DSPy prompt requires `expansion_terms` to be token-grounded in that text while synonyms remain free-form. Every non-stopword alphanumeric token in an expansion term must appear in the sampled source text; multi-word phrases are allowed when each substantive token is grounded. Runs a DSPy `QueryEnhancementModule` and returns the enhanced query alongside the expansion terms it generated.
 
 **Constructor:** `QueryEnhancementAgent(deps: QueryEnhancementDeps, port: int = 8012)` (standalone A2A server default; runs in-process on port 8000 in `cogniverse_runtime`)
 

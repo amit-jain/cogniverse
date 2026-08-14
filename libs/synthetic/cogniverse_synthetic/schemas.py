@@ -6,7 +6,7 @@ Each schema corresponds to the training data format expected by an optimizer.
 """
 
 from datetime import datetime, timezone
-from typing import Any, Dict, List, Optional
+from typing import Any, Dict, List, Literal, Optional
 
 from pydantic import BaseModel, ConfigDict, Field, field_validator
 
@@ -51,7 +51,7 @@ class ProfileSelectionExampleSchema(BaseModel):
             "Target modality: audio, code, document, image, text, video, or wiki"
         ),
     )
-    complexity: str = Field(
+    complexity: Literal["simple", "medium", "complex"] = Field(
         ..., description="Query complexity: simple, medium, complex"
     )
 
