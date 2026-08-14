@@ -15,6 +15,17 @@ MORPHOLOGY_SOURCE_TEXT = (
     "* The overall scene suggests spectators watching an activity taking place "
     "in the arena."
 )
+DOCUMENT_TITLE = "Annual report"
+DOCUMENT_BODY = "\ufeffThe video is of people applaud in the arena"
+
+
+def _document_sample() -> dict[str, str]:
+    return {
+        "schema_name": "document_text",
+        "content_type": "document",
+        "document_title": DOCUMENT_TITLE,
+        "full_text": DOCUMENT_BODY,
+    }
 
 
 @pytest.mark.asyncio
@@ -115,6 +126,39 @@ async def test_generator_accepts_grounded_morphological_variants():
 
 
 @pytest.mark.asyncio
+async def test_generator_accepts_grounded_document_body_terms():
+    async def enhance_query(query: str, tenant_id: str, source_text: str):
+        assert tenant_id == "acme:synthetic"
+        assert query == "The video is of"
+        assert (
+            source_text == "Annual report\nThe video is of people applaud in the arena"
+        )
+        return {
+            "original_query": query,
+            "enhanced_query": f"{query} people applaud",
+            "expansion_terms": ["people applaud"],
+            "synonyms": [],
+            "reasoning": "Production enhancement returned grounded document terms.",
+        }
+
+    generator = QueryEnhancementGenerator(query_enhancer=enhance_query)
+    examples = await generator.generate(
+        sampled_content=[_document_sample()],
+        target_count=1,
+        tenant_id="acme:synthetic",
+    )
+
+    assert examples[0].query == "The video is of"
+    assert examples[0].enhanced_query == "The video is of people applaud"
+    assert examples[0].expansion_terms == ["people applaud"]
+    assert examples[0].synonyms == []
+    assert examples[0].context == "document"
+    assert examples[0].reasoning == (
+        "Production enhancement returned grounded document terms."
+    )
+
+
+@pytest.mark.asyncio
 async def test_generator_rejects_ungrounded_expansion_phrase():
     async def enhance_query(query: str, tenant_id: str, source_text: str):
         assert tenant_id == "acme:synthetic"
@@ -144,6 +188,49 @@ async def test_generator_rejects_ungrounded_expansion_phrase():
             target_count=1,
             tenant_id="acme:synthetic",
         )
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    ("term", "reasoning"),
+    [
+        ("quantum physics", "Production enhancement returned an ungrounded phrase."),
+        ("the this", "Production enhancement returned a stopword-only phrase."),
+    ],
+)
+async def test_generator_rejects_document_body_ungrounded_terms(
+    term: str,
+    reasoning: str,
+):
+    async def enhance_query(query: str, tenant_id: str, source_text: str):
+        assert tenant_id == "acme:synthetic"
+        assert query == "The video is of"
+        assert (
+            source_text == "Annual report\nThe video is of people applaud in the arena"
+        )
+        return {
+            "original_query": query,
+            "enhanced_query": f"{query} {term}",
+            "expansion_terms": [term],
+            "synonyms": [],
+            "reasoning": reasoning,
+        }
+
+    generator = QueryEnhancementGenerator(query_enhancer=enhance_query)
+
+    with pytest.raises(ValueError) as error:
+        await generator.generate(
+            sampled_content=[_document_sample()],
+            target_count=1,
+            tenant_id="acme:synthetic",
+        )
+
+    assert str(error.value) == (
+        "query_enhancement optimizer callback query_enhancer returned "
+        "expansion_terms absent from sampled source for "
+        "tenant='acme:synthetic' query='The video is of': "
+        f"['{term}']"
+    )
 
 
 @pytest.mark.asyncio

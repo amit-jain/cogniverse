@@ -5,30 +5,120 @@ Abstract base class for all synthetic data generators.
 Defines common interface and shared functionality.
 """
 
+import json
 import logging
+import os
 import re
 from abc import ABC, abstractmethod
 from collections.abc import Mapping, Sequence
+from functools import lru_cache
+from pathlib import Path
 from typing import Any, Dict, List, Optional
 
 from pydantic import BaseModel
 
+from cogniverse_foundation.config.unified_config import FieldMappingConfig
+
 logger = logging.getLogger(__name__)
 
-CANONICAL_TOPIC_FIELDS = (
-    "description",
-    "segment_description",
-    "transcript",
-    "topic",
-    "title",
-    "video_title",
+_ZERO_WIDTH_TRANSLATION = str.maketrans("", "", "\ufeff\u200b\u200c\u200d\u2060")
+_SCHEMA_DIR = Path(
+    os.environ.get(
+        "COGNIVERSE_SCHEMAS_DIR",
+        Path(__file__).resolve().parents[4] / "configs" / "schemas",
+    )
 )
 _CONTENT_HASH_TOPIC_RE = re.compile(r"^[0-9a-f]{32,}(?:_seg_\d+)?$", re.IGNORECASE)
 
 
+def normalize_text(value: str) -> str:
+    """Strip invisible Unicode markers and collapse whitespace."""
+    return " ".join(value.translate(_ZERO_WIDTH_TRANSLATION).split())
+
+
 def is_content_hash_topic(value: str) -> bool:
     """Return True when a topic is only an identifier-like content hash."""
-    return bool(_CONTENT_HASH_TOPIC_RE.fullmatch(value.strip()))
+    return bool(_CONTENT_HASH_TOPIC_RE.fullmatch(normalize_text(value)))
+
+
+def _base_text_fields() -> tuple[str, ...]:
+    field_mappings = FieldMappingConfig()
+    ordered_fields = (
+        *field_mappings.description_fields,
+        *field_mappings.transcript_fields,
+        "topic",
+        *field_mappings.topic_fields,
+    )
+    seen: set[str] = set()
+    canonical_fields: list[str] = []
+    for field_name in ordered_fields:
+        if field_name not in seen:
+            canonical_fields.append(field_name)
+            seen.add(field_name)
+    return tuple(canonical_fields)
+
+
+@lru_cache(maxsize=1)
+def _schema_text_extras() -> tuple[str, ...]:
+    if not _SCHEMA_DIR.exists():
+        return ()
+
+    base_fields = set(_base_text_fields())
+    extras: list[str] = []
+    seen: set[str] = set()
+    for schema_path in sorted(_SCHEMA_DIR.glob("*_schema.json")):
+        try:
+            schema = json.loads(schema_path.read_text(encoding="utf-8"))
+        except (OSError, json.JSONDecodeError):
+            continue
+        fieldsets = schema.get("fieldsets") or []
+        default_fieldset = next(
+            (fieldset for fieldset in fieldsets if fieldset.get("name") == "default"),
+            None,
+        )
+        if default_fieldset is None:
+            continue
+        fields = default_fieldset.get("fields")
+        if not isinstance(fields, list):
+            continue
+        for field_name in fields:
+            if (
+                isinstance(field_name, str)
+                and field_name.strip()
+                and field_name not in base_fields
+                and field_name not in seen
+            ):
+                extras.append(field_name)
+                seen.add(field_name)
+    return tuple(extras)
+
+
+@lru_cache(maxsize=1)
+def canonical_topic_fields() -> tuple[str, ...]:
+    """Return the canonical text field order used by synthetic generators."""
+    return _base_text_fields() + _schema_text_extras()
+
+
+CANONICAL_TOPIC_FIELDS = canonical_topic_fields()
+
+
+@lru_cache(maxsize=1)
+def entity_candidate_text_fields() -> tuple[str, ...]:
+    """Return the candidate text order used by entity extraction."""
+    field_mappings = FieldMappingConfig()
+    ordered_fields = (
+        *field_mappings.topic_fields,
+        *field_mappings.description_fields,
+        *field_mappings.transcript_fields,
+        "topic",
+    )
+    seen: set[str] = set()
+    canonical_fields: list[str] = []
+    for field_name in ordered_fields:
+        if field_name not in seen:
+            canonical_fields.append(field_name)
+            seen.add(field_name)
+    return tuple(canonical_fields) + _schema_text_extras()
 
 
 def extract_topic(
@@ -42,7 +132,7 @@ def extract_topic(
         value = item.get(field_name)
         if not isinstance(value, str):
             continue
-        topic = " ".join(value.split())
+        topic = normalize_text(value)
         if not topic or is_content_hash_topic(topic):
             continue
         if max_words is not None:
