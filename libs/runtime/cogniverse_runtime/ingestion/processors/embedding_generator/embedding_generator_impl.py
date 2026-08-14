@@ -243,6 +243,17 @@ class EmbeddingGeneratorImpl(BaseEmbeddingGenerator):
             ref = segment.get("frame_number")
         return str(ref) if ref is not None else None
 
+    @staticmethod
+    def _resolve_title(original_filename: str | None, fallback: str) -> str:
+        """Return the preserved upload basename or a clean fallback basename."""
+        for candidate in (original_filename, fallback):
+            if candidate is None:
+                continue
+            cleaned = str(candidate).strip()
+            if cleaned:
+                return Path(cleaned).name
+        return ""
+
     def _process_multi_documents(
         self, video_data: dict[str, Any], segments: list[dict[str, Any]]
     ) -> EmbeddingResult:
@@ -251,6 +262,9 @@ class EmbeddingGeneratorImpl(BaseEmbeddingGenerator):
 
         video_id = video_data["video_id"]
         video_path = Path(video_data.get("video_path", ""))
+        video_title = self._resolve_title(
+            video_data.get("original_filename"), video_path.name or video_id
+        )
 
         documents_processed = 0
         documents_fed = 0
@@ -314,6 +328,7 @@ class EmbeddingGeneratorImpl(BaseEmbeddingGenerator):
                     transcript=transcript_text,
                     description=description,
                     source_url=video_data.get("source_url", ""),
+                    title=video_title,
                 )
 
                 documents_processed += 1
@@ -358,6 +373,9 @@ class EmbeddingGeneratorImpl(BaseEmbeddingGenerator):
         """Process all segments and create a single document."""
         video_id = video_data["video_id"]
         video_path = Path(video_data.get("video_path", ""))
+        video_title = self._resolve_title(
+            video_data.get("original_filename"), video_path.name or video_id
+        )
 
         # Collect embeddings from all segments
         all_embeddings = []
@@ -407,6 +425,7 @@ class EmbeddingGeneratorImpl(BaseEmbeddingGenerator):
             embeddings=combined_embeddings,
             segments=segments,
             video_data=video_data,
+            title=video_title,
         )
 
         documents_fed = 1 if self._feed_document(doc) else 0
@@ -470,7 +489,15 @@ class EmbeddingGeneratorImpl(BaseEmbeddingGenerator):
                     "embedding", embeddings_np, {"type": "float", "raw": True}
                 )
                 doc.add_metadata("document_id", doc_info.get("document_id", ""))
-                doc.add_metadata("document_title", doc_info.get("filename", ""))
+                doc.add_metadata(
+                    "document_title",
+                    self._resolve_title(
+                        video_data.get("original_filename"),
+                        doc_info.get("filename")
+                        or Path(doc_info.get("path", "")).name
+                        or doc_info.get("document_id", idx),
+                    ),
+                )
                 doc.add_metadata("document_type", doc_info.get("document_type", ""))
                 doc.add_metadata("document_path", doc_info.get("path", ""))
                 doc.add_metadata("full_text", text)
@@ -550,7 +577,15 @@ class EmbeddingGeneratorImpl(BaseEmbeddingGenerator):
                     "embedding", embeddings_np, {"type": "float", "raw": True}
                 )
                 doc.add_metadata("document_id", page.get("document_id", ""))
-                doc.add_metadata("document_title", page.get("document_title", ""))
+                doc.add_metadata(
+                    "document_title",
+                    self._resolve_title(
+                        video_data.get("original_filename"),
+                        page.get("document_title")
+                        or Path(page.get("document_path", "")).name
+                        or page.get("document_id", idx),
+                    ),
+                )
                 doc.add_metadata("document_type", page.get("document_type", "pdf"))
                 doc.add_metadata("document_path", page.get("document_path", ""))
                 doc.add_metadata("page_number", page_number)
@@ -756,7 +791,15 @@ class EmbeddingGeneratorImpl(BaseEmbeddingGenerator):
                 doc.add_metadata(
                     "audio_id", audio_info.get("audio_id", audio_path.stem)
                 )
-                doc.add_metadata("audio_title", audio_path.stem)
+                doc.add_metadata(
+                    "audio_title",
+                    self._resolve_title(
+                        video_data.get("original_filename"),
+                        audio_info.get("filename")
+                        or audio_path.name
+                        or audio_info.get("audio_id", idx),
+                    ),
+                )
                 doc.add_metadata("audio_path", str(audio_path))
                 doc.add_metadata("audio_transcript", transcript_text)
                 if video_data.get("source_url"):
@@ -1265,6 +1308,7 @@ class EmbeddingGeneratorImpl(BaseEmbeddingGenerator):
         transcript: str = "",
         description: str = "",
         source_url: str = "",
+        title: str = "",
     ) -> Document:
         """Create a Document for a single segment."""
         # All segments use generic Document now - no MediaType needed
@@ -1297,7 +1341,7 @@ class EmbeddingGeneratorImpl(BaseEmbeddingGenerator):
 
         # Add basic metadata
         document.add_metadata("video_id", video_id)
-        document.add_metadata("video_title", video_id)
+        document.add_metadata("video_title", self._resolve_title(title, video_id))
 
         # Canonical source URI — declared in the schema; consumers resolve bytes
         # (visual evaluators / frame extraction) from it.
@@ -1316,6 +1360,7 @@ class EmbeddingGeneratorImpl(BaseEmbeddingGenerator):
         embeddings: np.ndarray,
         segments: list[dict[str, Any]],
         video_data: dict[str, Any],
+        title: str = "",
     ) -> Document:
         """Create a single Document containing all segments."""
         # Extract timing info from segments (all are dicts now)
@@ -1352,7 +1397,7 @@ class EmbeddingGeneratorImpl(BaseEmbeddingGenerator):
 
         # Add basic metadata
         document.add_metadata("video_id", video_id)
-        document.add_metadata("video_title", video_id)
+        document.add_metadata("video_title", self._resolve_title(title, video_id))
 
         # Canonical source URI — declared in the schema; consumers resolve bytes
         # (visual evaluators / frame extraction) from it.

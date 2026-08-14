@@ -483,14 +483,19 @@ async def _ingest_and_extract_graph(
     reads it, directly or from a thread the binding's ContextVar reaches.
     """
     from cogniverse_runtime.ingestion.pipeline import VideoIngestionPipeline
+    from cogniverse_runtime.ingestion_worker import minio_client
     from cogniverse_runtime.routers.ingestion import _extract_graph_per_segment
 
+    original_filename = await asyncio.to_thread(
+        minio_client.get_original_filename, job.source_url
+    )
     pipeline = VideoIngestionPipeline(
         tenant_id=job.tenant_id,
         config_manager=config_manager,
         schema_loader=schema_loader,
         schema_name=job.profile,
     )
+    pipeline.original_filename = original_filename
     # Process the already-localized file, but record job.source_url (s3://…) as
     # the canonical source_url on every indexed document — answer-time keyframe
     # resolution derives the object-store bucket from it. Passing source_uri
