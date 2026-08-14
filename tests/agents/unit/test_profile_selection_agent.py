@@ -329,6 +329,8 @@ class TestProfileSelectionAgent:
         assert result.confidence == 0.0
         assert result.reasoning == "Empty query, using default profile"
         assert result.selected_profile == profile_agent.deps.available_profiles[0]
+        assert result.query_intent == "video_search"
+        assert result.modality == "video"
 
     @pytest.mark.asyncio
     async def test_process_custom_profiles(self, profile_agent):
