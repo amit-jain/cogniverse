@@ -60,7 +60,9 @@ class ProfileSelectionOutput(AgentOutput):
     selected_profile: str = Field(..., description="Selected profile")
     confidence: float = Field(0.0, ge=0.0, le=1.0, description="Confidence score")
     reasoning: str = Field("", description="Selection reasoning")
-    query_intent: str = Field("", description="Detected query intent")
+    query_intent: ProfileQueryIntent = Field(
+        "text_search", description="Detected query intent"
+    )
     modality: str = Field("video", description="Target modality")
     complexity: Literal["simple", "medium", "complex"] = Field(
         "simple", description="Query complexity"
@@ -295,7 +297,7 @@ class ProfileSelectionAgent(
                 ),
                 confidence=0.0,
                 reasoning="Empty query, using default profile",
-                query_intent="unknown",
+                query_intent="video_search",
                 modality="video",
                 complexity="simple",
                 alternatives=[],
@@ -341,7 +343,7 @@ class ProfileSelectionAgent(
             selected_profile = profiles[0]
         modality = result.modality or "text"
         reasoning = result.reasoning or ""
-        query_intent = result.query_intent
+        query_intent = result.query_intent or "text_search"
         complexity = result.complexity or "medium"
 
         profile_modality = await asyncio.to_thread(

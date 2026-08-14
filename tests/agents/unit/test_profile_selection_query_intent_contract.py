@@ -9,6 +9,7 @@ from pydantic import ValidationError
 from cogniverse_agents.profile_selection_agent import (
     ProfileSelectionAgent,
     ProfileSelectionInput,
+    ProfileSelectionOutput,
     ProfileSelectionSignature,
 )
 from cogniverse_core.approval.training_schema import PROFILE_TRAINING_MODALITIES
@@ -118,3 +119,42 @@ async def test_profile_selection_derives_in_vocab_query_intent_for_every_modalit
         "text_search" if modality == "text" else f"{modality}_search"
     )
     assert output.query_intent == expected_query_intent
+
+
+def _build_agent_with_empty_intent(modality: str) -> SimpleNamespace:
+    agent = _build_agent(modality)
+
+    async def call_dspy(*args, **kwargs):
+        return SimpleNamespace(
+            selected_profile="video_profile",
+            confidence="0.9",
+            reasoning="selected",
+            query_intent="",
+            modality="text",
+            complexity="medium",
+        )
+
+    agent.call_dspy = call_dspy
+    return agent
+
+
+def test_profile_selection_output_pins_the_same_query_intent_vocabulary():
+    annotation = ProfileSelectionOutput.model_fields["query_intent"].annotation
+    assert get_origin(annotation) is Literal
+    assert get_args(annotation) == EXPECTED_PROFILE_QUERY_INTENTS
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("modality", sorted(PROFILE_TRAINING_MODALITIES))
+async def test_empty_model_intent_still_derives_in_vocab_query_intent(modality: str):
+    output = await ProfileSelectionAgent._process_impl(
+        _build_agent_with_empty_intent(modality),
+        ProfileSelectionInput(
+            query="find a clip about transformer architecture",
+            available_profiles=["video_profile"],
+            tenant_id=None,
+        ),
+    )
+
+    expected = "text_search" if modality == "text" else f"{modality}_search"
+    assert output.query_intent == expected
