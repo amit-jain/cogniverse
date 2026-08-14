@@ -949,11 +949,9 @@ class TestSyntheticDataAPI:
         )
         assert {example["selected_profile"] for example in data["data"]} == {PROFILE}
         assert {example["modality"] for example in data["data"]} == {"video"}
-        assert {example["complexity"] for example in data["data"]} <= {
-            "simple",
-            "medium",
+        assert [example["complexity"] for example in data["data"]] == [
             "complex",
-        }
+        ] * len(data["data"])
         assert {example["query_intent"] for example in data["data"]} == {"video_search"}
 
     def test_generate_synthetic_data(self):
@@ -1191,11 +1189,13 @@ class TestSyntheticDataAPI:
                 }[example["selected_profile"]]
             )
             assert example["query_intent"] == "cross_modal_search"
-            assert example["complexity"] in {"simple", "medium", "complex"}
             assert "chosen_agent" not in example
             assert "workflow_id" not in example
         assert len({example["query"] for example in data["data"]}) == 2
         assert {example["modality"] for example in data["data"]} == {"video", "image"}
+        assert [example["complexity"] for example in data["data"]] == [
+            "complex",
+        ] * len(data["data"])
 
     def test_generate_workflow_ids_are_unique_and_schema_specific(self):
         image_content_id = _content_sha256(_sample_frame_path())
