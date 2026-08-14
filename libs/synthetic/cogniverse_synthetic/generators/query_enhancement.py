@@ -63,6 +63,16 @@ GROUNDING_STOPWORDS = frozenset(
         "without",
     }
 )
+GROUNDING_MORPHOLOGY_NORMALIZATIONS = {
+    "children": "child",
+    "feet": "foot",
+    "geese": "goose",
+    "men": "man",
+    "mice": "mouse",
+    "people": "person",
+    "teeth": "tooth",
+    "women": "woman",
+}
 
 
 class QueryEnhancementGenerator(BaseGenerator):
@@ -214,7 +224,7 @@ class QueryEnhancementGenerator(BaseGenerator):
     @staticmethod
     def _source_term_keys(source_text: str) -> set[str]:
         return {
-            token
+            QueryEnhancementGenerator._normalize_grounding_token(token)
             for token in re.findall(r"[A-Za-z0-9]+", source_text.casefold())
             if token
         }
@@ -222,11 +232,43 @@ class QueryEnhancementGenerator(BaseGenerator):
     @classmethod
     def _term_is_grounded(cls, term: str, source_term_keys: set[str]) -> bool:
         term_tokens = {
-            token
+            cls._normalize_grounding_token(token)
             for token in re.findall(r"[A-Za-z0-9]+", term.casefold())
             if token and token not in GROUNDING_STOPWORDS
         }
         return bool(term_tokens) and term_tokens <= source_term_keys
+
+    @staticmethod
+    def _normalize_grounding_token(token: str) -> str:
+        token = token.casefold()
+        normalized = GROUNDING_MORPHOLOGY_NORMALIZATIONS.get(token)
+        if normalized is not None:
+            return normalized
+        if len(token) <= 3:
+            return token
+        if token.endswith("ies") and len(token) > 4:
+            return f"{token[:-3]}y"
+        if token.endswith("ied") and len(token) > 4:
+            return f"{token[:-3]}y"
+        if token.endswith("ing") and len(token) > 5:
+            stem = token[:-3]
+            if len(stem) > 3 and stem[-1] == stem[-2]:
+                stem = stem[:-1]
+            return stem
+        if token.endswith("ed") and len(token) > 4:
+            stem = token[:-2]
+            if len(stem) > 3 and stem[-1] == stem[-2]:
+                stem = stem[:-1]
+            return stem
+        if token.endswith(("ses", "xes", "zes", "ches", "shes", "oes")):
+            return token[:-2]
+        if (
+            token.endswith("s")
+            and len(token) > 4
+            and not token.endswith(("ss", "us", "is"))
+        ):
+            return token[:-1]
+        return token
 
     def _source_records(
         self, sampled_content: List[Dict[str, Any]]
