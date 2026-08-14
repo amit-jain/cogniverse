@@ -14,6 +14,7 @@ from cogniverse_cli.argo import (
     filter_workflow_templates,
     install_argo_controller,
 )
+
 from tests.e2e.conftest import (
     ARGO_NAMESPACE,
     ARGO_WORKFLOW_CONTROLLER_LABEL_SELECTOR,
