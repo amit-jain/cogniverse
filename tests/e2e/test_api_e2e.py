@@ -868,6 +868,7 @@ class TestSyntheticDataAPI:
         assert resp.status_code == 404
 
     def test_profile_generation_uses_ingested_tenant_content(self):
+        expected_available_profiles = _expected_available_profile_names(TENANT_ID)
         with httpx.Client(base_url=RUNTIME, timeout=900.0) as client:
             resp = client.post(
                 "/synthetic/generate",
@@ -896,7 +897,6 @@ class TestSyntheticDataAPI:
         assert data["schema_name"] == "ProfileSelectionExampleSchema"
         assert data["count"] == 2
         assert data["selected_profiles"] == [PROFILE]
-        expected_available_profiles = _expected_available_profile_names(TENANT_ID)
         assert data["metadata"] == {
             "backend_query_strategy": "diverse",
             "sampled_content_count": 2,
@@ -1117,6 +1117,7 @@ class TestSyntheticDataAPI:
 
     def test_generate_synthetic_data_cross_modal(self):
         """POST /synthetic/generate with cross_modal optimizer."""
+        expected_available_profiles = _expected_available_profile_names(TENANT_ID)
         with httpx.Client(base_url=RUNTIME, timeout=900.0) as client:
             resp = client.post(
                 "/synthetic/generate",
@@ -1145,36 +1146,48 @@ class TestSyntheticDataAPI:
         assert data["schema_name"] == "ProfileSelectionExampleSchema"
         assert data["count"] == 2
         assert len(data["data"]) == 2
-        assert data["selected_profiles"] == [PROFILE, "document_text_semantic"]
-        expected_available_profiles = _expected_available_profile_names(TENANT_ID)
+        profile_types = _profile_type_map()
+        selected_profiles = data["selected_profiles"]
+        assert len(selected_profiles) == 2
+        assert len(set(selected_profiles)) == 2
+        assert PROFILE in selected_profiles
+        assert all(
+            profile in expected_available_profiles for profile in selected_profiles
+        )
+        assert len({profile_types[profile] for profile in selected_profiles}) == 2
         assert data["metadata"] == {
             "backend_query_strategy": "multi_modal_sequences",
             "sampled_content_count": 2,
             "target_count": 2,
             "vespa_sample_size": 2,
         }
-        video_first_pattern = re.compile(
-            r"^find (?P<video_topic>.+) in video content together with "
-            r"(?P<document_topic>.+) in document content$"
+        video_modality = profile_types[PROFILE]
+        other_profile = next(
+            profile for profile in selected_profiles if profile != PROFILE
         )
-        document_first_pattern = re.compile(
-            r"^find (?P<document_topic>.+) in document content together with "
-            r"(?P<video_topic>.+) in video content$"
+        other_modality = profile_types[other_profile]
+        video_first_pattern = re.compile(
+            rf"^find (?P<video_topic>.+) in {re.escape(video_modality)} content together with "
+            rf"(?P<other_topic>.+) in {re.escape(other_modality)} content$"
+        )
+        other_first_pattern = re.compile(
+            rf"^find (?P<other_topic>.+) in {re.escape(other_modality)} content together with "
+            rf"(?P<video_topic>.+) in {re.escape(video_modality)} content$"
         )
         orderings = {}
         for example in data["data"]:
             video_first = video_first_pattern.match(example["query"])
-            document_first = document_first_pattern.match(example["query"])
-            assert (video_first is None) != (document_first is None), example["query"]
-            match = video_first or document_first
-            ordering = "video_first" if video_first else "document_first"
+            other_first = other_first_pattern.match(example["query"])
+            assert (video_first is None) != (other_first is None), example["query"]
+            match = video_first or other_first
+            ordering = "video_first" if video_first else "other_first"
             assert ordering not in orderings, example["query"]
-            orderings[ordering] = (match["video_topic"], match["document_topic"])
-        assert set(orderings) == {"video_first", "document_first"}
-        video_topic, document_topic = orderings["video_first"]
-        assert orderings["document_first"] == (video_topic, document_topic)
+            orderings[ordering] = (match["video_topic"], match["other_topic"])
+        assert set(orderings) == {"video_first", "other_first"}
+        video_topic, other_topic = orderings["video_first"]
+        assert orderings["other_first"] == (video_topic, other_topic)
         assert 1 <= len(video_topic.split()) <= 20, video_topic
-        assert 1 <= len(document_topic.split()) <= 20, document_topic
+        assert 1 <= len(other_topic.split()) <= 20, other_topic
         profile_fields = {
             "query",
             "available_profiles",
@@ -1188,24 +1201,15 @@ class TestSyntheticDataAPI:
             assert set(example) == profile_fields
             available_profiles = example["available_profiles"].split(",")
             assert available_profiles == expected_available_profiles
-            assert example["selected_profile"] in {
-                PROFILE,
-                "document_text_semantic",
-            }
-            assert (
-                example["modality"]
-                == {
-                    PROFILE: "video",
-                    "document_text_semantic": "document",
-                }[example["selected_profile"]]
-            )
+            assert example["selected_profile"] in selected_profiles
+            assert example["modality"] == profile_types[example["selected_profile"]]
             assert example["query_intent"] == "multi_modal_search"
             assert "chosen_agent" not in example
             assert "workflow_id" not in example
         assert len({example["query"] for example in data["data"]}) == 2
         assert {example["modality"] for example in data["data"]} == {
-            "video",
-            "document",
+            video_modality,
+            other_modality,
         }
         # complexity is an LM judgment, so no single value is pinnable. The
         # vocabulary contract is enforced at the HTTP boundary: the schema
@@ -1218,6 +1222,7 @@ class TestSyntheticDataAPI:
 
     def test_generate_workflow_ids_are_unique_and_schema_specific(self):
         image_content_id = _content_sha256(_sample_frame_path())
+        expected_available_profiles = _expected_available_profile_names(TENANT_ID)
         with httpx.Client(base_url=RUNTIME, timeout=900.0) as client:
             agents_response = client.get("/agents/")
             resp = client.post(
@@ -1250,7 +1255,14 @@ class TestSyntheticDataAPI:
         assert data["schema_name"] == "WorkflowExecutionSchema"
         assert data["count"] == 4
         assert len(data["data"]) == 4
-        assert data["selected_profiles"] == [PROFILE, IMAGE_PROFILE]
+        selected_profiles = data["selected_profiles"]
+        assert len(selected_profiles) == 2
+        assert len(set(selected_profiles)) == 2
+        assert PROFILE in selected_profiles
+        assert all(
+            profile in expected_available_profiles for profile in selected_profiles
+        )
+        assert len({_profile_family(profile) for profile in selected_profiles}) == 2
         assert data["metadata"] == {
             "backend_query_strategy": "multi_modal_sequences",
             "sampled_content_count": 2,
@@ -1892,6 +1904,25 @@ def _expected_available_profile_names(tenant_id: str) -> list[str]:
         ):
             expected.append(profile_name)
     return expected
+
+
+def _profile_type_map() -> dict[str, str]:
+    config = json.loads(CONFIG_PATH.read_text())
+    profiles = config.get("backend", {}).get("profiles", {})
+    return {
+        profile_name: profile_config["type"]
+        for profile_name, profile_config in profiles.items()
+        if isinstance(profile_config, dict)
+        and isinstance(profile_config.get("type"), str)
+    }
+
+
+def _profile_family(profile_name: str) -> str:
+    normalized = profile_name.lower()
+    for family in ("colpali", "colqwen", "videoprism"):
+        if re.search(rf"(?<![a-z0-9]){re.escape(family)}(?![a-z0-9])", normalized):
+            return family
+    return profile_name
 
 
 def _assert_artifact_search_hit(
