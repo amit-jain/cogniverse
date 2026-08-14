@@ -62,6 +62,165 @@ class TestSourceUrlInDocuments:
 
 
 @pytest.mark.unit
+class TestOriginalFilenameTitles:
+    def test_segment_document_uses_original_filename_for_title(self):
+        gen = object.__new__(EmbeddingGeneratorImpl)
+        doc = gen._create_segment_document(
+            video_id="v1",
+            segment={"start_time": 0.0, "end_time": 5.0},
+            segment_idx=0,
+            total_segments=1,
+            embeddings=np.zeros((2, 128), dtype=np.float32),
+            source_url="s3://corpus/v1.mp4",
+            title="tracked_video_frame.jpg",
+        )
+
+        assert doc.metadata["video_title"] == "tracked_video_frame.jpg"
+
+    def test_document_file_segments_use_original_filename_for_title(self, monkeypatch):
+        import logging
+
+        class _FakeColbert:
+            def encode(self, texts, is_query=False):
+                return [np.zeros((4, 128), dtype=np.float32)]
+
+        gen = object.__new__(EmbeddingGeneratorImpl)
+        gen.logger = logging.getLogger("test_document_titles")
+        gen.profile_config = {}
+        gen.colbert_model = _FakeColbert()
+        fed = []
+        gen._feed_documents = lambda docs, errors=None: (fed.extend(docs), len(docs))[1]
+
+        result = gen._process_document_segments(
+            video_data={
+                "video_id": "doc1",
+                "video_path": "/tmp/dd95bb382700f5aa.pdf",
+                "original_filename": "tracked_report.pdf",
+            },
+            segments=[
+                {
+                    "document_id": "doc1",
+                    "filename": "dd95bb382700f5aa.pdf",
+                    "path": "/tmp/dd95bb382700f5aa.pdf",
+                    "document_type": "pdf",
+                    "extracted_text": "lorem ipsum",
+                    "page_count": 1,
+                }
+            ],
+        )
+
+        assert result.documents_fed == 1
+        assert len(fed) == 1
+        assert fed[0].metadata["document_title"] == "tracked_report.pdf"
+
+    def test_audio_segments_use_original_filename_for_title(
+        self, monkeypatch, tmp_path
+    ):
+        """The upload filename should survive to the audio schema title."""
+        import logging
+
+        from cogniverse_runtime.ingestion.processors import (
+            audio_embedding_generator as aeg,
+        )
+
+        class _StubAudioEmbeddingGenerator:
+            def __init__(self, clap_model, clap_endpoint_url=None):
+                pass
+
+            def generate_acoustic_embedding(self, **_kw):
+                return np.zeros(512, dtype=np.float32)
+
+        class _FakeColbert:
+            def encode(self, texts, is_query=False):
+                return [np.zeros((4, 128), dtype=np.float32)]
+
+        monkeypatch.setattr(
+            aeg, "AudioEmbeddingGenerator", _StubAudioEmbeddingGenerator
+        )
+
+        gen = object.__new__(EmbeddingGeneratorImpl)
+        gen.logger = logging.getLogger("test_original_filename_titles")
+        gen.profile_config = {}
+        gen.colbert_model = _FakeColbert()
+        fed = []
+        gen._feed_documents = lambda docs, errors=None: (fed.extend(docs), len(docs))[1]
+
+        audio_path = tmp_path / "dd95bb382700f5aa.wav"
+        audio_path.write_bytes(b"audio")
+
+        result = gen._process_audio_segments(
+            video_data={
+                "video_id": "a1",
+                "original_filename": "tracked_audio.wav",
+                "transcript": {"full_text": "hello world"},
+            },
+            segments=[
+                {
+                    "path": str(audio_path),
+                    "audio_id": "a1",
+                    "filename": audio_path.name,
+                }
+            ],
+        )
+
+        assert result.documents_fed == 1
+        assert len(fed) == 1
+        assert fed[0].metadata["audio_title"] == "tracked_audio.wav"
+
+    def test_audio_segments_fall_back_to_localized_basename(
+        self, monkeypatch, tmp_path
+    ):
+        """Missing upload names fall back to the localized object basename."""
+        import logging
+
+        from cogniverse_runtime.ingestion.processors import (
+            audio_embedding_generator as aeg,
+        )
+
+        class _StubAudioEmbeddingGenerator:
+            def __init__(self, clap_model, clap_endpoint_url=None):
+                pass
+
+            def generate_acoustic_embedding(self, **_kw):
+                return np.zeros(512, dtype=np.float32)
+
+        class _FakeColbert:
+            def encode(self, texts, is_query=False):
+                return [np.zeros((4, 128), dtype=np.float32)]
+
+        monkeypatch.setattr(
+            aeg, "AudioEmbeddingGenerator", _StubAudioEmbeddingGenerator
+        )
+
+        gen = object.__new__(EmbeddingGeneratorImpl)
+        gen.logger = logging.getLogger("test_original_filename_fallback")
+        gen.profile_config = {}
+        gen.colbert_model = _FakeColbert()
+        fed = []
+        gen._feed_documents = lambda docs, errors=None: (fed.extend(docs), len(docs))[1]
+
+        audio_path = tmp_path / "dd95bb382700f5aa.wav"
+        audio_path.write_bytes(b"audio")
+
+        result = gen._process_audio_segments(
+            video_data={
+                "video_id": "a1",
+                "transcript": {"full_text": "hello world"},
+            },
+            segments=[
+                {
+                    "path": str(audio_path),
+                    "audio_id": "a1",
+                }
+            ],
+        )
+
+        assert result.documents_fed == 1
+        assert len(fed) == 1
+        assert fed[0].metadata["audio_title"] == audio_path.name
+
+
+@pytest.mark.unit
 class TestAudioChunkResilience:
     def test_audio_chunk_feeds_without_acoustic_when_clap_unavailable(
         self, monkeypatch
