@@ -76,6 +76,7 @@ def profile_service(shared_vespa):
         tenant_id=tenant_id,
         base_schema_name=profile_name,
     )
+    config_manager.set_backend_config(backend_config)
     feed = make_vespa_app(
         url="http://localhost",
         port=shared_vespa["http_port"],
@@ -112,11 +113,13 @@ def profile_service(shared_vespa):
     profile_agent = ProfileSelectionAgent(
         deps=ProfileSelectionDeps(available_profiles=[profile_name])
     )
+    profile_agent._artifact_tenant_id = tenant_id
+    profile_agent._config_manager = config_manager
     profile_agent.dspy_module.selector = lambda **_: dspy.Prediction(
         selected_profile=profile_name,
         confidence="0.96",
         reasoning="The deployed selector chose the indexed video profile.",
-        query_intent="historical_fact_lookup",
+        query_intent="video_search",
         modality="video",
         complexity="medium",
     )
@@ -146,7 +149,7 @@ def profile_service(shared_vespa):
             service=service,
             tenant_id=tenant_id,
             profile_name=profile_name,
-            expected_query=title,
+            expected_query=f"find a video frame showing {description}",
             agents_config=agents_config,
         )
     finally:
@@ -177,7 +180,7 @@ async def test_service_generates_profile_examples(profile_service):
         assert item["selected_profile"] == profile_service.profile_name
         assert item["modality"] == "video"
         assert item["complexity"] == "medium"
-        assert item["query_intent"] == "historical_fact_lookup"
+        assert item["query_intent"] == "video_search"
         assert "confidence" not in item
         assert item["reasoning"] == (
             "The deployed selector chose the indexed video profile."
