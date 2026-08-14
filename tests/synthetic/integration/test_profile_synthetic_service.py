@@ -219,6 +219,8 @@ async def test_real_lm_profile_agent_labels_indexed_source_without_module_patch(
     agent = ProfileSelectionAgent(
         deps=ProfileSelectionDeps(available_profiles=[profile_service.profile_name])
     )
+    agent._artifact_tenant_id = profile_service.tenant_id
+    agent._config_manager = profile_service.service.backend._config_manager_instance
 
     async def label_profile(query, available_profiles, tenant_id):
         return await agent.process(
@@ -291,6 +293,6 @@ async def test_service_response_serializes_to_optimizer_demo_shape(profile_servi
             "selected_profile": profile_service.profile_name,
             "modality": "video",
             "complexity": "medium",
-            "query_intent": "historical_fact_lookup",
+            "query_intent": "video_search",
             "reasoning": "The deployed selector chose the indexed video profile.",
         }
