@@ -222,6 +222,15 @@ runtime:
     inCluster:
       enabled: false
 
+# Host-side gate for the shared e2e stack. The semantic-router envoy stays
+# ClusterIP in the base chart and becomes a fixed NodePort only in k3s so the
+# readiness probe can hit the live runtime path from the host.
+semanticRouter:
+  envoy:
+    service:
+      type: NodePort
+      nodePort: 28081
+
 dashboard:
   replicaCount: 1
   backend: cpu
