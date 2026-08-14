@@ -248,6 +248,22 @@ def test_generator_ignores_hash_only_candidate_texts():
     assert generator._candidate_texts([{"title": HASH_VALUE}]) == []
 
 
+def test_generator_candidate_texts_include_document_fields_and_strip_bom():
+    async def noop_extractor(text: str, tenant_id: str):
+        return {"query": text, "entities": [], "relationships": []}
+
+    generator = EntityExtractionGenerator(entity_extractor=noop_extractor)
+
+    assert generator._candidate_texts(
+        [
+            {
+                "document_title": "Annual report",
+                "full_text": "\ufeffThe video is of people applaud in the arena",
+            }
+        ]
+    ) == ["Annual report", "The video is of people applaud in the arena"]
+
+
 @pytest.mark.asyncio
 async def test_generator_scans_later_fields_and_stops_at_grounded_target():
     calls = []
