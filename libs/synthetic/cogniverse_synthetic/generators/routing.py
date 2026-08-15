@@ -157,6 +157,11 @@ class RoutingGenerator(BaseGenerator):
         """
         Generate RoutingExperience data
 
+        The outer candidate budget allows five draws per requested example.
+        Routing spends three production calls per draw, so the 5x surplus is a
+        latency/completeness tradeoff: enough room to replace a few duplicate
+        canonical labels, but still bounded when the source only yields one.
+
         Args:
             sampled_content: Content sampled from Vespa
             target_count: Number of examples to generate
@@ -186,9 +191,13 @@ class RoutingGenerator(BaseGenerator):
         examples = []
         canonical_labels: set[tuple[str, tuple[tuple[str, str], ...], str]] = set()
         last_validation_error: Exception | None = None
+        duplicate_streak = 0
+        attempts = 0
+        attempt_budget = self._routing_candidate_budget(target_count)
 
-        for index in range(target_count):
-            content = sampled_content[index % len(sampled_content)]
+        while len(examples) < target_count and attempts < attempt_budget:
+            content = sampled_content[attempts % len(sampled_content)]
+            attempts += 1
             patterns = self.pattern_extractor.extract([content])
 
             labelled = await self.entity_labeler.generate(
@@ -242,7 +251,11 @@ class RoutingGenerator(BaseGenerator):
                 )
                 if isinstance(generation_tracker, GenerationTracker):
                     generation_tracker.record_drop(query, last_validation_error)
+                duplicate_streak += 1
+                if duplicate_streak >= target_count:
+                    break
                 continue
+            duplicate_streak = 0
             canonical_labels.add(canonical_label)
 
             metadata = {
@@ -277,7 +290,7 @@ class RoutingGenerator(BaseGenerator):
             examples,
             target_count,
             source_context=(
-                f"{target_count} routing iterations from "
+                f"{attempts} routing candidate draws from "
                 f"{len(sampled_content)} sampled content items"
             ),
             floor_count=floor_count,
@@ -289,6 +302,17 @@ class RoutingGenerator(BaseGenerator):
 
         logger.info(f"Generated {len(examples)} RoutingExperience examples")
         return examples
+
+    @staticmethod
+    def _routing_candidate_budget(target_count: int) -> int:
+        """Return the bounded outer candidate budget for routing generation.
+
+        Five draws per requested example mirrors query_enhancement's template
+        fan-out. Routing burns three production calls per draw, so the 5x cap
+        preserves some surplus for duplicate replacement without letting an
+        exhausted source spin indefinitely.
+        """
+        return target_count * 5
 
     async def _request_routing_label(self, query: str, tenant_id: str) -> Any:
         async def invoke_callback() -> Any:
