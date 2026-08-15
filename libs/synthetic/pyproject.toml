@@ -24,6 +24,9 @@ dependencies = [
 
     # DSPy for LLM-driven query generation
     "dspy-ai==3.1.3",
+
+    # Tiny pure-Python stemmer for grounding token normalization
+    "snowballstemmer==3.1.1",
 ]
 
 [tool.uv.sources]

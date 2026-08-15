@@ -2959,6 +2959,15 @@ class TestSyntheticServiceIntegration:
             "sampled_content_count": 1,
             "target_count": 1,
             "vespa_sample_size": 1,
+            "generation": {
+                "requested_count": 1,
+                "returned_count": 1,
+                "shortfall_count": 0,
+                "floor_count": 1,
+                "surplus_exhausted": False,
+                "dropped_count": 0,
+                "dropped_examples": [],
+            },
         }
         assert len(response.data) == 1
         expected_entities = [

@@ -3,11 +3,14 @@
 from typing import Any
 
 import pytest
+import snowballstemmer
 
 from cogniverse_synthetic.generators.query_enhancement import (
+    GROUNDING_MORPHOLOGY_NORMALIZATIONS,
     QueryEnhancementGenerator,
 )
 
+STEMMER = snowballstemmer.stemmer("english")
 HASH_VALUE = "dd95bb382700f5aa2f17a1d6a8163ffd6ce4057b3c108e077ed34efb08e67691"
 MORPHOLOGY_SOURCE_TEXT = (
     "This video frame captures an outdoor event, likely a rodeo or similar "
@@ -18,7 +21,7 @@ MORPHOLOGY_SOURCE_TEXT = (
     "in the arena."
 )
 DOCUMENT_TOPIC = "v_-6dz6tBH77I.txt"
-DOCUMENT_BODY = "\ufeffThe video is of a man. People applaud loudly."
+DOCUMENT_BODY = "\ufeffThe video is of a man. People applaude loudly."
 DOCUMENT_SOURCE_TEXT = DOCUMENT_BODY.lstrip("\ufeff") + "\n" + DOCUMENT_TOPIC
 
 
@@ -142,6 +145,47 @@ async def test_generator_accepts_grounded_morphological_variants():
     )
 
 
+@pytest.mark.parametrize(
+    ("source_word", "term_word"),
+    [
+        ("view", "viewed"),
+        ("watch", "watching"),
+        ("applaud", "applauding"),
+        ("applaude", "applaud"),
+    ],
+)
+def test_stemmer_accepts_inflected_and_corrected_pairs(
+    source_word: str, term_word: str
+):
+    source_term_keys = QueryEnhancementGenerator._source_term_keys(source_word)
+
+    assert QueryEnhancementGenerator._term_is_grounded(term_word, source_term_keys)
+
+
+def test_grounding_accepts_people_applaud_against_typo_source():
+    source_term_keys = QueryEnhancementGenerator._source_term_keys(
+        "People applaude loudly"
+    )
+
+    assert QueryEnhancementGenerator._term_is_grounded(
+        "people applaud", source_term_keys
+    )
+
+
+@pytest.mark.parametrize(
+    ("source_word", "normalized_word"),
+    sorted(GROUNDING_MORPHOLOGY_NORMALIZATIONS.items()),
+)
+def test_irregular_grounding_entries_still_need_the_map(
+    source_word: str, normalized_word: str
+):
+    assert STEMMER.stemWord(source_word) != STEMMER.stemWord(normalized_word)
+    assert QueryEnhancementGenerator._term_is_grounded(
+        normalized_word,
+        QueryEnhancementGenerator._source_term_keys(source_word),
+    )
+
+
 @pytest.mark.asyncio
 async def test_generator_accepts_grounded_document_body_terms():
     async def enhance_query(query: str, tenant_id: str, source_text: str):
@@ -188,10 +232,7 @@ async def test_generator_rejects_ungrounded_expansion_phrase():
 
     generator = QueryEnhancementGenerator(query_enhancer=enhance_query)
 
-    with pytest.raises(
-        ValueError,
-        match="expansion_terms absent from sampled source",
-    ):
+    with pytest.raises(ValueError) as error:
         await generator.generate(
             sampled_content=[
                 {
@@ -204,13 +245,21 @@ async def test_generator_rejects_ungrounded_expansion_phrase():
             tenant_id="acme:synthetic",
         )
 
+    assert str(error.value) == (
+        "query_enhancement optimizer callback query_enhancer returned "
+        "expansion_terms absent from sampled source for "
+        "tenant='acme:synthetic' query='livestock competition agricultural fair': "
+        "['quantum physics']"
+    )
+
 
 @pytest.mark.asyncio
 @pytest.mark.parametrize(
     ("term", "reasoning"),
     [
         ("quantum physics", "Production enhancement returned an ungrounded phrase."),
-        ("the this", "Production enhancement returned a stopword-only phrase."),
+        ("blockchain ledger", "Production enhancement returned an ungrounded phrase."),
+        ("zebra", "Production enhancement returned an ungrounded phrase."),
     ],
 )
 async def test_generator_rejects_document_body_ungrounded_terms(
@@ -246,34 +295,6 @@ async def test_generator_rejects_document_body_ungrounded_terms(
     )
 
 
-def test_generator_rejects_metadata_only_source_text():
-    with pytest.raises(
-        ValueError,
-        match="^sampled_content contains no source text$",
-    ):
-        QueryEnhancementGenerator._source_text(
-            {
-                "tenant_id": "tenant-123",
-                "org_id": "org-456",
-                "org_name": "org-name",
-                "status": "active",
-                "config_id": "cfg-789",
-                "config_key": "query_enhancement",
-                "scope": "tenant",
-                "service": "optimizer",
-                "adapter_id": "adapter-1",
-                "derivation_kind": "derived",
-                "written_by": "system",
-                "tenant_full_id": "tenant-123:prod",
-                "tenant_name": "tenant-name",
-                "signature": "sig-1",
-                "name": "metadata-only",
-                "agent_type": "query_enhancement",
-                "text": "ignored",
-            }
-        )
-
-
 @pytest.mark.asyncio
 async def test_generator_rejects_all_stopword_expansion_phrase():
     async def enhance_query(query: str, tenant_id: str, source_text: str):
@@ -306,6 +327,34 @@ async def test_generator_rejects_all_stopword_expansion_phrase():
         "expansion_terms absent from sampled source for "
         "tenant='acme:synthetic' query='This video frame captures': ['the this']"
     )
+
+
+def test_generator_rejects_metadata_only_source_text():
+    with pytest.raises(
+        ValueError,
+        match="^sampled_content contains no source text$",
+    ):
+        QueryEnhancementGenerator._source_text(
+            {
+                "tenant_id": "tenant-123",
+                "org_id": "org-456",
+                "org_name": "org-name",
+                "status": "active",
+                "config_id": "cfg-789",
+                "config_key": "query_enhancement",
+                "scope": "tenant",
+                "service": "optimizer",
+                "adapter_id": "adapter-1",
+                "derivation_kind": "derived",
+                "written_by": "system",
+                "tenant_full_id": "tenant-123:prod",
+                "tenant_name": "tenant-name",
+                "signature": "sig-1",
+                "name": "metadata-only",
+                "agent_type": "query_enhancement",
+                "text": "ignored",
+            }
+        )
 
 
 def test_generator_rejects_hash_only_title_when_building_expansion_terms():

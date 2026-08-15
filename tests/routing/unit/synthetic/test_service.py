@@ -6,6 +6,7 @@ Tests the main service orchestrator end-to-end.
 
 import asyncio
 import json
+import logging
 import threading
 import time
 from concurrent.futures import ThreadPoolExecutor
@@ -48,7 +49,11 @@ def create_test_agent_mappings() -> list[AgentMappingRule]:
     ]
 
 
-def create_test_generator_config(*, synthetic_generation_timeout_seconds: float = 23.0):
+def create_test_generator_config(
+    *,
+    synthetic_generation_timeout_seconds: float = 23.0,
+    synthetic_generation_floor_count: int = 1,
+):
     """Create test generator configuration with all required optimizer configs"""
     scoring_configs = {
         optimizer_name: OptimizerGenerationConfig(
@@ -78,6 +83,7 @@ def create_test_generator_config(*, synthetic_generation_timeout_seconds: float 
     return SyntheticGeneratorConfig(
         tenant_id="test:unit",
         synthetic_generation_timeout_seconds=synthetic_generation_timeout_seconds,
+        synthetic_generation_floor_count=synthetic_generation_floor_count,
         optimizer_configs=scoring_configs,
     )
 
@@ -416,6 +422,15 @@ class TestSyntheticDataService:
         assert str(raised.value) == (
             "synthetic_generation_timeout_seconds must be finite and positive"
         )
+
+    def test_synthetic_generation_floor_is_read_from_generator_config(self):
+        service = create_test_service(
+            generator_config=create_test_generator_config(
+                synthetic_generation_floor_count=2
+            )
+        )
+
+        assert service._synthetic_generation_floor() == 2
 
     @pytest.mark.asyncio
     async def test_service_gateway_timeout_bounds_hung_routing_callback(self):
@@ -758,6 +773,15 @@ class TestSyntheticDataService:
         assert isinstance(response.selected_profiles, list)
         assert len(response.selected_profiles) > 0
         assert isinstance(response.metadata, dict)
+        assert response.metadata["generation"] == {
+            "requested_count": 1,
+            "returned_count": 1,
+            "shortfall_count": 0,
+            "floor_count": 1,
+            "surplus_exhausted": False,
+            "dropped_count": 0,
+            "dropped_examples": [],
+        }
         assert isinstance(response.profile_selection_reasoning, str)
 
     @pytest.mark.asyncio
@@ -878,6 +902,15 @@ class TestSyntheticDataService:
         assert response.count == 1
         assert response.schema_name == "RoutingExperienceSchema"
         assert len(response.data) == 1
+        assert response.metadata["generation"] == {
+            "requested_count": 1,
+            "returned_count": 1,
+            "shortfall_count": 0,
+            "floor_count": 1,
+            "surplus_exhausted": False,
+            "dropped_count": 0,
+            "dropped_examples": [],
+        }
         assert {tuple(item["entities"][0].values()) for item in response.data} == {
             ("Saturn V", "TECHNOLOGY")
         }
@@ -897,6 +930,15 @@ class TestSyntheticDataService:
         assert response.count == 3
         assert response.schema_name == "WorkflowExecutionSchema"
         assert len(response.data) == 3
+        assert response.metadata["generation"] == {
+            "requested_count": 3,
+            "returned_count": 3,
+            "shortfall_count": 0,
+            "floor_count": 1,
+            "surplus_exhausted": False,
+            "dropped_count": 0,
+            "dropped_examples": [],
+        }
 
     @pytest.mark.asyncio
     async def test_generate_with_custom_sample_size(self):
@@ -946,6 +988,161 @@ class TestSyntheticDataService:
 
         assert response.count == 1
         assert response.metadata["backend_query_strategy"] == "temporal_recent"
+
+    @pytest.mark.asyncio
+    async def test_query_enhancement_drops_failed_candidates_and_logs_replacement(
+        self, caplog
+    ):
+        calls: list[str] = []
+
+        async def flaky_enhance_query(query: str, tenant_id: str, source_text: str):
+            assert tenant_id == "test:unit"
+            calls.append(query)
+            if len(calls) == 1:
+                raise ValueError("first candidate rejected")
+            return {
+                "original_query": query,
+                "enhanced_query": f"{query} Saturn V",
+                "expansion_terms": ["Saturn V"],
+                "synonyms": ["launch"],
+                "reasoning": "The production enhancer added a source-grounded term.",
+            }
+
+        service = SyntheticDataService(
+            backend=_GroundedBackend(),
+            backend_config=create_test_backend_config(),
+            generator_config=create_test_generator_config(),
+            agents_config=create_test_agents_config(),
+            query_enhancer=flaky_enhance_query,
+        )
+
+        with caplog.at_level(
+            logging.WARNING, logger="cogniverse_synthetic.generators.base"
+        ):
+            with pytest.raises(RuntimeError) as error:
+                await service.generate(
+                    SyntheticDataRequest(
+                        tenant_id="test:unit",
+                        optimizer="query_enhancement",
+                        count=2,
+                        vespa_sample_size=1,
+                        max_profiles=1,
+                    )
+                )
+
+        assert str(error.value) == (
+            "query_enhancement optimizer callback query_enhancer failed for "
+            "tenant='test:unit' query='The Saturn V rocket'"
+        )
+        assert isinstance(error.value.__cause__, ValueError)
+        assert str(error.value.__cause__) == "first candidate rejected"
+        assert calls == ["The Saturn V rocket"]
+        assert not any(
+            record.name == "cogniverse_synthetic.generators.base"
+            for record in caplog.records
+        )
+
+    @pytest.mark.asyncio
+    async def test_entity_extraction_drops_invalid_relationships_and_logs_replacement(
+        self, caplog
+    ):
+        calls: list[str] = []
+
+        async def flaky_extract_entities(text: str, tenant_id: str):
+            assert tenant_id == "test:unit"
+            calls.append(text)
+            if len(calls) == 1:
+                return {
+                    "query": text,
+                    "entities": [{"text": "Saturn V", "type": "TECHNOLOGY"}],
+                    "relationships": [
+                        {
+                            "subject": "Saturn V",
+                            "relation": "launches",
+                            "object": "Mars",
+                        }
+                    ],
+                }
+            return {
+                "query": text,
+                "entities": [{"text": "Saturn V", "type": "TECHNOLOGY"}],
+                "relationships": [],
+            }
+
+        service = SyntheticDataService(
+            backend=_GroundedBackend(),
+            backend_config=create_test_backend_config(),
+            generator_config=create_test_generator_config(),
+            agents_config=create_test_agents_config(),
+            entity_extractor=flaky_extract_entities,
+        )
+
+        with caplog.at_level(
+            logging.WARNING, logger="cogniverse_synthetic.generators.base"
+        ):
+            response = await service.generate(
+                SyntheticDataRequest(
+                    tenant_id="test:unit",
+                    optimizer="entity_extraction",
+                    count=1,
+                    vespa_sample_size=1,
+                    max_profiles=1,
+                )
+            )
+
+        assert response.count == 1
+        assert [item["query"] for item in response.data] == [calls[1]]
+        assert response.data == [
+            {
+                "query": calls[1],
+                "entities": [{"text": "Saturn V", "type": "TECHNOLOGY"}],
+                "entity_types": "TECHNOLOGY",
+                "relationships": [],
+            }
+        ]
+        assert response.metadata["generation"] == {
+            "requested_count": 1,
+            "returned_count": 1,
+            "shortfall_count": 0,
+            "floor_count": 1,
+            "surplus_exhausted": False,
+            "dropped_count": 1,
+            "dropped_examples": [
+                {
+                    "candidate": calls[0],
+                    "reason": (
+                        "entity extractor relationships[0] references an "
+                        "entity absent from the result"
+                    ),
+                }
+            ],
+        }
+        warning_records = [
+            record
+            for record in caplog.records
+            if record.name == "cogniverse_synthetic.generators.base"
+        ]
+        assert len(warning_records) == 1
+        assert warning_records[0].name == "cogniverse_synthetic.generators.base"
+        assert warning_records[0].levelno == logging.WARNING
+        assert warning_records[0].args == (
+            "entity_extraction",
+            1,
+            1,
+            "3 unique source texts, 0 without entities",
+            1,
+            0,
+            False,
+            [
+                {
+                    "candidate": calls[0],
+                    "reason": (
+                        "entity extractor relationships[0] references an "
+                        "entity absent from the result"
+                    ),
+                }
+            ],
+        )
 
     @pytest.mark.asyncio
     async def test_generate_invalid_optimizer(self):
@@ -1192,6 +1389,15 @@ class TestServiceWithBackendConfig:
             "sampled_content_count": 1,
             "target_count": 1,
             "vespa_sample_size": 1,
+            "generation": {
+                "requested_count": 1,
+                "returned_count": 1,
+                "shortfall_count": 0,
+                "floor_count": 1,
+                "surplus_exhausted": False,
+                "dropped_count": 0,
+                "dropped_examples": [],
+            },
         }
         assert [example["query"] for example in response.data] == [
             "find Curie lecture explores radium and Marie Curie."
@@ -1355,21 +1561,42 @@ class TestServiceWithBackendConfig:
             tenant_id="test:unit", optimizer="cross_modal", count=3
         )
 
-        with pytest.raises(ValueError) as error:
-            await service._generate_examples(
-                request,
-                get_optimizer_config("cross_modal"),
-                [
-                    {"topic": "Curie lecture", "schema_name": "audio_content"},
-                    {"topic": "Radium notes", "schema_name": "document_text"},
-                ],
-                {name: profile.to_dict() for name, profile in profiles.items()},
-            )
-
-        assert str(error.value) == (
-            "ProfileGenerator generated 2 unique grounded examples but "
-            "target_count=3; source_context=2 unique cross-modal query combinations"
+        examples = await service._generate_examples(
+            request,
+            get_optimizer_config("cross_modal"),
+            [
+                {"topic": "Curie lecture", "schema_name": "audio_content"},
+                {"topic": "Radium notes", "schema_name": "document_text"},
+            ],
+            {name: profile.to_dict() for name, profile in profiles.items()},
         )
+
+        assert [example.model_dump() for example in examples] == [
+            {
+                "query": (
+                    "find Curie lecture in audio content together with "
+                    "Radium notes in document content"
+                ),
+                "available_profiles": "audio_semantic,document_semantic",
+                "selected_profile": "audio_semantic",
+                "reasoning": "Production selector chose audio_semantic.",
+                "query_intent": "audio_search",
+                "modality": "audio",
+                "complexity": "medium",
+            },
+            {
+                "query": (
+                    "find Radium notes in document content together with "
+                    "Curie lecture in audio content"
+                ),
+                "available_profiles": "audio_semantic,document_semantic",
+                "selected_profile": "audio_semantic",
+                "reasoning": "Production selector chose audio_semantic.",
+                "query_intent": "audio_search",
+                "modality": "audio",
+                "complexity": "medium",
+            },
+        ]
 
     @pytest.mark.asyncio
     async def test_cross_modal_selection_uses_distinct_configured_modalities(self):

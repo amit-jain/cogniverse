@@ -173,6 +173,15 @@ async def test_service_generates_profile_examples(profile_service):
     assert len(response.data) == 1
     assert response.selected_profiles == [profile_service.profile_name]
     assert response.metadata["sampled_content_count"] == 1
+    assert response.metadata["generation"] == {
+        "requested_count": 1,
+        "returned_count": 1,
+        "shortfall_count": 0,
+        "floor_count": 1,
+        "surplus_exhausted": False,
+        "dropped_count": 0,
+        "dropped_examples": [],
+    }
 
     for item in response.data:
         assert item["query"] == profile_service.expected_query
@@ -191,21 +200,37 @@ async def test_service_generates_profile_examples(profile_service):
 async def test_service_rejects_profile_count_above_unique_indexed_topics(
     profile_service,
 ):
-    with pytest.raises(ValueError) as error:
-        await profile_service.service.generate(
-            SyntheticDataRequest(
-                tenant_id=profile_service.tenant_id,
-                optimizer="profile",
-                count=2,
-                vespa_sample_size=1,
-                max_profiles=1,
-            )
+    response = await profile_service.service.generate(
+        SyntheticDataRequest(
+            tenant_id=profile_service.tenant_id,
+            optimizer="profile",
+            count=2,
+            vespa_sample_size=1,
+            max_profiles=1,
         )
-
-    assert str(error.value) == (
-        "ProfileGenerator generated 1 unique grounded examples but "
-        "target_count=2; source_context=1 unique source topics"
     )
+
+    assert response.count == 1
+    assert response.data == [
+        {
+            "query": profile_service.expected_query,
+            "available_profiles": profile_service.profile_name,
+            "selected_profile": profile_service.profile_name,
+            "reasoning": "The deployed selector chose the indexed video profile.",
+            "query_intent": "video_search",
+            "modality": "video",
+            "complexity": "medium",
+        }
+    ]
+    assert response.metadata["generation"] == {
+        "requested_count": 2,
+        "returned_count": 1,
+        "shortfall_count": 1,
+        "floor_count": 1,
+        "surplus_exhausted": True,
+        "dropped_count": 0,
+        "dropped_examples": [],
+    }
 
 
 @pytest.mark.requires_lm
@@ -258,6 +283,15 @@ async def test_real_lm_profile_agent_labels_indexed_source_without_module_patch(
     assert item["modality"] in {"video", "image", "text", "audio", "document"}
     assert item["complexity"] in {"simple", "medium", "complex"}
     assert item["query_intent"].strip() == item["query_intent"]
+    assert response.metadata["generation"] == {
+        "requested_count": 1,
+        "returned_count": 1,
+        "shortfall_count": 0,
+        "floor_count": 1,
+        "surplus_exhausted": False,
+        "dropped_count": 0,
+        "dropped_examples": [],
+    }
     assert 3 <= len(item["query_intent"]) <= 100
     assert item["reasoning"].strip() == item["reasoning"]
     assert 10 <= len(item["reasoning"]) <= 1000

@@ -1141,7 +1141,7 @@ class SyntheticGeneratorConfig:
     - Query template generation per optimizer type
     - Agent mapping rules
     - Profile selection scoring
-    - Shared synthetic-generation timeout for callback supervision
+    - Shared synthetic-generation timeout and floor for callback supervision
 
     ``tenant_id`` is required; the ``None`` default is only a
     dataclass-ordering placeholder. ``__post_init__`` raises via
@@ -1154,6 +1154,7 @@ class SyntheticGeneratorConfig:
         default_factory=dict
     )
     synthetic_generation_timeout_seconds: float = 300.0
+    synthetic_generation_floor_count: int = 1
 
     def __post_init__(self) -> None:
         from cogniverse_foundation.common.tenant_utils import require_tenant_id
@@ -1167,6 +1168,14 @@ class SyntheticGeneratorConfig:
         ):
             raise ValueError(
                 "synthetic_generation_timeout_seconds must be finite and positive"
+            )
+        if (
+            isinstance(self.synthetic_generation_floor_count, bool)
+            or not isinstance(self.synthetic_generation_floor_count, int)
+            or self.synthetic_generation_floor_count <= 0
+        ):
+            raise ValueError(
+                "synthetic_generation_floor_count must be a positive integer"
             )
         configured_types = set(self.optimizer_configs)
         if configured_types != SYNTHETIC_GENERATOR_CONFIG_TYPES:
@@ -1213,6 +1222,7 @@ class SyntheticGeneratorConfig:
             "tenant_id": self.tenant_id,
             "field_mappings": self.field_mappings.to_dict(),
             "synthetic_generation_timeout_seconds": self.synthetic_generation_timeout_seconds,
+            "synthetic_generation_floor_count": self.synthetic_generation_floor_count,
             "optimizer_configs": {
                 key: config.to_dict() for key, config in self.optimizer_configs.items()
             },
@@ -1228,6 +1238,7 @@ class SyntheticGeneratorConfig:
             "field_mappings",
             "optimizer_configs",
             "synthetic_generation_timeout_seconds",
+            "synthetic_generation_floor_count",
         }
         if set(data) != allowed_fields:
             missing = sorted(allowed_fields - data.keys())
@@ -1252,6 +1263,9 @@ class SyntheticGeneratorConfig:
             optimizer_configs=optimizer_configs,
             synthetic_generation_timeout_seconds=data.get(
                 "synthetic_generation_timeout_seconds", 300.0
+            ),
+            synthetic_generation_floor_count=data.get(
+                "synthetic_generation_floor_count", 1
             ),
         )
 

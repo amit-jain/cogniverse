@@ -14,13 +14,18 @@ import math
 from collections.abc import Awaitable, Callable
 from typing import Any, Dict, List
 
-from pydantic import BaseModel
+from pydantic import BaseModel, ValidationError
 
 from cogniverse_core.approval.training_schema import (
     PROFILE_TRAINING_MODALITIES,
     validate_approved_training_values,
 )
-from cogniverse_synthetic.generators.base import BaseGenerator, extract_topic
+from cogniverse_synthetic.generators.base import (
+    DEFAULT_SYNTHETIC_GENERATION_FLOOR_COUNT,
+    BaseGenerator,
+    GenerationTracker,
+    extract_topic,
+)
 from cogniverse_synthetic.schemas import ProfileSelectionExampleSchema
 
 logger = logging.getLogger(__name__)
@@ -83,26 +88,54 @@ class ProfileGenerator(BaseGenerator):
         tenant_id = kwargs.get("tenant_id")
         if not isinstance(tenant_id, str) or not tenant_id.strip():
             raise ValueError("tenant_id is required for profile generation")
+        generation_tracker = kwargs.get("generation_tracker")
+        floor_count = self._generation_floor_count(
+            kwargs.get(
+                "generation_floor_count",
+                DEFAULT_SYNTHETIC_GENERATION_FLOOR_COUNT,
+            )
+        )
         if kwargs.get("cross_modal", False):
             return await self._generate_cross_modal(
                 sampled_content,
                 target_count,
                 profile_configs,
                 tenant_id,
+                generation_tracker=generation_tracker
+                if isinstance(generation_tracker, GenerationTracker)
+                else None,
+                floor_count=floor_count,
             )
 
         if not self._extract_topics(sampled_content):
             raise ValueError("sampled_content contains no usable profile topic")
         queries = self._build_grounded_queries(sampled_content, profile_configs)
-        self.require_exact_target_count(
-            queries[:target_count],
-            target_count,
-            source_context=f"{len(queries)} unique source topics",
-        )
 
         examples: List[BaseModel] = []
-        for query in queries[:target_count]:
-            examples.append(await self._label_query(query, profile_configs, tenant_id))
+        last_validation_error: Exception | None = None
+        for query in queries:
+            if len(examples) == target_count:
+                break
+            try:
+                examples.append(
+                    await self._label_query(query, profile_configs, tenant_id)
+                )
+            except (ValueError, ValidationError) as exc:
+                last_validation_error = exc
+                if isinstance(generation_tracker, GenerationTracker):
+                    generation_tracker.record_drop(query, exc)
+                continue
+
+        self.require_exact_target_count(
+            examples,
+            target_count,
+            source_context=f"{len(queries)} unique source topics",
+            floor_count=floor_count,
+            generation_tracker=generation_tracker
+            if isinstance(generation_tracker, GenerationTracker)
+            else None,
+            cause=last_validation_error,
+        )
 
         logger.info(f"Generated {len(examples)} ProfileSelectionExample examples")
         return examples
@@ -264,6 +297,9 @@ class ProfileGenerator(BaseGenerator):
         target_count: int,
         profile_configs: Dict[str, Dict[str, Any]],
         tenant_id: str,
+        *,
+        generation_tracker: GenerationTracker | None = None,
+        floor_count: int = DEFAULT_SYNTHETIC_GENERATION_FLOOR_COUNT,
     ) -> List[BaseModel]:
         profiles_by_modality: Dict[str, List[str]] = {}
         schema_modalities: Dict[str, str] = {}
@@ -321,16 +357,29 @@ class ProfileGenerator(BaseGenerator):
                         if query not in queries:
                             queries.append(query)
 
+        examples: List[BaseModel] = []
+        last_validation_error: Exception | None = None
+        for query in queries:
+            if len(examples) == target_count:
+                break
+            try:
+                examples.append(
+                    await self._label_query(query, profile_configs, tenant_id)
+                )
+            except (ValueError, ValidationError) as exc:
+                last_validation_error = exc
+                if generation_tracker is not None:
+                    generation_tracker.record_drop(query, exc)
+                continue
+
         self.require_exact_target_count(
-            queries[:target_count],
+            examples,
             target_count,
             source_context=(f"{len(queries)} unique cross-modal query combinations"),
+            floor_count=floor_count,
+            generation_tracker=generation_tracker,
+            cause=last_validation_error,
         )
-
-        examples = [
-            await self._label_query(query, profile_configs, tenant_id)
-            for query in queries[:target_count]
-        ]
 
         logger.info(f"Generated {len(examples)} cross-modal examples")
         return examples

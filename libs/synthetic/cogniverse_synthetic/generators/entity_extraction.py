@@ -7,10 +7,12 @@ import re
 from collections.abc import Awaitable, Callable
 from typing import Any, Dict, List, Optional
 
-from pydantic import BaseModel
+from pydantic import BaseModel, ValidationError
 
 from cogniverse_synthetic.generators.base import (
+    DEFAULT_SYNTHETIC_GENERATION_FLOOR_COUNT,
     BaseGenerator,
+    GenerationTracker,
     entity_candidate_text_fields,
     is_content_hash_topic,
     normalize_text,
@@ -43,13 +45,23 @@ class EntityExtractionGenerator(BaseGenerator):
         tenant_id = kwargs.get("tenant_id")
         if not isinstance(tenant_id, str) or not tenant_id.strip():
             raise ValueError("tenant_id is required for entity extraction")
+        generation_tracker = kwargs.get("generation_tracker")
+        floor_count = self._generation_floor_count(
+            kwargs.get(
+                "generation_floor_count",
+                DEFAULT_SYNTHETIC_GENERATION_FLOOR_COUNT,
+            )
+        )
 
         logger.info("Generating %d EntityExtractionExample examples", target_count)
 
         candidate_texts = self._candidate_texts(sampled_content)
         labelled_examples: List[EntityExtractionExampleSchema] = []
         skipped_without_entities = 0
+        last_validation_error: Exception | None = None
         for text in candidate_texts:
+            if len(labelled_examples) == target_count:
+                break
             try:
                 extraction = await asyncio.wait_for(
                     self.entity_extractor(text, tenant_id),
@@ -66,13 +78,22 @@ class EntityExtractionGenerator(BaseGenerator):
                     f"entity extraction failed for source text {text!r}"
                 ) from exc
 
-            example = self._to_example(text, extraction)
+            try:
+                example = self._to_example(text, extraction)
+            except (ValueError, ValidationError) as exc:
+                last_validation_error = exc
+                if isinstance(generation_tracker, GenerationTracker):
+                    generation_tracker.record_drop(text, exc)
+                continue
+
             if example is not None:
                 labelled_examples.append(example)
-                if len(labelled_examples) == target_count:
-                    break
             else:
                 skipped_without_entities += 1
+                if isinstance(generation_tracker, GenerationTracker):
+                    generation_tracker.record_drop(
+                        text, "entity extractor returned no entities"
+                    )
 
         self.require_exact_target_count(
             labelled_examples,
@@ -81,6 +102,11 @@ class EntityExtractionGenerator(BaseGenerator):
                 f"{len(candidate_texts)} unique source texts, "
                 f"{skipped_without_entities} without entities"
             ),
+            floor_count=floor_count,
+            generation_tracker=generation_tracker
+            if isinstance(generation_tracker, GenerationTracker)
+            else None,
+            cause=last_validation_error,
         )
 
         examples: List[BaseModel] = list(labelled_examples)

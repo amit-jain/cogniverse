@@ -27,6 +27,7 @@ from cogniverse_synthetic.generators import (
     RoutingGenerator,
     WorkflowGenerator,
 )
+from cogniverse_synthetic.generators.base import GenerationTracker
 from cogniverse_synthetic.generators.entity_extraction import EntityExtractor
 from cogniverse_synthetic.generators.profile import ProfileLabeler
 from cogniverse_synthetic.generators.query_enhancement import QueryEnhancer
@@ -200,6 +201,19 @@ class SyntheticDataService:
             )
         return float(timeout)
 
+    def _synthetic_generation_floor(self) -> int:
+        floor = getattr(
+            self.generator_config,
+            "synthetic_generation_floor_count",
+            1,
+        )
+        if isinstance(floor, bool) or not isinstance(floor, int) or floor <= 0:
+            raise ValueError(
+                "SyntheticGeneratorConfig.synthetic_generation_floor_count "
+                "must be a positive integer"
+            )
+        return floor
+
     def _get_generator(self, optimizer_name: str):
         """
         Get or create generator for optimizer (lazy initialization)
@@ -327,6 +341,12 @@ class SyntheticDataService:
         )
         logger.info(f"Sampled {len(sampled_content)} content items")
 
+        generation_tracker = GenerationTracker(
+            optimizer=request.optimizer,
+            target_count=request.count,
+            floor_count=self._synthetic_generation_floor(),
+        )
+
         examples = await self._generate_examples(
             request,
             config,
@@ -335,9 +355,15 @@ class SyntheticDataService:
                 profile_name: available_profiles[profile_name]
                 for profile_name in profiles
             },
+            generation_tracker=generation_tracker,
             available_profile_configs=available_profiles,
         )
-        self._validate_generated_examples(examples, request, config)
+        self._validate_generated_examples(
+            examples,
+            request,
+            config,
+            generation_tracker=generation_tracker,
+        )
         logger.info(f"Generated {len(examples)} examples")
 
         response = SyntheticDataResponse(
@@ -352,6 +378,7 @@ class SyntheticDataService:
                 "sampled_content_count": len(sampled_content),
                 "target_count": request.count,
                 "vespa_sample_size": request.vespa_sample_size,
+                "generation": generation_tracker.to_metadata(),
             },
         )
 
@@ -485,6 +512,7 @@ class SyntheticDataService:
         sampled_content: List[Dict[str, Any]],
         selected_profile_configs: Dict[str, Dict[str, Any]],
         *,
+        generation_tracker: GenerationTracker | None = None,
         available_profile_configs: Optional[Dict[str, Dict[str, Any]]] = None,
     ) -> List[BaseModel]:
         """Generate synthetic examples using appropriate generator"""
@@ -504,6 +532,9 @@ class SyntheticDataService:
                 available_profile_configs or selected_profile_configs
             )
             generation_kwargs["cross_modal"] = request.optimizer == "cross_modal"
+        if generation_tracker is not None:
+            generation_kwargs["generation_tracker"] = generation_tracker
+            generation_kwargs["generation_floor_count"] = generation_tracker.floor_count
 
         examples = await generator.generate(
             sampled_content=sampled_content,
@@ -518,8 +549,40 @@ class SyntheticDataService:
         examples: List[BaseModel],
         request: SyntheticDataRequest,
         config: Any,
+        *,
+        generation_tracker: GenerationTracker | None = None,
     ) -> None:
-        if len(examples) != request.count:
+        floor_count = generation_tracker.floor_count if generation_tracker else 1
+        if len(examples) > request.count:
+            raise ValueError(
+                f"SyntheticDataService generated {len(examples)} examples but "
+                f"request count is {request.count}"
+            )
+        if not examples:
+            raise ValueError(
+                f"SyntheticDataService generated {len(examples)} examples but "
+                f"request count is {request.count}"
+            )
+        if len(examples) < request.count:
+            if generation_tracker is None or not generation_tracker.surplus_exhausted:
+                raise ValueError(
+                    f"SyntheticDataService generated {len(examples)} examples but "
+                    f"request count is {request.count}"
+                )
+            if len(examples) < floor_count:
+                raise ValueError(
+                    f"SyntheticDataService generated {len(examples)} examples but "
+                    f"request count is {request.count}; floor_count={floor_count}"
+                )
+
+        if generation_tracker is not None and len(examples) == request.count:
+            if generation_tracker.returned_count != len(examples):
+                generation_tracker.finalize(
+                    returned_count=len(examples),
+                    source_context="service validation",
+                    surplus_exhausted=False,
+                )
+        if len(examples) == 0:
             raise ValueError(
                 f"SyntheticDataService generated {len(examples)} examples but "
                 f"request count is {request.count}"

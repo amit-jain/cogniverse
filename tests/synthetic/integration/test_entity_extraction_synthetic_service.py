@@ -165,6 +165,15 @@ async def test_service_generates_entity_extraction_examples(ee_service):
     assert len(response.data) == 1
     assert response.selected_profiles == [ee_service.profile_name]
     assert response.metadata["sampled_content_count"] == 1
+    assert response.metadata["generation"] == {
+        "requested_count": 1,
+        "returned_count": 1,
+        "shortfall_count": 0,
+        "floor_count": 1,
+        "surplus_exhausted": False,
+        "dropped_count": 0,
+        "dropped_examples": [],
+    }
     assert ee_service.extraction_paths[prior_extractions:] == ["fast"]
 
     for item in response.data:
@@ -559,24 +568,27 @@ async def test_generator_rejects_partial_entity_bearing_source_set():
 
     generator = EntityExtractionGenerator(entity_extractor=extract_entities)
 
-    with pytest.raises(ValueError) as error:
-        await generator.generate(
-            sampled_content=[
-                {"title": "PyTorch works"},
-                {"title": "all words are lowercase"},
-            ],
-            target_count=2,
-            tenant_id="acme:synthetic",
-        )
-
-    assert str(error.value) == (
-        "EntityExtractionGenerator generated 1 unique grounded examples but "
-        "target_count=2; source_context=2 unique source texts, 1 without entities"
+    examples = await generator.generate(
+        sampled_content=[
+            {"title": "PyTorch works"},
+            {"title": "all words are lowercase"},
+        ],
+        target_count=2,
+        tenant_id="acme:synthetic",
     )
+
+    assert [example.model_dump() for example in examples] == [
+        {
+            "query": "PyTorch works",
+            "entities": [{"text": "PyTorch", "type": "TECHNOLOGY"}],
+            "entity_types": "TECHNOLOGY",
+            "relationships": [],
+        }
+    ]
 
 
 @pytest.mark.asyncio
-async def test_generator_reports_extractor_failure_without_returning_partial_data():
+async def test_generator_returns_partial_data_when_extractor_fails():
     calls = []
 
     async def extract_entities(text: str, tenant_id: str):
@@ -590,10 +602,8 @@ async def test_generator_reports_extractor_failure_without_returning_partial_dat
         }
 
     generator = EntityExtractionGenerator(entity_extractor=extract_entities)
-    with pytest.raises(
-        RuntimeError,
-        match="entity extraction failed for source text 'Meta AI failed'",
-    ) as error:
+
+    with pytest.raises(RuntimeError) as error:
         await generator.generate(
             sampled_content=[
                 {"title": "PyTorch works"},
@@ -603,12 +613,16 @@ async def test_generator_reports_extractor_failure_without_returning_partial_dat
             tenant_id="acme:synthetic",
         )
 
+    assert (
+        str(error.value) == "entity extraction failed for source text 'Meta AI failed'"
+    )
     assert isinstance(error.value.__cause__, ConnectionError)
+    assert str(error.value.__cause__) == "GLiNER endpoint closed"
     assert calls == ["PyTorch works", "Meta AI failed"]
 
 
 @pytest.mark.asyncio
-async def test_generator_bounds_hung_entity_extraction_without_partial_data():
+async def test_generator_raises_when_hung_entity_extraction_yields_no_examples():
     never_finishes = asyncio.Event()
 
     async def extract_entities(text: str, tenant_id: str):
@@ -619,19 +633,16 @@ async def test_generator_bounds_hung_entity_extraction_without_partial_data():
         extraction_timeout_seconds=0.01,
     )
 
-    with pytest.raises(
-        RuntimeError,
-        match=(
-            "entity extraction timed out after 0.01 seconds for source text "
-            "'PyTorch works'"
-        ),
-    ) as error:
+    with pytest.raises(RuntimeError) as error:
         await generator.generate(
             sampled_content=[{"title": "PyTorch works"}],
             target_count=1,
             tenant_id="acme:synthetic",
         )
 
+    assert str(error.value) == (
+        "entity extraction timed out after 0.01 seconds for source text 'PyTorch works'"
+    )
     assert isinstance(error.value.__cause__, TimeoutError)
 
 

@@ -10,6 +10,7 @@ import logging
 import re
 from abc import ABC, abstractmethod
 from collections.abc import Mapping, Sequence
+from dataclasses import dataclass, field
 from functools import lru_cache
 from pathlib import Path
 from typing import Any, Dict, List, Optional
@@ -30,6 +31,7 @@ _TEXT_DOCUMENT_MAPPING_ROLES = (
     "text_content",
     "transcript",
 )
+DEFAULT_SYNTHETIC_GENERATION_FLOOR_COUNT = 1
 
 
 def normalize_text(value: str) -> str:
@@ -98,6 +100,80 @@ def canonical_topic_fields() -> tuple[str, ...]:
 
 
 CANONICAL_TOPIC_FIELDS = canonical_topic_fields()
+
+
+@dataclass(slots=True)
+class GenerationDrop:
+    """One candidate that failed validation during synthetic generation."""
+
+    candidate: str
+    reason: str
+
+    def to_dict(self) -> Dict[str, str]:
+        return {"candidate": self.candidate, "reason": self.reason}
+
+
+@dataclass(slots=True)
+class GenerationTracker:
+    """Per-request drop accounting and response metadata for generators."""
+
+    optimizer: str
+    target_count: int
+    floor_count: int
+    source_context: str = ""
+    dropped_examples: list[GenerationDrop] = field(default_factory=list)
+    returned_count: int = 0
+    surplus_exhausted: bool = False
+
+    def record_drop(self, candidate: str, reason: Exception | str) -> None:
+        self.dropped_examples.append(
+            GenerationDrop(candidate=candidate, reason=str(reason))
+        )
+
+    def dropped_examples_summary(self) -> str:
+        if not self.dropped_examples:
+            return ""
+        return (
+            f"; dropped_examples={[drop.to_dict() for drop in self.dropped_examples]}"
+        )
+
+    def finalize(
+        self,
+        *,
+        returned_count: int,
+        source_context: str,
+        surplus_exhausted: bool,
+    ) -> None:
+        self.returned_count = returned_count
+        self.source_context = source_context
+        self.surplus_exhausted = surplus_exhausted
+
+    def to_metadata(self) -> Dict[str, Any]:
+        return {
+            "requested_count": self.target_count,
+            "returned_count": self.returned_count,
+            "shortfall_count": max(self.target_count - self.returned_count, 0),
+            "floor_count": self.floor_count,
+            "surplus_exhausted": self.surplus_exhausted,
+            "dropped_count": len(self.dropped_examples),
+            "dropped_examples": [drop.to_dict() for drop in self.dropped_examples],
+        }
+
+    def log_summary(self) -> None:
+        if not self.dropped_examples and not self.surplus_exhausted:
+            return
+        logger.warning(
+            "%s generation returned %d/%d examples from %s; "
+            "floor=%d; shortfall=%d; surplus_exhausted=%s; dropped_examples=%s",
+            self.optimizer,
+            self.returned_count,
+            self.target_count,
+            self.source_context or "synthetic candidates",
+            self.floor_count,
+            max(self.target_count - self.returned_count, 0),
+            self.surplus_exhausted,
+            [drop.to_dict() for drop in self.dropped_examples],
+        )
 
 
 @lru_cache(maxsize=1)
@@ -214,14 +290,75 @@ class BaseGenerator(ABC):
         target_count: int,
         *,
         source_context: str,
+        floor_count: int = DEFAULT_SYNTHETIC_GENERATION_FLOOR_COUNT,
+        generation_tracker: GenerationTracker | None = None,
+        cause: Exception | None = None,
     ) -> None:
-        """Reject partial training sets when grounded sources are insufficient."""
-        if len(examples) != target_count:
+        """Require enough grounded examples or fail once the floor is crossed."""
+        if generation_tracker is not None:
+            generation_tracker.finalize(
+                returned_count=len(examples),
+                source_context=source_context,
+                surplus_exhausted=len(examples) < target_count,
+            )
+            generation_tracker.log_summary()
+        dropped_examples_summary = (
+            generation_tracker.dropped_examples_summary()
+            if generation_tracker is not None
+            else ""
+        )
+        if generation_tracker is None and len(examples) < target_count:
+            logger.warning(
+                "%s generation returned %d/%d examples from %s; floor=%d; "
+                "shortfall=%d; surplus_exhausted=%s",
+                self.__class__.__name__,
+                len(examples),
+                target_count,
+                source_context,
+                floor_count,
+                target_count - len(examples),
+                True,
+            )
+
+        if len(examples) > target_count:
             raise ValueError(
                 f"{self.__class__.__name__} generated {len(examples)} unique "
                 f"grounded examples but target_count={target_count}; "
                 f"source_context={source_context}"
             )
+
+        if not examples:
+            message = (
+                f"{self.__class__.__name__} generated 0 unique grounded examples "
+                f"but target_count={target_count}; source_context={source_context}"
+            )
+            message += dropped_examples_summary
+            if cause is not None:
+                raise ValueError(message) from cause
+            raise ValueError(message)
+
+        if len(examples) < floor_count:
+            message = (
+                f"{self.__class__.__name__} generated {len(examples)} unique "
+                f"grounded examples but target_count={target_count}; "
+                f"floor_count={floor_count}; source_context={source_context}"
+            )
+            message += dropped_examples_summary
+            if cause is not None:
+                raise ValueError(message) from cause
+            raise ValueError(message)
+
+    @staticmethod
+    def _generation_floor_count(raw_floor_count: Any) -> int:
+        if (
+            isinstance(raw_floor_count, bool)
+            or not isinstance(raw_floor_count, int)
+            or raw_floor_count <= 0
+        ):
+            raise ValueError(
+                "synthetic_generation_floor_count must be a positive integer"
+            )
+        return raw_floor_count
 
     def get_generator_info(self) -> Dict[str, Any]:
         """

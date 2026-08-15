@@ -9,6 +9,7 @@ generator -> response flow and asserts the produced examples satisfy the
 from __future__ import annotations
 
 import json
+import logging
 import time
 import uuid
 from pathlib import Path
@@ -149,6 +150,7 @@ def qe_service(shared_vespa):
             tenant_id=tenant_id,
             profile_name=profile_name,
             title=title,
+            description=description,
             expected_query="encoder decoder architecture improves",
             source_text=f"{title}\n{description}",
             expansion_terms=["encoder", "decoder", "architecture"],
@@ -175,6 +177,15 @@ async def test_service_generates_query_enhancement_examples(qe_service):
     assert len(response.data) == 5
     assert response.selected_profiles == [qe_service.profile_name]
     assert response.metadata["sampled_content_count"] == 1
+    assert response.metadata["generation"] == {
+        "requested_count": 5,
+        "returned_count": 5,
+        "shortfall_count": 0,
+        "floor_count": 1,
+        "surplus_exhausted": False,
+        "dropped_count": 0,
+        "dropped_examples": [],
+    }
 
     possible_queries = {
         qe_service.expected_query,
@@ -203,6 +214,65 @@ async def test_service_generates_query_enhancement_examples(qe_service):
         assert item["reasoning"] == (
             "Production enhancement preserved the exact source terms."
         )
+
+
+@pytest.mark.asyncio
+async def test_service_reports_dropped_candidate_reason_in_metadata_and_logs(
+    qe_service,
+    caplog,
+):
+    calls = []
+
+    async def flaky_enhancement(query: str, tenant_id: str, source_text: str):
+        calls.append((query, tenant_id, source_text))
+        if len(calls) == 1:
+            raise ValueError("first candidate rejected")
+        return {
+            "original_query": query,
+            "enhanced_query": f"{query} encoder",
+            "expansion_terms": ["encoder"],
+            "synonyms": [],
+            "reasoning": "Production enhancement returned a grounded term.",
+        }
+
+    service = SyntheticDataService(
+        backend=qe_service.service.backend,
+        generator_config=qe_service.service.generator_config,
+        backend_config=qe_service.service.backend_config,
+        agents_config=qe_service.agents_config,
+        query_enhancer=flaky_enhancement,
+    )
+    request = SyntheticDataRequest(
+        tenant_id=qe_service.tenant_id,
+        optimizer="query_enhancement",
+        count=6,
+        vespa_sample_size=1,
+        max_profiles=1,
+    )
+
+    with caplog.at_level(
+        logging.WARNING, logger="cogniverse_synthetic.generators.base"
+    ):
+        with pytest.raises(RuntimeError) as error:
+            await service.generate(request)
+
+    assert str(error.value) == (
+        "query_enhancement optimizer callback query_enhancer failed for "
+        f"tenant={qe_service.tenant_id!r} query={qe_service.expected_query!r}"
+    )
+    assert isinstance(error.value.__cause__, ValueError)
+    assert str(error.value.__cause__) == "first candidate rejected"
+    assert calls == [
+        (
+            qe_service.expected_query,
+            qe_service.tenant_id,
+            f"{qe_service.description}\n{qe_service.title}",
+        )
+    ]
+    assert not any(
+        record.name == "cogniverse_synthetic.generators.base"
+        for record in caplog.records
+    )
 
 
 @pytest.mark.requires_lm
@@ -248,6 +318,15 @@ async def test_real_lm_query_agent_labels_grounded_terms(
     assert len(response.data) == 1
     assert response.selected_profiles == [qe_service.profile_name]
     assert response.metadata["sampled_content_count"] == 1
+    assert response.metadata["generation"] == {
+        "requested_count": 1,
+        "returned_count": 1,
+        "shortfall_count": 0,
+        "floor_count": 1,
+        "surplus_exhausted": False,
+        "dropped_count": 0,
+        "dropped_examples": [],
+    }
 
     item = response.data[0]
     source_term_keys = QueryEnhancementGenerator._source_term_keys(
@@ -379,12 +458,20 @@ async def test_generator_passes_exact_source_text_to_labeler():
 async def test_generator_rejects_count_above_unique_grounded_query_capacity():
     calls = []
 
-    async def unexpected_enhancement(query: str, tenant_id: str):
-        calls.append((query, tenant_id))
-        raise AssertionError("capacity must be checked before enhancement")
+    async def flaky_enhancement(query: str, tenant_id: str, source_text: str):
+        calls.append((query, tenant_id, source_text))
+        if len(calls) == 1:
+            raise ValueError("first candidate rejected")
+        return {
+            "original_query": query,
+            "enhanced_query": f"{query} encoder",
+            "expansion_terms": ["encoder"],
+            "synonyms": [],
+            "reasoning": "Production enhancement returned a grounded term.",
+        }
 
-    with pytest.raises(ValueError) as error:
-        await QueryEnhancementGenerator(query_enhancer=unexpected_enhancement).generate(
+    with pytest.raises(RuntimeError) as error:
+        await QueryEnhancementGenerator(query_enhancer=flaky_enhancement).generate(
             sampled_content=[
                 {
                     "title": "transformer attention",
@@ -396,11 +483,19 @@ async def test_generator_rejects_count_above_unique_grounded_query_capacity():
             tenant_id="acme:synthetic",
         )
 
-    assert calls == []
     assert str(error.value) == (
-        "QueryEnhancementGenerator generated 5 unique grounded examples but "
-        "target_count=6; source_context=5 unique source-template queries"
+        "query_enhancement optimizer callback query_enhancer failed for "
+        "tenant='acme:synthetic' query='encoder decoder architecture'"
     )
+    assert isinstance(error.value.__cause__, ValueError)
+    assert str(error.value.__cause__) == "first candidate rejected"
+    assert calls == [
+        (
+            "encoder decoder architecture",
+            "acme:synthetic",
+            "transformer attention\nencoder decoder architecture",
+        )
+    ]
 
 
 @pytest.mark.asyncio

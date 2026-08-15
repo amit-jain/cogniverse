@@ -340,6 +340,22 @@ document, code, and wiki schemas.
 `FieldMappingConfig.from_dict({})` hydrates these same defaults; unknown keys
 raise instead of being ignored.
 
+**SyntheticGeneratorConfig** - Synthetic generation timeout and floor:
+
+```python
+from cogniverse_foundation.config.unified_config import SyntheticGeneratorConfig
+
+generator_config = SyntheticGeneratorConfig(
+    tenant_id="acme",
+    synthetic_generation_timeout_seconds=300.0,
+    synthetic_generation_floor_count=1,
+)
+```
+
+The timeout bounds production callback work. The floor bounds how far a
+synthetic run may fall back when the candidate pool is exhausted. Both fields
+validate as positive values and are required in the deployable synthetic config.
+
 **RoutingConfigUnified** - Routing agent settings:
 ```python
 from cogniverse_foundation.config.unified_config import RoutingConfigUnified

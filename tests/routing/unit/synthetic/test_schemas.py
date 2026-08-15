@@ -21,6 +21,7 @@ from cogniverse_synthetic.schemas import (
     WorkflowExecutionSchema,
 )
 from cogniverse_synthetic.service import SyntheticDataService
+from tests.utils.synthetic_config import video_synthetic_generator_config
 
 pytestmark = [pytest.mark.unit]
 
@@ -139,6 +140,7 @@ class _StrategyProbeService(SyntheticDataService):
         self.backend_config = SimpleNamespace(
             profiles={"source_profile": _ProfileConfig()}
         )
+        self.generator_config = video_synthetic_generator_config("test:unit")
         self.backend_querier = recorder
 
     async def _get_available_profiles(self, tenant_id):
@@ -154,6 +156,7 @@ class _StrategyProbeService(SyntheticDataService):
         sampled_content,
         selected_profile_configs,
         *,
+        generation_tracker=None,
         available_profile_configs,
     ):
         assert selected_profile_configs == {

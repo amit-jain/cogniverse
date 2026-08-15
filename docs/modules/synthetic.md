@@ -142,10 +142,14 @@ See source at `libs/synthetic/cogniverse_synthetic/generators/`.
 generator, accepting sampled content, a target count, and generator-specific
 keyword arguments. Its shared `validate_inputs()` requires a positive integer
 count and a non-empty list containing only mapping records. The shared exact
-count check, `require_exact_target_count()`, lets grounded generators reject
-partial training sets with source context. `get_generator_info()` reports the
-concrete generator name and whether pattern extraction or agent inference
-helpers were supplied.
+count check, `require_exact_target_count()`, lets grounded generators replace
+dropped candidates from surplus until `target_count` is met, then falls back to
+the configured floor count when the candidate pool is exhausted.
+`SyntheticDataService` surfaces that accounting in `metadata.generation`
+(`requested_count`, `returned_count`, `shortfall_count`, `floor_count`,
+`surplus_exhausted`, `dropped_count`, `dropped_examples`) and logs each drop
+with source context. `get_generator_info()` reports the concrete generator name
+and whether pattern extraction or agent inference helpers were supplied.
 
 Direct construction of routing, profile-selection, and query-enhancement
 generators exposes a positive, finite `production_label_timeout_seconds`
@@ -182,7 +186,8 @@ casing are invalid, while punctuation inside an exact span such as
 positive, finite `extraction_timeout_seconds` value (300 seconds by default),
 and an outage or timeout aborts the request without returning partial labels.
 If fewer unique source texts contain entities than the requested count, the
-generator reports the exact shortfall and returns no partial dataset.
+generator returns the surviving floor-sized subset and only raises when the
+floor cannot be met.
 This keeps generated labels identical to the behaviour being optimized instead
 of inferring types from capitalization. The entity shape matches what the
 finetuning evaluator (`adapter_evaluator._check_entity_prediction`) scores.
@@ -253,6 +258,10 @@ non-stopword alphanumeric token in an expansion term must appear in the source
 text; multi-word phrases are allowed when each substantive token is grounded.
 A production response containing an unrelated expansion term raises with the
 tenant and query instead of creating self-fulfilling training data.
+Grounding uses a shared English stemmer on both source and candidate tokens,
+with a tiny irregular map only for forms the stemmer does not normalize.
+Corrected or inflected variants such as `applaude`/`applaud` and
+`viewed`/`view` are accepted; unrelated hallucinations are still rejected.
 Topic extraction uses the shared helper and prefers `description`,
 `segment_description`, `transcript`, `topic`, `title`, then `video_title`.
 Bare identifier-like hex strings, including `_seg_` suffixed forms, are
@@ -326,7 +335,9 @@ selector's exact query intent rather than inventing combined categorical
 values. The service selects at most one profile per modality before sampling,
 even when two higher-scoring profiles share a modality. Generation fails when
 either the configured profiles or the sampled source content contains fewer
-than two modalities.
+than two modalities. Requests above the unique cross-modal combination count
+return the surviving floor-sized subset and only raise when the floor cannot be
+met.
 Generator instances are initialized once per service even when concurrent
 requests arrive during a cold start; a constructor failure is not cached, so a
 later request can retry.
@@ -481,8 +492,9 @@ uses the same descriptive-first order as the other generators, ignores bare
 identifier-like hex strings, and keeps the workflow contract by raising
 `ValueError` when no descriptive text exists.
 Each source yields at most three unique plans: search, summarize, and analyze.
-Requests above the unique source-plan capacity fail instead of duplicating a
-query with a different workflow identifier.
+Requests above the unique source-plan capacity return the surviving floor-sized
+subset instead of duplicating a query with a different workflow identifier; the
+generator only raises when the floor is not met.
 
 Workflow examples use a 32-character random suffix in `workflow_id`, making
 collisions negligibly likely across repeated or concurrent generation. They are

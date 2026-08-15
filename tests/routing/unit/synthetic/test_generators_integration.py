@@ -1045,16 +1045,17 @@ class TestWorkflowGeneratorIntegration:
     async def test_workflow_generator_rejects_count_above_unique_query_capacity(self):
         generator = WorkflowGenerator(agent_inferrer=configured_agent_inferrer())
 
-        with pytest.raises(ValueError) as error:
-            await generator.generate(
-                sampled_content=[video_workflow_sample("Marie Curie radium")],
-                target_count=4,
-            )
-
-        assert str(error.value) == (
-            "WorkflowGenerator generated 3 unique grounded examples but "
-            "target_count=4; source_context=3 unique source-workflow queries"
+        examples = await generator.generate(
+            sampled_content=[video_workflow_sample("Marie Curie radium")],
+            target_count=4,
         )
+
+        assert len(examples) == 3
+        assert [example.query for example in examples] == [
+            "find Marie Curie radium",
+            "summarize Marie Curie radium",
+            "analyze Marie Curie radium and generate report",
+        ]
 
     @pytest.mark.asyncio
     async def test_workflow_intelligence_persists_generated_plan_for_serving(
