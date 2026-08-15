@@ -611,7 +611,6 @@ assert len(results) >= 0
 from cogniverse_agents.orchestrator_agent import OrchestratorAgent, OrchestratorDeps, OrchestratorInput
 from cogniverse_core.registries.agent_registry import AgentRegistry
 from cogniverse_synthetic.generators.routing import RoutingGenerator
-from cogniverse_synthetic.utils import PatternExtractor
 from cogniverse_foundation.config.unified_config import (
     DSPyModuleConfig,
     OptimizerGenerationConfig,
@@ -635,7 +634,6 @@ optimizer_config = OptimizerGenerationConfig(
 generator = RoutingGenerator(
     entity_extractor=production_entity_extractor,
     routing_decider=production_routing_decider,
-    pattern_extractor=PatternExtractor(),
     optimizer_config=optimizer_config,
 )
 

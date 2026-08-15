@@ -35,7 +35,7 @@ from cogniverse_synthetic.schemas import (
     SyntheticDataResponse,
     WorkflowExecutionSchema,
 )
-from cogniverse_synthetic.utils import AgentInferrer, PatternExtractor
+from cogniverse_synthetic.utils import AgentInferrer
 
 pytestmark = [pytest.mark.unit]
 
@@ -169,11 +169,6 @@ async def select_profile(query: str, profiles: list[str], tenant_id: str):
     }
 
 
-class _BoundaryPatternExtractor:
-    def extract(self, records):
-        return {"topics": [records[0]["title"]]}
-
-
 class _BoundaryQueryGenerator:
     max_retries = 3
 
@@ -256,7 +251,6 @@ def _build_label_invoker(kind: str, callback, timeout_seconds: float):
         generator = RoutingGenerator(
             entity_extractor=_extract_boundary_entity,
             routing_decider=callback,
-            pattern_extractor=_BoundaryPatternExtractor(),
             optimizer_config=object(),
             production_label_timeout_seconds=timeout_seconds,
         )
@@ -524,12 +518,9 @@ class TestRoutingGeneratorIntegration:
     @pytest.mark.asyncio
     async def test_routing_generator(self):
         """Test RoutingGenerator generates valid routing experiences"""
-        pattern_extractor = PatternExtractor()
-
         generator = RoutingGenerator(
             entity_extractor=extract_entities,
             routing_decider=route_query,
-            pattern_extractor=pattern_extractor,
             optimizer_config=create_routing_config(),
         )
 
@@ -582,7 +573,6 @@ class TestRoutingGeneratorIntegration:
         generator = RoutingGenerator(
             entity_extractor=hung_entity_extractor,
             routing_decider=route_query,
-            pattern_extractor=_BoundaryPatternExtractor(),
             optimizer_config=create_routing_config(),
             production_label_timeout_seconds=0.5,
             entity_extraction_timeout_seconds=0.02,
@@ -620,7 +610,6 @@ class TestRoutingGeneratorIntegration:
         generator = RoutingGenerator(
             entity_extractor=_extract_boundary_entity,
             routing_decider=route_query,
-            pattern_extractor=_BoundaryPatternExtractor(),
             optimizer_config=create_routing_config(),
             production_label_timeout_seconds=0.02,
             entity_extraction_timeout_seconds=0.5,
@@ -662,7 +651,6 @@ class TestRoutingGeneratorIntegration:
             RoutingGenerator(
                 entity_extractor=_extract_boundary_entity,
                 routing_decider=route_query,
-                pattern_extractor=_BoundaryPatternExtractor(),
                 optimizer_config=create_routing_config(),
                 entity_extraction_timeout_seconds=timeout_seconds,
             )
@@ -1617,7 +1605,6 @@ class TestAllGeneratorsTogether:
     @pytest.mark.asyncio
     async def test_all_generators_produce_valid_output(self):
         """Test all generators can produce valid output"""
-        pattern_extractor = PatternExtractor()
         agent_inferrer = configured_agent_inferrer()
 
         mock_content = [
@@ -1637,7 +1624,6 @@ class TestAllGeneratorsTogether:
                 RoutingGenerator(
                     entity_extractor=extract_entities,
                     routing_decider=route_query,
-                    pattern_extractor=pattern_extractor,
                     optimizer_config=create_routing_config(),
                 ),
                 1,

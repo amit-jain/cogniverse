@@ -223,19 +223,13 @@ class BaseGenerator(ABC):
     synthetic training examples from sampled backend content.
     """
 
-    def __init__(
-        self,
-        pattern_extractor: Optional[Any] = None,
-        agent_inferrer: Optional[Any] = None,
-    ):
+    def __init__(self, agent_inferrer: Optional[Any] = None):
         """
         Initialize base generator
 
         Args:
-            pattern_extractor: Utility for extracting patterns from content
             agent_inferrer: Utility for inferring correct agents (optional)
         """
-        self.pattern_extractor = pattern_extractor
         self.agent_inferrer = agent_inferrer
         logger.info(f"Initialized {self.__class__.__name__}")
 
@@ -369,6 +363,5 @@ class BaseGenerator(ABC):
         """
         return {
             "name": self.__class__.__name__,
-            "has_pattern_extractor": self.pattern_extractor is not None,
             "has_agent_inferrer": self.agent_inferrer is not None,
         }

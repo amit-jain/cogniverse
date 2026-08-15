@@ -353,7 +353,6 @@ generation and has no fallback config.
 
 ```python
 from cogniverse_synthetic.generators.routing import RoutingGenerator
-from cogniverse_synthetic.utils import PatternExtractor
 from cogniverse_foundation.config.unified_config import (
     DSPyModuleConfig,
     OptimizerGenerationConfig,
@@ -375,7 +374,6 @@ async def generate_examples(documents: list[dict], entity_extractor, routing_dec
     generator = RoutingGenerator(
         entity_extractor=entity_extractor,
         routing_decider=routing_decider,
-        pattern_extractor=PatternExtractor(),
         optimizer_config=optimizer_config,
         production_label_timeout_seconds=300.0,
         entity_extraction_timeout_seconds=300.0,
@@ -727,14 +725,15 @@ Each enabled field must contain non-empty text. A missing required field mapping
 fails before a live backend call; a profile that produces neither field is
 invalid for an `entity_rich` query.
 
-`PatternExtractor` consumes both normalized semantic fields (`topic`,
-`description`, `transcript`) and configured backend field names. Numeric
-timestamps accept seconds, milliseconds, microseconds, or nanoseconds and are
-normalized to UTC before recency classification. Text and `datetime` values
-must carry an explicit timezone offset; naive values are rejected rather than
-being treated as UTC. A supplied timestamp that cannot be parsed raises
-`ValueError` with the rejected value instead of silently producing default
-temporal patterns.
+Canonical topic extraction lives in `cogniverse_synthetic.generators.base`.
+`extract_topic(...)` walks the shipped schema text roles in canonical order,
+ignores content hashes and invisible markers, and can cap the result with an
+optional `max_words` budget. Numeric timestamps accept seconds, milliseconds,
+microseconds, or nanoseconds and are normalized to UTC before recency
+classification. Text and `datetime` values must carry an explicit timezone
+offset; naive values are rejected rather than being treated as UTC. A supplied
+timestamp that cannot be parsed raises `ValueError` with the rejected value
+instead of silently producing default temporal patterns.
 
 `BackendQuerier.query_by_modality()` accepts only `VIDEO`, `DOCUMENT`, `IMAGE`,
 or `AUDIO`, requires an explicit tenant ID, canonicalizes simple IDs, and
@@ -804,13 +803,6 @@ assert SyntheticDataConfidenceExtractor().get_confidence_breakdown(example_dict)
 The `cogniverse_synthetic/utils` subpackage contains the content-normalization
 and agent-selection helpers used by routing generation.
 
-- **`PatternExtractor`** (`pattern_extraction.py`) — extracts topics (bigrams/
-  trigrams), entities (capitalized/technical terms), temporal patterns, and
-  content-type keywords from sampled content, using `FieldMappingConfig` to
-  stay schema-agnostic. `extract()` returns all four pattern groups;
-  `extract_topics()`, `extract_entities()`, `extract_temporal_patterns()`,
-  `extract_content_types()`, and `extract_relationships()` expose the
-  individual operations.
 - **`AgentInferrer`** (`agent_inference.py`) — infers routing agents from
   modality, content characteristics, workflow shape, or task text through
   `infer_from_modality()`, `infer_from_characteristics()`,
@@ -868,7 +860,6 @@ cogniverse_synthetic/
 │   └── workflow.py            # WorkflowGenerator
 ├── utils/
 │   ├── __init__.py            # Utility exports
-│   ├── pattern_extraction.py  # PatternExtractor
 │   └── agent_inference.py     # AgentInferrer
 └── approval/
     ├── __init__.py              # Approval exports

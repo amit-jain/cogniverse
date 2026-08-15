@@ -249,12 +249,11 @@ class EntityExtractionGenerator(BaseGenerator):
     def __init__(
         self,
         entity_extractor: EntityExtractor,
-        pattern_extractor: Optional[Any] = None,
         agent_inferrer: Optional[Any] = None,
         optimizer_config: Optional[Any] = None,
         extraction_timeout_seconds: float = DEFAULT_ENTITY_EXTRACTION_TIMEOUT_SECONDS,
     ):
-        super().__init__(pattern_extractor, agent_inferrer)
+        super().__init__(agent_inferrer)
         if not callable(entity_extractor):
             raise ValueError("entity_extractor is required")
         if (

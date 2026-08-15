@@ -53,11 +53,11 @@ flowchart TB
         end
 
         subgraph Utilities["<span style='color:#000'>Utilities</span>"]
-            PatternExtractor["<span style='color:#000'>PatternExtractor<br/>Topics, Entities</span>"]
+            TopicExtraction["<span style='color:#000'>Topic extraction<br/>Topics, entities</span>"]
             AgentInferrer["<span style='color:#000'>AgentInferrer<br/>Agent Mapping</span>"]
         end
 
-        RoutingGen --> PatternExtractor
+        RoutingGen --> TopicExtraction
         RoutingGen --> AgentInferrer
     end
 
@@ -87,7 +87,7 @@ flowchart TB
     style RoutingGen fill:#81c784,stroke:#388e3c,color:#000
     style WorkflowGen fill:#81c784,stroke:#388e3c,color:#000
     style Utilities fill:#ffcc80,stroke:#ef6c00,color:#000
-    style PatternExtractor fill:#ffb74d,stroke:#ef6c00,color:#000
+    style TopicExtraction fill:#ffb74d,stroke:#ef6c00,color:#000
     style AgentInferrer fill:#ffb74d,stroke:#ef6c00,color:#000
     style ExternalSystems fill:#90caf9,stroke:#1565c0,color:#000
     style Backend fill:#64b5f6,stroke:#1565c0,color:#000
@@ -101,10 +101,10 @@ flowchart TB
 ### Generation Pipeline
 
 Steps 1, 2, and 4 are the same for every optimizer. Step 3 is shown here for
-the `routing` optimizer, which combines `PatternExtractor`, the production
-entity extractor, a validated DSPy query module, and the production routing
-decision. Workflow generation uses `AgentInferrer`; profile generation uses its
-production profile-selection callback (see "Generators" below).
+the `routing` optimizer, which combines canonical topic extraction, the
+production entity extractor, a validated DSPy query module, and the production
+routing decision. Workflow generation uses `AgentInferrer`; profile generation
+uses its production profile-selection callback (see "Generators" below).
 
 ```mermaid
 %%{init: {"theme": "base", "themeVariables": {"actorBkg": "#90caf9", "actorBorder": "#1565c0", "actorTextColor": "#000000", "lineColor": "#546e7a", "noteBkgColor": "#ffcc80", "noteBorderColor": "#ef6c00", "noteTextColor": "#000000", "signalTextColor": "#000000"}}}%%
@@ -114,7 +114,7 @@ sequenceDiagram
     participant PS as ProfileSelector
     participant BQ as BackendQuerier
     participant Gen as RoutingGenerator
-    participant PE as PatternExtractor
+    participant TE as Topic extraction
     participant Entity as Entity Agent
     participant Gateway as Routing Gateway
     participant Backend as Backend DB
@@ -384,7 +384,6 @@ from cogniverse_foundation.config.unified_config import (
     OptimizerGenerationConfig,
 )
 from cogniverse_synthetic.generators.routing import RoutingGenerator
-from cogniverse_synthetic.utils import PatternExtractor
 
 
 async def generate_routing_examples(lm: dspy.LM):
@@ -401,7 +400,6 @@ async def generate_routing_examples(lm: dspy.LM):
     generator = RoutingGenerator(
         entity_extractor=production_entity_extractor,
         routing_decider=production_routing_decider,
-        pattern_extractor=PatternExtractor(),
         optimizer_config=optimizer_config,
     )
     with dspy.context(lm=lm):
@@ -466,9 +464,11 @@ asyncio.run(main())
 
 #### 6. Utilities (`utils/`)
 
-**PatternExtractor** (`utils/pattern_extraction.py`):
+**Canonical topic extraction** (`generators/base.py:extract_topic`):
 
-- Extract topics — bigrams, trigrams (`extract_topics`)
+- Extract a grounded topic from the shipped schema text roles
+- Reject content hashes and invisible markers
+- Apply an optional `max_words` budget when callers need a shorter topic
 
 - Extract entities — capitalized terms, CamelCase/technical terms (`extract_entities`)
 
@@ -1185,7 +1185,6 @@ libs/
     │   │   └── workflow.py
     │   ├── utils/                  # Pattern extraction and agent inference
     │   │   ├── __init__.py
-    │   │   ├── pattern_extraction.py
     │   │   └── agent_inference.py
     │   └── approval/               # Human-in-loop approval system
     │       ├── __init__.py
@@ -1219,7 +1218,7 @@ tests/
 | `generators` | `BaseGenerator`, `QueryEnhancementGenerator`, `EntityExtractionGenerator`, `ProfileGenerator`, `RoutingGenerator`, `WorkflowGenerator`; each exposes async `generate`, `validate_inputs`, and `get_generator_info` |
 | `profile_selector` | `ProfileSelector(llm_client=None, generator_config=None)` and async `select_profiles(optimizer_name, optimizer_task, available_profiles, max_profiles=3)` |
 | `backend_querier` | `BackendQuerier(backend, backend_config, field_mappings)`, async `query_profiles(...)`, and async `query_by_modality(...)` |
-| `utils` | `PatternExtractor` and its extraction methods; `AgentInferrer(agents_config, agent_mappings)` with configuration validation and exact workflow-sequence inference |
+| `utils` | `AgentInferrer(agents_config, agent_mappings)` with configuration validation and exact workflow-sequence inference; canonical topic extraction is provided by `cogniverse_synthetic.generators.base.extract_topic(...)` |
 | `dspy_signatures` / `dspy_modules` | `GenerateModalityQuery`, `GenerateEntityQuery`, `RegenerateSyntheticExample`, `InferAgentFromModality`, `ValidatedEntityQueryGenerator(max_retries).forward(topics, entities, entity_types)`, and `ValidatedSyntheticExampleRegenerator(max_retries)` |
 | `approval` | `SyntheticDataConfidenceExtractor()` with `extract` / `get_confidence_breakdown`; `SyntheticDataFeedbackHandler(generator, generation_timeout_seconds, max_regeneration_attempts=2)` with async `process_rejection` |
 

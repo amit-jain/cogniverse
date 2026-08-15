@@ -19,7 +19,6 @@ from cogniverse_synthetic.approval.confidence_extractor import (
 from cogniverse_synthetic.dspy_modules import ValidatedEntityQueryGenerator
 from cogniverse_synthetic.generators.base import GenerationTracker
 from cogniverse_synthetic.generators.routing import RoutingGenerator
-from cogniverse_synthetic.utils import PatternExtractor
 
 pytestmark = pytest.mark.unit
 
@@ -285,44 +284,101 @@ def test_query_generator_uses_configured_module_and_retry_limit() -> None:
     assert query_generator.generate.__class__.__name__ == "Predict"
 
 
-async def test_generation_requires_grounding_dependencies() -> None:
-    generator = _routing_generator()
+async def test_generation_rejects_content_without_canonical_topic() -> None:
+    generator = RoutingGenerator(
+        entity_extractor=_extract_entities,
+        routing_decider=_route_query,
+        optimizer_config=_routing_generator().optimizer_config,
+    )
 
     with pytest.raises(
-        ValueError, match="^RoutingGenerator requires pattern_extractor$"
+        ValueError, match="^sampled routing content requires a non-empty topic$"
     ):
         await generator.generate(
-            sampled_content=[{"topic": "Marie Curie and radium"}],
+            sampled_content=[
+                {
+                    "schema_name": "document_text",
+                    "embedding_type": "single_vector",
+                }
+            ],
             target_count=1,
             tenant_id="acme:routing",
         )
 
 
 async def test_query_generation_rejects_missing_source_topic() -> None:
-    generator = _routing_generator()
-
     with pytest.raises(
         ValueError,
-        match="^patterns must contain at least one source-derived topic$",
+        match="^sampled routing content requires a non-empty topic$",
     ):
-        await generator._generate_entity_query(
-            [{"text": "Marie Curie", "type": "PERSON"}],
-            {"topics": []},
+        await RoutingGenerator(
+            entity_extractor=_extract_entities,
+            routing_decider=_route_query,
+            optimizer_config=_routing_generator().optimizer_config,
+        ).generate(
+            sampled_content=[
+                {
+                    "schema_name": "document_text",
+                    "embedding_type": "single_vector",
+                }
+            ],
+            target_count=1,
+            tenant_id="acme:routing",
         )
+
+
+async def test_generation_uses_canonical_topic_string_for_query_generation() -> None:
+    class _SourceQueryGenerator:
+        max_retries = 3
+
+        def __init__(self) -> None:
+            self.inputs = []
+
+        def __call__(self, **kwargs):
+            self.inputs.append(kwargs)
+            return SimpleNamespace(
+                query=f"find {kwargs['topics']}",
+                reasoning=f"Used {kwargs['topics']} from this source item.",
+                _retry_count=0,
+                _max_retries=3,
+            )
+
+    generator = RoutingGenerator(
+        entity_extractor=_extract_entities,
+        routing_decider=_route_query,
+        optimizer_config=_routing_generator().optimizer_config,
+    )
+    query_generator = _SourceQueryGenerator()
+    generator.query_generator = query_generator
+
+    examples = await generator.generate(
+        sampled_content=[
+            {
+                "topic": "TensorFlow deployment guide",
+                "schema_name": "document_text",
+                "embedding_type": "single_vector",
+            }
+        ],
+        target_count=1,
+        tenant_id="acme:routing",
+    )
+
+    assert query_generator.inputs == [
+        {
+            "topics": "TensorFlow deployment guide",
+            "entities": ["TensorFlow"],
+            "entity_types": ["TECHNOLOGY"],
+        }
+    ]
+    assert examples[0].query == "find TensorFlow deployment guide"
+    assert examples[0].enhanced_query == (
+        "find TensorFlow(TECHNOLOGY) deployment guide"
+    )
 
 
 async def test_generation_rejects_content_without_extracted_entities() -> None:
     async def extract_entities(text: str, tenant_id: str):
         return {"query": text, "entities": [], "relationships": []}
-
-    class _EmptyPatternExtractor:
-        def extract(self, sampled_content):
-            return {
-                "topics": ["radioactivity"],
-                "entities": [],
-                "temporal": [],
-                "content_types": ["document"],
-            }
 
     class _UnexpectedQueryGenerator:
         max_retries = 3
@@ -337,7 +393,6 @@ async def test_generation_rejects_content_without_extracted_entities() -> None:
     generator = RoutingGenerator(
         entity_extractor=extract_entities,
         routing_decider=_route_query,
-        pattern_extractor=_EmptyPatternExtractor(),
         optimizer_config=_routing_generator().optimizer_config,
     )
     query_generator = _UnexpectedQueryGenerator()
@@ -389,7 +444,6 @@ async def test_generation_keeps_source_query_entities_and_agent_aligned() -> Non
     generator = RoutingGenerator(
         entity_extractor=_extract_entities,
         routing_decider=_route_aligned_query,
-        pattern_extractor=PatternExtractor(),
         optimizer_config=_routing_generator().optimizer_config,
     )
     generator.query_generator = _SourceQueryGenerator()
@@ -453,7 +507,6 @@ async def test_generation_drops_repeated_canonical_routing_label() -> None:
     generator = RoutingGenerator(
         entity_extractor=_extract_entities,
         routing_decider=_route_query,
-        pattern_extractor=PatternExtractor(),
         optimizer_config=_routing_generator().optimizer_config,
     )
     generator.query_generator = _RepeatedQueryGenerator()
@@ -512,16 +565,10 @@ async def test_generation_fills_quota_after_one_duplicate() -> None:
                 _max_retries=3,
             )
 
-    class _GroundedPatternExtractor:
-        def extract(self, records):
-            assert records == [{"topic": "TensorFlow"}]
-            return {"topics": ["TensorFlow"]}
-
     query_generator = _SequenceQueryGenerator()
     generator = RoutingGenerator(
         entity_extractor=_extract_entities,
         routing_decider=_route_query,
-        pattern_extractor=_GroundedPatternExtractor(),
         optimizer_config=_routing_generator().optimizer_config,
     )
     generator.query_generator = query_generator
@@ -582,11 +629,6 @@ async def test_generation_stops_after_duplicate_streak_is_exhausted() -> None:
                 _max_retries=3,
             )
 
-    class _GroundedPatternExtractor:
-        def extract(self, records):
-            assert records == [{"topic": "TensorFlow"}]
-            return {"topics": ["TensorFlow"]}
-
     entity_calls = []
     routing_calls = []
 
@@ -604,7 +646,6 @@ async def test_generation_stops_after_duplicate_streak_is_exhausted() -> None:
     generator = RoutingGenerator(
         entity_extractor=_counted_entities,
         routing_decider=_counted_route,
-        pattern_extractor=_GroundedPatternExtractor(),
         optimizer_config=_routing_generator().optimizer_config,
     )
     generator.query_generator = query_generator
@@ -673,7 +714,6 @@ async def test_generation_preserves_actual_gateway_routing_decision() -> None:
     generator = RoutingGenerator(
         entity_extractor=_extract_entities,
         routing_decider=route_with_gateway,
-        pattern_extractor=PatternExtractor(),
         optimizer_config=_routing_generator().optimizer_config,
     )
     generator.query_generator = _SourceQueryGenerator()
@@ -742,7 +782,6 @@ async def test_generation_rejects_noncanonical_gateway_confidence(
     generator = RoutingGenerator(
         entity_extractor=_extract_entities,
         routing_decider=route_with_invalid_confidence,
-        pattern_extractor=PatternExtractor(),
         optimizer_config=_routing_generator().optimizer_config,
     )
     generator.query_generator = _SourceQueryGenerator()
@@ -777,7 +816,7 @@ async def test_generation_metadata_matches_canonical_contract() -> None:
 
     query, metadata = await generator._generate_entity_query(
         [{"text": "TensorFlow", "type": "TECHNOLOGY"}],
-        {"topics": ["machine learning"]},
+        "machine learning",
     )
 
     assert query == "find machine learning about TensorFlow"
@@ -815,7 +854,7 @@ async def test_routing_passes_entity_texts_and_types_as_structured_sequences() -
             {"text": "Washington, D.C.", "type": "PLACE"},
             {"text": "Meta AI", "type": "ORGANIZATION"},
         ],
-        {"topics": ["policy"]},
+        "policy",
     )
 
     assert query == "find Washington, D.C. reports from Meta AI"
@@ -913,7 +952,7 @@ async def test_query_generation_rejects_malformed_boundary_output(
     ):
         await generator._generate_entity_query(
             [{"text": "TensorFlow", "type": "TECHNOLOGY"}],
-            {"topics": ["machine learning"]},
+            "machine learning",
         )
 
 
@@ -924,10 +963,7 @@ async def test_query_generation_rejects_empty_entities() -> None:
         ValueError,
         match="^entities must contain at least one item$",
     ):
-        await generator._generate_entity_query(
-            [],
-            {"topics": ["machine learning"]},
-        )
+        await generator._generate_entity_query([], "machine learning")
 
 
 async def test_query_generation_keeps_event_loop_responsive() -> None:
@@ -959,7 +995,7 @@ async def test_query_generation_keeps_event_loop_responsive() -> None:
     result, _ = await asyncio.gather(
         generator._generate_entity_query(
             [{"text": "TensorFlow", "type": "TECHNOLOGY"}],
-            {"topics": ["machine learning"]},
+            "machine learning",
         ),
         release_generator(),
     )
@@ -984,7 +1020,7 @@ async def test_query_generation_boundary_failure_raises_with_context() -> None:
     ) as error:
         await generator._generate_entity_query(
             [{"text": "TensorFlow", "type": "TECHNOLOGY"}],
-            {"topics": ["machine learning"]},
+            "machine learning",
         )
 
     assert isinstance(error.value.__cause__, TimeoutError)
@@ -1013,11 +1049,11 @@ async def test_concurrent_validated_dspy_boundaries_keep_inputs_separate() -> No
     pytorch, tensorflow = await asyncio.gather(
         generator._generate_entity_query(
             [{"text": "PyTorch", "type": "TECHNOLOGY"}],
-            {"topics": ["machine learning"]},
+            "machine learning",
         ),
         generator._generate_entity_query(
             [{"text": "TensorFlow", "type": "TECHNOLOGY"}],
-            {"topics": ["machine learning"]},
+            "machine learning",
         ),
     )
 
