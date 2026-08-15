@@ -2138,15 +2138,17 @@ class AgentDispatcher:
         result = await gateway_agent._process_impl(input_data)
 
         if result.complexity == "complex":
-            final = await self._execute_orchestration_task(
-                query,
-                context,
-                tenant_id,
-                gateway_context={
-                    "modality": result.modality,
-                    "generation_type": result.generation_type,
-                    "confidence": result.confidence,
-                },
+            final = dict(
+                await self._execute_orchestration_task(
+                    query,
+                    context,
+                    tenant_id,
+                    gateway_context={
+                        "modality": result.modality,
+                        "generation_type": result.generation_type,
+                        "confidence": result.confidence,
+                    },
+                )
             )
         else:
             # Simple: route directly to the execution agent
@@ -2176,18 +2178,20 @@ class AgentDispatcher:
             # (its user-facing message + hits), not a routing breadcrumb. The
             # breadcrumb, saved as the assistant turn, fed the anaphora rewriter
             # on the next turn and replaced the answer in the messaging display.
-            # Gateway triage is stamped under "gateway"; the raw downstream
-            # payload stays under "downstream_result".
+            # The raw downstream payload stays under "downstream_result".
             final = dict(downstream)
             final["agent"] = "gateway_agent"
-            final["gateway"] = {
-                "complexity": result.complexity,
-                "modality": result.modality,
-                "generation_type": result.generation_type,
-                "routed_to": result.routed_to,
-                "confidence": result.confidence,
-            }
             final["downstream_result"] = downstream
+
+        # Gateway triage is stamped under "gateway" on both paths so a caller can
+        # always read how the query was classified and where it was routed.
+        final["gateway"] = {
+            "complexity": result.complexity,
+            "modality": result.modality,
+            "generation_type": result.generation_type,
+            "routed_to": result.routed_to,
+            "confidence": result.confidence,
+        }
 
         # Output rails on the final user-facing response (front-door exit).
         if rail_chains is not None and isinstance(final, dict):

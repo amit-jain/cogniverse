@@ -295,6 +295,15 @@ class TestGatewayOrchestrationHandoff:
 
         assert result["status"] == "success"
         assert result["agent"] == "orchestrator_agent"
+        # The gateway triage is stamped identically on both routing paths so a
+        # caller never needs to know which branch answered.
+        assert result["gateway"] == {
+            "complexity": "complex",
+            "modality": "both",
+            "generation_type": "raw_results",
+            "routed_to": "orchestrator_agent",
+            "confidence": 0.4,
+        }
         assert result["gateway_context"]["modality"] == "both"
         # Strong shape assertion: the dispatcher must thread through every
         # field the orchestrator round-trip is contracted to surface.
@@ -711,12 +720,23 @@ class TestStreamingAgentConstruction:
         entry.capabilities = [capability]
         dispatcher._registry.get_agent.return_value = entry
 
+        # Query enhancement grounds its expansion terms in the sampled source
+        # text, so the streaming context must carry it like production does.
+        context = (
+            {"source_text": "Robots assemble cars on a factory floor."}
+            if capability == "query_enhancement"
+            else None
+        )
         agent, typed_input = await dispatcher.create_streaming_agent(
-            agent_name, "find robots", "acme:prod"
+            agent_name, "find robots", "acme:prod", context=context
         )
 
         assert type(agent).__name__ == agent_type
         assert type(typed_input).__name__ == input_type
+        if capability == "query_enhancement":
+            assert typed_input.source_text == (
+                "Robots assemble cars on a factory floor."
+            )
 
 
 # ── Annotation Queue HTTP endpoints ──────────────────────────────────────
