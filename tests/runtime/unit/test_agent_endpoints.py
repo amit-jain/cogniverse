@@ -720,21 +720,24 @@ class TestStreamingAgentConstruction:
         entry.capabilities = [capability]
         dispatcher._registry.get_agent.return_value = entry
 
-        # Query enhancement grounds its expansion terms in the sampled source
-        # text, so the streaming context must carry it like production does.
-        context = (
-            {"source_text": "Robots assemble cars on a factory floor."}
-            if capability == "query_enhancement"
-            else None
-        )
         agent, typed_input = await dispatcher.create_streaming_agent(
-            agent_name, "find robots", "acme:prod", context=context
+            agent_name, "find robots", "acme:prod"
         )
 
         assert type(agent).__name__ == agent_type
         assert type(typed_input).__name__ == input_type
         if capability == "query_enhancement":
-            assert typed_input.source_text == (
+            # Interactive callers carry no sampled source; the input is built
+            # with an empty source_text and grounding applies only when a
+            # caller supplies one.
+            assert typed_input.source_text == ""
+            _, sourced_input = await dispatcher.create_streaming_agent(
+                agent_name,
+                "find robots",
+                "acme:prod",
+                context={"source_text": "Robots assemble cars on a factory floor."},
+            )
+            assert sourced_input.source_text == (
                 "Robots assemble cars on a factory floor."
             )
 

@@ -34,7 +34,11 @@ class QueryEnhancementInput(AgentInput):
 
     query: str = Field(..., description="Query to enhance")
     source_text: str = Field(
-        ..., description="Sampled source text used to ground expansion terms"
+        "",
+        description=(
+            "Sampled source text that grounds expansion terms; empty when the "
+            "caller has no source, as interactive queries do"
+        ),
     )
     entities: Optional[List[Dict[str, Any]]] = Field(
         None, description="Entities from EntityExtractionAgent"
@@ -79,8 +83,9 @@ class QueryEnhancementSignature(dspy.Signature):
     query: str = dspy.InputField(desc="Original user query")
     source_text: str = dspy.InputField(
         desc=(
-            "Sampled source text. Every expansion_terms entry must be a "
-            "literal term drawn from this text. Synonyms stay free-form."
+            "Sampled source text, possibly empty. When non-empty, every "
+            "expansion_terms entry must be a literal term drawn from this text; "
+            "when empty, expansion terms are free-form. Synonyms stay free-form."
         )
     )
     grounding_context: str = dspy.InputField(
@@ -105,7 +110,7 @@ class QueryEnhancementModule(dspy.Module):
         self.enhancer = dspy.ChainOfThought(QueryEnhancementSignature)
 
     def forward(
-        self, query: str, source_text: str, grounding_context: str = ""
+        self, query: str, source_text: str = "", grounding_context: str = ""
     ) -> dspy.Prediction:
         """Enhance query using DSPy.
 
