@@ -191,6 +191,9 @@ floor cannot be met.
 This keeps generated labels identical to the behaviour being optimized instead
 of inferring types from capitalization. The entity shape matches what the
 finetuning evaluator (`adapter_evaluator._check_entity_prediction`) scores.
+Pure content hashes and pure non-speech annotations such as `*Screaming*` or
+`[Music]` are skipped before entity labeling; mixed speech strings remain as
+source text.
 
 ```python
 from cogniverse_agents.entity_extraction_agent import (
@@ -265,8 +268,10 @@ Corrected or inflected variants such as `applaude`/`applaud` and
 Topic extraction uses the shared helper and prefers `description`,
 `segment_description`, `transcript`, `topic`, `title`, then `video_title`.
 Bare identifier-like hex strings, including `_seg_` suffixed forms, are
-ignored. The query-enhancement generator then truncates the surviving topic to
-four words before building its query set.
+ignored. Pure non-speech annotations are also ignored in topic, expansion, and
+source-text paths; mixed speech strings remain intact. The query-enhancement
+generator then truncates the surviving topic to four words before building its
+query set.
 
 ### ProfileGenerator
 
@@ -727,13 +732,16 @@ invalid for an `entity_rich` query.
 
 Canonical topic extraction lives in `cogniverse_synthetic.generators.base`.
 `extract_topic(...)` walks the shipped schema text roles in canonical order,
-ignores content hashes and invisible markers, and can cap the result with an
-optional `max_words` budget. Numeric timestamps accept seconds, milliseconds,
-microseconds, or nanoseconds and are normalized to UTC before recency
-classification. Text and `datetime` values must carry an explicit timezone
-offset; naive values are rejected rather than being treated as UTC. A supplied
-timestamp that cannot be parsed raises `ValueError` with the rejected value
-instead of silently producing default temporal patterns.
+ignores content hashes and pure non-speech annotations, and can cap the result
+with an optional `max_words` budget. The structural predicate
+`is_non_speech_annotation(...)` matches text made only of bracketed,
+parenthesized, or asterisked annotation tokens. Mixed strings are preserved
+verbatim. Numeric timestamps accept seconds, milliseconds, microseconds, or
+nanoseconds and are normalized to UTC before recency classification. Text and
+`datetime` values must carry an explicit timezone offset; naive values are
+rejected rather than being treated as UTC. A supplied timestamp that cannot be
+parsed raises `ValueError` with the rejected value instead of silently
+producing default temporal patterns.
 
 `BackendQuerier.query_by_modality()` accepts only `VIDEO`, `DOCUMENT`, `IMAGE`,
 or `AUDIO`, requires an explicit tenant ID, canonicalizes simple IDs, and
