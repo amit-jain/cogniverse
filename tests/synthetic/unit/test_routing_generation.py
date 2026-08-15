@@ -17,6 +17,7 @@ from cogniverse_synthetic.approval.confidence_extractor import (
     SyntheticDataConfidenceExtractor,
 )
 from cogniverse_synthetic.dspy_modules import ValidatedEntityQueryGenerator
+from cogniverse_synthetic.generators.base import GenerationTracker
 from cogniverse_synthetic.generators.routing import RoutingGenerator
 from cogniverse_synthetic.utils import PatternExtractor
 
@@ -437,7 +438,7 @@ async def test_generation_keeps_source_query_entities_and_agent_aligned() -> Non
     ]
 
 
-async def test_generation_rejects_repeated_canonical_routing_label() -> None:
+async def test_generation_drops_repeated_canonical_routing_label() -> None:
     class _RepeatedQueryGenerator:
         max_retries = 3
 
@@ -456,18 +457,29 @@ async def test_generation_rejects_repeated_canonical_routing_label() -> None:
         optimizer_config=_routing_generator().optimizer_config,
     )
     generator.query_generator = _RepeatedQueryGenerator()
+    tracker = GenerationTracker(
+        optimizer="routing",
+        target_count=2,
+        floor_count=1,
+    )
 
-    with pytest.raises(ValueError) as error:
-        await generator.generate(
-            sampled_content=[
-                {"topic": "TensorFlow graph execution"},
-                {"topic": "TensorFlow graph optimization"},
-            ],
-            target_count=2,
-            tenant_id="acme:routing",
-        )
+    examples = await generator.generate(
+        sampled_content=[
+            {"topic": "TensorFlow graph execution"},
+            {"topic": "TensorFlow graph optimization"},
+        ],
+        target_count=2,
+        tenant_id="acme:routing",
+        generation_tracker=tracker,
+        generation_floor_count=1,
+    )
 
-    assert str(error.value) == (
+    assert [example.query for example in examples] == ["find TensorFlow"]
+    assert [example.chosen_agent for example in examples] == ["video_search_agent"]
+    assert tracker.returned_count == 1
+    assert tracker.surplus_exhausted is True
+    assert tracker.dropped_examples[0].candidate == "find TensorFlow"
+    assert tracker.dropped_examples[0].reason == (
         "RoutingGenerator generated duplicate canonical label "
         "(query='find TensorFlow', entities=(('TensorFlow', 'TECHNOLOGY'),), "
         "chosen_agent='video_search_agent')"
