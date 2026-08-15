@@ -1491,11 +1491,8 @@ class AgentDispatcher:
             input_kwargs["tenant_id"] = tenant_id
         if "source_text" in input_cls.model_fields:
             source_text = context.get("source_text")
-            if not isinstance(source_text, str) or not source_text.strip():
-                raise ValueError(
-                    f"Agent '{agent_name}' requires source_text in context"
-                )
-            input_kwargs["source_text"] = source_text
+            if source_text is not None:
+                input_kwargs["source_text"] = source_text
 
         # Forward upstream agent results from context (e.g., entities from entity extraction)
         for key in ("entities", "relationships", "enhanced_query"):
@@ -1747,11 +1744,8 @@ class AgentDispatcher:
             input_kwargs["tenant_id"] = tenant_id
         if "source_text" in input_cls.model_fields:
             source_text = (context or {}).get("source_text")
-            if not isinstance(source_text, str) or not source_text.strip():
-                raise ValueError(
-                    f"Agent '{agent_name}' requires source_text in context"
-                )
-            input_kwargs["source_text"] = source_text
+            if source_text is not None:
+                input_kwargs["source_text"] = source_text
         return agent, input_cls(**input_kwargs)
 
     async def _execute_search_task(

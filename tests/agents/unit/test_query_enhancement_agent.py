@@ -156,6 +156,31 @@ class TestQueryEnhancementAgent:
         assert result.confidence == 0.85
 
     @pytest.mark.asyncio
+    async def test_process_without_source_text_enhances_freely(self, query_agent):
+        """Interactive callers have no sampled source; the module receives an
+        empty source_text and still enhances (grounding applies only to a
+        supplied source)."""
+        query_agent.dspy_module.forward = Mock(
+            return_value=dspy.Prediction(
+                enhanced_query="machine learning tutorials and guides",
+                expansion_terms="deep learning, neural networks",
+                synonyms="ML",
+                context="beginner",
+                confidence="0.8",
+                reasoning="Expanded ML",
+            )
+        )
+
+        request = QueryEnhancementInput(query="ML tutorials", tenant_id=TEST_TENANT_ID)
+        assert request.source_text == ""
+
+        result = await query_agent._process_impl(request)
+
+        assert query_agent.dspy_module.forward.call_args.kwargs["source_text"] == ""
+        assert result.enhanced_query == "machine learning tutorials and guides"
+        assert result.expansion_terms == ["deep learning", "neural networks"]
+
+    @pytest.mark.asyncio
     async def test_process_label_confidence_maps_to_band(self, query_agent):
         """Label confidence ("high") from a real LM maps to the 0.9 band via
         parse_confidence, not the 0.7 crash-default of the old float() path."""
