@@ -198,7 +198,7 @@ class RoutingGenerator(BaseGenerator):
             topic = self._extract_topic(content)
 
             labelled = await self.entity_labeler.generate(
-                sampled_content=[content],
+                sampled_content=[{"topic": topic}],
                 target_count=1,
                 tenant_id=tenant_id,
             )

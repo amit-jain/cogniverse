@@ -9,6 +9,7 @@ from cogniverse_synthetic.generators.base import (
     CANONICAL_TOPIC_FIELDS,
     extract_topic,
     is_content_hash_topic,
+    is_non_speech_annotation,
 )
 from cogniverse_synthetic.generators.profile import ProfileGenerator
 from cogniverse_synthetic.generators.query_enhancement import (
@@ -115,6 +116,24 @@ def test_content_hash_predicate_distinguishes_hashes_from_titles(value, expected
 
 
 @pytest.mark.parametrize(
+    ("value", "expected"),
+    [
+        ("*Screaming*", True),
+        ("[Music]", True),
+        ("(applause)", True),
+        ("[Music] (applause) *Screaming*", True),
+        ("[Music] hello there", False),
+        ("hello [Music] there", False),
+        ("hello there", False),
+    ],
+)
+def test_non_speech_annotation_predicate_detects_only_annotation_tokens(
+    value, expected
+):
+    assert is_non_speech_annotation(value) is expected
+
+
+@pytest.mark.parametrize(
     ("extract_topic", "expected"),
     [
         (_profile_topic, None),
@@ -140,6 +159,18 @@ def test_extract_topic_uses_document_body_and_strips_bom():
     item = LIVE_DOCUMENT_SAMPLE
 
     assert extract_topic(item, max_words=4) == "The video is of"
+
+
+def test_extract_topic_rejects_annotation_only_transcript():
+    item = {"audio_transcript": "*Screaming*"}
+
+    assert extract_topic(item) is None
+
+
+def test_extract_topic_preserves_mixed_transcript_annotations():
+    item = {"audio_transcript": "[Music] hello there"}
+
+    assert extract_topic(item) == "[Music] hello there"
 
 
 def test_extract_topic_refuses_metadata_only_fallback():

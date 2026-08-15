@@ -24,6 +24,10 @@ logger = logging.getLogger(__name__)
 _ZERO_WIDTH_TRANSLATION = str.maketrans("", "", "\ufeff\u200b\u200c\u200d\u2060")
 _SCHEMA_DIR = Path(__file__).resolve().parents[4] / "configs" / "schemas"
 _CONTENT_HASH_TOPIC_RE = re.compile(r"^[0-9a-f]{32,}(?:_seg_\d+)?$", re.IGNORECASE)
+_NON_SPEECH_ANNOTATION_TOKEN = r"(?:\*[^*]+\*|\[[^\[\]]+\]|\([^()]+\))"
+_NON_SPEECH_ANNOTATION_RE = re.compile(
+    rf"^(?:{_NON_SPEECH_ANNOTATION_TOKEN})(?:\s+{_NON_SPEECH_ANNOTATION_TOKEN})*$"
+)
 _TEXT_DOCUMENT_MAPPING_ROLES = (
     "title",
     "description",
@@ -42,6 +46,11 @@ def normalize_text(value: str) -> str:
 def is_content_hash_topic(value: str) -> bool:
     """Return True when a topic is only an identifier-like content hash."""
     return bool(_CONTENT_HASH_TOPIC_RE.fullmatch(normalize_text(value)))
+
+
+def is_non_speech_annotation(value: str) -> bool:
+    """Return True when text is only annotation tokens, not speech content."""
+    return bool(_NON_SPEECH_ANNOTATION_RE.fullmatch(normalize_text(value)))
 
 
 def _base_text_fields() -> tuple[str, ...]:
@@ -207,7 +216,7 @@ def extract_topic(
         if not isinstance(value, str):
             continue
         topic = normalize_text(value)
-        if not topic or is_content_hash_topic(topic):
+        if not topic or is_content_hash_topic(topic) or is_non_speech_annotation(topic):
             continue
         if max_words is not None:
             topic = " ".join(topic.split()[:max_words])
