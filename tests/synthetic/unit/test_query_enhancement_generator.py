@@ -377,22 +377,36 @@ def test_generator_rejects_metadata_only_source_text():
         )
 
 
-def test_generator_rejects_hash_only_title_when_building_expansion_terms():
+@pytest.mark.parametrize(
+    "item",
+    [
+        {"title": HASH_VALUE},
+        {"audio_transcript": "*Screaming*"},
+    ],
+)
+def test_generator_rejects_non_speech_title_when_building_expansion_terms(item):
     generator = QueryEnhancementGenerator()
 
     with pytest.raises(
         ValueError,
         match="sampled_content contains no expansion terms outside topic 'animal rodeo'",
     ):
-        generator._expansion_terms("animal rodeo", {"title": HASH_VALUE})
+        generator._expansion_terms("animal rodeo", item)
 
 
-def test_generator_rejects_hash_only_source_text():
+@pytest.mark.parametrize(
+    "item",
+    [
+        {"title": HASH_VALUE},
+        {"audio_transcript": "*Screaming*"},
+    ],
+)
+def test_generator_rejects_non_speech_source_text(item):
     with pytest.raises(
         ValueError,
         match="sampled_content contains no source text",
     ):
-        QueryEnhancementGenerator._source_text({"title": HASH_VALUE})
+        QueryEnhancementGenerator._source_text(item)
 
 
 @pytest.mark.asyncio

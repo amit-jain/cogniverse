@@ -1611,7 +1611,7 @@ class TestAllGeneratorsTogether:
             {
                 "title": "Deep Learning with TensorFlow",
                 "video_title": "Deep Learning with TensorFlow",
-                "segment_description": "Tutorial on neural networks",
+                "segment_description": "Tutorial on TensorFlow neural networks",
                 "schema_name": "video_videoprism_large_mv_chunk_30s",
                 "profile_type": "video",
                 "modality": "VIDEO",
