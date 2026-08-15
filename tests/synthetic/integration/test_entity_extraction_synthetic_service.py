@@ -185,7 +185,13 @@ async def test_service_generates_entity_extraction_examples(ee_service):
                 {"text": "Menlo Park", "type": "PLACE"},
             ],
             "entity_types": "TECHNOLOGY,ORGANIZATION,PLACE",
-            "relationships": [],
+            "relationships": [
+                {
+                    "source": "Meta AI",
+                    "target": "Menlo Park",
+                    "type": "in",
+                }
+            ],
         }
 
 

@@ -343,16 +343,8 @@ class EntityExtractionAgent(
         """Extract entities via GLiNER and relationships via SpaCy."""
         self.emit_progress("extraction", "Extracting entities with GLiNER...")
         raw_entities = self._gliner_extractor.extract_entities(query)
-
-        entities = [
-            Entity(
-                text=e["text"],
-                type=self._GLINER_TYPE_MAP.get(e["label"], e["label"]),
-                confidence=e.get("confidence", e.get("score", 0.5)),
-                context=self._extract_context(e["text"], query),
-            )
-            for e in raw_entities
-        ]
+        entity_records = self._build_entity_records(raw_entities, query)
+        entities = [record["entity"] for record in entity_records]
 
         relationships: List[Relationship] = []
         if len(entities) >= 2 and self._spacy_analyzer is not None:
@@ -360,17 +352,193 @@ class EntityExtractionAgent(
                 "relationships", "Extracting relationships with SpaCy..."
             )
             raw_rels = self._spacy_analyzer.extract_semantic_relationships(query)
-            relationships = [
-                Relationship(
-                    subject=r["subject"],
-                    relation=r["relation"],
-                    object=r["object"],
-                    confidence=r.get("confidence", 0.5),
-                )
-                for r in raw_rels
-            ]
+            relationships = self._reconcile_relationships(
+                query=query,
+                entity_records=entity_records,
+                raw_relationships=raw_rels,
+            )
 
         return entities, relationships, "fast"
+
+    def _build_entity_records(
+        self, raw_entities: List[Dict[str, Any]], query: str
+    ) -> List[Dict[str, Any]]:
+        """Attach span metadata to GLiNER entities for relationship grounding."""
+        entity_records: List[Dict[str, Any]] = []
+
+        for raw_entity in raw_entities:
+            entity_text = raw_entity["text"]
+            entity = Entity(
+                text=entity_text,
+                type=self._GLINER_TYPE_MAP.get(
+                    raw_entity["label"], raw_entity["label"]
+                ),
+                confidence=raw_entity.get("confidence", raw_entity.get("score", 0.5)),
+                context=self._extract_context(entity_text, query),
+            )
+
+            start = raw_entity.get("start_pos")
+            end = raw_entity.get("end_pos")
+            if not isinstance(start, int) or not isinstance(end, int) or start < 0:
+                start = query.lower().find(entity_text.lower())
+                end = start + len(entity_text) if start >= 0 else -1
+
+            entity_records.append(
+                {
+                    "entity": entity,
+                    "start": start,
+                    "end": end,
+                }
+            )
+
+        return entity_records
+
+    def _reconcile_relationships(
+        self,
+        *,
+        query: str,
+        entity_records: List[Dict[str, Any]],
+        raw_relationships: List[Dict[str, Any]],
+    ) -> List[Relationship]:
+        """Ground SpaCy relationships to GLiNER entity spans."""
+        if not raw_relationships or self._spacy_analyzer is None:
+            return []
+
+        try:
+            doc = self._spacy_analyzer.nlp(query)
+        except Exception as exc:
+            raise RuntimeError(
+                "spaCy parse failed while grounding relationships for "
+                f"query={query[:80]!r}"
+            ) from exc
+
+        relationships: List[Relationship] = []
+        for raw_relationship in raw_relationships:
+            subject_entity = self._resolve_relationship_endpoint(
+                doc,
+                raw_relationship.get("subject"),
+                role="subject",
+                entity_records=entity_records,
+            )
+            object_entity = self._resolve_relationship_endpoint(
+                doc,
+                raw_relationship.get("object"),
+                role="object",
+                entity_records=entity_records,
+            )
+            relation = raw_relationship.get("relation")
+            if (
+                subject_entity is None
+                or object_entity is None
+                or not isinstance(relation, str)
+                or not relation.strip()
+            ):
+                continue
+
+            relationships.append(
+                Relationship(
+                    subject=subject_entity.text,
+                    relation=relation,
+                    object=object_entity.text,
+                    confidence=raw_relationship.get("confidence", 0.5),
+                )
+            )
+
+        return relationships
+
+    def _resolve_relationship_endpoint(
+        self,
+        doc: Any,
+        endpoint_text: Any,
+        *,
+        role: str,
+        entity_records: List[Dict[str, Any]],
+    ) -> Optional[Entity]:
+        """Map a SpaCy relationship endpoint back to the best GLiNER entity."""
+        if not isinstance(endpoint_text, str) or not endpoint_text.strip():
+            return None
+
+        anchor = self._find_endpoint_anchor(doc, endpoint_text)
+        if anchor is None:
+            return None
+
+        if role == "subject" and anchor.pos_ in {"VERB", "AUX"}:
+            child = self._find_child_with_deps(anchor, {"nsubj", "nsubjpass", "csubj"})
+            if child is not None:
+                anchor = child
+        elif role == "object" and anchor.pos_ in {"VERB", "AUX"}:
+            child = self._find_child_with_deps(anchor, {"dobj", "pobj", "attr", "obj"})
+            if child is not None:
+                anchor = child
+
+        start = getattr(anchor, "idx", None)
+        end = None
+        if start is not None:
+            token_text = getattr(anchor, "text", "")
+            end = start + len(token_text)
+
+        if not isinstance(start, int) or not isinstance(end, int):
+            return None
+
+        return self._entity_for_span(entity_records, start, end)
+
+    def _find_endpoint_anchor(self, doc: Any, endpoint_text: str) -> Any:
+        """Find the token anchor corresponding to a relationship endpoint."""
+        pieces = [piece for piece in endpoint_text.split() if piece]
+        if not pieces:
+            return None
+
+        tokens = list(doc)
+        lowered_tokens = [getattr(token, "text", "").lower() for token in tokens]
+        lowered_pieces = [piece.lower() for piece in pieces]
+        width = len(lowered_pieces)
+
+        for start in range(len(tokens) - width + 1):
+            if lowered_tokens[start : start + width] == lowered_pieces:
+                return tokens[start + width - 1]
+
+        for token in tokens:
+            if getattr(token, "text", "").lower() == endpoint_text.lower():
+                return token
+
+        return None
+
+    def _find_child_with_deps(self, token: Any, deps: set[str]) -> Any:
+        """Return the first child token with one of the requested dependencies."""
+        for child in getattr(token, "children", []):
+            if getattr(child, "dep_", None) in deps:
+                return child
+        return None
+
+    def _entity_for_span(
+        self, entity_records: List[Dict[str, Any]], start: int, end: int
+    ) -> Optional[Entity]:
+        """Choose the entity span with the strongest overlap."""
+        best_entity: Optional[Entity] = None
+        best_overlap = 0
+        best_length = -1
+
+        for record in entity_records:
+            entity_start = record["start"]
+            entity_end = record["end"]
+            if not isinstance(entity_start, int) or not isinstance(entity_end, int):
+                continue
+            if entity_start < 0 or entity_end <= entity_start:
+                continue
+
+            overlap = min(end, entity_end) - max(start, entity_start)
+            if overlap <= 0:
+                continue
+
+            entity_length = entity_end - entity_start
+            if overlap > best_overlap or (
+                overlap == best_overlap and entity_length > best_length
+            ):
+                best_overlap = overlap
+                best_length = entity_length
+                best_entity = record["entity"]
+
+        return best_entity
 
     async def _extract_dspy_path(self, query: str) -> List[Entity]:
         """Fall back to DSPy ChainOfThought for entity extraction."""
