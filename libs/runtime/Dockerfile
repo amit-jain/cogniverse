@@ -47,12 +47,6 @@ RUN --mount=type=cache,target=/root/.cache/uv,sharing=locked \
     uv pip install -e ./libs/telemetry-phoenix && \
     rm -rf /root/.cache/pip
 
-# spaCy model wheel — venv-side install, not HF cache (so the chart's
-# model-cache volume mount can't shadow it). HF Hub models like GLiNER
-# load lazily into the chart-mounted HF cache instead.
-RUN --mount=type=cache,target=/root/.cache/uv,sharing=locked \
-    uv pip install "en_core_web_sm@https://github.com/explosion/spacy-models/releases/download/en_core_web_sm-3.8.0/en_core_web_sm-3.8.0-py3-none-any.whl"
-
 # Runtime stage
 FROM python:3.12-slim
 
