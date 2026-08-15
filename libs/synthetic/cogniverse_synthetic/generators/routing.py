@@ -16,7 +16,11 @@ from typing import Any, Dict, List, Optional
 from pydantic import BaseModel
 
 from cogniverse_foundation.config.unified_config import OptimizerGenerationConfig
-from cogniverse_synthetic.generators.base import BaseGenerator
+from cogniverse_synthetic.generators.base import (
+    DEFAULT_SYNTHETIC_GENERATION_FLOOR_COUNT,
+    BaseGenerator,
+    GenerationTracker,
+)
 from cogniverse_synthetic.generators.entity_extraction import (
     DEFAULT_ENTITY_EXTRACTION_TIMEOUT_SECONDS,
     EntityExtractionGenerator,
@@ -171,8 +175,17 @@ class RoutingGenerator(BaseGenerator):
         if not isinstance(tenant_id, str) or not tenant_id.strip():
             raise ValueError("tenant_id is required for routing generation")
 
+        generation_tracker = kwargs.get("generation_tracker")
+        floor_count = self._generation_floor_count(
+            kwargs.get(
+                "generation_floor_count",
+                DEFAULT_SYNTHETIC_GENERATION_FLOOR_COUNT,
+            )
+        )
+
         examples = []
         canonical_labels: set[tuple[str, tuple[tuple[str, str], ...], str]] = set()
+        last_validation_error: Exception | None = None
 
         for index in range(target_count):
             content = sampled_content[index % len(sampled_content)]
@@ -222,11 +235,14 @@ class RoutingGenerator(BaseGenerator):
             )
             canonical_label = (query, canonical_entities, chosen_agent)
             if canonical_label in canonical_labels:
-                raise ValueError(
+                last_validation_error = ValueError(
                     "RoutingGenerator generated duplicate canonical label "
                     f"(query={query!r}, entities={canonical_entities!r}, "
                     f"chosen_agent={chosen_agent!r})"
                 )
+                if isinstance(generation_tracker, GenerationTracker):
+                    generation_tracker.record_drop(query, last_validation_error)
+                continue
             canonical_labels.add(canonical_label)
 
             metadata = {
@@ -256,6 +272,20 @@ class RoutingGenerator(BaseGenerator):
                 metadata=metadata,
             )
             examples.append(example)
+
+        self.require_exact_target_count(
+            examples,
+            target_count,
+            source_context=(
+                f"{target_count} routing iterations from "
+                f"{len(sampled_content)} sampled content items"
+            ),
+            floor_count=floor_count,
+            generation_tracker=generation_tracker
+            if isinstance(generation_tracker, GenerationTracker)
+            else None,
+            cause=last_validation_error,
+        )
 
         logger.info(f"Generated {len(examples)} RoutingExperience examples")
         return examples
