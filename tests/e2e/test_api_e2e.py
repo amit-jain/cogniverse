@@ -898,12 +898,13 @@ class TestSyntheticDataAPI:
         assert data["schema_name"] == "ProfileSelectionExampleSchema"
         assert data["count"] == 2
         assert data["selected_profiles"] == [PROFILE]
-        assert data["metadata"] == {
-            "backend_query_strategy": "diverse",
-            "sampled_content_count": 2,
-            "target_count": 2,
-            "vespa_sample_size": 2,
-        }
+        _assert_synthetic_metadata(
+            data["metadata"],
+            backend_query_strategy="diverse",
+            sampled_content_count=2,
+            target_count=2,
+            vespa_sample_size=2,
+        )
         assert len(data["data"]) == 2
         profile_fields = {
             "query",
@@ -1039,12 +1040,13 @@ class TestSyntheticDataAPI:
         assert data["count"] == 5
         assert len(data["data"]) == 5
         assert data["selected_profiles"] == [PROFILE]
-        assert data["metadata"] == {
-            "backend_query_strategy": "entity_rich",
-            "sampled_content_count": 1,
-            "target_count": 5,
-            "vespa_sample_size": 1,
-        }
+        _assert_synthetic_metadata(
+            data["metadata"],
+            backend_query_strategy="entity_rich",
+            sampled_content_count=1,
+            target_count=5,
+            vespa_sample_size=1,
+        )
         fixture_corpus = " ".join(
             str(value)
             for result in fixture_results
@@ -1159,12 +1161,13 @@ class TestSyntheticDataAPI:
             profile in expected_available_profiles for profile in selected_profiles
         )
         assert len({profile_types[profile] for profile in selected_profiles}) == 2
-        assert data["metadata"] == {
-            "backend_query_strategy": "multi_modal_sequences",
-            "sampled_content_count": 2,
-            "target_count": 2,
-            "vespa_sample_size": 2,
-        }
+        _assert_synthetic_metadata(
+            data["metadata"],
+            backend_query_strategy="multi_modal_sequences",
+            sampled_content_count=2,
+            target_count=2,
+            vespa_sample_size=2,
+        )
         video_modality = profile_types[PROFILE]
         other_profile = next(
             profile for profile in selected_profiles if profile != PROFILE
@@ -1268,12 +1271,13 @@ class TestSyntheticDataAPI:
             profile in expected_available_profiles for profile in selected_profiles
         )
         assert len({_profile_family(profile) for profile in selected_profiles}) == 2
-        assert data["metadata"] == {
-            "backend_query_strategy": "multi_modal_sequences",
-            "sampled_content_count": 2,
-            "target_count": 4,
-            "vespa_sample_size": 2,
-        }
+        _assert_synthetic_metadata(
+            data["metadata"],
+            backend_query_strategy="multi_modal_sequences",
+            sampled_content_count=2,
+            target_count=4,
+            vespa_sample_size=2,
+        )
         # Topics are verbatim source text, and the VLM captions that supply
         # them are regenerated on every ingest, so their exact wording is not
         # pinnable. Pin the template shape exactly, and require the video topic
@@ -1877,6 +1881,52 @@ class TestIngestionAPI:
 # - Audio: generated 10-second, 16 kHz mono WAV from that video's audio stream
 # - PDF: deterministic one-page PDF generated from repository evaluation text
 # - Document: dataset_summary.md (real markdown about the evaluation set)
+
+
+_GENERATION_METADATA_FIELDS = frozenset(
+    {
+        "requested_count",
+        "returned_count",
+        "shortfall_count",
+        "floor_count",
+        "surplus_exhausted",
+        "dropped_count",
+        "dropped_examples",
+    }
+)
+
+
+def _assert_synthetic_metadata(
+    metadata: dict,
+    *,
+    backend_query_strategy: str,
+    sampled_content_count: int,
+    target_count: int,
+    vespa_sample_size: int,
+) -> None:
+    """Pin response metadata exactly, except the fields a live LM varies.
+
+    Drop counts depend on how many examples the model returned ungrounded on
+    this run, so they carry an invariant instead of a fixed value.
+    """
+    generation = metadata.get("generation")
+    assert isinstance(generation, dict), f"metadata has no generation block: {metadata}"
+    assert {key: value for key, value in metadata.items() if key != "generation"} == {
+        "backend_query_strategy": backend_query_strategy,
+        "sampled_content_count": sampled_content_count,
+        "target_count": target_count,
+        "vespa_sample_size": vespa_sample_size,
+    }
+    assert set(generation) == set(_GENERATION_METADATA_FIELDS)
+    assert generation["requested_count"] == target_count
+    assert generation["returned_count"] == target_count
+    assert generation["shortfall_count"] == 0
+    assert generation["floor_count"] == 1
+    assert generation["surplus_exhausted"] is False
+    assert generation["dropped_count"] == len(generation["dropped_examples"])
+    for drop in generation["dropped_examples"]:
+        assert set(drop) == {"candidate", "reason"}
+        assert drop["reason"].strip() != ""
 
 
 def _expected_artifact_source_url(path: Path, tenant_id: str = TENANT_ID) -> str:
