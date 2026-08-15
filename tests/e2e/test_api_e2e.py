@@ -1017,7 +1017,7 @@ class TestSyntheticDataAPI:
                 json={
                     "optimizer": "routing",
                     "count": 5,
-                    "vespa_sample_size": 1,
+                    "vespa_sample_size": 5,
                     "strategy": "entity_rich",
                     "max_profiles": 1,
                     "tenant_id": TENANT_ID,
@@ -1043,9 +1043,9 @@ class TestSyntheticDataAPI:
         _assert_synthetic_metadata(
             data["metadata"],
             backend_query_strategy="entity_rich",
-            sampled_content_count=1,
+            sampled_content_count=5,
             target_count=5,
-            vespa_sample_size=1,
+            vespa_sample_size=5,
         )
         fixture_corpus = " ".join(
             str(value)
