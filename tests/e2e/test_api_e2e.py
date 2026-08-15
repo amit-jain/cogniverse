@@ -30,15 +30,15 @@ from pathlib import Path
 import httpx
 import pytest
 
+from cogniverse_foundation.config.unified_config import BackendProfileConfig
 from cogniverse_synthetic.schemas import ProfileSelectionExampleSchema
+from cogniverse_synthetic.utils import profile_can_ground_topic
 from tests.e2e.conftest import (
     RUNTIME,
     SAMPLE_VIDEO_CONTENT_ID,
     TENANT_ID,
-    _content_sha256,
     _ensure_sample_content_ingested,
     _matching_sample_results,
-    _sample_frame_path,
     _vespa_deployed_schema_names,
     unique_id,
 )
@@ -59,10 +59,11 @@ CANONICAL_WORKFLOW_AGENTS = {
     "image_search_agent",
     "summarizer_agent",
     "detailed_report_agent",
+    "document_agent",
 }
 PRIMARY_AGENT_BY_QUERY_TYPE = {
     "VIDEO": "search_agent",
-    "DOCUMENT": "text_analysis_agent",
+    "DOCUMENT": "document_agent",
     "IMAGE": "image_search_agent",
 }
 
@@ -959,17 +960,20 @@ class TestSyntheticDataAPI:
             ProfileSelectionExampleSchema.model_validate(example).complexity
             for example in data["data"]
         ] == [example["complexity"] for example in data["data"]]
-        assert {example["query_intent"] for example in data["data"]} == {"video_search"}
+        assert {example["query_intent"] for example in data["data"]} == {
+            "image_search",
+            "video_search",
+        }
 
     def test_generate_synthetic_data(self):
         """POST /synthetic/generate creates real synthetic training examples."""
         with httpx.Client(base_url=RUNTIME, timeout=900.0) as client:
             fixture_results = self._exact_video_fixture_results(client)
             source_texts = {
-                result["metadata"]["description"]
+                result["metadata"]["segment_description"]
                 for result in fixture_results
-                if isinstance(result["metadata"].get("description"), str)
-                and result["metadata"]["description"].strip()
+                if isinstance(result["metadata"].get("segment_description"), str)
+                and result["metadata"]["segment_description"].strip()
             }
             assert len(source_texts) == len(fixture_results)
             expected_extractions = []
@@ -1203,14 +1207,11 @@ class TestSyntheticDataAPI:
             assert available_profiles == expected_available_profiles
             assert example["selected_profile"] in selected_profiles
             assert example["modality"] == profile_types[example["selected_profile"]]
-            assert example["query_intent"] == "multi_modal_search"
+            assert example["query_intent"] == "video_search"
             assert "chosen_agent" not in example
             assert "workflow_id" not in example
         assert len({example["query"] for example in data["data"]}) == 2
-        assert {example["modality"] for example in data["data"]} == {
-            video_modality,
-            other_modality,
-        }
+        assert {example["modality"] for example in data["data"]} == {video_modality}
         # complexity is an LM judgment, so no single value is pinnable. The
         # vocabulary contract is enforced at the HTTP boundary: the schema
         # forbids extras and types complexity as a Literal, so a value outside
@@ -1221,7 +1222,6 @@ class TestSyntheticDataAPI:
         ] == [example["complexity"] for example in data["data"]]
 
     def test_generate_workflow_ids_are_unique_and_schema_specific(self):
-        image_content_id = _content_sha256(_sample_frame_path())
         expected_available_profiles = _expected_available_profile_names(TENANT_ID)
         with httpx.Client(base_url=RUNTIME, timeout=900.0) as client:
             agents_response = client.get("/agents/")
@@ -1236,6 +1236,10 @@ class TestSyntheticDataAPI:
                     "tenant_id": TENANT_ID,
                 },
             )
+            ingested_video_topics = {
+                result["metadata"]["segment_description"]
+                for result in self._exact_video_fixture_results(client)
+            }
 
         assert agents_response.status_code == 200, agents_response.text
         registered_agents = set(agents_response.json()["agents"])
@@ -1269,6 +1273,21 @@ class TestSyntheticDataAPI:
             "target_count": 4,
             "vespa_sample_size": 2,
         }
+        # Topics are verbatim source text, and the VLM captions that supply
+        # them are regenerated on every ingest, so their exact wording is not
+        # pinnable. Pin the template shape exactly, and require the video topic
+        # to be verbatim text of a real ingested segment.
+        queries = [example["query"] for example in data["data"]]
+        video_topic = queries[0].removeprefix("find ")
+        document_topic = queries[3].removeprefix("find ")
+        assert queries == [
+            f"find {video_topic}",
+            f"summarize {video_topic}",
+            f"analyze {video_topic} and generate report",
+            f"find {document_topic}",
+        ]
+        assert video_topic != document_topic
+        assert video_topic in ingested_video_topics
         workflow_ids = [example["workflow_id"] for example in data["data"]]
         assert len(set(workflow_ids)) == 4
         assert all(
@@ -1299,13 +1318,6 @@ class TestSyntheticDataAPI:
             assert (
                 example["agent_sequence"][0]
                 == PRIMARY_AGENT_BY_QUERY_TYPE[example["query_type"]]
-            )
-            assert any(
-                content_id in example["query"]
-                for content_id in {
-                    SAMPLE_VIDEO_CONTENT_ID,
-                    image_content_id,
-                }
             )
             assert "selected_profile" not in example
             assert "chosen_agent" not in example
@@ -1883,7 +1895,7 @@ def _expected_artifact_source_url(path: Path, tenant_id: str = TENANT_ID) -> str
 
 
 def _expected_available_profile_names(tenant_id: str) -> list[str]:
-    """Return the deployed sampleable backend profiles for a tenant."""
+    """Return the deployed groundable backend profiles for a tenant."""
     config = json.loads(CONFIG_PATH.read_text())
     deployed_schemas = _vespa_deployed_schema_names()
     if not deployed_schemas:
@@ -1901,6 +1913,9 @@ def _expected_available_profile_names(tenant_id: str) -> list[str]:
         if (
             isinstance(schema_name, str)
             and f"{schema_name}{tenant_suffix}" in deployed_schemas
+            and profile_can_ground_topic(
+                BackendProfileConfig.from_dict(profile_name, profile_config)
+            )
         ):
             expected.append(profile_name)
     return expected
