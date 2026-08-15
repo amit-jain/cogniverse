@@ -16,7 +16,10 @@ from cogniverse_foundation.config.unified_config import (
 from cogniverse_synthetic.approval.confidence_extractor import (
     SyntheticDataConfidenceExtractor,
 )
-from cogniverse_synthetic.dspy_modules import ValidatedEntityQueryGenerator
+from cogniverse_synthetic.dspy_modules import (
+    EntityQueryValidationError,
+    ValidatedEntityQueryGenerator,
+)
 from cogniverse_synthetic.generators.base import GenerationTracker
 from cogniverse_synthetic.generators.routing import RoutingGenerator
 
@@ -112,6 +115,150 @@ def test_enhancement_never_reannotates_inserted_entity_types() -> None:
     )
 
 
+@pytest.mark.asyncio
+async def test_generate_truncates_topic_before_labeling_and_query_generation() -> None:
+    long_caption = {
+        "segment_description": (
+            "A man wearing a white tank top stands near a wire mesh fence at a "
+            "sporting event. Spectators line the field while the athlete prepares "
+            "to throw the disc. Rolling hills and a sunny park are visible in the "
+            "background."
+        )
+    }
+    expected_topic = " ".join(long_caption["segment_description"].split()[:20])
+    entity_calls = []
+
+    async def label_entities(*, sampled_content, target_count, tenant_id):
+        entity_calls.append(
+            {
+                "sampled_content": sampled_content,
+                "target_count": target_count,
+                "tenant_id": tenant_id,
+            }
+        )
+        return [
+            SimpleNamespace(
+                entities=[{"text": "man", "type": "PERSON"}],
+                relationships=[],
+            )
+        ]
+
+    class _CapturingQueryGenerator:
+        max_retries = 3
+
+        def __init__(self):
+            self.calls = []
+
+        def __call__(self, **kwargs):
+            self.calls.append(kwargs)
+            return SimpleNamespace(
+                query=f"find {kwargs['topics']}",
+                reasoning="Used the supplied entity.",
+                _retry_count=0,
+                _max_retries=self.max_retries,
+            )
+
+    generator = _routing_generator()
+    generator.entity_labeler.generate = label_entities
+    query_generator = _CapturingQueryGenerator()
+    generator.query_generator = query_generator
+
+    examples = await generator.generate(
+        [long_caption],
+        target_count=1,
+        tenant_id="tenant-a",
+    )
+
+    assert entity_calls == [
+        {
+            "sampled_content": [{"topic": expected_topic}],
+            "target_count": 1,
+            "tenant_id": "tenant-a",
+        }
+    ]
+    assert query_generator.calls == [
+        {
+            "topics": expected_topic,
+            "entities": ["man"],
+            "entity_types": ["PERSON"],
+        }
+    ]
+    assert examples[0].query == f"find {expected_topic}"
+    assert examples[0].entities == [{"text": "man", "type": "PERSON"}]
+
+
+@pytest.mark.asyncio
+async def test_generate_dedupes_casefold_entity_texts_before_storage() -> None:
+    source = {"segment_description": "sporting event"}
+    entity_calls = []
+
+    async def label_entities(*, sampled_content, target_count, tenant_id):
+        entity_calls.append(
+            {
+                "sampled_content": sampled_content,
+                "target_count": target_count,
+                "tenant_id": tenant_id,
+            }
+        )
+        return [
+            SimpleNamespace(
+                entities=[
+                    {"text": "man", "type": "PERSON"},
+                    {"text": "man", "type": "PERSON"},
+                    {"text": "spectators", "type": "PERSON"},
+                    {"text": "Spectators", "type": "PERSON"},
+                ],
+                relationships=[],
+            )
+        ]
+
+    class _CapturingQueryGenerator:
+        max_retries = 3
+
+        def __init__(self):
+            self.calls = []
+
+        def __call__(self, **kwargs):
+            self.calls.append(kwargs)
+            return SimpleNamespace(
+                query="find man and spectators at sporting event",
+                reasoning="Used the deduped entity set.",
+                _retry_count=0,
+                _max_retries=self.max_retries,
+            )
+
+    generator = _routing_generator()
+    generator.entity_labeler.generate = label_entities
+    query_generator = _CapturingQueryGenerator()
+    generator.query_generator = query_generator
+
+    examples = await generator.generate(
+        [source],
+        target_count=1,
+        tenant_id="tenant-a",
+    )
+
+    assert entity_calls == [
+        {
+            "sampled_content": [{"topic": "sporting event"}],
+            "target_count": 1,
+            "tenant_id": "tenant-a",
+        }
+    ]
+    assert query_generator.calls == [
+        {
+            "topics": "sporting event",
+            "entities": ["man", "spectators"],
+            "entity_types": ["PERSON", "PERSON"],
+        }
+    ]
+    assert examples[0].query == "find man and spectators at sporting event"
+    assert examples[0].entities == [
+        {"text": "man", "type": "PERSON"},
+        {"text": "spectators", "type": "PERSON"},
+    ]
+
+
 def test_validation_does_not_accept_entity_as_substring_of_another_word() -> None:
     generator = ValidatedEntityQueryGenerator(max_retries=1)
     calls = 0
@@ -127,7 +274,7 @@ def test_validation_does_not_accept_entity_as_substring_of_another_word() -> Non
     generator.generate = generate
 
     with pytest.raises(
-        RuntimeError,
+        EntityQueryValidationError,
         match=("Entity query validation failed after 1 attempt for entities: Go"),
     ):
         generator.forward(
@@ -176,7 +323,7 @@ def test_validation_rejects_query_that_omits_one_multiword_entity() -> None:
     )
 
     with pytest.raises(
-        RuntimeError,
+        EntityQueryValidationError,
         match=(
             "Entity query validation failed after 1 attempt for entities: "
             "Marie Curie, radium"
@@ -226,7 +373,7 @@ def test_validation_rejects_separated_fragments_of_punctuated_entity() -> None:
     )
 
     with pytest.raises(
-        RuntimeError,
+        EntityQueryValidationError,
         match=r"Entity query validation failed after 1 attempt for entities:.*Washington",
     ):
         generator.forward(
@@ -441,6 +588,10 @@ async def test_generation_rejects_content_without_extracted_entities() -> None:
         )
 
     assert str(error.value) == (
+        "RoutingGenerator generated 0 unique grounded examples but target_count=1; "
+        "source_context=5 routing candidate draws from 1 sampled content items"
+    )
+    assert str(error.value.__cause__) == (
         "EntityExtractionGenerator generated 0 unique grounded examples but "
         "target_count=1; source_context=1 unique source texts, 1 without entities"
     )
@@ -1138,3 +1289,157 @@ def test_query_generator_cold_build_constructs_once_under_thread_contention(
 
     assert build_count == 1
     assert results[0] is results[1]
+
+
+async def test_query_generation_validation_exhaustion_is_a_value_error() -> None:
+    class _ExhaustedGenerator:
+        max_retries = 3
+
+        def __call__(self, **kwargs):
+            raise EntityQueryValidationError(
+                "Entity query validation failed after 3 attempts for entities: "
+                "TensorFlow"
+            )
+
+    generator = _routing_generator()
+    generator.query_generator = _ExhaustedGenerator()
+
+    with pytest.raises(
+        ValueError,
+        match=(
+            "^Failed to generate valid entity query after 3 retries: Entity query "
+            "validation failed after 3 attempts for entities: TensorFlow$"
+        ),
+    ) as error:
+        await generator._generate_entity_query(
+            [{"text": "TensorFlow", "type": "TECHNOLOGY"}],
+            "machine learning",
+        )
+
+    assert type(error.value.__cause__) is EntityQueryValidationError
+
+
+async def test_generation_drops_candidate_when_query_validation_is_exhausted() -> None:
+    class _ExhaustThenSucceed:
+        max_retries = 3
+
+        def __init__(self) -> None:
+            self.calls = 0
+
+        def __call__(self, **kwargs):
+            self.calls += 1
+            if self.calls == 1:
+                raise EntityQueryValidationError(
+                    "Entity query validation failed after 3 attempts for entities: "
+                    "TensorFlow"
+                )
+            return SimpleNamespace(
+                query="find TensorFlow",
+                reasoning="Used the supplied entity.",
+                _retry_count=0,
+                _max_retries=3,
+            )
+
+    query_generator = _ExhaustThenSucceed()
+    generator = _routing_generator()
+    generator.query_generator = query_generator
+    tracker = GenerationTracker(optimizer="routing", target_count=1, floor_count=1)
+
+    examples = await generator.generate(
+        sampled_content=[{"topic": "TensorFlow"}],
+        target_count=1,
+        tenant_id="acme:routing",
+        generation_tracker=tracker,
+        generation_floor_count=1,
+    )
+
+    assert [example.query for example in examples] == ["find TensorFlow"]
+    assert query_generator.calls == 2
+    assert tracker.returned_count == 1
+    assert len(tracker.dropped_examples) == 1
+    assert [drop.candidate for drop in tracker.dropped_examples] == ["TensorFlow"]
+    assert tracker.dropped_examples[0].reason == (
+        "Failed to generate valid entity query after 3 retries: Entity query "
+        "validation failed after 3 attempts for entities: TensorFlow"
+    )
+
+
+async def test_generation_drops_candidate_when_labeler_yields_no_example() -> None:
+    generator = _routing_generator()
+    real_generate = generator.entity_labeler.generate
+    labeler_inputs = []
+
+    async def label_entities(sampled_content, target_count, tenant_id):
+        labeler_inputs.append(sampled_content)
+        if sampled_content == [{"topic": "blank frame"}]:
+            raise ValueError(
+                "EntityExtractionGenerator generated 0 unique grounded examples "
+                "but target_count=1"
+            )
+        return await real_generate(
+            sampled_content=sampled_content,
+            target_count=target_count,
+            tenant_id=tenant_id,
+        )
+
+    generator.entity_labeler.generate = label_entities
+
+    class _Generator:
+        max_retries = 3
+
+        def __call__(self, **kwargs):
+            return SimpleNamespace(
+                query=f"find {kwargs['topics']}",
+                reasoning="Used the supplied entity.",
+                _retry_count=0,
+                _max_retries=3,
+            )
+
+    generator.query_generator = _Generator()
+    tracker = GenerationTracker(optimizer="routing", target_count=1, floor_count=1)
+
+    examples = await generator.generate(
+        sampled_content=[{"topic": "blank frame"}, {"topic": "TensorFlow"}],
+        target_count=1,
+        tenant_id="acme:routing",
+        generation_tracker=tracker,
+        generation_floor_count=1,
+    )
+
+    assert labeler_inputs == [[{"topic": "blank frame"}], [{"topic": "TensorFlow"}]]
+    assert [example.query for example in examples] == ["find TensorFlow"]
+    assert tracker.returned_count == 1
+    assert [(drop.candidate, drop.reason) for drop in tracker.dropped_examples] == [
+        (
+            "blank frame",
+            "EntityExtractionGenerator generated 0 unique grounded examples "
+            "but target_count=1",
+        )
+    ]
+
+
+async def test_generation_still_raises_when_query_generator_is_unavailable() -> None:
+    class _UnavailableGenerator:
+        max_retries = 3
+
+        def __call__(self, **kwargs):
+            raise TimeoutError("teacher LM timed out")
+
+    generator = _routing_generator()
+    generator.query_generator = _UnavailableGenerator()
+    tracker = GenerationTracker(optimizer="routing", target_count=1, floor_count=1)
+
+    with pytest.raises(
+        RuntimeError,
+        match="^entity query generation failed for entities: TensorFlow$",
+    ) as error:
+        await generator.generate(
+            sampled_content=[{"topic": "TensorFlow"}],
+            target_count=1,
+            tenant_id="acme:routing",
+            generation_tracker=tracker,
+            generation_floor_count=1,
+        )
+
+    assert type(error.value.__cause__) is TimeoutError
+    assert tracker.dropped_examples == []

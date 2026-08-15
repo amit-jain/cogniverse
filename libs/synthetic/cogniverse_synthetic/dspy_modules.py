@@ -21,6 +21,10 @@ from cogniverse_synthetic.dspy_signatures import (
 logger = logging.getLogger(__name__)
 
 
+class EntityQueryValidationError(ValueError):
+    """No generated entity query passed validation within the retry budget."""
+
+
 def _strict_json(value: Mapping[str, Any]) -> str:
     return json.dumps(
         dict(value),
@@ -146,7 +150,7 @@ class ValidatedEntityQueryGenerator(dspy.Module):
             Prediction with validated query and generation metadata
 
         Raises:
-            RuntimeError: If no generated query passes validation
+            EntityQueryValidationError: If no generated query passes validation
         """
         if isinstance(entities, (str, bytes)) or not isinstance(entities, Sequence):
             raise TypeError("entities must be a sequence of strings")
@@ -222,7 +226,7 @@ class ValidatedEntityQueryGenerator(dspy.Module):
             )
 
         attempt_label = "attempt" if self.max_retries == 1 else "attempts"
-        raise RuntimeError(
+        raise EntityQueryValidationError(
             "Entity query validation failed after "
             f"{self.max_retries} {attempt_label} for entities: "
             + ", ".join(entity_list)
