@@ -26,6 +26,127 @@ def _make_extraction_agent():
         return EntityExtractionAgent(deps=deps, port=8010)
 
 
+class _FakeToken:
+    def __init__(
+        self,
+        text: str,
+        dep_: str,
+        pos_: str,
+        idx: int,
+        i: int,
+    ):
+        self.text = text
+        self.dep_ = dep_
+        self.pos_ = pos_
+        self.idx = idx
+        self.i = i
+        self.head = self
+        self.children: list["_FakeToken"] = []
+        self.doc = None
+
+
+class _FakeSpan:
+    def __init__(self, doc: "_FakeDoc", start: int, end: int):
+        self.doc = doc
+        self.start = start
+        self.end = end
+        self.text = " ".join(token.text for token in doc._tokens[start:end])
+        self.start_char = doc._tokens[start].idx
+        last_token = doc._tokens[end - 1]
+        self.end_char = last_token.idx + len(last_token.text)
+
+
+class _FakeDoc:
+    def __init__(self, tokens: list[_FakeToken], noun_chunks: list[tuple[int, int]]):
+        self._tokens = tokens
+        self._noun_chunks = [_FakeSpan(self, start, end) for start, end in noun_chunks]
+        for token in self._tokens:
+            token.doc = self
+
+    def __iter__(self):
+        return iter(self._tokens)
+
+    def __getitem__(self, item):
+        if isinstance(item, slice):
+            if item.step not in (None, 1):
+                raise ValueError("FakeDoc only supports contiguous slices")
+            start = 0 if item.start is None else item.start
+            end = len(self._tokens) if item.stop is None else item.stop
+            return _FakeSpan(self, start, end)
+        return self._tokens[item]
+
+    @property
+    def noun_chunks(self):
+        return list(self._noun_chunks)
+
+
+def _make_caption_doc() -> _FakeDoc:
+    specs = [
+        ("A", "det", "DET"),
+        ("man", "nsubj", "NOUN"),
+        ("wearing", "acl", "VERB"),
+        ("a", "det", "DET"),
+        ("white", "amod", "ADJ"),
+        ("tank", "compound", "NOUN"),
+        ("top", "dobj", "NOUN"),
+        ("stands", "ROOT", "VERB"),
+        ("near", "prep", "ADP"),
+        ("a", "det", "DET"),
+        ("wire", "compound", "NOUN"),
+        ("mesh", "compound", "NOUN"),
+        ("fence", "pobj", "NOUN"),
+        ("at", "prep", "ADP"),
+        ("a", "det", "DET"),
+        ("sporting", "compound", "NOUN"),
+        ("event", "pobj", "NOUN"),
+        (".", "punct", "PUNCT"),
+    ]
+    tokens = []
+    offset = 0
+    for i, (text, dep_, pos_) in enumerate(specs):
+        token = _FakeToken(text=text, dep_=dep_, pos_=pos_, idx=offset, i=i)
+        tokens.append(token)
+        offset += len(text)
+        if i < len(specs) - 1:
+            offset += 1
+
+    head_indices = [
+        1,
+        7,
+        1,
+        6,
+        5,
+        6,
+        2,
+        7,
+        7,
+        12,
+        11,
+        12,
+        8,
+        12,
+        16,
+        16,
+        13,
+        7,
+    ]
+    for token, head_index in zip(tokens, head_indices, strict=True):
+        token.head = tokens[head_index]
+    for token in tokens:
+        if token.head is not token:
+            token.head.children.append(token)
+
+    return _FakeDoc(
+        tokens,
+        noun_chunks=[
+            (0, 2),
+            (3, 7),
+            (9, 13),
+            (14, 17),
+        ],
+    )
+
+
 @pytest.fixture
 def mock_dspy_lm():
     """Mock DSPy language model"""
@@ -360,45 +481,142 @@ class TestGLiNERFastPath:
 
     @pytest.mark.asyncio
     async def test_fast_path_extracts_relationships(self, fast_agent):
-        """SpaCy produces Relationship objects when 2+ entities found."""
+        """Fast-path relationships are grounded to GLiNER entity texts."""
+        query = (
+            "A man wearing a white tank top stands near a wire mesh fence "
+            "at a sporting event."
+        )
         fast_agent._gliner_extractor.extract_entities.return_value = [
             {
-                "text": "Obama",
+                "text": "A man",
                 "label": "PERSON",
                 "confidence": 0.9,
                 "start_pos": 0,
                 "end_pos": 5,
             },
             {
-                "text": "White House",
-                "label": "LOCATION",
+                "text": "white tank top",
+                "label": "OBJECT",
                 "confidence": 0.85,
-                "start_pos": 14,
-                "end_pos": 25,
+                "start_pos": 16,
+                "end_pos": 30,
+            },
+            {
+                "text": "wire mesh fence",
+                "label": "LOCATION",
+                "confidence": 0.8,
+                "start_pos": 45,
+                "end_pos": 60,
+            },
+            {
+                "text": "sporting event",
+                "label": "EVENT",
+                "confidence": 0.78,
+                "start_pos": 66,
+                "end_pos": 80,
             },
         ]
         fast_agent._spacy_analyzer.extract_semantic_relationships.return_value = [
             {
-                "subject": "Obama",
+                "subject": "stands",
+                "relation": "near",
+                "object": "fence",
+                "confidence": 0.7,
+                "grammatical_pattern": "prep-near",
+            },
+            {
+                "subject": "fence",
                 "relation": "at",
-                "object": "House",
+                "object": "event",
                 "confidence": 0.7,
                 "grammatical_pattern": "prep-at",
             },
         ]
+        fast_agent._spacy_analyzer.nlp = Mock(return_value=_make_caption_doc())
 
         result = await fast_agent._process_impl(
-            EntityExtractionInput(
-                query="Obama at the White House", tenant_id=TEST_TENANT_ID
-            )
+            EntityExtractionInput(query=query, tenant_id=TEST_TENANT_ID)
         )
 
         assert result.path_used == "fast"
-        assert len(result.relationships) == 1
-        assert result.relationships[0].subject == "Obama"
-        assert result.relationships[0].relation == "at"
-        assert result.relationships[0].object == "House"
-        assert result.relationships[0].confidence == 0.7
+        assert [
+            (rel.subject, rel.relation, rel.object, rel.confidence)
+            for rel in result.relationships
+        ] == [
+            ("A man", "near", "wire mesh fence", 0.7),
+            ("wire mesh fence", "at", "sporting event", 0.7),
+        ]
+
+    @pytest.mark.asyncio
+    async def test_fast_path_relationship_endpoints_are_entity_texts(self, fast_agent):
+        """Every emitted relationship endpoint must be one of the entity texts."""
+        query = (
+            "A man wearing a white tank top stands near a wire mesh fence "
+            "at a sporting event."
+        )
+        fast_agent._gliner_extractor.extract_entities.return_value = [
+            {
+                "text": "A man",
+                "label": "PERSON",
+                "confidence": 0.9,
+                "start_pos": 0,
+                "end_pos": 5,
+            },
+            {
+                "text": "white tank top",
+                "label": "OBJECT",
+                "confidence": 0.85,
+                "start_pos": 16,
+                "end_pos": 30,
+            },
+            {
+                "text": "wire mesh fence",
+                "label": "LOCATION",
+                "confidence": 0.8,
+                "start_pos": 45,
+                "end_pos": 60,
+            },
+            {
+                "text": "sporting event",
+                "label": "EVENT",
+                "confidence": 0.78,
+                "start_pos": 66,
+                "end_pos": 80,
+            },
+        ]
+        fast_agent._spacy_analyzer.extract_semantic_relationships.return_value = [
+            {
+                "subject": "stands",
+                "relation": "near",
+                "object": "fence",
+                "confidence": 0.7,
+                "grammatical_pattern": "prep-near",
+            },
+            {
+                "subject": "fence",
+                "relation": "at",
+                "object": "event",
+                "confidence": 0.7,
+                "grammatical_pattern": "prep-at",
+            },
+        ]
+        fast_agent._spacy_analyzer.nlp = Mock(return_value=_make_caption_doc())
+
+        result = await fast_agent._process_impl(
+            EntityExtractionInput(query=query, tenant_id=TEST_TENANT_ID)
+        )
+
+        entity_texts = {entity.text for entity in result.entities}
+        assert entity_texts == {
+            "A man",
+            "white tank top",
+            "wire mesh fence",
+            "sporting event",
+        }
+        assert result.relationships
+        for relationship in result.relationships:
+            assert relationship.subject in entity_texts
+            assert relationship.object in entity_texts
 
     @pytest.mark.asyncio
     async def test_fast_path_skips_relationships_for_single_entity(self, fast_agent):
