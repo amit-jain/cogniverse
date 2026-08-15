@@ -91,21 +91,27 @@ class TestProfileGenerator:
         assert len(set(observed_queries)) == target_count == 100
 
     @pytest.mark.asyncio
-    async def test_rejects_target_larger_than_unique_grounded_topics(self):
+    async def test_returns_floor_sized_result_when_target_exceeds_capacity(self):
         generator = ProfileGenerator(profile_labeler=_select_document)
 
-        with pytest.raises(ValueError) as error:
-            await generator.generate(
-                sampled_content=SAMPLED_CONTENT,
-                target_count=5,
-                profile_configs=PROFILE_CONFIGS,
-                tenant_id="test:unit",
-            )
-
-        assert str(error.value) == (
-            "ProfileGenerator generated 1 unique grounded examples but "
-            "target_count=5; source_context=1 unique source topics"
+        examples = await generator.generate(
+            sampled_content=SAMPLED_CONTENT,
+            target_count=5,
+            profile_configs=PROFILE_CONFIGS,
+            tenant_id="test:unit",
         )
+
+        assert [example.model_dump() for example in examples] == [
+            {
+                "query": "find quantum computing applications in document content",
+                "available_profiles": "audio_semantic,document_semantic",
+                "selected_profile": "document_semantic",
+                "reasoning": "The production selector chose the document index.",
+                "query_intent": "document_search",
+                "modality": "document",
+                "complexity": "medium",
+            }
+        ]
 
     @pytest.mark.asyncio
     async def test_cross_modal_rejects_target_larger_than_unique_combinations(self):
@@ -122,23 +128,47 @@ class TestProfileGenerator:
                 "complexity": "complex",
             }
 
-        with pytest.raises(ValueError) as error:
-            await ProfileGenerator(profile_labeler=label_cross_modal).generate(
-                sampled_content=[
-                    {"topic": "Curie lecture", "schema_name": "audio_segments"},
-                    {"topic": "Radium notes", "schema_name": "document_pages"},
-                ],
-                target_count=3,
-                profile_configs=PROFILE_CONFIGS,
-                tenant_id="test:unit",
-                cross_modal=True,
-            )
-
-        assert calls == []
-        assert str(error.value) == (
-            "ProfileGenerator generated 2 unique grounded examples but "
-            "target_count=3; source_context=2 unique cross-modal query combinations"
+        examples = await ProfileGenerator(profile_labeler=label_cross_modal).generate(
+            sampled_content=[
+                {"topic": "Curie lecture", "schema_name": "audio_segments"},
+                {"topic": "Radium notes", "schema_name": "document_pages"},
+            ],
+            target_count=3,
+            profile_configs=PROFILE_CONFIGS,
+            tenant_id="test:unit",
+            cross_modal=True,
         )
+
+        assert calls == [
+            "find Curie lecture in audio content together with Radium notes in document content",
+            "find Radium notes in document content together with Curie lecture in audio content",
+        ]
+        assert [example.model_dump() for example in examples] == [
+            {
+                "query": (
+                    "find Curie lecture in audio content together with "
+                    "Radium notes in document content"
+                ),
+                "available_profiles": "audio_semantic,document_semantic",
+                "selected_profile": "document_semantic",
+                "reasoning": "The production selector chose document retrieval.",
+                "query_intent": "multi_modal_search",
+                "modality": "document",
+                "complexity": "complex",
+            },
+            {
+                "query": (
+                    "find Radium notes in document content together with "
+                    "Curie lecture in audio content"
+                ),
+                "available_profiles": "audio_semantic,document_semantic",
+                "selected_profile": "document_semantic",
+                "reasoning": "The production selector chose document retrieval.",
+                "query_intent": "multi_modal_search",
+                "modality": "document",
+                "complexity": "complex",
+            },
+        ]
 
     @pytest.mark.asyncio
     async def test_labels_through_profile_selection_agent_process(self):
@@ -241,8 +271,8 @@ class TestProfileGenerator:
         with pytest.raises(
             ValueError,
             match=(
-                "profile selection modality must match selected profile "
-                "'document_semantic' configured type 'document'"
+                "ProfileGenerator generated 0 unique grounded examples "
+                "but target_count=1; source_context=1 unique source topics"
             ),
         ):
             await ProfileGenerator(profile_labeler=select_wrong_modality).generate(
@@ -307,20 +337,22 @@ class TestProfileGenerator:
 
         generator = ProfileGenerator(profile_labeler=fail_selection)
 
-        with pytest.raises(
-            RuntimeError,
-            match=(
-                "Profile selection failed for tenant='test:unit' "
-                "query='find quantum computing applications in document "
-                "content': selector unavailable"
-            ),
-        ):
+        with pytest.raises(RuntimeError) as error:
             await generator.generate(
                 sampled_content=SAMPLED_CONTENT,
                 target_count=1,
                 profile_configs=PROFILE_CONFIGS,
                 tenant_id="test:unit",
             )
+
+        assert str(error.value) == (
+            "profile optimizer callback profile_labeler failed: "
+            "Profile selection failed for tenant='test:unit' "
+            "query='find quantum computing applications in document content': "
+            "selector unavailable"
+        )
+        assert isinstance(error.value.__cause__, ConnectionError)
+        assert str(error.value.__cause__) == "selector unavailable"
 
     @pytest.mark.asyncio
     async def test_cross_modal_query_uses_exact_production_selection(self):
@@ -399,7 +431,7 @@ class TestProfileGenerator:
             )
 
     @pytest.mark.parametrize(
-        ("field", "value", "message"),
+        ("field", "value", "_message"),
         [
             ("reasoning", " padded reasoning ", "reasoning must not contain"),
             ("query_intent", " video_search ", "query_intent must not contain"),
@@ -411,7 +443,7 @@ class TestProfileGenerator:
     )
     @pytest.mark.asyncio
     async def test_rejects_noncanonical_production_selector_values(
-        self, field, value, message
+        self, field, value, _message
     ):
         async def label_profile(query, profiles, tenant_id):
             output = {
@@ -425,7 +457,13 @@ class TestProfileGenerator:
             output[field] = value
             return output
 
-        with pytest.raises(ValueError, match=message):
+        with pytest.raises(
+            ValueError,
+            match=(
+                "ProfileGenerator generated 0 unique grounded examples "
+                "but target_count=1; source_context=1 unique source topics"
+            ),
+        ):
             await ProfileGenerator(profile_labeler=label_profile).generate(
                 sampled_content=SAMPLED_CONTENT,
                 target_count=1,

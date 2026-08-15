@@ -247,6 +247,7 @@ def _synthetic_runtime_sections(*, marker: str = "fixture") -> dict[str, Any]:
                 "metadata_fields": {"source": "source_uri"},
             },
             "synthetic_generation_timeout_seconds": 300.0,
+            "synthetic_generation_floor_count": 1,
             "optimizer_configs": {
                 "modality": {
                     "optimizer_type": "modality",
@@ -1103,7 +1104,7 @@ class TestSyntheticEntityExtractorWiring:
             selected_profile="document_semantic",
             confidence=0.95,
             reasoning="The production selector chose document retrieval.",
-            query_intent="research_lookup",
+            query_intent="document_search",
             modality="document",
             complexity="medium",
         )

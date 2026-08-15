@@ -9,7 +9,12 @@ from typing import Any, Dict, List
 
 from pydantic import BaseModel
 
-from cogniverse_synthetic.generators.base import BaseGenerator, extract_topic
+from cogniverse_synthetic.generators.base import (
+    DEFAULT_SYNTHETIC_GENERATION_FLOOR_COUNT,
+    BaseGenerator,
+    GenerationTracker,
+    extract_topic,
+)
 from cogniverse_synthetic.schemas import WorkflowExecutionSchema
 
 logger = logging.getLogger(__name__)
@@ -53,6 +58,13 @@ class WorkflowGenerator(BaseGenerator):
             raise ValueError("WorkflowGenerator requires agent_inferrer")
 
         logger.info(f"Generating {target_count} WorkflowExecution examples")
+        generation_tracker = kwargs.get("generation_tracker")
+        floor_count = self._generation_floor_count(
+            kwargs.get(
+                "generation_floor_count",
+                DEFAULT_SYNTHETIC_GENERATION_FLOOR_COUNT,
+            )
+        )
 
         grounded_plans = []
         seen_queries = set()
@@ -66,14 +78,10 @@ class WorkflowGenerator(BaseGenerator):
                 seen_queries.add(query)
                 grounded_plans.append((query, query_type, complexity, task_type))
 
-        self.require_exact_target_count(
-            grounded_plans[:target_count],
-            target_count,
-            source_context=f"{len(grounded_plans)} unique source-workflow queries",
-        )
-
         examples = []
-        for query, query_type, complexity, task_type in grounded_plans[:target_count]:
+        for query, query_type, complexity, task_type in grounded_plans:
+            if len(examples) == target_count:
+                break
             pattern = self.agent_inferrer.infer_workflow_sequence(
                 complexity,
                 query_type,
@@ -105,6 +113,16 @@ class WorkflowGenerator(BaseGenerator):
                 },
             )
             examples.append(example)
+
+        self.require_exact_target_count(
+            examples,
+            target_count,
+            source_context=f"{len(grounded_plans)} unique source-workflow queries",
+            floor_count=floor_count,
+            generation_tracker=generation_tracker
+            if isinstance(generation_tracker, GenerationTracker)
+            else None,
+        )
 
         logger.info(f"Generated {len(examples)} WorkflowExecution examples")
         return examples

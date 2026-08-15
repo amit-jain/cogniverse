@@ -668,6 +668,7 @@
       "metadata_fields": {}
     },
     "synthetic_generation_timeout_seconds": 300.0,
+    "synthetic_generation_floor_count": 1,
     "optimizer_configs": {
       "modality": {
         "optimizer_type": "modality",

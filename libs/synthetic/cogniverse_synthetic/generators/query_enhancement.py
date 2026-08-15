@@ -14,9 +14,11 @@ import re
 from collections.abc import Awaitable, Callable
 from typing import Any, Dict, List, Optional
 
+import snowballstemmer
 from pydantic import BaseModel
 
 from cogniverse_synthetic.generators.base import (
+    DEFAULT_SYNTHETIC_GENERATION_FLOOR_COUNT,
     BaseGenerator,
     entity_candidate_text_fields,
     extract_topic,
@@ -75,6 +77,7 @@ GROUNDING_MORPHOLOGY_NORMALIZATIONS = {
     "teeth": "tooth",
     "women": "woman",
 }
+_GROUNDING_STEMMER = snowballstemmer.stemmer("english")
 
 
 class QueryEnhancementGenerator(BaseGenerator):
@@ -110,29 +113,29 @@ class QueryEnhancementGenerator(BaseGenerator):
             raise ValueError("tenant_id is required for query enhancement")
         if self.query_enhancer is None:
             raise ValueError("query_enhancer is required")
+        floor_count = self._generation_floor_count(
+            kwargs.get(
+                "generation_floor_count",
+                DEFAULT_SYNTHETIC_GENERATION_FLOOR_COUNT,
+            )
+        )
 
         sources = self._source_records(sampled_content)
 
         grounded_queries: list[tuple[str, List[str], str, str]] = []
         seen_queries: set[str] = set()
-        for topic, allowed_terms, context, source_text in sources:
+        for topic, _allowed_terms, context, source_text in sources:
             for template in self.QUERY_TEMPLATES:
                 query = template.format(topic=topic)
                 if query in seen_queries:
                     continue
                 seen_queries.add(query)
-                grounded_queries.append((query, allowed_terms, context, source_text))
-
-        self.require_exact_target_count(
-            grounded_queries[:target_count],
-            target_count,
-            source_context=f"{len(grounded_queries)} unique source-template queries",
-        )
+                grounded_queries.append((query, _allowed_terms, context, source_text))
 
         examples: List[BaseModel] = []
-        for query, _allowed_terms, context, source_text in grounded_queries[
-            :target_count
-        ]:
+        for query, _allowed_terms, context, source_text in grounded_queries:
+            if len(examples) == target_count:
+                break
             result = await self._request_enhancement_label(
                 query, tenant_id, source_text
             )
@@ -185,6 +188,13 @@ class QueryEnhancementGenerator(BaseGenerator):
                     reasoning=reasoning.strip(),
                 )
             )
+
+        self.require_exact_target_count(
+            examples,
+            target_count,
+            source_context=f"{len(grounded_queries)} unique source-template queries",
+            floor_count=floor_count,
+        )
 
         logger.info(f"Generated {len(examples)} QueryEnhancementExample examples")
         return examples
@@ -245,34 +255,8 @@ class QueryEnhancementGenerator(BaseGenerator):
     @staticmethod
     def _normalize_grounding_token(token: str) -> str:
         token = token.casefold()
-        normalized = GROUNDING_MORPHOLOGY_NORMALIZATIONS.get(token)
-        if normalized is not None:
-            return normalized
-        if len(token) <= 3:
-            return token
-        if token.endswith("ies") and len(token) > 4:
-            return f"{token[:-3]}y"
-        if token.endswith("ied") and len(token) > 4:
-            return f"{token[:-3]}y"
-        if token.endswith("ing") and len(token) > 5:
-            stem = token[:-3]
-            if len(stem) > 3 and stem[-1] == stem[-2]:
-                stem = stem[:-1]
-            return stem
-        if token.endswith("ed") and len(token) > 4:
-            stem = token[:-2]
-            if len(stem) > 3 and stem[-1] == stem[-2]:
-                stem = stem[:-1]
-            return stem
-        if token.endswith(("ses", "xes", "zes", "ches", "shes", "oes")):
-            return token[:-2]
-        if (
-            token.endswith("s")
-            and len(token) > 4
-            and not token.endswith(("ss", "us", "is"))
-        ):
-            return token[:-1]
-        return token
+        token = GROUNDING_MORPHOLOGY_NORMALIZATIONS.get(token, token)
+        return _GROUNDING_STEMMER.stemWord(token)
 
     def _source_records(
         self, sampled_content: List[Dict[str, Any]]

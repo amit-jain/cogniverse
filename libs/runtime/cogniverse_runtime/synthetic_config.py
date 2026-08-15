@@ -360,6 +360,7 @@ def _validate_synthetic(
             "field_mappings",
             "optimizer_configs",
             "synthetic_generation_timeout_seconds",
+            "synthetic_generation_floor_count",
         },
         source="synthetic",
     )
