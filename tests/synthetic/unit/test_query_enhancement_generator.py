@@ -5,6 +5,7 @@ from typing import Any
 import pytest
 import snowballstemmer
 
+from cogniverse_synthetic.generators.base import GenerationTracker
 from cogniverse_synthetic.generators.query_enhancement import (
     GROUNDING_MORPHOLOGY_NORMALIZATIONS,
     QueryEnhancementGenerator,
@@ -246,9 +247,13 @@ async def test_generator_rejects_ungrounded_expansion_phrase():
         )
 
     assert str(error.value) == (
+        "QueryEnhancementGenerator generated 0 unique grounded examples "
+        "but target_count=1; source_context=5 unique source-template queries"
+    )
+    assert str(error.value.__cause__) == (
         "query_enhancement optimizer callback query_enhancer returned "
         "expansion_terms absent from sampled source for "
-        "tenant='acme:synthetic' query='livestock competition agricultural fair': "
+        "tenant='acme:synthetic' query='explain livestock competition agricultural fair': "
         "['quantum physics']"
     )
 
@@ -268,7 +273,13 @@ async def test_generator_rejects_document_body_ungrounded_terms(
 ):
     async def enhance_query(query: str, tenant_id: str, source_text: str):
         assert tenant_id == "acme:synthetic"
-        assert query == "The video is of"
+        assert query in {
+            "The video is of",
+            "find The video is of",
+            "show me The video is of",
+            "The video is of tutorial",
+            "explain The video is of",
+        }
         assert source_text == DOCUMENT_SOURCE_TEXT
         return {
             "original_query": query,
@@ -288,9 +299,13 @@ async def test_generator_rejects_document_body_ungrounded_terms(
         )
 
     assert str(error.value) == (
+        "QueryEnhancementGenerator generated 0 unique grounded examples "
+        "but target_count=1; source_context=5 unique source-template queries"
+    )
+    assert str(error.value.__cause__) == (
         "query_enhancement optimizer callback query_enhancer returned "
         "expansion_terms absent from sampled source for "
-        "tenant='acme:synthetic' query='The video is of': "
+        "tenant='acme:synthetic' query='explain The video is of': "
         f"['{term}']"
     )
 
@@ -323,9 +338,14 @@ async def test_generator_rejects_all_stopword_expansion_phrase():
         )
 
     assert str(error.value) == (
+        "QueryEnhancementGenerator generated 0 unique grounded examples "
+        "but target_count=1; source_context=5 unique source-template queries"
+    )
+    assert str(error.value.__cause__) == (
         "query_enhancement optimizer callback query_enhancer returned "
         "expansion_terms absent from sampled source for "
-        "tenant='acme:synthetic' query='This video frame captures': ['the this']"
+        "tenant='acme:synthetic' query='explain This video frame captures': "
+        "['the this']"
     )
 
 
@@ -373,3 +393,62 @@ def test_generator_rejects_hash_only_source_text():
         match="sampled_content contains no source text",
     ):
         QueryEnhancementGenerator._source_text({"title": HASH_VALUE})
+
+
+@pytest.mark.asyncio
+async def test_generator_replaces_ungrounded_example_from_surplus():
+    """One hallucinated candidate is dropped and replaced, not fatal."""
+    calls: list[str] = []
+
+    async def enhance_query(query: str, tenant_id: str, source_text: str):
+        calls.append(query)
+        if len(calls) == 1:
+            expansion = ["quantum physics"]
+            reasoning = "Production enhancement returned an ungrounded phrase."
+        else:
+            expansion = ["dirt arena"]
+            reasoning = "Production enhancement returned a grounded phrase."
+        return {
+            "original_query": query,
+            "enhanced_query": f"{query} {expansion[0]}",
+            "expansion_terms": expansion,
+            "synonyms": [],
+            "reasoning": reasoning,
+        }
+
+    generator = QueryEnhancementGenerator(query_enhancer=enhance_query)
+    tracker = GenerationTracker(
+        optimizer="query_enhancement", target_count=1, floor_count=1
+    )
+
+    examples = await generator.generate(
+        sampled_content=[
+            {
+                "title": "animal rodeo",
+                "description": (
+                    "livestock competition agricultural fair spectator "
+                    "viewing area dirt arena"
+                ),
+                "content_type": "video",
+            }
+        ],
+        target_count=1,
+        tenant_id="acme:synthetic",
+        generation_tracker=tracker,
+    )
+
+    assert len(examples) == 1
+    assert examples[0].expansion_terms == ["dirt arena"]
+    assert calls == [
+        "livestock competition agricultural fair",
+        "find livestock competition agricultural fair",
+    ]
+
+    metadata = tracker.to_metadata()
+    assert metadata["returned_count"] == 1
+    assert metadata["dropped_count"] == 1
+    assert (
+        metadata["dropped_examples"][0]["candidate"]
+        == "livestock competition agricultural fair"
+    )
+    assert "quantum physics" in metadata["dropped_examples"][0]["reason"]

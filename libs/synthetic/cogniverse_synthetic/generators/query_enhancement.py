@@ -15,11 +15,12 @@ from collections.abc import Awaitable, Callable
 from typing import Any, Dict, List, Optional
 
 import snowballstemmer
-from pydantic import BaseModel
+from pydantic import BaseModel, ValidationError
 
 from cogniverse_synthetic.generators.base import (
     DEFAULT_SYNTHETIC_GENERATION_FLOOR_COUNT,
     BaseGenerator,
+    GenerationTracker,
     entity_candidate_text_fields,
     extract_topic,
     is_content_hash_topic,
@@ -113,6 +114,7 @@ class QueryEnhancementGenerator(BaseGenerator):
             raise ValueError("tenant_id is required for query enhancement")
         if self.query_enhancer is None:
             raise ValueError("query_enhancer is required")
+        generation_tracker = kwargs.get("generation_tracker")
         floor_count = self._generation_floor_count(
             kwargs.get(
                 "generation_floor_count",
@@ -133,71 +135,90 @@ class QueryEnhancementGenerator(BaseGenerator):
                 grounded_queries.append((query, _allowed_terms, context, source_text))
 
         examples: List[BaseModel] = []
+        last_validation_error: Exception | None = None
         for query, _allowed_terms, context, source_text in grounded_queries:
             if len(examples) == target_count:
                 break
             result = await self._request_enhancement_label(
                 query, tenant_id, source_text
             )
-            if isinstance(result, BaseModel):
-                result = result.model_dump()
-            if not isinstance(result, dict):
-                raise ValueError("query enhancement result must be an object")
-            if result.get("original_query") != query:
-                raise ValueError(
-                    "query enhancement original_query must match generated query"
+            try:
+                example = self._build_example(
+                    result, query, context, source_text, tenant_id
                 )
-            enhanced_query = result.get("enhanced_query")
-            if (
-                not isinstance(enhanced_query, str)
-                or not enhanced_query.strip()
-                or enhanced_query.strip() == query
-            ):
-                raise ValueError(
-                    "query enhancement enhanced_query must be non-empty and changed"
-                )
-            expansion_terms = self._output_terms(
-                result.get("expansion_terms"), "expansion_terms"
-            )
-            source_term_keys = self._source_term_keys(source_text)
-            unrelated_terms = [
-                term
-                for term in expansion_terms
-                if not self._term_is_grounded(term, source_term_keys)
-            ]
-            if unrelated_terms:
-                raise ValueError(
-                    "query_enhancement optimizer callback query_enhancer returned "
-                    "expansion_terms absent from sampled source for "
-                    f"tenant={tenant_id!r} query={query!r}: {unrelated_terms!r}"
-                )
-            synonyms = self._output_terms(result.get("synonyms", []), "synonyms")
-            reasoning = result.get("reasoning")
-            if not isinstance(reasoning, str) or not reasoning.strip():
-                raise ValueError(
-                    "query enhancement reasoning must be a non-empty string"
-                )
-
-            examples.append(
-                QueryEnhancementExampleSchema(
-                    query=query,
-                    enhanced_query=enhanced_query.strip(),
-                    expansion_terms=expansion_terms,
-                    synonyms=synonyms,
-                    context=context,
-                    reasoning=reasoning.strip(),
-                )
-            )
+            except (ValueError, ValidationError) as exc:
+                last_validation_error = exc
+                if isinstance(generation_tracker, GenerationTracker):
+                    generation_tracker.record_drop(query, exc)
+                continue
+            examples.append(example)
 
         self.require_exact_target_count(
             examples,
             target_count,
             source_context=f"{len(grounded_queries)} unique source-template queries",
             floor_count=floor_count,
+            generation_tracker=generation_tracker,
+            cause=last_validation_error,
         )
 
         logger.info(f"Generated {len(examples)} QueryEnhancementExample examples")
         return examples
+
+    def _build_example(
+        self,
+        result: Any,
+        query: str,
+        context: str,
+        source_text: str,
+        tenant_id: str,
+    ) -> BaseModel:
+        """Validate one callback result into an example or raise."""
+        if isinstance(result, BaseModel):
+            result = result.model_dump()
+        if not isinstance(result, dict):
+            raise ValueError("query enhancement result must be an object")
+        if result.get("original_query") != query:
+            raise ValueError(
+                "query enhancement original_query must match generated query"
+            )
+        enhanced_query = result.get("enhanced_query")
+        if (
+            not isinstance(enhanced_query, str)
+            or not enhanced_query.strip()
+            or enhanced_query.strip() == query
+        ):
+            raise ValueError(
+                "query enhancement enhanced_query must be non-empty and changed"
+            )
+        expansion_terms = self._output_terms(
+            result.get("expansion_terms"), "expansion_terms"
+        )
+        source_term_keys = self._source_term_keys(source_text)
+        unrelated_terms = [
+            term
+            for term in expansion_terms
+            if not self._term_is_grounded(term, source_term_keys)
+        ]
+        if unrelated_terms:
+            raise ValueError(
+                "query_enhancement optimizer callback query_enhancer returned "
+                "expansion_terms absent from sampled source for "
+                f"tenant={tenant_id!r} query={query!r}: {unrelated_terms!r}"
+            )
+        synonyms = self._output_terms(result.get("synonyms", []), "synonyms")
+        reasoning = result.get("reasoning")
+        if not isinstance(reasoning, str) or not reasoning.strip():
+            raise ValueError("query enhancement reasoning must be a non-empty string")
+
+        return QueryEnhancementExampleSchema(
+            query=query,
+            enhanced_query=enhanced_query.strip(),
+            expansion_terms=expansion_terms,
+            synonyms=synonyms,
+            context=context,
+            reasoning=reasoning.strip(),
+        )
 
     async def _request_enhancement_label(
         self, query: str, tenant_id: str, source_text: str
