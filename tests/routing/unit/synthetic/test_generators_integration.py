@@ -3,7 +3,9 @@ Integration tests for all synthetic data generators
 """
 
 import asyncio
+import json
 import threading
+from pathlib import Path
 from types import SimpleNamespace
 from typing import Any
 
@@ -12,6 +14,7 @@ import pytest
 from cogniverse_agents.workflow.intelligence import WorkflowIntelligence
 from cogniverse_foundation.config.unified_config import (
     AgentMappingRule,
+    BackendProfileConfig,
     DSPyModuleConfig,
     OptimizerGenerationConfig,
 )
@@ -35,6 +38,17 @@ from cogniverse_synthetic.schemas import (
 from cogniverse_synthetic.utils import AgentInferrer, PatternExtractor
 
 pytestmark = [pytest.mark.unit]
+
+_REPO_ROOT = Path(__file__).resolve().parents[4]
+_SHIPPED_BACKEND_PROFILES = json.loads(
+    (_REPO_ROOT / "configs" / "config.json").read_text()
+)["backend"]["profiles"]
+
+
+def _shipped_backend_profile(profile_name: str) -> BackendProfileConfig:
+    return BackendProfileConfig.from_dict(
+        profile_name, _SHIPPED_BACKEND_PROFILES[profile_name]
+    )
 
 
 def create_routing_config():
@@ -127,7 +141,7 @@ def video_workflow_sample(topic: str) -> dict[str, str]:
         "topic": topic,
         "profile_type": "video",
         "modality": "VIDEO",
-        "schema_name": "video_content",
+        "schema_name": "video_videoprism_large_mv_chunk_30s",
     }
 
 
@@ -196,7 +210,7 @@ def _label_callback_result(kind: str, query: str) -> dict[str, Any]:
     if kind == "profile":
         return {
             "query": query,
-            "selected_profile": "documents",
+            "selected_profile": "document_text_semantic",
             "modality": "document",
             "complexity": "simple",
             "query_intent": "document_search",
@@ -222,7 +236,7 @@ def _expected_label(kind: str, topic: str) -> dict[str, Any]:
     if kind == "profile":
         return {
             "query": query,
-            "selected_profile": "documents",
+            "selected_profile": "document_text_semantic",
             "modality": "document",
             "complexity": "simple",
             "query_intent": "document_search",
@@ -275,10 +289,9 @@ def _build_label_invoker(kind: str, callback, timeout_seconds: float):
                 target_count=1,
                 tenant_id="tenant-a",
                 profile_configs={
-                    "documents": {
-                        "type": "document",
-                        "schema_name": "documents_schema",
-                    }
+                    "document_text_semantic": _shipped_backend_profile(
+                        "document_text_semantic"
+                    ).to_dict(),
                 },
             )
             example = examples[0]
@@ -302,9 +315,9 @@ def _build_label_invoker(kind: str, callback, timeout_seconds: float):
         examples = await generator.generate(
             [
                 {
-                    "title": topic,
-                    "description": f"{topic} magnetic eruptions",
-                    "profile_name": "documents",
+                    "topic": topic,
+                    "title": f"{topic} magnetic eruptions",
+                    "profile_name": "document_text_semantic",
                 }
             ],
             target_count=1,
@@ -353,49 +366,30 @@ class TestProfileGeneratorIntegration:
     """Integration tests for production-labelled profile examples."""
 
     PROFILE_CONFIGS = {
-        "audio_semantic": {
-            "type": "audio",
-            "schema_name": "audio_segments",
-            "embedding_type": "multi_vector",
-            "pipeline_config": {
-                "transcribe_audio": True,
-                "generate_embeddings": True,
-            },
-        },
-        "document_semantic": {
-            "type": "document",
-            "schema_name": "document_pages",
-            "embedding_type": "multi_vector",
-            "pipeline_config": {"generate_embeddings": True},
-        },
+        "audio_clap_semantic": _shipped_backend_profile(
+            "audio_clap_semantic"
+        ).to_dict(),
+        "document_text_semantic": _shipped_backend_profile(
+            "document_text_semantic"
+        ).to_dict(),
     }
 
     @pytest.mark.asyncio
     async def test_profile_generator_with_mock_data(self):
         generator = ProfileGenerator(profile_labeler=select_profile)
+        video_profile = _shipped_backend_profile("video_videoprism_large_mv_chunk_30s")
 
         mock_content = [
             {
                 "video_title": "Machine Learning Tutorial",
-                "segment_description": "Learn about neural networks and deep learning",
-                "schema_name": "video_content",
+                "schema_name": video_profile.schema_name,
             }
         ]
 
         examples = await generator.generate(
             sampled_content=mock_content,
             target_count=1,
-            profile_configs={
-                "video_frames": {
-                    "type": "video",
-                    "schema_name": "video_content",
-                    "embedding_type": "multi_vector",
-                    "pipeline_config": {
-                        "extract_keyframes": True,
-                        "generate_embeddings": True,
-                    },
-                }
-            },
+            profile_configs={video_profile.profile_name: video_profile.to_dict()},
             tenant_id="acme:profiles",
         )
 
@@ -406,7 +400,7 @@ class TestProfileGeneratorIntegration:
             assert ex.selected_profile in available
             assert ex.modality == "video"
             assert ex.query_intent == "video_search"
-            assert ex.query == "find a video frame showing Machine Learning Tutorial"
+            assert ex.query == "find video content about Machine Learning Tutorial"
             assert ex.complexity == "medium"
 
     @pytest.mark.asyncio
@@ -414,18 +408,20 @@ class TestProfileGeneratorIntegration:
         generator = ProfileGenerator(profile_labeler=select_profile)
         examples = await generator.generate(
             sampled_content=[
-                {"topic": "Curie lecture", "schema_name": "audio_segments"}
+                {"topic": "Curie lecture", "schema_name": "audio_content"}
             ],
             target_count=1,
-            profile_configs={"audio_semantic": self.PROFILE_CONFIGS["audio_semantic"]},
+            profile_configs={
+                "audio_clap_semantic": self.PROFILE_CONFIGS["audio_clap_semantic"]
+            },
             tenant_id="acme:profiles",
         )
 
         assert examples[0].model_dump() == {
             "query": "find Curie lecture in an audio transcript",
-            "available_profiles": "audio_semantic",
-            "selected_profile": "audio_semantic",
-            "reasoning": "Production selector chose audio_semantic.",
+            "available_profiles": "audio_clap_semantic",
+            "selected_profile": "audio_clap_semantic",
+            "reasoning": "Production selector chose audio_clap_semantic.",
             "query_intent": "audio_search",
             "modality": "audio",
             "complexity": "medium",
@@ -446,7 +442,10 @@ class TestProfileGeneratorIntegration:
                 sampled_content=[{"topic": "configured profile validation"}],
                 target_count=1,
                 profile_configs={
-                    "broken": {"type": modality, "schema_name": "broken_schema"}
+                    "broken": {
+                        **_shipped_backend_profile("document_text_semantic").to_dict(),
+                        "type": modality,
+                    }
                 },
             )
 
@@ -456,8 +455,8 @@ class TestProfileGeneratorIntegration:
 
         examples = await generator.generate(
             sampled_content=[
-                {"topic": "Curie lecture", "schema_name": "audio_segments"},
-                {"topic": "Radium notes", "schema_name": "document_pages"},
+                {"topic": "Curie lecture", "schema_name": "audio_content"},
+                {"topic": "Radium notes", "schema_name": "document_text"},
             ],
             target_count=1,
             profile_configs=self.PROFILE_CONFIGS,
@@ -471,9 +470,9 @@ class TestProfileGeneratorIntegration:
                     "find Curie lecture in audio content together with "
                     "Radium notes in document content"
                 ),
-                "available_profiles": "audio_semantic,document_semantic",
-                "selected_profile": "audio_semantic",
-                "reasoning": "Production selector chose audio_semantic.",
+                "available_profiles": "audio_clap_semantic,document_text_semantic",
+                "selected_profile": "audio_clap_semantic",
+                "reasoning": "Production selector chose audio_clap_semantic.",
                 "query_intent": "audio_search",
                 "modality": "audio",
                 "complexity": "medium",
@@ -490,11 +489,11 @@ class TestProfileGeneratorIntegration:
         ):
             await generator.generate(
                 sampled_content=[
-                    {"topic": "Curie lecture", "schema_name": "audio_segments"}
+                    {"topic": "Curie lecture", "schema_name": "audio_content"}
                 ],
                 target_count=1,
                 profile_configs={
-                    "audio_semantic": self.PROFILE_CONFIGS["audio_semantic"]
+                    "audio_clap_semantic": self.PROFILE_CONFIGS["audio_clap_semantic"]
                 },
                 tenant_id="acme:profiles",
                 cross_modal=True,
@@ -510,7 +509,7 @@ class TestProfileGeneratorIntegration:
         ):
             await generator.generate(
                 sampled_content=[
-                    {"topic": "Curie lecture", "schema_name": "audio_segments"}
+                    {"topic": "Curie lecture", "schema_name": "audio_content"}
                 ],
                 target_count=1,
                 profile_configs=self.PROFILE_CONFIGS,
@@ -539,7 +538,7 @@ class TestRoutingGeneratorIntegration:
                 "title": "TensorFlow Neural Networks Tutorial",
                 "video_title": "TensorFlow Neural Networks Tutorial",
                 "segment_description": "Learn TensorFlow for deep learning",
-                "schema_name": "video_content",
+                "schema_name": "video_videoprism_large_mv_chunk_30s",
             }
         ]
 
@@ -691,11 +690,11 @@ class TestProductionLabelCallbackBoundary:
 
         assert result == _expected_label(kind, "solar flares")
         if kind == "profile":
-            expected_args = (["documents"], "tenant-a")
+            expected_args = (["document_text_semantic"], "tenant-a")
         elif kind == "query_enhancement":
             expected_args = (
                 "tenant-a",
-                "solar flares\nsolar flares magnetic eruptions",
+                "solar flares magnetic eruptions\nsolar flares",
             )
         else:
             expected_args = ("tenant-a",)
@@ -802,7 +801,7 @@ class TestProductionLabelCallbackBoundary:
     async def test_query_enhancement_rejects_term_absent_from_sampled_source(self):
         async def unrelated_enhancement(query, tenant_id, source_text):
             assert tenant_id == "tenant-a"
-            assert source_text == "solar flares\nsolar flares magnetic eruptions"
+            assert source_text == "solar flares magnetic eruptions\nsolar flares"
             result = _label_callback_result("query_enhancement", query)
             result["expansion_terms"] = ["volcano"]
             return result
@@ -853,7 +852,7 @@ class TestWorkflowGeneratorIntegration:
                         "topic": "Redis lease coordination",
                         "profile_type": profile_type,
                         "modality": modality,
-                        "schema_name": "video_audio_document_schema",
+                        "schema_name": "video_videoprism_large_mv_chunk_30s",
                         "embedding_type": "image",
                     }
                 ],
@@ -875,7 +874,7 @@ class TestWorkflowGeneratorIntegration:
                 sampled_content=[
                     {
                         "topic": "Redis lease coordination",
-                        "schema_name": "video_content",
+                        "schema_name": "video_videoprism_large_mv_chunk_30s",
                         "embedding_type": "video",
                     }
                 ],
@@ -1073,7 +1072,7 @@ class TestWorkflowGeneratorIntegration:
             optimizer="workflow",
             schema_name="WorkflowExecutionSchema",
             count=1,
-            selected_profiles=["video_frames"],
+            selected_profiles=["video_videoprism_large_mv_chunk_30s"],
             profile_selection_reasoning="Selected source video profile",
             data=[example.model_dump(mode="python")],
             metadata={"sampled_content_count": 1},
@@ -1110,7 +1109,7 @@ class TestWorkflowGeneratorIntegration:
         added = await intelligence.generate_synthetic_training_data(
             count=1,
             backend=object(),
-            backend_config={"profiles": {"video_frames": {}}},
+            backend_config={"profiles": {"video_videoprism_large_mv_chunk_30s": {}}},
             generator_config=object(),
             agents_config=CONFIGURED_AGENTS,
         )
@@ -1150,7 +1149,7 @@ class TestWorkflowGeneratorIntegration:
             optimizer="workflow",
             schema_name="WorkflowExecutionSchema",
             count=4,
-            selected_profiles=["video_frames"],
+            selected_profiles=["video_videoprism_large_mv_chunk_30s"],
             profile_selection_reasoning="Selected source video profile",
             data=[example.model_dump(mode="python") for example in examples],
             metadata={"sampled_content_count": 1},
@@ -1189,7 +1188,9 @@ class TestWorkflowGeneratorIntegration:
             await intelligence.generate_synthetic_training_data(
                 count=4,
                 backend=object(),
-                backend_config={"profiles": {"video_frames": {}}},
+                backend_config={
+                    "profiles": {"video_videoprism_large_mv_chunk_30s": {}}
+                },
                 generator_config=object(),
                 agents_config=CONFIGURED_AGENTS,
             )
@@ -1211,7 +1212,7 @@ class TestWorkflowGeneratorIntegration:
             optimizer="workflow",
             schema_name="WorkflowExecutionSchema",
             count=2,
-            selected_profiles=["video_frames"],
+            selected_profiles=["video_videoprism_large_mv_chunk_30s"],
             profile_selection_reasoning="Selected source video profile",
             data=[example.model_dump(mode="python") for example in examples],
             metadata={"sampled_content_count": 1},
@@ -1259,7 +1260,9 @@ class TestWorkflowGeneratorIntegration:
             await intelligence.generate_synthetic_training_data(
                 count=2,
                 backend=object(),
-                backend_config={"profiles": {"video_frames": {}}},
+                backend_config={
+                    "profiles": {"video_videoprism_large_mv_chunk_30s": {}}
+                },
                 generator_config=object(),
                 agents_config=CONFIGURED_AGENTS,
             )
@@ -1281,7 +1284,7 @@ class TestWorkflowGeneratorIntegration:
             optimizer="workflow",
             schema_name="WorkflowExecutionSchema",
             count=2,
-            selected_profiles=["video_frames"],
+            selected_profiles=["video_videoprism_large_mv_chunk_30s"],
             profile_selection_reasoning="Selected source video profile",
             data=[example.model_dump(mode="python") for example in examples],
             metadata={"sampled_content_count": 1},
@@ -1328,7 +1331,7 @@ class TestWorkflowGeneratorIntegration:
         call = {
             "count": 2,
             "backend": object(),
-            "backend_config": {"profiles": {"video_frames": {}}},
+            "backend_config": {"profiles": {"video_videoprism_large_mv_chunk_30s": {}}},
             "generator_config": object(),
             "agents_config": CONFIGURED_AGENTS,
         }
@@ -1617,7 +1620,7 @@ class TestAllGeneratorsTogether:
                 "title": "Deep Learning with TensorFlow",
                 "video_title": "Deep Learning with TensorFlow",
                 "segment_description": "Tutorial on neural networks",
-                "schema_name": "video_content",
+                "schema_name": "video_videoprism_large_mv_chunk_30s",
                 "profile_type": "video",
                 "modality": "VIDEO",
                 "embedding_type": "video",

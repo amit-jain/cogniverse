@@ -8,6 +8,7 @@ import pytest
 
 from cogniverse_foundation.config.unified_config import (
     AgentMappingRule,
+    BackendProfileConfig,
     DSPyModuleConfig,
     OptimizerGenerationConfig,
     ProfileScoringRule,
@@ -15,6 +16,7 @@ from cogniverse_foundation.config.unified_config import (
 )
 from cogniverse_synthetic.profile_selector import ProfileSelector
 from cogniverse_synthetic.registry import OPTIMIZER_REGISTRY
+from cogniverse_synthetic.utils import profile_can_ground_topic
 
 pytestmark = pytest.mark.unit
 
@@ -32,57 +34,11 @@ def _described_profiles(*names: str) -> dict[str, dict[str, str]]:
     }
 
 
-def _live_cross_modal_profiles() -> dict[str, dict[str, object]]:
-    return {
-        "audio_clap_semantic": {
-            "description": "Audio ingestion with CLAP acoustic embeddings.",
-            "embedding_type": "multi_vector",
-            "schema_name": "audio_content",
-            "type": "audio",
-            "pipeline_config": {"transcribe_audio": True},
-            "schema_config": {"semantic_embedding_dim": 128},
-        },
-        "video_colpali_smol500_mv_frame": {
-            "description": "Frame-based ColPali visual search.",
-            "embedding_type": "multi_vector",
-            "schema_name": "video_colpali_smol500_mv_frame",
-            "type": "video",
-            "pipeline_config": {"transcribe_audio": True},
-            "schema_config": {"embedding_dim": 320},
-        },
-        "image_colpali_mv": {
-            "description": "ColPali multi-vector image search.",
-            "embedding_type": "multi_vector",
-            "schema_name": "image_colpali_mv",
-            "type": "image",
-            "pipeline_config": {"transcribe_audio": False},
-            "schema_config": {"embedding_dim": 320},
-        },
-        "document_text_semantic": {
-            "description": "LateOn semantic document search.",
-            "embedding_type": "multi_vector",
-            "schema_name": "document_text",
-            "type": "document",
-            "pipeline_config": {"transcribe_audio": False},
-            "schema_config": {"embedding_dim": 128},
-        },
-        "document_visual_colpali": {
-            "description": "ColPali document page image search.",
-            "embedding_type": "multi_vector",
-            "schema_name": "document_visual",
-            "type": "document",
-            "pipeline_config": {"transcribe_audio": False},
-            "schema_config": {"embedding_dim": 320},
-        },
-        "wiki_semantic": {
-            "description": "Wiki page hybrid search.",
-            "embedding_type": "single_vector",
-            "schema_name": "wiki_pages",
-            "type": "wiki",
-            "pipeline_config": {"transcribe_audio": False},
-            "schema_config": {"embedding_dims": 768},
-        },
-    }
+def _shipped_backend_profile(name: str) -> BackendProfileConfig:
+    profiles = json.loads((_REPO_ROOT / "configs" / "config.json").read_text())[
+        "backend"
+    ]["profiles"]
+    return BackendProfileConfig.from_dict(name, profiles[name])
 
 
 def _generator_config() -> SyntheticGeneratorConfig:
@@ -142,27 +98,44 @@ async def test_rule_selection_uses_only_configured_optimizer_rules() -> None:
 
 async def test_cross_modal_selection_prefers_sampleable_modalities() -> None:
     selector = ProfileSelector(generator_config=_live_generator_config())
+    profiles = {
+        name: _shipped_backend_profile(name)
+        for name in (
+            "video_videoprism_large_mv_chunk_30s",
+            "document_text_semantic",
+        )
+    }
+    available_profiles = {name: profile.to_dict() for name, profile in profiles.items()}
 
     selected, _ = await selector.select_profiles(
         optimizer_name="cross_modal",
         optimizer_task="choose a cross-modal search profile",
-        available_profiles=_live_cross_modal_profiles(),
-        max_profiles=6,
+        available_profiles=available_profiles,
+        max_profiles=2,
     )
 
-    assert selected[:2] == [
-        "video_colpali_smol500_mv_frame",
-        "image_colpali_mv",
-    ]
-    assert len(selected) == 6
-    assert set(selected) == {
-        "audio_clap_semantic",
-        "video_colpali_smol500_mv_frame",
-        "image_colpali_mv",
-        "document_text_semantic",
-        "document_visual_colpali",
-        "wiki_semantic",
+    assert len(selected) == 2
+    assert len(set(selected)) == 2
+    assert set(selected) == set(profiles)
+    assert {available_profiles[profile_name]["type"] for profile_name in selected} == {
+        "video",
+        "document",
     }
+
+
+def test_profile_groundability_is_derived_from_configured_schema_roles() -> None:
+    profiles = {
+        name: _shipped_backend_profile(name)
+        for name in (
+            "document_text_semantic",
+            "document_visual_colpali",
+            "image_colpali_mv",
+        )
+    }
+
+    assert profile_can_ground_topic(profiles["document_text_semantic"]) is True
+    assert profile_can_ground_topic(profiles["document_visual_colpali"]) is False
+    assert profile_can_ground_topic(profiles["image_colpali_mv"]) is False
 
 
 def test_rule_selection_rejects_missing_generator_config() -> None:
