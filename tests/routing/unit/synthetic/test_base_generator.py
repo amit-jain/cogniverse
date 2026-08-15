@@ -36,20 +36,18 @@ class TestBaseGenerator:
         """Test initializing concrete generator"""
         generator = ConcreteGenerator()
 
-        assert generator.pattern_extractor is None
         assert generator.agent_inferrer is None
+        assert not hasattr(generator, "pattern_extractor")
 
     def test_generator_with_utilities(self):
         """Test initializing generator with utilities"""
-        mock_extractor = object()
         mock_inferrer = object()
 
-        generator = ConcreteGenerator(
-            pattern_extractor=mock_extractor, agent_inferrer=mock_inferrer
-        )
+        generator = ConcreteGenerator(agent_inferrer=mock_inferrer)
 
-        assert generator.pattern_extractor is mock_extractor
         assert generator.agent_inferrer is mock_inferrer
+        with pytest.raises(TypeError):
+            ConcreteGenerator(pattern_extractor=object())
 
     @pytest.mark.asyncio
     async def test_generate_method(self):
@@ -130,24 +128,15 @@ class TestBaseGenerator:
 
         info = generator.get_generator_info()
 
-        assert isinstance(info, dict)
-        assert "name" in info
-        assert "has_pattern_extractor" in info
-        assert "has_agent_inferrer" in info
-        assert info["name"] == "ConcreteGenerator"
-        assert info["has_pattern_extractor"] is False
-        assert info["has_agent_inferrer"] is False
+        assert info == {"name": "ConcreteGenerator", "has_agent_inferrer": False}
 
     def test_get_generator_info_with_utilities(self):
         """Test get_generator_info with utilities"""
-        generator = ConcreteGenerator(
-            pattern_extractor=object(), agent_inferrer=object()
-        )
+        generator = ConcreteGenerator(agent_inferrer=object())
 
         info = generator.get_generator_info()
 
-        assert info["has_pattern_extractor"] is True
-        assert info["has_agent_inferrer"] is True
+        assert info == {"name": "ConcreteGenerator", "has_agent_inferrer": True}
 
     def test_base_generator_cannot_be_instantiated(self):
         """Test that BaseGenerator cannot be instantiated directly"""

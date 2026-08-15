@@ -357,13 +357,12 @@ class QueryEnhancementGenerator(BaseGenerator):
     # Optional config parameter accepted for parity with other generators.
     def __init__(
         self,
-        pattern_extractor: Optional[Any] = None,
         agent_inferrer: Optional[Any] = None,
         optimizer_config: Optional[Any] = None,
         query_enhancer: Optional[QueryEnhancer] = None,
         production_label_timeout_seconds: float = DEFAULT_PRODUCTION_LABEL_TIMEOUT_SECONDS,
     ):
-        super().__init__(pattern_extractor, agent_inferrer)
+        super().__init__(agent_inferrer)
         if (
             isinstance(production_label_timeout_seconds, bool)
             or not isinstance(production_label_timeout_seconds, (int, float))

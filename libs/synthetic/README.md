@@ -378,7 +378,6 @@ libs/synthetic/cogniverse_synthetic/
 │   └── feedback_handler.py
 └── utils/                   # Utilities
     ├── __init__.py
-    ├── pattern_extraction.py
     └── agent_inference.py
 ```
 

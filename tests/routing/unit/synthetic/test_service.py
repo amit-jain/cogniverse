@@ -354,9 +354,9 @@ class TestSyntheticDataService:
         service = create_test_service()
         assert service.profile_selector is not None
         assert service.backend_querier is not None
-        assert service.pattern_extractor is not None
         assert service.agent_inferrer is not None
         # Generators are initialized lazily, so check starts empty
+        assert service.generators == {}
         assert isinstance(service.generators, dict)
 
     def test_callback_generators_use_synthetic_generation_timeout(self):
@@ -443,6 +443,7 @@ class TestSyntheticDataService:
             max_retries = 3
 
             def __call__(self, *, topics, entities, entity_types):
+                assert topics == "Saturn V launch"
                 assert entities == ["Saturn V"]
                 assert entity_types == ["TECHNOLOGY"]
                 result = type("QueryResult", (), {})()
@@ -451,11 +452,6 @@ class TestSyntheticDataService:
                 result._retry_count = 0
                 result._max_retries = self.max_retries
                 return result
-
-        class _GroundedPatternExtractor:
-            def extract(self, records):
-                assert records == [{"title": "Saturn V launch"}]
-                return {"topics": ["Saturn V launch"]}
 
         generator_config = create_test_generator_config(
             synthetic_generation_timeout_seconds=0.02
@@ -470,7 +466,6 @@ class TestSyntheticDataService:
             routing_decider=hung_routing_decider,
         )
         generator = service._get_generator("routing")
-        generator.pattern_extractor = _GroundedPatternExtractor()
         generator.query_generator = _GroundedQueryGenerator()
 
         with pytest.raises(TimeoutError) as raised:

@@ -41,7 +41,6 @@ from cogniverse_synthetic.registry import (
 from cogniverse_synthetic.schemas import SyntheticDataRequest, SyntheticDataResponse
 from cogniverse_synthetic.utils import (
     AgentInferrer,
-    PatternExtractor,
     partition_profiles_by_groundability,
     partition_profiles_by_sampleability,
     profile_modality,
@@ -176,8 +175,6 @@ class SyntheticDataService:
             field_mappings=field_mappings,
         )
 
-        self.pattern_extractor = PatternExtractor(field_mappings=field_mappings)
-
         self.generators = {}
         self._generator_lock = threading.Lock()
 
@@ -252,7 +249,6 @@ class SyntheticDataService:
                 generator = RoutingGenerator(
                     entity_extractor=self.entity_extractor,
                     routing_decider=self.routing_decider,
-                    pattern_extractor=self.pattern_extractor,
                     optimizer_config=routing_config,
                     production_label_timeout_seconds=synthetic_generation_timeout,
                     entity_extraction_timeout_seconds=synthetic_generation_timeout,

@@ -20,6 +20,7 @@ from cogniverse_synthetic.generators.base import (
     DEFAULT_SYNTHETIC_GENERATION_FLOOR_COUNT,
     BaseGenerator,
     GenerationTracker,
+    extract_topic,
 )
 from cogniverse_synthetic.generators.entity_extraction import (
     DEFAULT_ENTITY_EXTRACTION_TIMEOUT_SECONDS,
@@ -89,7 +90,6 @@ class RoutingGenerator(BaseGenerator):
         self,
         entity_extractor: EntityExtractor,
         routing_decider: Optional[RoutingDecider] = None,
-        pattern_extractor: Optional[Any] = None,
         optimizer_config: Optional[OptimizerGenerationConfig] = None,
         production_label_timeout_seconds: float = DEFAULT_PRODUCTION_LABEL_TIMEOUT_SECONDS,
         entity_extraction_timeout_seconds: float = DEFAULT_ENTITY_EXTRACTION_TIMEOUT_SECONDS,
@@ -99,7 +99,6 @@ class RoutingGenerator(BaseGenerator):
 
         Args:
             entity_extractor: Production entity agent used for typed supervision
-            pattern_extractor: Utility for extracting patterns from content
             routing_decider: Production gateway/routing call used for labels
             optimizer_config: Optimizer generation configuration with DSPy modules (REQUIRED)
             production_label_timeout_seconds: Maximum routing callback and DSPy
@@ -109,7 +108,7 @@ class RoutingGenerator(BaseGenerator):
         Raises:
             ValueError: If optimizer_config is not provided
         """
-        super().__init__(pattern_extractor, None)
+        super().__init__()
 
         if not callable(entity_extractor):
             raise ValueError("entity_extractor is required")
@@ -174,8 +173,6 @@ class RoutingGenerator(BaseGenerator):
 
         logger.info(f"Generating {target_count} RoutingExperience examples")
 
-        if self.pattern_extractor is None:
-            raise ValueError("RoutingGenerator requires pattern_extractor")
         tenant_id = kwargs.get("tenant_id")
         if not isinstance(tenant_id, str) or not tenant_id.strip():
             raise ValueError("tenant_id is required for routing generation")
@@ -198,7 +195,7 @@ class RoutingGenerator(BaseGenerator):
         while len(examples) < target_count and attempts < attempt_budget:
             content = sampled_content[attempts % len(sampled_content)]
             attempts += 1
-            patterns = self.pattern_extractor.extract([content])
+            topic = self._extract_topic(content)
 
             labelled = await self.entity_labeler.generate(
                 sampled_content=[content],
@@ -210,7 +207,7 @@ class RoutingGenerator(BaseGenerator):
 
             # Generate query from entities using DSPy
             query, generation_metadata = await self._generate_entity_query(
-                entities, patterns
+                entities, topic
             )
 
             # Create enhanced query with entity annotations
@@ -337,7 +334,7 @@ class RoutingGenerator(BaseGenerator):
             ) from exc
 
     async def _generate_entity_query(
-        self, entities: List[Dict], patterns: Dict
+        self, entities: List[Dict], topic: str
     ) -> tuple[str, Dict[str, Any]]:
         """
         Generate query mentioning entities using validated DSPy module.
@@ -351,15 +348,14 @@ class RoutingGenerator(BaseGenerator):
         """
         if not entities:
             raise ValueError("entities must contain at least one item")
+        if not isinstance(topic, str) or not topic.strip():
+            raise ValueError("topic must be a non-empty string")
 
         # Get or initialize validated DSPy query generator
         query_generator = self._get_query_generator()
 
         # Prepare inputs
-        topics = patterns.get("topics")
-        if not isinstance(topics, list) or not topics:
-            raise ValueError("patterns must contain at least one source-derived topic")
-        topics_str = ", ".join(topics[:3])
+        topics_str = topic
         entity_texts = [entity["text"] for entity in entities]
         entity_types = [entity["type"] for entity in entities]
 
@@ -439,6 +435,13 @@ class RoutingGenerator(BaseGenerator):
                 "entity query generation failed for entities: "
                 + ", ".join(entity_texts)
             ) from e
+
+    @staticmethod
+    def _extract_topic(content: Dict[str, Any]) -> str:
+        topic = extract_topic(content)
+        if topic is not None:
+            return topic
+        raise ValueError("sampled routing content requires a non-empty topic")
 
     def _enhance_query(self, query: str, entities: List[Dict]) -> str:
         """Add entity annotations to query (case-insensitive)"""
