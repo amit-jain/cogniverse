@@ -816,9 +816,13 @@ class TestProductionLabelCallbackBoundary:
             await invoke("solar flares")
 
         assert str(raised.value) == (
+            "QueryEnhancementGenerator generated 0 unique grounded examples "
+            "but target_count=1; source_context=5 unique source-template queries"
+        )
+        assert str(raised.value.__cause__) == (
             "query_enhancement optimizer callback query_enhancer returned "
             "expansion_terms absent from sampled source for tenant='tenant-a' "
-            "query='solar flares': ['volcano']"
+            "query='explain solar flares': ['volcano']"
         )
 
 
