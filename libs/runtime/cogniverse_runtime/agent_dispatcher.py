@@ -2515,6 +2515,22 @@ class AgentDispatcher:
             AudioAnalysisAgent,
             AudioAnalysisDeps,
         )
+        from cogniverse_runtime.admin.tenant_manager import get_backend
+
+        # Tenant schemas deploy on first ingest, so a tenant that never
+        # ingested audio has no audio_content schema. That is a no-content
+        # answer; a registry lookup failure raises and is not read as one.
+        backend = get_backend()
+        if not await asyncio.to_thread(
+            backend.schema_exists, "audio_content", tenant_id
+        ):
+            return {
+                "status": "success",
+                "agent": "audio_analysis_agent",
+                "message": f"No audio content indexed for tenant '{tenant_id}'",
+                "results_count": 0,
+                "results": [],
+            }
 
         vespa_endpoint = self._get_vespa_endpoint(tenant_id)
         sys_cfg = self._config_manager.get_system_config()
