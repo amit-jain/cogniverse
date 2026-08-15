@@ -248,13 +248,20 @@ async def test_generator_extracts_entities_from_content():
     ]
 
 
-def test_generator_ignores_hash_only_candidate_texts():
+@pytest.mark.parametrize(
+    "item",
+    [
+        {"title": HASH_VALUE},
+        {"audio_transcript": "*Screaming*"},
+    ],
+)
+def test_generator_ignores_hash_and_annotation_only_candidate_texts(item):
     async def noop_extractor(text: str, tenant_id: str):
         return {"query": text, "entities": [], "relationships": []}
 
     generator = EntityExtractionGenerator(entity_extractor=noop_extractor)
 
-    assert generator._candidate_texts([{"title": HASH_VALUE}]) == []
+    assert generator._candidate_texts([item]) == []
 
 
 def test_generator_candidate_texts_include_document_fields_and_strip_bom():

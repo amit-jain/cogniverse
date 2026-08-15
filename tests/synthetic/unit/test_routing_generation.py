@@ -343,26 +343,55 @@ async def test_generation_uses_canonical_topic_string_for_query_generation() -> 
                 _max_retries=3,
             )
 
+    captured_entity_labeler_inputs = []
+    captured_entity_queries = []
+
+    async def extract_entities(text: str, tenant_id: str):
+        captured_entity_queries.append((text, tenant_id))
+        return await _extract_entities(text, tenant_id)
+
     generator = RoutingGenerator(
-        entity_extractor=_extract_entities,
+        entity_extractor=extract_entities,
         routing_decider=_route_query,
         optimizer_config=_routing_generator().optimizer_config,
     )
     query_generator = _SourceQueryGenerator()
     generator.query_generator = query_generator
+    real_entity_labeler_generate = generator.entity_labeler.generate
+
+    async def capture_entity_labeler_generate(
+        *, sampled_content, target_count, **kwargs
+    ):
+        captured_entity_labeler_inputs.append((sampled_content, target_count, kwargs))
+        return await real_entity_labeler_generate(
+            sampled_content=sampled_content,
+            target_count=target_count,
+            **kwargs,
+        )
+
+    generator.entity_labeler.generate = capture_entity_labeler_generate
 
     examples = await generator.generate(
         sampled_content=[
             {
-                "topic": "TensorFlow deployment guide",
-                "schema_name": "document_text",
-                "embedding_type": "single_vector",
+                "description": "TensorFlow deployment guide",
+                "audio_transcript": "PyTorch and TensorFlow clip",
+                "schema_name": "video_segments",
+                "embedding_type": "multi_vector",
             }
         ],
         target_count=1,
         tenant_id="acme:routing",
     )
 
+    assert captured_entity_labeler_inputs == [
+        (
+            [{"topic": "TensorFlow deployment guide"}],
+            1,
+            {"tenant_id": "acme:routing"},
+        )
+    ]
+    assert captured_entity_queries == [("TensorFlow deployment guide", "acme:routing")]
     assert query_generator.inputs == [
         {
             "topics": "TensorFlow deployment guide",
@@ -413,7 +442,7 @@ async def test_generation_rejects_content_without_extracted_entities() -> None:
 
     assert str(error.value) == (
         "EntityExtractionGenerator generated 0 unique grounded examples but "
-        "target_count=1; source_context=2 unique source texts, 2 without entities"
+        "target_count=1; source_context=1 unique source texts, 1 without entities"
     )
     assert query_generator.calls == 0
 
