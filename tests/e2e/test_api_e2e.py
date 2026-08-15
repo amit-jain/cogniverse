@@ -1236,8 +1236,9 @@ class TestSyntheticDataAPI:
                     "tenant_id": TENANT_ID,
                 },
             )
+            # topic extraction collapses whitespace, so compare normalized forms
             ingested_video_topics = {
-                result["metadata"]["segment_description"]
+                " ".join(result["metadata"]["segment_description"].split())
                 for result in self._exact_video_fixture_results(client)
             }
 
@@ -1287,7 +1288,7 @@ class TestSyntheticDataAPI:
             f"find {document_topic}",
         ]
         assert video_topic != document_topic
-        assert video_topic in ingested_video_topics
+        assert " ".join(video_topic.split()) in ingested_video_topics
         workflow_ids = [example["workflow_id"] for example in data["data"]]
         assert len(set(workflow_ids)) == 4
         assert all(
