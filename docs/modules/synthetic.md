@@ -387,14 +387,16 @@ async def generate_examples(documents: list[dict], entity_extractor, routing_dec
     )
 ```
 
-Each routing example is grounded in one sampled item. Generation walks through
-the sampled items in their returned order, gets typed entities and relationships
-from the production entity agent for only the current item, then generates its
-query and executes the production routing decision. A document item therefore
-cannot receive entities from a video item or a video route, and the same
-invariant holds for every supported modality. Reusing a source is permitted
-only when it produces a distinct `(query, entities, chosen_agent)` label; an
-exact repeated label fails the request instead of padding the dataset.
+Each routing example is grounded in one sampled item. Generation keeps drawing
+candidates in their returned order until it either fills the requested count or
+hits a 5x candidate budget. That surplus buys room for a few duplicate
+canonical labels without letting the 3-call routing path spin forever. A
+document item therefore cannot receive entities from a video item or a video
+route, and the same invariant holds for every supported modality. Reusing a
+source is permitted only when it produces a distinct `(query, entities,
+chosen_agent)` label; a full target-sized streak of duplicate canonical labels
+ends the run early, and an exact repeated label never gets fabricated into a
+new example.
 
 Both validation and enhanced query annotation require complete
 case-insensitive entity tokens, so an entity such as `Go` does not match

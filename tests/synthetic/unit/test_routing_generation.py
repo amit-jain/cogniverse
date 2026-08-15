@@ -486,6 +486,163 @@ async def test_generation_drops_repeated_canonical_routing_label() -> None:
     )
 
 
+async def test_generation_fills_quota_after_one_duplicate() -> None:
+    class _SequenceQueryGenerator:
+        max_retries = 3
+
+        def __init__(self) -> None:
+            self.calls = 0
+            self.outputs = iter(
+                [
+                    "find TensorFlow",
+                    "find TensorFlow",
+                    "find TensorFlow tutorial",
+                    "compare TensorFlow benchmarks",
+                    "TensorFlow deployment guide",
+                    "explain TensorFlow pipelines",
+                ]
+            )
+
+        def __call__(self, **kwargs):
+            self.calls += 1
+            return SimpleNamespace(
+                query=next(self.outputs),
+                reasoning=f"Sequence attempt {self.calls}.",
+                _retry_count=0,
+                _max_retries=3,
+            )
+
+    class _GroundedPatternExtractor:
+        def extract(self, records):
+            assert records == [{"topic": "TensorFlow"}]
+            return {"topics": ["TensorFlow"]}
+
+    query_generator = _SequenceQueryGenerator()
+    generator = RoutingGenerator(
+        entity_extractor=_extract_entities,
+        routing_decider=_route_query,
+        pattern_extractor=_GroundedPatternExtractor(),
+        optimizer_config=_routing_generator().optimizer_config,
+    )
+    generator.query_generator = query_generator
+    tracker = GenerationTracker(
+        optimizer="routing",
+        target_count=5,
+        floor_count=1,
+    )
+
+    examples = await generator.generate(
+        sampled_content=[{"topic": "TensorFlow"}],
+        target_count=5,
+        tenant_id="acme:routing",
+        generation_tracker=tracker,
+        generation_floor_count=1,
+    )
+
+    assert [example.query for example in examples] == [
+        "find TensorFlow",
+        "find TensorFlow tutorial",
+        "compare TensorFlow benchmarks",
+        "TensorFlow deployment guide",
+        "explain TensorFlow pipelines",
+    ]
+    assert [example.enhanced_query for example in examples] == [
+        "find TensorFlow(TECHNOLOGY)",
+        "find TensorFlow(TECHNOLOGY) tutorial",
+        "compare TensorFlow(TECHNOLOGY) benchmarks",
+        "TensorFlow(TECHNOLOGY) deployment guide",
+        "explain TensorFlow(TECHNOLOGY) pipelines",
+    ]
+    assert [example.chosen_agent for example in examples] == ["video_search_agent"] * 5
+    assert [example.routing_confidence for example in examples] == [0.73] * 5
+    assert query_generator.calls == 6
+    assert tracker.returned_count == 5
+    assert tracker.surplus_exhausted is False
+    assert [drop.candidate for drop in tracker.dropped_examples] == ["find TensorFlow"]
+    assert tracker.dropped_examples[0].reason == (
+        "RoutingGenerator generated duplicate canonical label "
+        "(query='find TensorFlow', entities=(('TensorFlow', 'TECHNOLOGY'),), "
+        "chosen_agent='video_search_agent')"
+    )
+
+
+async def test_generation_stops_after_duplicate_streak_is_exhausted() -> None:
+    class _SequenceQueryGenerator:
+        max_retries = 3
+
+        def __init__(self) -> None:
+            self.calls = 0
+
+        def __call__(self, **kwargs):
+            self.calls += 1
+            return SimpleNamespace(
+                query="find TensorFlow",
+                reasoning=f"Sequence attempt {self.calls}.",
+                _retry_count=0,
+                _max_retries=3,
+            )
+
+    class _GroundedPatternExtractor:
+        def extract(self, records):
+            assert records == [{"topic": "TensorFlow"}]
+            return {"topics": ["TensorFlow"]}
+
+    entity_calls = []
+    routing_calls = []
+
+    async def _counted_entities(text: str, tenant_id: str):
+        assert tenant_id == "acme:routing"
+        entity_calls.append(text)
+        return await _extract_entities(text, tenant_id)
+
+    async def _counted_route(query: str, tenant_id: str):
+        assert tenant_id == "acme:routing"
+        routing_calls.append(query)
+        return await _route_query(query, tenant_id)
+
+    query_generator = _SequenceQueryGenerator()
+    generator = RoutingGenerator(
+        entity_extractor=_counted_entities,
+        routing_decider=_counted_route,
+        pattern_extractor=_GroundedPatternExtractor(),
+        optimizer_config=_routing_generator().optimizer_config,
+    )
+    generator.query_generator = query_generator
+    tracker = GenerationTracker(
+        optimizer="routing",
+        target_count=5,
+        floor_count=1,
+    )
+
+    examples = await generator.generate(
+        sampled_content=[{"topic": "TensorFlow"}],
+        target_count=5,
+        tenant_id="acme:routing",
+        generation_tracker=tracker,
+        generation_floor_count=1,
+    )
+
+    assert [example.query for example in examples] == ["find TensorFlow"]
+    assert [example.enhanced_query for example in examples] == [
+        "find TensorFlow(TECHNOLOGY)"
+    ]
+    assert query_generator.calls == 6
+    assert entity_calls == ["TensorFlow"] * 6
+    assert routing_calls == ["find TensorFlow"] * 6
+    assert tracker.returned_count == 1
+    assert tracker.surplus_exhausted is True
+    assert [drop.candidate for drop in tracker.dropped_examples] == [
+        "find TensorFlow"
+    ] * 5
+    assert [drop.reason for drop in tracker.dropped_examples] == [
+        (
+            "RoutingGenerator generated duplicate canonical label "
+            "(query='find TensorFlow', entities=(('TensorFlow', 'TECHNOLOGY'),), "
+            "chosen_agent='video_search_agent')"
+        )
+    ] * 5
+
+
 async def test_generation_preserves_actual_gateway_routing_decision() -> None:
     class _SourceQueryGenerator:
         max_retries = 3
