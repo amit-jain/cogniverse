@@ -400,6 +400,10 @@ source is permitted only when it produces a distinct `(query, entities,
 chosen_agent)` label; a full target-sized streak of duplicate canonical labels
 ends the run early, and an exact repeated label never gets fabricated into a
 new example.
+Routing truncates the extracted topic to 20 words before entity labeling and
+query generation. Entity texts are deduplicated case-insensitively while
+preserving the first surface form, so the stored example and generated query
+use the same entity set.
 
 Both validation and enhanced query annotation require complete
 case-insensitive entity tokens, so an entity such as `Go` does not match
@@ -411,10 +415,15 @@ is bounded by the routing production-label deadline. The nested production
 entity call uses its separate entity-extraction deadline. Concurrent requests
 retain their own entity inputs.
 If every generated query fails validation, `ValidatedEntityQueryGenerator`
-raises with the retry limit and attempted entities; `RoutingGenerator` wraps
-that boundary error with the attempted entities and retains the validation
-error as its cause. It never fabricates a template query. LM execution failures
-use the same wrapper and exception chaining. An empty entity list is invalid.
+raises `EntityQueryValidationError` (a `ValueError`) with the retry limit and
+attempted entities; `RoutingGenerator` re-raises it as the same "Failed to
+generate valid entity query" `ValueError` its malformed-output path uses, with
+the validation error as its cause. It never fabricates a template query. LM
+execution failures and timeouts raise `RuntimeError`/`TimeoutError` with the
+attempted entities. Inside `generate`, a candidate whose topic yields no
+entities or whose query is rejected after the retries is recorded as a drop
+(candidate = topic) and the next candidate is drawn; execution failures still
+abort the run. An empty entity list is invalid.
 Successful output records only `retry_count`, `max_retries`, and `reasoning`
 inside `metadata._generation_metadata`; there is no fallback marker. Entity
 records contain only the production extractor's source-derived text and type,

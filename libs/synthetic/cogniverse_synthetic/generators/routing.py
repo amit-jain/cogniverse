@@ -13,9 +13,10 @@ import threading
 from collections.abc import Awaitable, Callable
 from typing import Any, Dict, List, Optional
 
-from pydantic import BaseModel
+from pydantic import BaseModel, ValidationError
 
 from cogniverse_foundation.config.unified_config import OptimizerGenerationConfig
+from cogniverse_synthetic.dspy_modules import EntityQueryValidationError
 from cogniverse_synthetic.generators.base import (
     DEFAULT_SYNTHETIC_GENERATION_FLOOR_COUNT,
     BaseGenerator,
@@ -33,6 +34,9 @@ logger = logging.getLogger(__name__)
 
 RoutingDecider = Callable[[str, str], Awaitable[Any]]
 DEFAULT_PRODUCTION_LABEL_TIMEOUT_SECONDS = 300.0
+# Routing queries are user-style search questions, so they use the same
+# 20-word topic cap as profile selection instead of a caption-length summary.
+TOPIC_WORD_BUDGET = 20
 
 
 class _QueryGeneratorBoundaryError(Exception):
@@ -197,18 +201,22 @@ class RoutingGenerator(BaseGenerator):
             attempts += 1
             topic = self._extract_topic(content)
 
-            labelled = await self.entity_labeler.generate(
-                sampled_content=[{"topic": topic}],
-                target_count=1,
-                tenant_id=tenant_id,
-            )
-            entities = labelled[0].entities
-            relationships = labelled[0].relationships
-
-            # Generate query from entities using DSPy
-            query, generation_metadata = await self._generate_entity_query(
-                entities, topic
-            )
+            try:
+                labelled = await self.entity_labeler.generate(
+                    sampled_content=[{"topic": topic}],
+                    target_count=1,
+                    tenant_id=tenant_id,
+                )
+                entities = self._canonicalize_entities(labelled[0].entities)
+                relationships = labelled[0].relationships
+                query, generation_metadata = await self._generate_entity_query(
+                    entities, topic
+                )
+            except (ValueError, ValidationError) as exc:
+                last_validation_error = exc
+                if isinstance(generation_tracker, GenerationTracker):
+                    generation_tracker.record_drop(topic, exc)
+                continue
 
             # Create enhanced query with entity annotations
             enhanced_query = self._enhance_query(query, entities)
@@ -351,13 +359,15 @@ class RoutingGenerator(BaseGenerator):
         if not isinstance(topic, str) or not topic.strip():
             raise ValueError("topic must be a non-empty string")
 
+        canonical_entities = self._canonicalize_entities(entities)
+
         # Get or initialize validated DSPy query generator
         query_generator = self._get_query_generator()
 
         # Prepare inputs
         topics_str = topic
-        entity_texts = [entity["text"] for entity in entities]
-        entity_types = [entity["type"] for entity in entities]
+        entity_texts = [entity["text"] for entity in canonical_entities]
+        entity_types = [entity["type"] for entity in canonical_entities]
 
         def invoke_query_generator():
             try:
@@ -422,10 +432,16 @@ class RoutingGenerator(BaseGenerator):
                 + ", ".join(entity_texts)
             ) from exc
         except _QueryGeneratorBoundaryError as exc:
+            cause = exc.__cause__
+            if isinstance(cause, EntityQueryValidationError):
+                raise ValueError(
+                    "Failed to generate valid entity query after "
+                    f"{query_generator.max_retries} retries: {cause}"
+                ) from cause
             raise RuntimeError(
                 "entity query generation failed for entities: "
                 + ", ".join(entity_texts)
-            ) from exc.__cause__
+            ) from cause
         except ValueError as e:
             raise ValueError(
                 f"Failed to generate valid entity query after {query_generator.max_retries} retries: {e}"
@@ -438,10 +454,38 @@ class RoutingGenerator(BaseGenerator):
 
     @staticmethod
     def _extract_topic(content: Dict[str, Any]) -> str:
-        topic = extract_topic(content)
+        topic = extract_topic(content, max_words=TOPIC_WORD_BUDGET)
         if topic is not None:
             return topic
         raise ValueError("sampled routing content requires a non-empty topic")
+
+    @staticmethod
+    def _canonicalize_entities(entities: List[Dict]) -> List[Dict[str, str]]:
+        canonical_entities: List[Dict[str, str]] = []
+        seen_casefold: set[str] = set()
+        for index, entity in enumerate(entities):
+            if not isinstance(entity, dict):
+                raise ValueError(f"entities[{index}] must be an object")
+            entity_text = entity.get("text")
+            entity_type = entity.get("type")
+            if not isinstance(entity_text, str) or not entity_text.strip():
+                raise ValueError(f"entities[{index}].text must be a non-empty string")
+            if not isinstance(entity_type, str) or not entity_type.strip():
+                raise ValueError(f"entities[{index}].type must be a non-empty string")
+            if entity_text != entity_text.strip():
+                raise ValueError(
+                    f"entities[{index}].text contains surrounding whitespace"
+                )
+            if entity_type != entity_type.strip():
+                raise ValueError(
+                    f"entities[{index}].type contains surrounding whitespace"
+                )
+            entity_key = entity_text.casefold()
+            if entity_key in seen_casefold:
+                continue
+            seen_casefold.add(entity_key)
+            canonical_entities.append({"text": entity_text, "type": entity_type})
+        return canonical_entities
 
     def _enhance_query(self, query: str, entities: List[Dict]) -> str:
         """Add entity annotations to query (case-insensitive)"""

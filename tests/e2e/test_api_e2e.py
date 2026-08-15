@@ -31,6 +31,8 @@ import httpx
 import pytest
 
 from cogniverse_foundation.config.unified_config import BackendProfileConfig
+from cogniverse_synthetic.generators.base import extract_topic
+from cogniverse_synthetic.generators.routing import TOPIC_WORD_BUDGET
 from cogniverse_synthetic.schemas import ProfileSelectionExampleSchema
 from cogniverse_synthetic.utils import profile_can_ground_topic
 from tests.e2e.conftest import (
@@ -977,29 +979,44 @@ class TestSyntheticDataAPI:
                 and result["metadata"]["segment_description"].strip()
             }
             assert len(source_texts) == len(fixture_results)
+            # Routing labels entities on the capped topic it derives from the
+            # caption, not on the whole caption; expectations use the same text.
             expected_extractions = []
             for source_text in sorted(source_texts):
+                topic = extract_topic(
+                    {"description": source_text}, max_words=TOPIC_WORD_BUDGET
+                )
+                assert topic == " ".join(source_text.split()[:TOPIC_WORD_BUDGET])
                 extraction_response = client.post(
                     "/agents/entity_extraction_agent/process",
                     json={
                         "agent_name": "entity_extraction_agent",
-                        "query": source_text,
+                        "query": topic,
                         "context": {"tenant_id": TENANT_ID},
                     },
                 )
                 assert extraction_response.status_code == 200, extraction_response.text
                 extraction = extraction_response.json()
-                assert extraction["query"] == source_text
+                assert extraction["query"] == topic
                 assert extraction["path_used"] == "fast"
-                assert all(
-                    entity["text"] in source_text for entity in extraction["entities"]
-                )
+                assert all(entity["text"] in topic for entity in extraction["entities"])
+                seen_exact: dict[str, str] = {}
+                seen_casefold: set[str] = set()
+                canonical_entities = []
+                for entity in extraction["entities"]:
+                    if entity["text"] in seen_exact:
+                        assert seen_exact[entity["text"]] == entity["type"]
+                        continue
+                    seen_exact[entity["text"]] = entity["type"]
+                    if entity["text"].casefold() in seen_casefold:
+                        continue
+                    seen_casefold.add(entity["text"].casefold())
+                    canonical_entities.append(
+                        {"text": entity["text"], "type": entity["type"]}
+                    )
                 expected_extractions.append(
                     {
-                        "entities": [
-                            {"text": entity["text"], "type": entity["type"]}
-                            for entity in extraction["entities"]
-                        ],
+                        "entities": canonical_entities,
                         "relationships": [
                             {
                                 "source": relationship["subject"],
@@ -1037,18 +1054,34 @@ class TestSyntheticDataAPI:
         }
         assert data["optimizer"] == "routing"
         assert data["schema_name"] == "RoutingExperienceSchema"
-        assert data["count"] == 5
-        assert len(data["data"]) == 5
         assert data["selected_profiles"] == [PROFILE]
-        _assert_synthetic_metadata(
+        generation = _assert_synthetic_metadata_fields(
             data["metadata"],
             backend_query_strategy="entity_rich",
             sampled_content_count=5,
             target_count=5,
             vespa_sample_size=5,
         )
+        # The fixture is five frames of one clip; adjacent captions can share a
+        # topic, so the quota is filled only when the content supports it and
+        # every shortfall is a recorded content drop, never a hidden failure.
+        assert data["count"] == len(data["data"]) == generation["returned_count"]
+        assert generation["returned_count"] + generation["shortfall_count"] == 5
+        assert generation["surplus_exhausted"] is (generation["shortfall_count"] > 0)
+        content_drop_prefixes = (
+            "RoutingGenerator generated duplicate canonical label (",
+            "Failed to generate valid entity query after ",
+            "EntityExtractionGenerator generated 0 unique grounded examples",
+        )
+        assert [
+            drop["reason"].startswith(content_drop_prefixes)
+            for drop in generation["dropped_examples"]
+        ] == [True] * generation["dropped_count"]
+        assert generation["returned_count"] == len(
+            {(example["query"], example["chosen_agent"]) for example in data["data"]}
+        )
         fixture_corpus = " ".join(
-            str(value)
+            " ".join(str(value).split())
             for result in fixture_results
             for value in result["metadata"].values()
             if isinstance(value, str)
@@ -1068,58 +1101,70 @@ class TestSyntheticDataAPI:
             "timestamp",
             "metadata",
         }
-        for example in data["data"]:
-            assert set(example) == routing_fields
-            assert example["chosen_agent"] == "search_agent"
-            assert {
-                "entities": example["entities"],
-                "relationships": example["relationships"],
-            } in expected_extractions
-            assert all(
-                set(entity) == {"text", "type"} for entity in example["entities"]
-            )
-            assert len(example["entities"]) == len(
-                {
-                    (entity["text"].casefold(), entity["type"])
-                    for entity in example["entities"]
-                }
-            )
-            assert all(
-                entity["text"].casefold() in fixture_corpus
-                for entity in example["entities"]
-            )
-            entity_words = [
-                word
-                for entity in example["entities"]
-                for word in re.findall(r"\w+", entity["text"])
-                if len(word) > 3
-            ] or [entity["text"] for entity in example["entities"]]
-            assert any(
-                re.search(
-                    rf"(?<!\w){re.escape(word)}(?!\w)",
-                    example["query"],
-                    flags=re.IGNORECASE,
+        with httpx.Client(base_url=RUNTIME, timeout=900.0) as client:
+            for example in data["data"]:
+                assert set(example) == routing_fields
+                gateway_response = client.post(
+                    "/agents/gateway_agent/process",
+                    json={
+                        "agent_name": "gateway_agent",
+                        "query": example["query"],
+                        "context": {"tenant_id": TENANT_ID},
+                    },
                 )
-                for word in entity_words
-            )
-            assert all(
-                f"{entity['text']}({entity['type']})".casefold()
-                in example["enhanced_query"].casefold()
-                for entity in example["entities"]
-            )
-            generation_metadata = example["metadata"]["_generation_metadata"]
-            assert set(generation_metadata) == {
-                "retry_count",
-                "max_retries",
-                "reasoning",
-            }
-            assert type(generation_metadata["retry_count"]) is int
-            assert generation_metadata["retry_count"] in {0, 1, 2}
-            assert type(generation_metadata["max_retries"]) is int
-            assert generation_metadata["max_retries"] == 3
-            assert 20 <= len(generation_metadata["reasoning"]) <= 2_000
-            assert "available_profiles" not in example
-            assert "workflow_id" not in example
+                assert gateway_response.status_code == 200, gateway_response.text
+                gateway = gateway_response.json()["gateway"]
+                assert example["chosen_agent"] == gateway["routed_to"]
+                assert example["routing_confidence"] == gateway["confidence"]
+                assert {
+                    "entities": example["entities"],
+                    "relationships": example["relationships"],
+                } in expected_extractions
+                assert all(
+                    set(entity) == {"text", "type"} for entity in example["entities"]
+                )
+                assert len(example["entities"]) == len(
+                    {
+                        (entity["text"].casefold(), entity["type"])
+                        for entity in example["entities"]
+                    }
+                )
+                assert all(
+                    entity["text"].casefold() in fixture_corpus
+                    for entity in example["entities"]
+                )
+                entity_words = [
+                    word
+                    for entity in example["entities"]
+                    for word in re.findall(r"\w+", entity["text"])
+                    if len(word) > 3
+                ] or [entity["text"] for entity in example["entities"]]
+                assert any(
+                    re.search(
+                        rf"(?<!\w){re.escape(word)}(?!\w)",
+                        example["query"],
+                        flags=re.IGNORECASE,
+                    )
+                    for word in entity_words
+                )
+                assert all(
+                    f"{entity['text']}({entity['type']})".casefold()
+                    in example["enhanced_query"].casefold()
+                    for entity in example["entities"]
+                )
+                generation_metadata = example["metadata"]["_generation_metadata"]
+                assert set(generation_metadata) == {
+                    "retry_count",
+                    "max_retries",
+                    "reasoning",
+                }
+                assert type(generation_metadata["retry_count"]) is int
+                assert generation_metadata["retry_count"] in {0, 1, 2}
+                assert type(generation_metadata["max_retries"]) is int
+                assert generation_metadata["max_retries"] == 3
+                assert 20 <= len(generation_metadata["reasoning"]) <= 2_000
+                assert "available_profiles" not in example
+                assert "workflow_id" not in example
 
     def test_generate_synthetic_data_cross_modal(self):
         """POST /synthetic/generate with cross_modal optimizer."""
@@ -1909,6 +1954,27 @@ def _assert_synthetic_metadata(
     Drop counts depend on how many examples the model returned ungrounded on
     this run, so they carry an invariant instead of a fixed value.
     """
+    generation = _assert_synthetic_metadata_fields(
+        metadata,
+        backend_query_strategy=backend_query_strategy,
+        sampled_content_count=sampled_content_count,
+        target_count=target_count,
+        vespa_sample_size=vespa_sample_size,
+    )
+    assert generation["returned_count"] == target_count
+    assert generation["shortfall_count"] == 0
+    assert generation["surplus_exhausted"] is False
+
+
+def _assert_synthetic_metadata_fields(
+    metadata: dict,
+    *,
+    backend_query_strategy: str,
+    sampled_content_count: int,
+    target_count: int,
+    vespa_sample_size: int,
+) -> dict:
+    """Pin every metadata field except the quota outcome; return the block."""
     generation = metadata.get("generation")
     assert isinstance(generation, dict), f"metadata has no generation block: {metadata}"
     assert {key: value for key, value in metadata.items() if key != "generation"} == {
@@ -1919,14 +1985,12 @@ def _assert_synthetic_metadata(
     }
     assert set(generation) == set(_GENERATION_METADATA_FIELDS)
     assert generation["requested_count"] == target_count
-    assert generation["returned_count"] == target_count
-    assert generation["shortfall_count"] == 0
     assert generation["floor_count"] == 1
-    assert generation["surplus_exhausted"] is False
     assert generation["dropped_count"] == len(generation["dropped_examples"])
     for drop in generation["dropped_examples"]:
         assert set(drop) == {"candidate", "reason"}
         assert drop["reason"].strip() != ""
+    return generation
 
 
 def _expected_artifact_source_url(path: Path, tenant_id: str = TENANT_ID) -> str:
