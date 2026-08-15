@@ -33,6 +33,11 @@ from cogniverse_synthetic.service import SyntheticDataService
 
 pytestmark = [pytest.mark.unit]
 
+_REPO_ROOT = Path(__file__).resolve().parents[4]
+_SHIPPED_BACKEND_PROFILES = json.loads(
+    (_REPO_ROOT / "configs" / "config.json").read_text()
+)["backend"]["profiles"]
+
 
 def create_test_agent_mappings() -> list[AgentMappingRule]:
     return [
@@ -148,7 +153,7 @@ def create_test_backend_config() -> BackendConfig:
             "video_frames": BackendProfileConfig(
                 profile_name="video_frames",
                 type="video",
-                schema_name="video_segments",
+                schema_name="video_videoprism_large_mv_chunk_30s",
                 embedding_type="multi_vector",
                 pipeline_config={
                     "extract_keyframes": True,
@@ -158,7 +163,7 @@ def create_test_backend_config() -> BackendConfig:
             "audio_semantic": BackendProfileConfig(
                 profile_name="audio_semantic",
                 type="audio",
-                schema_name="audio_segments",
+                schema_name="audio_content",
                 embedding_type="multi_vector",
                 pipeline_config={"transcribe_audio": True},
             ),
@@ -174,6 +179,23 @@ class _GroundedBackend:
         return f"{base_schema_name}_{tenant_id.replace(':', '_')}"
 
     def query_metadata_documents(self, schema, query=None, yql=None, **kwargs):
+        if schema == "document_text":
+            return [
+                {
+                    "document_id": "doc-1",
+                    "document_title": "Curie lecture",
+                    "full_text": "Curie lecture explores radium and Marie Curie.",
+                    "schema": schema,
+                }
+            ]
+        if schema == "document_visual":
+            return [
+                {
+                    "document_id": "doc-2",
+                    "document_title": "Curie lecture",
+                    "schema": schema,
+                }
+            ]
         return [
             {
                 "video_title": "Saturn V launch",
@@ -195,6 +217,46 @@ class _BackendAccessRecorder(_GroundedBackend):
     def query_metadata_documents(self, schema, query=None, yql=None, **kwargs):
         self.calls.append(("query_metadata_documents", schema, kwargs))
         return super().query_metadata_documents(schema, query=query, yql=yql, **kwargs)
+
+
+class _GroundabilityBackend:
+    def __init__(self) -> None:
+        self.schema_queries = []
+        self.query_calls = []
+
+    def schema_exists(self, schema_name, tenant_id=None):
+        self.schema_queries.append((schema_name, tenant_id))
+        return True
+
+    def get_tenant_schema_name(self, tenant_id, base_schema_name):
+        return f"{base_schema_name}_{tenant_id.replace(':', '_')}"
+
+    def query_metadata_documents(self, schema, query=None, yql=None, **kwargs):
+        self.query_calls.append((schema, kwargs))
+        if schema == "document_text":
+            return [
+                {
+                    "document_id": "doc-1",
+                    "document_title": "Curie lecture",
+                    "full_text": "Curie lecture explores radium and Marie Curie.",
+                    "schema": schema,
+                }
+            ]
+        if schema == "document_visual":
+            return [
+                {
+                    "document_id": "doc-2",
+                    "document_title": "Curie lecture",
+                    "schema": schema,
+                }
+            ]
+        return []
+
+
+def _shipped_backend_profile(profile_name: str) -> BackendProfileConfig:
+    return BackendProfileConfig.from_dict(
+        profile_name, _SHIPPED_BACKEND_PROFILES[profile_name]
+    )
 
 
 def _generator_config_with_mappings(
@@ -564,7 +626,7 @@ class TestSyntheticDataService:
                         "video_frames": BackendProfileConfig(
                             profile_name="video_frames",
                             type="video",
-                            schema_name="video_segments",
+                            schema_name="video_videoprism_large_mv_chunk_30s",
                             embedding_type="multi_vector",
                         )
                     },
@@ -592,7 +654,7 @@ class TestSyntheticDataService:
                         "audio_semantic": BackendProfileConfig(
                             profile_name="audio_semantic",
                             type="audio",
-                            schema_name="audio_segments",
+                            schema_name="audio_content",
                             embedding_type="multi_vector",
                         )
                     },
@@ -618,7 +680,7 @@ class TestSyntheticDataService:
                         "video_frames": BackendProfileConfig(
                             profile_name="video_frames",
                             type="video",
-                            schema_name="video_segments",
+                            schema_name="video_videoprism_large_mv_chunk_30s",
                             embedding_type="multi_vector",
                         )
                     },
@@ -1059,19 +1121,8 @@ class TestServiceWithBackendConfig:
     @pytest.mark.asyncio
     async def test_profile_examples_use_the_configured_profile_universe(self):
         configured_profiles = {
-            "custom_image": BackendProfileConfig(
-                profile_name="custom_image",
-                type="image",
-                schema_name="image_segments",
-                embedding_type="multi_vector",
-            ),
-            "custom_audio": BackendProfileConfig(
-                profile_name="custom_audio",
-                type="audio",
-                schema_name="audio_segments",
-                embedding_type="multi_vector",
-                pipeline_config={"transcribe_audio": True},
-            ),
+            name: _shipped_backend_profile(name)
+            for name in ("document_visual_colpali", "document_text_semantic")
         }
         service = SyntheticDataService(
             backend=_GroundedBackend(),
@@ -1094,20 +1145,100 @@ class TestServiceWithBackendConfig:
         )
 
         assert response.count == 1
-        assert set(response.selected_profiles) == set(configured_profiles)
+        assert response.selected_profiles == ["document_text_semantic"]
         assert {item["available_profiles"] for item in response.data} == {
-            "custom_image,custom_audio"
+            "document_text_semantic"
         }
-        assert {item["selected_profile"] for item in response.data} == {"custom_image"}
-        assert {item["modality"] for item in response.data} == {"image"}
-        assert {item["query_intent"] for item in response.data} == {"image_search"}
+        assert {item["selected_profile"] for item in response.data} == {
+            "document_text_semantic"
+        }
+        assert {item["modality"] for item in response.data} == {"document"}
+        assert {item["query_intent"] for item in response.data} == {"document_search"}
+
+    @pytest.mark.asyncio
+    async def test_workflow_generation_skips_ungroundable_profiles_and_uses_groundable_content(
+        self,
+    ):
+        backend = _GroundabilityBackend()
+        profiles = {
+            name: _shipped_backend_profile(name)
+            for name in ("document_visual_colpali", "document_text_semantic")
+        }
+        service = SyntheticDataService(
+            backend=backend,
+            backend_config=BackendConfig(profiles=profiles, tenant_id="test:unit"),
+            generator_config=create_test_generator_config(),
+            agents_config=create_test_agents_config(),
+            profile_labeler=_label_grounded_profile,
+        )
+
+        response = await service.generate(
+            SyntheticDataRequest(
+                tenant_id="test:unit",
+                optimizer="workflow",
+                count=1,
+                vespa_sample_size=1,
+                max_profiles=2,
+            )
+        )
+
+        assert response.count == 1
+        assert response.selected_profiles == ["document_text_semantic"]
+        assert backend.query_calls == [
+            ("document_text", {"hits": 1, "tenant_id": "test:unit"})
+        ]
+        assert response.metadata == {
+            "backend_query_strategy": "multi_modal_sequences",
+            "sampled_content_count": 1,
+            "target_count": 1,
+            "vespa_sample_size": 1,
+        }
+        assert [example["query"] for example in response.data] == [
+            "find Curie lecture explores radium and Marie Curie."
+        ]
+        assert [example["query_type"] for example in response.data] == ["DOCUMENT"]
+
+    @pytest.mark.asyncio
+    async def test_workflow_generation_rejects_tenant_with_only_ungroundable_profiles(
+        self,
+    ):
+        backend = _GroundabilityBackend()
+        profiles = {
+            "document_visual_colpali": _shipped_backend_profile(
+                "document_visual_colpali"
+            )
+        }
+        service = SyntheticDataService(
+            backend=backend,
+            backend_config=BackendConfig(profiles=profiles, tenant_id="test:unit"),
+            generator_config=create_test_generator_config(),
+            agents_config=create_test_agents_config(),
+            profile_labeler=_label_grounded_profile,
+        )
+
+        with pytest.raises(ValueError) as error:
+            await service.generate(
+                SyntheticDataRequest(
+                    tenant_id="test:unit",
+                    optimizer="workflow",
+                    count=1,
+                    vespa_sample_size=1,
+                    max_profiles=1,
+                )
+            )
+
+        assert str(error.value) == (
+            "Synthetic generation requires at least one groundable backend "
+            "profile for tenant 'test:unit'; considered profiles: "
+            "document_visual_colpali"
+        )
 
     @pytest.mark.asyncio
     async def test_service_passes_full_profile_configs_to_profile_generation(self):
         audio_profile = BackendProfileConfig(
             profile_name="audio_semantic",
             type="audio",
-            schema_name="audio_segments",
+            schema_name="audio_content",
             embedding_type="multi_vector",
             pipeline_config={"transcribe_audio": True},
         )
@@ -1128,7 +1259,7 @@ class TestServiceWithBackendConfig:
         examples = await service._generate_examples(
             request,
             get_optimizer_config("profile"),
-            [{"topic": "Curie lecture", "schema_name": "audio_segments"}],
+            [{"topic": "Curie lecture", "schema_name": "audio_content"}],
             {"audio_semantic": audio_profile.to_dict()},
         )
 
@@ -1148,14 +1279,14 @@ class TestServiceWithBackendConfig:
             "audio_semantic": BackendProfileConfig(
                 profile_name="audio_semantic",
                 type="audio",
-                schema_name="audio_segments",
+                schema_name="audio_content",
                 embedding_type="multi_vector",
                 pipeline_config={"transcribe_audio": True},
             ),
             "document_semantic": BackendProfileConfig(
                 profile_name="document_semantic",
                 type="document",
-                schema_name="document_pages",
+                schema_name="document_text",
                 embedding_type="multi_vector",
             ),
         }
@@ -1174,8 +1305,8 @@ class TestServiceWithBackendConfig:
             request,
             get_optimizer_config("cross_modal"),
             [
-                {"topic": "Curie lecture", "schema_name": "audio_segments"},
-                {"topic": "Radium notes", "schema_name": "document_pages"},
+                {"topic": "Curie lecture", "schema_name": "audio_content"},
+                {"topic": "Radium notes", "schema_name": "document_text"},
             ],
             {name: profile.to_dict() for name, profile in profiles.items()},
         )
@@ -1203,13 +1334,13 @@ class TestServiceWithBackendConfig:
             "audio_semantic": BackendProfileConfig(
                 profile_name="audio_semantic",
                 type="audio",
-                schema_name="audio_segments",
+                schema_name="audio_content",
                 embedding_type="multi_vector",
             ),
             "document_semantic": BackendProfileConfig(
                 profile_name="document_semantic",
                 type="document",
-                schema_name="document_pages",
+                schema_name="document_text",
                 embedding_type="single_vector",
             ),
         }
@@ -1229,8 +1360,8 @@ class TestServiceWithBackendConfig:
                 request,
                 get_optimizer_config("cross_modal"),
                 [
-                    {"topic": "Curie lecture", "schema_name": "audio_segments"},
-                    {"topic": "Radium notes", "schema_name": "document_pages"},
+                    {"topic": "Curie lecture", "schema_name": "audio_content"},
+                    {"topic": "Radium notes", "schema_name": "document_text"},
                 ],
                 {name: profile.to_dict() for name, profile in profiles.items()},
             )
@@ -1246,21 +1377,21 @@ class TestServiceWithBackendConfig:
             "video_colpali": BackendProfileConfig(
                 profile_name="video_colpali",
                 type="video",
-                schema_name="video_frames",
+                schema_name="video_colpali_smol500_mv_frame",
                 embedding_type="multi_vector",
                 pipeline_config={"transcribe_audio": True},
             ),
             "video_colqwen": BackendProfileConfig(
                 profile_name="video_colqwen",
                 type="video",
-                schema_name="video_chunks",
+                schema_name="video_videoprism_large_mv_chunk_30s",
                 embedding_type="multi_vector",
                 pipeline_config={"transcribe_audio": True},
             ),
             "audio_semantic": BackendProfileConfig(
                 profile_name="audio_semantic",
                 type="audio",
-                schema_name="audio_segments",
+                schema_name="audio_content",
                 embedding_type="multi_vector",
             ),
         }
@@ -1321,14 +1452,14 @@ def _tenant_profile_service(backend) -> SyntheticDataService:
         "profile_a": BackendProfileConfig(
             profile_name="profile_a",
             type="audio",
-            schema_name="schema_a",
+            schema_name="audio_content",
             embedding_type="multi_vector",
             pipeline_config={"transcribe_audio": True},
         ),
         "profile_b": BackendProfileConfig(
             profile_name="profile_b",
             type="document",
-            schema_name="schema_b",
+            schema_name="document_text",
             embedding_type="single_vector",
         ),
     }
@@ -1345,7 +1476,7 @@ def _tenant_profile_service(backend) -> SyntheticDataService:
 async def test_live_backend_samples_a_deployed_configured_profile_schema():
     tenant_id = "acme:media"
     profile_name = "video_frames"
-    schema_name = "video_segments"
+    schema_name = "video_videoprism_large_mv_chunk_30s"
     backend = _TenantProfileBackend({tenant_id: {schema_name}})
     service = SyntheticDataService(
         backend=backend,
@@ -1393,7 +1524,7 @@ async def test_live_backend_samples_a_deployed_configured_profile_schema():
 async def test_generation_uses_only_each_tenants_deployed_profiles_concurrently():
     tenants = [f"tenant_{index}:media" for index in range(8)]
     deployed = {
-        tenant: {"schema_a" if index % 2 == 0 else "schema_b"}
+        tenant: {"audio_content" if index % 2 == 0 else "document_text"}
         for index, tenant in enumerate(tenants)
     }
     backend = _TenantProfileBackend(deployed)
@@ -1416,7 +1547,7 @@ async def test_generation_uses_only_each_tenants_deployed_profiles_concurrently(
 
     for tenant, response in zip(tenants, responses, strict=True):
         expected_profile = (
-            "profile_a" if deployed[tenant] == {"schema_a"} else "profile_b"
+            "profile_a" if deployed[tenant] == {"audio_content"} else "profile_b"
         )
         expected_modality = "audio" if expected_profile == "profile_a" else "document"
         expected_schema = next(iter(deployed[tenant]))
@@ -1446,7 +1577,9 @@ async def test_generation_uses_only_each_tenants_deployed_profiles_concurrently(
     )
 
     assert sorted(backend.schema_checks) == sorted(
-        (tenant, schema) for tenant in tenants for schema in ("schema_a", "schema_b")
+        (tenant, schema)
+        for tenant in tenants
+        for schema in ("audio_content", "document_text")
     )
 
 
@@ -1456,7 +1589,7 @@ async def test_profile_schema_checks_do_not_block_the_event_loop():
 
     class _BlockingSchemaBackend(_TenantProfileBackend):
         def __init__(self):
-            super().__init__({"acme:media": {"schema_a"}})
+            super().__init__({"acme:media": {"audio_content"}})
             self.released_by_event_loop = False
 
         def schema_exists(self, schema_name, tenant_id=None):
@@ -1490,7 +1623,7 @@ async def test_profile_schema_lookup_failure_propagates_without_querying():
         def schema_exists(self, schema_name, tenant_id=None):
             raise RuntimeError("schema registry unavailable")
 
-    backend = _BrokenSchemaBackend({"acme:media": {"schema_a"}})
+    backend = _BrokenSchemaBackend({"acme:media": {"audio_content"}})
 
     with pytest.raises(RuntimeError, match="schema registry unavailable"):
         await _tenant_profile_service(backend).generate(
@@ -1513,35 +1646,30 @@ async def test_profile_schema_lookup_failure_propagates_without_querying():
 async def test_profile_requires_canonical_schema_name_before_backend_access(
     profile_data,
 ):
-    class _ProfileConfig:
-        def to_dict(self):
-            return dict(profile_data)
-
     tenant_id = "acme:media"
     backend = _TenantProfileBackend({tenant_id: {"legacy_profile", " ", 7}})
-    service = SyntheticDataService(
-        backend=backend,
-        backend_config=BackendConfig(
-            profiles={"legacy_profile": _ProfileConfig()},
-            tenant_id="test:unit",
-        ),
-        generator_config=create_test_generator_config(),
-        agents_config=create_test_agents_config(),
-    )
-
     with pytest.raises(
         ValueError,
         match=(
-            "Backend profile 'legacy_profile' requires a non-empty string schema_name"
+            "Backend profile 'legacy_profile' cannot be assessed for groundability: "
+            "Backend profile requires a non-empty string schema_name"
         ),
     ):
-        await service.generate(
-            SyntheticDataRequest(
-                tenant_id=tenant_id,
-                optimizer="profile",
-                count=1,
-                vespa_sample_size=1,
-            )
+        SyntheticDataService(
+            backend=backend,
+            backend_config=BackendConfig(
+                profiles={
+                    "legacy_profile": BackendProfileConfig(
+                        profile_name="legacy_profile",
+                        type="document",
+                        schema_name=profile_data.get("schema_name", ""),
+                        embedding_type="single_vector",
+                    )
+                },
+                tenant_id="test:unit",
+            ),
+            generator_config=create_test_generator_config(),
+            agents_config=create_test_agents_config(),
         )
 
     assert backend.schema_checks == []

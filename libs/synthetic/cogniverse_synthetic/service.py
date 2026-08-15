@@ -41,6 +41,7 @@ from cogniverse_synthetic.schemas import SyntheticDataRequest, SyntheticDataResp
 from cogniverse_synthetic.utils import (
     AgentInferrer,
     PatternExtractor,
+    partition_profiles_by_groundability,
     partition_profiles_by_sampleability,
     profile_modality,
 )
@@ -138,17 +139,25 @@ class SyntheticDataService:
         self._sampleable_profiles, internal_profiles = (
             partition_profiles_by_sampleability(self.backend_config.profiles)
         )
+        self._groundable_profiles, ungroundable_profiles = (
+            partition_profiles_by_groundability(self._sampleable_profiles)
+        )
         if internal_profiles:
             logger.warning(
                 "Synthetic skips internal backend profiles: %s",
                 ", ".join(sorted(internal_profiles)),
+            )
+        if ungroundable_profiles:
+            logger.warning(
+                "Synthetic skips ungroundable backend profiles: %s",
+                ", ".join(sorted(ungroundable_profiles)),
             )
         self.agent_inferrer.require_mappings(
             {
                 modality
                 for modality in (
                     profile_modality(profile)
-                    for profile in self._sampleable_profiles.values()
+                    for profile in self._groundable_profiles.values()
                 )
                 if modality is not None
             }
@@ -353,13 +362,15 @@ class SyntheticDataService:
         self,
         tenant_id: str,
     ) -> Dict[str, Dict[str, Any]]:
-        if not self._sampleable_profiles:
+        if not self._groundable_profiles:
             raise ValueError(
-                "Synthetic generation requires configured backend profiles"
+                "Synthetic generation requires at least one groundable backend "
+                f"profile for tenant {tenant_id!r}; considered profiles: "
+                f"{', '.join(sorted(self._sampleable_profiles))}"
             )
         configured_profiles = {
             name: profile.to_dict()
-            for name, profile in self._sampleable_profiles.items()
+            for name, profile in self._groundable_profiles.items()
         }
 
         for profile_name, profile_config in configured_profiles.items():
@@ -380,7 +391,11 @@ class SyntheticDataService:
 
         deployed_profiles = await asyncio.to_thread(find_deployed_profiles)
         if not deployed_profiles:
-            raise ValueError(f"No deployed backend profiles for tenant {tenant_id}")
+            raise ValueError(
+                "Synthetic generation requires at least one deployed "
+                f"groundable backend profile for tenant {tenant_id!r}; "
+                f"considered profiles: {', '.join(sorted(configured_profiles))}"
+            )
         return deployed_profiles
 
     async def _select_profiles(
