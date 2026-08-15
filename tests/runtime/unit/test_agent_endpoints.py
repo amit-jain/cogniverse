@@ -9,7 +9,7 @@ import time
 from contextlib import contextmanager
 from datetime import datetime
 from types import SimpleNamespace
-from unittest.mock import AsyncMock, MagicMock, Mock, patch
+from unittest.mock import AsyncMock, MagicMock, Mock, call, patch
 
 import pytest
 from fastapi import FastAPI
@@ -523,6 +523,11 @@ class TestModalitySearchDispatchSerialization:
         from cogniverse_agents.audio_analysis_agent import AudioResult
 
         monkeypatch.setattr(dispatcher, "_get_vespa_endpoint", lambda t: "http://vespa")
+        backend = MagicMock()
+        backend.schema_exists = MagicMock(return_value=True)
+        monkeypatch.setattr(
+            "cogniverse_runtime.admin.tenant_manager.get_backend", lambda: backend
+        )
         stub = MagicMock()
         stub.search_audio = AsyncMock(
             return_value=[AudioResult(audio_id="aud1", audio_url="http://x/1.mp3")]
@@ -534,10 +539,75 @@ class TestModalitySearchDispatchSerialization:
 
         result = await dispatcher._execute_audio_search_task("speech", "acme:prod", 5)
 
+        assert backend.schema_exists.call_args_list == [
+            call("audio_content", "acme:prod")
+        ]
         assert result["status"] == "success"
         assert result["results_count"] == 1
         assert result["results"][0]["audio_id"] == "aud1"
         assert result["results"][0]["audio_url"] == "http://x/1.mp3"
+
+    @pytest.mark.asyncio
+    @pytest.mark.ci_fast
+    async def test_audio_search_dispatch_is_empty_when_tenant_has_no_audio_schema(
+        self, dispatcher, monkeypatch
+    ):
+        """Tenant schemas deploy on first ingest; a tenant that never ingested
+        audio has no audio_content schema, and a query for it is a real
+        no-content answer, not a Vespa error."""
+        monkeypatch.setattr(dispatcher, "_get_vespa_endpoint", lambda t: "http://vespa")
+        backend = MagicMock()
+        backend.schema_exists = MagicMock(return_value=False)
+        monkeypatch.setattr(
+            "cogniverse_runtime.admin.tenant_manager.get_backend", lambda: backend
+        )
+
+        def _must_not_build(*a, **k):
+            raise AssertionError("audio agent must not be built without a schema")
+
+        monkeypatch.setattr(
+            "cogniverse_agents.audio_analysis_agent.AudioAnalysisAgent",
+            _must_not_build,
+        )
+
+        result = await dispatcher._execute_audio_search_task("speech", "acme:prod", 5)
+
+        assert backend.schema_exists.call_args_list == [
+            call("audio_content", "acme:prod")
+        ]
+        assert result == {
+            "status": "success",
+            "agent": "audio_analysis_agent",
+            "message": "No audio content indexed for tenant 'acme:prod'",
+            "results_count": 0,
+            "results": [],
+        }
+
+    @pytest.mark.asyncio
+    @pytest.mark.ci_fast
+    async def test_audio_search_dispatch_raises_when_schema_lookup_fails(
+        self, dispatcher, monkeypatch
+    ):
+        """A registry outage is not "no audio content": it must surface."""
+        monkeypatch.setattr(dispatcher, "_get_vespa_endpoint", lambda t: "http://vespa")
+        backend = MagicMock()
+        backend.schema_exists = MagicMock(
+            side_effect=RuntimeError("schema registry unavailable")
+        )
+        monkeypatch.setattr(
+            "cogniverse_runtime.admin.tenant_manager.get_backend", lambda: backend
+        )
+
+        def _must_not_build(*a, **k):
+            raise AssertionError("audio agent must not be built when lookup fails")
+
+        monkeypatch.setattr(
+            "cogniverse_agents.audio_analysis_agent.AudioAnalysisAgent",
+            _must_not_build,
+        )
+
+        with pytest.raises(RuntimeError, match="^schema registry unavailable$"):
+            await dispatcher._execute_audio_search_task("speech", "acme:prod", 5)
 
     @pytest.mark.asyncio
     @pytest.mark.ci_fast
@@ -1182,6 +1252,12 @@ class TestUnconfiguredInferenceServiceContract:
             return real_find_spec(name, *args, **kwargs)
 
         monkeypatch.setattr(_importlib_util, "find_spec", _no_torch)
+        # The tenant has an audio schema; the failing boundary is the sidecar.
+        backend = MagicMock()
+        backend.schema_exists = MagicMock(return_value=True)
+        monkeypatch.setattr(
+            "cogniverse_runtime.admin.tenant_manager.get_backend", lambda: backend
+        )
 
         # The deployed runtime carried no clap_embed entry at all.
         assert (
