@@ -8,6 +8,7 @@ from unittest.mock import MagicMock
 
 import pytest
 
+from cogniverse_core.registries.exceptions import SchemaRegistryInitializationError
 from cogniverse_core.registries.schema_registry import SchemaRegistry
 from cogniverse_sdk.interfaces.config_store import ConfigScope
 
@@ -357,6 +358,40 @@ class TestSchemaRegistryTracking:
 
         # Should not exist for tenant_b
         assert schema_registry.schema_exists("tenant_b", "schema1") is False
+
+    def test_schema_exists_sees_a_peer_registration_on_miss(
+        self, mock_config_manager, mock_backend, mock_schema_loader, schema_registry
+    ):
+        """A schema deployed by another process (a peer registry on the same
+        store) is visible without a restart: a cache miss re-reads storage."""
+        assert schema_registry.schema_exists("acme", "agent_memories") is False
+
+        peer = SchemaRegistry(
+            config_manager=mock_config_manager,
+            backend=mock_backend,
+            schema_loader=mock_schema_loader,
+        )
+        peer.deploy_schema("acme", "agent_memories")
+
+        assert schema_registry.schema_exists("acme", "agent_memories") is True
+        assert schema_registry.get_tenant_schemas("acme")[0].full_schema_name == (
+            peer.get_tenant_schemas("acme")[0].full_schema_name
+        )
+
+    def test_schema_exists_miss_reload_outage_raises(self, schema_registry):
+        """A storage outage during the miss re-read is not 'schema missing'."""
+        schema_registry._config_manager.store.list_all_configs.side_effect = (
+            ConnectionError("config store unreachable")
+        )
+        with pytest.raises(SchemaRegistryInitializationError, match="unreachable"):
+            schema_registry.schema_exists("acme", "never_deployed")
+
+    def test_schema_exists_hit_does_not_touch_storage(self, schema_registry):
+        schema_registry.deploy_schema("acme", "test_schema")
+        schema_registry._config_manager.store.list_all_configs.reset_mock()
+
+        assert schema_registry.schema_exists("acme", "test_schema") is True
+        schema_registry._config_manager.store.list_all_configs.assert_not_called()
 
     def test_register_schema_adds_to_tracking(self, schema_registry):
         """Test register_schema adds schema to in-memory tracking"""
