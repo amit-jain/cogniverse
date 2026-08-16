@@ -2,7 +2,7 @@
 Audio Analysis Agent using Whisper
 
 Uses existing AudioTranscriber for transcription and connects to Vespa
-for real audio search. Supports both transcript-based and acoustic similarity search.
+for real audio search. Supports transcript, semantic, and acoustic search.
 """
 
 import asyncio
@@ -25,6 +25,7 @@ from cogniverse_agents.search.vespa_query import (
 )
 from cogniverse_core.agents.a2a_agent import A2AAgent, A2AAgentConfig
 from cogniverse_core.agents.base import AgentDeps, AgentInput, AgentOutput
+from cogniverse_core.registries.backend_registry import get_backend_registry
 from cogniverse_foundation.config.inference_auth import inference_headers
 from cogniverse_runtime.ingestion.processors.audio_embedding_generator import (
     AudioEmbeddingGenerator,
@@ -32,7 +33,6 @@ from cogniverse_runtime.ingestion.processors.audio_embedding_generator import (
 from cogniverse_runtime.ingestion.processors.audio_transcriber import AudioTranscriber
 
 logger = logging.getLogger(__name__)
-
 
 # =============================================================================
 # Type-Safe Models
@@ -65,7 +65,7 @@ class AudioSearchInput(AgentInput):
 
     query: str = PydanticField(..., description="Search query")
     search_mode: str = PydanticField(
-        "hybrid", description="Search mode: transcript, acoustic, hybrid"
+        "semantic", description="Search mode: transcript, semantic, acoustic, hybrid"
     )
     limit: int = PydanticField(20, description="Number of results")
 
@@ -143,6 +143,25 @@ class AudioAnalysisDeps(AgentDeps):
             "Validated request headers from the resolved CLAP endpoint. "
             "Authenticated endpoints accept only an Authorization bearer value."
         ),
+    )
+    backend_type: str = PydanticField("vespa", description="Backend type")
+    backend_config: Dict[str, Any] = PydanticField(
+        default_factory=dict,
+        repr=False,
+        description=(
+            "Merged backend config, including backend.profiles, used to build "
+            "the shared search backend."
+        ),
+    )
+    config_manager: Any = PydanticField(
+        None,
+        repr=False,
+        description="ConfigManager for search backend resolution",
+    )
+    schema_loader: Any = PydanticField(
+        None,
+        repr=False,
+        description="SchemaLoader for search backend resolution",
     )
 
     @field_validator("whisper_headers")
@@ -338,9 +357,9 @@ class AudioAnalysisAgent(
 
     Capabilities:
     - Speech transcription using existing AudioTranscriber
-    - Transcript-based semantic search
+    - Transcript, semantic, and hybrid text search
     - Acoustic similarity search
-    - Hybrid search combining both approaches
+    - Hybrid semantic + BM25 search
     - Real Vespa backend integration
     """
 
@@ -361,7 +380,7 @@ class AudioAnalysisAgent(
         class AudioSearchSignature(dspy.Signature):
             query: str = dspy.InputField(desc="Audio search query")
             mode: str = dspy.InputField(
-                desc="Search mode: transcript, acoustic, hybrid"
+                desc="Search mode: transcript, semantic, acoustic, hybrid"
             )
             result: str = dspy.OutputField(desc="Search results")
 
@@ -369,7 +388,7 @@ class AudioAnalysisAgent(
             def __init__(self):
                 super().__init__()
 
-            def forward(self, query: str, mode: str = "hybrid"):
+            def forward(self, query: str, mode: str = "semantic"):
                 return dspy.Prediction(
                     result=f"Searching audio: {query} (mode: {mode})"
                 )
@@ -393,12 +412,18 @@ class AudioAnalysisAgent(
         self._whisper_headers = deps._resolved_whisper_headers
         self._whisper_model = deps.whisper_model
         self._clap_headers = deps._resolved_clap_headers
+        self._backend_type = deps.backend_type
+        self._backend_config = dict(deps.backend_config or {})
+        self.config_manager = deps.config_manager
+        self.schema_loader = deps.schema_loader
 
         # Initialize components (lazy loading)
         self._audio_transcriber = None
         self._embedding_generator = None
+        self._shared_backend = None
         self._audio_transcriber_lock = Lock()
         self._embedding_generator_lock = Lock()
+        self._shared_backend_lock = Lock()
 
         from cogniverse_core.common.media import MediaConfig, MediaLocator
 
@@ -450,7 +475,7 @@ class AudioAnalysisAgent(
     async def search_audio(
         self,
         query: str,
-        search_mode: str = "hybrid",
+        search_mode: str = "semantic",
         limit: int = 20,
     ) -> List[AudioResult]:
         """
@@ -458,7 +483,7 @@ class AudioAnalysisAgent(
 
         Args:
             query: Text query
-            search_mode: "acoustic", "transcript", or "hybrid"
+            search_mode: "acoustic", "transcript", "semantic", or "hybrid"
             limit: Number of results
 
         Returns:
@@ -471,11 +496,15 @@ class AudioAnalysisAgent(
                 results = await self._search_acoustic(query, limit)
             elif search_mode == "transcript":
                 results = await self._search_transcript(query, limit)
+            elif search_mode == "semantic":
+                results = await self._search_semantic(query, limit)
             elif search_mode == "hybrid":
-                # Hybrid: BM25 on transcripts + semantic similarity
                 results = await self._search_hybrid(query, limit)
             else:
-                results = await self._search_transcript(query, limit)
+                raise ValueError(
+                    f"Unknown audio search mode {search_mode!r}; expected one of "
+                    "acoustic, transcript, semantic, hybrid"
+                )
 
             logger.info(f"✅ Found {len(results)} audio results")
             return results
@@ -574,57 +603,74 @@ class AudioAnalysisAgent(
 
         return _parse_remote_transcription(body, url)
 
-    async def _search_transcript(self, query: str, limit: int) -> List[AudioResult]:
-        """Search by transcript text using BM25"""
+    def _get_backend(self):
+        """Get or create the shared search backend (lazy initialization)."""
+        if self._shared_backend is not None:
+            return self._shared_backend
+        with self._shared_backend_lock:
+            if self._shared_backend is None:
+                registry = get_backend_registry()
+                self._shared_backend = registry.get_search_backend(
+                    self._backend_type,
+                    self._backend_config,
+                    config_manager=self.config_manager,
+                    schema_loader=self.schema_loader,
+                )
+                logger.info("Shared audio search backend initialized")
+            return self._shared_backend
 
-        # Build YQL query for transcript search
-        yql = f"select * from {self._schema_name} where userQuery()"
-
-        params = {
-            "yql": yql,
+    def _build_backend_query(
+        self, query: str, strategy: str, limit: int
+    ) -> Dict[str, Any]:
+        # No profile: the backend selects the tenant's audio profile by type.
+        return {
             "query": query,
-            "hits": limit,
-            "ranking.profile": "transcript_search",
+            "type": "audio",
+            "strategy": strategy,
+            "tenant_id": self._tenant_id,
+            "top_k": limit,
         }
 
+    def _search_result_to_audio_result(self, search_result: Any) -> AudioResult:
+        document = search_result.document
+        metadata = dict(document.metadata)
+        transcript = document.text_content or metadata.get("audio_transcript", "")
+        return AudioResult(
+            audio_id=metadata.get("audio_id", document.id),
+            audio_url=metadata.get("source_url", ""),
+            title=metadata.get("audio_title", ""),
+            transcript=transcript,
+            duration=metadata.get("audio_duration", 0.0),
+            relevance_score=search_result.score,
+            speaker_labels=metadata.get("speaker_labels", []),
+            detected_events=metadata.get("detected_events", []),
+            language=metadata.get("audio_language", "unknown"),
+            metadata=metadata,
+        )
+
+    async def _search_backend_mode(
+        self, query: str, strategy: str, limit: int
+    ) -> List[AudioResult]:
+        backend = self._get_backend()
+        query_dict = self._build_backend_query(query, strategy, limit)
+        # backend.search is synchronous; keep the async audio API responsive.
+        search_results = await asyncio.to_thread(backend.search, query_dict)
+        return [self._search_result_to_audio_result(hit) for hit in search_results]
+
+    async def _search_transcript(self, query: str, limit: int) -> List[AudioResult]:
+        """Search by transcript text using backend BM25."""
         try:
-            from cogniverse_agents.search.vespa_query import vespa_search_post
-
-            response = await asyncio.to_thread(
-                vespa_search_post, self._vespa_endpoint, params, 10
-            )
-
-            if response.status_code != 200:
-                raise VespaSearchError(
-                    f"Vespa search returned {response.status_code}: {response.text[:200]}"
-                )
-
-            # Parse results
-            results = []
-            data = response.json()
-
-            for hit in vespa_search_children(
-                data, correlation_id=f"audio_analysis_agent:{self._tenant_id}"
-            ):
-                fields = hit.get("fields", {})
-                results.append(
-                    AudioResult(
-                        audio_id=fields.get("audio_id", ""),
-                        audio_url=fields.get("source_url", ""),
-                        title=fields.get("audio_title", ""),
-                        transcript=fields.get("audio_transcript", ""),
-                        duration=fields.get("audio_duration", 0.0),
-                        relevance_score=hit.get("relevance", 0.0),
-                        speaker_labels=fields.get("speaker_labels", []),
-                        detected_events=fields.get("detected_events", []),
-                        language=fields.get("audio_language", "unknown"),
-                    )
-                )
-
-            return results
-
+            return await self._search_backend_mode(query, "transcript_search", limit)
         except Exception as e:
             logger.error(f"❌ Transcript search failed: {e}")
+            raise
+
+    async def _search_semantic(self, query: str, limit: int) -> List[AudioResult]:
+        """Search by ColBERT semantic similarity through the backend."""
+        try:
+            return await self._search_backend_mode(query, "phased_semantic", limit)
+        except Exception as e:
+            logger.error(f"❌ Semantic search failed: {e}")
             raise
 
     async def _search_acoustic(self, query: str, limit: int) -> List[AudioResult]:
@@ -703,69 +749,9 @@ class AudioAnalysisAgent(
             raise
 
     async def _search_hybrid(self, query: str, limit: int) -> List[AudioResult]:
-        """Search by hybrid (BM25 transcript + semantic embeddings)"""
-
-        # CLAP text features for the acoustic half (same 512-dim space as the
-        # stored acoustic_embedding); the transcript half uses the raw query text.
-        # Blocking CLAP HTTP call — off the loop, lazy generator build included.
-        logger.info("Generating query embedding for hybrid search...")
-        query_embedding = await asyncio.to_thread(
-            lambda: self.embedding_generator.generate_acoustic_text_embedding(query)
-        )
-
-        # hybrid_acoustic_bm25 = 0.5*closeness(acoustic) + 0.5*bm25(text); the
-        # acoustic half needs the nearestNeighbor operator, OR-ed with the text
-        # match so either signal can surface a document.
-        yql = (
-            f"select * from {self._schema_name} where "
-            f"({{targetHits:{limit}}}nearestNeighbor(acoustic_embedding, acoustic_query)) "
-            "or userQuery()"
-        )
-
-        params = {
-            "yql": yql,
-            "query": query,
-            "hits": limit,
-            "ranking.profile": "hybrid_acoustic_bm25",
-            "input.query(acoustic_query)": query_embedding.tolist(),
-        }
-
+        """Search by semantic+BM25 hybrid text retrieval through the backend."""
         try:
-            from cogniverse_agents.search.vespa_query import vespa_search_post
-
-            response = await asyncio.to_thread(
-                vespa_search_post, self._vespa_endpoint, params, 10
-            )
-
-            if response.status_code != 200:
-                raise VespaSearchError(
-                    f"Vespa search returned {response.status_code}: {response.text[:200]}"
-                )
-
-            # Parse results
-            results = []
-            data = response.json()
-
-            for hit in vespa_search_children(
-                data, correlation_id=f"audio_analysis_agent:{self._tenant_id}"
-            ):
-                fields = hit.get("fields", {})
-                results.append(
-                    AudioResult(
-                        audio_id=fields.get("audio_id", ""),
-                        audio_url=fields.get("source_url", ""),
-                        title=fields.get("audio_title", ""),
-                        transcript=fields.get("audio_transcript", ""),
-                        duration=fields.get("audio_duration", 0.0),
-                        relevance_score=hit.get("relevance", 0.0),
-                        speaker_labels=fields.get("speaker_labels", []),
-                        detected_events=fields.get("detected_events", []),
-                        language=fields.get("audio_language", "unknown"),
-                    )
-                )
-
-            return results
-
+            return await self._search_backend_mode(query, "hybrid_semantic_bm25", limit)
         except Exception as e:
             logger.error(f"❌ Hybrid search failed: {e}")
             raise
@@ -866,7 +852,7 @@ class AudioAnalysisAgent(
         return [
             {
                 "name": "search_audio",
-                "description": "Search audio content by transcript or acoustic features",
+                "description": "Search audio content by transcript, semantic, or acoustic features",
                 "input_schema": {
                     "query": "string",
                     "search_mode": "string",

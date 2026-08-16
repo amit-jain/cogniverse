@@ -2515,7 +2515,9 @@ class AgentDispatcher:
             AudioAnalysisAgent,
             AudioAnalysisDeps,
         )
+        from cogniverse_foundation.config.utils import get_config
         from cogniverse_runtime.admin.tenant_manager import get_backend
+        from cogniverse_vespa.config_utils import calculate_config_port
 
         # Tenant schemas deploy on first ingest, so a tenant that never
         # ingested audio has no audio_content schema. That is a no-content
@@ -2534,7 +2536,20 @@ class AgentDispatcher:
 
         vespa_endpoint = self._get_vespa_endpoint(tenant_id)
         sys_cfg = self._config_manager.get_system_config()
+        backend_config = get_config(
+            tenant_id=tenant_id, config_manager=self._config_manager
+        ).get("backend", {})
         deps = AudioAnalysisDeps(
+            backend_type=sys_cfg.search_backend,
+            backend_config={
+                "url": sys_cfg.backend_url,
+                "port": sys_cfg.backend_port,
+                "config_port": calculate_config_port(sys_cfg.backend_port),
+                "schema_name": "audio_content",
+                "backend": backend_config,
+            },
+            config_manager=self._config_manager,
+            schema_loader=self._schema_loader,
             vespa_endpoint=vespa_endpoint,
             tenant_id=tenant_id,
             clap_endpoint=(sys_cfg.inference_service_urls or {}).get("clap_embed"),

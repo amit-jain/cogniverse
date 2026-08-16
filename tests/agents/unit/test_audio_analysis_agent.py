@@ -13,8 +13,9 @@ from concurrent.futures import ThreadPoolExecutor
 from contextlib import contextmanager
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from types import SimpleNamespace
-from unittest.mock import MagicMock, PropertyMock, patch
+from unittest.mock import AsyncMock, MagicMock, PropertyMock, patch
 
+import numpy as np
 import pytest
 import requests
 
@@ -94,6 +95,32 @@ def _agent_for_remote_transcription(base_url: str, authorization: str):
             whisper_headers={"Authorization": authorization},
         )
     )
+
+
+def _audio_search_hit(
+    *,
+    audio_id: str = "audio_001",
+    source_url: str = "http://example.com/audio1.mp3",
+    title: str = "Test Podcast",
+    transcript: str = "This is a test podcast about AI",
+    duration: float = 300.0,
+    score: float = 0.91,
+    speaker_labels: list[str] | None = None,
+    detected_events: list[str] | None = None,
+    language: str = "en",
+):
+    metadata = {
+        "audio_id": audio_id,
+        "source_url": source_url,
+        "audio_title": title,
+        "audio_transcript": transcript,
+        "audio_duration": duration,
+        "speaker_labels": speaker_labels if speaker_labels is not None else [],
+        "detected_events": detected_events if detected_events is not None else [],
+        "audio_language": language,
+    }
+    document = SimpleNamespace(id=audio_id, text_content=None, metadata=metadata)
+    return SimpleNamespace(document=document, score=score)
 
 
 class TestAudioAnalysisAgent:
@@ -387,71 +414,171 @@ class TestAudioAnalysisAgent:
         assert loaded == [constructed] * 12
 
     @pytest.mark.asyncio
-    @patch("requests.post")
-    async def test_search_audio_transcript_mode(self, mock_post):
-        """Test transcript-based audio search"""
-        # Mock Vespa response
-        mock_response = MagicMock()
-        mock_response.status_code = 200
-        mock_response.json.return_value = {
-            "root": {
-                "children": [
-                    {
-                        "relevance": 0.90,
-                        # Field names are the deployed audio_content schema's --
-                        # audio_transcript / audio_duration / audio_language, not
-                        # bare transcript/duration/language (which never populate
-                        # and previously shipped every hit empty).
-                        "fields": {
-                            "audio_id": "audio_001",
-                            "source_url": "http://example.com/audio1.mp3",
-                            "audio_title": "Test Podcast",
-                            "audio_transcript": "This is a test podcast about AI",
-                            "audio_duration": 300.0,
-                            "audio_language": "en",
-                        },
-                    }
-                ]
-            }
-        }
-        mock_post.return_value = mock_response
+    async def test_search_audio_transcript_mode_uses_backend(self):
+        backend = MagicMock()
+        backend.search = MagicMock(return_value=[])
+        self.agent._get_backend = MagicMock(return_value=backend)
+        self.agent._embedding_generator = MagicMock(
+            generate_acoustic_text_embedding=MagicMock(
+                side_effect=AssertionError("acoustic embedding should not be used")
+            )
+        )
 
-        # Execute search
         results = await self.agent.search_audio(
             query="AI podcast", search_mode="transcript", limit=20
         )
 
-        # Verify results -- the transcript/duration/language must round-trip from
-        # the schema field names, not come back empty.
-        assert len(results) == 1
-        assert results[0].audio_id == "audio_001"
-        assert results[0].title == "Test Podcast"
-        assert results[0].transcript == "This is a test podcast about AI"
-        assert results[0].duration == 300.0
-        assert results[0].language == "en"
-
-        # Verify Vespa was called correctly
-        mock_post.assert_called_once()
-        call_args = mock_post.call_args
-        assert "transcript_search" in str(call_args)
+        assert results == []
+        backend.search.assert_called_once_with(
+            {
+                "query": "AI podcast",
+                "type": "audio",
+                "strategy": "transcript_search",
+                "tenant_id": "test_tenant",
+                "top_k": 20,
+            }
+        )
+        self.agent._embedding_generator.generate_acoustic_text_embedding.assert_not_called()
 
     @pytest.mark.asyncio
-    @patch("requests.post")
-    async def test_search_audio_hybrid_mode(self, mock_post):
-        """Test hybrid audio search"""
-        # Mock Vespa response
-        mock_response = MagicMock()
-        mock_response.status_code = 200
-        mock_response.json.return_value = {"root": {"children": []}}
-        mock_post.return_value = mock_response
-
-        # Execute search
-        await self.agent.search_audio(
-            query="machine learning", search_mode="hybrid", limit=10
+    async def test_search_audio_default_mode_is_semantic(self):
+        backend = MagicMock()
+        backend.search = MagicMock(return_value=[])
+        self.agent._get_backend = MagicMock(return_value=backend)
+        self.agent._embedding_generator = MagicMock(
+            generate_acoustic_text_embedding=MagicMock(
+                side_effect=AssertionError("acoustic embedding should not be used")
+            )
         )
 
-        # Verify Vespa was called
-        mock_post.assert_called_once()
+        results = await self.agent.search_audio(query="machine learning", limit=10)
+
+        assert results == []
+        backend.search.assert_called_once_with(
+            {
+                "query": "machine learning",
+                "type": "audio",
+                "strategy": "phased_semantic",
+                "tenant_id": "test_tenant",
+                "top_k": 10,
+            }
+        )
+        self.agent._embedding_generator.generate_acoustic_text_embedding.assert_not_called()
+
+    @pytest.mark.asyncio
+    async def test_search_audio_semantic_mode_maps_backend_hits_exactly(self):
+        backend_hit = _audio_search_hit(
+            speaker_labels=["host", "guest"],
+            detected_events=["intro"],
+        )
+        backend = MagicMock()
+        backend.search = MagicMock(return_value=[backend_hit])
+        self.agent._get_backend = MagicMock(return_value=backend)
+        self.agent._embedding_generator = MagicMock(
+            generate_acoustic_text_embedding=MagicMock(
+                side_effect=AssertionError("acoustic embedding should not be used")
+            )
+        )
+
+        results = await self.agent.search_audio(
+            query="what was said about AI", search_mode="semantic", limit=7
+        )
+
+        backend.search.assert_called_once_with(
+            {
+                "query": "what was said about AI",
+                "type": "audio",
+                "strategy": "phased_semantic",
+                "tenant_id": "test_tenant",
+                "top_k": 7,
+            }
+        )
+        expected = AudioResult(
+            audio_id="audio_001",
+            audio_url="http://example.com/audio1.mp3",
+            title="Test Podcast",
+            transcript="This is a test podcast about AI",
+            duration=300.0,
+            relevance_score=0.91,
+            speaker_labels=["host", "guest"],
+            detected_events=["intro"],
+            language="en",
+            metadata=backend_hit.document.metadata,
+        ).model_dump()
+        assert [result.model_dump() for result in results] == [expected]
+        self.agent._embedding_generator.generate_acoustic_text_embedding.assert_not_called()
+
+    @pytest.mark.asyncio
+    async def test_search_audio_acoustic_mode_still_uses_clap(self):
+        query_embedding = np.ones(512, dtype=np.float32)
+        self.agent._embedding_generator = MagicMock()
+        self.agent._embedding_generator.generate_acoustic_text_embedding.return_value = query_embedding
+        self.agent._search_by_acoustic_embedding = AsyncMock(return_value=[])
+        self.agent._get_backend = MagicMock(
+            side_effect=AssertionError("backend should not be used")
+        )
+
+        results = await self.agent.search_audio(
+            query="sounds like thunder", search_mode="acoustic", limit=3
+        )
+
+        assert results == []
+        self.agent._embedding_generator.generate_acoustic_text_embedding.assert_called_once_with(
+            "sounds like thunder"
+        )
+        self.agent._search_by_acoustic_embedding.assert_awaited_once()
+        call_args = self.agent._search_by_acoustic_embedding.await_args.args
+        assert call_args[0].shape == (512,)
+        assert call_args[1] == 3
+        self.agent._get_backend.assert_not_called()
+
+    @pytest.mark.asyncio
+    async def test_search_audio_rejects_unknown_mode(self):
+        backend = MagicMock()
+        backend.search = MagicMock(
+            side_effect=AssertionError("no backend search for an unknown mode")
+        )
+        self.agent._get_backend = MagicMock(return_value=backend)
+
+        with pytest.raises(
+            ValueError,
+            match=(
+                "Unknown audio search mode 'lexical'; expected one of "
+                "acoustic, transcript, semantic, hybrid"
+            ),
+        ):
+            await self.agent.search_audio(
+                query="machine learning", search_mode="lexical", limit=10
+            )
+
+        backend.search.assert_not_called()
+
+    @pytest.mark.asyncio
+    async def test_search_audio_backend_failure_raises(self):
+        backend = MagicMock()
+        backend.search.side_effect = RuntimeError("backend unavailable")
+        self.agent._get_backend = MagicMock(return_value=backend)
+        self.agent._embedding_generator = MagicMock(
+            generate_acoustic_text_embedding=MagicMock(
+                side_effect=AssertionError("acoustic embedding should not be used")
+            )
+        )
+
+        with pytest.raises(RuntimeError, match="backend unavailable"):
+            await self.agent.search_audio(
+                query="machine learning", search_mode="semantic", limit=10
+            )
+
+        backend.search.assert_called_once_with(
+            {
+                "query": "machine learning",
+                "type": "audio",
+                "strategy": "phased_semantic",
+                "tenant_id": "test_tenant",
+                "top_k": 10,
+            }
+        )
+        self.agent._embedding_generator.generate_acoustic_text_embedding.assert_not_called()
 
     @pytest.mark.asyncio
     @patch.object(AudioAnalysisAgent, "audio_transcriber", new_callable=PropertyMock)
@@ -896,10 +1023,7 @@ class TestAudioAnalysisAgent:
 
     @pytest.mark.asyncio
     @patch.object(AudioAnalysisAgent, "audio_transcriber", new_callable=PropertyMock)
-    @patch("requests.post")
-    async def test_find_similar_audio_semantic(
-        self, mock_post, mock_transcriber, tmp_path
-    ):
+    async def test_find_similar_audio_semantic(self, mock_transcriber, tmp_path):
         """Test finding similar audio using semantic similarity"""
         # Mock transcriber
         mock_transcriber_obj = MagicMock()
@@ -909,12 +1033,7 @@ class TestAudioAnalysisAgent:
             "segments": [],
             "language": "en",
         }
-
-        # Mock Vespa response
-        mock_response = MagicMock()
-        mock_response.status_code = 200
-        mock_response.json.return_value = {"root": {"children": []}}
-        mock_post.return_value = mock_response
+        self.agent._search_transcript = AsyncMock(return_value=["stub"])
 
         clip = tmp_path / "ref.mp3"
         clip.write_bytes(b"")
@@ -922,7 +1041,7 @@ class TestAudioAnalysisAgent:
         self.agent._locator.localize.return_value = clip
         self.agent._locator.to_canonical_uri.return_value = f"file://{clip}"
 
-        await self.agent.find_similar_audio(
+        results = await self.agent.find_similar_audio(
             reference_audio_url="http://example.com/ref.mp3",
             similarity_type="semantic",
             limit=20,
@@ -930,8 +1049,8 @@ class TestAudioAnalysisAgent:
 
         # Verify transcription was called
         mock_transcriber_obj.transcribe_audio.assert_called_once()
-        # Verify Vespa search was called
-        mock_post.assert_called_once()
+        self.agent._search_transcript.assert_awaited_once_with("Test transcription", 20)
+        assert results == ["stub"]
 
     def test_get_audio_path_local(self, tmp_path):
         """Test getting local audio path"""
@@ -1021,29 +1140,38 @@ class TestAudioSearchEventLoop:
         agent = object.__new__(AudioAnalysisAgent)
         agent._tenant_id = "acme:acme"
         agent._vespa_endpoint = "http://vespa:8080"
+        agent._shared_backend = None
+        agent._shared_backend_lock = threading.Lock()
+        agent._backend_type = "vespa"
+        agent._backend_config = {}
+        agent.config_manager = None
+        agent.schema_loader = None
         for k, v in attrs.items():
             setattr(agent, k, v)
         return agent
 
     @pytest.mark.asyncio
-    async def test_search_transcript_offloads_blocking_post(self, monkeypatch):
-        """Representative of the three async search methods, which share the
-        same offload wrapper. If the post ran on the loop the releaser could
-        never run and the gather would deadlock."""
+    async def test_search_transcript_offloads_blocking_backend_search(
+        self, monkeypatch
+    ):
+        """Transcript search offloads the synchronous backend call off loop."""
         release = threading.Event()
 
-        class _Resp:
-            status_code = 200
+        def blocking_search(query_dict):
+            assert query_dict == {
+                "query": "q",
+                "type": "audio",
+                "strategy": "transcript_search",
+                "tenant_id": "acme:acme",
+                "top_k": 5,
+            }
+            assert release.wait(timeout=5), "event loop was blocked by backend.search"
+            return []
 
-            def json(self):
-                return {"root": {"children": []}}
-
-        def blocking_post(url, json=None, timeout=None):
-            assert release.wait(timeout=5), "event loop was blocked by requests.post"
-            return _Resp()
-
-        monkeypatch.setattr("requests.post", blocking_post)
         agent = self._bare_agent()
+        agent._get_backend = MagicMock(
+            return_value=SimpleNamespace(search=blocking_search)
+        )
 
         async def releaser():
             await asyncio.sleep(0.05)
@@ -1054,6 +1182,7 @@ class TestAudioSearchEventLoop:
             timeout=5,
         )
         assert results == []
+        agent._get_backend.assert_called_once()
 
     @pytest.mark.asyncio
     async def test_transcribe_via_sidecar_offloaded(self, monkeypatch, tmp_path):
@@ -1122,21 +1251,26 @@ def _bare_acoustic_agent(blocking_embed):
 
 
 @pytest.mark.asyncio
-async def test_search_hybrid_offloads_blocking_clap_encode(monkeypatch):
-    """The CLAP text encode is a blocking HTTP call and must run in a worker
-    thread like the Vespa post below it — inline on the loop it stalls every
-    other coroutine for the whole encode round-trip."""
+async def test_search_hybrid_offloads_blocking_backend_search(monkeypatch):
+    """Hybrid text search offloads the synchronous backend call off loop."""
     release = threading.Event()
+    blocking_embed = MagicMock(
+        side_effect=AssertionError("acoustic embedding should not be used")
+    )
 
-    def blocking_embed(query):
-        assert release.wait(timeout=5), "event loop was blocked by CLAP encode"
-        return _Vec()
+    def blocking_search(query_dict):
+        assert query_dict == {
+            "query": "q",
+            "type": "audio",
+            "strategy": "hybrid_semantic_bm25",
+            "tenant_id": "test:test",
+            "top_k": 5,
+        }
+        assert release.wait(timeout=5), "event loop was blocked by backend.search"
+        return []
 
     agent = _bare_acoustic_agent(blocking_embed)
-    monkeypatch.setattr(
-        "cogniverse_agents.search.vespa_query.vespa_search_post",
-        lambda endpoint, params, timeout: _EmptyVespaResp(),
-    )
+    agent._get_backend = MagicMock(return_value=SimpleNamespace(search=blocking_search))
 
     async def releaser():
         await asyncio.sleep(0.05)
@@ -1146,6 +1280,8 @@ async def test_search_hybrid_offloads_blocking_clap_encode(monkeypatch):
         asyncio.gather(agent._search_hybrid("q", 5), releaser()), timeout=5
     )
     assert results == []
+    agent._get_backend.assert_called_once()
+    agent._embedding_generator.generate_acoustic_text_embedding.assert_not_called()
 
 
 @pytest.mark.asyncio
