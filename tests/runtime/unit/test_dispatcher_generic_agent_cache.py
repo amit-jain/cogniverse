@@ -180,7 +180,7 @@ async def test_profile_dispatch_forwards_candidate_profiles(dispatcher, monkeypa
                 selected_profile="document_semantic",
                 confidence=0.94,
                 reasoning="The selector chose document retrieval.",
-                query_intent="research_lookup",
+                query_intent="document_search",
                 modality="document",
                 complexity="medium",
             )

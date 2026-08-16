@@ -10,7 +10,6 @@ search.
 """
 
 from dataclasses import dataclass
-from types import SimpleNamespace
 from unittest.mock import MagicMock
 
 import pytest
@@ -491,6 +490,8 @@ class TestGatewayTopKForwarding:
     for 100 results was silently capped at 10."""
 
     async def test_dispatch_forwards_top_k_through_gateway_branch(self, dispatcher):
+        from cogniverse_agents.gateway_agent import GatewayOutput
+
         d = dispatcher
         gateway_agent = MagicMock()
         gateway_agent.capabilities = {"gateway"}
@@ -501,12 +502,16 @@ class TestGatewayTopKForwarding:
         d._get_rail_chains = lambda tenant_id: None
         d._spawn_background = lambda coro: coro.close()
 
-        routed = SimpleNamespace(
+        routed = GatewayOutput(
+            query="find every matching clip",
             complexity="simple",
             routed_to="search_agent",
             modality="video",
-            generation_type="raw",
+            generation_type="raw_results",
             confidence=0.9,
+            fast_path_confidence_threshold=0.4,
+            gliner_threshold=0.3,
+            reasoning="keyword route",
         )
 
         class _GW:
