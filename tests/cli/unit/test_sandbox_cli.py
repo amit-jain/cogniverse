@@ -269,6 +269,60 @@ class TestGatewayRunning:
         assert sandbox_mod.gateway_running() is False
 
 
+class TestPodGatewayEndpoint:
+    """The pod-facing endpoint takes its port from the active gateway's metadata."""
+
+    def test_port_comes_from_the_gateway_metadata(self) -> None:
+        metadata = {
+            "name": "cogniverse-test-gw",
+            "gateway_endpoint": "https://127.0.0.1:19090",
+            "is_remote": False,
+            "gateway_port": 19090,
+        }
+        assert (
+            sandbox_mod.pod_gateway_endpoint(metadata)
+            == "https://host.docker.internal:19090"
+        )
+
+    @pytest.mark.parametrize(
+        "metadata",
+        [
+            {"name": "cogniverse", "gateway_endpoint": "https://127.0.0.1:28080"},
+            {"name": "cogniverse", "gateway_port": "28080"},
+            {"name": "cogniverse", "gateway_port": 0},
+        ],
+        ids=["missing", "string", "zero"],
+    )
+    def test_metadata_without_a_usable_port_is_rejected(self, metadata) -> None:
+        with pytest.raises(ValueError, match="no positive integer gateway_port"):
+            sandbox_mod.pod_gateway_endpoint(metadata)
+
+
+class TestActiveGatewayMetadata:
+    def test_reads_the_active_gateway_metadata(
+        self, monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+    ) -> None:
+        monkeypatch.setenv("HOME", str(tmp_path))
+        config_root = tmp_path / ".config" / "openshell"
+        gateway_dir = config_root / "gateways" / "cogniverse-test-gw"
+        gateway_dir.mkdir(parents=True)
+        (config_root / "active_gateway").write_text("cogniverse-test-gw\n")
+        (gateway_dir / "metadata.json").write_text(
+            json.dumps({"name": "cogniverse-test-gw", "gateway_port": 19090})
+        )
+        assert sandbox_mod.active_gateway_metadata() == {
+            "name": "cogniverse-test-gw",
+            "gateway_port": 19090,
+        }
+
+    def test_no_active_gateway_raises(
+        self, monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+    ) -> None:
+        monkeypatch.setenv("HOME", str(tmp_path))
+        with pytest.raises(RuntimeError, match="no active OpenShell gateway"):
+            sandbox_mod.active_gateway_metadata()
+
+
 class TestSyncGatewayCertsToCluster:
     """Tests for :func:`cogniverse_cli.sandbox.sync_gateway_certs_to_cluster`."""
 
@@ -284,7 +338,11 @@ class TestSyncGatewayCertsToCluster:
         if metadata:
             (gateway_dir / "metadata.json").write_text(
                 json.dumps(
-                    {"gateway_endpoint": "https://localhost:19091", "token": "t"}
+                    {
+                        "gateway_endpoint": "https://127.0.0.1:19090",
+                        "gateway_port": 19090,
+                        "token": "t",
+                    }
                 )
             )
         if certs:
@@ -312,25 +370,34 @@ class TestSyncGatewayCertsToCluster:
         gateway_dir = self._build_gateway()
         mtls_dir = gateway_dir / "mtls"
 
-        kubectl_calls: list[tuple[list[str], str | None]] = []
+        kubectl_calls: list[tuple[str | None, list[str], str | None]] = []
+        metadata_stdout = "metadata-yaml"
 
-        def fake_kubectl(args: list[str], *, input_data: str | None = None):
-            kubectl_calls.append((args, input_data))
+        def fake_kubectl(
+            args: list[str],
+            *,
+            input_data: str | None = None,
+            kube_context: str | None = None,
+        ):
+            kubectl_calls.append((kube_context, args, input_data))
+            if args[:3] == ["create", "configmap", "openshell-metadata"]:
+                return _completed(returncode=0, stdout=metadata_stdout)
             return _completed(returncode=0, stdout="rendered-yaml")
 
-        metadata_cmds: list[list[str]] = []
-
-        def fake_run(cmd, **kwargs):
-            metadata_cmds.append(cmd)
-            return _completed(returncode=0, stdout="metadata-yaml")
-
         monkeypatch.setattr(sandbox_mod, "_kubectl", fake_kubectl)
-        monkeypatch.setattr(sandbox_mod.subprocess, "run", fake_run)
 
-        assert sandbox_mod.sync_gateway_certs_to_cluster() is True
+        assert (
+            sandbox_mod.sync_gateway_certs_to_cluster(kube_context="k3d-cogniverse-e2e")
+            is True
+        )
 
-        assert kubectl_calls[0] == (["get", "namespace", "cogniverse"], None)
+        assert kubectl_calls[0] == (
+            "k3d-cogniverse-e2e",
+            ["get", "namespace", "cogniverse"],
+            None,
+        )
         assert kubectl_calls[1] == (
+            "k3d-cogniverse-e2e",
             [
                 "create",
                 "secret",
@@ -347,14 +414,21 @@ class TestSyncGatewayCertsToCluster:
             ],
             None,
         )
-        assert kubectl_calls[2] == (["apply", "-f", "-"], "rendered-yaml")
-
-        expected_pod_metadata = json.dumps(
-            {"gateway_endpoint": "https://host.docker.internal:19091", "token": "t"}
+        assert kubectl_calls[2] == (
+            "k3d-cogniverse-e2e",
+            ["apply", "-f", "-"],
+            "rendered-yaml",
         )
-        assert metadata_cmds == [
+        expected_pod_metadata = json.dumps(
+            {
+                "gateway_endpoint": "https://host.docker.internal:19090",
+                "gateway_port": 19090,
+                "token": "t",
+            }
+        )
+        assert kubectl_calls[3] == (
+            "k3d-cogniverse-e2e",
             [
-                "kubectl",
                 "create",
                 "configmap",
                 "openshell-metadata",
@@ -364,11 +438,17 @@ class TestSyncGatewayCertsToCluster:
                 "--dry-run=client",
                 "-o",
                 "yaml",
-            ]
-        ]
-        assert kubectl_calls[3] == (["apply", "-f", "-"], "metadata-yaml")
-
+            ],
+            None,
+        )
         assert kubectl_calls[4] == (
+            "k3d-cogniverse-e2e",
+            ["apply", "-f", "-"],
+            "metadata-yaml",
+        )
+
+        assert kubectl_calls[5] == (
+            "k3d-cogniverse-e2e",
             [
                 "create",
                 "configmap",
@@ -382,15 +462,24 @@ class TestSyncGatewayCertsToCluster:
             ],
             None,
         )
-        assert kubectl_calls[5] == (["apply", "-f", "-"], "rendered-yaml")
-        assert len(kubectl_calls) == 6
+        assert kubectl_calls[6] == (
+            "k3d-cogniverse-e2e",
+            ["apply", "-f", "-"],
+            "rendered-yaml",
+        )
+        assert len(kubectl_calls) == 7
 
     def test_secret_apply_failure_stops_sync(
         self, monkeypatch: pytest.MonkeyPatch
     ) -> None:
         self._build_gateway()
 
-        def fake_kubectl(args: list[str], *, input_data: str | None = None):
+        def fake_kubectl(
+            args: list[str],
+            *,
+            input_data: str | None = None,
+            kube_context: str | None = None,
+        ):
             if args[:1] == ["apply"]:
                 return _completed(returncode=1, stderr="denied")
             return _completed(returncode=0, stdout="rendered-yaml")
@@ -401,3 +490,24 @@ class TestSyncGatewayCertsToCluster:
 
         assert sandbox_mod.sync_gateway_certs_to_cluster() is False
         run.assert_not_called()
+
+
+class TestEnsureSandboxReady:
+    """Tests for :func:`cogniverse_cli.sandbox.ensure_sandbox_ready`."""
+
+    def test_threads_kube_context_into_sync(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        sync_calls: list[str | None] = []
+        monkeypatch.setattr(sandbox_mod, "openshell_installed", lambda: True)
+        monkeypatch.setattr(sandbox_mod, "gateway_running", lambda: True)
+        monkeypatch.setattr(
+            sandbox_mod,
+            "sync_gateway_certs_to_cluster",
+            lambda *, kube_context=None: sync_calls.append(kube_context) or True,
+        )
+
+        assert (
+            sandbox_mod.ensure_sandbox_ready(kube_context="k3d-cogniverse-e2e") is True
+        )
+        assert sync_calls == ["k3d-cogniverse-e2e"]

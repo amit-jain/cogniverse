@@ -56,7 +56,12 @@ def _run_prerequisite_command(
 
 @pytest.fixture()
 def runtime_sandbox_ready() -> None:
-    """Provision OpenShell and prove a real exec from the runtime pod."""
+    """Provision OpenShell, sync the cluster mounts, and prove runtime exec.
+
+    The runtime mounts the OpenShell files with subPath, so if the gateway
+    is recreated the cluster needs a re-sync and the runtime pod needs a
+    rollout to pick up the refreshed files.
+    """
     context_command = ["kubectl", "config", "current-context"]
     context = _run_prerequisite_command(context_command, timeout=10)
     assert context.returncode == 0, (
@@ -74,7 +79,7 @@ def runtime_sandbox_ready() -> None:
     from cogniverse_cli.sandbox import ensure_sandbox_ready
 
     try:
-        ready = ensure_sandbox_ready()
+        ready = ensure_sandbox_ready(kube_context=KUBECTL_CONTEXT)
     except (OSError, subprocess.SubprocessError, ValueError) as exc:
         pytest.fail(
             "OpenShell host gateway setup raised before the runtime probe; "

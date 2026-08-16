@@ -1281,8 +1281,48 @@ _E2E_ASR_MODELS = {
 SEMANTIC_ROUTER_ENVOY = "http://localhost:33881"
 
 
+def _e2e_docker_network_gateway_ip() -> str:
+    network_name = f"k3d-{E2E_CLUSTER_NAME}"
+    command = [
+        "docker",
+        "network",
+        "inspect",
+        network_name,
+        "-f",
+        "{{range .IPAM.Config}}{{.Gateway}}{{end}}",
+    ]
+    result = subprocess.run(
+        command,
+        capture_output=True,
+        text=True,
+        timeout=30,
+    )
+    if result.returncode != 0:
+        raise RuntimeError(
+            "docker network gateway inspection failed: "
+            f"{shlex.join(command)}\nstderr: {(result.stderr or '').strip()}"
+        )
+    gateway_ip = result.stdout.strip()
+    if not gateway_ip:
+        raise RuntimeError(
+            "docker network gateway inspection returned an empty IP: "
+            f"{shlex.join(command)}"
+        )
+    return gateway_ip
+
+
 def _e2e_deployment_overrides() -> dict[str, str]:
-    overrides = {"inference.vllm_llm_teacher.enabled": "false"}
+    from cogniverse_cli.sandbox import active_gateway_metadata, pod_gateway_endpoint
+
+    overrides = {
+        "inference.vllm_llm_teacher.enabled": "false",
+        "runtime.sandbox.enabled": "true",
+        "runtime.sandbox.inCluster.enabled": "false",
+        "runtime.sandbox.gatewayEndpoint": pod_gateway_endpoint(
+            active_gateway_metadata()
+        ),
+        "runtime.sandbox.hostGatewayIP": _e2e_docker_network_gateway_ip(),
+    }
     for service in ("vllm_colpali", "vllm_asr", "vllm_llm_student"):
         overrides[f"inference.{service}.livenessProbe.initialDelaySeconds"] = "1200"
         overrides[f"inference.{service}.livenessProbe.failureThreshold"] = "60"
@@ -1735,6 +1775,7 @@ def e2e_stack(request, resolved_inference_endpoints):
     repo_root = _e2e_repo_root()
     deploy_sha = _current_e2e_deploy_sha(repo_root)
     force_fresh = os.environ.get("E2E_FRESH", "").lower() in ("1", "true", "yes")
+    _ensure_host_sandbox_gateway()
     cluster_state, state_detail = _e2e_cluster_state()
     created_this_session = False
     reset_command = f"k3d cluster delete {E2E_CLUSTER_NAME}"
@@ -1767,9 +1808,9 @@ def e2e_stack(request, resolved_inference_endpoints):
             f"Reusing warm e2e cluster {E2E_CLUSTER_NAME} "
             f"(deploy SHA {deploy_sha} unchanged)"
         )
+        _sync_sandbox_into_cluster(KUBECTL_CONTEXT, roll_runtime=True)
     else:
         _require_clean_e2e_worktree(repo_root)
-        deploy_identity = _effective_e2e_deployment_identity(repo_root)
         _stop_dev_cluster_and_free_ports()
 
         create_test_cluster(
@@ -1778,6 +1819,8 @@ def e2e_stack(request, resolved_inference_endpoints):
             share_host_storage=False,
         )
         created_this_session = True
+        deploy_identity = _effective_e2e_deployment_identity(repo_root)
+        sandbox_overrides = _e2e_deployment_overrides()
         # Test-cluster-only helm overrides (never touch the shipped chart):
         #  - teacher LM off: only the opt-in teacher-optimization e2e uses it,
         #    and it can't coexist with colpali + student during GPU weight
@@ -1790,10 +1833,15 @@ def e2e_stack(request, resolved_inference_endpoints):
         #    load under memory contention. Only LIVENESS matters — readiness
         #    never kills, it just gates the Available condition the wait below
         #    keys off, so it is left shipped-default.
+        #  - host-mode sandbox wiring: the gateway's mTLS secret and metadata
+        #    configmaps must exist before Helm installs the runtime so its
+        #    subPath mounts resolve at pod start; hostAliases maps
+        #    host.docker.internal to the k3d network gateway.
+        _sync_sandbox_into_cluster(KUBECTL_CONTEXT, roll_runtime=False)
         deploy_stack(
             E2E_CLUSTER_NAME,
             "cogniverse",
-            extra_set=_e2e_deployment_overrides(),
+            extra_set=sandbox_overrides,
         )
         if not _ensure_stack_running():
             pytest.fail("e2e stack did not become healthy after deploy")
@@ -1850,9 +1898,6 @@ def e2e_stack(request, resolved_inference_endpoints):
         _ingest_sample_video()
         _ingest_sample_frame()
         _ingest_sample_audio()
-        # The chart's ``model-pulling`` post-install hook owns engine-gated,
-        # readiness-waiting, retrying Ollama model provisioning.
-        _ensure_sandbox_gateway()
         try:
             yield
         finally:
@@ -2234,19 +2279,90 @@ def _restore_cronworkflows(names: list[str]) -> None:
             )
 
 
-def _ensure_sandbox_gateway() -> None:
-    """Start the OpenShell sandbox gateway and sync mTLS certs into k3d."""
+def _ensure_host_sandbox_gateway() -> None:
+    """Start (or reuse) the host OpenShell gateway.
+
+    Runs before the deploy identity is computed: the pod-facing gateway
+    endpoint in the identity comes from the active gateway's own metadata.
+    """
+    from cogniverse_cli.sandbox import ensure_host_gateway
+
     try:
-        from cogniverse_cli.sandbox import ensure_sandbox_ready
-    except ImportError:
-        print(
-            "OpenShell sandbox setup unavailable (cogniverse_cli.sandbox not importable)"
+        ready = ensure_host_gateway()
+    except Exception as exc:
+        pytest.fail(f"OpenShell host gateway bootstrap raised: {exc!r}", pytrace=False)
+    if not ready:
+        pytest.fail(
+            "OpenShell host gateway bootstrap returned false; expected=True",
+            pytrace=False,
         )
-        return
+
+
+def _openshell_mtls_fingerprint(kube_context: str) -> str:
+    result = subprocess.run(
+        [
+            "kubectl",
+            "--context",
+            kube_context,
+            "-n",
+            "cogniverse",
+            "get",
+            "secret",
+            "openshell-mtls",
+            "-o",
+            "jsonpath={.data.tls\\.crt}",
+        ],
+        capture_output=True,
+        text=True,
+        timeout=30,
+    )
+    return result.stdout if result.returncode == 0 else ""
+
+
+def _sync_sandbox_into_cluster(kube_context: str, *, roll_runtime: bool) -> None:
+    """Sync the active gateway's mTLS certs + metadata into the e2e cluster.
+
+    The runtime mounts them with subPath, which never refreshes in place, so
+    on a reused deployment a changed secret rolls the runtime deployment.
+    """
+    from cogniverse_cli.sandbox import sync_gateway_certs_to_cluster
+
+    before = _openshell_mtls_fingerprint(kube_context)
     try:
-        ensure_sandbox_ready()
-    except Exception as exc:  # pragma: no cover — infra failure, not fatal
-        print(f"OpenShell gateway bootstrap raised (non-fatal): {exc}")
+        synced = sync_gateway_certs_to_cluster(kube_context=kube_context)
+    except Exception as exc:
+        pytest.fail(
+            f"OpenShell cert sync raised; kube_context={kube_context!r}; error={exc!r}",
+            pytrace=False,
+        )
+    if not synced:
+        pytest.fail(
+            f"OpenShell cert sync returned false; kube_context={kube_context!r}; "
+            "expected=True",
+            pytrace=False,
+        )
+    if not roll_runtime:
+        return
+    after = _openshell_mtls_fingerprint(kube_context)
+    if after == before:
+        return
+    for args in (
+        ["rollout", "restart", "deployment/cogniverse-runtime"],
+        ["rollout", "status", "deployment/cogniverse-runtime", "--timeout=900s"],
+    ):
+        result = subprocess.run(
+            ["kubectl", "--context", kube_context, "-n", "cogniverse", *args],
+            capture_output=True,
+            text=True,
+            timeout=960,
+        )
+        if result.returncode != 0:
+            pytest.fail(
+                "runtime rollout after OpenShell cert change failed: "
+                f"kubectl {' '.join(args)}\nstdout={result.stdout!r}\n"
+                f"stderr={result.stderr!r}",
+                pytrace=False,
+            )
 
 
 @pytest.fixture(scope="session")
