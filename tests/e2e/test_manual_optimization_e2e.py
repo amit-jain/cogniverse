@@ -16,6 +16,7 @@ and the test waits for phase transitions.
 
 import subprocess
 import time
+import uuid
 
 import httpx
 import pytest
@@ -26,12 +27,31 @@ from tests.e2e.conftest import (
     TENANT_ID,
     argo_workflow_controller_probe_command,
     argo_workflow_controller_probe_failure_message,
+    register_tenant_and_wait,
 )
+from tests.e2e.test_api_e2e import _deploy_profile_for_tenant
 
 pytestmark = pytest.mark.slow
 
 NAMESPACE = "cogniverse"
 RUNTIME = "http://localhost:33000"
+GATEWAY_THRESHOLD_PROFILES = (
+    "video_colpali_smol500_mv_frame",
+    "image_colpali_mv",
+    "audio_clap_semantic",
+    "document_text_semantic",
+    "document_visual_colpali",
+)
+GATEWAY_THRESHOLD_SEED_QUERIES = (
+    "search for video content about AI",
+    "find videos of dogs running on a beach",
+    "listen to podcasts about deep learning",
+    "find images of neural network architectures",
+    "find PDF documents about Python",
+    "show me robotics tutorials",
+    "search for lecture recordings about physics",
+    "find videos and documents about neural networks",
+)
 
 
 def _run_stack_command(
@@ -130,16 +150,71 @@ def _kubectl_get_workflow(name: str) -> dict | None:
     return json.loads(result.stdout)
 
 
+@pytest.fixture(scope="module")
+def gateway_threshold_tenant() -> str:
+    """Create a dedicated tenant for gateway-threshold optimization runs."""
+    suffix = uuid.uuid4().hex[:8]
+    org_id = f"opt_gw_{suffix}"
+    tenant_id = f"{org_id}:t1"
+
+    with httpx.Client(timeout=60.0) as client:
+        resp = client.post(
+            f"{RUNTIME}/admin/organizations",
+            json={
+                "org_id": org_id,
+                "org_name": f"opt-gw-{suffix}",
+                "created_by": "e2e",
+            },
+        )
+        assert resp.status_code in (200, 201, 409), resp.text
+
+    register_tenant_and_wait(tenant_id, created_by="e2e", timeout_s=600.0)
+
+    with httpx.Client(base_url=RUNTIME, timeout=60.0) as client:
+        for profile_name in GATEWAY_THRESHOLD_PROFILES:
+            _deploy_profile_for_tenant(client, profile_name, tenant_id)
+
+    with httpx.Client(base_url=RUNTIME, timeout=120.0) as client:
+        for query in GATEWAY_THRESHOLD_SEED_QUERIES:
+            resp = client.post(
+                "/agents/gateway_agent/process",
+                json={
+                    "agent_name": "gateway_agent",
+                    "query": query,
+                    "context": {"tenant_id": tenant_id},
+                    "top_k": 3,
+                },
+            )
+            assert resp.status_code == 200, (
+                f"{query!r} rejected while seeding gateway spans: "
+                f"HTTP {resp.status_code} {resp.text[:500]}"
+            )
+
+    time.sleep(15)
+    try:
+        yield tenant_id
+    finally:
+        with httpx.Client(timeout=60.0) as client:
+            try:
+                client.delete(f"{RUNTIME}/admin/tenants/{tenant_id}")
+            except httpx.HTTPError:
+                pass
+            try:
+                client.delete(f"{RUNTIME}/admin/organizations/{org_id}")
+            except httpx.HTTPError:
+                pass
+
+
 @pytest.mark.e2e
 class TestManualOptimizationE2E:
     """End-to-end: POST /admin/tenant/{id}/optimize creates a real Argo Workflow."""
 
-    def test_submit_creates_workflow_with_correct_spec(self):
+    def test_submit_creates_workflow_with_correct_spec(self, gateway_threshold_tenant):
         """Runtime submits a real Workflow to Argo; kubectl confirms it
         exists with the expected mode/tenant/image/env/TTL."""
         with httpx.Client(base_url=RUNTIME, timeout=30.0) as client:
             resp = client.post(
-                f"/admin/tenant/{TENANT_ID}/optimize",
+                f"/admin/tenant/{gateway_threshold_tenant}/optimize",
                 json={"mode": "gateway-thresholds"},
             )
 
@@ -163,7 +238,7 @@ class TestManualOptimizationE2E:
         assert labels["cogniverse.ai/mode"] == "gateway-thresholds"
         # K8s labels disallow colons; the manifest builder sanitizes tenant IDs
         # to a label-safe form while the raw tenant flows through the CLI arg.
-        expected_label = TENANT_ID.replace(":", "-")
+        expected_label = gateway_threshold_tenant.replace(":", "-")
         assert labels["cogniverse.ai/tenant"] == expected_label
 
         ttl = wf["spec"]["ttlStrategy"]
@@ -180,15 +255,15 @@ class TestManualOptimizationE2E:
         )
         params = {p["name"]: p["value"] for p in wf["spec"]["arguments"]["parameters"]}
         assert params["mode"] == "gateway-thresholds"
-        assert params["tenant-id"] == TENANT_ID
+        assert params["tenant-id"] == gateway_threshold_tenant
         assert params["lookback-hours"] == "48"
 
-    def test_status_endpoint_reflects_argo_phase(self):
+    def test_status_endpoint_reflects_argo_phase(self, gateway_threshold_tenant):
         """After submit, GET status returns a real phase from Argo within
         a reasonable window (≤60s until scheduler picks it up)."""
         with httpx.Client(base_url=RUNTIME, timeout=30.0) as client:
             submit = client.post(
-                f"/admin/tenant/{TENANT_ID}/optimize",
+                f"/admin/tenant/{gateway_threshold_tenant}/optimize",
                 json={"mode": "gateway-thresholds"},
             )
         assert submit.status_code == 200, submit.text
@@ -313,10 +388,12 @@ class TestManualOptimizationDeepE2E:
     image, connects to Phoenix/Vespa, and does real computation.
     """
 
-    def test_gateway_thresholds_workflow_runs_to_success_and_produces_artifact(self):
+    def test_gateway_thresholds_workflow_runs_to_success_and_produces_artifact(
+        self, gateway_threshold_tenant
+    ):
         with httpx.Client(base_url=RUNTIME, timeout=30.0) as client:
             submit = client.post(
-                f"/admin/tenant/{TENANT_ID}/optimize",
+                f"/admin/tenant/{gateway_threshold_tenant}/optimize",
                 json={"mode": "gateway-thresholds"},
             )
         assert submit.status_code == 200, submit.text
