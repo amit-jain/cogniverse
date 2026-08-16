@@ -179,7 +179,7 @@ sequenceDiagram
         Search->>Backend: search(query_dict) [in-process]
         Backend-->>Search: Results
         Search-->>Gateway: {results: [...]}
-        Gateway-->>User: {results: [...], gateway: {complexity: "simple", routed_to: "search_agent"}}
+        Gateway-->>User: {results: [...], gateway: {complexity: "simple", routed_to: "search_agent", fast_path_confidence_threshold: ..., gliner_threshold: ...}}
     else Complex query
         Gateway->>Orch: in-process handoff with gateway_context<br/>{modality, generation_type, confidence}
 

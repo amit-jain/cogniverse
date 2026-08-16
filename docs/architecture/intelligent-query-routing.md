@@ -249,7 +249,7 @@ When `GatewayAgent` classifies a query as `complexity="simple"`:
    - `summarization`/`text_generation` → `_execute_summarization_task`
    - `text_analysis`/`sentiment`/`classification` → `_execute_text_analysis_task`
    - `coding` → `_execute_coding_task` (not reachable via `SIMPLE_ROUTE_MAP` today since GatewayAgent has no "code" modality, but handled if a target agent is registered with this capability)
-3. The response surfaces the executed agent's answer as the top-level response — its user-facing `message` and any hits (`results`/`results_count`) — so the rendered reply and the persisted assistant turn are the answer, not a routing breadcrumb. Gateway triage (`complexity`, `modality`, `routed_to`, `confidence`) is stamped under `gateway`, and the raw executed-agent payload is kept under `downstream_result`.
+3. The response surfaces the executed agent's answer as the top-level response — its user-facing `message` and any hits (`results`/`results_count`) — so the rendered reply and the persisted assistant turn are the answer, not a routing breadcrumb. Gateway triage (`complexity`, `modality`, `generation_type`, `routed_to`, `confidence`, `fast_path_confidence_threshold`, `gliner_threshold`) is stamped under `gateway`, and the raw executed-agent payload is kept under `downstream_result`.
 
 #### Complex Path (Multi-Agent Orchestration)
 
