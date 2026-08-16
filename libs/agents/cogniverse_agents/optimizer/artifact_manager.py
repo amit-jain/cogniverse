@@ -1493,6 +1493,11 @@ def load_optimized_module(agent: Any, blob_key: str) -> None:
     """
     agent.artifact_load_status = "no_telemetry"
     if not getattr(agent, "telemetry_manager", None):
+        logger.warning(
+            "%s: no telemetry manager injected; skipping %s artifact load",
+            type(agent).__name__,
+            blob_key,
+        )
         return
     try:
         from cogniverse_core.common.utils.async_bridge import run_coro_blocking

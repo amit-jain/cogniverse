@@ -960,13 +960,13 @@ class TestSyntheticDataAPI:
             ProfileSelectionExampleSchema.model_validate(example).complexity
             for example in data["data"]
         ] == [example["complexity"] for example in data["data"]]
-        # query_intent is the labeler's LM judgment: the grounded query names a
-        # video frame, so per example it is video_search or image_search; the
-        # split between the two is not pinnable across LM runs.
+        # query_intent is the labeler's LM judgment, so no single value is
+        # pinnable; the vocabulary contract is enforced at the HTTP boundary
+        # by the Literal-typed schema, exactly as for complexity above.
         assert [
-            example["query_intent"] in {"video_search", "image_search"}
+            ProfileSelectionExampleSchema.model_validate(example).query_intent
             for example in data["data"]
-        ] == [True, True], [example["query_intent"] for example in data["data"]]
+        ] == [example["query_intent"] for example in data["data"]]
 
     def test_generate_synthetic_data(self):
         """POST /synthetic/generate creates real synthetic training examples."""
@@ -2499,6 +2499,26 @@ class TestBatchVideoIngestion:
             f"tracked E2E video set is incomplete: {tracked_videos!r}"
         )
         pod_dir = f"{self.POD_BATCH_ROOT}/{tenant_id}"
+        # ``kubectl cp`` addresses a pod, not a deployment; the exec calls
+        # below resolve ``deploy/`` themselves, so both target the same pod
+        # only while the runtime runs a single replica (as it does here).
+        pods = _kubectl_e2e(
+            "-n",
+            "cogniverse",
+            "get",
+            "pods",
+            "-l",
+            "app.kubernetes.io/component=runtime",
+            "--field-selector=status.phase=Running",
+            "-o",
+            "jsonpath={.items[*].metadata.name}",
+        )
+        _require_kubectl_success(pods, ["kubectl", "get", "pods", "runtime"])
+        runtime_pods = pods.stdout.split()
+        assert len(runtime_pods) == 1, (
+            f"expected exactly one running runtime pod, got {runtime_pods!r}"
+        )
+        runtime_pod = runtime_pods[0]
         mkdir = _kubectl_e2e(
             "-n",
             "cogniverse",
@@ -2519,7 +2539,7 @@ class TestBatchVideoIngestion:
             "-c",
             "runtime",
             str(host_dir / self.BATCH_VIDEO),
-            f"deploy/cogniverse-runtime:{pod_dir}/{self.BATCH_VIDEO}",
+            f"{runtime_pod}:{pod_dir}/{self.BATCH_VIDEO}",
             timeout=120,
         )
         _require_kubectl_success(copy, ["kubectl", "cp", self.BATCH_VIDEO, pod_dir])

@@ -1136,6 +1136,7 @@ export INFERENCE_SERVICE_URLS='{"general": "http://vllm-inference:8000"}'
 export REDIS_URL="redis://localhost:6379"        # cross-pod inbound messaging + queue-driven ingestion
 export MINIO_ENDPOINT="http://minio:9000"        # object store for /ingestion/upload
 export COGNIVERSE_ADAPTER_CACHE="/data/adapters" # local cache dir for finetuning adapters
+export LOG_LEVEL="INFO"                          # root logging level for the server process (a logging level name)
 
 # Orchestrator iterative-retrieval knobs
 export ITER_RETRIEVAL_MAX_ITER="5"

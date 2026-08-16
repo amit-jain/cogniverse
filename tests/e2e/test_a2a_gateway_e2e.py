@@ -1096,11 +1096,20 @@ class TestProfileSelectionAgent:
             f"got: {data['selected_profile']}"
         )
 
-        # Alternatives should list other profiles, all also video profiles
-        alternatives = data.get("alternatives", [])
-        assert len(alternatives) >= 1, (
-            f"Expected alternative profiles, got: {alternatives}"
-        )
+        # Alternatives are exactly the tenant's other registered video-typed
+        # profiles (top 3, registry order); the agent reads the same registry.
+        with httpx.Client(base_url=RUNTIME, timeout=30.0) as client:
+            registry = client.get("/admin/profiles", params={"tenant_id": TENANT_ID})
+        assert registry.status_code == 200, registry.text
+        expected_alternatives = [
+            profile["profile_name"]
+            for profile in registry.json()["profiles"]
+            if profile["type"] == "video"
+            and profile["profile_name"] != data["selected_profile"]
+        ][:3]
+        assert [
+            candidate["profile_name"] for candidate in data["alternatives"]
+        ] == expected_alternatives
 
     def test_profile_selection_agent_is_registered(self):
         """The agent should be registered in the registry."""

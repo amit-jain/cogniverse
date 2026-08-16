@@ -26,6 +26,8 @@ import uuid
 import httpx
 import pytest
 
+from cogniverse_agents.query_enhancement_agent import QueryEnhancementModule
+
 pytestmark = pytest.mark.slow
 
 from tests.e2e.conftest import (
@@ -931,23 +933,17 @@ class TestSimbaOptimization:
         )
         module = artifact["enhancer.predict"]
 
-        # Signature fields must match QueryEnhancementSignature exactly
+        # The persisted signature must be the served module's: ChainOfThought
+        # places its Reasoning field ahead of the signature's own outputs, so
+        # the order comes from the real predictor, not from the class body.
+        served_signature = QueryEnhancementModule().enhancer.predict.signature
         sig = module["signature"]
         field_names = [f.get("prefix", "").rstrip(":").strip() for f in sig["fields"]]
         assert field_names == [
-            "Query",
-            "Source Text",
-            "Grounding Context",
-            "Enhanced Query",
-            "Expansion Terms",
-            "Synonyms",
-            "Context",
-            "Confidence",
-            "Reasoning",
+            field.json_schema_extra["prefix"].rstrip(":").strip()
+            for field in served_signature.fields.values()
         ], field_names
-        assert sig["instructions"] == (
-            "Enhance query with source-grounded expansions, synonyms, and context."
-        )
+        assert sig["instructions"] == served_signature.instructions
 
         # Must have learned demos — 0 demos means optimization did nothing
         demos = module.get("demos", [])
@@ -1623,7 +1619,10 @@ class TestSyntheticGeneration:
 
         assert result.returncode == 1, result
         assert result.stdout.strip() == "", result.stdout
-        assert result.stderr.rstrip().splitlines()[-1] == (
+        # kubectl exec appends its own exit line after the CLI's stderr.
+        stderr_lines = result.stderr.rstrip().splitlines()
+        assert stderr_lines[-1] == "command terminated with exit code 1", stderr_lines
+        assert stderr_lines[-2] == (
             "Error: synthetic optimizer types have no approved training-data "
             "consumer: ['simba']"
         ), result.stderr[-1000:]

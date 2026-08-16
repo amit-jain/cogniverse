@@ -2,12 +2,15 @@
 
 from types import SimpleNamespace
 from typing import Literal, get_args, get_origin
+from unittest.mock import AsyncMock, Mock, patch
 
+import dspy
 import pytest
 from pydantic import ValidationError
 
 from cogniverse_agents.profile_selection_agent import (
     ProfileSelectionAgent,
+    ProfileSelectionDeps,
     ProfileSelectionInput,
     ProfileSelectionOutput,
     ProfileSelectionSignature,
@@ -43,26 +46,33 @@ BASE_PROFILE_SELECTION_EXAMPLE = {
 }
 
 
-def _build_agent(modality: str) -> SimpleNamespace:
-    async def call_dspy(*args, **kwargs):
-        return SimpleNamespace(
+def _build_agent(
+    modality: str, *, model_query_intent: str = "text_search"
+) -> ProfileSelectionAgent:
+    """A real ProfileSelectionAgent whose tenant config declares ``modality``
+    for every profile and whose LM answers ``model_query_intent``."""
+    with patch("dspy.ChainOfThought"):
+        agent = ProfileSelectionAgent(
+            deps=ProfileSelectionDeps(
+                tenant_id="acme:docs", available_profiles=["video_profile"]
+            ),
+            port=8011,
+        )
+    agent._config_manager = Mock()
+    agent._config_manager.get_backend_profile.return_value = SimpleNamespace(
+        type=modality
+    )
+    agent.call_dspy = AsyncMock(
+        return_value=dspy.Prediction(
             selected_profile="video_profile",
             confidence="0.9",
             reasoning="selected",
-            query_intent="text_search",
+            query_intent=model_query_intent,
             modality="text",
             complexity="medium",
         )
-
-    return SimpleNamespace(
-        deps=SimpleNamespace(available_profiles=["video_profile"]),
-        dspy_module=SimpleNamespace(),
-        call_dspy=call_dspy,
-        emit_progress=lambda *args, **kwargs: None,
-        _configured_profile_modality=lambda selected_profile, tenant_id: modality,
-        _generate_alternatives=lambda *args, **kwargs: [],
-        _emit_profile_span=lambda *args, **kwargs: None,
     )
+    return agent
 
 
 def test_profile_query_intent_literal_alias_is_closed():
@@ -111,7 +121,7 @@ async def test_profile_selection_derives_in_vocab_query_intent_for_every_modalit
         ProfileSelectionInput(
             query="find a clip about transformer architecture",
             available_profiles=["video_profile"],
-            tenant_id=None,
+            tenant_id="acme:docs",
         ),
     )
 
@@ -121,21 +131,8 @@ async def test_profile_selection_derives_in_vocab_query_intent_for_every_modalit
     assert output.query_intent == expected_query_intent
 
 
-def _build_agent_with_empty_intent(modality: str) -> SimpleNamespace:
-    agent = _build_agent(modality)
-
-    async def call_dspy(*args, **kwargs):
-        return SimpleNamespace(
-            selected_profile="video_profile",
-            confidence="0.9",
-            reasoning="selected",
-            query_intent="",
-            modality="text",
-            complexity="medium",
-        )
-
-    agent.call_dspy = call_dspy
-    return agent
+def _build_agent_with_empty_intent(modality: str) -> ProfileSelectionAgent:
+    return _build_agent(modality, model_query_intent="")
 
 
 def test_profile_selection_output_pins_the_same_query_intent_vocabulary():
@@ -152,7 +149,7 @@ async def test_empty_model_intent_still_derives_in_vocab_query_intent(modality: 
         ProfileSelectionInput(
             query="find a clip about transformer architecture",
             available_profiles=["video_profile"],
-            tenant_id=None,
+            tenant_id="acme:docs",
         ),
     )
 
