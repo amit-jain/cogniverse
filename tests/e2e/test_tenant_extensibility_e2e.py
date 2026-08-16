@@ -13,6 +13,7 @@ import httpx
 import pytest
 
 from tests.e2e.conftest import RUNTIME, TENANT_ID
+from tests.e2e.test_api_e2e import PROFILE
 
 # DenseOn (768-dim, ModernBERT) served by vLLM (inference.denseon, vllm_embed).
 # k3s NodePort wired in chart values: inference.denseon.service.nodePort.
@@ -728,14 +729,14 @@ class TestSearchBehavior:
                 json={
                     "query": "outdoor scene nature",
                     "tenant_id": TENANT_ID,
-                    "profile": "video_colpali_smol500_mv_frame",
+                    "profile": PROFILE,
                     "top_k": 5,
                 },
             )
         assert resp.status_code == 200
         data = resp.json()
         assert data["results_count"] >= 1
-        assert data["profile"] == "video_colpali_smol500_mv_frame"
+        assert data["profile"] == PROFILE
 
         scores = [r["score"] for r in data["results"]]
         assert scores == sorted(scores, reverse=True), (
@@ -761,7 +762,7 @@ class TestSearchBehavior:
                 json={
                     "query": "video content",
                     "tenant_id": TENANT_ID,
-                    "profile": "video_colpali_smol500_mv_frame",
+                    "profile": PROFILE,
                     "top_k": 3,
                 },
             )

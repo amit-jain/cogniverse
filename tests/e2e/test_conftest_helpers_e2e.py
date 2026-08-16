@@ -33,6 +33,7 @@ from tests.e2e.conftest import (
     unique_id,
     wait_for_span,
 )
+from tests.e2e.test_api_e2e import IMAGE_PROFILE, PROFILE
 
 
 @pytest.fixture(scope="module", autouse=True)
@@ -301,7 +302,7 @@ class TestSharedClusterOwnership:
     def test_unrelated_search_hit_does_not_satisfy_sample_precheck(self):
         search_body = {
             "query": e2e_conftest.SAMPLE_VIDEO_CONTENT_ID,
-            "profile": "video_colpali_smol500_mv_frame",
+            "profile": PROFILE,
             "strategy": "default",
             "results_count": 1,
             "results": [
@@ -323,7 +324,7 @@ class TestSharedClusterOwnership:
             search_body,
             content_id=e2e_conftest.SAMPLE_VIDEO_CONTENT_ID,
             tenant_id=e2e_conftest.TENANT_ID,
-            profile="video_colpali_smol500_mv_frame",
+            profile=PROFILE,
             suffix=".mp4",
             media_type="video",
         )
@@ -343,7 +344,7 @@ class TestSharedClusterOwnership:
         }
         search_body = {
             "query": content_id,
-            "profile": "video_colpali_smol500_mv_frame",
+            "profile": PROFILE,
             "strategy": "default",
             "results_count": 2,
             "results": [
@@ -366,7 +367,7 @@ class TestSharedClusterOwnership:
             search_body,
             content_id=content_id,
             tenant_id=e2e_conftest.TENANT_ID,
-            profile="video_colpali_smol500_mv_frame",
+            profile=PROFILE,
             suffix=".mp4",
             media_type="video",
         )
@@ -383,7 +384,7 @@ class TestSharedClusterOwnership:
         }
         search_body = {
             "query": content_id,
-            "profile": "image_colpali_mv",
+            "profile": IMAGE_PROFILE,
             "strategy": "default",
             "results_count": 1,
             "results": [expected],
@@ -393,7 +394,7 @@ class TestSharedClusterOwnership:
             search_body,
             content_id=content_id,
             tenant_id=e2e_conftest.TENANT_ID,
-            profile="image_colpali_mv",
+            profile=IMAGE_PROFILE,
             suffix=".jpg",
             media_type="image",
         )
@@ -407,7 +408,7 @@ class TestSharedClusterOwnership:
         source_url = f"s3://cogniverse-ingest/{e2e_conftest.TENANT_ID}/{content_id}.jpg"
         search_body = {
             "query": content_id,
-            "profile": "image_colpali_mv",
+            "profile": IMAGE_PROFILE,
             "strategy": "default",
             "results_count": 1,
             "results": [
@@ -423,7 +424,7 @@ class TestSharedClusterOwnership:
             search_body,
             content_id=content_id,
             tenant_id=e2e_conftest.TENANT_ID,
-            profile="image_colpali_mv",
+            profile=IMAGE_PROFILE,
             suffix=".jpg",
             media_type="image",
         )
@@ -438,7 +439,7 @@ class TestSharedClusterOwnership:
         matches, error = e2e_conftest._search_sample_content(
             content_id=e2e_conftest.SAMPLE_VIDEO_CONTENT_ID,
             tenant_id=e2e_conftest.TENANT_ID,
-            profile="video_colpali_smol500_mv_frame",
+            profile=PROFILE,
             suffix=".mp4",
             media_type="video",
         )
@@ -454,7 +455,7 @@ class TestSharedClusterOwnership:
         matches, error = e2e_conftest._search_sample_content(
             content_id=e2e_conftest.SAMPLE_VIDEO_CONTENT_ID,
             tenant_id=e2e_conftest.TENANT_ID,
-            profile="video_colpali_smol500_mv_frame",
+            profile=PROFILE,
             suffix=".mp4",
             media_type="video",
         )
@@ -474,7 +475,7 @@ class TestSharedClusterOwnership:
         }
         body = {
             "query": content_id,
-            "profile": "video_colpali_smol500_mv_frame",
+            "profile": PROFILE,
             "strategy": "default",
             "results_count": 1,
             "results": [expected],
@@ -491,7 +492,7 @@ class TestSharedClusterOwnership:
         matches, error = e2e_conftest._search_sample_content(
             content_id=content_id,
             tenant_id=e2e_conftest.TENANT_ID,
-            profile="video_colpali_smol500_mv_frame",
+            profile=PROFILE,
             suffix=".mp4",
             media_type="video",
         )
@@ -514,6 +515,7 @@ class TestSharedClusterOwnership:
                 content_id=content_id,
                 tenant_id=e2e_conftest.TENANT_ID,
                 suffix=".mp4",
+                expected_documents_fed=3,
             )
             == 3
         )
@@ -532,19 +534,21 @@ class TestSharedClusterOwnership:
                     content_id=content_id,
                     tenant_id=e2e_conftest.TENANT_ID,
                     suffix=".mp4",
+                    expected_documents_fed=3,
                 )
 
     def test_synthetic_fixture_profiles_have_two_exact_modalities(self):
         config = json.loads(
             (e2e_conftest.DATA_ROOT.parent / "configs" / "config.json").read_text()
         )
+        expected_profiles = [
+            e2e_conftest._active_video_profile_name(config),
+            e2e_conftest._configured_image_profile_name(config),
+        ]
 
         profiles = e2e_conftest._synthetic_fixture_profiles(config)
 
-        assert profiles == [
-            "video_colpali_smol500_mv_frame",
-            "image_colpali_mv",
-        ]
+        assert profiles == expected_profiles
         configured = config["backend"]["profiles"]
         assert [configured[name]["type"] for name in profiles] == ["video", "image"]
 

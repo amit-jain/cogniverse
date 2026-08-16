@@ -19,6 +19,7 @@ from tests.e2e.conftest import (
     RUNTIME,
     register_tenant_and_wait,
 )
+from tests.e2e.test_api_e2e import PROFILE
 
 GRAPH_STATS_URL = f"{RUNTIME}/graph/stats"
 GRAPH_UPSERT_URL = f"{RUNTIME}/graph/upsert"
@@ -313,7 +314,7 @@ class TestMultimodalGraphExtraction:
                     f"{RUNTIME}/ingestion/upload?wait=true&wait_timeout=540",
                     files={"file": (video_path.name, f, "video/mp4")},
                     data={
-                        "profile": "video_colpali_smol500_mv_frame",
+                        "profile": PROFILE,
                         "backend": "vespa",
                         "tenant_id": tenant,
                     },

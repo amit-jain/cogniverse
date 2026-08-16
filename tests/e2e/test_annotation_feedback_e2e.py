@@ -32,6 +32,7 @@ from uuid import uuid4
 import pytest
 
 from cogniverse_core.common.tenant_utils import canonical_tenant_id
+from tests.e2e.test_api_e2e import PROFILE
 
 NAMESPACE = "cogniverse"
 PHOENIX_HTTP = "http://localhost:33006"  # phoenix.service nodePort
@@ -193,7 +194,7 @@ def _ensure_annotation_crons_applied() -> None:
     assert applied.returncode == 0, applied.stderr
 
 
-PROFILE_NAME = "video_colpali_smol500_mv_frame"
+PROFILE_NAME = PROFILE
 
 
 def _provision_run_tenant() -> None:

@@ -31,7 +31,7 @@ from tests.e2e.conftest import (
     GATEWAY_VIDEO_QUERIES,
     expected_gateway_calibration,
 )
-from tests.e2e.test_api_e2e import _deploy_profile_for_tenant
+from tests.e2e.test_api_e2e import PROFILE, _deploy_profile_for_tenant
 
 NAMESPACE = "cogniverse"
 RUNTIME = (
@@ -582,9 +582,7 @@ class TestDailyGatewayWorkflow:
             # profile so cued queries reach search_agent and answer with zero
             # hits instead of a profile-not-found error.
             with httpx.Client(base_url=RUNTIME, timeout=300.0) as client:
-                _deploy_profile_for_tenant(
-                    client, "video_colpali_smol500_mv_frame", tenant_id
-                )
+                _deploy_profile_for_tenant(client, PROFILE, tenant_id)
             assert _gateway_thresholds_blob(tenant_id) is None
 
             decisions = _run_gateway_traffic(tenant_id)
