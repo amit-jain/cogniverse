@@ -1242,32 +1242,13 @@ class TestGetAgentCard:
 
 
 @pytest.mark.unit
-class TestUnconfiguredInferenceServiceContract:
-    """An unprovisioned inference sidecar must not surface as an opaque 500.
+class TestAudioTextSearchBackendContract:
+    """Audio text search uses the backend even when clap_embed is unset."""
 
-    A gateway query whose modality is audio routes to audio_analysis_agent,
-    whose hybrid search encodes the query with CLAP. With no ``clap_embed``
-    URL configured the encode falls to the in-process branch, which the
-    runtime image cannot run. The caller must be told which service is
-    missing instead of receiving a bodyless 500.
-    """
-
-    def test_audio_dispatch_raises_named_error_when_clap_unconfigured(
+    def test_audio_dispatch_succeeds_without_clap_embed_for_text_search(
         self, dispatcher, monkeypatch
     ):
-        """Root cause: real dispatcher + real audio agent, no clap_embed URL.
-
-        Nothing is mocked at the failing boundary -- the real
-        AudioAnalysisAgent and the real AudioEmbeddingGenerator run until
-        the missing in-process backend is detected. ``find_spec`` is forced
-        to report torch absent so the assertion holds on a developer box
-        that has torch installed; the deployed runtime image ships none.
-        """
         import importlib.util as _importlib_util
-
-        from cogniverse_foundation.config.inference_service import (
-            InferenceServiceUnavailableError,
-        )
 
         real_find_spec = _importlib_util.find_spec
 
@@ -1277,11 +1258,20 @@ class TestUnconfiguredInferenceServiceContract:
             return real_find_spec(name, *args, **kwargs)
 
         monkeypatch.setattr(_importlib_util, "find_spec", _no_torch)
-        # The tenant has an audio schema; the failing boundary is the sidecar.
-        backend = MagicMock()
-        backend.schema_exists = MagicMock(return_value=True)
+        search_backend = MagicMock()
+        search_backend.search = MagicMock(return_value=[])
         monkeypatch.setattr(
-            "cogniverse_runtime.admin.tenant_manager.get_backend", lambda: backend
+            "cogniverse_agents.audio_analysis_agent.AudioAnalysisAgent._get_backend",
+            lambda self: search_backend,
+        )
+
+        # The tenant has an audio schema; the text-search path should not
+        # require clap_embed or in-process CLAP.
+        tenant_backend = MagicMock()
+        tenant_backend.schema_exists = MagicMock(return_value=True)
+        monkeypatch.setattr(
+            "cogniverse_runtime.admin.tenant_manager.get_backend",
+            lambda: tenant_backend,
         )
 
         # The deployed runtime carried no clap_embed entry at all.
@@ -1289,19 +1279,31 @@ class TestUnconfiguredInferenceServiceContract:
             dispatcher._config_manager.get_system_config().inference_service_urls or {}
         ).get("clap_embed") is None
 
-        with pytest.raises(InferenceServiceUnavailableError) as excinfo:
-            import asyncio as _asyncio
+        import asyncio as _asyncio
 
-            _asyncio.run(
-                dispatcher._execute_audio_search_task(
-                    "listen to podcasts about deep learning run 4", "acme:prod", 3
-                )
+        result = _asyncio.run(
+            dispatcher._execute_audio_search_task(
+                "listen to podcasts about deep learning run 4", "acme:prod", 3
             )
+        )
 
-        exc = excinfo.value
-        assert exc.service == "clap_embed"
-        assert exc.module == "torch"
-        assert "INFERENCE_SERVICE_URLS['clap_embed']" in str(exc)
+        assert result == {
+            "status": "success",
+            "agent": "audio_analysis_agent",
+            "message": "Found 0 audio results for 'listen to podcasts about deep learning run 4'",
+            "results_count": 0,
+            "results": [],
+        }
+        search_backend.search.assert_called_once_with(
+            {
+                "query": "listen to podcasts about deep learning run 4",
+                "type": "audio",
+                "profile": "audio_clap_semantic",
+                "strategy": "hybrid_semantic_bm25",
+                "tenant_id": "acme:prod",
+                "top_k": 3,
+            }
+        )
 
     def test_process_route_maps_unconfigured_service_to_503(self, monkeypatch):
         """The route names the missing service instead of a bare 500."""

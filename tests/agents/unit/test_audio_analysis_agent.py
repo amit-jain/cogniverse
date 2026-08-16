@@ -1235,21 +1235,27 @@ def _bare_acoustic_agent(blocking_embed):
 
 
 @pytest.mark.asyncio
-async def test_search_hybrid_offloads_blocking_clap_encode(monkeypatch):
-    """The CLAP text encode is a blocking HTTP call and must run in a worker
-    thread like the Vespa post below it — inline on the loop it stalls every
-    other coroutine for the whole encode round-trip."""
+async def test_search_hybrid_offloads_blocking_backend_search(monkeypatch):
+    """Hybrid text search offloads the synchronous backend call off loop."""
     release = threading.Event()
+    blocking_embed = MagicMock(
+        side_effect=AssertionError("acoustic embedding should not be used")
+    )
 
-    def blocking_embed(query):
-        assert release.wait(timeout=5), "event loop was blocked by CLAP encode"
-        return _Vec()
+    def blocking_search(query_dict):
+        assert query_dict == {
+            "query": "q",
+            "type": "audio",
+            "profile": "audio_clap_semantic",
+            "strategy": "hybrid_semantic_bm25",
+            "tenant_id": "test:test",
+            "top_k": 5,
+        }
+        assert release.wait(timeout=5), "event loop was blocked by backend.search"
+        return []
 
     agent = _bare_acoustic_agent(blocking_embed)
-    monkeypatch.setattr(
-        "cogniverse_agents.search.vespa_query.vespa_search_post",
-        lambda endpoint, params, timeout: _EmptyVespaResp(),
-    )
+    agent._get_backend = MagicMock(return_value=SimpleNamespace(search=blocking_search))
 
     async def releaser():
         await asyncio.sleep(0.05)
@@ -1259,6 +1265,8 @@ async def test_search_hybrid_offloads_blocking_clap_encode(monkeypatch):
         asyncio.gather(agent._search_hybrid("q", 5), releaser()), timeout=5
     )
     assert results == []
+    agent._get_backend.assert_called_once()
+    agent._embedding_generator.generate_acoustic_text_embedding.assert_not_called()
 
 
 @pytest.mark.asyncio
