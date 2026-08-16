@@ -18,6 +18,10 @@ from cogniverse_agents.profile_selection_agent import (
     ProfileSelectionOutput,
     ProfileSelectionSignature,
 )
+from cogniverse_foundation.config.unified_config import (
+    BackendProfileConfig,
+    SystemConfig,
+)
 
 
 @pytest.fixture
@@ -356,6 +360,107 @@ class TestProfileSelectionAgent:
 
         assert result.selected_profile == "custom_profile_1"
         assert result.confidence == 0.85
+
+    @pytest.mark.asyncio
+    async def test_process_derives_exact_tenant_usable_profiles(self, profile_agent):
+        """Profiles missing services or missing from tenant config stay hidden."""
+        profile_agent.deps.available_profiles = [
+            "video_videoprism_base_mv_chunk_30s",
+            "video_colqwen_omni_mv_chunk_30s",
+            "video_colpali_smol500_mv_frame",
+            "image_colpali_mv",
+        ]
+
+        tenant_profiles = {
+            "video_colpali_smol500_mv_frame": BackendProfileConfig.from_dict(
+                "video_colpali_smol500_mv_frame",
+                {
+                    "type": "video",
+                    "schema_name": "video_colpali_smol500_mv_frame",
+                    "embedding_model": "TomoroAI/tomoro-colqwen3-embed-4b",
+                    "inference_services": {"embedding": "vllm_colpali"},
+                },
+            ),
+            "image_colpali_mv": BackendProfileConfig.from_dict(
+                "image_colpali_mv",
+                {
+                    "type": "image",
+                    "schema_name": "image_colpali_mv",
+                    "embedding_model": "TomoroAI/tomoro-colqwen3-embed-4b",
+                    "inference_services": {"embedding": "vllm_colpali"},
+                },
+            ),
+            "video_videoprism_base_mv_chunk_30s": BackendProfileConfig.from_dict(
+                "video_videoprism_base_mv_chunk_30s",
+                {
+                    "type": "video",
+                    "schema_name": "video_videoprism_base_mv_chunk_30s",
+                    "embedding_model": "videoprism_public_v1_base_hf",
+                    "inference_services": {"embedding": "videoprism_jax"},
+                },
+            ),
+        }
+        profile_agent._config_manager.list_backend_profiles.return_value = (
+            tenant_profiles
+        )
+        profile_agent._config_manager.get_system_config.return_value = SystemConfig(
+            inference_service_urls={"vllm_colpali": "http://localhost:8000"}
+        )
+        profile_agent._config_manager.get_backend_profile.side_effect = (
+            lambda profile_name, tenant_id: tenant_profiles.get(profile_name)
+        )
+
+        captured = {}
+
+        async def capture_dspy(*_args, **kwargs):
+            captured["available_profiles"] = kwargs["available_profiles"]
+            return dspy.Prediction(
+                selected_profile="video_colpali_smol500_mv_frame",
+                confidence="0.9",
+                reasoning="Derived candidate set",
+                query_intent="video_search",
+                modality="video",
+                complexity="medium",
+            )
+
+        profile_agent.call_dspy = AsyncMock(side_effect=capture_dspy)
+        profile_agent._generate_alternatives = lambda *args, **kwargs: []
+
+        result = await profile_agent._process_impl(
+            ProfileSelectionInput(
+                query="Show me machine learning videos",
+                tenant_id="test_tenant",
+            )
+        )
+
+        assert captured["available_profiles"].split(", ") == [
+            "video_colpali_smol500_mv_frame",
+            "image_colpali_mv",
+        ]
+        assert (
+            "video_videoprism_base_mv_chunk_30s" not in captured["available_profiles"]
+        )
+        assert "video_colqwen_omni_mv_chunk_30s" not in captured["available_profiles"]
+        assert result.selected_profile == "video_colpali_smol500_mv_frame"
+
+    @pytest.mark.asyncio
+    async def test_process_raises_when_tenant_has_no_usable_profiles(
+        self, profile_agent
+    ):
+        profile_agent._config_manager.list_backend_profiles.return_value = {}
+        profile_agent._config_manager.get_system_config.return_value = SystemConfig(
+            inference_service_urls={}
+        )
+
+        with pytest.raises(
+            ValueError, match="No usable backend profiles are configured for tenant"
+        ):
+            await profile_agent._process_impl(
+                ProfileSelectionInput(
+                    query="Show me machine learning videos",
+                    tenant_id="test_tenant",
+                )
+            )
 
     @pytest.mark.asyncio
     async def test_process_invalid_confidence(self, profile_agent):

@@ -25,6 +25,7 @@ from tests.e2e.conftest import (
     RUNTIME,
     TENANT_ID,
 )
+from tests.e2e.test_api_e2e import _expected_available_profile_names
 
 PROFILE = "video_colpali_smol500_mv_frame"
 SAMPLE_VIDEO = (
@@ -1017,8 +1018,14 @@ class TestProfileSelectionAgent:
         """POST to profile_selection_agent/process selects a real Vespa profile.
 
         "find basketball highlights" is a video query — should select a video
-        profile from the 4 known profiles, with modality="video".
+        profile from the tenant's exact usable profile set, with modality="video".
         """
+        expected_available_profiles = _expected_available_profile_names(TENANT_ID)
+        assert expected_available_profiles, (
+            "The tenant's usable profile set is unexpectedly empty; the comparison "
+            "would be vacuous."
+        )
+
         with httpx.Client(base_url=RUNTIME, timeout=900.0) as client:
             resp = client.post(
                 "/agents/profile_selection_agent/process",
@@ -1036,15 +1043,10 @@ class TestProfileSelectionAgent:
         assert data["status"] == "success"
         assert data["agent"] == "profile_selection_agent"
 
-        # Must select one of the 4 known Vespa profiles
-        known_profiles = {
-            "video_colpali_smol500_mv_frame",
-            "video_colqwen_omni_mv_chunk_30s",
-            "video_videoprism_base_mv_chunk_30s",
-            "video_videoprism_large_mv_chunk_30s",
-        }
-        assert data["selected_profile"] in known_profiles, (
-            f"Expected one of {known_profiles}, got: {data['selected_profile']}"
+        # Must select one of the tenant's actual usable profiles.
+        assert data["selected_profile"] in expected_available_profiles, (
+            f"Expected one of {expected_available_profiles}, got: "
+            f"{data['selected_profile']}"
         )
 
         # Video query should detect video modality
@@ -1052,7 +1054,7 @@ class TestProfileSelectionAgent:
             f"'find basketball highlights' should be video modality, got: {data.get('modality')}"
         )
 
-        # Profile must be a VIDEO profile — all 4 known profiles start with "video_"
+        # Profile must be a VIDEO profile.
         assert data["selected_profile"].startswith("video_"), (
             f"Video query should select a video profile (starts with 'video_'), "
             f"got: {data['selected_profile']}"
