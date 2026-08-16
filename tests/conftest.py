@@ -2,6 +2,7 @@
 
 pytest_plugins = [
     "tests.fixtures.inference",
+    "tests.fixtures.instafail",
     "tests.fixtures.llm",
     "tests.fixtures.sidecars",
 ]
