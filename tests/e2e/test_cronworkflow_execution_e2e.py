@@ -17,6 +17,7 @@ marker.
 
 from __future__ import annotations
 
+import asyncio
 import json
 import shlex
 import subprocess
@@ -64,8 +65,14 @@ def _require_cronworkflow(name: str) -> None:
         )
 
 
-def _submit_workflow_from_cron(cron_name: str) -> str:
-    """Create a one-off Workflow from the CronWorkflow's workflowSpec."""
+def _submit_workflow_from_cron(
+    cron_name: str, *, parameters: dict[str, str] | None = None
+) -> str:
+    """Create a one-off Workflow from the CronWorkflow's workflowSpec.
+
+    ``parameters`` overrides the values of the workflow's declared arguments
+    (e.g. ``tenant-id``); an unknown name is a test bug and raises.
+    """
     out = subprocess.run(
         ["kubectl", "get", "cronworkflow", cron_name, "-n", NAMESPACE, "-o", "json"],
         capture_output=True,
@@ -77,6 +84,18 @@ def _submit_workflow_from_cron(cron_name: str) -> str:
             f"kubectl get cronworkflow {cron_name} failed: {out.stderr.strip()}"
         )
     spec = json.loads(out.stdout)["spec"]["workflowSpec"]
+    if parameters:
+        declared = {
+            p["name"]: p for p in spec.get("arguments", {}).get("parameters", [])
+        }
+        unknown = sorted(set(parameters) - set(declared))
+        if unknown:
+            raise ValueError(
+                f"{cron_name} declares no workflow parameter(s) {unknown}; "
+                f"declared={sorted(declared)}"
+            )
+        for name, value in parameters.items():
+            declared[name]["value"] = value
 
     workflow = {
         "apiVersion": "argoproj.io/v1alpha1",
@@ -159,9 +178,14 @@ def _wait_for_workflow_terminal(
     return _workflow_status(name)
 
 
-def _submit_and_wait_succeeded(cron_name: str, timeout_s: float = SUBMISSION_TIMEOUT_S):
+def _submit_and_wait_succeeded(
+    cron_name: str,
+    timeout_s: float = SUBMISSION_TIMEOUT_S,
+    *,
+    parameters: dict[str, str] | None = None,
+):
     """Submit + poll. Fails the test with pod logs on non-Succeeded terminal."""
-    wf = _submit_workflow_from_cron(cron_name)
+    wf = _submit_workflow_from_cron(cron_name, parameters=parameters)
     try:
         status = _wait_for_workflow_terminal(wf, timeout_s=timeout_s)
         phase = status.get("phase") or "Unknown"
@@ -273,27 +297,6 @@ def _poll_resolve(
         time.sleep(2.0)
         last = _resolve_memory(tenant_full_id, mid)
     return last
-
-
-def _runtime_pod_restart_count() -> int:
-    """Read the runtime Deployment's pod restart-count for rollout detection."""
-    out = subprocess.run(
-        [
-            "kubectl",
-            "get",
-            "deployment",
-            "-n",
-            NAMESPACE,
-            "-l",
-            "app.kubernetes.io/component=runtime",
-            "-o",
-            "jsonpath={.items[*].status.observedGeneration}",
-        ],
-        capture_output=True,
-        text=True,
-        timeout=30,
-    )
-    return int(out.stdout.strip() or "0")
 
 
 # ---------------------------------------------------------------------------
@@ -443,48 +446,132 @@ class TestDailyCleanupWorkflow:
             _delete_tenant_and_org(tenant_id)
 
 
+# The same cue-only shape test_api_e2e pins at confidence 0.5: "videos" is a
+# keyword cue and GLiNER tags no modality entity in these phrasings.
+GATEWAY_CUED_QUERIES = (
+    "find videos of dogs running on a beach",
+    "find videos of dogs running on a sandy beach",
+    "find videos of dogs running along a beach at dusk",
+)
+
+
+def _run_gateway_traffic(tenant_id: str) -> None:
+    """Route cued simple queries for ``tenant_id`` and pin each decision.
+
+    Every query carries a modality cue, so the keyword path classifies it
+    simple/video at KEYWORD_MODALITY_CONFIDENCE (0.5) and dispatches
+    search_agent; the tenant's deployed-but-empty video schema answers with
+    zero hits and no error.
+    """
+    with httpx.Client(base_url=RUNTIME, timeout=600.0) as client:
+        for query in GATEWAY_CUED_QUERIES:
+            resp = client.post(
+                "/agents/gateway_agent/process",
+                json={
+                    "agent_name": "gateway_agent",
+                    "query": query,
+                    "context": {"tenant_id": tenant_id},
+                    "top_k": 3,
+                },
+            )
+            assert resp.status_code == 200, resp.text
+            body = resp.json()
+            gw = body["gateway"]
+            assert (gw["complexity"], gw["confidence"], gw["routed_to"]) == (
+                "simple",
+                0.5,
+                "search_agent",
+            ), body
+            assert body["status"] == "success", body
+
+
+def _wait_for_gateway_spans(provider, tenant_id: str, expected: int) -> None:
+    """Block until Phoenix has exported exactly ``expected`` gateway spans."""
+    from cogniverse_foundation.telemetry.config import SPAN_NAME_GATEWAY
+    from cogniverse_runtime.optimization_cli import _query_spans_by_name
+
+    deadline = time.monotonic() + 180.0
+    seen = -1
+    while time.monotonic() < deadline:
+        df = asyncio.run(
+            _query_spans_by_name(provider, tenant_id, SPAN_NAME_GATEWAY, 1)
+        )
+        seen = len(df)
+        if seen == expected:
+            return
+        time.sleep(3.0)
+    raise AssertionError(
+        f"Phoenix shows {seen} gateway spans for tenant {tenant_id!r}; "
+        f"expected {expected} within 180s"
+    )
+
+
 @pytest.mark.e2e
 class TestDailyGatewayWorkflow:
-    """Daily-gateway must (1) call run_gateway_thresholds_optimization
-    against Phoenix spans and (2) trigger a runtime rollout. The
-    workflow uses templateRef → optimization-runner, which is the
-    chart path that previously broke with "volume 'config' not found"."""
+    """Daily-gateway calls run_gateway_thresholds_optimization for the
+    tenant it is given: it reads that tenant's gateway spans from Phoenix and
+    persists the calibrated thresholds as the tenant's ``gateway_thresholds``
+    artifact. There is no restart step — warm runtime pods re-read the
+    artifact on the dispatcher's reload interval. The workflow uses
+    templateRef → optimization-runner, the chart path that previously broke
+    with "volume 'config' not found"."""
 
-    def test_workflow_runs_to_succeeded_and_triggers_runtime_rollout(self):
+    def test_workflow_calibrates_and_persists_the_tenant_thresholds(self):
         _require_cronworkflow("cogniverse-daily-gateway")
+        from cogniverse_agents.optimizer.artifact_manager import ArtifactManager
+        from cogniverse_foundation.telemetry.manager import get_telemetry_manager
 
-        # Pre: capture rollout generation. Post: it must have bumped if
-        # the restart-deployment step ran — and that step is
-        # sequenced AFTER optimize-gateway in the pipeline, so an
-        # advance proves both steps Succeeded against the live cluster.
-        gen_before = _runtime_pod_restart_count()
+        tenant_id = _seed_org_and_tenant(uuid.uuid4().hex[:8])
+        try:
+            # Tenant creation deploys the default video schema, so cued queries
+            # reach search_agent and answer with zero hits, not an error.
+            with httpx.Client(base_url=RUNTIME, timeout=300.0) as client:
+                deploy = client.post(
+                    "/admin/profiles/video_colpali_smol500_mv_frame/deploy",
+                    json={"tenant_id": tenant_id, "force": False},
+                )
+                assert deploy.status_code == 200, deploy.text
+                assert deploy.json()["deployment_status"] == "already_deployed", (
+                    deploy.text
+                )
+            provider = get_telemetry_manager().get_provider(tenant_id=tenant_id)
+            artifacts = ArtifactManager(provider, tenant_id)
+            assert (
+                asyncio.run(artifacts.load_blob("config", "gateway_thresholds")) is None
+            )
 
-        _submit_and_wait_succeeded("cogniverse-daily-gateway", timeout_s=600)
+            _run_gateway_traffic(tenant_id)
+            _wait_for_gateway_spans(provider, tenant_id, len(GATEWAY_CUED_QUERIES))
 
-        # Functional outcome: runtime deployment was rolled. The
-        # restart-deployment step needs RBAC to patch deployments + a
-        # successful optimize-gateway step upstream; the observed
-        # generation bump proves both. This is a stronger contract than
-        # reading pod logs (Argo gc's completed pods quickly, so log
-        # scraping races the workflow controller).
-        #
-        # ``kubectl rollout restart`` exits immediately after patching
-        # the deployment spec; the deployment controller updates
-        # observedGeneration asynchronously. Poll for the bump rather
-        # than reading once and racing the controller.
-        deadline = time.monotonic() + 120.0
-        gen_after = gen_before
-        while time.monotonic() < deadline:
-            gen_after = _runtime_pod_restart_count()
-            if gen_after > gen_before:
-                break
-            time.sleep(2.0)
-        assert gen_after > gen_before, (
-            f"daily-gateway workflow Succeeded but the runtime deployment "
-            f"observedGeneration did not advance ({gen_before} → {gen_after}) "
-            f"within 120s; the restart-deployment step must have run for "
-            f"thresholds to take effect"
-        )
+            _submit_and_wait_succeeded(
+                "cogniverse-daily-gateway",
+                timeout_s=600,
+                parameters={"tenant-id": tenant_id},
+            )
+
+            blob = asyncio.run(artifacts.load_blob("config", "gateway_thresholds"))
+            assert blob is not None, (
+                f"daily-gateway Succeeded but wrote no gateway_thresholds "
+                f"artifact for tenant {tenant_id!r}"
+            )
+            # Three simple decisions at confidence 0.5, none in error: the
+            # fast-path threshold stays at the 0.4 default (mean 0.5 is not
+            # > 0.8) and the GLiNER threshold is min(p25 0.5 * 0.8, 0.5).
+            assert json.loads(blob) == {
+                "fast_path_confidence_threshold": 0.4,
+                "gliner_threshold": 0.4,
+                "analysis": {
+                    "total_spans": 3,
+                    "simple_count": 3,
+                    "complex_count": 0,
+                    "simple_error_rate": 0.0,
+                    "complex_error_rate": 0.0,
+                    "mean_confidence": 0.5,
+                    "p25_confidence": 0.5,
+                },
+            }
+        finally:
+            _delete_tenant_and_org(tenant_id)
 
 
 @pytest.mark.e2e
