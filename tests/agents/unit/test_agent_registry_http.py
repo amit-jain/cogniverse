@@ -322,16 +322,28 @@ class TestProcessAgentTaskDispatch:
 
     @pytest.fixture
     def app_and_client(self):
-        """Create FastAPI app with agents router and injected dependencies."""
+        """Create FastAPI app with agents router and injected dependencies.
+
+        The router keeps its dependencies in module globals; restore what
+        was there afterwards, or the Mock config manager leaks into every
+        later test that mounts the router in the same process.
+        """
         from fastapi import FastAPI
         from fastapi.testclient import TestClient
 
+        from cogniverse_runtime.routers import agents as agents_router
         from cogniverse_runtime.routers.agents import (
             router,
             set_agent_dependencies,
             set_agent_registry,
         )
 
+        saved = (
+            agents_router._agent_registry,
+            agents_router._config_manager,
+            agents_router._schema_loader,
+            agents_router._dispatcher,
+        )
         config_manager = Mock()
         schema_loader = Mock()
         registry = AgentRegistry(tenant_id="test:unit", config_manager=config_manager)
@@ -341,7 +353,15 @@ class TestProcessAgentTaskDispatch:
         app = FastAPI()
         app.include_router(router, prefix="/agents")
         client = TestClient(app)
-        return app, client, registry
+        try:
+            yield app, client, registry
+        finally:
+            (
+                agents_router._agent_registry,
+                agents_router._config_manager,
+                agents_router._schema_loader,
+                agents_router._dispatcher,
+            ) = saved
 
     def test_routing_capability_dispatches_to_gateway_task(self, app_and_client):
         """Routing agent with 'routing' capability dispatches via _execute_gateway_task."""
