@@ -351,19 +351,35 @@ def _clear_stale_running_loop() -> None:
     called from a running event loop`` before its body runs.
 
     Only stale state is cleared: a loop that is genuinely running owns the
-    slot and is left attached.
+    slot and is left attached. Genuinely running means a task is executing
+    on it right now (this reset would be running inside that task). A loop
+    left behind by a runner that never unwound still reports ``is_running()``
+    -- ``run_forever``'s ``finally`` resets ``_thread_id`` and this slot
+    together, so a leak keeps both -- but no task is executing on it.
     """
     import asyncio
+    import warnings
 
     leaked = asyncio.events._get_running_loop()
     if leaked is None:
         return
-    if leaked.is_closed() or not leaked.is_running():
-        asyncio.events._set_running_loop(None)
+    if not leaked.is_closed() and asyncio.current_task(loop=leaked) is not None:
+        return
+    warnings.warn(
+        f"Detached a leaked running event loop {leaked!r} left by "
+        f"{_LAST_FINISHED_TEST or 'session setup'}; that test must unwind "
+        "the loop it started",
+        RuntimeWarning,
+        stacklevel=2,
+    )
+    asyncio.events._set_running_loop(None)
+
+
+_LAST_FINISHED_TEST: str | None = None
 
 
 @pytest.fixture(autouse=True)
-def _reset_event_loop_state_before_each_test():
+def _reset_event_loop_state_before_each_test(request):
     """Clear thread-attached event-loop state before every test.
 
     Some upstream code paths in cogniverse + dspy + dspy/lite-llm call
@@ -386,6 +402,8 @@ def _reset_event_loop_state_before_each_test():
     _clear_thread_event_loop()
     _clear_stale_running_loop()
     yield
+    global _LAST_FINISHED_TEST
+    _LAST_FINISHED_TEST = request.node.nodeid
 
 
 @pytest.fixture(autouse=True)

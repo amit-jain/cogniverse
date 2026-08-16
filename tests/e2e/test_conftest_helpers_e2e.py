@@ -83,7 +83,9 @@ def test_event_loop_reset_does_not_warn_when_no_loop_is_attached():
     asyncio.set_event_loop_policy(asyncio.DefaultEventLoopPolicy())
 
     try:
-        reset = e2e_conftest._reset_event_loop_state_before_each_test.__wrapped__()
+        reset = e2e_conftest._reset_event_loop_state_before_each_test.__wrapped__(
+            SimpleNamespace(node=SimpleNamespace(nodeid="drive_reset_fixture"))
+        )
         with warnings.catch_warnings():
             warnings.simplefilter("error", DeprecationWarning)
             next(reset)
@@ -94,7 +96,9 @@ def test_event_loop_reset_does_not_warn_when_no_loop_is_attached():
 
 def _drive_reset_fixture() -> None:
     """Run the autouse reset fixture's setup phase on this thread."""
-    reset = e2e_conftest._reset_event_loop_state_before_each_test.__wrapped__()
+    reset = e2e_conftest._reset_event_loop_state_before_each_test.__wrapped__(
+        SimpleNamespace(node=SimpleNamespace(nodeid="drive_reset_fixture"))
+    )
     next(reset)
     reset.close()
 
@@ -133,6 +137,40 @@ class TestEventLoopStateReset:
                 assert runner.run(asyncio.sleep(0, result="ran")) == "ran"
         finally:
             asyncio.events._set_running_loop(None)
+
+    def test_reset_clears_a_leaked_loop_that_still_reports_running(self):
+        """A runner that never unwound leaves the running-loop slot pointing at a
+        loop whose ``_thread_id`` was never reset (``run_forever``'s ``finally``
+        clears both together), so ``is_running()`` stays True although nothing
+        executes on it. That is the leak that breaks the next pytest-asyncio
+        test; it must be cleared and the leaker named."""
+        import threading
+
+        leaked = asyncio.new_event_loop()
+        leaked._thread_id = threading.get_ident()
+        asyncio.events._set_running_loop(leaked)
+        try:
+            assert asyncio.events._get_running_loop() is leaked
+            assert leaked.is_running() is True
+            assert asyncio.current_task(loop=leaked) is None
+
+            with warnings.catch_warnings(record=True) as caught:
+                warnings.simplefilter("always")
+                _drive_reset_fixture()
+
+            assert asyncio.events._get_running_loop() is None
+            messages = [str(w.message) for w in caught]
+            assert [m for m in messages if "leaked running event loop" in m] == [
+                messages[0]
+            ], messages
+            assert "left by" in messages[0], messages[0]
+
+            with asyncio.Runner() as runner:
+                assert runner.run(asyncio.sleep(0, result="ran")) == "ran"
+        finally:
+            asyncio.events._set_running_loop(None)
+            leaked._thread_id = None
+            leaked.close()
 
     def test_reset_leaves_a_genuinely_running_loop_attached(self):
         """Only *stale* running-loop state is cleared, never a live loop."""
