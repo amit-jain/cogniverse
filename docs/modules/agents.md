@@ -2395,10 +2395,14 @@ class AudioAnalysisAgent(A2AAgent[AudioSearchInput, AudioSearchOutput, AudioAnal
 
 **Search Modes:**
 
-- `transcript` - Lexical BM25 over `audio_title` and `audio_transcript`
-- `semantic` - ColBERT semantic search over transcript text
-- `hybrid` - Default. Semantic + BM25 recall
+- `semantic` - Default. ColBERT (`phased_semantic`) over transcript text
+- `transcript` - Lexical BM25 (`transcript_search`) over `audio_title` and `audio_transcript`
+- `hybrid` - BM25 recall re-ranked with ColBERT (`hybrid_semantic_bm25`)
 - `acoustic` - CLAP text-to-audio similarity over `acoustic_embedding`
+
+Text modes go through the shared search backend with `type="audio"`; the
+backend selects the tenant's audio profile and encodes the query on demand.
+An unknown mode raises `ValueError`.
 
 `find_similar_audio(..., similarity_type="semantic")` transcribes the reference
 clip and reuses transcript search. Acoustic similarity encodes the reference

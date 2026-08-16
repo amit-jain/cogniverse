@@ -2540,13 +2540,12 @@ class AgentDispatcher:
             tenant_id=tenant_id, config_manager=self._config_manager
         ).get("backend", {})
         deps = AudioAnalysisDeps(
-            backend_type=getattr(sys_cfg, "search_backend", "vespa"),
+            backend_type=sys_cfg.search_backend,
             backend_config={
                 "url": sys_cfg.backend_url,
                 "port": sys_cfg.backend_port,
                 "config_port": calculate_config_port(sys_cfg.backend_port),
-                "schema_name": "audio_clap_semantic",
-                "profile": "audio_clap_semantic",
+                "schema_name": "audio_content",
                 "backend": backend_config,
             },
             config_manager=self._config_manager,
