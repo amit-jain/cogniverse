@@ -78,6 +78,91 @@ _LEGACY_PREFIXES = (
 )
 
 
+_E2E_SANDBOX_GATEWAY_ENDPOINT = "https://host.docker.internal:19090"
+_E2E_SANDBOX_HOST_GATEWAY_IP = "172.18.0.1"
+
+
+def _expected_e2e_sandbox_overrides() -> dict[str, str]:
+    return {
+        "inference.vllm_llm_teacher.enabled": "false",
+        "inference.vllm_colpali.livenessProbe.initialDelaySeconds": "1200",
+        "inference.vllm_colpali.livenessProbe.failureThreshold": "60",
+        "inference.vllm_asr.livenessProbe.initialDelaySeconds": "1200",
+        "inference.vllm_asr.livenessProbe.failureThreshold": "60",
+        "inference.vllm_llm_student.livenessProbe.initialDelaySeconds": "1200",
+        "inference.vllm_llm_student.livenessProbe.failureThreshold": "60",
+        "runtime.sandbox.enabled": "true",
+        "runtime.sandbox.inCluster.enabled": "false",
+        "runtime.sandbox.gatewayEndpoint": _E2E_SANDBOX_GATEWAY_ENDPOINT,
+        "runtime.sandbox.hostGatewayIP": _E2E_SANDBOX_HOST_GATEWAY_IP,
+    }
+
+
+class TestE2EDeploymentOverrides:
+    """The e2e Helm overrides wire the host-mode sandbox from live sources: the
+    active gateway's own port and the k3d network's gateway IP."""
+
+    def test_overrides_derive_endpoint_and_host_ip(self, monkeypatch):
+        import cogniverse_cli.sandbox as sandbox_mod
+
+        monkeypatch.setattr(
+            sandbox_mod,
+            "active_gateway_metadata",
+            lambda: {"name": "cogniverse-test-gw", "gateway_port": 19090},
+        )
+        commands: list[list[str]] = []
+
+        def fake_run(command, **kwargs):
+            commands.append(command)
+            return SimpleNamespace(returncode=0, stdout="172.18.0.1\n", stderr="")
+
+        monkeypatch.setattr(e2e_conftest.subprocess, "run", fake_run)
+
+        assert e2e_conftest._e2e_deployment_overrides() == (
+            _expected_e2e_sandbox_overrides()
+        )
+        assert commands == [
+            [
+                "docker",
+                "network",
+                "inspect",
+                "k3d-cogniverse-e2e",
+                "-f",
+                "{{range .IPAM.Config}}{{.Gateway}}{{end}}",
+            ]
+        ]
+
+    def test_missing_network_gateway_is_an_error(self, monkeypatch):
+        import cogniverse_cli.sandbox as sandbox_mod
+
+        monkeypatch.setattr(
+            sandbox_mod,
+            "active_gateway_metadata",
+            lambda: {"name": "cogniverse-test-gw", "gateway_port": 19090},
+        )
+        monkeypatch.setattr(
+            e2e_conftest.subprocess,
+            "run",
+            lambda command, **kwargs: SimpleNamespace(
+                returncode=1, stdout="", stderr="no such network"
+            ),
+        )
+        with pytest.raises(
+            RuntimeError, match="docker network gateway inspection failed"
+        ):
+            e2e_conftest._e2e_deployment_overrides()
+
+
+def _expected_e2e_deployment_set_overrides() -> dict[str, str]:
+    return {
+        "argo-workflows.crds.install": "false",
+        "runtime.backend": "rocm",
+        "dashboard.backend": "rocm",
+        "devMode.enabled": "false",
+        **_expected_e2e_sandbox_overrides(),
+    }
+
+
 def test_event_loop_reset_does_not_warn_when_no_loop_is_attached():
     previous_policy = asyncio.get_event_loop_policy()
     asyncio.set_event_loop_policy(asyncio.DefaultEventLoopPolicy())
@@ -796,6 +881,9 @@ class TestSharedClusterOwnership:
             "deployment_helm_inputs",
             lambda project_root, extra_set=None: deployment_inputs,
         )
+        monkeypatch.setattr(
+            e2e_conftest, "_e2e_deployment_overrides", _expected_e2e_sandbox_overrides
+        )
         current_identity = e2e_conftest._effective_e2e_deployment_identity(repo_root)
         deployed_stamp = {"sha": deployed_sha, **current_identity}
 
@@ -966,12 +1054,7 @@ class TestSharedClusterOwnership:
                     "charts/cogniverse/values.k3s.yaml",
                     "charts/cogniverse/values.rocm.yaml",
                 ],
-                "set_overrides": {
-                    "devMode.enabled": "false",
-                    "runtime.backend": "rocm",
-                    "dashboard.backend": "rocm",
-                    "inference.vllm_asr.livenessProbe.failureThreshold": "60",
-                },
+                "set_overrides": _expected_e2e_deployment_set_overrides(),
                 "image_repository": "cogniverse/runtime-rocm",
             },
         )
@@ -1001,7 +1084,12 @@ class TestSharedClusterOwnership:
         monkeypatch.setattr(e2e_conftest, "_ingest_sample_video", lambda: None)
         monkeypatch.setattr(e2e_conftest, "_ingest_sample_frame", lambda: None)
         monkeypatch.setattr(e2e_conftest, "_ingest_sample_audio", lambda: None)
-        monkeypatch.setattr(e2e_conftest, "_ensure_sandbox_gateway", lambda: None)
+        monkeypatch.setattr(e2e_conftest, "_ensure_host_sandbox_gateway", lambda: None)
+        monkeypatch.setattr(
+            e2e_conftest,
+            "_sync_sandbox_into_cluster",
+            lambda kube_context, *, roll_runtime: None,
+        )
         monkeypatch.setattr(
             e2e_conftest, "_restore_cronworkflows", lambda cron_restore: None
         )
@@ -1296,6 +1384,7 @@ class TestSharedClusterOwnership:
             "models": [],
             "stamp": [],
             "delete": [],
+            "sandbox": [],
         }
         if force_fresh:
             monkeypatch.setenv("E2E_FRESH", "1")
@@ -1314,20 +1403,14 @@ class TestSharedClusterOwnership:
             )
         else:
             cluster_state_values = iter([("absent", "")])
+        sandbox_overrides = _expected_e2e_sandbox_overrides()
         deployment_identity = {
             "backend": "rocm",
             "values_files": [
                 "charts/cogniverse/values.k3s.yaml",
                 "charts/cogniverse/values.rocm.yaml",
             ],
-            "set_overrides": {
-                "argo-workflows.crds.install": "false",
-                "runtime.backend": "rocm",
-                "dashboard.backend": "rocm",
-                "devMode.enabled": "false",
-                "runtime.sandbox.enabled": "false",
-                **e2e_conftest._e2e_deployment_overrides(),
-            },
+            "set_overrides": _expected_e2e_deployment_set_overrides(),
             "image_repository": "cogniverse/runtime-rocm",
         }
         monkeypatch.setattr(
@@ -1357,6 +1440,11 @@ class TestSharedClusterOwnership:
         )
         monkeypatch.setattr(
             e2e_conftest,
+            "_e2e_deployment_overrides",
+            lambda: sandbox_overrides,
+        )
+        monkeypatch.setattr(
+            e2e_conftest,
             "_stop_dev_cluster_and_free_ports",
             lambda: calls["stop_dev"].append(None),
         )
@@ -1368,7 +1456,10 @@ class TestSharedClusterOwnership:
         monkeypatch.setattr(
             deployment_conftest,
             "deploy_stack",
-            lambda *args, **kwargs: calls["deploy"].append((args, kwargs)),
+            lambda *args, **kwargs: (
+                calls["deploy"].append((args, kwargs)),
+                calls["sandbox"].append("deploy"),
+            ),
         )
         monkeypatch.setattr(
             e2e_conftest,
@@ -1397,7 +1488,18 @@ class TestSharedClusterOwnership:
         monkeypatch.setattr(e2e_conftest, "_ingest_sample_video", lambda: None)
         monkeypatch.setattr(e2e_conftest, "_ingest_sample_frame", lambda: None)
         monkeypatch.setattr(e2e_conftest, "_ingest_sample_audio", lambda: None)
-        monkeypatch.setattr(e2e_conftest, "_ensure_sandbox_gateway", lambda: None)
+        monkeypatch.setattr(
+            e2e_conftest,
+            "_ensure_host_sandbox_gateway",
+            lambda: calls["sandbox"].append("host-gateway"),
+        )
+        monkeypatch.setattr(
+            e2e_conftest,
+            "_sync_sandbox_into_cluster",
+            lambda kube_context, *, roll_runtime: calls["sandbox"].append(
+                ("sync", kube_context, roll_runtime)
+            ),
+        )
         monkeypatch.setattr(
             e2e_conftest, "_restore_cronworkflows", lambda cron_restore: None
         )
@@ -1429,15 +1531,7 @@ class TestSharedClusterOwnership:
             (
                 ("cogniverse-e2e", "cogniverse"),
                 {
-                    "extra_set": {
-                        "inference.vllm_llm_teacher.enabled": "false",
-                        "inference.vllm_colpali.livenessProbe.initialDelaySeconds": "1200",
-                        "inference.vllm_colpali.livenessProbe.failureThreshold": "60",
-                        "inference.vllm_asr.livenessProbe.initialDelaySeconds": "1200",
-                        "inference.vllm_asr.livenessProbe.failureThreshold": "60",
-                        "inference.vllm_llm_student.livenessProbe.initialDelaySeconds": "1200",
-                        "inference.vllm_llm_student.livenessProbe.failureThreshold": "60",
-                    }
+                    "extra_set": _expected_e2e_sandbox_overrides(),
                 },
             )
         ]
@@ -1445,6 +1539,14 @@ class TestSharedClusterOwnership:
         assert calls["models"] == [None]
         assert calls["sha"] == [None, None]
         assert calls["identity"] == [None]
+        # Host gateway first (its port feeds the deploy identity), then the
+        # cluster sync, then Helm — the runtime's subPath mounts need the
+        # secret/configmaps at pod start.
+        assert calls["sandbox"] == [
+            "host-gateway",
+            ("sync", "k3d-cogniverse-e2e", False),
+            "deploy",
+        ]
         assert calls["stamp"] == [
             {
                 "sha": "current-build",
@@ -1453,20 +1555,7 @@ class TestSharedClusterOwnership:
                     "charts/cogniverse/values.k3s.yaml",
                     "charts/cogniverse/values.rocm.yaml",
                 ],
-                "set_overrides": {
-                    "argo-workflows.crds.install": "false",
-                    "runtime.backend": "rocm",
-                    "dashboard.backend": "rocm",
-                    "devMode.enabled": "false",
-                    "runtime.sandbox.enabled": "false",
-                    "inference.vllm_llm_teacher.enabled": "false",
-                    "inference.vllm_colpali.livenessProbe.initialDelaySeconds": "1200",
-                    "inference.vllm_colpali.livenessProbe.failureThreshold": "60",
-                    "inference.vllm_asr.livenessProbe.initialDelaySeconds": "1200",
-                    "inference.vllm_asr.livenessProbe.failureThreshold": "60",
-                    "inference.vllm_llm_student.livenessProbe.initialDelaySeconds": "1200",
-                    "inference.vllm_llm_student.livenessProbe.failureThreshold": "60",
-                },
+                "set_overrides": _expected_e2e_deployment_set_overrides(),
                 "image_repository": "cogniverse/runtime-rocm",
             }
         ]
@@ -1506,6 +1595,10 @@ class TestSharedClusterOwnership:
         assert calls["deploy"] == []
         assert calls["stamp"] == []
         assert calls["delete"] == []
+        assert calls["sandbox"] == [
+            "host-gateway",
+            ("sync", "k3d-cogniverse-e2e", True),
+        ]
 
     def test_normally_created_shared_cluster_is_left_warm(self, monkeypatch):
         stack, calls = self._start_stack(
@@ -1619,6 +1712,14 @@ class TestSharedClusterOwnership:
                 RuntimeError("cluster creation attempted")
             ),
         )
+        monkeypatch.setattr(e2e_conftest, "_ensure_host_sandbox_gateway", lambda: None)
+        monkeypatch.setattr(
+            e2e_conftest,
+            "_sync_sandbox_into_cluster",
+            lambda kube_context, *, roll_runtime: (_ for _ in ()).throw(
+                RuntimeError("cluster sync attempted")
+            ),
+        )
 
         stack = e2e_conftest.e2e_stack.__wrapped__(
             SimpleNamespace(session=SimpleNamespace(items=[])), {}
@@ -1683,7 +1784,12 @@ class TestSharedClusterOwnership:
         monkeypatch.setattr(e2e_conftest, "_ingest_sample_video", lambda: None)
         monkeypatch.setattr(e2e_conftest, "_ingest_sample_frame", lambda: None)
         monkeypatch.setattr(e2e_conftest, "_ingest_sample_audio", lambda: None)
-        monkeypatch.setattr(e2e_conftest, "_ensure_sandbox_gateway", lambda: None)
+        monkeypatch.setattr(e2e_conftest, "_ensure_host_sandbox_gateway", lambda: None)
+        monkeypatch.setattr(
+            e2e_conftest,
+            "_sync_sandbox_into_cluster",
+            lambda kube_context, *, roll_runtime: None,
+        )
         monkeypatch.setattr(
             e2e_conftest, "_restore_cronworkflows", lambda cron_restore: None
         )

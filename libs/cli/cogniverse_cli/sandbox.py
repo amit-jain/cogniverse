@@ -14,6 +14,7 @@ chart (``runtime.sandbox.enabled`` = true).
 from __future__ import annotations
 
 import json
+import os
 import shutil
 import subprocess
 from pathlib import Path
@@ -29,7 +30,38 @@ MTLS_SECRET = "openshell-mtls"
 METADATA_CONFIGMAP = "openshell-metadata"
 ACTIVE_CONFIGMAP = "openshell-active"
 GATEWAY_NAME = "cogniverse"
-POD_GATEWAY_ENDPOINT = "https://host.docker.internal:19091"
+
+
+def pod_gateway_endpoint(metadata: dict) -> str:
+    """Return the gateway endpoint as seen from inside the runtime pod.
+
+    ``metadata`` is the active gateway's own ``metadata.json``; its
+    ``gateway_port`` is the host port the gateway listens on, so the
+    pod-facing endpoint can never drift from the real port. The runtime
+    pod maps ``host.docker.internal`` to the host via ``hostAliases``.
+    """
+    port = metadata.get("gateway_port")
+    if not isinstance(port, int) or port <= 0:
+        raise ValueError(
+            "active gateway metadata has no positive integer gateway_port: "
+            f"{metadata!r}"
+        )
+    return f"https://host.docker.internal:{port}"
+
+
+def active_gateway_metadata() -> dict:
+    """Load the active gateway's ``metadata.json``; raise when none is active."""
+    gateway_dir = get_active_gateway_dir()
+    if gateway_dir is None:
+        raise RuntimeError(
+            "no active OpenShell gateway: ~/.config/openshell/active_gateway is "
+            "missing or names a gateway directory that does not exist"
+        )
+    metadata_file = gateway_dir / "metadata.json"
+    if not metadata_file.exists():
+        raise RuntimeError(f"active gateway metadata missing: {metadata_file}")
+    return json.loads(metadata_file.read_text())
+
 
 # Version pin — must match the openshell Python package version pinned in
 # libs/runtime/pyproject.toml so the runtime SDK and host gateway speak the
@@ -137,8 +169,6 @@ def start_gateway() -> bool:
         )
         return False
 
-    import os
-
     host_port = os.environ.get("OPENSHELL_GATEWAY_HOST_PORT", "28080")
     console.print(f"Starting OpenShell gateway on port {host_port}...")
     try:
@@ -161,10 +191,17 @@ def start_gateway() -> bool:
 
 
 def _kubectl(
-    args: list[str], *, input_data: Optional[str] = None
+    args: list[str],
+    *,
+    input_data: Optional[str] = None,
+    kube_context: Optional[str] = None,
 ) -> subprocess.CompletedProcess:
+    command = ["kubectl"]
+    if kube_context:
+        command += ["--context", kube_context]
+    command += args
     return subprocess.run(
-        ["kubectl", *args],
+        command,
         capture_output=True,
         text=True,
         timeout=30,
@@ -173,7 +210,7 @@ def _kubectl(
     )
 
 
-def sync_gateway_certs_to_cluster() -> bool:
+def sync_gateway_certs_to_cluster(*, kube_context: Optional[str] = None) -> bool:
     """Sync openshell gateway mTLS certs + metadata into k8s resources.
 
     Idempotent — re-creates the secret and configmaps from the current
@@ -203,9 +240,9 @@ def sync_gateway_certs_to_cluster() -> bool:
             console.print(f"[red]Gateway cert missing: {cert}[/red]")
             return False
 
-    ns_check = _kubectl(["get", "namespace", NAMESPACE])
+    ns_check = _kubectl(["get", "namespace", NAMESPACE], kube_context=kube_context)
     if ns_check.returncode != 0:
-        _kubectl(["create", "namespace", NAMESPACE])
+        _kubectl(["create", "namespace", NAMESPACE], kube_context=kube_context)
 
     secret_yaml = _kubectl(
         [
@@ -221,23 +258,25 @@ def sync_gateway_certs_to_cluster() -> bool:
             "--dry-run=client",
             "-o",
             "yaml",
-        ]
+        ],
+        kube_context=kube_context,
     )
     if secret_yaml.returncode != 0:
         console.print(f"[red]Failed to build mTLS secret: {secret_yaml.stderr}[/red]")
         return False
-    apply_secret = _kubectl(["apply", "-f", "-"], input_data=secret_yaml.stdout)
+    apply_secret = _kubectl(
+        ["apply", "-f", "-"], input_data=secret_yaml.stdout, kube_context=kube_context
+    )
     if apply_secret.returncode != 0:
         console.print(f"[red]Failed to apply mTLS secret: {apply_secret.stderr}[/red]")
         return False
 
     metadata = json.loads(metadata_file.read_text())
-    metadata["gateway_endpoint"] = POD_GATEWAY_ENDPOINT
+    metadata["gateway_endpoint"] = pod_gateway_endpoint(metadata)
     metadata_for_pod = json.dumps(metadata)
 
-    proc = subprocess.run(
+    proc = _kubectl(
         [
-            "kubectl",
             "create",
             "configmap",
             METADATA_CONFIGMAP,
@@ -248,15 +287,14 @@ def sync_gateway_certs_to_cluster() -> bool:
             "-o",
             "yaml",
         ],
-        capture_output=True,
-        text=True,
-        timeout=30,
-        check=False,
+        kube_context=kube_context,
     )
     if proc.returncode != 0:
         console.print(f"[red]Failed to build metadata configmap: {proc.stderr}[/red]")
         return False
-    apply_meta = _kubectl(["apply", "-f", "-"], input_data=proc.stdout)
+    apply_meta = _kubectl(
+        ["apply", "-f", "-"], input_data=proc.stdout, kube_context=kube_context
+    )
     if apply_meta.returncode != 0:
         console.print(
             f"[red]Failed to apply metadata configmap: {apply_meta.stderr}[/red]"
@@ -274,9 +312,14 @@ def sync_gateway_certs_to_cluster() -> bool:
             "--dry-run=client",
             "-o",
             "yaml",
-        ]
+        ],
+        kube_context=kube_context,
     )
-    apply_active = _kubectl(["apply", "-f", "-"], input_data=active_yaml.stdout)
+    apply_active = _kubectl(
+        ["apply", "-f", "-"],
+        input_data=active_yaml.stdout,
+        kube_context=kube_context,
+    )
     if apply_active.returncode != 0:
         console.print(
             f"[red]Failed to apply active configmap: {apply_active.stderr}[/red]"
@@ -289,7 +332,20 @@ def sync_gateway_certs_to_cluster() -> bool:
     return True
 
 
-def ensure_sandbox_ready() -> bool:
+def ensure_host_gateway() -> bool:
+    """Install the openshell CLI if missing and start the host gateway if it
+    is not running. Returns True when a gateway is healthy on the host."""
+    if not openshell_installed():
+        if not install_openshell():
+            return False
+
+    if not gateway_running():
+        if not start_gateway():
+            return False
+    return True
+
+
+def ensure_sandbox_ready(*, kube_context: Optional[str] = None) -> bool:
     """End-to-end setup: install CLI if missing → start gateway → sync certs.
 
     The openshell Python SDK is baked into the runtime image. This function
@@ -299,12 +355,6 @@ def ensure_sandbox_ready() -> bool:
 
     Returns True if the sandbox is ready.
     """
-    if not openshell_installed():
-        if not install_openshell():
-            return False
-
-    if not gateway_running():
-        if not start_gateway():
-            return False
-
-    return sync_gateway_certs_to_cluster()
+    if not ensure_host_gateway():
+        return False
+    return sync_gateway_certs_to_cluster(kube_context=kube_context)

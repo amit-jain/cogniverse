@@ -260,6 +260,12 @@ spec:
         {{- toYaml . | nindent 8 }}
       {{- end }}
       serviceAccountName: {{ include "cogniverse.serviceAccountName" . }}
+      {{- if and .Values.runtime.sandbox.enabled (not .Values.runtime.sandbox.inCluster.enabled) (not ((.Values.runtime.sandbox.external).enabled)) .Values.runtime.sandbox.hostGatewayIP }}
+      hostAliases:
+        - ip: {{ .Values.runtime.sandbox.hostGatewayIP | quote }}
+          hostnames:
+            - host.docker.internal
+      {{- end }}
       securityContext:
         runAsNonRoot: true
         runAsUser: 1000

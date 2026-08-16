@@ -214,11 +214,14 @@ runtime:
     COGNIVERSE_DEBUG_MEM: "1"
   qualityMonitor:
     tenantId: "flywheel_org:production"
-  # Host-mode OpenShell sandbox: requires `openshell gateway start --port
-  # 19091` on the host + `cogniverse sandbox sync` to copy mTLS certs.
+  # Host-mode OpenShell sandbox: requires a running host gateway
+  # (`openshell gateway start --port <port>`) + `cogniverse sandbox sync`
+  # to copy mTLS certs; gatewayEndpoint's port must match the gateway's, and
+  # runtime.sandbox.hostGatewayIP makes host.docker.internal resolve in k3d.
   sandbox:
     enabled: true
-    gatewayEndpoint: "https://host.docker.internal:19091"
+    gatewayEndpoint: "https://host.docker.internal:28080"
+    hostGatewayIP: ""
     inCluster:
       enabled: false
 

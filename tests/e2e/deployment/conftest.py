@@ -404,7 +404,6 @@ def deployment_helm_inputs(
         "runtime.backend": backend,
         "dashboard.backend": backend,
         "devMode.enabled": "false",
-        "runtime.sandbox.enabled": "false",
     }
     helm_set_overrides.update(
         # Same overlays helm is about to apply: the tag overrides are emitted
