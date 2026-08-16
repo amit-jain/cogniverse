@@ -1065,8 +1065,20 @@ def code(tenant: str | None, language: str, iterations: int, codebase: str) -> N
 )
 @click.option("--tenant", default=None, help="Tenant ID.")
 @click.option("--profile", default=None, help="Override Vespa profile.")
+@click.option(
+    "--gliner-url",
+    default=None,
+    help=(
+        "GLiNER inference service used for text graph extraction "
+        "(default: the URL in system configuration)."
+    ),
+)
 def index(
-    path: str, content_type: str, tenant: str | None, profile: str | None
+    path: str,
+    content_type: str,
+    tenant: str | None,
+    profile: str | None,
+    gliner_url: str | None,
 ) -> None:
     """Index a directory into Vespa for agent context search."""
     from pathlib import Path as P
@@ -1086,6 +1098,7 @@ def index(
         content_type=content_type,
         tenant_id=tenant_id,
         profile=profile,
+        gliner_url=gliner_url,
     )
 
 

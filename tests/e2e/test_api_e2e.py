@@ -997,10 +997,13 @@ class TestSyntheticDataAPI:
             ProfileSelectionExampleSchema.model_validate(example).complexity
             for example in data["data"]
         ] == [example["complexity"] for example in data["data"]]
-        assert {example["query_intent"] for example in data["data"]} == {
-            "image_search",
-            "video_search",
-        }
+        # query_intent is the labeler's LM judgment: the grounded query names a
+        # video frame, so per example it is video_search or image_search; the
+        # split between the two is not pinnable across LM runs.
+        assert [
+            example["query_intent"] in {"video_search", "image_search"}
+            for example in data["data"]
+        ] == [True, True], [example["query_intent"] for example in data["data"]]
 
     def test_generate_synthetic_data(self):
         """POST /synthetic/generate creates real synthetic training examples."""
@@ -2513,78 +2516,142 @@ class TestEventEndpoints:
 
 @pytest.mark.e2e
 class TestBatchVideoIngestion:
-    """Start batch ingestion and verify the event loop stays responsive.
+    """Directory-based batch ingestion of the tracked clip in its own tenant.
 
-    The asyncio.to_thread fix for embedding generation means the event loop
-    should remain responsive during CPU-bound ColPali inference. This test
-    verifies both job tracking AND event loop health.
+    ``/ingestion/start`` reads a directory on the runtime pod's filesystem,
+    so the tracked clip is copied into the pod first. Frame embedding runs
+    off the event loop, so ``/health/live`` must keep answering while the
+    job is processing.
     """
 
-    def test_batch_ingestion_start(self):
-        """Start batch ingestion → poll status → verify event loop responsive."""
-        video_dir = "/app/tests/system/resources/videos"
+    BATCH_VIDEO = "v_-6dz6tBH77I.mp4"
+    POD_BATCH_ROOT = "/app/outputs/temp/e2e_batch"
+
+    def _copy_video_into_pod(self, tenant_id: str) -> str:
+        from tests.e2e.conftest import _kubectl_e2e, _require_kubectl_success
 
         host_dir = Path(__file__).parent.parent / "system" / "resources" / "videos"
-        tracked_videos = sorted(host_dir.glob("*.mp4"))
-        assert [path.name for path in tracked_videos] == [
-            "v_-6dz6tBH77I.mp4",
-            "v_-D1gdv_gQyw.mp4",
-        ], (
-            f"tracked E2E video set is incomplete: "
-            f"{[path.name for path in tracked_videos]!r}"
+        tracked_videos = sorted(path.name for path in host_dir.glob("*.mp4"))
+        assert tracked_videos == ["v_-6dz6tBH77I.mp4", "v_-D1gdv_gQyw.mp4"], (
+            f"tracked E2E video set is incomplete: {tracked_videos!r}"
         )
+        pod_dir = f"{self.POD_BATCH_ROOT}/{tenant_id}"
+        mkdir = _kubectl_e2e(
+            "-n",
+            "cogniverse",
+            "exec",
+            "deploy/cogniverse-runtime",
+            "-c",
+            "runtime",
+            "--",
+            "mkdir",
+            "-p",
+            pod_dir,
+        )
+        _require_kubectl_success(mkdir, ["kubectl", "exec", "mkdir", pod_dir])
+        copy = _kubectl_e2e(
+            "-n",
+            "cogniverse",
+            "cp",
+            "-c",
+            "runtime",
+            str(host_dir / self.BATCH_VIDEO),
+            f"deploy/cogniverse-runtime:{pod_dir}/{self.BATCH_VIDEO}",
+            timeout=120,
+        )
+        _require_kubectl_success(copy, ["kubectl", "cp", self.BATCH_VIDEO, pod_dir])
+        listing = _kubectl_e2e(
+            "-n",
+            "cogniverse",
+            "exec",
+            "deploy/cogniverse-runtime",
+            "-c",
+            "runtime",
+            "--",
+            "ls",
+            pod_dir,
+        )
+        _require_kubectl_success(listing, ["kubectl", "exec", "ls", pod_dir])
+        assert listing.stdout.split() == [self.BATCH_VIDEO], listing.stdout
+        return pod_dir
 
+    def test_batch_ingestion_start(self):
+        """Start batch ingestion → poll to completion → the clip is retrievable."""
+        tenant_id = unique_id("batch_e2e")
         with httpx.Client(base_url=RUNTIME, timeout=60.0) as client:
+            resp = client.post(
+                "/admin/tenants",
+                json={"tenant_id": tenant_id, "created_by": "e2e-test"},
+                timeout=30,
+            )
+            assert resp.status_code in (200, 201), resp.text
+            _deploy_profile_for_tenant(client, PROFILE, tenant_id)
+            pod_dir = self._copy_video_into_pod(tenant_id)
+
             resp = client.post(
                 "/ingestion/start",
                 json={
-                    "video_dir": video_dir,
-                    "profile": "video_colpali_smol500_mv_frame",
+                    "video_dir": pod_dir,
+                    "profile": PROFILE,
                     "backend": "vespa",
-                    "tenant_id": TENANT_ID,
+                    "tenant_id": tenant_id,
                     "max_videos": 1,
                     "batch_size": 1,
                 },
             )
-
             assert resp.status_code == 200, f"Batch ingestion start failed: {resp.text}"
             data = resp.json()
-            assert data["status"] == "started"
-            assert "job_id" in data
+            assert data == {
+                "job_id": data["job_id"],
+                "status": "started",
+                "message": "Ingestion job started successfully",
+            }
             job_id = data["job_id"]
 
-        # Poll status — with asyncio.to_thread fix the event loop stays
-        # responsive during inference, so status endpoint should reply.
         status_data = None
-        health_ok_during_ingestion = False
-        for attempt in range(30):
+        deadline = time.monotonic() + 900.0
+        while time.monotonic() < deadline:
             time.sleep(5)
-            try:
-                with httpx.Client(base_url=RUNTIME, timeout=10.0) as client:
-                    # Verify event loop is responsive by hitting health endpoint
-                    health_resp = client.get("/health/live")
-                    if health_resp.status_code == 200:
-                        health_ok_during_ingestion = True
+            with httpx.Client(base_url=RUNTIME, timeout=10.0) as client:
+                health_resp = client.get("/health/live")
+                assert health_resp.status_code == 200, (
+                    "the event loop stalled during batch ingestion: "
+                    f"/health/live returned {health_resp.status_code}"
+                )
+                status_resp = client.get(f"/ingestion/status/{job_id}")
+                assert status_resp.status_code == 200, status_resp.text
+                status_data = status_resp.json()
+                if status_data["status"] not in ("started", "processing"):
+                    break
 
-                    status_resp = client.get(f"/ingestion/status/{job_id}")
-                    if status_resp.status_code == 200:
-                        status_data = status_resp.json()
-                        if status_data["status"] in ("completed", "failed"):
-                            break
-            except httpx.HTTPError:
-                continue
+        assert status_data == {
+            "job_id": job_id,
+            "status": "completed",
+            "videos_processed": 1,
+            "videos_total": 1,
+            "errors": [],
+        }, status_data
 
-        # Event loop responsiveness is the key assertion for the deadlock fix
-        assert health_ok_during_ingestion, (
-            "Event loop should remain responsive during batch ingestion "
-            "(asyncio.to_thread fix for embedding generation)"
+        video_id = Path(self.BATCH_VIDEO).stem
+        query = "a person on camera"
+        with httpx.Client(base_url=RUNTIME, timeout=120.0) as client:
+            search_resp = client.post(
+                "/search/",
+                json={
+                    "query": query,
+                    "profile": PROFILE,
+                    "top_k": 1,
+                    "tenant_id": tenant_id,
+                    "filters": {"video_id": video_id},
+                },
+            )
+        _assert_artifact_search_hit(
+            search_resp,
+            query=query,
+            profile=PROFILE,
+            video_id=video_id,
+            expected_metadata={"video_id": video_id},
         )
-
-        assert status_data is not None, (
-            "Should be able to poll ingestion status while job is running"
-        )
-        assert status_data["job_id"] == job_id
-        assert status_data["status"] in ("started", "processing", "completed", "failed")
 
     def test_runtime_responsive_after_batch(self):
         """Verify runtime is fully responsive after batch ingestion completes."""
