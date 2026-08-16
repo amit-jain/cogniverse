@@ -41,10 +41,26 @@ from tests.e2e.conftest import (
     register_tenant_and_wait,
 )
 from tests.e2e.test_api_e2e import (
-    CANONICAL_WORKFLOW_AGENTS,
     _deploy_profile_for_tenant,
     _expected_available_profile_names,
 )
+
+
+def _enabled_agents_in_shipped_config() -> set[str]:
+    """Agents the runtime routes to today: configs/config.json ``agents``
+    entries not disabled — the optimizer's own stale-demo filter."""
+    config = json.loads(
+        (Path(__file__).resolve().parents[2] / "configs" / "config.json").read_text()
+    )
+    agents = config.get("agents", {})
+    live = {
+        name
+        for name, body in agents.items()
+        if isinstance(body, dict) and body.get("enabled", True)
+    }
+    assert live, "configs/config.json agents block is empty"
+    return live
+
 
 NAMESPACE = "cogniverse"
 DEPLOYMENT = "deploy/cogniverse-runtime"
@@ -879,13 +895,18 @@ class TestWorkflowOptimization:
                 f"report agent, got: {agents}"
             )
 
-        # All agents must be part of the workflow-capable config-derived set.
+        # Observed workflows may name any agent enabled in the shipped config —
+        # the same set the optimizer's stale-demo filter keeps
+        # (optimization_cli._agents_live); the synthetic generator's narrower
+        # planning vocabulary does not apply to recorded orchestrations.
+        live_agents = _enabled_agents_in_shipped_config()
         for demo in valid_demos:
             agents = demo["agent_sequence"]
             if isinstance(agents, str):
                 agents = [a.strip() for a in agents.split(",") if a.strip()]
+            assert agents, f"empty agent_sequence for query '{demo['query']}'"
             for agent in agents:
-                assert agent in CANONICAL_WORKFLOW_AGENTS, (
+                assert agent in live_agents, (
                     f"Unknown agent '{agent}' in workflow for query '{demo['query']}'"
                 )
 
