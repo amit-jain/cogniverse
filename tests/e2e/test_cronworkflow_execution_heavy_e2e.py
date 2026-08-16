@@ -16,6 +16,7 @@ the test must prove that landed.
 
 from __future__ import annotations
 
+import json
 import subprocess
 import time
 
@@ -43,6 +44,35 @@ from tests.e2e.test_cronworkflow_execution_e2e import (  # noqa: E402
 
 
 def _submit_and_wait_succeeded_heavy(cron_name: str) -> str:
+    wf, _ = _submit_and_wait_succeeded_heavy_with_output(cron_name)
+    return wf
+
+
+def _workflow_main_output(workflow_name: str) -> str:
+    """The workflow's ``main`` container stdout (the CLI's structured result)."""
+    out = subprocess.run(
+        [
+            "kubectl",
+            "logs",
+            "-n",
+            NAMESPACE,
+            "-l",
+            f"workflows.argoproj.io/workflow={workflow_name}",
+            "-c",
+            "main",
+            "--tail=-1",
+        ],
+        capture_output=True,
+        text=True,
+        timeout=60,
+    )
+    assert out.returncode == 0, out.stderr[-2000:]
+    return out.stdout
+
+
+def _submit_and_wait_succeeded_heavy_with_output(cron_name: str) -> tuple[str, str]:
+    """Submit + poll; return the workflow name and its main-container stdout,
+    captured before the workflow (and its pod) is deleted."""
     wf = _submit_workflow_from_cron(cron_name)
     try:
         status = _wait_for_workflow_terminal(wf, timeout_s=HEAVY_TIMEOUT_S)
@@ -54,63 +84,26 @@ def _submit_and_wait_succeeded_heavy(cron_name: str) -> str:
                 f"'Succeeded'.\nstatus.message={status.get('message')!r}\n"
                 f"--- pod logs (tail 500) ---\n{logs[-4000:]}\n--- end logs ---"
             )
-        return wf
+        return wf, _workflow_main_output(wf)
     finally:
         _delete_workflow(wf)
 
 
-# ---------------------------------------------------------------------------
-# Phoenix dataset helpers (synthetic-generation)
-# ---------------------------------------------------------------------------
-
-
-def _phoenix_url() -> str:
-    # Phoenix container port 6006 → k3d-serverlb NodePort 26006.
-    # Without 26006 the GET silently 0-results and the test
-    # mis-reports "no new datasets appeared" when the workflow
-    # actually created them.
-    return "http://localhost:33006"
-
-
-def _phoenix_dataset_names() -> set[str]:
-    """Full set of dataset names via Phoenix HTTP API, paginating cursor.
-
-    The endpoint returns ``data`` (10 per page) + ``next_cursor`` for
-    the next page. Without paging, any dataset older than the most
-    recent 10 is invisible — a newly-created dataset can be present
-    yet the diff against ``names_before`` looks empty if both pages
-    overlap into the same 10 head rows. The synthetic-generation
-    workflow adds ~3 new datasets per run, which would never fit
-    inside the head-10 window once the cluster has any real history.
-    """
-    names: set[str] = set()
-    cursor: str | None = None
-    params: dict[str, str] | None = None
-    endpoint = f"{_phoenix_url()}/v1/datasets"
-    try:
-        with httpx.Client(timeout=30.0) as client:
-            while True:
-                params = {"cursor": cursor} if cursor else None
-                r = client.get(endpoint, params=params)
-                if r.status_code != 200:
-                    pytest.fail(
-                        f"Phoenix prerequisite endpoint failed: GET {endpoint} "
-                        f"params={params!r}\nHTTP {r.status_code} body={r.text!r}",
-                        pytrace=False,
-                    )
-                payload = r.json()
-                names.update(d.get("name", "") for d in payload.get("data") or [])
-                cursor = payload.get("next_cursor")
-                if not cursor:
-                    break
-    except (httpx.HTTPError, OSError) as exc:
-        pytest.fail(
-            f"Phoenix prerequisite endpoint failed: GET {endpoint} "
-            f"params={params!r}\n"
-            f"error={type(exc).__name__}: {exc}",
-            pytrace=False,
-        )
-    return names
+def _last_json_object(text: str) -> dict:
+    """The last balanced top-level JSON object printed in ``text``."""
+    depth = 0
+    end = None
+    for i in range(len(text) - 1, -1, -1):
+        ch = text[i]
+        if ch == "}":
+            if depth == 0:
+                end = i + 1
+            depth += 1
+        elif ch == "{":
+            depth -= 1
+            if depth == 0 and end is not None:
+                return json.loads(text[i:end])
+    raise AssertionError(f"no JSON object in workflow output: {text[-1500:]!r}")
 
 
 # ---------------------------------------------------------------------------
@@ -307,42 +300,35 @@ class TestScheduledDistillationWorkflow:
 
 @pytest.mark.e2e_heavy
 class TestSyntheticGenerationWorkflow:
-    """Weekly synthetic-generation produces training datasets in Phoenix
-    for every optimizer type. Functional intent: at least one new
-    Phoenix dataset matching ``synthetic-*`` exists after the workflow."""
+    """Weekly synthetic-generation runs ``--mode synthetic --agents profile``
+    for the quality-monitor tenant and persists the generated examples as a
+    pending-review approval batch (human approval later publishes them as the
+    optimizer's training dataset)."""
 
-    def test_workflow_creates_synthetic_datasets_for_each_optimizer(self):
+    def test_workflow_persists_a_pending_review_batch_for_profile(self):
+        from tests.e2e.test_optimizer_persistence_e2e import (
+            _assert_review_batch,
+            _load_review_batch,
+        )
+
         _require_cronworkflow("cogniverse-synthetic-generation")
 
-        wf = _submit_and_wait_succeeded_heavy("cogniverse-synthetic-generation")
-        logs = _workflow_pod_logs(wf)
+        _wf, output = _submit_and_wait_succeeded_heavy_with_output(
+            "cogniverse-synthetic-generation"
+        )
+        result = _last_json_object(output)
+        assert result["status"] == "success", result
+        assert set(result["results"]) == {"profile"}, result
+        profile = result["results"]["profile"]
+        assert profile["status"] == "success", profile
+        assert profile["examples_generated"] == profile["pending_review"], profile
+        assert 1 <= profile["examples_generated"] <= 50, profile
 
-        # Wait briefly for the upload to be visible via the Phoenix API
-        # (the workflow writes via OTLP; the HTTP list-datasets endpoint
-        # is read-after-write within a few seconds).
-        names_after: set[str] = set()
-        for _ in range(6):
-            time.sleep(POLL_INTERVAL_S)
-            names_after = _phoenix_dataset_names()
-            if all(
-                any(f"synthetic_{opt}" in n for n in names_after)
-                for opt in ("workflow", "profile")
-            ):
-                break
-
-        # Functional outcome: the expected dataset NAMES exist after the
-        # run. The CLI's ArtifactManager APPENDS to an existing dataset
-        # on second/later runs (same name → ``append_to_dataset``), so
-        # ``names_after - names_before`` is empty on re-runs. Assert
-        # existence instead — that's the contract this cron owes: each
-        # opt_type ends up with a populated demos dataset.
-        for optimizer in ("workflow", "profile"):
-            expected = f"synthetic_{optimizer}"
-            matched = [n for n in names_after if expected in n]
-            assert matched, (
-                f"synthetic-generation must leave a dataset for "
-                f"optimizer={optimizer!r} (expected substring "
-                f"{expected!r}); datasets observed after run "
-                f"(showing first 50): {sorted(names_after)[:50]}.\n"
-                f"--- pod logs (tail 500) ---\n{logs[-3000:]}"
-            )
+        batch = _load_review_batch(profile["batch_id"])
+        _assert_review_batch(
+            batch,
+            batch_id=profile["batch_id"],
+            optimizer_type="profile",
+            agent_type="profile_selection",
+            expected_items=profile["examples_generated"],
+        )
