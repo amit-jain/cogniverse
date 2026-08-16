@@ -1283,6 +1283,28 @@ def _ingest_sample_audio() -> str:
     )
 
 
+SAMPLE_DOCUMENT_TITLES = ("v_-nl4G-00PtA.txt", "v_0BtHd6dvm78.txt")
+_CAPTION_CORPUS_DIR = (
+    Path(__file__).resolve().parents[2]
+    / "data"
+    / "testset"
+    / "Test_Human_Annotated_Captions"
+)
+
+
+def _ingest_sample_documents() -> dict[str, str]:
+    """Ensure the two human-annotated captions that describe washing dishes
+    are persisted as document content; returns ``{title: content_id}``."""
+    return {
+        title: _ensure_sample_content_ingested(
+            _CAPTION_CORPUS_DIR / title,
+            profile="document_text_semantic",
+            media_type="text/plain",
+        )
+        for title in SAMPLE_DOCUMENT_TITLES
+    }
+
+
 def _ingest_sample_frame() -> str:
     """Ensure a real frame from the tracked video is persisted as image content."""
     return _ensure_sample_content_ingested(

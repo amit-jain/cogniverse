@@ -24,6 +24,7 @@ from tests.e2e.conftest import (
     PHOENIX_URL,
     RUNTIME,
     TENANT_ID,
+    _ingest_sample_documents,
     assert_orchestrated,
     expected_gateway_routing,
     sample_audio_content_id,
@@ -64,6 +65,24 @@ def skip_without_sample_video() -> None:
 # ---------------------------------------------------------------------------
 # 1. Gateway simple routing
 # ---------------------------------------------------------------------------
+
+
+def _tenant_document_count(tenant_id: str) -> int:
+    """Number of documents the tenant's document profile currently serves."""
+    with httpx.Client(base_url=RUNTIME, timeout=120.0) as client:
+        response = client.post(
+            "/search/",
+            json={
+                "query": "washing dishes",
+                "tenant_id": tenant_id,
+                "profile": "document_text_semantic",
+                "top_k": 1000,
+            },
+        )
+    assert response.status_code == 200, response.text
+    body = response.json()
+    assert body["results_count"] == len(body["results"])
+    return body["results_count"]
 
 
 @pytest.mark.e2e
@@ -239,6 +258,7 @@ class TestGatewaySimpleRouting:
 class TestGatewaySeededSearchContract:
     def test_seeded_video_identity_order_and_competing_route(self):
         skip_without_sample_video()
+        seeded_documents = _ingest_sample_documents()
         video_query = "find videos of a man washing dishes in a kitchen sink"
         document_query = "find PDF documents about washing dishes"
         with httpx.Client(base_url=RUNTIME, timeout=900.0) as client:
@@ -294,10 +314,23 @@ class TestGatewaySeededSearchContract:
             document_gw["routed_to"],
         ) == expected_gateway_routing(document_query, document_gw)
         if document_gw["complexity"] == "simple":
-            document_results = document_data["downstream_result"]["results"]
-            assert sample_video_id() not in {
-                result["metadata"]["video_id"] for result in document_results
-            }
+            # The competing route searches the tenant's document corpus: the
+            # two captions that describe washing dishes are the top two hits,
+            # identified by content id, and top_k is honoured against the
+            # corpus size.
+            document_downstream = document_data["downstream_result"]
+            document_results = document_downstream["results"]
+            assert document_downstream["results_count"] == len(document_results)
+            assert len(document_results) == min(5, _tenant_document_count(TENANT_ID))
+            assert {result["document_id"] for result in document_results[:2]} == set(
+                seeded_documents.values()
+            )
+            assert {result["title"] for result in document_results[:2]} == set(
+                seeded_documents
+            )
+            assert [result["document_type"] for result in document_results] == [
+                "txt" for _ in document_results
+            ]
         else:
             assert document_data["agent"] == "orchestrator_agent"
             assert "orchestration_result" in document_data
