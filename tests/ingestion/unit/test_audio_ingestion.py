@@ -106,9 +106,23 @@ class TestAudioProfileConfig:
         schema_config = config["backend"]["profiles"]["audio_clap_semantic"][
             "schema_config"
         ]
-        assert schema_config["acoustic_embedding_dim"] == 512
-        assert schema_config["semantic_embedding_dim"] == 128
-        assert schema_config["semantic_binary_dim"] == 16
+        assert schema_config == {
+            "schema_name": "audio_content",
+            "embedding_dim": 128,
+            "binary_dim": 16,
+        }
+        # The dims are the transcript tensors the audio schema declares.
+        with open("configs/schemas/audio_content_schema.json") as f:
+            schema_fields = {
+                field["name"]: field["type"]
+                for field in json.load(f)["document"]["fields"]
+            }
+        assert (
+            schema_fields["semantic_embedding"] == "tensor<bfloat16>(token{}, v[128])"
+        )
+        assert (
+            schema_fields["semantic_embedding_binary"] == "tensor<int8>(token{}, v[16])"
+        )
 
 
 class TestAudioSchemaFile:
