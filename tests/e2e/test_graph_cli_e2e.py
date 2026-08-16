@@ -15,6 +15,7 @@ import httpx
 import pytest
 
 from tests.e2e.conftest import (
+    GLINER_URL,
     RUNTIME,
     register_tenant_and_wait,
 )
@@ -396,9 +397,11 @@ class TestCliIndexWithGraph:
                 content_type="docs",
                 tenant_id=tenant,
                 runtime_url=RUNTIME,
+                gliner_url=GLINER_URL,
             )
 
         assert summary["files_found"] == 1
+        assert summary["graph_errors"] == 0, summary
         assert summary["graph_nodes"] >= 2, (
             f"Expected >= 2 graph nodes from markdown, got {summary['graph_nodes']}"
         )

@@ -201,6 +201,7 @@ def pytest_collection_modifyitems(config, items):
 RUNTIME = "http://localhost:33000"  # runtime.service.nodePort
 DASHBOARD = "http://localhost:33501"  # dashboard.service.nodePort
 PHOENIX_URL = "http://localhost:33006"  # phoenix.service.nodePort
+GLINER_URL = "http://localhost:33907"  # gliner NodePort 29007 via E2E_HOST_PORTS
 TENANT_ID = "flywheel_org:production"
 
 DATA_ROOT = Path(__file__).parent.parent.parent / "data"

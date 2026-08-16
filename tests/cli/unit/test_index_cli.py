@@ -202,3 +202,45 @@ def test_upload_failure_lands_in_errors_not_silence(
     assert summary["files_indexed"] == 0
     assert summary["errors"] == 1
     assert "503" in capture_console.getvalue()
+
+
+def test_gliner_url_reaches_the_doc_extractor(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """``index_files(gliner_url=...)`` is the GLiNER endpoint DocExtractor uses."""
+    import cogniverse_agents.graph.doc_extractor as doc_extractor_mod
+
+    (tmp_path / "guide.md").write_text("# Guide\n\nColPali powers retrieval.\n")
+    constructed: list[dict] = []
+    extracted: list[tuple[Path, str, str]] = []
+
+    class _RecordingDocExtractor:
+        def __init__(self, gliner_inference_url=None):
+            constructed.append({"gliner_inference_url": gliner_inference_url})
+
+        def extract(self, file_path, tenant_id, source_doc_id):
+            extracted.append((file_path, tenant_id, source_doc_id))
+            return None
+
+    monkeypatch.setattr(doc_extractor_mod, "DocExtractor", _RecordingDocExtractor)
+    _mount_httpx(
+        monkeypatch,
+        _runtime_handler(
+            httpx.Response(200, json={"nodes_upserted": 0, "edges_upserted": 0})
+        ),
+    )
+
+    summary = index_cli.index_files(
+        root=tmp_path,
+        content_type="docs",
+        tenant_id="acme:acme",
+        runtime_url="http://runtime.test",
+        gliner_url="http://gliner.test:8080",
+    )
+
+    assert constructed == [{"gliner_inference_url": "http://gliner.test:8080"}]
+    assert [(p.name, t) for p, t, _ in extracted] == [("guide.md", "acme:acme")]
+    assert summary["files_found"] == 1
+    assert summary["graph_errors"] == 0
+    assert summary["graph_nodes"] == 0
