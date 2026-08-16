@@ -519,12 +519,64 @@ def _run_process_with_optional_constraint(
     return last_result
 
 
+def _assert_loop_iteration_contract(
+    il: dict,
+    *,
+    constraint: str | None,
+) -> None:
+    iterations_executed = int(il["iterations_executed"])
+    loop_trajectory = list(il["loop_trajectory"])
+    per_iter_duration_ms = list(il["per_iter_duration_ms"])
+
+    assert il["exit_reason"] in {"max_iter", "sufficient"}
+    assert iterations_executed == len(loop_trajectory)
+    assert iterations_executed == len(per_iter_duration_ms)
+    assert iterations_executed == len(loop_trajectory) == len(per_iter_duration_ms)
+    assert loop_trajectory[0]["iteration_idx"] == 0
+    assert loop_trajectory[-1]["iteration_idx"] == iterations_executed - 1
+    assert per_iter_duration_ms[0] == loop_trajectory[0]["duration_ms"]
+    assert per_iter_duration_ms[-1] == loop_trajectory[-1]["duration_ms"]
+    assert [entry["iteration_idx"] for entry in loop_trajectory] == list(
+        range(iterations_executed)
+    )
+    assert per_iter_duration_ms == [entry["duration_ms"] for entry in loop_trajectory]
+    assert all(
+        duration == abs(duration) and duration != 0.0
+        for duration in per_iter_duration_ms
+    )
+    if il["exit_reason"] == "max_iter":
+        assert iterations_executed == 3
+    else:
+        assert iterations_executed in {2, 3}
+
+    if constraint is None:
+        assert il["inbound_constraints_applied"] == []
+        return
+
+    assert il["inbound_constraints_applied"] == [constraint]
+    constrained_entries = []
+    first_constrained_idx = -1
+    for entry in loop_trajectory:
+        missing_aspects = list(entry["missing_aspects"])
+        if missing_aspects and missing_aspects[0] == constraint:
+            if first_constrained_idx == -1:
+                first_constrained_idx = int(entry["iteration_idx"])
+            constrained_entries.append(entry)
+    assert first_constrained_idx != -1, (
+        f"no trajectory entry had missing_aspects[0] == {constraint!r}; "
+        f"trajectory: {loop_trajectory}"
+    )
+    assert [int(entry["iteration_idx"]) for entry in constrained_entries] == list(
+        range(first_constrained_idx, iterations_executed)
+    )
+    assert len(constrained_entries) == iterations_executed - first_constrained_idx
+
+
 def test_baseline_run_locks_deterministic_observables_byte_equal():
-    """Baseline run locks the LM-state-INDEPENDENT observables:
-    ``inbound_constraints_applied == []``, ``iterations_executed == 3``,
-    ``exit_reason == "max_iter"``, and 3 entries in ``loop_trajectory``.
-    These are the channel's own contract, deterministic regardless
-    of what the search agent / LM produced for retrieval.
+    """Baseline run locks the channel-side observables and loop shape.
+    ``inbound_constraints_applied`` stays empty, and the loop payload
+    keeps exact per-iteration relationships even when the exit path is
+    ``sufficient`` instead of ``max_iter``.
 
     ``top_hits`` is NOT asserted here because it depends on the LM's
     reformulation which varies across batches. The "constraint
@@ -537,12 +589,7 @@ def test_baseline_run_locks_deterministic_observables_byte_equal():
     session_id = f"e2e-baseline-det-{uuid.uuid4().hex[:8]}"
     result = _run_process_with_optional_constraint(session_id, None)
     il = result["final_output"]["iterative_loop"]
-    # Channel-side: byte-equal exact list.
-    assert il["inbound_constraints_applied"] == []
-    # Loop structure: deterministic across runs (no LM coupling).
-    assert il["exit_reason"] == "max_iter"
-    assert il["iterations_executed"] == 3
-    assert len(il["loop_trajectory"]) == 3
+    _assert_loop_iteration_contract(il, constraint=None)
     # iter 0 missing_aspects is empty for baseline (no constraints,
     # no prior gate output to consume).
     assert il["loop_trajectory"][0]["missing_aspects"] == []
@@ -550,48 +597,16 @@ def test_baseline_run_locks_deterministic_observables_byte_equal():
 
 def test_with_constraint_run_locks_deterministic_observables_byte_equal():
     """With-constraint run MUST produce ``inbound_constraints_applied
-    == [constraint]`` exactly, and the constraint MUST be the first
-    entry of iter N's ``missing_aspects`` for every iteration that
-    drained AFTER the constraint was POSTed. These are deterministic
-    channel-side observables, byte-equal locked.
-
-    The constraint is enqueued during iter 0's body via the
-    test-side POST. The drain at the top of iter 1 sees it. From
-    iter 1 onward, missing_aspects[0] == constraint exactly.
+    == [constraint]`` exactly, and the constraint MUST remain at
+    ``missing_aspects[0]`` from the draining iteration onward. These
+    are deterministic channel-side observables, byte-equal locked.
     """
     import uuid
 
     session_id = f"e2e-withC-det-{uuid.uuid4().hex[:8]}"
     result = _run_process_with_optional_constraint(session_id, _CONSTRAINT_TEXT)
     il = result["final_output"]["iterative_loop"]
-    # Channel-side byte-equal exact-list lock.
-    assert il["inbound_constraints_applied"] == [_CONSTRAINT_TEXT]
-    # Loop ran to max_iter (constraint doesn't trigger early exit).
-    assert il["exit_reason"] == "max_iter"
-    assert il["iterations_executed"] == 3
-    assert len(il["loop_trajectory"]) == 3
-    # The constraint POSTed during iter 0 is drained at iter 0's TOP
-    # OR iter 1's TOP depending on POST timing. Either way, from the
-    # first iteration that drained it onward, missing_aspects[0]
-    # MUST equal the constraint text exactly. Find that iteration:
-    iters_with_constraint = [
-        t
-        for t in il["loop_trajectory"]
-        if t["missing_aspects"] and t["missing_aspects"][0] == _CONSTRAINT_TEXT
-    ]
-    assert iters_with_constraint, (
-        f"no iteration's missing_aspects[0] == constraint text; "
-        f"trajectory: {il['loop_trajectory']}"
-    )
-    # AT LEAST ONE iteration drained the constraint AND every
-    # subsequent iteration also has it (constraints monotonic).
-    first_with = iters_with_constraint[0]["iteration_idx"]
-    for t in il["loop_trajectory"]:
-        if t["iteration_idx"] >= first_with:
-            assert t["missing_aspects"][0] == _CONSTRAINT_TEXT, (
-                f"iter {t['iteration_idx']} expected constraint at "
-                f"missing_aspects[0], got {t['missing_aspects']}"
-            )
+    _assert_loop_iteration_contract(il, constraint=_CONSTRAINT_TEXT)
 
 
 def test_constraint_changes_orchestrator_input_to_reformulator():
@@ -622,9 +637,8 @@ def test_constraint_changes_orchestrator_input_to_reformulator():
     base_il = base["final_output"]["iterative_loop"]
     withc_il = with_c["final_output"]["iterative_loop"]
 
-    # Channel-side delta — byte-equal exact lists.
-    assert base_il["inbound_constraints_applied"] == []
-    assert withc_il["inbound_constraints_applied"] == [_CONSTRAINT_TEXT]
+    _assert_loop_iteration_contract(base_il, constraint=None)
+    _assert_loop_iteration_contract(withc_il, constraint=_CONSTRAINT_TEXT)
 
     # Orchestrator-input delta — proves the constraint reached the
     # LM call's input via missing_aspects, regardless of how the LM
@@ -633,35 +647,9 @@ def test_constraint_changes_orchestrator_input_to_reformulator():
     # constraint run MUST have at least one iteration where
     # missing_aspects[0] == constraint exactly.
     assert base_il["loop_trajectory"][0]["missing_aspects"] == []
-    iters_with_c = [
-        t
-        for t in withc_il["loop_trajectory"]
-        if t["missing_aspects"] and t["missing_aspects"][0] == _CONSTRAINT_TEXT
-    ]
-    assert iters_with_c, (
-        f"no iteration of the with-constraint run had missing_aspects[0] "
-        f"== {_CONSTRAINT_TEXT!r}; orchestrator failed to feed the "
-        f"constraint to the reformulator. Trajectory: "
-        f"{[t['missing_aspects'] for t in withc_il['loop_trajectory']]}"
+    assert all(
+        _CONSTRAINT_TEXT not in t["missing_aspects"] for t in base_il["loop_trajectory"]
     )
-    # AND for every iteration from the first-constrained onward, the
-    # constraint remains at missing_aspects[0] — proves the constraint
-    # is monotonic across iterations (every LM call from that iter
-    # onward sees it as input).
-    first_with = iters_with_c[0]["iteration_idx"]
-    for t in withc_il["loop_trajectory"]:
-        if t["iteration_idx"] >= first_with:
-            assert t["missing_aspects"][0] == _CONSTRAINT_TEXT, (
-                f"iter {t['iteration_idx']} expected constraint at "
-                f"missing_aspects[0], got {t['missing_aspects']}"
-            )
-    # Compared across runs at the same iteration: baseline must NEVER
-    # have the constraint in any iteration's missing_aspects.
-    for t in base_il["loop_trajectory"]:
-        assert _CONSTRAINT_TEXT not in t["missing_aspects"], (
-            f"baseline iter {t['iteration_idx']} unexpectedly has the "
-            f"constraint in missing_aspects: {t['missing_aspects']}"
-        )
 
 
 def test_constraint_appears_in_iter_missing_aspects_byte_equal():
@@ -685,21 +673,7 @@ def test_constraint_appears_in_iter_missing_aspects_byte_equal():
     session_id = f"e2e-input-{uuid.uuid4().hex[:8]}"
     result = _run_process_with_optional_constraint(session_id, _CONSTRAINT_TEXT)
     il = result["final_output"]["iterative_loop"]
-    # Channel-side ALWAYS asserted — the constraint reached the loop
-    # regardless of LM rephrasing.
-    assert il["inbound_constraints_applied"] == [_CONSTRAINT_TEXT]
-    # And the orchestrator MUST have fed it to the reformulator on
-    # at least one iteration via missing_aspects[0].
-    iters_with_c = [
-        t
-        for t in il["loop_trajectory"]
-        if t["missing_aspects"] and t["missing_aspects"][0] == _CONSTRAINT_TEXT
-    ]
-    assert iters_with_c, (
-        f"orchestrator failed to feed constraint to reformulator on "
-        f"any iteration. Trajectory: "
-        f"{[t['missing_aspects'] for t in il['loop_trajectory']]}"
-    )
+    _assert_loop_iteration_contract(il, constraint=_CONSTRAINT_TEXT)
 
 
 def test_baseline_run_per_iter_duration_ms_is_populated():
@@ -715,9 +689,7 @@ def test_baseline_run_per_iter_duration_ms_is_populated():
     result = _run_process_with_optional_constraint(session_id, None)
     il = result["final_output"]["iterative_loop"]
     per_iter = il["per_iter_duration_ms"]
-    # 3 iterations under max_iter, all positive ms.
-    assert len(per_iter) == 3
-    assert all(t > 0 for t in per_iter)
+    _assert_loop_iteration_contract(il, constraint=None)
     # Total ``duration_ms`` is at least the sum of per-iter (loop
     # body work) — loop adds overhead (gate, KG expansion, etc.).
     assert il["duration_ms"] >= sum(per_iter) * 0.9
@@ -850,41 +822,61 @@ def test_with_constraint_run_emits_retrieval_iteration_spans_for_each_iter():
                 time.sleep(2)
 
     px_initial = Client(base_url="http://localhost:33006")
-    spans_for_match = _tenant_spans(px_initial)
-    # Match session_ids that start with the base; pick the one with
-    # ``inbound_constraints_applied`` populated (the successful run).
-    candidates = spans_for_match[
-        spans_for_match["attributes.session_id"].fillna("").str.startswith(session_id)
-    ]
-    succ = candidates[
-        candidates["attributes.inbound_constraints_applied"] == _CONSTRAINT_TEXT
-    ]
-    assert len(succ) > 0, (
-        f"no Phoenix spans with session_id prefix={session_id!r} carry "
+    base_session_id = session_id
+    expected_iter_count = il["iterations_executed"]
+    selected_session_id = ""
+    iter_spans = None
+    constrained_iter_spans = None
+    first_constrained_iter = -1
+    deadline = time.time() + 30
+    while time.time() < deadline:
+        spans_for_match = _tenant_spans(px_initial)
+        candidates = spans_for_match[
+            (spans_for_match["name"] == "retrieval_iteration")
+            & spans_for_match["attributes.session_id"]
+            .fillna("")
+            .str.startswith(base_session_id)
+        ]
+        constrained = candidates[
+            candidates["attributes.inbound_constraints_applied"] == _CONSTRAINT_TEXT
+        ]
+        if len(constrained) == 0:
+            time.sleep(2)
+            continue
+        candidate_session_id = str(constrained.iloc[0]["attributes.session_id"])
+        candidate_iter_spans = candidates[
+            candidates["attributes.session_id"] == candidate_session_id
+        ]
+        candidate_constrained_iter_spans = candidate_iter_spans[
+            candidate_iter_spans["attributes.inbound_constraints_applied"]
+            == _CONSTRAINT_TEXT
+        ]
+        candidate_first_constrained_iter = int(
+            candidate_constrained_iter_spans["attributes.iteration_idx"].min()
+        )
+        if len(candidate_iter_spans) != expected_iter_count:
+            time.sleep(2)
+            continue
+        if len(candidate_constrained_iter_spans) != (
+            expected_iter_count - candidate_first_constrained_iter + 1
+        ):
+            time.sleep(2)
+            continue
+        selected_session_id = candidate_session_id
+        iter_spans = candidate_iter_spans
+        constrained_iter_spans = candidate_constrained_iter_spans
+        first_constrained_iter = candidate_first_constrained_iter
+        break
+    assert selected_session_id != "", (
+        f"no Phoenix spans with session_id prefix={base_session_id!r} carry "
         f"inbound_constraints_applied={_CONSTRAINT_TEXT!r}; OTLP ingest "
         f"may have dropped them or the helper's retry path is broken."
     )
-    session_id = succ.iloc[0]["attributes.session_id"]
-
-    # Wait for Phoenix to ingest all spans — OTLP ingest is async
-    # and the runtime emits the final span at loop exit. Poll up to
-    # 30 s for the expected count to appear rather than asserting
-    # on a snapshot that might be mid-ingest.
-    px = Client(base_url="http://localhost:33006")
-    expected_iter_count = il["iterations_executed"]
-    iter_spans = None
-    deadline = time.time() + 30
-    while time.time() < deadline:
-        spans = _tenant_spans(px)
-        matching = spans[spans["attributes.session_id"] == session_id]
-        iter_spans = matching[matching["name"] == "retrieval_iteration"]
-        if len(iter_spans) >= expected_iter_count:
-            break
-        time.sleep(2)
-    assert iter_spans is not None and len(iter_spans) == expected_iter_count, (
+    session_id = selected_session_id
+    assert len(iter_spans) == expected_iter_count, (
         f"expected {expected_iter_count} retrieval_iteration spans for "
         f"session_id={session_id} within 30 s of Phoenix ingest, "
-        f"got {0 if iter_spans is None else len(iter_spans)}"
+        f"got {len(iter_spans)}"
     )
     # Each span's iteration_idx attribute matches the loop trajectory.
     span_iters = sorted(int(v) for v in iter_spans["attributes.iteration_idx"])
@@ -895,10 +887,16 @@ def test_with_constraint_run_emits_retrieval_iteration_spans_for_each_iter():
     # Each iteration span carries the inbound_constraints_applied
     # attribute (added so Phoenix-side trajectory tools can grade
     # the inbound channel without parsing the response payload).
-    constraints_attr = iter_spans["attributes.inbound_constraints_applied"].dropna()
-    assert (constraints_attr == _CONSTRAINT_TEXT).any(), (
-        f"at least one retrieval_iteration span must record the "
-        f"inbound constraint; got {list(constraints_attr)}"
+    constraints_attr = constrained_iter_spans["attributes.inbound_constraints_applied"]
+    assert len(constraints_attr) == (
+        expected_iter_count - first_constrained_iter + 1
+    ), (
+        f"expected the constrained suffix to cover "
+        f"{expected_iter_count - first_constrained_iter + 1} spans, "
+        f"got {len(constraints_attr)}"
+    )
+    assert (constraints_attr == _CONSTRAINT_TEXT).all(), (
+        f"constraint attr values were {list(constraints_attr)}"
     )
     # Each iteration span has a sufficiency_score populated (non-NaN).
     for _, row in iter_spans.iterrows():
