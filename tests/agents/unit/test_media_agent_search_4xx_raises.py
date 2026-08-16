@@ -24,8 +24,24 @@ class _Resp400:
     status_code = 400
     text = "Bad request: Expected 128 values, got 64"
 
-    def json(self):  # pragma: no cover - never reached on a 4xx
-        return {}
+    hits = []
+
+    def get_json(self):  # pragma: no cover - exact body consumed by backend
+        return {
+            "root": {
+                "errors": [
+                    {
+                        "code": 400,
+                        "summary": "Bad request",
+                        "message": "Expected 128 values, got 64",
+                    }
+                ],
+                "children": [],
+            }
+        }
+
+    def json(self):  # pragma: no cover - exact body consumed by backend
+        return self.get_json()
 
 
 @pytest.fixture
@@ -70,13 +86,78 @@ async def test_document_text_search_raises_on_4xx(patch_vespa_400, monkeypatch):
 
 
 @pytest.mark.asyncio
-async def test_audio_transcript_search_raises_on_4xx(patch_vespa_400, monkeypatch):
-    # _schema_name is a read-only property; replace it at class level.
-    monkeypatch.setattr(
-        AudioAnalysisAgent, "_schema_name", "audio_transcript_acme_acme"
+async def test_audio_transcript_search_raises_on_4xx(monkeypatch):
+    from pathlib import Path
+
+    from cogniverse_agents.audio_analysis_agent import AudioAnalysisDeps
+    from cogniverse_core.schemas.filesystem_loader import FilesystemSchemaLoader
+    from cogniverse_foundation.config.manager import ConfigManager
+    from cogniverse_foundation.config.unified_config import SystemConfig
+    from cogniverse_vespa.search_backend import VespaSearchBackend
+    from tests.utils.memory_store import InMemoryConfigStore
+
+    store = InMemoryConfigStore()
+    store.initialize()
+    config_manager = ConfigManager(store=store)
+    config_manager.set_system_config(
+        SystemConfig(backend_url="http://localhost", backend_port=8080)
     )
-    agent = AudioAnalysisAgent.__new__(AudioAnalysisAgent)
-    agent._tenant_id = "acme:acme"
-    agent._vespa_endpoint = "http://vespa:8080"
-    with pytest.raises(VespaSearchError, match="400"):
+    schema_loader = FilesystemSchemaLoader(Path("configs/schemas"))
+    agent = AudioAnalysisAgent(
+        deps=AudioAnalysisDeps(
+            tenant_id="acme:acme",
+            vespa_endpoint="http://vespa:8080",
+            config_manager=config_manager,
+            schema_loader=schema_loader,
+            backend_config={
+                "backend": {
+                    "profiles": {
+                        "audio_transcript_profile": {
+                            "type": "audio",
+                            "schema_name": "audio_content",
+                        }
+                    },
+                    "default_profiles": {
+                        "audio": {
+                            "profile": "audio_transcript_profile",
+                            "strategy": "transcript_search",
+                        }
+                    },
+                }
+            },
+        )
+    )
+    backend = agent._get_backend()
+    search_backend = VespaSearchBackend(
+        config=backend.config,
+        config_manager=config_manager,
+        schema_loader=schema_loader,
+    )
+
+    class _Conn:
+        def __init__(self, response):
+            self._response = response
+
+        def query(self, body):
+            return self._response
+
+    class _ConnCtx:
+        def __init__(self, response):
+            self._response = response
+
+        def __enter__(self):
+            return _Conn(self._response)
+
+        def __exit__(self, exc_type, exc, tb):
+            return False
+
+    monkeypatch.setattr(
+        search_backend.pool,
+        "get_connection",
+        lambda: _ConnCtx(_Resp400()),
+    )
+    backend._vespa_search_backend = search_backend
+    from vespa.exceptions import VespaError
+
+    with pytest.raises(VespaError, match="400"):
         await agent._search_transcript("q", 5)
