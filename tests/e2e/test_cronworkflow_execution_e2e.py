@@ -17,7 +17,6 @@ marker.
 
 from __future__ import annotations
 
-import asyncio
 import json
 import shlex
 import subprocess
@@ -446,25 +445,26 @@ class TestDailyCleanupWorkflow:
             _delete_tenant_and_org(tenant_id)
 
 
-# The same cue-only shape test_api_e2e pins at confidence 0.5: "videos" is a
-# keyword cue and GLiNER tags no modality entity in these phrasings.
-GATEWAY_CUED_QUERIES = (
-    "find videos of dogs running on a beach",
-    "find videos of dogs running on a sandy beach",
-    "find videos of dogs running along a beach at dusk",
+# Video queries GLiNER tags video_content at >= 0.44 across the calibrator's
+# whole 0.15-0.5 range (and nothing else), so on a fresh tenant with the
+# default thresholds (fast path 0.4, GLiNER 0.3) each routes simple to
+# search_agent with the GLiNER score as its confidence.
+GATEWAY_VIDEO_QUERIES = (
+    "search for animal videos",
+    "search for video content about AI",
+    "find videos about machine learning",
 )
 
 
-def _run_gateway_traffic(tenant_id: str) -> None:
-    """Route cued simple queries for ``tenant_id`` and pin each decision.
+def _run_gateway_traffic(tenant_id: str) -> list[float]:
+    """Route the video queries for ``tenant_id``; return their confidences.
 
-    Every query carries a modality cue, so the keyword path classifies it
-    simple/video at KEYWORD_MODALITY_CONFIDENCE (0.5) and dispatches
-    search_agent; the tenant's deployed-but-empty video schema answers with
-    zero hits and no error.
+    The tenant's deployed-but-empty video schema answers each simple search
+    with zero hits and no error.
     """
+    confidences: list[float] = []
     with httpx.Client(base_url=RUNTIME, timeout=600.0) as client:
-        for query in GATEWAY_CUED_QUERIES:
+        for query in GATEWAY_VIDEO_QUERIES:
             resp = client.post(
                 "/agents/gateway_agent/process",
                 json={
@@ -477,33 +477,126 @@ def _run_gateway_traffic(tenant_id: str) -> None:
             assert resp.status_code == 200, resp.text
             body = resp.json()
             gw = body["gateway"]
-            assert (gw["complexity"], gw["confidence"], gw["routed_to"]) == (
+            assert (gw["complexity"], gw["modality"], gw["routed_to"]) == (
                 "simple",
-                0.5,
+                "video",
                 "search_agent",
             ), body
+            assert gw["confidence"] >= gw["fast_path_confidence_threshold"], gw
             assert body["status"] == "success", body
+            confidences.append(gw["confidence"])
+    return confidences
 
 
-def _wait_for_gateway_spans(provider, tenant_id: str, expected: int) -> None:
+def _runtime_pod_python(script: str, *, timeout: int = 180) -> str:
+    """Run a Python snippet inside the runtime pod and return its stdout.
+
+    Telemetry and artifact reads run in the pod: the host test process has no
+    live config store, and the pod's telemetry manager is the one the
+    workflow's own optimizer reads through.
+    """
+    result = subprocess.run(
+        [
+            "kubectl",
+            "-n",
+            NAMESPACE,
+            "exec",
+            "deploy/cogniverse-runtime",
+            "-c",
+            "runtime",
+            "--",
+            "python3",
+            "-c",
+            script,
+        ],
+        capture_output=True,
+        text=True,
+        timeout=timeout,
+    )
+    assert result.returncode == 0, (
+        f"runtime pod python failed: rc={result.returncode}\n"
+        f"stdout={result.stdout[-2000:]!r}\nstderr={result.stderr[-2000:]!r}"
+    )
+    return result.stdout
+
+
+def _gateway_thresholds_blob(tenant_id: str) -> str | None:
+    """The tenant's ``gateway_thresholds`` artifact blob, or None when absent."""
+    script = (
+        "import asyncio; "
+        "from cogniverse_foundation.telemetry.manager import get_telemetry_manager; "
+        "from cogniverse_agents.optimizer.artifact_manager import ArtifactManager; "
+        f"tp = get_telemetry_manager().get_provider(tenant_id={tenant_id!r}); "
+        f"am = ArtifactManager(tp, {tenant_id!r}); "
+        "blob = asyncio.run(am.load_blob('config', 'gateway_thresholds')); "
+        "print('__ABSENT__' if blob is None else '__BLOB__' + blob)"
+    )
+    out = _runtime_pod_python(script).strip().splitlines()[-1]
+    if out == "__ABSENT__":
+        return None
+    assert out.startswith("__BLOB__"), out
+    return out[len("__BLOB__") :]
+
+
+def _count_gateway_spans(tenant_id: str) -> int:
+    script = (
+        "import asyncio; "
+        "from cogniverse_foundation.telemetry.config import SPAN_NAME_GATEWAY; "
+        "from cogniverse_foundation.telemetry.manager import get_telemetry_manager; "
+        "from cogniverse_runtime.optimization_cli import _query_spans_by_name; "
+        f"tp = get_telemetry_manager().get_provider(tenant_id={tenant_id!r}); "
+        f"df = asyncio.run(_query_spans_by_name(tp, {tenant_id!r}, SPAN_NAME_GATEWAY, 1)); "
+        "print('__SPANS__' + str(len(df)))"
+    )
+    out = _runtime_pod_python(script).strip().splitlines()[-1]
+    assert out.startswith("__SPANS__"), out
+    return int(out[len("__SPANS__") :])
+
+
+def _wait_for_gateway_spans(tenant_id: str, expected: int) -> None:
     """Block until Phoenix has exported exactly ``expected`` gateway spans."""
-    from cogniverse_foundation.telemetry.config import SPAN_NAME_GATEWAY
-    from cogniverse_runtime.optimization_cli import _query_spans_by_name
-
-    deadline = time.monotonic() + 180.0
+    deadline = time.monotonic() + 240.0
     seen = -1
     while time.monotonic() < deadline:
-        df = asyncio.run(
-            _query_spans_by_name(provider, tenant_id, SPAN_NAME_GATEWAY, 1)
-        )
-        seen = len(df)
+        seen = _count_gateway_spans(tenant_id)
         if seen == expected:
             return
-        time.sleep(3.0)
+        time.sleep(5.0)
     raise AssertionError(
         f"Phoenix shows {seen} gateway spans for tenant {tenant_id!r}; "
-        f"expected {expected} within 180s"
+        f"expected {expected} within 240s"
     )
+
+
+def _expected_gateway_calibration(confidences: list[float]) -> dict:
+    """The calibrator's result for N simple, error-free decisions.
+
+    Mirrors optimization_cli._compute_gateway_thresholds: with no simple
+    errors and a mean confidence <= 0.8 the fast-path threshold stays at the
+    0.4 default; the GLiNER threshold is max(0.15, min(p25 * 0.8, 0.5)).
+    """
+    import statistics
+
+    ordered = sorted(confidences)
+    n = len(ordered)
+    # pandas' default (linear) quantile at 0.25
+    pos = 0.25 * (n - 1)
+    lo, hi = int(pos), min(int(pos) + 1, n - 1)
+    p25 = ordered[lo] + (ordered[hi] - ordered[lo]) * (pos - lo)
+    mean = statistics.fmean(confidences)
+    return {
+        "fast_path_confidence_threshold": 0.4,
+        "gliner_threshold": round(max(0.15, min(p25 * 0.8, 0.5)), 3),
+        "analysis": {
+            "total_spans": n,
+            "simple_count": n,
+            "complex_count": 0,
+            "simple_error_rate": 0.0,
+            "complex_error_rate": 0.0,
+            "mean_confidence": round(mean, 4),
+            "p25_confidence": round(p25, 4),
+        },
+    }
 
 
 @pytest.mark.e2e
@@ -518,8 +611,6 @@ class TestDailyGatewayWorkflow:
 
     def test_workflow_calibrates_and_persists_the_tenant_thresholds(self):
         _require_cronworkflow("cogniverse-daily-gateway")
-        from cogniverse_agents.optimizer.artifact_manager import ArtifactManager
-        from cogniverse_foundation.telemetry.manager import get_telemetry_manager
 
         tenant_id = _seed_org_and_tenant(uuid.uuid4().hex[:8])
         try:
@@ -534,14 +625,10 @@ class TestDailyGatewayWorkflow:
                 assert deploy.json()["deployment_status"] == "already_deployed", (
                     deploy.text
                 )
-            provider = get_telemetry_manager().get_provider(tenant_id=tenant_id)
-            artifacts = ArtifactManager(provider, tenant_id)
-            assert (
-                asyncio.run(artifacts.load_blob("config", "gateway_thresholds")) is None
-            )
+            assert _gateway_thresholds_blob(tenant_id) is None
 
-            _run_gateway_traffic(tenant_id)
-            _wait_for_gateway_spans(provider, tenant_id, len(GATEWAY_CUED_QUERIES))
+            confidences = _run_gateway_traffic(tenant_id)
+            _wait_for_gateway_spans(tenant_id, len(GATEWAY_VIDEO_QUERIES))
 
             _submit_and_wait_succeeded(
                 "cogniverse-daily-gateway",
@@ -549,27 +636,12 @@ class TestDailyGatewayWorkflow:
                 parameters={"tenant-id": tenant_id},
             )
 
-            blob = asyncio.run(artifacts.load_blob("config", "gateway_thresholds"))
+            blob = _gateway_thresholds_blob(tenant_id)
             assert blob is not None, (
                 f"daily-gateway Succeeded but wrote no gateway_thresholds "
                 f"artifact for tenant {tenant_id!r}"
             )
-            # Three simple decisions at confidence 0.5, none in error: the
-            # fast-path threshold stays at the 0.4 default (mean 0.5 is not
-            # > 0.8) and the GLiNER threshold is min(p25 0.5 * 0.8, 0.5).
-            assert json.loads(blob) == {
-                "fast_path_confidence_threshold": 0.4,
-                "gliner_threshold": 0.4,
-                "analysis": {
-                    "total_spans": 3,
-                    "simple_count": 3,
-                    "complex_count": 0,
-                    "simple_error_rate": 0.0,
-                    "complex_error_rate": 0.0,
-                    "mean_confidence": 0.5,
-                    "p25_confidence": 0.5,
-                },
-            }
+            assert json.loads(blob) == _expected_gateway_calibration(confidences)
         finally:
             _delete_tenant_and_org(tenant_id)
 
