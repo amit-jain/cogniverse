@@ -974,12 +974,7 @@
           "transcription": "vllm_asr"
         },
         "semantic_model": "lightonai/LateOn",
-        "schema_config": {
-          "schema_name": "audio_content",
-          "acoustic_embedding_dim": 512,
-          "semantic_embedding_dim": 128,
-          "semantic_binary_dim": 16
-        }
+        "schema_config": {"schema_name": "audio_content", "embedding_dim": 128, "binary_dim": 16}
       },
       "document_text_semantic": {
         "type": "document",

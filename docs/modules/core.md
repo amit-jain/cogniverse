@@ -629,8 +629,8 @@ caching factory that picks the right encoder from `configs/config.json`.
 ```python
 from cogniverse_core.query.encoders import QueryEncoderFactory
 
-# Cached by the routed encoder parameters; repeat calls for the same profile
-# reuse the already-loaded encoder.
+# Cached by (model_name, inference_service, embedding_dim) — a repeat
+# call for the same profile reuses the already-loaded encoder.
 encoder = QueryEncoderFactory.create_encoder(
     profile="frame_based_colpali",
     config=system_config,  # SystemConfig instance, required
@@ -644,25 +644,23 @@ QueryEncoderFactory.get_supported_profiles(config=system_config)
 | Class | Model family | Notes |
 |---|---|---|
 | `ColBERTQueryEncoder` | ColBERT / LateOn | Per-token multi-vector; `embedding_dim` is required (read from `schema_config.embedding_dim`); supports joint query+CoT-trace encoding |
-| `ClapQueryEncoder` | Audio / CLAP | 512-d acoustic text embeddings via `RemoteClapClient.generate_acoustic_text_embedding`; routes through `clap_embed` when configured |
 | `ColPaliFamilyQueryEncoder` | ColPali, ColQwen, ColSmol | 320-d patch multi-vector; local or remote (`inference_service_url`) |
 | `ColPaliQueryEncoder(...)` / `ColQwenQueryEncoder(...)` | — | Thin factory functions over `ColPaliFamilyQueryEncoder` with `model_loader="colpali"`/`"colqwen"` |
 | `VideoPrismQueryEncoder` | VideoPrism | Single-vector (global, `_lvt_`/`global` in name) or patch-based (768/1024-d) |
 
 `QueryEncoderFactory._create_encoder_instance` resolves the encoder in this
-order: audio profiles (`profile_config["type"] == "audio"`) → `profile_config["model_loader"]`
-(authoritative) → model-name substring → profile-name substring, raising
-`ValueError` if none match. When a profile
+order: `profile_config["model_loader"]` (authoritative) → model-name substring
+→ profile-name substring, raising `ValueError` if none match. When a profile
+carries a second, acoustic embedding (`audio_clap_semantic`), `semantic_model`
+names its ColBERT transcript model and is what the ColBERT branch loads;
+`embedding_model` names the acoustic model.
 declares `inference_services.embedding` but the merged config's
 `inference_service_urls` has no URL for that service, the factory raises
 `ValueError` naming the service (all families, not just ColBERT) rather than
 silently falling back to a local load — so a misconfigured sidecar fails loud.
-`ClapQueryEncoder` uses the core `RemoteClapClient` directly; the runtime
-audio embedding generator delegates its remote CLAP audio/text calls to the
-same client so there is one transport implementation for the sidecar.
-Search agents (document/image/audio) resolve their encoders through this
-factory, passing the merged config, so they route through the deployed sidecar
-exactly as the `/search` path does.
+Search agents (document/image) resolve their encoders through this factory,
+passing the merged config, so they route through the deployed sidecar exactly
+as the `/search` path does.
 
 ---
 
@@ -1772,6 +1770,14 @@ threshold)` contract over `/predict_entities`. Modal endpoints use
 `COGNIVERSE_INFERENCE_API_KEY`; non-Modal endpoints use `api_key`.
 Cache keys include a one-way fingerprint of the credential snapshot used to
 construct the client.
+
+### RemoteClapClient (model_loaders.py)
+
+`RemoteClapClient` calls the `clap_embed` sidecar's `/embed/text` and
+`/embed/audio` and returns the 512-d CLAP vector, raising with the URL and
+cause on a transport or HTTP failure and rejecting any response whose vector
+is not exactly 512 floats. The runtime audio embedding generator delegates
+its remote CLAP calls to it.
 
 ### VideoPrismLoader (videoprism_loader.py)
 

@@ -1,16 +1,12 @@
-"""Tests for the query encoder factory path."""
+"""Tests for the ColBERT query encoder factory path."""
 
 from __future__ import annotations
 
-import json
-from pathlib import Path
 from unittest.mock import MagicMock, patch
 
-import numpy as np
 import pytest
 
 from cogniverse_core.query.encoders import (
-    ClapQueryEncoder,
     ColBERTQueryEncoder,
     QueryEncoderFactory,
     _videoprism_is_global,
@@ -115,43 +111,6 @@ def test_factory_recognizes_lateon_model_name_without_model_loader(mock_get_mode
     assert encoder.get_embedding_dim() == 128
 
 
-@patch("cogniverse_core.query.encoders.RemoteClapClient")
-@patch("cogniverse_core.query.encoders.get_or_load_model")
-def test_factory_routes_audio_profile_to_clap_encoder(mock_get_model, mock_clap_client):
-    """The shipped audio profile resolves to CLAP text embeddings, not ColBERT."""
-    mock_clap_instance = MagicMock()
-    mock_clap_instance.generate_acoustic_text_embedding.return_value = np.full(
-        512, 0.25, dtype=np.float32
-    )
-    mock_clap_client.return_value = mock_clap_instance
-    profile_body = json.loads(Path("configs/config.json").read_text())["backend"][
-        "profiles"
-    ]["audio_clap_semantic"]
-
-    assert profile_body["type"] == "audio"
-    assert profile_body["model_loader"] == "colbert"
-    assert "embedding_dim" not in profile_body["schema_config"]
-
-    config = _build_system_config(
-        "audio_clap_semantic",
-        profile_body,
-        inference_service_urls={"clap_embed": "CLAP_REMOTE_URL"},
-    )
-
-    encoder = QueryEncoderFactory.create_encoder(
-        profile="audio_clap_semantic", config=config
-    )
-
-    assert isinstance(encoder, ClapQueryEncoder)
-    assert encoder.get_embedding_dim() == 512
-    assert encoder.encode("man speaking outdoors").tolist() == [0.25] * 512
-    mock_clap_client.assert_called_once_with("CLAP_REMOTE_URL")
-    mock_clap_instance.generate_acoustic_text_embedding.assert_called_once_with(
-        "man speaking outdoors"
-    )
-    mock_get_model.assert_not_called()
-
-
 @pytest.mark.unit
 @pytest.mark.ci_fast
 @patch("cogniverse_core.query.encoders.get_or_load_model")
@@ -210,6 +169,40 @@ def test_factory_wires_remote_url_from_inference_service(mock_get_model):
     QueryEncoderFactory.create_encoder(profile="lateon_mv", config=config)
 
     passed_config = mock_get_model.call_args[0][1]
+    assert passed_config["remote_inference_url"] == "COLBERT_REMOTE_URL"
+
+
+@patch("cogniverse_core.query.encoders.get_or_load_model")
+def test_factory_routes_shipped_audio_profile_to_colbert(mock_get_model):
+    """audio_clap_semantic searches its transcript embedding with ColBERT; the
+    acoustic CLAP embedding is a second field the audio agent queries itself.
+    The shipped profile must therefore resolve to ColBERT at the transcript
+    dimension the schema declares (semantic_embedding v[128])."""
+    import json
+    from pathlib import Path as _Path
+
+    mock_get_model.return_value = (MagicMock(), None)
+    shipped = json.loads(_Path("configs/config.json").read_text())
+    profile_body = shipped["backend"]["profiles"]["audio_clap_semantic"]
+    assert profile_body["model_loader"] == "colbert"
+    config = _build_system_config(
+        "audio_clap_semantic",
+        profile_body,
+        inference_service_urls={"colbert_pylate": "COLBERT_REMOTE_URL"},
+    )
+
+    encoder = QueryEncoderFactory.create_encoder(
+        profile="audio_clap_semantic", config=config
+    )
+
+    assert type(encoder).__name__ == "ColBERTQueryEncoder"
+    assert encoder.get_embedding_dim() == 128
+    loaded_model_name, passed_config = mock_get_model.call_args[0][:2]
+    # The transcript embedding is LateOn (semantic_model); embedding_model on
+    # this profile names the CLAP acoustic model, which the pylate sidecar
+    # would reject by name.
+    assert loaded_model_name == "lightonai/LateOn"
+    assert profile_body["embedding_model"] == "laion/clap-htsat-unfused"
     assert passed_config["remote_inference_url"] == "COLBERT_REMOTE_URL"
 
 
