@@ -329,8 +329,10 @@ class TestGatewaySeededSearchContract:
             assert {result["title"] for result in document_results[:2]} == set(
                 seeded_documents
             )
+            # document_type is the file suffix of each row's title; the
+            # corpus may hold captions, PDFs and other uploads at once.
             assert [result["document_type"] for result in document_results] == [
-                "txt" for _ in document_results
+                result["title"].rsplit(".", 1)[-1] for result in document_results
             ]
         else:
             assert document_data["agent"] == "orchestrator_agent"
