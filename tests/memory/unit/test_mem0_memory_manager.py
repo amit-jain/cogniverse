@@ -238,6 +238,17 @@ class TestMem0MemoryManager:
         )
         assert results == []
 
+    @staticmethod
+    def _bind_deployed_partition(manager, mock_memory) -> MagicMock:
+        """Wire the state initialize() leaves behind: a Mem0 handle, the
+        vector-store profile, and a backend whose partition schema exists."""
+        manager.memory = mock_memory
+        manager.config = {"vector_store": {"config": {"profile": "agent_memories"}}}
+        backend = MagicMock()
+        backend.schema_exists.return_value = True
+        manager._backend = backend
+        return backend
+
     @patch("cogniverse_core.memory.manager.Memory")
     def test_get_all_memories(self, mock_memory_class, manager):
         """Test getting all memories"""
@@ -250,7 +261,7 @@ class TestMem0MemoryManager:
                 {"id": "mem_2", "text": "Memory 2"},
             ]
         }
-        manager.memory = mock_memory
+        backend = self._bind_deployed_partition(manager, mock_memory)
 
         # Get all
         memories = manager.get_all_memories(
@@ -258,7 +269,13 @@ class TestMem0MemoryManager:
             agent_name="test_agent",
         )
 
-        assert len(memories) == 2
+        assert memories == [
+            {"id": "mem_1", "text": "Memory 1"},
+            {"id": "mem_2", "text": "Memory 2"},
+        ]
+        backend.schema_exists.assert_called_once_with(
+            "agent_memories", tenant_id=canonical_tenant_id("tenant1")
+        )
         mock_memory.get_all.assert_called_once_with(
             user_id=canonical_tenant_id("tenant1"),
             agent_id="test_agent",
@@ -273,7 +290,7 @@ class TestMem0MemoryManager:
         """limit=None forwards to mem0 as the whole-partition walk signal."""
         mock_memory = MagicMock()
         mock_memory.get_all.return_value = {"results": []}
-        manager.memory = mock_memory
+        self._bind_deployed_partition(manager, mock_memory)
 
         manager.get_all_memories(
             tenant_id="tenant1",
@@ -289,6 +306,61 @@ class TestMem0MemoryManager:
         )
 
     @patch("cogniverse_core.memory.manager.Memory")
+    def test_get_all_memories_returns_empty_when_schema_missing(
+        self, mock_memory_class, manager
+    ):
+        """A tenant partition with no deployed schema is empty, not an error."""
+        mock_memory = MagicMock()
+        mock_memory.get_all.side_effect = AssertionError(
+            "schema guard should short-circuit before get_all"
+        )
+        manager.memory = mock_memory
+        manager.config = {"vector_store": {"config": {"profile": "agent_memories"}}}
+
+        mock_backend = MagicMock()
+        mock_backend.schema_exists.return_value = False
+        manager._backend = mock_backend
+
+        memories = manager.get_all_memories(
+            tenant_id="tenant1",
+            agent_name="test_agent",
+        )
+
+        assert memories == []
+        mock_backend.schema_exists.assert_called_once_with(
+            "agent_memories",
+            tenant_id=canonical_tenant_id("tenant1"),
+        )
+        mock_memory.get_all.assert_not_called()
+
+    @patch("cogniverse_core.memory.manager.Memory")
+    def test_get_all_memories_propagates_schema_lookup_failure(
+        self, mock_memory_class, manager
+    ):
+        """A schema lookup failure is not "no memories" and must raise."""
+        mock_memory = MagicMock()
+        mock_memory.get_all.side_effect = AssertionError(
+            "schema lookup failure should short-circuit before get_all"
+        )
+        manager.memory = mock_memory
+        manager.config = {"vector_store": {"config": {"profile": "agent_memories"}}}
+
+        mock_backend = MagicMock()
+        mock_backend.schema_exists.side_effect = ConnectionError(
+            "schema registry unavailable"
+        )
+        manager._backend = mock_backend
+
+        with pytest.raises(ConnectionError, match="schema registry unavailable"):
+            manager.get_all_memories(tenant_id="tenant1", agent_name="test_agent")
+
+        mock_backend.schema_exists.assert_called_once_with(
+            "agent_memories",
+            tenant_id=canonical_tenant_id("tenant1"),
+        )
+        mock_memory.get_all.assert_not_called()
+
+    @patch("cogniverse_core.memory.manager.Memory")
     def test_get_all_memories_raises_on_backend_outage(
         self, mock_memory_class, manager
     ):
@@ -298,9 +370,9 @@ class TestMem0MemoryManager:
 
         mock_memory = MagicMock()
         mock_memory.get_all.side_effect = ConnectionError("vespa unreachable")
-        manager.memory = mock_memory
+        self._bind_deployed_partition(manager, mock_memory)
 
-        with pytest.raises(ConnectionError):
+        with pytest.raises(ConnectionError, match="vespa unreachable"):
             manager.get_all_memories(tenant_id="tenant1", agent_name="test_agent")
 
     @patch("cogniverse_core.memory.manager.Memory")
@@ -330,7 +402,7 @@ class TestMem0MemoryManager:
             {"id": "mem_1"},
             {"id": "mem_2"},
         ]
-        manager.memory = mock_memory
+        self._bind_deployed_partition(manager, mock_memory)
 
         # Clear
         success = manager.clear_agent_memory(
@@ -384,7 +456,7 @@ class TestMem0MemoryManager:
         # Setup
         mock_memory = MagicMock()
         mock_memory.get_all.return_value = [{"id": "1"}, {"id": "2"}, {"id": "3"}]
-        manager.memory = mock_memory
+        self._bind_deployed_partition(manager, mock_memory)
 
         # Get stats
         stats = manager.get_memory_stats(
