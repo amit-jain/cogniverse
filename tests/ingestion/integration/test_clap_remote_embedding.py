@@ -190,7 +190,7 @@ def test_connection_refusal_includes_endpoint_without_credential():
 
     message = str(caught.value)
     assert message.startswith(
-        f"CLAP request to {refused_url}/embed/text failed: ConnectError:"
+        f"CLAP request to {refused_url}/embed/text failed: ConnectionError:"
     )
     assert "Connection refused" in message
     assert token not in message

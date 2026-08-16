@@ -1,8 +1,8 @@
-"""Remote CLAP calls must reuse one httpx.Client per generator instance.
+"""Remote CLAP calls must reuse one core client per generator instance.
 
-A bare httpx.post per segment rebuilds the connection pool (TCP + TLS
-handshake) for every audio segment in a batch; the generator owns one
-lazily created client instead and closes it via close().
+The generator delegates remote audio/text requests to a single
+``RemoteClapClient`` so audio segments and text queries share one
+cached transport wrapper and close() tears it down deterministically.
 """
 
 from __future__ import annotations
@@ -20,36 +20,37 @@ from cogniverse_runtime.ingestion.processors.audio_embedding_generator import (
 )
 
 
-class _FakeResponse:
-    def raise_for_status(self) -> None:
-        pass
+class _FakeClapClient:
+    instances: list["_FakeClapClient"] = []
 
-    def json(self) -> dict:
-        return {"vec": [0.25] * 512}
-
-
-class _FakeClient:
-    instances: list["_FakeClient"] = []
-
-    def __init__(self, *args, **kwargs):
+    def __init__(self, endpoint_url, *, _resolved_headers=None):
         type(self).instances.append(self)
-        self.headers = dict(kwargs.get("headers", {}))
-        self.post_calls: list[tuple] = []
+        self.endpoint_url = endpoint_url
+        self.headers = dict(_resolved_headers or {})
+        self.calls: list[tuple] = []
         self.closed = False
 
-    def post(self, url, json=None, **kwargs):
-        assert not self.closed
-        self.post_calls.append((url, json))
-        return _FakeResponse()
-
-    def close(self) -> None:
+    def _close(self) -> None:
         self.closed = True
+
+    def generate_acoustic_embedding(
+        self, audio_path=None, audio_array=None, sample_rate=48000
+    ):
+        self.calls.append(("audio", audio_path, audio_array, sample_rate))
+        return np.full(512, 0.25, dtype=np.float32)
+
+    def generate_acoustic_text_embedding(self, text):
+        self.calls.append(("text", text))
+        return np.full(512, 0.25, dtype=np.float32)
 
 
 @pytest.fixture(autouse=True)
-def fake_httpx_client(monkeypatch):
-    _FakeClient.instances = []
-    monkeypatch.setattr("httpx.Client", _FakeClient)
+def fake_remote_clap_client(monkeypatch):
+    _FakeClapClient.instances = []
+    monkeypatch.setattr(
+        "cogniverse_runtime.ingestion.processors.audio_embedding_generator.RemoteClapClient",
+        _FakeClapClient,
+    )
 
 
 def test_one_client_reused_across_segment_and_text_calls():
@@ -66,17 +67,19 @@ def test_one_client_reused_across_segment_and_text_calls():
     text_vec = gen.generate_acoustic_text_embedding("rain on a tin roof")
     assert text_vec.tolist() == [0.25] * 512
 
-    assert len(_FakeClient.instances) == 1
-    client = _FakeClient.instances[0]
+    assert len(_FakeClapClient.instances) == 1
+    client = _FakeClapClient.instances[0]
     assert client.headers == {"Authorization": "Bearer modal-clap-key"}
-    assert len(client.post_calls) == 4
-    urls = [url for url, _ in client.post_calls]
-    assert urls == ["http://127.0.0.1:9/embed/audio"] * 3 + [
-        "http://127.0.0.1:9/embed/text"
-    ]
-    for _, payload in client.post_calls[:3]:
-        assert set(payload) == {"audio_b64"}
-    assert client.post_calls[3][1] == {"text": "rain on a tin roof"}
+    assert len(client.calls) == 4
+    calls = client.calls
+    assert [kind for kind, *_ in calls] == ["audio", "audio", "audio", "text"]
+    assert all(call[1] is None for call in calls[:3])
+    assert all(call[2] is tone for call in calls[:3])
+    assert all(call[3] == 48000 for call in calls[:3])
+    assert calls[3][1] == "rain on a tin roof"
+    assert gen._http_client is client
+    assert id(gen._get_http_client()) == id(client)
+    assert gen._http_client.endpoint_url == "http://127.0.0.1:9"
 
 
 def test_close_shuts_client_and_next_call_builds_a_fresh_one():
@@ -84,15 +87,15 @@ def test_close_shuts_client_and_next_call_builds_a_fresh_one():
 
     gen.generate_acoustic_text_embedding("a dog barking")
     gen.close()
-    assert len(_FakeClient.instances) == 1
-    assert _FakeClient.instances[0].closed is True
+    assert len(_FakeClapClient.instances) == 1
+    assert _FakeClapClient.instances[0].closed is True
 
     # close() is idempotent and the client rebuilds lazily on next use.
     gen.close()
     gen.generate_acoustic_text_embedding("a dog barking")
-    assert len(_FakeClient.instances) == 2
-    assert _FakeClient.instances[1].closed is False
-    assert len(_FakeClient.instances[1].post_calls) == 1
+    assert len(_FakeClapClient.instances) == 2
+    assert _FakeClapClient.instances[1].closed is False
+    assert len(_FakeClapClient.instances[1].calls) == 1
 
 
 @pytest.mark.parametrize(
@@ -150,7 +153,7 @@ def test_resolved_modal_headers_do_not_read_rotated_environment(monkeypatch):
     )
     generator.generate_acoustic_text_embedding("rain on a tin roof")
 
-    assert _FakeClient.instances[0].headers == {
+    assert _FakeClapClient.instances[0].headers == {
         "Authorization": "Bearer initial-production-key"
     }
 

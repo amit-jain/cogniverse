@@ -858,6 +858,109 @@ class RemoteWhisperLoader(ModelLoader):
         return wrapper, None
 
 
+class RemoteClapClient:
+    """HTTP client for the CLAP inference service.
+
+    The runtime search path uses this for CLAP acoustic-text embeddings, and
+    the audio embedding generator reuses the same client for its remote audio
+    and text calls. The client keeps the request/response contract local to
+    core so application code does not reimplement the transport details.
+    """
+
+    _VECTOR_DIM = 512
+
+    def __init__(
+        self,
+        endpoint_url: str,
+        api_key: Optional[str] = None,
+        logger: Optional[logging.Logger] = None,
+        *,
+        _resolved_headers: Optional[Mapping[str, str]] = None,
+    ) -> None:
+        self._url = endpoint_url.rstrip("/")
+        self._logger = logger or logging.getLogger(__name__)
+        self._session = requests.Session()
+        if _resolved_headers is not None:
+            if api_key is not None:
+                raise ValueError("api_key and _resolved_headers are mutually exclusive")
+            resolved_headers = _resolved_headers
+        else:
+            resolved_headers = _resolved_inference_headers(self._url, api_key)
+        self._session.headers.update(resolved_headers)
+
+    def _close(self) -> None:
+        self._session.close()
+
+    def _request_vector(self, path: str, payload: Dict[str, Any]) -> np.ndarray:
+        url = f"{self._url}{path}"
+        try:
+            response = self._session.post(url, json=payload, timeout=600)
+            response.raise_for_status()
+        except requests.RequestException as exc:
+            self._logger.error("Remote CLAP request failed (url=%s): %s", url, exc)
+            raise RuntimeError(
+                f"CLAP request to {url} failed: {type(exc).__name__}: {exc}"
+            ) from exc
+
+        try:
+            data = response.json()
+        except ValueError as exc:
+            raise ValueError(
+                f"Remote CLAP response from {url} must be a JSON object"
+            ) from exc
+
+        prefix = f"Remote CLAP response from {url}"
+        if not isinstance(data, dict):
+            raise ValueError(f"{prefix} must be a JSON object")
+        if "vec" not in data:
+            raise ValueError(f"{prefix} must contain 'vec'")
+
+        vec = data["vec"]
+        if not isinstance(vec, list):
+            raise ValueError(f"{prefix} 'vec' must be a list")
+        if len(vec) != self._VECTOR_DIM:
+            raise ValueError(
+                f"{prefix} 'vec' must contain exactly {self._VECTOR_DIM} floats, "
+                f"got {len(vec)}"
+            )
+        for index, value in enumerate(vec):
+            if isinstance(value, bool) or not isinstance(value, (int, float)):
+                raise ValueError(
+                    f"{prefix} 'vec' item at index {index} must be a number"
+                )
+
+        return np.asarray(vec, dtype=np.float32)
+
+    def generate_acoustic_embedding(
+        self,
+        audio_path: Optional[Path] = None,
+        audio_array: Optional[np.ndarray] = None,
+        sample_rate: int = 48000,
+    ) -> np.ndarray:
+        if audio_path is None and audio_array is None:
+            raise ValueError("Must provide either audio_path or audio_array")
+
+        import base64
+        import io
+
+        if audio_path is not None:
+            raw = Path(audio_path).read_bytes()
+        else:
+            import soundfile as sf
+
+            buf = io.BytesIO()
+            sf.write(buf, audio_array, sample_rate, format="WAV")
+            raw = buf.getvalue()
+
+        return self._request_vector(
+            "/embed/audio",
+            {"audio_b64": base64.b64encode(raw).decode()},
+        )
+
+    def generate_acoustic_text_embedding(self, text: str) -> np.ndarray:
+        return self._request_vector("/embed/text", {"text": text})
+
+
 _REMOTE_ONLY_MESSAGE = (
     "ColQwen3/Tomoro models are remote-only — serve via vLLM and set "
     "inference_service_url (profile inference_services.embedding). Local "

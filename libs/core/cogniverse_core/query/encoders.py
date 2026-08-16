@@ -8,6 +8,7 @@ from typing import TYPE_CHECKING, Optional
 import numpy as np
 
 from cogniverse_core.common.models import get_or_load_model
+from cogniverse_core.common.models.model_loaders import RemoteClapClient
 
 if TYPE_CHECKING:
     from cogniverse_foundation.config.system_config import SystemConfig
@@ -74,6 +75,45 @@ class ColBERTQueryEncoder(QueryEncoder):
         encoded_text = f"{query} {trace}" if trace else query
         result = self.model.encode([encoded_text], is_query=True)
         return np.array(result[0], dtype=np.float32)
+
+    def get_embedding_dim(self) -> int:
+        return self.embedding_dim
+
+
+class ClapQueryEncoder(QueryEncoder):
+    """Query encoder for audio profiles in CLAP's acoustic-text space.
+
+    The encoder mirrors the audio agent's query path by calling
+    ``RemoteClapClient.generate_acoustic_text_embedding`` so the runtime
+    search API embeds text queries into the same 512-d space as the stored
+    ``acoustic_embedding`` field.
+    """
+
+    def __init__(
+        self,
+        model_name: str = "laion/clap-htsat-unfused",
+        *,
+        clap_endpoint_url: Optional[str] = None,
+    ):
+        if not clap_endpoint_url:
+            raise ValueError("clap_endpoint_url is required for ClapQueryEncoder")
+
+        self.model_name = model_name
+        self.embedding_dim = 512
+        self._remote_client = RemoteClapClient(clap_endpoint_url)
+        logger.info(
+            "Loaded CLAP query encoder: %s (dim=%s, remote=%s)",
+            model_name,
+            self.embedding_dim,
+            "yes" if clap_endpoint_url else "no",
+        )
+
+    def encode(self, query: str) -> np.ndarray:
+        """Encode text into CLAP's 512-d acoustic space."""
+        return np.asarray(
+            self._remote_client.generate_acoustic_text_embedding(query),
+            dtype=np.float32,
+        )
 
     def get_embedding_dim(self) -> int:
         return self.embedding_dim
@@ -384,15 +424,27 @@ class QueryEncoderFactory:
             if not model_name:
                 raise ValueError(f"No embedding_model specified for profile: {profile}")
 
-        # Cache key includes per-profile routing knobs so profiles sharing a
-        # model but declaring different inference services or embedding dims
-        # do not collapse onto the first-constructed encoder.
-        schema_config = profile_config.get("schema_config", {}) or {}
-        cache_key = (
-            model_name,
-            (profile_config.get("inference_services") or {}).get("embedding"),
-            schema_config.get("embedding_dim"),
-        )
+        profile_type = str(profile_config.get("type") or "").lower()
+        service_urls = getattr(config, "inference_service_urls", {}) or {}
+
+        # Cache key includes the routing knobs that actually change the query
+        # encoder. Audio profiles route through the CLAP sidecar URL, while the
+        # other families still key on their declared embedding service + dim.
+        if profile_type == "audio":
+            clap_endpoint_url = service_urls.get("clap_embed")
+            if not clap_endpoint_url:
+                raise ValueError(
+                    f"Profile {profile!r} routes to ClapQueryEncoder but the "
+                    "merged config is missing inference_service_urls['clap_embed']"
+                )
+            cache_key = (profile_type, model_name, clap_endpoint_url)
+        else:
+            schema_config = profile_config.get("schema_config", {}) or {}
+            cache_key = (
+                model_name,
+                (profile_config.get("inference_services") or {}).get("embedding"),
+                schema_config.get("embedding_dim"),
+            )
 
         cached = cls._encoder_cache.get(cache_key)
         if cached is not None:
@@ -427,10 +479,26 @@ class QueryEncoderFactory:
         """Create a new encoder instance based on model loader / name.
 
         Preference order:
-          1. ``profile_config["model_loader"]`` (authoritative when set).
-          2. Model-name substring match.
-          3. Profile-name substring match.
+          1. Audio profiles (``profile_config["type"] == "audio"``) route to
+             the CLAP acoustic encoder.
+          2. ``profile_config["model_loader"]`` (authoritative when set).
+          3. Model-name substring match.
+          4. Profile-name substring match.
         """
+        profile_type = str(profile_config.get("type") or "").lower()
+        if profile_type == "audio":
+            service_urls = getattr(system_config, "inference_service_urls", {}) or {}
+            clap_endpoint_url = service_urls.get("clap_embed")
+            if not clap_endpoint_url:
+                raise ValueError(
+                    f"Profile {profile!r} routes to ClapQueryEncoder but the "
+                    "merged config is missing inference_service_urls['clap_embed']"
+                )
+            return ClapQueryEncoder(
+                model_name,
+                clap_endpoint_url=clap_endpoint_url,
+            )
+
         model_loader = profile_config.get("model_loader")
         # Resolve the configured sidecar URL for this profile so the
         # encoders can route through the deployed vLLM service instead

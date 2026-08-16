@@ -1,12 +1,16 @@
-"""Tests for the ColBERT query encoder factory path."""
+"""Tests for the query encoder factory path."""
 
 from __future__ import annotations
 
+import json
+from pathlib import Path
 from unittest.mock import MagicMock, patch
 
+import numpy as np
 import pytest
 
 from cogniverse_core.query.encoders import (
+    ClapQueryEncoder,
     ColBERTQueryEncoder,
     QueryEncoderFactory,
     _videoprism_is_global,
@@ -109,6 +113,43 @@ def test_factory_recognizes_lateon_model_name_without_model_loader(mock_get_mode
 
     assert isinstance(encoder, ColBERTQueryEncoder)
     assert encoder.get_embedding_dim() == 128
+
+
+@patch("cogniverse_core.query.encoders.RemoteClapClient")
+@patch("cogniverse_core.query.encoders.get_or_load_model")
+def test_factory_routes_audio_profile_to_clap_encoder(mock_get_model, mock_clap_client):
+    """The shipped audio profile resolves to CLAP text embeddings, not ColBERT."""
+    mock_clap_instance = MagicMock()
+    mock_clap_instance.generate_acoustic_text_embedding.return_value = np.full(
+        512, 0.25, dtype=np.float32
+    )
+    mock_clap_client.return_value = mock_clap_instance
+    profile_body = json.loads(Path("configs/config.json").read_text())["backend"][
+        "profiles"
+    ]["audio_clap_semantic"]
+
+    assert profile_body["type"] == "audio"
+    assert profile_body["model_loader"] == "colbert"
+    assert "embedding_dim" not in profile_body["schema_config"]
+
+    config = _build_system_config(
+        "audio_clap_semantic",
+        profile_body,
+        inference_service_urls={"clap_embed": "CLAP_REMOTE_URL"},
+    )
+
+    encoder = QueryEncoderFactory.create_encoder(
+        profile="audio_clap_semantic", config=config
+    )
+
+    assert isinstance(encoder, ClapQueryEncoder)
+    assert encoder.get_embedding_dim() == 512
+    assert encoder.encode("man speaking outdoors").tolist() == [0.25] * 512
+    mock_clap_client.assert_called_once_with("CLAP_REMOTE_URL")
+    mock_clap_instance.generate_acoustic_text_embedding.assert_called_once_with(
+        "man speaking outdoors"
+    )
+    mock_get_model.assert_not_called()
 
 
 @pytest.mark.unit

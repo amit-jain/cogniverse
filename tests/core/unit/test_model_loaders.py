@@ -1006,6 +1006,108 @@ class TestRemoteGlinerClientHTTPContract:
             )
 
 
+@pytest.mark.unit
+class TestRemoteClapClientHTTPContract:
+    """Exercise RemoteClapClient against a real sidecar-shaped HTTP server."""
+
+    def _serve(self, handler_fn):
+        import threading
+        from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
+
+        class _Handler(BaseHTTPRequestHandler):
+            def do_POST(self):
+                length = int(self.headers.get("Content-Length", 0))
+                body = self.rfile.read(length)
+                status, payload = handler_fn(
+                    self.path,
+                    body,
+                    self.headers.get("Authorization"),
+                )
+                self.send_response(status)
+                self.send_header("Content-Type", "application/json")
+                self.end_headers()
+                self.wfile.write(payload)
+
+            def log_message(self, *a):
+                pass
+
+        server = ThreadingHTTPServer(("127.0.0.1", 0), _Handler)
+        thread = threading.Thread(target=server.serve_forever, daemon=True)
+        thread.start()
+        return server, f"http://127.0.0.1:{server.server_address[1]}"
+
+    def test_text_embedding_round_trip_with_exact_request_payload(self):
+        import json
+
+        from cogniverse_core.common.models.model_loaders import RemoteClapClient
+
+        seen = {}
+
+        def handler(path, body, authorization):
+            seen["path"] = path
+            seen["payload"] = json.loads(body)
+            seen["authorization"] = authorization
+            return 200, json.dumps({"vec": [0.25] * 512}).encode()
+
+        server, url = self._serve(handler)
+        try:
+            client = RemoteClapClient(url, api_key="clap-modal-secret")
+            vector = client.generate_acoustic_text_embedding("rain on a tin roof")
+        finally:
+            server.shutdown()
+
+        assert seen["path"] == "/embed/text"
+        assert seen["authorization"] == "Bearer clap-modal-secret"
+        assert seen["payload"] == {"text": "rain on a tin roof"}
+        assert vector.dtype == np.float32
+        assert vector.tolist() == [0.25] * 512
+
+    def test_non_200_raises_with_url_and_cause(self):
+        import requests
+
+        from cogniverse_core.common.models.model_loaders import RemoteClapClient
+
+        server, url = self._serve(lambda p, b, auth: (503, b"{}"))
+        endpoint = f"{url}/embed/text"
+        try:
+            client = RemoteClapClient(url)
+            with pytest.raises(RuntimeError) as excinfo:
+                client.generate_acoustic_text_embedding("rain")
+        finally:
+            server.shutdown()
+
+        assert str(excinfo.value) == (
+            f"CLAP request to {endpoint} failed: HTTPError: 503 Server Error: "
+            f"Service Unavailable for url: {endpoint}"
+        )
+        assert isinstance(excinfo.value.__cause__, requests.HTTPError)
+
+    def test_short_vector_response_raises_exact_error(self):
+        import json
+
+        from cogniverse_core.common.models.model_loaders import RemoteClapClient
+
+        server, url = self._serve(
+            lambda p, b, auth: (
+                200,
+                json.dumps({"vec": [0.25] * 511}).encode(),
+            )
+        )
+        endpoint = f"{url}/embed/text"
+        try:
+            client = RemoteClapClient(url)
+            with pytest.raises(ValueError) as excinfo:
+                client.generate_acoustic_text_embedding("rain")
+        finally:
+            server.shutdown()
+
+        assert (
+            str(excinfo.value)
+            == f"Remote CLAP response from {endpoint} 'vec' must contain exactly "
+            "512 floats, got 511"
+        )
+
+
 def test_remote_inference_client_uses_modal_environment_credential(monkeypatch):
     from cogniverse_core.common.models.model_loaders import RemoteInferenceClient
 
