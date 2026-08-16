@@ -864,18 +864,15 @@ async def _process_impl(
 
 #### Configuration
 
-The `ProfileSelectionDeps.available_profiles` field lists the profiles this agent will consider when none are specified in the request:
+When the runtime handles `profile_selection_agent`, it derives the candidate
+set from the tenant's backend config and filters out profiles whose embedding
+service is not deployed in `SystemConfig.inference_service_urls`. The
+`ProfileSelectionDeps.available_profiles` field is now only a standalone fallback
+for local construction or tests that do not have tenant state wired in.
 
-```text
-# Default available profiles (matched to config.json backend.profiles)
-deps = ProfileSelectionDeps(
-    available_profiles=[
-        "video_colpali_smol500_mv_frame",
-        "video_colqwen_omni_mv_chunk_30s",
-        "video_videoprism_base_mv_chunk_30s",
-        "video_videoprism_large_mv_chunk_30s",
-    ]
-)
+```python
+# Standalone fallback; the runtime injects tenant-usable profiles instead.
+deps = ProfileSelectionDeps()
 ```
 
 #### Decision Criteria
