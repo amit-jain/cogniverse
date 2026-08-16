@@ -27,6 +27,11 @@ from datetime import datetime, timedelta, timezone
 import httpx
 import pytest
 
+from tests.e2e.conftest import (
+    GATEWAY_VIDEO_QUERIES,
+    expected_gateway_calibration,
+)
+
 NAMESPACE = "cogniverse"
 RUNTIME = (
     "http://localhost:33000"  # runtime.service.nodePort — matches tests/e2e/conftest.py
@@ -445,24 +450,13 @@ class TestDailyCleanupWorkflow:
             _delete_tenant_and_org(tenant_id)
 
 
-# Video queries GLiNER tags video_content at >= 0.44 across the calibrator's
-# whole 0.15-0.5 range (and nothing else), so on a fresh tenant with the
-# default thresholds (fast path 0.4, GLiNER 0.3) each routes simple to
-# search_agent with the GLiNER score as its confidence.
-GATEWAY_VIDEO_QUERIES = (
-    "search for animal videos",
-    "search for video content about AI",
-    "find videos about machine learning",
-)
-
-
-def _run_gateway_traffic(tenant_id: str) -> list[float]:
-    """Route the video queries for ``tenant_id``; return their confidences.
+def _run_gateway_traffic(tenant_id: str) -> list[tuple[str, float]]:
+    """Route the video queries for ``tenant_id``; return each decision.
 
     The tenant's deployed-but-empty video schema answers each simple search
     with zero hits and no error.
     """
-    confidences: list[float] = []
+    decisions: list[tuple[str, float]] = []
     with httpx.Client(base_url=RUNTIME, timeout=600.0) as client:
         for query in GATEWAY_VIDEO_QUERIES:
             resp = client.post(
@@ -484,8 +478,8 @@ def _run_gateway_traffic(tenant_id: str) -> list[float]:
             ), body
             assert gw["confidence"] >= gw["fast_path_confidence_threshold"], gw
             assert body["status"] == "success", body
-            confidences.append(gw["confidence"])
-    return confidences
+            decisions.append((gw["complexity"], gw["confidence"]))
+    return decisions
 
 
 def _runtime_pod_python(script: str, *, timeout: int = 180) -> str:
@@ -568,37 +562,6 @@ def _wait_for_gateway_spans(tenant_id: str, expected: int) -> None:
     )
 
 
-def _expected_gateway_calibration(confidences: list[float]) -> dict:
-    """The calibrator's result for N simple, error-free decisions.
-
-    Mirrors optimization_cli._compute_gateway_thresholds: with no simple
-    errors and a mean confidence <= 0.8 the fast-path threshold stays at the
-    0.4 default; the GLiNER threshold is max(0.15, min(p25 * 0.8, 0.5)).
-    """
-    import statistics
-
-    ordered = sorted(confidences)
-    n = len(ordered)
-    # pandas' default (linear) quantile at 0.25
-    pos = 0.25 * (n - 1)
-    lo, hi = int(pos), min(int(pos) + 1, n - 1)
-    p25 = ordered[lo] + (ordered[hi] - ordered[lo]) * (pos - lo)
-    mean = statistics.fmean(confidences)
-    return {
-        "fast_path_confidence_threshold": 0.4,
-        "gliner_threshold": round(max(0.15, min(p25 * 0.8, 0.5)), 3),
-        "analysis": {
-            "total_spans": n,
-            "simple_count": n,
-            "complex_count": 0,
-            "simple_error_rate": 0.0,
-            "complex_error_rate": 0.0,
-            "mean_confidence": round(mean, 4),
-            "p25_confidence": round(p25, 4),
-        },
-    }
-
-
 @pytest.mark.e2e
 class TestDailyGatewayWorkflow:
     """Daily-gateway calls run_gateway_thresholds_optimization for the
@@ -627,7 +590,7 @@ class TestDailyGatewayWorkflow:
                 )
             assert _gateway_thresholds_blob(tenant_id) is None
 
-            confidences = _run_gateway_traffic(tenant_id)
+            decisions = _run_gateway_traffic(tenant_id)
             _wait_for_gateway_spans(tenant_id, len(GATEWAY_VIDEO_QUERIES))
 
             _submit_and_wait_succeeded(
@@ -641,7 +604,7 @@ class TestDailyGatewayWorkflow:
                 f"daily-gateway Succeeded but wrote no gateway_thresholds "
                 f"artifact for tenant {tenant_id!r}"
             )
-            assert json.loads(blob) == _expected_gateway_calibration(confidences)
+            assert json.loads(blob) == expected_gateway_calibration(decisions)
         finally:
             _delete_tenant_and_org(tenant_id)
 

@@ -29,9 +29,12 @@ import pytest
 pytestmark = pytest.mark.slow
 
 from tests.e2e.conftest import (
+    GATEWAY_VIDEO_QUERIES,
     KUBECTL_CONTEXT,
     PHOENIX_URL,
     TENANT_ID,
+    expected_gateway_calibration,
+    expected_gateway_routing,
     register_tenant_and_wait,
 )
 from tests.e2e.test_api_e2e import _deploy_profile_for_tenant
@@ -231,9 +234,73 @@ def _kubectl_cluster_ready() -> None:
         )
 
 
+def _count_gateway_spans_in_pod(tenant_id: str) -> int:
+    script = (
+        "import asyncio; "
+        "from cogniverse_foundation.telemetry.config import SPAN_NAME_GATEWAY; "
+        "from cogniverse_foundation.telemetry.manager import get_telemetry_manager; "
+        "from cogniverse_runtime.optimization_cli import _query_spans_by_name; "
+        f"tp = get_telemetry_manager().get_provider(tenant_id={tenant_id!r}); "
+        f"df = asyncio.run(_query_spans_by_name(tp, {tenant_id!r}, SPAN_NAME_GATEWAY, 1)); "
+        "print('__SPANS__' + str(len(df)))"
+    )
+    result = subprocess.run(
+        [
+            "kubectl",
+            "--context",
+            KUBECTL_CONTEXT,
+            "exec",
+            "-n",
+            NAMESPACE,
+            DEPLOYMENT,
+            "-c",
+            CONTAINER,
+            "--",
+            "python3",
+            "-c",
+            script,
+        ],
+        capture_output=True,
+        text=True,
+        timeout=180,
+    )
+    assert result.returncode == 0, result.stderr[-2000:]
+    line = result.stdout.strip().splitlines()[-1]
+    assert line.startswith("__SPANS__"), result.stdout[-500:]
+    return int(line[len("__SPANS__") :])
+
+
+def _wait_for_gateway_spans_in_pod(tenant_id: str, expected: int) -> None:
+    deadline = time.monotonic() + 240.0
+    seen = -1
+    while time.monotonic() < deadline:
+        seen = _count_gateway_spans_in_pod(tenant_id)
+        if seen == expected:
+            return
+        time.sleep(5.0)
+    raise AssertionError(
+        f"Phoenix shows {seen} gateway spans for tenant {tenant_id!r}; "
+        f"expected {expected} within 240s"
+    )
+
+
+class GatewayThresholdTenant:
+    """A dedicated tenant plus the exact gateway decisions it recorded."""
+
+    def __init__(self, tenant_id: str, decisions: list[tuple[str, float]]):
+        self.tenant_id = tenant_id
+        self.decisions = decisions
+
+    @property
+    def expected_thresholds(self) -> dict:
+        return expected_gateway_calibration(self.decisions)
+
+
 @pytest.fixture(scope="module")
-def gateway_threshold_tenant(_kubectl_cluster_ready) -> str:
-    """Create a dedicated tenant for gateway-threshold optimization runs."""
+def gateway_threshold_tenant(_kubectl_cluster_ready) -> GatewayThresholdTenant:
+    """Create a dedicated tenant for gateway-threshold optimization runs and
+    drive exactly BATCH_SPAN_COUNT (default 20) simple video decisions
+    through its gateway, recording each one so the calibration is exact."""
     suffix = uuid.uuid4().hex[:8]
     org_id = f"opt_gw_{suffix}"
     tenant_id = f"{org_id}:t1"
@@ -257,13 +324,32 @@ def gateway_threshold_tenant(_kubectl_cluster_ready) -> str:
 
     span_count = int(os.environ.get("BATCH_SPAN_COUNT", "20"))
     assert span_count > 0, "BATCH_SPAN_COUNT must be a positive integer"
-    for i in range(span_count):
-        query = GATEWAY_QUERIES[i % len(GATEWAY_QUERIES)]
-        _call_agent("gateway_agent", query, tenant_id=tenant_id)
-
-    time.sleep(15)
+    decisions: list[tuple[str, float]] = []
+    with httpx.Client(base_url=RUNTIME, timeout=GATEWAY_PROCESS_TIMEOUT_S) as client:
+        for i in range(span_count):
+            query = GATEWAY_VIDEO_QUERIES[i % len(GATEWAY_VIDEO_QUERIES)]
+            resp = client.post(
+                "/agents/gateway_agent/process",
+                json={
+                    "agent_name": "gateway_agent",
+                    "query": query,
+                    "context": {"tenant_id": tenant_id},
+                    "top_k": 3,
+                },
+            )
+            assert resp.status_code == 200, resp.text[:500]
+            body = resp.json()
+            gw = body["gateway"]
+            assert (gw["complexity"], gw["modality"], gw["routed_to"]) == (
+                "simple",
+                "video",
+                "search_agent",
+            ), body
+            assert body["status"] == "success", body
+            decisions.append((gw["complexity"], gw["confidence"]))
+    _wait_for_gateway_spans_in_pod(tenant_id, span_count)
     try:
-        yield tenant_id
+        yield GatewayThresholdTenant(tenant_id, decisions)
     finally:
         with httpx.Client(timeout=60.0) as client:
             try:
@@ -613,116 +699,29 @@ class TestGatewayThresholds:
     """Verify gateway-thresholds batch job produces valid threshold artifact."""
 
     def test_gateway_thresholds_produces_artifact(self, gateway_threshold_tenant):
-        """Run --mode gateway-thresholds, assert it produces a threshold config."""
+        """Run --mode gateway-thresholds: the job calibrates exactly from the
+        tenant's recorded decisions and reports the persisted artifact."""
         result = _run_batch_job(
-            "gateway-thresholds", tenant_id=gateway_threshold_tenant
+            "gateway-thresholds", tenant_id=gateway_threshold_tenant.tenant_id
         )
 
-        assert result["status"] == "success", (
-            f"Expected status='success', got '{result.get('status')}': {result}"
-        )
-        assert result["spans_found"] > 0, (
-            f"Expected spans_found > 0, got {result.get('spans_found')}"
-        )
-        assert isinstance(result["artifact_id"], str) and result["artifact_id"], (
-            f"Expected non-empty artifact_id, got {result.get('artifact_id')!r}"
-        )
-
-        # Threshold config is nested under 'thresholds'
-        thresholds = result["thresholds"]
-        analysis = thresholds["analysis"]
-
-        assert analysis["total_spans"] > 0, (
-            f"Expected total_spans > 0, got {analysis['total_spans']}"
-        )
-        assert analysis["mean_confidence"] > 0, (
-            f"Expected mean_confidence > 0, got {analysis['mean_confidence']}"
-        )
-
-        fp_threshold = thresholds["fast_path_confidence_threshold"]
-        assert isinstance(fp_threshold, float), (
-            f"Expected float threshold, got {type(fp_threshold)}"
-        )
-        assert 0 < fp_threshold < 1, f"Expected threshold in (0, 1), got {fp_threshold}"
+        assert result["status"] == "success", result
+        assert result["spans_found"] == len(gateway_threshold_tenant.decisions), result
+        assert isinstance(result["artifact_id"], str) and result["artifact_id"], result
+        assert result["thresholds"] == gateway_threshold_tenant.expected_thresholds
 
     def test_gateway_thresholds_artifact_loadable(self, gateway_threshold_tenant):
-        """Load the gateway threshold artifact and verify its content."""
-        # Run the job to ensure artifact exists
+        """The persisted artifact is exactly what the job computed."""
         job_result = _run_batch_job(
-            "gateway-thresholds", tenant_id=gateway_threshold_tenant
+            "gateway-thresholds", tenant_id=gateway_threshold_tenant.tenant_id
         )
-        assert job_result["status"] == "success"
+        assert job_result["status"] == "success", job_result
 
-        # Load the artifact from inside the pod
         blob = _load_blob_in_pod(
-            "config", "gateway_thresholds", tenant_id=gateway_threshold_tenant
+            "config", "gateway_thresholds", tenant_id=gateway_threshold_tenant.tenant_id
         )
-        assert blob, "Loaded blob is empty"
-
-        artifact = json.loads(blob)
-        assert "fast_path_confidence_threshold" in artifact, (
-            f"Missing fast_path_confidence_threshold, keys: {list(artifact.keys())}"
-        )
-        assert "analysis" in artifact, (
-            f"Missing analysis key, keys: {list(artifact.keys())}"
-        )
-
-        # Verify analysis data matches what the job reported
-        assert (
-            artifact["analysis"]["total_spans"]
-            == job_result["thresholds"]["analysis"]["total_spans"]
-        ), (
-            f"Artifact total_spans ({artifact['analysis']['total_spans']}) "
-            f"!= job total_spans ({job_result['thresholds']['analysis']['total_spans']})"
-        )
-
-        # Verify threshold is a valid float
-        threshold = artifact["fast_path_confidence_threshold"]
-        assert isinstance(threshold, (int, float)) and 0 < threshold < 1, (
-            f"Invalid threshold in artifact: {threshold}"
-        )
-
-        # Analysis must have correct breakdown
-        analysis = artifact["analysis"]
-        assert (
-            analysis["simple_count"] + analysis["complex_count"]
-            == analysis["total_spans"]
-        ), (
-            f"simple ({analysis['simple_count']}) + complex ({analysis['complex_count']}) "
-            f"should equal total ({analysis['total_spans']})"
-        )
-        # Both classes must be represented — the fixture sends both the
-        # GATEWAY_QUERIES (simple-intent) set and the COMPLEX_QUERIES set.
-        # We do NOT assert simple > complex: the gateway (correctly) marks
-        # any query GLiNER cannot classify — e.g. "find basketball highlights"
-        # — as complex so the orchestrator can fan out across modalities in
-        # parallel. Several simple-looking queries in GATEWAY_QUERIES have no
-        # explicit modality word and legitimately end up on the complex path.
-        # That's the intended fan-out behaviour, not a bug.
-        assert analysis["simple_count"] > 0 and analysis["complex_count"] > 0, (
-            f"Expected both classes represented, got simple={analysis['simple_count']}, "
-            f"complex={analysis['complex_count']}"
-        )
-        assert 0 <= analysis["simple_error_rate"] <= 1
-        assert 0 <= analysis["complex_error_rate"] <= 1
-        # mean_confidence should reflect real GLiNER scores. The current 21-
-        # label set dilutes per-label scores compared to earlier configs that
-        # used 7 labels (where simple queries scored 0.4-0.7). With 21 labels
-        # the realistic range for simple queries is 0.05-0.20; allow 0.05-0.9
-        # so the test catches obvious breakage (zero / NaN / >0.9) without
-        # baking in a particular label-set size.
-        assert 0.05 < analysis["mean_confidence"] < 0.9, (
-            f"mean_confidence {analysis['mean_confidence']} outside expected 0.05-0.9 range"
-        )
-        # gliner_threshold must be computed (not just default)
-        assert "gliner_threshold" in artifact, "Missing computed gliner_threshold"
-        assert isinstance(artifact["gliner_threshold"], float), (
-            f"gliner_threshold should be float, got {type(artifact['gliner_threshold'])}"
-        )
-        # p25 just needs to be a real positive number reflecting actual data —
-        # the absolute value depends on the deployed GLiNER label set.
-        p25 = analysis.get("p25_confidence", 0)
-        assert p25 > 0, f"p25_confidence {p25} should be > 0 with real query data"
+        assert json.loads(blob) == gateway_threshold_tenant.expected_thresholds
+        assert json.loads(blob) == job_result["thresholds"]
 
 
 # ---------------------------------------------------------------------------
@@ -898,17 +897,19 @@ class TestSimbaOptimization:
         # Signature fields must match QueryEnhancementSignature exactly
         sig = module["signature"]
         field_names = [f.get("prefix", "").rstrip(":").strip() for f in sig["fields"]]
-        for expected in (
+        assert field_names == [
             "Query",
+            "Source Text",
+            "Grounding Context",
             "Enhanced Query",
             "Expansion Terms",
             "Synonyms",
+            "Context",
             "Confidence",
-        ):
-            assert expected in field_names, f"Missing '{expected}', got: {field_names}"
-        assert (
-            sig["instructions"]
-            == "Enhance query with synonyms, context, and related terms"
+            "Reasoning",
+        ], field_names
+        assert sig["instructions"] == (
+            "Enhance query with source-grounded expansions, synonyms, and context."
         )
 
         # Must have learned demos — 0 demos means optimization did nothing
@@ -1266,7 +1267,7 @@ class TestArtifactLoadingRoundTrip:
         """Run gateway-thresholds → verify artifact → restart → verify agent uses it."""
         # 1. Run batch job and capture the optimized thresholds
         result = _run_batch_job(
-            "gateway-thresholds", tenant_id=gateway_threshold_tenant
+            "gateway-thresholds", tenant_id=gateway_threshold_tenant.tenant_id
         )
         assert result["status"] == "success"
 
@@ -1275,7 +1276,7 @@ class TestArtifactLoadingRoundTrip:
 
         # 2. Verify artifact in pod matches what the batch job produced
         blob = _load_blob_in_pod(
-            "config", "gateway_thresholds", tenant_id=gateway_threshold_tenant
+            "config", "gateway_thresholds", tenant_id=gateway_threshold_tenant.tenant_id
         )
         assert blob, "Gateway artifact blob is empty"
         artifact = json.loads(blob)
@@ -1365,19 +1366,20 @@ class TestArtifactLoadingRoundTrip:
         time.sleep(20)
 
         # 4. Query the gateway and verify it works after restart with artifact loaded.
-        #    The optimized threshold may classify this as simple or complex depending
-        #    on the threshold value. Either path proves the agent started correctly.
-        #    What we're testing: artifact loading didn't crash the agent.
+        #    The response's gateway block reports the thresholds the restarted
+        #    agent APPLIED, so the artifact having been loaded is asserted
+        #    exactly, and the decision must obey the rule against them.
         # Cold-started runtime: first gateway call walks the full
         # GLiNER load + DSPy module compile + LM inference path,
         # 60-180s on CPU. 120s timeout was too tight after the pod
         # delete; 600s gives margin without masking real hangs.
+        query = "find videos of dogs running on a beach"
         resp = httpx.post(
             f"{RUNTIME}/agents/gateway_agent/process",
             json={
                 "agent_name": "gateway_agent",
-                "query": "find videos of dogs running on a beach",
-                "context": {"tenant_id": gateway_threshold_tenant},
+                "query": query,
+                "context": {"tenant_id": gateway_threshold_tenant.tenant_id},
             },
             timeout=600.0,
         )
@@ -1385,36 +1387,20 @@ class TestArtifactLoadingRoundTrip:
             f"Agent failed after restart: {resp.status_code} {resp.text[:200]}"
         )
         body = resp.json()
-        assert body.get("status") == "success", (
-            f"Gateway dispatch did not succeed: {json.dumps(body, default=str)[:300]}"
+        assert body["status"] == "success", json.dumps(body, default=str)[:300]
+        gw = body["gateway"]
+        assert (gw["fast_path_confidence_threshold"], gw["gliner_threshold"]) == (
+            optimized_threshold,
+            optimized_gliner,
+        ), gw
+        assert (gw["complexity"], gw["routed_to"]) == expected_gateway_routing(
+            query, gw
         )
-        # Gateway returns either:
-        # - Simple path: {"gateway": {"complexity": "simple", "routed_to": ...}, "downstream_result": ...}
-        # - Complex path: {"agent": "orchestrator_agent", "orchestration_result": ...}
-        # Both are valid — what matters is the agent processed the query, not HTTP 200
-        agent = body.get("agent", "")
-        assert agent in ("gateway_agent", "orchestrator_agent"), (
-            f"Expected gateway_agent or orchestrator_agent, got '{agent}'. "
-            f"Body: {json.dumps(body, default=str)[:300]}"
-        )
-        if agent == "gateway_agent":
-            gateway_info = body.get("gateway", {})
-            assert "complexity" in gateway_info, (
-                f"Gateway response missing complexity: {gateway_info}"
-            )
-            assert "routed_to" in gateway_info, (
-                f"Gateway response missing routed_to: {gateway_info}"
-            )
-        else:
-            # Routed to orchestrator — verify orchestration produced a result
-            assert "orchestration_result" in body, (
-                f"Orchestrator path but no orchestration_result: {list(body.keys())}"
-            )
 
         # 5. Verify the artifact is still loadable in-pod after restart
         #    (proves the agent's telemetry infrastructure survived restart)
         blob_after = _load_blob_in_pod(
-            "config", "gateway_thresholds", tenant_id=gateway_threshold_tenant
+            "config", "gateway_thresholds", tenant_id=gateway_threshold_tenant.tenant_id
         )
         assert blob_after, "Gateway artifact not loadable after restart"
         artifact_after = json.loads(blob_after)
@@ -1561,10 +1547,12 @@ class TestArtifactLoadingRoundTrip:
 
 @pytest.mark.e2e
 class TestSyntheticGeneration:
-    """Verify --mode synthetic runs inside the pod."""
+    """``--mode synthetic`` accepts only optimizer types with an approved
+    training-data consumer (query_enhancement, profile, routing,
+    entity_extraction). The valid-type end-to-end run, through to the persisted
+    pending-review batch, is ``test_optimizer_persistence_e2e``."""
 
-    def test_synthetic_mode_runs(self):
-        """Run --mode synthetic for one optimizer type, verify structured result."""
+    def test_synthetic_mode_rejects_an_optimizer_without_a_consumer(self):
         result = subprocess.run(
             [
                 "kubectl",
@@ -1592,34 +1580,9 @@ class TestSyntheticGeneration:
             timeout=300,
         )
 
-        stdout = result.stdout.strip()
-
-        brace_depth = 0
-        json_start = None
-        json_end = None
-        for i in range(len(stdout) - 1, -1, -1):
-            if stdout[i] == "}":
-                if brace_depth == 0:
-                    json_end = i + 1
-                brace_depth += 1
-            elif stdout[i] == "{":
-                brace_depth -= 1
-                if brace_depth == 0:
-                    json_start = i
-                    break
-
-        assert json_start is not None, (
-            f"No JSON in synthetic output. rc={result.returncode}, "
-            f"stderr={result.stderr[-300:]}, stdout={stdout[-300:]}"
-        )
-        output = json.loads(stdout[json_start:json_end])
-
-        assert "results" in output, f"Synthetic output missing 'results' key: {output}"
-        assert "simba" in output["results"], (
-            f"Synthetic output missing 'simba' result: {output['results']}"
-        )
-        assert output["results"]["simba"]["status"] in (
-            "success",
-            "failed",
-            "no_data",
-        ), f"Unexpected status: {output['results']['simba']}"
+        assert result.returncode == 1, result
+        assert result.stdout.strip() == "", result.stdout
+        assert result.stderr.rstrip().splitlines()[-1] == (
+            "Error: synthetic optimizer types have no approved training-data "
+            "consumer: ['simba']"
+        ), result.stderr[-1000:]

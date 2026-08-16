@@ -179,6 +179,54 @@ def assert_orchestrated(data: dict, query: str, gw: dict) -> None:
     }, sorted(orchestration)
 
 
+# Video queries GLiNER tags video_content at >= 0.44 across the calibrator's
+# whole 0.15-0.5 threshold range and nothing else, so on any tenant whose
+# fast-path threshold is at or below that score each routes simple to
+# search_agent with the GLiNER score as its confidence.
+GATEWAY_VIDEO_QUERIES = (
+    "search for animal videos",
+    "search for video content about AI",
+    "find videos about machine learning",
+)
+
+
+def expected_gateway_calibration(decisions: list[tuple[str, float]]) -> dict:
+    """The gateway-thresholds calibrator's result for error-free decisions.
+
+    ``decisions`` are ``(complexity, confidence)`` pairs, one per gateway span
+    the tenant produced. Mirrors optimization_cli._compute_gateway_thresholds
+    for spans that carried no ERROR status: the fast-path threshold drops
+    to 0.35 only when the complex error rate is below 0.05 AND the mean
+    confidence exceeds 0.8, otherwise it stays at the 0.4 default; the GLiNER
+    threshold is max(0.15, min(p25 * 0.8, 0.5)).
+    """
+    import statistics
+
+    confidences = [confidence for _, confidence in decisions]
+    ordered = sorted(confidences)
+    n = len(ordered)
+    pos = 0.25 * (n - 1)  # pandas' default linear quantile
+    lo, hi = int(pos), min(int(pos) + 1, n - 1)
+    p25 = ordered[lo] + (ordered[hi] - ordered[lo]) * (pos - lo)
+    mean = statistics.fmean(confidences)
+    simple_count = sum(1 for complexity, _ in decisions if complexity == "simple")
+    complex_count = sum(1 for complexity, _ in decisions if complexity == "complex")
+    fast_path = 0.35 if mean > 0.8 else 0.4
+    return {
+        "fast_path_confidence_threshold": fast_path,
+        "gliner_threshold": round(max(0.15, min(p25 * 0.8, 0.5)), 3),
+        "analysis": {
+            "total_spans": n,
+            "simple_count": simple_count,
+            "complex_count": complex_count,
+            "simple_error_rate": 0.0,
+            "complex_error_rate": 0.0,
+            "mean_confidence": round(mean, 4),
+            "p25_confidence": round(p25, 4),
+        },
+    }
+
+
 def pytest_collection_modifyitems(config, items):
     """Run async tests before playwright and select paid model tests explicitly.
 
