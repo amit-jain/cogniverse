@@ -58,7 +58,9 @@ def dispatcher():
     # GatewayDeps pydantic validation (Optional[str] rejects a MagicMock).
     sys_cfg.inference_service_urls = None
     config_manager.get_system_config.return_value = sys_cfg
-    config_manager.get_backend_config.side_effect = lambda tenant_id, service="backend": BackendConfig(tenant_id=tenant_id)
+    config_manager.get_backend_config.side_effect = (
+        lambda tenant_id, service="backend": BackendConfig(tenant_id=tenant_id)
+    )
     schema_loader = MagicMock()
     return AgentDispatcher(
         agent_registry=registry,
