@@ -857,7 +857,7 @@ def _sample_source_location_matches(
     Media fixtures record an S3 ``source_url``; text fixtures record the
     tenant-partitioned ``document_path`` of the cached original.
     """
-    if family in ("image", "video"):
+    if family in ("image", "video", "audio"):
         return _source_url_matches(
             metadata.get("source_url"),
             content_id=content_id,
@@ -897,6 +897,8 @@ def _matching_sample_results(
         identity_field, expected_document_prefix = "video_id", f"{content_id}_seg_"
     elif family == "text":
         identity_field, expected_document_prefix = "document_id", f"{content_id}_"
+    elif family == "audio":
+        identity_field, expected_document_prefix = "audio_id", f"{content_id}_"
     else:
         raise AssertionError(f"unsupported sample media_type {media_type!r}")
 
@@ -1130,6 +1132,27 @@ def _ingest_sample_video() -> None:
         media_type="video/mp4",
     )
     assert persisted_content_id == SAMPLE_VIDEO_CONTENT_ID
+
+
+def _sample_audio_path() -> Path:
+    """Ten seconds of the tracked video's real audio stream, extracted once."""
+    return _extract_audio_fixture(
+        _TRACKED_E2E_VIDEO, E2E_ARTIFACT_DIR / "tracked_video_audio.wav"
+    )
+
+
+def sample_audio_content_id() -> str:
+    """Document id the seeded corpus assigns the tracked audio clip."""
+    return _content_sha256(_sample_audio_path())
+
+
+def _ingest_sample_audio() -> str:
+    """Ensure the tracked video's audio is persisted as audio content."""
+    return _ensure_sample_content_ingested(
+        _sample_audio_path(),
+        profile="audio_clap_semantic",
+        media_type="audio/wav",
+    )
 
 
 def _ingest_sample_frame() -> str:
@@ -1750,6 +1773,7 @@ def e2e_stack(request, resolved_inference_endpoints):
         _bootstrap_tenant_and_schemas()
         _ingest_sample_video()
         _ingest_sample_frame()
+        _ingest_sample_audio()
         # The chart's ``model-pulling`` post-install hook owns engine-gated,
         # readiness-waiting, retrying Ollama model provisioning.
         _ensure_sandbox_gateway()

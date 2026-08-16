@@ -962,6 +962,7 @@ class TestSharedClusterOwnership:
         monkeypatch.setattr(e2e_conftest, "_bootstrap_tenant_and_schemas", lambda: None)
         monkeypatch.setattr(e2e_conftest, "_ingest_sample_video", lambda: None)
         monkeypatch.setattr(e2e_conftest, "_ingest_sample_frame", lambda: None)
+        monkeypatch.setattr(e2e_conftest, "_ingest_sample_audio", lambda: None)
         monkeypatch.setattr(e2e_conftest, "_ensure_sandbox_gateway", lambda: None)
         monkeypatch.setattr(
             e2e_conftest, "_restore_cronworkflows", lambda cron_restore: None
@@ -1357,6 +1358,7 @@ class TestSharedClusterOwnership:
         monkeypatch.setattr(e2e_conftest, "_bootstrap_tenant_and_schemas", lambda: None)
         monkeypatch.setattr(e2e_conftest, "_ingest_sample_video", lambda: None)
         monkeypatch.setattr(e2e_conftest, "_ingest_sample_frame", lambda: None)
+        monkeypatch.setattr(e2e_conftest, "_ingest_sample_audio", lambda: None)
         monkeypatch.setattr(e2e_conftest, "_ensure_sandbox_gateway", lambda: None)
         monkeypatch.setattr(
             e2e_conftest, "_restore_cronworkflows", lambda cron_restore: None
@@ -1642,6 +1644,7 @@ class TestSharedClusterOwnership:
         monkeypatch.setattr(e2e_conftest, "_bootstrap_tenant_and_schemas", lambda: None)
         monkeypatch.setattr(e2e_conftest, "_ingest_sample_video", lambda: None)
         monkeypatch.setattr(e2e_conftest, "_ingest_sample_frame", lambda: None)
+        monkeypatch.setattr(e2e_conftest, "_ingest_sample_audio", lambda: None)
         monkeypatch.setattr(e2e_conftest, "_ensure_sandbox_gateway", lambda: None)
         monkeypatch.setattr(
             e2e_conftest, "_restore_cronworkflows", lambda cron_restore: None
