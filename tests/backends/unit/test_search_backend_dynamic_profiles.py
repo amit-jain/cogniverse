@@ -512,3 +512,77 @@ def test_initialize_honors_enable_metrics_false():
             {"url": "http://localhost", "port": 8080, "schema_name": "s"}
         )
         assert default_backend.metrics is not None  # default path keeps it on
+
+
+def test_search_types_hits_by_resolved_profile_not_by_query_type():
+    """The profile owns the schema, so it owns the content type of every hit.
+
+    ``query_dict["type"]`` only selects a profile when none is named; the
+    search agent sends its inferred modality there alongside its active
+    profile, and the two can disagree.
+    """
+    from pathlib import Path
+
+    from vespa.io import VespaQueryResponse
+
+    from cogniverse_core.schemas.filesystem_loader import FilesystemSchemaLoader
+    from cogniverse_sdk.document import ContentType
+
+    with (
+        patch("cogniverse_vespa.search_backend.ConnectionPool"),
+        patch("cogniverse_vespa.search_backend.SearchMetrics"),
+    ):
+        backend = VespaSearchBackend(
+            config={
+                "url": "http://localhost",
+                "port": 8080,
+                "profiles": {
+                    "audio_clap_semantic": {
+                        "type": "audio",
+                        "schema_name": "audio_content",
+                    }
+                },
+            },
+            schema_loader=FilesystemSchemaLoader(Path("configs/schemas")),
+        )
+    backend.pool = None
+    backend.vespa = MagicMock()
+    backend.vespa.query.return_value = VespaQueryResponse(
+        json={
+            "root": {
+                "id": "toplevel",
+                "relevance": 1.0,
+                "fields": {"totalCount": 2},
+                "coverage": {"coverage": 100, "documents": 2},
+                "children": [
+                    {
+                        "id": "id:content:audio_content_acme_acme::clip-1",
+                        "relevance": 0.9,
+                        "fields": {"audio_id": "clip-1", "transcript": "fire"},
+                    },
+                    {
+                        "id": "id:content:audio_content_acme_acme::clip-2",
+                        "relevance": 0.8,
+                        "fields": {"audio_id": "clip-2", "transcript": "rain"},
+                    },
+                ],
+            }
+        },
+        status_code=200,
+        url="http://localhost:8080/search/",
+    )
+
+    results = backend.search(
+        query_dict={
+            "query": "podcasts about deep learning",
+            "type": "video",
+            "profile": "audio_clap_semantic",
+            "strategy": "transcript_search",
+            "tenant_id": "acme:acme",
+        }
+    )
+
+    assert [(r.document.id, r.document.content_type) for r in results] == [
+        ("clip-1", ContentType.AUDIO),
+        ("clip-2", ContentType.AUDIO),
+    ]

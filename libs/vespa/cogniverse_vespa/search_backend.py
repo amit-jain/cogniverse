@@ -974,6 +974,15 @@ class VespaSearchBackend(SearchBackend):
         # Get profile config from the same snapshot used above
         profile_config = profiles_snapshot[profile_name]
 
+        # The profile owns the schema, so its declared type — not the caller's
+        # routing hint in query_dict["type"] — types every hit.
+        declared_type = profile_config.get("type")
+        if not declared_type:
+            raise ValueError(
+                f"Profile '{profile_name}' declares no 'type'; cannot type its hits"
+            )
+        content_type = declared_type
+
         # Determine schema_name from profile (base name)
         base_schema_name = profile_config.get("schema_name", profile_name)
 

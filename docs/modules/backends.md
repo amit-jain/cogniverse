@@ -913,6 +913,10 @@ query_dict = {
 results = backend.search(query_dict)
 ```
 
+Once a profile is resolved (requested or auto-selected), its declared `type`
+owns the content type of every returned hit; the query's `type` is only the
+profile-selection key. A profile with no `type` is rejected with `ValueError`.
+
 **Request with Explicit Parameters**:
 ```python
 query_dict = {
