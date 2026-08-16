@@ -14,6 +14,7 @@ from typing import Dict, Mapping, Optional, Tuple
 
 import numpy as np
 
+from cogniverse_core.common.models.model_loaders import RemoteClapClient
 from cogniverse_core.common.models.semantic_embedder import get_semantic_embedder
 from cogniverse_foundation.config.inference_auth import inference_headers
 from cogniverse_foundation.config.inference_service import (
@@ -112,24 +113,24 @@ class AudioEmbeddingGenerator:
         )
 
     def _get_http_client(self):
-        """One pooled httpx.Client per generator — a bare httpx.post per
-        segment re-handshakes TCP/TLS for every call in a batch. The
-        generous timeout absorbs the sidecar's one-time model cold-load."""
+        """One pooled RemoteClapClient per generator for remote CLAP calls.
+
+        Audio and text embeddings reuse the same sidecar client so requests
+        share auth headers and transport state instead of rebuilding per call.
+        """
         with self._http_client_lock:
             if self._http_client is None:
-                import httpx
-
-                self._http_client = httpx.Client(
-                    timeout=600.0,
-                    headers=self._clap_headers,
+                self._http_client = RemoteClapClient(
+                    self._clap_endpoint_url,
+                    _resolved_headers=self._clap_headers,
                 )
             return self._http_client
 
     def close(self) -> None:
-        """Close the pooled sidecar client; the next remote call rebuilds it."""
+        """Close the pooled CLAP client; the next remote call rebuilds it."""
         with self._http_client_lock:
             if self._http_client is not None:
-                self._http_client.close()
+                self._http_client._close()
                 self._http_client = None
 
     @property
@@ -262,48 +263,18 @@ class AudioEmbeddingGenerator:
         audio_array: Optional[np.ndarray],
         sample_rate: int,
     ) -> np.ndarray:
-        """POST the audio to the clap_embed sidecar and return its vector.
+        """Delegate audio embedding to the shared core CLAP client.
 
         An array input is serialised to WAV first; a path is sent as raw
         file bytes."""
-        import base64
-        import io
-
-        if audio_path is not None:
-            raw = Path(audio_path).read_bytes()
-        else:
-            import soundfile as sf
-
-            buf = io.BytesIO()
-            sf.write(buf, audio_array, sample_rate, format="WAV")
-            raw = buf.getvalue()
-
-        return self._post_remote(
-            "/embed/audio",
-            {"audio_b64": base64.b64encode(raw).decode()},
+        return self._get_http_client().generate_acoustic_embedding(
+            audio_path=audio_path,
+            audio_array=audio_array,
+            sample_rate=sample_rate,
         )
 
     def _remote_acoustic_text_embedding(self, text: str) -> np.ndarray:
-        return self._post_remote("/embed/text", {"text": text})
-
-    def _post_remote(self, path: str, payload: Dict[str, str]) -> np.ndarray:
-        import httpx
-
-        url = f"{self._clap_endpoint_url}{path}"
-        try:
-            response = self._get_http_client().post(url, json=payload)
-            response.raise_for_status()
-        except httpx.HTTPError as exc:
-            raise RuntimeError(
-                f"CLAP request to {url} failed: {type(exc).__name__}: {exc}"
-            ) from exc
-        try:
-            vector = response.json()["vec"]
-        except (KeyError, TypeError, ValueError) as exc:
-            raise RuntimeError(
-                f"CLAP request to {url} returned an invalid embedding response"
-            ) from exc
-        return np.asarray(vector, dtype=np.float32)
+        return self._get_http_client().generate_acoustic_text_embedding(text)
 
     def generate_acoustic_text_embedding(self, text: str) -> np.ndarray:
         """Generate a 512-dim text embedding in CLAP's joint audio-text space.
