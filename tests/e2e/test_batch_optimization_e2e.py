@@ -144,6 +144,10 @@ GATEWAY_QUERIES = [
     "search for music theory lectures",
 ]
 
+# Live cue-less gateway/orchestrator calls measured 176s, 136s, and 229s here;
+# use the shared 480s endpoint budget from ORCHESTRATOR_PROCESS_TIMEOUT_S.
+GATEWAY_PROCESS_TIMEOUT_S = 480.0
+
 COMPLEX_QUERIES = [
     "analyze the video transcripts for key themes",
     "compare videos and documents about neural networks then summarize",
@@ -175,7 +179,7 @@ def _call_agent(agent_name: str, query: str, tenant_id: str = TENANT_ID) -> None
             "context": {"tenant_id": tenant_id},
             "top_k": 3,
         },
-        timeout=120.0,
+        timeout=GATEWAY_PROCESS_TIMEOUT_S,
     )
     assert resp.status_code == 200, (
         f"{agent_name} rejected span-seeding query {query!r}: "
@@ -577,10 +581,10 @@ def seeded_gateway_traffic():
     ]
     # The gateway span is emitted as soon as the gateway CLASSIFIES the
     # query — the downstream agent's answer is irrelevant here, so keep a
-    # short per-query budget and tolerate individual slow dispatches; one
+    # 480s per-query budget and tolerate individual slow dispatches; one
     # classified query is enough for the job's span analysis.
     seeded = 0
-    with httpx.Client(base_url=RUNTIME, timeout=120.0) as client:
+    with httpx.Client(base_url=RUNTIME, timeout=GATEWAY_PROCESS_TIMEOUT_S) as client:
         for query in queries:
             try:
                 resp = client.post(
@@ -596,7 +600,9 @@ def seeded_gateway_traffic():
                     seeded += 1
             except httpx.HTTPError:
                 continue
-    assert seeded >= 1, "No gateway seeding query succeeded within 120s each"
+    assert seeded >= 1, (
+        f"No gateway seeding query succeeded within {GATEWAY_PROCESS_TIMEOUT_S:.0f}s each"
+    )
     # OTLP export is batched; give the exporter time to flush to Phoenix.
     time.sleep(15)
 
