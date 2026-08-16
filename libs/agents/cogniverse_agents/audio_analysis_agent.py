@@ -19,13 +19,13 @@ import dspy
 from pydantic import Field as PydanticField
 from pydantic import PrivateAttr, field_validator, model_validator
 
-from cogniverse_core.registries.backend_registry import get_backend_registry
 from cogniverse_agents.search.vespa_query import (
     VespaSearchError,
     vespa_search_children,
 )
 from cogniverse_core.agents.a2a_agent import A2AAgent, A2AAgentConfig
 from cogniverse_core.agents.base import AgentDeps, AgentInput, AgentOutput
+from cogniverse_core.registries.backend_registry import get_backend_registry
 from cogniverse_foundation.config.inference_auth import inference_headers
 from cogniverse_runtime.ingestion.processors.audio_embedding_generator import (
     AudioEmbeddingGenerator,
@@ -619,7 +619,9 @@ class AudioAnalysisAgent(
                 logger.info("Shared audio search backend initialized")
             return self._shared_backend
 
-    def _build_backend_query(self, query: str, strategy: str, limit: int) -> Dict[str, Any]:
+    def _build_backend_query(
+        self, query: str, strategy: str, limit: int
+    ) -> Dict[str, Any]:
         return {
             "query": query,
             "type": "audio",
@@ -646,18 +648,19 @@ class AudioAnalysisAgent(
             metadata=metadata,
         )
 
-    def _search_backend_mode(
+    async def _search_backend_mode(
         self, query: str, strategy: str, limit: int
     ) -> List[AudioResult]:
         backend = self._get_backend()
         query_dict = self._build_backend_query(query, strategy, limit)
-        search_results = backend.search(query_dict)
+        # backend.search is synchronous; keep the async audio API responsive.
+        search_results = await asyncio.to_thread(backend.search, query_dict)
         return [self._search_result_to_audio_result(hit) for hit in search_results]
 
     async def _search_transcript(self, query: str, limit: int) -> List[AudioResult]:
         """Search by transcript text using backend BM25."""
         try:
-            return self._search_backend_mode(query, "transcript_search", limit)
+            return await self._search_backend_mode(query, "transcript_search", limit)
         except Exception as e:
             logger.error(f"❌ Transcript search failed: {e}")
             raise
@@ -665,7 +668,7 @@ class AudioAnalysisAgent(
     async def _search_semantic(self, query: str, limit: int) -> List[AudioResult]:
         """Search by ColBERT semantic similarity through the backend."""
         try:
-            return self._search_backend_mode(query, "phased_semantic", limit)
+            return await self._search_backend_mode(query, "phased_semantic", limit)
         except Exception as e:
             logger.error(f"❌ Semantic search failed: {e}")
             raise
@@ -748,7 +751,7 @@ class AudioAnalysisAgent(
     async def _search_hybrid(self, query: str, limit: int) -> List[AudioResult]:
         """Search by semantic+BM25 hybrid text retrieval through the backend."""
         try:
-            return self._search_backend_mode(query, "hybrid_semantic_bm25", limit)
+            return await self._search_backend_mode(query, "hybrid_semantic_bm25", limit)
         except Exception as e:
             logger.error(f"❌ Hybrid search failed: {e}")
             raise

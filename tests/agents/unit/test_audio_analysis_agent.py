@@ -16,7 +16,6 @@ from types import SimpleNamespace
 from unittest.mock import AsyncMock, MagicMock, PropertyMock, patch
 
 import numpy as np
-
 import pytest
 import requests
 
@@ -516,9 +515,7 @@ class TestAudioAnalysisAgent:
     async def test_search_audio_acoustic_mode_still_uses_clap(self):
         query_embedding = np.ones(512, dtype=np.float32)
         self.agent._embedding_generator = MagicMock()
-        self.agent._embedding_generator.generate_acoustic_text_embedding.return_value = (
-            query_embedding
-        )
+        self.agent._embedding_generator.generate_acoustic_text_embedding.return_value = query_embedding
         self.agent._search_by_acoustic_embedding = AsyncMock(return_value=[])
         self.agent._get_backend = MagicMock(
             side_effect=AssertionError("backend should not be used")
@@ -1009,10 +1006,7 @@ class TestAudioAnalysisAgent:
 
     @pytest.mark.asyncio
     @patch.object(AudioAnalysisAgent, "audio_transcriber", new_callable=PropertyMock)
-    @patch("requests.post")
-    async def test_find_similar_audio_semantic(
-        self, mock_post, mock_transcriber, tmp_path
-    ):
+    async def test_find_similar_audio_semantic(self, mock_transcriber, tmp_path):
         """Test finding similar audio using semantic similarity"""
         # Mock transcriber
         mock_transcriber_obj = MagicMock()
@@ -1022,12 +1016,7 @@ class TestAudioAnalysisAgent:
             "segments": [],
             "language": "en",
         }
-
-        # Mock Vespa response
-        mock_response = MagicMock()
-        mock_response.status_code = 200
-        mock_response.json.return_value = {"root": {"children": []}}
-        mock_post.return_value = mock_response
+        self.agent._search_transcript = AsyncMock(return_value=["stub"])
 
         clip = tmp_path / "ref.mp3"
         clip.write_bytes(b"")
@@ -1035,7 +1024,7 @@ class TestAudioAnalysisAgent:
         self.agent._locator.localize.return_value = clip
         self.agent._locator.to_canonical_uri.return_value = f"file://{clip}"
 
-        await self.agent.find_similar_audio(
+        results = await self.agent.find_similar_audio(
             reference_audio_url="http://example.com/ref.mp3",
             similarity_type="semantic",
             limit=20,
@@ -1043,8 +1032,8 @@ class TestAudioAnalysisAgent:
 
         # Verify transcription was called
         mock_transcriber_obj.transcribe_audio.assert_called_once()
-        # Verify Vespa search was called
-        mock_post.assert_called_once()
+        self.agent._search_transcript.assert_awaited_once_with("Test transcription", 20)
+        assert results == ["stub"]
 
     def test_get_audio_path_local(self, tmp_path):
         """Test getting local audio path"""
@@ -1134,29 +1123,39 @@ class TestAudioSearchEventLoop:
         agent = object.__new__(AudioAnalysisAgent)
         agent._tenant_id = "acme:acme"
         agent._vespa_endpoint = "http://vespa:8080"
+        agent._shared_backend = None
+        agent._shared_backend_lock = threading.Lock()
+        agent._backend_type = "vespa"
+        agent._backend_config = {}
+        agent.config_manager = None
+        agent.schema_loader = None
         for k, v in attrs.items():
             setattr(agent, k, v)
         return agent
 
     @pytest.mark.asyncio
-    async def test_search_transcript_offloads_blocking_post(self, monkeypatch):
-        """Representative of the three async search methods, which share the
-        same offload wrapper. If the post ran on the loop the releaser could
-        never run and the gather would deadlock."""
+    async def test_search_transcript_offloads_blocking_backend_search(
+        self, monkeypatch
+    ):
+        """Transcript search offloads the synchronous backend call off loop."""
         release = threading.Event()
 
-        class _Resp:
-            status_code = 200
+        def blocking_search(query_dict):
+            assert query_dict == {
+                "query": "q",
+                "type": "audio",
+                "profile": "audio_clap_semantic",
+                "strategy": "transcript_search",
+                "tenant_id": "acme:acme",
+                "top_k": 5,
+            }
+            assert release.wait(timeout=5), "event loop was blocked by backend.search"
+            return []
 
-            def json(self):
-                return {"root": {"children": []}}
-
-        def blocking_post(url, json=None, timeout=None):
-            assert release.wait(timeout=5), "event loop was blocked by requests.post"
-            return _Resp()
-
-        monkeypatch.setattr("requests.post", blocking_post)
         agent = self._bare_agent()
+        agent._get_backend = MagicMock(
+            return_value=SimpleNamespace(search=blocking_search)
+        )
 
         async def releaser():
             await asyncio.sleep(0.05)
@@ -1167,6 +1166,7 @@ class TestAudioSearchEventLoop:
             timeout=5,
         )
         assert results == []
+        agent._get_backend.assert_called_once()
 
     @pytest.mark.asyncio
     async def test_transcribe_via_sidecar_offloaded(self, monkeypatch, tmp_path):

@@ -2515,8 +2515,8 @@ class AgentDispatcher:
             AudioAnalysisAgent,
             AudioAnalysisDeps,
         )
-        from cogniverse_runtime.admin.tenant_manager import get_backend
         from cogniverse_foundation.config.utils import get_config
+        from cogniverse_runtime.admin.tenant_manager import get_backend
         from cogniverse_vespa.config_utils import calculate_config_port
 
         # Tenant schemas deploy on first ingest, so a tenant that never
