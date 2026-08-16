@@ -2185,6 +2185,8 @@ class AgentDispatcher:
             "generation_type": result.generation_type,
             "routed_to": result.routed_to,
             "confidence": result.confidence,
+            "fast_path_confidence_threshold": result.fast_path_confidence_threshold,
+            "gliner_threshold": result.gliner_threshold,
         }
 
         # Output rails on the final user-facing response (front-door exit).

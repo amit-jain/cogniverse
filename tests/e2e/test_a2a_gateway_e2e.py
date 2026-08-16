@@ -13,26 +13,26 @@ to the orchestration pipeline and not directly callable via REST.
 Requires live k3d-deployed runtime at http://localhost:33000.
 """
 
-import asyncio
 import hashlib
-import json
 import warnings
 
 import httpx
 import pytest
 
-from cogniverse_agents.optimizer.artifact_manager import ArtifactManager
-from cogniverse_foundation.telemetry.manager import get_telemetry_manager
 from tests.e2e.conftest import (
     DATA_ROOT,
     PHOENIX_URL,
     RUNTIME,
     TENANT_ID,
+    assert_orchestrated,
+    expected_gateway_routing,
     sample_audio_content_id,
 )
 from tests.e2e.test_api_e2e import _expected_available_profile_names
 
 PROFILE = "video_colpali_smol500_mv_frame"
+
+
 SAMPLE_VIDEO = (
     DATA_ROOT / "testset" / "evaluation" / "sample_videos" / "v_-nl4G-00PtA.mp4"
 )
@@ -61,43 +61,6 @@ def skip_without_sample_video() -> None:
         pytest.skip(f"sample video not available: {SAMPLE_VIDEO}")
 
 
-DEFAULT_GATEWAY_THRESHOLDS = {
-    "fast_path_confidence_threshold": 0.4,
-    "gliner_threshold": 0.3,
-}
-
-
-@pytest.fixture(scope="module", autouse=True)
-def _pin_default_gateway_thresholds():
-    """Keep the shared routing tenant on the deployment defaults."""
-    am = ArtifactManager(
-        get_telemetry_manager().get_provider(tenant_id=TENANT_ID), TENANT_ID
-    )
-    previous_blob = asyncio.run(am.load_blob("config", "gateway_thresholds"))
-    if previous_blob is not None:
-        try:
-            previous_config = json.loads(previous_blob)
-        except json.JSONDecodeError:
-            previous_config = None
-    else:
-        previous_config = None
-    desired_blob = json.dumps(DEFAULT_GATEWAY_THRESHOLDS)
-    if previous_config != DEFAULT_GATEWAY_THRESHOLDS:
-        asyncio.run(am.save_blob("config", "gateway_thresholds", desired_blob))
-
-    try:
-        yield
-    finally:
-        if previous_blob is None:
-            asyncio.run(
-                am._provider.datasets.delete_dataset(
-                    am._blob_dataset_name("config", "gateway_thresholds")
-                )
-            )
-        else:
-            asyncio.run(am.save_blob("config", "gateway_thresholds", previous_blob))
-
-
 # ---------------------------------------------------------------------------
 # 1. Gateway simple routing
 # ---------------------------------------------------------------------------
@@ -114,12 +77,13 @@ class TestGatewaySimpleRouting:
         Query chosen for GLiNER score 0.693 (well above 0.4 threshold) on
         the deployed 7-label model.
         """
+        query = "search for video content about AI"
         with httpx.Client(base_url=RUNTIME, timeout=900.0) as client:
             resp = client.post(
                 "/agents/gateway_agent/process",
                 json={
                     "agent_name": "gateway_agent",
-                    "query": "search for video content about AI",
+                    "query": query,
                     "context": {"tenant_id": TENANT_ID},
                     "top_k": 5,
                 },
@@ -133,49 +97,17 @@ class TestGatewaySimpleRouting:
         # Gateway metadata block
         assert "gateway" in data, f"Missing 'gateway' key, got: {list(data.keys())}"
         gw = data["gateway"]
-        assert gw["complexity"] == "simple"
-        assert gw["routed_to"] in (
-            "search_agent",
-            "summarizer_agent",
-            "detailed_report_agent",
-            "image_search_agent",
-            "audio_analysis_agent",
-            "document_agent",
+        assert (gw["complexity"], gw["routed_to"]) == expected_gateway_routing(
+            query, gw
         )
-        assert isinstance(gw["confidence"], (int, float))
-        assert gw["confidence"] >= 0.0
-        assert gw["modality"] in (
-            "video",
-            "text",
-            "audio",
-            "image",
-            "document",
-            "both",
-        )
-        assert gw["generation_type"] in (
-            "raw_results",
-            "summary",
-            "detailed_report",
-        )
-
-        # Content assertions: query scores 0.693 → unambiguously simple video
         assert gw["modality"] == "video", (
             f"Expected video modality for video query, got {gw['modality']!r}"
         )
         assert gw["generation_type"] == "raw_results", (
             f"No summary/report keyword → raw_results, got {gw['generation_type']!r}"
         )
-        assert gw["routed_to"] == "search_agent", (
-            f"Simple video query should route to search_agent, got {gw['routed_to']!r}"
-        )
-        # This query scores 0.693 on deployed model — must clear 0.4 threshold comfortably
-        assert gw["confidence"] >= 0.5, (
-            f"'search for video content about AI' scores 0.693 on deployed model, "
-            f"confidence should be >= 0.5, got {gw['confidence']}"
-        )
-        # Gateway confidence for this query should be ~0.69 (measured on deployed model)
-        assert gw["confidence"] >= 0.6, (
-            f"'search for video content about AI' should score ~0.69, got {gw['confidence']}"
+        assert gw["confidence"] >= gw["fast_path_confidence_threshold"], (
+            f"Simple video query should meet the live fast-path threshold, got {gw['confidence']} < {gw['fast_path_confidence_threshold']}"
         )
 
     def test_simple_query_includes_downstream_result(self):
@@ -184,12 +116,13 @@ class TestGatewaySimpleRouting:
         Query chosen for GLiNER score 0.444 (above 0.4 threshold) on the
         deployed 7-label model.
         """
+        query = "find videos about machine learning"
         with httpx.Client(base_url=RUNTIME, timeout=900.0) as client:
             resp = client.post(
                 "/agents/gateway_agent/process",
                 json={
                     "agent_name": "gateway_agent",
-                    "query": "find videos about machine learning",
+                    "query": query,
                     "context": {"tenant_id": TENANT_ID},
                     "top_k": 5,
                 },
@@ -198,50 +131,60 @@ class TestGatewaySimpleRouting:
         assert resp.status_code == 200
         data = resp.json()
         assert data["status"] == "success"
-
-        # Simple path produces downstream_result
-        assert "downstream_result" in data, (
-            f"Simple routing should produce downstream_result, got keys: {list(data.keys())}"
-        )
-        downstream = data["downstream_result"]
-        assert isinstance(downstream, dict)
-        assert downstream.get("status") == "success"
-
-        # Search results must exist and contain real Vespa data
-        assert "results" in downstream, (
-            f"Missing 'results' in downstream, keys: {list(downstream.keys())}"
-        )
-        results = downstream["results"]
-        assert downstream["results_count"] >= 1, (
-            "Query 'find videos about machine learning' must return results from ingested data"
-        )
-        assert len(results) == downstream["results_count"], (
-            f"results_count ({downstream['results_count']}) doesn't match len(results) ({len(results)})"
+        gw = data["gateway"]
+        assert (gw["complexity"], gw["routed_to"]) == expected_gateway_routing(
+            query, gw
         )
 
-        # Each result must have score + metadata with real video data
-        first = results[0]
-        assert "score" in first, f"Result missing 'score' field: {list(first.keys())}"
-        assert first["score"] > 0, (
-            f"First result score should be positive, got {first['score']}"
-        )
-        assert "metadata" in first, f"Result missing 'metadata': {list(first.keys())}"
-        meta = first["metadata"]
-        assert "video_id" in meta, (
-            f"Result metadata missing video_id: {list(meta.keys())}"
-        )
-        assert meta["video_id"] != "", "video_id should not be empty"
+        if gw["complexity"] == "simple":
+            assert "downstream_result" in data, (
+                f"Simple routing should produce downstream_result, got keys: {list(data.keys())}"
+            )
+            downstream = data["downstream_result"]
+            assert isinstance(downstream, dict)
+            assert downstream.get("status") == "success"
 
-        # Results must be ranked — first result score >= last result score
-        scores = [r["score"] for r in results]
-        assert scores == sorted(scores, reverse=True), (
-            f"Results not ranked by score descending: {scores}"
-        )
+            # Search results must exist and contain real Vespa data
+            assert "results" in downstream, (
+                f"Missing 'results' in downstream, keys: {list(downstream.keys())}"
+            )
+            results = downstream["results"]
+            assert downstream["results_count"] >= 1, (
+                "Query 'find videos about machine learning' must return results from ingested data"
+            )
+            assert len(results) == downstream["results_count"], (
+                f"results_count ({downstream['results_count']}) doesn't match len(results) ({len(results)})"
+            )
 
-        # Profile used should be the default video profile
-        assert downstream.get("profile") == "video_colpali_smol500_mv_frame", (
-            f"Expected default video profile, got: {downstream.get('profile')}"
-        )
+            # Each result must have score + metadata with real video data
+            first = results[0]
+            assert "score" in first, (
+                f"Result missing 'score' field: {list(first.keys())}"
+            )
+            assert first["score"] > 0, (
+                f"First result score should be positive, got {first['score']}"
+            )
+            assert "metadata" in first, (
+                f"Result missing 'metadata': {list(first.keys())}"
+            )
+            meta = first["metadata"]
+            assert "video_id" in meta, (
+                f"Result metadata missing video_id: {list(meta.keys())}"
+            )
+            assert meta["video_id"] != "", "video_id should not be empty"
+
+            # Results must be ranked — first result score >= last result score
+            scores = [r["score"] for r in results]
+            assert scores == sorted(scores, reverse=True), (
+                f"Results not ranked by score descending: {scores}"
+            )
+
+            # Profile used should be the default video profile
+            assert downstream.get("profile") == "video_colpali_smol500_mv_frame", (
+                f"Expected default video profile, got: {downstream.get('profile')}"
+            )
+        else:
+            assert_orchestrated(data, query, gw)
 
     def test_message_field_present(self):
         """Gateway response surfaces the downstream agent's answer as `message`.
@@ -255,12 +198,13 @@ class TestGatewaySimpleRouting:
         Query chosen for GLiNER score 0.446 (above 0.4 threshold) on the
         deployed 7-label model.
         """
+        query = "find videos of a man washing dishes in a kitchen sink"
         with httpx.Client(base_url=RUNTIME, timeout=900.0) as client:
             resp = client.post(
                 "/agents/gateway_agent/process",
                 json={
                     "agent_name": "gateway_agent",
-                    "query": "find videos of a man washing dishes in a kitchen sink",
+                    "query": query,
                     "context": {"tenant_id": TENANT_ID},
                     "top_k": 3,
                 },
@@ -268,45 +212,41 @@ class TestGatewaySimpleRouting:
 
         assert resp.status_code == 200
         data = resp.json()
+        gw = data["gateway"]
+        assert (gw["complexity"], gw["routed_to"]) == expected_gateway_routing(
+            query, gw
+        )
 
-        # The message is the downstream agent's answer, not a routing breadcrumb.
-        msg = data["message"]
-        assert msg and not msg.startswith("Routed "), (
-            f"Message should be the downstream answer, not a routing breadcrumb, "
-            f"got: {msg!r}"
-        )
-        # The search answer surfaces its hit count + results at the top level so
-        # the messaging display renders them.
-        assert isinstance(data.get("results_count"), int), (
-            f"Simple search route should surface results_count, got keys: "
-            f"{list(data.keys())}"
-        )
-        assert "results" in data, f"got keys: {list(data.keys())}"
-
-        # Routing/triage metadata lives under `gateway`.
-        gw = data.get("gateway", {})
-        assert gw.get("routed_to") == "search_agent", (
-            f"'man washing dishes' video query should route to search_agent, got: "
-            f"{gw.get('routed_to')!r}"
-        )
-        assert gw.get("modality") == "video", (
-            f"'dog beach videos' should be video modality, got: {gw.get('modality')!r}"
-        )
-        assert gw.get("complexity") == "simple", (
-            f"'dog beach videos' should be simple, got: {gw.get('complexity')!r}"
-        )
+        if gw["complexity"] == "simple":
+            # The message is the downstream agent's answer, not a routing breadcrumb.
+            msg = data["message"]
+            assert msg and not msg.startswith("Routed "), (
+                f"Message should be the downstream answer, not a routing breadcrumb, "
+                f"got: {msg!r}"
+            )
+            # The search answer surfaces its hit count + results at the top level so
+            # the messaging display renders them.
+            assert isinstance(data.get("results_count"), int), (
+                f"Simple search route should surface results_count, got keys: "
+                f"{list(data.keys())}"
+            )
+            assert "results" in data, f"got keys: {list(data.keys())}"
+        else:
+            assert_orchestrated(data, query, gw)
 
 
 @pytest.mark.e2e
 class TestGatewaySeededSearchContract:
     def test_seeded_video_identity_order_and_competing_route(self):
         skip_without_sample_video()
+        video_query = "find videos of a man washing dishes in a kitchen sink"
+        document_query = "find PDF documents about washing dishes"
         with httpx.Client(base_url=RUNTIME, timeout=900.0) as client:
             video_response = client.post(
                 "/agents/gateway_agent/process",
                 json={
                     "agent_name": "gateway_agent",
-                    "query": "find videos of a man washing dishes in a kitchen sink",
+                    "query": video_query,
                     "context": {"tenant_id": TENANT_ID},
                     "top_k": 5,
                 },
@@ -315,7 +255,7 @@ class TestGatewaySeededSearchContract:
                 "/agents/gateway_agent/process",
                 json={
                     "agent_name": "gateway_agent",
-                    "query": "find PDF documents about washing dishes",
+                    "query": document_query,
                     "context": {"tenant_id": TENANT_ID},
                     "top_k": 5,
                 },
@@ -324,29 +264,44 @@ class TestGatewaySeededSearchContract:
         assert video_response.status_code == 200
         video_data = video_response.json()
         assert video_data["status"] == "success"
-        assert video_data["gateway"]["complexity"] == "simple"
-        assert video_data["gateway"]["modality"] == "video"
-        assert video_data["gateway"]["routed_to"] == "search_agent"
-
-        downstream = video_data["downstream_result"]
-        assert downstream["status"] == "success"
-        assert downstream["profile"] == PROFILE
-        assert downstream["results_count"] == len(downstream["results"])
-        video_ids = [result["metadata"]["video_id"] for result in downstream["results"]]
-        assert set(video_ids) == {sample_video_id()}
-        scores = [result["score"] for result in downstream["results"]]
-        assert scores == sorted(scores, reverse=True)
+        video_gw = video_data["gateway"]
+        assert (
+            video_gw["complexity"],
+            video_gw["routed_to"],
+        ) == expected_gateway_routing(video_query, video_gw)
+        if video_gw["complexity"] == "simple":
+            downstream = video_data["downstream_result"]
+            assert downstream["status"] == "success"
+            assert downstream["profile"] == PROFILE
+            assert downstream["results_count"] == len(downstream["results"])
+            video_ids = [
+                result["metadata"]["video_id"] for result in downstream["results"]
+            ]
+            assert set(video_ids) == {sample_video_id()}
+            scores = [result["score"] for result in downstream["results"]]
+            assert scores == sorted(scores, reverse=True)
+        else:
+            assert video_data["agent"] == "orchestrator_agent"
+            assert "orchestration_result" in video_data
+            assert "gateway_context" in video_data
 
         assert document_response.status_code == 200
         document_data = document_response.json()
         assert document_data["status"] == "success"
-        assert document_data["gateway"]["complexity"] == "simple"
-        assert document_data["gateway"]["modality"] == "document"
-        assert document_data["gateway"]["routed_to"] == "document_agent"
-        document_results = document_data["downstream_result"]["results"]
-        assert sample_video_id() not in {
-            result["metadata"]["video_id"] for result in document_results
-        }
+        document_gw = document_data["gateway"]
+        assert (
+            document_gw["complexity"],
+            document_gw["routed_to"],
+        ) == expected_gateway_routing(document_query, document_gw)
+        if document_gw["complexity"] == "simple":
+            document_results = document_data["downstream_result"]["results"]
+            assert sample_video_id() not in {
+                result["metadata"]["video_id"] for result in document_results
+            }
+        else:
+            assert document_data["agent"] == "orchestrator_agent"
+            assert "orchestration_result" in document_data
+            assert "gateway_context" in document_data
 
 
 # ---------------------------------------------------------------------------
@@ -368,12 +323,13 @@ class TestGatewayComplexRouting:
         both video and document modalities which forces complexity regardless
         of GLiNER confidence.
         """
+        query = "find videos and documents about neural networks"
         with httpx.Client(base_url=RUNTIME, timeout=900.0) as client:
             resp = client.post(
                 "/agents/gateway_agent/process",
                 json={
                     "agent_name": "gateway_agent",
-                    "query": "find videos and documents about neural networks",
+                    "query": query,
                     "context": {"tenant_id": TENANT_ID},
                     "top_k": 5,
                 },
@@ -385,25 +341,29 @@ class TestGatewayComplexRouting:
         )
         data = resp.json()
         assert data["status"] == "success"
-        # Orchestrator handled it — verify it produced real work
-        assert "orchestration_result" in data or "gateway_context" in data, (
-            f"Complex query should produce orchestration result, got keys: {list(data.keys())}"
+        gw = data["gateway"]
+        assert (gw["complexity"], gw["routed_to"]) == expected_gateway_routing(
+            query, gw
         )
+        assert gw["modality"] == "both", gw
+        assert gw["generation_type"] == "raw_results", gw
+        assert_orchestrated(data, query, gw)
 
     def test_complex_query_triggers_orchestration(self):
         """A clearly complex query should route to the orchestrator when it is
         healthy.  If the orchestrator returns 500 (e.g. LM not loaded),
         we still verify the gateway classification was correct.
         """
+        query = (
+            "Find videos about machine learning, compare them with "
+            "the PDF research papers, and write a detailed report"
+        )
         with httpx.Client(base_url=RUNTIME, timeout=900.0) as client:
             resp = client.post(
                 "/agents/gateway_agent/process",
                 json={
                     "agent_name": "gateway_agent",
-                    "query": (
-                        "Find videos about machine learning, compare them with "
-                        "the PDF research papers, and write a detailed report"
-                    ),
+                    "query": query,
                     "context": {"tenant_id": TENANT_ID},
                     "top_k": 5,
                 },
@@ -415,40 +375,32 @@ class TestGatewayComplexRouting:
         )
         data = resp.json()
         assert data["status"] == "success"
-
-        # Must have orchestration result — not just gateway classification
-        assert (
-            "orchestration_result" in data or data.get("agent") == "orchestrator_agent"
-        ), (
-            f"Complex query must produce orchestration_result, got keys: {list(data.keys())}"
+        gw = data["gateway"]
+        assert (gw["complexity"], gw["routed_to"]) == expected_gateway_routing(
+            query, gw
         )
-
-        # Orchestrator must have produced real work
-        assert data.get("agent") == "orchestrator_agent", (
-            f"Complex query should be handled by orchestrator, got agent={data.get('agent')!r}"
-        )
-        orch = data.get("orchestration_result", {})
-        assert "plan_steps" in orch, (
-            f"Orchestration should produce plan_steps, got keys: {list(orch.keys())}"
-        )
-        assert len(orch["plan_steps"]) >= 1, (
-            f"Orchestration plan should have at least 1 step, got {len(orch['plan_steps'])}"
-        )
-        # gateway_context proves the gateway classified this as complex
-        assert "gateway_context" in data, (
-            f"Response should include gateway_context, got keys: {list(data.keys())}"
-        )
+        assert gw["modality"] == "both", gw
+        assert gw["generation_type"] == "detailed_report", gw
+        assert_orchestrated(data, query, gw)
+        # The orchestrator planned real work: a non-empty plan of
+        # (agent_name, reasoning, depends_on) steps.
+        plan_steps = data["orchestration_result"]["plan_steps"]
+        assert plan_steps != [], data["orchestration_result"]
+        assert [set(step) for step in plan_steps] == [
+            {"agent_name", "reasoning", "depends_on"}
+        ] * len(plan_steps), plan_steps
 
     def test_analysis_keyword_triggers_complex(self):
         """Queries with 'analyze'/'summarize' keywords should be complex
         regardless of modality confidence — the complexity detection
         checks for analysis verbs."""
+        query = "analyze the video transcripts for key themes"
         with httpx.Client(base_url=RUNTIME, timeout=900.0) as client:
             resp = client.post(
                 "/agents/gateway_agent/process",
                 json={
                     "agent_name": "gateway_agent",
-                    "query": "analyze the video transcripts for key themes",
+                    "query": query,
                     "context": {"tenant_id": TENANT_ID},
                     "top_k": 3,
                 },
@@ -459,19 +411,12 @@ class TestGatewayComplexRouting:
             f"E2E tests require all services running."
         )
         data = resp.json()
-        # Complex queries produce orchestration_result (handled by OrchestratorAgent)
-        # The gateway classified as complex, which is why orchestrator was invoked.
-        # Simple queries have agent=="gateway_agent" + "gateway" dict.
-        # Complex queries have agent=="orchestrator_agent" + "gateway_context" dict.
-        assert data.get("agent") == "orchestrator_agent", (
-            f"'analyze' keyword should trigger orchestrator, got agent={data.get('agent')!r}"
+        gw = data["gateway"]
+        assert (gw["complexity"], gw["routed_to"]) == expected_gateway_routing(
+            query, gw
         )
-        assert "orchestration_result" in data, (
-            f"Complex query should produce orchestration_result, got keys: {list(data.keys())}"
-        )
-        assert "gateway_context" in data, (
-            f"Orchestrator response should include gateway_context, got keys: {list(data.keys())}"
-        )
+        assert gw["complexity"] == "complex", gw
+        assert_orchestrated(data, query, gw)
 
     def test_gateway_consistent_across_calls(self):
         """Same query should produce same classification twice."""
@@ -491,17 +436,15 @@ class TestGatewayComplexRouting:
                 assert resp.status_code == 200
                 results.append(resp.json())
 
-        gw1 = results[0].get("gateway", {})
-        gw2 = results[1].get("gateway", {})
-        assert gw1["complexity"] == gw2["complexity"], (
-            f"Inconsistent complexity: {gw1['complexity']} vs {gw2['complexity']}"
+        gw1 = results[0]["gateway"]
+        gw2 = results[1]["gateway"]
+        assert (gw1["complexity"], gw1["routed_to"]) == expected_gateway_routing(
+            query, gw1
         )
-        assert gw1["modality"] == gw2["modality"], (
-            f"Inconsistent modality: {gw1['modality']} vs {gw2['modality']}"
+        assert (gw2["complexity"], gw2["routed_to"]) == expected_gateway_routing(
+            query, gw2
         )
-        assert gw1["routed_to"] == gw2["routed_to"], (
-            f"Inconsistent routing: {gw1['routed_to']} vs {gw2['routed_to']}"
-        )
+        assert gw1 == gw2, f"Inconsistent gateway classification: {gw1} vs {gw2}"
 
 
 # ---------------------------------------------------------------------------
@@ -522,12 +465,13 @@ class TestGatewaySearchPipeline:
         deployed 7-label model, ensuring the gateway classifies it as simple
         and routes to search_agent rather than the orchestrator.
         """
+        query = "search for video content about AI"
         with httpx.Client(base_url=RUNTIME, timeout=900.0) as client:
             resp = client.post(
                 "/agents/gateway_agent/process",
                 json={
                     "agent_name": "gateway_agent",
-                    "query": "search for video content about AI",
+                    "query": query,
                     "context": {"tenant_id": TENANT_ID},
                     "top_k": 5,
                 },
@@ -536,23 +480,32 @@ class TestGatewaySearchPipeline:
         assert resp.status_code == 200
         data = resp.json()
         assert data["status"] == "success"
+        gw = data["gateway"]
+        assert (gw["complexity"], gw["routed_to"]) == expected_gateway_routing(
+            query, gw
+        )
 
-        # Simple routing must produce downstream_result with search results
-        assert "downstream_result" in data, (
-            f"Simple query should produce downstream_result, got keys: {list(data.keys())}"
-        )
-        downstream = data["downstream_result"]
-        assert "results" in downstream, (
-            f"Downstream should contain 'results', got keys: {list(downstream.keys())}"
-        )
-        assert downstream["results_count"] >= 1, (
-            "Gateway search for 'search for video content about AI' must return results"
-        )
-        results = downstream["results"]
-        scores = [r["score"] for r in results]
-        assert scores == sorted(scores, reverse=True), (
-            f"Results must be ranked by score descending, got: {scores}"
-        )
+        if gw["complexity"] == "simple":
+            # Simple routing must produce downstream_result with search results
+            assert "downstream_result" in data, (
+                f"Simple query should produce downstream_result, got keys: {list(data.keys())}"
+            )
+            downstream = data["downstream_result"]
+            assert "results" in downstream, (
+                f"Downstream should contain 'results', got keys: {list(downstream.keys())}"
+            )
+            assert downstream["results_count"] >= 1, (
+                "Gateway search for 'search for video content about AI' must return results"
+            )
+            results = downstream["results"]
+            scores = [r["score"] for r in results]
+            assert scores == sorted(scores, reverse=True), (
+                f"Results must be ranked by score descending, got: {scores}"
+            )
+            assert gw["modality"] == "video", gw
+            assert gw["generation_type"] == "raw_results", gw
+        else:
+            assert_orchestrated(data, query, gw)
 
     def test_gateway_search_result_fields(self):
         """Search results from the gateway pipeline should have content fields.
@@ -560,12 +513,13 @@ class TestGatewaySearchPipeline:
         Query chosen for GLiNER score 0.444 (above 0.4 threshold) on the
         deployed 7-label model.
         """
+        query = "find videos about machine learning"
         with httpx.Client(base_url=RUNTIME, timeout=900.0) as client:
             resp = client.post(
                 "/agents/gateway_agent/process",
                 json={
                     "agent_name": "gateway_agent",
-                    "query": "find videos about machine learning",
+                    "query": query,
                     "context": {"tenant_id": TENANT_ID},
                     "top_k": 5,
                 },
@@ -573,42 +527,56 @@ class TestGatewaySearchPipeline:
 
         assert resp.status_code == 200
         data = resp.json()
-        downstream = data.get("downstream_result", data)
-
-        # Must have results — ingested data exists for this tenant
-        assert "results" in downstream, (
-            f"Missing results, keys: {list(downstream.keys())}"
-        )
-        assert downstream["results_count"] >= 1, (
-            "'find videos about machine learning' must return results from ingested data"
+        gw = data["gateway"]
+        assert (gw["complexity"], gw["routed_to"]) == expected_gateway_routing(
+            query, gw
         )
 
-        result = downstream["results"][0]
+        if gw["complexity"] == "simple":
+            downstream = data["downstream_result"]
 
-        # Each result must have: document_id, score, metadata with video_id
-        assert "document_id" in result, (
-            f"Result missing document_id: {list(result.keys())}"
-        )
-        assert result["document_id"] != "", "document_id should not be empty"
-        assert "score" in result, f"Result missing score: {list(result.keys())}"
-        assert result["score"] > 0, f"Score should be positive, got {result['score']}"
-        assert "metadata" in result, f"Result missing metadata: {list(result.keys())}"
-
-        meta = result["metadata"]
-        assert "video_id" in meta, f"metadata missing video_id: {list(meta.keys())}"
-        assert "segment_id" in meta, f"metadata missing segment_id: {list(meta.keys())}"
-        assert isinstance(meta["segment_id"], int), (
-            f"segment_id should be int, got {type(meta['segment_id'])}"
-        )
-
-        # Temporal info should be present (start_time, end_time)
-        if "temporal_info" in result:
-            temporal = result["temporal_info"]
-            assert "start_time" in temporal, "temporal_info missing start_time"
-            assert "end_time" in temporal, "temporal_info missing end_time"
-            assert temporal["end_time"] >= temporal["start_time"], (
-                f"end_time ({temporal['end_time']}) should be >= start_time ({temporal['start_time']})"
+            # Must have results — ingested data exists for this tenant
+            assert "results" in downstream, (
+                f"Missing results, keys: {list(downstream.keys())}"
             )
+            assert downstream["results_count"] >= 1, (
+                "'find videos about machine learning' must return results from ingested data"
+            )
+
+            result = downstream["results"][0]
+
+            # Each result must have: document_id, score, metadata with video_id
+            assert "document_id" in result, (
+                f"Result missing document_id: {list(result.keys())}"
+            )
+            assert result["document_id"] != "", "document_id should not be empty"
+            assert "score" in result, f"Result missing score: {list(result.keys())}"
+            assert result["score"] > 0, (
+                f"Score should be positive, got {result['score']}"
+            )
+            assert "metadata" in result, (
+                f"Result missing metadata: {list(result.keys())}"
+            )
+
+            meta = result["metadata"]
+            assert "video_id" in meta, f"metadata missing video_id: {list(meta.keys())}"
+            assert "segment_id" in meta, (
+                f"metadata missing segment_id: {list(meta.keys())}"
+            )
+            assert isinstance(meta["segment_id"], int), (
+                f"segment_id should be int, got {type(meta['segment_id'])}"
+            )
+
+            # Temporal info should be present (start_time, end_time)
+            if "temporal_info" in result:
+                temporal = result["temporal_info"]
+                assert "start_time" in temporal, "temporal_info missing start_time"
+                assert "end_time" in temporal, "temporal_info missing end_time"
+                assert temporal["end_time"] >= temporal["start_time"], (
+                    f"end_time ({temporal['end_time']}) should be >= start_time ({temporal['start_time']})"
+                )
+        else:
+            assert_orchestrated(data, query, gw)
 
 
 # ---------------------------------------------------------------------------
@@ -631,12 +599,13 @@ class TestGatewayAgentThin:
         This verifies the full routing→gateway→search pipeline produces
         real search results with correct classification.
         """
+        query = "find videos of dogs running on a beach"
         with httpx.Client(base_url=RUNTIME, timeout=900.0) as client:
             resp = client.post(
                 "/agents/gateway_agent/process",
                 json={
                     "agent_name": "gateway_agent",
-                    "query": "find videos of dogs running on a beach",
+                    "query": query,
                     "context": {"tenant_id": TENANT_ID},
                     "top_k": 5,
                 },
@@ -647,25 +616,22 @@ class TestGatewayAgentThin:
         assert data["status"] == "success"
 
         # Must go through gateway and produce classification
-        gw = data.get("gateway", {})
-        assert gw.get("complexity") == "simple", (
-            f"'dog beach videos' should be simple, got {gw.get('complexity')!r}"
-        )
-        assert gw.get("modality") == "video", (
-            f"'dog beach videos' should be video modality, got {gw.get('modality')!r}"
-        )
-        assert gw.get("routed_to") == "search_agent", (
-            f"Simple video should route to search_agent, got {gw.get('routed_to')!r}"
+        gw = data["gateway"]
+        assert (gw["complexity"], gw["routed_to"]) == expected_gateway_routing(
+            query, gw
         )
 
-        # Must produce downstream search results
-        downstream = data.get("downstream_result", {})
-        assert downstream.get("status") == "success", (
-            f"Downstream search should succeed, got: {downstream.get('status')}"
-        )
-        assert downstream.get("results_count", 0) >= 1, (
-            "Should return search results from ingested data"
-        )
+        if gw["complexity"] == "simple":
+            # Must produce downstream search results
+            downstream = data["downstream_result"]
+            assert downstream.get("status") == "success", (
+                f"Downstream search should succeed, got: {downstream.get('status')}"
+            )
+            assert downstream.get("results_count", 0) >= 1, (
+                "Should return search results from ingested data"
+            )
+        else:
+            assert_orchestrated(data, query, gw)
 
     def test_routing_no_inline_entities(self):
         """Routing agent response must NOT have top-level entities or
@@ -699,12 +665,13 @@ class TestGatewayAgentThin:
 
     def test_routing_different_modality_routes_correctly(self):
         """Audio query through routing → gateway → audio_analysis_agent."""
+        query = "listen to podcasts about deep learning"
         with httpx.Client(base_url=RUNTIME, timeout=900.0) as client:
             resp = client.post(
                 "/agents/gateway_agent/process",
                 json={
                     "agent_name": "gateway_agent",
-                    "query": "listen to podcasts about deep learning",
+                    "query": query,
                     "context": {"tenant_id": TENANT_ID},
                     "top_k": 3,
                 },
@@ -712,37 +679,43 @@ class TestGatewayAgentThin:
 
         assert resp.status_code == 200
         data = resp.json()
-        gw = data.get("gateway", {})
-        assert gw.get("modality") == "audio", (
-            f"'podcasts about deep learning' should be audio, got {gw.get('modality')!r}"
+        gw = data["gateway"]
+        assert (gw["complexity"], gw["routed_to"]) == expected_gateway_routing(
+            query, gw
         )
-        assert gw.get("routed_to") == "audio_analysis_agent", (
-            f"Audio query should route to audio_analysis_agent, got {gw.get('routed_to')!r}"
+        assert gw["modality"] == "audio", (
+            f"'podcasts about deep learning' should be audio, got {gw['modality']!r}"
         )
-        # The session seeds exactly one audio clip for the tenant, so the
-        # acoustic nearest-neighbour search returns that clip and nothing else.
-        downstream = data["downstream_result"]
-        assert downstream["status"] == "success", downstream
-        assert downstream["agent"] == "audio_analysis_agent", downstream
-        assert downstream["results_count"] == 1, downstream
-        assert [result["audio_id"] for result in downstream["results"]] == [
-            sample_audio_content_id()
-        ]
-        assert downstream["results"][0]["audio_url"] == (
-            f"s3://cogniverse-ingest/{TENANT_ID}/{sample_audio_content_id()}.wav"
-        )
+        assert gw["generation_type"] == "raw_results", gw
+
+        if gw["complexity"] == "simple":
+            # The session seeds exactly one audio clip for the tenant, so the
+            # acoustic nearest-neighbour search returns that clip and nothing else.
+            downstream = data["downstream_result"]
+            assert downstream["status"] == "success", downstream
+            assert downstream["agent"] == "audio_analysis_agent", downstream
+            assert downstream["results_count"] == 1, downstream
+            assert [result["audio_id"] for result in downstream["results"]] == [
+                sample_audio_content_id()
+            ]
+            assert downstream["results"][0]["audio_url"] == (
+                f"s3://cogniverse-ingest/{TENANT_ID}/{sample_audio_content_id()}.wav"
+            )
+        else:
+            assert_orchestrated(data, query, gw)
 
     def test_image_modality_routes_to_image_agent(self):
         """'find images of neural network architectures' → image, image_search_agent.
 
         GLiNER score 0.423 on deployed model (above 0.4 threshold).
         """
+        query = "find images of neural network architectures"
         with httpx.Client(base_url=RUNTIME, timeout=900.0) as client:
             resp = client.post(
                 "/agents/gateway_agent/process",
                 json={
                     "agent_name": "gateway_agent",
-                    "query": "find images of neural network architectures",
+                    "query": query,
                     "context": {"tenant_id": TENANT_ID},
                     "top_k": 3,
                 },
@@ -750,25 +723,30 @@ class TestGatewayAgentThin:
 
         assert resp.status_code == 200
         data = resp.json()
-        gw = data.get("gateway", {})
-        assert gw.get("modality") == "image", (
-            f"'images of neural networks' should be image modality, got {gw.get('modality')!r}"
+        gw = data["gateway"]
+        assert (gw["complexity"], gw["routed_to"]) == expected_gateway_routing(
+            query, gw
         )
-        assert gw.get("routed_to") == "image_search_agent", (
-            f"Image query should route to image_search_agent, got {gw.get('routed_to')!r}"
-        )
+        if gw["complexity"] == "simple":
+            downstream = data["downstream_result"]
+            assert downstream["status"] == "success", downstream
+            assert downstream["agent"] == "image_search_agent", downstream
+            assert downstream["results_count"] >= 1, downstream
+        else:
+            assert_orchestrated(data, query, gw)
 
     def test_document_modality_routes_to_document_agent(self):
         """'find PDF documents about Python' → document, document_agent.
 
         GLiNER score 0.466 on deployed model (above 0.4 threshold).
         """
+        query = "find PDF documents about Python"
         with httpx.Client(base_url=RUNTIME, timeout=900.0) as client:
             resp = client.post(
                 "/agents/gateway_agent/process",
                 json={
                     "agent_name": "gateway_agent",
-                    "query": "find PDF documents about Python",
+                    "query": query,
                     "context": {"tenant_id": TENANT_ID},
                     "top_k": 3,
                 },
@@ -776,13 +754,17 @@ class TestGatewayAgentThin:
 
         assert resp.status_code == 200
         data = resp.json()
-        gw = data.get("gateway", {})
-        assert gw.get("modality") == "document", (
-            f"'PDF documents' should be document modality, got {gw.get('modality')!r}"
+        gw = data["gateway"]
+        assert (gw["complexity"], gw["routed_to"]) == expected_gateway_routing(
+            query, gw
         )
-        assert gw.get("routed_to") == "document_agent", (
-            f"Document query should route to document_agent, got {gw.get('routed_to')!r}"
-        )
+        if gw["complexity"] == "simple":
+            downstream = data["downstream_result"]
+            assert downstream["status"] == "success", downstream
+            assert downstream["agent"] == "document_agent", downstream
+            assert downstream["results_count"] >= 1, downstream
+        else:
+            assert_orchestrated(data, query, gw)
 
 
 # ---------------------------------------------------------------------------

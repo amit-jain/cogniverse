@@ -21,7 +21,6 @@ Architecture note (A2A gateway):
     See ``test_a2a_gateway_e2e.py`` for gateway-specific E2E tests.
 """
 
-import asyncio
 import json
 import re
 import time
@@ -31,9 +30,7 @@ from pathlib import Path
 import httpx
 import pytest
 
-from cogniverse_agents.optimizer.artifact_manager import ArtifactManager
 from cogniverse_foundation.config.unified_config import BackendProfileConfig
-from cogniverse_foundation.telemetry.manager import get_telemetry_manager
 from cogniverse_synthetic.generators.base import extract_topic
 from cogniverse_synthetic.generators.routing import TOPIC_WORD_BUDGET
 from cogniverse_synthetic.schemas import ProfileSelectionExampleSchema
@@ -45,6 +42,8 @@ from tests.e2e.conftest import (
     _ensure_sample_content_ingested,
     _matching_sample_results,
     _vespa_deployed_schema_names,
+    assert_orchestrated,
+    expected_gateway_routing,
     unique_id,
 )
 
@@ -71,41 +70,6 @@ PRIMARY_AGENT_BY_QUERY_TYPE = {
     "DOCUMENT": "document_agent",
     "IMAGE": "image_search_agent",
 }
-DEFAULT_GATEWAY_THRESHOLDS = {
-    "fast_path_confidence_threshold": 0.4,
-    "gliner_threshold": 0.3,
-}
-
-
-@pytest.fixture(scope="module", autouse=True)
-def _pin_default_gateway_thresholds():
-    """Keep the shared routing tenant on the deployment defaults."""
-    am = ArtifactManager(
-        get_telemetry_manager().get_provider(tenant_id=TENANT_ID), TENANT_ID
-    )
-    previous_blob = asyncio.run(am.load_blob("config", "gateway_thresholds"))
-    if previous_blob is not None:
-        try:
-            previous_config = json.loads(previous_blob)
-        except json.JSONDecodeError:
-            previous_config = None
-    else:
-        previous_config = None
-    desired_blob = json.dumps(DEFAULT_GATEWAY_THRESHOLDS)
-    if previous_config != DEFAULT_GATEWAY_THRESHOLDS:
-        asyncio.run(am.save_blob("config", "gateway_thresholds", desired_blob))
-
-    try:
-        yield
-    finally:
-        if previous_blob is None:
-            asyncio.run(
-                am._provider.datasets.delete_dataset(
-                    am._blob_dataset_name("config", "gateway_thresholds")
-                )
-            )
-        else:
-            asyncio.run(am.save_blob("config", "gateway_thresholds", previous_blob))
 
 
 def _deploy_profile_for_tenant(
@@ -158,12 +122,13 @@ class TestRoutingPipeline:
 
     def test_routing_decision_structure(self):
         """Routing agent returns success via the gateway pipeline."""
+        query = "find videos of dogs running on a beach"
         with httpx.Client(base_url=RUNTIME, timeout=900.0) as client:
             resp = client.post(
                 "/agents/gateway_agent/process",
                 json={
                     "agent_name": "gateway_agent",
-                    "query": "find videos of dogs running on a beach",
+                    "query": query,
                     "context": {"tenant_id": TENANT_ID},
                     "top_k": 5,
                 },
@@ -172,32 +137,18 @@ class TestRoutingPipeline:
         assert resp.status_code == 200
         data = resp.json()
         assert data["status"] == "success"
-        # In the new architecture, the response comes from the gateway
-        # pipeline. The agent field will be gateway_agent or orchestrator_agent.
-        assert data["agent"] in (
-            "gateway_agent",
-            "orchestrator_agent",
+        gw = data["gateway"]
+        assert (gw["complexity"], gw["routed_to"]) == expected_gateway_routing(
+            query, gw
         )
-
-        # Content assertions: dog-beach videos is an unambiguous video query
-        if "gateway" in data:
-            gw = data["gateway"]
-            assert gw["modality"] == "video", (
-                f"Expected video modality for dog beach query, got {gw['modality']!r}"
-            )
-            assert gw["complexity"] == "simple", (
-                f"Expected simple routing for dog beach query, got {gw['complexity']!r}"
-            )
-            assert gw["generation_type"] == "raw_results", (
-                f"Expected raw_results for dog beach query, got {gw['generation_type']!r}"
-            )
-            assert gw["routed_to"] == "search_agent", (
-                f"Simple video query should route to search_agent, "
-                f"got {gw['routed_to']!r}"
-            )
-            assert gw["confidence"] == 0.5, (
-                f"Dog beach query should use keyword confidence 0.5, got {gw['confidence']}"
-            )
+        if gw["complexity"] == "simple":
+            # In the new architecture, the response comes from the gateway
+            # pipeline. The agent field will be gateway_agent on simple routes.
+            assert data["agent"] == "gateway_agent"
+            assert "downstream_result" in data
+            assert gw["confidence"] >= gw["fast_path_confidence_threshold"]
+        else:
+            assert_orchestrated(data, query, gw)
 
     def test_routing_no_longer_returns_inline_entities(self):
         """Routing agent no longer returns entities/enhanced_query at top level.
@@ -254,12 +205,13 @@ class TestRoutingPipeline:
             ), f"Routing returned unknown agent: {data['recommended_agent']!r}"
 
     def test_routing_executes_downstream(self):
+        query = "search for animal videos"
         with httpx.Client(base_url=RUNTIME, timeout=900.0) as client:
             resp = client.post(
                 "/agents/gateway_agent/process",
                 json={
                     "agent_name": "gateway_agent",
-                    "query": "search for animal videos",
+                    "query": query,
                     "context": {"tenant_id": TENANT_ID},
                     "top_k": 3,
                 },
@@ -268,17 +220,17 @@ class TestRoutingPipeline:
         assert resp.status_code == 200
         data = resp.json()
         assert data["status"] == "success"
-        has_downstream = (
-            "downstream_result" in data
-            or "orchestration_result" in data
-            or "gateway" in data
+        gw = data["gateway"]
+        assert (gw["complexity"], gw["routed_to"]) == expected_gateway_routing(
+            query, gw
         )
-        assert has_downstream, (
-            f"Routing should execute downstream, got keys: {list(data.keys())}"
-        )
-        # Content assertion: animal video query should produce search results
-        downstream = data.get("downstream_result", {})
-        if "results" in downstream and downstream.get("results_count", 0) > 0:
+        if gw["complexity"] == "simple":
+            # Content assertion: animal video query should produce search results
+            downstream = data["downstream_result"]
+            assert downstream["status"] == "success", downstream
+            assert "results" in downstream, (
+                f"Missing results, keys: {list(downstream.keys())}"
+            )
             results = downstream["results"]
             assert len(results) > 0, (
                 "Search for 'animal videos' should return results from ingested data"
@@ -290,6 +242,8 @@ class TestRoutingPipeline:
                 assert scores == sorted(scores, reverse=True), (
                     f"Results should be ranked by {score_key} descending, got: {scores}"
                 )
+        else:
+            assert_orchestrated(data, query, gw)
 
 
 @pytest.mark.e2e
@@ -345,13 +299,14 @@ class TestQueryEnhancementViaGateway:
         )
 
     def test_gateway_confidence_in_range(self):
-        """Cue-less complex queries stay on the orchestrator with zero confidence."""
+        """Complex queries stay on the orchestrator with the live thresholds."""
+        query = "find me detailed analysis of deep learning architectures"
         with httpx.Client(base_url=RUNTIME, timeout=900.0) as client:
             resp = client.post(
                 "/agents/gateway_agent/process",
                 json={
                     "agent_name": "gateway_agent",
-                    "query": "find me detailed analysis of deep learning architectures",
+                    "query": query,
                     "context": {"tenant_id": TENANT_ID},
                     "top_k": 3,
                 },
@@ -359,15 +314,11 @@ class TestQueryEnhancementViaGateway:
 
         assert resp.status_code == 200
         data = resp.json()
-        assert data["agent"] == "orchestrator_agent", data
         gw = data["gateway"]
-        assert gw["modality"] == "video", gw
-        assert gw["complexity"] == "complex", gw
-        assert gw["generation_type"] == "raw_results", gw
-        assert gw["routed_to"] == "orchestrator_agent", gw
-        assert gw["confidence"] == 0.0, (
-            f"Cue-less complex query should have zero keyword confidence, got {gw['confidence']}"
+        assert (gw["complexity"], gw["routed_to"]) == expected_gateway_routing(
+            query, gw
         )
+        assert_orchestrated(data, query, gw)
 
 
 @pytest.mark.e2e

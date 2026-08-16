@@ -104,6 +104,8 @@ class TestGatewayModels:
             generation_type="raw_results",
             routed_to="search_agent",
             confidence=0.95,
+            fast_path_confidence_threshold=0.4,
+            gliner_threshold=0.3,
             reasoning="test reasoning",
         )
         assert out.complexity == "simple"
@@ -111,6 +113,8 @@ class TestGatewayModels:
         assert out.generation_type == "raw_results"
         assert out.routed_to == "search_agent"
         assert out.confidence == 0.95
+        assert out.fast_path_confidence_threshold == 0.4
+        assert out.gliner_threshold == 0.3
 
     def test_output_rejects_invalid_complexity(self):
         with pytest.raises(Exception):
@@ -121,6 +125,8 @@ class TestGatewayModels:
                 generation_type="raw_results",
                 routed_to="x",
                 confidence=0.5,
+                fast_path_confidence_threshold=0.4,
+                gliner_threshold=0.3,
                 reasoning="r",
             )
 
@@ -353,6 +359,8 @@ class TestProcessImpl:
         assert result.generation_type == "raw_results"
         assert result.routed_to == "search_agent"
         assert result.confidence >= 0.7
+        assert result.fast_path_confidence_threshold == 0.4
+        assert result.gliner_threshold == 0.3
 
     @pytest.mark.asyncio
     async def test_complex_multimodal_query(self, gateway_agent, mock_gliner_model):
@@ -706,6 +714,16 @@ class TestArtifactLoading:
 
         assert agent.deps.fast_path_confidence_threshold == 0.55
         assert agent.deps.gliner_threshold == 0.35
+
+        agent._gliner_model = MagicMock()
+        agent._gliner_model.predict_entities.return_value = [
+            {"text": "videos", "label": "video_content", "score": 0.92},
+        ]
+        result = await agent._process_impl(
+            GatewayInput(query="Show me cooking videos", tenant_id=TEST_TENANT_ID)
+        )
+        assert result.fast_path_confidence_threshold == 0.55
+        assert result.gliner_threshold == 0.35
 
     def test_gateway_uses_defaults_without_artifact(self):
         """GatewayAgent should use default thresholds when no artifact exists."""
