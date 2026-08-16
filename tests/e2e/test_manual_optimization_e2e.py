@@ -14,9 +14,11 @@ Marked ``slow`` because real Argo submission + status poll is network-heavy
 and the test waits for phase transitions.
 """
 
+import json
 import subprocess
 import time
 import uuid
+from pathlib import Path
 
 import httpx
 import pytest
@@ -35,13 +37,20 @@ pytestmark = pytest.mark.slow
 
 NAMESPACE = "cogniverse"
 RUNTIME = "http://localhost:33000"
-GATEWAY_THRESHOLD_PROFILES = (
-    "video_colpali_smol500_mv_frame",
-    "image_colpali_mv",
-    "audio_clap_semantic",
-    "document_text_semantic",
-    "document_visual_colpali",
-)
+CONFIG_PATH = Path(__file__).resolve().parents[2] / "configs" / "config.json"
+
+
+def _configured_profile_names() -> tuple[str, ...]:
+    config = json.loads(CONFIG_PATH.read_text())
+    profiles = config.get("backend", {}).get("profiles", {})
+    return tuple(
+        profile_name
+        for profile_name, profile_config in profiles.items()
+        if isinstance(profile_config, dict)
+    )
+
+
+GATEWAY_THRESHOLD_PROFILES = _configured_profile_names()
 GATEWAY_THRESHOLD_SEED_QUERIES = (
     "search for video content about AI",
     "find videos of dogs running on a beach",

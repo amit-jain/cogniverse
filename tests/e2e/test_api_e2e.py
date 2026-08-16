@@ -52,7 +52,6 @@ from tests.e2e.conftest import (
     unique_id,
 )
 
-PROFILE = "video_colpali_smol500_mv_frame"
 IMAGE_PROFILE = "image_colpali_mv"
 CAPTION_CORPUS_DIR = (
     Path(__file__).resolve().parents[2]
@@ -62,6 +61,33 @@ CAPTION_CORPUS_DIR = (
 )
 CAPTION_CORPUS_LIMIT = 50
 CONFIG_PATH = Path(__file__).resolve().parents[2] / "configs" / "config.json"
+
+
+def _default_video_profile_name() -> str:
+    config = json.loads(CONFIG_PATH.read_text())
+    active = config.get("active_video_profile")
+    if isinstance(active, dict):
+        name = active.get("name")
+        if isinstance(name, str) and name.strip():
+            return name
+    if isinstance(active, str) and active.strip():
+        return active
+    return "video_colpali_smol500_mv_frame"
+
+
+PROFILE = _default_video_profile_name()
+
+
+def _configured_image_profile_name() -> str:
+    config = json.loads(CONFIG_PATH.read_text())
+    profiles = config.get("backend", {}).get("profiles", {})
+    for profile_name, profile_config in profiles.items():
+        if isinstance(profile_config, dict) and profile_config.get("type") == "image":
+            return profile_name
+    return "image_colpali_mv"
+
+
+IMAGE_PROFILE = _configured_image_profile_name()
 
 
 def _shipped_agent_inferrer() -> AgentInferrer:
@@ -582,7 +608,7 @@ class TestProfileCRUD:
                         "tenant_id": TENANT_ID,
                         "type": "video",
                         "description": "E2E get test profile",
-                        "schema_name": "video_colpali_smol500_mv_frame",
+                        "schema_name": PROFILE,
                         "embedding_model": "TomoroAI/tomoro-colqwen3-embed-4b",
                         "embedding_type": "multi_vector",
                         "deploy_schema": False,
@@ -633,7 +659,7 @@ class TestProfileCRUD:
                         "tenant_id": TENANT_ID,
                         "type": "video",
                         "description": "E2E test profile",
-                        "schema_name": "video_colpali_smol500_mv_frame",
+                        "schema_name": PROFILE,
                         "embedding_model": "TomoroAI/tomoro-colqwen3-embed-4b",
                         "embedding_type": "multi_vector",
                         "deploy_schema": False,
@@ -1930,7 +1956,7 @@ class TestIngestionAPI:
                 "/ingestion/start",
                 json={
                     "video_dir": "/nonexistent/path/e2e_fake_dir",
-                    "profile": "video_colpali_smol500_mv_frame",
+                    "profile": PROFILE,
                     "backend": "vespa",
                     "tenant_id": TENANT_ID,
                 },
@@ -2146,9 +2172,7 @@ class TestVideoIngestionAndSearch:
                 timeout=30,
             )
             assert resp.status_code in (200, 201, 409), resp.text
-            _deploy_profile_for_tenant(
-                client, "video_colpali_smol500_mv_frame", tenant_id
-            )
+            _deploy_profile_for_tenant(client, PROFILE, tenant_id)
             with open(real_video_path, "rb") as f:
                 # wait=true keeps the synchronous response shape
                 # (status, chunks_created, ...); the default async
@@ -2157,7 +2181,7 @@ class TestVideoIngestionAndSearch:
                     "/ingestion/upload?wait=true&wait_timeout=540",
                     files={"file": (real_video_path.name, f, "video/mp4")},
                     data={
-                        "profile": "video_colpali_smol500_mv_frame",
+                        "profile": PROFILE,
                         "tenant_id": tenant_id,
                     },
                 )
@@ -2179,7 +2203,7 @@ class TestVideoIngestionAndSearch:
                 "/search/",
                 json={
                     "query": query,
-                    "profile": "video_colpali_smol500_mv_frame",
+                    "profile": PROFILE,
                     "top_k": 1,
                     "tenant_id": tenant_id,
                     "filters": {"source_url": expected_source_url},
@@ -2188,7 +2212,7 @@ class TestVideoIngestionAndSearch:
             _assert_artifact_search_hit(
                 search_resp,
                 query=query,
-                profile="video_colpali_smol500_mv_frame",
+                profile=PROFILE,
                 video_id=upload_data["video_id"],
                 expected_metadata={
                     "source_url": expected_source_url,
