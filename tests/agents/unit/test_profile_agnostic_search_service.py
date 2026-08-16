@@ -25,22 +25,37 @@ def mock_config():
             "port": 8080,
             "profiles": {
                 "frame_based_colpali": {
+                    "type": "video",
                     "embedding_model": "vidore/colSmol-256M",
                     "embedding_dim": 128,
                     "embedding_format": "binary",
                     "schema_name": "frame_based_colpali",
                 },
                 "video_colqwen_omni": {
+                    "type": "video",
                     "embedding_model": "TomoroAI/tomoro-colqwen3-embed-4b",
                     "embedding_dim": 320,
                     "embedding_format": "binary",
                     "schema_name": "video_colqwen_omni",
                 },
                 "video_videoprism_base": {
+                    "type": "video",
                     "embedding_model": "google/videoprism-base",
                     "embedding_dim": 768,
                     "embedding_format": "float",
                     "schema_name": "video_videoprism_base",
+                },
+                "audio_clap_semantic": {
+                    "type": "audio",
+                    "model_loader": "colbert",
+                    "embedding_model": "laion/clap-htsat-unfused",
+                    "semantic_model": "lightonai/LateOn",
+                    "schema_name": "audio_content",
+                    "schema_config": {
+                        "schema_name": "audio_content",
+                        "embedding_dim": 128,
+                        "binary_dim": 16,
+                    },
                 },
             },
         },
@@ -334,6 +349,96 @@ class TestEncodingDelegatedToBackend:
                 ]
                 is mock_encoder
             )
+
+
+@pytest.mark.unit
+class TestQueryDictCarriesProfileContract:
+    """The backend query dict is built from the profile the caller named:
+    ``type`` is the profile's declared content type (the backend types every
+    hit with it), and the query encoder is whatever the factory resolves for
+    the profile — the service passes no model override."""
+
+    def _search(self, search_service, profile, **kwargs):
+        mock_encoder = MagicMock()
+        mock_backend = MagicMock()
+        mock_backend.search.return_value = []
+        with (
+            patch("cogniverse_agents.search.service.get_backend_registry") as mock_reg,
+            patch.object(search_service, "_get_encoder", return_value=mock_encoder),
+        ):
+            mock_reg.return_value.get_search_backend.return_value = mock_backend
+            search_service.search(
+                query="podcasts about deep learning",
+                profile=profile,
+                tenant_id="acme:acme",
+                **kwargs,
+            )
+        return mock_backend.search.call_args[0][0], mock_encoder
+
+    def test_audio_profile_query_dict_is_typed_audio(self, search_service):
+        query_dict, encoder = self._search(
+            search_service, "audio_clap_semantic", ranking_strategy="phased_semantic"
+        )
+        assert query_dict == {
+            "query": "podcasts about deep learning",
+            "type": "audio",
+            "profile": "audio_clap_semantic",
+            "tenant_id": "acme:acme",
+            "strategy": "phased_semantic",
+            "top_k": 10,
+            "filters": None,
+            "query_encoder": encoder,
+        }
+
+    def test_video_profile_query_dict_is_typed_video(self, search_service):
+        query_dict, encoder = self._search(search_service, "frame_based_colpali")
+        assert query_dict == {
+            "query": "podcasts about deep learning",
+            "type": "video",
+            "profile": "frame_based_colpali",
+            "tenant_id": "acme:acme",
+            "strategy": "default",
+            "top_k": 10,
+            "filters": None,
+            "query_encoder": encoder,
+        }
+
+    def test_profile_without_declared_type_is_rejected(
+        self, mock_config, mock_config_manager, mock_schema_loader
+    ):
+        del mock_config["backend"]["profiles"]["frame_based_colpali"]["type"]
+        with patch(
+            "cogniverse_foundation.telemetry.manager.get_telemetry_manager",
+            return_value=Mock(),
+        ):
+            svc = SearchService(
+                config=mock_config,
+                config_manager=mock_config_manager,
+                schema_loader=mock_schema_loader,
+            )
+        with pytest.raises(
+            ValueError,
+            match="Profile 'frame_based_colpali' missing 'type' configuration",
+        ):
+            self._search(svc, "frame_based_colpali")
+
+    def test_encoder_resolution_is_delegated_to_the_factory(self, search_service):
+        """No ``model_name`` override: the factory owns model selection, so a
+        ColBERT-over-transcript profile whose ``embedding_model`` names its
+        acoustic (CLAP) model still gets its ``semantic_model`` encoder."""
+        profile_config = search_service._get_profile_config(
+            "audio_clap_semantic", "acme:acme"
+        )
+        sentinel = MagicMock()
+        with patch(
+            "cogniverse_agents.search.service.QueryEncoderFactory.create_encoder",
+            return_value=sentinel,
+        ) as create_encoder:
+            encoder = search_service._get_encoder("audio_clap_semantic", profile_config)
+        assert encoder is sentinel
+        create_encoder.assert_called_once_with(
+            "audio_clap_semantic", config=search_service.config
+        )
 
 
 @pytest.mark.unit

@@ -104,16 +104,12 @@ class SearchService:
         return profile_config
 
     def _get_encoder(self, profile: str, profile_config: Dict[str, Any]):
-        """Get or create cached encoder for the given profile."""
-        model_name = profile_config.get("embedding_model")
-        if not model_name:
-            raise ValueError(
-                f"Profile '{profile}' missing 'embedding_model' configuration"
-            )
+        """Get or create the cached query encoder for the given profile.
 
-        return QueryEncoderFactory.create_encoder(
-            profile, model_name, config=self.config
-        )
+        The factory resolves the model from the profile config (``semantic_model``
+        for ColBERT-over-transcript profiles, ``embedding_model`` otherwise).
+        """
+        return QueryEncoderFactory.create_encoder(profile, config=self.config)
 
     def get_available_strategies(self, profile: str, tenant_id: str) -> list[str]:
         """Return the ranking-strategy names ``search`` accepts for a profile.
@@ -225,6 +221,9 @@ class SearchService:
 
         # Resolve profile config and encoder
         profile_config = self._get_profile_config(profile, tenant_id)
+        content_type = profile_config.get("type")
+        if not content_type:
+            raise ValueError(f"Profile '{profile}' missing 'type' configuration")
         query_encoder = self._get_encoder(profile, profile_config)
         search_backend = self._get_backend(profile, profile_config, query_encoder)
 
@@ -263,7 +262,7 @@ class SearchService:
             ) as backend_span_ctx:
                 query_dict = {
                     "query": query,
-                    "type": "video",
+                    "type": content_type,
                     "profile": profile,
                     "tenant_id": tenant_id,
                     "strategy": ranking_strategy or "default",
