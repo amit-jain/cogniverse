@@ -317,6 +317,7 @@ class TestSharedClusterOwnership:
             tenant_id=e2e_conftest.TENANT_ID,
             profile="video_colpali_smol500_mv_frame",
             suffix=".mp4",
+            media_type="video",
         )
         assert matches is None
         assert error == "search request failed: ConnectError('nope')"
@@ -332,6 +333,7 @@ class TestSharedClusterOwnership:
             tenant_id=e2e_conftest.TENANT_ID,
             profile="video_colpali_smol500_mv_frame",
             suffix=".mp4",
+            media_type="video",
         )
         assert matches is None
         assert error == 'search returned 500: {"detail":"Illegal query"}'
@@ -368,6 +370,7 @@ class TestSharedClusterOwnership:
             tenant_id=e2e_conftest.TENANT_ID,
             profile="video_colpali_smol500_mv_frame",
             suffix=".mp4",
+            media_type="video",
         )
         assert matches == [expected]
         assert error is None
@@ -1375,25 +1378,8 @@ class TestSharedClusterOwnership:
                 "cogniverse-e2e",
                 {
                     "ports": [
-                        "33080:8080",
-                        "33071:19071",
-                        "33000:28000",
-                        "33501:28501",
-                        "33006:26006",
-                        "33317:4317",
-                        "33434:11434",
-                        "33746:2746",
-                        "33901:29001",
-                        "33902:29002",
-                        "33903:29003",
-                        "33904:29004",
-                        "33905:29005",
-                        "33906:29006",
-                        "33907:29007",
-                        "33908:29008",
-                        "33909:29009",
-                        "33910:29010",
-                        "33911:29011",
+                        f"{host}:{node}"
+                        for host, node in e2e_conftest.E2E_HOST_PORTS.items()
                     ],
                     "share_host_storage": False,
                 },
