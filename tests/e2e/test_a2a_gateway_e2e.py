@@ -29,10 +29,7 @@ from tests.e2e.conftest import (
     expected_gateway_routing,
     sample_audio_content_id,
 )
-from tests.e2e.test_api_e2e import _expected_available_profile_names
-
-PROFILE = "video_colpali_smol500_mv_frame"
-
+from tests.e2e.test_api_e2e import PROFILE, _expected_available_profile_names
 
 SAMPLE_VIDEO = (
     DATA_ROOT / "testset" / "evaluation" / "sample_videos" / "v_-nl4G-00PtA.mp4"
@@ -199,7 +196,7 @@ class TestGatewaySimpleRouting:
             )
 
             # Profile used should be the default video profile
-            assert downstream.get("profile") == "video_colpali_smol500_mv_frame", (
+            assert downstream.get("profile") == PROFILE, (
                 f"Expected default video profile, got: {downstream.get('profile')}"
             )
         else:

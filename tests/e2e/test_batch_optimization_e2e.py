@@ -22,6 +22,7 @@ import os
 import subprocess
 import time
 import uuid
+from pathlib import Path
 
 import httpx
 import pytest
@@ -39,7 +40,11 @@ from tests.e2e.conftest import (
     expected_gateway_routing,
     register_tenant_and_wait,
 )
-from tests.e2e.test_api_e2e import _deploy_profile_for_tenant
+from tests.e2e.test_api_e2e import (
+    CANONICAL_WORKFLOW_AGENTS,
+    _deploy_profile_for_tenant,
+    _expected_available_profile_names,
+)
 
 NAMESPACE = "cogniverse"
 DEPLOYMENT = "deploy/cogniverse-runtime"
@@ -60,6 +65,19 @@ def _module_lookback_hours() -> float:
 
 
 RUNTIME = "http://localhost:33000"
+CONFIG_PATH = Path(__file__).resolve().parents[2] / "configs" / "config.json"
+
+
+def _configured_profile_names(profile_type: str | None = None) -> tuple[str, ...]:
+    config = json.loads(CONFIG_PATH.read_text())
+    profiles = config.get("backend", {}).get("profiles", {})
+    names = []
+    for profile_name, profile_config in profiles.items():
+        if not isinstance(profile_config, dict):
+            continue
+        if profile_type is None or profile_config.get("type") == profile_type:
+            names.append(profile_name)
+    return tuple(names)
 
 
 # ---------------------------------------------------------------------------
@@ -175,13 +193,7 @@ COMPLEX_QUERIES = [
     "analyze video transcripts about climate change and create a summary report",
 ]
 
-GATEWAY_THRESHOLD_PROFILES = (
-    "video_colpali_smol500_mv_frame",
-    "image_colpali_mv",
-    "audio_clap_semantic",
-    "document_text_semantic",
-    "document_visual_colpali",
-)
+GATEWAY_THRESHOLD_PROFILES = _configured_profile_names("video")
 
 
 def _call_agent(agent_name: str, query: str, tenant_id: str = TENANT_ID) -> None:
@@ -867,29 +879,13 @@ class TestWorkflowOptimization:
                 f"report agent, got: {agents}"
             )
 
-        # All agents must be valid registered agents
-        known_agents = {
-            "search_agent",
-            "summarizer_agent",
-            "detailed_report_agent",
-            "entity_extraction_agent",
-            "query_enhancement_agent",
-            "profile_selection_agent",
-            "gateway_agent",
-            "image_search_agent",
-            "audio_analysis_agent",
-            "document_agent",
-            "deep_research_agent",
-            "coding_agent",
-            "text_analysis_agent",
-            "orchestrator_agent",
-        }
+        # All agents must be part of the workflow-capable config-derived set.
         for demo in valid_demos:
             agents = demo["agent_sequence"]
             if isinstance(agents, str):
                 agents = [a.strip() for a in agents.split(",") if a.strip()]
             for agent in agents:
-                assert agent in known_agents, (
+                assert agent in CANONICAL_WORKFLOW_AGENTS, (
                     f"Unknown agent '{agent}' in workflow for query '{demo['query']}'"
                 )
 
@@ -1019,28 +1015,32 @@ class TestProfileOptimization:
         demos = module.get("demos", [])
         assert len(demos) >= 1, "Profile produced 0 demos — optimization was useless"
 
-        # Known Vespa profiles
-        known_profiles = {
-            "video_colpali_smol500_mv_frame",
-            "video_colqwen_omni_mv_chunk_30s",
-            "video_videoprism_base_mv_chunk_30s",
-            "video_videoprism_large_mv_chunk_30s",
-        }
+        expected_available_profiles = _expected_available_profile_names(TENANT_ID)
+        assert expected_available_profiles, (
+            "Expected at least one groundable profile in the live tenant"
+        )
 
-        # Each demo: real query selecting a known profile
+        # Each demo: real query selecting a profile the live tenant exposes.
         for demo in demos:
             assert demo.get("query"), f"Demo missing query: {demo}"
-            assert demo.get("selected_profile"), (
-                f"Demo missing selected_profile: {demo}"
+            available = [
+                profile.strip()
+                for profile in demo.get("available_profiles", "").split(",")
+                if profile.strip()
+            ]
+            assert available, f"Demo missing available_profiles: {demo}"
+            assert available == [
+                profile
+                for profile in expected_available_profiles
+                if profile in available
+            ], f"available_profiles are not a live-tenant subset: {available}"
+            assert demo.get("selected_profile") in expected_available_profiles, (
+                f"Demo selected unknown profile '{demo.get('selected_profile')}', "
+                f"expected one of {expected_available_profiles}"
             )
-            assert demo["selected_profile"] in known_profiles, (
-                f"Demo selected unknown profile '{demo['selected_profile']}', "
-                f"expected one of {known_profiles}"
-            )
-            # available_profiles should list the 4 known profiles
-            avail = demo.get("available_profiles", "")
-            assert "video_colpali" in avail, (
-                f"available_profiles should contain known profiles, got: {avail[:100]}"
+            assert demo["selected_profile"] in available, (
+                f"Demo selected profile {demo['selected_profile']!r} is absent from "
+                f"available_profiles {available}"
             )
 
 
@@ -1558,22 +1558,17 @@ class TestArtifactLoadingRoundTrip:
         demos = artifact["selector.predict"].get("demos", [])
         assert len(demos) >= 1, "Profile selection artifact has 0 demos"
 
-        known_profiles = {
-            "video_colpali_smol500_mv_frame",
-            "video_colqwen_omni_mv_chunk_30s",
-            "video_videoprism_base_mv_chunk_30s",
-            "video_videoprism_large_mv_chunk_30s",
-        }
+        expected_available_profiles = _expected_available_profile_names(TENANT_ID)
+        assert expected_available_profiles, (
+            "Expected at least one groundable profile in the live tenant"
+        )
 
         # Verify demo structure: each should have query and selected_profile
         for demo in demos:
             assert demo.get("query"), f"Demo missing query: {demo}"
-            assert demo.get("selected_profile"), (
-                f"Demo missing selected_profile: {demo}"
-            )
-            assert demo["selected_profile"] in known_profiles, (
-                f"Demo selected unknown profile '{demo['selected_profile']}', "
-                f"expected one of {known_profiles}"
+            assert demo.get("selected_profile") in expected_available_profiles, (
+                f"Demo selected unknown profile '{demo.get('selected_profile')}', "
+                f"expected one of {expected_available_profiles}"
             )
 
 
