@@ -31,6 +31,7 @@ from tests.e2e.conftest import (
     GATEWAY_VIDEO_QUERIES,
     expected_gateway_calibration,
 )
+from tests.e2e.test_api_e2e import _deploy_profile_for_tenant
 
 NAMESPACE = "cogniverse"
 RUNTIME = (
@@ -577,16 +578,12 @@ class TestDailyGatewayWorkflow:
 
         tenant_id = _seed_org_and_tenant(uuid.uuid4().hex[:8])
         try:
-            # Tenant creation deploys the default video schema, so cued queries
-            # reach search_agent and answer with zero hits, not an error.
+            # A new tenant registers no profiles; register + deploy the video
+            # profile so cued queries reach search_agent and answer with zero
+            # hits instead of a profile-not-found error.
             with httpx.Client(base_url=RUNTIME, timeout=300.0) as client:
-                deploy = client.post(
-                    "/admin/profiles/video_colpali_smol500_mv_frame/deploy",
-                    json={"tenant_id": tenant_id, "force": False},
-                )
-                assert deploy.status_code == 200, deploy.text
-                assert deploy.json()["deployment_status"] == "already_deployed", (
-                    deploy.text
+                _deploy_profile_for_tenant(
+                    client, "video_colpali_smol500_mv_frame", tenant_id
                 )
             assert _gateway_thresholds_blob(tenant_id) is None
 

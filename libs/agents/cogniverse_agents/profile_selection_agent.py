@@ -9,7 +9,7 @@ import asyncio
 import json
 import logging
 from pathlib import Path
-from typing import Any, Dict, List, Literal, Optional
+from typing import Any, Dict, List, Literal, Mapping, Optional
 
 import dspy
 from pydantic import BaseModel, Field
@@ -486,8 +486,11 @@ class ProfileSelectionAgent(
 
         # Generate alternative profiles (top 3)
         self.emit_progress("alternatives", "Generating alternative profiles...")
+        profile_types = await asyncio.to_thread(
+            self._candidate_profile_types, profiles, input.tenant_id
+        )
         alternatives = self._generate_alternatives(
-            query, profiles, selected_profile, modality
+            query, profiles, selected_profile, modality, profile_types
         )
 
         output = ProfileSelectionOutput(
@@ -574,36 +577,52 @@ class ProfileSelectionAgent(
         except Exception as e:
             logger.debug("Failed to emit profile_selection span: %s", e)
 
-    def _generate_alternatives(
-        self, query: str, profiles: List[str], selected: str, modality: str
-    ) -> List[ProfileCandidate]:
-        """Generate alternative profile suggestions"""
-        alternatives = []
+    def _candidate_profile_types(
+        self, profiles: List[str], tenant_id: str | None
+    ) -> Dict[str, str]:
+        """Map each candidate to its declared type.
 
+        The tenant's configured type is authoritative; a bare agent (no config
+        manager) infers it from the profile-name prefix. Candidates that are
+        neither configured nor prefix-encoded are left out.
+        """
+        config_manager = getattr(self, "_config_manager", None)
+        types: Dict[str, str] = {}
+        for profile_name in profiles:
+            if config_manager is not None and tenant_id:
+                profile = config_manager.get_backend_profile(profile_name, tenant_id)
+                if profile is not None and profile.type:
+                    types[profile_name] = profile.type
+                continue
+            try:
+                types[profile_name] = self._infer_profile_modality_from_name(
+                    profile_name
+                )
+            except ValueError:
+                continue
+        return types
+
+    def _generate_alternatives(
+        self,
+        query: str,
+        profiles: List[str],
+        selected: str,
+        modality: str,
+        profile_types: Mapping[str, str],
+    ) -> List[ProfileCandidate]:
+        """Other candidates whose declared type is the selected modality (top 3)."""
         if isinstance(profiles, str):
             profiles = [p.strip() for p in profiles.split(",")]
 
-        # Score profiles based on modality match
-        for profile in profiles:
-            if profile == selected:
-                continue
-
-            # Simple scoring: check if profile name matches modality
-            score = 0.3  # Base score
-            if modality.lower() in profile.lower():
-                score += 0.4
-
-            if score > 0.3:  # Only include relevant alternatives
-                alternatives.append(
-                    ProfileCandidate(
-                        profile_name=profile,
-                        score=score,
-                        reasoning=f"Alternative profile for {modality} modality",
-                    )
-                )
-
-        # Sort by score and return top 3
-        alternatives.sort(key=lambda x: x.score, reverse=True)
+        alternatives = [
+            ProfileCandidate(
+                profile_name=profile,
+                score=0.7,
+                reasoning=f"Alternative profile for {modality} modality",
+            )
+            for profile in profiles
+            if profile != selected and profile_types.get(profile) == modality
+        ]
         return alternatives[:3]
 
     def _dspy_to_a2a_output(self, result: ProfileSelectionOutput) -> Dict[str, Any]:

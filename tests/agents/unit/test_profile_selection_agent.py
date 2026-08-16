@@ -4,7 +4,7 @@ import asyncio
 import time
 from types import SimpleNamespace
 from typing import Literal, get_args, get_origin
-from unittest.mock import AsyncMock, Mock, patch
+from unittest.mock import AsyncMock, Mock, call, patch
 
 import dspy
 import pytest
@@ -211,9 +211,14 @@ class TestProfileSelectionAgent:
             if configured_modality == "text"
             else f"{configured_modality}_search"
         )
-        profile_agent._config_manager.get_backend_profile.assert_called_once_with(
-            "video_colpali_base", "acme:docs"
-        )
+        # The selected profile's configured type first, then each candidate's
+        # for the alternatives ranking.
+        assert profile_agent._config_manager.get_backend_profile.call_args_list == [
+            call("video_colpali_base", "acme:docs"),
+            call("video_colpali_base", "acme:docs"),
+            call("video_colpali_large", "acme:docs"),
+            call("image_colpali_base", "acme:docs"),
+        ]
 
     @pytest.mark.asyncio
     async def test_live_profile_lookup_does_not_block_event_loop(self, profile_agent):
@@ -482,50 +487,103 @@ class TestProfileSelectionAgent:
 
         assert result.confidence == 0.5  # Default fallback
 
-    def test_generate_alternatives(self, profile_agent):
-        """Test alternative profile generation"""
-        profiles = ["video_colpali_base", "video_colpali_large", "image_colpali_base"]
-        selected = "video_colpali_base"
-        modality = "video"
+    def test_generate_alternatives_ranks_by_declared_type_not_name(self, profile_agent):
+        """Alternatives are the other candidates whose declared type equals the
+        selected modality; the profile name is not consulted."""
+        profiles = [
+            "video_colpali_base",
+            "mv_frames_colqwen",
+            "video_transcripts_text",
+            "image_colpali_base",
+        ]
+        profile_types = {
+            "video_colpali_base": "video",
+            "mv_frames_colqwen": "video",
+            "video_transcripts_text": "text",
+            "image_colpali_base": "image",
+        }
 
         alternatives = profile_agent._generate_alternatives(
-            query="test query", profiles=profiles, selected=selected, modality=modality
+            query="test query",
+            profiles=profiles,
+            selected="video_colpali_base",
+            modality="video",
+            profile_types=profile_types,
         )
 
-        # Should not include selected profile
-        assert all(alt.profile_name != selected for alt in alternatives)
-
-        # Video profiles should rank higher
-        if alternatives:
-            video_alts = [
-                alt for alt in alternatives if "video" in alt.profile_name.lower()
-            ]
-            if video_alts:
-                assert video_alts[0].score > 0.3
+        assert [
+            (alt.profile_name, alt.score, alt.reasoning) for alt in alternatives
+        ] == [
+            ("mv_frames_colqwen", 0.7, "Alternative profile for video modality"),
+        ]
 
     def test_generate_alternatives_string_input(self, profile_agent):
-        """Test alternative generation with string input"""
-        profiles_str = "video_colpali_base, video_colpali_large"
-        selected = "video_colpali_base"
-        modality = "video"
-
         alternatives = profile_agent._generate_alternatives(
-            query="test", profiles=profiles_str, selected=selected, modality=modality
+            query="test",
+            profiles="video_colpali_base, video_colpali_large",
+            selected="video_colpali_base",
+            modality="video",
+            profile_types={
+                "video_colpali_base": "video",
+                "video_colpali_large": "video",
+            },
         )
 
-        assert isinstance(alternatives, list)
+        assert [alt.profile_name for alt in alternatives] == ["video_colpali_large"]
 
-    def test_generate_alternatives_max_three(self, profile_agent):
-        """Test alternatives limited to top 3"""
+    def test_generate_alternatives_max_three_in_candidate_order(self, profile_agent):
         profiles = [f"profile_{i}" for i in range(10)]
-        selected = "profile_0"
-        modality = "video"
 
         alternatives = profile_agent._generate_alternatives(
-            query="test", profiles=profiles, selected=selected, modality=modality
+            query="test",
+            profiles=profiles,
+            selected="profile_0",
+            modality="video",
+            profile_types={name: "video" for name in profiles},
         )
 
-        assert len(alternatives) <= 3
+        assert [alt.profile_name for alt in alternatives] == [
+            "profile_1",
+            "profile_2",
+            "profile_3",
+        ]
+
+    def test_candidate_profile_types_read_the_configured_type(self, profile_agent):
+        """With a config manager the declared profile type is authoritative;
+        a candidate the tenant has not configured is unclassified."""
+        configured = {
+            "video_colpali_base": SimpleNamespace(type="video"),
+            "video_transcripts_text": SimpleNamespace(type="text"),
+        }
+        profile_agent._config_manager.get_backend_profile.side_effect = (
+            lambda profile_name, tenant_id: configured.get(profile_name)
+        )
+
+        types = profile_agent._candidate_profile_types(
+            ["video_colpali_base", "video_transcripts_text", "unregistered_mv"],
+            "test_tenant",
+        )
+
+        assert types == {
+            "video_colpali_base": "video",
+            "video_transcripts_text": "text",
+        }
+        assert profile_agent._config_manager.get_backend_profile.call_args_list == [
+            call("video_colpali_base", "test_tenant"),
+            call("video_transcripts_text", "test_tenant"),
+            call("unregistered_mv", "test_tenant"),
+        ]
+
+    def test_candidate_profile_types_without_config_manager_infer_from_name(
+        self, profile_agent
+    ):
+        profile_agent._config_manager = None
+
+        types = profile_agent._candidate_profile_types(
+            ["video_colpali_base", "image_colpali_base", "profile_9"], None
+        )
+
+        assert types == {"video_colpali_base": "video", "image_colpali_base": "image"}
 
     def test_dspy_to_a2a_output(self, profile_agent):
         """Test conversion to A2A output format"""

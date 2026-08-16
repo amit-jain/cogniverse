@@ -1,5 +1,6 @@
 """Unit tests for QueryEnhancementAgent"""
 
+import logging
 from unittest.mock import Mock, patch
 
 import dspy
@@ -371,11 +372,20 @@ class TestQueryEnhancementArtifactLoading:
         query_agent.dspy_module.load_state.assert_called_once_with(fake_state)
         assert query_agent.artifact_load_status == "loaded"
 
-    def test_no_telemetry_skips_loading(self, query_agent):
-        """_load_artifact is a no-op when telemetry_manager is not set."""
+    def test_no_telemetry_skips_loading(self, query_agent, caplog):
+        """_load_artifact skips loading when telemetry_manager is not set, and
+        says so: the dispatcher always injects one, so silence would hide a
+        wiring bug as "tenant never optimized"."""
         query_agent.telemetry_manager = None
-        query_agent._load_artifact()
+        with caplog.at_level(
+            logging.WARNING, logger="cogniverse_agents.optimizer.artifact_manager"
+        ):
+            query_agent._load_artifact()
         assert query_agent.artifact_load_status == "no_telemetry"
+        assert [r.getMessage() for r in caplog.records] == [
+            "QueryEnhancementAgent: no telemetry manager injected; "
+            "skipping simba_query_enhancement artifact load"
+        ]
 
     @pytest.mark.asyncio
     async def test_absent_artifact_records_no_artifact(self, query_agent):

@@ -66,6 +66,27 @@ from cogniverse_synthetic.api import router as synthetic_router
 
 logger = logging.getLogger(__name__)
 
+_RUNTIME_LOG_FORMAT = "%(asctime)s - %(name)s - %(levelname)s - %(message)s"
+
+
+def _configure_runtime_logging() -> None:
+    """Attach a stream handler to the root logger under ``LOG_LEVEL``.
+
+    Uvicorn configures only its own loggers; a pre-existing root handler
+    (pytest, an embedding host) is left in charge.
+    """
+    root = logging.getLogger()
+    if root.handlers:
+        return
+    level_name = os.environ.get("LOG_LEVEL", "INFO").upper()
+    level = logging.getLevelNamesMapping().get(level_name)
+    if level is None:
+        raise ValueError(f"LOG_LEVEL={level_name!r} is not a logging level name")
+    logging.basicConfig(level=level, format=_RUNTIME_LOG_FORMAT)
+
+
+_configure_runtime_logging()
+
 # Bound on cached per-tenant GraphManagers. Least-recently-used tenants
 # rebuild on their next graph access; tenant delete evicts eagerly via the
 # registered-cache hook.
