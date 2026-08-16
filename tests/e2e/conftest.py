@@ -446,31 +446,32 @@ def _clear_thread_event_loop() -> None:
     asyncio.set_event_loop(None)
 
 
-def _clear_stale_running_loop() -> None:
-    """Detach a leaked *running-loop* thread-local left by a dead loop.
+def _clear_stale_running_loop():
+    """Detach a *running-loop* thread-local that no task is executing on.
 
     ``set_event_loop(None)`` clears the policy slot read by
     ``get_event_loop()``. ``Runner.run()`` reads a different thread-local
-    via ``events._get_running_loop()``, so a leaker that dies without
-    unwinding leaves that slot pointing at a closed loop and every later
-    pytest-asyncio test raises ``RuntimeError: Runner.run() cannot be
-    called from a running event loop`` before its body runs.
+    via ``events._get_running_loop()``, so a loop left in that slot makes
+    every later pytest-asyncio test raise ``RuntimeError: Runner.run()
+    cannot be called from a running event loop`` before its body runs.
 
-    Only stale state is cleared: a loop that is genuinely running owns the
-    slot and is left attached. Genuinely running means a task is executing
-    on it right now (this reset would be running inside that task). A loop
-    left behind by a runner that never unwound still reports ``is_running()``
-    -- ``run_forever``'s ``finally`` resets ``_thread_id`` and this slot
-    together, so a leak keeps both -- but no task is executing on it.
+    Two things leave that slot set with no task executing: a runner that
+    never unwound (``run_forever``'s ``finally`` resets ``_thread_id`` and
+    this slot together, so a leak keeps both), and Playwright's sync API,
+    whose ``_sync`` deliberately re-sets the slot to its own loop after
+    every call. Both are detached here; the caller decides whether to
+    re-attach for a test that needs the sync-API sentinel. A loop with a
+    task executing on it right now is genuinely running and left alone.
+    Returns the detached loop, or ``None``.
     """
     import asyncio
     import warnings
 
     leaked = asyncio.events._get_running_loop()
     if leaked is None:
-        return
+        return None
     if not leaked.is_closed() and asyncio.current_task(loop=leaked) is not None:
-        return
+        return None
     warnings.warn(
         f"Detached a leaked running event loop {leaked!r} left by "
         f"{_LAST_FINISHED_TEST or 'session setup'}; that test must unwind "
@@ -479,9 +480,16 @@ def _clear_stale_running_loop() -> None:
         stacklevel=2,
     )
     asyncio.events._set_running_loop(None)
+    return leaked
 
 
 _LAST_FINISHED_TEST: str | None = None
+_PARKED_RUNNING_LOOP = None
+_BROWSER_FIXTURES = frozenset({"browser", "context", "page", "new_context"})
+
+
+def _requests_browser(request) -> bool:
+    return bool(_BROWSER_FIXTURES.intersection(getattr(request, "fixturenames", ())))
 
 
 @pytest.fixture(autouse=True)
@@ -505,11 +513,35 @@ def _reset_event_loop_state_before_each_test(request):
     state) at the start of every test, so pytest-asyncio always sees a
     clean thread when it constructs its per-test runner.
     """
+    import asyncio
+
+    global _LAST_FINISHED_TEST, _PARKED_RUNNING_LOOP
     _clear_thread_event_loop()
-    _clear_stale_running_loop()
+    if _requests_browser(request):
+        # Playwright's sync API needs its own loop back in the running-loop
+        # slot; a pytest-asyncio test in between parked it here.
+        parked = _PARKED_RUNNING_LOOP
+        if (
+            asyncio.events._get_running_loop() is None
+            and parked is not None
+            and not parked.is_closed()
+        ):
+            asyncio.events._set_running_loop(parked)
+    else:
+        detached = _clear_stale_running_loop()
+        if detached is not None and not detached.is_closed():
+            _PARKED_RUNNING_LOOP = detached
     yield
-    global _LAST_FINISHED_TEST
     _LAST_FINISHED_TEST = request.node.nodeid
+    # Session-scoped teardown (Playwright's ``browser.close()``) runs after
+    # the last test; give it back the loop the last async test parked.
+    parked = _PARKED_RUNNING_LOOP
+    if (
+        asyncio.events._get_running_loop() is None
+        and parked is not None
+        and not parked.is_closed()
+    ):
+        asyncio.events._set_running_loop(parked)
 
 
 @pytest.fixture(autouse=True)
