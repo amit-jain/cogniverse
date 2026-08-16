@@ -77,6 +77,26 @@ def _ingestor_container_env(manifests: list) -> dict:
     return {e["name"]: e.get("value") for e in ingestor[0].get("env", [])}
 
 
+def _runtime_pod_spec(manifests: list) -> dict:
+    deployments = [
+        m
+        for m in manifests
+        if m.get("kind") == "Deployment"
+        and m.get("metadata", {}).get("name") == "cogniverse-runtime"
+    ]
+    assert len(deployments) == 1, (
+        f"Expected exactly one cogniverse-runtime Deployment, got {len(deployments)}"
+    )
+    return deployments[0]["spec"]["template"]["spec"]
+
+
+def _runtime_container(manifests: list) -> dict:
+    containers = _runtime_pod_spec(manifests)["containers"]
+    runtime = [c for c in containers if c["name"] == "runtime"]
+    assert len(runtime) == 1, "runtime container missing from the Deployment"
+    return runtime[0]
+
+
 @pytest.mark.unit
 @pytest.mark.ci_fast
 class TestIngestorMinioEnv:
@@ -117,6 +137,102 @@ class TestRuntimeInstrumentationEnv:
             _render_chart("runtime.iterRetrieval.wallClockMs=45000")
         )
         assert env.get("ITER_RETRIEVAL_WALL_CLOCK_MS") == "45000"
+
+
+@pytest.mark.unit
+@pytest.mark.ci_fast
+class TestRuntimeSandboxHostMode:
+    def test_host_mode_renders_host_alias_and_host_mounts(self):
+        manifests = _render_chart(
+            "runtime.sandbox.enabled=true",
+            "runtime.sandbox.inCluster.enabled=false",
+            "runtime.sandbox.gatewayEndpoint=https://host.docker.internal:28080",
+            "runtime.sandbox.hostGatewayIP=172.18.0.1",
+        )
+        spec = _runtime_pod_spec(manifests)
+        assert spec["hostAliases"] == [
+            {"ip": "172.18.0.1", "hostnames": ["host.docker.internal"]}
+        ]
+
+        runtime = _runtime_container(manifests)
+        host_mounts = [
+            mount
+            for mount in runtime["volumeMounts"]
+            if mount["name"].startswith("openshell")
+        ]
+        assert host_mounts == [
+            {
+                "name": "openshell-mtls",
+                "mountPath": "/home/cogniverse/.config/openshell/gateways/cogniverse/mtls/ca.crt",
+                "subPath": "ca.crt",
+                "readOnly": True,
+            },
+            {
+                "name": "openshell-mtls",
+                "mountPath": "/home/cogniverse/.config/openshell/gateways/cogniverse/mtls/tls.crt",
+                "subPath": "tls.crt",
+                "readOnly": True,
+            },
+            {
+                "name": "openshell-mtls",
+                "mountPath": "/home/cogniverse/.config/openshell/gateways/cogniverse/mtls/tls.key",
+                "subPath": "tls.key",
+                "readOnly": True,
+            },
+            {
+                "name": "openshell-metadata",
+                "mountPath": "/home/cogniverse/.config/openshell/gateways/cogniverse/metadata.json",
+                "subPath": "metadata.json",
+                "readOnly": True,
+            },
+            {
+                "name": "openshell-active",
+                "mountPath": "/home/cogniverse/.config/openshell/active_gateway",
+                "subPath": "active_gateway",
+                "readOnly": True,
+            },
+        ]
+
+    def test_disabled_mode_renders_no_host_alias_or_host_mounts(self):
+        manifests = _render_chart()
+        spec = _runtime_pod_spec(manifests)
+        assert spec.get("hostAliases") is None
+        runtime = _runtime_container(manifests)
+        host_mounts = [
+            mount
+            for mount in runtime["volumeMounts"]
+            if mount["name"].startswith("openshell")
+        ]
+        assert host_mounts == []
+
+    @pytest.mark.parametrize(
+        "sandbox_override",
+        [
+            "runtime.sandbox.inCluster.enabled=true",
+            "runtime.sandbox.external.enabled=true",
+        ],
+    )
+    def test_non_host_sandbox_modes_do_not_render_host_aliases(
+        self, sandbox_override: str
+    ):
+        extra = [sandbox_override]
+        if sandbox_override.endswith("external.enabled=true"):
+            extra.append("runtime.sandbox.external.endpoint=openshell.example.com:8080")
+        manifests = _render_chart(
+            "runtime.sandbox.enabled=true",
+            *extra,
+            "runtime.sandbox.hostGatewayIP=172.18.0.1",
+        )
+        spec = _runtime_pod_spec(manifests)
+        assert spec.get("hostAliases") is None
+        runtime = _runtime_container(manifests)
+        host_mounts = [
+            mount
+            for mount in runtime["volumeMounts"]
+            if mount["name"].startswith("openshell-mtls")
+            or mount["name"] in {"openshell-metadata", "openshell-active"}
+        ]
+        assert host_mounts == []
 
 
 def _render_with_values(*values_files: str) -> list:

@@ -440,7 +440,9 @@ runtime:
   #
   # 1. HOST mode (default for local dev with k3d):
   #    - Gateway runs on the developer's host via `openshell gateway start`
-  #    - Runtime pod reaches it via host.docker.internal:19091
+  #    - Runtime pod reaches it via host.docker.internal:<gateway port> (the
+  #      active gateway's own metadata.json gateway_port), with hostAliases
+  #      from runtime.sandbox.hostGatewayIP
   #    - Host's ~/.config/openshell dir is synced into the pod via k8s Secret/ConfigMap
   #    - `cogniverse up` automates the setup (install CLI, start gateway, sync certs)
   #
@@ -452,9 +454,12 @@ runtime:
   sandbox:
     enabled: false
     # Endpoint reachable from inside the runtime pod.
-    # - Host mode:       "host.docker.internal:19091"
+    # - Host mode:       "host.docker.internal:<gateway port>"
     # - In-cluster mode: auto-computed as openshell.<ns>.svc.cluster.local:8080
-    gatewayEndpoint: "host.docker.internal:19091"
+    gatewayEndpoint: "host.docker.internal:28080"
+    # Host gateway IP used to map host.docker.internal inside the runtime pod
+    # when host mode is enabled. Set by the e2e host-mode fixture.
+    hostGatewayIP: ""
     # Host path to the openshell config directory (host mode only, ignored in in-cluster).
     hostConfigPath: ""
     # In-cluster mode settings — deploy the OpenShell gateway + agent-sandbox
