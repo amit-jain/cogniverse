@@ -51,8 +51,10 @@ from tests.e2e.conftest import (
     expected_gateway_routing,
     unique_id,
 )
+from tests.e2e.conftest import (
+    _configured_profile_name as _configured_profile_name_from_config,
+)
 
-IMAGE_PROFILE = "image_colpali_mv"
 CAPTION_CORPUS_DIR = (
     Path(__file__).resolve().parents[2]
     / "data"
@@ -72,22 +74,24 @@ def _default_video_profile_name() -> str:
             return name
     if isinstance(active, str) and active.strip():
         return active
-    return "video_colpali_smol500_mv_frame"
+    return _configured_profile_name("video")
 
 
 PROFILE = _default_video_profile_name()
 
 
-def _configured_image_profile_name() -> str:
+def _configured_profile_name(
+    profile_type: str, *, schema_name: str | None = None
+) -> str:
     config = json.loads(CONFIG_PATH.read_text())
-    profiles = config.get("backend", {}).get("profiles", {})
-    for profile_name, profile_config in profiles.items():
-        if isinstance(profile_config, dict) and profile_config.get("type") == "image":
-            return profile_name
-    return "image_colpali_mv"
+    return _configured_profile_name_from_config(
+        config, profile_type=profile_type, schema_name=schema_name
+    )
 
 
-IMAGE_PROFILE = _configured_image_profile_name()
+IMAGE_PROFILE = _configured_profile_name("image")
+DOCUMENT_PROFILE = _configured_profile_name("document", schema_name="document_text")
+AUDIO_PROFILE = _configured_profile_name("audio")
 
 
 def _shipped_agent_inferrer() -> AgentInferrer:
@@ -800,7 +804,7 @@ class TestSyntheticDataAPI:
         for caption_path in caption_paths:
             _ensure_sample_content_ingested(
                 caption_path,
-                profile="document_text_semantic",
+                profile=DOCUMENT_PROFILE,
                 media_type="text/plain",
             )
 
@@ -2249,14 +2253,14 @@ class TestImageIngestionAndSearch:
             assert image.size == (1280, 720)
         expected_source_url = _expected_artifact_source_url(real_image_path)
         with httpx.Client(base_url=RUNTIME, timeout=900.0) as client:
-            self._deploy_schema_if_needed(client, "image_colpali_mv")
+            self._deploy_schema_if_needed(client, IMAGE_PROFILE)
 
             with open(real_image_path, "rb") as f:
                 resp = client.post(
                     "/ingestion/upload?wait=true&wait_timeout=540",
                     files={"file": (real_image_path.name, f, "image/jpeg")},
                     data={
-                        "profile": "image_colpali_mv",
+                        "profile": IMAGE_PROFILE,
                         "tenant_id": TENANT_ID,
                     },
                 )
@@ -2278,7 +2282,7 @@ class TestImageIngestionAndSearch:
                 "/search/",
                 json={
                     "query": query,
-                    "profile": "image_colpali_mv",
+                    "profile": IMAGE_PROFILE,
                     "top_k": 1,
                     "tenant_id": TENANT_ID,
                     "filters": {"source_url": expected_source_url},
@@ -2287,7 +2291,7 @@ class TestImageIngestionAndSearch:
             _assert_artifact_search_hit(
                 search_resp,
                 query=query,
-                profile="image_colpali_mv",
+                profile=IMAGE_PROFILE,
                 video_id=upload_data["video_id"],
                 expected_metadata={"source_url": expected_source_url},
             )
@@ -2323,7 +2327,7 @@ class TestAudioIngestionAndSearch:
                     "/ingestion/upload?wait=true&wait_timeout=540&force=true",
                     files={"file": (extracted_audio_path.name, f, "audio/wav")},
                     data={
-                        "profile": "audio_clap_semantic",
+                        "profile": AUDIO_PROFILE,
                         "tenant_id": TENANT_ID,
                     },
                 )
@@ -2346,7 +2350,7 @@ class TestAudioIngestionAndSearch:
                 "/search/",
                 json={
                     "query": query,
-                    "profile": "audio_clap_semantic",
+                    "profile": AUDIO_PROFILE,
                     "top_k": 1,
                     "tenant_id": TENANT_ID,
                     "filters": {"source_url": expected_source_url},
@@ -2355,7 +2359,7 @@ class TestAudioIngestionAndSearch:
             _assert_artifact_search_hit(
                 search_resp,
                 query=query,
-                profile="audio_clap_semantic",
+                profile=AUDIO_PROFILE,
                 video_id=upload_data["video_id"],
                 expected_metadata={
                     "source_url": expected_source_url,
@@ -2396,7 +2400,7 @@ class TestPDFIngestionAndSearch:
                     "/ingestion/upload?force=true",
                     files={"file": (real_pdf_path.name, f, "application/pdf")},
                     data={
-                        "profile": "document_text_semantic",
+                        "profile": DOCUMENT_PROFILE,
                         "tenant_id": TENANT_ID,
                     },
                 )
@@ -2444,7 +2448,7 @@ class TestPDFIngestionAndSearch:
                 "/search/",
                 json={
                     "query": query,
-                    "profile": "document_text_semantic",
+                    "profile": DOCUMENT_PROFILE,
                     "top_k": 1,
                     "tenant_id": TENANT_ID,
                     "filters": {"document_id": pipeline_result["video_id"]},
@@ -2453,7 +2457,7 @@ class TestPDFIngestionAndSearch:
             _assert_artifact_search_hit(
                 search_resp,
                 query=query,
-                profile="document_text_semantic",
+                profile=DOCUMENT_PROFILE,
                 video_id=pipeline_result["video_id"],
                 expected_metadata={
                     "document_id": pipeline_result["video_id"],
@@ -2479,7 +2483,7 @@ class TestDocumentIngestionAndSearch:
                     "/ingestion/upload?wait=true&wait_timeout=540",
                     files={"file": (real_document_path.name, f, "text/markdown")},
                     data={
-                        "profile": "document_text_semantic",
+                        "profile": DOCUMENT_PROFILE,
                         "tenant_id": TENANT_ID,
                     },
                 )
@@ -2501,7 +2505,7 @@ class TestDocumentIngestionAndSearch:
                 "/search/",
                 json={
                     "query": query,
-                    "profile": "document_text_semantic",
+                    "profile": DOCUMENT_PROFILE,
                     "top_k": 1,
                     "tenant_id": TENANT_ID,
                     "filters": {"document_id": upload_data["video_id"]},
@@ -2510,7 +2514,7 @@ class TestDocumentIngestionAndSearch:
             _assert_artifact_search_hit(
                 search_resp,
                 query=query,
-                profile="document_text_semantic",
+                profile=DOCUMENT_PROFILE,
                 video_id=upload_data["video_id"],
                 expected_metadata={
                     "document_id": upload_data["video_id"],

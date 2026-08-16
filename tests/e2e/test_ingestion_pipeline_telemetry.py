@@ -27,6 +27,8 @@ from pathlib import Path
 import httpx
 import pytest
 
+from tests.e2e.test_api_e2e import PROFILE
+
 RUNTIME_BASE = os.environ.get("COGNIVERSE_RUNTIME_BASE", "http://localhost:33000")
 PHOENIX_BASE = os.environ.get("COGNIVERSE_PHOENIX_BASE", "http://localhost:33006")
 _TENANT = "flywheel_org:production"
@@ -228,7 +230,7 @@ def _upload_fixture(tenant_id: str) -> str:
                 # ignored and the route returns 202 without waiting.
                 data={
                     "tenant_id": tenant_id,
-                    "profile": "video_colpali_smol500_mv_frame",
+                    "profile": PROFILE,
                 },
                 params={"wait": "true", "wait_timeout": "300", "force": "true"},
             )

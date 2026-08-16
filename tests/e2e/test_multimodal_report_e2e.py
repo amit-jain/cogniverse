@@ -26,6 +26,7 @@ import pytest
 import requests
 
 from cogniverse_runtime.ingestion_worker.status_api import TERMINAL_STATES
+from tests.e2e.test_api_e2e import PROFILE
 from tests.e2e.test_ingestion_upload_e2e import EXPECTED_KEYFRAMES
 
 REPO_ROOT = Path(__file__).resolve().parents[2]
@@ -33,8 +34,7 @@ SAMPLE_VIDEO = REPO_ROOT / "tests/system/resources/videos/v_-D1gdv_gQyw.mp4"
 RUNTIME_URL = "http://localhost:33000"
 VESPA_URL = "http://localhost:33080"
 TENANT_FULL_ID = "flywheel_org:production"
-PROFILE = "video_colpali_smol500_mv_frame"
-SCHEMA_NAME = "video_colpali_smol500_mv_frame_flywheel_org_production"
+SCHEMA_NAME = f"{PROFILE}_{TENANT_FULL_ID.replace(':', '_')}"
 
 
 pytestmark = pytest.mark.e2e

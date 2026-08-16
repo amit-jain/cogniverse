@@ -52,6 +52,7 @@ from cogniverse_agents.graph.graph_schema import (
     normalize_name,
 )
 from cogniverse_runtime.ingestion_worker.status_api import TERMINAL_STATES
+from tests.e2e.test_api_e2e import PROFILE
 
 pytestmark = pytest.mark.e2e
 
@@ -67,8 +68,7 @@ TENANT_FULL_ID = "flywheel_org:production"
 # this number; update it here with the same arithmetic rather than relaxing
 # the equality.
 EXPECTED_KEYFRAMES = 10
-PROFILE = "video_colpali_smol500_mv_frame"
-SCHEMA_NAME = "video_colpali_smol500_mv_frame_flywheel_org_production"
+SCHEMA_NAME = f"{PROFILE}_flywheel_org_production"
 KG_SCHEMA_NAME = "knowledge_graph_flywheel_org_production"
 
 

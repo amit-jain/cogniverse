@@ -823,11 +823,61 @@ def restart_runtime(timeout_s: int = 60) -> bool:
     return False
 
 
-def _synthetic_fixture_profiles(config: dict) -> list[str]:
-    active_profile = config.get(
-        "active_video_profile", "video_colpali_smol500_mv_frame"
+def _configured_profile_name(
+    config: dict,
+    *,
+    profile_type: str | None = None,
+    schema_name: str | None = None,
+) -> str:
+    profiles = config.get("backend", {}).get("profiles", {})
+    for profile_name, profile_config in profiles.items():
+        if not isinstance(profile_config, dict):
+            continue
+        if profile_type is not None and profile_config.get("type") != profile_type:
+            continue
+        if schema_name is not None and profile_config.get("schema_name") != schema_name:
+            continue
+        return profile_name
+    criteria = []
+    if profile_type is not None:
+        criteria.append(f"type={profile_type!r}")
+    if schema_name is not None:
+        criteria.append(f"schema_name={schema_name!r}")
+    raise AssertionError(f"configured profile not found ({', '.join(criteria)})")
+
+
+def _active_video_profile_name(config: dict) -> str:
+    active_profile = config.get("active_video_profile")
+    if isinstance(active_profile, dict):
+        name = active_profile.get("name")
+        if isinstance(name, str) and name.strip():
+            return name
+    if isinstance(active_profile, str) and active_profile.strip():
+        return active_profile
+    return _configured_profile_name(config, profile_type="video")
+
+
+def _configured_image_profile_name(config: dict) -> str:
+    return _configured_profile_name(config, profile_type="image")
+
+
+def _configured_audio_profile_name(config: dict) -> str:
+    return _configured_profile_name(config, profile_type="audio")
+
+
+def _configured_document_profile_name(
+    config: dict, *, schema_name: str = "document_text"
+) -> str:
+    return _configured_profile_name(
+        config, profile_type="document", schema_name=schema_name
     )
-    profiles = [active_profile, "image_colpali_mv"]
+
+
+def _synthetic_fixture_profiles(config: dict) -> list[str]:
+    profiles = [
+        _active_video_profile_name(config),
+        _configured_image_profile_name(config),
+    ]
     configured_profiles = config.get("backend", {}).get("profiles", {})
     missing = [name for name in profiles if name not in configured_profiles]
     if missing:
@@ -842,6 +892,44 @@ def _synthetic_fixture_profiles(config: dict) -> list[str]:
     return profiles
 
 
+def _expected_sample_documents_fed(path: Path, profile: str, media_type: str) -> int:
+    if not media_type.startswith("video/"):
+        return 1
+
+    config_path = DATA_ROOT.parent / "configs" / "config.json"
+    config = json.loads(config_path.read_text()) if config_path.exists() else {}
+    profile_def = config.get("backend", {}).get("profiles", {}).get(profile, {})
+    pipeline_config = profile_def.get("pipeline_config", {}) if profile_def else {}
+    target_fps = pipeline_config.get("keyframe_fps")
+    if not isinstance(target_fps, (int, float)) or target_fps <= 0:
+        target_fps = (
+            profile_def.get("strategies", {})
+            .get("segmentation", {})
+            .get("params", {})
+            .get("fps", 0.5)
+        )
+    if not isinstance(target_fps, (int, float)) or target_fps <= 0:
+        raise AssertionError(
+            f"Could not determine keyframe fps for profile {profile!r}: {profile_def}"
+        )
+
+    import cv2
+
+    cap = cv2.VideoCapture(str(path))
+    video_fps = cap.get(cv2.CAP_PROP_FPS)
+    total_frames = int(cap.get(cv2.CAP_PROP_FRAME_COUNT))
+    cap.release()
+    if video_fps <= 0 or total_frames <= 0:
+        raise AssertionError(
+            f"Could not determine frame count for tracked video {path!r}: "
+            f"fps={video_fps!r}, frames={total_frames!r}"
+        )
+    frame_interval = int(video_fps / target_fps) if video_fps > target_fps else 1
+    return sum(
+        1 for frame_idx in range(total_frames) if frame_idx % frame_interval == 0
+    )
+
+
 def _bootstrap_tenant_and_schemas() -> None:
     """Create the E2E tenant and deploy schemas if not already done.
 
@@ -854,16 +942,17 @@ def _bootstrap_tenant_and_schemas() -> None:
 
     config = json.loads(config_path.read_text())
     all_profiles = config.get("backend", {}).get("profiles", {})
-    # The seeded audio clip is ingested with audio_clap_semantic, so the tenant
-    # registers it like every other profile it uses: profile selection and
-    # the admin listing read the tenant's registered profiles.
+    # Register the profile families the seeded fixtures actually use; the
+    # tenant's profile-selection and admin listings must reflect live config.
     profile_names = tuple(
         dict.fromkeys(
             (
                 *_synthetic_fixture_profiles(config),
-                "document_text_semantic",
-                "document_visual_colpali",
-                "audio_clap_semantic",
+                _configured_document_profile_name(config),
+                _configured_document_profile_name(
+                    config, schema_name="document_visual"
+                ),
+                _configured_audio_profile_name(config),
             )
         )
     )
@@ -1060,6 +1149,7 @@ def _validate_sample_ingestion_result(
     content_id: str,
     tenant_id: str,
     suffix: str,
+    expected_documents_fed: int,
 ) -> int:
     """Validate the terminal worker result and return its persisted count."""
     assert result.get("video_id") == content_id, result
@@ -1071,8 +1161,10 @@ def _validate_sample_ingestion_result(
     ), result
     chunks = result.get("chunks")
     documents_fed = result.get("documents_fed")
-    assert type(chunks) is int and chunks > 0, result
-    assert type(documents_fed) is int and documents_fed > 0, result
+    assert type(chunks) is int and chunks == expected_documents_fed, result
+    assert type(documents_fed) is int and documents_fed == expected_documents_fed, (
+        result
+    )
     assert chunks == documents_fed, result
     return documents_fed
 
@@ -1176,6 +1268,7 @@ def _ensure_sample_content_ingested(
     deadline = _time.monotonic() + 2400
     latest: dict = {}
     documents_fed = 0
+    expected_documents_fed = _expected_sample_documents_fed(path, profile, media_type)
     while _time.monotonic() < deadline:
         try:
             status_response = httpx.get(
@@ -1200,6 +1293,7 @@ def _ensure_sample_content_ingested(
                 content_id=content_id,
                 tenant_id=TENANT_ID,
                 suffix=path.suffix,
+                expected_documents_fed=expected_documents_fed,
             )
             break
         if snapshot.get("state") == "failed":
@@ -1251,9 +1345,7 @@ def _ingest_sample_video() -> None:
 
     config_path = DATA_ROOT.parent / "configs" / "config.json"
     config = json.loads(config_path.read_text()) if config_path.exists() else {}
-    active_profile = config.get(
-        "active_video_profile", "video_colpali_smol500_mv_frame"
-    )
+    active_profile = _active_video_profile_name(config)
     persisted_content_id = _ensure_sample_content_ingested(
         SAMPLE_VIDEO_PATH,
         profile=active_profile,
@@ -1276,9 +1368,11 @@ def sample_audio_content_id() -> str:
 
 def _ingest_sample_audio() -> str:
     """Ensure the tracked video's audio is persisted as audio content."""
+    config_path = DATA_ROOT.parent / "configs" / "config.json"
+    config = json.loads(config_path.read_text()) if config_path.exists() else {}
     return _ensure_sample_content_ingested(
         _sample_audio_path(),
-        profile="audio_clap_semantic",
+        profile=_configured_audio_profile_name(config),
         media_type="audio/wav",
     )
 
@@ -1295,10 +1389,12 @@ _CAPTION_CORPUS_DIR = (
 def _ingest_sample_documents() -> dict[str, str]:
     """Ensure the two human-annotated captions that describe washing dishes
     are persisted as document content; returns ``{title: content_id}``."""
+    config_path = DATA_ROOT.parent / "configs" / "config.json"
+    config = json.loads(config_path.read_text()) if config_path.exists() else {}
     return {
         title: _ensure_sample_content_ingested(
             _CAPTION_CORPUS_DIR / title,
-            profile="document_text_semantic",
+            profile=_configured_document_profile_name(config),
             media_type="text/plain",
         )
         for title in SAMPLE_DOCUMENT_TITLES
@@ -1307,9 +1403,11 @@ def _ingest_sample_documents() -> dict[str, str]:
 
 def _ingest_sample_frame() -> str:
     """Ensure a real frame from the tracked video is persisted as image content."""
+    config_path = DATA_ROOT.parent / "configs" / "config.json"
+    config = json.loads(config_path.read_text()) if config_path.exists() else {}
     return _ensure_sample_content_ingested(
         _sample_frame_path(),
-        profile="image_colpali_mv",
+        profile=_configured_image_profile_name(config),
         media_type="image/jpeg",
     )
 

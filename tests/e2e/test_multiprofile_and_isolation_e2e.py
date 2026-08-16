@@ -30,6 +30,7 @@ from tests.e2e.conftest import (
     unique_id,
     wait_for_streamlit,
 )
+from tests.e2e.test_api_e2e import AUDIO_PROFILE, DOCUMENT_PROFILE, PROFILE
 
 SEARCH_TIMEOUT = 120_000
 LLM_TIMEOUT = 60_000
@@ -54,6 +55,36 @@ def _get_profile_def(profile_name: str) -> dict:
     """Read profile definition from configs/config.json."""
     config = json.loads(CONFIG_PATH.read_text())
     return config.get("backend", {}).get("profiles", {}).get(profile_name, {})
+
+
+def _expected_video_documents_fed(video_path: Path, profile_name: str) -> int:
+    """Return the exact keyframe/doc count for a tracked video/profile pair."""
+    profile_def = _get_profile_def(profile_name)
+    pipeline_config = profile_def.get("pipeline_config", {})
+    target_fps = pipeline_config.get("keyframe_fps")
+    if not isinstance(target_fps, (int, float)) or target_fps <= 0:
+        target_fps = (
+            profile_def.get("strategies", {})
+            .get("segmentation", {})
+            .get("params", {})
+            .get("fps", 0.5)
+        )
+
+    import cv2
+
+    cap = cv2.VideoCapture(str(video_path))
+    video_fps = cap.get(cv2.CAP_PROP_FPS)
+    total_frames = int(cap.get(cv2.CAP_PROP_FRAME_COUNT))
+    cap.release()
+    if video_fps <= 0 or total_frames <= 0:
+        raise AssertionError(
+            f"Could not determine frame count for tracked video {video_path!r}: "
+            f"fps={video_fps!r}, frames={total_frames!r}"
+        )
+    frame_interval = int(video_fps / target_fps) if video_fps > target_fps else 1
+    return sum(
+        1 for frame_idx in range(total_frames) if frame_idx % frame_interval == 0
+    )
 
 
 def _deploy_schema(client: httpx.Client, profile_name: str, tenant_id: str) -> dict:
@@ -199,83 +230,92 @@ class TestMultiProfileIngestion:
     def test_video_colpali_produces_searchable_results(self, real_video_path):
         """Baseline: ColPali profile ingests video and search returns results."""
         with httpx.Client(base_url=RUNTIME, timeout=600.0) as client:
-            _deploy_schema(client, "video_colpali_smol500_mv_frame", TENANT_ID)
-
-            data = _upload_file(
-                client, real_video_path, "video_colpali_smol500_mv_frame", TENANT_ID
+            expected_documents_fed = _expected_video_documents_fed(
+                real_video_path, PROFILE
             )
-            assert data["status"] == "success"
-            assert data["chunks_created"] >= 1
+            _deploy_schema(client, PROFILE, TENANT_ID)
 
-            if data.get("documents_fed", 0) > 0:
-                time.sleep(5)
-                results = _search(
-                    client,
-                    "person throwing discus",
-                    "video_colpali_smol500_mv_frame",
-                    TENANT_ID,
-                )
-                assert results["results_count"] >= 1, (
-                    "ColPali search must return results after ingestion"
-                )
+            data = _upload_file(client, real_video_path, PROFILE, TENANT_ID)
+            assert data["status"] == "success"
+            assert data["chunks_created"] == expected_documents_fed
+            assert data["documents_fed"] == expected_documents_fed
+
+            time.sleep(5)
+            results = _search(
+                client,
+                "person throwing discus",
+                PROFILE,
+                TENANT_ID,
+            )
+            assert results["results_count"] >= 1, (
+                "ColPali search must return results after ingestion"
+            )
 
     def test_same_video_different_ingestion_runs(self, real_video_path):
         """Re-ingesting the same video creates new documents (not idempotent)."""
         with httpx.Client(base_url=RUNTIME, timeout=600.0) as client:
-            _deploy_schema(client, "video_colpali_smol500_mv_frame", TENANT_ID)
+            expected_documents_fed = _expected_video_documents_fed(
+                real_video_path, PROFILE
+            )
+            _deploy_schema(client, PROFILE, TENANT_ID)
 
             data1 = _upload_file(
                 client,
                 real_video_path,
-                "video_colpali_smol500_mv_frame",
+                PROFILE,
                 TENANT_ID,
             )
             assert data1["status"] == "success"
             chunks_1 = data1["chunks_created"]
-            assert chunks_1 >= 1
+            assert chunks_1 == expected_documents_fed
+            assert data1["documents_fed"] == expected_documents_fed
 
             data2 = _upload_file(
                 client,
                 real_video_path,
-                "video_colpali_smol500_mv_frame",
+                PROFILE,
                 TENANT_ID,
             )
             assert data2["status"] == "success"
             chunks_2 = data2["chunks_created"]
+            assert chunks_2 == expected_documents_fed
+            assert data2["documents_fed"] == expected_documents_fed
 
             assert chunks_2 == chunks_1, (
                 f"Same video should produce same chunk count: {chunks_1} vs {chunks_2}"
             )
 
-    def test_document_text_semantic_profile(self, real_document_path):
+    def test_document_profile(self, real_document_path):
         """Document profile ingests text via ColBERT embeddings."""
         with httpx.Client(base_url=RUNTIME, timeout=600.0) as client:
-            _deploy_schema(client, "document_text_semantic", TENANT_ID)
+            _deploy_schema(client, DOCUMENT_PROFILE, TENANT_ID)
 
             data = _upload_file(
                 client,
                 real_document_path,
-                "document_text_semantic",
+                DOCUMENT_PROFILE,
                 TENANT_ID,
                 mime_type="text/markdown",
             )
             assert data["status"] == "success"
-            assert data["chunks_created"] >= 1
+            assert data["chunks_created"] == 1
+            assert data["documents_fed"] == 1
 
-    def test_audio_clap_semantic_profile(self, extracted_audio_path):
+    def test_audio_profile(self, extracted_audio_path):
         """Audio profile ingests wav via CLAP + ColBERT embeddings."""
         with httpx.Client(base_url=RUNTIME, timeout=600.0) as client:
-            _deploy_schema(client, "audio_clap_semantic", TENANT_ID)
+            _deploy_schema(client, AUDIO_PROFILE, TENANT_ID)
 
             data = _upload_file(
                 client,
                 extracted_audio_path,
-                "audio_clap_semantic",
+                AUDIO_PROFILE,
                 TENANT_ID,
                 mime_type="audio/wav",
             )
             assert data["status"] == "success"
-            assert data["chunks_created"] >= 1
+            assert data["chunks_created"] == 1
+            assert data["documents_fed"] == 1
 
     def test_list_profiles_shows_deployed(self):
         """Profile listing includes all deployed profiles for the tenant."""
@@ -284,7 +324,7 @@ class TestMultiProfileIngestion:
             assert resp.status_code == 200
             data = resp.json()
             profile_names = [p["name"] for p in data.get("profiles", [])]
-            assert "video_colpali_smol500_mv_frame" in profile_names, (
+            assert PROFILE in profile_names, (
                 f"ColPali profile must be listed, got: {profile_names}"
             )
 
@@ -342,7 +382,7 @@ class TestMultiProfileDashboardUI:
         assert multiselect.count() > 0, "Ingestion tab must have profile multiselect"
 
         body_text = page.inner_text("body").lower()
-        assert "video_colpali_smol500_mv_frame" in body_text, (
+        assert PROFILE in body_text, (
             "Default ColPali profile must be visible in ingestion tab"
         )
 
@@ -376,32 +416,31 @@ class TestCrossTenantIsolation:
 
         with httpx.Client(base_url=RUNTIME, timeout=600.0) as client:
             try:
+                expected_documents_fed = _expected_video_documents_fed(
+                    real_video_path, PROFILE
+                )
                 _create_tenant(client, tenant_a)
                 _create_tenant(client, tenant_b)
 
-                _deploy_schema(client, "video_colpali_smol500_mv_frame", tenant_a)
-                _deploy_schema(client, "video_colpali_smol500_mv_frame", tenant_b)
+                _deploy_schema(client, PROFILE, tenant_a)
+                _deploy_schema(client, PROFILE, tenant_b)
 
                 data = _upload_file(
                     client,
                     real_video_path,
-                    "video_colpali_smol500_mv_frame",
+                    PROFILE,
                     tenant_a,
                 )
                 assert data["status"] == "success"
-                assert data["chunks_created"] >= 1
-
-                assert data["documents_fed"] > 0, (
-                    f"Tenant A ingestion must feed documents before isolation is "
-                    f"verified: {data}"
-                )
+                assert data["chunks_created"] == expected_documents_fed
+                assert data["documents_fed"] == expected_documents_fed
 
                 time.sleep(5)
 
                 results_a = _search(
                     client,
                     "person throwing discus",
-                    "video_colpali_smol500_mv_frame",
+                    PROFILE,
                     tenant_a,
                 )
                 assert results_a["results_count"] >= 1, "Tenant A must see its own data"
@@ -409,7 +448,7 @@ class TestCrossTenantIsolation:
                 results_b = _search(
                     client,
                     "person throwing discus",
-                    "video_colpali_smol500_mv_frame",
+                    PROFILE,
                     tenant_b,
                 )
                 assert results_b["results_count"] == 0, (
@@ -432,12 +471,8 @@ class TestCrossTenantIsolation:
                 _create_tenant(client, tenant_a)
                 _create_tenant(client, tenant_b)
 
-                deploy_a = _deploy_schema(
-                    client, "video_colpali_smol500_mv_frame", tenant_a
-                )
-                deploy_b = _deploy_schema(
-                    client, "video_colpali_smol500_mv_frame", tenant_b
-                )
+                deploy_a = _deploy_schema(client, PROFILE, tenant_a)
+                deploy_b = _deploy_schema(client, PROFILE, tenant_b)
 
                 schema_a = deploy_a.get("tenant_schema_name", "")
                 schema_b = deploy_b.get("tenant_schema_name", "")
@@ -467,31 +502,31 @@ class TestCrossTenantIsolation:
 
         with httpx.Client(base_url=RUNTIME, timeout=600.0) as client:
             try:
+                expected_documents_fed = _expected_video_documents_fed(
+                    real_video_path, PROFILE
+                )
                 _create_tenant(client, tenant_a)
                 _create_tenant(client, tenant_b)
 
-                _deploy_schema(client, "video_colpali_smol500_mv_frame", tenant_a)
-                _deploy_schema(client, "video_colpali_smol500_mv_frame", tenant_b)
+                _deploy_schema(client, PROFILE, tenant_a)
+                _deploy_schema(client, PROFILE, tenant_b)
 
                 data = _upload_file(
                     client,
                     real_video_path,
-                    "video_colpali_smol500_mv_frame",
+                    PROFILE,
                     tenant_b,
                 )
                 assert data["status"] == "success"
-
-                assert data["documents_fed"] > 0, (
-                    f"Tenant B ingestion must feed documents before reverse "
-                    f"isolation is verified: {data}"
-                )
+                assert data["chunks_created"] == expected_documents_fed
+                assert data["documents_fed"] == expected_documents_fed
 
                 time.sleep(5)
 
                 results_a = _search(
                     client,
                     "person throwing discus",
-                    "video_colpali_smol500_mv_frame",
+                    PROFILE,
                     tenant_a,
                 )
                 assert results_a["results_count"] == 0, (
@@ -501,7 +536,7 @@ class TestCrossTenantIsolation:
                 results_b = _search(
                     client,
                     "person throwing discus",
-                    "video_colpali_smol500_mv_frame",
+                    PROFILE,
                     tenant_b,
                 )
                 assert results_b["results_count"] >= 1, "Tenant B must see its own data"
@@ -518,37 +553,38 @@ class TestCrossTenantIsolation:
 
         with httpx.Client(base_url=RUNTIME, timeout=600.0) as client:
             try:
+                expected_a_documents_fed = _expected_video_documents_fed(
+                    real_video_path, PROFILE
+                )
+                expected_b_documents_fed = _expected_video_documents_fed(
+                    SECOND_VIDEO_PATH, PROFILE
+                )
                 _create_tenant(client, tenant_a)
                 _create_tenant(client, tenant_b)
 
-                _deploy_schema(client, "video_colpali_smol500_mv_frame", tenant_a)
-                _deploy_schema(client, "video_colpali_smol500_mv_frame", tenant_b)
+                _deploy_schema(client, PROFILE, tenant_a)
+                _deploy_schema(client, PROFILE, tenant_b)
 
                 # Ingest into both tenants
                 data_a = _upload_file(
                     client,
                     real_video_path,
-                    "video_colpali_smol500_mv_frame",
+                    PROFILE,
                     tenant_a,
                 )
                 data_b = _upload_file(
                     client,
                     SECOND_VIDEO_PATH,
-                    "video_colpali_smol500_mv_frame",
+                    PROFILE,
                     tenant_b,
                 )
 
                 assert data_a["status"] == "success"
                 assert data_b["status"] == "success"
-
-                assert data_a["documents_fed"] > 0, (
-                    f"Tenant A ingestion must feed documents before isolation is "
-                    f"verified: {data_a}"
-                )
-                assert data_b["documents_fed"] > 0, (
-                    f"Tenant B ingestion must feed documents before isolation is "
-                    f"verified: {data_b}"
-                )
+                assert data_a["chunks_created"] == expected_a_documents_fed
+                assert data_a["documents_fed"] == expected_a_documents_fed
+                assert data_b["chunks_created"] == expected_b_documents_fed
+                assert data_b["documents_fed"] == expected_b_documents_fed
 
                 time.sleep(5)
 
@@ -556,13 +592,13 @@ class TestCrossTenantIsolation:
                 results_a = _search(
                     client,
                     "person throwing discus",
-                    "video_colpali_smol500_mv_frame",
+                    PROFILE,
                     tenant_a,
                 )
                 results_b = _search(
                     client,
                     "person throwing discus",
-                    "video_colpali_smol500_mv_frame",
+                    PROFILE,
                     tenant_b,
                 )
 
@@ -593,28 +629,28 @@ class TestCrossTenantIsolation:
 
         with httpx.Client(base_url=RUNTIME, timeout=600.0) as client:
             try:
+                expected_documents_fed = _expected_video_documents_fed(
+                    real_video_path, PROFILE
+                )
                 _create_tenant(client, tenant_id)
-                _deploy_schema(client, "video_colpali_smol500_mv_frame", tenant_id)
+                _deploy_schema(client, PROFILE, tenant_id)
 
                 data = _upload_file(
                     client,
                     real_video_path,
-                    "video_colpali_smol500_mv_frame",
+                    PROFILE,
                     tenant_id,
                 )
                 assert data["status"] == "success"
-
-                assert data["documents_fed"] > 0, (
-                    f"Tenant ingestion must feed documents before deletion is "
-                    f"verified: {data}"
-                )
+                assert data["chunks_created"] == expected_documents_fed
+                assert data["documents_fed"] == expected_documents_fed
 
                 time.sleep(5)
 
                 results = _search(
                     client,
                     "person throwing discus",
-                    "video_colpali_smol500_mv_frame",
+                    PROFILE,
                     tenant_id,
                 )
                 assert results["results_count"] >= 1, (
@@ -631,7 +667,7 @@ class TestCrossTenantIsolation:
                     "/search/",
                     json={
                         "query": "person throwing discus",
-                        "profile": "video_colpali_smol500_mv_frame",
+                        "profile": PROFILE,
                         "top_k": 5,
                         "tenant_id": tenant_id,
                     },
@@ -677,10 +713,18 @@ class TestConcurrentMultiTenantSearch:
 
         with httpx.Client(base_url=RUNTIME, timeout=600.0) as client:
             try:
+                expected_documents_fed = {
+                    real_video_path: _expected_video_documents_fed(
+                        real_video_path, PROFILE
+                    ),
+                    SECOND_VIDEO_PATH: _expected_video_documents_fed(
+                        SECOND_VIDEO_PATH, PROFILE
+                    ),
+                }
                 # Setup: create tenants, deploy schemas, ingest data
                 for t in tenants:
                     _create_tenant(client, t)
-                    _deploy_schema(client, "video_colpali_smol500_mv_frame", t)
+                    _deploy_schema(client, PROFILE, t)
 
                 # Distinct content per tenant: content-addressed
                 # video_ids from the same file would collide across
@@ -691,13 +735,20 @@ class TestConcurrentMultiTenantSearch:
                     data = _upload_file(
                         client,
                         tenant_videos[t],
-                        "video_colpali_smol500_mv_frame",
+                        PROFILE,
                         t,
                     )
-                    if data.get("documents_fed", 0) > 0:
-                        fed_tenants.append(t)
+                    assert (
+                        data["chunks_created"]
+                        == expected_documents_fed[tenant_videos[t]]
+                    )
+                    assert (
+                        data["documents_fed"]
+                        == expected_documents_fed[tenant_videos[t]]
+                    )
+                    fed_tenants.append(t)
 
-                assert len(fed_tenants) >= 2, (
+                assert len(fed_tenants) == 2, (
                     f"Need at least 2 tenants with data, got {len(fed_tenants)}"
                 )
                 time.sleep(5)
@@ -708,7 +759,7 @@ class TestConcurrentMultiTenantSearch:
                         pool.submit(
                             _search_sync,
                             "person throwing discus",
-                            "video_colpali_smol500_mv_frame",
+                            PROFILE,
                             t,
                         ): t
                         for t in fed_tenants
@@ -756,21 +807,22 @@ class TestConcurrentMultiTenantSearch:
 
         with httpx.Client(base_url=RUNTIME, timeout=600.0) as client:
             try:
+                expected_documents_fed = _expected_video_documents_fed(
+                    real_video_path, PROFILE
+                )
                 _create_tenant(client, tenant_data)
                 _create_tenant(client, tenant_empty)
-                _deploy_schema(client, "video_colpali_smol500_mv_frame", tenant_data)
-                _deploy_schema(client, "video_colpali_smol500_mv_frame", tenant_empty)
+                _deploy_schema(client, PROFILE, tenant_data)
+                _deploy_schema(client, PROFILE, tenant_empty)
 
                 data = _upload_file(
                     client,
                     real_video_path,
-                    "video_colpali_smol500_mv_frame",
+                    PROFILE,
                     tenant_data,
                 )
-                assert data["documents_fed"] > 0, (
-                    f"Data tenant ingestion must feed documents before concurrent "
-                    f"isolation is verified: {data}"
-                )
+                assert data["chunks_created"] == expected_documents_fed
+                assert data["documents_fed"] == expected_documents_fed
 
                 time.sleep(5)
 
@@ -778,13 +830,13 @@ class TestConcurrentMultiTenantSearch:
                     f_data = pool.submit(
                         _search_sync,
                         "throwing discus",
-                        "video_colpali_smol500_mv_frame",
+                        PROFILE,
                         tenant_data,
                     )
                     f_empty = pool.submit(
                         _search_sync,
                         "throwing discus",
-                        "video_colpali_smol500_mv_frame",
+                        PROFILE,
                         tenant_empty,
                     )
 
@@ -824,7 +876,7 @@ class TestLoadTesting:
                 pool.submit(
                     _search_sync,
                     f"sports activity query {i}",
-                    "video_colpali_smol500_mv_frame",
+                    PROFILE,
                     TENANT_ID,
                 )
                 for i in range(n_requests)
@@ -911,40 +963,41 @@ class TestLoadTesting:
 
         with httpx.Client(base_url=RUNTIME, timeout=600.0) as client:
             try:
+                expected_a_documents_fed = _expected_video_documents_fed(
+                    real_video_path, PROFILE
+                )
+                expected_b_documents_fed = _expected_video_documents_fed(
+                    SECOND_VIDEO_PATH, PROFILE
+                )
                 _create_tenant(client, tenant_a)
                 _create_tenant(client, tenant_b)
-                _deploy_schema(client, "video_colpali_smol500_mv_frame", tenant_a)
-                _deploy_schema(client, "video_colpali_smol500_mv_frame", tenant_b)
+                _deploy_schema(client, PROFILE, tenant_a)
+                _deploy_schema(client, PROFILE, tenant_b)
 
                 # Ingest sequentially with pause between
                 data_a = _upload_file(
                     client,
                     real_video_path,
-                    "video_colpali_smol500_mv_frame",
+                    PROFILE,
                     tenant_a,
                 )
                 assert data_a["status"] == "success", (
                     f"Tenant A ingestion failed: {data_a}"
                 )
+                assert data_a["chunks_created"] == expected_a_documents_fed
+                assert data_a["documents_fed"] == expected_a_documents_fed
                 time.sleep(3)
                 data_b = _upload_file(
                     client,
                     SECOND_VIDEO_PATH,
-                    "video_colpali_smol500_mv_frame",
+                    PROFILE,
                     tenant_b,
                 )
                 assert data_b["status"] == "success", (
                     f"Tenant B ingestion failed: {data_b}"
                 )
-
-                assert data_a["documents_fed"] > 0, (
-                    f"Tenant A ingestion must feed documents before concurrent "
-                    f"isolation is verified: {data_a}"
-                )
-                assert data_b["documents_fed"] > 0, (
-                    f"Tenant B ingestion must feed documents before concurrent "
-                    f"isolation is verified: {data_b}"
-                )
+                assert data_b["chunks_created"] == expected_b_documents_fed
+                assert data_b["documents_fed"] == expected_b_documents_fed
 
                 time.sleep(5)
 
@@ -953,13 +1006,13 @@ class TestLoadTesting:
                     f_a = pool.submit(
                         _search_sync,
                         "person throwing",
-                        "video_colpali_smol500_mv_frame",
+                        PROFILE,
                         tenant_a,
                     )
                     f_b = pool.submit(
                         _search_sync,
                         "person throwing",
-                        "video_colpali_smol500_mv_frame",
+                        PROFILE,
                         tenant_b,
                     )
                     r_a = f_a.result()

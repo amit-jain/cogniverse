@@ -28,6 +28,7 @@ from tests.e2e.conftest import (
     argo_workflow_controller_probe_command,
     argo_workflow_controller_probe_failure_message,
 )
+from tests.e2e.test_api_e2e import PROFILE
 
 PHOENIX = "http://localhost:33006"
 VESPA = "http://localhost:33080"
@@ -205,7 +206,7 @@ class TestSearchWithStrategies:
                 "/search/",
                 json={
                     "query": "video of people",
-                    "profile": "video_colpali_smol500_mv_frame",
+                    "profile": PROFILE,
                     "tenant_id": TENANT_ID,
                     "top_k": 5,
                 },

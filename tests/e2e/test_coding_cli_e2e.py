@@ -206,9 +206,9 @@ class TestIndexCommand:
     def test_index_files_uploads_to_runtime_ingestion(self):
         """index_files POSTs to /ingestion/upload and returns real counts.
 
-        Uses the document_text_semantic profile (docs type) since code_lateon_mv
-        requires LateOn-Code encoder which isn't registered yet. This test still
-        exercises the full path: walk → upload → runtime → Vespa.
+        Uses the configured document profile (docs type) because the coding
+        profile requires a LateOn-Code encoder that is not registered yet. This
+        test still exercises the full path: walk → upload → runtime → Vespa.
         """
         with tempfile.TemporaryDirectory() as tmpdir:
             root = Path(tmpdir)

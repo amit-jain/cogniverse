@@ -29,7 +29,11 @@ from tests.e2e.conftest import (
     expected_gateway_routing,
     sample_audio_content_id,
 )
-from tests.e2e.test_api_e2e import PROFILE, _expected_available_profile_names
+from tests.e2e.test_api_e2e import (
+    DOCUMENT_PROFILE,
+    PROFILE,
+    _expected_available_profile_names,
+)
 
 SAMPLE_VIDEO = (
     DATA_ROOT / "testset" / "evaluation" / "sample_videos" / "v_-nl4G-00PtA.mp4"
@@ -72,7 +76,7 @@ def _tenant_document_count(tenant_id: str) -> int:
             json={
                 "query": "washing dishes",
                 "tenant_id": tenant_id,
-                "profile": "document_text_semantic",
+                "profile": DOCUMENT_PROFILE,
                 "top_k": 1000,
             },
         )

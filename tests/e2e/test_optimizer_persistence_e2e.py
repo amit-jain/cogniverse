@@ -48,6 +48,7 @@ from tests.e2e.conftest import (
     TENANT_ID,
     _ensure_sample_content_ingested,
 )
+from tests.e2e.test_api_e2e import DOCUMENT_PROFILE
 
 pytestmark = [
     pytest.mark.slow,
@@ -159,7 +160,7 @@ def optimizer_corpus_ready(optimizer_runtime_ready) -> None:
     for caption_path in caption_paths:
         _ensure_sample_content_ingested(
             caption_path,
-            profile="document_text_semantic",
+            profile=DOCUMENT_PROFILE,
             media_type="text/plain",
         )
 
