@@ -33,6 +33,8 @@ from cogniverse_cli.argo import (
     ARGO_WORKFLOW_CONTROLLER_LABEL_SELECTOR,
 )
 
+from cogniverse_agents.gateway_agent import SIMPLE_ROUTE_MAP, GatewayAgent
+
 # Deployment-lifecycle tests bring up their own port-forward-based cluster
 # and are exercised via a dedicated ``pytest tests/e2e/deployment/`` run —
 # never as part of the main suite, which boots its own NodePort stack via
@@ -120,6 +122,61 @@ def _require_modal_inference_endpoints(items, endpoints) -> None:
                     f"resolved {provider!r}",
                     pytrace=False,
                 )
+
+
+def expected_gateway_routing(query: str, gw: dict) -> tuple[str, str]:
+    """Return the expected gateway complexity and route for a response."""
+    confidence = gw["confidence"]
+    threshold = gw["fast_path_confidence_threshold"]
+    if confidence < threshold:
+        complexity = "complex"
+    elif gw["modality"] == "both":
+        complexity = "complex"
+    elif gw["generation_type"] == "detailed_report":
+        complexity = "complex"
+    else:
+        query_lower = query.lower()
+        query_words = set(query_lower.split())
+        if query_words & GatewayAgent._COMPLEXITY_KEYWORDS:
+            complexity = "complex"
+        elif any(marker in query_lower for marker in GatewayAgent._MULTI_STEP_MARKERS):
+            complexity = "complex"
+        elif query_lower.count(",") >= 3 or query_lower.count(" and ") >= 2:
+            complexity = "complex"
+        else:
+            complexity = "simple"
+
+    if complexity == "complex":
+        routed_to = "orchestrator_agent"
+    else:
+        route_key = (gw["modality"], gw["generation_type"])
+        routed_to = SIMPLE_ROUTE_MAP.get(route_key, "orchestrator_agent")
+    return complexity, routed_to
+
+
+def assert_orchestrated(data: dict, query: str, gw: dict) -> None:
+    """The complex-route payload the dispatcher builds for an orchestrated query."""
+    assert data["status"] == "success", data
+    assert data["agent"] == "orchestrator_agent", data
+    assert data["message"] == f"Orchestrated '{query[:50]}' via A2A pipeline", data
+    assert data["gateway_context"] == {
+        "modality": gw["modality"],
+        "generation_type": gw["generation_type"],
+        "confidence": gw["confidence"],
+    }, data
+    orchestration = data["orchestration_result"]
+    assert orchestration["query"] == query, orchestration
+    assert set(orchestration) == {
+        "query",
+        "workflow_id",
+        "plan_steps",
+        "parallel_groups",
+        "plan_reasoning",
+        "agent_results",
+        "final_output",
+        "execution_summary",
+        "metadata",
+    }, sorted(orchestration)
 
 
 def pytest_collection_modifyitems(config, items):

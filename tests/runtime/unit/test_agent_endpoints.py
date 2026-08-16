@@ -76,6 +76,8 @@ def _make_gateway_output(
     generation_type="raw_results",
     routed_to="search_agent",
     confidence=0.9,
+    fast_path_confidence_threshold=0.4,
+    gliner_threshold=0.3,
 ):
     """Build a mock GatewayOutput for tests."""
     output = Mock()
@@ -84,6 +86,8 @@ def _make_gateway_output(
     output.generation_type = generation_type
     output.routed_to = routed_to
     output.confidence = confidence
+    output.fast_path_confidence_threshold = fast_path_confidence_threshold
+    output.gliner_threshold = gliner_threshold
     output.reasoning = "test reasoning"
     return output
 
@@ -152,8 +156,16 @@ class TestGatewayOrchestrationHandoff:
 
         assert result["status"] == "success"
         assert result["agent"] == "gateway_agent"
-        assert result["gateway"]["complexity"] == "simple"
-        assert result["gateway"]["routed_to"] == "search_agent"
+        assert result["gateway"] == {
+            "complexity": "simple",
+            "modality": "video",
+            "generation_type": "raw_results",
+            "routed_to": "search_agent",
+            "confidence": 0.9,
+            "fast_path_confidence_threshold": 0.4,
+            "gliner_threshold": 0.3,
+        }
+        assert result["gateway"]["confidence"] == 0.9
         # Assert on the SHAPE the dispatcher must build, not on the literal
         # dict the test injected — the latter would pass even if the
         # dispatcher silently dropped fields.
@@ -244,7 +256,15 @@ class TestGatewayOrchestrationHandoff:
         assert result["message"] == "Found 3 results for 'find videos of cats'"
         assert not result["message"].startswith("Routed")
         assert result["agent"] == "gateway_agent"
-        assert result["gateway"]["routed_to"] == "search_agent"
+        assert result["gateway"] == {
+            "complexity": "simple",
+            "modality": "video",
+            "generation_type": "raw_results",
+            "routed_to": "search_agent",
+            "confidence": 0.9,
+            "fast_path_confidence_threshold": 0.4,
+            "gliner_threshold": 0.3,
+        }
         assert result["results_count"] == 3
         assert result["results"] == downstream_answer["results"]
         assert result["downstream_result"] == downstream_answer
@@ -258,6 +278,8 @@ class TestGatewayOrchestrationHandoff:
             routed_to="orchestrator_agent",
             modality="both",
             confidence=0.4,
+            fast_path_confidence_threshold=0.55,
+            gliner_threshold=0.35,
         )
 
         gateway_ep = MagicMock()
@@ -309,6 +331,8 @@ class TestGatewayOrchestrationHandoff:
             "generation_type": "raw_results",
             "routed_to": "orchestrator_agent",
             "confidence": 0.4,
+            "fast_path_confidence_threshold": 0.55,
+            "gliner_threshold": 0.35,
         }
         assert result["gateway_context"]["modality"] == "both"
         # Strong shape assertion: the dispatcher must thread through every

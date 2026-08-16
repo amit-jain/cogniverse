@@ -1007,6 +1007,8 @@ class TestGatewayComplexHandoff:
             generation_type="detailed_report",
             routed_to="orchestrator_agent",
             confidence=0.83,
+            fast_path_confidence_threshold=0.4,
+            gliner_threshold=0.3,
             reasoning="multi-step comparison across subsidiaries",
         )
         mock_dispatcher._get_or_build_gateway_agent = self._gateway_returning(gw_output)
@@ -1060,6 +1062,8 @@ class TestGatewayComplexHandoff:
             generation_type="raw_results",
             routed_to="video_search_agent",
             confidence=0.6,
+            fast_path_confidence_threshold=0.4,
+            gliner_threshold=0.3,
             reasoning="single-modal keyword lookup",
         )
         mock_dispatcher._get_or_build_gateway_agent = self._gateway_returning(gw_output)

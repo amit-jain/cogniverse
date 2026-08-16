@@ -420,7 +420,7 @@ results_startup = agent.search_by_text("cooking videos", tenant_id="startup")
 
 #### What It Does
 
-GatewayAgent is the first agent to handle every incoming query. It uses GLiNER zero-shot NER to detect the content modality and generation type, then decides whether the query is simple (direct to a specialist agent) or complex (forward to OrchestratorAgent for multi-step planning). A deterministic `MODALITY_KEYWORDS` fallback (literal word matching) is merged into `_classify_modality()` so queries GLiNER misses or where the remote service times out can still route correctly via keyword detection alone. The confidence assigned to a keyword-only match (`KEYWORD_MODALITY_CONFIDENCE = 0.5`) is above `fast_path_confidence_threshold` (0.4), so obvious single-modal keyword queries stay on the simple fast path.
+GatewayAgent is the first agent to handle every incoming query. It uses GLiNER zero-shot NER to detect the content modality and generation type, then decides whether the query is simple (direct to a specialist agent) or complex (forward to OrchestratorAgent for multi-step planning). A deterministic `MODALITY_KEYWORDS` fallback (literal word matching) is merged into `_classify_modality()` so queries GLiNER misses or where the remote service times out can still route correctly via keyword detection alone. The confidence assigned to a keyword-only match (`KEYWORD_MODALITY_CONFIDENCE = 0.5`) is above `fast_path_confidence_threshold` (0.4), so obvious single-modal keyword queries stay on the simple fast path. The runtime response also copies the applied `fast_path_confidence_threshold` and `gliner_threshold` into `gateway`.
 
 #### Input / Output
 
@@ -436,6 +436,8 @@ class GatewayOutput(AgentOutput):
     generation_type: Literal["raw_results", "summary", "detailed_report"]
     routed_to: str      # Target agent name, or "orchestrator_agent"
     confidence: float   # min(modality_confidence, generation_confidence)
+    fast_path_confidence_threshold: float  # fast-path threshold snapshot
+    gliner_threshold: float  # GLiNER threshold snapshot
     reasoning: str      # Human-readable explanation of the routing decision
     entity_extraction_failed: bool  # True on a GLiNER outage (keyword-only
                                     # classification); distinguishes a sidecar

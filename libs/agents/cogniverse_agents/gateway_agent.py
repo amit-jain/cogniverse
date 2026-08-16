@@ -142,6 +142,14 @@ class GatewayOutput(AgentOutput):
     confidence: float = Field(
         ..., ge=0.0, le=1.0, description="Classification confidence"
     )
+    fast_path_confidence_threshold: float = Field(
+        ...,
+        description="Fast-path confidence threshold snapshot applied to the decision",
+    )
+    gliner_threshold: float = Field(
+        ...,
+        description="GLiNER entity threshold snapshot applied to the decision",
+    )
     reasoning: str = Field(..., description="Brief explanation of routing decision")
     entity_extraction_failed: bool = Field(
         False,
@@ -768,6 +776,8 @@ class GatewayAgent(A2AAgent[GatewayInput, GatewayOutput, GatewayDeps]):
             generation_type=generation_type,
             routed_to=routed_to,
             confidence=overall_confidence,
+            fast_path_confidence_threshold=thresholds.fast_path_confidence,
+            gliner_threshold=thresholds.gliner,
             reasoning=reasoning,
             entity_extraction_failed=entity_extraction_failed,
         )
