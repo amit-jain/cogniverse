@@ -28,6 +28,7 @@ from tests.e2e.conftest import (
     PHOENIX_URL,
     RUNTIME,
     TENANT_ID,
+    sample_audio_content_id,
 )
 from tests.e2e.test_api_e2e import _expected_available_profile_names
 
@@ -717,6 +718,18 @@ class TestGatewayAgentThin:
         )
         assert gw.get("routed_to") == "audio_analysis_agent", (
             f"Audio query should route to audio_analysis_agent, got {gw.get('routed_to')!r}"
+        )
+        # The session seeds exactly one audio clip for the tenant, so the
+        # acoustic nearest-neighbour search returns that clip and nothing else.
+        downstream = data["downstream_result"]
+        assert downstream["status"] == "success", downstream
+        assert downstream["agent"] == "audio_analysis_agent", downstream
+        assert downstream["results_count"] == 1, downstream
+        assert [result["audio_id"] for result in downstream["results"]] == [
+            sample_audio_content_id()
+        ]
+        assert downstream["results"][0]["audio_url"] == (
+            f"s3://cogniverse-ingest/{TENANT_ID}/{sample_audio_content_id()}.wav"
         )
 
     def test_image_modality_routes_to_image_agent(self):
