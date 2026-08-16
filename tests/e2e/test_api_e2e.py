@@ -141,6 +141,11 @@ class TestRoutingPipeline:
         assert (gw["complexity"], gw["routed_to"]) == expected_gateway_routing(
             query, gw
         )
+        # Across the calibrator's whole GLiNER range the only entity is
+        # video_content ("videos", 0.339 at 0.15; none at 0.5) and the keyword
+        # cue is video, so the modality and generation type never move.
+        assert gw["modality"] == "video", gw
+        assert gw["generation_type"] == "raw_results", gw
         if gw["complexity"] == "simple":
             # In the new architecture, the response comes from the gateway
             # pipeline. The agent field will be gateway_agent on simple routes.
@@ -224,6 +229,11 @@ class TestRoutingPipeline:
         assert (gw["complexity"], gw["routed_to"]) == expected_gateway_routing(
             query, gw
         )
+        # GLiNER tags "animal videos" video_content at 0.709 across the whole
+        # 0.15-0.5 range and nothing else, so modality and confidence are fixed.
+        assert gw["modality"] == "video", gw
+        assert gw["generation_type"] == "raw_results", gw
+        assert gw["confidence"] == pytest.approx(0.709, abs=0.001), gw
         if gw["complexity"] == "simple":
             # Content assertion: animal video query should produce search results
             downstream = data["downstream_result"]
@@ -318,6 +328,8 @@ class TestQueryEnhancementViaGateway:
         assert (gw["complexity"], gw["routed_to"]) == expected_gateway_routing(
             query, gw
         )
+        # "analysis" is a complexity keyword, so this is complex at any threshold.
+        assert gw["complexity"] == "complex", gw
         assert_orchestrated(data, query, gw)
 
 
