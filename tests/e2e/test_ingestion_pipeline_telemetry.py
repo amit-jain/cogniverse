@@ -221,7 +221,7 @@ def _upload_fixture(tenant_id: str) -> str:
         )
     upload_name = f"pipeline_test_{uuid.uuid4().hex[:8]}.mp4"
     with fixture.open("rb") as fh:
-        with httpx.Client(timeout=600.0) as c:
+        with httpx.Client(timeout=660.0) as c:
             r = c.post(
                 f"{RUNTIME_BASE}/ingestion/upload",
                 files={"file": (upload_name, fh, "video/mp4")},
@@ -232,7 +232,10 @@ def _upload_fixture(tenant_id: str) -> str:
                     "tenant_id": tenant_id,
                     "profile": PROFILE,
                 },
-                params={"wait": "true", "wait_timeout": "300", "force": "true"},
+                # A full ingest of the tracked clip (10 keyframes, VLM captions,
+                # embeddings, KG extraction) measures 240-361 s on this host
+                # under sweep load; 600 s matches the sibling upload tests.
+                params={"wait": "true", "wait_timeout": "600", "force": "true"},
             )
     assert r.status_code in (200, 202), f"upload failed: {r.status_code} {r.text[:300]}"
     body = r.json()
