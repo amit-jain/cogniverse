@@ -44,17 +44,21 @@ def dispatcher():
     """Create an AgentDispatcher with mock dependencies."""
     registry = MagicMock()
     config_manager = MagicMock()
+    from cogniverse_foundation.config.unified_config import BackendConfig
+
     # Production dispatch reads backend_url + backend_port from
     # get_system_config() to build URLs; bare MagicMocks would yield
     # a MagicMock port that urllib.parse can't cast to int.
     sys_cfg = MagicMock()
     sys_cfg.backend_url = "http://localhost"
     sys_cfg.backend_port = 8080
+    sys_cfg.search_backend = "vespa"
     # _resolve_gliner_url reads inference_service_urls; a bare MagicMock
     # would return another MagicMock from .get("gliner"), which then fails
     # GatewayDeps pydantic validation (Optional[str] rejects a MagicMock).
     sys_cfg.inference_service_urls = None
     config_manager.get_system_config.return_value = sys_cfg
+    config_manager.get_backend_config.side_effect = lambda tenant_id, service="backend": BackendConfig(tenant_id=tenant_id)
     schema_loader = MagicMock()
     return AgentDispatcher(
         agent_registry=registry,
@@ -520,7 +524,10 @@ class TestModalitySearchDispatchSerialization:
     async def test_audio_search_dispatch_serializes_results(
         self, dispatcher, monkeypatch
     ):
-        from cogniverse_agents.audio_analysis_agent import AudioResult
+        from cogniverse_agents.audio_analysis_agent import (
+            AudioAnalysisDeps,
+            AudioResult,
+        )
 
         monkeypatch.setattr(dispatcher, "_get_vespa_endpoint", lambda t: "http://vespa")
         backend = MagicMock()
@@ -532,9 +539,15 @@ class TestModalitySearchDispatchSerialization:
         stub.search_audio = AsyncMock(
             return_value=[AudioResult(audio_id="aud1", audio_url="http://x/1.mp3")]
         )
+        captured = {}
+
+        def build_agent(*, deps, **kwargs):
+            captured["deps"] = deps
+            return stub
+
         monkeypatch.setattr(
             "cogniverse_agents.audio_analysis_agent.AudioAnalysisAgent",
-            lambda *a, **k: stub,
+            build_agent,
         )
 
         result = await dispatcher._execute_audio_search_task("speech", "acme:prod", 5)
@@ -542,6 +555,16 @@ class TestModalitySearchDispatchSerialization:
         assert backend.schema_exists.call_args_list == [
             call("audio_content", "acme:prod")
         ]
+        deps = captured["deps"]
+        assert isinstance(deps, AudioAnalysisDeps)
+        assert deps.backend_type == "vespa"
+        assert deps.config_manager is dispatcher._config_manager
+        assert deps.schema_loader is dispatcher._schema_loader
+        assert deps.backend_config["url"] == "http://localhost"
+        assert deps.backend_config["port"] == 8080
+        assert deps.backend_config["schema_name"] == "audio_clap_semantic"
+        assert deps.backend_config["profile"] == "audio_clap_semantic"
+        assert deps.backend_config["backend"]["type"] == "vespa"
         assert result["status"] == "success"
         assert result["results_count"] == 1
         assert result["results"][0]["audio_id"] == "aud1"

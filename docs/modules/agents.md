@@ -2349,7 +2349,7 @@ keyframe not yet in object storage is silently skipped (text-only fallback).
 
 **Location:** `libs/agents/cogniverse_agents/audio_analysis_agent.py`
 
-Audio search and analysis using Whisper transcription. Supports both transcript-based and acoustic similarity search.
+Audio search and analysis using Whisper transcription. Supports transcript, semantic, and acoustic search.
 
 ```mermaid
 flowchart LR
@@ -2359,18 +2359,20 @@ flowchart LR
 
     Query["<span style='color:#000'>Text Query</span>"] --> Mode{"<span style='color:#000'>Search Mode</span>"}
 
-    Mode -->|transcript| TextSearch["<span style='color:#000'>Text Search</span>"]
+    Mode -->|transcript| TranscriptSearch["<span style='color:#000'>Transcript Search</span>"]
+    Mode -->|semantic| SemanticSearch["<span style='color:#000'>Semantic Search</span>"]
+    Mode -->|hybrid| HybridSearch["<span style='color:#000'>Hybrid Search</span>"]
     Mode -->|acoustic| AcousticSearch["<span style='color:#000'>Acoustic Search</span>"]
-    Mode -->|hybrid| Both["<span style='color:#000'>Both Searches</span>"]
 
-    Transcript --> TextSearch
+    Transcript --> TranscriptSearch
+    Transcript --> SemanticSearch
+    Transcript --> HybridSearch
     Acoustic --> AcousticSearch
-    Transcript --> Both
-    Acoustic --> Both
 
-    TextSearch --> Results["<span style='color:#000'>Audio Results</span>"]
+    TranscriptSearch --> Results["<span style='color:#000'>Audio Results</span>"]
+    SemanticSearch --> Results
+    HybridSearch --> Results
     AcousticSearch --> Results
-    Both --> Results
 
     style Audio fill:#90caf9,stroke:#1565c0,color:#000
     style Query fill:#90caf9,stroke:#1565c0,color:#000
@@ -2378,9 +2380,10 @@ flowchart LR
     style Transcript fill:#ffcc80,stroke:#ef6c00,color:#000
     style Acoustic fill:#ffcc80,stroke:#ef6c00,color:#000
     style Mode fill:#ffcc80,stroke:#ef6c00,color:#000
-    style TextSearch fill:#90caf9,stroke:#1565c0,color:#000
+    style TranscriptSearch fill:#90caf9,stroke:#1565c0,color:#000
+    style SemanticSearch fill:#90caf9,stroke:#1565c0,color:#000
+    style HybridSearch fill:#90caf9,stroke:#1565c0,color:#000
     style AcousticSearch fill:#90caf9,stroke:#1565c0,color:#000
-    style Both fill:#90caf9,stroke:#1565c0,color:#000
     style Results fill:#a5d6a7,stroke:#388e3c,color:#000
 ```
 
@@ -2392,16 +2395,21 @@ class AudioAnalysisAgent(A2AAgent[AudioSearchInput, AudioSearchOutput, AudioAnal
 
 **Search Modes:**
 
-- `transcript` - Search through transcribed text
-- `acoustic` - Acoustic similarity search
-- `hybrid` - Combines both approaches
+- `transcript` - Lexical BM25 over `audio_title` and `audio_transcript`
+- `semantic` - ColBERT semantic search over transcript text
+- `hybrid` - Default. Semantic + BM25 recall
+- `acoustic` - CLAP text-to-audio similarity over `acoustic_embedding`
+
+`find_similar_audio(..., similarity_type="semantic")` transcribes the reference
+clip and reuses transcript search. Acoustic similarity encodes the reference
+clip with CLAP and searches `acoustic_embedding`.
 
 **Input Fields:**
 
 | Field | Type | Description |
 |-------|------|-------------|
 | `query` | str | Search query |
-| `search_mode` | str | Mode: transcript, acoustic, hybrid |
+| `search_mode` | str | Mode: transcript, semantic, acoustic, hybrid |
 | `limit` | int | Number of results (default: 20) |
 
 **Output Fields:**
@@ -2419,6 +2427,7 @@ class AudioAnalysisAgent(A2AAgent[AudioSearchInput, AudioSearchOutput, AudioAnal
 - `speaker_labels` - Detected speakers
 - `detected_events` - Audio events
 - `language` - Detected language
+- `metadata` - Raw backend fields preserved on the result
 
 **Transcription (`transcribe_audio`):**
 
