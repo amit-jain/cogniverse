@@ -1213,6 +1213,156 @@ class TestEmptySpanHandling:
         assert result["spans_found"] == 0
 
 
+class TestProfileSelectionTrainingExamples:
+    @pytest.mark.asyncio
+    async def test_profile_pairs_use_recorded_pool_and_live_fallback(self):
+        from cogniverse_agents.profile_selection_agent import (
+            tenant_usable_profile_names,
+        )
+        from cogniverse_foundation.config.manager import ConfigManager
+        from cogniverse_foundation.config.unified_config import (
+            BackendProfileConfig,
+            SystemConfig,
+        )
+        from cogniverse_runtime.optimization_cli import _profile_selection_pairs
+        from tests.utils.memory_store import InMemoryConfigStore
+
+        store = InMemoryConfigStore()
+        config_manager = ConfigManager(store=store)
+        config_manager.set_system_config(
+            SystemConfig(
+                inference_service_urls={
+                    "vllm_colpali": "http://localhost:8000",
+                    "vllm_colqwen": "http://localhost:8001",
+                }
+            )
+        )
+        config_manager.add_backend_profile(
+            BackendProfileConfig.from_dict(
+                "video_colpali_smol500_mv_frame",
+                {
+                    "type": "video",
+                    "schema_name": "video_colpali_smol500_mv_frame",
+                    "embedding_model": "TomoroAI/tomoro-colqwen3-embed-4b",
+                    "inference_services": {"embedding": "vllm_colpali"},
+                },
+            ),
+            tenant_id="acme:docs",
+        )
+        config_manager.add_backend_profile(
+            BackendProfileConfig.from_dict(
+                "video_colqwen_omni_mv_chunk_30s",
+                {
+                    "type": "video",
+                    "schema_name": "video_colqwen_omni_mv_chunk_30s",
+                    "embedding_model": "TomoroAI/tomoro-colqwen3-embed-4b",
+                    "inference_services": {"embedding": "vllm_colqwen"},
+                },
+            ),
+            tenant_id="acme:docs",
+        )
+        config_manager.add_backend_profile(
+            BackendProfileConfig.from_dict(
+                "video_videoprism_base_mv_chunk_30s",
+                {
+                    "type": "video",
+                    "schema_name": "video_videoprism_base_mv_chunk_30s",
+                    "embedding_model": "videoprism_public_v1_base_hf",
+                    "inference_services": {"embedding": "videoprism_jax"},
+                },
+            ),
+            tenant_id="acme:docs",
+        )
+
+        expected_live = [
+            "video_colpali_smol500_mv_frame",
+            "video_colqwen_omni_mv_chunk_30s",
+        ]
+        assert tenant_usable_profile_names(config_manager, "acme:docs") == (
+            expected_live
+        )
+
+        spans_df = _make_spans_df(
+            "cogniverse.profile_selection",
+            [
+                {
+                    "attributes.input.value": "find a clip about transformer architecture",
+                    "attributes.output.value": json.dumps(
+                        {
+                            "selected_profile": "video_colqwen_omni_mv_chunk_30s",
+                            "modality": "video",
+                            "complexity": "medium",
+                            "intent": "video_search",
+                            "confidence": 0.9,
+                        }
+                    ),
+                    "attributes.available_profiles": (
+                        "video_colqwen_omni_mv_chunk_30s, "
+                        "video_colpali_smol500_mv_frame"
+                    ),
+                },
+                {
+                    "attributes.input.value": "find a clip about transformer architecture",
+                    "attributes.output.value": json.dumps(
+                        {
+                            "selected_profile": "video_colpali_smol500_mv_frame",
+                            "modality": "video",
+                            "complexity": "medium",
+                            "intent": "video_search",
+                            "confidence": 0.9,
+                        }
+                    ),
+                },
+            ],
+        )
+
+        pairs = _profile_selection_pairs(
+            spans_df, config_manager=config_manager, tenant_id="acme:docs"
+        )
+
+        assert pairs == [
+            {
+                "query": "find a clip about transformer architecture",
+                "available_profiles": (
+                    "video_colqwen_omni_mv_chunk_30s, video_colpali_smol500_mv_frame"
+                ),
+                "selected_profile": "video_colqwen_omni_mv_chunk_30s",
+                "modality": "video",
+                "complexity": "medium",
+                "intent": "video_search",
+                "confidence": 0.9,
+            },
+            {
+                "query": "find a clip about transformer architecture",
+                "available_profiles": ", ".join(expected_live),
+                "selected_profile": "video_colpali_smol500_mv_frame",
+                "modality": "video",
+                "complexity": "medium",
+                "intent": "video_search",
+                "confidence": 0.9,
+            },
+        ]
+
+    def test_profile_optimizer_source_does_not_embed_retired_pool(self):
+        from pathlib import Path
+
+        source = (
+            Path(__file__).resolve().parents[3]
+            / "libs"
+            / "runtime"
+            / "cogniverse_runtime"
+            / "optimization_cli.py"
+        )
+        text = source.read_text()
+        retired_pool = (
+            "video_colpali_smol500_mv_frame,"
+            "video_colqwen_omni_mv_chunk_30s,"
+            "video_videoprism_base_mv_chunk_30s,"
+            "video_videoprism_large_mv_chunk_30s"
+        )
+        assert retired_pool not in text
+
+
 # ---------------------------------------------------------------------------
 # Test: functions handle spans with no extractable training examples
 # ---------------------------------------------------------------------------

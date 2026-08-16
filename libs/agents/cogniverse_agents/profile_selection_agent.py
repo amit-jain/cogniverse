@@ -69,6 +69,66 @@ def _default_available_profiles() -> List[str]:
     return [name for name, _profile in sorted(profiles.items(), key=_sort_key)]
 
 
+def tenant_usable_profile_names(config_manager: Any, tenant_id: str) -> List[str]:
+    """Return the tenant-scoped profiles the runtime can actually serve."""
+    tenant_id = require_tenant_id(tenant_id, source="ProfileSelectionInput")
+    tenant_profiles = config_manager.list_backend_profiles(tenant_id)
+    system_config = config_manager.get_system_config()
+    service_urls = getattr(system_config, "inference_service_urls", None)
+    if not isinstance(tenant_profiles, dict) or not isinstance(service_urls, dict):
+        raise TypeError(
+            "ConfigManager must expose dict backend profiles and dict "
+            "inference_service_urls"
+        )
+
+    usable: list[tuple[str, BackendProfileConfig]] = []
+    missing_services: list[tuple[str, str]] = []
+
+    for profile_name, profile in tenant_profiles.items():
+        if not isinstance(profile, BackendProfileConfig):
+            continue
+        profile_dict = profile.to_dict()
+        inference_services = profile_dict.get("inference_services") or {}
+        if not isinstance(inference_services, dict):
+            inference_services = {}
+        embedding_service = inference_services.get("embedding")
+        if (
+            isinstance(embedding_service, str)
+            and embedding_service.strip()
+            and embedding_service not in service_urls
+        ):
+            missing_services.append((profile_name, embedding_service))
+            continue
+        usable.append((profile_name, profile))
+
+    if not usable:
+        configured = ", ".join(sorted(tenant_profiles)) or "<none>"
+        if missing_services:
+            missing = ", ".join(
+                f"{profile_name}:{service_name}"
+                for profile_name, service_name in sorted(missing_services)
+            )
+            raise ValueError(
+                f"No usable backend profiles are configured for tenant "
+                f"{tenant_id!r}; configured profiles={configured}; "
+                f"missing inference services={missing}"
+            )
+        raise ValueError(
+            f"No usable backend profiles are configured for tenant "
+            f"{tenant_id!r}; configured profiles={configured}"
+        )
+
+    def _sort_key(item: tuple[str, BackendProfileConfig]) -> tuple[int, str]:
+        profile_name, profile = item
+        profile_type = (profile.type or "").lower()
+        return (
+            _PROFILE_TYPE_ORDER.get(profile_type, len(_PROFILE_TYPE_ORDER)),
+            profile_name,
+        )
+
+    return [name for name, _profile in sorted(usable, key=_sort_key)]
+
+
 class ProfileCandidate(BaseModel):
     """Candidate profile with score"""
 
@@ -312,63 +372,13 @@ class ProfileSelectionAgent(
 
     def _tenant_usable_profiles(self, tenant_id: str) -> List[str]:
         """Return the tenant-scoped profiles that can actually run here."""
-        tenant_id = require_tenant_id(tenant_id, source="ProfileSelectionInput")
         config_manager = getattr(self, "_config_manager", None)
         if config_manager is None:
             return list(self.deps.available_profiles)
-
-        tenant_profiles = config_manager.list_backend_profiles(tenant_id)
-        system_config = config_manager.get_system_config()
-        service_urls = getattr(system_config, "inference_service_urls", None)
-        if not isinstance(tenant_profiles, dict) or not isinstance(service_urls, dict):
+        try:
+            return tenant_usable_profile_names(config_manager, tenant_id)
+        except (AttributeError, TypeError):
             return list(self.deps.available_profiles)
-
-        usable: list[tuple[str, BackendProfileConfig]] = []
-        missing_services: list[tuple[str, str]] = []
-
-        for profile_name, profile in tenant_profiles.items():
-            if not isinstance(profile, BackendProfileConfig):
-                continue
-            profile_dict = profile.to_dict()
-            inference_services = profile_dict.get("inference_services") or {}
-            if not isinstance(inference_services, dict):
-                inference_services = {}
-            embedding_service = inference_services.get("embedding")
-            if (
-                isinstance(embedding_service, str)
-                and embedding_service.strip()
-                and embedding_service not in service_urls
-            ):
-                missing_services.append((profile_name, embedding_service))
-                continue
-            usable.append((profile_name, profile))
-
-        if not usable:
-            configured = ", ".join(sorted(tenant_profiles)) or "<none>"
-            if missing_services:
-                missing = ", ".join(
-                    f"{profile_name}:{service_name}"
-                    for profile_name, service_name in sorted(missing_services)
-                )
-                raise ValueError(
-                    f"No usable backend profiles are configured for tenant "
-                    f"{tenant_id!r}; configured profiles={configured}; "
-                    f"missing inference services={missing}"
-                )
-            raise ValueError(
-                f"No usable backend profiles are configured for tenant "
-                f"{tenant_id!r}; configured profiles={configured}"
-            )
-
-        def _sort_key(item: tuple[str, BackendProfileConfig]) -> tuple[int, str]:
-            profile_name, profile = item
-            profile_type = (profile.type or "").lower()
-            return (
-                _PROFILE_TYPE_ORDER.get(profile_type, len(_PROFILE_TYPE_ORDER)),
-                profile_name,
-            )
-
-        return [name for name, _profile in sorted(usable, key=_sort_key)]
 
     def _resolve_candidate_profiles(self, input: ProfileSelectionInput) -> List[str]:
         """Choose the candidate pool for the LM."""
@@ -507,6 +517,7 @@ class ProfileSelectionAgent(
         self._emit_profile_span(
             query=input.query,
             tenant_id=input.tenant_id,
+            available_profiles=profiles_str,
             selected_profile=output.selected_profile,
             intent=output.query_intent,
             modality=output.modality,
@@ -543,6 +554,7 @@ class ProfileSelectionAgent(
         self,
         query: str,
         tenant_id: Optional[str],
+        available_profiles: str,
         selected_profile: str,
         intent: str,
         modality: str,
@@ -562,6 +574,7 @@ class ProfileSelectionAgent(
                 "cogniverse.profile_selection",
                 tenant_id=validated_tenant,
             ) as span:
+                span.set_attribute("available_profiles", available_profiles)
                 record_span_io(
                     span,
                     input_value=query,

@@ -196,7 +196,7 @@ flowchart TB
 
 ```mermaid
 flowchart TB
-    Spans["<span style='color:#000'>cogniverse.profile_selection Phoenix spans<br/>• Emitted by ProfileSelectionAgent on every dispatch<br/>• Attributes: query, selected_profile, modality,<br/>  complexity, intent, confidence</span>"]
+    Spans["<span style='color:#000'>cogniverse.profile_selection Phoenix spans<br/>• Emitted by ProfileSelectionAgent on every dispatch<br/>• Attributes: query, available_profiles, selected_profile,<br/>  modality, complexity, intent, confidence</span>"]
 
     Spans --> RunOpt["<span style='color:#000'>run_profile_optimization tenant_id, lookback_hours<br/>• Build dspy.Example trainset<br/>• Filter on confidence ≥ 0.5</span>"]
 
@@ -277,7 +277,10 @@ async def run_profile_optimization(
     Optimize ProfileSelectionAgent's DSPy module:
 
     1. Collect (query, available_profiles) -> selected_profile examples from
-       cogniverse.profile_selection Phoenix spans; keep only confidence >= 0.5.
+       cogniverse.profile_selection Phoenix spans; use the span's recorded
+       available_profiles pool when present and derive the live tenant pool via
+       tenant_usable_profile_names(ConfigManager, tenant_id) for legacy spans;
+       keep only confidence >= 0.5.
     2. Merge in approved synthetic demos for optimizer type "profile". The
        consumer projection supplies the signature-required string confidence
        sentinel and preserves the two exact input fields.

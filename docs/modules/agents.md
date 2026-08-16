@@ -867,10 +867,11 @@ async def _process_impl(
 #### Configuration
 
 When the runtime handles `profile_selection_agent`, it derives the candidate
-set from the tenant's backend config and filters out profiles whose embedding
-service is not deployed in `SystemConfig.inference_service_urls`. The
-`ProfileSelectionDeps.available_profiles` field is now only a standalone fallback
-for local construction or tests that do not have tenant state wired in.
+set with `tenant_usable_profile_names(ConfigManager, tenant_id)`, which filters
+out profiles whose embedding service is not deployed in
+`SystemConfig.inference_service_urls`. `ProfileSelectionDeps.available_profiles`
+is only a standalone fallback for local construction or tests without tenant
+state.
 
 ```python
 # Standalone fallback; the runtime injects tenant-usable profiles instead.
