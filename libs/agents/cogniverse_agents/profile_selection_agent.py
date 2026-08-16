@@ -6,7 +6,9 @@ backend profile based on query characteristics, modality, and complexity.
 """
 
 import asyncio
+import json
 import logging
+from pathlib import Path
 from typing import Any, Dict, List, Literal, Optional
 
 import dspy
@@ -22,12 +24,49 @@ from cogniverse_core.approval.training_schema import (
     ProfileQueryIntent,
 )
 from cogniverse_core.common.tenant_utils import require_tenant_id
+from cogniverse_foundation.config.unified_config import BackendProfileConfig
 from cogniverse_foundation.telemetry.span_contract import (
     OP_PROFILE_SELECTION,
     record_span_io,
 )
 
 logger = logging.getLogger(__name__)
+
+_CONFIG_PATH = Path(__file__).resolve().parents[3] / "configs" / "config.json"
+_PROFILE_TYPE_ORDER = {
+    "video": 0,
+    "document": 1,
+    "image": 2,
+    "audio": 3,
+    "code": 4,
+    "wiki": 5,
+}
+
+
+def _default_available_profiles() -> List[str]:
+    """Load the shipped profile names for standalone/local agent construction."""
+    try:
+        config = json.loads(_CONFIG_PATH.read_text())
+    except Exception as exc:  # pragma: no cover - defensive fallback
+        logger.debug(
+            "Unable to load default profile list from %s: %s", _CONFIG_PATH, exc
+        )
+        return []
+
+    profiles = config.get("backend", {}).get("profiles", {})
+    if not isinstance(profiles, dict):
+        return []
+
+    def _sort_key(item: tuple[str, Any]) -> tuple[int, str]:
+        name, profile = item
+        profile_type = ""
+        if isinstance(profile, dict):
+            value = profile.get("type")
+            if isinstance(value, str):
+                profile_type = value.lower()
+        return (_PROFILE_TYPE_ORDER.get(profile_type, len(_PROFILE_TYPE_ORDER)), name)
+
+    return [name for name, _profile in sorted(profiles.items(), key=_sort_key)]
 
 
 class ProfileCandidate(BaseModel):
@@ -76,13 +115,12 @@ class ProfileSelectionDeps(AgentDeps):
     """Dependencies for profile selection agent (tenant-agnostic at startup)."""
 
     available_profiles: List[str] = Field(
-        default_factory=lambda: [
-            "video_colpali_smol500_mv_frame",
-            "video_colqwen_omni_mv_chunk_30s",
-            "video_videoprism_base_mv_chunk_30s",
-            "video_videoprism_large_mv_chunk_30s",
-        ],
-        description="Default available profiles (must match config.json backend.profiles)",
+        default_factory=_default_available_profiles,
+        description=(
+            "Default fallback profiles for standalone construction. "
+            "Runtime requests derive the tenant-usable set from ConfigManager "
+            "and deployed inference services."
+        ),
     )
 
 
@@ -272,6 +310,90 @@ class ProfileSelectionAgent(
         """Expose available profiles from deps for convenience."""
         return self.deps.available_profiles
 
+    def _tenant_usable_profiles(self, tenant_id: str) -> List[str]:
+        """Return the tenant-scoped profiles that can actually run here."""
+        tenant_id = require_tenant_id(tenant_id, source="ProfileSelectionInput")
+        config_manager = getattr(self, "_config_manager", None)
+        if config_manager is None:
+            return list(self.deps.available_profiles)
+
+        tenant_profiles = config_manager.list_backend_profiles(tenant_id)
+        system_config = config_manager.get_system_config()
+        service_urls = getattr(system_config, "inference_service_urls", None)
+        if not isinstance(tenant_profiles, dict) or not isinstance(service_urls, dict):
+            return list(self.deps.available_profiles)
+
+        usable: list[tuple[str, BackendProfileConfig]] = []
+        missing_services: list[tuple[str, str]] = []
+
+        for profile_name, profile in tenant_profiles.items():
+            if not isinstance(profile, BackendProfileConfig):
+                continue
+            profile_dict = profile.to_dict()
+            inference_services = profile_dict.get("inference_services") or {}
+            if not isinstance(inference_services, dict):
+                inference_services = {}
+            embedding_service = inference_services.get("embedding")
+            if (
+                isinstance(embedding_service, str)
+                and embedding_service.strip()
+                and embedding_service not in service_urls
+            ):
+                missing_services.append((profile_name, embedding_service))
+                continue
+            usable.append((profile_name, profile))
+
+        if not usable:
+            configured = ", ".join(sorted(tenant_profiles)) or "<none>"
+            if missing_services:
+                missing = ", ".join(
+                    f"{profile_name}:{service_name}"
+                    for profile_name, service_name in sorted(missing_services)
+                )
+                raise ValueError(
+                    f"No usable backend profiles are configured for tenant "
+                    f"{tenant_id!r}; configured profiles={configured}; "
+                    f"missing inference services={missing}"
+                )
+            raise ValueError(
+                f"No usable backend profiles are configured for tenant "
+                f"{tenant_id!r}; configured profiles={configured}"
+            )
+
+        def _sort_key(item: tuple[str, BackendProfileConfig]) -> tuple[int, str]:
+            profile_name, profile = item
+            profile_type = (profile.type or "").lower()
+            return (
+                _PROFILE_TYPE_ORDER.get(profile_type, len(_PROFILE_TYPE_ORDER)),
+                profile_name,
+            )
+
+        return [name for name, _profile in sorted(usable, key=_sort_key)]
+
+    def _resolve_candidate_profiles(self, input: ProfileSelectionInput) -> List[str]:
+        """Choose the candidate pool for the LM."""
+        if input.available_profiles:
+            return list(input.available_profiles)
+
+        if getattr(self, "_config_manager", None) is not None:
+            return self._tenant_usable_profiles(input.tenant_id)
+
+        return list(self.deps.available_profiles)
+
+    @staticmethod
+    def _infer_profile_modality_from_name(selected_profile: str) -> str:
+        """Best-effort fallback for bare agents without a config manager."""
+        normalized = selected_profile.lower()
+        for modality in sorted(PROFILE_TRAINING_MODALITIES, key=len, reverse=True):
+            if normalized == modality:
+                return modality
+            if normalized.startswith(f"{modality}_"):
+                return modality
+        raise ValueError(
+            f"Selected profile {selected_profile!r} does not encode a supported "
+            "modality and no config manager is available"
+        )
+
     async def _process_impl(
         self, input: ProfileSelectionInput
     ) -> ProfileSelectionOutput:
@@ -285,16 +407,17 @@ class ProfileSelectionAgent(
             ProfileSelectionOutput with selected profile and reasoning
         """
         query = input.query
-        profiles = input.available_profiles or self.deps.available_profiles
-
         if not query:
+            if input.available_profiles:
+                profiles = list(input.available_profiles)
+            elif getattr(self, "_config_manager", None) is not None and input.tenant_id:
+                profiles = self._resolve_candidate_profiles(input)
+            else:
+                profiles = list(self.deps.available_profiles)
+
             return ProfileSelectionOutput(
                 query="",
-                selected_profile=(
-                    self.deps.available_profiles[0]
-                    if self.deps.available_profiles
-                    else "default"
-                ),
+                selected_profile=profiles[0] if profiles else "default",
                 confidence=0.0,
                 reasoning="Empty query, using default profile",
                 query_intent="video_search",
@@ -302,6 +425,8 @@ class ProfileSelectionAgent(
                 complexity="simple",
                 alternatives=[],
             )
+
+        profiles = self._resolve_candidate_profiles(input)
 
         # Feed memory-enriched prompt to the LM but keep the caller's
         # original query for response/telemetry — otherwise tenant
@@ -393,12 +518,10 @@ class ProfileSelectionAgent(
     ) -> str:
         """Return the canonical type declared by the selected live profile."""
         tenant_id = require_tenant_id(tenant_id, source="ProfileSelectionInput")
-        try:
-            config_manager = self._config_manager
-        except AttributeError as exc:
-            raise RuntimeError(
-                "Profile selection requires an injected config manager"
-            ) from exc
+        config_manager = getattr(self, "_config_manager", None)
+        if config_manager is None:
+            return self._infer_profile_modality_from_name(selected_profile)
+
         profile = config_manager.get_backend_profile(selected_profile, tenant_id)
         if profile is None:
             raise ValueError(
