@@ -219,13 +219,40 @@ def _entity_extraction_pairs(spans_df) -> List[Dict[str, Any]]:
     return pairs
 
 
-def _profile_selection_pairs(spans_df) -> List[Dict[str, Any]]:
+def _span_available_profiles(row: Any) -> Optional[str]:
+    """Read the candidate pool recorded on a profile_selection span."""
+    getter = getattr(row, "get", None)
+    if getter is None:
+        attrs = row if isinstance(row, dict) else dict(row)
+        raw = attrs.get("attributes.available_profiles")
+        if raw is None:
+            raw = attrs.get("available_profiles")
+    else:
+        raw = getter("attributes.available_profiles")
+        if raw is None:
+            raw = getter("available_profiles")
+
+    if isinstance(raw, str):
+        return raw if raw.strip() else None
+    if isinstance(raw, list):
+        profiles = [str(profile).strip() for profile in raw if str(profile).strip()]
+        return ", ".join(profiles) if profiles else None
+    return None
+
+
+def _profile_selection_pairs(
+    spans_df, *, config_manager, tenant_id
+) -> List[Dict[str, Any]]:
     """(query -> selected_profile) training pairs from profile_selection spans.
 
     Reads the canonical span slots: input.value holds the query, output.value
     holds ``{"selected_profile", "modality", "complexity", "intent",
     "confidence"}``. Only high-confidence (>= 0.5) selections are kept.
+    ``available_profiles`` comes from the span attribute when present; legacy
+    spans derive it from the tenant's live usable profile set.
     """
+    from cogniverse_agents.profile_selection_agent import tenant_usable_profile_names
+
     pairs: List[Dict[str, Any]] = []
     for _, row in spans_df.iterrows():
         span_io = read_span_io(row)
@@ -235,9 +262,15 @@ def _profile_selection_pairs(spans_df) -> List[Dict[str, Any]]:
         confidence = float(output.get("confidence", 0.0) or 0.0)
         if not query or not selected or confidence < 0.5:
             continue
+        available_profiles = _span_available_profiles(row)
+        if available_profiles is None:
+            available_profiles = ", ".join(
+                tenant_usable_profile_names(config_manager, tenant_id)
+            )
         pairs.append(
             {
                 "query": query,
+                "available_profiles": available_profiles,
                 "selected_profile": selected,
                 "modality": output.get("modality", "video"),
                 "complexity": output.get("complexity", "simple"),
@@ -2526,7 +2559,7 @@ async def run_profile_optimization(
     trainset = [
         dspy.Example(
             query=pair["query"],
-            available_profiles="video_colpali_smol500_mv_frame,video_colqwen_omni_mv_chunk_30s,video_videoprism_base_mv_chunk_30s,video_videoprism_large_mv_chunk_30s",
+            available_profiles=pair["available_profiles"],
             selected_profile=pair["selected_profile"],
             confidence=str(pair["confidence"]),
             reasoning=f"Selected {pair['selected_profile']} for {pair['modality']}/{pair['complexity']} query",
@@ -2534,7 +2567,9 @@ async def run_profile_optimization(
             modality=pair["modality"],
             complexity=pair["complexity"],
         ).with_inputs("query", "available_profiles")
-        for pair in _profile_selection_pairs(spans_df)
+        for pair in _profile_selection_pairs(
+            spans_df, config_manager=config_manager, tenant_id=tenant_id
+        )
     ]
 
     # Merge approved synthetic data

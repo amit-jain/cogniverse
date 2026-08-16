@@ -31,14 +31,71 @@ EXPECTED_PROFILE_QUERY_INTENTS = (
     "wiki_search",
 )
 
+
+def _base_profile_selection_available_profiles() -> str:
+    from cogniverse_agents.profile_selection_agent import (
+        tenant_usable_profile_names,
+    )
+    from cogniverse_foundation.config.manager import ConfigManager
+    from cogniverse_foundation.config.unified_config import (
+        BackendProfileConfig,
+        SystemConfig,
+    )
+    from tests.utils.memory_store import InMemoryConfigStore
+
+    store = InMemoryConfigStore()
+    config_manager = ConfigManager(store=store)
+    config_manager.set_system_config(
+        SystemConfig(
+            inference_service_urls={
+                "vllm_colpali": "http://localhost:8000",
+                "vllm_colqwen": "http://localhost:8001",
+            }
+        )
+    )
+    config_manager.add_backend_profile(
+        BackendProfileConfig.from_dict(
+            "video_colpali_smol500_mv_frame",
+            {
+                "type": "video",
+                "schema_name": "video_colpali_smol500_mv_frame",
+                "embedding_model": "TomoroAI/tomoro-colqwen3-embed-4b",
+                "inference_services": {"embedding": "vllm_colpali"},
+            },
+        ),
+        tenant_id="acme:docs",
+    )
+    config_manager.add_backend_profile(
+        BackendProfileConfig.from_dict(
+            "video_colqwen_omni_mv_chunk_30s",
+            {
+                "type": "video",
+                "schema_name": "video_colqwen_omni_mv_chunk_30s",
+                "embedding_model": "TomoroAI/tomoro-colqwen3-embed-4b",
+                "inference_services": {"embedding": "vllm_colqwen"},
+            },
+        ),
+        tenant_id="acme:docs",
+    )
+    config_manager.add_backend_profile(
+        BackendProfileConfig.from_dict(
+            "video_videoprism_base_mv_chunk_30s",
+            {
+                "type": "video",
+                "schema_name": "video_videoprism_base_mv_chunk_30s",
+                "embedding_model": "videoprism_public_v1_base_hf",
+                "inference_services": {"embedding": "videoprism_jax"},
+            },
+        ),
+        tenant_id="acme:docs",
+    )
+
+    return ", ".join(tenant_usable_profile_names(config_manager, "acme:docs"))
+
+
 BASE_PROFILE_SELECTION_EXAMPLE = {
     "query": "find a clip about transformer architecture",
-    "available_profiles": (
-        "video_colpali_smol500_mv_frame,"
-        "video_colqwen_omni_mv_chunk_30s,"
-        "video_videoprism_base_mv_chunk_30s,"
-        "video_videoprism_large_mv_chunk_30s"
-    ),
+    "available_profiles": _base_profile_selection_available_profiles(),
     "selected_profile": "video_colqwen_omni_mv_chunk_30s",
     "reasoning": "Selected chunk-based profile for medium-complexity video search.",
     "modality": "video",

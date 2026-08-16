@@ -634,8 +634,12 @@ class TestProfileSelectionAgent:
         mock_telemetry.span = Mock(return_value=mock_cm)
         profile_agent.telemetry_manager = mock_telemetry
 
-        profile_agent.dspy_module.forward = Mock(
-            return_value=dspy.Prediction(
+        captured = {}
+        candidate_profiles = ["video_colpali_base", "video_colpali_large"]
+
+        async def capture_dspy(*_args, **kwargs):
+            captured["available_profiles"] = kwargs["available_profiles"]
+            return dspy.Prediction(
                 selected_profile="video_colpali_base",
                 confidence="0.85",
                 reasoning="Good match",
@@ -643,11 +647,13 @@ class TestProfileSelectionAgent:
                 modality="video",
                 complexity="simple",
             )
-        )
+
+        profile_agent.call_dspy = AsyncMock(side_effect=capture_dspy)
 
         await profile_agent._process_impl(
             ProfileSelectionInput(
                 query="Show me cat videos",
+                available_profiles=candidate_profiles,
                 tenant_id="test_tenant",
             )
         )
@@ -657,8 +663,10 @@ class TestProfileSelectionAgent:
         mock_telemetry.span.assert_called_once()
         call_kwargs = mock_telemetry.span.call_args
         assert call_kwargs[0][0] == "cogniverse.profile_selection"
+        assert captured["available_profiles"] == ", ".join(candidate_profiles)
         span_obj = mock_telemetry.span.return_value.__enter__.return_value
         recorded = {c.args[0]: c.args[1] for c in span_obj.set_attribute.call_args_list}
+        assert recorded["available_profiles"] == captured["available_profiles"]
         assert recorded["operation"] == "profile_selection"
         assert recorded["input.value"] == "Show me cat videos"
         out = json.loads(recorded["output.value"])
