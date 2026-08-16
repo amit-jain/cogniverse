@@ -600,6 +600,8 @@ class SchemaRegistry:
         """
         Check if schema already deployed for tenant.
 
+        A cache hit answers from memory; a miss re-reads persistent storage
+        first, so schemas registered by peer processes are visible.
         Use this before deploying to avoid unnecessary redeployments.
 
         Args:
@@ -620,6 +622,14 @@ class SchemaRegistry:
 
         tenant_id = canonical_tenant_id(tenant_id)
         key = (tenant_id, base_schema_name)
+        if key in self._schemas:
+            return True
+        # A miss is not authoritative: a peer process (another runtime
+        # replica, a host-side manager) may have deployed and registered the
+        # schema since this registry last read storage. Re-read, then answer.
+        # A storage outage during the re-read raises (strict mode) — an
+        # outage must never read as "not deployed".
+        self._load_schemas_from_storage()
         return key in self._schemas
 
     def unregister_schema(self, tenant_id: str, base_schema_name: str) -> None:
