@@ -258,7 +258,7 @@ sequenceDiagram
     SearchAgent-->>Runtime: SearchOutput{results: [...]}
     deactivate SearchAgent
 
-    Runtime-->>User: {status, agent: "gateway_agent", message: <answer>,<br/>results: [...], gateway: {...}, downstream_result: {...}}
+    Runtime-->>User: {status, agent: "gateway_agent", message: <answer>,<br/>results: [...], gateway: {complexity: ..., routed_to: ..., fast_path_confidence_threshold: ..., gliner_threshold: ...}, downstream_result: {...}}
 ```
 
 ### Scenario 2: Multi-Modal Query with Fusion
@@ -1167,4 +1167,3 @@ flowchart TB
 [architecture/multi-tenant.md](./multi-tenant.md) - Tenant isolation guide
 
 [modules/sdk.md](../modules/sdk.md) - Per-package technical details
-
