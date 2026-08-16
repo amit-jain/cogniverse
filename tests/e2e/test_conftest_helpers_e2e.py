@@ -180,10 +180,13 @@ def test_event_loop_reset_does_not_warn_when_no_loop_is_attached():
         asyncio.set_event_loop_policy(previous_policy)
 
 
-def _drive_reset_fixture() -> None:
+def _drive_reset_fixture(*, fixturenames: tuple[str, ...] = ()) -> None:
     """Run the autouse reset fixture's setup phase on this thread."""
     reset = e2e_conftest._reset_event_loop_state_before_each_test.__wrapped__(
-        SimpleNamespace(node=SimpleNamespace(nodeid="drive_reset_fixture"))
+        SimpleNamespace(
+            node=SimpleNamespace(nodeid="drive_reset_fixture"),
+            fixturenames=fixturenames,
+        )
     )
     next(reset)
     reset.close()
@@ -257,6 +260,49 @@ class TestEventLoopStateReset:
             asyncio.events._set_running_loop(None)
             leaked._thread_id = None
             leaked.close()
+
+    def test_reset_reattaches_the_parked_loop_for_a_browser_test(self):
+        """Playwright's sync API keeps the running-loop slot pointing at its own
+        loop between calls (``_sync`` re-sets it after every call) and its next
+        call needs it there. Detaching it for a pytest-asyncio test is right;
+        a later test that requests a Playwright fixture must find it attached
+        again, or ``Browser.new_context`` dies with ``no running event loop``.
+        """
+        import threading
+
+        parked = asyncio.new_event_loop()
+        parked._thread_id = threading.get_ident()
+        asyncio.events._set_running_loop(parked)
+        try:
+            with warnings.catch_warnings():
+                warnings.simplefilter("ignore")
+                _drive_reset_fixture()
+            assert asyncio.events._get_running_loop() is None
+
+            _drive_reset_fixture(fixturenames=("request", "page", "context"))
+            assert asyncio.events._get_running_loop() is parked, (
+                "a browser test must get the parked sync-API loop back"
+            )
+
+            with warnings.catch_warnings():
+                warnings.simplefilter("ignore")
+                _drive_reset_fixture()
+            assert asyncio.events._get_running_loop() is None
+        finally:
+            asyncio.events._set_running_loop(None)
+            e2e_conftest._PARKED_RUNNING_LOOP = None
+            parked._thread_id = None
+            parked.close()
+
+    def test_reset_does_not_reattach_a_closed_parked_loop(self):
+        parked = asyncio.new_event_loop()
+        parked.close()
+        e2e_conftest._PARKED_RUNNING_LOOP = parked
+        try:
+            _drive_reset_fixture(fixturenames=("page",))
+            assert asyncio.events._get_running_loop() is None
+        finally:
+            e2e_conftest._PARKED_RUNNING_LOOP = None
 
     def test_reset_leaves_a_genuinely_running_loop_attached(self):
         """Only *stale* running-loop state is cleared, never a live loop."""
