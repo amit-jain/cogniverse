@@ -18,8 +18,10 @@ machines where the LLM is backed by a GPU or faster inference service.
 """
 
 import json
+import os
 import subprocess
 import time
+import uuid
 
 import httpx
 import pytest
@@ -30,7 +32,9 @@ from tests.e2e.conftest import (
     KUBECTL_CONTEXT,
     PHOENIX_URL,
     TENANT_ID,
+    register_tenant_and_wait,
 )
+from tests.e2e.test_api_e2e import _deploy_profile_for_tenant
 
 NAMESPACE = "cogniverse"
 DEPLOYMENT = "deploy/cogniverse-runtime"
@@ -153,14 +157,22 @@ COMPLEX_QUERIES = [
     "analyze video transcripts about climate change and create a summary report",
 ]
 
+GATEWAY_THRESHOLD_PROFILES = (
+    "video_colpali_smol500_mv_frame",
+    "image_colpali_mv",
+    "audio_clap_semantic",
+    "document_text_semantic",
+    "document_visual_colpali",
+)
 
-def _call_agent(agent_name: str, query: str) -> None:
+
+def _call_agent(agent_name: str, query: str, tenant_id: str = TENANT_ID) -> None:
     resp = httpx.post(
         f"{RUNTIME}/agents/{agent_name}/process",
         json={
             "agent_name": agent_name,
             "query": query,
-            "context": {"tenant_id": TENANT_ID},
+            "context": {"tenant_id": tenant_id},
             "top_k": 3,
         },
         timeout=120.0,
@@ -213,6 +225,51 @@ def _kubectl_cluster_ready() -> None:
             f"stderr={result.stderr!r}",
             pytrace=False,
         )
+
+
+@pytest.fixture(scope="module")
+def gateway_threshold_tenant(_kubectl_cluster_ready) -> str:
+    """Create a dedicated tenant for gateway-threshold optimization runs."""
+    suffix = uuid.uuid4().hex[:8]
+    org_id = f"opt_gw_{suffix}"
+    tenant_id = f"{org_id}:t1"
+
+    with httpx.Client(timeout=60.0) as client:
+        resp = client.post(
+            f"{RUNTIME}/admin/organizations",
+            json={
+                "org_id": org_id,
+                "org_name": f"opt-gw-{suffix}",
+                "created_by": "e2e",
+            },
+        )
+        assert resp.status_code in (200, 201, 409), resp.text
+
+    register_tenant_and_wait(tenant_id, created_by="e2e", timeout_s=600.0)
+
+    with httpx.Client(base_url=RUNTIME, timeout=60.0) as client:
+        for profile_name in GATEWAY_THRESHOLD_PROFILES:
+            _deploy_profile_for_tenant(client, profile_name, tenant_id)
+
+    span_count = int(os.environ.get("BATCH_SPAN_COUNT", "20"))
+    assert span_count > 0, "BATCH_SPAN_COUNT must be a positive integer"
+    for i in range(span_count):
+        query = GATEWAY_QUERIES[i % len(GATEWAY_QUERIES)]
+        _call_agent("gateway_agent", query, tenant_id=tenant_id)
+
+    time.sleep(15)
+    try:
+        yield tenant_id
+    finally:
+        with httpx.Client(timeout=60.0) as client:
+            try:
+                client.delete(f"{RUNTIME}/admin/tenants/{tenant_id}")
+            except httpx.HTTPError:
+                pass
+            try:
+                client.delete(f"{RUNTIME}/admin/organizations/{org_id}")
+            except httpx.HTTPError:
+                pass
 
 
 @pytest.fixture(scope="module", autouse=True)
@@ -549,9 +606,11 @@ def seeded_gateway_traffic():
 class TestGatewayThresholds:
     """Verify gateway-thresholds batch job produces valid threshold artifact."""
 
-    def test_gateway_thresholds_produces_artifact(self):
+    def test_gateway_thresholds_produces_artifact(self, gateway_threshold_tenant):
         """Run --mode gateway-thresholds, assert it produces a threshold config."""
-        result = _run_batch_job("gateway-thresholds")
+        result = _run_batch_job(
+            "gateway-thresholds", tenant_id=gateway_threshold_tenant
+        )
 
         assert result["status"] == "success", (
             f"Expected status='success', got '{result.get('status')}': {result}"
@@ -580,14 +639,18 @@ class TestGatewayThresholds:
         )
         assert 0 < fp_threshold < 1, f"Expected threshold in (0, 1), got {fp_threshold}"
 
-    def test_gateway_thresholds_artifact_loadable(self):
+    def test_gateway_thresholds_artifact_loadable(self, gateway_threshold_tenant):
         """Load the gateway threshold artifact and verify its content."""
         # Run the job to ensure artifact exists
-        job_result = _run_batch_job("gateway-thresholds")
+        job_result = _run_batch_job(
+            "gateway-thresholds", tenant_id=gateway_threshold_tenant
+        )
         assert job_result["status"] == "success"
 
         # Load the artifact from inside the pod
-        blob = _load_blob_in_pod("config", "gateway_thresholds")
+        blob = _load_blob_in_pod(
+            "config", "gateway_thresholds", tenant_id=gateway_threshold_tenant
+        )
         assert blob, "Loaded blob is empty"
 
         artifact = json.loads(blob)
@@ -1193,17 +1256,21 @@ class TestEntityExtractionOptimization:
 class TestArtifactLoadingRoundTrip:
     """Full loop: batch job → artifact → pod restart → agent uses optimized thresholds."""
 
-    def test_gateway_artifact_round_trip(self):
+    def test_gateway_artifact_round_trip(self, gateway_threshold_tenant):
         """Run gateway-thresholds → verify artifact → restart → verify agent uses it."""
         # 1. Run batch job and capture the optimized thresholds
-        result = _run_batch_job("gateway-thresholds")
+        result = _run_batch_job(
+            "gateway-thresholds", tenant_id=gateway_threshold_tenant
+        )
         assert result["status"] == "success"
 
         optimized_threshold = result["thresholds"]["fast_path_confidence_threshold"]
         optimized_gliner = result["thresholds"]["gliner_threshold"]
 
         # 2. Verify artifact in pod matches what the batch job produced
-        blob = _load_blob_in_pod("config", "gateway_thresholds")
+        blob = _load_blob_in_pod(
+            "config", "gateway_thresholds", tenant_id=gateway_threshold_tenant
+        )
         assert blob, "Gateway artifact blob is empty"
         artifact = json.loads(blob)
         assert artifact["fast_path_confidence_threshold"] == optimized_threshold, (
@@ -1303,8 +1370,8 @@ class TestArtifactLoadingRoundTrip:
             f"{RUNTIME}/agents/gateway_agent/process",
             json={
                 "agent_name": "gateway_agent",
-                "query": "find cooking videos",
-                "context": {"tenant_id": TENANT_ID},
+                "query": "find videos of dogs running on a beach",
+                "context": {"tenant_id": gateway_threshold_tenant},
             },
             timeout=600.0,
         )
@@ -1340,7 +1407,9 @@ class TestArtifactLoadingRoundTrip:
 
         # 5. Verify the artifact is still loadable in-pod after restart
         #    (proves the agent's telemetry infrastructure survived restart)
-        blob_after = _load_blob_in_pod("config", "gateway_thresholds")
+        blob_after = _load_blob_in_pod(
+            "config", "gateway_thresholds", tenant_id=gateway_threshold_tenant
+        )
         assert blob_after, "Gateway artifact not loadable after restart"
         artifact_after = json.loads(blob_after)
         assert (

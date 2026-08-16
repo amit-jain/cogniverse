@@ -21,6 +21,7 @@ Architecture note (A2A gateway):
     See ``test_a2a_gateway_e2e.py`` for gateway-specific E2E tests.
 """
 
+import asyncio
 import json
 import re
 import time
@@ -30,7 +31,9 @@ from pathlib import Path
 import httpx
 import pytest
 
+from cogniverse_agents.optimizer.artifact_manager import ArtifactManager
 from cogniverse_foundation.config.unified_config import BackendProfileConfig
+from cogniverse_foundation.telemetry.manager import get_telemetry_manager
 from cogniverse_synthetic.generators.base import extract_topic
 from cogniverse_synthetic.generators.routing import TOPIC_WORD_BUDGET
 from cogniverse_synthetic.schemas import ProfileSelectionExampleSchema
@@ -68,6 +71,41 @@ PRIMARY_AGENT_BY_QUERY_TYPE = {
     "DOCUMENT": "document_agent",
     "IMAGE": "image_search_agent",
 }
+DEFAULT_GATEWAY_THRESHOLDS = {
+    "fast_path_confidence_threshold": 0.4,
+    "gliner_threshold": 0.3,
+}
+
+
+@pytest.fixture(scope="module", autouse=True)
+def _pin_default_gateway_thresholds():
+    """Keep the shared routing tenant on the deployment defaults."""
+    am = ArtifactManager(
+        get_telemetry_manager().get_provider(tenant_id=TENANT_ID), TENANT_ID
+    )
+    previous_blob = asyncio.run(am.load_blob("config", "gateway_thresholds"))
+    if previous_blob is not None:
+        try:
+            previous_config = json.loads(previous_blob)
+        except json.JSONDecodeError:
+            previous_config = None
+    else:
+        previous_config = None
+    desired_blob = json.dumps(DEFAULT_GATEWAY_THRESHOLDS)
+    if previous_config != DEFAULT_GATEWAY_THRESHOLDS:
+        asyncio.run(am.save_blob("config", "gateway_thresholds", desired_blob))
+
+    try:
+        yield
+    finally:
+        if previous_blob is None:
+            asyncio.run(
+                am._provider.datasets.delete_dataset(
+                    am._blob_dataset_name("config", "gateway_thresholds")
+                )
+            )
+        else:
+            asyncio.run(am.save_blob("config", "gateway_thresholds", previous_blob))
 
 
 def _deploy_profile_for_tenant(
@@ -125,7 +163,7 @@ class TestRoutingPipeline:
                 "/agents/gateway_agent/process",
                 json={
                     "agent_name": "gateway_agent",
-                    "query": "Show me videos of cats playing piano",
+                    "query": "find videos of dogs running on a beach",
                     "context": {"tenant_id": TENANT_ID},
                     "top_k": 5,
                 },
@@ -141,18 +179,24 @@ class TestRoutingPipeline:
             "orchestrator_agent",
         )
 
-        # Content assertions: "cats playing piano" is an unambiguous video query
+        # Content assertions: dog-beach videos is an unambiguous video query
         if "gateway" in data:
             gw = data["gateway"]
             assert gw["modality"] == "video", (
-                f"Expected video modality for cat piano query, got {gw['modality']!r}"
+                f"Expected video modality for dog beach query, got {gw['modality']!r}"
+            )
+            assert gw["complexity"] == "simple", (
+                f"Expected simple routing for dog beach query, got {gw['complexity']!r}"
+            )
+            assert gw["generation_type"] == "raw_results", (
+                f"Expected raw_results for dog beach query, got {gw['generation_type']!r}"
             )
             assert gw["routed_to"] == "search_agent", (
                 f"Simple video query should route to search_agent, "
                 f"got {gw['routed_to']!r}"
             )
-            assert gw["confidence"] >= 0.4, (
-                f"Simple route should have confidence >= 0.4, got {gw['confidence']}"
+            assert gw["confidence"] == 0.5, (
+                f"Dog beach query should use keyword confidence 0.5, got {gw['confidence']}"
             )
 
     def test_routing_no_longer_returns_inline_entities(self):
@@ -301,17 +345,7 @@ class TestQueryEnhancementViaGateway:
         )
 
     def test_gateway_confidence_in_range(self):
-        """Gateway classification confidence should be in [0.4, 1.0] for clear queries.
-
-        This query is classified 'complex' by the gateway and hands off to the
-        OrchestratorAgent, which fires 5+ ChainOfThought LLM calls through
-        the local LM on CPU. End-to-end latency on a dev k3d cluster regularly
-        lands north of 10 minutes. The default 300s httpx timeout tripped
-        before the orchestration could return a 200, so the test failed on
-        ReadTimeout instead of surfacing the actual confidence score. Give
-        the pipeline a 900s budget to complete on CPU hardware; if real
-        latency regresses past that it's a separate signal.
-        """
+        """Cue-less complex queries stay on the orchestrator with zero confidence."""
         with httpx.Client(base_url=RUNTIME, timeout=900.0) as client:
             resp = client.post(
                 "/agents/gateway_agent/process",
@@ -325,15 +359,15 @@ class TestQueryEnhancementViaGateway:
 
         assert resp.status_code == 200
         data = resp.json()
-        # Confidence is nested in gateway metadata
-        gw = data.get("gateway", {})
-        if "confidence" in gw:
-            assert 0.0 <= gw["confidence"] <= 1.0
-            # A clear, unambiguous query should exceed the routing threshold
-            assert gw["confidence"] >= 0.4, (
-                f"Clear query should produce confidence >= 0.4 (threshold), "
-                f"got {gw['confidence']}"
-            )
+        assert data["agent"] == "orchestrator_agent", data
+        gw = data["gateway"]
+        assert gw["modality"] == "video", gw
+        assert gw["complexity"] == "complex", gw
+        assert gw["generation_type"] == "raw_results", gw
+        assert gw["routed_to"] == "orchestrator_agent", gw
+        assert gw["confidence"] == 0.0, (
+            f"Cue-less complex query should have zero keyword confidence, got {gw['confidence']}"
+        )
 
 
 @pytest.mark.e2e

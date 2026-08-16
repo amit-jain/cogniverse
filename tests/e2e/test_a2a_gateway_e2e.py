@@ -13,12 +13,16 @@ to the orchestration pipeline and not directly callable via REST.
 Requires live k3d-deployed runtime at http://localhost:33000.
 """
 
+import asyncio
 import hashlib
+import json
 import warnings
 
 import httpx
 import pytest
 
+from cogniverse_agents.optimizer.artifact_manager import ArtifactManager
+from cogniverse_foundation.telemetry.manager import get_telemetry_manager
 from tests.e2e.conftest import (
     DATA_ROOT,
     PHOENIX_URL,
@@ -53,6 +57,43 @@ def skip_without_sample_video() -> None:
             stacklevel=2,
         )
         pytest.skip(f"sample video not available: {SAMPLE_VIDEO}")
+
+
+DEFAULT_GATEWAY_THRESHOLDS = {
+    "fast_path_confidence_threshold": 0.4,
+    "gliner_threshold": 0.3,
+}
+
+
+@pytest.fixture(scope="module", autouse=True)
+def _pin_default_gateway_thresholds():
+    """Keep the shared routing tenant on the deployment defaults."""
+    am = ArtifactManager(
+        get_telemetry_manager().get_provider(tenant_id=TENANT_ID), TENANT_ID
+    )
+    previous_blob = asyncio.run(am.load_blob("config", "gateway_thresholds"))
+    if previous_blob is not None:
+        try:
+            previous_config = json.loads(previous_blob)
+        except json.JSONDecodeError:
+            previous_config = None
+    else:
+        previous_config = None
+    desired_blob = json.dumps(DEFAULT_GATEWAY_THRESHOLDS)
+    if previous_config != DEFAULT_GATEWAY_THRESHOLDS:
+        asyncio.run(am.save_blob("config", "gateway_thresholds", desired_blob))
+
+    try:
+        yield
+    finally:
+        if previous_blob is None:
+            asyncio.run(
+                am._provider.datasets.delete_dataset(
+                    am._blob_dataset_name("config", "gateway_thresholds")
+                )
+            )
+        else:
+            asyncio.run(am.save_blob("config", "gateway_thresholds", previous_blob))
 
 
 # ---------------------------------------------------------------------------
@@ -217,7 +258,7 @@ class TestGatewaySimpleRouting:
                 "/agents/gateway_agent/process",
                 json={
                     "agent_name": "gateway_agent",
-                    "query": "show me cooking videos",
+                    "query": "find videos of a man washing dishes in a kitchen sink",
                     "context": {"tenant_id": TENANT_ID},
                     "top_k": 3,
                 },
@@ -243,14 +284,14 @@ class TestGatewaySimpleRouting:
         # Routing/triage metadata lives under `gateway`.
         gw = data.get("gateway", {})
         assert gw.get("routed_to") == "search_agent", (
-            f"'cooking videos' should route to search_agent, got: "
+            f"'man washing dishes' video query should route to search_agent, got: "
             f"{gw.get('routed_to')!r}"
         )
         assert gw.get("modality") == "video", (
-            f"'cooking videos' should be video modality, got: {gw.get('modality')!r}"
+            f"'dog beach videos' should be video modality, got: {gw.get('modality')!r}"
         )
         assert gw.get("complexity") == "simple", (
-            f"'cooking videos' with score 0.446 should be simple, got: {gw.get('complexity')!r}"
+            f"'dog beach videos' should be simple, got: {gw.get('complexity')!r}"
         )
 
 
@@ -263,7 +304,7 @@ class TestGatewaySeededSearchContract:
                 "/agents/gateway_agent/process",
                 json={
                     "agent_name": "gateway_agent",
-                    "query": "show me cooking videos",
+                    "query": "find videos of a man washing dishes in a kitchen sink",
                     "context": {"tenant_id": TENANT_ID},
                     "top_k": 5,
                 },
@@ -582,7 +623,7 @@ class TestGatewayAgentThin:
     separate agents invoked by the orchestrator when needed."""
 
     def test_gateway_agent_routes_video_to_search(self):
-        """'show me cooking videos' through routing → gateway classifies as
+        """'find videos of dogs running on a beach' through routing → gateway classifies as
         simple video → routes to search_agent → returns Vespa results.
 
         This verifies the full routing→gateway→search pipeline produces
@@ -593,7 +634,7 @@ class TestGatewayAgentThin:
                 "/agents/gateway_agent/process",
                 json={
                     "agent_name": "gateway_agent",
-                    "query": "show me cooking videos",
+                    "query": "find videos of dogs running on a beach",
                     "context": {"tenant_id": TENANT_ID},
                     "top_k": 5,
                 },
@@ -606,10 +647,10 @@ class TestGatewayAgentThin:
         # Must go through gateway and produce classification
         gw = data.get("gateway", {})
         assert gw.get("complexity") == "simple", (
-            f"'cooking videos' should be simple, got {gw.get('complexity')!r}"
+            f"'dog beach videos' should be simple, got {gw.get('complexity')!r}"
         )
         assert gw.get("modality") == "video", (
-            f"'cooking videos' should be video modality, got {gw.get('modality')!r}"
+            f"'dog beach videos' should be video modality, got {gw.get('modality')!r}"
         )
         assert gw.get("routed_to") == "search_agent", (
             f"Simple video should route to search_agent, got {gw.get('routed_to')!r}"
@@ -1115,7 +1156,7 @@ class TestTelemetrySpans:
                 "/agents/gateway_agent/process",
                 json={
                     "agent_name": "gateway_agent",
-                    "query": "show me cooking videos",
+                    "query": "find videos of dogs running on a beach",
                     "context": {"tenant_id": TENANT_ID},
                     "top_k": 3,
                 },
