@@ -564,8 +564,8 @@ class TestModalitySearchDispatchSerialization:
         assert deps.schema_loader is dispatcher._schema_loader
         assert deps.backend_config["url"] == "http://localhost"
         assert deps.backend_config["port"] == 8080
-        assert deps.backend_config["schema_name"] == "audio_clap_semantic"
-        assert deps.backend_config["profile"] == "audio_clap_semantic"
+        assert deps.backend_config["schema_name"] == "audio_content"
+        assert "profile" not in deps.backend_config
         assert deps.backend_config["backend"]["type"] == "vespa"
         assert result["status"] == "success"
         assert result["results_count"] == 1
@@ -1298,8 +1298,7 @@ class TestAudioTextSearchBackendContract:
             {
                 "query": "listen to podcasts about deep learning run 4",
                 "type": "audio",
-                "profile": "audio_clap_semantic",
-                "strategy": "hybrid_semantic_bm25",
+                "strategy": "phased_semantic",
                 "tenant_id": "acme:prod",
                 "top_k": 3,
             }

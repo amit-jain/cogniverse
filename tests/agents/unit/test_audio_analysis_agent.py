@@ -433,7 +433,6 @@ class TestAudioAnalysisAgent:
             {
                 "query": "AI podcast",
                 "type": "audio",
-                "profile": "audio_clap_semantic",
                 "strategy": "transcript_search",
                 "tenant_id": "test_tenant",
                 "top_k": 20,
@@ -442,7 +441,7 @@ class TestAudioAnalysisAgent:
         self.agent._embedding_generator.generate_acoustic_text_embedding.assert_not_called()
 
     @pytest.mark.asyncio
-    async def test_search_audio_default_hybrid_mode_uses_backend(self):
+    async def test_search_audio_default_mode_is_semantic(self):
         backend = MagicMock()
         backend.search = MagicMock(return_value=[])
         self.agent._get_backend = MagicMock(return_value=backend)
@@ -459,8 +458,7 @@ class TestAudioAnalysisAgent:
             {
                 "query": "machine learning",
                 "type": "audio",
-                "profile": "audio_clap_semantic",
-                "strategy": "hybrid_semantic_bm25",
+                "strategy": "phased_semantic",
                 "tenant_id": "test_tenant",
                 "top_k": 10,
             }
@@ -490,7 +488,6 @@ class TestAudioAnalysisAgent:
             {
                 "query": "what was said about AI",
                 "type": "audio",
-                "profile": "audio_clap_semantic",
                 "strategy": "phased_semantic",
                 "tenant_id": "test_tenant",
                 "top_k": 7,
@@ -536,6 +533,27 @@ class TestAudioAnalysisAgent:
         self.agent._get_backend.assert_not_called()
 
     @pytest.mark.asyncio
+    async def test_search_audio_rejects_unknown_mode(self):
+        backend = MagicMock()
+        backend.search = MagicMock(
+            side_effect=AssertionError("no backend search for an unknown mode")
+        )
+        self.agent._get_backend = MagicMock(return_value=backend)
+
+        with pytest.raises(
+            ValueError,
+            match=(
+                "Unknown audio search mode 'lexical'; expected one of "
+                "acoustic, transcript, semantic, hybrid"
+            ),
+        ):
+            await self.agent.search_audio(
+                query="machine learning", search_mode="lexical", limit=10
+            )
+
+        backend.search.assert_not_called()
+
+    @pytest.mark.asyncio
     async def test_search_audio_backend_failure_raises(self):
         backend = MagicMock()
         backend.search.side_effect = RuntimeError("backend unavailable")
@@ -555,7 +573,6 @@ class TestAudioAnalysisAgent:
             {
                 "query": "machine learning",
                 "type": "audio",
-                "profile": "audio_clap_semantic",
                 "strategy": "phased_semantic",
                 "tenant_id": "test_tenant",
                 "top_k": 10,
@@ -1144,7 +1161,6 @@ class TestAudioSearchEventLoop:
             assert query_dict == {
                 "query": "q",
                 "type": "audio",
-                "profile": "audio_clap_semantic",
                 "strategy": "transcript_search",
                 "tenant_id": "acme:acme",
                 "top_k": 5,
@@ -1246,7 +1262,6 @@ async def test_search_hybrid_offloads_blocking_backend_search(monkeypatch):
         assert query_dict == {
             "query": "q",
             "type": "audio",
-            "profile": "audio_clap_semantic",
             "strategy": "hybrid_semantic_bm25",
             "tenant_id": "test:test",
             "top_k": 5,

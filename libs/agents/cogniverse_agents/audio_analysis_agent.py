@@ -34,9 +34,6 @@ from cogniverse_runtime.ingestion.processors.audio_transcriber import AudioTrans
 
 logger = logging.getLogger(__name__)
 
-AUDIO_SEARCH_PROFILE = "audio_clap_semantic"
-
-
 # =============================================================================
 # Type-Safe Models
 # =============================================================================
@@ -68,7 +65,7 @@ class AudioSearchInput(AgentInput):
 
     query: str = PydanticField(..., description="Search query")
     search_mode: str = PydanticField(
-        "hybrid", description="Search mode: transcript, semantic, acoustic, hybrid"
+        "semantic", description="Search mode: transcript, semantic, acoustic, hybrid"
     )
     limit: int = PydanticField(20, description="Number of results")
 
@@ -391,7 +388,7 @@ class AudioAnalysisAgent(
             def __init__(self):
                 super().__init__()
 
-            def forward(self, query: str, mode: str = "hybrid"):
+            def forward(self, query: str, mode: str = "semantic"):
                 return dspy.Prediction(
                     result=f"Searching audio: {query} (mode: {mode})"
                 )
@@ -478,7 +475,7 @@ class AudioAnalysisAgent(
     async def search_audio(
         self,
         query: str,
-        search_mode: str = "hybrid",
+        search_mode: str = "semantic",
         limit: int = 20,
     ) -> List[AudioResult]:
         """
@@ -504,7 +501,10 @@ class AudioAnalysisAgent(
             elif search_mode == "hybrid":
                 results = await self._search_hybrid(query, limit)
             else:
-                results = await self._search_transcript(query, limit)
+                raise ValueError(
+                    f"Unknown audio search mode {search_mode!r}; expected one of "
+                    "acoustic, transcript, semantic, hybrid"
+                )
 
             logger.info(f"✅ Found {len(results)} audio results")
             return results
@@ -622,10 +622,10 @@ class AudioAnalysisAgent(
     def _build_backend_query(
         self, query: str, strategy: str, limit: int
     ) -> Dict[str, Any]:
+        # No profile: the backend selects the tenant's audio profile by type.
         return {
             "query": query,
             "type": "audio",
-            "profile": AUDIO_SEARCH_PROFILE,
             "strategy": strategy,
             "tenant_id": self._tenant_id,
             "top_k": limit,
@@ -633,7 +633,7 @@ class AudioAnalysisAgent(
 
     def _search_result_to_audio_result(self, search_result: Any) -> AudioResult:
         document = search_result.document
-        metadata = dict(getattr(document, "metadata", {}) or {})
+        metadata = dict(document.metadata)
         transcript = document.text_content or metadata.get("audio_transcript", "")
         return AudioResult(
             audio_id=metadata.get("audio_id", document.id),
