@@ -318,12 +318,15 @@ def _extract_and_upsert_graph(
     file_path: Path,
     source_doc_id: str,
     tenant_id: str,
+    gliner_url: Optional[str] = None,
 ) -> Optional[Dict]:
     """Extract a file's nodes+edges locally and POST them to /graph/upsert.
 
     Graph extraction runs in the CLI process (not the runtime) so the user's
     local tree-sitter / GLiNER do the work. Only the resulting nodes+edges
     are shipped to the runtime — the runtime doesn't need to read the file.
+    ``gliner_url`` names the GLiNER inference service text extraction calls;
+    ``None`` lets ``DocExtractor`` resolve it from system configuration.
     """
     try:
         from cogniverse_agents.graph.code_extractor import CodeExtractor
@@ -340,7 +343,9 @@ def _extract_and_upsert_graph(
         if ext in code_exts():
             result = CodeExtractor().extract(file_path, tenant_id, source_doc_id)
         elif ext in GRAPH_TEXT_EXTENSIONS:
-            result = DocExtractor().extract(file_path, tenant_id, source_doc_id)
+            result = DocExtractor(gliner_inference_url=gliner_url).extract(
+                file_path, tenant_id, source_doc_id
+            )
     except Exception as exc:  # noqa: BLE001 — surfaced in the run summary
         # Swallowing this made a broken extractor read as "no graph in any
         # file": every file silently contributed zero nodes.
@@ -366,11 +371,14 @@ def index_files(
     tenant_id: str,
     profile: Optional[str] = None,
     runtime_url: str = RUNTIME_URL,
+    gliner_url: Optional[str] = None,
 ) -> dict:
     """Index files from a directory into Vespa via the runtime ingestion API.
 
     Also extracts a knowledge graph (nodes + edges) from code and text
-    files, and POSTs it to ``/graph/upsert``.
+    files, and POSTs it to ``/graph/upsert``. ``gliner_url`` is the GLiNER
+    inference service used for text files; ``None`` resolves it from system
+    configuration.
 
     Returns a summary dict with counts.
     """
@@ -444,6 +452,7 @@ def index_files(
                     file_path,
                     source_doc_id,
                     tenant_id,
+                    gliner_url=gliner_url,
                 )
                 if graph_result and "error" not in graph_result:
                     total_nodes += graph_result.get("nodes_upserted", 0)
