@@ -33,6 +33,7 @@ from cogniverse_core.schemas.filesystem_loader import FilesystemSchemaLoader
 from cogniverse_foundation.config.manager import ConfigManager
 from cogniverse_foundation.config.unified_config import SystemConfig
 from cogniverse_vespa.config.config_store import VespaConfigStore
+from tests.utils.async_polling import wait_for_vespa_indexing
 from tests.utils.llm_config import get_llm_base_url, get_llm_model
 
 logger = logging.getLogger(__name__)
@@ -117,6 +118,44 @@ def _bind(agent: _FederatingAgent, mm, tenant_id: str, *, federate: bool) -> Non
 
 
 class TestFederationReadPath:
+    def test_missing_org_trunk_schema_returns_empty(self, federation_setup):
+        tenant_mm, _trunk_mm = federation_setup
+        missing_trunk_tenant = org_trunk_tenant_id("lazy_guard")
+
+        assert (
+            tenant_mm._backend.schema_exists(
+                "agent_memories", tenant_id=missing_trunk_tenant
+            )
+            is False
+        )
+
+        rows = tenant_mm.get_all_memories(
+            tenant_id=missing_trunk_tenant,
+            agent_name=AGENT,
+        )
+        assert rows == []
+
+    def test_deployed_tenant_partition_round_trips(self, federation_setup):
+        tenant_mm, _trunk_mm = federation_setup
+        tenant_mm.clear_agent_memory(TENANT, AGENT)
+
+        memory_id = tenant_mm.add_memory(
+            content="TENANT_ROUND_TRIP_FACT_h6",
+            tenant_id=TENANT,
+            agent_name=AGENT,
+            infer=False,
+        )
+        assert memory_id
+
+        wait_for_vespa_indexing(delay=2)
+
+        rows = tenant_mm.get_all_memories(
+            tenant_id=TENANT,
+            agent_name=AGENT,
+        )
+        assert {r["id"] for r in rows} == {memory_id}
+        assert {r["memory"] for r in rows} == {"TENANT_ROUND_TRIP_FACT_h6"}
+
     def test_org_trunk_memory_visible_when_federation_enabled(self, federation_setup):
         tenant_mm, trunk_mm = federation_setup
         # Seed an org-trunk-only memory.

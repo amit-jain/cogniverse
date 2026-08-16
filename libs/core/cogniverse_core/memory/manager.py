@@ -949,6 +949,14 @@ class Mem0MemoryManager:
             logger.error(f"Memory search failed: {e}")
             raise
 
+    def _tenant_partition_schema_exists(self, tenant_id: str) -> bool:
+        """Whether the tenant's memory partition schema is deployed.
+
+        Raises when the backend / registry lookup itself fails.
+        """
+        base_schema_name = self.config["vector_store"]["config"]["profile"]
+        return self._backend.schema_exists(base_schema_name, tenant_id=tenant_id)
+
     # Re-stamps within this window are skipped — the lifecycle scheduler
     # reads recency at day scale, so per-request writes buy nothing.
     _LAST_ACCESSED_BUMP_INTERVAL_S = 900
@@ -1066,6 +1074,13 @@ class Mem0MemoryManager:
 
         try:
             storage_tenant_id = canonical_tenant_id(tenant_id)
+            if not self._tenant_partition_schema_exists(storage_tenant_id):
+                logger.info(
+                    "No deployed schema for tenant %s; returning no memories",
+                    storage_tenant_id,
+                )
+                return []
+
             result = self.memory.get_all(
                 user_id=storage_tenant_id,
                 agent_id=agent_name,
