@@ -42,12 +42,21 @@ from tests.e2e.test_api_e2e import _deploy_profile_for_tenant
 NAMESPACE = "cogniverse"
 DEPLOYMENT = "deploy/cogniverse-runtime"
 CONTAINER = "runtime"
-# Narrow lookback so each batch job analyses only the spans this module's
-# fixture just emitted. 48h dragged in spans from every past local e2e run,
-# and assertions like "simple_count > complex_count" (which reflect THIS
-# fixture's 20-simple + 10-complex query mix) get drowned out when past runs
-# skewed the population. 1h comfortably covers fixture → test-run latency.
-LOOKBACK_HOURS = 1
+# Each batch job analyses the spans this module's fixtures emitted: the
+# lookback is measured from the moment span seeding started (plus a small
+# margin), so it neither drags in earlier sessions' traffic nor expires the
+# seeded spans when the module runs longer than a fixed window.
+_SPAN_SEED_STARTED_AT: float | None = None
+_LOOKBACK_MARGIN_HOURS = 0.25
+
+
+def _module_lookback_hours() -> float:
+    assert _SPAN_SEED_STARTED_AT is not None, (
+        "batch job requested before this module's span seeding started"
+    )
+    return (time.time() - _SPAN_SEED_STARTED_AT) / 3600.0 + _LOOKBACK_MARGIN_HOURS
+
+
 RUNTIME = "http://localhost:33000"
 
 
@@ -345,7 +354,10 @@ def gateway_threshold_tenant(_kubectl_cluster_ready) -> GatewayThresholdTenant:
                 "video",
                 "search_agent",
             ), body
+            assert gw["generation_type"] == "raw_results", body
+            assert gw["confidence"] >= gw["fast_path_confidence_threshold"], body
             assert body["status"] == "success", body
+            assert body["downstream_result"]["status"] == "success", body
             decisions.append((gw["complexity"], gw["confidence"]))
     _wait_for_gateway_spans_in_pod(tenant_id, span_count)
     try:
@@ -374,6 +386,8 @@ def generate_spans_for_batch_jobs(_kubectl_cluster_ready):
 
     Runs once per module, before any batch job test.
     """
+    global _SPAN_SEED_STARTED_AT
+    _SPAN_SEED_STARTED_AT = time.time()
     response = httpx.get(f"{RUNTIME}/health", timeout=5.0)
     assert response.status_code == 200, (
         f"runtime health returned HTTP {response.status_code}: {response.text[:500]}"
@@ -427,13 +441,15 @@ def generate_spans_for_batch_jobs(_kubectl_cluster_ready):
 def _run_batch_job(
     mode: str,
     tenant_id: str = TENANT_ID,
-    lookback_hours: float = LOOKBACK_HOURS,
+    lookback_hours: float | None = None,
     # A job is a Phoenix span scan (tens of seconds on a project holding a
     # day of traffic) plus a DSPy compile with real LM calls at ~12 tok/s —
     # ~2 min solo, more when the cluster is loaded.
     timeout: int = 600,
 ) -> dict:
     """Run a batch optimization job inside the k3d pod and return parsed JSON."""
+    if lookback_hours is None:
+        lookback_hours = _module_lookback_hours()
     result = subprocess.run(
         [
             "kubectl",
@@ -652,8 +668,8 @@ def seeded_gateway_traffic():
     """Route real queries through the gateway so its spans land inside the
     thresholds job's lookback window.
 
-    The job reads ``cogniverse.gateway`` spans from the last
-    ``LOOKBACK_HOURS`` hours; without seeding, the test silently depends
+    The job reads ``cogniverse.gateway`` spans from the module's lookback
+    window; without seeding, the test silently depends
     on some earlier suite (a2a_gateway) having run recently, and returns
     ``no_data`` when executed on its own.
     """
@@ -708,7 +724,17 @@ class TestGatewayThresholds:
         assert result["status"] == "success", result
         assert result["spans_found"] == len(gateway_threshold_tenant.decisions), result
         assert isinstance(result["artifact_id"], str) and result["artifact_id"], result
-        assert result["thresholds"] == gateway_threshold_tenant.expected_thresholds
+        expected = gateway_threshold_tenant.expected_thresholds
+        thresholds = result["thresholds"]
+        assert (
+            thresholds["fast_path_confidence_threshold"]
+            == (expected["fast_path_confidence_threshold"])
+        ), thresholds
+        assert thresholds["gliner_threshold"] == expected["gliner_threshold"], (
+            thresholds
+        )
+        assert thresholds["analysis"] == expected["analysis"], thresholds
+        assert thresholds == expected
 
     def test_gateway_thresholds_artifact_loadable(self, gateway_threshold_tenant):
         """The persisted artifact is exactly what the job computed."""
@@ -720,8 +746,17 @@ class TestGatewayThresholds:
         blob = _load_blob_in_pod(
             "config", "gateway_thresholds", tenant_id=gateway_threshold_tenant.tenant_id
         )
-        assert json.loads(blob) == gateway_threshold_tenant.expected_thresholds
-        assert json.loads(blob) == job_result["thresholds"]
+        artifact = json.loads(blob)
+        assert set(artifact) == {
+            "fast_path_confidence_threshold",
+            "gliner_threshold",
+            "analysis",
+        }, artifact
+        assert artifact["analysis"]["total_spans"] == len(
+            gateway_threshold_tenant.decisions
+        ), artifact
+        assert artifact == gateway_threshold_tenant.expected_thresholds
+        assert artifact == job_result["thresholds"]
 
 
 # ---------------------------------------------------------------------------
@@ -807,19 +842,21 @@ class TestWorkflowOptimization:
             f"Expected demos for queries {known_queries}, got: {demo_queries}"
         )
 
-        # Workflow demos reflect the orchestrator's agent_sequence — the agents
-        # it explicitly routes to. Entity extraction and query enhancement run
-        # in the gateway preprocessing pipeline BEFORE orchestration starts,
-        # so they aren't part of the orchestrator's recorded sequence. Only
-        # assert on agents the orchestrator actually dispatches.
+        # Workflow demos reflect the orchestrator's agent_sequence — the plan
+        # steps it dispatched. A "compare with documents" plan must retrieve:
+        # through search_agent / document_agent, or through
+        # detailed_report_agent, which runs its own retrieval before writing.
         compare_demos = [d for d in valid_demos if "compare" in d["query"]]
         if compare_demos:
             agents = compare_demos[0]["agent_sequence"]
             if isinstance(agents, str):
                 agents = [a.strip() for a in agents.split(",") if a.strip()]
-            assert any(a in agents for a in ("search_agent", "document_agent")), (
-                f"'compare with documents' workflow should use search or document agent, "
-                f"got: {agents}"
+            assert any(
+                a in agents
+                for a in ("search_agent", "document_agent", "detailed_report_agent")
+            ), (
+                f"'compare with documents' workflow must retrieve via search, "
+                f"document or detailed-report agent, got: {agents}"
             )
             assert any(
                 a in agents for a in ("summarizer_agent", "detailed_report_agent")
@@ -1396,6 +1433,10 @@ class TestArtifactLoadingRoundTrip:
         assert (gw["complexity"], gw["routed_to"]) == expected_gateway_routing(
             query, gw
         )
+        # GLiNER only ever tags this query video_content, so the modality and
+        # generation type hold under any calibrated GLiNER threshold.
+        assert gw["modality"] == "video", gw
+        assert gw["generation_type"] == "raw_results", gw
 
         # 5. Verify the artifact is still loadable in-pod after restart
         #    (proves the agent's telemetry infrastructure survived restart)
@@ -1586,3 +1627,5 @@ class TestSyntheticGeneration:
             "Error: synthetic optimizer types have no approved training-data "
             "consumer: ['simba']"
         ), result.stderr[-1000:]
+        # A configuration error is a one-line message, not a traceback.
+        assert "Traceback" not in result.stderr, result.stderr[-2000:]

@@ -854,12 +854,16 @@ def _bootstrap_tenant_and_schemas() -> None:
 
     config = json.loads(config_path.read_text())
     all_profiles = config.get("backend", {}).get("profiles", {})
+    # The seeded audio clip is ingested with audio_clap_semantic, so the tenant
+    # registers it like every other profile it uses: profile selection and
+    # the admin listing read the tenant's registered profiles.
     profile_names = tuple(
         dict.fromkeys(
             (
                 *_synthetic_fixture_profiles(config),
                 "document_text_semantic",
                 "document_visual_colpali",
+                "audio_clap_semantic",
             )
         )
     )
