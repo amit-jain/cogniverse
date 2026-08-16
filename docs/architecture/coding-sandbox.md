@@ -36,10 +36,10 @@ or the Helm value `runtime.sandbox.*`:
 | **`external`** | The runtime connects to an OpenShell gateway you run **somewhere else** (a managed/hosted endpoint). Nothing sandbox-related is deployed here. | When a central/managed sandbox service already exists. Set `runtime.sandbox.external.endpoint`. |
 | **`off`** | No sandbox. The coding agent is disabled and returns an error on any coding request. | When you don't need the coding agent. |
 
-> There is also a legacy **host mode** (gateway runs as a process on the
-> developer's laptop, reached via `host.docker.internal`). It is a local-dev-only
-> shortcut and is **not** the recommended path — the pod-to-host network bridge is
-> fragile across environments. `in-cluster` supersedes it.
+> There is also a **host mode** for local k3d. The runtime pod gets a
+> `hostAliases` entry for `host.docker.internal` from
+> `runtime.sandbox.hostGatewayIP`, so it can reach the host gateway on the port
+> recorded in the active gateway's `metadata.json` (`gateway_port`).
 
 ---
 
@@ -170,6 +170,7 @@ runtime:
     enabled: true
     inCluster:
       enabled: true          # self-host the gateway + operator (default path)
+    hostGatewayIP: ""        # host.docker.internal alias for host mode
     external:
       enabled: false         # OR point at a managed gateway
       endpoint: ""           # e.g. "openshell.example.com:8080"

@@ -203,6 +203,16 @@ k3d cluster delete cogniverse-e2e
 absent. A fresh session deletes the cluster at teardown only when that same
 session created it; ordinary sessions always leave the shared cluster warm.
 
+The fixture also provisions the coding sandbox in host mode: it starts (or
+reuses) the host OpenShell gateway, syncs its mTLS certs and metadata into the
+cluster before Helm installs the runtime, and deploys with
+`runtime.sandbox.enabled=true`, `runtime.sandbox.gatewayEndpoint` set to the
+gateway's own port and `runtime.sandbox.hostGatewayIP` set to the k3d network
+gateway (so `host.docker.internal` resolves in the runtime pod). Those values
+are part of the deploy identity. On reuse the sync runs again and a changed
+secret rolls the runtime deployment, because the pod mounts the files with
+`subPath`.
+
 There is no idle reaper: only the person or automation that knows the whole
 campaign is complete can safely decide when to stop the shared cluster.
 
