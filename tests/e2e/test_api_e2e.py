@@ -30,15 +30,20 @@ from pathlib import Path
 import httpx
 import pytest
 
-from cogniverse_foundation.config.unified_config import BackendProfileConfig
+from cogniverse_foundation.config.unified_config import (
+    BackendProfileConfig,
+    SyntheticGeneratorConfig,
+)
 from cogniverse_synthetic.generators.base import extract_topic
 from cogniverse_synthetic.generators.routing import TOPIC_WORD_BUDGET
 from cogniverse_synthetic.schemas import ProfileSelectionExampleSchema
 from cogniverse_synthetic.utils import profile_can_ground_topic
+from cogniverse_synthetic.utils.agent_inference import AgentInferrer
 from tests.e2e.conftest import (
     RUNTIME,
     SAMPLE_VIDEO_CONTENT_ID,
     TENANT_ID,
+    _content_sha256,
     _ensure_sample_content_ingested,
     _matching_sample_results,
     _vespa_deployed_schema_names,
@@ -57,18 +62,27 @@ CAPTION_CORPUS_DIR = (
 )
 CAPTION_CORPUS_LIMIT = 50
 CONFIG_PATH = Path(__file__).resolve().parents[2] / "configs" / "config.json"
-CANONICAL_WORKFLOW_AGENTS = {
-    "search_agent",
-    "text_analysis_agent",
-    "image_search_agent",
-    "summarizer_agent",
-    "detailed_report_agent",
-    "document_agent",
-}
-PRIMARY_AGENT_BY_QUERY_TYPE = {
-    "VIDEO": "search_agent",
-    "DOCUMENT": "document_agent",
-    "IMAGE": "image_search_agent",
+
+
+def _shipped_agent_inferrer() -> AgentInferrer:
+    """The AgentInferrer the synthetic service builds from the shipped config."""
+    config = json.loads(CONFIG_PATH.read_text())
+    synthetic = dict(config["synthetic"])
+    synthetic["tenant_id"] = TENANT_ID
+    generator_config = SyntheticGeneratorConfig.from_dict(synthetic)
+    return AgentInferrer(
+        agents_config=config["agents"],
+        agent_mappings=generator_config.get_optimizer_config("modality").agent_mappings,
+    )
+
+
+_SHIPPED_AGENT_INFERRER = _shipped_agent_inferrer()
+# Every agent a workflow sequence can name: the primary agent per modality plus
+# the summarizer / detailed_report roles infer_workflow_sequence appends.
+PRIMARY_AGENT_BY_QUERY_TYPE = dict(_SHIPPED_AGENT_INFERRER.MODALITY_TO_AGENT)
+CANONICAL_WORKFLOW_AGENTS = set(PRIMARY_AGENT_BY_QUERY_TYPE.values()) | {
+    _SHIPPED_AGENT_INFERRER.ROLE_AGENTS["summarizer"],
+    _SHIPPED_AGENT_INFERRER.ROLE_AGENTS["detailed_report"],
 }
 
 
@@ -765,6 +779,30 @@ class TestSyntheticDataAPI:
             )
 
     @staticmethod
+    def _tenant_video_results(client: httpx.Client) -> list[dict]:
+        """Every video document the tenant serves on PROFILE — the population
+        the synthetic sampler draws from, read live rather than assumed."""
+        response = client.post(
+            "/search/",
+            json={
+                "query": "video",
+                "profile": PROFILE,
+                "strategy": "default",
+                "top_k": 1000,
+                "tenant_id": TENANT_ID,
+            },
+        )
+        assert response.status_code == 200, response.text
+        body = response.json()
+        results = body["results"]
+        assert body["results_count"] == len(results)
+        assert [
+            {"segment_description", "video_id"} <= set(result["metadata"])
+            for result in results
+        ] == [True for _ in results]
+        return results
+
+    @staticmethod
     def _exact_video_fixture_results(client: httpx.Client) -> list[dict]:
         response = client.post(
             "/search/",
@@ -971,7 +1009,7 @@ class TestSyntheticDataAPI:
     def test_generate_synthetic_data(self):
         """POST /synthetic/generate creates real synthetic training examples."""
         with httpx.Client(base_url=RUNTIME, timeout=900.0) as client:
-            fixture_results = self._exact_video_fixture_results(client)
+            fixture_results = self._tenant_video_results(client)
             source_texts = {
                 result["metadata"]["segment_description"]
                 for result in fixture_results
@@ -1255,7 +1293,12 @@ class TestSyntheticDataAPI:
             assert available_profiles == expected_available_profiles
             assert example["selected_profile"] in selected_profiles
             assert example["modality"] == profile_types[example["selected_profile"]]
-            assert example["query_intent"] == "video_search"
+            # query_intent is the labeler's LM judgment; the vocabulary is
+            # enforced at the boundary by the Literal-typed schema.
+            assert (
+                ProfileSelectionExampleSchema.model_validate(example).query_intent
+                == example["query_intent"]
+            )
             assert "chosen_agent" not in example
             assert "workflow_id" not in example
         assert len({example["query"] for example in data["data"]}) == 2
@@ -1287,7 +1330,7 @@ class TestSyntheticDataAPI:
             # topic extraction collapses whitespace, so compare normalized forms
             ingested_video_topics = {
                 " ".join(result["metadata"]["segment_description"].split())
-                for result in self._exact_video_fixture_results(client)
+                for result in self._tenant_video_results(client)
             }
 
         assert agents_response.status_code == 200, agents_response.text
@@ -2249,8 +2292,11 @@ class TestAudioIngestionAndSearch:
         expected_source_url = _expected_artifact_source_url(extracted_audio_path)
         with httpx.Client(base_url=RUNTIME, timeout=900.0) as client:
             with open(extracted_audio_path, "rb") as f:
+                # force=true: this test proves the processing path, and the
+                # session fixture may already have ingested these exact bytes
+                # (a plain upload would then be a dedup echo with 0 chunks).
                 resp = client.post(
-                    "/ingestion/upload?wait=true&wait_timeout=540",
+                    "/ingestion/upload?wait=true&wait_timeout=540&force=true",
                     files={"file": (extracted_audio_path.name, f, "audio/wav")},
                     data={
                         "profile": "audio_clap_semantic",
@@ -2262,11 +2308,12 @@ class TestAudioIngestionAndSearch:
             upload_data = resp.json()
             assert upload_data["status"] == "success"
             assert upload_data["state"] == "complete"
+            assert upload_data["existing"] is False, upload_data
             assert upload_data["filename"] == extracted_audio_path.name
             assert upload_data["source_url"] == expected_source_url
             assert upload_data["chunks_created"] == 1, upload_data
             assert upload_data["documents_fed"] == 1, upload_data
-            assert isinstance(upload_data["video_id"], str) and upload_data["video_id"]
+            assert upload_data["video_id"] == _content_sha256(extracted_audio_path)
 
             time.sleep(3)
 
