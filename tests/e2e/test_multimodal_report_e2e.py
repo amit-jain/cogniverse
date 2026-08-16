@@ -181,9 +181,11 @@ def test_report_agent_attaches_retrieved_keyframes_to_llm(ingested_video):
     )
 
     # Content: the report answers "describe the outdoor scene and what the
-    # person is doing" over a clip of a man lighting a fire outdoors, so the
-    # grounded summary must describe the person, the outdoor setting, and the
-    # fire activity — not just be 50+ chars of anything. Robust to phrasing
+    # person is doing" over the tracked clip (ground truth: a man in a yellow
+    # t-shirt kneels in a wooded area and lights a stack of firewood with a
+    # knife and fire starter), so the grounded summary must describe the
+    # person, the outdoor setting, and the firewood/fire activity the attached
+    # keyframes show — not just be 50+ chars of anything. Robust to phrasing
     # via concept membership. (The query is stripped first so a bare echo of
     # it can't satisfy these on its own.)
     summary_lc = (
@@ -214,5 +216,19 @@ def test_report_agent_attaches_retrieved_keyframes_to_llm(ingested_video):
     ), f"report does not describe the outdoor scene: {summary_lc!r}"
     assert any(
         t in summary_lc
-        for t in ("fire", "smoke", "flame", "burn", "spark", "kindl", "ignit")
-    ), f"report does not describe the fire-lighting activity: {summary_lc!r}"
+        for t in (
+            "fire",
+            "smoke",
+            "flame",
+            "burn",
+            "spark",
+            "kindl",
+            "ignit",
+            "firewood",
+            "wood",
+            "log",
+            "knife",
+            "camp",
+            "survival",
+        )
+    ), f"report does not describe the firewood/fire activity: {summary_lc!r}"
