@@ -145,6 +145,59 @@ def video_workflow_sample(topic: str) -> dict[str, str]:
     }
 
 
+def video_workflow_batch(*topics: str) -> list[dict[str, str]]:
+    return [video_workflow_sample(topic) for topic in topics]
+
+
+def video_profile_sample(video_title: str, schema_name: str) -> dict[str, str]:
+    return {"video_title": video_title, "schema_name": schema_name}
+
+
+def topic_schema_sample(topic: str, schema_name: str) -> dict[str, str]:
+    return {"topic": topic, "schema_name": schema_name}
+
+
+def title_sample(title: str) -> dict[str, str]:
+    return {"title": title}
+
+
+def workflow_content_sample(
+    topic: str,
+    profile_type: str,
+    modality: str,
+    *,
+    embedding_type: str = "image",
+) -> dict[str, str]:
+    return {
+        "topic": topic,
+        "profile_type": profile_type,
+        "modality": modality,
+        "schema_name": "video_videoprism_large_mv_chunk_30s",
+        "embedding_type": embedding_type,
+    }
+
+
+def routing_sample(topic: str, title: str, segment_description: str) -> dict[str, str]:
+    return {
+        "topic": topic,
+        "title": title,
+        "video_title": title,
+        "segment_description": segment_description,
+        "schema_name": "video_videoprism_large_mv_chunk_30s",
+        "profile_type": "video",
+        "modality": "VIDEO",
+        "embedding_type": "video",
+    }
+
+
+def query_enhancement_sample(
+    topic: str,
+    title: str,
+    profile_name: str = "document_text_semantic",
+) -> dict[str, str]:
+    return {"topic": topic, "title": title, "profile_name": profile_name}
+
+
 async def extract_entities(text: str, tenant_id: str):
     entities = []
     if "TensorFlow" in text:
@@ -258,7 +311,7 @@ def _build_label_invoker(kind: str, callback, timeout_seconds: float):
 
         async def invoke(topic: str):
             examples = await generator.generate(
-                [{"title": topic}],
+                [title_sample(topic), title_sample("Apollo guidance computer")],
                 target_count=1,
                 tenant_id="tenant-a",
             )
@@ -279,7 +332,7 @@ def _build_label_invoker(kind: str, callback, timeout_seconds: float):
 
         async def invoke(topic: str):
             examples = await generator.generate(
-                [{"title": topic}],
+                [title_sample(topic), title_sample("Apollo guidance computer")],
                 target_count=1,
                 tenant_id="tenant-a",
                 profile_configs={
@@ -308,11 +361,16 @@ def _build_label_invoker(kind: str, callback, timeout_seconds: float):
     async def invoke(topic: str):
         examples = await generator.generate(
             [
-                {
-                    "topic": topic,
-                    "title": f"{topic} magnetic eruptions",
-                    "profile_name": "document_text_semantic",
-                }
+                query_enhancement_sample(
+                    topic,
+                    f"{topic} magnetic eruptions",
+                    "document_text_semantic",
+                ),
+                query_enhancement_sample(
+                    "Apollo guidance",
+                    "Apollo guidance telemetry",
+                    "document_text_semantic",
+                ),
             ],
             target_count=1,
             tenant_id="tenant-a",
@@ -374,10 +432,12 @@ class TestProfileGeneratorIntegration:
         video_profile = _shipped_backend_profile("video_videoprism_large_mv_chunk_30s")
 
         mock_content = [
-            {
-                "video_title": "Machine Learning Tutorial",
-                "schema_name": video_profile.schema_name,
-            }
+            video_profile_sample(
+                "Machine Learning Tutorial", video_profile.schema_name
+            ),
+            video_profile_sample(
+                "Computer Vision Deep Dive", video_profile.schema_name
+            ),
         ]
 
         examples = await generator.generate(
@@ -402,7 +462,8 @@ class TestProfileGeneratorIntegration:
         generator = ProfileGenerator(profile_labeler=select_profile)
         examples = await generator.generate(
             sampled_content=[
-                {"topic": "Curie lecture", "schema_name": "audio_content"}
+                topic_schema_sample("Curie lecture", "audio_content"),
+                topic_schema_sample("Radium notes", "audio_content"),
             ],
             target_count=1,
             profile_configs={
@@ -433,7 +494,12 @@ class TestProfileGeneratorIntegration:
             match="Backend profile 'broken' requires a supported non-empty type",
         ):
             await generator.generate(
-                sampled_content=[{"topic": "configured profile validation"}],
+                sampled_content=[
+                    topic_schema_sample(
+                        "configured profile validation", "audio_content"
+                    ),
+                    topic_schema_sample("related profile validation", "audio_content"),
+                ],
                 target_count=1,
                 profile_configs={
                     "broken": {
@@ -483,7 +549,8 @@ class TestProfileGeneratorIntegration:
         ):
             await generator.generate(
                 sampled_content=[
-                    {"topic": "Curie lecture", "schema_name": "audio_content"}
+                    topic_schema_sample("Curie lecture", "audio_content"),
+                    topic_schema_sample("Radium notes", "audio_content"),
                 ],
                 target_count=1,
                 profile_configs={
@@ -503,7 +570,8 @@ class TestProfileGeneratorIntegration:
         ):
             await generator.generate(
                 sampled_content=[
-                    {"topic": "Curie lecture", "schema_name": "audio_content"}
+                    topic_schema_sample("Curie lecture", "audio_content"),
+                    topic_schema_sample("Radium notes", "audio_content"),
                 ],
                 target_count=1,
                 profile_configs=self.PROFILE_CONFIGS,
@@ -525,12 +593,16 @@ class TestRoutingGeneratorIntegration:
         )
 
         mock_content = [
-            {
-                "title": "TensorFlow Neural Networks Tutorial",
-                "video_title": "TensorFlow Neural Networks Tutorial",
-                "segment_description": "Learn TensorFlow for deep learning",
-                "schema_name": "video_videoprism_large_mv_chunk_30s",
-            }
+            routing_sample(
+                "TensorFlow Neural Networks Tutorial",
+                "TensorFlow Neural Networks Tutorial",
+                "Learn TensorFlow for deep learning",
+            ),
+            routing_sample(
+                "Apollo Guidance Computer",
+                "Apollo Guidance Computer",
+                "Launch telemetry guides lunar descent",
+            ),
         ]
 
         examples = await generator.generate(
@@ -582,7 +654,7 @@ class TestRoutingGeneratorIntegration:
         with pytest.raises(RuntimeError) as raised:
             await asyncio.wait_for(
                 generator.generate(
-                    [{"title": "solar flares"}],
+                    [title_sample("solar flares"), title_sample("lunar launch")],
                     target_count=1,
                     tenant_id="tenant-a",
                 ),
@@ -620,7 +692,7 @@ class TestRoutingGeneratorIntegration:
             with pytest.raises(TimeoutError) as raised:
                 await asyncio.wait_for(
                     generator.generate(
-                        [{"title": "solar flares"}],
+                        [title_sample("solar flares"), title_sample("lunar launch")],
                         target_count=1,
                         tenant_id="tenant-a",
                     ),
@@ -787,9 +859,11 @@ class TestProductionLabelCallbackBoundary:
 
     @pytest.mark.asyncio
     async def test_query_enhancement_rejects_term_absent_from_sampled_source(self):
+        calls: list[tuple[str, str]] = []
+
         async def unrelated_enhancement(query, tenant_id, source_text):
             assert tenant_id == "tenant-a"
-            assert source_text == "solar flares magnetic eruptions\nsolar flares"
+            calls.append((query, source_text))
             result = _label_callback_result("query_enhancement", query)
             result["expansion_terms"] = ["volcano"]
             return result
@@ -805,13 +879,55 @@ class TestProductionLabelCallbackBoundary:
 
         assert str(raised.value) == (
             "QueryEnhancementGenerator generated 0 unique grounded examples "
-            "but target_count=1; source_context=5 unique source-template queries"
+            "but target_count=1; source_context=10 unique source-template queries"
         )
         assert str(raised.value.__cause__) == (
             "query_enhancement optimizer callback query_enhancer returned "
             "expansion_terms absent from sampled source for tenant='tenant-a' "
-            "query='explain solar flares': ['volcano']"
+            "query='explain Apollo guidance': ['volcano']"
         )
+        assert calls == [
+            (
+                "solar flares",
+                "solar flares magnetic eruptions\nsolar flares",
+            ),
+            (
+                "find solar flares",
+                "solar flares magnetic eruptions\nsolar flares",
+            ),
+            (
+                "show me solar flares",
+                "solar flares magnetic eruptions\nsolar flares",
+            ),
+            (
+                "solar flares tutorial",
+                "solar flares magnetic eruptions\nsolar flares",
+            ),
+            (
+                "explain solar flares",
+                "solar flares magnetic eruptions\nsolar flares",
+            ),
+            (
+                "Apollo guidance",
+                "Apollo guidance telemetry\nApollo guidance",
+            ),
+            (
+                "find Apollo guidance",
+                "Apollo guidance telemetry\nApollo guidance",
+            ),
+            (
+                "show me Apollo guidance",
+                "Apollo guidance telemetry\nApollo guidance",
+            ),
+            (
+                "Apollo guidance tutorial",
+                "Apollo guidance telemetry\nApollo guidance",
+            ),
+            (
+                "explain Apollo guidance",
+                "Apollo guidance telemetry\nApollo guidance",
+            ),
+        ]
 
 
 class TestWorkflowGeneratorIntegration:
@@ -840,13 +956,12 @@ class TestWorkflowGeneratorIntegration:
         example = (
             await generator.generate(
                 sampled_content=[
-                    {
-                        "topic": "Redis lease coordination",
-                        "profile_type": profile_type,
-                        "modality": modality,
-                        "schema_name": "video_videoprism_large_mv_chunk_30s",
-                        "embedding_type": "image",
-                    }
+                    workflow_content_sample(
+                        "Redis lease coordination",
+                        profile_type,
+                        modality,
+                    ),
+                    workflow_content_sample("Apollo lunar landing", "video", "VIDEO"),
                 ],
                 target_count=1,
             )
@@ -868,7 +983,8 @@ class TestWorkflowGeneratorIntegration:
                         "topic": "Redis lease coordination",
                         "schema_name": "video_videoprism_large_mv_chunk_30s",
                         "embedding_type": "video",
-                    }
+                    },
+                    workflow_content_sample("Apollo lunar landing", "video", "VIDEO"),
                 ],
                 target_count=1,
             )
@@ -914,7 +1030,8 @@ class TestWorkflowGeneratorIntegration:
                         "topic": "Redis lease coordination",
                         "profile_type": profile_type,
                         "modality": modality,
-                    }
+                    },
+                    workflow_content_sample("Apollo lunar landing", "video", "VIDEO"),
                 ],
                 target_count=1,
             )
@@ -928,11 +1045,10 @@ class TestWorkflowGeneratorIntegration:
         with pytest.raises(ValueError) as raised:
             await generator.generate(
                 sampled_content=[
-                    {
-                        "topic": "Redis lease coordination",
-                        "profile_type": "wiki",
-                        "modality": "VIDEO",
-                    }
+                    workflow_content_sample(
+                        "Redis lease coordination", "wiki", "VIDEO"
+                    ),
+                    workflow_content_sample("Apollo lunar landing", "video", "VIDEO"),
                 ],
                 target_count=1,
             )
@@ -947,7 +1063,10 @@ class TestWorkflowGeneratorIntegration:
         """Test WorkflowGenerator generates valid workflow executions"""
         generator = WorkflowGenerator(agent_inferrer=configured_agent_inferrer())
 
-        mock_content = [video_workflow_sample("Machine Learning Tutorial")]
+        mock_content = video_workflow_batch(
+            "Machine Learning Tutorial",
+            "Computer Vision Deep Dive",
+        )
 
         examples = await generator.generate(
             sampled_content=mock_content, target_count=3
@@ -1002,7 +1121,10 @@ class TestWorkflowGeneratorIntegration:
         generator = WorkflowGenerator(agent_inferrer=configured_agent_inferrer())
 
         examples = await generator.generate(
-            sampled_content=[video_workflow_sample("Marie Curie radium")],
+            sampled_content=video_workflow_batch(
+                "Marie Curie radium",
+                "Apollo lunar landing",
+            ),
             target_count=3,
         )
 
@@ -1015,7 +1137,10 @@ class TestWorkflowGeneratorIntegration:
     async def test_workflow_ids_remain_unique_across_generation_calls(self):
         generator = WorkflowGenerator(agent_inferrer=configured_agent_inferrer())
 
-        sampled_content = [video_workflow_sample("Marie Curie radium")]
+        sampled_content = video_workflow_batch(
+            "Marie Curie radium",
+            "Apollo lunar landing",
+        )
         first = await generator.generate(
             sampled_content=sampled_content, target_count=3
         )
@@ -1038,15 +1163,19 @@ class TestWorkflowGeneratorIntegration:
         generator = WorkflowGenerator(agent_inferrer=configured_agent_inferrer())
 
         examples = await generator.generate(
-            sampled_content=[video_workflow_sample("Marie Curie radium")],
+            sampled_content=video_workflow_batch(
+                "Marie Curie radium",
+                "Apollo lunar landing",
+            ),
             target_count=4,
         )
 
-        assert len(examples) == 3
+        assert len(examples) == 4
         assert [example.query for example in examples] == [
             "find Marie Curie radium",
             "summarize Marie Curie radium",
             "analyze Marie Curie radium and generate report",
+            "find Apollo lunar landing",
         ]
 
     @pytest.mark.asyncio
@@ -1057,7 +1186,10 @@ class TestWorkflowGeneratorIntegration:
             await WorkflowGenerator(
                 agent_inferrer=configured_agent_inferrer()
             ).generate(
-                sampled_content=[video_workflow_sample("Marie Curie radium")],
+                sampled_content=video_workflow_batch(
+                    "Marie Curie radium",
+                    "Apollo lunar landing",
+                ),
                 target_count=1,
             )
         )[0]
@@ -1068,7 +1200,7 @@ class TestWorkflowGeneratorIntegration:
             selected_profiles=["video_videoprism_large_mv_chunk_30s"],
             profile_selection_reasoning="Selected source video profile",
             data=[example.model_dump(mode="python")],
-            metadata={"sampled_content_count": 1},
+            metadata={"sampled_content_count": 2},
         )
 
         class StaticSyntheticDataService:
@@ -1130,7 +1262,10 @@ class TestWorkflowGeneratorIntegration:
         examples = await WorkflowGenerator(
             agent_inferrer=configured_agent_inferrer()
         ).generate(
-            sampled_content=[video_workflow_sample("Marie Curie radium")],
+            sampled_content=video_workflow_batch(
+                "Marie Curie radium",
+                "Apollo lunar landing",
+            ),
             target_count=3,
         )
         examples.append(
@@ -1145,7 +1280,7 @@ class TestWorkflowGeneratorIntegration:
             selected_profiles=["video_videoprism_large_mv_chunk_30s"],
             profile_selection_reasoning="Selected source video profile",
             data=[example.model_dump(mode="python") for example in examples],
-            metadata={"sampled_content_count": 1},
+            metadata={"sampled_content_count": 2},
         )
 
         class StaticSyntheticDataService:
@@ -1198,7 +1333,10 @@ class TestWorkflowGeneratorIntegration:
         examples = await WorkflowGenerator(
             agent_inferrer=configured_agent_inferrer()
         ).generate(
-            sampled_content=[video_workflow_sample("Marie Curie radium")],
+            sampled_content=video_workflow_batch(
+                "Marie Curie radium",
+                "Apollo lunar landing",
+            ),
             target_count=2,
         )
         response = SyntheticDataResponse(
@@ -1208,7 +1346,7 @@ class TestWorkflowGeneratorIntegration:
             selected_profiles=["video_videoprism_large_mv_chunk_30s"],
             profile_selection_reasoning="Selected source video profile",
             data=[example.model_dump(mode="python") for example in examples],
-            metadata={"sampled_content_count": 1},
+            metadata={"sampled_content_count": 2},
         )
 
         class StaticSyntheticDataService:
@@ -1270,7 +1408,10 @@ class TestWorkflowGeneratorIntegration:
         examples = await WorkflowGenerator(
             agent_inferrer=configured_agent_inferrer()
         ).generate(
-            sampled_content=[video_workflow_sample("Marie Curie radium")],
+            sampled_content=video_workflow_batch(
+                "Marie Curie radium",
+                "Apollo lunar landing",
+            ),
             target_count=2,
         )
         response = SyntheticDataResponse(
@@ -1280,7 +1421,7 @@ class TestWorkflowGeneratorIntegration:
             selected_profiles=["video_videoprism_large_mv_chunk_30s"],
             profile_selection_reasoning="Selected source video profile",
             data=[example.model_dump(mode="python") for example in examples],
-            metadata={"sampled_content_count": 1},
+            metadata={"sampled_content_count": 2},
         )
 
         class StaticSyntheticDataService:
@@ -1608,15 +1749,16 @@ class TestAllGeneratorsTogether:
         agent_inferrer = configured_agent_inferrer()
 
         mock_content = [
-            {
-                "title": "Deep Learning with TensorFlow",
-                "video_title": "Deep Learning with TensorFlow",
-                "segment_description": "Tutorial on TensorFlow neural networks",
-                "schema_name": "video_videoprism_large_mv_chunk_30s",
-                "profile_type": "video",
-                "modality": "VIDEO",
-                "embedding_type": "video",
-            }
+            routing_sample(
+                "Deep Learning with TensorFlow",
+                "Deep Learning with TensorFlow",
+                "Tutorial on TensorFlow neural networks",
+            ),
+            routing_sample(
+                "Apollo lunar guidance",
+                "Apollo lunar guidance",
+                "Lunar guidance telemetry and mission control",
+            ),
         ]
 
         generators = [

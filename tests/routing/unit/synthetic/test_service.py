@@ -177,6 +177,74 @@ def create_test_backend_config() -> BackendConfig:
     )
 
 
+def _grounded_video_records(schema: str) -> list[dict[str, str]]:
+    return [
+        {
+            "video_title": "Saturn V launch",
+            "segment_description": "The Saturn V rocket clears the launch tower.",
+            "audio_transcript": "Saturn V mission control confirms ignition.",
+            "schema": schema,
+        },
+        {
+            "video_title": "Apollo launch vehicle",
+            "segment_description": (
+                "The launch tower clears as the Apollo launch vehicle rises skyward."
+            ),
+            "audio_transcript": "Apollo mission control confirms liftoff.",
+            "schema": schema,
+        },
+    ]
+
+
+def _grounded_document_text_records(schema: str) -> list[dict[str, str]]:
+    return [
+        {
+            "document_id": "doc-1",
+            "document_title": "Curie lecture",
+            "full_text": "Curie lecture explores radium and Marie Curie.",
+            "schema": schema,
+        },
+        {
+            "document_id": "doc-2",
+            "document_title": "Separate lecture",
+            "full_text": (
+                "A separate lecture examines x-ray imaging and laboratory notes."
+            ),
+            "schema": schema,
+        },
+    ]
+
+
+def _grounded_document_visual_records(schema: str) -> list[dict[str, str]]:
+    return [
+        {
+            "document_id": "doc-2",
+            "document_title": "Curie lecture",
+            "schema": schema,
+        },
+        {
+            "document_id": "doc-3",
+            "document_title": "Radium notes",
+            "schema": schema,
+        },
+    ]
+
+
+def _tenant_profile_records() -> list[dict[str, str]]:
+    return [
+        {"title": "grounded content summary"},
+        {"title": "related content archive"},
+    ]
+
+
+def _title_sample(title: str) -> dict[str, str]:
+    return {"title": title}
+
+
+def _topic_schema_sample(topic: str, schema_name: str) -> dict[str, str]:
+    return {"topic": topic, "schema_name": schema_name}
+
+
 class _GroundedBackend:
     def schema_exists(self, schema_name, tenant_id=None):
         return True
@@ -186,30 +254,10 @@ class _GroundedBackend:
 
     def query_metadata_documents(self, schema, query=None, yql=None, **kwargs):
         if schema == "document_text":
-            return [
-                {
-                    "document_id": "doc-1",
-                    "document_title": "Curie lecture",
-                    "full_text": "Curie lecture explores radium and Marie Curie.",
-                    "schema": schema,
-                }
-            ]
+            return _grounded_document_text_records(schema)
         if schema == "document_visual":
-            return [
-                {
-                    "document_id": "doc-2",
-                    "document_title": "Curie lecture",
-                    "schema": schema,
-                }
-            ]
-        return [
-            {
-                "video_title": "Saturn V launch",
-                "segment_description": "The Saturn V rocket clears the launch tower.",
-                "audio_transcript": "Saturn V mission control confirms ignition.",
-                "schema": schema,
-            }
-        ]
+            return _grounded_document_visual_records(schema)
+        return _grounded_video_records(schema)
 
 
 class _BackendAccessRecorder(_GroundedBackend):
@@ -240,22 +288,9 @@ class _GroundabilityBackend:
     def query_metadata_documents(self, schema, query=None, yql=None, **kwargs):
         self.query_calls.append((schema, kwargs))
         if schema == "document_text":
-            return [
-                {
-                    "document_id": "doc-1",
-                    "document_title": "Curie lecture",
-                    "full_text": "Curie lecture explores radium and Marie Curie.",
-                    "schema": schema,
-                }
-            ]
+            return _grounded_document_text_records(schema)
         if schema == "document_visual":
-            return [
-                {
-                    "document_id": "doc-2",
-                    "document_title": "Curie lecture",
-                    "schema": schema,
-                }
-            ]
+            return _grounded_document_visual_records(schema)
         return []
 
 
@@ -471,7 +506,10 @@ class TestSyntheticDataService:
         with pytest.raises(TimeoutError) as raised:
             await asyncio.wait_for(
                 generator.generate(
-                    [{"title": "Saturn V launch"}],
+                    [
+                        _title_sample("Saturn V launch"),
+                        _title_sample("Apollo guidance computer"),
+                    ],
                     target_count=1,
                     tenant_id="test:unit",
                 ),
@@ -1020,18 +1058,18 @@ class TestSyntheticDataService:
                         tenant_id="test:unit",
                         optimizer="query_enhancement",
                         count=2,
-                        vespa_sample_size=1,
+                        vespa_sample_size=2,
                         max_profiles=1,
                     )
                 )
 
         assert str(error.value) == (
             "query_enhancement optimizer callback query_enhancer failed for "
-            "tenant='test:unit' query='The Saturn V rocket'"
+            "tenant='test:unit' query='Saturn V rocket'"
         )
         assert isinstance(error.value.__cause__, ValueError)
         assert str(error.value.__cause__) == "first candidate rejected"
-        assert calls == ["The Saturn V rocket"]
+        assert calls == ["Saturn V rocket"]
         assert not any(
             record.name == "cogniverse_synthetic.generators.base"
             for record in caplog.records
@@ -1369,7 +1407,7 @@ class TestServiceWithBackendConfig:
                 tenant_id="test:unit",
                 optimizer="workflow",
                 count=1,
-                vespa_sample_size=1,
+                vespa_sample_size=2,
                 max_profiles=2,
             )
         )
@@ -1377,13 +1415,13 @@ class TestServiceWithBackendConfig:
         assert response.count == 1
         assert response.selected_profiles == ["document_text_semantic"]
         assert backend.query_calls == [
-            ("document_text", {"hits": 1, "tenant_id": "test:unit"})
+            ("document_text", {"hits": 2, "tenant_id": "test:unit"})
         ]
         assert response.metadata == {
             "backend_query_strategy": "multi_modal_sequences",
-            "sampled_content_count": 1,
+            "sampled_content_count": 2,
             "target_count": 1,
-            "vespa_sample_size": 1,
+            "vespa_sample_size": 2,
             "generation": {
                 "requested_count": 1,
                 "returned_count": 1,
@@ -1395,7 +1433,7 @@ class TestServiceWithBackendConfig:
             },
         }
         assert [example["query"] for example in response.data] == [
-            "find Curie lecture explores radium and Marie Curie."
+            "find Curie lecture explores radium and Marie"
         ]
         assert [example["query_type"] for example in response.data] == ["DOCUMENT"]
 
@@ -1460,7 +1498,10 @@ class TestServiceWithBackendConfig:
         examples = await service._generate_examples(
             request,
             get_optimizer_config("profile"),
-            [{"topic": "Curie lecture", "schema_name": "audio_content"}],
+            [
+                _topic_schema_sample("Curie lecture", "audio_content"),
+                _topic_schema_sample("Radium notes", "audio_content"),
+            ],
             {"audio_semantic": audio_profile.to_dict()},
         )
 
@@ -1666,7 +1707,7 @@ class _TenantProfileBackend:
         self.query_calls.append(
             {"schema": schema, "yql": yql, "tenant_id": kwargs["tenant_id"]}
         )
-        return [{"title": f"grounded content for {kwargs['tenant_id']}"}]
+        return _tenant_profile_records()
 
 
 def _tenant_profile_service(backend) -> SyntheticDataService:
@@ -1724,19 +1765,19 @@ async def test_live_backend_samples_a_deployed_configured_profile_schema():
             tenant_id=tenant_id,
             optimizer="profile",
             count=1,
-            vespa_sample_size=1,
+            vespa_sample_size=2,
             max_profiles=1,
         )
     )
 
     assert response.selected_profiles == [profile_name]
-    assert response.metadata["sampled_content_count"] == 1
+    assert response.metadata["sampled_content_count"] == 2
     assert response.data[0]["modality"] == "video"
     assert backend.schema_checks == [(tenant_id, schema_name)]
     assert backend.query_calls == [
         {
             "schema": schema_name,
-            "yql": f"select * from sources {schema_name} where true limit 5",
+            "yql": f"select * from sources {schema_name} where true limit 10",
             "tenant_id": tenant_id,
         }
     ]
@@ -1759,7 +1800,7 @@ async def test_generation_uses_only_each_tenants_deployed_profiles_concurrently(
                     tenant_id=tenant,
                     optimizer="profile",
                     count=1,
-                    vespa_sample_size=1,
+                    vespa_sample_size=2,
                     max_profiles=2,
                 )
             )
@@ -1779,9 +1820,9 @@ async def test_generation_uses_only_each_tenants_deployed_profiles_concurrently(
         assert response.data[0]["modality"] == expected_modality
         assert response.data[0]["query_intent"] == f"{expected_modality}_search"
         expected_query = (
-            f"find grounded content for {tenant} in an audio transcript"
+            "find grounded content summary in an audio transcript"
             if expected_profile == "profile_a"
-            else f"find grounded content for {tenant} in document content"
+            else "find grounded content summary in document content"
         )
         assert response.data[0]["query"] == expected_query
     expected_query_calls = []
@@ -1790,7 +1831,7 @@ async def test_generation_uses_only_each_tenants_deployed_profiles_concurrently(
         expected_query_calls.append(
             {
                 "schema": expected_schema,
-                "yql": f"select * from sources {expected_schema} where true limit 5",
+                "yql": f"select * from sources {expected_schema} where true limit 10",
                 "tenant_id": tenant,
             }
         )
@@ -1829,7 +1870,7 @@ async def test_profile_schema_checks_do_not_block_the_event_loop():
                 tenant_id="acme:media",
                 optimizer="profile",
                 count=1,
-                vespa_sample_size=1,
+                vespa_sample_size=2,
             )
         ),
         release_schema_check(),
