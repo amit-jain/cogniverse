@@ -24,7 +24,7 @@ from __future__ import annotations
 
 import logging
 from dataclasses import dataclass
-from typing import TYPE_CHECKING, Any, Dict, List, Optional
+from typing import TYPE_CHECKING, Any, Dict, List, Mapping, Optional
 
 from cogniverse_core.memory.schema import (
     KnowledgeRegistry,
@@ -103,42 +103,22 @@ class PinQuotas:
     def for_tenant(
         cls,
         tenant_id: str,
+        *,
+        admin_overrides: Optional[Mapping[str, int]],
         tenant_config: Optional[Any] = None,
     ) -> "PinQuotas":
-        """Resolve effective quotas, checking the admin runtime override first.
-
-        the admin endpoint ``PUT /admin/tenants/{t}/pin_quotas``
-        writes into a process-local override dict. This factory consults
-        that dict before falling back to ``TenantConfig.metadata['pin_quota']``
-        and finally to the dataclass defaults. Without this consultation,
-        admin PUTs were a write-only black hole.
+        """Resolve effective quotas from caller-supplied admin overrides.
 
         Order of precedence (highest first):
-          1. Admin runtime override (``PUT`` in this process / replica).
-          2. ``TenantConfig.metadata['pin_quota']`` (persisted overrides).
+          1. ``admin_overrides`` — the durable per-tenant quota blob.
+          2. ``TenantConfig.metadata['pin_quota']``.
           3. Dataclass defaults.
         """
-        # Lazy import — pinning is loaded by core, the admin router lives in
-        # the runtime layer; static imports would create a circular dep.
-        try:
-            from cogniverse_runtime.routers.admin import (
-                _pin_quota_overrides as _admin_overrides,
-            )
-        except Exception:
-            _admin_overrides = {}
-
-        # The admin PUT stores the override under the canonical tenant id;
-        # canonicalize here too so an override applies regardless of how the
-        # caller spells the id (a bare "acme" resolves to the same "acme:acme"
-        # blob the endpoint wrote).
-        from cogniverse_core.common.tenant_utils import canonical_tenant_id
-
-        admin_blob = _admin_overrides.get(canonical_tenant_id(tenant_id))
-        if admin_blob:
-            org_admin_raw = admin_blob.get("org_admin")
+        if admin_overrides:
+            org_admin_raw = admin_overrides.get("org_admin")
             return cls(
-                user=admin_blob.get("user", _DEFAULT_USER_QUOTA),
-                tenant_admin=admin_blob.get(
+                user=admin_overrides.get("user", _DEFAULT_USER_QUOTA),
+                tenant_admin=admin_overrides.get(
                     "tenant_admin", _DEFAULT_TENANT_ADMIN_QUOTA
                 ),
                 # Admin endpoint stores -1 as the "unlimited" sentinel

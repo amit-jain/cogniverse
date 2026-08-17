@@ -33,7 +33,7 @@ import logging
 import os
 from contextlib import asynccontextmanager
 from enum import StrEnum
-from typing import AsyncIterator
+from typing import AsyncIterator, Callable, Mapping
 
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
@@ -566,7 +566,13 @@ def build_wiki_manager_factory(wiki_backend, config, config_manager):
     return _wiki_manager_factory
 
 
-def build_pin_lookup(knowledge_registry):
+_PIN_QUOTA_LOAD_TIMEOUT_S = 10.0
+
+
+def build_pin_lookup(
+    knowledge_registry,
+    quota_loader: Callable[[str], Mapping[str, int]],
+):
     """Pin-lookup callable for the lifecycle scheduler.
 
     Returns the pinned-id set for one tenant's Mem0 manager. A lookup failure
@@ -581,16 +587,13 @@ def build_pin_lookup(knowledge_registry):
         if not tenant_id:
             return set()
         try:
-            # Honor admin PinService quota overrides set via
-            # PUT /admin/tenants/{t}/pin_quotas. PinQuotas.for_tenant
-            # checks the admin runtime dict first, then TenantConfig
-            # metadata, then defaults.
             from cogniverse_core.memory.pinning import PinQuotas, PinService
 
+            admin_overrides = quota_loader(tenant_id)
             pin_svc = PinService(
                 mm,
                 knowledge_registry,
-                quotas=PinQuotas.for_tenant(tenant_id),
+                quotas=PinQuotas.for_tenant(tenant_id, admin_overrides=admin_overrides),
             )
             return {rec.target_memory_id for rec in pin_svc.list_pins(tenant_id)}
         except Exception as exc:
@@ -1386,13 +1389,21 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
         from cogniverse_core.memory.lifecycle_scheduler import LifecycleScheduler
         from cogniverse_core.memory.manager import Mem0MemoryManager
         from cogniverse_core.memory.schema import build_default_registry
+        from cogniverse_runtime.routers.admin import _load_pin_quotas
 
         lifecycle_interval = float(
             os.environ.get("COGNIVERSE_MEMORY_LIFECYCLE_INTERVAL", "3600")
         )
         knowledge_registry = build_default_registry()
 
-        _pin_lookup = build_pin_lookup(knowledge_registry)
+        loop = asyncio.get_running_loop()
+
+        def _quota_loader(tenant_id: str) -> dict[str, int]:
+            return asyncio.run_coroutine_threadsafe(
+                _load_pin_quotas(tenant_id), loop
+            ).result(timeout=_PIN_QUOTA_LOAD_TIMEOUT_S)
+
+        _pin_lookup = build_pin_lookup(knowledge_registry, _quota_loader)
 
         lifecycle_scheduler = LifecycleScheduler(
             get_warm_managers=Mem0MemoryManager._instances.values,

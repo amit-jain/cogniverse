@@ -5,7 +5,7 @@ import json
 import logging
 import time
 from datetime import datetime, timedelta, timezone
-from typing import Any, Dict, List, Optional
+from typing import Any, Dict, List, Mapping, Optional
 
 from fastapi import APIRouter, Depends, HTTPException, Query
 from pydantic import BaseModel
@@ -1513,30 +1513,15 @@ class PinUnpinResponse(BaseModel):
 async def _pin_service_for(tenant_id: str):
     """Build the tenant's PinService with quotas read from the durable blob.
 
-    Enforcement resolves quotas through PinQuotas.for_tenant, which reads the
-    process-local override cache. That cache is only warmed by a pin-quota
-    GET/PUT on this same replica, so without this pre-load a pod that never
-    served one enforced hardcoded defaults and ignored an admin PUT made on
-    another replica. Loading here (bounded by the cache TTL) makes every
-    replica enforce the persisted quotas.
-
-    The refresh is best-effort: if the quota store is unreachable, warn and
-    enforce the last-known cache / defaults rather than failing the pin — a
-    pin operation must not be coupled to the artifact store's availability.
+    Enforcement resolves quotas through PinQuotas.for_tenant, which now takes
+    the caller-supplied durable blob. Loading here makes every replica enforce
+    the persisted quotas.
     """
-    try:
-        await _load_pin_quotas(tenant_id)
-    except Exception as exc:
-        logger.warning(
-            "pin-quota refresh failed for tenant=%s (%s); enforcing "
-            "last-known/default quotas",
-            tenant_id,
-            exc,
-        )
-    return await asyncio.to_thread(_get_pin_service, tenant_id)
+    admin_overrides = await _load_pin_quotas(tenant_id)
+    return await asyncio.to_thread(_get_pin_service, tenant_id, admin_overrides)
 
 
-def _get_pin_service(tenant_id: str):
+def _get_pin_service(tenant_id: str, admin_overrides: Mapping[str, int] | None):
     """Build a PinService bound to the tenant's Mem0 manager + registry.
 
     Constructs the registry from the default schema set so authority +
@@ -1567,7 +1552,7 @@ def _get_pin_service(tenant_id: str):
     return PinService(
         mgr,
         build_default_registry(),
-        quotas=PinQuotas.for_tenant(tenant_id),
+        quotas=PinQuotas.for_tenant(tenant_id, admin_overrides=admin_overrides),
     )
 
 
