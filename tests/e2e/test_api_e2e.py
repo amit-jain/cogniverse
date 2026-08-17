@@ -2256,8 +2256,11 @@ class TestImageIngestionAndSearch:
             self._deploy_schema_if_needed(client, IMAGE_PROFILE)
 
             with open(real_image_path, "rb") as f:
+                # force=true: this test proves the processing path; a prior
+                # run against the same cluster already ingested these exact
+                # bytes (a plain upload would be a dedup echo with 0 chunks).
                 resp = client.post(
-                    "/ingestion/upload?wait=true&wait_timeout=540",
+                    "/ingestion/upload?wait=true&wait_timeout=540&force=true",
                     files={"file": (real_image_path.name, f, "image/jpeg")},
                     data={
                         "profile": IMAGE_PROFILE,
@@ -2269,11 +2272,12 @@ class TestImageIngestionAndSearch:
             upload_data = resp.json()
             assert upload_data["status"] == "success"
             assert upload_data["state"] == "complete"
+            assert upload_data["existing"] is False, upload_data
             assert upload_data["filename"] == real_image_path.name
             assert upload_data["source_url"] == expected_source_url
             assert upload_data["chunks_created"] == 1, upload_data
             assert upload_data["documents_fed"] == 1, upload_data
-            assert isinstance(upload_data["video_id"], str) and upload_data["video_id"]
+            assert upload_data["video_id"] == _content_sha256(real_image_path)
 
             time.sleep(5)
 
@@ -2479,8 +2483,11 @@ class TestDocumentIngestionAndSearch:
         expected_source_url = _expected_artifact_source_url(real_document_path)
         with httpx.Client(base_url=RUNTIME, timeout=900.0) as client:
             with open(real_document_path, "rb") as f:
+                # force=true: this test proves the processing path; a prior
+                # run against the same cluster already ingested these exact
+                # bytes (a plain upload would be a dedup echo with 0 chunks).
                 resp = client.post(
-                    "/ingestion/upload?wait=true&wait_timeout=540",
+                    "/ingestion/upload?wait=true&wait_timeout=540&force=true",
                     files={"file": (real_document_path.name, f, "text/markdown")},
                     data={
                         "profile": DOCUMENT_PROFILE,
@@ -2492,11 +2499,12 @@ class TestDocumentIngestionAndSearch:
             upload_data = resp.json()
             assert upload_data["status"] == "success"
             assert upload_data["state"] == "complete"
+            assert upload_data["existing"] is False, upload_data
             assert upload_data["filename"] == real_document_path.name
             assert upload_data["source_url"] == expected_source_url
             assert upload_data["chunks_created"] == 1, upload_data
             assert upload_data["documents_fed"] == 1, upload_data
-            assert isinstance(upload_data["video_id"], str) and upload_data["video_id"]
+            assert upload_data["video_id"] == _content_sha256(real_document_path)
 
             time.sleep(3)
 
