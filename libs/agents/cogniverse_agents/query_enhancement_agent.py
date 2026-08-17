@@ -211,6 +211,25 @@ class QueryEnhancementModule(dspy.Module):
         )
 
 
+_ENTITIES_PREFIX = "Entities: "
+_RELATIONSHIPS_PREFIX = "Relationships: "
+_CONTEXT_PART_SEPARATOR = "; "
+
+
+def grounding_entity_names(grounding_context: str) -> List[str]:
+    """Entity names in a context string built by ``_build_entity_context``."""
+    for part in (grounding_context or "").split(_CONTEXT_PART_SEPARATOR):
+        if not part.startswith(_ENTITIES_PREFIX):
+            continue
+        names = []
+        for item in part[len(_ENTITIES_PREFIX) :].split(", "):
+            name = item.rsplit(" (", 1)[0].strip()
+            if name:
+                names.append(name)
+        return names
+    return []
+
+
 class QueryEnhancementAgent(
     MemoryAwareMixin,
     A2AAgent[QueryEnhancementInput, QueryEnhancementOutput, QueryEnhancementDeps],
@@ -401,14 +420,14 @@ class QueryEnhancementAgent(
                 f"{e.get('text', '')} ({e.get('type', e.get('label', ''))})"
                 for e in entities
             ]
-            parts.append(f"Entities: {', '.join(entity_strs)}")
+            parts.append(_ENTITIES_PREFIX + ", ".join(entity_strs))
         if relationships:
             rel_strs = [
                 f"{r.get('subject', '')} -{r.get('relation', '')}-> {r.get('object', '')}"
                 for r in relationships
             ]
-            parts.append(f"Relationships: {', '.join(rel_strs)}")
-        return "; ".join(parts)
+            parts.append(_RELATIONSHIPS_PREFIX + ", ".join(rel_strs))
+        return _CONTEXT_PART_SEPARATOR.join(parts)
 
     def _generate_variants(
         self, original: str, enhanced: str, expansion_terms: List[str]

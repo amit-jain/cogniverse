@@ -1462,6 +1462,365 @@ class TestSpansWithNoExamples:
         assert result["examples"] == 0
 
 
+def _qe_span_row(
+    query: str,
+    enhanced: str,
+    *,
+    expansion_terms: list[str],
+    grounding_context: str = "",
+    source_text: str = "",
+    confidence: float = 0.8,
+) -> dict:
+    """A cogniverse.query_enhancement span row as the agent writes it."""
+    return {
+        "attributes.input.value": query,
+        "attributes.input.source_text": source_text,
+        "attributes.input.grounding_context": grounding_context,
+        "attributes.output.value": json.dumps(
+            {
+                "enhanced_query": enhanced,
+                "expansion_terms": expansion_terms,
+                "synonyms": ["s1"],
+                "context_additions": ["c1"],
+                "variant_count": 2,
+                "confidence": confidence,
+            }
+        ),
+    }
+
+
+_TF_CONTEXT = (
+    "Entities: TensorFlow (TECHNOLOGY), neural networks (CONCEPT); "
+    "Relationships: TensorFlow -used_for-> neural networks"
+)
+
+
+class TestSimbaQueryEnhancement:
+    """The SIMBA path trains on served calls and only serves a module that
+    scores at least as well as the base module on held-out inputs."""
+
+    def test_pairs_read_the_full_served_call(self):
+        from cogniverse_runtime.optimization_cli import _query_enhancement_pairs
+
+        spans_df = _make_spans_df(
+            "cogniverse.query_enhancement",
+            [
+                _qe_span_row(
+                    "find tutorials",
+                    "find TensorFlow tutorials",
+                    expansion_terms=["TensorFlow", "neural networks"],
+                    grounding_context=_TF_CONTEXT,
+                    source_text="src",
+                ),
+                _qe_span_row("robots", "Robots", expansion_terms=["machines"]),
+                _qe_span_row("cats", "cats and dogs", expansion_terms=[]),
+                _qe_span_row("dogs", "", expansion_terms=["puppies"]),
+            ],
+        )
+
+        assert _query_enhancement_pairs(spans_df) == [
+            {
+                "query": "find tutorials",
+                "source_text": "src",
+                "grounding_context": _TF_CONTEXT,
+                "enhanced_query": "find TensorFlow tutorials",
+                "expansion_terms": ["TensorFlow", "neural networks"],
+                "synonyms": ["s1"],
+                "context": ["c1"],
+                "confidence": 0.8,
+                "trainable": True,
+            },
+            {
+                "query": "robots",
+                "source_text": "",
+                "grounding_context": "",
+                "enhanced_query": "Robots",
+                "expansion_terms": ["machines"],
+                "synonyms": ["s1"],
+                "context": ["c1"],
+                "confidence": 0.8,
+                "trainable": False,
+            },
+            {
+                "query": "cats",
+                "source_text": "",
+                "grounding_context": "",
+                "enhanced_query": "cats and dogs",
+                "expansion_terms": [],
+                "synonyms": ["s1"],
+                "context": ["c1"],
+                "confidence": 0.8,
+                "trainable": False,
+            },
+        ]
+
+    @pytest.mark.parametrize(
+        ("grounding_context", "enhanced", "expansion_terms", "expected"),
+        [
+            ("", "find video tutorials", "guides, lessons", 1.0),
+            ("", "find tutorials", "guides", 0.0),
+            ("", "Find Tutorials ", "guides", 0.0),
+            ("", "find video tutorials", "", 0.0),
+            ("", "", "guides", 0.0),
+            (_TF_CONTEXT, "find tutorials locate", "locate, discover", 0.0),
+            (_TF_CONTEXT, "find tensorflow tutorials", "guides", 1.0),
+            (_TF_CONTEXT, "find tutorials online", "Neural Networks, guides", 1.0),
+        ],
+    )
+    def test_quality_scores_the_module_output(
+        self, grounding_context, enhanced, expansion_terms, expected
+    ):
+        import dspy
+
+        from cogniverse_runtime.optimization_cli import (
+            _query_enhancement_metric,
+            _query_enhancement_quality,
+        )
+
+        example = dspy.Example(
+            query="find tutorials",
+            source_text="",
+            grounding_context=grounding_context,
+        ).with_inputs("query", "source_text", "grounding_context")
+        prediction = dspy.Prediction(
+            enhanced_query=enhanced, expansion_terms=expansion_terms
+        )
+
+        assert _query_enhancement_quality(prediction, example) == expected
+        assert _query_enhancement_metric(example, prediction) is (expected == 1.0)
+
+    @pytest.mark.parametrize(
+        ("baseline", "current", "candidate", "min_improvement", "expected"),
+        [
+            (0.5, None, 1.0, 0.0, "promote"),
+            (0.5, None, 0.5, 0.0, "promote"),
+            (0.5, None, 0.5, 0.05, "reject"),
+            (0.5, None, 0.25, 0.0, "reject"),
+            (0.5, None, None, 0.0, "reject"),
+            (0.5, 0.0, 0.25, 0.0, "rollback"),
+            (0.5, 0.0, None, 0.0, "rollback"),
+            (0.5, 0.5, 0.25, 0.0, "keep"),
+            (0.5, 0.75, 0.75, 0.05, "keep"),
+            (0.5, 0.75, 0.8, 0.05, "promote"),
+            (1.0, 1.0, 1.0, 0.0, "promote"),
+        ],
+    )
+    def test_select_simba_artifact(
+        self, baseline, current, candidate, min_improvement, expected
+    ):
+        from cogniverse_runtime.optimization_cli import _select_simba_artifact
+
+        assert (
+            _select_simba_artifact(baseline, current, candidate, min_improvement)
+            == expected
+        )
+
+    @staticmethod
+    def _score_by_module(module, holdout) -> float:
+        """Base module 0.5, the persisted artifact 0.0, the compiled candidate 1.0."""
+        del holdout
+        if getattr(module, "_compiled_marker", False):
+            return 1.0
+        if module.enhancer.predict.demos:
+            return 0.0
+        return 0.5
+
+    @staticmethod
+    def _fake_teleprompter(*args, **kwargs):
+        from cogniverse_agents.query_enhancement_agent import QueryEnhancementModule
+
+        class _Compiler:
+            def compile(self, module, trainset):
+                compiled = QueryEnhancementModule()
+                compiled._compiled_marker = True
+                compiled.enhancer.predict.demos = [
+                    ex.toDict() if hasattr(ex, "toDict") else ex for ex in trainset
+                ]
+                return compiled
+
+        return _Compiler()
+
+    def _run(self, provider, *, min_improvement: float, scorer=None):
+        from cogniverse_runtime.optimization_cli import run_simba_optimization
+
+        mgr = FakeTelemetryManager(provider)
+        p1, p2 = _patch_infra(mgr)
+        llm_config = SimpleNamespace(
+            resolve=lambda purpose: "student-endpoint",
+            resolve_teacher=lambda: "teacher-endpoint",
+        )
+        with (
+            p1,
+            p2,
+            patch(
+                "cogniverse_foundation.config.utils.get_config",
+                return_value=SimpleNamespace(get_llm_config=lambda: llm_config),
+            ),
+            patch(
+                "cogniverse_foundation.config.llm_factory.create_dspy_lm",
+                return_value=object(),
+            ),
+            patch(
+                "cogniverse_runtime.optimization_cli._create_teleprompter",
+                side_effect=self._fake_teleprompter,
+            ),
+            patch(
+                "cogniverse_runtime.optimization_cli._query_enhancement_scores",
+                side_effect=scorer or self._score_by_module,
+            ),
+            patch(
+                "cogniverse_runtime.optimization_cli._min_improvement_from_config",
+                return_value=min_improvement,
+            ),
+        ):
+            return asyncio.run(
+                run_simba_optimization(tenant_id="test:unit", lookback_hours=1)
+            )
+
+    @staticmethod
+    def _persisted_state(provider) -> dict:
+        blob_df = provider.datasets.datasets[
+            "dspy-model-test:unit-simba_query_enhancement"
+        ]
+        return json.loads(blob_df.iloc[-1]["content"])
+
+    def test_promotes_a_candidate_that_beats_the_base_module(self):
+        rows = [
+            _qe_span_row(
+                f"query {i}", f"query {i} expanded", expansion_terms=["expanded"]
+            )
+            for i in range(4)
+        ]
+        provider = FakeTelemetryProvider(
+            _make_spans_df("cogniverse.query_enhancement", rows)
+        )
+
+        result = self._run(provider, min_improvement=0.0)
+
+        assert result == {
+            "status": "success",
+            "spans_found": 4,
+            "examples": 4,
+            "training_examples": 3,
+            "holdout_examples": 1,
+            "baseline_score": 0.5,
+            "current_score": None,
+            "candidate_score": 1.0,
+            "decision": "promote",
+            "artifact_id": "dataset-1",
+        }
+        state = self._persisted_state(provider)
+        assert [d["query"] for d in state["enhancer.predict"]["demos"]] == [
+            "query 0",
+            "query 1",
+            "query 2",
+        ]
+
+    def test_rolls_a_worse_persisted_artifact_back_to_the_base_state(self):
+        from cogniverse_agents.optimizer.artifact_manager import ArtifactManager
+        from cogniverse_agents.query_enhancement_agent import QueryEnhancementModule
+
+        # Only identity enhancements were served (nothing trainable), and the
+        # persisted artifact is what produced them.
+        rows = [
+            _qe_span_row(f"query {i}", f"Query {i}", expansion_terms=[])
+            for i in range(4)
+        ]
+        provider = FakeTelemetryProvider(
+            _make_spans_df("cogniverse.query_enhancement", rows)
+        )
+        degraded = QueryEnhancementModule()
+        degraded.enhancer.predict.demos = [
+            {"query": "old", "enhanced_query": "old related content"}
+        ]
+        asyncio.run(
+            ArtifactManager(provider, "test:unit").save_blob(
+                "model",
+                "simba_query_enhancement",
+                json.dumps(degraded.dump_state(), default=str),
+            )
+        )
+
+        result = self._run(provider, min_improvement=0.0)
+
+        assert result == {
+            "status": "success",
+            "spans_found": 4,
+            "examples": 4,
+            "training_examples": 0,
+            "holdout_examples": 1,
+            "baseline_score": 0.5,
+            "current_score": 0.0,
+            "candidate_score": None,
+            "decision": "rollback",
+            "artifact_id": "dataset-2",
+        }
+        assert self._persisted_state(provider) == json.loads(
+            json.dumps(QueryEnhancementModule().dump_state(), default=str)
+        )
+
+    def test_keeps_a_persisted_artifact_the_candidate_does_not_beat(self):
+        from cogniverse_agents.optimizer.artifact_manager import ArtifactManager
+        from cogniverse_agents.query_enhancement_agent import QueryEnhancementModule
+
+        rows = [
+            _qe_span_row(
+                f"query {i}", f"query {i} expanded", expansion_terms=["expanded"]
+            )
+            for i in range(4)
+        ]
+        provider = FakeTelemetryProvider(
+            _make_spans_df("cogniverse.query_enhancement", rows)
+        )
+        served = QueryEnhancementModule()
+        served.enhancer.predict.demos = [{"query": "old", "enhanced_query": "old x"}]
+        served_state = json.dumps(served.dump_state(), default=str)
+        asyncio.run(
+            ArtifactManager(provider, "test:unit").save_blob(
+                "model", "simba_query_enhancement", served_state
+            )
+        )
+
+        # Every module scores 1.0: the candidate cannot clear the 0.05 bar
+        # over the served artifact, which is not worse than base, so it stays.
+        result = self._run(
+            provider, min_improvement=0.05, scorer=lambda module, holdout: 1.0
+        )
+
+        assert result == {
+            "status": "success",
+            "spans_found": 4,
+            "examples": 4,
+            "training_examples": 3,
+            "holdout_examples": 1,
+            "baseline_score": 1.0,
+            "current_score": 1.0,
+            "candidate_score": 1.0,
+            "decision": "keep",
+            "artifact_id": None,
+        }
+        assert self._persisted_state(provider) == json.loads(served_state)
+
+    def test_single_record_has_no_holdout_and_persists_nothing(self):
+        provider = FakeTelemetryProvider(
+            _make_spans_df(
+                "cogniverse.query_enhancement",
+                [_qe_span_row("q", "q expanded", expansion_terms=["expanded"])],
+            )
+        )
+
+        result = self._run(provider, min_improvement=0.0)
+
+        assert result == {
+            "status": "no_eval_material",
+            "spans_found": 1,
+            "examples": 1,
+            "training_examples": 1,
+            "holdout_examples": 0,
+        }
+        assert provider.datasets.created == []
+
+
 # ---------------------------------------------------------------------------
 # Test: gateway threshold analysis with mock span data
 # ---------------------------------------------------------------------------
