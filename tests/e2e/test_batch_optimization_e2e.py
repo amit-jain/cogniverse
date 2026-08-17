@@ -533,8 +533,8 @@ def generate_spans_for_batch_jobs(_kubectl_cluster_ready):
     for q in COMPLEX_QUERIES:
         _call_agent("gateway_agent", q)
 
-    # Wait for Phoenix to ingest spans
-    time.sleep(15)
+    # Wait for Phoenix to ingest the current module's seeded spans.
+    _wait_for_seeded_query_enhancement_queries_in_pod()
 
     yield
 
@@ -927,7 +927,7 @@ class TestWorkflowOptimization:
 
     def test_workflow_artifact_contains_real_data(self):
         """Workflow demos must contain agent_sequence, execution_time, success."""
-        _run_batch_job("workflow")  # ensure artifact exists
+        result = _run_batch_job("workflow")  # ensure artifact exists
 
         script = (
             "import asyncio, json; "
@@ -961,7 +961,7 @@ class TestWorkflowOptimization:
             timeout=60,
         )
         demos = json.loads(out.stdout.strip() or "[]")
-        assert len(demos) >= 1, f"Expected workflow demos, got {len(demos)}"
+        assert demos != [], "Expected workflow demos, got 0"
 
         # Find demos with non-empty agent_sequence (latest runs have the fix)
         valid_demos = []
@@ -973,10 +973,11 @@ class TestWorkflowOptimization:
             if agents:
                 valid_demos.append(data)
 
-        assert len(valid_demos) >= 1, (
+        assert valid_demos != [], (
             f"Expected at least 1 demo with non-empty agent_sequence, "
-            f"got {len(valid_demos)} out of {len(demos)} total demos"
+            f"got 0 out of {len(demos)} total demos"
         )
+        assert len(valid_demos) == result["execution_demos_saved"], result
 
         # Known queries we sent: "analyze the video transcripts for key themes"
         # and "analyze the video transcripts and compare with documents"
@@ -985,33 +986,28 @@ class TestWorkflowOptimization:
             "analyze the video transcripts and compare with documents",
         }
         demo_queries = {d["query"] for d in valid_demos}
-        matching = demo_queries & known_queries
-        assert matching, (
+        assert known_queries <= demo_queries, (
             f"Expected demos for queries {known_queries}, got: {demo_queries}"
         )
 
-        # Workflow demos reflect the orchestrator's agent_sequence — the plan
-        # steps it dispatched. A "compare with documents" plan must retrieve:
-        # through search_agent / document_agent, or through
-        # detailed_report_agent, which runs its own retrieval before writing.
+        # Workflow demos must show a real retrieval-heavy execution, not a
+        # planner name guess.
         compare_demos = [d for d in valid_demos if "compare" in d["query"]]
-        if compare_demos:
-            agents = compare_demos[0]["agent_sequence"]
-            if isinstance(agents, str):
-                agents = [a.strip() for a in agents.split(",") if a.strip()]
-            assert any(
-                a in agents
-                for a in ("search_agent", "document_agent", "detailed_report_agent")
-            ), (
-                f"'compare with documents' workflow must retrieve via search, "
-                f"document or detailed-report agent, got: {agents}"
-            )
-            assert any(
-                a in agents for a in ("summarizer_agent", "detailed_report_agent")
-            ), (
-                f"'compare' workflow should aggregate results via summarizer or "
-                f"report agent, got: {agents}"
-            )
+        assert compare_demos != [], f"Expected compare demos, got: {demo_queries}"
+        compare_demo = max(
+            compare_demos,
+            key=lambda d: (
+                len((d.get("metadata") or {}).get("agent_observations") or []),
+                d.get("task_count") or 0,
+            ),
+        )
+        metadata = compare_demo.get("metadata") or {}
+        assert compare_demo["success"] is True, compare_demo
+        assert compare_demo["task_count"] == 5, compare_demo
+        assert metadata.get("query_type") == "detailed_analysis", compare_demo
+        assert metadata.get("tasks_completed") == 5, compare_demo
+        assert len(metadata.get("execution_order") or []) == 10, compare_demo
+        assert len(metadata.get("agent_observations") or []) == 10, compare_demo
 
         # Observed workflows may name any agent enabled in the shipped config —
         # the same set the optimizer's stale-demo filter keeps
@@ -1126,6 +1122,31 @@ def _served_query_enhancement_queries_in_pod(
     line = result.stdout.strip().splitlines()[-1]
     assert line.startswith("__SERVED__"), result.stdout[-500:]
     return set(json.loads(line[len("__SERVED__") :]))
+
+
+def _wait_for_seeded_query_enhancement_queries_in_pod(
+    tenant_id: str = TENANT_ID,
+    lookback_hours: float | None = None,
+    timeout_s: float = 240.0,
+) -> set[str]:
+    """Wait until this module's seeded query-enhancement queries are visible."""
+    expected_queries = set(ENHANCEMENT_QUERIES) | {
+        q for q, _, _ in GROUNDED_ENHANCEMENT_QUERIES
+    }
+    deadline = time.monotonic() + timeout_s
+    served_queries: set[str] = set()
+    while time.monotonic() < deadline:
+        served_queries = _served_query_enhancement_queries_in_pod(
+            tenant_id, lookback_hours
+        )
+        if served_queries and expected_queries <= served_queries:
+            return served_queries
+        time.sleep(5.0)
+    missing = sorted(expected_queries - served_queries)
+    raise AssertionError(
+        f"Phoenix showed {len(served_queries & expected_queries)}/{len(expected_queries)} "
+        f"seeded query-enhancement queries after {timeout_s:.0f}s; missing: {missing}"
+    )
 
 
 def _usable_profile_names_in_pod(tenant_id: str = TENANT_ID) -> list[str]:
