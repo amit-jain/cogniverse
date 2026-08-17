@@ -132,9 +132,6 @@ async def test_generator_accepts_grounded_morphological_variants():
     async def enhance_query(query: str, tenant_id: str, source_text: str):
         assert tenant_id == "acme:synthetic"
         enhance_calls.append((query, source_text))
-        assert (
-            MORPHOLOGY_SOURCE_TEXT in source_text or "outdoor activities" in source_text
-        )
         return {
             "original_query": query,
             "enhanced_query": (f"{query} wire mesh fence view men watching event"),
@@ -175,6 +172,12 @@ async def test_generator_accepts_grounded_morphological_variants():
     assert examples[0].reasoning == (
         "Production enhancement returned grounded morphology variants."
     )
+    assert enhance_calls == [
+        (
+            "rodeo or similar competition viewed through",
+            f"{MORPHOLOGY_SOURCE_TEXT}\nv_morph.txt",
+        )
+    ]
 
 
 @pytest.mark.parametrize(
@@ -486,6 +489,19 @@ async def test_generator_rejects_all_stopword_expansion_phrase():
         "QueryEnhancementGenerator generated 0 unique grounded examples "
         "but target_count=1; source_context=10 unique source-template queries"
     )
+    # Every candidate was drawn: both records' topics across all five templates.
+    assert sorted(stopword_calls) == [
+        "different video showing various outdoor activities",
+        "different video showing various outdoor activities tutorial",
+        "explain different video showing various outdoor activities",
+        "explain rodeo or similar competition viewed through",
+        "find different video showing various outdoor activities",
+        "find rodeo or similar competition viewed through",
+        "rodeo or similar competition viewed through",
+        "rodeo or similar competition viewed through tutorial",
+        "show me different video showing various outdoor activities",
+        "show me rodeo or similar competition viewed through",
+    ]
     assert str(error.value.__cause__) == (
         "query_enhancement optimizer callback query_enhancer returned "
         "expansion_terms absent from sampled source for "
