@@ -42,19 +42,34 @@ def _sanitize_fragment(fragment: str) -> str:
     return "".join(c if c in _OBJECT_KEY_ALLOWED else "-" for c in fragment)
 
 
+_CONFIGURED_ENDPOINT: Optional[str] = None
+_CONFIGURED_ACCESS_KEY: Optional[str] = None
+_CONFIGURED_SECRET_KEY: Optional[str] = None
+
+
+def configure_s3_backend_defaults(
+    *, endpoint: Optional[str], access_key: Optional[str], secret_key: Optional[str]
+) -> None:
+    """Set the runtime defaults the backend uses when config omits values."""
+    global _CONFIGURED_ENDPOINT, _CONFIGURED_ACCESS_KEY, _CONFIGURED_SECRET_KEY
+    _CONFIGURED_ENDPOINT = endpoint
+    _CONFIGURED_ACCESS_KEY = access_key
+    _CONFIGURED_SECRET_KEY = secret_key
+
+
 @dataclass
 class S3CacheBackendConfig:
     """Configuration for the S3 cache backend.
 
     Pure data: credential fields default to ``None`` and are resolved from the
-    ``MINIO_*`` environment at client-build time (mirroring
-    ``ingestion_worker.minio_client``), with config values taking precedence.
+    runtime-configured defaults at client-build time, with config values taking
+    precedence.
     """
 
     backend_type: str = "s3"
-    endpoint: Optional[str] = None  # falls back to MINIO_ENDPOINT
-    access_key: Optional[str] = None  # falls back to MINIO_ACCESS_KEY
-    secret_key: Optional[str] = None  # falls back to MINIO_SECRET_KEY
+    endpoint: Optional[str] = None  # falls back to configured endpoint default
+    access_key: Optional[str] = None  # falls back to configured access key
+    secret_key: Optional[str] = None  # falls back to configured secret key
     bucket: str = "cogniverse-pipeline-cache"
     key_prefix: str = "pipeline/"
     region: str = "us-east-1"
@@ -92,26 +107,23 @@ class S3CacheBackend(CacheBackend):
     def _s3(self):
         """Lazily build the boto3 client and ensure the bucket exists.
 
-        Credentials come from config first, then ``MINIO_*`` env. boto3 is
-        heavy to import, so the cost is paid only when the cache is actually
-        used (not at config-load time).
+        Credentials come from config first, then runtime defaults set at the
+        entrypoint. boto3 is heavy to import, so the cost is paid only when the
+        cache is actually used (not at config-load time).
         """
         if self._client is not None:
             return self._client
 
-        import os
-
         import boto3
         from botocore.client import Config
 
-        endpoint = self.config.endpoint or os.environ.get("MINIO_ENDPOINT")
-        access_key = self.config.access_key or os.environ.get("MINIO_ACCESS_KEY")
-        secret_key = self.config.secret_key or os.environ.get("MINIO_SECRET_KEY")
+        endpoint = self.config.endpoint or _CONFIGURED_ENDPOINT
+        access_key = self.config.access_key or _CONFIGURED_ACCESS_KEY
+        secret_key = self.config.secret_key or _CONFIGURED_SECRET_KEY
         if not (endpoint and access_key and secret_key):
             raise RuntimeError(
                 "S3 cache backend needs endpoint/access_key/secret_key via "
-                "config or the MINIO_ENDPOINT/MINIO_ACCESS_KEY/MINIO_SECRET_KEY "
-                "environment variables."
+                "config or runtime defaults configured at startup."
             )
 
         client = boto3.client(
