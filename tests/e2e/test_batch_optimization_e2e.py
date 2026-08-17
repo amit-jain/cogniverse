@@ -1083,6 +1083,54 @@ def _approved_query_enhancement_examples_in_pod(
     return json.loads(line[len("__APPROVED__") :])
 
 
+def _served_query_enhancement_queries_in_pod(
+    tenant_id: str = TENANT_ID,
+    lookback_hours: float | None = None,
+) -> set[str]:
+    """Every query the query-enhancement agent served in the module window.
+
+    Read from the tenant's Phoenix spans in-pod — the population the SIMBA job
+    builds its records from. It holds the fixture's seeded calls AND the
+    sub-queries the orchestrator issued to the agent while the complex
+    seeding queries ran; both are real served traffic.
+    """
+    if lookback_hours is None:
+        lookback_hours = _module_lookback_hours()
+    script = (
+        "import asyncio, json; "
+        "from cogniverse_foundation.telemetry.config import SPAN_NAME_QUERY_ENHANCEMENT; "
+        "from cogniverse_foundation.telemetry.manager import get_telemetry_manager; "
+        "from cogniverse_runtime.optimization_cli import _query_enhancement_pairs, _query_spans_by_name; "
+        f"tp = get_telemetry_manager().get_provider(tenant_id={tenant_id!r}); "
+        f"df = asyncio.run(_query_spans_by_name(tp, {tenant_id!r}, SPAN_NAME_QUERY_ENHANCEMENT, {lookback_hours!r})); "
+        "print('__SERVED__' + json.dumps(sorted({r['query'] for r in _query_enhancement_pairs(df)})))"
+    )
+    result = subprocess.run(
+        [
+            "kubectl",
+            "--context",
+            KUBECTL_CONTEXT,
+            "exec",
+            "-n",
+            NAMESPACE,
+            DEPLOYMENT,
+            "-c",
+            CONTAINER,
+            "--",
+            "python3",
+            "-c",
+            script,
+        ],
+        capture_output=True,
+        text=True,
+        timeout=180,
+    )
+    assert result.returncode == 0, result.stderr[-2000:]
+    line = result.stdout.strip().splitlines()[-1]
+    assert line.startswith("__SERVED__"), result.stdout[-500:]
+    return set(json.loads(line[len("__SERVED__") :]))
+
+
 def _base_query_enhancement_state() -> dict:
     return json.loads(json.dumps(QueryEnhancementModule().dump_state(), default=str))
 
@@ -1090,10 +1138,11 @@ def _base_query_enhancement_state() -> dict:
 def _assert_simba_served_the_best_module(result: dict, blob_before: str) -> dict:
     """The contract of one ``--mode simba`` run against the seeded tenant.
 
-    Every seeded span (plus every approved synthetic example) is a record;
-    the holdout is the deterministic quarter; the module persisted after
-    the run is the one that scored best on that holdout and never scores
-    below the base module. Returns the persisted state.
+    Every query-enhancement span in the module window (the fixture's seeded
+    calls and the orchestrator's own sub-calls) plus every approved synthetic
+    example is a record; the holdout is the deterministic quarter; the module
+    persisted after the run is the one that scored best on that holdout and
+    never scores below the base module. Returns the persisted state.
     """
     approved = _approved_query_enhancement_examples_in_pod()
     assert set(result) == {
@@ -1137,14 +1186,18 @@ def _assert_simba_served_the_best_module(result: dict, blob_before: str) -> dict
     demos = after["enhancer.predict"]["demos"]
     if result["decision"] == "promote":
         assert isinstance(result["artifact_id"], str) and result["artifact_id"] != ""
-        seeded_queries = (
-            set(ENHANCEMENT_QUERIES)
-            | {q for q, _, _ in GROUNDED_ENHANCEMENT_QUERIES}
-            | {row["query"] for row in approved}
-        )
+        served_queries = _served_query_enhancement_queries_in_pod()
+        seeded_queries = set(ENHANCEMENT_QUERIES) | {
+            q for q, _, _ in GROUNDED_ENHANCEMENT_QUERIES
+        }
+        # The fixture's seeded calls all landed as served spans ...
+        assert seeded_queries <= served_queries, sorted(seeded_queries - served_queries)
+        # ... and every demo is a real served call or an approved example —
+        # never a label synthesized from a query string.
+        record_queries = served_queries | {row["query"] for row in approved}
         assert demos != [], result
         for demo in demos:
-            assert demo["query"] in seeded_queries, demo
+            assert demo["query"] in record_queries, demo
             assert (
                 demo["enhanced_query"].strip().lower() != demo["query"].strip().lower()
             ), demo
