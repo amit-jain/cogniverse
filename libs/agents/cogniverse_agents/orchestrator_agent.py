@@ -1402,10 +1402,14 @@ class OrchestratorAgent(
             if name.endswith("_agent"):
                 _agent_lookup[name[: -len("_agent")]] = name
 
-        # Pass 1: filter to registered agents, keeping the raw sequence index so
-        # parallel-group / dependency indices can be remapped to the surviving
-        # step positions below (identity when nothing is filtered).
+        # Pass 1: filter to registered agents and drop repeats (first
+        # occurrence wins — agent results are keyed by name, so a repeated
+        # step could only overwrite the earlier one), keeping the raw
+        # sequence index so parallel-group / dependency indices can be
+        # remapped to the surviving step positions below (identity when
+        # nothing is filtered).
         surviving = []  # (raw_sequence_index, agent_name)
+        seen_agents: set[str] = set()
         for i, agent_name in enumerate(agent_sequence):
             agent_name = _agent_lookup.get(agent_name, agent_name)
             if agent_name not in registered_agents:
@@ -1415,6 +1419,13 @@ class OrchestratorAgent(
                 )
                 unavailable_agents.append(agent_name)
                 continue
+            if agent_name in seen_agents:
+                logger.warning(
+                    f"LLM proposed agent '{agent_name}' more than once "
+                    f"(raw sequence {agent_sequence}), keeping the first step"
+                )
+                continue
+            seen_agents.add(agent_name)
             surviving.append((i, agent_name))
 
         raw_to_step = {raw: pos for pos, (raw, _) in enumerate(surviving)}
