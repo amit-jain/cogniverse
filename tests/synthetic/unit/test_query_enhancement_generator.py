@@ -7,8 +7,14 @@ import snowballstemmer
 
 from cogniverse_synthetic.generators.base import GenerationTracker
 from cogniverse_synthetic.generators.query_enhancement import (
-    GROUNDING_MORPHOLOGY_NORMALIZATIONS,
     QueryEnhancementGenerator,
+)
+from cogniverse_synthetic.grounding import (
+    GROUNDING_MORPHOLOGY_NORMALIZATIONS,
+    GROUNDING_STOPWORDS,
+    normalize_grounding_token,
+    source_term_keys,
+    term_is_grounded,
 )
 
 STEMMER = snowballstemmer.stemmer("english")
@@ -158,19 +164,15 @@ async def test_generator_accepts_grounded_morphological_variants():
 def test_stemmer_accepts_inflected_and_corrected_pairs(
     source_word: str, term_word: str
 ):
-    source_term_keys = QueryEnhancementGenerator._source_term_keys(source_word)
+    keys = source_term_keys(source_word)
 
-    assert QueryEnhancementGenerator._term_is_grounded(term_word, source_term_keys)
+    assert term_is_grounded(term_word, keys) is True
 
 
 def test_grounding_accepts_people_applaud_against_typo_source():
-    source_term_keys = QueryEnhancementGenerator._source_term_keys(
-        "People applaude loudly"
-    )
+    keys = source_term_keys("People applaude loudly")
 
-    assert QueryEnhancementGenerator._term_is_grounded(
-        "people applaud", source_term_keys
-    )
+    assert term_is_grounded("people applaud", keys) is True
 
 
 @pytest.mark.parametrize(
@@ -181,9 +183,103 @@ def test_irregular_grounding_entries_still_need_the_map(
     source_word: str, normalized_word: str
 ):
     assert STEMMER.stemWord(source_word) != STEMMER.stemWord(normalized_word)
-    assert QueryEnhancementGenerator._term_is_grounded(
-        normalized_word,
-        QueryEnhancementGenerator._source_term_keys(source_word),
+    assert term_is_grounded(normalized_word, source_term_keys(source_word)) is True
+
+
+_ROPE_SOURCE = (
+    "The video begins with a man wearing a blue shirt pulling heavy logs "
+    "placed against each other with a thick rope."
+)
+
+
+def test_source_term_keys_are_the_complete_stemmed_vocabulary():
+    assert source_term_keys(_ROPE_SOURCE) == {
+        "the",
+        "video",
+        "begin",
+        "with",
+        "a",
+        "man",
+        "wear",
+        "blue",
+        "shirt",
+        "pull",
+        "heavi",
+        "log",
+        "place",
+        "against",
+        "each",
+        "other",
+        "thick",
+        "rope",
+    }
+
+
+def test_term_grounding_verdict_for_every_candidate():
+    keys = source_term_keys(_ROPE_SOURCE)
+    verdicts = {
+        term: term_is_grounded(term, keys)
+        for term in [
+            "heavy logs",
+            "thick rope",
+            "blue shirt",
+            "the man",
+            "quantum chromodynamics",
+            "v_-6dz6tBH77I",
+            "",
+            "the",
+        ]
+    }
+
+    assert verdicts == {
+        "heavy logs": True,
+        "thick rope": True,
+        "blue shirt": True,
+        "the man": True,
+        "quantum chromodynamics": False,
+        "v_-6dz6tBH77I": False,
+        "": False,
+        "the": False,
+    }
+
+
+def test_grounding_normalization_is_morphological_then_stemmed():
+    assert normalize_grounding_token("PEOPLE") == normalize_grounding_token("person")
+    assert normalize_grounding_token("logs") == "log"
+    assert GROUNDING_STOPWORDS == frozenset(
+        {
+            "a",
+            "an",
+            "and",
+            "are",
+            "as",
+            "at",
+            "be",
+            "but",
+            "by",
+            "for",
+            "from",
+            "in",
+            "into",
+            "is",
+            "it",
+            "of",
+            "on",
+            "or",
+            "so",
+            "than",
+            "that",
+            "the",
+            "these",
+            "this",
+            "those",
+            "to",
+            "via",
+            "was",
+            "were",
+            "with",
+            "without",
+        }
     )
 
 

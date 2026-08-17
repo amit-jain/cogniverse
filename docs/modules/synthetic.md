@@ -174,6 +174,16 @@ callback raises with its operation and source context; callback exceptions
 retain their original cause. No path returns a default label or partial
 dataset after a callback failure.
 
+### Grounding
+
+`cogniverse_synthetic/grounding.py` holds the single source-grounding predicate:
+`GROUNDING_STOPWORDS`, `GROUNDING_MORPHOLOGY_NORMALIZATIONS`,
+`normalize_grounding_token()`, `source_term_keys()`, and `term_is_grounded()`.
+A term is grounded when every one of its non-stopword tokens, folded through the
+irregular-plural map and then the English Snowball stemmer, appears in the
+sampled source text. Generation and optimizer scoring both import these names,
+so a candidate is judged grounded by the same rule wherever it is checked.
+
 ### EntityExtractionGenerator
 
 Labels sampled-content text through the configured production entity-extraction
@@ -866,6 +876,7 @@ cogniverse_synthetic/
 ├── dspy_signatures.py      # Query, routing, and schema-aware regeneration signatures
 ├── dspy_modules.py         # Retry-validated query and regeneration modules
 ├── registry.py             # OPTIMIZER_REGISTRY, OptimizerConfig
+├── grounding.py            # Source-grounding vocabulary and predicate
 ├── profile_selector.py     # ProfileSelector (LLM or rule-based profile scoring)
 ├── generators/
 │   ├── __init__.py            # Generator exports
