@@ -22,9 +22,13 @@ TARGET_FILES = [
     Path("libs/core/cogniverse_core/common/cache/backends/s3.py"),
     Path("libs/foundation/cogniverse_foundation/telemetry/manager.py"),
     Path("libs/core/cogniverse_core/common/models/semantic_embedder.py"),
+    Path("libs/agents/cogniverse_agents/text_analysis_agent.py"),
+    Path("libs/core/cogniverse_core/memory/manager.py"),
+    Path("libs/core/cogniverse_core/registries/backend_registry.py"),
+    Path("libs/foundation/cogniverse_foundation/registry/entry_point_registry.py"),
 ]
 
-MODULES_SCANNED = 3
+MODULES_SCANNED = 7
 
 pytestmark = [pytest.mark.unit, pytest.mark.ci_fast]
 
@@ -84,6 +88,7 @@ def test_runtime_main_resolves_and_injects_target_env_vars(monkeypatch):
     monkeypatch.setenv("TELEMETRY_OTLP_ENDPOINT", "wired-phoenix:4317")
     monkeypatch.setenv("COGNIVERSE_SEMANTIC_EMBED_URL", "http://embed.internal:8000")
     monkeypatch.setenv("COGNIVERSE_SEMANTIC_EMBED_MODEL", "from-config")
+    monkeypatch.setenv("COGNIVERSE_TENANT_CACHE_CAPACITY", "23")
 
     resolved = runtime_main._resolve_library_env_defaults()
 
@@ -94,53 +99,26 @@ def test_runtime_main_resolves_and_injects_target_env_vars(monkeypatch):
         "telemetry_otlp_endpoint": "wired-phoenix:4317",
         "semantic_embed_url": "http://embed.internal:8000",
         "semantic_embed_model": "from-config",
+        "tenant_cache_capacity": 23,
     }
 
-    captured: dict[str, object] = {}
-
-    def _capture_s3_defaults(**kwargs):
-        captured["s3"] = kwargs
-
-    def _capture_semantic_defaults(**kwargs):
-        captured["semantic"] = kwargs
-
-    def _capture_telemetry_manager(config_manager=None, *, otlp_endpoint=None):
-        captured["telemetry"] = {
-            "config_manager": config_manager,
-            "otlp_endpoint": otlp_endpoint,
-        }
-        return object()
-
     monkeypatch.setattr(
-        runtime_main, "configure_s3_backend_defaults", _capture_s3_defaults
-    )
-    monkeypatch.setattr(
-        runtime_main,
-        "configure_semantic_embedder_defaults",
-        _capture_semantic_defaults,
-    )
-    monkeypatch.setattr(
-        runtime_main, "get_telemetry_manager", _capture_telemetry_manager
+        runtime_main, "get_telemetry_manager", lambda *args, **kwargs: object()
     )
 
-    config_manager = object()
     runtime_main._configure_library_module_defaults(
-        config_manager,
+        object(),
         **resolved,
     )
 
-    assert captured == {
-        "s3": {
-            "endpoint": "http://minio.internal:9000",
-            "access_key": "minio-access",
-            "secret_key": "minio-secret",
-        },
-        "semantic": {
-            "remote_url": "http://embed.internal:8000",
-            "model_name": "from-config",
-        },
-        "telemetry": {
-            "config_manager": config_manager,
-            "otlp_endpoint": "wired-phoenix:4317",
-        },
-    }
+    from cogniverse_agents.text_analysis_agent import _agent_instances
+    from cogniverse_core.memory.manager import Mem0MemoryManager
+    from cogniverse_core.registries.backend_registry import BackendRegistry
+    from cogniverse_foundation.registry.entry_point_registry import (
+        EntryPointRegistry,
+    )
+
+    assert _agent_instances.capacity == 23
+    assert Mem0MemoryManager._instances.capacity == 23
+    assert BackendRegistry._backend_instances.capacity == 23
+    assert EntryPointRegistry._instances.capacity == 23

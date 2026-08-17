@@ -507,7 +507,17 @@ def _bootstrap_metadata_schemas(bootstrap, application_name: str) -> None:
     logger.info("Metadata schemas bootstrapped for fresh backend")
 
 
-def _resolve_library_env_defaults() -> dict[str, str | None]:
+def _resolve_tenant_cache_capacity() -> int:
+    try:
+        return max(
+            1,
+            int(os.environ.get("COGNIVERSE_TENANT_CACHE_CAPACITY", 16)),
+        )
+    except (TypeError, ValueError):
+        return 16
+
+
+def _resolve_library_env_defaults() -> dict[str, str | int | None]:
     """Read the library-module defaults from process env exactly once."""
     return {
         "minio_endpoint": os.environ.get("MINIO_ENDPOINT"),
@@ -516,6 +526,7 @@ def _resolve_library_env_defaults() -> dict[str, str | None]:
         "telemetry_otlp_endpoint": os.environ.get("TELEMETRY_OTLP_ENDPOINT"),
         "semantic_embed_url": os.environ.get("COGNIVERSE_SEMANTIC_EMBED_URL"),
         "semantic_embed_model": os.environ.get("COGNIVERSE_SEMANTIC_EMBED_MODEL"),
+        "tenant_cache_capacity": _resolve_tenant_cache_capacity(),
     }
 
 
@@ -538,8 +549,22 @@ def _configure_library_module_defaults(
     telemetry_otlp_endpoint: str | None,
     semantic_embed_url: str | None,
     semantic_embed_model: str | None,
+    tenant_cache_capacity: int,
 ) -> None:
     """Inject the runtime defaults into the library modules that use them."""
+    from cogniverse_agents.text_analysis_agent import (
+        configure_tenant_cache_capacity as configure_text_analysis_agent_tenant_cache_capacity,
+    )
+    from cogniverse_core.memory.manager import (
+        configure_tenant_cache_capacity as configure_memory_manager_tenant_cache_capacity,
+    )
+    from cogniverse_core.registries.backend_registry import (
+        configure_tenant_cache_capacity as configure_backend_registry_tenant_cache_capacity,
+    )
+    from cogniverse_foundation.registry.entry_point_registry import (
+        configure_tenant_cache_capacity as configure_entry_point_registry_tenant_cache_capacity,
+    )
+
     _mirror_minio_credentials_to_aws(minio_access_key, minio_secret_key)
     configure_s3_backend_defaults(
         endpoint=minio_endpoint,
@@ -550,6 +575,10 @@ def _configure_library_module_defaults(
         remote_url=semantic_embed_url,
         model_name=semantic_embed_model,
     )
+    configure_text_analysis_agent_tenant_cache_capacity(tenant_cache_capacity)
+    configure_memory_manager_tenant_cache_capacity(tenant_cache_capacity)
+    configure_backend_registry_tenant_cache_capacity(tenant_cache_capacity)
+    configure_entry_point_registry_tenant_cache_capacity(tenant_cache_capacity)
     get_telemetry_manager(config_manager, otlp_endpoint=telemetry_otlp_endpoint)
 
 

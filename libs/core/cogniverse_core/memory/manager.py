@@ -53,24 +53,32 @@ def build_memory_profile(base_schema_name: str, embedding_dims: int) -> Dict[str
 # Max number of distinct tenants whose Mem0 instances are kept warm in
 # this process. Each instance carries a Vespa client and an LLM config,
 # so an unbounded dict leaks ~50-200MB per tenant across long-running
-# suites. Override with COGNIVERSE_TENANT_CACHE_CAPACITY to widen the
-# working set in multi-tenant servers.
+# suites. Startup can reconfigure the working set for multi-tenant servers.
 _DEFAULT_TENANT_CACHE_CAPACITY = 16
+_CONFIGURED_TENANT_CACHE_CAPACITY: Optional[int] = None
 
 
 def _tenant_cache_capacity() -> int:
     try:
+        configured_capacity = _CONFIGURED_TENANT_CACHE_CAPACITY
+        if configured_capacity is not None:
+            return max(1, int(configured_capacity))
         return max(
             1,
-            int(
-                os.environ.get(
-                    "COGNIVERSE_TENANT_CACHE_CAPACITY",
-                    _DEFAULT_TENANT_CACHE_CAPACITY,
-                )
-            ),
+            int(_DEFAULT_TENANT_CACHE_CAPACITY),
         )
     except (TypeError, ValueError):
         return _DEFAULT_TENANT_CACHE_CAPACITY
+
+
+def configure_tenant_cache_capacity(capacity: int) -> None:
+    """Set the tenant cache capacity used for new Mem0 manager instances."""
+    global _CONFIGURED_TENANT_CACHE_CAPACITY
+    _CONFIGURED_TENANT_CACHE_CAPACITY = capacity
+    Mem0MemoryManager._instances = TenantLRUCache(  # type: ignore[attr-defined]
+        capacity=_tenant_cache_capacity(),
+        on_evict=_on_tenant_evicted,
+    )
 
 
 def _on_tenant_evicted(tenant_id: str, instance: "Mem0MemoryManager") -> None:

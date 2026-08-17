@@ -29,7 +29,6 @@ from __future__ import annotations
 
 import importlib.metadata
 import logging
-import os
 import threading
 import time
 from typing import Any, ClassVar, Dict, Generic, List, Optional, Tuple, Type, TypeVar
@@ -41,6 +40,7 @@ logger = logging.getLogger(__name__)
 T = TypeVar("T")
 
 _DEFAULT_TENANT_CACHE_CAPACITY = 16
+_CONFIGURED_TENANT_CACHE_CAPACITY: Optional[int] = None
 
 # LRU capacity eviction can drop an instance that a concurrent request still
 # holds (``get()`` returned it and the caller is mid-await). Closing its
@@ -81,17 +81,28 @@ def _flush_pending_close() -> None:
 
 def _tenant_cache_capacity() -> int:
     try:
-        return max(
-            1,
-            int(
-                os.environ.get(
-                    "COGNIVERSE_TENANT_CACHE_CAPACITY",
-                    _DEFAULT_TENANT_CACHE_CAPACITY,
-                )
-            ),
-        )
+        configured_capacity = _CONFIGURED_TENANT_CACHE_CAPACITY
+        if configured_capacity is not None:
+            return max(1, int(configured_capacity))
+        return _DEFAULT_TENANT_CACHE_CAPACITY
     except (TypeError, ValueError):
         return _DEFAULT_TENANT_CACHE_CAPACITY
+
+
+def _reconfigure_entry_point_cache(cls, capacity: int) -> None:
+    cls._instances = TenantLRUCache(  # type: ignore[attr-defined]
+        capacity=capacity,
+        on_evict=_on_instance_evicted,
+    )
+    for subclass in cls.__subclasses__():
+        _reconfigure_entry_point_cache(subclass, capacity)
+
+
+def configure_tenant_cache_capacity(capacity: int) -> None:
+    """Set the tenant cache capacity used for entry-point registries."""
+    global _CONFIGURED_TENANT_CACHE_CAPACITY
+    _CONFIGURED_TENANT_CACHE_CAPACITY = capacity
+    _reconfigure_entry_point_cache(EntryPointRegistry, _tenant_cache_capacity())
 
 
 def _on_instance_evicted(key: str, instance: Any) -> None:
@@ -133,7 +144,7 @@ class EntryPointRegistry(Generic[T]):
     _instance: ClassVar[Optional["EntryPointRegistry"]] = None
     _registry_classes: ClassVar[Dict[str, Type[Any]]] = {}
     _instances: ClassVar[TenantLRUCache[Any]] = TenantLRUCache(
-        capacity=_DEFAULT_TENANT_CACHE_CAPACITY,
+        capacity=_tenant_cache_capacity(),
         on_evict=_on_instance_evicted,
     )
     _entry_points_loaded: ClassVar[bool] = False
