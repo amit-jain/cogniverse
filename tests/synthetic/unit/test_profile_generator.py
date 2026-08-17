@@ -31,12 +31,16 @@ PROFILE_CONFIGS = {
     },
 }
 SAMPLED_CONTENT = [
-    {"title": "quantum computing applications", "schema_name": "document_pages"}
+    {"title": "quantum computing applications", "schema_name": "document_pages"},
+    {"title": "machine learning algorithms", "schema_name": "document_pages"},
 ]
 
 
 async def _select_document(query: str, profiles: list[str], tenant_id: str):
-    assert query == "find quantum computing applications in document content"
+    assert query in (
+        "find quantum computing applications in document content",
+        "find machine learning algorithms in document content",
+    )
     assert profiles == ["audio_semantic", "document_semantic"]
     assert tenant_id == "test:unit"
     return {
@@ -82,9 +86,9 @@ class TestProfileGenerator:
             tenant_id="test:unit",
         )
 
+        # Saliency selects the unique part of each title — the number
         expected_queries = [
-            f"find canonical source query {index:03d} in document content"
-            for index in range(target_count)
+            f"find {index:03d} in document content" for index in range(target_count)
         ]
         assert [example.query for example in examples] == expected_queries
         assert observed_queries == expected_queries
@@ -110,7 +114,16 @@ class TestProfileGenerator:
                 "query_intent": "document_search",
                 "modality": "document",
                 "complexity": "medium",
-            }
+            },
+            {
+                "query": "find machine learning algorithms in document content",
+                "available_profiles": "audio_semantic,document_semantic",
+                "selected_profile": "document_semantic",
+                "reasoning": "The production selector chose the document index.",
+                "query_intent": "document_search",
+                "modality": "document",
+                "complexity": "medium",
+            },
         ]
 
     @pytest.mark.asyncio
@@ -246,7 +259,11 @@ class TestProfileGenerator:
                 {
                     "title": "quantum computing applications",
                     "schema_name": "wiki_pages",
-                }
+                },
+                {
+                    "title": "neural network architectures",
+                    "schema_name": "wiki_pages",
+                },
             ],
             target_count=1,
             profile_configs=profile_configs,
@@ -272,7 +289,7 @@ class TestProfileGenerator:
             ValueError,
             match=(
                 "ProfileGenerator generated 0 unique grounded examples "
-                "but target_count=1; source_context=1 unique source topics"
+                "but target_count=1; source_context=2 unique source topics"
             ),
         ):
             await ProfileGenerator(profile_labeler=select_wrong_modality).generate(
@@ -306,19 +323,20 @@ class TestProfileGenerator:
             }
 
         generator = ProfileGenerator(profile_labeler=label_by_tenant)
+        # Both batches need 2+ records for saliency
+        sampled_batch = [
+            {"title": "shared topic", "schema_name": "document_pages"},
+            {"title": "other content", "schema_name": "document_pages"},
+        ]
         audio_examples, document_examples = await asyncio.gather(
             generator.generate(
-                sampled_content=[
-                    {"title": "shared topic", "schema_name": "document_pages"}
-                ],
+                sampled_content=sampled_batch,
                 target_count=1,
                 profile_configs=PROFILE_CONFIGS,
                 tenant_id="tenant:audio",
             ),
             generator.generate(
-                sampled_content=[
-                    {"title": "shared topic", "schema_name": "document_pages"}
-                ],
+                sampled_content=sampled_batch,
                 target_count=1,
                 profile_configs=PROFILE_CONFIGS,
                 tenant_id="tenant:document",
@@ -461,7 +479,7 @@ class TestProfileGenerator:
             ValueError,
             match=(
                 "ProfileGenerator generated 0 unique grounded examples "
-                "but target_count=1; source_context=1 unique source topics"
+                "but target_count=1; source_context=2 unique source topics"
             ),
         ):
             await ProfileGenerator(profile_labeler=label_profile).generate(
@@ -488,11 +506,16 @@ class TestProfileGenerator:
     async def test_rejects_sample_without_profile_topic(self):
         generator = ProfileGenerator(profile_labeler=_select_document)
 
+        # Both records lack topic text, so saliency raises with "got 0"
         with pytest.raises(
-            ValueError, match="sampled_content contains no usable profile topic"
+            ValueError,
+            match="topic saliency requires at least 2 sampled records with topic text; got 0",
         ):
             await generator.generate(
-                sampled_content=[{"schema_name": "audio_segments"}],
+                sampled_content=[
+                    {"schema_name": "audio_segments"},
+                    {"schema_name": "document_pages"},
+                ],
                 target_count=1,
                 profile_configs=PROFILE_CONFIGS,
                 tenant_id="test:unit",
@@ -513,6 +536,9 @@ FRAME_DESCRIPTION_A = (
 FRAME_DESCRIPTION_B = (
     "This video frame captures an indoor stage with red curtains and lights"
 )
+# Saliency extracts the distinctive span, excluding shared "This video frame captures"
+FRAME_TOPIC_A = "outdoor rodeo arena with metal bleachers"
+FRAME_TOPIC_B = "indoor stage with red curtains"
 SAME_VIDEO_FRAMES = [
     {
         "topic": "dd95bb382700f5aa2f17a1d6a8163ffd6ce4057b3c108e077ed34efb08e67691",
@@ -553,8 +579,8 @@ class TestFrameLevelGrounding:
         )
 
         expected_queries = [
-            f"find a video frame showing {FRAME_DESCRIPTION_A}",
-            f"find a video frame showing {FRAME_DESCRIPTION_B}",
+            f"find a video frame showing {FRAME_TOPIC_A}",
+            f"find a video frame showing {FRAME_TOPIC_B}",
         ]
         assert [example.query for example in examples] == expected_queries
         assert observed == expected_queries
@@ -564,9 +590,11 @@ class TestFrameLevelGrounding:
             "video_frames_mv",
         ]
 
-    @pytest.mark.asyncio
-    async def test_shared_description_prefix_does_not_collapse_distinct_frames(self):
-        generator = ProfileGenerator(profile_labeler=_select_document)
-        topics = generator._extract_topics(SAME_VIDEO_FRAMES)
+    def test_shared_description_prefix_does_not_collapse_distinct_frames(self):
+        from cogniverse_synthetic.topics import TopicSaliency, extract_topic
 
-        assert topics == [FRAME_DESCRIPTION_A, FRAME_DESCRIPTION_B]
+        saliency = TopicSaliency.from_records(SAME_VIDEO_FRAMES)
+        topics = [extract_topic(r, saliency=saliency) for r in SAME_VIDEO_FRAMES]
+
+        # Saliency extracts the distinctive span of each description
+        assert topics == [FRAME_TOPIC_A, FRAME_TOPIC_B]

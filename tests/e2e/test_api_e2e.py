@@ -1053,17 +1053,26 @@ class TestSyntheticDataAPI:
             ]
             saliency = TopicSaliency.from_records(records)
 
+            topics = [extract_topic(record, saliency=saliency) for record in records]
+            # Every sampled record yields a topic; name any that did not.
+            assert [
+                record["topic"]
+                for record, topic in zip(records, topics)
+                if topic is None
+            ] == []
+            # Distinct sources never collapse onto one topic, which is what a
+            # positional slice produced when captions shared an opening.
+            assert sorted(set(topics)) == sorted(topics)
+
             expected_extractions = []
-            for record in records:
-                topic = extract_topic(record, saliency=saliency)
-                # The topic must be a contiguous span from the source text
+            for record, topic in zip(records, topics):
                 source_text = record["description"]
-                assert topic is not None, "saliency-based topic should not be None"
+                # The topic is a contiguous span of its own source text ...
                 assert topic in source_text, f"topic {topic!r} must be a span of source"
-                # The topic must NOT be the document prefix (proves the defect is gone)
-                first_words = " ".join(source_text.split()[:6])
-                assert topic != first_words, (
-                    f"topic should not be the prefix: {topic!r}"
+                # ... and never that source's leading words, compared over the
+                # same width as the topic itself.
+                assert topic != " ".join(source_text.split()[: len(topic.split())]), (
+                    f"topic is the source prefix: {topic!r}"
                 )
                 extraction_response = client.post(
                     "/agents/entity_extraction_agent/process",

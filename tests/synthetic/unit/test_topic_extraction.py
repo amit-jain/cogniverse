@@ -262,3 +262,38 @@ def test_canonical_topic_fields_cover_all_shipped_schema_text_roles():
             if isinstance(field_name, str) and field_name not in canonical_fields
         ]
         assert missing_fields == [], schema_path.name
+
+
+def test_saliency_metadata_only_record_yields_no_topic():
+    """Metadata-only records produce no topic via saliency extraction."""
+    from cogniverse_synthetic.topics import TopicSaliency
+    from cogniverse_synthetic.topics import extract_topic as sal_extract
+
+    records = [
+        {
+            "config_id": "cfg-1",
+            "tenant_id": "tenant-123",
+            "status": "active",
+            "agent_type": "routing",
+        },
+        {"description": "A video showing people walking through a park"},
+        {"description": "Another video with people playing in the field"},
+    ]
+    saliency = TopicSaliency.from_records(records)
+    metadata_only_record = records[0]
+    assert sal_extract(metadata_only_record, saliency=saliency) is None
+
+
+def test_saliency_identifier_only_record_yields_no_topic():
+    """Identifier-only records (hash, UUID, timestamp) produce no topic via saliency."""
+    from cogniverse_synthetic.topics import TopicSaliency
+    from cogniverse_synthetic.topics import extract_topic as sal_extract
+
+    records = [
+        {"description": "a1b2c3d4e5f6789012345678901234567890abcdef"},
+        {"description": "A video showing people walking through a park"},
+        {"description": "Another video with people playing in the field"},
+    ]
+    saliency = TopicSaliency.from_records(records)
+    identifier_only_record = records[0]
+    assert sal_extract(identifier_only_record, saliency=saliency) is None
