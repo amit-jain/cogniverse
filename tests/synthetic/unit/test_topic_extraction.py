@@ -8,7 +8,7 @@ import pytest
 from cogniverse_synthetic.generators.base import (
     CANONICAL_TOPIC_FIELDS,
     extract_topic,
-    is_content_hash_topic,
+    is_identifier_topic,
     is_non_speech_annotation,
 )
 from cogniverse_synthetic.generators.profile import ProfileGenerator
@@ -103,16 +103,49 @@ def test_extract_topic_rejects_bare_hash_and_uses_next_field(
     assert extract_topic(item) == expected, name
 
 
-@pytest.mark.parametrize(
-    ("value", "expected"),
-    [
-        (HASH_VALUE, True),
-        (f"{HASH_VALUE}_seg_7", True),
-        ("animal rodeo", False),
-    ],
-)
-def test_content_hash_predicate_distinguishes_hashes_from_titles(value, expected):
-    assert is_content_hash_topic(value) is expected
+def test_identifier_predicate_verdict_for_every_shipped_id_form():
+    verdicts = {
+        value: is_identifier_topic(value)
+        for value in [
+            HASH_VALUE,
+            f"{HASH_VALUE}_seg_7",
+            "550e8400-e29b-41d4-a716-446655440000",
+            "v_-6dz6tBH77I",
+            "v_-6dz6tBH77I.txt",
+            "yt_dQw4w9WgXcQ",
+            "doc_7f3a91",
+            "IMG_20240113_154522",
+            "IMG_20240113_154522.jpg",
+            "sha256:9f86d081884c7d65",
+            "The video is of",
+            "animal rodeo",
+            "t-shirt",
+            "COVID-19",
+            "Apollo-11",
+            "report.pdf",
+            "transformer attention mechanism",
+        ]
+    }
+
+    assert verdicts == {
+        HASH_VALUE: True,
+        f"{HASH_VALUE}_seg_7": True,
+        "550e8400-e29b-41d4-a716-446655440000": True,
+        "v_-6dz6tBH77I": True,
+        "v_-6dz6tBH77I.txt": True,
+        "yt_dQw4w9WgXcQ": True,
+        "doc_7f3a91": True,
+        "IMG_20240113_154522": True,
+        "IMG_20240113_154522.jpg": True,
+        "sha256:9f86d081884c7d65": True,
+        "The video is of": False,
+        "animal rodeo": False,
+        "t-shirt": False,
+        "COVID-19": False,
+        "Apollo-11": False,
+        "report.pdf": False,
+        "transformer attention mechanism": False,
+    }
 
 
 @pytest.mark.parametrize(

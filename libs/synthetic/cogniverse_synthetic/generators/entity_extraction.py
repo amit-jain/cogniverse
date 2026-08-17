@@ -14,7 +14,7 @@ from cogniverse_synthetic.generators.base import (
     BaseGenerator,
     GenerationTracker,
     entity_candidate_text_fields,
-    is_content_hash_topic,
+    is_identifier_topic,
     is_non_speech_annotation,
     normalize_text,
 )
@@ -124,7 +124,7 @@ class EntityExtractionGenerator(BaseGenerator):
                 if not isinstance(text, str) or not text.strip():
                     continue
                 normalized = normalize_text(text)
-                if is_content_hash_topic(normalized) or is_non_speech_annotation(
+                if is_identifier_topic(normalized) or is_non_speech_annotation(
                     normalized
                 ):
                     continue
