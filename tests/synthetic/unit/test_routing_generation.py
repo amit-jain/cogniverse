@@ -21,7 +21,10 @@ from cogniverse_synthetic.dspy_modules import (
     ValidatedEntityQueryGenerator,
 )
 from cogniverse_synthetic.generators.base import GenerationTracker
-from cogniverse_synthetic.generators.routing import RoutingGenerator
+from cogniverse_synthetic.generators.routing import (
+    DuplicateLabelFilter,
+    RoutingGenerator,
+)
 
 pytestmark = pytest.mark.unit
 
@@ -742,196 +745,95 @@ async def test_generation_drops_repeated_canonical_routing_label() -> None:
     )
 
 
-async def test_generation_fills_quota_after_one_duplicate() -> None:
-    """Duplicate canonical labels are dropped and replaced from the surplus."""
-    from cogniverse_synthetic.schemas import EntityExtractionExampleSchema
+def test_duplicate_label_filter_golden() -> None:
+    """Complete golden: duplicate detection is a pure state machine.
 
-    class _SequenceQueryGenerator:
-        max_retries = 3
+    Feed an explicit sequence of canonical labels, assert exact decisions,
+    exact kept-label set, and exact drop errors. No LM, no mock, no fixture
+    contortion — the contract is expressed directly.
+    """
+    filter_ = DuplicateLabelFilter()
+    target_count = 3
 
-        def __init__(self) -> None:
-            self.calls = 0
-            self.outputs = iter(
-                [
-                    "find TensorFlow",
-                    "find TensorFlow",
-                    "find TensorFlow tutorial",
-                    "compare TensorFlow benchmarks",
-                    "TensorFlow deployment guide",
-                    "explain TensorFlow pipelines",
-                ]
-            )
-
-        def __call__(self, **kwargs):
-            self.calls += 1
-            return SimpleNamespace(
-                query=next(self.outputs),
-                reasoning=f"Sequence attempt {self.calls}.",
-                _retry_count=0,
-                _max_retries=3,
-            )
-
-    class _MockEntityLabeler:
-        """Mock entity labeler returning pre-built TensorFlow entity."""
-
-        async def generate(self, *, sampled_content, target_count, tenant_id):
-            topic = sampled_content[0].get("topic", "topic")
-            return [
-                EntityExtractionExampleSchema(
-                    query=topic,
-                    entities=[{"text": "TensorFlow", "type": "TECHNOLOGY"}],
-                    relationships=[],
-                )
-            ]
-
-    query_generator = _SequenceQueryGenerator()
-    generator = RoutingGenerator(
-        entity_extractor=_extract_entities,
-        routing_decider=_route_query,
-        optimizer_config=_routing_generator().optimizer_config,
-    )
-    generator.query_generator = query_generator
-    generator.entity_labeler = _MockEntityLabeler()
-    tracker = GenerationTracker(
-        optimizer="routing",
-        target_count=5,
-        floor_count=1,
-    )
-
-    # Two distinct records for saliency (batch IDF). The mock entity labeler
-    # returns TensorFlow for ANY topic, so all produce the same entity tuple.
-    # The stub query generator returns a fixed sequence: the second
-    # "find TensorFlow" has the same canonical label = duplicate = dropped.
-    examples = await generator.generate(
-        sampled_content=[
-            {"description": "GPU compute accelerated parallel training system"},
-            {"description": "Neural network deep learning model architecture"},
-        ],
-        target_count=5,
-        tenant_id="acme:routing",
-        generation_tracker=tracker,
-        generation_floor_count=1,
-    )
-
-    assert [example.query for example in examples] == [
-        "find TensorFlow",
-        "find TensorFlow tutorial",
-        "compare TensorFlow benchmarks",
-        "TensorFlow deployment guide",
-        "explain TensorFlow pipelines",
+    # Build the canonical label sequence: mix of unique, duplicate, streak
+    labels = [
+        # Label 0: unique → keep
+        ("find TensorFlow", (("TensorFlow", "TECHNOLOGY"),), "video_search_agent"),
+        # Label 1: duplicate of 0 → drop, streak=1
+        ("find TensorFlow", (("TensorFlow", "TECHNOLOGY"),), "video_search_agent"),
+        # Label 2: unique → keep, streak resets
+        ("find PyTorch", (("PyTorch", "TECHNOLOGY"),), "video_search_agent"),
+        # Label 3: duplicate of 0 → drop, streak=1
+        ("find TensorFlow", (("TensorFlow", "TECHNOLOGY"),), "video_search_agent"),
+        # Label 4: duplicate of 2 → drop, streak=2
+        ("find PyTorch", (("PyTorch", "TECHNOLOGY"),), "video_search_agent"),
+        # Label 5: duplicate of 0 → drop, streak=3 (== target_count) → stop
+        ("find TensorFlow", (("TensorFlow", "TECHNOLOGY"),), "video_search_agent"),
+        # Label 6: never reached
+        ("find Marie Curie", (("Marie Curie", "PERSON"),), "research_agent"),
     ]
-    assert [example.enhanced_query for example in examples] == [
-        "find TensorFlow(TECHNOLOGY)",
-        "find TensorFlow(TECHNOLOGY) tutorial",
-        "compare TensorFlow(TECHNOLOGY) benchmarks",
-        "TensorFlow(TECHNOLOGY) deployment guide",
-        "explain TensorFlow(TECHNOLOGY) pipelines",
+
+    # Expected decisions for each label
+    expected_decisions = [
+        "keep",  # 0: unique
+        "drop",  # 1: dup of 0, streak=1
+        "keep",  # 2: unique, streak resets
+        "drop",  # 3: dup of 0, streak=1
+        "drop",  # 4: dup of 2, streak=2
+        "stop",  # 5: dup of 0, streak=3 == target_count
     ]
-    assert [example.chosen_agent for example in examples] == ["video_search_agent"] * 5
-    assert [example.routing_confidence for example in examples] == [0.73] * 5
-    assert query_generator.calls == 6
-    assert tracker.returned_count == 5
-    assert tracker.surplus_exhausted is False
-    assert [drop.candidate for drop in tracker.dropped_examples] == ["find TensorFlow"]
-    assert tracker.dropped_examples[0].reason == (
-        "RoutingGenerator generated duplicate canonical label "
-        "(query='find TensorFlow', entities=(('TensorFlow', 'TECHNOLOGY'),), "
-        "chosen_agent='video_search_agent')"
-    )
 
-
-async def test_generation_stops_after_duplicate_streak_is_exhausted() -> None:
-    """After target_count consecutive duplicate canonical labels, the draw stops."""
-    from cogniverse_synthetic.schemas import EntityExtractionExampleSchema
-
-    class _SequenceQueryGenerator:
-        max_retries = 3
-
-        def __init__(self) -> None:
-            self.calls = 0
-
-        def __call__(self, **kwargs):
-            self.calls += 1
-            return SimpleNamespace(
-                query="find TensorFlow",
-                reasoning=f"Sequence attempt {self.calls}.",
-                _retry_count=0,
-                _max_retries=3,
-            )
-
-    entity_labeler_calls = []
-    routing_calls = []
-
-    class _CountedMockEntityLabeler:
-        """Mock entity labeler returning pre-built TensorFlow entity."""
-
-        async def generate(self, *, sampled_content, target_count, tenant_id):
-            assert tenant_id == "acme:routing"
-            topic = sampled_content[0].get("topic", "topic")
-            entity_labeler_calls.append(topic)
-            return [
-                EntityExtractionExampleSchema(
-                    query=topic,
-                    entities=[{"text": "TensorFlow", "type": "TECHNOLOGY"}],
-                    relationships=[],
-                )
-            ]
-
-    async def _counted_route(query: str, tenant_id: str):
-        assert tenant_id == "acme:routing"
-        routing_calls.append(query)
-        return await _route_query(query, tenant_id)
-
-    query_generator = _SequenceQueryGenerator()
-    generator = RoutingGenerator(
-        entity_extractor=_extract_entities,
-        routing_decider=_counted_route,
-        optimizer_config=_routing_generator().optimizer_config,
-    )
-    generator.query_generator = query_generator
-    generator.entity_labeler = _CountedMockEntityLabeler()
-    tracker = GenerationTracker(
-        optimizer="routing",
-        target_count=5,
-        floor_count=1,
-    )
-
-    # Two distinct records for saliency (batch IDF). The mock entity labeler
-    # returns TensorFlow for ANY topic, so all produce same canonical label.
-    # Stub always returns "find TensorFlow" = every attempt after the first is
-    # a duplicate. After target_count consecutive duplicates, the draw stops.
-    examples = await generator.generate(
-        sampled_content=[
-            {"description": "GPU compute accelerated parallel training system"},
-            {"description": "Neural network deep learning model architecture"},
-        ],
-        target_count=5,
-        tenant_id="acme:routing",
-        generation_tracker=tracker,
-        generation_floor_count=1,
-    )
-
-    # The entity_labeler_calls list contains the saliency-extracted topics.
-    # What matters is: one unique example + 5 dropped duplicates.
-    assert [example.query for example in examples] == ["find TensorFlow"]
-    assert [example.enhanced_query for example in examples] == [
-        "find TensorFlow(TECHNOLOGY)"
-    ]
-    assert query_generator.calls == 6
-    assert len(entity_labeler_calls) == 6
-    assert routing_calls == ["find TensorFlow"] * 6
-    assert tracker.returned_count == 1
-    assert tracker.surplus_exhausted is True
-    assert [drop.candidate for drop in tracker.dropped_examples] == [
-        "find TensorFlow"
-    ] * 5
-    assert [drop.reason for drop in tracker.dropped_examples] == [
+    # Expected error messages (None for keep, exact message for drop/stop)
+    expected_errors = [
+        None,
         (
             "RoutingGenerator generated duplicate canonical label "
             "(query='find TensorFlow', entities=(('TensorFlow', 'TECHNOLOGY'),), "
             "chosen_agent='video_search_agent')"
-        )
-    ] * 5
+        ),
+        None,
+        (
+            "RoutingGenerator generated duplicate canonical label "
+            "(query='find TensorFlow', entities=(('TensorFlow', 'TECHNOLOGY'),), "
+            "chosen_agent='video_search_agent')"
+        ),
+        (
+            "RoutingGenerator generated duplicate canonical label "
+            "(query='find PyTorch', entities=(('PyTorch', 'TECHNOLOGY'),), "
+            "chosen_agent='video_search_agent')"
+        ),
+        (
+            "RoutingGenerator generated duplicate canonical label "
+            "(query='find TensorFlow', entities=(('TensorFlow', 'TECHNOLOGY'),), "
+            "chosen_agent='video_search_agent')"
+        ),
+    ]
+
+    # Run the filter on all labels up to the stop
+    actual_decisions = []
+    actual_errors = []
+    for label in labels:
+        decision, error = filter_.check(label, target_count)
+        actual_decisions.append(decision)
+        actual_errors.append(str(error) if error else None)
+        if decision == "stop":
+            break
+
+    # Assert exact decision sequence
+    assert actual_decisions == expected_decisions
+
+    # Assert exact error messages
+    assert actual_errors == expected_errors
+
+    # Assert exact kept labels (the unique ones)
+    assert filter_.seen_count == 2
+    assert filter_._seen == {
+        ("find TensorFlow", (("TensorFlow", "TECHNOLOGY"),), "video_search_agent"),
+        ("find PyTorch", (("PyTorch", "TECHNOLOGY"),), "video_search_agent"),
+    }
+
+    # Assert final streak count
+    assert filter_.duplicate_streak == 3
 
 
 async def test_generation_preserves_actual_gateway_routing_decision() -> None:

@@ -72,6 +72,58 @@ def _enhance_entity_query(query: str, entities: List[Dict]) -> str:
     )
 
 
+# Type alias for canonical labels: (query, sorted entity tuples, chosen_agent)
+CanonicalLabel = tuple[str, tuple[tuple[str, str], ...], str]
+
+
+class DuplicateLabelFilter:
+    """Pure state machine for duplicate canonical label detection.
+
+    Tracks seen labels and a consecutive duplicate streak. Returns a decision
+    for each label: keep (unique), drop (duplicate, continue), or stop
+    (duplicate streak reached target_count).
+    """
+
+    __slots__ = ("_seen", "_duplicate_streak")
+
+    def __init__(self) -> None:
+        self._seen: set[CanonicalLabel] = set()
+        self._duplicate_streak: int = 0
+
+    def check(
+        self, label: CanonicalLabel, target_count: int
+    ) -> tuple[str, ValueError | None]:
+        """Return (decision, error) for a canonical label.
+
+        Returns:
+            ("keep", None) — label is unique, add to results
+            ("drop", ValueError) — duplicate, skip but continue
+            ("stop", ValueError) — duplicate streak hit target_count, break
+        """
+        query, canonical_entities, chosen_agent = label
+        if label in self._seen:
+            error = ValueError(
+                "RoutingGenerator generated duplicate canonical label "
+                f"(query={query!r}, entities={canonical_entities!r}, "
+                f"chosen_agent={chosen_agent!r})"
+            )
+            self._duplicate_streak += 1
+            if self._duplicate_streak >= target_count:
+                return ("stop", error)
+            return ("drop", error)
+        self._duplicate_streak = 0
+        self._seen.add(label)
+        return ("keep", None)
+
+    @property
+    def seen_count(self) -> int:
+        return len(self._seen)
+
+    @property
+    def duplicate_streak(self) -> int:
+        return self._duplicate_streak
+
+
 class RoutingGenerator(BaseGenerator):
     """
     Generate RoutingExperience data for advanced routing with entity extraction
@@ -188,9 +240,8 @@ class RoutingGenerator(BaseGenerator):
 
         saliency = TopicSaliency.from_records(sampled_content)
         examples = []
-        canonical_labels: set[tuple[str, tuple[tuple[str, str], ...], str]] = set()
+        duplicate_filter = DuplicateLabelFilter()
         last_validation_error: Exception | None = None
-        duplicate_streak = 0
         attempts = 0
         attempt_budget = self._routing_candidate_budget(target_count)
 
@@ -245,21 +296,18 @@ class RoutingGenerator(BaseGenerator):
             canonical_entities = tuple(
                 sorted((entity["text"], entity["type"]) for entity in entities)
             )
-            canonical_label = (query, canonical_entities, chosen_agent)
-            if canonical_label in canonical_labels:
-                last_validation_error = ValueError(
-                    "RoutingGenerator generated duplicate canonical label "
-                    f"(query={query!r}, entities={canonical_entities!r}, "
-                    f"chosen_agent={chosen_agent!r})"
-                )
+            canonical_label: CanonicalLabel = (query, canonical_entities, chosen_agent)
+            decision, dup_error = duplicate_filter.check(canonical_label, target_count)
+            if decision == "stop":
+                last_validation_error = dup_error
                 if isinstance(generation_tracker, GenerationTracker):
-                    generation_tracker.record_drop(query, last_validation_error)
-                duplicate_streak += 1
-                if duplicate_streak >= target_count:
-                    break
+                    generation_tracker.record_drop(query, dup_error)
+                break
+            if decision == "drop":
+                last_validation_error = dup_error
+                if isinstance(generation_tracker, GenerationTracker):
+                    generation_tracker.record_drop(query, dup_error)
                 continue
-            duplicate_streak = 0
-            canonical_labels.add(canonical_label)
 
             metadata = {
                 **generation_metadata,
