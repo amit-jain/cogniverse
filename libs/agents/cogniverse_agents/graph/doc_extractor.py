@@ -565,58 +565,6 @@ class DocExtractor:
             chunks.append(current)
         return chunks
 
-    def _fallback_extract(self, chunk: str) -> List[Tuple[str, str]]:
-        """Cheap fallback when GLiNER is unavailable: capitalized phrases.
-
-        Splits on sentence-initial capitalized articles so "The ColPali" →
-        "ColPali". Only accepts phrases that start with a non-stopword
-        capitalized token.
-        """
-        stopwords = {
-            "the",
-            "this",
-            "that",
-            "these",
-            "those",
-            "there",
-            "here",
-            "when",
-            "where",
-            "how",
-            "why",
-            "what",
-            "which",
-            "who",
-            "it",
-            "its",
-            "a",
-            "an",
-            "and",
-            "but",
-            "or",
-            "so",
-        }
-        candidates = re.findall(
-            r"\b([A-Z][a-zA-Z0-9]+(?:\s+[A-Z][a-zA-Z0-9]+){0,3})\b", chunk
-        )
-        seen: Set[str] = set()
-        out: List[Tuple[str, str]] = []
-        for raw in candidates:
-            parts = raw.split()
-            while parts and parts[0].lower() in stopwords:
-                parts.pop(0)
-            if not parts:
-                continue
-            name = " ".join(parts)
-            if len(name) < 3:
-                continue
-            key = name.lower()
-            if key in seen:
-                continue
-            seen.add(key)
-            out.append((name, "Concept"))
-        return out
-
 
 class ClaimExtractorProtocol:
     """Structural protocol — ClaimExtractor satisfies this without inheriting."""
