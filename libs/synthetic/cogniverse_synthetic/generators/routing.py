@@ -21,7 +21,6 @@ from cogniverse_synthetic.generators.base import (
     DEFAULT_SYNTHETIC_GENERATION_FLOOR_COUNT,
     BaseGenerator,
     GenerationTracker,
-    extract_topic,
 )
 from cogniverse_synthetic.generators.entity_extraction import (
     DEFAULT_ENTITY_EXTRACTION_TIMEOUT_SECONDS,
@@ -29,14 +28,12 @@ from cogniverse_synthetic.generators.entity_extraction import (
     EntityExtractor,
 )
 from cogniverse_synthetic.schemas import RoutingExperienceSchema
+from cogniverse_synthetic.topics import TopicSaliency, extract_topic
 
 logger = logging.getLogger(__name__)
 
 RoutingDecider = Callable[[str, str], Awaitable[Any]]
 DEFAULT_PRODUCTION_LABEL_TIMEOUT_SECONDS = 300.0
-# Routing queries are user-style search questions, so they use the same
-# 20-word topic cap as profile selection instead of a caption-length summary.
-TOPIC_WORD_BUDGET = 20
 
 
 class _QueryGeneratorBoundaryError(Exception):
@@ -189,6 +186,7 @@ class RoutingGenerator(BaseGenerator):
             )
         )
 
+        saliency = TopicSaliency.from_records(sampled_content)
         examples = []
         canonical_labels: set[tuple[str, tuple[tuple[str, str], ...], str]] = set()
         last_validation_error: Exception | None = None
@@ -199,7 +197,7 @@ class RoutingGenerator(BaseGenerator):
         while len(examples) < target_count and attempts < attempt_budget:
             content = sampled_content[attempts % len(sampled_content)]
             attempts += 1
-            topic = self._extract_topic(content)
+            topic = self._extract_topic(content, saliency=saliency)
 
             try:
                 labelled = await self.entity_labeler.generate(
@@ -453,8 +451,8 @@ class RoutingGenerator(BaseGenerator):
             ) from e
 
     @staticmethod
-    def _extract_topic(content: Dict[str, Any]) -> str:
-        topic = extract_topic(content, max_words=TOPIC_WORD_BUDGET)
+    def _extract_topic(content: Dict[str, Any], *, saliency: TopicSaliency) -> str:
+        topic = extract_topic(content, saliency=saliency)
         if topic is not None:
             return topic
         raise ValueError("sampled routing content requires a non-empty topic")

@@ -24,15 +24,14 @@ from cogniverse_synthetic.generators.base import (
     DEFAULT_SYNTHETIC_GENERATION_FLOOR_COUNT,
     BaseGenerator,
     GenerationTracker,
-    extract_topic,
 )
 from cogniverse_synthetic.schemas import ProfileSelectionExampleSchema
+from cogniverse_synthetic.topics import TopicSaliency, extract_topic
 
 logger = logging.getLogger(__name__)
 
 ProfileLabeler = Callable[[str, List[str], str], Awaitable[Any]]
 DEFAULT_PRODUCTION_LABEL_TIMEOUT_SECONDS = 300.0
-TOPIC_WORD_BUDGET = 20
 
 
 class ProfileGenerator(BaseGenerator):
@@ -107,9 +106,12 @@ class ProfileGenerator(BaseGenerator):
                 floor_count=floor_count,
             )
 
-        if not self._extract_topics(sampled_content):
+        saliency = TopicSaliency.from_records(sampled_content)
+        if not self._extract_topics(sampled_content, saliency):
             raise ValueError("sampled_content contains no usable profile topic")
-        queries = self._build_grounded_queries(sampled_content, profile_configs)
+        queries = self._build_grounded_queries(
+            sampled_content, profile_configs, saliency
+        )
 
         examples: List[BaseModel] = []
         last_validation_error: Exception | None = None
@@ -301,6 +303,7 @@ class ProfileGenerator(BaseGenerator):
         generation_tracker: GenerationTracker | None = None,
         floor_count: int = DEFAULT_SYNTHETIC_GENERATION_FLOOR_COUNT,
     ) -> List[BaseModel]:
+        saliency = TopicSaliency.from_records(sampled_content)
         profiles_by_modality: Dict[str, List[str]] = {}
         schema_modalities: Dict[str, str] = {}
         for profile_name, profile_config in profile_configs.items():
@@ -324,7 +327,7 @@ class ProfileGenerator(BaseGenerator):
                 raise ValueError(
                     f"Sampled content schema {schema_name!r} has no configured profile"
                 )
-            topic = self._extract_topic(item)
+            topic = self._extract_topic(item, saliency=saliency)
             if topic is None:
                 raise ValueError(
                     f"Sampled {modality} content requires a non-empty topic or title"
@@ -384,8 +387,10 @@ class ProfileGenerator(BaseGenerator):
         logger.info(f"Generated {len(examples)} cross-modal examples")
         return examples
 
-    def _extract_topic(self, item: Dict[str, Any]) -> str | None:
-        return extract_topic(item, max_words=TOPIC_WORD_BUDGET)
+    def _extract_topic(
+        self, item: Dict[str, Any], *, saliency: TopicSaliency
+    ) -> str | None:
+        return extract_topic(item, saliency=saliency)
 
     def _source_profile_config(
         self,
@@ -410,10 +415,11 @@ class ProfileGenerator(BaseGenerator):
         self,
         sampled_content: List[Dict[str, Any]],
         profile_configs: Dict[str, Dict[str, Any]],
+        saliency: TopicSaliency,
     ) -> List[str]:
         queries: List[str] = []
         for item in sampled_content:
-            topic = self._extract_topic(item)
+            topic = self._extract_topic(item, saliency=saliency)
             if topic is None:
                 continue
             traits = self._profile_traits(
@@ -424,10 +430,12 @@ class ProfileGenerator(BaseGenerator):
                 queries.append(query)
         return queries
 
-    def _extract_topics(self, sampled_content: List[Dict[str, Any]]) -> List[str]:
+    def _extract_topics(
+        self, sampled_content: List[Dict[str, Any]], saliency: TopicSaliency
+    ) -> List[str]:
         topics = []
         for item in sampled_content:
-            topic = self._extract_topic(item)
+            topic = self._extract_topic(item, saliency=saliency)
             if topic is not None and topic not in topics:
                 topics.append(topic)
         return topics
