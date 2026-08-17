@@ -1556,7 +1556,12 @@ class TestEnhancedQueryEnhancementAgent:
         qe_agent._emit_enhancement_span(
             tenant_id="acme",
             original_query="robots",
+            source_text="industrial robots weld car frames",
+            grounding_context="Entities: robots (CONCEPT)",
             enhanced_query="robots enhanced",
+            expansion_terms=["weld", "car frames"],
+            synonyms=["machines"],
+            context_additions=["industrial"],
             variant_count=2,
             confidence=0.85,
         )
@@ -1569,11 +1574,17 @@ class TestEnhancedQueryEnhancementAgent:
             c.args[0]: c.args[1] for c in mock_span.set_attribute.call_args_list
         }
         assert recorded["input.value"] == "robots"
+        assert recorded["input.source_text"] == "industrial robots weld car frames"
+        assert recorded["input.grounding_context"] == "Entities: robots (CONCEPT)"
         assert recorded["operation"] == "query_enhancement"
-        output = json.loads(recorded["output.value"])
-        assert output["enhanced_query"] == "robots enhanced"
-        assert output["variant_count"] == 2
-        assert output["confidence"] == 0.85
+        assert json.loads(recorded["output.value"]) == {
+            "enhanced_query": "robots enhanced",
+            "expansion_terms": ["weld", "car frames"],
+            "synonyms": ["machines"],
+            "context_additions": ["industrial"],
+            "variant_count": 2,
+            "confidence": 0.85,
+        }
 
     def test_emit_span_noop_without_telemetry_manager(self, qe_agent):
         """No error when telemetry_manager is absent."""
@@ -1582,7 +1593,12 @@ class TestEnhancedQueryEnhancementAgent:
         qe_agent._emit_enhancement_span(
             tenant_id="t",
             original_query="q",
+            source_text="",
+            grounding_context="",
             enhanced_query="eq",
+            expansion_terms=[],
+            synonyms=[],
+            context_additions=[],
             variant_count=0,
             confidence=0.5,
         )
@@ -1597,7 +1613,12 @@ class TestEnhancedQueryEnhancementAgent:
         qe_agent._emit_enhancement_span(
             tenant_id="t",
             original_query="q",
+            source_text="",
+            grounding_context="",
             enhanced_query="eq",
+            expansion_terms=[],
+            synonyms=[],
+            context_additions=[],
             variant_count=0,
             confidence=0.5,
         )
