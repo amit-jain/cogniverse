@@ -54,9 +54,10 @@ async def test_cold_replica_enforces_persisted_quotas(real_artifact_backed_admin
     # A cold replica (cache cleared) enforces a pin — it must read the persisted
     # blob, not fall back to hardcoded defaults.
     admin_router._reset_admin_overrides_for_tests()
-    await admin_router._load_pin_quotas(TENANT)
+    loaded = await admin_router._load_pin_quotas(TENANT)
 
-    quotas = PinQuotas.for_tenant(TENANT)
+    quotas = PinQuotas.for_tenant(TENANT, admin_overrides=loaded)
+    assert loaded == {"user": 3, "tenant_admin": 7, "org_admin": -1}
     assert quotas.user == 3
     assert quotas.tenant_admin == 7
     assert quotas.org_admin is None  # -1 sentinel == unlimited
@@ -74,6 +75,12 @@ async def test_defaults_when_no_blob_persisted(real_artifact_backed_admin):
     assert (
         admin_router.canonical_tenant_id(unwritten)
         not in admin_router._pin_quota_overrides
+    )
+    quotas = PinQuotas.for_tenant(unwritten, admin_overrides=loaded)
+    assert (quotas.user, quotas.tenant_admin, quotas.org_admin) == (
+        50,
+        500,
+        None,
     )
 
 
