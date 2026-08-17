@@ -235,9 +235,7 @@ async def _deploy_tenant_schema_with_retry(
                 _TENANT_SCHEMA_DEPLOY_MAX_ATTEMPTS,
             )
             await asyncio.sleep(backoff_s)
-            backoff_s = min(
-                backoff_s * 2, _TENANT_SCHEMA_DEPLOY_MAX_BACKOFF_S
-            )
+            backoff_s = min(backoff_s * 2, _TENANT_SCHEMA_DEPLOY_MAX_BACKOFF_S)
 
 
 # ============================================================================
