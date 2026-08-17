@@ -23,7 +23,16 @@ logger = logging.getLogger(__name__)
 
 _ZERO_WIDTH_TRANSLATION = str.maketrans("", "", "\ufeff\u200b\u200c\u200d\u2060")
 _SCHEMA_DIR = Path(__file__).resolve().parents[4] / "configs" / "schemas"
-_CONTENT_HASH_TOPIC_RE = re.compile(r"^[0-9a-f]{32,}(?:_seg_\d+)?$", re.IGNORECASE)
+_HEX_DIGEST_RE = re.compile(r"[0-9a-f]{32,}(?:_seg_\d+)?", re.IGNORECASE)
+_UUID_RE = re.compile(
+    r"[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}", re.IGNORECASE
+)
+_PREFIXED_DIGEST_RE = re.compile(
+    r"(?:md5|sha1|sha256|sha512|blake2b):[0-9a-f]{8,}", re.IGNORECASE
+)
+_PREFIXED_ID_RE = re.compile(r"[A-Za-z]{1,6}[_-]([A-Za-z0-9_\-]+)")
+_FILENAME_RE = re.compile(r"(.+)\.[A-Za-z0-9]{1,5}")
+_MIN_IDENTIFIER_BODY_CHARS = 6
 _NON_SPEECH_ANNOTATION_TOKEN = r"(?:\*[^*]+\*|\[[^\[\]]+\]|\([^()]+\))"
 _NON_SPEECH_ANNOTATION_RE = re.compile(
     rf"^(?:{_NON_SPEECH_ANNOTATION_TOKEN})(?:\s+{_NON_SPEECH_ANNOTATION_TOKEN})*$"
@@ -43,9 +52,31 @@ def normalize_text(value: str) -> str:
     return " ".join(value.translate(_ZERO_WIDTH_TRANSLATION).split())
 
 
-def is_content_hash_topic(value: str) -> bool:
-    """Return True when a topic is only an identifier-like content hash."""
-    return bool(_CONTENT_HASH_TOPIC_RE.fullmatch(normalize_text(value)))
+def _is_bare_identifier(text: str) -> bool:
+    if (
+        _HEX_DIGEST_RE.fullmatch(text)
+        or _UUID_RE.fullmatch(text)
+        or _PREFIXED_DIGEST_RE.fullmatch(text)
+    ):
+        return True
+    match = _PREFIXED_ID_RE.fullmatch(text)
+    if match is None:
+        return False
+    body = match.group(1)
+    return len(body) >= _MIN_IDENTIFIER_BODY_CHARS and any(
+        char.isdigit() for char in body
+    )
+
+
+def is_identifier_topic(value: str) -> bool:
+    """Return True when a value is only an identifier, not descriptive text."""
+    text = normalize_text(value)
+    if not text or " " in text:
+        return False
+    if _is_bare_identifier(text):
+        return True
+    stem = _FILENAME_RE.fullmatch(text)
+    return stem is not None and _is_bare_identifier(stem.group(1))
 
 
 def is_non_speech_annotation(value: str) -> bool:
@@ -216,7 +247,7 @@ def extract_topic(
         if not isinstance(value, str):
             continue
         topic = normalize_text(value)
-        if not topic or is_content_hash_topic(topic) or is_non_speech_annotation(topic):
+        if not topic or is_identifier_topic(topic) or is_non_speech_annotation(topic):
             continue
         if max_words is not None:
             topic = " ".join(topic.split()[:max_words])

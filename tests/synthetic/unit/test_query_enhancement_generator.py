@@ -29,7 +29,7 @@ MORPHOLOGY_SOURCE_TEXT = (
 )
 DOCUMENT_TOPIC = "v_-6dz6tBH77I.txt"
 DOCUMENT_BODY = "\ufeffThe video is of a man. People applaude loudly."
-DOCUMENT_SOURCE_TEXT = DOCUMENT_BODY.lstrip("\ufeff") + "\n" + DOCUMENT_TOPIC
+DOCUMENT_SOURCE_TEXT = "The video is of a man. People applaude loudly."
 
 
 def _document_sample() -> dict[str, Any]:

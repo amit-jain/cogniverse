@@ -21,7 +21,7 @@ from cogniverse_synthetic.generators.base import (
     GenerationTracker,
     entity_candidate_text_fields,
     extract_topic,
-    is_content_hash_topic,
+    is_identifier_topic,
     is_non_speech_annotation,
     normalize_text,
 )
@@ -238,7 +238,7 @@ class QueryEnhancementGenerator(BaseGenerator):
             text = item.get(field)
             if isinstance(text, str):
                 normalized = normalize_text(text)
-                if is_content_hash_topic(normalized) or is_non_speech_annotation(
+                if is_identifier_topic(normalized) or is_non_speech_annotation(
                     normalized
                 ):
                     continue
@@ -275,7 +275,7 @@ class QueryEnhancementGenerator(BaseGenerator):
             value = item.get(field)
             if isinstance(value, str):
                 text = normalize_text(value)
-                if is_content_hash_topic(text) or is_non_speech_annotation(text):
+                if is_identifier_topic(text) or is_non_speech_annotation(text):
                     continue
                 if text and text not in parts:
                     parts.append(text)

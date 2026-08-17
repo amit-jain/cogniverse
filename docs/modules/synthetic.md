@@ -201,7 +201,7 @@ floor cannot be met.
 This keeps generated labels identical to the behaviour being optimized instead
 of inferring types from capitalization. The entity shape matches what the
 finetuning evaluator (`adapter_evaluator._check_entity_prediction`) scores.
-Pure content hashes and pure non-speech annotations such as `*Screaming*` or
+Pure identifiers and pure non-speech annotations such as `*Screaming*` or
 `[Music]` are skipped before entity labeling; mixed speech strings remain as
 source text.
 
@@ -751,11 +751,16 @@ invalid for an `entity_rich` query.
 
 Canonical topic extraction lives in `cogniverse_synthetic.generators.base`.
 `extract_topic(...)` walks the shipped schema text roles in canonical order,
-ignores content hashes and pure non-speech annotations, and can cap the result
+ignores identifiers and pure non-speech annotations, and can cap the result
 with an optional `max_words` budget. The structural predicate
-`is_non_speech_annotation(...)` matches text made only of bracketed,
-parenthesized, or asterisked annotation tokens. Mixed strings are preserved
-verbatim. Numeric timestamps accept seconds, milliseconds, microseconds, or
+`is_identifier_topic(...)` matches a single token that is only an identifier:
+a hex digest, a UUID, a `sha256:`-style prefixed digest, or a short alphabetic
+prefix joined by `_`/`-` to a digit-bearing body of at least six characters,
+with one optional filename extension. Text containing a space is never an
+identifier, so `t-shirt`, `COVID-19` and `report.pdf` stay descriptive. The
+structural predicate `is_non_speech_annotation(...)` matches text made only of
+bracketed, parenthesized, or asterisked annotation tokens. Mixed strings are
+preserved verbatim. Numeric timestamps accept seconds, milliseconds, microseconds, or
 nanoseconds and are normalized to UTC before recency classification. Text and
 `datetime` values must carry an explicit timezone offset; naive values are
 rejected rather than being treated as UTC. A supplied timestamp that cannot be
