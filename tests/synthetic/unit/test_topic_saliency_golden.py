@@ -16,7 +16,7 @@ from cogniverse_synthetic.topics import (
     extract_topic,
 )
 
-CORPUS_DIR = Path("data/testset/Test_Human_Annotated_Captions")
+CORPUS_DIR = Path(__file__).resolve().parent / "data" / "human_captions"
 
 GOLDEN_TOPICS = {
     "v_-6dz6tBH77I.txt": "also several people sitting on bleachers",
