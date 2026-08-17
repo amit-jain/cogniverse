@@ -426,6 +426,43 @@ class TestGatewayComplexRouting:
             {"agent_name", "reasoning", "depends_on"}
         ] * len(plan_steps), plan_steps
 
+    def test_planner_repeating_an_agent_still_orchestrates(self):
+        """The planner LM listed deep_research_agent twice for this exact
+        query and the request came back 400; the plan must instead
+        normalize to one step per agent and execute."""
+        query = "find cooking recipe demonstrations run 15"
+        with httpx.Client(base_url=RUNTIME, timeout=900.0) as client:
+            resp = client.post(
+                "/agents/gateway_agent/process",
+                json={
+                    "agent_name": "gateway_agent",
+                    "query": query,
+                    "context": {"tenant_id": TENANT_ID},
+                    "top_k": 3,
+                },
+            )
+
+        assert resp.status_code == 200, f"HTTP {resp.status_code} {resp.text[:500]}"
+        data = resp.json()
+        gw = data["gateway"]
+        assert (gw["complexity"], gw["routed_to"]) == expected_gateway_routing(
+            query, gw
+        )
+        assert gw["routed_to"] == "orchestrator_agent", gw
+        assert_orchestrated(data, query, gw)
+        plan_agents = [
+            step["agent_name"] for step in data["orchestration_result"]["plan_steps"]
+        ]
+        assert plan_agents != [], data["orchestration_result"]
+        assert plan_agents == list(dict.fromkeys(plan_agents)), plan_agents
+        assert set(data["orchestration_result"]["agent_results"]) == set(plan_agents), (
+            data["orchestration_result"]["agent_results"]
+        )
+        n = len(plan_agents)
+        assert data["orchestration_result"]["execution_summary"].startswith(
+            f"Executed {n}/{n} steps ({n} successful). Plan: "
+        ), data["orchestration_result"]["execution_summary"]
+
     def test_analysis_keyword_triggers_complex(self):
         """Queries with 'analyze'/'summarize' keywords should be complex
         regardless of modality confidence — the complexity detection
