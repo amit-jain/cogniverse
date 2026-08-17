@@ -27,7 +27,7 @@ NAMESPACE = "cogniverse"
 RUNTIME = (
     "http://localhost:33000"  # runtime.service.nodePort — matches tests/e2e/conftest.py
 )
-HEAVY_TIMEOUT_S = 1500.0  # 25 min — covers DSPy training + Phoenix work
+HEAVY_TIMEOUT_S = 3600.0  # 60 min; measured run was 2026-08-17T13:26:55Z→14:14:03Z
 POLL_INTERVAL_S = 10.0
 
 
