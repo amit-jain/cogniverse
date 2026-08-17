@@ -30,6 +30,7 @@ from cogniverse_foundation.config.unified_config import (
     BackendProfileConfig,
 )
 from cogniverse_synthetic.generators import QueryEnhancementGenerator
+from cogniverse_synthetic.grounding import source_term_keys, term_is_grounded
 from cogniverse_synthetic.schemas import (
     QueryEnhancementExampleSchema,
     SyntheticDataRequest,
@@ -329,16 +330,11 @@ async def test_real_lm_query_agent_labels_grounded_terms(
     }
 
     item = response.data[0]
-    source_term_keys = QueryEnhancementGenerator._source_term_keys(
-        qe_service.source_text
-    )
+    keys = source_term_keys(qe_service.source_text)
     assert item["query"] == qe_service.expected_query
     assert item["enhanced_query"] != item["query"]
     assert item["context"] == qe_service.profile_name
-    assert all(
-        QueryEnhancementGenerator._term_is_grounded(term, source_term_keys)
-        for term in item["expansion_terms"]
-    )
+    assert all(term_is_grounded(term, keys) for term in item["expansion_terms"])
     assert all(isinstance(s, str) and s.strip() for s in item["synonyms"])
     assert item["reasoning"].strip() == item["reasoning"]
 

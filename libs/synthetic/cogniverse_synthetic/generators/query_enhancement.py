@@ -10,11 +10,9 @@ so approved examples retain their source boundary.
 import asyncio
 import logging
 import math
-import re
 from collections.abc import Awaitable, Callable
 from typing import Any, Dict, List, Optional
 
-import snowballstemmer
 from pydantic import BaseModel, ValidationError
 
 from cogniverse_synthetic.generators.base import (
@@ -27,6 +25,7 @@ from cogniverse_synthetic.generators.base import (
     is_non_speech_annotation,
     normalize_text,
 )
+from cogniverse_synthetic.grounding import source_term_keys, term_is_grounded
 from cogniverse_synthetic.schemas import QueryEnhancementExampleSchema
 
 logger = logging.getLogger(__name__)
@@ -34,52 +33,6 @@ logger = logging.getLogger(__name__)
 QueryEnhancer = Callable[[str, str, str], Awaitable[Any]]
 DEFAULT_PRODUCTION_LABEL_TIMEOUT_SECONDS = 300.0
 TOPIC_WORD_BUDGET = 4
-GROUNDING_STOPWORDS = frozenset(
-    {
-        "a",
-        "an",
-        "and",
-        "are",
-        "as",
-        "at",
-        "be",
-        "but",
-        "by",
-        "for",
-        "from",
-        "in",
-        "into",
-        "is",
-        "it",
-        "of",
-        "on",
-        "or",
-        "so",
-        "than",
-        "that",
-        "the",
-        "these",
-        "this",
-        "those",
-        "to",
-        "via",
-        "was",
-        "were",
-        "with",
-        "without",
-    }
-)
-GROUNDING_MORPHOLOGY_NORMALIZATIONS = {
-    "children": "child",
-    "feet": "foot",
-    "geese": "goose",
-    "men": "man",
-    "mice": "mouse",
-    "people": "person",
-    "teeth": "tooth",
-    "women": "woman",
-}
-_GROUNDING_STEMMER = snowballstemmer.stemmer("english")
 
 
 class QueryEnhancementGenerator(BaseGenerator):
@@ -195,11 +148,9 @@ class QueryEnhancementGenerator(BaseGenerator):
         expansion_terms = self._output_terms(
             result.get("expansion_terms"), "expansion_terms"
         )
-        source_term_keys = self._source_term_keys(source_text)
+        keys = source_term_keys(source_text)
         unrelated_terms = [
-            term
-            for term in expansion_terms
-            if not self._term_is_grounded(term, source_term_keys)
+            term for term in expansion_terms if not term_is_grounded(term, keys)
         ]
         if unrelated_terms:
             raise ValueError(
@@ -254,31 +205,6 @@ class QueryEnhancementGenerator(BaseGenerator):
                 f"query enhancement {field_name} must be a list of non-empty strings"
             )
         return [term.strip() for term in value]
-
-    @staticmethod
-    def _source_term_keys(source_text: str) -> set[str]:
-        return {
-            QueryEnhancementGenerator._normalize_grounding_token(token)
-            for token in re.findall(
-                r"[A-Za-z0-9]+", normalize_text(source_text).casefold()
-            )
-            if token
-        }
-
-    @classmethod
-    def _term_is_grounded(cls, term: str, source_term_keys: set[str]) -> bool:
-        term_tokens = {
-            cls._normalize_grounding_token(token)
-            for token in re.findall(r"[A-Za-z0-9]+", normalize_text(term).casefold())
-            if token and token not in GROUNDING_STOPWORDS
-        }
-        return bool(term_tokens) and term_tokens <= source_term_keys
-
-    @staticmethod
-    def _normalize_grounding_token(token: str) -> str:
-        token = token.casefold()
-        token = GROUNDING_MORPHOLOGY_NORMALIZATIONS.get(token, token)
-        return _GROUNDING_STEMMER.stemWord(token)
 
     def _source_records(
         self, sampled_content: List[Dict[str, Any]]
