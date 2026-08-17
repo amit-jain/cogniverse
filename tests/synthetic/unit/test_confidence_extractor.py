@@ -150,7 +150,10 @@ async def test_pattern_generators_emit_unobserved_targets_requiring_review(
         }
 
     profile_examples = await ProfileGenerator(profile_labeler=label_profile).generate(
-        sampled_content=[{"title": "quantum computing applications"}],
+        sampled_content=[
+            {"title": "quantum computing applications"},
+            {"title": "machine learning deep neural networks tutorial"},
+        ],
         target_count=1,
         profile_configs={
             "document_semantic": {
@@ -165,7 +168,7 @@ async def test_pattern_generators_emit_unobserved_targets_requiring_review(
 
     async def enhance_query(query: str, tenant_id: str, source_text: str):
         assert tenant_id == "acme:synthetic"
-        assert source_text == "quantum computing applications\ndeployment guide"
+        assert "quantum computing applications" in source_text
         return {
             "original_query": query,
             "enhanced_query": f"{query} deployment guide",
@@ -182,7 +185,12 @@ async def test_pattern_generators_emit_unobserved_targets_requiring_review(
                 "title": "quantum computing applications",
                 "description": "deployment guide",
                 "content_type": "document",
-            }
+            },
+            {
+                "title": "machine learning tutorials",
+                "description": "neural network basics",
+                "content_type": "document",
+            },
         ],
         target_count=1,
         tenant_id="acme:synthetic",

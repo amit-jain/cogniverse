@@ -55,6 +55,17 @@ def _document_sample() -> dict[str, Any]:
     }
 
 
+def _second_sample() -> dict[str, Any]:
+    """A second sample record for saliency computation."""
+    return {
+        "topic": "v_other.txt",
+        "description": "A different video showing various outdoor activities in nature.",
+        "schema_name": "document_text",
+        "profile_name": "document_text_semantic",
+        "content_type": "video",
+    }
+
+
 @pytest.mark.asyncio
 async def test_generator_accepts_grounded_multi_word_expansion_terms():
     async def enhance_query(query: str, tenant_id: str, source_text: str):
@@ -85,15 +96,20 @@ async def test_generator_accepts_grounded_multi_word_expansion_terms():
                 "title": "animal rodeo",
                 "description": "livestock competition agricultural fair spectator viewing area dirt arena",
                 "content_type": "video",
-            }
+            },
+            _second_sample(),
         ],
         target_count=1,
         tenant_id="acme:synthetic",
     )
 
-    assert examples[0].query == "livestock competition agricultural fair"
+    # Saliency extracts 6-word span from the first record (livestock)
+    assert examples[0].context == "video"
+    assert (
+        examples[0].query == "livestock competition agricultural fair spectator viewing"
+    )
     assert examples[0].enhanced_query == (
-        "livestock competition agricultural fair animal rodeo livestock "
+        "livestock competition agricultural fair spectator viewing animal rodeo livestock "
         "competition agricultural fair "
         "spectator viewing area dirt arena"
     )
@@ -111,9 +127,11 @@ async def test_generator_accepts_grounded_multi_word_expansion_terms():
 
 @pytest.mark.asyncio
 async def test_generator_accepts_grounded_morphological_variants():
+    enhance_calls = []
+
     async def enhance_query(query: str, tenant_id: str, source_text: str):
         assert tenant_id == "acme:synthetic"
-        assert source_text == MORPHOLOGY_SOURCE_TEXT
+        enhance_calls.append((query, source_text))
         return {
             "original_query": query,
             "enhanced_query": (f"{query} wire mesh fence view men watching event"),
@@ -129,17 +147,21 @@ async def test_generator_accepts_grounded_morphological_variants():
     examples = await generator.generate(
         sampled_content=[
             {
+                "topic": "v_morph.txt",
                 "description": MORPHOLOGY_SOURCE_TEXT,
                 "content_type": "video",
-            }
+            },
+            _second_sample(),
         ],
         target_count=1,
         tenant_id="acme:synthetic",
     )
 
-    assert examples[0].query == "This video frame captures"
+    # Saliency extracts "rodeo or similar competition viewed through"
+    assert examples[0].context == "video"
+    assert examples[0].query == "rodeo or similar competition viewed through"
     assert examples[0].enhanced_query == (
-        "This video frame captures wire mesh fence view men watching event"
+        "rodeo or similar competition viewed through wire mesh fence view men watching event"
     )
     assert examples[0].expansion_terms == [
         "wire mesh fence view",
@@ -150,6 +172,12 @@ async def test_generator_accepts_grounded_morphological_variants():
     assert examples[0].reasoning == (
         "Production enhancement returned grounded morphology variants."
     )
+    assert enhance_calls == [
+        (
+            "rodeo or similar competition viewed through",
+            f"{MORPHOLOGY_SOURCE_TEXT}\nv_morph.txt",
+        )
+    ]
 
 
 @pytest.mark.parametrize(
@@ -285,40 +313,57 @@ def test_grounding_normalization_is_morphological_then_stemmed():
 
 @pytest.mark.asyncio
 async def test_generator_accepts_grounded_document_body_terms():
+    doc_sample_calls = []
+
     async def enhance_query(query: str, tenant_id: str, source_text: str):
         assert tenant_id == "acme:synthetic"
-        assert query == "The video is of"
-        assert source_text == DOCUMENT_SOURCE_TEXT
+        # Callback receives both records; return grounded for document sample
+        # Saliency extracts "People applaude loudly" as most distinctive span
+        if DOCUMENT_SOURCE_TEXT in source_text:
+            doc_sample_calls.append(query)
+            return {
+                "original_query": query,
+                "enhanced_query": f"{query} man video",
+                "expansion_terms": ["man video"],
+                "synonyms": [],
+                "reasoning": "Production enhancement returned grounded document terms.",
+            }
+        # _second_sample gets ungrounded (won't validate, generator continues)
         return {
             "original_query": query,
-            "enhanced_query": f"{query} people applaud",
-            "expansion_terms": ["people applaud"],
+            "enhanced_query": f"{query} quantum",
+            "expansion_terms": ["quantum"],
             "synonyms": [],
-            "reasoning": "Production enhancement returned grounded document terms.",
+            "reasoning": "fallback",
         }
 
     generator = QueryEnhancementGenerator(query_enhancer=enhance_query)
     examples = await generator.generate(
-        sampled_content=[_document_sample()],
+        sampled_content=[_document_sample(), _second_sample()],
         target_count=1,
         tenant_id="acme:synthetic",
     )
 
-    assert examples[0].query == "The video is of"
-    assert examples[0].enhanced_query == "The video is of people applaud"
-    assert examples[0].expansion_terms == ["people applaud"]
+    assert examples[0].query == "People applaude loudly"
+    assert examples[0].enhanced_query == "People applaude loudly man video"
+    assert examples[0].expansion_terms == ["man video"]
     assert examples[0].synonyms == []
     assert examples[0].context == "document_text_semantic"
     assert examples[0].reasoning == (
         "Production enhancement returned grounded document terms."
     )
+    assert doc_sample_calls[0] == "People applaude loudly"
+    assert "man video" in examples[0].enhanced_query
 
 
 @pytest.mark.asyncio
 async def test_generator_rejects_ungrounded_expansion_phrase():
+    ungrounded_calls = []
+
     async def enhance_query(query: str, tenant_id: str, source_text: str):
         assert tenant_id == "acme:synthetic"
-        assert "animal rodeo" in source_text
+        ungrounded_calls.append(query)
+        # Callback receives all records; return ungrounded for all
         return {
             "original_query": query,
             "enhanced_query": f"{query} quantum physics",
@@ -332,24 +377,26 @@ async def test_generator_rejects_ungrounded_expansion_phrase():
     with pytest.raises(ValueError) as error:
         await generator.generate(
             sampled_content=[
+                _second_sample(),
                 {
                     "title": "animal rodeo",
                     "description": "livestock competition agricultural fair spectator viewing area dirt arena",
                     "content_type": "video",
-                }
+                },
             ],
             target_count=1,
             tenant_id="acme:synthetic",
         )
 
+    # Saliency: "livestock competition agricultural fair spectator viewing"
     assert str(error.value) == (
         "QueryEnhancementGenerator generated 0 unique grounded examples "
-        "but target_count=1; source_context=5 unique source-template queries"
+        "but target_count=1; source_context=10 unique source-template queries"
     )
     assert str(error.value.__cause__) == (
         "query_enhancement optimizer callback query_enhancer returned "
         "expansion_terms absent from sampled source for "
-        "tenant='acme:synthetic' query='explain livestock competition agricultural fair': "
+        "tenant='acme:synthetic' query='explain livestock competition agricultural fair spectator viewing': "
         "['quantum physics']"
     )
 
@@ -367,16 +414,12 @@ async def test_generator_rejects_document_body_ungrounded_terms(
     term: str,
     reasoning: str,
 ):
+    doc_ungrounded_calls = []
+
     async def enhance_query(query: str, tenant_id: str, source_text: str):
         assert tenant_id == "acme:synthetic"
-        assert query in {
-            "The video is of",
-            "find The video is of",
-            "show me The video is of",
-            "The video is of tutorial",
-            "explain The video is of",
-        }
-        assert source_text == DOCUMENT_SOURCE_TEXT
+        doc_ungrounded_calls.append(query)
+        # Callback receives queries from both records; return ungrounded for all
         return {
             "original_query": query,
             "enhanced_query": f"{query} {term}",
@@ -389,28 +432,34 @@ async def test_generator_rejects_document_body_ungrounded_terms(
 
     with pytest.raises(ValueError) as error:
         await generator.generate(
-            sampled_content=[_document_sample()],
+            sampled_content=[_second_sample(), _document_sample()],
             target_count=1,
             tenant_id="acme:synthetic",
         )
 
+    # Saliency: "People applaude loudly"
     assert str(error.value) == (
         "QueryEnhancementGenerator generated 0 unique grounded examples "
-        "but target_count=1; source_context=5 unique source-template queries"
+        "but target_count=1; source_context=10 unique source-template queries"
     )
     assert str(error.value.__cause__) == (
         "query_enhancement optimizer callback query_enhancer returned "
         "expansion_terms absent from sampled source for "
-        "tenant='acme:synthetic' query='explain The video is of': "
+        "tenant='acme:synthetic' query='explain People applaude loudly': "
         f"['{term}']"
     )
+
+    assert len(doc_ungrounded_calls) == 10
 
 
 @pytest.mark.asyncio
 async def test_generator_rejects_all_stopword_expansion_phrase():
+    stopword_calls = []
+
     async def enhance_query(query: str, tenant_id: str, source_text: str):
         assert tenant_id == "acme:synthetic"
-        assert source_text == MORPHOLOGY_SOURCE_TEXT
+        stopword_calls.append(query)
+        # Callback receives queries from both records; return stopword-only for all
         return {
             "original_query": query,
             "enhanced_query": f"{query} the this",
@@ -424,23 +473,39 @@ async def test_generator_rejects_all_stopword_expansion_phrase():
     with pytest.raises(ValueError) as error:
         await generator.generate(
             sampled_content=[
+                _second_sample(),
                 {
+                    "topic": "morphology_vid.txt",
                     "description": MORPHOLOGY_SOURCE_TEXT,
                     "content_type": "video",
-                }
+                },
             ],
             target_count=1,
             tenant_id="acme:synthetic",
         )
 
+    # Saliency: "rodeo or similar competition viewed through"
     assert str(error.value) == (
         "QueryEnhancementGenerator generated 0 unique grounded examples "
-        "but target_count=1; source_context=5 unique source-template queries"
+        "but target_count=1; source_context=10 unique source-template queries"
     )
+    # Every candidate was drawn: both records' topics across all five templates.
+    assert sorted(stopword_calls) == [
+        "different video showing various outdoor activities",
+        "different video showing various outdoor activities tutorial",
+        "explain different video showing various outdoor activities",
+        "explain rodeo or similar competition viewed through",
+        "find different video showing various outdoor activities",
+        "find rodeo or similar competition viewed through",
+        "rodeo or similar competition viewed through",
+        "rodeo or similar competition viewed through tutorial",
+        "show me different video showing various outdoor activities",
+        "show me rodeo or similar competition viewed through",
+    ]
     assert str(error.value.__cause__) == (
         "query_enhancement optimizer callback query_enhancer returned "
         "expansion_terms absent from sampled source for "
-        "tenant='acme:synthetic' query='explain This video frame captures': "
+        "tenant='acme:synthetic' query='explain rodeo or similar competition viewed through': "
         "['the this']"
     )
 
@@ -540,7 +605,8 @@ async def test_generator_replaces_ungrounded_example_from_surplus():
                     "viewing area dirt arena"
                 ),
                 "content_type": "video",
-            }
+            },
+            _second_sample(),
         ],
         target_count=1,
         tenant_id="acme:synthetic",
@@ -550,8 +616,8 @@ async def test_generator_replaces_ungrounded_example_from_surplus():
     assert len(examples) == 1
     assert examples[0].expansion_terms == ["dirt arena"]
     assert calls == [
-        "livestock competition agricultural fair",
-        "find livestock competition agricultural fair",
+        "livestock competition agricultural fair spectator viewing",
+        "find livestock competition agricultural fair spectator viewing",
     ]
 
     metadata = tracker.to_metadata()
@@ -559,6 +625,6 @@ async def test_generator_replaces_ungrounded_example_from_surplus():
     assert metadata["dropped_count"] == 1
     assert (
         metadata["dropped_examples"][0]["candidate"]
-        == "livestock competition agricultural fair"
+        == "livestock competition agricultural fair spectator viewing"
     )
     assert "quantum physics" in metadata["dropped_examples"][0]["reason"]

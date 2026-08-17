@@ -34,9 +34,8 @@ from cogniverse_foundation.config.unified_config import (
     BackendProfileConfig,
     SyntheticGeneratorConfig,
 )
-from cogniverse_synthetic.generators.base import extract_topic
-from cogniverse_synthetic.generators.routing import TOPIC_WORD_BUDGET
 from cogniverse_synthetic.schemas import ProfileSelectionExampleSchema
+from cogniverse_synthetic.topics import TopicSaliency, extract_topic
 from cogniverse_synthetic.utils import profile_can_ground_topic
 from cogniverse_synthetic.utils.agent_inference import AgentInferrer
 from tests.e2e.conftest import (
@@ -1047,14 +1046,34 @@ class TestSyntheticDataAPI:
                 and result["metadata"]["segment_description"].strip()
             }
             assert len(source_texts) == len(fixture_results)
-            # Routing labels entities on the capped topic it derives from the
-            # caption, not on the whole caption; expectations use the same text.
+            # Build saliency from all source texts and extract distinctive topics.
+            records = [
+                {"description": text, "topic": f"video_{i}"}
+                for i, text in enumerate(sorted(source_texts))
+            ]
+            saliency = TopicSaliency.from_records(records)
+
+            topics = [extract_topic(record, saliency=saliency) for record in records]
+            # Every sampled record yields a topic; name any that did not.
+            assert [
+                record["topic"]
+                for record, topic in zip(records, topics)
+                if topic is None
+            ] == []
+            # Distinct sources never collapse onto one topic, which is what a
+            # positional slice produced when captions shared an opening.
+            assert sorted(set(topics)) == sorted(topics)
+
             expected_extractions = []
-            for source_text in sorted(source_texts):
-                topic = extract_topic(
-                    {"description": source_text}, max_words=TOPIC_WORD_BUDGET
+            for record, topic in zip(records, topics):
+                source_text = record["description"]
+                # The topic is a contiguous span of its own source text ...
+                assert topic in source_text, f"topic {topic!r} must be a span of source"
+                # ... and never that source's leading words, compared over the
+                # same width as the topic itself.
+                assert topic != " ".join(source_text.split()[: len(topic.split())]), (
+                    f"topic is the source prefix: {topic!r}"
                 )
-                assert topic == " ".join(source_text.split()[:TOPIC_WORD_BUDGET])
                 extraction_response = client.post(
                     "/agents/entity_extraction_agent/process",
                     json={
