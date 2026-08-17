@@ -745,6 +745,163 @@ async def test_generation_drops_repeated_canonical_routing_label() -> None:
     )
 
 
+@pytest.mark.asyncio
+async def test_generation_fills_quota_after_one_duplicate() -> None:
+    """Duplicate canonical labels are dropped and replaced from the surplus."""
+
+    class _SequenceQueryGenerator:
+        max_retries = 3
+
+        def __init__(self) -> None:
+            self.calls = 0
+            self.outputs = iter(
+                [
+                    "find TensorFlow",
+                    "find TensorFlow",
+                    "find TensorFlow tutorial",
+                    "compare TensorFlow benchmarks",
+                    "TensorFlow deployment guide",
+                    "explain TensorFlow pipelines",
+                ]
+            )
+
+        def __call__(self, **kwargs):
+            self.calls += 1
+            return SimpleNamespace(
+                query=next(self.outputs),
+                reasoning=f"Sequence attempt {self.calls}.",
+                _retry_count=0,
+                _max_retries=3,
+            )
+
+    query_generator = _SequenceQueryGenerator()
+    generator = RoutingGenerator(
+        entity_extractor=_extract_entities,
+        routing_decider=_route_query,
+        optimizer_config=_routing_generator().optimizer_config,
+    )
+    generator.query_generator = query_generator
+    tracker = GenerationTracker(
+        optimizer="routing",
+        target_count=5,
+        floor_count=1,
+    )
+
+    # TensorFlow only in record 0 so saliency preserves it (high IDF).
+    # Record 1 has no extractable entity, so entity extraction fails for it
+    # and the generator cycles back to record 0. The sequence query generator
+    # returns "find TensorFlow" twice → duplicate canonical label → dropped.
+    examples = await generator.generate(
+        sampled_content=[
+            {"description": "TensorFlow machine learning framework tutorial"},
+            {"description": "cooking recipes and kitchen tips video"},
+        ],
+        target_count=5,
+        tenant_id="acme:routing",
+        generation_tracker=tracker,
+        generation_floor_count=1,
+    )
+
+    assert [example.query for example in examples] == [
+        "find TensorFlow",
+        "find TensorFlow tutorial",
+        "compare TensorFlow benchmarks",
+        "TensorFlow deployment guide",
+        "explain TensorFlow pipelines",
+    ]
+    assert [example.enhanced_query for example in examples] == [
+        "find TensorFlow(TECHNOLOGY)",
+        "find TensorFlow(TECHNOLOGY) tutorial",
+        "compare TensorFlow(TECHNOLOGY) benchmarks",
+        "TensorFlow(TECHNOLOGY) deployment guide",
+        "explain TensorFlow(TECHNOLOGY) pipelines",
+    ]
+    assert [example.chosen_agent for example in examples] == ["video_search_agent"] * 5
+    assert [example.routing_confidence for example in examples] == [0.73] * 5
+    assert query_generator.calls == 6
+    assert tracker.returned_count == 5
+    assert tracker.surplus_exhausted is False
+    duplicate_drops = [d for d in tracker.dropped_examples if "duplicate" in d.reason]
+    assert [drop.candidate for drop in duplicate_drops] == ["find TensorFlow"]
+    assert duplicate_drops[0].reason == (
+        "RoutingGenerator generated duplicate canonical label "
+        "(query='find TensorFlow', entities=(('TensorFlow', 'TECHNOLOGY'),), "
+        "chosen_agent='video_search_agent')"
+    )
+
+
+@pytest.mark.asyncio
+async def test_generation_stops_after_duplicate_streak_is_exhausted() -> None:
+    """After target_count consecutive duplicate canonical labels, the draw stops."""
+
+    class _SequenceQueryGenerator:
+        max_retries = 3
+
+        def __init__(self) -> None:
+            self.calls = 0
+
+        def __call__(self, **kwargs):
+            self.calls += 1
+            return SimpleNamespace(
+                query="find TensorFlow",
+                reasoning=f"Sequence attempt {self.calls}.",
+                _retry_count=0,
+                _max_retries=3,
+            )
+
+    routing_calls = []
+
+    async def _counted_route(query: str, tenant_id: str):
+        assert tenant_id == "acme:routing"
+        routing_calls.append(query)
+        return await _route_query(query, tenant_id)
+
+    query_generator = _SequenceQueryGenerator()
+    generator = RoutingGenerator(
+        entity_extractor=_extract_entities,
+        routing_decider=_counted_route,
+        optimizer_config=_routing_generator().optimizer_config,
+    )
+    generator.query_generator = query_generator
+    tracker = GenerationTracker(
+        optimizer="routing",
+        target_count=5,
+        floor_count=1,
+    )
+
+    # TensorFlow only in record 0 so saliency preserves it (high IDF).
+    # Record 1 has no extractable entity, so entity extraction fails for it.
+    # The sequence query generator always returns "find TensorFlow" → every
+    # successful attempt after the first is a duplicate. After target_count
+    # consecutive duplicates, the generator stops.
+    examples = await generator.generate(
+        sampled_content=[
+            {"description": "TensorFlow machine learning framework tutorial"},
+            {"description": "cooking recipes and kitchen tips video"},
+        ],
+        target_count=5,
+        tenant_id="acme:routing",
+        generation_tracker=tracker,
+        generation_floor_count=1,
+    )
+
+    assert [example.query for example in examples] == ["find TensorFlow"]
+    assert [example.enhanced_query for example in examples] == [
+        "find TensorFlow(TECHNOLOGY)"
+    ]
+    assert query_generator.calls == 6
+    assert routing_calls == ["find TensorFlow"] * 6
+    assert tracker.returned_count == 1
+    assert tracker.surplus_exhausted is True
+    duplicate_drops = [d for d in tracker.dropped_examples if "duplicate" in d.reason]
+    assert [drop.candidate for drop in duplicate_drops] == ["find TensorFlow"] * 5
+    assert duplicate_drops[-1].reason == (
+        "RoutingGenerator generated duplicate canonical label "
+        "(query='find TensorFlow', entities=(('TensorFlow', 'TECHNOLOGY'),), "
+        "chosen_agent='video_search_agent')"
+    )
+
+
 def test_duplicate_label_filter_golden() -> None:
     """Complete golden: duplicate detection is a pure state machine.
 
