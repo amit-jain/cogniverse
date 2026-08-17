@@ -962,7 +962,20 @@ _telemetry_manager: Optional[TelemetryManager] = None
 _telemetry_manager_lock = threading.Lock()
 
 
-def get_telemetry_manager(config_manager=None) -> TelemetryManager:
+def _apply_otlp_endpoint_override(
+    mgr: TelemetryManager, otlp_endpoint: Optional[str]
+) -> None:
+    if otlp_endpoint is None or otlp_endpoint == mgr.config.otlp_endpoint:
+        return
+    mgr.config.otlp_endpoint = otlp_endpoint
+    mgr._tenant_providers.clear()
+    mgr._tenant_tracers.clear()
+    mgr._tracer_provider_keys.clear()
+
+
+def get_telemetry_manager(
+    config_manager=None, *, otlp_endpoint: Optional[str] = None
+) -> TelemetryManager:
     """
     Get the global telemetry manager singleton.
 
@@ -974,6 +987,7 @@ def get_telemetry_manager(config_manager=None) -> TelemetryManager:
     Args:
         config_manager: Optional ConfigManager to load config from.
             If None on first call, creates one via create_default_config_manager().
+        otlp_endpoint: Optional runtime override injected by the entrypoint.
     """
     from cogniverse_foundation.common.tenant_utils import SYSTEM_TENANT_ID
 
@@ -989,20 +1003,12 @@ def get_telemetry_manager(config_manager=None) -> TelemetryManager:
                     config_manager = create_default_config_manager()
                 config = config_manager.get_telemetry_config(SYSTEM_TENANT_ID)
                 mgr = TelemetryManager(config)
-
-                # Apply TELEMETRY_OTLP_ENDPOINT env var override (set by Helm
-                # chart in k3d deployments, pointing to cogniverse-phoenix:4317).
-                # Without this, the config defaults to localhost:4317 which is
-                # wrong inside a pod. Mirrors what main.py does at startup.
-                import os
-
-                otlp_override = os.environ.get("TELEMETRY_OTLP_ENDPOINT")
-                if otlp_override and otlp_override != mgr.config.otlp_endpoint:
-                    mgr.config.otlp_endpoint = otlp_override
-                    mgr._tenant_providers.clear()
-                    mgr._tenant_tracers.clear()
-                    mgr._tracer_provider_keys.clear()
+                _apply_otlp_endpoint_override(mgr, otlp_endpoint)
                 # Publish only after fully built + configured so a concurrent
                 # reader never sees a half-initialized singleton.
                 _telemetry_manager = mgr
+    elif otlp_endpoint is not None:
+        with _telemetry_manager_lock:
+            if _telemetry_manager is not None:
+                _apply_otlp_endpoint_override(_telemetry_manager, otlp_endpoint)
     return _telemetry_manager

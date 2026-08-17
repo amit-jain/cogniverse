@@ -88,3 +88,12 @@ def test_concurrent_get_after_reset_builds_exactly_one() -> None:
     # Every racer observed the same single live instance.
     assert all(r is not None for r in results)
     assert len({id(r) for r in results}) == 1
+
+
+def test_injected_otlp_endpoint_overrides_config_manager() -> None:
+    cfg_mgr = _StubConfigManager()
+
+    manager = get_telemetry_manager(cfg_mgr, otlp_endpoint="wired-phoenix:4317")
+
+    assert manager.config.otlp_endpoint == "wired-phoenix:4317"
+    assert cfg_mgr.load_count == 1

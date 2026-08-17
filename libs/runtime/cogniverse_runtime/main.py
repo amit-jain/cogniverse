@@ -39,10 +39,15 @@ from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
 
+from cogniverse_core.common.cache.backends.s3 import configure_s3_backend_defaults
+from cogniverse_core.common.models.semantic_embedder import (
+    configure_semantic_embedder_defaults,
+)
 from cogniverse_core.common.tenant_utils import SYSTEM_TENANT_ID
 from cogniverse_core.registries.agent_registry import AgentRegistry
 from cogniverse_core.registries.backend_registry import BackendRegistry
 from cogniverse_foundation.config.utils import get_config
+from cogniverse_foundation.telemetry.manager import get_telemetry_manager
 
 # Import routers
 from cogniverse_runtime.admin import tenant_manager
@@ -502,19 +507,50 @@ def _bootstrap_metadata_schemas(bootstrap, application_name: str) -> None:
     logger.info("Metadata schemas bootstrapped for fresh backend")
 
 
-def _mirror_minio_credentials_to_aws() -> None:
-    """Mirror the ``MINIO_*`` secret onto the ``AWS_*`` names fsspec's s3 client
-    reads, so answer-time keyframe resolution (agents localize ``s3://``
-    keyframes via ``MediaLocator``) authenticates against MinIO. Done once at the
-    entrypoint so the agents stay env-agnostic and build their s3 MediaConfig
-    from ``SystemConfig.minio_endpoint``. ``setdefault`` never overwrites an
-    explicit ``AWS_*`` value already in the environment."""
-    access = os.environ.get("MINIO_ACCESS_KEY")
-    if access:
-        os.environ.setdefault("AWS_ACCESS_KEY_ID", access)
-    secret = os.environ.get("MINIO_SECRET_KEY")
-    if secret:
-        os.environ.setdefault("AWS_SECRET_ACCESS_KEY", secret)
+def _resolve_library_env_defaults() -> dict[str, str | None]:
+    """Read the library-module defaults from process env exactly once."""
+    return {
+        "minio_endpoint": os.environ.get("MINIO_ENDPOINT"),
+        "minio_access_key": os.environ.get("MINIO_ACCESS_KEY"),
+        "minio_secret_key": os.environ.get("MINIO_SECRET_KEY"),
+        "telemetry_otlp_endpoint": os.environ.get("TELEMETRY_OTLP_ENDPOINT"),
+        "semantic_embed_url": os.environ.get("COGNIVERSE_SEMANTIC_EMBED_URL"),
+        "semantic_embed_model": os.environ.get("COGNIVERSE_SEMANTIC_EMBED_MODEL"),
+    }
+
+
+def _mirror_minio_credentials_to_aws(
+    access_key: str | None, secret_key: str | None
+) -> None:
+    """Mirror the MinIO secret onto the AWS names fsspec's S3 client reads."""
+    if access_key:
+        os.environ.setdefault("AWS_ACCESS_KEY_ID", access_key)
+    if secret_key:
+        os.environ.setdefault("AWS_SECRET_ACCESS_KEY", secret_key)
+
+
+def _configure_library_module_defaults(
+    config_manager,
+    *,
+    minio_endpoint: str | None,
+    minio_access_key: str | None,
+    minio_secret_key: str | None,
+    telemetry_otlp_endpoint: str | None,
+    semantic_embed_url: str | None,
+    semantic_embed_model: str | None,
+) -> None:
+    """Inject the runtime defaults into the library modules that use them."""
+    _mirror_minio_credentials_to_aws(minio_access_key, minio_secret_key)
+    configure_s3_backend_defaults(
+        endpoint=minio_endpoint,
+        access_key=minio_access_key,
+        secret_key=minio_secret_key,
+    )
+    configure_semantic_embedder_defaults(
+        remote_url=semantic_embed_url,
+        model_name=semantic_embed_model,
+    )
+    get_telemetry_manager(config_manager, otlp_endpoint=telemetry_otlp_endpoint)
 
 
 def build_wiki_manager_factory(wiki_backend, config, config_manager):
@@ -810,6 +846,8 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
     # the reserved SYSTEM_TENANT_ID so it can't collide with a user tenant.
     config = get_config(tenant_id=SYSTEM_TENANT_ID, config_manager=config_manager)
     logger.info(f"Loaded configuration for tenant: {config.tenant_id}")
+    library_env = _resolve_library_env_defaults()
+    _configure_library_module_defaults(config_manager, **library_env)
 
     # 3. Initialize SchemaLoader
     schema_loader = FilesystemSchemaLoader(Path("configs/schemas"))
@@ -1005,9 +1043,9 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
     if os.environ.get("TELEMETRY_HTTP_ENDPOINT"):
         system_config.telemetry_url = os.environ["TELEMETRY_HTTP_ENDPOINT"]
         updated = True
-    if os.environ.get("TELEMETRY_OTLP_ENDPOINT"):
-        system_config.telemetry_collector_endpoint = os.environ[
-            "TELEMETRY_OTLP_ENDPOINT"
+    if library_env["telemetry_otlp_endpoint"]:
+        system_config.telemetry_collector_endpoint = library_env[
+            "telemetry_otlp_endpoint"
         ]
         updated = True
     if os.environ.get("RUNTIME_URL"):
@@ -1052,10 +1090,9 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
         updated = True
     # MINIO_ENDPOINT: object-store target for the ingestion-upload
     # route. The route reads from SystemConfig (no env access).
-    if os.environ.get("MINIO_ENDPOINT"):
-        system_config.minio_endpoint = os.environ["MINIO_ENDPOINT"]
+    if library_env["minio_endpoint"]:
+        system_config.minio_endpoint = library_env["minio_endpoint"]
         updated = True
-    _mirror_minio_credentials_to_aws()
     # Semantic router: the chart turns routing on by default and points the
     # runtime at the in-cluster router Service. Absent env (local/dev), routing
     # stays disabled and agents call the backend directly.
@@ -1074,18 +1111,6 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
         system_config.telemetry_url,
         system_config.telemetry_collector_endpoint,
     )
-
-    # 7b. Propagate telemetry OTLP endpoint to the TelemetryManager singleton
-    # (created during load_backends/load_agents above, before env overrides)
-    if os.environ.get("TELEMETRY_OTLP_ENDPOINT"):
-        from cogniverse_foundation.telemetry.manager import get_telemetry_manager
-
-        tm = get_telemetry_manager()
-        tm.config.otlp_endpoint = system_config.telemetry_collector_endpoint
-        tm._tenant_providers.clear()
-        logger.info(
-            f"TelemetryManager otlp_endpoint set to {system_config.telemetry_collector_endpoint}"
-        )
 
     # 7c. Probe Phoenix reachability so a silent NoOpSpan fallback surfaces
     # at startup. If TELEMETRY_REQUIRED is set, missing telemetry fails
@@ -1258,8 +1283,8 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
             from openinference.instrumentation.dspy import DSPyInstrumentor
             from phoenix.otel import register as _px_register
 
-            otlp_endpoint = os.environ.get(
-                "TELEMETRY_OTLP_ENDPOINT", "cogniverse-phoenix:4317"
+            otlp_endpoint = library_env["telemetry_otlp_endpoint"] or (
+                "cogniverse-phoenix:4317"
             )
             if "://" not in otlp_endpoint:
                 otlp_endpoint = f"http://{otlp_endpoint}"

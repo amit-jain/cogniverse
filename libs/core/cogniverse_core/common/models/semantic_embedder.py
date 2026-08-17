@@ -3,9 +3,9 @@
 `get_semantic_embedder()`:
 
 * Delegates to any OpenAI-compatible `/v1/embeddings`
-  endpoint) when `COGNIVERSE_SEMANTIC_EMBED_URL` is set. Inference
-  runs out of process; the runtime only holds a lightweight HTTP
-  wrapper.
+  endpoint when the runtime default remote URL is configured by the
+  entrypoint. Inference runs out of process; the runtime only holds a
+  lightweight HTTP wrapper.
 * Falls back to an in-process SentenceTransformer otherwise.
 
 Instances are cached module-level so concurrent agents share one
@@ -17,7 +17,6 @@ from __future__ import annotations
 
 import hashlib
 import logging
-import os
 import threading
 from collections import OrderedDict
 from typing import List, Mapping, Optional, Union
@@ -36,6 +35,9 @@ TextsT = Union[str, List[str]]
 
 _DEFAULT_LOCAL_MODEL = "sentence-transformers/all-mpnet-base-v2"
 _DEFAULT_REMOTE_MODEL = "lightonai/DenseOn"
+
+_CONFIGURED_REMOTE_URL: Optional[str] = None
+_CONFIGURED_MODEL_NAME: Optional[str] = None
 
 # DenseOn's config_sentence_transformers.json carries
 # prompts={"query": "query: ", "document": "document: "} and the pylate
@@ -153,6 +155,15 @@ def _resolved_inference_headers(
     if configured_headers and explicit_headers:
         raise ValueError("headers must not be supplied for a Modal endpoint")
     return configured_headers or explicit_headers
+
+
+def configure_semantic_embedder_defaults(
+    *, remote_url: Optional[str], model_name: Optional[str]
+) -> None:
+    """Set the runtime defaults the factory uses when args are omitted."""
+    global _CONFIGURED_REMOTE_URL, _CONFIGURED_MODEL_NAME
+    _CONFIGURED_REMOTE_URL = remote_url
+    _CONFIGURED_MODEL_NAME = model_name
 
 
 class SemanticEmbedder:
@@ -463,28 +474,27 @@ def get_semantic_embedder(
 
     Resolution order for the backend:
     1. Explicit `remote_url` argument
-    2. Env var ``COGNIVERSE_SEMANTIC_EMBED_URL``
+    2. Runtime default configured by the entrypoint
     3. Local SentenceTransformer
 
     Resolution order for the model name:
     1. Explicit `model_name` argument
-    2. Env var ``COGNIVERSE_SEMANTIC_EMBED_MODEL``
+    2. Runtime default configured by the entrypoint
     3. A default that matches the chosen backend
     """
-    remote_url = remote_url or os.environ.get("COGNIVERSE_SEMANTIC_EMBED_URL")
-    env_model = os.environ.get("COGNIVERSE_SEMANTIC_EMBED_MODEL")
+    remote_url = remote_url or _CONFIGURED_REMOTE_URL
     canonical_headers: Mapping[str, str] = {}
 
     if remote_url:
         canonical_headers = _resolved_inference_headers(remote_url, headers)
-        model_name = model_name or env_model or _DEFAULT_REMOTE_MODEL
+        model_name = model_name or _CONFIGURED_MODEL_NAME or _DEFAULT_REMOTE_MODEL
         authorization = canonical_headers.get("Authorization", "")
         credential_fingerprint = hashlib.sha256(authorization.encode()).hexdigest()
         key = f"remote|{remote_url}|{model_name}|{credential_fingerprint}"
     else:
         if headers:
             raise ValueError("headers require a remote_url")
-        model_name = model_name or env_model or _DEFAULT_LOCAL_MODEL
+        model_name = model_name or _CONFIGURED_MODEL_NAME or _DEFAULT_LOCAL_MODEL
         key = f"local|{model_name}"
 
     with _lock:

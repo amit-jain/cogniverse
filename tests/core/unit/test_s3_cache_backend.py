@@ -8,6 +8,7 @@ self-confirming mock.
 
 import json
 import time
+from unittest.mock import patch
 
 import pytest
 from botocore.exceptions import ClientError
@@ -16,6 +17,7 @@ from cogniverse_core.common.cache.backends.s3 import (
     _META_KEY,
     S3CacheBackend,
     S3CacheBackendConfig,
+    configure_s3_backend_defaults,
 )
 from cogniverse_core.common.cache.base import CacheBackend
 from cogniverse_core.common.cache.registry import CacheBackendRegistry
@@ -89,6 +91,13 @@ def fake():
     return FakeS3()
 
 
+@pytest.fixture(autouse=True)
+def _reset_s3_defaults():
+    configure_s3_backend_defaults(endpoint=None, access_key=None, secret_key=None)
+    yield
+    configure_s3_backend_defaults(endpoint=None, access_key=None, secret_key=None)
+
+
 def _backend(fake, fmt="pickle"):
     backend = S3CacheBackend(
         S3CacheBackendConfig(
@@ -97,6 +106,30 @@ def _backend(fake, fmt="pickle"):
     )
     backend._client = fake  # bypass real boto3 / env resolution
     return backend
+
+
+@pytest.mark.unit
+@pytest.mark.ci_fast
+def test_s3_client_uses_configured_defaults_without_env(fake):
+    configure_s3_backend_defaults(
+        endpoint="http://minio.internal:9000",
+        access_key="minio-access",
+        secret_key="minio-secret",
+    )
+    backend = _backend(fake)
+    backend._client = None
+
+    with patch("boto3.client") as mock_client:
+        mock_client.return_value = fake
+        client = backend._s3()
+
+    assert client is fake
+    kwargs = mock_client.call_args.kwargs
+    assert kwargs["endpoint_url"] == "http://minio.internal:9000"
+    assert kwargs["aws_access_key_id"] == "minio-access"
+    assert kwargs["aws_secret_access_key"] == "minio-secret"
+    assert kwargs["region_name"] == "us-east-1"
+    assert kwargs["config"].signature_version == "s3v4"
 
 
 @pytest.mark.unit

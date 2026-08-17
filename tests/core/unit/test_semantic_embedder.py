@@ -15,6 +15,7 @@ import pytest
 from cogniverse_core.common.models.semantic_embedder import (
     LocalSentenceTransformerEmbedder,
     RemoteOpenAIEmbedder,
+    configure_semantic_embedder_defaults,
     get_semantic_embedder,
     reset_semantic_embedder_cache,
 )
@@ -22,9 +23,11 @@ from cogniverse_core.common.models.semantic_embedder import (
 
 @pytest.fixture(autouse=True)
 def _reset_cache():
+    configure_semantic_embedder_defaults(remote_url=None, model_name=None)
     reset_semantic_embedder_cache()
     yield
     reset_semantic_embedder_cache()
+    configure_semantic_embedder_defaults(remote_url=None, model_name=None)
 
 
 @pytest.mark.unit
@@ -34,10 +37,15 @@ def test_remote_url_arg_selects_remote_backend():
     assert isinstance(embedder, RemoteOpenAIEmbedder)
 
 
-def test_env_var_selects_remote_backend(monkeypatch):
-    monkeypatch.setenv("COGNIVERSE_SEMANTIC_EMBED_URL", "http://fake.invalid:11434")
+def test_configured_defaults_select_remote_backend():
+    configure_semantic_embedder_defaults(
+        remote_url="http://fake.invalid:11434",
+        model_name="configured-remote-model",
+    )
     embedder = get_semantic_embedder()
     assert isinstance(embedder, RemoteOpenAIEmbedder)
+    assert embedder._base_url == "http://fake.invalid:11434"
+    assert embedder._model == "configured-remote-model"
 
 
 def test_no_url_falls_back_to_local(monkeypatch):
@@ -753,21 +761,26 @@ def test_mem0_adapter_registered_provider_resolves(echo_embed_server):
     assert isinstance(embedder, DenseOnMem0Embedder)
 
 
-def test_model_name_resolution_prefers_explicit_then_env_then_default(monkeypatch):
-    monkeypatch.setenv("COGNIVERSE_SEMANTIC_EMBED_URL", "http://fake.invalid:11434")
-    monkeypatch.setenv("COGNIVERSE_SEMANTIC_EMBED_MODEL", "from-env")
+def test_model_name_resolution_prefers_explicit_then_config_then_default():
+    configure_semantic_embedder_defaults(
+        remote_url="http://fake.invalid:11434",
+        model_name="from-config",
+    )
 
     # Explicit arg wins
     e1 = get_semantic_embedder(model_name="explicit-arg")
     assert e1._model == "explicit-arg"  # type: ignore[attr-defined]
 
-    # Env var used when no explicit arg
+    # Configured default used when no explicit arg
     reset_semantic_embedder_cache()
     e2 = get_semantic_embedder()
-    assert e2._model == "from-env"  # type: ignore[attr-defined]
+    assert e2._model == "from-config"  # type: ignore[attr-defined]
 
-    # Default used when neither
+    # Default used when no configured remote model remains.
     reset_semantic_embedder_cache()
-    monkeypatch.delenv("COGNIVERSE_SEMANTIC_EMBED_MODEL")
+    configure_semantic_embedder_defaults(
+        remote_url="http://fake.invalid:11434",
+        model_name=None,
+    )
     e3 = get_semantic_embedder()
     assert e3._model == "lightonai/DenseOn"  # type: ignore[attr-defined]
