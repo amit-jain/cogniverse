@@ -363,6 +363,42 @@ class TestOrchestratorAgent:
         assert _plan_executes_to_completion(plan)
 
     @pytest.mark.asyncio
+    async def test_create_plan_dedupes_repeated_agent_remaps_parallel_groups(
+        self, orchestrator_agent
+    ):
+        """A repeated agent (also via the ``_agent`` alias) keeps its first
+        step only, and parallel_steps indices remap to the surviving steps.
+
+        Raw sequence 0..3 with raw index 2 (``search`` -> ``search_agent``)
+        a repeat of raw index 0: groups "0,2" and "1,3" must become [0] and
+        [1,2] in surviving-step positions, and the plan must still execute.
+        """
+        orchestrator_agent.dspy_module.forward = Mock(
+            return_value=dspy.Prediction(
+                agent_sequence=(
+                    "search_agent,query_enhancement_agent,"
+                    "search,entity_extraction_agent"
+                ),
+                parallel_steps="0,2|1,3",
+                reasoning="Planner repeated the search step",
+            )
+        )
+
+        plan = await orchestrator_agent._create_plan("Test query")
+
+        agent_names = [step.agent_name for step in plan.steps]
+        assert agent_names == [
+            "search_agent",
+            "query_enhancement_agent",
+            "entity_extraction_agent",
+        ]
+        assert plan.parallel_groups == [[0], [1, 2]]
+        for idx, step in enumerate(plan.steps):
+            assert idx not in step.depends_on
+            assert all(0 <= d < len(plan.steps) for d in step.depends_on)
+        assert _plan_executes_to_completion(plan)
+
+    @pytest.mark.asyncio
     async def test_create_plan_with_parallel_groups(self, orchestrator_agent):
         """Test planning with parallel execution groups"""
         orchestrator_agent.dspy_module.forward = Mock(

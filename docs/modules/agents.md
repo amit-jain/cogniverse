@@ -1456,24 +1456,15 @@ async def _create_plan(
         gateway_context=gateway_context,
     )
 
-    # Parse and validate agent sequence against registry
-    agent_sequence = [
-        a.strip() for a in result.agent_sequence.split(",") if a.strip()
-    ]
-
-    steps = []
-    for i, agent_name in enumerate(agent_sequence):
-        if agent_name not in registered_agents:
-            logger.warning(f"Unknown agent '{agent_name}', skipping")
-            continue
-        step = AgentStep(
-            agent_name=agent_name,
-            input_data={"query": query},
-            depends_on=self._calculate_dependencies(i, parallel_groups),
-            reasoning=f"Step {i+1}: {agent_name} processing",
-        )
-        steps.append(step)
-
+    # Normalize the LM output into an executable plan:
+    #   - "name" / "name_agent" aliases resolve to the registered name
+    #   - unknown agents are dropped (warning logged)
+    #   - a repeated agent keeps its first step only (results are keyed
+    #     by agent name)
+    #   - parallel_steps / dependency indices are remapped from the raw
+    #     sequence to the surviving step positions
+    #   - an empty result falls back to a single search_agent step
+    ...
     return OrchestrationPlan(
         query=query,
         steps=steps,
