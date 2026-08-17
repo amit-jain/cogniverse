@@ -827,7 +827,7 @@ def test_duplicate_label_filter_golden() -> None:
 
     # Assert exact kept labels (the unique ones)
     assert filter_.seen_count == 2
-    assert filter_._seen == {
+    assert filter_.seen_labels == {
         ("find TensorFlow", (("TensorFlow", "TECHNOLOGY"),), "video_search_agent"),
         ("find PyTorch", (("PyTorch", "TECHNOLOGY"),), "video_search_agent"),
     }
