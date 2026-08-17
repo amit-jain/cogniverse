@@ -124,13 +124,19 @@ def _upload_file(
     profile: str,
     tenant_id: str,
     mime_type: str = "video/mp4",
+    *,
+    force: bool = False,
 ) -> dict:
     """Upload via /ingestion/upload (wait=true so the response shape is
     synchronous; isolation tests assert status=='success').
+
+    ``force=True`` bypasses the (source_url, profile, tenant) idempotency
+    record so the response is a fresh ingest, not an echo of a run a prior
+    session already completed against the same cluster.
     """
     with open(file_path, "rb") as f:
         resp = client.post(
-            "/ingestion/upload?wait=true&wait_timeout=600",
+            f"/ingestion/upload?wait=true&wait_timeout=600&force={str(force).lower()}",
             files={"file": (file_path.name, f, mime_type)},
             data={"profile": profile, "tenant_id": tenant_id, "backend": "vespa"},
         )
@@ -235,8 +241,9 @@ class TestMultiProfileIngestion:
             )
             _deploy_schema(client, PROFILE, TENANT_ID)
 
-            data = _upload_file(client, real_video_path, PROFILE, TENANT_ID)
+            data = _upload_file(client, real_video_path, PROFILE, TENANT_ID, force=True)
             assert data["status"] == "success"
+            assert data["existing"] is False, data
             assert data["chunks_created"] == expected_documents_fed
             assert data["documents_fed"] == expected_documents_fed
 
@@ -251,8 +258,8 @@ class TestMultiProfileIngestion:
                 "ColPali search must return results after ingestion"
             )
 
-    def test_same_video_different_ingestion_runs(self, real_video_path):
-        """Re-ingesting the same video creates new documents (not idempotent)."""
+    def test_same_video_resubmit_returns_existing_run(self, real_video_path):
+        """A second identical upload echoes the completed run, not a new one."""
         with httpx.Client(base_url=RUNTIME, timeout=600.0) as client:
             expected_documents_fed = _expected_video_documents_fed(
                 real_video_path, PROFILE
@@ -260,30 +267,22 @@ class TestMultiProfileIngestion:
             _deploy_schema(client, PROFILE, TENANT_ID)
 
             data1 = _upload_file(
-                client,
-                real_video_path,
-                PROFILE,
-                TENANT_ID,
+                client, real_video_path, PROFILE, TENANT_ID, force=True
             )
             assert data1["status"] == "success"
-            chunks_1 = data1["chunks_created"]
-            assert chunks_1 == expected_documents_fed
+            assert data1["existing"] is False, data1
+            assert data1["chunks_created"] == expected_documents_fed
             assert data1["documents_fed"] == expected_documents_fed
 
-            data2 = _upload_file(
-                client,
-                real_video_path,
-                PROFILE,
-                TENANT_ID,
-            )
+            data2 = _upload_file(client, real_video_path, PROFILE, TENANT_ID)
             assert data2["status"] == "success"
-            chunks_2 = data2["chunks_created"]
-            assert chunks_2 == expected_documents_fed
+            assert data2["existing"] is True, data2
+            assert data2["state"] == "complete"
+            assert data2["ingest_id"] == data1["ingest_id"]
+            assert data2["sha"] == data1["sha"]
+            assert data2["video_id"] == data1["video_id"]
+            assert data2["chunks_created"] == expected_documents_fed
             assert data2["documents_fed"] == expected_documents_fed
-
-            assert chunks_2 == chunks_1, (
-                f"Same video should produce same chunk count: {chunks_1} vs {chunks_2}"
-            )
 
     def test_document_profile(self, real_document_path):
         """Document profile ingests text via ColBERT embeddings."""
@@ -296,8 +295,10 @@ class TestMultiProfileIngestion:
                 DOCUMENT_PROFILE,
                 TENANT_ID,
                 mime_type="text/markdown",
+                force=True,
             )
             assert data["status"] == "success"
+            assert data["existing"] is False, data
             assert data["chunks_created"] == 1
             assert data["documents_fed"] == 1
 
@@ -312,8 +313,10 @@ class TestMultiProfileIngestion:
                 AUDIO_PROFILE,
                 TENANT_ID,
                 mime_type="audio/wav",
+                force=True,
             )
             assert data["status"] == "success"
+            assert data["existing"] is False, data
             assert data["chunks_created"] == 1
             assert data["documents_fed"] == 1
 
