@@ -97,6 +97,12 @@ spec:
           readOnly: true
         - name: models-cache
           mountPath: /models-cache
+          subPath: hf
+        # The router's Go downloader writes to models/<name> relative to its
+        # workdir and ignores HF_HOME, so this path carries the weights.
+        - name: models-cache
+          mountPath: /app/models
+          subPath: models
       volumes:
       - name: router-config
         configMap:

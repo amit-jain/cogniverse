@@ -273,3 +273,41 @@ def test_k3s_overlay_exposes_semantic_router_envoy_on_a_nodeport():
             "targetPort": "http",
         }
     ]
+
+
+def _router_container(docs: list[dict]) -> dict:
+    for doc in docs:
+        if doc.get("kind") != "Deployment":
+            continue
+        name = doc["metadata"]["name"]
+        if "semantic-router" in name and "envoy" not in name:
+            return doc["spec"]["template"]["spec"]
+    raise AssertionError("semantic-router Deployment not rendered")
+
+
+def test_router_model_directory_is_backed_by_the_persistent_claim():
+    """The weights land in the claim, so a restart resumes instead of restarting.
+
+    The router's downloader writes to models/<name> relative to its workdir and
+    ignores HF_HOME, so a claim mounted only at HF_HOME leaves the weights on the
+    container's ephemeral layer: every restart discards a partial download and the
+    pod can never finish one.
+    """
+    pod = _router_container(_render("semanticRouter.router.persistence.enabled=true"))
+    container = pod["containers"][0]
+
+    assert [
+        (mount["name"], mount["mountPath"], mount.get("subPath"))
+        for mount in container["volumeMounts"]
+    ] == [
+        ("router-config", "/app/config.yaml", "config.yaml"),
+        ("models-cache", "/models-cache", "hf"),
+        ("models-cache", "/app/models", "models"),
+    ]
+
+    claims = {
+        volume["name"]: volume["persistentVolumeClaim"]["claimName"]
+        for volume in pod["volumes"]
+        if "persistentVolumeClaim" in volume
+    }
+    assert claims == {"models-cache": "cogniverse-semantic-router-models"}
