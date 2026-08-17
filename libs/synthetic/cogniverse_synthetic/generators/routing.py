@@ -116,6 +116,11 @@ class DuplicateLabelFilter:
         return ("keep", None)
 
     @property
+    def seen_labels(self) -> frozenset[CanonicalLabel]:
+        """The labels kept so far, as an immutable snapshot."""
+        return frozenset(self._seen)
+
+    @property
     def seen_count(self) -> int:
         return len(self._seen)
 
