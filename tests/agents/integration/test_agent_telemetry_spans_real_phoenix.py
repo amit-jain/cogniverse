@@ -450,6 +450,30 @@ class TestA2ACustomTelemetrySpansRealPhoenix:
             "cogniverse.query_enhancement span not found in Phoenix. "
             "QueryEnhancementAgent._emit_enhancement_span() may have regressed."
         )
+        from cogniverse_foundation.telemetry.span_contract import (
+            _reconstruct_attributes,
+            read_span_io,
+        )
+
+        # The complete call round-trips through Phoenix: every prompt input
+        # and every produced field, in the slots the SIMBA optimizer reads.
+        span_io = read_span_io(span)
+        assert span_io["input"] == "ML tutorials"
+        assert span_io["operation"] == "query_enhancement"
+        assert span_io["output"] == {
+            "enhanced_query": "machine learning tutorials guides",
+            "expansion_terms": ["deep learning", "neural networks"],
+            "synonyms": ["ML", "AI"],
+            "context_additions": ["education", "technology"],
+            "variant_count": 2,
+            "confidence": 0.85,
+        }
+        attrs = _reconstruct_attributes(span)
+        assert (
+            attrs["input.source_text"]
+            == "ML tutorials source text about machine learning"
+        )
+        assert attrs["input.grounding_context"] == ""
 
     @pytest.mark.asyncio
     async def test_profile_selection_emits_custom_span(self, real_telemetry):

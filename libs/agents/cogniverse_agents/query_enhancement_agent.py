@@ -89,7 +89,11 @@ class QueryEnhancementSignature(dspy.Signature):
         )
     )
     grounding_context: str = dspy.InputField(
-        desc="Optional entity and relationship context from upstream extraction"
+        desc=(
+            "Optional entity and relationship context from upstream extraction. "
+            "When non-empty, enhanced_query and expansion_terms must include "
+            "its entity names."
+        )
     )
 
     enhanced_query: str = dspy.OutputField(desc="Enhanced version of query")
@@ -346,7 +350,12 @@ class QueryEnhancementAgent(
                 input.tenant_id, source="QueryEnhancementInput"
             ),
             original_query=query,
+            source_text=input.source_text,
+            grounding_context=grounding_context,
             enhanced_query=enhanced_query,
+            expansion_terms=expansion_terms,
+            synonyms=synonyms,
+            context_additions=context_additions,
             variant_count=len(variants),
             confidence=confidence,
         )
@@ -419,11 +428,22 @@ class QueryEnhancementAgent(
         *,
         tenant_id: str,
         original_query: str,
+        source_text: str,
+        grounding_context: str,
         enhanced_query: str,
+        expansion_terms: List[str],
+        synonyms: List[str],
+        context_additions: List[str],
         variant_count: int,
         confidence: float,
     ) -> None:
-        """Emit a cogniverse.query_enhancement telemetry span."""
+        """Emit a cogniverse.query_enhancement telemetry span.
+
+        The span carries the complete call: ``input.value`` is the query,
+        ``input.source_text`` / ``input.grounding_context`` the other two
+        prompt inputs, and ``output.value`` every produced field, so the
+        SIMBA optimizer can rebuild the exact example the agent served.
+        """
         if not (hasattr(self, "telemetry_manager") and self.telemetry_manager):
             return
 
@@ -437,11 +457,16 @@ class QueryEnhancementAgent(
                     input_value=original_query,
                     output={
                         "enhanced_query": enhanced_query,
+                        "expansion_terms": list(expansion_terms),
+                        "synonyms": list(synonyms),
+                        "context_additions": list(context_additions),
                         "variant_count": variant_count,
                         "confidence": confidence,
                     },
                     operation=OP_QUERY_ENHANCEMENT,
                 )
+                span.set_attribute("input.source_text", source_text)
+                span.set_attribute("input.grounding_context", grounding_context)
         except Exception as e:
             logger.debug("Failed to emit query_enhancement span: %s", e)
 
