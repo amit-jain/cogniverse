@@ -38,8 +38,8 @@ async def test_create_tenant_fails_loud_when_schema_deploy_fails(monkeypatch):
     with pytest.raises(HTTPException) as exc:
         await tm.create_tenant(request)
 
-    assert exc.value.status_code == 502
-    assert "schema deploy failed" in str(exc.value.detail)
+    assert exc.value.status_code == 500
+    assert "Vespa config server unreachable" in str(exc.value.detail)
 
     # The tenant_metadata document must NOT have been written.
     written_schemas = [
