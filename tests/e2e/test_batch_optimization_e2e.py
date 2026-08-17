@@ -40,10 +40,7 @@ from tests.e2e.conftest import (
     expected_gateway_routing,
     register_tenant_and_wait,
 )
-from tests.e2e.test_api_e2e import (
-    _deploy_profile_for_tenant,
-    _expected_available_profile_names,
-)
+from tests.e2e.test_api_e2e import _deploy_profile_for_tenant
 
 
 def _enabled_agents_in_shipped_config() -> set[str]:
@@ -1131,6 +1128,45 @@ def _served_query_enhancement_queries_in_pod(
     return set(json.loads(line[len("__SERVED__") :]))
 
 
+def _usable_profile_names_in_pod(tenant_id: str = TENANT_ID) -> list[str]:
+    """The candidate pool the profile-selection agent shows the LM for this
+    tenant, derived in-pod by the agent's own function (tenant profiles whose
+    inference services are deployed, in the agent's type order). Visual-only
+    profiles belong here — selection is not synthetic-generation groundability."""
+    script = (
+        "import json; "
+        "from cogniverse_foundation.config.utils import create_default_config_manager; "
+        "from cogniverse_agents.profile_selection_agent import tenant_usable_profile_names; "
+        f"print('__USABLE__' + json.dumps(tenant_usable_profile_names(create_default_config_manager(), {tenant_id!r})))"
+    )
+    result = subprocess.run(
+        [
+            "kubectl",
+            "--context",
+            KUBECTL_CONTEXT,
+            "exec",
+            "-n",
+            NAMESPACE,
+            DEPLOYMENT,
+            "-c",
+            CONTAINER,
+            "--",
+            "python3",
+            "-c",
+            script,
+        ],
+        capture_output=True,
+        text=True,
+        timeout=180,
+    )
+    assert result.returncode == 0, result.stderr[-2000:]
+    line = result.stdout.strip().splitlines()[-1]
+    assert line.startswith("__USABLE__"), result.stdout[-500:]
+    usable = json.loads(line[len("__USABLE__") :])
+    assert usable, f"tenant {tenant_id!r} exposes no usable profiles"
+    return usable
+
+
 def _base_query_enhancement_state() -> dict:
     return json.loads(json.dumps(QueryEnhancementModule().dump_state(), default=str))
 
@@ -1283,12 +1319,11 @@ class TestProfileOptimization:
         demos = module.get("demos", [])
         assert len(demos) >= 1, "Profile produced 0 demos — optimization was useless"
 
-        expected_available_profiles = _expected_available_profile_names(TENANT_ID)
-        assert expected_available_profiles, (
-            "Expected at least one groundable profile in the live tenant"
-        )
+        usable_profiles = _usable_profile_names_in_pod(TENANT_ID)
 
-        # Each demo: real query selecting a profile the live tenant exposes.
+        # Each demo: real query, and the pool it was labelled against is exactly
+        # the pool the agent shows the LM (recorded on the span, read back by
+        # the optimizer) — not a literal, not a subset, same order.
         for demo in demos:
             assert demo.get("query"), f"Demo missing query: {demo}"
             available = [
@@ -1296,15 +1331,9 @@ class TestProfileOptimization:
                 for profile in demo.get("available_profiles", "").split(",")
                 if profile.strip()
             ]
-            assert available, f"Demo missing available_profiles: {demo}"
-            assert available == [
-                profile
-                for profile in expected_available_profiles
-                if profile in available
-            ], f"available_profiles are not a live-tenant subset: {available}"
-            assert demo.get("selected_profile") in expected_available_profiles, (
-                f"Demo selected unknown profile '{demo.get('selected_profile')}', "
-                f"expected one of {expected_available_profiles}"
+            assert available == usable_profiles, (
+                f"demo available_profiles {available} != the agent's candidate "
+                f"pool for the tenant {usable_profiles}"
             )
             assert demo["selected_profile"] in available, (
                 f"Demo selected profile {demo['selected_profile']!r} is absent from "
@@ -1803,17 +1832,14 @@ class TestArtifactLoadingRoundTrip:
         demos = artifact["selector.predict"].get("demos", [])
         assert len(demos) >= 1, "Profile selection artifact has 0 demos"
 
-        expected_available_profiles = _expected_available_profile_names(TENANT_ID)
-        assert expected_available_profiles, (
-            "Expected at least one groundable profile in the live tenant"
-        )
+        usable_profiles = _usable_profile_names_in_pod(TENANT_ID)
 
         # Verify demo structure: each should have query and selected_profile
         for demo in demos:
             assert demo.get("query"), f"Demo missing query: {demo}"
-            assert demo.get("selected_profile") in expected_available_profiles, (
+            assert demo.get("selected_profile") in usable_profiles, (
                 f"Demo selected unknown profile '{demo.get('selected_profile')}', "
-                f"expected one of {expected_available_profiles}"
+                f"expected one of {usable_profiles}"
             )
 
 
