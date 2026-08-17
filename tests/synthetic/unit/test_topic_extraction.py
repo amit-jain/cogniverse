@@ -12,16 +12,20 @@ from cogniverse_synthetic.generators.base import (
     is_non_speech_annotation,
 )
 from cogniverse_synthetic.generators.profile import ProfileGenerator
-from cogniverse_synthetic.generators.query_enhancement import (
-    QueryEnhancementGenerator,
-)
 from cogniverse_synthetic.generators.workflow import WorkflowGenerator
+from cogniverse_synthetic.topics import (
+    TopicSaliency,
+)
+from cogniverse_synthetic.topics import (
+    extract_topic as saliency_extract_topic,
+)
 
 HASH_VALUE = "dd95bb382700f5aa2f17a1d6a8163ffd6ce4057b3c108e077ed34efb08e67691"
 RODEO_TEXT = (
     "This video frame captures an outdoor event, likely a rodeo or similar "
     "competition, viewed through a wire mesh fence..."
 )
+RODEO_SALIENCY_TOPIC = "video frame captures an outdoor event"
 DOCUMENT_TOPIC = "v_-6dz6tBH77I.txt"
 DOCUMENT_BODY = (
     "\ufeffThe video is of a man in athletic clothes standing in a net. He is "
@@ -54,23 +58,28 @@ LIVE_DOCUMENT_SAMPLE = {
 
 
 def _profile_topic(item):
-    return ProfileGenerator()._extract_topic(item)
-
-
-def _query_enhancement_topic(item):
-    return QueryEnhancementGenerator._extract_topic(item)
+    other = {
+        "topic": "other",
+        "description": "Different content for saliency computation.",
+    }
+    saliency = TopicSaliency.from_records([item, other])
+    return ProfileGenerator()._extract_topic(item, saliency=saliency)
 
 
 def _workflow_topic(item):
-    return WorkflowGenerator()._extract_topic(item)
+    other = {
+        "topic": "other",
+        "description": "Different content for saliency computation.",
+    }
+    saliency = TopicSaliency.from_records([item, other])
+    return WorkflowGenerator._extract_topic(item, saliency=saliency)
 
 
 @pytest.mark.parametrize(
     ("name", "extract_topic", "expected"),
     [
-        ("profile", _profile_topic, RODEO_TEXT),
-        ("query_enhancement", _query_enhancement_topic, "This video frame captures"),
-        ("workflow", _workflow_topic, RODEO_TEXT),
+        ("profile", _profile_topic, RODEO_SALIENCY_TOPIC),
+        ("workflow", _workflow_topic, RODEO_SALIENCY_TOPIC),
     ],
 )
 def test_extract_topic_prefers_segment_description_over_video_title_hash(
@@ -87,9 +96,8 @@ def test_extract_topic_prefers_segment_description_over_video_title_hash(
 @pytest.mark.parametrize(
     ("name", "extract_topic", "expected"),
     [
-        ("profile", _profile_topic, RODEO_TEXT),
-        ("query_enhancement", _query_enhancement_topic, "This video frame captures"),
-        ("workflow", _workflow_topic, RODEO_TEXT),
+        ("profile", _profile_topic, RODEO_SALIENCY_TOPIC),
+        ("workflow", _workflow_topic, RODEO_SALIENCY_TOPIC),
     ],
 )
 def test_extract_topic_rejects_bare_hash_and_uses_next_field(
@@ -166,32 +174,20 @@ def test_non_speech_annotation_predicate_detects_only_annotation_tokens(
     assert is_non_speech_annotation(value) is expected
 
 
-@pytest.mark.parametrize(
-    ("extract_topic", "expected"),
-    [
-        (_profile_topic, None),
-        (_query_enhancement_topic, None),
-    ],
-)
-def test_extract_topic_returns_none_when_no_descriptive_field_exists(
-    extract_topic, expected
-):
-    item = {"video_title": HASH_VALUE}
-
-    assert extract_topic(item) == expected
-
-
-def test_workflow_extract_topic_rejects_hash_only_item():
-    with pytest.raises(
-        ValueError, match="sampled workflow content requires a non-empty topic"
-    ):
-        _workflow_topic({"video_title": HASH_VALUE})
-
-
 def test_extract_topic_uses_document_body_and_strips_bom():
-    item = LIVE_DOCUMENT_SAMPLE
+    other = {
+        "topic": "v_other.txt",
+        "description": (
+            "A woman in an orange top walks toward a kitchen sink and begins "
+            "washing dishes under running water."
+        ),
+    }
+    saliency = TopicSaliency.from_records([LIVE_DOCUMENT_SAMPLE, other])
 
-    assert extract_topic(item, max_words=4) == "The video is of"
+    assert (
+        saliency_extract_topic(LIVE_DOCUMENT_SAMPLE, saliency=saliency)
+        == "people sitting and standing right outside"
+    )
 
 
 def test_extract_topic_rejects_annotation_only_transcript():
@@ -266,3 +262,38 @@ def test_canonical_topic_fields_cover_all_shipped_schema_text_roles():
             if isinstance(field_name, str) and field_name not in canonical_fields
         ]
         assert missing_fields == [], schema_path.name
+
+
+def test_saliency_metadata_only_record_yields_no_topic():
+    """Metadata-only records produce no topic via saliency extraction."""
+    from cogniverse_synthetic.topics import TopicSaliency
+    from cogniverse_synthetic.topics import extract_topic as sal_extract
+
+    records = [
+        {
+            "config_id": "cfg-1",
+            "tenant_id": "tenant-123",
+            "status": "active",
+            "agent_type": "routing",
+        },
+        {"description": "A video showing people walking through a park"},
+        {"description": "Another video with people playing in the field"},
+    ]
+    saliency = TopicSaliency.from_records(records)
+    metadata_only_record = records[0]
+    assert sal_extract(metadata_only_record, saliency=saliency) is None
+
+
+def test_saliency_identifier_only_record_yields_no_topic():
+    """Identifier-only records (hash, UUID, timestamp) produce no topic via saliency."""
+    from cogniverse_synthetic.topics import TopicSaliency
+    from cogniverse_synthetic.topics import extract_topic as sal_extract
+
+    records = [
+        {"description": "a1b2c3d4e5f6789012345678901234567890abcdef"},
+        {"description": "A video showing people walking through a park"},
+        {"description": "Another video with people playing in the field"},
+    ]
+    saliency = TopicSaliency.from_records(records)
+    identifier_only_record = records[0]
+    assert sal_extract(identifier_only_record, saliency=saliency) is None

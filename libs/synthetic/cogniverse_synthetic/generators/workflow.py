@@ -13,9 +13,9 @@ from cogniverse_synthetic.generators.base import (
     DEFAULT_SYNTHETIC_GENERATION_FLOOR_COUNT,
     BaseGenerator,
     GenerationTracker,
-    extract_topic,
 )
 from cogniverse_synthetic.schemas import WorkflowExecutionSchema
+from cogniverse_synthetic.topics import TopicSaliency, extract_topic
 
 logger = logging.getLogger(__name__)
 
@@ -66,11 +66,12 @@ class WorkflowGenerator(BaseGenerator):
             )
         )
 
+        saliency = TopicSaliency.from_records(sampled_content)
         grounded_plans = []
         seen_queries = set()
         for content in sampled_content:
             query_type = self._infer_modality(content)
-            topic = self._extract_topic(content)
+            topic = self._extract_topic(content, saliency=saliency)
             for complexity, task_type in self.WORKFLOW_PLANS:
                 query = self._generate_workflow_query(topic, task_type)
                 if query in seen_queries:
@@ -136,8 +137,8 @@ class WorkflowGenerator(BaseGenerator):
         return f"find {topic}"
 
     @staticmethod
-    def _extract_topic(content: Dict[str, Any]) -> str:
-        topic = extract_topic(content)
+    def _extract_topic(content: Dict[str, Any], *, saliency: TopicSaliency) -> str:
+        topic = extract_topic(content, saliency=saliency)
         if topic is not None:
             return topic
         raise ValueError("sampled workflow content requires a non-empty topic")

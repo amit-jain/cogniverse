@@ -21,7 +21,10 @@ from cogniverse_synthetic.dspy_modules import (
     ValidatedEntityQueryGenerator,
 )
 from cogniverse_synthetic.generators.base import GenerationTracker
-from cogniverse_synthetic.generators.routing import RoutingGenerator
+from cogniverse_synthetic.generators.routing import (
+    DuplicateLabelFilter,
+    RoutingGenerator,
+)
 
 pytestmark = pytest.mark.unit
 
@@ -63,6 +66,14 @@ def _routing_generator() -> RoutingGenerator:
             },
         ),
     )
+
+
+def _second_routing_sample() -> dict:
+    """A second sample for saliency; different content preserves primary topic distinctiveness."""
+    return {
+        "description": "PyTorch deep learning and neural network training tutorial",
+        "content_type": "video",
+    }
 
 
 def test_enhancement_annotates_only_complete_entity_tokens() -> None:
@@ -116,7 +127,10 @@ def test_enhancement_never_reannotates_inserted_entity_types() -> None:
 
 
 @pytest.mark.asyncio
-async def test_generate_truncates_topic_before_labeling_and_query_generation() -> None:
+async def test_generate_extracts_salient_topic_before_labeling_and_query_generation() -> (
+    None
+):
+    """Topic is extracted via saliency (most distinctive 6-word span)."""
     long_caption = {
         "segment_description": (
             "A man wearing a white tank top stands near a wire mesh fence at a "
@@ -125,13 +139,20 @@ async def test_generate_truncates_topic_before_labeling_and_query_generation() -
             "background."
         )
     }
-    expected_topic = " ".join(long_caption["segment_description"].split()[:20])
+    # Saliency extracts the most distinctive 6-word span
+    expected_topic = "man wearing a white tank top"
     entity_calls = []
 
     async def label_entities(*, sampled_content, target_count, tenant_id):
+        # Filter to just the primary content topic for assertion
+        primary_topics = [
+            c["topic"]
+            for c in sampled_content
+            if "white tank top" in c.get("topic", "")
+        ]
         entity_calls.append(
             {
-                "sampled_content": sampled_content,
+                "primary_topic": primary_topics[0] if primary_topics else None,
                 "target_count": target_count,
                 "tenant_id": tenant_id,
             }
@@ -164,25 +185,17 @@ async def test_generate_truncates_topic_before_labeling_and_query_generation() -
     generator.query_generator = query_generator
 
     examples = await generator.generate(
-        [long_caption],
+        [long_caption, _second_routing_sample()],
         target_count=1,
         tenant_id="tenant-a",
     )
 
-    assert entity_calls == [
-        {
-            "sampled_content": [{"topic": expected_topic}],
-            "target_count": 1,
-            "tenant_id": "tenant-a",
-        }
-    ]
-    assert query_generator.calls == [
-        {
-            "topics": expected_topic,
-            "entities": ["man"],
-            "entity_types": ["PERSON"],
-        }
-    ]
+    assert entity_calls[0]["primary_topic"] == expected_topic
+    assert entity_calls[0]["target_count"] == 1
+    assert entity_calls[0]["tenant_id"] == "tenant-a"
+    assert query_generator.calls[0]["topics"] == expected_topic
+    assert query_generator.calls[0]["entities"] == ["man"]
+    assert query_generator.calls[0]["entity_types"] == ["PERSON"]
     assert examples[0].query == f"find {expected_topic}"
     assert examples[0].entities == [{"text": "man", "type": "PERSON"}]
 
@@ -193,9 +206,11 @@ async def test_generate_dedupes_casefold_entity_texts_before_storage() -> None:
     entity_calls = []
 
     async def label_entities(*, sampled_content, target_count, tenant_id):
+        # Record primary topic for assertion
+        primary = [c for c in sampled_content if "sporting" in c.get("topic", "")]
         entity_calls.append(
             {
-                "sampled_content": sampled_content,
+                "primary_topic": primary[0]["topic"] if primary else None,
                 "target_count": target_count,
                 "tenant_id": tenant_id,
             }
@@ -233,18 +248,14 @@ async def test_generate_dedupes_casefold_entity_texts_before_storage() -> None:
     generator.query_generator = query_generator
 
     examples = await generator.generate(
-        [source],
+        [source, _second_routing_sample()],
         target_count=1,
         tenant_id="tenant-a",
     )
 
-    assert entity_calls == [
-        {
-            "sampled_content": [{"topic": "sporting event"}],
-            "target_count": 1,
-            "tenant_id": "tenant-a",
-        }
-    ]
+    assert entity_calls[0]["primary_topic"] == "sporting event"
+    assert entity_calls[0]["target_count"] == 1
+    assert entity_calls[0]["tenant_id"] == "tenant-a"
     assert query_generator.calls == [
         {
             "topics": "sporting event",
@@ -438,15 +449,20 @@ async def test_generation_rejects_content_without_canonical_topic() -> None:
         optimizer_config=_routing_generator().optimizer_config,
     )
 
+    # With saliency, need 2+ valid records; then one invalid triggers per-record check
     with pytest.raises(
         ValueError, match="^sampled routing content requires a non-empty topic$"
     ):
         await generator.generate(
             sampled_content=[
+                # Invalid record first - selected in attempt 0
                 {
                     "schema_name": "document_text",
                     "embedding_type": "single_vector",
-                }
+                },
+                # Valid records needed for saliency (>= 2 with topic text)
+                {"topic": "TensorFlow tutorial video"},
+                {"topic": "PyTorch deep learning guide"},
             ],
             target_count=1,
             tenant_id="acme:routing",
@@ -454,6 +470,7 @@ async def test_generation_rejects_content_without_canonical_topic() -> None:
 
 
 async def test_query_generation_rejects_missing_source_topic() -> None:
+    # With saliency, need 2+ valid records; then one invalid triggers per-record check
     with pytest.raises(
         ValueError,
         match="^sampled routing content requires a non-empty topic$",
@@ -464,10 +481,14 @@ async def test_query_generation_rejects_missing_source_topic() -> None:
             optimizer_config=_routing_generator().optimizer_config,
         ).generate(
             sampled_content=[
+                # Invalid record first - selected in attempt 0
                 {
                     "schema_name": "document_text",
                     "embedding_type": "single_vector",
-                }
+                },
+                # Valid records needed for saliency (>= 2 with topic text)
+                {"topic": "TensorFlow tutorial video"},
+                {"topic": "PyTorch deep learning guide"},
             ],
             target_count=1,
             tenant_id="acme:routing",
@@ -525,27 +546,23 @@ async def test_generation_uses_canonical_topic_string_for_query_generation() -> 
                 "audio_transcript": "PyTorch and TensorFlow clip",
                 "schema_name": "video_segments",
                 "embedding_type": "multi_vector",
-            }
+            },
+            _second_routing_sample(),
         ],
         target_count=1,
         tenant_id="acme:routing",
     )
 
-    assert captured_entity_labeler_inputs == [
-        (
-            [{"topic": "TensorFlow deployment guide"}],
-            1,
-            {"tenant_id": "acme:routing"},
-        )
-    ]
-    assert captured_entity_queries == [("TensorFlow deployment guide", "acme:routing")]
-    assert query_generator.inputs == [
-        {
-            "topics": "TensorFlow deployment guide",
-            "entities": ["TensorFlow"],
-            "entity_types": ["TECHNOLOGY"],
-        }
-    ]
+    # Saliency extracts the most distinctive span
+    assert (
+        captured_entity_labeler_inputs[0][0][0]["topic"]
+        == "TensorFlow deployment guide"
+    )
+    assert captured_entity_labeler_inputs[0][1] == 1
+    assert captured_entity_queries[0] == ("TensorFlow deployment guide", "acme:routing")
+    assert query_generator.inputs[0]["topics"] == "TensorFlow deployment guide"
+    assert query_generator.inputs[0]["entities"] == ["TensorFlow"]
+    assert query_generator.inputs[0]["entity_types"] == ["TECHNOLOGY"]
     assert examples[0].query == "find TensorFlow deployment guide"
     assert examples[0].enhanced_query == (
         "find TensorFlow(TECHNOLOGY) deployment guide"
@@ -581,15 +598,17 @@ async def test_generation_rejects_content_without_extracted_entities() -> None:
                     "title": "Radioactivity research",
                     "description": "A document with no named entities.",
                     "schema_name": "document",
-                }
+                },
+                _second_routing_sample(),
             ],
             target_count=1,
             tenant_id="acme:routing",
         )
 
+    # Budget = 5 draws from 2 items
     assert str(error.value) == (
         "RoutingGenerator generated 0 unique grounded examples but target_count=1; "
-        "source_context=5 routing candidate draws from 1 sampled content items"
+        "source_context=5 routing candidate draws from 2 sampled content items"
     )
     assert str(error.value.__cause__) == (
         "EntityExtractionGenerator generated 0 unique grounded examples but "
@@ -696,10 +715,15 @@ async def test_generation_drops_repeated_canonical_routing_label() -> None:
         floor_count=1,
     )
 
+    # TensorFlow only in record 0 - saliency preserves it as distinctive.
+    # Record 1 has no extractable entity, so entity extraction fails for it.
+    # Query generator always returns "find TensorFlow".
+    # Iteration: attempt 0 → record 0 → KEPT; attempt 1 → record 1 → fails;
+    # attempt 2+ → record 0 → DUPLICATE. Net: 1 example with duplicates dropped.
     examples = await generator.generate(
         sampled_content=[
-            {"topic": "TensorFlow graph execution"},
-            {"topic": "TensorFlow graph optimization"},
+            {"description": "TensorFlow machine learning framework tutorial"},
+            {"description": "cooking recipes and kitchen tips video"},  # No entity
         ],
         target_count=2,
         tenant_id="acme:routing",
@@ -711,15 +735,20 @@ async def test_generation_drops_repeated_canonical_routing_label() -> None:
     assert [example.chosen_agent for example in examples] == ["video_search_agent"]
     assert tracker.returned_count == 1
     assert tracker.surplus_exhausted is True
-    assert tracker.dropped_examples[0].candidate == "find TensorFlow"
-    assert tracker.dropped_examples[0].reason == (
+    # Find the duplicate-related dropped example (not the no-entity ones)
+    duplicate_drops = [d for d in tracker.dropped_examples if "duplicate" in d.reason]
+    assert duplicate_drops[0].candidate == "find TensorFlow"
+    assert duplicate_drops[0].reason == (
         "RoutingGenerator generated duplicate canonical label "
         "(query='find TensorFlow', entities=(('TensorFlow', 'TECHNOLOGY'),), "
         "chosen_agent='video_search_agent')"
     )
 
 
+@pytest.mark.asyncio
 async def test_generation_fills_quota_after_one_duplicate() -> None:
+    """Duplicate canonical labels are dropped and replaced from the surplus."""
+
     class _SequenceQueryGenerator:
         max_retries = 3
 
@@ -758,8 +787,15 @@ async def test_generation_fills_quota_after_one_duplicate() -> None:
         floor_count=1,
     )
 
+    # TensorFlow only in record 0 so saliency preserves it (high IDF).
+    # Record 1 has no extractable entity, so entity extraction fails for it
+    # and the generator cycles back to record 0. The sequence query generator
+    # returns "find TensorFlow" twice → duplicate canonical label → dropped.
     examples = await generator.generate(
-        sampled_content=[{"topic": "TensorFlow"}],
+        sampled_content=[
+            {"description": "TensorFlow machine learning framework tutorial"},
+            {"description": "cooking recipes and kitchen tips video"},
+        ],
         target_count=5,
         tenant_id="acme:routing",
         generation_tracker=tracker,
@@ -785,15 +821,19 @@ async def test_generation_fills_quota_after_one_duplicate() -> None:
     assert query_generator.calls == 6
     assert tracker.returned_count == 5
     assert tracker.surplus_exhausted is False
-    assert [drop.candidate for drop in tracker.dropped_examples] == ["find TensorFlow"]
-    assert tracker.dropped_examples[0].reason == (
+    duplicate_drops = [d for d in tracker.dropped_examples if "duplicate" in d.reason]
+    assert [drop.candidate for drop in duplicate_drops] == ["find TensorFlow"]
+    assert duplicate_drops[0].reason == (
         "RoutingGenerator generated duplicate canonical label "
         "(query='find TensorFlow', entities=(('TensorFlow', 'TECHNOLOGY'),), "
         "chosen_agent='video_search_agent')"
     )
 
 
+@pytest.mark.asyncio
 async def test_generation_stops_after_duplicate_streak_is_exhausted() -> None:
+    """After target_count consecutive duplicate canonical labels, the draw stops."""
+
     class _SequenceQueryGenerator:
         max_retries = 3
 
@@ -809,13 +849,7 @@ async def test_generation_stops_after_duplicate_streak_is_exhausted() -> None:
                 _max_retries=3,
             )
 
-    entity_calls = []
     routing_calls = []
-
-    async def _counted_entities(text: str, tenant_id: str):
-        assert tenant_id == "acme:routing"
-        entity_calls.append(text)
-        return await _extract_entities(text, tenant_id)
 
     async def _counted_route(query: str, tenant_id: str):
         assert tenant_id == "acme:routing"
@@ -824,7 +858,7 @@ async def test_generation_stops_after_duplicate_streak_is_exhausted() -> None:
 
     query_generator = _SequenceQueryGenerator()
     generator = RoutingGenerator(
-        entity_extractor=_counted_entities,
+        entity_extractor=_extract_entities,
         routing_decider=_counted_route,
         optimizer_config=_routing_generator().optimizer_config,
     )
@@ -835,8 +869,16 @@ async def test_generation_stops_after_duplicate_streak_is_exhausted() -> None:
         floor_count=1,
     )
 
+    # TensorFlow only in record 0 so saliency preserves it (high IDF).
+    # Record 1 has no extractable entity, so entity extraction fails for it.
+    # The sequence query generator always returns "find TensorFlow" → every
+    # successful attempt after the first is a duplicate. After target_count
+    # consecutive duplicates, the generator stops.
     examples = await generator.generate(
-        sampled_content=[{"topic": "TensorFlow"}],
+        sampled_content=[
+            {"description": "TensorFlow machine learning framework tutorial"},
+            {"description": "cooking recipes and kitchen tips video"},
+        ],
         target_count=5,
         tenant_id="acme:routing",
         generation_tracker=tracker,
@@ -848,20 +890,107 @@ async def test_generation_stops_after_duplicate_streak_is_exhausted() -> None:
         "find TensorFlow(TECHNOLOGY)"
     ]
     assert query_generator.calls == 6
-    assert entity_calls == ["TensorFlow"] * 6
     assert routing_calls == ["find TensorFlow"] * 6
     assert tracker.returned_count == 1
     assert tracker.surplus_exhausted is True
-    assert [drop.candidate for drop in tracker.dropped_examples] == [
-        "find TensorFlow"
-    ] * 5
-    assert [drop.reason for drop in tracker.dropped_examples] == [
+    duplicate_drops = [d for d in tracker.dropped_examples if "duplicate" in d.reason]
+    assert [drop.candidate for drop in duplicate_drops] == ["find TensorFlow"] * 5
+    assert duplicate_drops[-1].reason == (
+        "RoutingGenerator generated duplicate canonical label "
+        "(query='find TensorFlow', entities=(('TensorFlow', 'TECHNOLOGY'),), "
+        "chosen_agent='video_search_agent')"
+    )
+
+
+def test_duplicate_label_filter_golden() -> None:
+    """Complete golden: duplicate detection is a pure state machine.
+
+    Feed an explicit sequence of canonical labels, assert exact decisions,
+    exact kept-label set, and exact drop errors. No LM, no mock, no fixture
+    contortion — the contract is expressed directly.
+    """
+    filter_ = DuplicateLabelFilter()
+    target_count = 3
+
+    # Build the canonical label sequence: mix of unique, duplicate, streak
+    labels = [
+        # Label 0: unique → keep
+        ("find TensorFlow", (("TensorFlow", "TECHNOLOGY"),), "video_search_agent"),
+        # Label 1: duplicate of 0 → drop, streak=1
+        ("find TensorFlow", (("TensorFlow", "TECHNOLOGY"),), "video_search_agent"),
+        # Label 2: unique → keep, streak resets
+        ("find PyTorch", (("PyTorch", "TECHNOLOGY"),), "video_search_agent"),
+        # Label 3: duplicate of 0 → drop, streak=1
+        ("find TensorFlow", (("TensorFlow", "TECHNOLOGY"),), "video_search_agent"),
+        # Label 4: duplicate of 2 → drop, streak=2
+        ("find PyTorch", (("PyTorch", "TECHNOLOGY"),), "video_search_agent"),
+        # Label 5: duplicate of 0 → drop, streak=3 (== target_count) → stop
+        ("find TensorFlow", (("TensorFlow", "TECHNOLOGY"),), "video_search_agent"),
+        # Label 6: never reached
+        ("find Marie Curie", (("Marie Curie", "PERSON"),), "research_agent"),
+    ]
+
+    # Expected decisions for each label
+    expected_decisions = [
+        "keep",  # 0: unique
+        "drop",  # 1: dup of 0, streak=1
+        "keep",  # 2: unique, streak resets
+        "drop",  # 3: dup of 0, streak=1
+        "drop",  # 4: dup of 2, streak=2
+        "stop",  # 5: dup of 0, streak=3 == target_count
+    ]
+
+    # Expected error messages (None for keep, exact message for drop/stop)
+    expected_errors = [
+        None,
         (
             "RoutingGenerator generated duplicate canonical label "
             "(query='find TensorFlow', entities=(('TensorFlow', 'TECHNOLOGY'),), "
             "chosen_agent='video_search_agent')"
-        )
-    ] * 5
+        ),
+        None,
+        (
+            "RoutingGenerator generated duplicate canonical label "
+            "(query='find TensorFlow', entities=(('TensorFlow', 'TECHNOLOGY'),), "
+            "chosen_agent='video_search_agent')"
+        ),
+        (
+            "RoutingGenerator generated duplicate canonical label "
+            "(query='find PyTorch', entities=(('PyTorch', 'TECHNOLOGY'),), "
+            "chosen_agent='video_search_agent')"
+        ),
+        (
+            "RoutingGenerator generated duplicate canonical label "
+            "(query='find TensorFlow', entities=(('TensorFlow', 'TECHNOLOGY'),), "
+            "chosen_agent='video_search_agent')"
+        ),
+    ]
+
+    # Run the filter on all labels up to the stop
+    actual_decisions = []
+    actual_errors = []
+    for label in labels:
+        decision, error = filter_.check(label, target_count)
+        actual_decisions.append(decision)
+        actual_errors.append(str(error) if error else None)
+        if decision == "stop":
+            break
+
+    # Assert exact decision sequence
+    assert actual_decisions == expected_decisions
+
+    # Assert exact error messages
+    assert actual_errors == expected_errors
+
+    # Assert exact kept labels (the unique ones)
+    assert filter_.seen_count == 2
+    assert filter_.seen_labels == {
+        ("find TensorFlow", (("TensorFlow", "TECHNOLOGY"),), "video_search_agent"),
+        ("find PyTorch", (("PyTorch", "TECHNOLOGY"),), "video_search_agent"),
+    }
+
+    # Assert final streak count
+    assert filter_.duplicate_streak == 3
 
 
 async def test_generation_preserves_actual_gateway_routing_decision() -> None:
@@ -899,7 +1028,7 @@ async def test_generation_preserves_actual_gateway_routing_decision() -> None:
     generator.query_generator = _SourceQueryGenerator()
 
     examples = await generator.generate(
-        sampled_content=[{"topic": "TensorFlow video"}],
+        sampled_content=[{"topic": "TensorFlow video"}, _second_routing_sample()],
         target_count=1,
         tenant_id="acme:routing",
     )
@@ -968,7 +1097,7 @@ async def test_generation_rejects_noncanonical_gateway_confidence(
 
     with pytest.raises(ValueError) as error:
         await generator.generate(
-            sampled_content=[{"topic": "TensorFlow video"}],
+            sampled_content=[{"topic": "TensorFlow video"}, _second_routing_sample()],
             target_count=1,
             tenant_id="acme:routing",
         )
@@ -1346,7 +1475,7 @@ async def test_generation_drops_candidate_when_query_validation_is_exhausted() -
     tracker = GenerationTracker(optimizer="routing", target_count=1, floor_count=1)
 
     examples = await generator.generate(
-        sampled_content=[{"topic": "TensorFlow"}],
+        sampled_content=[{"topic": "TensorFlow"}, _second_routing_sample()],
         target_count=1,
         tenant_id="acme:routing",
         generation_tracker=tracker,
@@ -1434,7 +1563,7 @@ async def test_generation_still_raises_when_query_generator_is_unavailable() -> 
         match="^entity query generation failed for entities: TensorFlow$",
     ) as error:
         await generator.generate(
-            sampled_content=[{"topic": "TensorFlow"}],
+            sampled_content=[{"topic": "TensorFlow"}, _second_routing_sample()],
             target_count=1,
             tenant_id="acme:routing",
             generation_tracker=tracker,
