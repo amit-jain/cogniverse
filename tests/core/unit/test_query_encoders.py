@@ -2,10 +2,13 @@
 
 from __future__ import annotations
 
+import logging
 from unittest.mock import MagicMock, patch
 
+import numpy as np
 import pytest
 
+from cogniverse_core.query import encoders
 from cogniverse_core.query.encoders import (
     ColBERTQueryEncoder,
     QueryEncoderFactory,
@@ -227,6 +230,44 @@ def test_factory_wires_remote_url_for_videoprism(mock_get_model):
 
     passed_config = mock_get_model.call_args[0][1]
     assert passed_config["remote_inference_url"] == "REMOTE_URL_SENTINEL"
+
+
+class _LoaderWithTextEncoding:
+    text_tokenizer = None
+    is_global = True
+
+    def encode_text(self, query: str) -> np.ndarray:
+        return np.zeros((768,), dtype=np.float32)
+
+
+class _LoaderWithoutTextEncoding:
+    text_tokenizer = None
+    is_global = True
+
+
+def _build_video_prism_encoder(monkeypatch, loader):
+    monkeypatch.setattr(
+        encoders, "get_or_load_model", lambda name, config, log: (loader, None)
+    )
+    return encoders.VideoPrismQueryEncoder("videoprism_public_v1_large_hf")
+
+
+def test_loader_without_encode_text_warns_once(monkeypatch, caplog):
+    with caplog.at_level(logging.WARNING, logger=encoders.logger.name):
+        _build_video_prism_encoder(monkeypatch, _LoaderWithoutTextEncoding())
+
+    assert [record.getMessage() for record in caplog.records] == [
+        "VideoPrism loader _LoaderWithoutTextEncoding has no encode_text; "
+        "text-to-video queries will fail"
+    ]
+
+
+def test_loader_with_encode_text_warns_nothing(monkeypatch, caplog):
+    with caplog.at_level(logging.WARNING, logger=encoders.logger.name):
+        encoder = _build_video_prism_encoder(monkeypatch, _LoaderWithTextEncoding())
+
+    assert [record.getMessage() for record in caplog.records] == []
+    assert encoder.encode("a man throwing a discus").shape == (768,)
 
 
 @patch("cogniverse_core.query.encoders.get_or_load_model")
