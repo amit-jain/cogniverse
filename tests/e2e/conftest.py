@@ -654,26 +654,46 @@ def register_tenant_and_wait(
             f"the config-server base URL of your deployed cluster."
         )
 
-    # Send the create — give the runtime up to 5 min to ACK; the actual
-    # readiness signal is the poll below, not the response code.
+    # Send the create; the runtime rolls back on failure, so a transient 502
+    # can be retried safely here without leaving a torn tenant behind. The
+    # readiness signal is still the poll below, not the response code.
+    deadline = _time.monotonic() + timeout_s
+    last_failure = ""
     with httpx.Client(timeout=300.0) as client:
-        try:
-            resp = client.post(
-                f"{RUNTIME}/admin/tenants",
-                json={"tenant_id": tenant_id, "created_by": created_by},
-            )
-        except (httpx.HTTPError, OSError) as exc:
-            # Server may have started the deploy anyway; the poll below
-            # is the actual completion signal. Don't fail here.
-            print(
-                f"register_tenant_and_wait: POST raised {exc!r} — "
-                f"continuing to schemas poll"
-            )
-            resp = None
-        if resp is not None and resp.status_code not in (200, 201, 409):
+        while True:
+            try:
+                resp = client.post(
+                    f"{RUNTIME}/admin/tenants",
+                    json={"tenant_id": tenant_id, "created_by": created_by},
+                )
+            except (httpx.HTTPError, OSError) as exc:
+                last_failure = f"raised {exc!r}"
+                if _time.monotonic() >= deadline:
+                    raise RuntimeError(
+                        f"register_tenant_and_wait: POST /admin/tenants for "
+                        f"{tenant_id!r} {last_failure}"
+                    ) from exc
+                print(
+                    f"register_tenant_and_wait: POST raised {exc!r} — "
+                    f"retrying tenant creation"
+                )
+                _time.sleep(2.0)
+                continue
+
+            if resp.status_code in (200, 201, 409):
+                break
+
+            last_failure = f"returned {resp.status_code} {resp.text}"
+            if resp.status_code in (502, 503, 504) and _time.monotonic() < deadline:
+                print(
+                    f"register_tenant_and_wait: POST /admin/tenants for "
+                    f"{tenant_id!r} {last_failure} — retrying"
+                )
+                _time.sleep(2.0)
+                continue
             raise RuntimeError(
                 f"register_tenant_and_wait: POST /admin/tenants for "
-                f"{tenant_id!r} returned {resp.status_code} {resp.text}"
+                f"{tenant_id!r} {last_failure}"
             )
 
     deadline = _time.monotonic() + timeout_s
