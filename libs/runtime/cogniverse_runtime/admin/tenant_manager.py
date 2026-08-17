@@ -170,6 +170,76 @@ def validate_tenant_name(tenant_name: str) -> None:
         )
 
 
+_TENANT_SCHEMA_DEPLOY_MAX_ATTEMPTS = 5
+_TENANT_SCHEMA_DEPLOY_INITIAL_BACKOFF_S = 0.5
+_TENANT_SCHEMA_DEPLOY_MAX_BACKOFF_S = 4.0
+
+
+def _tenant_schema_deploy_retryable(exc: Exception) -> bool:
+    """Return True when a tenant schema deploy can safely be retried."""
+    node: BaseException | None = exc
+    for _ in range(4):
+        if node is None:
+            break
+        status = getattr(node, "status_code", None)
+        if isinstance(status, int) and status in {502, 503, 504}:
+            return True
+        text = str(node)
+        if any(
+            fragment in text
+            for fragment in (
+                "HTTP 502",
+                "HTTP 503",
+                "HTTP 504",
+                "Connection aborted",
+                "Connection refused",
+                "ConnectionError",
+                "Read timed out",
+                "timed out",
+                "Vespa config server",
+                "temporarily unavailable",
+            )
+        ):
+            return True
+        node = node.__cause__ or node.__context__
+    return False
+
+
+async def _deploy_tenant_schema_with_retry(
+    backend: Backend, tenant_full_id: str, base_schema_name: str
+) -> None:
+    """Deploy one tenant schema with a short retry for transient Vespa errors."""
+    backoff_s = _TENANT_SCHEMA_DEPLOY_INITIAL_BACKOFF_S
+    for attempt in range(1, _TENANT_SCHEMA_DEPLOY_MAX_ATTEMPTS + 1):
+        try:
+            await asyncio.to_thread(
+                backend.schema_registry.deploy_schema,
+                tenant_id=tenant_full_id,
+                base_schema_name=base_schema_name,
+            )
+            return
+        except Exception as exc:
+            if (
+                attempt == _TENANT_SCHEMA_DEPLOY_MAX_ATTEMPTS
+                or not _tenant_schema_deploy_retryable(exc)
+            ):
+                raise
+            logger.warning(
+                "Retrying schema deploy for tenant %s base_schema %s after %s: %s "
+                "(attempt %d/%d)",
+                tenant_full_id,
+                base_schema_name,
+                type(exc).__name__,
+                exc,
+                attempt,
+                _TENANT_SCHEMA_DEPLOY_MAX_ATTEMPTS,
+            )
+            await asyncio.sleep(backoff_s)
+            backoff_s = min(
+                backoff_s * 2, _TENANT_SCHEMA_DEPLOY_MAX_BACKOFF_S
+            )
+
+
 # ============================================================================
 # Organization Endpoints
 # ============================================================================
@@ -495,78 +565,86 @@ async def create_tenant(request: CreateTenantRequest) -> Tenant:
                 )
             org_created = True
 
-        # Deploy schemas for tenant via Backend
+        # Deploy schemas for tenant via Backend.
         base_schemas = request.base_schemas or [
             "video_colpali_smol500_mv_frame",
         ]
 
-        deployed_schemas = []
-        failed_schemas = []
-        for base_schema in base_schemas:
-            try:
-                await asyncio.to_thread(
-                    backend.schema_registry.deploy_schema,
-                    tenant_id=tenant_full_id,
-                    base_schema_name=base_schema,
+        deployed_schemas: list[str] = []
+        try:
+            for base_schema in base_schemas:
+                await _deploy_tenant_schema_with_retry(
+                    backend, tenant_full_id, base_schema
                 )
                 deployed_schemas.append(base_schema)
-            except Exception as e:
-                logger.error(
-                    f"Failed to deploy schema {base_schema} for {tenant_full_id}: {e}"
+
+            # Create tenant only after the schemas are live.
+            tenant = Tenant(
+                tenant_full_id=tenant_full_id,
+                org_id=org_id,
+                tenant_name=tenant_name,
+                created_at=int(time.time() * 1000),
+                created_by=request.created_by,
+                status="active",
+                schemas_deployed=deployed_schemas,
+            )
+
+            # Store via Backend.
+            success = backend.create_metadata_document(
+                schema="tenant_metadata",
+                doc_id=tenant_full_id,
+                fields={
+                    "tenant_full_id": tenant.tenant_full_id,
+                    "org_id": tenant.org_id,
+                    "tenant_name": tenant.tenant_name,
+                    "created_at": tenant.created_at,
+                    "created_by": tenant.created_by,
+                    "status": tenant.status,
+                    "schemas_deployed": tenant.schemas_deployed,
+                },
+            )
+
+            if not success:
+                raise HTTPException(
+                    status_code=500,
+                    detail=f"Failed to create tenant {tenant_full_id} in backend",
                 )
-                failed_schemas.append(base_schema)
 
-        if failed_schemas:
-            # Do not create an active tenant whose schemas didn't deploy. Such a
-            # tenant silently accepts writes that then hit an undeployed doc type
-            # — every ingest/search fails or grinds in the feed-retry loop, and
-            # graph upsert reports success having persisted nothing. Fail loud so
-            # the operator can fix the Vespa config server and retry.
-            raise HTTPException(
-                status_code=502,
-                detail=(
-                    f"Tenant {tenant_full_id} not created: schema deploy failed for "
-                    f"{failed_schemas}. Check the Vespa config server and retry."
-                ),
+            logger.info(
+                f"Created tenant: {tenant_full_id} (org_created: {org_created}, schemas: {len(deployed_schemas)})"
             )
 
-        # Create tenant
-        tenant = Tenant(
-            tenant_full_id=tenant_full_id,
-            org_id=org_id,
-            tenant_name=tenant_name,
-            created_at=int(time.time() * 1000),
-            created_by=request.created_by,
-            status="active",
-            schemas_deployed=deployed_schemas,
-        )
+            return tenant
+        except Exception:
+            # Best-effort rollback keeps the create path from leaving a tenant
+            # with schemas but no metadata, or an auto-created org with no tenant.
+            schema_manager = getattr(backend, "schema_manager", None)
+            if deployed_schemas and schema_manager is not None:
+                try:
+                    await asyncio.to_thread(
+                        schema_manager.delete_tenant_schemas, tenant_full_id
+                    )
+                except Exception as rollback_exc:
+                    logger.error(
+                        f"Failed to roll back tenant schemas for {tenant_full_id}: "
+                        f"{rollback_exc}"
+                    )
 
-        # Store via Backend
-        success = backend.create_metadata_document(
-            schema="tenant_metadata",
-            doc_id=tenant_full_id,
-            fields={
-                "tenant_full_id": tenant.tenant_full_id,
-                "org_id": tenant.org_id,
-                "tenant_name": tenant.tenant_name,
-                "created_at": tenant.created_at,
-                "created_by": tenant.created_by,
-                "status": tenant.status,
-                "schemas_deployed": tenant.schemas_deployed,
-            },
-        )
-
-        if not success:
-            raise HTTPException(
-                status_code=500,
-                detail=f"Failed to create tenant {tenant_full_id} in backend",
-            )
-
-        logger.info(
-            f"Created tenant: {tenant_full_id} (org_created: {org_created}, schemas: {len(deployed_schemas)})"
-        )
-
-        return tenant
+            if org_created:
+                delete_org = getattr(backend, "delete_metadata_document", None)
+                if callable(delete_org):
+                    try:
+                        await asyncio.to_thread(
+                            delete_org,
+                            schema="organization_metadata",
+                            doc_id=org_id,
+                        )
+                    except Exception as rollback_exc:
+                        logger.error(
+                            f"Failed to roll back organization {org_id} for "
+                            f"{tenant_full_id}: {rollback_exc}"
+                        )
+            raise
 
     except HTTPException:
         raise
