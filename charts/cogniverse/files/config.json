@@ -1,6 +1,4 @@
 {
-  "comment": "Multi-Agent RAG System Configuration - Copy this file to config.json and modify the values as needed",
-  "default_tenant": "",
   "active_video_profile": "video_colpali_smol500_mv_frame",
   "agents": {
     "search_agent": {
@@ -263,7 +261,6 @@
     "max_sub_questions": 5
   },
   "search_backend": "vespa",
-  "byaldi_index_name": ".byaldi/my_video_index",
   "colpali_model": "TomoroAI/tomoro-colqwen3-embed-4b",
   "embedding_model": "lightonai/DenseOn",
   "prompts": {
@@ -271,10 +268,6 @@
     "default_system_prompt": "You are a precise and efficient routing agent. Analyze the query and output a JSON object with 'search_modality' (video or text) and 'generation_type' (detailed_report, summary, or raw_results)."
   },
   "remote_inference_url": null,
-  "evaluation_datasets": {
-    "default": "visual_test_queries",
-    "registry_path": "configs/dataset_registry.json"
-  },
   "evaluators": {
     "visual_judge": {
       "provider": "vllm",
@@ -300,7 +293,6 @@
     }
   },
   "remote_inference_api_key": null,
-  "remote_inference_provider": null,
   "videoprism_repo_path": "",
   "pipeline_cache": {
     "enabled": true,
@@ -331,31 +323,7 @@
   },
   "query_inference_engine": {
     "mode": "llm",
-    "available_gliner_models": [
-      "urchade/gliner_small-v2.1",
-      "urchade/gliner_medium-v2.1",
-      "urchade/gliner_large-v2.1",
-      "urchade/gliner_multi-v2.1"
-    ],
-    "current_gliner_model": "urchade/gliner_large-v2.1",
-    "enable_llm_fallback": false,
-    "gliner_labels": [
-      "video_content",
-      "visual_content",
-      "document_content",
-      "text_information",
-      "time_reference",
-      "date_pattern",
-      "search_intent"
-    ],
-    "gliner_threshold": 0.3,
-    "optimization_results": {
-      "strategy": "focused",
-      "accuracy": 0.9333,
-      "optimized_on": "2025-01-03",
-      "configurations_tested": 608,
-      "best_runtime": "49.4s"
-    }
+    "gliner_threshold": 0.3
   },
   "pipeline_config": {
     "extract_keyframes": true,
@@ -369,10 +337,6 @@
   "timeout": 60.0,
   "log_level": "INFO",
   "log_file": "multi_agent_system.log",
-  "output_base_dir": "outputs",
-  "video_data_dir": "data/videos",
-  "text_data_dir": "data/text",
-  "index_dir": "data/indexes",
   "reranking": {
     "enabled": false,
     "model": "heuristic",
@@ -392,8 +356,7 @@
       "heuristic": "heuristic"
     },
     "ollama_config": {
-      "api_base": "{{ include "cogniverse.llmEndpoint" . }}/v1",
-      "comment": "For Ollama models, set 'model' to 'ollama_bge' or 'ollama_mxbai' and 'api_base' to this value"
+      "api_base": "{{ include "cogniverse.llmEndpoint" . }}/v1"
     }
   },
   "routing": {
