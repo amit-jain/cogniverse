@@ -482,30 +482,34 @@ class SummarizerAgent(
         return cut.rstrip() + "…"
 
     def _extract_themes(self, search_results: List[Dict[str, Any]]) -> List[str]:
-        """Extract key themes from search results"""
-        themes = set()
+        """Extract key themes from search results in first-seen order."""
+        themes: List[str] = []
+
+        def add(theme: str) -> None:
+            if theme not in themes:
+                themes.append(theme)
 
         for result in search_results:
             # Extract from video metadata
             if "video_id" in result:
-                themes.add("video_content")
+                add("video_content")
 
             # Extract from descriptions
             if "description" in result:
                 desc = result["description"].lower()
                 if "education" in desc or "tutorial" in desc:
-                    themes.add("educational_content")
+                    add("educational_content")
                 if "news" in desc or "report" in desc:
-                    themes.add("news_content")
+                    add("news_content")
                 if "entertainment" in desc or "comedy" in desc:
-                    themes.add("entertainment")
+                    add("entertainment")
 
             # Extract from content type
             content_type = result.get("content_type", "").lower()
             if content_type:
-                themes.add(f"{content_type}_content")
+                add(f"{content_type}_content")
 
-        return list(themes)[:10]  # Limit to top 10 themes
+        return themes[:10]  # Limit to top 10 themes
 
     def _categorize_content(self, search_results: List[Dict[str, Any]]) -> List[str]:
         """Categorize content by type and format"""
@@ -553,18 +557,22 @@ class SummarizerAgent(
     def _identify_visual_elements(
         self, search_results: List[Dict[str, Any]]
     ) -> List[str]:
-        """Identify visual elements in search results"""
-        visual_elements = []
+        """Identify visual elements in search results in first-seen order."""
+        visual_elements: List[str] = []
+
+        def add(element: str) -> None:
+            if element not in visual_elements:
+                visual_elements.append(element)
 
         for result in search_results:
             if "frame_id" in result:
-                visual_elements.append("video_frames")
+                add("video_frames")
             if "thumbnail" in result:
-                visual_elements.append("thumbnails")
+                add("thumbnails")
             if "image_path" in result:
-                visual_elements.append("images")
+                add("images")
 
-        return list(set(visual_elements))
+        return visual_elements
 
     def _generate_reasoning(
         self,

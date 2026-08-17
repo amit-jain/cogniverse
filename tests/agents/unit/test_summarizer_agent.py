@@ -319,11 +319,11 @@ class TestSummarizerAgentCoreFunctionality:
             "text",
             "medium_form",
         }
-        assert set(thinking_phase.key_themes) == {
+        assert thinking_phase.key_themes == [
             "video_content",
-            "text_content",
             "educational_content",
-        }
+            "text_content",
+        ]
         assert thinking_phase.reasoning.strip()
 
     @pytest.mark.ci_fast
@@ -340,14 +340,14 @@ class TestSummarizerAgentCoreFunctionality:
             {"description": "breaking news report", "content_type": "text"},
         ]
 
-        themes = set(agent._extract_themes(results))
+        themes = agent._extract_themes(results)
 
-        assert themes == {
+        assert themes == [
             "video_content",  # video_id + content_type video
             "educational_content",  # "tutorial" in description
             "news_content",  # "news"/"report" in description
             "text_content",  # content_type text
-        }
+        ]
 
     @pytest.mark.ci_fast
     def test_categorize_content_functionality(
@@ -389,9 +389,46 @@ class TestSummarizerAgentCoreFunctionality:
             {"video_id": "v9"},  # no visual field → contributes nothing
         ]
 
-        visual_elements = set(agent._identify_visual_elements(results))
+        visual_elements = agent._identify_visual_elements(results)
 
-        assert visual_elements == {"video_frames", "thumbnails", "images"}
+        assert visual_elements == ["video_frames", "thumbnails", "images"]
+
+    @pytest.mark.ci_fast
+    def test_theme_order_is_identical_under_different_hash_seeds(self):
+        import subprocess
+        import sys
+
+        script = (
+            "from unittest.mock import Mock, patch\n"
+            "from cogniverse_agents.summarizer_agent import "
+            "SummarizerAgent, SummarizerDeps\n"
+            "with patch('cogniverse_agents.summarizer_agent.VLMInterface'), "
+            "patch.object(SummarizerAgent, '_initialize_vlm_client'):\n"
+            "    agent = SummarizerAgent(deps=SummarizerDeps(), config_manager=Mock())\n"
+            "print(agent._extract_themes([\n"
+            "    {'video_id': 'v1', 'description': 'a great tutorial on python',"
+            " 'content_type': 'video'},\n"
+            "    {'description': 'breaking news report', 'content_type': 'text'},\n"
+            "]))\n"
+        )
+        outputs = [
+            subprocess.run(
+                [sys.executable, "-c", script],
+                capture_output=True,
+                text=True,
+                check=True,
+                env={"PYTHONHASHSEED": seed, "PATH": "/usr/bin:/bin"},
+            ).stdout.strip()
+            for seed in ("0", "2", "7")
+        ]
+
+        assert (
+            outputs
+            == [
+                "['video_content', 'educational_content', 'news_content', 'text_content']"
+            ]
+            * 3
+        )
 
     @pytest.mark.ci_fast
     @pytest.mark.asyncio
