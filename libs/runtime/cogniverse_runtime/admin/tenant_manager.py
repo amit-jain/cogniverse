@@ -35,6 +35,7 @@ from typing import Dict, List, Optional
 
 import uvicorn
 from fastapi import APIRouter, FastAPI, HTTPException, Query
+from requests import exceptions as requests_exceptions
 
 from cogniverse_core.common.tenant_utils import SYSTEM_TENANT_ID, parse_tenant_id
 from cogniverse_foundation.config.utils import get_config
@@ -176,29 +177,22 @@ _TENANT_SCHEMA_DEPLOY_MAX_BACKOFF_S = 4.0
 
 
 def _tenant_schema_deploy_retryable(exc: Exception) -> bool:
-    """Return True when a tenant schema deploy can safely be retried."""
+    """Return True when a tenant schema deploy can safely be retried.
+
+    Only transport-layer failures from the HTTP client are retryable here.
+    The schema registry flattens config-server failures before they reach this
+    helper, so message sniffing would just paper over a backend contract gap.
+    """
     node: BaseException | None = exc
     for _ in range(4):
         if node is None:
             break
-        status = getattr(node, "status_code", None)
-        if isinstance(status, int) and status in {502, 503, 504}:
-            return True
-        text = str(node)
-        if any(
-            fragment in text
-            for fragment in (
-                "HTTP 502",
-                "HTTP 503",
-                "HTTP 504",
-                "Connection aborted",
-                "Connection refused",
-                "ConnectionError",
-                "Read timed out",
-                "timed out",
-                "Vespa config server",
-                "temporarily unavailable",
-            )
+        if isinstance(
+            node,
+            (
+                requests_exceptions.ConnectionError,
+                requests_exceptions.Timeout,
+            ),
         ):
             return True
         node = node.__cause__ or node.__context__
@@ -616,8 +610,15 @@ async def create_tenant(request: CreateTenantRequest) -> Tenant:
         except Exception:
             # Best-effort rollback keeps the create path from leaving a tenant
             # with schemas but no metadata, or an auto-created org with no tenant.
-            schema_manager = getattr(backend, "schema_manager", None)
-            if deployed_schemas and schema_manager is not None:
+            schema_manager = backend.schema_manager
+            if deployed_schemas and schema_manager is None:
+                logger.error(
+                    "Cannot roll back tenant schemas for %s: backend.schema_manager "
+                    "is unavailable after deploying %d schema(s)",
+                    tenant_full_id,
+                    len(deployed_schemas),
+                )
+            elif deployed_schemas:
                 try:
                     await asyncio.to_thread(
                         schema_manager.delete_tenant_schemas, tenant_full_id
@@ -629,19 +630,17 @@ async def create_tenant(request: CreateTenantRequest) -> Tenant:
                     )
 
             if org_created:
-                delete_org = getattr(backend, "delete_metadata_document", None)
-                if callable(delete_org):
-                    try:
-                        await asyncio.to_thread(
-                            delete_org,
-                            schema="organization_metadata",
-                            doc_id=org_id,
-                        )
-                    except Exception as rollback_exc:
-                        logger.error(
-                            f"Failed to roll back organization {org_id} for "
-                            f"{tenant_full_id}: {rollback_exc}"
-                        )
+                try:
+                    await asyncio.to_thread(
+                        backend.delete_metadata_document,
+                        schema="organization_metadata",
+                        doc_id=org_id,
+                    )
+                except Exception as rollback_exc:
+                    logger.error(
+                        f"Failed to roll back organization {org_id} for "
+                        f"{tenant_full_id}: {rollback_exc}"
+                    )
             raise
 
     except HTTPException:
