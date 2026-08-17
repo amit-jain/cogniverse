@@ -8,7 +8,6 @@ modifying core code.
 
 import importlib
 import logging
-import os
 from typing import Any, Dict, Optional, Type
 
 from cogniverse_core.common.tenant_utils import SYSTEM_TENANT_ID
@@ -18,11 +17,28 @@ from cogniverse_sdk.interfaces.backend import Backend, IngestionBackend, SearchB
 logger = logging.getLogger(__name__)
 
 
+_DEFAULT_TENANT_CACHE_CAPACITY = 16
+_CONFIGURED_TENANT_CACHE_CAPACITY: Optional[int] = None
+
+
 def _tenant_cache_capacity() -> int:
     try:
-        return max(1, int(os.environ.get("COGNIVERSE_TENANT_CACHE_CAPACITY", 16)))
+        configured_capacity = _CONFIGURED_TENANT_CACHE_CAPACITY
+        if configured_capacity is not None:
+            return max(1, int(configured_capacity))
+        return _DEFAULT_TENANT_CACHE_CAPACITY
     except (TypeError, ValueError):
-        return 16
+        return _DEFAULT_TENANT_CACHE_CAPACITY
+
+
+def configure_tenant_cache_capacity(capacity: int) -> None:
+    """Set the tenant cache capacity used for backend instances."""
+    global _CONFIGURED_TENANT_CACHE_CAPACITY
+    _CONFIGURED_TENANT_CACHE_CAPACITY = capacity
+    BackendRegistry._backend_instances = TenantLRUCache(
+        capacity=_tenant_cache_capacity(),
+        on_evict=_on_backend_evicted,
+    )
 
 
 def _on_backend_evicted(key: str, instance: Any) -> None:

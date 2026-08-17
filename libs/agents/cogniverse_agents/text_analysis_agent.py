@@ -296,15 +296,33 @@ app = FastAPI(
 
 # Per-tenant agent instances cache (LRU-bounded). Each instance holds a
 # compiled DSPy module + LM config, non-trivial in memory across many
-# tenants. Capacity defaults to DEFAULT_TENANT_CACHE_CAPACITY; the standalone
-# __main__ launch may override it from COGNIVERSE_TENANT_CACHE_CAPACITY (env
-# reads stay confined to that startup boundary).
+# tenants. Capacity defaults to DEFAULT_TENANT_CACHE_CAPACITY; startup code
+# can reconfigure it before the first agent is cached.
 from cogniverse_foundation.caching import TenantLRUCache
 
 DEFAULT_TENANT_CACHE_CAPACITY = 16
+_CONFIGURED_TENANT_CACHE_CAPACITY: Optional[int] = None
+
+
+def _tenant_cache_capacity() -> int:
+    try:
+        configured_capacity = _CONFIGURED_TENANT_CACHE_CAPACITY
+        if configured_capacity is not None:
+            return max(1, int(configured_capacity))
+        return DEFAULT_TENANT_CACHE_CAPACITY
+    except (TypeError, ValueError):
+        return DEFAULT_TENANT_CACHE_CAPACITY
+
+
+def configure_tenant_cache_capacity(capacity: int) -> None:
+    """Set the tenant cache capacity used for text-analysis agents."""
+    global _CONFIGURED_TENANT_CACHE_CAPACITY, _agent_instances
+    _CONFIGURED_TENANT_CACHE_CAPACITY = capacity
+    _agent_instances = TenantLRUCache(capacity=_tenant_cache_capacity())
+
 
 _agent_instances: TenantLRUCache[TextAnalysisAgent] = TenantLRUCache(
-    capacity=DEFAULT_TENANT_CACHE_CAPACITY,
+    capacity=_tenant_cache_capacity(),
 )
 _config_manager: ConfigManager = None
 
@@ -427,22 +445,11 @@ async def analyze_text_endpoint(request: AnalyzeRequest):
 
 
 if __name__ == "__main__":
-    import os
-
     from cogniverse_core.common.tenant_utils import SYSTEM_TENANT_ID
+    from cogniverse_runtime.main import _resolve_library_env_defaults
 
-    try:
-        _capacity = max(
-            1,
-            int(
-                os.environ.get(
-                    "COGNIVERSE_TENANT_CACHE_CAPACITY", DEFAULT_TENANT_CACHE_CAPACITY
-                )
-            ),
-        )
-    except (TypeError, ValueError):
-        _capacity = DEFAULT_TENANT_CACHE_CAPACITY
-    _agent_instances = TenantLRUCache(capacity=_capacity)
+    _runtime_defaults = _resolve_library_env_defaults()
+    configure_tenant_cache_capacity(_runtime_defaults["tenant_cache_capacity"])
 
     config = get_config(
         tenant_id=SYSTEM_TENANT_ID, config_manager=create_default_config_manager()
