@@ -212,13 +212,76 @@ COMPLEX_QUERIES = [
 GATEWAY_THRESHOLD_PROFILES = _configured_profile_names("video")
 
 
-def _call_agent(agent_name: str, query: str, tenant_id: str = TENANT_ID) -> None:
+# Query-enhancement calls that carry upstream entities — the hardest served
+# input: the enhancement must surface the entity names. Seeding them puts
+# grounded records in the SIMBA training set and holdout.
+GROUNDED_ENHANCEMENT_QUERIES = [
+    (
+        "find tutorials",
+        [
+            {"text": "TensorFlow", "type": "TECHNOLOGY", "confidence": 0.9},
+            {"text": "neural networks", "type": "CONCEPT", "confidence": 0.85},
+        ],
+        [
+            {
+                "subject": "TensorFlow",
+                "relation": "used_for",
+                "object": "neural networks",
+            }
+        ],
+    ),
+    (
+        "compare frameworks",
+        [
+            {"text": "PyTorch", "type": "TECHNOLOGY", "confidence": 0.9},
+            {"text": "JAX", "type": "TECHNOLOGY", "confidence": 0.8},
+        ],
+        [],
+    ),
+    (
+        "show lectures",
+        [
+            {"text": "linear algebra", "type": "CONCEPT", "confidence": 0.9},
+            {"text": "eigenvalues", "type": "CONCEPT", "confidence": 0.8},
+        ],
+        [{"subject": "eigenvalues", "relation": "part_of", "object": "linear algebra"}],
+    ),
+    (
+        "find demos",
+        [{"text": "Kubernetes", "type": "TECHNOLOGY", "confidence": 0.9}],
+        [],
+    ),
+    (
+        "search recordings",
+        [
+            {"text": "jazz piano", "type": "GENRE", "confidence": 0.9},
+            {"text": "Bill Evans", "type": "PERSON", "confidence": 0.9},
+        ],
+        [{"subject": "Bill Evans", "relation": "plays", "object": "jazz piano"}],
+    ),
+    (
+        "get footage",
+        [
+            {"text": "volcano", "type": "LOCATION", "confidence": 0.9},
+            {"text": "lava flow", "type": "EVENT", "confidence": 0.8},
+        ],
+        [],
+    ),
+]
+
+
+def _call_agent(
+    agent_name: str,
+    query: str,
+    tenant_id: str = TENANT_ID,
+    context_extra: dict | None = None,
+) -> None:
     resp = httpx.post(
         f"{RUNTIME}/agents/{agent_name}/process",
         json={
             "agent_name": agent_name,
             "query": query,
-            "context": {"tenant_id": tenant_id},
+            "context": {"tenant_id": tenant_id, **(context_extra or {})},
             "top_k": 3,
         },
         timeout=GATEWAY_PROCESS_TIMEOUT_S,
@@ -422,6 +485,11 @@ def generate_spans_for_batch_jobs(_kubectl_cluster_ready):
     assert response.status_code == 200, (
         f"runtime health returned HTTP {response.status_code}: {response.text[:500]}"
     )
+    # The tenant's SIMBA artifact is this module's own state: seed the
+    # query-enhancement spans from the base module, not from whatever an
+    # earlier optimization run left persisted (and loaded into the pod).
+    if _reset_query_enhancement_artifact_in_pod():
+        _bounce_runtime_pod()
 
     # Per-agent span count. BootstrapFewShot samples demos from these; the
     # project originally generated 100 per agent which takes ~9 hours on CPU
@@ -451,6 +519,12 @@ def generate_spans_for_batch_jobs(_kubectl_cluster_ready):
     for i in range(spans_per_agent):
         q = ENHANCEMENT_QUERIES[i % len(ENHANCEMENT_QUERIES)]
         _call_agent("query_enhancement_agent", q)
+    for q, entities, relationships in GROUNDED_ENHANCEMENT_QUERIES:
+        _call_agent(
+            "query_enhancement_agent",
+            q,
+            context_extra={"entities": entities, "relationships": relationships},
+        )
 
     # Profile selection spans
     for i in range(spans_per_agent):
@@ -577,6 +651,53 @@ def _load_blob_in_pod(kind: str, key: str, tenant_id: str = TENANT_ID) -> str:
     if result.returncode != 0:
         raise RuntimeError(f"load_blob({kind}, {key}) failed: {result.stderr[-500:]}")
     return result.stdout.strip()
+
+
+def _reset_query_enhancement_artifact_in_pod(tenant_id: str = TENANT_ID) -> bool:
+    """Persist the base QueryEnhancementModule state as the tenant's SIMBA artifact.
+
+    Returns True when the persisted artifact differed from the base state
+    (so the running pod, which loaded it at start, must be bounced before
+    it serves the seeding traffic).
+    """
+    script = (
+        "import asyncio, json; "
+        "from cogniverse_foundation.telemetry.manager import get_telemetry_manager; "
+        "from cogniverse_agents.optimizer.artifact_manager import ArtifactManager; "
+        "from cogniverse_agents.query_enhancement_agent import QueryEnhancementModule; "
+        "from cogniverse_runtime.optimization_cli import SIMBA_ARTIFACT_KEY; "
+        f"tp = get_telemetry_manager().get_provider(tenant_id={tenant_id!r}); "
+        f"am = ArtifactManager(tp, {tenant_id!r}); "
+        "base = json.dumps(QueryEnhancementModule().dump_state(), default=str); "
+        "blob = asyncio.run(am.load_blob('model', SIMBA_ARTIFACT_KEY)); "
+        "differs = bool(blob) and json.loads(blob) != json.loads(base); "
+        "differs and asyncio.run(am.save_blob(kind='model', key=SIMBA_ARTIFACT_KEY, content=base)); "
+        "print('__RESET__' + ('1' if differs else '0'))"
+    )
+    result = subprocess.run(
+        [
+            "kubectl",
+            "--context",
+            KUBECTL_CONTEXT,
+            "exec",
+            "-n",
+            NAMESPACE,
+            DEPLOYMENT,
+            "-c",
+            CONTAINER,
+            "--",
+            "python3",
+            "-c",
+            script,
+        ],
+        capture_output=True,
+        text=True,
+        timeout=180,
+    )
+    assert result.returncode == 0, result.stderr[-2000:]
+    line = result.stdout.strip().splitlines()[-1]
+    assert line in ("__RESET__0", "__RESET__1"), result.stdout[-500:]
+    return line == "__RESET__1"
 
 
 def _bounce_runtime_pod(ready_timeout_s: int = 240) -> str:
@@ -924,71 +1045,144 @@ class TestWorkflowOptimization:
 # ---------------------------------------------------------------------------
 
 
+def _approved_query_enhancement_examples_in_pod(
+    tenant_id: str = TENANT_ID,
+) -> list[dict]:
+    """The tenant's approved synthetic query-enhancement examples, read in-pod."""
+    script = (
+        "import asyncio, json; "
+        "from cogniverse_foundation.telemetry.manager import get_telemetry_manager; "
+        "from cogniverse_runtime.optimization_cli import _load_approved_synthetic_data; "
+        f"tp = get_telemetry_manager().get_provider(tenant_id={tenant_id!r}); "
+        f"rows = asyncio.run(_load_approved_synthetic_data(tp, {tenant_id!r}, 'query_enhancement')); "
+        "print('__APPROVED__' + json.dumps(rows, default=str))"
+    )
+    result = subprocess.run(
+        [
+            "kubectl",
+            "--context",
+            KUBECTL_CONTEXT,
+            "exec",
+            "-n",
+            NAMESPACE,
+            DEPLOYMENT,
+            "-c",
+            CONTAINER,
+            "--",
+            "python3",
+            "-c",
+            script,
+        ],
+        capture_output=True,
+        text=True,
+        timeout=180,
+    )
+    assert result.returncode == 0, result.stderr[-2000:]
+    line = result.stdout.strip().splitlines()[-1]
+    assert line.startswith("__APPROVED__"), result.stdout[-500:]
+    return json.loads(line[len("__APPROVED__") :])
+
+
+def _base_query_enhancement_state() -> dict:
+    return json.loads(json.dumps(QueryEnhancementModule().dump_state(), default=str))
+
+
+def _assert_simba_served_the_best_module(result: dict, blob_before: str) -> dict:
+    """The contract of one ``--mode simba`` run against the seeded tenant.
+
+    Every seeded span (plus every approved synthetic example) is a record;
+    the holdout is the deterministic quarter; the module persisted after
+    the run is the one that scored best on that holdout and never scores
+    below the base module. Returns the persisted state.
+    """
+    approved = _approved_query_enhancement_examples_in_pod()
+    assert set(result) == {
+        "status",
+        "spans_found",
+        "examples",
+        "training_examples",
+        "holdout_examples",
+        "baseline_score",
+        "current_score",
+        "candidate_score",
+        "decision",
+        "artifact_id",
+    }, result
+    assert result["status"] == "success", result
+    assert result["examples"] == result["spans_found"] + len(approved), result
+    assert result["holdout_examples"] == max(1, result["examples"] // 4), result
+    assert (
+        result["training_examples"] <= result["examples"] - result["holdout_examples"]
+    )
+    served_score = {
+        "promote": result["candidate_score"],
+        "keep": result["current_score"],
+        "rollback": result["baseline_score"],
+    }[result["decision"]]
+    assert served_score >= result["baseline_score"], result
+
+    after = json.loads(_load_blob_in_pod("model", "simba_query_enhancement"))
+    assert list(after) == ["enhancer.predict"], list(after)
+    # The persisted signature is the served module's: ChainOfThought places
+    # its Reasoning field ahead of the signature's own outputs, so the order
+    # comes from the real predictor, not from the class body.
+    served_signature = QueryEnhancementModule().enhancer.predict.signature
+    sig = after["enhancer.predict"]["signature"]
+    assert [f.get("prefix", "").rstrip(":").strip() for f in sig["fields"]] == [
+        field.json_schema_extra["prefix"].rstrip(":").strip()
+        for field in served_signature.fields.values()
+    ], sig["fields"]
+    assert sig["instructions"] == served_signature.instructions
+
+    demos = after["enhancer.predict"]["demos"]
+    if result["decision"] == "promote":
+        assert isinstance(result["artifact_id"], str) and result["artifact_id"] != ""
+        seeded_queries = (
+            set(ENHANCEMENT_QUERIES)
+            | {q for q, _, _ in GROUNDED_ENHANCEMENT_QUERIES}
+            | {row["query"] for row in approved}
+        )
+        assert demos != [], result
+        for demo in demos:
+            assert demo["query"] in seeded_queries, demo
+            assert (
+                demo["enhanced_query"].strip().lower() != demo["query"].strip().lower()
+            ), demo
+    elif result["decision"] == "rollback":
+        assert isinstance(result["artifact_id"], str) and result["artifact_id"] != ""
+        assert after == _base_query_enhancement_state()
+    else:
+        assert result["artifact_id"] is None, result
+        assert after == json.loads(blob_before)
+    return after
+
+
 @pytest.mark.e2e
 class TestSimbaOptimization:
-    """Verify SIMBA batch job compiles the query enhancement module."""
+    """Verify SIMBA batch job serves only a query-enhancement module that
+    scores at least as well as the base module on held-out served calls."""
 
-    def test_simba_produces_model_artifact(self):
-        """Run --mode simba, assert it produces a compiled DSPy model."""
-        result = _run_batch_job("simba")
+    def test_simba_serves_the_best_scoring_module(self):
+        """Run --mode simba against the seeded spans and pin its contract."""
+        blob_before = _load_blob_in_pod("model", "simba_query_enhancement")
+        assert blob_before != "", "the module fixture persists the base artifact"
 
-        assert result["status"] == "success"
-        assert result["spans_found"] > 0
-        assert result["training_examples"] >= 1
-        assert isinstance(result["artifact_id"], str) and result["artifact_id"]
+        result = _run_batch_job("simba", timeout=1200)
 
-    def test_simba_artifact_has_learned_demos(self):
-        """SIMBA artifact must have demos with real query→enhanced_query pairs."""
-        _run_batch_job("simba")
+        _assert_simba_served_the_best_module(result, blob_before)
 
-        blob = _load_blob_in_pod("model", "simba_query_enhancement")
-        assert blob, "SIMBA artifact blob is empty"
+    def test_simba_second_run_is_consistent_with_the_first(self):
+        """A rerun scores the artifact the first run persisted as ``current``
+        and again serves the best module."""
+        blob_before = _load_blob_in_pod("model", "simba_query_enhancement")
+        first = json.loads(blob_before)
 
-        artifact = json.loads(blob)
-        assert "enhancer.predict" in artifact, (
-            f"Expected 'enhancer.predict' module, got: {list(artifact.keys())}"
-        )
-        module = artifact["enhancer.predict"]
+        result = _run_batch_job("simba", timeout=1200)
 
-        # The persisted signature must be the served module's: ChainOfThought
-        # places its Reasoning field ahead of the signature's own outputs, so
-        # the order comes from the real predictor, not from the class body.
-        served_signature = QueryEnhancementModule().enhancer.predict.signature
-        sig = module["signature"]
-        field_names = [f.get("prefix", "").rstrip(":").strip() for f in sig["fields"]]
-        assert field_names == [
-            field.json_schema_extra["prefix"].rstrip(":").strip()
-            for field in served_signature.fields.values()
-        ], field_names
-        assert sig["instructions"] == served_signature.instructions
-
-        # Must have learned demos — 0 demos means optimization did nothing
-        demos = module.get("demos", [])
-        assert len(demos) >= 1, "SIMBA produced 0 demos — optimization was useless"
-
-        # Each demo: real query with a DIFFERENT enhanced version
-        for demo in demos:
-            assert demo.get("query"), f"Demo missing query: {demo}"
-            assert demo.get("enhanced_query"), f"Demo missing enhanced_query: {demo}"
-            assert demo["enhanced_query"] != demo["query"], (
-                f"Enhanced should differ from original: '{demo['query']}'"
-            )
-
-        # At least one demo should contain an ML-related query (our test data)
-        demo_queries = " ".join(d["query"].lower() for d in demos)
-        ml_terms = (
-            "learning",
-            "neural",
-            "ai",
-            "detection",
-            "vision",
-            "nlp",
-            "reinforcement",
-        )
-        assert any(t in demo_queries for t in ml_terms), (
-            f"Demos should contain ML-related queries from our test data, "
-            f"got: {[d['query'] for d in demos[:5]]}"
-        )
+        after = _assert_simba_served_the_best_module(result, blob_before)
+        assert isinstance(result["current_score"], float), result
+        if result["decision"] == "keep":
+            assert after == first
 
 
 # ---------------------------------------------------------------------------
@@ -1470,40 +1664,17 @@ class TestArtifactLoadingRoundTrip:
         )
 
     def test_simba_artifact_round_trip(self):
-        """Run simba batch job -> verify artifact blob has correct structure and is loadable."""
-        # 1. Run batch job
-        result = _run_batch_job("simba")
-        assert result["status"] == "success"
-        assert result["training_examples"] >= 1
+        """Run simba after the pod bounce: the run honours its contract against
+        the artifact the earlier runs persisted, and the persisted state reads
+        back identically twice (it survived the restart)."""
+        blob_before = _load_blob_in_pod("model", "simba_query_enhancement")
+        assert blob_before != "", "earlier SIMBA runs persisted an artifact"
 
-        # 2. Verify artifact blob exists and has correct structure
-        blob = _load_blob_in_pod("model", "simba_query_enhancement")
-        assert blob, "SIMBA artifact blob is empty after batch job"
+        result = _run_batch_job("simba", timeout=1200)
 
-        artifact = json.loads(blob)
-        assert "enhancer.predict" in artifact, (
-            f"Expected 'enhancer.predict' module, got: {list(artifact.keys())}"
-        )
-
-        # Must have learned demos
-        demos = artifact["enhancer.predict"].get("demos", [])
-        assert len(demos) >= 1, "SIMBA artifact has 0 demos"
-
-        # Each demo should have query and enhanced_query
-        for demo in demos:
-            assert demo.get("query"), f"Demo missing query: {demo}"
-            assert demo.get("enhanced_query"), f"Demo missing enhanced_query: {demo}"
-            assert demo["enhanced_query"] != demo["query"], (
-                f"Enhanced should differ from original: '{demo['query']}'"
-            )
-
-        # 3. Verify the artifact is loadable in-pod (proves it survives restart
-        #    since test_gateway_artifact_round_trip already restarted the pod)
-        blob_check = _load_blob_in_pod("model", "simba_query_enhancement")
-        assert blob_check, "SIMBA artifact not loadable in pod"
-        reloaded = json.loads(blob_check)
-        assert len(reloaded["enhancer.predict"].get("demos", [])) == len(demos), (
-            "SIMBA artifact demo count changed between loads"
+        after = _assert_simba_served_the_best_module(result, blob_before)
+        assert json.loads(_load_blob_in_pod("model", "simba_query_enhancement")) == (
+            after
         )
 
     def test_entity_extraction_artifact_survives_restart(self):
