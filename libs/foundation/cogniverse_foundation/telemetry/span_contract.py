@@ -183,6 +183,16 @@ def _parse_output(raw: Any) -> Any:
     return raw
 
 
+def read_span_attributes(row: Any) -> dict:
+    """Return a Phoenix span row's attributes as a flat ``{key: value}`` dict.
+
+    Keys are the writer's dotted names (``input.value``,
+    ``input.grounding_context``, ``operation``, ...) whichever way Phoenix
+    surfaced them (leaf columns or nested dicts).
+    """
+    return _reconstruct_attributes(row)
+
+
 def read_span_io(row: Any) -> dict:
     """Read the canonical input/output/operation/modality from a Phoenix span row.
 

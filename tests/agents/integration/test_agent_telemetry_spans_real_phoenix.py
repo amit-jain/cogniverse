@@ -451,7 +451,7 @@ class TestA2ACustomTelemetrySpansRealPhoenix:
             "QueryEnhancementAgent._emit_enhancement_span() may have regressed."
         )
         from cogniverse_foundation.telemetry.span_contract import (
-            _reconstruct_attributes,
+            read_span_attributes,
             read_span_io,
         )
 
@@ -468,7 +468,7 @@ class TestA2ACustomTelemetrySpansRealPhoenix:
             "variant_count": 2,
             "confidence": 0.85,
         }
-        attrs = _reconstruct_attributes(span)
+        attrs = read_span_attributes(span)
         assert (
             attrs["input.source_text"]
             == "ML tutorials source text about machine learning"

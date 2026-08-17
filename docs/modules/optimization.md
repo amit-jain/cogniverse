@@ -319,12 +319,21 @@ not the SIMBA algorithm.
 **CLI mode:** `--mode simba`
 
 **Key function:** `run_simba_optimization(tenant_id, lookback_hours=24.0)` — reads
-`cogniverse.query_enhancement` spans, builds `(original_query -> enhanced_query)` examples (skipping
-identity pairs where `enhanced == original`), merges approved synthetic demos for `"query_enhancement"`,
-converts list-valued expansion terms and synonyms to the signature's comma-separated strings, compiles via
-`_create_teleprompter(len(trainset))`, and saves the artifact as `("model", "simba_query_enhancement")`.
-`QueryEnhancementAgent` reloads it via `am.load_blob("model", "simba_query_enhancement")`.
-Approved data can bootstrap compilation when there are no production spans in the selected window.
+`cogniverse.query_enhancement` spans into served-call records (`input.value`, `input.source_text`,
+`input.grounding_context` → `enhanced_query`, `expansion_terms`, `synonyms`, `context_additions`,
+`confidence`), appends approved synthetic demos for `"query_enhancement"`, and splits the records with
+`_split_train_holdout` (deterministic ~25% tail holdout). Trainable records — a non-identity enhancement
+with at least one expansion term — compile the module via
+`_create_teleprompter(len(trainset), metric=_query_enhancement_metric)`; every holdout record is an
+evaluation probe. `_query_enhancement_quality` scores a module's own output for the probe inputs (1.0 when
+the enhanced query differs from the query, has expansion terms and, given a grounding context, names one
+of its entities; else 0.0). The base module, the persisted artifact and the compiled candidate are scored
+on the same holdout and `_select_simba_artifact` decides: `promote` persists the candidate (it beats the
+served module by the tenant's `optimization_improvement_threshold`), `keep` leaves the artifact, `rollback`
+persists the base state over an artifact that scores below base, `reject` persists nothing. Without a
+holdout the run returns `no_eval_material` and persists nothing. The artifact key is
+`("model", "simba_query_enhancement")`; `QueryEnhancementAgent` reloads it via
+`am.load_blob("model", "simba_query_enhancement")`.
 
 **File:** `libs/runtime/cogniverse_runtime/optimization_cli.py`
 

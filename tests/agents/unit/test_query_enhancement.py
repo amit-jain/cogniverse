@@ -1500,14 +1500,42 @@ class TestEnhancedQueryEnhancementAgent:
             {"subject": "robots", "relation": "playing", "object": "soccer"},
         ]
         ctx = qe_agent._build_entity_context(entities, relationships)
-        assert "robots (TECH)" in ctx
-        assert "soccer (SPORT)" in ctx
-        assert "robots -playing-> soccer" in ctx
+        assert ctx == (
+            "Entities: robots (TECH), soccer (SPORT); "
+            "Relationships: robots -playing-> soccer"
+        )
 
     def test_build_entity_context_empty(self, qe_agent):
         """Returns empty string when no entities/relationships."""
         assert qe_agent._build_entity_context(None, None) == ""
         assert qe_agent._build_entity_context([], []) == ""
+
+    def test_grounding_entity_names_round_trip(self, qe_agent):
+        """The optimizer's parser reads back exactly the names the builder wrote."""
+        from cogniverse_agents.query_enhancement_agent import grounding_entity_names
+
+        ctx = qe_agent._build_entity_context(
+            [
+                {"text": "TensorFlow", "type": "TECHNOLOGY"},
+                {"text": "neural networks", "type": "CONCEPT"},
+                {"text": "St. Louis (MO)", "label": "GPE"},
+            ],
+            [{"subject": "TensorFlow", "relation": "used_for", "object": "nets"}],
+        )
+        assert grounding_entity_names(ctx) == [
+            "TensorFlow",
+            "neural networks",
+            "St. Louis (MO)",
+        ]
+        assert (
+            grounding_entity_names(
+                qe_agent._build_entity_context(
+                    [], [{"subject": "a", "relation": "r", "object": "b"}]
+                )
+            )
+            == []
+        )
+        assert grounding_entity_names("") == []
 
     # ------------------------------------------------------------------
     # _generate_variants

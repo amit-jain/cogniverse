@@ -49,7 +49,8 @@ libs/foundation/cogniverse_foundation/telemetry/
 - `span_contract`: the one span I/O shape every operation uses.
   `record_span_io(span, input_value=, output=, operation=, modality=)` writes the
   input on `input.value`, the output as JSON on `output.value`, and the type on
-  `operation`; `read_span_io(row)` reads `{input, output, operation, modality}` back
+  `operation`; `read_span_io(row)` reads `{input, output, operation, modality}` back and
+  `read_span_attributes(row)` returns every attribute as a flat dotted-key dict
   from a Phoenix span row. Search (list output) and domain spans like
   `query_enhancement` (dict output) share the same writer and reader, so eval,
   dataset-building, experiments, and optimization read every operation uniformly.

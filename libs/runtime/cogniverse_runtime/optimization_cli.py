@@ -34,7 +34,10 @@ from cogniverse_core.durable import (
     PipelineCheckpointStatus,
     PipelineCheckpointStorage,
 )
-from cogniverse_foundation.telemetry.span_contract import read_span_io
+from cogniverse_foundation.telemetry.span_contract import (
+    read_span_attributes,
+    read_span_io,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -175,30 +178,102 @@ class _TriggeredOptCheckpointer:
 
 
 def _query_enhancement_pairs(spans_df) -> List[Dict[str, Any]]:
-    """(original_query -> enhanced_query) training pairs from query_enhancement spans.
+    """One record per query_enhancement span: the served call's inputs and outputs.
 
-    Reads the canonical span slots: input.value holds the original query, and
-    output.value holds ``{"enhanced_query", "confidence", ...}``. Identity pairs
-    (enhanced == original) are dropped so SIMBA never trains on no-ops.
+    ``input.value`` / ``input.source_text`` / ``input.grounding_context`` are the
+    prompt inputs; ``output.value`` carries every produced field. Rows without a
+    query or an enhanced query are skipped. ``trainable`` marks a record worth
+    serving as a demo — a non-identity enhancement with at least one expansion
+    term; every record is still an evaluation probe (its inputs are real).
     """
     pairs: List[Dict[str, Any]] = []
     for _, row in spans_df.iterrows():
         span_io = read_span_io(row)
         original = span_io["input"] or ""
         output = span_io["output"] if isinstance(span_io["output"], dict) else {}
-        enhanced = output.get("enhanced_query", "")
+        enhanced = output.get("enhanced_query", "") or ""
         if not original or not enhanced:
             continue
-        if enhanced.strip() == original.strip():
-            continue
+        attrs = read_span_attributes(row)
+        expansion_terms = [str(t) for t in output.get("expansion_terms", []) or []]
         pairs.append(
             {
                 "query": original,
+                "source_text": str(attrs.get("input.source_text") or ""),
+                "grounding_context": str(attrs.get("input.grounding_context") or ""),
                 "enhanced_query": enhanced,
+                "expansion_terms": expansion_terms,
+                "synonyms": [str(s) for s in output.get("synonyms", []) or []],
+                "context": [str(c) for c in output.get("context_additions", []) or []],
                 "confidence": float(output.get("confidence", 0.0) or 0.0),
+                "trainable": (
+                    enhanced.strip().lower() != original.strip().lower()
+                    and bool(expansion_terms)
+                ),
             }
         )
     return pairs
+
+
+def _query_enhancement_quality(prediction, example) -> float:
+    """1.0 for a usable enhancement of ``example``'s inputs, else 0.0.
+
+    Usable: a non-empty enhanced query that differs from the query, at least
+    one expansion term, and — when a grounding context was supplied — at
+    least one of its entity names present in the enhanced query or the
+    expansion terms. Labels are not consulted: the score is a property of
+    the module's own output for real inputs.
+    """
+    from cogniverse_agents.query_enhancement_agent import grounding_entity_names
+
+    query = str(getattr(example, "query", "") or "").strip().lower()
+    enhanced = str(getattr(prediction, "enhanced_query", "") or "").strip()
+    terms = [
+        t.strip()
+        for t in str(getattr(prediction, "expansion_terms", "") or "").split(",")
+        if t.strip()
+    ]
+    if not enhanced or enhanced.lower() == query or not terms:
+        return 0.0
+    names = grounding_entity_names(str(getattr(example, "grounding_context", "")))
+    if names:
+        haystack = " ".join([enhanced, *terms]).lower()
+        if not any(name.lower() in haystack for name in names):
+            return 0.0
+    return 1.0
+
+
+def _query_enhancement_metric(example, prediction, trace=None) -> bool:
+    """BootstrapFewShot metric: keep a teacher trace only when it is usable."""
+    del trace
+    return _query_enhancement_quality(prediction, example) >= 1.0
+
+
+def _select_simba_artifact(
+    baseline_score: float,
+    current_score: Optional[float],
+    candidate_score: Optional[float],
+    min_improvement: float,
+) -> str:
+    """Which module the tenant should serve after this run.
+
+    ``promote``: persist the compiled candidate — it scores at least
+    ``min_improvement`` above whatever is served today (the base module, or
+    the persisted artifact when that beats base). ``keep``: the persisted
+    artifact stays. ``rollback``: the persisted artifact scores below the
+    base module, so the base state is persisted in its place. ``reject``:
+    nothing is served and the candidate did not earn it.
+    """
+    served = (
+        baseline_score if current_score is None else max(baseline_score, current_score)
+    )
+    if candidate_score is not None and candidate_score >= served + min_improvement:
+        return "promote"
+    if current_score is None:
+        return "reject"
+    if current_score < baseline_score:
+        return "rollback"
+    return "keep"
 
 
 def _entity_extraction_pairs(spans_df) -> List[Dict[str, Any]]:
@@ -1488,7 +1563,11 @@ def _approved_example_exact_metric(example, prediction, trace=None) -> bool:
     )
 
 
-def _create_teleprompter(trainset_size: int, teacher_settings: dict | None = None):
+def _create_teleprompter(
+    trainset_size: int,
+    teacher_settings: dict | None = None,
+    metric=_approved_example_exact_metric,
+):
     """Select DSPy optimizer config based on training set size.
 
     Scales BootstrapFewShot parameters for larger training sets:
@@ -1497,7 +1576,8 @@ def _create_teleprompter(trainset_size: int, teacher_settings: dict | None = Non
 
     teacher_settings (e.g. ``{"lm": teacher_lm}``) makes DSPy run the
     bootstrap teacher on the configured teacher endpoint instead of the
-    student model teaching itself.
+    student model teaching itself. ``metric`` decides which teacher traces
+    become bootstrapped demos.
     """
     from dspy.teleprompt import BootstrapFewShot
 
@@ -1507,7 +1587,7 @@ def _create_teleprompter(trainset_size: int, teacher_settings: dict | None = Non
             trainset_size,
         )
         return BootstrapFewShot(
-            metric=_approved_example_exact_metric,
+            metric=metric,
             max_bootstrapped_demos=8,
             max_labeled_demos=16,
             max_rounds=2,
@@ -1517,7 +1597,7 @@ def _create_teleprompter(trainset_size: int, teacher_settings: dict | None = Non
 
     logger.info("Using BootstrapFewShot for %d examples", trainset_size)
     return BootstrapFewShot(
-        metric=_approved_example_exact_metric,
+        metric=metric,
         max_bootstrapped_demos=4,
         max_labeled_demos=8,
         max_rounds=1,
@@ -1860,16 +1940,56 @@ async def run_monthly_reports(
     return result
 
 
+SIMBA_ARTIFACT_KEY = "simba_query_enhancement"
+_QUERY_ENHANCEMENT_INPUTS = ("query", "source_text", "grounding_context")
+
+
+def _query_enhancement_example(record: Dict[str, Any]):
+    """A DSPy example carrying a served call's real inputs and outputs."""
+    import dspy
+
+    fields = {
+        "query": record["query"],
+        "source_text": record["source_text"],
+        "grounding_context": record["grounding_context"],
+        "enhanced_query": record["enhanced_query"],
+        "expansion_terms": ", ".join(record["expansion_terms"]),
+        "synonyms": ", ".join(record["synonyms"]),
+        "context": ", ".join(record["context"]),
+        "confidence": str(record["confidence"]),
+    }
+    if record.get("reasoning"):
+        fields["reasoning"] = record["reasoning"]
+    return dspy.Example(**fields).with_inputs(*_QUERY_ENHANCEMENT_INPUTS)
+
+
+def _query_enhancement_scores(module, holdout) -> float:
+    """Mean ``_query_enhancement_quality`` of ``module`` over the holdout inputs."""
+    scores = [
+        _query_enhancement_quality(
+            module(**{k: getattr(example, k) for k in _QUERY_ENHANCEMENT_INPUTS}),
+            example,
+        )
+        for example in holdout
+    ]
+    return sum(scores) / len(scores)
+
+
 async def run_simba_optimization(
     tenant_id: str,
     lookback_hours: float = 24.0,
 ) -> dict:
     """SIMBA query enhancement optimization.
 
-    Reads cogniverse.query_enhancement spans, builds training examples
-    from (original_query -> enhanced_query) pairs, compiles the
-    QueryEnhancementAgent's DSPy module via BootstrapFewShot, and
-    saves the optimized module as an artifact.
+    Reads cogniverse.query_enhancement spans into served-call records,
+    splits them (plus approved synthetic examples) into a training set and a
+    deterministic holdout, compiles the QueryEnhancementAgent's DSPy module
+    via BootstrapFewShot on the trainable records, then scores the base
+    module, the persisted artifact and the compiled candidate on the holdout
+    with ``_query_enhancement_quality``. Only the winner is served: the
+    candidate is persisted when it earns it, a persisted artifact that
+    scores below the base module is replaced by the base state, and nothing
+    is persisted without holdout material.
     """
     from cogniverse_foundation.config.utils import create_default_config_manager
     from cogniverse_foundation.telemetry.config import SPAN_NAME_QUERY_ENHANCEMENT
@@ -1891,85 +2011,142 @@ async def run_simba_optimization(
 
     logger.info("Found %d query_enhancement spans", len(spans_df))
 
-    # Build DSPy training examples from the canonical span slots.
-    import dspy
-
-    trainset = [
-        dspy.Example(
-            query=pair["query"],
-            enhanced_query=pair["enhanced_query"],
-            expansion_terms="",
-            synonyms="",
-            context="",
-            confidence=str(pair["confidence"]),
-            reasoning="From production span",
-        ).with_inputs("query")
-        for pair in _query_enhancement_pairs(spans_df)
-    ]
-
-    # Merge approved synthetic data
+    records = _query_enhancement_pairs(spans_df)
+    production_count = len(records)
     synthetic_demos = await _load_approved_synthetic_data(
         telemetry_provider, tenant_id, "query_enhancement"
     )
-    production_count = len(trainset)
     for demo in synthetic_demos:
         projected = _project_approved_optimizer_example("query_enhancement", demo)
-        example = dspy.Example(**projected).with_inputs("query")
-        trainset.append(example)
-    if not trainset:
+        records.append(
+            {
+                "query": projected["query"],
+                "source_text": "",
+                "grounding_context": "",
+                "enhanced_query": projected["enhanced_query"],
+                "expansion_terms": [
+                    t.strip()
+                    for t in projected["expansion_terms"].split(",")
+                    if t.strip()
+                ],
+                "synonyms": [
+                    s.strip() for s in projected["synonyms"].split(",") if s.strip()
+                ],
+                "context": [
+                    c.strip() for c in projected["context"].split(",") if c.strip()
+                ],
+                "confidence": 0.0,
+                "reasoning": projected["reasoning"],
+                "trainable": True,
+            }
+        )
+    if not records:
         logger.info("No valid production or approved synthetic examples")
         return {"status": "no_data", "spans_found": len(spans_df), "examples": 0}
+
+    train_records, holdout_records = _split_train_holdout(records)
+    trainset = [_query_enhancement_example(r) for r in train_records if r["trainable"]]
+    holdout = [_query_enhancement_example(r) for r in holdout_records]
     logger.info(
-        "Merged %d synthetic + %d production = %d total training examples",
+        "Merged %d synthetic + %d production = %d records: %d trainable, %d holdout",
         len(synthetic_demos),
         production_count,
+        len(records),
         len(trainset),
+        len(holdout),
     )
+    if not holdout:
+        logger.warning(
+            "No holdout material for %s query enhancement — nothing persisted",
+            tenant_id,
+        )
+        return {
+            "status": "no_eval_material",
+            "spans_found": len(spans_df),
+            "examples": len(records),
+            "training_examples": len(trainset),
+            "holdout_examples": 0,
+        }
 
-    # Compile DSPy module
+    import dspy
+
+    from cogniverse_agents.optimizer.artifact_manager import ArtifactManager
     from cogniverse_agents.query_enhancement_agent import QueryEnhancementModule
     from cogniverse_foundation.config.llm_factory import create_dspy_lm
     from cogniverse_foundation.config.utils import get_config
 
     config = get_config(tenant_id=tenant_id, config_manager=config_manager)
     llm_config = config.get_llm_config()
-    llm_endpoint = llm_config.resolve("optimization")
+    dspy.configure(lm=create_dspy_lm(llm_config.resolve("optimization")))
 
-    dspy.configure(lm=create_dspy_lm(llm_endpoint))
-
-    module = QueryEnhancementModule()
-
-    teleprompter = _create_teleprompter(
-        len(trainset),
-        teacher_settings={"lm": create_dspy_lm(llm_config.resolve_teacher())},
-    )
+    artifact_manager = ArtifactManager(telemetry_provider, tenant_id)
+    current_blob = await artifact_manager.load_blob("model", SIMBA_ARTIFACT_KEY)
+    current_module = None
+    if current_blob:
+        current_module = QueryEnhancementModule()
+        current_module.load_state(json.loads(current_blob))
 
     try:
-        compiled = teleprompter.compile(module, trainset=trainset)
+        compiled = None
+        if trainset:
+            teleprompter = _create_teleprompter(
+                len(trainset),
+                teacher_settings={"lm": create_dspy_lm(llm_config.resolve_teacher())},
+                metric=_query_enhancement_metric,
+            )
+            compiled = teleprompter.compile(QueryEnhancementModule(), trainset=trainset)
 
-        # Save compiled module via ArtifactManager
-        import json as _json
-
-        from cogniverse_agents.optimizer.artifact_manager import ArtifactManager
-
-        artifact_manager = ArtifactManager(telemetry_provider, tenant_id)
-        dataset_id = await artifact_manager.save_blob(
-            kind="model",
-            key="simba_query_enhancement",
-            content=_json.dumps(compiled.dump_state(), default=str),
+        baseline_score = _query_enhancement_scores(QueryEnhancementModule(), holdout)
+        current_score = (
+            _query_enhancement_scores(current_module, holdout)
+            if current_module is not None
+            else None
         )
-
-        logger.info("SIMBA optimization complete — artifact %s", dataset_id)
-        return {
-            "status": "success",
-            "spans_found": len(spans_df),
-            "training_examples": len(trainset),
-            "artifact_id": dataset_id,
-        }
-
+        candidate_score = (
+            _query_enhancement_scores(compiled, holdout)
+            if compiled is not None
+            else None
+        )
     except Exception as e:
         logger.error("SIMBA compilation failed: %s", e)
         return {"status": "failed", "error": str(e)}
+
+    decision = _select_simba_artifact(
+        baseline_score,
+        current_score,
+        candidate_score,
+        _min_improvement_from_config(tenant_id, config_manager),
+    )
+    persisted = {"promote": compiled, "rollback": QueryEnhancementModule()}.get(
+        decision
+    )
+    artifact_id = None
+    if persisted is not None:
+        artifact_id = await artifact_manager.save_blob(
+            kind="model",
+            key=SIMBA_ARTIFACT_KEY,
+            content=json.dumps(persisted.dump_state(), default=str),
+        )
+    logger.info(
+        "SIMBA optimization %s (baseline=%.3f current=%s candidate=%s)%s",
+        decision,
+        baseline_score,
+        current_score,
+        candidate_score,
+        f" — artifact {artifact_id}" if artifact_id else "",
+    )
+    return {
+        "status": "success",
+        "spans_found": len(spans_df),
+        "examples": len(records),
+        "training_examples": len(trainset),
+        "holdout_examples": len(holdout),
+        "baseline_score": baseline_score,
+        "current_score": current_score,
+        "candidate_score": candidate_score,
+        "decision": decision,
+        "artifact_id": artifact_id,
+    }
 
 
 async def _save_workflow_learning_state(
