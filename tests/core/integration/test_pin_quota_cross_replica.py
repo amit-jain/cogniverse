@@ -9,7 +9,12 @@ from typing import Mapping
 import pytest
 
 from cogniverse_agents.optimizer.artifact_manager import ArtifactManager
-from cogniverse_core.memory.pinning import PinQuotas
+from cogniverse_core.memory.pinning import (
+    PIN_AGENT_NAME,
+    PIN_RECORD_KIND,
+    PinQuotas,
+)
+from cogniverse_core.memory.schema import Pinnable
 from cogniverse_runtime.routers import admin as admin_router
 
 pytestmark = pytest.mark.integration
@@ -48,7 +53,7 @@ async def test_cold_reader_enforces_the_persisted_blob(real_artifact_backed_admi
 
 @pytest.mark.asyncio
 async def test_lifecycle_pin_lookup_uses_the_same_loader(real_artifact_backed_admin):
-    from cogniverse_runtime.main import build_pin_lookup
+    from cogniverse_runtime.main import _PIN_QUOTA_LOAD_TIMEOUT_S, build_pin_lookup
 
     key = admin_router.canonical_tenant_id(TENANT)
     await admin_router._build_artifact_manager(key).save_blob(
@@ -59,18 +64,22 @@ async def test_lifecycle_pin_lookup_uses_the_same_loader(real_artifact_backed_ad
     admin_router._reset_admin_overrides_for_tests()
 
     seen: list[Mapping[str, int]] = []
+    loop = asyncio.get_running_loop()
 
     def loader(tenant_id: str):
         loaded = asyncio.run_coroutine_threadsafe(
-            admin_router._load_pin_quotas(tenant_id), asyncio.get_event_loop()
-        ).result(timeout=10)
+            admin_router._load_pin_quotas(tenant_id), loop
+        ).result(timeout=_PIN_QUOTA_LOAD_TIMEOUT_S)
         seen.append(loaded)
         return loaded
 
     pin_lookup = build_pin_lookup(_RecordingRegistry(), loader)
-    await asyncio.to_thread(pin_lookup, _FakeManager(TENANT))
+    manager = _FakeManager(TENANT)
+    pinned = await asyncio.to_thread(pin_lookup, manager)
 
     assert seen == [{"user": 2, "tenant_admin": 4, "org_admin": -1}]
+    assert manager.get_all_calls == [(TENANT, PIN_AGENT_NAME)]
+    assert pinned == {"mem_target_1"}
 
 
 @pytest.mark.asyncio
@@ -121,9 +130,24 @@ class _RecordingRegistry:
 
 
 class _FakeManager:
+    """Mirrors the manager surface PinService reads: get_all_memories(tenant_id=, agent_name=)."""
+
     def __init__(self, tenant_id: str) -> None:
         self.tenant_id = tenant_id
         self.memory = object()
+        self.get_all_calls: list[tuple[str, str]] = []
 
-    def list_memories(self, *args, **kwargs):
-        return []
+    def get_all_memories(self, *, tenant_id: str, agent_name: str):
+        self.get_all_calls.append((tenant_id, agent_name))
+        return [
+            {
+                "id": "pin_rec_1",
+                "metadata": {
+                    "kind": PIN_RECORD_KIND,
+                    "target_memory_id": "mem_target_1",
+                    "pinned_by": Pinnable.USER.value,
+                    "target_kind": "fact",
+                    "pin_actor_id": "actor_1",
+                },
+            }
+        ]
