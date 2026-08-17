@@ -20,19 +20,18 @@ from cogniverse_synthetic.generators.base import (
     BaseGenerator,
     GenerationTracker,
     entity_candidate_text_fields,
-    extract_topic,
     is_identifier_topic,
     is_non_speech_annotation,
     normalize_text,
 )
 from cogniverse_synthetic.grounding import source_term_keys, term_is_grounded
 from cogniverse_synthetic.schemas import QueryEnhancementExampleSchema
+from cogniverse_synthetic.topics import TopicSaliency, extract_topic
 
 logger = logging.getLogger(__name__)
 
 QueryEnhancer = Callable[[str, str, str], Awaitable[Any]]
 DEFAULT_PRODUCTION_LABEL_TIMEOUT_SECONDS = 300.0
-TOPIC_WORD_BUDGET = 4
 
 
 class QueryEnhancementGenerator(BaseGenerator):
@@ -209,9 +208,11 @@ class QueryEnhancementGenerator(BaseGenerator):
     def _source_records(
         self, sampled_content: List[Dict[str, Any]]
     ) -> List[tuple[str, List[str], str, str]]:
+        batch = sampled_content[:50]
+        saliency = TopicSaliency.from_records(batch)
         records = []
-        for item in sampled_content[:50]:
-            topic = self._extract_topic(item)
+        for item in batch:
+            topic = extract_topic(item, saliency=saliency)
             if topic is None:
                 continue
             records.append(
@@ -225,10 +226,6 @@ class QueryEnhancementGenerator(BaseGenerator):
         if not records:
             raise ValueError("sampled_content contains no usable topic text")
         return records
-
-    @staticmethod
-    def _extract_topic(item: Dict[str, Any]) -> str | None:
-        return extract_topic(item, max_words=TOPIC_WORD_BUDGET)
 
     def _expansion_terms(self, topic: str, item: Dict[str, Any]) -> List[str]:
         """Return expansion terms grounded in the topic's source item."""

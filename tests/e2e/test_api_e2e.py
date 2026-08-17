@@ -34,9 +34,8 @@ from cogniverse_foundation.config.unified_config import (
     BackendProfileConfig,
     SyntheticGeneratorConfig,
 )
-from cogniverse_synthetic.generators.base import extract_topic
-from cogniverse_synthetic.generators.routing import TOPIC_WORD_BUDGET
 from cogniverse_synthetic.schemas import ProfileSelectionExampleSchema
+from cogniverse_synthetic.topics import TopicSaliency, extract_topic
 from cogniverse_synthetic.utils import profile_can_ground_topic
 from cogniverse_synthetic.utils.agent_inference import AgentInferrer
 from tests.e2e.conftest import (
@@ -1047,14 +1046,25 @@ class TestSyntheticDataAPI:
                 and result["metadata"]["segment_description"].strip()
             }
             assert len(source_texts) == len(fixture_results)
-            # Routing labels entities on the capped topic it derives from the
-            # caption, not on the whole caption; expectations use the same text.
+            # Build saliency from all source texts and extract distinctive topics.
+            records = [
+                {"description": text, "topic": f"video_{i}"}
+                for i, text in enumerate(sorted(source_texts))
+            ]
+            saliency = TopicSaliency.from_records(records)
+
             expected_extractions = []
-            for source_text in sorted(source_texts):
-                topic = extract_topic(
-                    {"description": source_text}, max_words=TOPIC_WORD_BUDGET
+            for record in records:
+                topic = extract_topic(record, saliency=saliency)
+                # The topic must be a contiguous span from the source text
+                source_text = record["description"]
+                assert topic is not None, "saliency-based topic should not be None"
+                assert topic in source_text, f"topic {topic!r} must be a span of source"
+                # The topic must NOT be the document prefix (proves the defect is gone)
+                first_words = " ".join(source_text.split()[:6])
+                assert topic != first_words, (
+                    f"topic should not be the prefix: {topic!r}"
                 )
-                assert topic == " ".join(source_text.split()[:TOPIC_WORD_BUDGET])
                 extraction_response = client.post(
                     "/agents/entity_extraction_agent/process",
                     json={
