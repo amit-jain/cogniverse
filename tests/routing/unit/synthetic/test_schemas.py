@@ -3,7 +3,6 @@ Unit tests for synthetic data schemas
 """
 
 import asyncio
-from types import SimpleNamespace
 from typing import Literal, get_args, get_origin
 
 import pytest
@@ -11,10 +10,15 @@ from fastapi import FastAPI
 from fastapi.testclient import TestClient
 from pydantic import ValidationError
 
+from cogniverse_foundation.config.unified_config import (
+    BackendConfig,
+    BackendProfileConfig,
+)
 from cogniverse_synthetic import api as synthetic_api
 from cogniverse_synthetic.schemas import (
     EntityExtractionExampleSchema,
     ProfileSelectionExampleSchema,
+    QueryEnhancementExampleSchema,
     RoutingExperienceSchema,
     SyntheticDataRequest,
     SyntheticDataResponse,
@@ -135,12 +139,109 @@ class _StrategyRecorder:
         return [{"topic": f"source for {tenant_id}"}]
 
 
+PROBE_AGENTS_CONFIG = {
+    "search_agent": {
+        "enabled": True,
+        "modalities": ["VIDEO"],
+        "capabilities": ["video_search"],
+    },
+    "query_enhancement_agent": {
+        "enabled": True,
+        "modalities": [],
+        "capabilities": ["query_enhancement", "expansion"],
+    },
+}
+
+
+async def _unused_labeler(*args, **kwargs):
+    raise AssertionError("strategy probe must not invoke a production labeler")
+
+
+class _ProbeBackend:
+    """Backend stand-in that satisfies the service's constructor invariants."""
+
+    def __init__(self) -> None:
+        self.initialized = True
+
+
+def _probe_example(schema_class, query: str):
+    """One fully validated example of the optimizer's own schema class."""
+    payloads = {
+        QueryEnhancementExampleSchema: {
+            "query": query,
+            "enhanced_query": f"{query} expanded",
+            "expansion_terms": ["expanded"],
+            "synonyms": [],
+            "context": "video",
+            "reasoning": "probe example",
+        },
+        ProfileSelectionExampleSchema: {
+            "query": query,
+            "available_profiles": "source_profile",
+            "selected_profile": "source_profile",
+            "reasoning": "probe example",
+            "query_intent": "video_search",
+            "modality": "video",
+            "complexity": "simple",
+        },
+        EntityExtractionExampleSchema: {
+            "query": query,
+            "entities": [{"text": "source", "type": "TOPIC"}],
+            "entity_types": "TOPIC",
+            "relationships": [],
+        },
+        RoutingExperienceSchema: {
+            "query": query,
+            "entities": [{"text": "source", "type": "TOPIC"}],
+            "relationships": [],
+            "enhanced_query": f"{query} expanded",
+            "chosen_agent": "search_agent",
+            "routing_confidence": 0.9,
+            "search_quality": 0.0,
+            "agent_success": False,
+        },
+        WorkflowExecutionSchema: {
+            "workflow_id": f"probe-{query}",
+            "query": query,
+            "query_type": "VIDEO",
+            "execution_time": 0.0,
+            "success": False,
+            "agent_sequence": ["search_agent"],
+            "task_count": 1,
+            "parallel_efficiency": 0.0,
+            "confidence_score": 0.0,
+        },
+    }
+    return schema_class(**payloads[schema_class])
+
+
 class _StrategyProbeService(SyntheticDataService):
+    """Real SyntheticDataService whose only override is example generation."""
+
     def __init__(self, recorder: _StrategyRecorder) -> None:
-        self.backend_config = SimpleNamespace(
-            profiles={"source_profile": _ProfileConfig()}
+        super().__init__(
+            backend=_ProbeBackend(),
+            backend_config=BackendConfig(
+                tenant_id="test:unit",
+                backend_type="vespa",
+                url="http://localhost",
+                port=8080,
+                profiles={
+                    "source_profile": BackendProfileConfig(
+                        profile_name="source_profile",
+                        type="video",
+                        schema_name="video_colpali_smol500_mv_frame",
+                        embedding_type="multi_vector",
+                    )
+                },
+            ),
+            generator_config=video_synthetic_generator_config("test:unit"),
+            agents_config=PROBE_AGENTS_CONFIG,
+            entity_extractor=_unused_labeler,
+            routing_decider=_unused_labeler,
+            query_enhancer=_unused_labeler,
+            profile_labeler=_unused_labeler,
         )
-        self.generator_config = video_synthetic_generator_config("test:unit")
         self.backend_querier = recorder
 
     async def _get_available_profiles(self, tenant_id):
@@ -164,10 +265,26 @@ class _StrategyProbeService(SyntheticDataService):
         }
         assert available_profile_configs == selected_profile_configs
         return [
-            config.schema_class.model_construct(
-                query=f"source query for {request.tenant_id}"
-            )
+            _probe_example(config.schema_class, f"source query for {request.tenant_id}")
         ]
+
+
+def test_strategy_probe_is_a_fully_constructed_service():
+    recorder = _StrategyRecorder()
+    service = _StrategyProbeService(recorder)
+
+    assert service.agents_config == PROBE_AGENTS_CONFIG
+    assert sorted(service.backend_config.profiles) == ["source_profile"]
+    assert service.query_enhancer is _unused_labeler
+    assert service.profile_labeler is _unused_labeler
+    assert service.entity_extractor is _unused_labeler
+    assert service.routing_decider is _unused_labeler
+    assert service.agent_inferrer.MODALITY_TO_AGENT == {"VIDEO": "search_agent"}
+    assert sorted(service.agent_inferrer.AGENT_CAPABILITIES) == [
+        "query_enhancement_agent",
+        "search_agent",
+    ]
+    assert list(service._groundable_profiles) == ["source_profile"]
 
 
 class TestProfileSelectionExampleSchema:
