@@ -29,6 +29,7 @@ import pytest
 
 from tests.e2e.conftest import (
     GATEWAY_VIDEO_QUERIES,
+    IN_POD_TELEMETRY_PRELUDE,
     expected_gateway_calibration,
 )
 from tests.e2e.test_api_e2e import PROFILE, _deploy_profile_for_tenant
@@ -517,7 +518,7 @@ def _runtime_pod_python(script: str, *, timeout: int = 180) -> str:
 
 def _gateway_thresholds_blob(tenant_id: str) -> str | None:
     """The tenant's ``gateway_thresholds`` artifact blob, or None when absent."""
-    script = (
+    script = IN_POD_TELEMETRY_PRELUDE + (
         "import asyncio; "
         "from cogniverse_foundation.telemetry.manager import get_telemetry_manager; "
         "from cogniverse_agents.optimizer.artifact_manager import ArtifactManager; "
@@ -534,7 +535,7 @@ def _gateway_thresholds_blob(tenant_id: str) -> str | None:
 
 
 def _count_gateway_spans(tenant_id: str) -> int:
-    script = (
+    script = IN_POD_TELEMETRY_PRELUDE + (
         "import asyncio; "
         "from cogniverse_foundation.telemetry.config import SPAN_NAME_GATEWAY; "
         "from cogniverse_foundation.telemetry.manager import get_telemetry_manager; "

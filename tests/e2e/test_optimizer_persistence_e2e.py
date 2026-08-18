@@ -43,6 +43,7 @@ import httpx
 import pytest
 
 from tests.e2e.conftest import (
+    IN_POD_TELEMETRY_PRELUDE,
     KUBECTL_CONTEXT,
     RUNTIME,
     TENANT_ID,
@@ -331,7 +332,7 @@ class TestWorkflowOptimizationPersistence:
         # this step a save_demonstrations bug that returned a fake
         # dataset id (or wrote 0 rows) would still pass step 3.
         if demos_saved > 0:
-            probe_code = (
+            probe_code = IN_POD_TELEMETRY_PRELUDE + (
                 "import asyncio\n"
                 "from cogniverse_foundation.telemetry import "
                 "get_telemetry_manager\n"
@@ -385,7 +386,7 @@ _SYNTHETIC_EXAMPLE_FIELDS = {
 def _load_review_batch(batch_id: str) -> dict:
     """Load a persisted approval batch back through the pod's
     ApprovalStorage, mirroring the CLI's own storage wiring."""
-    probe_code = (
+    probe_code = IN_POD_TELEMETRY_PRELUDE + (
         "import asyncio, json\n"
         "from cogniverse_agents.approval.approval_storage import (\n"
         "    ApprovalStorageImpl,\n"
