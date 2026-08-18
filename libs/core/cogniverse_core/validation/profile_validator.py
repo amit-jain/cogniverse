@@ -18,6 +18,12 @@ if TYPE_CHECKING:
 
 logger = logging.getLogger(__name__)
 
+SHIPPED_CONFIG_PATH = Path(__file__).resolve().parents[4] / "configs" / "config.json"
+NO_SHIPPED_PROFILE_TYPES_ERROR = (
+    "Profile type validation failed: no backend profile types are "
+    "configured in configs/config.json backend.profiles"
+)
+
 
 class ProfileValidator:
     """Validates backend profile configurations."""
@@ -28,10 +34,6 @@ class ProfileValidator:
         "multi_vector",
         "single_vector",
     ]
-
-    # Valid profile types — must match the types used by real profiles in
-    # configs/config.json (backend.profiles).
-    VALID_PROFILE_TYPES = ["video", "image", "audio", "document", "code"]
 
     def __init__(
         self,
@@ -48,6 +50,56 @@ class ProfileValidator:
         """
         self.config_manager = config_manager
         self.schema_templates_dir = schema_templates_dir or Path("configs/schemas")
+        self._valid_profile_types, self._profile_type_source_error = (
+            self._load_valid_profile_types()
+        )
+        self._valid_profile_type_set = frozenset(self._valid_profile_types)
+
+    def _load_valid_profile_types(self) -> tuple[list[str], Optional[str]]:
+        """Derive valid profile types from the shipped backend config."""
+        try:
+            json_config = json.loads(SHIPPED_CONFIG_PATH.read_text(encoding="utf-8"))
+        except (OSError, json.JSONDecodeError):
+            return [], NO_SHIPPED_PROFILE_TYPES_ERROR
+
+        backend_config = json_config.get("backend")
+        if not isinstance(backend_config, dict):
+            return [], NO_SHIPPED_PROFILE_TYPES_ERROR
+
+        profiles = backend_config.get("profiles")
+        if not isinstance(profiles, dict) or not profiles:
+            return [], NO_SHIPPED_PROFILE_TYPES_ERROR
+
+        valid_profile_types: list[str] = []
+        for profile_name, profile_config in profiles.items():
+            if not isinstance(profile_config, dict):
+                return (
+                    [],
+                    "Profile type validation failed: backend profile "
+                    f"'{profile_name}' must be an object in "
+                    "configs/config.json backend.profiles",
+                )
+
+            profile_type = profile_config.get("type")
+            if not isinstance(profile_type, str) or not profile_type.strip():
+                return (
+                    [],
+                    "Profile type validation failed: backend profile "
+                    f"'{profile_name}' must declare a non-empty string type in "
+                    "configs/config.json backend.profiles",
+                )
+            if profile_type != profile_type.strip():
+                return (
+                    [],
+                    "Profile type validation failed: backend profile "
+                    f"'{profile_name}' type contains surrounding whitespace in "
+                    "configs/config.json backend.profiles",
+                )
+
+            if profile_type not in valid_profile_types:
+                valid_profile_types.append(profile_type)
+
+        return valid_profile_types, None
 
     def validate_profile(
         self, profile: "BackendProfileConfig", tenant_id: str, is_update: bool = False
@@ -122,14 +174,18 @@ class ProfileValidator:
         """Validate profile type."""
         errors = []
 
+        if self._profile_type_source_error:
+            errors.append(self._profile_type_source_error)
+            return errors
+
         if not profile_type:
             errors.append("Profile type is required")
             return errors
 
-        if profile_type not in self.VALID_PROFILE_TYPES:
+        if profile_type not in self._valid_profile_type_set:
             errors.append(
                 f"Invalid profile type '{profile_type}'. "
-                f"Must be one of: {self.VALID_PROFILE_TYPES}"
+                f"Must be one of: {self._valid_profile_types}"
             )
 
         return errors
