@@ -835,7 +835,17 @@ class TestGatewayAgentThin:
             downstream = data["downstream_result"]
             assert downstream["status"] == "success", downstream
             assert downstream["agent"] == "document_agent", downstream
-            assert downstream["results_count"] >= 1, downstream
+            results = downstream["results"]
+            # document_agent filters by relevance, so a query about Python
+            # legitimately returns nothing from a corpus of dish-washing
+            # captions. What this routing test owns is that the document
+            # search ran for this exact query and reported consistently;
+            # exact retrieval results are pinned against a seeded corpus in
+            # TestGatewaySeededSearchContract.
+            assert downstream["results_count"] == len(results), downstream
+            assert downstream["message"] == (
+                f"Found {len(results)} documents for '{query}'"
+            ), downstream
         else:
             assert_orchestrated(data, query, gw)
 
