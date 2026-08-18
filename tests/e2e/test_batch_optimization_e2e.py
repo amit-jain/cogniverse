@@ -669,8 +669,8 @@ def _reset_query_enhancement_artifact_in_pod(tenant_id: str = TENANT_ID) -> bool
         f"am = ArtifactManager(tp, {tenant_id!r}); "
         "base = json.dumps(QueryEnhancementModule().dump_state(), default=str); "
         "blob = asyncio.run(am.load_blob('model', SIMBA_ARTIFACT_KEY)); "
-        "differs = bool(blob) and json.loads(blob) != json.loads(base); "
-        "differs and asyncio.run(am.save_blob(kind='model', key=SIMBA_ARTIFACT_KEY, content=base)); "
+        "differs = (json.loads(blob) != json.loads(base)) if blob else False; "
+        "asyncio.run(am.save_blob(kind='model', key=SIMBA_ARTIFACT_KEY, content=base)); "
         "print('__RESET__' + ('1' if differs else '0'))"
     )
     result = subprocess.run(
@@ -981,15 +981,15 @@ class TestWorkflowOptimization:
         )
         assert len(valid_demos) == result["execution_demos_saved"], result
 
-        # Known queries we sent: "analyze the video transcripts for key themes"
-        # and "analyze the video transcripts and compare with documents"
-        known_queries = {
-            "analyze the video transcripts for key themes",
-            "analyze the video transcripts and compare with documents",
-        }
+        # Every orchestrated query the fixture seeded must appear as a demo.
+        # Derived from the seeding constant so the expectation cannot name a
+        # query the fixture never sent.
+        seeded_queries = set(COMPLEX_QUERIES)
+        assert seeded_queries != set()
         demo_queries = {d["query"] for d in valid_demos}
-        assert known_queries <= demo_queries, (
-            f"Expected demos for queries {known_queries}, got: {demo_queries}"
+        assert seeded_queries <= demo_queries, (
+            f"Expected a demo for every seeded orchestrated query; missing "
+            f"{sorted(seeded_queries - demo_queries)}, got: {sorted(demo_queries)}"
         )
 
         # Workflow demos must show a real retrieval-heavy execution, not a
