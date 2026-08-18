@@ -5,9 +5,10 @@ from __future__ import annotations
 import ast
 from pathlib import Path
 
-EXPECTED_TELEMETRY_SCRIPT_COUNT = 10
+EXPECTED_TELEMETRY_SCRIPT_COUNT = 11
 PRELUDE_MARKERS = (
     "IN_POD_TELEMETRY_PRELUDE",
+    "resolve_library_env_defaults",
     "resolve_library_env_defaults()['telemetry_otlp_endpoint']",
     'resolve_library_env_defaults()["telemetry_otlp_endpoint"]',
 )
@@ -33,7 +34,10 @@ def _telemetry_script_sources(path: Path) -> list[tuple[int, str]]:
 
 
 def _resolves_endpoint_first(script_source: str) -> bool:
-    telemetry_index = script_source.find("get_telemetry_manager")
+    # Compare against the first invocation, not the import: the shared prelude
+    # imports get_telemetry_manager before calling it with the resolved
+    # endpoint, and importing a name configures nothing.
+    telemetry_index = script_source.find("get_telemetry_manager(")
     if telemetry_index == -1:
         return False
     prefix_index = min(
@@ -52,7 +56,7 @@ def test_in_pod_telemetry_scripts_resolve_endpoint_first():
     guard_path = Path(__file__).resolve()
     e2e_dir = guard_path.parent
     for path in sorted(e2e_dir.glob("*.py")):
-        if path.resolve() in {guard_path, e2e_dir / "conftest.py"}:
+        if path.resolve() == guard_path:
             continue
         for line, script_source in _telemetry_script_sources(path):
             scripts.append((path, line, script_source))
