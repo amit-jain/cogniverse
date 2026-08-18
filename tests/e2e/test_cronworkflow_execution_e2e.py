@@ -540,8 +540,9 @@ def _count_gateway_spans(tenant_id: str) -> int:
         "from cogniverse_foundation.telemetry.config import SPAN_NAME_GATEWAY; "
         "from cogniverse_foundation.telemetry.manager import get_telemetry_manager; "
         "from cogniverse_runtime.optimization_cli import _query_spans_by_name; "
-        f"tp = get_telemetry_manager().get_provider(tenant_id={tenant_id!r}); "
-        f"df = asyncio.run(_query_spans_by_name(tp, {tenant_id!r}, SPAN_NAME_GATEWAY, 1)); "
+        f"tm = get_telemetry_manager(); "
+        f"tp = tm.get_provider(tenant_id={tenant_id!r}); "
+        f"df = asyncio.run(_query_spans_by_name(tm, tp, {tenant_id!r}, SPAN_NAME_GATEWAY, 1)); "
         "print('__SPANS__' + str(len(df)))"
     )
     out = _runtime_pod_python(script).strip().splitlines()[-1]
