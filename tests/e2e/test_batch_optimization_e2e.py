@@ -33,6 +33,7 @@ pytestmark = pytest.mark.slow
 
 from tests.e2e.conftest import (
     GATEWAY_VIDEO_QUERIES,
+    IN_POD_TELEMETRY_PRELUDE,
     KUBECTL_CONTEXT,
     PHOENIX_URL,
     TENANT_ID,
@@ -334,7 +335,7 @@ def _kubectl_cluster_ready() -> None:
 
 
 def _count_gateway_spans_in_pod(tenant_id: str) -> int:
-    script = (
+    script = IN_POD_TELEMETRY_PRELUDE + (
         "import asyncio; "
         "from cogniverse_foundation.telemetry.config import SPAN_NAME_GATEWAY; "
         "from cogniverse_foundation.telemetry.manager import get_telemetry_manager; "
@@ -615,7 +616,7 @@ def _run_batch_job(
 
 def _load_blob_in_pod(kind: str, key: str, tenant_id: str = TENANT_ID) -> str:
     """Load an artifact blob from inside the k3d pod via ArtifactManager."""
-    script = (
+    script = IN_POD_TELEMETRY_PRELUDE + (
         "import asyncio, json; "
         "from cogniverse_foundation.telemetry.manager import get_telemetry_manager; "
         "from cogniverse_agents.optimizer.artifact_manager import ArtifactManager; "
@@ -657,7 +658,7 @@ def _reset_query_enhancement_artifact_in_pod(tenant_id: str = TENANT_ID) -> bool
     (so the running pod, which loaded it at start, must be bounced before
     it serves the seeding traffic).
     """
-    script = (
+    script = IN_POD_TELEMETRY_PRELUDE + (
         "import asyncio, json; "
         "from cogniverse_foundation.telemetry.manager import get_telemetry_manager; "
         "from cogniverse_agents.optimizer.artifact_manager import ArtifactManager; "
@@ -929,7 +930,7 @@ class TestWorkflowOptimization:
         """Workflow demos must contain agent_sequence, execution_time, success."""
         result = _run_batch_job("workflow")  # ensure artifact exists
 
-        script = (
+        script = IN_POD_TELEMETRY_PRELUDE + (
             "import asyncio, json; "
             "from cogniverse_foundation.telemetry.manager import get_telemetry_manager; "
             "from cogniverse_agents.optimizer.artifact_manager import ArtifactManager; "
@@ -1042,7 +1043,7 @@ def _approved_query_enhancement_examples_in_pod(
     tenant_id: str = TENANT_ID,
 ) -> list[dict]:
     """The tenant's approved synthetic query-enhancement examples, read in-pod."""
-    script = (
+    script = IN_POD_TELEMETRY_PRELUDE + (
         "import asyncio, json; "
         "from cogniverse_foundation.telemetry.manager import get_telemetry_manager; "
         "from cogniverse_runtime.optimization_cli import _load_approved_synthetic_data; "
@@ -1089,7 +1090,7 @@ def _served_query_enhancement_queries_in_pod(
     """
     if lookback_hours is None:
         lookback_hours = _module_lookback_hours()
-    script = (
+    script = IN_POD_TELEMETRY_PRELUDE + (
         "import asyncio, json; "
         "from cogniverse_foundation.telemetry.config import SPAN_NAME_QUERY_ENHANCEMENT; "
         "from cogniverse_foundation.telemetry.manager import get_telemetry_manager; "

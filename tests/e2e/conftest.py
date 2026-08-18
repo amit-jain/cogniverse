@@ -308,6 +308,11 @@ DASHBOARD = "http://localhost:33501"  # dashboard.service.nodePort
 PHOENIX_URL = "http://localhost:33006"  # phoenix.service.nodePort
 GLINER_URL = "http://localhost:33907"  # gliner NodePort 29007 via E2E_HOST_PORTS
 TENANT_ID = "flywheel_org:production"
+IN_POD_TELEMETRY_PRELUDE = (
+    "from cogniverse_runtime.entrypoint_env import resolve_library_env_defaults; "
+    "from cogniverse_foundation.telemetry.manager import get_telemetry_manager; "
+    "get_telemetry_manager(otlp_endpoint=resolve_library_env_defaults()['telemetry_otlp_endpoint']); "
+)
 
 DATA_ROOT = Path(__file__).parent.parent.parent / "data"
 SAMPLE_VIDEO_PATH = (
