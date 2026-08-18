@@ -16,9 +16,28 @@ from unittest.mock import MagicMock, patch
 
 import pytest
 
+from cogniverse_core.approval.training_schema import PROFILE_TRAINING_MODALITIES
+from cogniverse_core.validation import profile_validator as profile_validator_module
 from cogniverse_core.validation.profile_validator import ProfileValidator
 from cogniverse_foundation.config.manager import ConfigManager
 from cogniverse_foundation.config.unified_config import BackendProfileConfig
+from cogniverse_foundation.config.utils import ConfigUtils
+
+REPO_ROOT = Path(__file__).resolve().parents[3]
+SHIPPED_CONFIG_PATH = REPO_ROOT / "configs" / "config.json"
+
+
+def _shipped_profile_types() -> list[str]:
+    config = json.loads(SHIPPED_CONFIG_PATH.read_text())
+    profile_types: list[str] = []
+    for profile in config["backend"]["profiles"].values():
+        profile_type = profile["type"]
+        if profile_type not in profile_types:
+            profile_types.append(profile_type)
+    return profile_types
+
+
+SHIPPED_PROFILE_TYPES = _shipped_profile_types()
 
 
 @pytest.fixture
@@ -146,25 +165,122 @@ class TestProfileNameValidation:
 class TestProfileTypeValidation:
     """Test profile type validation."""
 
-    def test_valid_profile_types(self, validator: ProfileValidator):
-        """Every type used by a real profile in config must validate."""
-        valid_types = ["video", "image", "audio", "document", "code"]
+    @pytest.mark.parametrize("profile_type", SHIPPED_PROFILE_TYPES)
+    def test_valid_profile_types(self, validator: ProfileValidator, profile_type):
+        """Every type used by a real shipped profile must validate."""
+        assert validator._validate_profile_type(profile_type) == []
 
-        for profile_type in valid_types:
-            errors = validator._validate_profile_type(profile_type)
-            assert not errors, f"Profile type '{profile_type}' should be valid"
+    def test_profile_type_loading_does_not_use_configutils_private_api(
+        self,
+        mock_config_manager: MagicMock,
+        temp_schema_dir: Path,
+    ):
+        """Shipped profile type loading should not depend on ConfigUtils internals."""
+        with patch.object(
+            ConfigUtils,
+            "_load_json_config",
+            side_effect=AssertionError(
+                "ProfileValidator must not call ConfigUtils._load_json_config"
+            ),
+        ):
+            validator = ProfileValidator(
+                config_manager=mock_config_manager,
+                schema_templates_dir=temp_schema_dir,
+            )
 
-    def test_code_profile_type_is_valid(self, validator: ProfileValidator):
-        """The live ``code_lateon_mv`` profile is type 'code' and must validate."""
-        assert validator._validate_profile_type("code") == []
+        assert validator._validate_profile_type("video") == []
 
-    def test_invalid_profile_types(self, validator: ProfileValidator):
+    @pytest.mark.parametrize(
+        ("profile_type", "expected_errors"),
+        [
+            ("", ["Profile type is required"]),
+            (
+                "pdf",
+                [
+                    "Invalid profile type 'pdf'. Must be one of: "
+                    f"{SHIPPED_PROFILE_TYPES}"
+                ],
+            ),
+            (
+                "unknown",
+                [
+                    "Invalid profile type 'unknown'. Must be one of: "
+                    f"{SHIPPED_PROFILE_TYPES}"
+                ],
+            ),
+            (
+                "spreadsheet",
+                [
+                    "Invalid profile type 'spreadsheet'. Must be one of: "
+                    f"{SHIPPED_PROFILE_TYPES}"
+                ],
+            ),
+            (
+                "text",
+                [
+                    "Invalid profile type 'text'. Must be one of: "
+                    f"{SHIPPED_PROFILE_TYPES}"
+                ],
+            ),
+        ],
+    )
+    def test_invalid_profile_types(
+        self,
+        validator: ProfileValidator,
+        profile_type: str,
+        expected_errors: list[str],
+    ):
         """Invalid profile types should fail validation."""
-        invalid_types = ["", "pdf", "unknown", "spreadsheet", "text"]
+        assert validator._validate_profile_type(profile_type) == expected_errors
 
-        for profile_type in invalid_types:
-            errors = validator._validate_profile_type(profile_type)
-            assert errors, f"Profile type '{profile_type}' should be invalid"
+    def test_profile_type_drift_guard_matches_shipped_config_and_training_modalities(
+        self, validator: ProfileValidator
+    ):
+        """Sanity-check the shipped-config derivation and guard training coverage.
+
+        The equality check only proves the shipped-config load/parse/accept
+        round-trip; it is not the drift guard because both sides originate from
+        the same file. The subset check is the real cross-domain guard: every
+        shipped profile type must still exist in PROFILE_TRAINING_MODALITIES.
+        """
+        shipped_types = set(SHIPPED_PROFILE_TYPES)
+        accepted_types = {
+            profile_type
+            for profile_type in SHIPPED_PROFILE_TYPES
+            if validator._validate_profile_type(profile_type) == []
+        }
+
+        assert accepted_types == shipped_types
+        assert shipped_types <= PROFILE_TRAINING_MODALITIES
+
+    def test_empty_profile_type_source_fails_loudly(
+        self,
+        temp_schema_dir: Path,
+        mock_config_manager: MagicMock,
+        valid_profile: BackendProfileConfig,
+    ):
+        """An empty shipped backend profile set must block validation."""
+        with patch.object(
+            profile_validator_module,
+            "SHIPPED_CONFIG_PATH",
+            temp_schema_dir / "missing_config.json",
+        ):
+            validator = ProfileValidator(
+                config_manager=mock_config_manager,
+                schema_templates_dir=temp_schema_dir,
+            )
+
+        with patch.object(validator, "_strategy_class_exists", return_value=True):
+            errors = validator.validate_profile(
+                profile=valid_profile,
+                tenant_id="test_tenant",
+                is_update=False,
+            )
+
+        assert errors == [
+            "Profile type validation failed: no backend profile types are "
+            "configured in configs/config.json backend.profiles"
+        ]
 
 
 class TestSchemaTemplateValidation:
