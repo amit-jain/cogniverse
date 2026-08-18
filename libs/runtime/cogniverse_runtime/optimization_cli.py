@@ -362,6 +362,7 @@ async def run_triggered_optimization(
     trigger_dataset: str,
     config_manager=None,
     phoenix_endpoint: str = None,
+    telemetry_otlp_endpoint: str | None = None,
 ) -> dict:
     """Run optimization triggered by quality monitor.
 
@@ -384,7 +385,7 @@ async def run_triggered_optimization(
 
         config_manager = create_default_config_manager()
 
-    telemetry_manager = get_telemetry_manager()
+    telemetry_manager = get_telemetry_manager(otlp_endpoint=telemetry_otlp_endpoint)
     telemetry_provider = telemetry_manager.get_provider(tenant_id=tenant_id)
 
     # Load trigger dataset from Phoenix
@@ -1494,6 +1495,7 @@ _ONLINE_EVAL_CONCURRENCY = 8
 
 
 async def _query_spans_by_name(
+    telemetry_manager,
     telemetry_provider,
     tenant_id: str,
     span_name: str,
@@ -1504,9 +1506,6 @@ async def _query_spans_by_name(
     Returns a DataFrame of matching spans, or an empty DataFrame if none found.
     """
 
-    from cogniverse_foundation.telemetry.manager import get_telemetry_manager
-
-    telemetry_manager = get_telemetry_manager()
     project_name = telemetry_manager.config.get_project_name(tenant_id)
 
     end_time = datetime.now(timezone.utc)
@@ -1758,6 +1757,7 @@ async def _load_approved_synthetic_data(
 async def run_monthly_reports(
     output_dir: str,
     lookback_hours: float = 24.0 * 30,
+    telemetry_otlp_endpoint: str | None = None,
 ) -> dict:
     """Generate the monthly usage + performance report.
 
@@ -1832,7 +1832,7 @@ async def run_monthly_reports(
     usage_path.write_text(json.dumps(usage_report, indent=2, default=str))
 
     # --- performance ---
-    telemetry_manager = get_telemetry_manager()
+    telemetry_manager = get_telemetry_manager(otlp_endpoint=telemetry_otlp_endpoint)
     end = datetime.now(timezone.utc)
     start = end - timedelta(hours=lookback_hours)
     perf_per_tenant: Dict[str, Any] = {}
@@ -1978,6 +1978,7 @@ def _query_enhancement_scores(module, holdout) -> float:
 async def run_simba_optimization(
     tenant_id: str,
     lookback_hours: float = 24.0,
+    telemetry_otlp_endpoint: str | None = None,
 ) -> dict:
     """SIMBA query enhancement optimization.
 
@@ -2002,11 +2003,15 @@ async def run_simba_optimization(
     )
 
     config_manager = create_default_config_manager()
-    telemetry_manager = get_telemetry_manager()
+    telemetry_manager = get_telemetry_manager(otlp_endpoint=telemetry_otlp_endpoint)
     telemetry_provider = telemetry_manager.get_provider(tenant_id=tenant_id)
 
     spans_df = await _query_spans_by_name(
-        telemetry_provider, tenant_id, SPAN_NAME_QUERY_ENHANCEMENT, lookback_hours
+        telemetry_manager,
+        telemetry_provider,
+        tenant_id,
+        SPAN_NAME_QUERY_ENHANCEMENT,
+        lookback_hours,
     )
 
     logger.info("Found %d query_enhancement spans", len(spans_df))
@@ -2171,6 +2176,7 @@ async def _save_workflow_learning_state(
 async def run_workflow_optimization(
     tenant_id: str,
     lookback_hours: float = 24.0,
+    telemetry_otlp_endpoint: str | None = None,
 ) -> dict:
     """Workflow orchestration optimization.
 
@@ -2196,6 +2202,9 @@ async def run_workflow_optimization(
     from cogniverse_agents.routing.orchestration_evaluator import (
         OrchestrationEvaluator,
     )
+    from cogniverse_foundation.telemetry.manager import get_telemetry_manager
+
+    get_telemetry_manager(otlp_endpoint=telemetry_otlp_endpoint)
 
     evaluator = OrchestrationEvaluator(
         workflow_intelligence=intelligence,
@@ -2423,6 +2432,7 @@ def _compute_gateway_thresholds(spans_df) -> dict:
 async def run_gateway_thresholds_optimization(
     tenant_id: str,
     lookback_hours: float = 24.0,
+    telemetry_otlp_endpoint: str | None = None,
 ) -> dict:
     """Gateway confidence threshold tuning.
 
@@ -2444,11 +2454,15 @@ async def run_gateway_thresholds_optimization(
     )
 
     create_default_config_manager()
-    telemetry_manager = get_telemetry_manager()
+    telemetry_manager = get_telemetry_manager(otlp_endpoint=telemetry_otlp_endpoint)
     telemetry_provider = telemetry_manager.get_provider(tenant_id=tenant_id)
 
     spans_df = await _query_spans_by_name(
-        telemetry_provider, tenant_id, SPAN_NAME_GATEWAY, lookback_hours
+        telemetry_manager,
+        telemetry_provider,
+        tenant_id,
+        SPAN_NAME_GATEWAY,
+        lookback_hours,
     )
 
     if spans_df.empty:
@@ -2491,6 +2505,7 @@ async def run_gateway_thresholds_optimization(
 async def run_online_routing_evaluation(
     tenant_id: str,
     lookback_hours: float = 24.0,
+    telemetry_otlp_endpoint: str | None = None,
 ) -> dict:
     """Online routing-span scoring.
 
@@ -2519,12 +2534,16 @@ async def run_online_routing_evaluation(
         logger.info("Online routing evaluation disabled in config")
         return {"status": "disabled"}
 
-    telemetry_manager = get_telemetry_manager()
+    telemetry_manager = get_telemetry_manager(otlp_endpoint=telemetry_otlp_endpoint)
     telemetry_provider = telemetry_manager.get_provider(tenant_id=tenant_id)
     project_name = telemetry_manager.config.get_project_name(tenant_id)
 
     spans_df = await _query_spans_by_name(
-        telemetry_provider, tenant_id, SPAN_NAME_ROUTING, lookback_hours
+        telemetry_manager,
+        telemetry_provider,
+        tenant_id,
+        SPAN_NAME_ROUTING,
+        lookback_hours,
     )
     if spans_df.empty:
         logger.info("No routing spans found — nothing to evaluate")
@@ -2595,6 +2614,7 @@ async def run_online_evaluation(
     tenant_id: str,
     lookback_hours: float | None = None,
     agent_types: list[str] | None = None,
+    telemetry_otlp_endpoint: str | None = None,
 ) -> dict:
     """Online span scoring for every domain-span agent type.
 
@@ -2635,7 +2655,7 @@ async def run_online_evaluation(
     if agent_types is None:
         agent_types = _online_eval_agent_types()
 
-    telemetry_manager = get_telemetry_manager()
+    telemetry_manager = get_telemetry_manager(otlp_endpoint=telemetry_otlp_endpoint)
     telemetry_provider = telemetry_manager.get_provider(tenant_id=tenant_id)
     project_name = telemetry_manager.config.get_project_name(tenant_id)
 
@@ -2649,7 +2669,11 @@ async def run_online_evaluation(
             continue
 
         spans_df = await _query_spans_by_name(
-            telemetry_provider, tenant_id, entry.span_name, lookback_hours
+            telemetry_manager,
+            telemetry_provider,
+            tenant_id,
+            entry.span_name,
+            lookback_hours,
         )
         if spans_df.empty:
             per_agent[agent_type] = {"spans_found": 0, "scores_persisted": 0}
@@ -2702,6 +2726,7 @@ async def run_online_evaluation(
 async def run_profile_optimization(
     tenant_id: str,
     lookback_hours: float = 24.0,
+    telemetry_otlp_endpoint: str | None = None,
 ) -> dict:
     """Profile selection optimization.
 
@@ -2721,11 +2746,15 @@ async def run_profile_optimization(
     )
 
     config_manager = create_default_config_manager()
-    telemetry_manager = get_telemetry_manager()
+    telemetry_manager = get_telemetry_manager(otlp_endpoint=telemetry_otlp_endpoint)
     telemetry_provider = telemetry_manager.get_provider(tenant_id=tenant_id)
 
     spans_df = await _query_spans_by_name(
-        telemetry_provider, tenant_id, SPAN_NAME_PROFILE_SELECTION, lookback_hours
+        telemetry_manager,
+        telemetry_provider,
+        tenant_id,
+        SPAN_NAME_PROFILE_SELECTION,
+        lookback_hours,
     )
 
     logger.info("Found %d profile_selection spans", len(spans_df))
@@ -2819,6 +2848,7 @@ async def run_profile_optimization(
 async def run_entity_extraction_optimization(
     tenant_id: str,
     lookback_hours: float = 24.0,
+    telemetry_otlp_endpoint: str | None = None,
 ) -> dict:
     """Entity extraction optimization.
 
@@ -2837,11 +2867,15 @@ async def run_entity_extraction_optimization(
     )
 
     config_manager = create_default_config_manager()
-    telemetry_manager = get_telemetry_manager()
+    telemetry_manager = get_telemetry_manager(otlp_endpoint=telemetry_otlp_endpoint)
     telemetry_provider = telemetry_manager.get_provider(tenant_id=tenant_id)
 
     spans_df = await _query_spans_by_name(
-        telemetry_provider, tenant_id, SPAN_NAME_ENTITY_EXTRACTION, lookback_hours
+        telemetry_manager,
+        telemetry_provider,
+        tenant_id,
+        SPAN_NAME_ENTITY_EXTRACTION,
+        lookback_hours,
     )
 
     logger.info("Found %d entity_extraction spans", len(spans_df))
@@ -3146,6 +3180,7 @@ async def run_synthetic_generation(
     tenant_id: str,
     optimizer_types: list[str] | None = None,
     count: int = 50,
+    telemetry_otlp_endpoint: str | None = None,
 ) -> dict:
     """Generate synthetic training data for optimizer types.
 
@@ -3203,7 +3238,7 @@ async def run_synthetic_generation(
         }
         return {"status": "failed", "results": results}
 
-    telemetry_manager = get_telemetry_manager()
+    telemetry_manager = get_telemetry_manager(otlp_endpoint=telemetry_otlp_endpoint)
     entity_extractor = None
     routing_decider = None
     query_enhancer = None
@@ -4084,6 +4119,11 @@ def main():
         format="%(asctime)s - %(name)s - %(levelname)s - %(message)s",
     )
 
+    from cogniverse_runtime.entrypoint_env import resolve_library_env_defaults
+
+    runtime_env = resolve_library_env_defaults()
+    telemetry_otlp_endpoint = runtime_env["telemetry_otlp_endpoint"]
+
     if (
         args.mode not in ("cleanup", "egress-netpol", "monthly-reports")
         and not args.tenant_id
@@ -4110,6 +4150,7 @@ def main():
                 run_monthly_reports(
                     output_dir=args.reports_output_dir,
                     lookback_hours=args.lookback_hours,
+                    telemetry_otlp_endpoint=telemetry_otlp_endpoint,
                 )
             )
         elif args.mode == "triggered":
@@ -4123,6 +4164,7 @@ def main():
                     tenant_id=args.tenant_id,
                     agents=agents,
                     trigger_dataset=args.trigger_dataset,
+                    telemetry_otlp_endpoint=telemetry_otlp_endpoint,
                 )
             )
         elif args.mode == "simba":
@@ -4130,6 +4172,7 @@ def main():
                 run_simba_optimization(
                     tenant_id=args.tenant_id,
                     lookback_hours=args.lookback_hours,
+                    telemetry_otlp_endpoint=telemetry_otlp_endpoint,
                 )
             )
         elif args.mode == "workflow":
@@ -4137,6 +4180,7 @@ def main():
                 run_workflow_optimization(
                     tenant_id=args.tenant_id,
                     lookback_hours=args.lookback_hours,
+                    telemetry_otlp_endpoint=telemetry_otlp_endpoint,
                 )
             )
         elif args.mode == "gateway-thresholds":
@@ -4144,6 +4188,7 @@ def main():
                 run_gateway_thresholds_optimization(
                     tenant_id=args.tenant_id,
                     lookback_hours=args.lookback_hours,
+                    telemetry_otlp_endpoint=telemetry_otlp_endpoint,
                 )
             )
         elif args.mode == "online-routing-eval":
@@ -4151,6 +4196,7 @@ def main():
                 run_online_routing_evaluation(
                     tenant_id=args.tenant_id,
                     lookback_hours=args.lookback_hours,
+                    telemetry_otlp_endpoint=telemetry_otlp_endpoint,
                 )
             )
         elif args.mode == "online-eval":
@@ -4158,6 +4204,7 @@ def main():
                 run_online_evaluation(
                     tenant_id=args.tenant_id,
                     lookback_hours=args.lookback_hours,
+                    telemetry_otlp_endpoint=telemetry_otlp_endpoint,
                 )
             )
         elif args.mode == "profile":
@@ -4165,6 +4212,7 @@ def main():
                 run_profile_optimization(
                     tenant_id=args.tenant_id,
                     lookback_hours=args.lookback_hours,
+                    telemetry_otlp_endpoint=telemetry_otlp_endpoint,
                 )
             )
         elif args.mode == "entity-extraction":
@@ -4172,6 +4220,7 @@ def main():
                 run_entity_extraction_optimization(
                     tenant_id=args.tenant_id,
                     lookback_hours=args.lookback_hours,
+                    telemetry_otlp_endpoint=telemetry_otlp_endpoint,
                 )
             )
         elif args.mode == "rollback":
@@ -4247,6 +4296,7 @@ def main():
                 run_synthetic_generation(
                     tenant_id=args.tenant_id,
                     optimizer_types=optimizer_types,
+                    telemetry_otlp_endpoint=telemetry_otlp_endpoint,
                 )
             )
         else:

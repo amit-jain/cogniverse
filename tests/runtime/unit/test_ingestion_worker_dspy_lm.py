@@ -252,7 +252,9 @@ class TestRunEntrypointWiring:
         self._set_env(monkeypatch)
         claim_call = {}
 
-        async def _claim_loop(redis, config, stop, processor=None):
+        async def _claim_loop(
+            redis, config, stop, processor=None, telemetry_otlp_endpoint=None
+        ):
             claim_call.update(
                 redis=redis, config=config, stop=stop, processor=processor
             )
@@ -311,13 +313,22 @@ class TestRunEntrypointWiring:
         reaper_call = {}
         reaper_started = asyncio.Event()
 
-        async def _default(job, *, service_urls, mark_graph_pending, graph_deadline_s):
+        async def _default(
+            job,
+            *,
+            service_urls,
+            mark_graph_pending,
+            graph_deadline_s,
+            media_config=None,
+        ):
             default_calls.append(
                 (job, service_urls, mark_graph_pending, graph_deadline_s)
             )
             return {"status": "success"}
 
-        async def _claim_loop(redis, config, stop, *, processor):
+        async def _claim_loop(
+            redis, config, stop, *, processor, telemetry_otlp_endpoint=None
+        ):
             claim_call.update(config=config, processor=processor)
             await processor("claim-job")
             await reaper_started.wait()
@@ -369,7 +380,9 @@ class TestRunEntrypointWiring:
             dependency_calls.append(("config-manager", None))
             return object()
 
-        async def _claim_loop(redis, config, stop, *, processor):
+        async def _claim_loop(
+            redis, config, stop, *, processor, telemetry_otlp_endpoint=None
+        ):
             dependency_calls.append(("claim", config))
 
         monkeypatch.setattr(worker, "get_redis", _get_redis)
@@ -390,7 +403,9 @@ class TestRunEntrypointWiring:
 
         self._set_env(monkeypatch)
 
-        async def _boom(redis, config, stop, processor=None):
+        async def _boom(
+            redis, config, stop, processor=None, telemetry_otlp_endpoint=None
+        ):
             raise RuntimeError("redis stream gone")
 
         worker, recorded, _ = self._wire(monkeypatch, _boom)
@@ -422,7 +437,9 @@ class TestRunEntrypointWiring:
         monkeypatch.setenv("INGEST_GRAPH_DEADLINE_SECONDS", "37.5")
         claim_call = {}
 
-        async def _claim_loop(redis, config, stop, processor=None):
+        async def _claim_loop(
+            redis, config, stop, processor=None, telemetry_otlp_endpoint=None
+        ):
             claim_call.update(redis=redis, config=config, processor=processor)
 
         worker, _, fake_redis = self._wire(monkeypatch, _claim_loop)

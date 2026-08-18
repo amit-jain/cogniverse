@@ -28,6 +28,7 @@ logger = logging.getLogger(__name__)
 def _wait_for_telemetry_manager(
     *,
     get_manager=None,
+    telemetry_otlp_endpoint: str | None = None,
     timeout_seconds: float = 300.0,
     poll_interval_seconds: float = 2.0,
 ):
@@ -38,7 +39,8 @@ def _wait_for_telemetry_manager(
     if get_manager is None:
         from cogniverse_foundation.telemetry.manager import get_telemetry_manager
 
-        get_manager = get_telemetry_manager
+        def get_manager():
+            return get_telemetry_manager(otlp_endpoint=telemetry_otlp_endpoint)
 
     deadline = time.monotonic() + timeout_seconds
     attempts = 0
@@ -381,6 +383,7 @@ async def run_annotation_feedback_cycle(
     now=None,
     force: bool = False,
     pod_spec=None,
+    telemetry_otlp_endpoint: str | None = None,
 ) -> dict:
     """Turn accumulated human annotations into optimization submissions.
 
@@ -438,7 +441,7 @@ async def run_annotation_feedback_cycle(
     if dataset_store is None:
         from cogniverse_foundation.telemetry.manager import get_telemetry_manager
 
-        telemetry_manager = get_telemetry_manager()
+        telemetry_manager = get_telemetry_manager(otlp_endpoint=telemetry_otlp_endpoint)
         dataset_store = telemetry_manager.get_provider(tenant_id=tenant_id).datasets
 
     end_time = now
@@ -782,6 +785,11 @@ def main():
     # artifacts by the canonical form, so a bare chart value like "default"
     # must not fork a parallel tenant world.
     from cogniverse_core.common.tenant_utils import canonical_tenant_id
+    from cogniverse_runtime.entrypoint_env import resolve_library_env_defaults
+
+    runtime_env = resolve_library_env_defaults()
+    telemetry_otlp_endpoint = runtime_env["telemetry_otlp_endpoint"]
+    telemetry_http_endpoint = runtime_env["telemetry_http_endpoint"] or args.phoenix_url
 
     args.tenant_id = canonical_tenant_id(args.tenant_id)
 
@@ -795,10 +803,11 @@ def main():
     # TELEMETRY_OTLP_ENDPOINT's host on the fixed :6006 port; point them at
     # --phoenix-url before any provider is constructed and cached.
     telemetry_manager = _wait_for_telemetry_manager(
+        telemetry_otlp_endpoint=telemetry_otlp_endpoint,
         timeout_seconds=args.startup_timeout,
         poll_interval_seconds=args.startup_poll_interval,
     )
-    telemetry_manager.config.provider_config["http_endpoint"] = args.phoenix_url
+    telemetry_manager.config.provider_config["http_endpoint"] = telemetry_http_endpoint
     if not args.annotation_cycle and not args.annotation_feedback:
         _wait_for_runtime_search(
             runtime_url=args.runtime_url,
@@ -816,14 +825,14 @@ def main():
     # matching the standard Phoenix deployment in the Helm chart.
     telemetry_provider = _build_phoenix_provider(
         tenant_id=args.tenant_id,
-        http_endpoint=args.phoenix_url,
+        http_endpoint=telemetry_http_endpoint,
     )
 
     workflow_pod_spec = _workflow_pod_spec_from_env()
     monitor = QualityMonitor(
         tenant_id=args.tenant_id,
         runtime_url=args.runtime_url,
-        phoenix_http_endpoint=args.phoenix_url,
+        phoenix_http_endpoint=telemetry_http_endpoint,
         llm_base_url=args.llm_base_url,
         llm_model=args.llm_model,
         golden_dataset_path=args.golden_dataset_path,
@@ -859,6 +868,7 @@ def main():
                 argo_url=args.argo_url,
                 argo_namespace=args.argo_namespace,
                 pod_spec=workflow_pod_spec,
+                telemetry_otlp_endpoint=telemetry_otlp_endpoint,
             )
         )
         logger.info(f"Annotation feedback result: {result}")

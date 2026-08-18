@@ -52,6 +52,9 @@ from cogniverse_foundation.telemetry.manager import get_telemetry_manager
 # Import routers
 from cogniverse_runtime.admin import tenant_manager
 from cogniverse_runtime.config_loader import get_config_loader
+from cogniverse_runtime.entrypoint_env import (
+    resolve_library_env_defaults as _resolve_library_env_defaults_from_entrypoint,
+)
 from cogniverse_runtime.inference_services import parse_inference_service_urls
 from cogniverse_runtime.routers import (
     admin,
@@ -507,27 +510,9 @@ def _bootstrap_metadata_schemas(bootstrap, application_name: str) -> None:
     logger.info("Metadata schemas bootstrapped for fresh backend")
 
 
-def _resolve_tenant_cache_capacity() -> int:
-    try:
-        return max(
-            1,
-            int(os.environ.get("COGNIVERSE_TENANT_CACHE_CAPACITY", 16)),
-        )
-    except (TypeError, ValueError):
-        return 16
-
-
 def _resolve_library_env_defaults() -> dict[str, str | int | None]:
-    """Read the library-module defaults from process env exactly once."""
-    return {
-        "minio_endpoint": os.environ.get("MINIO_ENDPOINT"),
-        "minio_access_key": os.environ.get("MINIO_ACCESS_KEY"),
-        "minio_secret_key": os.environ.get("MINIO_SECRET_KEY"),
-        "telemetry_otlp_endpoint": os.environ.get("TELEMETRY_OTLP_ENDPOINT"),
-        "semantic_embed_url": os.environ.get("COGNIVERSE_SEMANTIC_EMBED_URL"),
-        "semantic_embed_model": os.environ.get("COGNIVERSE_SEMANTIC_EMBED_MODEL"),
-        "tenant_cache_capacity": _resolve_tenant_cache_capacity(),
-    }
+    """Read the library-module defaults from the shared runtime resolver."""
+    return _resolve_library_env_defaults_from_entrypoint()
 
 
 def _mirror_minio_credentials_to_aws(
@@ -547,6 +532,7 @@ def _configure_library_module_defaults(
     minio_access_key: str | None,
     minio_secret_key: str | None,
     telemetry_otlp_endpoint: str | None,
+    telemetry_http_endpoint: str | None = None,
     semantic_embed_url: str | None,
     semantic_embed_model: str | None,
     tenant_cache_capacity: int,

@@ -86,6 +86,7 @@ def test_runtime_main_resolves_and_injects_target_env_vars(monkeypatch):
     monkeypatch.setenv("MINIO_ACCESS_KEY", "minio-access")
     monkeypatch.setenv("MINIO_SECRET_KEY", "minio-secret")
     monkeypatch.setenv("TELEMETRY_OTLP_ENDPOINT", "wired-phoenix:4317")
+    monkeypatch.setenv("TELEMETRY_HTTP_ENDPOINT", "http://wired-phoenix:6006")
     monkeypatch.setenv("COGNIVERSE_SEMANTIC_EMBED_URL", "http://embed.internal:8000")
     monkeypatch.setenv("COGNIVERSE_SEMANTIC_EMBED_MODEL", "from-config")
     monkeypatch.setenv("COGNIVERSE_TENANT_CACHE_CAPACITY", "23")
@@ -97,6 +98,7 @@ def test_runtime_main_resolves_and_injects_target_env_vars(monkeypatch):
         "minio_access_key": "minio-access",
         "minio_secret_key": "minio-secret",
         "telemetry_otlp_endpoint": "wired-phoenix:4317",
+        "telemetry_http_endpoint": "http://wired-phoenix:6006",
         "semantic_embed_url": "http://embed.internal:8000",
         "semantic_embed_model": "from-config",
         "tenant_cache_capacity": 23,

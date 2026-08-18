@@ -102,7 +102,11 @@ def test_lookback_mode_success_dispatch(monkeypatch, mode, worker_attr):
     assert code == 0
     assert rec.calls == 1
     assert rec.args == ()
-    assert rec.kwargs == {"tenant_id": "acme:acme", "lookback_hours": 2.5}
+    assert rec.kwargs == {
+        "tenant_id": "acme:acme",
+        "lookback_hours": 2.5,
+        "telemetry_otlp_endpoint": None,
+    }
 
 
 @pytest.mark.parametrize("mode,worker_attr", _LOOKBACK_MODES)
@@ -176,7 +180,11 @@ def test_monthly_reports_success_dispatch(monkeypatch):
     assert rec.calls == 1
     # monthly-reports is global: no tenant_id forwarded.
     assert rec.args == ()
-    assert rec.kwargs == {"output_dir": "/tmp/reports_x", "lookback_hours": 3.0}
+    assert rec.kwargs == {
+        "output_dir": "/tmp/reports_x",
+        "lookback_hours": 3.0,
+        "telemetry_otlp_endpoint": None,
+    }
 
 
 def test_monthly_reports_failure_result_exits_1(monkeypatch):
@@ -209,6 +217,7 @@ def test_triggered_success_dispatch(monkeypatch):
         "tenant_id": "acme:acme",
         "agents": ["search_agent", "routing_agent"],
         "trigger_dataset": "trig_ds",
+        "telemetry_otlp_endpoint": None,
     }
 
 
@@ -255,6 +264,7 @@ def test_synthetic_default_optimizers_dispatch(monkeypatch):
             "routing",
             "entity_extraction",
         ],
+        "telemetry_otlp_endpoint": None,
     }
 
 
@@ -276,6 +286,7 @@ def test_synthetic_agents_override_optimizers(monkeypatch):
     assert rec.kwargs == {
         "tenant_id": "acme:acme",
         "optimizer_types": ["profile", "routing"],
+        "telemetry_otlp_endpoint": None,
     }
 
 

@@ -344,7 +344,9 @@ async def test_search_route_offloads_config_resolution(monkeypatch):
     tm = MagicMock()
     tm.span = _noop_span
     tm.session_span = _noop_span
-    monkeypatch.setattr(search_router, "get_telemetry_manager", lambda: tm)
+    monkeypatch.setattr(
+        search_router, "get_telemetry_manager", lambda *args, **kwargs: tm
+    )
 
     def _slow_get(*a, **k):
         time.sleep(0.3)  # cold ConfigUtils ensure-chain read
@@ -394,6 +396,10 @@ async def test_admin_pin_service_init_offloaded(monkeypatch):
         svc.list_pins.return_value = []
         return svc
 
+    async def _no_overrides(tenant_id):
+        return {}
+
+    monkeypatch.setattr(admin, "_load_pin_quotas", _no_overrides)
     monkeypatch.setattr(admin, "_get_pin_service", _blocking_svc)
     ticks = await _ticks_during(lambda: admin.list_pins("acme:acme"))
     assert ticks >= 10, f"only {ticks} ticks — the pin-service init ran on the loop"

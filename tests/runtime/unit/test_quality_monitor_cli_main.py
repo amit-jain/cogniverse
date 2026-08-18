@@ -135,6 +135,26 @@ def test_main_waits_for_runtime_search_before_constructing_monitor(patched):
     ]
 
 
+def test_main_uses_env_phoenix_url_for_monitor_and_provider(patched, monkeypatch):
+    seen = {}
+
+    def build_phoenix_provider(**kwargs):
+        seen.update(kwargs)
+        return None
+
+    monkeypatch.setenv("TELEMETRY_HTTP_ENDPOINT", "http://phoenix-env:6006")
+    patched.setattr(qm, "_build_phoenix_provider", build_phoenix_provider)
+
+    assert _main_exit(patched, [*_BASE, "--once"]) == 0
+    assert seen == {
+        "tenant_id": "acme:acme",
+        "http_endpoint": "http://phoenix-env:6006",
+    }
+    assert _StubMonitor.instances[-1].kwargs["phoenix_http_endpoint"] == (
+        "http://phoenix-env:6006"
+    )
+
+
 def test_once_status_error_exits_1_and_closes(patched):
     _StubMonitor.force_result = {"status": "error", "reason": "eval failed"}
     code = _main_exit(patched, [*_BASE, "--once"])

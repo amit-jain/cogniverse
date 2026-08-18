@@ -110,7 +110,7 @@ class TestMirrorMinioCredentialsToAws:
     def test_mirrors_minio_secret_onto_aws_names(self, monkeypatch):
         monkeypatch.setenv("MINIO_ACCESS_KEY", "minio-access")
         monkeypatch.setenv("MINIO_SECRET_KEY", "minio-secret")
-        _mirror_minio_credentials_to_aws()
+        _mirror_minio_credentials_to_aws("minio-access", "minio-secret")
         import os
 
         assert os.environ["AWS_ACCESS_KEY_ID"] == "minio-access"
@@ -119,13 +119,13 @@ class TestMirrorMinioCredentialsToAws:
     def test_does_not_overwrite_explicit_aws_creds(self, monkeypatch):
         monkeypatch.setenv("MINIO_ACCESS_KEY", "minio-access")
         monkeypatch.setenv("AWS_ACCESS_KEY_ID", "explicit-aws")
-        _mirror_minio_credentials_to_aws()
+        _mirror_minio_credentials_to_aws("minio-access", None)
         import os
 
         assert os.environ["AWS_ACCESS_KEY_ID"] == "explicit-aws"
 
     def test_no_minio_creds_leaves_aws_unset(self, monkeypatch):
-        _mirror_minio_credentials_to_aws()
+        _mirror_minio_credentials_to_aws(None, None)
         import os
 
         assert "AWS_ACCESS_KEY_ID" not in os.environ
