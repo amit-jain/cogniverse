@@ -787,7 +787,11 @@ async def main():
         create_default_config_manager,
         get_config,
     )
-    from cogniverse_foundation.telemetry import get_telemetry_manager
+    from cogniverse_foundation.telemetry.manager import get_telemetry_manager
+    from cogniverse_runtime.entrypoint_env import resolve_library_env_defaults
+
+    runtime_env = resolve_library_env_defaults()
+    telemetry_otlp_endpoint = runtime_env["telemetry_otlp_endpoint"]
 
     config_manager = create_default_config_manager()
     config_utils = get_config(config_manager=config_manager)
@@ -802,7 +806,8 @@ async def main():
     pipeline = DSPyAgentOptimizerPipeline(optimizer)
 
     tenant_id = SYSTEM_TENANT_ID
-    telemetry_provider = get_telemetry_manager().get_provider(tenant_id=tenant_id)
+    telemetry_manager = get_telemetry_manager(otlp_endpoint=telemetry_otlp_endpoint)
+    telemetry_provider = telemetry_manager.get_provider(tenant_id=tenant_id)
 
     optimized_modules = await pipeline.optimize_all_modules()
 

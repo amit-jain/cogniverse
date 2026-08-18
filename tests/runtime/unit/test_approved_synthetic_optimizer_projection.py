@@ -172,9 +172,22 @@ async def test_synthetic_only_data_compiles_the_actual_production_module(
         assert received_provider is provider
         assert tenant_id == "acme:production"
         assert received_optimizer == optimizer_type
+        if optimizer_type == "query_enhancement":
+            return [demo, dict(demo)]
         return [demo]
 
     class Compiled:
+        def __call__(self, *args, **kwargs):
+            query = kwargs.get("query", args[0] if args else "")
+            return SimpleNamespace(
+                enhanced_query=f"{query} attention mechanism",
+                expansion_terms="attention mechanism",
+                synonyms="",
+                context="",
+                confidence=0.0,
+                reasoning="",
+            )
+
         def dump_state(self):
             return {"compiled": optimizer_type}
 
@@ -188,6 +201,9 @@ async def test_synthetic_only_data_compiles_the_actual_production_module(
         def __init__(self, received_provider, tenant_id):
             assert received_provider is provider
             assert tenant_id == "acme:production"
+
+        async def load_blob(self, kind, key):
+            return None
 
         async def save_blob(self, kind, key, content):
             captured["artifact"] = (kind, key, content)
@@ -208,7 +224,7 @@ async def test_synthetic_only_data_compiles_the_actual_production_module(
     )
     monkeypatch.setattr(
         "cogniverse_foundation.telemetry.manager.get_telemetry_manager",
-        lambda: telemetry_manager,
+        lambda *args, **kwargs: telemetry_manager,
     )
     monkeypatch.setattr(
         "cogniverse_foundation.config.utils.get_config",
@@ -228,8 +244,16 @@ async def test_synthetic_only_data_compiles_the_actual_production_module(
 
     example = captured["example"]
     expected = _project_approved_optimizer_example(optimizer_type, demo)
+    if optimizer_type == "query_enhancement":
+        expected = {
+            **expected,
+            "source_text": "",
+            "grounding_context": "",
+        }
     assert captured["module"] == module_type
     assert example.toDict() == expected
+    if optimizer_type == "query_enhancement":
+        input_names = ["query", "source_text", "grounding_context"]
     assert list(example.inputs().toDict()) == input_names
     assert example.labels().toDict() == {
         key: value for key, value in expected.items() if key not in input_names
@@ -244,9 +268,23 @@ async def test_synthetic_only_data_compiles_the_actual_production_module(
         artifact_key,
         f'{{"compiled": "{optimizer_type}"}}',
     )
-    assert result == {
-        "status": "success",
-        "spans_found": 0,
-        "training_examples": 1,
-        "artifact_id": f"artifact-{optimizer_type}",
-    }
+    if optimizer_type == "query_enhancement":
+        assert result == {
+            "status": "success",
+            "spans_found": 0,
+            "examples": 2,
+            "training_examples": 1,
+            "holdout_examples": 1,
+            "baseline_score": 0.0,
+            "current_score": None,
+            "candidate_score": 1.0,
+            "decision": "promote",
+            "artifact_id": "artifact-query_enhancement",
+        }
+    else:
+        assert result == {
+            "status": "success",
+            "spans_found": 0,
+            "training_examples": 1,
+            "artifact_id": f"artifact-{optimizer_type}",
+        }

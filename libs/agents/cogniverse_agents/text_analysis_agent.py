@@ -446,9 +446,9 @@ async def analyze_text_endpoint(request: AnalyzeRequest):
 
 if __name__ == "__main__":
     from cogniverse_core.common.tenant_utils import SYSTEM_TENANT_ID
-    from cogniverse_runtime.main import _resolve_library_env_defaults
+    from cogniverse_runtime.entrypoint_env import resolve_library_env_defaults
 
-    _runtime_defaults = _resolve_library_env_defaults()
+    _runtime_defaults = resolve_library_env_defaults()
     configure_tenant_cache_capacity(_runtime_defaults["tenant_cache_capacity"])
 
     config = get_config(

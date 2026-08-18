@@ -326,7 +326,7 @@ class TestRestoreMemory:
         mm.restore_archived_memory.return_value = True
         pin_service_calls = []
 
-        def _get_pin_service(tenant_id):
+        def _get_pin_service(tenant_id, admin_overrides=None):
             pin_service_calls.append(tenant_id)
             return SimpleNamespace(_mm=mm)
 
@@ -350,7 +350,7 @@ class TestRestoreMemory:
         monkeypatch.setattr(
             admin_router,
             "_get_pin_service",
-            lambda tenant_id: SimpleNamespace(_mm=mm),
+            lambda tenant_id, admin_overrides=None: SimpleNamespace(_mm=mm),
         )
 
         resp = client.post("/admin/tenants/acme:prod/memories/mem-gone/restore")
@@ -494,7 +494,11 @@ def _pin_service_with_mm(monkeypatch, rows):
     mm.memory.get.side_effect = lambda memory_id: by_id.get(str(memory_id))
     mm.memory.get_all.return_value = {"results": rows}
     svc = SimpleNamespace(_mm=mm)
-    monkeypatch.setattr(admin_router, "_get_pin_service", lambda tenant_id: svc)
+    monkeypatch.setattr(
+        admin_router,
+        "_get_pin_service",
+        lambda tenant_id, admin_overrides=None: svc,
+    )
     return mm
 
 
@@ -648,7 +652,11 @@ class TestPromoteToOrgTrunkRoute:
 class TestPinRoutes:
     def _svc(self, monkeypatch):
         svc = MagicMock(name="pin_service")
-        monkeypatch.setattr(admin_router, "_get_pin_service", lambda tenant_id: svc)
+        monkeypatch.setattr(
+            admin_router,
+            "_get_pin_service",
+            lambda tenant_id, admin_overrides=None: svc,
+        )
         return svc
 
     def _record(self, target="mem-3"):

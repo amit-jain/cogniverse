@@ -145,22 +145,21 @@ class WorkerConfig:
             )
 
 
-def _media_config_from_env() -> "object":
-    """Build a MediaConfig that points fsspec at MinIO when the worker
-    runs alongside our object store. Reading the MINIO_* env once at
-    job-processing time keeps MediaConfig env-agnostic and avoids
-    mutating any global config singleton."""
+def _media_config_from_defaults(
+    runtime_defaults: dict[str, str | int | None],
+) -> "object":
+    """Build a MediaConfig from the resolved entrypoint defaults."""
     from cogniverse_core.common.media import MediaConfig
 
-    minio_endpoint = os.environ.get("MINIO_ENDPOINT")
+    minio_endpoint = runtime_defaults["minio_endpoint"]
     if not minio_endpoint:
         return MediaConfig()
 
     # fsspec's s3 client picks up AWS_ACCESS_KEY_ID / AWS_SECRET_ACCESS_KEY
     # from the process env. Mirror our MINIO_* secrets onto those names
     # for the duration of the job so the localize() call authenticates.
-    access = os.environ.get("MINIO_ACCESS_KEY")
-    secret = os.environ.get("MINIO_SECRET_KEY")
+    access = runtime_defaults["minio_access_key"]
+    secret = runtime_defaults["minio_secret_key"]
     if access:
         os.environ.setdefault("AWS_ACCESS_KEY_ID", access)
     if secret:
@@ -422,6 +421,7 @@ async def _default_processor(
     service_urls: dict[str, str] | None,
     mark_graph_pending: Callable[[IngestJob], Awaitable[None]],
     graph_deadline_s: float,
+    media_config: "object" | None = None,
 ) -> dict:
     """Production processor: localise the source, bind the worker's default
     LM for the job, and run the pipeline + per-segment KG extraction under
@@ -437,9 +437,10 @@ async def _default_processor(
     """
     import dspy
 
-    from cogniverse_core.common.media import MediaLocator
+    from cogniverse_core.common.media import MediaConfig, MediaLocator
 
-    media_config = _media_config_from_env()
+    if media_config is None:
+        media_config = MediaConfig()
     locator = MediaLocator(tenant_id=job.tenant_id, config=media_config)
     local_path = await asyncio.to_thread(locator.localize, job.source_url)
 
@@ -621,6 +622,7 @@ async def _process_job(
     config: WorkerConfig,
     *,
     processor,
+    telemetry_otlp_endpoint: str | None = None,
 ) -> None:
     """Run one job end-to-end and publish events for every state
     change. ACKs terminal success or pre-content failure. A graph-stage
@@ -656,7 +658,7 @@ async def _process_job(
     # admits at DETAILED+. Errors propagate into the span via the
     # contextmanager's try/yield/except path.
     try:
-        tm = get_telemetry_manager()
+        tm = get_telemetry_manager(otlp_endpoint=telemetry_otlp_endpoint)
         await queue.publish_status(
             redis,
             job.ingest_id,
@@ -832,6 +834,7 @@ async def _claim_loop(
     stop: asyncio.Event,
     *,
     processor,
+    telemetry_otlp_endpoint: str | None = None,
 ) -> None:
     await queue.ensure_consumer_group(redis, config.consumer_group)
     while not stop.is_set():
@@ -852,7 +855,13 @@ async def _claim_loop(
             if stop.is_set():
                 break
             try:
-                await _process_job(redis, job, config, processor=processor)
+                await _process_job(
+                    redis,
+                    job,
+                    config,
+                    processor=processor,
+                    telemetry_otlp_endpoint=telemetry_otlp_endpoint,
+                )
             except Exception:
                 # Status-publish/telemetry blips escape the per-job guard;
                 # they must not kill the consumer. Leave the entry in the
@@ -875,6 +884,11 @@ async def run(
         level=os.environ.get("LOG_LEVEL", "INFO"),
         format="%(asctime)s %(levelname)s %(name)s: %(message)s",
     )
+    from cogniverse_runtime.entrypoint_env import resolve_library_env_defaults
+
+    runtime_defaults = resolve_library_env_defaults()
+    telemetry_otlp_endpoint = runtime_defaults["telemetry_otlp_endpoint"]
+    media_config = _media_config_from_defaults(runtime_defaults)
     config = WorkerConfig()
     if stop is None:
         stop = asyncio.Event()
@@ -887,6 +901,7 @@ async def run(
             service_urls=config.inference_service_urls,
             mark_graph_pending=partial(_mark_graph_pending, redis),
             graph_deadline_s=config.graph_deadline_s,
+            media_config=media_config,
         )
     logger.info(
         "Worker %s started: group=%s redis=%s reaper=%s",
@@ -903,7 +918,13 @@ async def run(
             reaper_task = asyncio.create_task(
                 reaper_loop(redis, config, stop, processor=processor)
             )
-        await _claim_loop(redis, config, stop, processor=processor)
+        await _claim_loop(
+            redis,
+            config,
+            stop,
+            processor=processor,
+            telemetry_otlp_endpoint=telemetry_otlp_endpoint,
+        )
     finally:
         logger.info("Worker %s stopping", config.consumer_id)
         if reaper_task is not None:

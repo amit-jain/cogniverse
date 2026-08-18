@@ -3983,7 +3983,11 @@ class TestQuerySpansFailureIsNotNoData:
         with patch(_PATCH_TELEMETRY, return_value=manager):
             with pytest.raises(RuntimeError, match="after 2 attempts"):
                 await cli._query_spans_by_name(
-                    provider, "acme:prod", "cogniverse.entity_extraction", 1.0
+                    manager,
+                    provider,
+                    "acme:prod",
+                    "cogniverse.entity_extraction",
+                    1.0,
                 )
         assert store.calls == 2
 
@@ -4019,7 +4023,11 @@ class TestQuerySpansFailureIsNotNoData:
         monkeypatch.setattr(_asyncio, "sleep", _instant_sleep)
         with patch(_PATCH_TELEMETRY, return_value=manager):
             out = await cli._query_spans_by_name(
-                provider, "acme:prod", "cogniverse.entity_extraction", 1.0
+                manager,
+                provider,
+                "acme:prod",
+                "cogniverse.entity_extraction",
+                1.0,
             )
         assert store.calls == 2
         assert len(out) == 1
@@ -4071,7 +4079,11 @@ class TestQuerySpansHungPhoenixIsCancelled:
         with patch(_PATCH_TELEMETRY, return_value=manager):
             with pytest.raises(RuntimeError, match="after 2 attempts"):
                 await cli._query_spans_by_name(
-                    provider, "acme:prod", "cogniverse.entity_extraction", 1.0
+                    manager,
+                    provider,
+                    "acme:prod",
+                    "cogniverse.entity_extraction",
+                    1.0,
                 )
         elapsed = time.monotonic() - start
 

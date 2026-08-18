@@ -102,7 +102,8 @@ def test_init_telemetry_emits_probe_span(monkeypatch):
             return _Span()
 
     monkeypatch.setattr(
-        "cogniverse_foundation.telemetry.manager.get_telemetry_manager", lambda: _TM()
+        "cogniverse_foundation.telemetry.manager.get_telemetry_manager",
+        lambda *args, **kwargs: _TM(),
     )
     pt.init_telemetry("acme")
     assert spans == [("provision.probe", "acme", "search_service")]
