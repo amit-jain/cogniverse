@@ -1470,9 +1470,11 @@ def _qe_span_row(
     grounding_context: str = "",
     source_text: str = "",
     confidence: float = 0.8,
+    span_id: str = "span-0",
 ) -> dict:
     """A cogniverse.query_enhancement span row as the agent writes it."""
     return {
+        "context.span_id": span_id,
         "attributes.input.value": query,
         "attributes.input.source_text": source_text,
         "attributes.input.grounding_context": grounding_context,
@@ -1511,8 +1513,11 @@ class TestSimbaQueryEnhancement:
                     expansion_terms=["TensorFlow", "neural networks"],
                     grounding_context=_TF_CONTEXT,
                     source_text="src",
+                    span_id="s-tut",
                 ),
-                _qe_span_row("robots", "Robots", expansion_terms=["machines"]),
+                _qe_span_row(
+                    "robots", "Robots", expansion_terms=["machines"], span_id="s-rob"
+                ),
                 _qe_span_row("cats", "cats and dogs", expansion_terms=[]),
                 _qe_span_row("dogs", "", expansion_terms=["puppies"]),
             ],
@@ -1528,6 +1533,7 @@ class TestSimbaQueryEnhancement:
                 "synonyms": ["s1"],
                 "context": ["c1"],
                 "confidence": 0.8,
+                "example_id": "span:s-tut",
                 "trainable": True,
             },
             {
@@ -1539,6 +1545,7 @@ class TestSimbaQueryEnhancement:
                 "synonyms": ["s1"],
                 "context": ["c1"],
                 "confidence": 0.8,
+                "example_id": "span:s-rob",
                 "trainable": False,
             },
             {
@@ -1550,9 +1557,29 @@ class TestSimbaQueryEnhancement:
                 "synonyms": ["s1"],
                 "context": ["c1"],
                 "confidence": 0.8,
+                "example_id": "span:span-0",
                 "trainable": False,
             },
         ]
+
+    def test_pairs_carry_the_span_id_as_example_id(self):
+        """Every production record carries example_id = span:<span_id>, the id
+        the optimizer ledger records as the example's source."""
+        from cogniverse_runtime.optimization_cli import _query_enhancement_pairs
+
+        spans_df = _make_spans_df(
+            "cogniverse.query_enhancement",
+            [
+                _qe_span_row(
+                    "q0", "q0 enhanced", expansion_terms=["a"], span_id="sid-0"
+                ),
+                _qe_span_row(
+                    "q1", "q1 enhanced", expansion_terms=["b"], span_id="sid-1"
+                ),
+            ],
+        )
+        pairs = _query_enhancement_pairs(spans_df)
+        assert [p["example_id"] for p in pairs] == ["span:sid-0", "span:sid-1"]
 
     @pytest.mark.parametrize(
         ("grounding_context", "enhanced", "expansion_terms", "expected"),

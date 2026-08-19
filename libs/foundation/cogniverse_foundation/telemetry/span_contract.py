@@ -183,6 +183,17 @@ def _parse_output(raw: Any) -> Any:
     return raw
 
 
+def read_span_id(row: Any) -> Optional[str]:
+    """Return a Phoenix span row's stable span id (``context.span_id``).
+
+    This is the id the optimizer's ledger records as the source of a consumed
+    training example. Returns ``None`` only when the column is absent — real
+    Phoenix rows always carry it.
+    """
+    span_id = _reconstruct_attributes(row).get("context.span_id")
+    return str(span_id) if span_id is not None else None
+
+
 def read_span_attributes(row: Any) -> dict:
     """Return a Phoenix span row's attributes as a flat ``{key: value}`` dict.
 
