@@ -2040,11 +2040,12 @@ async def run_simba_optimization(
     deterministic holdout, compiles the QueryEnhancementAgent's DSPy module
     via BootstrapFewShot on the trainable records, then scores the base
     module, the persisted artifact and the compiled candidate on the holdout
-    with ``_query_enhancement_quality``. Only the winner is served: the
-    candidate is persisted when it earns it, a persisted artifact that
-    scores below the base module is replaced by the base state, and nothing
-    is persisted without holdout material.
+    with ``_query_enhancement_quality``. Below
+    ``min_samples_for_optimization`` or ``min_unique_queries``, the run
+    persists an ``insufficient_population`` version and leaves the served
+    artifact unchanged.
     """
+    from cogniverse_agents.optimizer.artifact_manager import ArtifactManager
     from cogniverse_foundation.config.utils import create_default_config_manager
     from cogniverse_foundation.telemetry.config import SPAN_NAME_QUERY_ENHANCEMENT
     from cogniverse_foundation.telemetry.manager import get_telemetry_manager
@@ -2103,6 +2104,44 @@ async def run_simba_optimization(
         logger.info("No valid production or approved synthetic examples")
         return {"status": "no_data", "spans_found": len(spans_df), "examples": 0}
 
+    artifact_manager = ArtifactManager(telemetry_provider, tenant_id)
+    current_blob = await artifact_manager.load_blob("model", SIMBA_ARTIFACT_KEY)
+    min_samples, min_unique_queries = _population_floor_from_config(
+        tenant_id, config_manager
+    )
+    population = len(records)
+    distinct_queries = len({record["query"] for record in records})
+    if population < min_samples or distinct_queries < min_unique_queries:
+        logger.warning(
+            "SIMBA below population floor for %s: population=%d (min %d) "
+            "distinct_queries=%d (min %d)",
+            tenant_id,
+            population,
+            min_samples,
+            distinct_queries,
+            min_unique_queries,
+        )
+        consumed_example_ids = [record["example_id"] for record in records]
+        _, version = await artifact_manager.save_blob_versioned(
+            "model",
+            SIMBA_ARTIFACT_KEY,
+            current_blob or "{}",
+            consumed_example_ids=consumed_example_ids,
+            decision="insufficient_population",
+            scored=False,
+            base_score=None,
+            candidate_score=None,
+        )
+        return {
+            "status": "insufficient_population",
+            "spans_found": len(spans_df),
+            "examples": population,
+            "distinct_queries": distinct_queries,
+            "min_samples": min_samples,
+            "min_unique_queries": min_unique_queries,
+            "version": version,
+        }
+
     train_records, holdout_records = _split_train_holdout(records)
     trainset = [_query_enhancement_example(r) for r in train_records if r["trainable"]]
     holdout = [_query_enhancement_example(r) for r in holdout_records]
@@ -2129,7 +2168,6 @@ async def run_simba_optimization(
 
     import dspy
 
-    from cogniverse_agents.optimizer.artifact_manager import ArtifactManager
     from cogniverse_agents.query_enhancement_agent import QueryEnhancementModule
     from cogniverse_foundation.config.llm_factory import create_dspy_lm
     from cogniverse_foundation.config.utils import get_config
@@ -2138,8 +2176,6 @@ async def run_simba_optimization(
     llm_config = config.get_llm_config()
     dspy.configure(lm=create_dspy_lm(llm_config.resolve("optimization")))
 
-    artifact_manager = ArtifactManager(telemetry_provider, tenant_id)
-    current_blob = await artifact_manager.load_blob("model", SIMBA_ARTIFACT_KEY)
     current_module = None
     if current_blob:
         current_module = QueryEnhancementModule()
