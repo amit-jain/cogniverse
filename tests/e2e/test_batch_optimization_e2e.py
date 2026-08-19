@@ -703,6 +703,89 @@ def _load_blob_in_pod(kind: str, key: str, tenant_id: str = TENANT_ID) -> str:
     return result.stdout.strip()
 
 
+def _blob_version_lineage_in_pod(
+    kind: str, key: str, tenant_id: str = TENANT_ID
+) -> list[dict]:
+    """The versioned-artifact ledger for ``kind/key``, read from inside the pod."""
+    script = IN_POD_TELEMETRY_PRELUDE + (
+        "import asyncio, json; "
+        "from cogniverse_foundation.telemetry.manager import get_telemetry_manager; "
+        "from cogniverse_agents.optimizer.artifact_manager import ArtifactManager; "
+        f"tp = get_telemetry_manager().get_provider(tenant_id={tenant_id!r}); "
+        f"am = ArtifactManager(tp, {tenant_id!r}); "
+        "lineage = asyncio.get_event_loop().run_until_complete("
+        f"am.get_version_lineage({kind!r}, {key!r})); "
+        "print('__LINEAGE__' + json.dumps(lineage))"
+    )
+    result = subprocess.run(
+        [
+            "kubectl",
+            "--context",
+            KUBECTL_CONTEXT,
+            "exec",
+            "-n",
+            NAMESPACE,
+            DEPLOYMENT,
+            "-c",
+            CONTAINER,
+            "--",
+            "python3",
+            "-c",
+            script,
+        ],
+        capture_output=True,
+        text=True,
+        timeout=60,
+    )
+    if result.returncode != 0:
+        raise RuntimeError(
+            f"get_version_lineage({kind}, {key}) failed: {result.stderr[-500:]}"
+        )
+    line = next(ln for ln in result.stdout.splitlines() if ln.startswith("__LINEAGE__"))
+    return json.loads(line[len("__LINEAGE__") :])
+
+
+def _active_blob_version_in_pod(kind: str, key: str, tenant_id: str = TENANT_ID):
+    """The activated version of ``kind/key``, or None, read from inside the pod."""
+    script = IN_POD_TELEMETRY_PRELUDE + (
+        "import asyncio, json; "
+        "from cogniverse_foundation.telemetry.manager import get_telemetry_manager; "
+        "from cogniverse_agents.optimizer.artifact_manager import ArtifactManager; "
+        f"tp = get_telemetry_manager().get_provider(tenant_id={tenant_id!r}); "
+        f"am = ArtifactManager(tp, {tenant_id!r}); "
+        "state = asyncio.get_event_loop().run_until_complete("
+        f"am.get_blob_state({kind!r}, {key!r})); "
+        "print('__ACTIVE__' + json.dumps(state['active']))"
+    )
+    result = subprocess.run(
+        [
+            "kubectl",
+            "--context",
+            KUBECTL_CONTEXT,
+            "exec",
+            "-n",
+            NAMESPACE,
+            DEPLOYMENT,
+            "-c",
+            CONTAINER,
+            "--",
+            "python3",
+            "-c",
+            script,
+        ],
+        capture_output=True,
+        text=True,
+        timeout=60,
+    )
+    if result.returncode != 0:
+        raise RuntimeError(
+            f"get_blob_state({kind}, {key}) failed: {result.stderr[-500:]}"
+        )
+    line = next(ln for ln in result.stdout.splitlines() if ln.startswith("__ACTIVE__"))
+    active = json.loads(line[len("__ACTIVE__") :])
+    return active["version"] if active else None
+
+
 def _reset_query_enhancement_artifact_in_pod(tenant_id: str = TENANT_ID) -> bool:
     """Persist the base QueryEnhancementModule state as the tenant's SIMBA artifact.
 
@@ -1266,7 +1349,8 @@ def _assert_simba_served_the_best_module(result: dict, blob_before: str) -> dict
         "current_score",
         "candidate_score",
         "decision",
-        "artifact_id",
+        "version",
+        "consumed_example_ids",
     }, result
     assert result["status"] == "success", result
     assert result["examples"] == result["spans_found"] + len(approved), result
@@ -1294,13 +1378,27 @@ def _assert_simba_served_the_best_module(result: dict, blob_before: str) -> dict
     ], sig["fields"]
     assert sig["instructions"] == served_signature.instructions
 
+    # The run persisted a version whose ledger names exactly what it consumed;
+    # promote/rollback activate it, keep/reject leave the pointer.
+    version = result["version"]
+    assert isinstance(version, int) and version >= 1, result
+    lineage = _blob_version_lineage_in_pod("model", "simba_query_enhancement")
+    newest = lineage[-1]
+    assert newest["version"] == version, lineage
+    assert newest["decision"] == result["decision"], newest
+    assert newest["consumed_example_ids"] == result["consumed_example_ids"], newest
+    assert newest["consumed_example_ids"] != [], newest
+    served_queries = _served_query_enhancement_queries_in_pod()
+    seeded_queries = set(ENHANCEMENT_QUERIES) | {
+        q for q, _, _ in GROUNDED_ENHANCEMENT_QUERIES
+    }
+    # Every consumed id is a served span or an approved example — never
+    # a fabricated attribution.
+    for example_id in result["consumed_example_ids"]:
+        assert example_id.startswith(("span:", "approved:")), example_id
+
     demos = after["enhancer.predict"]["demos"]
     if result["decision"] == "promote":
-        assert isinstance(result["artifact_id"], str) and result["artifact_id"] != ""
-        served_queries = _served_query_enhancement_queries_in_pod()
-        seeded_queries = set(ENHANCEMENT_QUERIES) | {
-            q for q, _, _ in GROUNDED_ENHANCEMENT_QUERIES
-        }
         # The fixture's seeded calls all landed as served spans ...
         assert seeded_queries <= served_queries, sorted(seeded_queries - served_queries)
         # ... and every demo is a real served call or an approved example —
@@ -1312,11 +1410,17 @@ def _assert_simba_served_the_best_module(result: dict, blob_before: str) -> dict
             assert (
                 demo["enhanced_query"].strip().lower() != demo["query"].strip().lower()
             ), demo
+        assert (
+            _active_blob_version_in_pod("model", "simba_query_enhancement") == version
+        ), lineage
     elif result["decision"] == "rollback":
-        assert isinstance(result["artifact_id"], str) and result["artifact_id"] != ""
         assert after == _base_query_enhancement_state()
+        assert (
+            _active_blob_version_in_pod("model", "simba_query_enhancement") == version
+        ), lineage
     else:
-        assert result["artifact_id"] is None, result
+        # keep / reject record the version but never activate it; the served
+        # blob is whatever the run started from.
         assert after == json.loads(blob_before)
     return after
 
@@ -1365,7 +1469,18 @@ class TestProfileOptimization:
         assert result["status"] == "success"
         assert result["spans_found"] > 0
         assert result["training_examples"] >= 1
-        assert isinstance(result["artifact_id"], str) and result["artifact_id"]
+        assert isinstance(result["version"], int) and result["version"] >= 1
+        assert result["consumed_example_ids"] != []
+        lineage = _blob_version_lineage_in_pod("model", "profile_selection")
+        assert lineage[-1]["version"] == result["version"], lineage
+        assert lineage[-1]["consumed_example_ids"] == result["consumed_example_ids"], (
+            lineage
+        )
+        assert lineage[-1]["decision"] == "promote", lineage
+        assert (
+            _active_blob_version_in_pod("model", "profile_selection")
+            == result["version"]
+        ), lineage
 
     def test_profile_artifact_has_learned_demos(self):
         """Profile artifact must have demos with real query→profile pairs."""
@@ -1599,7 +1714,18 @@ class TestEntityExtractionOptimization:
         assert result["status"] == "success"
         assert result["spans_found"] > 0
         assert result["training_examples"] >= 1
-        assert isinstance(result["artifact_id"], str) and result["artifact_id"]
+        assert isinstance(result["version"], int) and result["version"] >= 1
+        assert result["consumed_example_ids"] != []
+        lineage = _blob_version_lineage_in_pod("model", "entity_extraction")
+        assert lineage[-1]["version"] == result["version"], lineage
+        assert lineage[-1]["consumed_example_ids"] == result["consumed_example_ids"], (
+            lineage
+        )
+        assert lineage[-1]["decision"] == "promote", lineage
+        assert (
+            _active_blob_version_in_pod("model", "entity_extraction")
+            == result["version"]
+        ), lineage
 
     def test_entity_extraction_artifact_has_learned_demos(self):
         """Entity extraction artifact must have demos with real entity data."""
