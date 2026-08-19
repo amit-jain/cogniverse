@@ -34,7 +34,7 @@ def manager(phoenix_container) -> ArtifactManager:
 
 
 @pytest.mark.asyncio
-async def test_save_blob_versioned_records_consumed_ids(manager):
+async def test_save_blob_versioned_records_consumed_ids(manager, phoenix_container):
     """A saved version's ledger names its exact inputs; the active blob is untouched."""
     dataset_id, version = await manager.save_blob_versioned(
         "model",
@@ -48,7 +48,15 @@ async def test_save_blob_versioned_records_consumed_ids(manager):
     )
 
     assert version == 1
-    assert dataset_id  # the store's identifier for the version dataset
+    from phoenix.client import Client
+
+    dataset_name = manager._versioned_dataset_name(
+        "model", "simba_query_enhancement", version
+    )
+    raw = Client(base_url=phoenix_container["http_endpoint"]).datasets.get_dataset(
+        dataset=dataset_name
+    )
+    assert dataset_id == raw.id
 
     lineage = await manager.get_version_lineage("model", "simba_query_enhancement")
     assert [entry["version"] for entry in lineage] == [1]
@@ -83,6 +91,51 @@ async def test_save_blob_versioned_records_consumed_ids(manager):
     assert await manager.get_blob_state("model", "simba_query_enhancement") == {
         "active": None
     }
+
+
+@pytest.mark.asyncio
+async def test_save_blob_versioned_accepts_insufficient_population(
+    manager, phoenix_container
+):
+    key = "simba_query_enhancement"
+    dataset_id, version = await manager.save_blob_versioned(
+        "model",
+        key,
+        "{}",
+        consumed_example_ids=["span:a", "span:b"],
+        decision="insufficient_population",
+        scored=False,
+        base_score=None,
+        candidate_score=None,
+    )
+
+    assert version == 1
+    from phoenix.client import Client
+
+    dataset_name = manager._versioned_dataset_name("model", key, version)
+    raw = Client(base_url=phoenix_container["http_endpoint"]).datasets.get_dataset(
+        dataset=dataset_name
+    )
+    assert dataset_id == raw.id
+
+    lineage = await manager.get_version_lineage("model", key)
+    assert [entry["version"] for entry in lineage] == [1]
+    assert lineage[0]["name"] == dataset_name
+    assert lineage[0]["row_count"] == 1
+    assert lineage[0]["consumed_example_ids"] == ["span:a", "span:b"]
+    assert lineage[0]["decision"] == "insufficient_population"
+    assert lineage[0]["scored"] is False
+    assert lineage[0]["base_score"] is None
+    assert lineage[0]["candidate_score"] is None
+    assert lineage[0]["created_at"].endswith("+00:00")
+
+    content, ledger = await manager.load_blob_version("model", key, version)
+    assert content == "{}"
+    assert ledger["decision"] == "insufficient_population"
+    assert ledger["consumed_example_ids"] == ["span:a", "span:b"]
+    assert ledger["version"] == 1
+    assert await manager.load_blob("model", key) is None
+    assert await manager.get_blob_state("model", key) == {"active": None}
 
 
 @pytest.mark.asyncio
@@ -204,6 +257,7 @@ async def test_save_blob_versioned_rejects_unattributable_input(manager):
             candidate_score=0.7,
         )
     assert str(err.value) == (
-        "decision must be one of ['keep', 'promote', 'reject', 'rollback'], got 'shipped'"
+        "decision must be one of ['insufficient_population', 'keep', 'promote', "
+        "'reject', 'rollback'], got 'shipped'"
     )
     assert await manager.get_version_lineage("model", "simba_query_enhancement") == []
