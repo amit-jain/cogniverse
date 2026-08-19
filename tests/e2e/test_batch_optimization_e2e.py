@@ -78,6 +78,13 @@ def _module_lookback_hours() -> float:
     return (time.time() - _SPAN_SEED_STARTED_AT) / 3600.0 + _LOOKBACK_MARGIN_HOURS
 
 
+def _synthetic_approve_count() -> int:
+    approve_count = int(os.environ.get("SYNTHETIC_APPROVE_COUNT", "90"))
+    if approve_count <= 0:
+        raise AssertionError("SYNTHETIC_APPROVE_COUNT must be a positive integer")
+    return approve_count
+
+
 RUNTIME = "http://localhost:33000"
 CONFIG_PATH = Path(__file__).resolve().parents[2] / "configs" / "config.json"
 
@@ -266,6 +273,12 @@ GROUNDED_ENHANCEMENT_QUERIES = [
         [],
     ),
 ]
+
+BELOW_FLOOR_QUERY_ENHANCEMENT_QUERIES = (
+    "ML transformer videos",
+    "find AI tutorials",
+    "deep learning frameworks",
+)
 
 
 def _call_agent(
@@ -509,6 +522,10 @@ def generate_spans_for_batch_jobs(_kubectl_cluster_ready):
     - 100+ cogniverse.query_enhancement spans
     - 100+ cogniverse.profile_selection spans
     - 3+ cogniverse.orchestration spans (complex queries)
+    Then generates and approves synthetic query-enhancement examples through
+    the production CLI and approval agent. ``SYNTHETIC_APPROVE_COUNT``
+    defaults to 90, so the synthetic pass adds a real QE generation call per
+    approved example and materially increases fixture runtime.
 
     Runs once per module, before any batch job test.
     """
@@ -587,6 +604,12 @@ def generate_spans_for_batch_jobs(_kubectl_cluster_ready):
     )
     _wait_for_seeded_span_lower_bound_in_pod(
         TENANT_ID, "SPAN_NAME_ORCHESTRATION", len(COMPLEX_QUERIES)
+    )
+
+    approved = _generate_and_approve_query_enhancement_synthetic_in_pod(TENANT_ID)
+    _wait_for_approved_query_enhancement_examples_in_pod(
+        TENANT_ID,
+        minimum=approved,
     )
 
     yield
@@ -701,6 +724,48 @@ def _load_blob_in_pod(kind: str, key: str, tenant_id: str = TENANT_ID) -> str:
     if result.returncode != 0:
         raise RuntimeError(f"load_blob({kind}, {key}) failed: {result.stderr[-500:]}")
     return result.stdout.strip()
+
+
+def _blob_state_in_pod(
+    kind: str, key: str, tenant_id: str = TENANT_ID
+) -> dict[str, object]:
+    """The activation state for ``kind/key``, read from inside the pod."""
+    script = IN_POD_TELEMETRY_PRELUDE + (
+        "import asyncio, json; "
+        "from cogniverse_foundation.telemetry.manager import get_telemetry_manager; "
+        "from cogniverse_agents.optimizer.artifact_manager import ArtifactManager; "
+        f"tp = get_telemetry_manager().get_provider(tenant_id={tenant_id!r}); "
+        f"am = ArtifactManager(tp, {tenant_id!r}); "
+        "state = asyncio.run(am.get_blob_state("
+        f"{kind!r}, {key!r})); "
+        "print('__STATE__' + json.dumps(state))"
+    )
+    result = subprocess.run(
+        [
+            "kubectl",
+            "--context",
+            KUBECTL_CONTEXT,
+            "exec",
+            "-n",
+            NAMESPACE,
+            DEPLOYMENT,
+            "-c",
+            CONTAINER,
+            "--",
+            "python3",
+            "-c",
+            script,
+        ],
+        capture_output=True,
+        text=True,
+        timeout=60,
+    )
+    if result.returncode != 0:
+        raise RuntimeError(
+            f"get_blob_state({kind}, {key}) failed: {result.stderr[-500:]}"
+        )
+    line = next(ln for ln in result.stdout.splitlines() if ln.startswith("__STATE__"))
+    return json.loads(line[len("__STATE__") :])
 
 
 def _blob_version_lineage_in_pod(
@@ -831,6 +896,47 @@ def _reset_query_enhancement_artifact_in_pod(tenant_id: str = TENANT_ID) -> bool
     line = result.stdout.strip().splitlines()[-1]
     assert line in ("__RESET__0", "__RESET__1"), result.stdout[-500:]
     return line == "__RESET__1"
+
+
+def _population_floor_in_pod(tenant_id: str = TENANT_ID) -> tuple[int, int]:
+    """The tenant's SIMBA population floor, read through the production helper."""
+    script = IN_POD_TELEMETRY_PRELUDE + (
+        "import json; "
+        "from cogniverse_foundation.config.utils import create_default_config_manager; "
+        "from cogniverse_runtime.optimization_cli import _population_floor_from_config; "
+        f"manager = create_default_config_manager(); "
+        f"min_samples, min_unique_queries = _population_floor_from_config({tenant_id!r}, manager); "
+        "print('__FLOOR__' + json.dumps({"
+        "'min_samples': min_samples, 'min_unique_queries': min_unique_queries"
+        "}))"
+    )
+    result = subprocess.run(
+        [
+            "kubectl",
+            "--context",
+            KUBECTL_CONTEXT,
+            "exec",
+            "-n",
+            NAMESPACE,
+            DEPLOYMENT,
+            "-c",
+            CONTAINER,
+            "--",
+            "python3",
+            "-c",
+            script,
+        ],
+        capture_output=True,
+        text=True,
+        timeout=60,
+    )
+    if result.returncode != 0:
+        raise RuntimeError(
+            f"_population_floor_from_config({tenant_id}) failed: {result.stderr[-500:]}"
+        )
+    line = next(ln for ln in result.stdout.splitlines() if ln.startswith("__FLOOR__"))
+    payload = json.loads(line[len("__FLOOR__") :])
+    return int(payload["min_samples"]), int(payload["min_unique_queries"])
 
 
 def _bounce_runtime_pod(ready_timeout_s: int = 240) -> str:
@@ -1281,6 +1387,26 @@ def _served_query_enhancement_queries_in_pod(
     return set(json.loads(line[len("__SERVED__") :]))
 
 
+def _wait_for_approved_query_enhancement_examples_in_pod(
+    tenant_id: str = TENANT_ID,
+    minimum: int = 1,
+    timeout_s: float = 240.0,
+) -> list[dict]:
+    """Wait until the tenant's approved query-enhancement examples are visible."""
+    deadline = time.monotonic() + timeout_s
+    approved: list[dict] = []
+    while time.monotonic() < deadline:
+        approved = _approved_query_enhancement_examples_in_pod(tenant_id)
+        if len(approved) >= minimum:
+            return approved
+        time.sleep(5.0)
+    raise AssertionError(
+        f"Phoenix showed {len(approved)} approved query-enhancement examples "
+        f"for tenant {tenant_id!r}; expected at least {minimum} within "
+        f"{timeout_s:.0f}s"
+    )
+
+
 def _wait_for_seeded_query_enhancement_queries_in_pod(
     tenant_id: str = TENANT_ID,
     lookback_hours: float | None = None,
@@ -1304,6 +1430,90 @@ def _wait_for_seeded_query_enhancement_queries_in_pod(
         f"Phoenix showed {len(served_queries & expected_queries)}/{len(expected_queries)} "
         f"seeded query-enhancement queries after {timeout_s:.0f}s; missing: {missing}"
     )
+
+
+def _generate_and_approve_query_enhancement_synthetic_in_pod(
+    tenant_id: str = TENANT_ID,
+    count: int | None = None,
+) -> int:
+    """Generate query_enhancement synthetic rows and approve them in-pod."""
+    approve_count = _synthetic_approve_count() if count is None else count
+    script = IN_POD_TELEMETRY_PRELUDE + (
+        "import asyncio, json\n"
+        "from cogniverse_agents.approval.approval_storage import ApprovalStorageImpl\n"
+        "from cogniverse_agents.approval.human_approval_agent import HumanApprovalAgent\n"
+        "from cogniverse_core.approval.interfaces import ReviewDecision\n"
+        "from cogniverse_foundation.config.utils import create_default_config_manager\n"
+        "from cogniverse_foundation.telemetry.manager import get_telemetry_manager\n"
+        "from cogniverse_runtime.optimization_cli import run_synthetic_generation\n"
+        "from cogniverse_synthetic.approval.confidence_extractor import (\n"
+        "    SyntheticDataConfidenceExtractor,\n"
+        ")\n"
+        "async def _go():\n"
+        "    config_manager = create_default_config_manager()\n"
+        "    system_config = config_manager.get_system_config()\n"
+        "    grpc_endpoint = system_config.telemetry_collector_endpoint\n"
+        "    if not grpc_endpoint.startswith('http'):\n"
+        "        grpc_endpoint = f'http://{grpc_endpoint}'\n"
+        "    telemetry_manager = get_telemetry_manager()\n"
+        f"    generation = await run_synthetic_generation(\n"
+        f"        {tenant_id!r}, optimizer_types=['query_enhancement'], count={approve_count}\n"
+        "    )\n"
+        "    outcome = generation['results']['query_enhancement']\n"
+        "    assert outcome['status'] == 'success', outcome\n"
+        "    storage = ApprovalStorageImpl(\n"
+        "        grpc_endpoint=grpc_endpoint,\n"
+        "        http_endpoint=system_config.telemetry_url,\n"
+        f"        tenant_id={tenant_id!r},\n"
+        "        telemetry_manager=telemetry_manager,\n"
+        "        redis_url=system_config.redis_url,\n"
+        "    )\n"
+        "    agent = HumanApprovalAgent(\n"
+        "        confidence_extractor=SyntheticDataConfidenceExtractor(),\n"
+        "        storage=storage,\n"
+        "    )\n"
+        "    batch = await storage.get_batch(outcome['batch_id'])\n"
+        "    if batch is None:\n"
+        "        raise AssertionError(f'approval batch not found: {outcome[\"batch_id\"]!r}')\n"
+        "    assert len(batch.items) == outcome['examples_generated'], (len(batch.items), outcome)\n"
+        "    assert len(batch.pending_review) == outcome['pending_review'], (len(batch.pending_review), outcome)\n"
+        "    decisions = [\n"
+        "        ReviewDecision(item_id=item.item_id, approved=True, reviewer='e2e:fixture')\n"
+        "        for item in batch.items\n"
+        "    ]\n"
+        "    await agent.apply_batch_decisions(outcome['batch_id'], decisions)\n"
+        "    return len(decisions)\n"
+        "print('__APPROVED__' + json.dumps(asyncio.run(_go())))\n"
+    )
+    result = subprocess.run(
+        [
+            "kubectl",
+            "--context",
+            KUBECTL_CONTEXT,
+            "exec",
+            "-n",
+            NAMESPACE,
+            DEPLOYMENT,
+            "-c",
+            CONTAINER,
+            "--",
+            "python3",
+            "-c",
+            script,
+        ],
+        capture_output=True,
+        text=True,
+        timeout=1800,
+    )
+    if result.returncode != 0:
+        raise RuntimeError(
+            "synthetic generation/approval failed: "
+            f"{result.stderr[-2000:]}\nstdout: {result.stdout[-2000:]}"
+        )
+    line = next(
+        ln for ln in result.stdout.splitlines() if ln.startswith("__APPROVED__")
+    )
+    return int(json.loads(line[len("__APPROVED__") :]))
 
 
 def _usable_profile_names_in_pod(tenant_id: str = TENANT_ID) -> list[str]:
@@ -1471,6 +1681,77 @@ class TestSimbaOptimization:
         assert isinstance(result["current_score"], float), result
         if result["decision"] == "keep":
             assert after == first
+
+
+@pytest.fixture(scope="function")
+def simba_floor_tenant() -> str:
+    """A fresh tenant for the below-floor SIMBA contract."""
+    suffix = uuid.uuid4().hex[:8]
+    org_id = f"opt_simba_floor_{suffix}"
+    tenant_id = f"{org_id}:t1"
+    try:
+        with httpx.Client(timeout=60.0) as client:
+            resp = client.post(
+                f"{RUNTIME}/admin/organizations",
+                json={
+                    "org_id": org_id,
+                    "org_name": f"opt-simba-floor-{suffix}",
+                    "created_by": "e2e",
+                },
+            )
+            assert resp.status_code in (200, 201, 409), resp.text
+        register_tenant_and_wait(tenant_id, created_by="e2e", timeout_s=600.0)
+        yield tenant_id
+    finally:
+        with httpx.Client(timeout=60.0) as client:
+            try:
+                client.delete(f"{RUNTIME}/admin/tenants/{tenant_id}")
+            except httpx.HTTPError:
+                pass
+            try:
+                client.delete(f"{RUNTIME}/admin/organizations/{org_id}")
+            except httpx.HTTPError:
+                pass
+
+
+@pytest.mark.e2e
+class TestSimbaPopulationFloor:
+    """A tenant with a few query-enhancement spans but no approved synthetic
+    rows stays below the SIMBA population floor and persists an inactive
+    insufficient_population version."""
+
+    def test_fresh_tenant_below_floor_does_not_promote(self, simba_floor_tenant):
+        for query in BELOW_FLOOR_QUERY_ENHANCEMENT_QUERIES:
+            _call_agent("query_enhancement_agent", query, tenant_id=simba_floor_tenant)
+        _wait_for_seeded_span_lower_bound_in_pod(
+            simba_floor_tenant,
+            "SPAN_NAME_QUERY_ENHANCEMENT",
+            len(BELOW_FLOOR_QUERY_ENHANCEMENT_QUERIES),
+        )
+
+        result = _run_batch_job("simba", tenant_id=simba_floor_tenant)
+        min_samples, min_unique_queries = _population_floor_in_pod(simba_floor_tenant)
+
+        assert result["status"] == "insufficient_population", result
+        assert result["spans_found"] == len(BELOW_FLOOR_QUERY_ENHANCEMENT_QUERIES), (
+            result
+        )
+        assert result["examples"] == len(BELOW_FLOOR_QUERY_ENHANCEMENT_QUERIES), result
+        assert result["distinct_queries"] == len(
+            BELOW_FLOOR_QUERY_ENHANCEMENT_QUERIES
+        ), result
+        assert result["min_samples"] == min_samples, result
+        assert result["min_unique_queries"] == min_unique_queries, result
+        assert result["version"] == 1, result
+        assert [
+            (entry["version"], entry["decision"])
+            for entry in _blob_version_lineage_in_pod(
+                "model", "simba_query_enhancement", tenant_id=simba_floor_tenant
+            )
+        ] == [(1, "insufficient_population")]
+        assert _blob_state_in_pod(
+            "model", "simba_query_enhancement", tenant_id=simba_floor_tenant
+        ) == {"active": None}
 
 
 # ---------------------------------------------------------------------------
