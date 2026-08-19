@@ -1286,6 +1286,7 @@ class TestProfileSelectionTrainingExamples:
             "cogniverse.profile_selection",
             [
                 {
+                    "context.span_id": "ps-1",
                     "attributes.input.value": "find a clip about transformer architecture",
                     "attributes.output.value": json.dumps(
                         {
@@ -1302,6 +1303,7 @@ class TestProfileSelectionTrainingExamples:
                     ),
                 },
                 {
+                    "context.span_id": "ps-2",
                     "attributes.input.value": "find a clip about transformer architecture",
                     "attributes.output.value": json.dumps(
                         {
@@ -1331,6 +1333,7 @@ class TestProfileSelectionTrainingExamples:
                 "complexity": "medium",
                 "intent": "video_search",
                 "confidence": 0.9,
+                "example_id": "span:ps-1",
             },
             {
                 "query": "find a clip about transformer architecture",
@@ -1340,8 +1343,81 @@ class TestProfileSelectionTrainingExamples:
                 "complexity": "medium",
                 "intent": "video_search",
                 "confidence": 0.9,
+                "example_id": "span:ps-2",
             },
         ]
+
+    def test_pair_builders_refuse_rows_without_span_id(self):
+        """A record the ledger cannot attribute is an error, never ``span:None``."""
+        from cogniverse_runtime.optimization_cli import (
+            _entity_extraction_pairs,
+            _profile_selection_pairs,
+            _query_enhancement_pairs,
+        )
+
+        qe_df = _make_spans_df(
+            "cogniverse.query_enhancement",
+            [
+                {
+                    "attributes.input.value": "find tutorials",
+                    "attributes.output.value": json.dumps(
+                        {
+                            "enhanced_query": "find ML tutorials",
+                            "expansion_terms": ["ML"],
+                        }
+                    ),
+                }
+            ],
+        )
+        with pytest.raises(ValueError) as qe_err:
+            _query_enhancement_pairs(qe_df)
+        assert str(qe_err.value) == (
+            "cogniverse.query_enhancement span row 0 has no context.span_id; "
+            "the optimizer cannot record which example it consumed"
+        )
+
+        entity_df = _make_spans_df(
+            "cogniverse.entity_extraction",
+            [
+                {
+                    "attributes.input.value": "find PyTorch tutorials",
+                    "attributes.output.value": json.dumps(
+                        {"entities": [{"text": "PyTorch", "type": "TECHNOLOGY"}]}
+                    ),
+                }
+            ],
+        )
+        with pytest.raises(ValueError) as entity_err:
+            _entity_extraction_pairs(entity_df)
+        assert str(entity_err.value) == (
+            "cogniverse.entity_extraction span row 0 has no context.span_id; "
+            "the optimizer cannot record which example it consumed"
+        )
+
+        profile_df = _make_spans_df(
+            "cogniverse.profile_selection",
+            [
+                {
+                    "attributes.input.value": "find a clip",
+                    "attributes.output.value": json.dumps(
+                        {
+                            "selected_profile": "video_colpali_smol500_mv_frame",
+                            "modality": "video",
+                            "complexity": "simple",
+                            "intent": "video_search",
+                            "confidence": 0.9,
+                        }
+                    ),
+                    "attributes.available_profiles": "video_colpali_smol500_mv_frame",
+                }
+            ],
+        )
+        with pytest.raises(ValueError) as profile_err:
+            _profile_selection_pairs(profile_df, config_manager=None, tenant_id="acme")
+        assert str(profile_err.value) == (
+            "cogniverse.profile_selection span row 0 has no context.span_id; "
+            "the optimizer cannot record which example it consumed"
+        )
 
     def test_profile_optimizer_source_does_not_embed_retired_pool(self):
         from pathlib import Path
@@ -2254,6 +2330,56 @@ class TestEntityExtractionOptimization:
         assert result["status"] == "no_data"
         assert result["spans_found"] == 0
 
+    def test_entity_extraction_pairs_carry_span_ids(self):
+        """Every entity record names the served span it came from."""
+        from cogniverse_runtime.optimization_cli import _entity_extraction_pairs
+
+        spans_df = _make_spans_df(
+            "cogniverse.entity_extraction",
+            [
+                {
+                    "context.span_id": "ee-1",
+                    "attributes.input.value": "find PyTorch tutorials",
+                    "attributes.output.value": json.dumps(
+                        {"entities": [{"text": "PyTorch", "type": "TECHNOLOGY"}]}
+                    ),
+                },
+                {
+                    "context.span_id": "ee-skip",
+                    "attributes.input.value": "nothing here",
+                    "attributes.output.value": json.dumps({"entities": []}),
+                },
+                {
+                    "context.span_id": "ee-2",
+                    "attributes.input.value": "compare JAX and TensorFlow",
+                    "attributes.output.value": json.dumps(
+                        {
+                            "entities": [
+                                {"text": "JAX", "type": "TECHNOLOGY"},
+                                {"text": "TensorFlow", "type": "TECHNOLOGY"},
+                            ]
+                        }
+                    ),
+                },
+            ],
+        )
+
+        assert _entity_extraction_pairs(spans_df) == [
+            {
+                "query": "find PyTorch tutorials",
+                "entities": [{"text": "PyTorch", "type": "TECHNOLOGY"}],
+                "example_id": "span:ee-1",
+            },
+            {
+                "query": "compare JAX and TensorFlow",
+                "entities": [
+                    {"text": "JAX", "type": "TECHNOLOGY"},
+                    {"text": "TensorFlow", "type": "TECHNOLOGY"},
+                ],
+                "example_id": "span:ee-2",
+            },
+        ]
+
     @pytest.mark.asyncio
     async def test_entity_extraction_spans_no_entities(self):
         """Spans with no entities produce no training examples."""
@@ -2424,6 +2550,7 @@ class TestSyntheticDataMerge:
                 "synonyms": ["torch"],
                 "context": "document_text",
                 "reasoning": "Framework disambiguates the library.",
+                "example_id": "approved:alpha-approved-1",
             },
             {
                 "query": "Find exact JAX tutorials",
@@ -2432,6 +2559,7 @@ class TestSyntheticDataMerge:
                 "synonyms": [],
                 "context": "document_text",
                 "reasoning": "Framework distinguishes JAX documentation.",
+                "example_id": "approved:alpha-approved-2",
             },
         ]
         assert beta == [
@@ -2442,6 +2570,7 @@ class TestSyntheticDataMerge:
                 "synonyms": [],
                 "context": "document_text",
                 "reasoning": "Search identifies the Vespa platform.",
+                "example_id": "approved:beta-approved-1",
             }
         ]
         assert dataset_store.names == [
