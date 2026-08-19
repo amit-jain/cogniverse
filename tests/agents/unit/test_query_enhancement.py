@@ -1,5 +1,7 @@
 """Unit tests for DSPy integration across all agents."""
 
+import asyncio
+import logging
 from unittest.mock import AsyncMock, MagicMock, Mock, patch
 
 # DSPy imports
@@ -31,6 +33,10 @@ from cogniverse_core.agents.a2a_agent import A2AAgent, A2AAgentConfig
 from cogniverse_core.agents.base import AgentDeps, AgentInput, AgentOutput
 from cogniverse_core.common.tenant_utils import TEST_TENANT_ID
 from cogniverse_foundation.config.unified_config import LLMEndpointConfig
+from tests.agents.unit._recording_telemetry import (
+    FailingTelemetryManager,
+    RecordingTelemetryManager,
+)
 
 
 # Test fixture classes for A2AAgent testing (replaces old DSPyA2AAgentBase tests)
@@ -1421,7 +1427,12 @@ def qe_agent():
     """Create a QueryEnhancementAgent with mocked DSPy for unit testing."""
     deps = QueryEnhancementDeps()
     agent = QueryEnhancementAgent(deps=deps)
+    agent.telemetry_manager = RecordingTelemetryManager()
     return agent
+
+
+def _messages(caplog, logger_name: str) -> list[str]:
+    return [r.getMessage() for r in caplog.records if r.name == logger_name]
 
 
 @pytest.mark.unit
@@ -1575,32 +1586,29 @@ class TestEnhancedQueryEnhancementAgent:
         """Span records the canonical input/output/operation slots."""
         import json
 
-        mock_tm = MagicMock()
-        mock_span = MagicMock()
-        mock_tm.span.return_value.__enter__ = Mock(return_value=mock_span)
-        mock_tm.span.return_value.__exit__ = Mock(return_value=False)
-        qe_agent.telemetry_manager = mock_tm
+        telemetry = RecordingTelemetryManager()
+        qe_agent.telemetry_manager = telemetry
 
-        qe_agent._emit_enhancement_span(
-            tenant_id="acme",
-            original_query="robots",
-            source_text="industrial robots weld car frames",
-            grounding_context="Entities: robots (CONCEPT)",
-            enhanced_query="robots enhanced",
-            expansion_terms=["weld", "car frames"],
-            synonyms=["machines"],
-            context_additions=["industrial"],
-            variant_count=2,
-            confidence=0.85,
+        asyncio.run(
+            qe_agent._emit_enhancement_span(
+                tenant_id="acme",
+                original_query="robots",
+                source_text="industrial robots weld car frames",
+                grounding_context="Entities: robots (CONCEPT)",
+                enhanced_query="robots enhanced",
+                expansion_terms=["weld", "car frames"],
+                synonyms=["machines"],
+                context_additions=["industrial"],
+                variant_count=2,
+                confidence=0.85,
+            )
         )
 
-        mock_tm.span.assert_called_once()
-        call_kwargs = mock_tm.span.call_args
-        assert call_kwargs[0][0] == "cogniverse.query_enhancement"
-        assert call_kwargs[1]["tenant_id"] == "acme"
-        recorded = {
-            c.args[0]: c.args[1] for c in mock_span.set_attribute.call_args_list
-        }
+        assert len(telemetry.calls) == 1
+        assert telemetry.calls == [
+            {"name": "cogniverse.query_enhancement", "tenant_id": "acme"}
+        ]
+        recorded = telemetry.spans[0].attributes
         assert recorded["input.value"] == "robots"
         assert recorded["input.source_text"] == "industrial robots weld car frames"
         assert recorded["input.grounding_context"] == "Entities: robots (CONCEPT)"
@@ -1614,42 +1622,62 @@ class TestEnhancedQueryEnhancementAgent:
             "confidence": 0.85,
         }
 
-    def test_emit_span_noop_without_telemetry_manager(self, qe_agent):
-        """No error when telemetry_manager is absent."""
+    @pytest.mark.expects_telemetry_loss_warning
+    def test_emit_span_warns_without_telemetry_manager(self, qe_agent, caplog):
+        """No manager: the request continues; the loss is a WARNING, never silent."""
         qe_agent.telemetry_manager = None
-        # Should not raise
-        qe_agent._emit_enhancement_span(
-            tenant_id="t",
-            original_query="q",
-            source_text="",
-            grounding_context="",
-            enhanced_query="eq",
-            expansion_terms=[],
-            synonyms=[],
-            context_additions=[],
-            variant_count=0,
-            confidence=0.5,
-        )
+        with caplog.at_level(
+            logging.WARNING, logger="cogniverse_agents.query_enhancement_agent"
+        ):
+            asyncio.run(
+                qe_agent._emit_enhancement_span(
+                    tenant_id="t",
+                    original_query="q",
+                    source_text="",
+                    grounding_context="",
+                    enhanced_query="eq",
+                    expansion_terms=[],
+                    synonyms=[],
+                    context_additions=[],
+                    variant_count=0,
+                    confidence=0.5,
+                )
+            )
+        assert _messages(caplog, "cogniverse_agents.query_enhancement_agent") == [
+            "QueryEnhancementAgent has no telemetry_manager; query_enhancement span "
+            "not emitted (tenant=t)"
+        ]
 
-    def test_emit_span_swallows_exception(self, qe_agent):
-        """Telemetry exceptions are caught and logged, never propagated."""
-        mock_tm = MagicMock()
-        mock_tm.span.side_effect = RuntimeError("telemetry boom")
-        qe_agent.telemetry_manager = mock_tm
+    @pytest.mark.expects_telemetry_loss_warning
+    def test_emit_span_enqueue_failure_warns_and_does_not_raise(self, qe_agent, caplog):
+        """A telemetry enqueue failure never fails the request; it is a WARNING."""
+        telemetry = FailingTelemetryManager(RuntimeError("telemetry boom"))
+        qe_agent.telemetry_manager = telemetry
 
-        # Must not raise
-        qe_agent._emit_enhancement_span(
-            tenant_id="t",
-            original_query="q",
-            source_text="",
-            grounding_context="",
-            enhanced_query="eq",
-            expansion_terms=[],
-            synonyms=[],
-            context_additions=[],
-            variant_count=0,
-            confidence=0.5,
-        )
+        with caplog.at_level(
+            logging.WARNING, logger="cogniverse_agents.query_enhancement_agent"
+        ):
+            asyncio.run(
+                qe_agent._emit_enhancement_span(
+                    tenant_id="t",
+                    original_query="q",
+                    source_text="",
+                    grounding_context="",
+                    enhanced_query="eq",
+                    expansion_terms=[],
+                    synonyms=[],
+                    context_additions=[],
+                    variant_count=0,
+                    confidence=0.5,
+                )
+            )
+
+        assert telemetry.calls == [
+            {"name": "cogniverse.query_enhancement", "tenant_id": "t"}
+        ]
+        assert _messages(caplog, "cogniverse_agents.query_enhancement_agent") == [
+            "Failed to emit query_enhancement telemetry: tenant=t error=telemetry boom"
+        ]
 
     # ------------------------------------------------------------------
     # Full _process_impl round-trip
@@ -1739,11 +1767,8 @@ class TestEnhancedQueryEnhancementAgent:
         )
         qe_agent.call_dspy = AsyncMock(return_value=mock_result)
 
-        mock_tm = MagicMock()
-        mock_span = MagicMock()
-        mock_tm.span.return_value.__enter__ = Mock(return_value=mock_span)
-        mock_tm.span.return_value.__exit__ = Mock(return_value=False)
-        qe_agent.telemetry_manager = mock_tm
+        telemetry = RecordingTelemetryManager()
+        qe_agent.telemetry_manager = telemetry
 
         await qe_agent._process_impl(
             QueryEnhancementInput(
@@ -1753,9 +1778,10 @@ class TestEnhancedQueryEnhancementAgent:
             )
         )
 
-        mock_tm.span.assert_called_once()
         # require_tenant_id canonicalizes "acme" → "acme:acme"
-        assert mock_tm.span.call_args[1]["tenant_id"] == "acme:acme"
+        assert telemetry.calls == [
+            {"name": "cogniverse.query_enhancement", "tenant_id": "acme:acme"}
+        ]
 
     # ------------------------------------------------------------------
     # _dspy_to_a2a_output includes query_variants

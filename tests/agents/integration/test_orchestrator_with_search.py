@@ -89,7 +89,7 @@ def dspy_lm():
 
 
 @pytest.fixture
-def agent_instances(vespa_with_schema, dspy_lm, tomoro_inference_url):
+def agent_instances(vespa_with_schema, dspy_lm, tomoro_inference_url, real_telemetry):
     """
     Create real in-process agent instances for orchestrator dispatch.
 
@@ -131,6 +131,9 @@ def agent_instances(vespa_with_schema, dspy_lm, tomoro_inference_url):
     # Without this, the orchestrator's _ensure_memory_for_tenant() creates
     # backends at the wrong port (from config file), and the search agent
     # picks up a stale/wrong backend from the registry.
+    entity_agent.set_telemetry_manager(real_telemetry)
+    profile_agent.set_telemetry_manager(real_telemetry)
+    query_agent.set_telemetry_manager(real_telemetry)
     search_agent._get_backend()
 
     # Map agent URLs (from registry config) to instances
@@ -143,7 +146,9 @@ def agent_instances(vespa_with_schema, dspy_lm, tomoro_inference_url):
 
 
 @pytest.fixture
-def orchestrator_with_agents(vespa_with_schema, dspy_lm, agent_instances):
+def orchestrator_with_agents(
+    vespa_with_schema, dspy_lm, agent_instances, real_telemetry
+):
     """
     OrchestratorAgent wired to real in-process agents via an in-memory ASGI
     FastAPI app. httpx.AsyncClient is patched to use ASGITransport so POSTs
@@ -191,6 +196,7 @@ def orchestrator_with_agents(vespa_with_schema, dspy_lm, agent_instances):
         config_manager=config_manager,
         port=8013,
     )
+    orchestrator.set_telemetry_manager(real_telemetry)
 
     # Build a minimal FastAPI app carrying only the agents router. Injecting
     # registry + config_manager + schema_loader reaches the real dispatcher,

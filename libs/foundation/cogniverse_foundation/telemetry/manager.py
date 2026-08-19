@@ -298,6 +298,15 @@ class TelemetryManager:
                         f"tenant={tenant_id} project={full_project_name} "
                         f"endpoint={endpoint}"
                     )
+                if self.config.enabled:
+                    logger.warning(
+                        "No tracer for span %s: tenant=%s project=%s endpoint=%s; "
+                        "span not recorded",
+                        name,
+                        tenant_id,
+                        full_project_name,
+                        endpoint,
+                    )
                 yield NoOpSpan()
                 return
 

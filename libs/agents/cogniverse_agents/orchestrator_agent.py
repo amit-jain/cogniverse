@@ -2811,7 +2811,7 @@ class OrchestratorAgent(
 
     # Telemetry
 
-    def _emit_orchestration_span(
+    async def _emit_orchestration_span(
         self,
         tenant_id: str,
         workflow_id: str,
@@ -2826,11 +2826,15 @@ class OrchestratorAgent(
         agent_observations: Optional[List[Dict[str, Any]]] = None,
     ) -> None:
         """Emit cogniverse.orchestration telemetry span."""
-        if not (hasattr(self, "telemetry_manager") and self.telemetry_manager):
-            raise RuntimeError(
-                f"{type(self).__name__} requires telemetry_manager to record "
-                "orchestration outcomes"
+        if not self.telemetry_manager:
+            logger.warning(
+                "%s has no telemetry_manager; orchestration span not emitted "
+                "(tenant=%s workflow=%s)",
+                type(self).__name__,
+                tenant_id,
+                workflow_id,
             )
+            return
         if success:
             if error_summary is not None:
                 raise ValueError(
@@ -2846,7 +2850,6 @@ class OrchestratorAgent(
             with self.telemetry_manager.span(
                 name="cogniverse.orchestration",
                 tenant_id=tenant_id,
-                require_export=True,
             ) as span:
                 output = {
                     "workflow_id": str(workflow_id),
@@ -2877,10 +2880,12 @@ class OrchestratorAgent(
                     )
                 )
         except Exception as exc:
-            raise RuntimeError(
-                "Failed to persist orchestration telemetry: "
-                f"tenant={tenant_id} workflow={workflow_id}"
-            ) from exc
+            logger.warning(
+                "Failed to emit orchestration telemetry: tenant=%s workflow=%s error=%s",
+                tenant_id,
+                workflow_id,
+                exc,
+            )
 
     @staticmethod
     def _agent_observation(
@@ -3003,8 +3008,7 @@ class OrchestratorAgent(
                 error_summary=error_summary,
                 agent_results=state.agent_results,
             )
-        await asyncio.to_thread(
-            self._emit_orchestration_span,
+        await self._emit_orchestration_span(
             tenant_id=state.tenant_id,
             workflow_id=state.workflow_id,
             query=state.query,

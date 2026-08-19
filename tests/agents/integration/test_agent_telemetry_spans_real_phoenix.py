@@ -227,7 +227,10 @@ class TestAgentTelemetrySpansRealPhoenix:
         for agent_type, emitter in domain_span_emitters.items():
             expected_span_name = SPAN_NAME_BY_AGENT[agent_type]
             emitter_source = re.sub(r"\s+", "", inspect.getsource(emitter))
-            assert f'.span("{expected_span_name}"' in emitter_source, (
+            assert (
+                f'.span("{expected_span_name}"' in emitter_source
+                or f'name="{expected_span_name}"' in emitter_source
+            ), (
                 f"SPAN_NAME_BY_AGENT[{agent_type.value}] = "
                 f"{expected_span_name!r} but {emitter.__qualname__} does not "
                 f"pass that literal to telemetry_manager.span(). The lookup "

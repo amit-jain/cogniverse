@@ -1,6 +1,7 @@
 """Unit tests for ProfileSelectionAgent"""
 
 import asyncio
+import logging
 import time
 from types import SimpleNamespace
 from typing import Literal, get_args, get_origin
@@ -22,6 +23,14 @@ from cogniverse_foundation.config.unified_config import (
     BackendProfileConfig,
     SystemConfig,
 )
+from tests.agents.unit._recording_telemetry import (
+    FailingTelemetryManager,
+    RecordingTelemetryManager,
+)
+
+
+def _messages(caplog, logger_name: str) -> list[str]:
+    return [r.getMessage() for r in caplog.records if r.name == logger_name]
 
 
 @pytest.fixture
@@ -56,6 +65,7 @@ def profile_agent():
         agent._config_manager.get_backend_profile.return_value = SimpleNamespace(
             type="video"
         )
+        agent.telemetry_manager = RecordingTelemetryManager()
         return agent
 
 
@@ -626,13 +636,8 @@ class TestProfileSelectionAgent:
     @pytest.mark.asyncio
     async def test_span_emitted_with_tenant_id(self, profile_agent):
         """Span is emitted with cogniverse.profile_selection name when tenant_id is set."""
-        mock_telemetry = Mock()
-        mock_span = Mock()
-        mock_cm = Mock()
-        mock_cm.__enter__ = Mock(return_value=mock_span)
-        mock_cm.__exit__ = Mock(return_value=False)
-        mock_telemetry.span = Mock(return_value=mock_cm)
-        profile_agent.telemetry_manager = mock_telemetry
+        telemetry = RecordingTelemetryManager()
+        profile_agent.telemetry_manager = telemetry
 
         captured = {}
         candidate_profiles = ["video_colpali_base", "video_colpali_large"]
@@ -660,12 +665,15 @@ class TestProfileSelectionAgent:
 
         import json
 
-        mock_telemetry.span.assert_called_once()
-        call_kwargs = mock_telemetry.span.call_args
-        assert call_kwargs[0][0] == "cogniverse.profile_selection"
+        assert len(telemetry.calls) == 1
+        assert telemetry.calls == [
+            {
+                "name": "cogniverse.profile_selection",
+                "tenant_id": "test_tenant:test_tenant",
+            }
+        ]
         assert captured["available_profiles"] == ", ".join(candidate_profiles)
-        span_obj = mock_telemetry.span.return_value.__enter__.return_value
-        recorded = {c.args[0]: c.args[1] for c in span_obj.set_attribute.call_args_list}
+        recorded = telemetry.spans[0].attributes
         assert recorded["available_profiles"] == captured["available_profiles"]
         assert recorded["operation"] == "profile_selection"
         assert recorded["input.value"] == "Show me cat videos"
@@ -675,13 +683,39 @@ class TestProfileSelectionAgent:
         assert out["complexity"] == "simple"
         assert out["intent"] == "video_search"
 
+    @pytest.mark.expects_telemetry_loss_warning
+    def test_emit_profile_span_warns_without_telemetry_manager(
+        self, profile_agent, caplog
+    ):
+        """No manager: the request continues; the loss is a WARNING, never silent."""
+        profile_agent.telemetry_manager = None
+        with caplog.at_level(
+            logging.WARNING, logger="cogniverse_agents.profile_selection_agent"
+        ):
+            asyncio.run(
+                profile_agent._emit_profile_span(
+                    query="Show me cat videos",
+                    tenant_id="acme",
+                    available_profiles="video_colpali_base, video_colpali_large",
+                    selected_profile="video_colpali_base",
+                    intent="video_search",
+                    modality="video",
+                    complexity="simple",
+                    confidence=0.85,
+                )
+            )
+        assert _messages(caplog, "cogniverse_agents.profile_selection_agent") == [
+            "ProfileSelectionAgent has no telemetry_manager; profile_selection span "
+            "not emitted (tenant=acme)"
+        ]
+
     @pytest.mark.asyncio
     async def test_missing_tenant_id_raises(self, profile_agent):
         """Span emission requires tenant_id; the silent ``or "default"``
         fallback was banned. Missing tenant raises ValueError so the
         dispatcher can surface it as a 400 to the caller."""
-        mock_telemetry = Mock()
-        profile_agent.telemetry_manager = mock_telemetry
+        telemetry = RecordingTelemetryManager()
+        profile_agent.telemetry_manager = telemetry
 
         profile_agent.dspy_module.forward = Mock(
             return_value=dspy.Prediction(
@@ -696,13 +730,14 @@ class TestProfileSelectionAgent:
 
         with pytest.raises(ValueError, match="tenant_id is required"):
             await profile_agent._process_impl(ProfileSelectionInput(query="cat videos"))
+        assert telemetry.calls == []
 
     @pytest.mark.asyncio
-    async def test_span_failure_does_not_raise(self, profile_agent):
-        """Span emission failure is swallowed and does not propagate."""
-        mock_telemetry = Mock()
-        mock_telemetry.span = Mock(side_effect=RuntimeError("telemetry down"))
-        profile_agent.telemetry_manager = mock_telemetry
+    @pytest.mark.expects_telemetry_loss_warning
+    async def test_span_failure_warns_and_request_succeeds(self, profile_agent, caplog):
+        """A telemetry enqueue failure never fails the request; it is a WARNING."""
+        telemetry = FailingTelemetryManager(RuntimeError("telemetry down"))
+        profile_agent.telemetry_manager = telemetry
 
         profile_agent.dspy_module.forward = Mock(
             return_value=dspy.Prediction(
@@ -715,11 +750,20 @@ class TestProfileSelectionAgent:
             )
         )
 
-        # Must not raise
-        result = await profile_agent._process_impl(
-            ProfileSelectionInput(query="cat videos", tenant_id="t1")
-        )
+        with caplog.at_level(
+            logging.WARNING, logger="cogniverse_agents.profile_selection_agent"
+        ):
+            result = await profile_agent._process_impl(
+                ProfileSelectionInput(query="cat videos", tenant_id="t1")
+            )
+
         assert result.selected_profile == "video_colpali_base"
+        assert telemetry.calls == [
+            {"name": "cogniverse.profile_selection", "tenant_id": "t1:t1"}
+        ]
+        assert _messages(caplog, "cogniverse_agents.profile_selection_agent") == [
+            "Failed to emit profile_selection telemetry: tenant=t1:t1 error=telemetry down"
+        ]
 
 
 # ---------------------------------------------------------------------------
@@ -827,6 +871,7 @@ class TestProfileMembershipGuard:
         from unittest.mock import AsyncMock
 
         agent = object.__new__(ProfileSelectionAgent)
+        agent.telemetry_manager = RecordingTelemetryManager()
         agent.deps = SimpleNamespace(
             available_profiles=["video_colpali_base", "text_bge_base"]
         )
@@ -863,6 +908,7 @@ class TestProfileMembershipGuard:
         from unittest.mock import AsyncMock
 
         agent = object.__new__(ProfileSelectionAgent)
+        agent.telemetry_manager = RecordingTelemetryManager()
         agent.deps = SimpleNamespace(
             available_profiles=["video_colpali_base", "text_bge_base"]
         )

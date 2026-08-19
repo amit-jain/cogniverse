@@ -1,6 +1,8 @@
 """Unit tests for GatewayAgent."""
 
-from unittest.mock import MagicMock, Mock
+import asyncio
+import logging
+from unittest.mock import MagicMock
 
 import pytest
 
@@ -15,6 +17,10 @@ from cogniverse_agents.gateway_agent import (
     GatewayOutput,
 )
 from cogniverse_core.common.tenant_utils import TEST_TENANT_ID
+from tests.agents.unit._recording_telemetry import (
+    FailingTelemetryManager,
+    RecordingTelemetryManager,
+)
 
 pytestmark = [pytest.mark.unit, pytest.mark.ci_fast]
 
@@ -41,11 +47,26 @@ def _make_gateway(**kwargs) -> GatewayAgent:
     return GatewayAgent(deps=deps)
 
 
+def _span_attributes(telemetry: RecordingTelemetryManager, name: str) -> dict:
+    matches = [
+        span
+        for call, span in zip(telemetry.calls, telemetry.spans)
+        if call["name"] == name
+    ]
+    assert len(matches) == 1, f"expected exactly one {name} span, got {len(matches)}"
+    return matches[0].attributes
+
+
+def _messages(caplog, logger_name: str) -> list[str]:
+    return [r.getMessage() for r in caplog.records if r.name == logger_name]
+
+
 @pytest.fixture
 def gateway_agent(mock_gliner_model):
     """GatewayAgent with a pre-injected mock GLiNER model (no real download)."""
     agent = _make_gateway()
     agent._gliner_model = mock_gliner_model
+    agent.telemetry_manager = RecordingTelemetryManager()
     return agent
 
 
@@ -562,23 +583,6 @@ class TestProcessImpl:
 
 class TestTelemetrySpan:
     @pytest.mark.asyncio
-    @staticmethod
-    def _per_span_manager():
-        """A telemetry manager whose span() returns a distinct span per call,
-        keyed by name, so each span's set_attribute calls can be inspected."""
-        spans = {}
-
-        def _span_cm(name, **kwargs):
-            cm = MagicMock()
-            span = spans.setdefault(name, MagicMock())
-            cm.__enter__ = Mock(return_value=span)
-            cm.__exit__ = Mock(return_value=False)
-            return cm
-
-        mock_tm = MagicMock()
-        mock_tm.span.side_effect = _span_cm
-        return mock_tm, spans
-
     async def test_span_emitted(self, gateway_agent, mock_gliner_model):
         """telemetry_manager set -> gateway AND routing spans emitted."""
         import json
@@ -586,30 +590,30 @@ class TestTelemetrySpan:
         mock_gliner_model.predict_entities.return_value = [
             {"text": "video", "label": "video_content", "score": 0.92},
         ]
-        mock_tm, spans = self._per_span_manager()
-        gateway_agent.telemetry_manager = mock_tm
+        telemetry = RecordingTelemetryManager()
+        gateway_agent.telemetry_manager = telemetry
 
         await gateway_agent._process_impl(
             GatewayInput(query="cooking videos", tenant_id="acme")
         )
 
-        # Gateway emits two spans: one for gateway-specific analysis,
-        # one for downstream routing evaluators/annotation that key off
-        # `cogniverse.routing`.
-        assert mock_tm.span.call_count == 2
-        span_names = [call.args[0] for call in mock_tm.span.call_args_list]
-        assert "cogniverse.gateway" in span_names
-        assert "cogniverse.routing" in span_names
-
-        gateway_call = next(
-            c for c in mock_tm.span.call_args_list if c.args[0] == "cogniverse.gateway"
-        )
-        # require_tenant_id canonicalizes "acme" → "acme:acme"
-        assert gateway_call.kwargs["tenant_id"] == "acme:acme"
-        recorded = {
-            c.args[0]: c.args[1]
-            for c in spans["cogniverse.gateway"].set_attribute.call_args_list
+        # Gateway emits two spans, in this order: the training-data gateway
+        # span, then the routing span downstream evaluators/annotation read.
+        # require_tenant_id canonicalizes "acme" → "acme:acme".
+        assert len(telemetry.calls) == 2
+        assert [c["name"] for c in telemetry.calls] == [
+            "cogniverse.gateway",
+            "cogniverse.routing",
+        ]
+        assert telemetry.calls[0] == {
+            "name": "cogniverse.gateway",
+            "tenant_id": "acme:acme",
         }
+        assert telemetry.calls[1] == {
+            "name": "cogniverse.routing",
+            "tenant_id": "acme:acme",
+        }
+        recorded = _span_attributes(telemetry, "cogniverse.gateway")
         assert recorded["operation"] == "gateway"
         assert recorded["input.value"] == "cooking videos"
         gw_out = json.loads(recorded["output.value"])
@@ -626,22 +630,19 @@ class TestTelemetrySpan:
         mock_gliner_model.predict_entities.return_value = [
             {"text": "video", "label": "video_content", "score": 0.92},
         ]
-        mock_tm, spans = self._per_span_manager()
-        gateway_agent.telemetry_manager = mock_tm
+        telemetry = RecordingTelemetryManager()
+        gateway_agent.telemetry_manager = telemetry
 
         await gateway_agent._process_impl(
             GatewayInput(query="cooking videos", tenant_id="acme")
         )
 
-        routing_call = next(
-            c for c in mock_tm.span.call_args_list if c.args[0] == "cogniverse.routing"
-        )
         # require_tenant_id canonicalizes "acme" → "acme:acme"
-        assert routing_call.kwargs["tenant_id"] == "acme:acme"
-        recorded = {
-            c.args[0]: c.args[1]
-            for c in spans["cogniverse.routing"].set_attribute.call_args_list
+        assert telemetry.calls[1] == {
+            "name": "cogniverse.routing",
+            "tenant_id": "acme:acme",
         }
+        recorded = _span_attributes(telemetry, "cogniverse.routing")
         assert recorded["operation"] == "routing"
         assert recorded["input.value"] == "cooking videos"
         out = json.loads(recorded["output.value"])
@@ -652,17 +653,51 @@ class TestTelemetrySpan:
         assert out["modality"] == "video"
         assert out["reasoning"]
 
-    @pytest.mark.asyncio
-    async def test_no_telemetry_manager(self, gateway_agent, mock_gliner_model):
-        """No telemetry_manager -> no error, no span."""
-        mock_gliner_model.predict_entities.return_value = [
-            {"text": "video", "label": "video_content", "score": 0.92},
-        ]
+    @pytest.mark.expects_telemetry_loss_warning
+    def test_gateway_span_warns_without_telemetry_manager(self, gateway_agent, caplog):
+        """No manager: the request continues; the loss is a WARNING, never silent."""
         gateway_agent.telemetry_manager = None
-        result = await gateway_agent._process_impl(
-            GatewayInput(query="cooking videos", tenant_id=TEST_TENANT_ID)
-        )
-        assert result.routed_to == "search_agent"
+        with caplog.at_level(logging.WARNING, logger="cogniverse_agents.gateway_agent"):
+            asyncio.run(
+                gateway_agent._emit_gateway_span(
+                    tenant_id="acme",
+                    query="cooking videos",
+                    complexity="simple",
+                    modality="video",
+                    generation_type="raw_results",
+                    routed_to="search_agent",
+                    confidence=0.91,
+                )
+            )
+        assert _messages(caplog, "cogniverse_agents.gateway_agent") == [
+            "GatewayAgent has no telemetry_manager; gateway span not emitted (tenant=acme)"
+        ]
+
+    @pytest.mark.expects_telemetry_loss_warning
+    def test_gateway_span_enqueue_failure_warns_and_does_not_raise(
+        self, gateway_agent, caplog
+    ):
+        """A telemetry enqueue failure never fails the request; it is a WARNING."""
+        telemetry = FailingTelemetryManager(RuntimeError("telemetry boom"))
+        gateway_agent.telemetry_manager = telemetry
+
+        with caplog.at_level(logging.WARNING, logger="cogniverse_agents.gateway_agent"):
+            asyncio.run(
+                gateway_agent._emit_gateway_span(
+                    tenant_id="acme",
+                    query="cooking videos",
+                    complexity="simple",
+                    modality="video",
+                    generation_type="raw_results",
+                    routed_to="search_agent",
+                    confidence=0.91,
+                )
+            )
+
+        assert telemetry.calls == [{"name": "cogniverse.gateway", "tenant_id": "acme"}]
+        assert _messages(caplog, "cogniverse_agents.gateway_agent") == [
+            "Failed to emit gateway telemetry: tenant=acme error=telemetry boom"
+        ]
 
     @pytest.mark.asyncio
     async def test_missing_tenant_id_raises(self, gateway_agent, mock_gliner_model):
@@ -671,15 +706,14 @@ class TestTelemetrySpan:
         mock_gliner_model.predict_entities.return_value = [
             {"text": "video", "label": "video_content", "score": 0.92},
         ]
-        mock_tm = MagicMock()
-        mock_tm.span.return_value.__enter__ = Mock(return_value=MagicMock())
-        mock_tm.span.return_value.__exit__ = Mock(return_value=False)
-        gateway_agent.telemetry_manager = mock_tm
+        telemetry = RecordingTelemetryManager()
+        gateway_agent.telemetry_manager = telemetry
 
         with pytest.raises(ValueError, match="tenant_id is required"):
             await gateway_agent._process_impl(
                 GatewayInput(query="videos", tenant_id=None)
             )
+        assert telemetry.calls == []
 
 
 # ---------------------------------------------------------------------------

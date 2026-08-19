@@ -14,6 +14,7 @@ from cogniverse_agents.query_enhancement_agent import (
     QueryEnhancementOutput,
 )
 from cogniverse_core.common.tenant_utils import TEST_TENANT_ID
+from tests.agents.unit._recording_telemetry import RecordingTelemetryManager
 
 pytestmark = [pytest.mark.unit, pytest.mark.ci_fast]
 
@@ -39,6 +40,7 @@ def query_agent():
     with patch("dspy.ChainOfThought"):
         deps = QueryEnhancementDeps()
         agent = QueryEnhancementAgent(deps=deps, port=8012)
+        agent.telemetry_manager = RecordingTelemetryManager()
         return agent
 
 

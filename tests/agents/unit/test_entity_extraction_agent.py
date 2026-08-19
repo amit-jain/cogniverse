@@ -1,5 +1,7 @@
 """Unit tests for EntityExtractionAgent"""
 
+import asyncio
+import logging
 from unittest.mock import MagicMock, Mock, patch
 
 import dspy
@@ -15,6 +17,10 @@ from cogniverse_agents.entity_extraction_agent import (
     Relationship,
 )
 from cogniverse_core.common.tenant_utils import TEST_TENANT_ID
+from tests.agents.unit._recording_telemetry import (
+    FailingTelemetryManager,
+    RecordingTelemetryManager,
+)
 
 pytestmark = [pytest.mark.unit, pytest.mark.ci_fast]
 
@@ -23,7 +29,13 @@ def _make_extraction_agent():
     """Create EntityExtractionAgent with mocked DSPy for use in tests."""
     with patch("dspy.ChainOfThought"):
         deps = EntityExtractionDeps()
-        return EntityExtractionAgent(deps=deps, port=8010)
+        agent = EntityExtractionAgent(deps=deps, port=8010)
+        agent.telemetry_manager = RecordingTelemetryManager()
+        return agent
+
+
+def _messages(caplog, logger_name: str) -> list[str]:
+    return [r.getMessage() for r in caplog.records if r.name == logger_name]
 
 
 class _FakeToken:
@@ -167,6 +179,7 @@ def entity_agent():
         # Force DSPy fallback path for existing tests
         agent._gliner_extractor = None
         agent._spacy_analyzer = None
+        agent.telemetry_manager = RecordingTelemetryManager()
         return agent
 
 
@@ -435,6 +448,7 @@ class TestGLiNERFastPath:
         with patch("dspy.ChainOfThought"):
             deps = EntityExtractionDeps()
             agent = EntityExtractionAgent(deps=deps, port=8010)
+            agent.telemetry_manager = RecordingTelemetryManager()
 
             mock_gliner = MagicMock()
             mock_spacy = MagicMock()
@@ -718,11 +732,7 @@ class TestTelemetrySpanEmission:
             agent._gliner_extractor = None
             agent._spacy_analyzer = None
 
-            mock_tm = MagicMock()
-            mock_span = MagicMock()
-            mock_tm.span.return_value.__enter__ = Mock(return_value=mock_span)
-            mock_tm.span.return_value.__exit__ = Mock(return_value=False)
-            agent.telemetry_manager = mock_tm
+            agent.telemetry_manager = RecordingTelemetryManager()
             return agent
 
     @pytest.mark.asyncio
@@ -742,13 +752,11 @@ class TestTelemetrySpanEmission:
 
         import json
 
-        agent.telemetry_manager.span.assert_called_once()
-        call_kwargs = agent.telemetry_manager.span.call_args
-        assert call_kwargs[0][0] == "cogniverse.entity_extraction"
-        # require_tenant_id canonicalizes "acme" → "acme:acme"
-        assert call_kwargs[1]["tenant_id"] == "acme:acme"
-        span_obj = agent.telemetry_manager.span.return_value.__enter__.return_value
-        recorded = {c.args[0]: c.args[1] for c in span_obj.set_attribute.call_args_list}
+        assert len(agent.telemetry_manager.calls) == 1
+        assert agent.telemetry_manager.calls == [
+            {"name": "cogniverse.entity_extraction", "tenant_id": "acme:acme"}
+        ]
+        recorded = agent.telemetry_manager.spans[0].attributes
         assert recorded["operation"] == "entity_extraction"
         assert recorded["input.value"] == "Obama in Chicago"
         output = json.loads(recorded["output.value"])
@@ -757,24 +765,61 @@ class TestTelemetrySpanEmission:
         assert output["path_used"] == "dspy"
         assert any(e["text"] == "Obama" for e in output["entities"])
 
-    @pytest.mark.asyncio
-    async def test_no_telemetry_manager(self):
-        """No telemetry_manager -> no error, no span."""
-        with patch("dspy.ChainOfThought"):
-            deps = EntityExtractionDeps()
-            agent = EntityExtractionAgent(deps=deps, port=8010)
-            agent._gliner_extractor = None
-            agent._spacy_analyzer = None
-            agent.telemetry_manager = None
-            agent.dspy_module.forward = Mock(
-                return_value=dspy.Prediction(entities="", entity_types="")
+    @pytest.mark.expects_telemetry_loss_warning
+    def test_emit_extraction_span_warns_without_telemetry_manager(self, caplog):
+        """No manager: the request continues; the loss is a WARNING, never silent."""
+        agent = _make_extraction_agent()
+        agent._gliner_extractor = None
+        agent._spacy_analyzer = None
+        agent.telemetry_manager = None
+
+        with caplog.at_level(
+            logging.WARNING, logger="cogniverse_agents.entity_extraction_agent"
+        ):
+            asyncio.run(
+                agent._emit_extraction_span(
+                    tenant_id="acme",
+                    query="hello",
+                    entities=[],
+                    relationships=[],
+                    path_used="dspy",
+                )
+            )
+        assert _messages(caplog, "cogniverse_agents.entity_extraction_agent") == [
+            "EntityExtractionAgent has no telemetry_manager; entity_extraction span "
+            "not emitted (tenant=acme)"
+        ]
+
+    @pytest.mark.expects_telemetry_loss_warning
+    def test_emit_extraction_span_enqueue_failure_warns_and_does_not_raise(
+        self, caplog
+    ):
+        """A telemetry enqueue failure never fails the request; it is a WARNING."""
+        agent = _make_extraction_agent()
+        agent._gliner_extractor = None
+        agent._spacy_analyzer = None
+        telemetry = FailingTelemetryManager(RuntimeError("telemetry boom"))
+        agent.telemetry_manager = telemetry
+
+        with caplog.at_level(
+            logging.WARNING, logger="cogniverse_agents.entity_extraction_agent"
+        ):
+            asyncio.run(
+                agent._emit_extraction_span(
+                    tenant_id="acme",
+                    query="hello",
+                    entities=[],
+                    relationships=[],
+                    path_used="dspy",
+                )
             )
 
-            result = await agent._process_impl(
-                EntityExtractionInput(query="hello", tenant_id=TEST_TENANT_ID)
-            )
-
-            assert result.entity_count == 0
+        assert telemetry.calls == [
+            {"name": "cogniverse.entity_extraction", "tenant_id": "acme"}
+        ]
+        assert _messages(caplog, "cogniverse_agents.entity_extraction_agent") == [
+            "Failed to emit entity_extraction telemetry: tenant=acme error=telemetry boom"
+        ]
 
     @pytest.mark.asyncio
     async def test_missing_tenant_id_raises(self, agent_with_telemetry):
@@ -788,6 +833,7 @@ class TestTelemetrySpanEmission:
 
         with pytest.raises(ValueError, match="tenant_id is required"):
             await agent._process_impl(EntityExtractionInput(query="hello"))
+        assert agent.telemetry_manager.calls == []
 
     @pytest.mark.asyncio
     async def test_span_records_full_query(self, agent_with_telemetry):
@@ -802,8 +848,7 @@ class TestTelemetrySpanEmission:
             EntityExtractionInput(query=long_query, tenant_id=TEST_TENANT_ID)
         )
 
-        span_obj = agent.telemetry_manager.span.return_value.__enter__.return_value
-        recorded = {c.args[0]: c.args[1] for c in span_obj.set_attribute.call_args_list}
+        recorded = agent.telemetry_manager.spans[0].attributes
         assert recorded["input.value"] == long_query
 
 

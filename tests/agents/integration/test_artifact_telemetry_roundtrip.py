@@ -353,6 +353,8 @@ class TestGatewayAgentArtifactRoundTrip:
         # --- Agent with DEFAULT thresholds (0.4) ---
         agent_default = GatewayAgent(deps=GatewayDeps())
         # Real GLiNER model loads on first use (lazy)
+        tm = get_telemetry_manager()
+        agent_default.telemetry_manager = tm
 
         result_default = await agent_default._process_impl(
             GatewayInput(query=test_query, tenant_id="test:unit")

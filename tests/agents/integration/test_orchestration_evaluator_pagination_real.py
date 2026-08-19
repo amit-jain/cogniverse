@@ -59,8 +59,7 @@ async def test_real_phoenix_batches_return_every_workflow_once(real_telemetry):
         _validated_agent_observations=OrchestratorAgent._validated_agent_observations,
     )
     for workflow_id in workflow_ids:
-        await asyncio.to_thread(
-            OrchestratorAgent._emit_orchestration_span,
+        await OrchestratorAgent._emit_orchestration_span(
             emitter,
             tenant_id=tenant_id,
             workflow_id=workflow_id,
@@ -108,8 +107,7 @@ async def test_real_cli_drains_and_persists_profiles_and_template(
     )
     for index, workflow_id in enumerate(workflow_ids):
         failed = index == 54
-        await asyncio.to_thread(
-            OrchestratorAgent._emit_orchestration_span,
+        await OrchestratorAgent._emit_orchestration_span(
             emitter,
             tenant_id=tenant_id,
             workflow_id=workflow_id,

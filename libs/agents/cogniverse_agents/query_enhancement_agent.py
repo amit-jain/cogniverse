@@ -364,7 +364,7 @@ class QueryEnhancementAgent(
         variants = self._generate_variants(query, enhanced_query, expansion_terms)
 
         # Emit telemetry span
-        self._emit_enhancement_span(
+        await self._emit_enhancement_span(
             tenant_id=require_tenant_id(
                 input.tenant_id, source="QueryEnhancementInput"
             ),
@@ -442,7 +442,7 @@ class QueryEnhancementAgent(
                 variants.append(expanded)
         return variants
 
-    def _emit_enhancement_span(
+    async def _emit_enhancement_span(
         self,
         *,
         tenant_id: str,
@@ -463,12 +463,17 @@ class QueryEnhancementAgent(
         prompt inputs, and ``output.value`` every produced field, so the
         SIMBA optimizer can rebuild the exact example the agent served.
         """
-        if not (hasattr(self, "telemetry_manager") and self.telemetry_manager):
+        if not self.telemetry_manager:
+            logger.warning(
+                "%s has no telemetry_manager; query_enhancement span not emitted (tenant=%s)",
+                type(self).__name__,
+                tenant_id,
+            )
             return
 
         try:
             with self.telemetry_manager.span(
-                "cogniverse.query_enhancement",
+                name="cogniverse.query_enhancement",
                 tenant_id=tenant_id,
             ) as span:
                 record_span_io(
@@ -486,8 +491,12 @@ class QueryEnhancementAgent(
                 )
                 span.set_attribute("input.source_text", source_text)
                 span.set_attribute("input.grounding_context", grounding_context)
-        except Exception as e:
-            logger.debug("Failed to emit query_enhancement span: %s", e)
+        except Exception as exc:
+            logger.warning(
+                "Failed to emit query_enhancement telemetry: tenant=%s error=%s",
+                tenant_id,
+                exc,
+            )
 
     def _get_agent_skills(self) -> List[Dict[str, Any]]:
         """Return agent-specific skills for A2A protocol."""
