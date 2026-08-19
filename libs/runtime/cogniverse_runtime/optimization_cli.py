@@ -36,6 +36,7 @@ from cogniverse_core.durable import (
 )
 from cogniverse_foundation.telemetry.span_contract import (
     read_span_attributes,
+    read_span_id,
     read_span_io,
 )
 
@@ -189,6 +190,7 @@ def _query_enhancement_pairs(spans_df) -> List[Dict[str, Any]]:
     pairs: List[Dict[str, Any]] = []
     for _, row in spans_df.iterrows():
         span_io = read_span_io(row)
+        span_id = read_span_id(row)
         original = span_io["input"] or ""
         output = span_io["output"] if isinstance(span_io["output"], dict) else {}
         enhanced = output.get("enhanced_query", "") or ""
@@ -206,6 +208,7 @@ def _query_enhancement_pairs(spans_df) -> List[Dict[str, Any]]:
                 "synonyms": [str(s) for s in output.get("synonyms", []) or []],
                 "context": [str(c) for c in output.get("context_additions", []) or []],
                 "confidence": float(output.get("confidence", 0.0) or 0.0),
+                "example_id": f"span:{span_id}",
                 "trainable": (
                     enhanced.strip().lower() != original.strip().lower()
                     and bool(expansion_terms)

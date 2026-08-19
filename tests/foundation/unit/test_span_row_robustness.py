@@ -120,3 +120,27 @@ class TestFirstAttributeLookup:
         )
         io = read_span_io(row)
         assert io is not None
+
+
+class TestReadSpanId:
+    def test_reads_context_span_id_column(self):
+        import pandas as pd
+
+        from cogniverse_foundation.telemetry.span_contract import read_span_id
+
+        row = pd.Series(
+            {"context.span_id": "abc123", "attributes.input.value": "q", "name": "s"}
+        )
+        assert read_span_id(row) == "abc123"
+
+    def test_returns_none_when_absent(self):
+        import pandas as pd
+
+        from cogniverse_foundation.telemetry.span_contract import read_span_id
+
+        assert read_span_id(pd.Series({"name": "s"})) is None
+
+    def test_coerces_non_string_id_to_string(self):
+        from cogniverse_foundation.telemetry.span_contract import read_span_id
+
+        assert read_span_id({"context.span_id": 42}) == "42"
