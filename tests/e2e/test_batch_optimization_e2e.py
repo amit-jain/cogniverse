@@ -334,15 +334,22 @@ def _kubectl_cluster_ready() -> None:
         )
 
 
-def _count_gateway_spans_in_pod(tenant_id: str) -> int:
+def _count_spans_by_name_in_pod(tenant_id: str, span_name_symbol: str) -> int:
+    """Count spans of one training-span type for a tenant, via the runtime pod.
+
+    ``span_name_symbol`` is a ``SPAN_NAME_*`` name in
+    ``cogniverse_foundation.telemetry.config`` (e.g. ``SPAN_NAME_PROFILE_SELECTION``).
+    Seeding emits best-effort onto the batch queue (~500ms), so callers poll
+    this until the directly-seeded lower bound is present before optimizing.
+    """
     script = IN_POD_TELEMETRY_PRELUDE + (
         "import asyncio; "
-        "from cogniverse_foundation.telemetry.config import SPAN_NAME_GATEWAY; "
+        f"from cogniverse_foundation.telemetry.config import {span_name_symbol}; "
         "from cogniverse_foundation.telemetry.manager import get_telemetry_manager; "
         "from cogniverse_runtime.optimization_cli import _query_spans_by_name; "
         f"tm = get_telemetry_manager(); "
         f"tp = tm.get_provider(tenant_id={tenant_id!r}); "
-        f"df = asyncio.run(_query_spans_by_name(tm, tp, {tenant_id!r}, SPAN_NAME_GATEWAY, 1)); "
+        f"df = asyncio.run(_query_spans_by_name(tm, tp, {tenant_id!r}, {span_name_symbol}, 1)); "
         "print('__SPANS__' + str(len(df)))"
     )
     result = subprocess.run(
@@ -369,6 +376,33 @@ def _count_gateway_spans_in_pod(tenant_id: str) -> int:
     line = result.stdout.strip().splitlines()[-1]
     assert line.startswith("__SPANS__"), result.stdout[-500:]
     return int(line[len("__SPANS__") :])
+
+
+def _count_gateway_spans_in_pod(tenant_id: str) -> int:
+    return _count_spans_by_name_in_pod(tenant_id, "SPAN_NAME_GATEWAY")
+
+
+def _wait_for_seeded_span_lower_bound_in_pod(
+    tenant_id: str, span_name_symbol: str, minimum: int, timeout_s: float = 240.0
+) -> None:
+    """Poll until at least ``minimum`` spans of this type are queryable.
+
+    Emitters are async best-effort (batch export), so a directly-seeded span
+    is eventually consistent. Waiting for the seeded lower bound makes the
+    optimizer read deterministic without forcing synchronous export on the
+    request path.
+    """
+    deadline = time.monotonic() + timeout_s
+    seen = -1
+    while time.monotonic() < deadline:
+        seen = _count_spans_by_name_in_pod(tenant_id, span_name_symbol)
+        if seen >= minimum:
+            return
+        time.sleep(5.0)
+    raise AssertionError(
+        f"Phoenix shows {seen} {span_name_symbol} spans for tenant {tenant_id!r}; "
+        f"expected at least {minimum} within {timeout_s:.0f}s"
+    )
 
 
 def _wait_for_gateway_spans_in_pod(tenant_id: str, expected: int) -> None:
@@ -535,8 +569,25 @@ def generate_spans_for_batch_jobs(_kubectl_cluster_ready):
     for q in COMPLEX_QUERIES:
         _call_agent("gateway_agent", q)
 
-    # Wait for Phoenix to ingest the current module's seeded spans.
+    # Wait for Phoenix to ingest EVERY seeded span type before any optimizer
+    # reads them. Emitters are async best-effort (batch export), so seeded
+    # spans are eventually consistent; polling here — not forcing synchronous
+    # export on the request path — is what keeps the batch-job reads
+    # deterministic. QE waits on the exact seeded query set; the others wait
+    # on the directly-seeded lower bound (complex-query fan-out adds more).
     _wait_for_seeded_query_enhancement_queries_in_pod()
+    _wait_for_seeded_span_lower_bound_in_pod(
+        TENANT_ID, "SPAN_NAME_GATEWAY", spans_per_agent
+    )
+    _wait_for_seeded_span_lower_bound_in_pod(
+        TENANT_ID, "SPAN_NAME_ENTITY_EXTRACTION", spans_per_agent
+    )
+    _wait_for_seeded_span_lower_bound_in_pod(
+        TENANT_ID, "SPAN_NAME_PROFILE_SELECTION", spans_per_agent
+    )
+    _wait_for_seeded_span_lower_bound_in_pod(
+        TENANT_ID, "SPAN_NAME_ORCHESTRATION", len(COMPLEX_QUERIES)
+    )
 
     yield
 
