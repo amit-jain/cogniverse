@@ -2162,23 +2162,37 @@ async def run_simba_optimization(
         candidate_score,
         _min_improvement_from_config(tenant_id, config_manager),
     )
-    persisted = {"promote": compiled, "rollback": QueryEnhancementModule()}.get(
-        decision
+    # Every run this reached persists a version whose ledger names the examples
+    # it consumed; only promote / rollback move the active pointer. The version
+    # content is what the run would serve: the candidate for promote / keep, the
+    # base state for rollback, the candidate (or base if none compiled) for
+    # reject.
+    run_module = {
+        "promote": compiled,
+        "rollback": QueryEnhancementModule(),
+    }.get(decision, compiled or QueryEnhancementModule())
+    consumed_example_ids = [record["example_id"] for record in records]
+    _, version = await artifact_manager.save_blob_versioned(
+        "model",
+        SIMBA_ARTIFACT_KEY,
+        json.dumps(run_module.dump_state(), default=str),
+        consumed_example_ids=consumed_example_ids,
+        decision=decision,
+        scored=candidate_score is not None,
+        base_score=baseline_score,
+        candidate_score=candidate_score,
     )
-    artifact_id = None
-    if persisted is not None:
-        artifact_id = await artifact_manager.save_blob(
-            kind="model",
-            key=SIMBA_ARTIFACT_KEY,
-            content=json.dumps(persisted.dump_state(), default=str),
-        )
+    if decision in ("promote", "rollback"):
+        await artifact_manager.activate_version("model", SIMBA_ARTIFACT_KEY, version)
     logger.info(
-        "SIMBA optimization %s (baseline=%.3f current=%s candidate=%s)%s",
+        "SIMBA optimization %s v%d (baseline=%.3f current=%s candidate=%s, "
+        "%d examples)",
         decision,
+        version,
         baseline_score,
         current_score,
         candidate_score,
-        f" — artifact {artifact_id}" if artifact_id else "",
+        len(consumed_example_ids),
     )
     return {
         "status": "success",
@@ -2190,7 +2204,8 @@ async def run_simba_optimization(
         "current_score": current_score,
         "candidate_score": candidate_score,
         "decision": decision,
-        "artifact_id": artifact_id,
+        "version": version,
+        "consumed_example_ids": consumed_example_ids,
     }
 
 
@@ -2802,6 +2817,10 @@ async def run_profile_optimization(
     # Build DSPy training examples from the canonical span slots.
     import dspy
 
+    profile_pairs = _profile_selection_pairs(
+        spans_df, config_manager=config_manager, tenant_id=tenant_id
+    )
+    consumed_example_ids = [pair["example_id"] for pair in profile_pairs]
     trainset = [
         dspy.Example(
             query=pair["query"],
@@ -2813,15 +2832,14 @@ async def run_profile_optimization(
             modality=pair["modality"],
             complexity=pair["complexity"],
         ).with_inputs("query", "available_profiles")
-        for pair in _profile_selection_pairs(
-            spans_df, config_manager=config_manager, tenant_id=tenant_id
-        )
+        for pair in profile_pairs
     ]
 
     # Merge approved synthetic data
     synthetic_demos = await _load_approved_synthetic_data(
         telemetry_provider, tenant_id, "profile"
     )
+    consumed_example_ids.extend(demo["example_id"] for demo in synthetic_demos)
     production_count = len(trainset)
     for demo in synthetic_demos:
         # ProfileSelectionSignature has query AND available_profiles as
@@ -2866,18 +2884,25 @@ async def run_profile_optimization(
         from cogniverse_agents.optimizer.artifact_manager import ArtifactManager
 
         artifact_manager = ArtifactManager(telemetry_provider, tenant_id)
-        dataset_id = await artifact_manager.save_blob(
-            kind="model",
-            key="profile_selection",
-            content=_json.dumps(compiled.dump_state(), default=str),
+        _, version = await artifact_manager.save_blob_versioned(
+            "model",
+            "profile_selection",
+            _json.dumps(compiled.dump_state(), default=str),
+            consumed_example_ids=consumed_example_ids,
+            decision="promote",
+            scored=False,
+            base_score=None,
+            candidate_score=None,
         )
+        await artifact_manager.activate_version("model", "profile_selection", version)
 
-        logger.info("Profile optimization complete — artifact %s", dataset_id)
+        logger.info("Profile optimization complete — v%d", version)
         return {
             "status": "success",
             "spans_found": len(spans_df),
             "training_examples": len(trainset),
-            "artifact_id": dataset_id,
+            "version": version,
+            "consumed_example_ids": consumed_example_ids,
         }
 
     except Exception as e:
@@ -2924,19 +2949,22 @@ async def run_entity_extraction_optimization(
 
     import dspy
 
+    entity_pairs = _entity_extraction_pairs(spans_df)
+    consumed_example_ids = [pair["example_id"] for pair in entity_pairs]
     trainset = [
         dspy.Example(
             query=pair["query"],
             entities=_json.dumps(pair["entities"]),
             entity_types="",
         ).with_inputs("query")
-        for pair in _entity_extraction_pairs(spans_df)
+        for pair in entity_pairs
     ]
 
     # Merge approved synthetic data
     synthetic_demos = await _load_approved_synthetic_data(
         telemetry_provider, tenant_id, "entity_extraction"
     )
+    consumed_example_ids.extend(demo["example_id"] for demo in synthetic_demos)
     production_count = len(trainset)
     for demo in synthetic_demos:
         projected = _project_approved_optimizer_example("entity_extraction", demo)
@@ -2975,18 +3003,25 @@ async def run_entity_extraction_optimization(
         from cogniverse_agents.optimizer.artifact_manager import ArtifactManager
 
         artifact_manager = ArtifactManager(telemetry_provider, tenant_id)
-        dataset_id = await artifact_manager.save_blob(
-            kind="model",
-            key="entity_extraction",
-            content=_json.dumps(compiled.dump_state(), default=str),
+        _, version = await artifact_manager.save_blob_versioned(
+            "model",
+            "entity_extraction",
+            _json.dumps(compiled.dump_state(), default=str),
+            consumed_example_ids=consumed_example_ids,
+            decision="promote",
+            scored=False,
+            base_score=None,
+            candidate_score=None,
         )
+        await artifact_manager.activate_version("model", "entity_extraction", version)
 
-        logger.info("Entity extraction optimization complete — artifact %s", dataset_id)
+        logger.info("Entity extraction optimization complete — v%d", version)
         return {
             "status": "success",
             "spans_found": len(spans_df),
             "training_examples": len(trainset),
-            "artifact_id": dataset_id,
+            "version": version,
+            "consumed_example_ids": consumed_example_ids,
         }
 
     except Exception as e:

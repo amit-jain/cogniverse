@@ -1787,10 +1787,32 @@ class TestSimbaQueryEnhancement:
         ]
         return json.loads(blob_df.iloc[-1]["content"])
 
+    @staticmethod
+    def _lineage(provider) -> list[dict]:
+        from cogniverse_agents.optimizer.artifact_manager import ArtifactManager
+
+        return asyncio.run(
+            ArtifactManager(provider, "test:unit").get_version_lineage(
+                "model", "simba_query_enhancement"
+            )
+        )
+
+    @staticmethod
+    def _active_version(provider, key):
+        from cogniverse_agents.optimizer.artifact_manager import ArtifactManager
+
+        state = asyncio.run(
+            ArtifactManager(provider, "test:unit").get_blob_state("model", key)
+        )
+        return state["active"]["version"] if state["active"] else None
+
     def test_promotes_a_candidate_that_beats_the_base_module(self):
         rows = [
             _qe_span_row(
-                f"query {i}", f"query {i} expanded", expansion_terms=["expanded"]
+                f"query {i}",
+                f"query {i} expanded",
+                expansion_terms=["expanded"],
+                span_id=f"qe-{i}",
             )
             for i in range(4)
         ]
@@ -1810,14 +1832,31 @@ class TestSimbaQueryEnhancement:
             "current_score": None,
             "candidate_score": 1.0,
             "decision": "promote",
-            "artifact_id": "dataset-1",
+            "version": 1,
+            "consumed_example_ids": [
+                "span:qe-0",
+                "span:qe-1",
+                "span:qe-2",
+                "span:qe-3",
+            ],
         }
+        # promote activated v1: the served blob and the ledger both hold it.
         state = self._persisted_state(provider)
         assert [d["query"] for d in state["enhancer.predict"]["demos"]] == [
             "query 0",
             "query 1",
             "query 2",
         ]
+        lineage = self._lineage(provider)
+        assert [(e["version"], e["decision"]) for e in lineage] == [(1, "promote")]
+        assert lineage[0]["consumed_example_ids"] == [
+            "span:qe-0",
+            "span:qe-1",
+            "span:qe-2",
+            "span:qe-3",
+        ]
+        assert lineage[0]["scored"] is True
+        assert self._active_version(provider, "simba_query_enhancement") == 1
 
     def test_rolls_a_worse_persisted_artifact_back_to_the_base_state(self):
         from cogniverse_agents.optimizer.artifact_manager import ArtifactManager
@@ -1826,7 +1865,9 @@ class TestSimbaQueryEnhancement:
         # Only identity enhancements were served (nothing trainable), and the
         # persisted artifact is what produced them.
         rows = [
-            _qe_span_row(f"query {i}", f"Query {i}", expansion_terms=[])
+            _qe_span_row(
+                f"query {i}", f"Query {i}", expansion_terms=[], span_id=f"qe-{i}"
+            )
             for i in range(4)
         ]
         provider = FakeTelemetryProvider(
@@ -1856,11 +1897,21 @@ class TestSimbaQueryEnhancement:
             "current_score": 0.0,
             "candidate_score": None,
             "decision": "rollback",
-            "artifact_id": "dataset-2",
+            "version": 1,
+            "consumed_example_ids": [
+                "span:qe-0",
+                "span:qe-1",
+                "span:qe-2",
+                "span:qe-3",
+            ],
         }
+        # rollback activated a base-state version; the served blob is the base.
         assert self._persisted_state(provider) == json.loads(
             json.dumps(QueryEnhancementModule().dump_state(), default=str)
         )
+        lineage = self._lineage(provider)
+        assert [(e["version"], e["decision"]) for e in lineage] == [(1, "rollback")]
+        assert self._active_version(provider, "simba_query_enhancement") == 1
 
     def test_keeps_a_persisted_artifact_the_candidate_does_not_beat(self):
         from cogniverse_agents.optimizer.artifact_manager import ArtifactManager
@@ -1868,7 +1919,10 @@ class TestSimbaQueryEnhancement:
 
         rows = [
             _qe_span_row(
-                f"query {i}", f"query {i} expanded", expansion_terms=["expanded"]
+                f"query {i}",
+                f"query {i} expanded",
+                expansion_terms=["expanded"],
+                span_id=f"qe-{i}",
             )
             for i in range(4)
         ]
@@ -1900,9 +1954,20 @@ class TestSimbaQueryEnhancement:
             "current_score": 1.0,
             "candidate_score": 1.0,
             "decision": "keep",
-            "artifact_id": None,
+            "version": 1,
+            "consumed_example_ids": [
+                "span:qe-0",
+                "span:qe-1",
+                "span:qe-2",
+                "span:qe-3",
+            ],
         }
+        # keep records the candidate as a version but never activates it: the
+        # incumbent blob is untouched and no active pointer is written.
         assert self._persisted_state(provider) == json.loads(served_state)
+        lineage = self._lineage(provider)
+        assert [(e["version"], e["decision"]) for e in lineage] == [(1, "keep")]
+        assert self._active_version(provider, "simba_query_enhancement") is None
 
     def test_single_record_has_no_holdout_and_persists_nothing(self):
         provider = FakeTelemetryProvider(

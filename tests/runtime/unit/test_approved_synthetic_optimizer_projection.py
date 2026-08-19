@@ -176,7 +176,7 @@ async def test_synthetic_only_data_compiles_the_actual_production_module(
         assert tenant_id == "acme:production"
         assert received_optimizer == optimizer_type
         if optimizer_type == "query_enhancement":
-            return [demo, dict(demo)]
+            return [demo, {**demo, "example_id": "approved:qe-approved-2"}]
         return [demo]
 
     class Compiled:
@@ -211,6 +211,31 @@ async def test_synthetic_only_data_compiles_the_actual_production_module(
         async def save_blob(self, kind, key, content):
             captured["artifact"] = (kind, key, content)
             return f"artifact-{optimizer_type}"
+
+        async def save_blob_versioned(
+            self,
+            kind,
+            key,
+            content,
+            *,
+            consumed_example_ids,
+            decision,
+            scored,
+            base_score,
+            candidate_score,
+        ):
+            captured["versioned"] = {
+                "kind": kind,
+                "key": key,
+                "content": content,
+                "consumed_example_ids": consumed_example_ids,
+                "decision": decision,
+            }
+            return f"artifact-{optimizer_type}", 1
+
+        async def activate_version(self, kind, key, version):
+            captured["activated"] = (kind, key, version)
+            return {"active": {"version": version, "activated_at": "now"}}
 
     monkeypatch.setattr(optimization_cli, "_query_spans_by_name", empty_spans)
     monkeypatch.setattr(
@@ -266,12 +291,17 @@ async def test_synthetic_only_data_compiles_the_actual_production_module(
         "profile": "profile_selection",
         "entity_extraction": "entity_extraction",
     }[optimizer_type]
-    assert captured["artifact"] == (
-        "model",
-        artifact_key,
-        f'{{"compiled": "{optimizer_type}"}}',
-    )
+    assert captured["versioned"]["kind"] == "model"
+    assert captured["versioned"]["key"] == artifact_key
+    assert captured["versioned"]["content"] == f'{{"compiled": "{optimizer_type}"}}'
+    assert captured["versioned"]["decision"] == "promote"
+    # Promotion activated the persisted version.
+    assert captured["activated"] == ("model", artifact_key, 1)
     if optimizer_type == "query_enhancement":
+        assert captured["versioned"]["consumed_example_ids"] == [
+            "approved:qe-approved-1",
+            "approved:qe-approved-2",
+        ]
         assert result == {
             "status": "success",
             "spans_found": 0,
@@ -282,12 +312,22 @@ async def test_synthetic_only_data_compiles_the_actual_production_module(
             "current_score": None,
             "candidate_score": 1.0,
             "decision": "promote",
-            "artifact_id": "artifact-query_enhancement",
+            "version": 1,
+            "consumed_example_ids": [
+                "approved:qe-approved-1",
+                "approved:qe-approved-2",
+            ],
         }
     else:
+        approved_id = {
+            "profile": "approved:profile-approved-1",
+            "entity_extraction": "approved:entity-approved-1",
+        }[optimizer_type]
+        assert captured["versioned"]["consumed_example_ids"] == [approved_id]
         assert result == {
             "status": "success",
             "spans_found": 0,
             "training_examples": 1,
-            "artifact_id": f"artifact-{optimizer_type}",
+            "version": 1,
+            "consumed_example_ids": [approved_id],
         }
