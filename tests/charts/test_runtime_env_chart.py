@@ -119,8 +119,8 @@ class TestRuntimeInstrumentationEnv:
         env = _runtime_container_env(_render_chart())
         assert env.get("OPENINFERENCE_DSPY") == "1", (
             "OPENINFERENCE_DSPY must be '1' on the runtime container — without "
-            "it DSPy LM spans never reach the cogniverse-dspy-instrumentation "
-            "Phoenix project"
+            "it DSPy LM spans are never instrumented and so never reach the "
+            "tenant's Phoenix project"
         )
 
     def test_iter_retrieval_wall_clock_set_from_values(self):

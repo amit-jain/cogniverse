@@ -303,9 +303,8 @@ spec:
           value: "http://{{ $fullName }}-phoenix:{{ .Values.phoenix.service.port }}"
         - name: TELEMETRY_OTLP_ENDPOINT
           value: "{{ $fullName }}-phoenix:4317"
-        # DSPy LM spans (project cogniverse-dspy-instrumentation). Previously
-        # enabled only via a live Deployment patch, which every redeploy
-        # silently dropped.
+        # Instrument DSPy LM spans; the runtime routes each to the tenant's
+        # own Phoenix project via the tenant-routing tracer provider.
         - name: OPENINFERENCE_DSPY
           value: "1"
         {{- if .Values.runtime.iterRetrieval.wallClockMs }}

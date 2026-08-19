@@ -98,7 +98,7 @@ Observability settings (`TelemetryConfig` in `cogniverse_foundation.telemetry.co
 |----------|---------|
 | `TELEMETRY_HTTP_ENDPOINT` | Phoenix HTTP endpoint |
 | `TELEMETRY_OTLP_ENDPOINT` | OTLP collector gRPC endpoint |
-| `OPENINFERENCE_DSPY` | `1` enables OpenInference DSPy instrumentation — LM call spans (full prompt/completion) exported to the `cogniverse-dspy-instrumentation` Phoenix project. Set by the chart on the runtime deployment. |
+| `OPENINFERENCE_DSPY` | `1` enables OpenInference DSPy instrumentation — LM call spans (full prompt/completion) are routed to the requesting tenant's own Phoenix project via the tenant-routing tracer provider. Set by the chart on the runtime deployment. |
 | `ITER_RETRIEVAL_MAX_ITER` / `ITER_RETRIEVAL_TOKEN_BUDGET` / `ITER_RETRIEVAL_WALL_CLOCK_MS` | Override `SystemConfig` iterative-retrieval budgets at runtime startup. The chart sets the wall clock from `runtime.iterRetrieval.wallClockMs`. |
 | `BACKEND_URL` / `BACKEND_PORT` | Backend connection info consumed by `BootstrapConfig` to construct the `ConfigStore` itself (see "Bootstrap: Breaking the Chicken-and-Egg Problem" below), and re-applied onto `SystemConfig.backend_url`/`backend_port`. |
 | `INFERENCE_SERVICE_URLS` | Strict JSON object mapping unique, non-empty inference-service names (e.g. `vllm_colpali`, `vllm_llm_student`, `vllm_asr`) to absolute HTTP(S) URLs without whitespace, credentials, or fragments. Ports, when present, must be in `1..65535`. If absent, persisted `SystemConfig.inference_service_urls` remains unchanged; explicit `{}` clears it. |

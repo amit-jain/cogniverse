@@ -3529,6 +3529,7 @@ async def run_ab_compare(
     judge_substring: Optional[str] = None,
     rlm_max_iterations: int = 10,
     rlm_max_llm_calls: int = 30,
+    telemetry_otlp_endpoint: Optional[str] = None,
 ) -> Dict[str, Any]:
     """run RLMABRunner over a Phoenix queries dataset.
 
@@ -3608,7 +3609,16 @@ async def run_ab_compare(
         config_manager=config_manager,
     )
 
-    tracer = trace.get_tracer("cogniverse.ab_compare")
+    # Emit the comparison span through the tenant's own provider so it lands
+    # in that tenant's project -- not the global no-op provider, which
+    # discards it. Falls back to the global tracer only when telemetry is
+    # disabled and no tenant tracer exists.
+    from cogniverse_foundation.telemetry.manager import get_telemetry_manager
+
+    telemetry_manager = get_telemetry_manager(otlp_endpoint=telemetry_otlp_endpoint)
+    tracer = telemetry_manager._get_tracer_for_project(
+        tenant_id, None
+    ) or trace.get_tracer("cogniverse.ab_compare")
 
     rows: list = []
     for _, r in df.iterrows():
@@ -3630,6 +3640,11 @@ async def run_ab_compare(
             span.set_attribute("openinference.tenant_id", tenant_id)
             span.set_attribute("openinference.queries_dataset", queries_dataset)
         rows.append(result)
+
+    # This is a short-lived job: flush batched spans before returning so the
+    # emitted rlm.ab_compare spans reach Phoenix rather than being dropped on
+    # process exit.
+    telemetry_manager.force_flush()
 
     if not rows:
         return {
@@ -4357,6 +4372,7 @@ def main():
                     judge_substring=args.judge_substring,
                     rlm_max_iterations=args.rlm_max_iterations,
                     rlm_max_llm_calls=args.rlm_max_llm_calls,
+                    telemetry_otlp_endpoint=telemetry_otlp_endpoint,
                 )
             )
         elif args.mode == "synthetic":

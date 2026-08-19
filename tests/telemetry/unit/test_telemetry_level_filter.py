@@ -19,6 +19,21 @@ from cogniverse_foundation.telemetry.manager import NoOpSpan, TelemetryManager
 pytestmark = pytest.mark.unit
 
 
+def _recording_tracer():
+    """A real SDK tracer backed by an InMemory exporter, for asserting that
+    ``span()`` actually recorded a span through the tracer path."""
+    from opentelemetry.sdk.trace import TracerProvider as _TP
+    from opentelemetry.sdk.trace.export import SimpleSpanProcessor
+    from opentelemetry.sdk.trace.export.in_memory_span_exporter import (
+        InMemorySpanExporter,
+    )
+
+    exporter = InMemorySpanExporter()
+    provider = _TP()
+    provider.add_span_processor(SimpleSpanProcessor(exporter))
+    return provider.get_tracer("test"), exporter
+
+
 @pytest.fixture(autouse=True)
 def _reset_telemetry_singleton():
     """TelemetryManager is a process-wide singleton, so each test's
@@ -122,16 +137,17 @@ def test_span_yields_noop_when_filter_says_no():
 
 
 def test_span_consults_tracer_when_filter_says_yes():
-    """When the filter admits the component, ``span()`` MUST call the
-    tracer-lookup path."""
+    """When the filter admits the component, ``span()`` MUST take the
+    tracer path and record the span (proved by a real exported span,
+    not by asserting a mock was called)."""
     cfg = TelemetryConfig(enabled=True, level=TelemetryLevel.BASIC)
     mgr = TelemetryManager(cfg)
-    tracer_lookup = MagicMock(return_value=None)
-    mgr._get_tracer_for_project = tracer_lookup  # type: ignore[assignment]
+    tracer, exporter = _recording_tracer()
+    mgr._get_tracer_for_project = lambda tenant_id, project: tracer
 
     with mgr.span("t", tenant_id="t1", component="search_service") as _:
         pass
-    tracer_lookup.assert_called_once()
+    assert [s.name for s in exporter.get_finished_spans()] == ["t"]
 
 
 def test_span_default_component_is_agents_rejected_at_basic():
@@ -152,8 +168,8 @@ def test_span_default_component_is_agents_admitted_at_detailed():
     keep emitting at the default level."""
     cfg_detailed = TelemetryConfig(enabled=True, level=TelemetryLevel.DETAILED)
     mgr_detailed = TelemetryManager(cfg_detailed)
-    lookup = MagicMock(return_value=None)
-    mgr_detailed._get_tracer_for_project = lookup  # type: ignore[assignment]
+    tracer, exporter = _recording_tracer()
+    mgr_detailed._get_tracer_for_project = lambda tenant_id, project: tracer
     with mgr_detailed.span("t", tenant_id="t1") as _:
         pass
-    lookup.assert_called_once()
+    assert [s.name for s in exporter.get_finished_spans()] == ["t"]
