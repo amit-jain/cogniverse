@@ -165,13 +165,14 @@ def _optional_int(v: Any) -> Optional[int]:
         return None
 
 
-BLOB_VERSION_DECISIONS = frozenset({"promote", "keep", "rollback", "reject"})
+BLOB_VERSION_DECISIONS = frozenset(
+    {"promote", "keep", "rollback", "reject", "insufficient_population"}
+)
 """What an optimization run decided about the version it persisted.
 
-``promote``: the version was activated. ``keep``: the incumbent stays.
-``rollback``: an older version was re-activated. ``reject``: nothing changed.
-The version is persisted in every case; only ``promote`` / ``rollback`` move
-the active pointer, and only through ``activate_version``.
+``promote``: the version is activated. ``keep``: the incumbent stays.
+``rollback``: an older version is re-activated. ``reject``: nothing changes.
+``insufficient_population``: the run saw too little data to optimize; the version records the run and its ledger but the served artifact is unchanged.
 """
 
 
