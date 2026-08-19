@@ -858,6 +858,20 @@ def _min_improvement_from_config(tenant_id: str, config_manager=None) -> float:
     return float(rules.optimization_triggers.optimization_improvement_threshold)
 
 
+def _population_floor_from_config(
+    tenant_id: str, config_manager=None
+) -> tuple[int, int]:
+    """The tenant's promotion floor: (min_samples, min_unique_queries)."""
+    from cogniverse_foundation.config.utils import create_default_config_manager
+
+    manager = config_manager or create_default_config_manager()
+    routing = manager.get_routing_config(tenant_id=tenant_id)
+    return (
+        int(routing.min_samples_for_optimization),
+        int(routing.min_unique_queries),
+    )
+
+
 def _reflective_settings_from_config(tenant_id: str, config_manager=None):
     """The tenant's reflective-recompile toggles: (enable, min_failures, budget)."""
     from cogniverse_runtime.quality_monitor_cli import _load_automation_rules

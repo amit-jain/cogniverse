@@ -1573,6 +1573,41 @@ _TF_CONTEXT = (
 )
 
 
+class TestPopulationFloorConfig:
+    def test_routing_config_round_trips_min_unique_queries(self):
+        from cogniverse_foundation.config.unified_config import RoutingConfigUnified
+
+        cfg = RoutingConfigUnified(
+            tenant_id="acme:acme",
+            min_samples_for_optimization=40,
+            min_unique_queries=7,
+        )
+        restored = RoutingConfigUnified.from_dict(cfg.to_dict())
+        assert restored.min_samples_for_optimization == 40
+        assert restored.min_unique_queries == 7
+
+    def test_min_unique_queries_defaults_to_three(self):
+        from cogniverse_foundation.config.unified_config import RoutingConfigUnified
+
+        assert RoutingConfigUnified(tenant_id="acme:acme").min_unique_queries == 3
+
+    def test_population_floor_reads_routing_config(self):
+        from cogniverse_foundation.config.manager import ConfigManager
+        from cogniverse_foundation.config.unified_config import RoutingConfigUnified
+        from cogniverse_runtime.optimization_cli import _population_floor_from_config
+        from tests.utils.memory_store import InMemoryConfigStore
+
+        manager = ConfigManager(store=InMemoryConfigStore())
+        manager.set_routing_config(
+            RoutingConfigUnified(
+                tenant_id="acme:acme",
+                min_samples_for_optimization=55,
+                min_unique_queries=9,
+            )
+        )
+        assert _population_floor_from_config("acme:acme", manager) == (55, 9)
+
+
 class TestSimbaQueryEnhancement:
     """The SIMBA path trains on served calls and only serves a module that
     scores at least as well as the base module on held-out inputs."""

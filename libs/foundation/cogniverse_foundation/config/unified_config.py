@@ -475,6 +475,7 @@ class RoutingConfigUnified:
     enable_auto_optimization: bool = True
     optimization_interval_seconds: int = 3600
     min_samples_for_optimization: int = 100
+    min_unique_queries: int = 3
 
     # Metadata
     metadata: Dict[str, Any] = field(default_factory=dict)
@@ -497,6 +498,7 @@ class RoutingConfigUnified:
             "enable_auto_optimization": self.enable_auto_optimization,
             "optimization_interval_seconds": self.optimization_interval_seconds,
             "min_samples_for_optimization": self.min_samples_for_optimization,
+            "min_unique_queries": self.min_unique_queries,
             "metadata": self.metadata,
         }
 
@@ -523,6 +525,7 @@ class RoutingConfigUnified:
                 "optimization_interval_seconds", 3600
             ),
             min_samples_for_optimization=data.get("min_samples_for_optimization", 100),
+            min_unique_queries=data.get("min_unique_queries", 3),
             metadata=data.get("metadata", {}),
         )
 
