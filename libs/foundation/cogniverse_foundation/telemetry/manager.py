@@ -18,6 +18,8 @@ from typing import Any, Dict, Optional
 from opentelemetry.sdk.trace import TracerProvider
 from opentelemetry.trace import Status, StatusCode, Tracer, use_span
 
+from cogniverse_foundation.telemetry.tenant_context import _current_tenant_id
+
 from .config import TelemetryConfig
 
 logger = logging.getLogger(__name__)
@@ -259,95 +261,106 @@ class TelemetryManager:
                 "Non-tenant-specific spans are not allowed."
             )
 
-        if require_export:
-            try:
-                asyncio.get_running_loop()
-            except RuntimeError:
-                pass
-            else:
-                raise RuntimeError("Use TelemetryManager.required_span from async code")
-
-        # Telemetry-level filter: if the component is below the
-        # configured level, yield a NoOpSpan so callers' set_attribute /
-        # set_status calls become no-ops. Lets ops dial down telemetry
-        # cost in production without code changes.
-        if not require_export and not self.config.should_instrument_component(
-            component
-        ):
-            yield NoOpSpan()
-            return
-
-        checked_provider = None
-        full_project_name = self.config.get_project_name(tenant_id, project_name)
-        project_key = f"{tenant_id}:{project_name}"
-        endpoint = self._project_configs.get(project_key, {}).get(
-            "otlp_endpoint", self.config.otlp_endpoint
-        )
+        tenant_token = _current_tenant_id.set(tenant_id)
         try:
             if require_export:
-                checked_provider, tracer = self._create_checked_tracer_for_project(
-                    tenant_id, project_name
-                )
-            else:
-                tracer = self._get_tracer_for_project(tenant_id, project_name)
-
-            if tracer is None:
-                if require_export:
+                try:
+                    asyncio.get_running_loop()
+                except RuntimeError:
+                    pass
+                else:
                     raise RuntimeError(
-                        "Required telemetry exporter returned no tracer: "
-                        f"tenant={tenant_id} project={full_project_name} "
-                        f"endpoint={endpoint}"
+                        "Use TelemetryManager.required_span from async code"
                     )
-                if self.config.enabled:
-                    logger.warning(
-                        "No tracer for span %s: tenant=%s project=%s endpoint=%s; "
-                        "span not recorded",
-                        name,
-                        tenant_id,
-                        full_project_name,
-                        endpoint,
-                    )
+
+            # Telemetry-level filter: if the component is below the
+            # configured level, yield a NoOpSpan so callers' set_attribute /
+            # set_status calls become no-ops. Lets ops dial down telemetry
+            # cost in production without code changes.
+            if not require_export and not self.config.should_instrument_component(
+                component
+            ):
                 yield NoOpSpan()
                 return
 
-            with tracer.start_as_current_span(name) as span:
+            checked_provider = None
+            full_project_name = self.config.get_project_name(tenant_id, project_name)
+            project_key = f"{tenant_id}:{project_name}"
+            endpoint = self._project_configs.get(project_key, {}).get(
+                "otlp_endpoint", self.config.otlp_endpoint
+            )
+            try:
                 if require_export:
-                    span_context = span.get_span_context()
-                    if not span.is_recording() or not span_context.trace_flags.sampled:
+                    checked_provider, tracer = self._create_checked_tracer_for_project(
+                        tenant_id, project_name
+                    )
+                else:
+                    tracer = self._get_tracer_for_project(tenant_id, project_name)
+
+                if tracer is None:
+                    if require_export:
                         raise RuntimeError(
-                            "Required telemetry span was not sampled: "
+                            "Required telemetry exporter returned no tracer: "
                             f"tenant={tenant_id} project={full_project_name} "
                             f"endpoint={endpoint}"
                         )
+                    if self.config.enabled:
+                        logger.warning(
+                            "No tracer for span %s: tenant=%s project=%s endpoint=%s; "
+                            "span not recorded",
+                            name,
+                            tenant_id,
+                            full_project_name,
+                            endpoint,
+                        )
+                    yield NoOpSpan()
+                    return
 
-                span.set_attribute("tenant.id", tenant_id)
-                span.set_attribute("service.name", self.config.service_name)
-                span.set_attribute("environment", self.config.environment)
+                with tracer.start_as_current_span(name) as span:
+                    if require_export:
+                        span_context = span.get_span_context()
+                        if (
+                            not span.is_recording()
+                            or not span_context.trace_flags.sampled
+                        ):
+                            raise RuntimeError(
+                                "Required telemetry span was not sampled: "
+                                f"tenant={tenant_id} project={full_project_name} "
+                                f"endpoint={endpoint}"
+                            )
 
-                if attributes:
-                    for key, value in attributes.items():
-                        if value is not None:
-                            span.set_attribute(key, value)
-                        else:
-                            logger.debug(f"Skipping None attribute: {key}")
+                    span.set_attribute("tenant.id", tenant_id)
+                    span.set_attribute("service.name", self.config.service_name)
+                    span.set_attribute("environment", self.config.environment)
 
-                try:
-                    yield span
-                except Exception as e:
-                    logger.warning(f"Error in span {name} for tenant {tenant_id}: {e}")
-                    span.record_exception(e)
-                    span.set_status(Status(StatusCode.ERROR, str(e)))
-                    raise
+                    if attributes:
+                        for key, value in attributes.items():
+                            if value is not None:
+                                span.set_attribute(key, value)
+                            else:
+                                logger.debug(f"Skipping None attribute: {key}")
+
+                    try:
+                        yield span
+                    except Exception as e:
+                        logger.warning(
+                            f"Error in span {name} for tenant {tenant_id}: {e}"
+                        )
+                        span.record_exception(e)
+                        span.set_status(Status(StatusCode.ERROR, str(e)))
+                        raise
+            finally:
+                if checked_provider is not None:
+                    try:
+                        checked_provider.shutdown()
+                    except Exception as exc:
+                        raise RuntimeError(
+                            "Required telemetry exporter shutdown failed: "
+                            f"tenant={tenant_id} project={full_project_name} "
+                            f"endpoint={endpoint}"
+                        ) from exc
         finally:
-            if checked_provider is not None:
-                try:
-                    checked_provider.shutdown()
-                except Exception as exc:
-                    raise RuntimeError(
-                        "Required telemetry exporter shutdown failed: "
-                        f"tenant={tenant_id} project={full_project_name} "
-                        f"endpoint={endpoint}"
-                    ) from exc
+            _current_tenant_id.reset(tenant_token)
 
     @asynccontextmanager
     async def required_span(

@@ -1296,31 +1296,25 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
     if os.environ.get("OPENINFERENCE_DSPY") == "1":
         try:
             from openinference.instrumentation.dspy import DSPyInstrumentor
-            from phoenix.otel import register as _px_register
 
-            otlp_endpoint = library_env["telemetry_otlp_endpoint"] or (
-                "cogniverse-phoenix:4317"
+            from cogniverse_foundation.telemetry.tenant_routing import (
+                TenantRoutingTracerProvider,
             )
-            if "://" not in otlp_endpoint:
-                otlp_endpoint = f"http://{otlp_endpoint}"
-            # Create a dedicated tracer provider for DSPy LM spans
-            # and use it explicitly with the instrumentor (NOT set
-            # as global so the existing telemetry-phoenix per-tenant
-            # tracers remain authoritative for their domains).
-            dspy_tp = _px_register(
-                endpoint=otlp_endpoint,
-                project_name="cogniverse-dspy-instrumentation",
-                batch=True,
-                protocol="grpc",
-                auto_instrument=False,
-                set_global_tracer_provider=False,
+
+            # Route every DSPy span to the tenant in scope, through that
+            # tenant's own provider -- the same provider that owns the
+            # request's ``.process`` span -- so the whole trace is filed in
+            # one tenant project with correct parentage. There is no shared
+            # cross-tenant project; a DSPy span with no tenant in context is
+            # dropped, not misfiled.
+            routing_provider = TenantRoutingTracerProvider(
+                resolve_tracer=lambda tenant_id: (
+                    get_telemetry_manager()._get_tracer_for_project(tenant_id, None)
+                )
             )
             DSPyInstrumentor().uninstrument()
-            DSPyInstrumentor().instrument(tracer_provider=dspy_tp)
-            logger.info(
-                "DSPy re-instrumented with Phoenix tracer "
-                "(project: cogniverse-dspy-instrumentation)"
-            )
+            DSPyInstrumentor().instrument(tracer_provider=routing_provider)
+            logger.info("DSPy instrumented with the tenant-routing tracer provider")
         except Exception as exc:  # noqa: BLE001
             logger.warning("Failed to rebind DSPy instrumentation to Phoenix: %s", exc)
 

@@ -9,10 +9,10 @@ from ``missing_aspects`` which is byte-equal deterministic.
 Requires the runtime pod to be running with:
 * ``OPENINFERENCE_DSPY=1`` env var
 * ``openinference-instrumentation-dspy`` installed (in the runtime image)
-* DSPy re-instrumented with the cogniverse-dspy-instrumentation
+* DSPy re-instrumented with the tenant-routing tracer provider
   Phoenix tracer (done in main.py's lifespan)
 
-The runtime emits DSPy LM spans to project ``cogniverse-dspy-
+The runtime emits DSPy LM spans to the tenant's project ``cogniverse-
 instrumentation`` with ``input.value`` (the full prompt) and
 ``output.value`` (the completion). Tests query the project, filter
 to spans whose ``input.value`` contains the unique per-test query,
@@ -131,15 +131,15 @@ def _query_dspy_lm_spans_with_text(text: str, timeout_s: float = 30.0) -> list:
     from phoenix.client import Client
 
     px = Client(base_url=PHOENIX_BASE)
-    # The shared instrumentation project accumulates spans across every
-    # run on the cluster; without a time window the unsorted `limit`
-    # slice can consist entirely of historic spans and hide this run's.
+    # The tenant project accumulates spans across every run on the
+    # cluster; without a time window the unsorted `limit` slice can
+    # consist entirely of historic spans and hide this run's.
     window_start = datetime.now(timezone.utc) - timedelta(minutes=30)
     deadline = time.time() + timeout_s
     while time.time() < deadline:
         try:
             spans = px.spans.get_spans_dataframe(
-                project_identifier="cogniverse-dspy-instrumentation",
+                project_identifier=f"cogniverse-{_TENANT}",
                 start_time=window_start,
                 limit=500,
                 timeout=90,
@@ -184,10 +184,10 @@ def test_with_constraint_run_appears_in_dspy_lm_span_input_byte_equal():
 
     Uses a unique-per-run query string as the anchor so the test's
     spans are findable even when many concurrent test runs share the
-    Phoenix project.
+    tenant Phoenix project.
     """
     # Unique anchor — the query string uniquely identifies this test's
-    # spans across the shared cogniverse-dspy-instrumentation project.
+    # spans across the tenant project.
     unique_id = uuid.uuid4().hex[:12]
     query = f"unique-test-marker-{unique_id} what is bear grylls saying"
     session_id = f"e2e-dspy-{unique_id}"

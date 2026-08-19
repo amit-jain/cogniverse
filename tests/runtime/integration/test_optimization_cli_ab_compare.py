@@ -25,10 +25,12 @@ tests; this test asserts the CLI plumbing.
 
 from __future__ import annotations
 
+import asyncio
 import json
 import os
 import subprocess
 import sys
+import time
 import uuid
 from datetime import datetime, timezone
 
@@ -104,6 +106,9 @@ def _run_cli(
     # autouse shared-vespa fixture; never the k3d cluster.
     env["PHOENIX_HTTP_ENDPOINT"] = phoenix_container["http_endpoint"]
     env["PHOENIX_GRPC_ENDPOINT"] = phoenix_container["otlp_endpoint"]
+    # The CLI's tenant tracer exports through TELEMETRY_OTLP_ENDPOINT; point it
+    # at the container so rlm.ab_compare spans land where the test reads them.
+    env["TELEMETRY_OTLP_ENDPOINT"] = phoenix_container["otlp_endpoint"]
     # Avoid Deno requirement at import time inside the subprocess.
     env["COGNIVERSE_RLM_SKIP_DENO_CHECK"] = "1"
     # Stub both arms via a sitecustomize that monkey-patches RLMABRunner.run
@@ -235,6 +240,42 @@ class TestAbCompareRoundTrip:
             "ties paired arms via this id, so collisions corrupt the "
             "downstream comparison"
         )
+
+        # The rlm.ab_compare spans MUST land in this tenant's project --
+        # emitted through the tenant provider, not the global no-op tracer
+        # that silently discards them. Three rows -> three spans in
+        # cogniverse-<canonical tenant>, each tagged with this tenant.
+        canonical = canonical_tenant_id(tenant_id)
+        loader = PhoenixProvider()
+        loader.initialize(
+            {
+                "tenant_id": canonical,
+                "http_endpoint": phoenix_container["http_endpoint"],
+                "grpc_endpoint": phoenix_container["otlp_endpoint"],
+            }
+        )
+
+        async def _spans_in_tenant_project():
+            return await loader.traces.get_all_spans(project=f"cogniverse-{canonical}")
+
+        for _ in range(30):
+            df = asyncio.run(_spans_in_tenant_project())
+            ab = df[df["name"] == "rlm.ab_compare"] if len(df) else df
+            if len(ab) >= 3:
+                break
+            time.sleep(1)
+        assert len(ab) == 3, (
+            f"expected 3 rlm.ab_compare spans in cogniverse-{canonical}, "
+            f"found {len(ab)} -- the ab_compare span is not routed to the "
+            "tenant project"
+        )
+        tenant_cols = [
+            c for c in ab.columns if str(c).endswith("openinference.tenant_id")
+        ]
+        assert len(tenant_cols) == 1, (
+            f"expected exactly one tenant-id attribute column, got {tenant_cols}"
+        )
+        assert list(ab[tenant_cols[0]].unique()) == [canonical]
 
     def test_judge_substring_populates_avg_judge_delta(
         self, tenant_id: str, seeded_dataset: str, phoenix_container, monkeypatch
