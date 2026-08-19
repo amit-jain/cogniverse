@@ -97,6 +97,7 @@ gateway agent refreshes on a `GATEWAY_ARTIFACT_TTL_S` interval).
   as a `("model", <key>)` blob via `ArtifactManager`. Bootstrap candidates are accepted only when every output
   field exactly matches the reviewed label; otherwise the compiled module retains the labeled example instead
   of replacing it with teacher-generated content.
+  SIMBA also enforces the tenant floor from routing config: below `min_samples_for_optimization` or `min_unique_queries`, it saves a version with decision `insufficient_population` and leaves the active artifact unchanged.
 - **Monthly Performance Reports**: each tenant's complete bounded-time Phoenix window is read through the same
   lossless cursor walk before latency and error summaries are written; a tenant read failure is recorded and
   makes the command fail instead of being reported as an empty history.

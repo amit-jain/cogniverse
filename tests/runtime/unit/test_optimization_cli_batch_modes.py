@@ -1778,7 +1778,14 @@ class TestSimbaQueryEnhancement:
 
         return _Compiler()
 
-    def _run(self, provider, *, min_improvement: float, scorer=None):
+    def _run(
+        self,
+        provider,
+        *,
+        min_improvement: float,
+        scorer=None,
+        floor=(1, 1),
+    ):
         from cogniverse_runtime.optimization_cli import run_simba_optimization
 
         mgr = FakeTelemetryManager(provider)
@@ -1809,6 +1816,10 @@ class TestSimbaQueryEnhancement:
             patch(
                 "cogniverse_runtime.optimization_cli._min_improvement_from_config",
                 return_value=min_improvement,
+            ),
+            patch(
+                "cogniverse_runtime.optimization_cli._population_floor_from_config",
+                return_value=floor,
             ),
         ):
             return asyncio.run(
@@ -2003,6 +2014,106 @@ class TestSimbaQueryEnhancement:
         lineage = self._lineage(provider)
         assert [(e["version"], e["decision"]) for e in lineage] == [(1, "keep")]
         assert self._active_version(provider, "simba_query_enhancement") is None
+
+    def test_below_count_floor_persists_version_without_activating(self):
+        rows = [
+            _qe_span_row(
+                f"query {i}",
+                f"query {i} expanded",
+                expansion_terms=["expanded"],
+                span_id=f"qe-{i}",
+            )
+            for i in range(4)
+        ]
+        provider = FakeTelemetryProvider(
+            _make_spans_df("cogniverse.query_enhancement", rows)
+        )
+
+        result = self._run(provider, min_improvement=0.0, floor=(100, 1))
+
+        assert result == {
+            "status": "insufficient_population",
+            "spans_found": 4,
+            "examples": 4,
+            "distinct_queries": 4,
+            "min_samples": 100,
+            "min_unique_queries": 1,
+            "version": 1,
+        }
+        lineage = self._lineage(provider)
+        assert [(e["version"], e["decision"]) for e in lineage] == [
+            (1, "insufficient_population")
+        ]
+        assert self._active_version(provider, "simba_query_enhancement") is None
+
+    def test_below_distinct_query_floor_is_insufficient(self):
+        rows = [
+            _qe_span_row(
+                "same query",
+                "same query expanded",
+                expansion_terms=["expanded"],
+                span_id=f"qe-{i}",
+            )
+            for i in range(100)
+        ]
+        provider = FakeTelemetryProvider(
+            _make_spans_df("cogniverse.query_enhancement", rows)
+        )
+
+        result = self._run(provider, min_improvement=0.0, floor=(1, 3))
+
+        assert result == {
+            "status": "insufficient_population",
+            "spans_found": 100,
+            "examples": 100,
+            "distinct_queries": 1,
+            "min_samples": 1,
+            "min_unique_queries": 3,
+            "version": 1,
+        }
+        lineage = self._lineage(provider)
+        assert [(e["version"], e["decision"]) for e in lineage] == [
+            (1, "insufficient_population")
+        ]
+        assert self._active_version(provider, "simba_query_enhancement") is None
+
+    def test_population_exactly_at_floor_proceeds_to_promotion(self):
+        rows = [
+            _qe_span_row(
+                f"query {i}",
+                f"query {i} expanded",
+                expansion_terms=["expanded"],
+                span_id=f"qe-{i}",
+            )
+            for i in range(4)
+        ]
+        provider = FakeTelemetryProvider(
+            _make_spans_df("cogniverse.query_enhancement", rows)
+        )
+
+        result = self._run(provider, min_improvement=0.0, floor=(4, 4))
+
+        assert result == {
+            "status": "success",
+            "spans_found": 4,
+            "examples": 4,
+            "training_examples": 3,
+            "holdout_examples": 1,
+            "baseline_score": 0.5,
+            "current_score": None,
+            "candidate_score": 1.0,
+            "decision": "promote",
+            "version": 1,
+            "consumed_example_ids": [
+                "span:qe-0",
+                "span:qe-1",
+                "span:qe-2",
+                "span:qe-3",
+            ],
+        }
+        lineage = self._lineage(provider)
+        assert [(e["version"], e["decision"]) for e in lineage] == [(1, "promote")]
+        assert self._active_version(provider, "simba_query_enhancement") == 1
 
     def test_single_record_has_no_holdout_and_persists_nothing(self):
         provider = FakeTelemetryProvider(
