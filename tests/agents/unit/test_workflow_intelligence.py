@@ -2,6 +2,8 @@
 Unit tests for WorkflowIntelligence — read-only template loader
 """
 
+import asyncio
+
 import pytest
 
 from cogniverse_agents.workflow.intelligence import (
@@ -207,25 +209,27 @@ class TestOrchestrationOutcomeExtraction:
 
         class TelemetryManager:
             @contextmanager
-            def span(self, name, tenant_id, require_export):
+            def span(self, name, tenant_id):
                 assert tenant_id == "acme:acme"
-                assert require_export is True
+                assert name == "cogniverse.orchestration"
                 with tracer.start_as_current_span(name) as span:
                     yield span
 
         agent = object.__new__(OrchestratorAgent)
         agent.telemetry_manager = TelemetryManager()
-        agent._emit_orchestration_span(
-            tenant_id="acme:acme",
-            workflow_id="wf-emitted",
-            query="find Curie footage",
-            agent_sequence=["search_agent", "summarizer_agent"],
-            execution_time=1.25,
-            success=False,
-            tasks_completed=1,
-            pattern="parallel",
-            execution_order=["search_agent", "summarizer_agent"],
-            error_summary="ReadTimeout: summarizer exceeded 30s",
+        asyncio.run(
+            agent._emit_orchestration_span(
+                tenant_id="acme:acme",
+                workflow_id="wf-emitted",
+                query="find Curie footage",
+                agent_sequence=["search_agent", "summarizer_agent"],
+                execution_time=1.25,
+                success=False,
+                tasks_completed=1,
+                pattern="parallel",
+                execution_order=["search_agent", "summarizer_agent"],
+                error_summary="ReadTimeout: summarizer exceeded 30s",
+            )
         )
 
         spans = exporter.get_finished_spans()

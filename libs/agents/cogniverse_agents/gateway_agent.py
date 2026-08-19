@@ -8,6 +8,7 @@ No LLM call. Target latency: <100ms.
 Extracted from ComprehensiveRouter's fast path in routing/router.py.
 """
 
+import asyncio
 import logging
 import re
 from typing import Any, Dict, List, Literal, NamedTuple, Optional, Set, Tuple
@@ -588,7 +589,7 @@ class GatewayAgent(A2AAgent[GatewayInput, GatewayOutput, GatewayDeps]):
     # Telemetry
     # ------------------------------------------------------------------
 
-    def _emit_gateway_span(
+    async def _emit_gateway_span(
         self,
         *,
         tenant_id: str,
@@ -600,12 +601,17 @@ class GatewayAgent(A2AAgent[GatewayInput, GatewayOutput, GatewayDeps]):
         confidence: float,
     ) -> None:
         """Emit a cogniverse.gateway telemetry span."""
-        if not (hasattr(self, "telemetry_manager") and self.telemetry_manager):
+        if not self.telemetry_manager:
+            logger.warning(
+                "%s has no telemetry_manager; gateway span not emitted (tenant=%s)",
+                type(self).__name__,
+                tenant_id,
+            )
             return
 
         try:
             with self.telemetry_manager.span(
-                "cogniverse.gateway",
+                name="cogniverse.gateway",
                 tenant_id=tenant_id,
             ) as span:
                 record_span_io(
@@ -620,8 +626,12 @@ class GatewayAgent(A2AAgent[GatewayInput, GatewayOutput, GatewayDeps]):
                     },
                     operation=OP_GATEWAY,
                 )
-        except Exception as e:
-            logger.debug("Failed to emit gateway span: %s", e)
+        except Exception as exc:
+            logger.warning(
+                "Failed to emit gateway telemetry: tenant=%s error=%s",
+                tenant_id,
+                exc,
+            )
 
     def _emit_routing_span(
         self,
@@ -691,7 +701,6 @@ class GatewayAgent(A2AAgent[GatewayInput, GatewayOutput, GatewayDeps]):
 
     async def _process_impl(self, input: GatewayInput) -> GatewayOutput:
         """Classify and route a query."""
-        import asyncio
 
         self.emit_progress("classify", "Classifying query")
 
@@ -747,7 +756,7 @@ class GatewayAgent(A2AAgent[GatewayInput, GatewayOutput, GatewayDeps]):
         )
 
         tenant_id = require_tenant_id(input.tenant_id, source="GatewayInput")
-        self._emit_gateway_span(
+        await self._emit_gateway_span(
             tenant_id=tenant_id,
             query=input.query,
             complexity=complexity,

@@ -514,7 +514,7 @@ class ProfileSelectionAgent(
             alternatives=alternatives,
         )
 
-        self._emit_profile_span(
+        await self._emit_profile_span(
             query=input.query,
             tenant_id=input.tenant_id,
             available_profiles=profiles_str,
@@ -550,7 +550,7 @@ class ProfileSelectionAgent(
             )
         return modality
 
-    def _emit_profile_span(
+    async def _emit_profile_span(
         self,
         query: str,
         tenant_id: Optional[str],
@@ -562,16 +562,19 @@ class ProfileSelectionAgent(
         confidence: float,
     ) -> None:
         """Emit cogniverse.profile_selection telemetry span."""
-        if not (hasattr(self, "telemetry_manager") and self.telemetry_manager):
+        if not self.telemetry_manager:
+            logger.warning(
+                "%s has no telemetry_manager; profile_selection span not emitted (tenant=%s)",
+                type(self).__name__,
+                tenant_id,
+            )
             return
-        # Tenant validation must propagate; only telemetry/transport errors
-        # are swallowed.  The old broad except swallowed ValueError too,
-        # which silently dropped missing-tenant requests instead of
-        # surfacing a 400.
+        # Validated outside the try so a missing tenant surfaces as a 400
+        # rather than a telemetry error.
         validated_tenant = require_tenant_id(tenant_id, source="ProfileSelectionInput")
         try:
             with self.telemetry_manager.span(
-                "cogniverse.profile_selection",
+                name="cogniverse.profile_selection",
                 tenant_id=validated_tenant,
             ) as span:
                 span.set_attribute("available_profiles", available_profiles)
@@ -587,8 +590,12 @@ class ProfileSelectionAgent(
                     },
                     operation=OP_PROFILE_SELECTION,
                 )
-        except Exception as e:
-            logger.debug("Failed to emit profile_selection span: %s", e)
+        except Exception as exc:
+            logger.warning(
+                "Failed to emit profile_selection telemetry: tenant=%s error=%s",
+                validated_tenant,
+                exc,
+            )
 
     def _candidate_profile_types(
         self, profiles: List[str], tenant_id: str | None

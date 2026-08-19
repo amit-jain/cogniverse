@@ -1,5 +1,7 @@
 """Unit tests for OrchestratorAgent"""
 
+import asyncio
+import logging
 from contextlib import nullcontext
 from unittest.mock import AsyncMock, MagicMock, Mock, patch
 
@@ -1222,48 +1224,44 @@ class TestOrchestratorIntelligence:
                 self.calls = []
                 self.span_obj = _RecordingSpan()
 
-            def span(self, *, name, tenant_id, require_export):
-                self.calls.append(
-                    {
-                        "name": name,
-                        "tenant_id": tenant_id,
-                        "require_export": require_export,
-                    }
-                )
+            def span(self, name, tenant_id):
+                self.calls.append({"name": name, "tenant_id": tenant_id})
                 return _Ctx(self.span_obj)
 
         recorder = _RecordingTelemetry()
         orchestrator_agent.telemetry_manager = recorder
 
-        orchestrator_agent._emit_orchestration_span(
-            tenant_id="acme:prod",
-            workflow_id="wf_test",
-            query="q" * 300,
-            agent_sequence=["search_agent", "summarizer_agent"],
-            execution_time=1.5,
-            success=True,
-            tasks_completed=2,
-            pattern="sequential",
-            execution_order=["search_agent", "summarizer_agent"],
-            agent_observations=[
-                {
-                    "agent_name": "search_agent",
-                    "execution_time": 0.4,
-                    "success": True,
-                    "confidence": 0.93,
-                },
-                {
-                    "agent_name": "summarizer_agent",
-                    "execution_time": 1.0,
-                    "success": True,
-                },
-            ],
+        asyncio.run(
+            orchestrator_agent._emit_orchestration_span(
+                tenant_id="acme:prod",
+                workflow_id="wf_test",
+                query="q" * 300,
+                agent_sequence=["search_agent", "summarizer_agent"],
+                execution_time=1.5,
+                success=True,
+                tasks_completed=2,
+                pattern="sequential",
+                execution_order=["search_agent", "summarizer_agent"],
+                agent_observations=[
+                    {
+                        "agent_name": "search_agent",
+                        "execution_time": 0.4,
+                        "success": True,
+                        "confidence": 0.93,
+                    },
+                    {
+                        "agent_name": "summarizer_agent",
+                        "execution_time": 1.0,
+                        "success": True,
+                    },
+                ],
+            )
         )
 
         assert len(recorder.calls) == 1
         assert recorder.calls[0]["name"] == "cogniverse.orchestration"
         assert recorder.calls[0]["tenant_id"] == "acme:prod"
-        assert recorder.calls[0]["require_export"] is True
+        assert set(recorder.calls[0]) == {"name", "tenant_id"}
         attrs = recorder.span_obj.attrs
         assert attrs["operation"] == "orchestration"
         assert attrs["input.value"] == "q" * 300
@@ -1290,23 +1288,35 @@ class TestOrchestratorIntelligence:
         ]
         assert recorder.span_obj.status.status_code.name == "OK"
 
-    def test_orchestration_span_requires_telemetry(self, orchestrator_agent):
+    @pytest.mark.expects_telemetry_loss_warning
+    def test_orchestration_span_warns_without_telemetry_manager(
+        self, orchestrator_agent, caplog
+    ):
         orchestrator_agent.telemetry_manager = None
-        with pytest.raises(
-            RuntimeError,
-            match="OrchestratorAgent requires telemetry_manager",
+        with caplog.at_level(
+            logging.WARNING, logger="cogniverse_agents.orchestrator_agent"
         ):
-            orchestrator_agent._emit_orchestration_span(
-                tenant_id="acme:prod",
-                workflow_id="w",
-                query="q",
-                agent_sequence=["a"],
-                execution_time=0.1,
-                success=True,
-                tasks_completed=1,
-                pattern="sequential",
-                execution_order=["a"],
+            asyncio.run(
+                orchestrator_agent._emit_orchestration_span(
+                    tenant_id="acme:prod",
+                    workflow_id="w",
+                    query="q",
+                    agent_sequence=["a"],
+                    execution_time=0.1,
+                    success=True,
+                    tasks_completed=1,
+                    pattern="sequential",
+                    execution_order=["a"],
+                )
             )
+        assert [
+            r.getMessage()
+            for r in caplog.records
+            if r.name == "cogniverse_agents.orchestrator_agent"
+        ] == [
+            "OrchestratorAgent has no telemetry_manager; orchestration span not "
+            "emitted (tenant=acme:prod workflow=w)"
+        ]
 
     def test_execution_outcome_counts_only_successful_observed_results(
         self, orchestrator_agent
@@ -1374,11 +1384,7 @@ class TestOrchestratorIntelligence:
             )
 
         assert telemetry.calls == [
-            {
-                "name": "cogniverse.orchestration",
-                "tenant_id": "acme:prod",
-                "require_export": True,
-            }
+            {"name": "cogniverse.orchestration", "tenant_id": "acme:prod"}
         ]
         output = json.loads(telemetry.span_obj.attrs["output.value"])
         assert output["agent_sequence"] == []

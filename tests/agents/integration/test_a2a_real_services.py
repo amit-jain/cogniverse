@@ -100,11 +100,13 @@ class TestGatewayWithRealGLiNER:
     """
 
     @pytest.fixture
-    def gateway_agent(self):
+    def gateway_agent(self, real_telemetry):
         """Gateway with default config (7-label set, threshold=0.4)."""
         from cogniverse_agents.gateway_agent import GatewayAgent, GatewayDeps
 
-        return GatewayAgent(deps=GatewayDeps())
+        agent = GatewayAgent(deps=GatewayDeps())
+        agent.set_telemetry_manager(real_telemetry)
+        return agent
 
     @pytest.mark.asyncio
     async def test_video_content_query_routes_to_search_agent(self, gateway_agent):
@@ -197,13 +199,15 @@ class TestEntityExtractionRealGLiNERSpaCy:
     """
 
     @pytest.fixture
-    def entity_agent(self):
+    def entity_agent(self, real_telemetry):
         from cogniverse_agents.entity_extraction_agent import (
             EntityExtractionAgent,
             EntityExtractionDeps,
         )
 
-        return EntityExtractionAgent(deps=EntityExtractionDeps())
+        agent = EntityExtractionAgent(deps=EntityExtractionDeps())
+        agent.set_telemetry_manager(real_telemetry)
+        return agent
 
     @pytest.mark.asyncio
     async def test_named_entities_exact_matches(self, entity_agent):
@@ -344,13 +348,15 @@ class TestQueryEnhancementRealDSPy:
     """
 
     @pytest.fixture
-    def enhancement_agent(self, configure_dspy):
+    def enhancement_agent(self, configure_dspy, real_telemetry):
         from cogniverse_agents.query_enhancement_agent import (
             QueryEnhancementAgent,
             QueryEnhancementDeps,
         )
 
-        return QueryEnhancementAgent(deps=QueryEnhancementDeps())
+        agent = QueryEnhancementAgent(deps=QueryEnhancementDeps())
+        agent.set_telemetry_manager(real_telemetry)
+        return agent
 
     @pytest.mark.asyncio
     async def test_ml_expansion(self, enhancement_agent):

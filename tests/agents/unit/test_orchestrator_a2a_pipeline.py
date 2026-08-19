@@ -62,14 +62,8 @@ class _RecordingTelemetryManager:
         self.calls = []
         self.spans = []
 
-    def span(self, *, name, tenant_id, require_export):
-        self.calls.append(
-            {
-                "name": name,
-                "tenant_id": tenant_id,
-                "require_export": require_export,
-            }
-        )
+    def span(self, name, tenant_id):
+        self.calls.append({"name": name, "tenant_id": tenant_id})
         span = _RecordingSpan()
         self.spans.append(span)
         return _SpanContext(span)
@@ -183,11 +177,7 @@ class TestA2APipelineFlow:
         assert "search" in result.agent_results
         assert result.final_output["status"] == "success"
         assert orchestrator.telemetry_manager.calls == [
-            {
-                "name": "cogniverse.orchestration",
-                "tenant_id": "test:unit",
-                "require_export": True,
-            }
+            {"name": "cogniverse.orchestration", "tenant_id": "test:unit"}
         ]
         assert len(orchestrator.telemetry_manager.spans) == 1
         assert (

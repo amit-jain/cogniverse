@@ -17,6 +17,7 @@ from cogniverse_agents.profile_selection_agent import (
 )
 from cogniverse_core.approval.training_schema import PROFILE_TRAINING_MODALITIES
 from cogniverse_synthetic.schemas import ProfileSelectionExampleSchema
+from tests.agents.unit._recording_telemetry import RecordingTelemetryManager
 
 EXPECTED_PROFILE_QUERY_INTENTS = (
     "multi_modal_search",
@@ -115,6 +116,7 @@ def _build_agent(
             ),
             port=8011,
         )
+    agent.telemetry_manager = RecordingTelemetryManager()
     agent._config_manager = Mock()
     agent._config_manager.get_backend_profile.return_value = SimpleNamespace(
         type=modality

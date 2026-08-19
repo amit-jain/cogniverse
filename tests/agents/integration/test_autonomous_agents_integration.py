@@ -51,15 +51,16 @@ def real_dspy_lm(gemma_inference_endpoint):
 
 
 @pytest.fixture
-def entity_agent_with_real_lm(real_dspy_lm):
+def entity_agent_with_real_lm(real_dspy_lm, real_telemetry):
     """EntityExtractionAgent with real LLM"""
     deps = EntityExtractionDeps()
     agent = EntityExtractionAgent(deps=deps, port=8010)
+    agent.set_telemetry_manager(real_telemetry)
     return agent
 
 
 @pytest.fixture
-def profile_agent_with_real_lm(real_dspy_lm):
+def profile_agent_with_real_lm(real_dspy_lm, real_telemetry):
     """ProfileSelectionAgent with real LLM"""
     deps = ProfileSelectionDeps(
         available_profiles=[
@@ -71,19 +72,21 @@ def profile_agent_with_real_lm(real_dspy_lm):
         ],
     )
     agent = ProfileSelectionAgent(deps=deps, port=8011)
+    agent.set_telemetry_manager(real_telemetry)
     return agent
 
 
 @pytest.fixture
-def query_agent_with_real_lm(real_dspy_lm):
+def query_agent_with_real_lm(real_dspy_lm, real_telemetry):
     """QueryEnhancementAgent with real LLM"""
     deps = QueryEnhancementDeps()
     agent = QueryEnhancementAgent(deps=deps, port=8012)
+    agent.set_telemetry_manager(real_telemetry)
     return agent
 
 
 @pytest.fixture
-def orchestrator_with_real_agents(vespa_with_schema, dspy_lm):
+def orchestrator_with_real_agents(vespa_with_schema, dspy_lm, real_telemetry):
     """OrchestratorAgent wired to real in-process agents via an in-memory ASGI
     app. httpx is patched to ASGITransport so the orchestrator's POSTs flow
     through the real /agents/{name}/process route + AgentTask validation + the
@@ -133,6 +136,7 @@ def orchestrator_with_real_agents(vespa_with_schema, dspy_lm):
         config_manager=config_manager,
         port=8015,
     )
+    orchestrator.set_telemetry_manager(real_telemetry)
 
     app = FastAPI()
     app.include_router(agents_router.router, prefix="/agents", tags=["agents"])

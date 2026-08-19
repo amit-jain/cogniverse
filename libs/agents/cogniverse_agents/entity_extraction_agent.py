@@ -308,7 +308,7 @@ class EntityExtractionAgent(
             path_used=path_used,
         )
 
-        self._emit_extraction_span(
+        await self._emit_extraction_span(
             tenant_id=require_tenant_id(
                 input.tenant_id, source="EntityExtractionInput"
             ),
@@ -550,7 +550,7 @@ class EntityExtractionAgent(
         self.emit_progress("parsing", "Parsing extracted entities...")
         return self._parse_entities(result.entities, query)
 
-    def _emit_extraction_span(
+    async def _emit_extraction_span(
         self,
         *,
         tenant_id: str,
@@ -560,12 +560,17 @@ class EntityExtractionAgent(
         path_used: str,
     ) -> None:
         """Emit a cogniverse.entity_extraction telemetry span."""
-        if not (hasattr(self, "telemetry_manager") and self.telemetry_manager):
+        if not self.telemetry_manager:
+            logger.warning(
+                "%s has no telemetry_manager; entity_extraction span not emitted (tenant=%s)",
+                type(self).__name__,
+                tenant_id,
+            )
             return
 
         try:
             with self.telemetry_manager.span(
-                "cogniverse.entity_extraction",
+                name="cogniverse.entity_extraction",
                 tenant_id=tenant_id,
             ) as span:
                 record_span_io(
@@ -580,8 +585,12 @@ class EntityExtractionAgent(
                     },
                     operation=OP_ENTITY_EXTRACTION,
                 )
-        except Exception as e:
-            logger.debug("Failed to emit entity_extraction span: %s", e)
+        except Exception as exc:
+            logger.warning(
+                "Failed to emit entity_extraction telemetry: tenant=%s error=%s",
+                tenant_id,
+                exc,
+            )
 
     def _parse_entities(self, entities_str: str, query: str) -> List[Entity]:
         """Parse entities from DSPy output format"""

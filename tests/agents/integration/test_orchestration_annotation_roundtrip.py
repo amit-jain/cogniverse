@@ -15,6 +15,7 @@ silently broke:
 from __future__ import annotations
 
 import asyncio
+import logging
 import subprocess
 import time
 from datetime import datetime, timedelta, timezone
@@ -146,8 +147,9 @@ async def test_human_annotation_round_trips_and_auto_is_filtered(real_telemetry)
     assert {r["span_id"] for r in everything} == {human_span, auto_span}
 
 
-def test_orchestration_span_failure_propagates_when_real_phoenix_is_down(
+def test_orchestration_span_is_best_effort_when_real_phoenix_is_down(
     phoenix_container,
+    caplog,
 ):
     TelemetryManager.reset()
     get_telemetry_registry().clear_cache()
@@ -175,25 +177,52 @@ def test_orchestration_span_failure_propagates_when_real_phoenix_is_down(
         timeout=30,
     )
     try:
-        with pytest.raises(
-            RuntimeError,
-            match=(
-                "Failed to persist orchestration telemetry: "
-                f"tenant={tenant_id} workflow=wf-phoenix-down"
-            ),
+        # Serving telemetry is best effort on the request path. Phoenix being
+        # down must not fail the orchestration request: the emit enqueues onto
+        # the batch queue and returns None without raising. The export failure
+        # is handled off the request path by the batch processor; there is no
+        # emit-site warning because the enqueue itself succeeded. The managed
+        # test environment forces sync export + polling elsewhere so real span
+        # persistence is still asserted when Phoenix is up.
+        import time as _time
+
+        with caplog.at_level(
+            logging.WARNING, logger="cogniverse_agents.orchestrator_agent"
         ):
-            OrchestratorAgent._emit_orchestration_span(
-                emitter,
-                tenant_id=tenant_id,
-                workflow_id="wf-phoenix-down",
-                query="find the incident recording",
-                agent_sequence=["search_agent"],
-                execution_time=1.25,
-                success=True,
-                tasks_completed=1,
-                pattern="sequential",
-                execution_order=["search_agent"],
+            start = _time.monotonic()
+            result = asyncio.run(
+                OrchestratorAgent._emit_orchestration_span(
+                    emitter,
+                    tenant_id=tenant_id,
+                    workflow_id="wf-phoenix-down",
+                    query="find the incident recording",
+                    agent_sequence=["search_agent"],
+                    execution_time=1.25,
+                    success=True,
+                    tasks_completed=1,
+                    pattern="sequential",
+                    execution_order=["search_agent"],
+                )
             )
+            elapsed = _time.monotonic() - start
+
+        assert result is None
+        # The request path did not block on the dead backend (well under the
+        # 30s synchronous-export timeout that require_export would have imposed).
+        assert elapsed < 5.0, (
+            f"orchestration emit took {elapsed:.1f}s with Phoenix down: the "
+            "request path is blocking on telemetry export"
+        )
+        emit_losses = [
+            r.getMessage()
+            for r in caplog.records
+            if r.name == "cogniverse_agents.orchestrator_agent"
+            and r.getMessage().startswith("Failed to emit orchestration telemetry")
+        ]
+        assert emit_losses == [], (
+            "batch enqueue succeeded, so there must be no emit-site loss warning; "
+            f"got {emit_losses}"
+        )
     finally:
         TelemetryManager.reset()
         get_telemetry_registry().clear_cache()

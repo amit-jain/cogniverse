@@ -5,6 +5,7 @@ pytest_plugins = [
     "tests.fixtures.instafail",
     "tests.fixtures.llm",
     "tests.fixtures.sidecars",
+    "tests.fixtures.telemetry_loss_guard",
 ]
 
 import gc
