@@ -565,6 +565,7 @@
       "enable_auto_optimization": false,
       "optimization_interval_seconds": 3600,
       "min_samples_for_optimization": 100,
+      "min_unique_queries": 3,
       "performance_degradation_threshold": 0.1,
       "min_accuracy": 0.8,
       "max_acceptable_latency_ms": 1000,

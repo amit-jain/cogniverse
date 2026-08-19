@@ -872,6 +872,7 @@ config.fast_path_confidence_threshold = 0.75
 config.enable_auto_optimization = True
 config.optimization_interval_seconds = 3600
 config.min_samples_for_optimization = 100
+config.min_unique_queries = 3
 
 # GLiNER device — seeded into GatewayDeps and applied to a locally-loaded model.
 config.gliner_device = "cuda"
