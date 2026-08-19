@@ -34,6 +34,11 @@ from cogniverse_core.durable import (
     PipelineCheckpointStatus,
     PipelineCheckpointStorage,
 )
+from cogniverse_foundation.telemetry.config import (
+    SPAN_NAME_ENTITY_EXTRACTION,
+    SPAN_NAME_PROFILE_SELECTION,
+    SPAN_NAME_QUERY_ENHANCEMENT,
+)
 from cogniverse_foundation.telemetry.span_contract import (
     read_span_attributes,
     read_span_id,
@@ -178,6 +183,22 @@ class _TriggeredOptCheckpointer:
         await self._storage.save_checkpoint(checkpoint)
 
 
+def _span_example_id(row: Any, *, span_name: str, position: int) -> str:
+    """The ledger id of a served call: ``span:<context.span_id>``.
+
+    A record without a span id cannot be attributed by the ledger, so a row
+    that yields a training example must carry one; that is an error, never
+    a ``span:None`` id.
+    """
+    span_id = read_span_id(row)
+    if not span_id:
+        raise ValueError(
+            f"{span_name} span row {position} has no context.span_id; "
+            "the optimizer cannot record which example it consumed"
+        )
+    return f"span:{span_id}"
+
+
 def _query_enhancement_pairs(spans_df) -> List[Dict[str, Any]]:
     """One record per query_enhancement span: the served call's inputs and outputs.
 
@@ -188,14 +209,16 @@ def _query_enhancement_pairs(spans_df) -> List[Dict[str, Any]]:
     term; every record is still an evaluation probe (its inputs are real).
     """
     pairs: List[Dict[str, Any]] = []
-    for _, row in spans_df.iterrows():
+    for position, (_, row) in enumerate(spans_df.iterrows()):
         span_io = read_span_io(row)
-        span_id = read_span_id(row)
         original = span_io["input"] or ""
         output = span_io["output"] if isinstance(span_io["output"], dict) else {}
         enhanced = output.get("enhanced_query", "") or ""
         if not original or not enhanced:
             continue
+        example_id = _span_example_id(
+            row, span_name=SPAN_NAME_QUERY_ENHANCEMENT, position=position
+        )
         attrs = read_span_attributes(row)
         expansion_terms = [str(t) for t in output.get("expansion_terms", []) or []]
         pairs.append(
@@ -208,7 +231,7 @@ def _query_enhancement_pairs(spans_df) -> List[Dict[str, Any]]:
                 "synonyms": [str(s) for s in output.get("synonyms", []) or []],
                 "context": [str(c) for c in output.get("context_additions", []) or []],
                 "confidence": float(output.get("confidence", 0.0) or 0.0),
-                "example_id": f"span:{span_id}",
+                "example_id": example_id,
                 "trainable": (
                     enhanced.strip().lower() != original.strip().lower()
                     and bool(expansion_terms)
@@ -286,14 +309,22 @@ def _entity_extraction_pairs(spans_df) -> List[Dict[str, Any]]:
     holds ``{"entities": [...], ...}``.
     """
     pairs: List[Dict[str, Any]] = []
-    for _, row in spans_df.iterrows():
+    for position, (_, row) in enumerate(spans_df.iterrows()):
         span_io = read_span_io(row)
         query = span_io["input"] or ""
         output = span_io["output"] if isinstance(span_io["output"], dict) else {}
         entities = output.get("entities", [])
         if not query or not entities:
             continue
-        pairs.append({"query": query, "entities": entities})
+        pairs.append(
+            {
+                "query": query,
+                "entities": entities,
+                "example_id": _span_example_id(
+                    row, span_name=SPAN_NAME_ENTITY_EXTRACTION, position=position
+                ),
+            }
+        )
     return pairs
 
 
@@ -332,7 +363,7 @@ def _profile_selection_pairs(
     from cogniverse_agents.profile_selection_agent import tenant_usable_profile_names
 
     pairs: List[Dict[str, Any]] = []
-    for _, row in spans_df.iterrows():
+    for position, (_, row) in enumerate(spans_df.iterrows()):
         span_io = read_span_io(row)
         query = span_io["input"] or ""
         output = span_io["output"] if isinstance(span_io["output"], dict) else {}
@@ -340,6 +371,9 @@ def _profile_selection_pairs(
         confidence = float(output.get("confidence", 0.0) or 0.0)
         if not query or not selected or confidence < 0.5:
             continue
+        example_id = _span_example_id(
+            row, span_name=SPAN_NAME_PROFILE_SELECTION, position=position
+        )
         available_profiles = _span_available_profiles(row)
         if available_profiles is None:
             available_profiles = ", ".join(
@@ -354,6 +388,7 @@ def _profile_selection_pairs(
                 "complexity": output.get("complexity", "simple"),
                 "intent": output.get("intent", ""),
                 "confidence": confidence,
+                "example_id": example_id,
             }
         )
     return pairs
@@ -1745,6 +1780,7 @@ async def _load_approved_synthetic_data(
                 f"optimizer={optimizer_type}"
             ),
         )
+        example["example_id"] = f"approved:{record['item_id']}"
         approved.append(example)
 
     logger.info(
@@ -2045,6 +2081,7 @@ async def run_simba_optimization(
                 ],
                 "confidence": 0.0,
                 "reasoning": projected["reasoning"],
+                "example_id": demo["example_id"],
                 "trainable": True,
             }
         )

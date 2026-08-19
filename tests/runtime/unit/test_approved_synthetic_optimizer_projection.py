@@ -107,6 +107,7 @@ def test_projection_rejects_optimizer_without_a_signature_contract():
                 "synonyms": ["neural network model"],
                 "context": "machine learning",
                 "reasoning": "Added the exact source term.",
+                "example_id": "approved:qe-approved-1",
             },
         ),
         (
@@ -122,6 +123,7 @@ def test_projection_rejects_optimizer_without_a_signature_contract():
                 "query_intent": "video_search",
                 "modality": "video",
                 "complexity": "simple",
+                "example_id": "approved:profile-approved-1",
             },
         ),
         (
@@ -139,6 +141,7 @@ def test_projection_rejects_optimizer_without_a_signature_contract():
                 "relationships": [
                     {"source": "Meta AI", "target": "PyTorch", "type": "created"}
                 ],
+                "example_id": "approved:entity-approved-1",
             },
         ),
     ],

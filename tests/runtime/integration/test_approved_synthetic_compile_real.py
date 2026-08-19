@@ -47,6 +47,7 @@ async def _approve_example(agent, optimizer_type, agent_type, example):
     )
     assert approved is not None
     assert approved.status is ApprovalStatus.APPROVED
+    return f"{batch_id}_0"
 
 
 @pytest.mark.asyncio
@@ -123,8 +124,11 @@ async def test_real_phoenix_approved_examples_compile_into_actual_dspy_modules(
         ),
     ]
 
+    approved_item_ids = {}
     for optimizer_type, agent_type, _, _, source in cases:
-        await _approve_example(agent, optimizer_type, agent_type, source)
+        approved_item_ids[optimizer_type] = await _approve_example(
+            agent, optimizer_type, agent_type, source
+        )
 
     provider = real_telemetry.get_provider(tenant_id=tenant_id)
     dspy.configure(lm=dspy_test_lm)
@@ -132,7 +136,9 @@ async def test_real_phoenix_approved_examples_compile_into_actual_dspy_modules(
         loaded = await _load_approved_synthetic_data(
             provider, tenant_id, optimizer_type
         )
-        assert loaded == [source]
+        assert loaded == [
+            {**source, "example_id": f"approved:{approved_item_ids[optimizer_type]}"}
+        ]
         projected = _project_approved_optimizer_example(optimizer_type, loaded[0])
         trainset = [dspy.Example(**projected).with_inputs(*input_names)]
 
