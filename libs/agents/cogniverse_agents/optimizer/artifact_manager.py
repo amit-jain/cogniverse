@@ -165,6 +165,32 @@ def _optional_int(v: Any) -> Optional[int]:
         return None
 
 
+BLOB_VERSION_DECISIONS = frozenset({"promote", "keep", "rollback", "reject"})
+"""What an optimization run decided about the version it persisted.
+
+``promote``: the version was activated. ``keep``: the incumbent stays.
+``rollback``: an older version was re-activated. ``reject``: nothing changed.
+The version is persisted in every case; only ``promote`` / ``rollback`` move
+the active pointer, and only through ``activate_version``.
+"""
+
+
+def _validate_consumed_example_ids(consumed_example_ids: List[str]) -> List[str]:
+    if not consumed_example_ids:
+        raise ValueError("consumed_example_ids must name at least one example")
+    if not all(isinstance(i, str) and i for i in consumed_example_ids):
+        raise ValueError("consumed_example_ids must be non-empty strings")
+    seen: set[str] = set()
+    duplicates: List[str] = []
+    for example_id in consumed_example_ids:
+        if example_id in seen and example_id not in duplicates:
+            duplicates.append(example_id)
+        seen.add(example_id)
+    if duplicates:
+        raise ValueError(f"consumed_example_ids contains duplicates: {duplicates}")
+    return list(consumed_example_ids)
+
+
 class ArtifactManager:
     """Manage DSPy optimization artifacts through telemetry stores.
 
@@ -572,6 +598,156 @@ class ArtifactManager:
         )
         return content
 
+    # --- versioned blobs (optimizer ledger) --------------------------------
+
+    def _blob_state_key(self, kind: str, key: str) -> str:
+        return f"blob_state_{kind}_{key}"
+
+    @staticmethod
+    def _blob_version_row(df: pd.DataFrame) -> Dict[str, Any]:
+        """The single row of a version dataset, as written or as Phoenix returns it."""
+        if "content" in df.columns:
+            return df.iloc[-1].to_dict()
+        if "input" in df.columns:
+            row = df["input"].iloc[-1]
+            if isinstance(row, dict):
+                return row
+        raise ValueError(
+            f"Blob version dataset has unexpected columns: {list(df.columns)}"
+        )
+
+    async def save_blob_versioned(
+        self,
+        kind: str,
+        key: str,
+        content: str,
+        *,
+        consumed_example_ids: List[str],
+        decision: str,
+        scored: bool,
+        base_score: Optional[float],
+        candidate_score: Optional[float],
+    ) -> tuple[str, int]:
+        """Persist ``content`` as the next version of blob ``kind/key`` with its ledger.
+
+        The ledger row records exactly which examples produced this version
+        (``consumed_example_ids``, ``span:<id>`` or ``approved:<id>``), the
+        run's decision, and how base and candidate scored. Saving never moves
+        the active pointer; ``activate_version`` does.
+
+        Returns:
+            ``(dataset_id, version)``.
+        """
+        consumed = _validate_consumed_example_ids(consumed_example_ids)
+        if decision not in BLOB_VERSION_DECISIONS:
+            raise ValueError(
+                f"decision must be one of {sorted(BLOB_VERSION_DECISIONS)}, "
+                f"got {decision!r}"
+            )
+        version = await self._get_next_version(kind, key)
+        ledger = {
+            "version": version,
+            "kind": kind,
+            "key": key,
+            "consumed_example_ids": consumed,
+            "decision": decision,
+            "scored": bool(scored),
+            "base_score": base_score,
+            "candidate_score": candidate_score,
+            "created_at": datetime.now(timezone.utc).isoformat(),
+        }
+        dataset_name = self._versioned_dataset_name(kind, key, version)
+        dataset_id = await self._provider.datasets.create_dataset(
+            name=dataset_name,
+            data=pd.DataFrame([{"content": content, "ledger": json.dumps(ledger)}]),
+            metadata={
+                "artifact_type": f"blob_{kind}",
+                "key": key,
+                "tenant_id": self._tenant_id,
+                "version": version,
+                "created_at": ledger["created_at"],
+                "input_keys": ["content", "ledger"],
+                "output_keys": [],
+            },
+        )
+        logger.info(
+            "Saved blob %s/%s v%d for %s (%s, %d examples) → dataset %s",
+            kind,
+            key,
+            version,
+            self._tenant_id,
+            decision,
+            len(consumed),
+            dataset_id,
+        )
+        return dataset_id, version
+
+    async def load_blob_version(
+        self, kind: str, key: str, version: int
+    ) -> tuple[str, Dict[str, Any]]:
+        """Return ``(content, ledger)`` for one persisted version.
+
+        Raises ``ValueError`` when the version does not exist.
+        """
+        dataset_name = self._versioned_dataset_name(kind, key, version)
+        try:
+            df = await self._provider.datasets.get_dataset(name=dataset_name)
+        except (KeyError, ValueError) as exc:
+            raise ValueError(
+                f"No version {version} of blob {kind}/{key} exists for tenant "
+                f"{self._tenant_id}"
+            ) from exc
+        if df is None or df.empty:
+            raise ValueError(
+                f"No version {version} of blob {kind}/{key} exists for tenant "
+                f"{self._tenant_id}"
+            )
+        row = self._blob_version_row(df)
+        content = row.get("content")
+        raw_ledger = row.get("ledger")
+        if not isinstance(content, str) or not isinstance(raw_ledger, str):
+            raise ValueError(
+                f"Blob {kind}/{key} v{version} for tenant {self._tenant_id} has no "
+                "content/ledger row"
+            )
+        return content, json.loads(raw_ledger)
+
+    async def get_blob_state(self, kind: str, key: str) -> Dict[str, Any]:
+        """The activation pointer for blob ``kind/key``.
+
+        Schema: ``{"active": {"version": int, "activated_at": ISO} | None}``.
+        """
+        raw = await self.load_blob("config", self._blob_state_key(kind, key))
+        if not raw:
+            return {"active": None}
+        state = json.loads(raw)
+        return {"active": state.get("active")}
+
+    async def activate_version(
+        self, kind: str, key: str, version: int
+    ) -> Dict[str, Any]:
+        """Serve ``version`` of blob ``kind/key``.
+
+        Copies the version's content into the last-write-wins blob the served
+        process loads (``load_blob`` / ``load_optimized_module``) and records
+        the pointer. Activating an older version is the rollback path.
+        """
+        content, _ = await self.load_blob_version(kind, key, version)
+        await self.save_blob(kind, key, content)
+        state = {
+            "active": {
+                "version": version,
+                "activated_at": datetime.now(timezone.utc).isoformat(),
+            }
+        }
+        await self.save_blob(
+            "config", self._blob_state_key(kind, key), json.dumps(state)
+        )
+        logger.info(
+            "Activated blob %s/%s v%d for %s", kind, key, version, self._tenant_id
+        )
+        return state
+
     def _versioned_dataset_name(self, kind: str, agent_type: str, version: int) -> str:
         return f"dspy-{kind}-{self._tenant_id}-{agent_type}-v{version}"
 
@@ -705,8 +881,34 @@ class ArtifactManager:
                 entry["row_count"] = len(df) if df is not None else 0
             except (KeyError, ValueError):
                 entry["row_count"] = 0
+                df = None
+            if df is not None and not df.empty:
+                row = self._blob_version_row_or_none(df)
+                raw_ledger = row.get("ledger") if row else None
+                if isinstance(raw_ledger, str):
+                    ledger = json.loads(raw_ledger)
+                    entry.update(
+                        {
+                            field: ledger[field]
+                            for field in (
+                                "consumed_example_ids",
+                                "decision",
+                                "scored",
+                                "base_score",
+                                "candidate_score",
+                                "created_at",
+                            )
+                        }
+                    )
             lineage.append(entry)
         return lineage
+
+    @classmethod
+    def _blob_version_row_or_none(cls, df: pd.DataFrame) -> Optional[Dict[str, Any]]:
+        try:
+            return cls._blob_version_row(df)
+        except ValueError:
+            return None
 
     # --- canary state machine ---------------------------------------------
 
