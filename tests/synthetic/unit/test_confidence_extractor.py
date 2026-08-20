@@ -7,6 +7,11 @@ import pytest
 
 from cogniverse_agents.approval.human_approval_agent import HumanApprovalAgent
 from cogniverse_core.approval.interfaces import ApprovalStatus
+from cogniverse_foundation.config.manager import ConfigManager
+from cogniverse_foundation.config.unified_config import (
+    BackendProfileConfig,
+    SystemConfig,
+)
 from cogniverse_synthetic.approval.confidence_extractor import (
     SyntheticDataConfidenceExtractor,
 )
@@ -21,6 +26,7 @@ from cogniverse_synthetic.schemas import (
     RoutingExperienceSchema,
     WorkflowExecutionSchema,
 )
+from tests.utils.memory_store import InMemoryConfigStore
 
 pytestmark = pytest.mark.unit
 
@@ -149,10 +155,30 @@ async def test_pattern_generators_emit_unobserved_targets_requiring_review(
             "complexity": "medium",
         }
 
+    profile_config_manager = ConfigManager(store=InMemoryConfigStore())
+    profile_config_manager.set_system_config(SystemConfig())
+    profile_config_manager.add_backend_profile(
+        BackendProfileConfig.from_dict(
+            "document_semantic",
+            {
+                "type": "document",
+                "schema_name": "document_pages",
+                "embedding_type": "single_vector",
+                "pipeline_config": {},
+            },
+        ),
+        tenant_id="acme:synthetic",
+    )
     profile_examples = await ProfileGenerator(profile_labeler=label_profile).generate(
         sampled_content=[
-            {"title": "quantum computing applications"},
-            {"title": "machine learning deep neural networks tutorial"},
+            {
+                "title": "quantum computing applications",
+                "schema_name": "document_pages",
+            },
+            {
+                "title": "machine learning deep neural networks tutorial",
+                "schema_name": "document_pages",
+            },
         ],
         target_count=1,
         profile_configs={
@@ -164,6 +190,7 @@ async def test_pattern_generators_emit_unobserved_targets_requiring_review(
             }
         },
         tenant_id="acme:synthetic",
+        config_manager=profile_config_manager,
     )
 
     async def enhance_query(query: str, tenant_id: str, source_text: str):
