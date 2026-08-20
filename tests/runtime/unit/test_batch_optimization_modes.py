@@ -1697,26 +1697,40 @@ class TestPopulationFloorConfig:
 
         assert RoutingConfigUnified(tenant_id="acme:acme").min_unique_queries == 3
 
-    def test_population_floor_reads_per_optimizer_mapping(self):
+    def test_population_floor_reads_per_optimizer_mapping(self, tmp_path, monkeypatch):
         from cogniverse_foundation.config.manager import ConfigManager
         from cogniverse_foundation.config.unified_config import RoutingConfigUnified
+        from cogniverse_runtime import optimization_cli
         from cogniverse_runtime.optimization_cli import _population_floor_from_config
         from tests.utils.memory_store import InMemoryConfigStore
+
+        shipped_config = tmp_path / "config.json"
+        shipped_config.write_text(
+            json.dumps(
+                {
+                    "routing": {
+                        "optimization_config": {
+                            "optimizer_floors": {
+                                "profile_selection": {
+                                    "min_samples_for_optimization": 20,
+                                    "min_unique_queries": 6,
+                                },
+                                "entity_extraction": {
+                                    "min_samples_for_optimization": 58,
+                                    "min_unique_queries": 15,
+                                },
+                            }
+                        }
+                    }
+                }
+            )
+        )
+        monkeypatch.setattr(optimization_cli, "SHIPPED_CONFIG_PATH", shipped_config)
 
         manager = ConfigManager(store=InMemoryConfigStore())
         manager.set_routing_config(
             RoutingConfigUnified(
                 tenant_id="acme:acme",
-                optimizer_floors={
-                    "profile_selection": {
-                        "min_samples_for_optimization": 20,
-                        "min_unique_queries": 6,
-                    },
-                    "entity_extraction": {
-                        "min_samples_for_optimization": 58,
-                        "min_unique_queries": 15,
-                    },
-                },
             )
         )
         assert _population_floor_from_config(
@@ -1728,6 +1742,58 @@ class TestPopulationFloorConfig:
         assert _population_floor_from_config(
             "acme:acme", manager, "query_enhancement"
         ) == (100, 3)
+
+    def test_population_floor_store_override_wins_over_shipped_floor(
+        self, tmp_path, monkeypatch
+    ):
+        from cogniverse_foundation.config.manager import ConfigManager
+        from cogniverse_foundation.config.unified_config import RoutingConfigUnified
+        from cogniverse_runtime import optimization_cli
+        from cogniverse_runtime.optimization_cli import _population_floor_from_config
+        from tests.utils.memory_store import InMemoryConfigStore
+
+        shipped_config = tmp_path / "config.json"
+        shipped_config.write_text(
+            json.dumps(
+                {
+                    "routing": {
+                        "optimization_config": {
+                            "optimizer_floors": {
+                                "profile_selection": {
+                                    "min_samples_for_optimization": 20,
+                                    "min_unique_queries": 6,
+                                },
+                                "entity_extraction": {
+                                    "min_samples_for_optimization": 58,
+                                    "min_unique_queries": 15,
+                                },
+                            }
+                        }
+                    }
+                }
+            )
+        )
+
+        monkeypatch.setattr(optimization_cli, "SHIPPED_CONFIG_PATH", shipped_config)
+
+        manager = ConfigManager(store=InMemoryConfigStore())
+        manager.set_routing_config(
+            RoutingConfigUnified(
+                tenant_id="acme:acme",
+                optimizer_floors={
+                    "profile_selection": {
+                        "min_samples_for_optimization": 33,
+                        "min_unique_queries": 9,
+                    }
+                },
+            )
+        )
+        assert _population_floor_from_config(
+            "acme:acme", manager, "profile_selection"
+        ) == (33, 9)
+        assert _population_floor_from_config(
+            "acme:acme", manager, "entity_extraction"
+        ) == (58, 15)
 
     def test_unlisted_optimizer_falls_back_to_tenant_global_floor(self):
         """An optimizer absent from optimizer_floors inherits the tenant's
