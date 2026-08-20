@@ -292,6 +292,60 @@ def _query_enhancement_metric(example, prediction, trace=None) -> bool:
     return _query_enhancement_quality(prediction, example) == 1.0
 
 
+def _profile_selection_value(record, key: str):
+    if isinstance(record, dict):
+        return record.get(key)
+    return getattr(record, key, None)
+
+
+def _profile_selection_pool(available_profiles) -> list[str]:
+    if isinstance(available_profiles, str):
+        return [
+            profile.strip()
+            for profile in available_profiles.split(",")
+            if profile.strip()
+        ]
+    if isinstance(available_profiles, (list, tuple, set)):
+        return [
+            str(profile).strip()
+            for profile in available_profiles
+            if str(profile).strip()
+        ]
+    raw = str(available_profiles or "").strip()
+    return [raw] if raw else []
+
+
+def _profile_selection_quality(prediction, example) -> float:
+    """1.0 only for the exact recorded profile inside the recorded pool."""
+    selected = str(
+        _profile_selection_value(prediction, "selected_profile") or ""
+    ).strip()
+    recorded = str(_profile_selection_value(example, "selected_profile") or "").strip()
+    available = _profile_selection_pool(
+        _profile_selection_value(example, "available_profiles")
+    )
+    if not selected or not recorded or not available:
+        return 0.0
+    return 1.0 if selected == recorded and recorded in available else 0.0
+
+
+def _profile_selection_metric(example, prediction, trace=None) -> bool:
+    """BootstrapFewShot metric: keep only exact profile matches."""
+    del trace
+    return _profile_selection_quality(prediction, example) == 1.0
+
+
+def _profile_selection_scores(module, holdout) -> float:
+    """Mean ``_profile_selection_quality`` over the held-out profile spans."""
+    scores = []
+    for example in holdout:
+        prediction = module(
+            **{k: getattr(example, k) for k in _PROFILE_SELECTION_INPUTS}
+        )
+        scores.append(_profile_selection_quality(prediction, example))
+    return sum(scores) / len(scores) if scores else 0.0
+
+
 def _select_simba_artifact(
     baseline_score: float,
     current_score: Optional[float],
@@ -2064,6 +2118,27 @@ def _query_enhancement_example(record: Dict[str, Any]):
     return dspy.Example(**fields).with_inputs(*_QUERY_ENHANCEMENT_INPUTS)
 
 
+_PROFILE_SELECTION_INPUTS = ("query", "available_profiles")
+
+
+def _profile_selection_example(record: Dict[str, Any]):
+    """A DSPy example carrying a profile-selection span or approved record."""
+    import dspy
+
+    query_intent = record.get("query_intent", record.get("intent", ""))
+    fields = {
+        "query": record["query"],
+        "available_profiles": record["available_profiles"],
+        "selected_profile": record["selected_profile"],
+        "confidence": str(record.get("confidence", 0.0)),
+        "reasoning": record.get("reasoning", ""),
+        "query_intent": query_intent,
+        "modality": record.get("modality", "video"),
+        "complexity": record.get("complexity", "simple"),
+    }
+    return dspy.Example(**fields).with_inputs(*_PROFILE_SELECTION_INPUTS)
+
+
 def _query_enhancement_scores(module, holdout) -> tuple[float, int]:
     """Mean ``_query_enhancement_quality`` over scoreable holdout inputs."""
     scores = []
@@ -2935,51 +3010,114 @@ async def run_profile_optimization(
 
     logger.info("Found %d profile_selection spans", len(spans_df))
 
-    # Build DSPy training examples from the canonical span slots.
-    import dspy
-
     profile_pairs = _profile_selection_pairs(
         spans_df, config_manager=config_manager, tenant_id=tenant_id
     )
-    consumed_example_ids = [pair["example_id"] for pair in profile_pairs]
-    trainset = [
-        dspy.Example(
-            query=pair["query"],
-            available_profiles=pair["available_profiles"],
-            selected_profile=pair["selected_profile"],
-            confidence=str(pair["confidence"]),
-            reasoning=f"Selected {pair['selected_profile']} for {pair['modality']}/{pair['complexity']} query",
-            query_intent=pair["intent"],
-            modality=pair["modality"],
-            complexity=pair["complexity"],
-        ).with_inputs("query", "available_profiles")
-        for pair in profile_pairs
-    ]
-
-    # Merge approved synthetic data
     synthetic_demos = await _load_approved_synthetic_data(
         telemetry_provider, tenant_id, "profile"
     )
-    consumed_example_ids.extend(demo["example_id"] for demo in synthetic_demos)
-    production_count = len(trainset)
+    consumed_example_ids = [pair["example_id"] for pair in profile_pairs]
+    records = list(profile_pairs)
     for demo in synthetic_demos:
-        # ProfileSelectionSignature has query AND available_profiles as
-        # InputFields; match the production trainset's input set so
-        # BootstrapFewShot doesn't see split-shape demos.
         projected = _project_approved_optimizer_example("profile", demo)
-        example = dspy.Example(**projected).with_inputs("query", "available_profiles")
-        trainset.append(example)
-    if not trainset:
+        consumed_example_ids.append(demo["example_id"])
+        records.append(
+            {
+                "query": projected["query"],
+                "available_profiles": projected["available_profiles"],
+                "selected_profile": projected["selected_profile"],
+                "confidence": 0.0,
+                "reasoning": projected["reasoning"],
+                "query_intent": projected["query_intent"],
+                "modality": projected["modality"],
+                "complexity": projected["complexity"],
+                "example_id": demo["example_id"],
+            }
+        )
+    if not records:
         logger.info("No valid production or approved synthetic examples")
         return {"status": "no_data", "spans_found": len(spans_df), "examples": 0}
+
+    from cogniverse_agents.optimizer.artifact_manager import ArtifactManager
+
+    artifact_manager = ArtifactManager(telemetry_provider, tenant_id)
+    current_blob = await artifact_manager.load_blob("model", "profile_selection")
+    min_samples, min_unique_queries = _population_floor_from_config(
+        tenant_id, config_manager
+    )
+    population = len(records)
+    distinct_queries = len({record["query"] for record in records})
+    if population < min_samples or distinct_queries < min_unique_queries:
+        logger.warning(
+            "Profile selection below population floor for %s: population=%d "
+            "(min %d) distinct_queries=%d (min %d)",
+            tenant_id,
+            population,
+            min_samples,
+            distinct_queries,
+            min_unique_queries,
+        )
+        _, version = await artifact_manager.save_blob_versioned(
+            "model",
+            "profile_selection",
+            current_blob or "{}",
+            consumed_example_ids=consumed_example_ids,
+            decision="insufficient_population",
+            scored=False,
+            base_score=None,
+            candidate_score=None,
+        )
+        return {
+            "status": "insufficient_population",
+            "spans_found": len(spans_df),
+            "examples": population,
+            "distinct_queries": distinct_queries,
+            "min_samples": min_samples,
+            "min_unique_queries": min_unique_queries,
+            "version": version,
+        }
+
+    min_holdout = max(1, min_samples // 10)
+    served_records = []
+    for record in records:
+        served_record = dict(record)
+        if (
+            served_record["example_id"].startswith("span:")
+            and str(served_record.get("available_profiles") or "").strip()
+            and str(served_record.get("selected_profile") or "").strip()
+        ):
+            served_record["source_text"] = served_record["available_profiles"]
+            served_record["grounding_context"] = served_record["selected_profile"]
+        else:
+            served_record["source_text"] = ""
+            served_record["grounding_context"] = ""
+        served_records.append(served_record)
+
+    train_records, holdout_records = _split_served_holdout(served_records, min_holdout)
+    trainset = [_profile_selection_example(record) for record in train_records]
+    holdout = [_profile_selection_example(record) for record in holdout_records]
     logger.info(
         "Merged %d synthetic + %d production = %d total training examples",
         len(synthetic_demos),
-        production_count,
-        len(trainset),
+        len(profile_pairs),
+        len(records),
     )
+    if not holdout:
+        logger.warning(
+            "No served-scoreable holdout material for %s profile selection — "
+            "nothing persisted",
+            tenant_id,
+        )
+        return {
+            "status": "no_eval_material",
+            "spans_found": len(spans_df),
+            "training_examples": len(trainset),
+            "holdout_examples": 0,
+            "holdout_source": "served",
+        }
 
-    # Compile DSPy module
+    import dspy
+
     from cogniverse_agents.profile_selection_agent import ProfileSelectionModule
     from cogniverse_foundation.config.llm_factory import create_dspy_lm
     from cogniverse_foundation.config.utils import get_config
@@ -2990,45 +3128,83 @@ async def run_profile_optimization(
 
     dspy.configure(lm=create_dspy_lm(llm_endpoint))
 
-    module = ProfileSelectionModule()
-
-    teleprompter = _create_teleprompter(
-        len(trainset),
-        teacher_settings={"lm": create_dspy_lm(llm_config.resolve_teacher())},
-    )
-
     try:
-        compiled = teleprompter.compile(module, trainset=trainset)
+        baseline_score = _profile_selection_scores(ProfileSelectionModule(), holdout)
 
-        import json as _json
+        current_module = None
+        if current_blob:
+            current_module = ProfileSelectionModule()
+            current_module.load_state(json.loads(current_blob))
 
-        from cogniverse_agents.optimizer.artifact_manager import ArtifactManager
+        compiled = None
+        if trainset:
+            teleprompter = _create_teleprompter(
+                len(trainset),
+                teacher_settings={"lm": create_dspy_lm(llm_config.resolve_teacher())},
+                metric=_profile_selection_metric,
+            )
+            compiled = teleprompter.compile(ProfileSelectionModule(), trainset=trainset)
 
-        artifact_manager = ArtifactManager(telemetry_provider, tenant_id)
-        _, version = await artifact_manager.save_blob_versioned(
-            "model",
-            "profile_selection",
-            _json.dumps(compiled.dump_state(), default=str),
-            consumed_example_ids=consumed_example_ids,
-            decision="promote",
-            scored=False,
-            base_score=None,
-            candidate_score=None,
+        current_score = (
+            _profile_selection_scores(current_module, holdout)
+            if current_module is not None
+            else None
         )
-        await artifact_manager.activate_version("model", "profile_selection", version)
-
-        logger.info("Profile optimization complete — v%d", version)
-        return {
-            "status": "success",
-            "spans_found": len(spans_df),
-            "training_examples": len(trainset),
-            "version": version,
-            "consumed_example_ids": consumed_example_ids,
-        }
-
+        candidate_score = (
+            _profile_selection_scores(compiled, holdout)
+            if compiled is not None
+            else None
+        )
     except Exception as e:
         logger.error("Profile DSPy compilation failed: %s", e)
         return {"status": "failed", "error": str(e)}
+
+    decision = _select_simba_artifact(
+        baseline_score,
+        current_score,
+        candidate_score,
+        _min_improvement_from_config(tenant_id, config_manager),
+    )
+    run_module = {
+        "promote": compiled,
+        "rollback": ProfileSelectionModule(),
+    }.get(decision, compiled or ProfileSelectionModule())
+    _, version = await artifact_manager.save_blob_versioned(
+        "model",
+        "profile_selection",
+        json.dumps(run_module.dump_state(), default=str),
+        consumed_example_ids=consumed_example_ids,
+        decision=decision,
+        scored=candidate_score is not None,
+        base_score=baseline_score,
+        candidate_score=candidate_score,
+    )
+    if decision in ("promote", "rollback"):
+        await artifact_manager.activate_version("model", "profile_selection", version)
+
+    logger.info(
+        "Profile optimization %s v%d (baseline=%.3f current=%s candidate=%s, "
+        "%d examples)",
+        decision,
+        version,
+        baseline_score,
+        current_score,
+        candidate_score,
+        len(consumed_example_ids),
+    )
+    return {
+        "status": "success",
+        "spans_found": len(spans_df),
+        "training_examples": len(trainset),
+        "holdout_examples": len(holdout),
+        "holdout_source": "served",
+        "baseline_score": baseline_score,
+        "current_score": current_score,
+        "candidate_score": candidate_score,
+        "decision": decision,
+        "version": version,
+        "consumed_example_ids": consumed_example_ids,
+    }
 
 
 async def run_entity_extraction_optimization(
