@@ -1881,15 +1881,17 @@ def _assert_simba_served_the_best_module(result: dict, blob_before: str) -> dict
 
     Every query-enhancement span in the module window (the fixture's seeded
     calls and the orchestrator's own sub-calls) plus every approved synthetic
-    example is a record; the holdout is the deterministic quarter; the module
-    persisted after the run is the one that scored best on that holdout and
-    never scores below the base module. Returns the persisted state.
+    example is a record; the holdout is the deterministic quarter of the
+    served-scoreable records; the module persisted after the run is the one
+    that scored best on that holdout and never scores below the base module.
+    Returns the persisted state.
     """
     approved = _approved_query_enhancement_examples_in_pod()
     assert set(result) == {
         "status",
         "spans_found",
         "examples",
+        "served_scoreable_examples",
         "training_examples",
         "holdout_examples",
         "holdout_source",
@@ -1902,7 +1904,9 @@ def _assert_simba_served_the_best_module(result: dict, blob_before: str) -> dict
     }, result
     assert result["status"] == "success", result
     assert result["examples"] == result["spans_found"] + len(approved), result
-    assert result["holdout_examples"] == max(1, result["examples"] // 4), result
+    assert result["holdout_examples"] == max(
+        1, result["served_scoreable_examples"] // 4
+    ), result
     assert (
         result["training_examples"] <= result["examples"] - result["holdout_examples"]
     )
@@ -2134,6 +2138,7 @@ class TestProfileOptimization:
         assert set(result) == {
             "status",
             "spans_found",
+            "served_scoreable_examples",
             "training_examples",
             "holdout_examples",
             "holdout_source",
@@ -2152,7 +2157,9 @@ class TestProfileOptimization:
         assert result["spans_found"] >= expected_min_samples, result
         assert result["holdout_source"] == "served", result
         assert result["decision"] in BLOB_VERSION_DECISIONS, result
-        assert result["holdout_examples"] == max(1, result["spans_found"] // 4), result
+        assert result["holdout_examples"] == max(
+            1, result["served_scoreable_examples"] // 4
+        ), result
         assert result["training_examples"] == (
             result["spans_found"] - result["holdout_examples"] + len(approved)
         ), result
@@ -2208,6 +2215,7 @@ class TestProfileOptimization:
         assert set(result) == {
             "status",
             "spans_found",
+            "served_scoreable_examples",
             "training_examples",
             "holdout_examples",
             "holdout_source",
@@ -2226,7 +2234,9 @@ class TestProfileOptimization:
         assert result["spans_found"] >= expected_min_samples, result
         assert result["holdout_source"] == "served", result
         assert result["decision"] in BLOB_VERSION_DECISIONS, result
-        assert result["holdout_examples"] == max(1, result["spans_found"] // 4), result
+        assert result["holdout_examples"] == max(
+            1, result["served_scoreable_examples"] // 4
+        ), result
         assert result["training_examples"] == (
             result["spans_found"] - result["holdout_examples"] + len(approved)
         ), result
@@ -2319,6 +2329,7 @@ class TestProfileSelectionArtifactReload:
         assert set(result) == {
             "status",
             "spans_found",
+            "served_scoreable_examples",
             "training_examples",
             "holdout_examples",
             "holdout_source",
@@ -2337,7 +2348,9 @@ class TestProfileSelectionArtifactReload:
         assert result["spans_found"] >= expected_min_samples, result
         assert result["holdout_source"] == "served", result
         assert result["decision"] in BLOB_VERSION_DECISIONS, result
-        assert result["holdout_examples"] == max(1, result["spans_found"] // 4), result
+        assert result["holdout_examples"] == max(
+            1, result["served_scoreable_examples"] // 4
+        ), result
         assert result["training_examples"] == (
             result["spans_found"] - result["holdout_examples"] + len(approved)
         ), result
@@ -2532,6 +2545,7 @@ class TestEntityExtractionOptimization:
         assert set(result) == {
             "status",
             "spans_found",
+            "served_scoreable_examples",
             "training_examples",
             "holdout_examples",
             "holdout_source",
@@ -2550,7 +2564,9 @@ class TestEntityExtractionOptimization:
         assert result["spans_found"] >= expected_min_samples, result
         assert result["holdout_source"] == "served", result
         assert result["decision"] in BLOB_VERSION_DECISIONS, result
-        assert result["holdout_examples"] == max(1, result["spans_found"] // 4), result
+        assert result["holdout_examples"] == max(
+            1, result["served_scoreable_examples"] // 4
+        ), result
         assert result["training_examples"] == (
             result["spans_found"] - result["holdout_examples"] + len(approved)
         ), result
@@ -2608,6 +2624,7 @@ class TestEntityExtractionOptimization:
         assert set(result) == {
             "status",
             "spans_found",
+            "served_scoreable_examples",
             "training_examples",
             "holdout_examples",
             "holdout_source",
@@ -2626,7 +2643,9 @@ class TestEntityExtractionOptimization:
         assert result["spans_found"] >= expected_min_samples, result
         assert result["holdout_source"] == "served", result
         assert result["decision"] in BLOB_VERSION_DECISIONS, result
-        assert result["holdout_examples"] == max(1, result["spans_found"] // 4), result
+        assert result["holdout_examples"] == max(
+            1, result["served_scoreable_examples"] // 4
+        ), result
         assert result["training_examples"] == (
             result["spans_found"] - result["holdout_examples"] + len(approved)
         ), result
@@ -2890,6 +2909,7 @@ class TestArtifactLoadingRoundTrip:
         assert set(result) == {
             "status",
             "spans_found",
+            "served_scoreable_examples",
             "training_examples",
             "holdout_examples",
             "holdout_source",
@@ -2908,7 +2928,9 @@ class TestArtifactLoadingRoundTrip:
         assert result["spans_found"] >= expected_min_samples, result
         assert result["holdout_source"] == "served", result
         assert result["decision"] in BLOB_VERSION_DECISIONS, result
-        assert result["holdout_examples"] == max(1, result["spans_found"] // 4), result
+        assert result["holdout_examples"] == max(
+            1, result["served_scoreable_examples"] // 4
+        ), result
         assert result["training_examples"] == (
             result["spans_found"] - result["holdout_examples"] + len(approved)
         ), result
@@ -3015,6 +3037,7 @@ class TestArtifactLoadingRoundTrip:
         assert set(result) == {
             "status",
             "spans_found",
+            "served_scoreable_examples",
             "training_examples",
             "holdout_examples",
             "holdout_source",

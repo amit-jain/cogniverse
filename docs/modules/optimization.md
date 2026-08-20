@@ -292,14 +292,15 @@ async def run_profile_optimization(
     The agent reloads the artifact on each dispatch via am.load_blob("model", "profile_selection").
 
     Returns:
-      - {"status": "success", "spans_found": int, "training_examples": int,
-         "holdout_examples": int, "holdout_source": "served",
+      - {"status": "success", "spans_found": int, "served_scoreable_examples": int,
+         "training_examples": int, "holdout_examples": int, "holdout_source": "served",
          "baseline_score": float, "current_score": float | None,
          "candidate_score": float | None,
          "decision": "promote" | "keep" | "rollback" | "reject",
          "version": int, "consumed_example_ids": list[str]}
       - {"status": "no_data", "spans_found": int, "examples": 0}
-      - {"status": "no_eval_material", "spans_found": int, "training_examples": int,
+      - {"status": "no_eval_material", "spans_found": int,
+         "served_scoreable_examples": int, "training_examples": int,
          "holdout_examples": 0, "holdout_source": "served"}
       - {"status": "insufficient_population", "spans_found": int, "examples": int,
          "distinct_queries": int, "min_samples": int, "min_unique_queries": int,
@@ -335,8 +336,8 @@ not the SIMBA algorithm.
 `cogniverse.query_enhancement` spans into served-call records (`input.value`, `input.source_text`,
 `input.grounding_context` → `enhanced_query`, `expansion_terms`, `synonyms`, `context_additions`,
 `confidence`), appends approved synthetic demos for `"query_enhancement"`, and splits the records with
-`_split_train_holdout` (deterministic ~25% tail holdout). Trainable records — a non-identity enhancement
-with at least one expansion term — compile the module via
+`_split_served_holdout` (deterministic ~25% tail holdout over served-scoreable spans). Trainable records
+— a non-identity enhancement with at least one expansion term — compile the module via
 `_create_teleprompter(len(trainset), metric=_query_enhancement_metric)`; every holdout record is an
 evaluation probe. `_query_enhancement_quality` scores a module's own output for the probe inputs (1.0 when
 the enhanced query differs from the query, has expansion terms and, given a grounding context, names one
@@ -367,14 +368,15 @@ version on `promote` or `rollback`. The artifact key is `("model", "entity_extra
 `EntityExtractionAgent` reloads it via `am.load_blob("model", "entity_extraction")`.
 
 Returns:
-  - {"status": "success", "spans_found": int, "training_examples": int,
-     "holdout_examples": int, "holdout_source": "served",
+  - {"status": "success", "spans_found": int, "served_scoreable_examples": int,
+     "training_examples": int, "holdout_examples": int, "holdout_source": "served",
      "baseline_score": float, "current_score": float | None,
      "candidate_score": float | None,
      "decision": "promote" | "keep" | "rollback" | "reject",
      "version": int, "consumed_example_ids": list[str]}
   - {"status": "no_data", "spans_found": int, "examples": 0}
-  - {"status": "no_eval_material", "spans_found": int, "training_examples": int,
+  - {"status": "no_eval_material", "spans_found": int,
+     "served_scoreable_examples": int, "training_examples": int,
      "holdout_examples": 0, "holdout_source": "served"}
   - {"status": "insufficient_population", "spans_found": int, "examples": int,
      "distinct_queries": int, "min_samples": int, "min_unique_queries": int,
