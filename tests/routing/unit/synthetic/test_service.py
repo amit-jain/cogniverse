@@ -15,6 +15,7 @@ from unittest.mock import AsyncMock
 
 import pytest
 
+from cogniverse_foundation.config.manager import ConfigManager
 from cogniverse_foundation.config.unified_config import (
     AgentMappingRule,
     BackendConfig,
@@ -23,6 +24,7 @@ from cogniverse_foundation.config.unified_config import (
     OptimizerGenerationConfig,
     ProfileScoringRule,
     SyntheticGeneratorConfig,
+    SystemConfig,
 )
 from cogniverse_synthetic.registry import OPTIMIZER_REGISTRY, get_optimizer_config
 from cogniverse_synthetic.schemas import (
@@ -31,6 +33,7 @@ from cogniverse_synthetic.schemas import (
     WorkflowExecutionSchema,
 )
 from cogniverse_synthetic.service import SyntheticDataService
+from tests.utils.memory_store import InMemoryConfigStore
 
 pytestmark = [pytest.mark.unit]
 
@@ -175,6 +178,46 @@ def create_test_backend_config() -> BackendConfig:
             ),
         },
     )
+
+
+def _profile_generation_config_manager(
+    profiles: dict[str, BackendProfileConfig],
+    *,
+    tenant_id: str = "test:unit",
+    tenant_ids: tuple[str, ...] | None = None,
+) -> ConfigManager:
+    config_manager = ConfigManager(store=InMemoryConfigStore())
+    service_urls: dict[str, str] = {}
+    seeded_tenant_ids = tenant_ids if tenant_ids is not None else (tenant_id,)
+    for profile_name, profile in profiles.items():
+        profile_dict = profile.to_dict()
+        inference_services = profile_dict.get("inference_services")
+        if isinstance(inference_services, dict):
+            embedding_service = inference_services.get("embedding")
+            if isinstance(embedding_service, str) and embedding_service.strip():
+                service_urls[embedding_service] = f"http://{embedding_service}.invalid"
+        for seeded_tenant_id in seeded_tenant_ids:
+            config_manager.add_backend_profile(
+                profile,
+                tenant_id=seeded_tenant_id,
+            )
+    config_manager.set_system_config(SystemConfig(inference_service_urls=service_urls))
+    return config_manager
+
+
+def _attach_profile_config_manager(
+    backend,
+    profiles: dict[str, BackendProfileConfig],
+    *,
+    tenant_id: str = "test:unit",
+    tenant_ids: tuple[str, ...] | None = None,
+):
+    backend.config_manager = _profile_generation_config_manager(
+        profiles,
+        tenant_id=tenant_id,
+        tenant_ids=tenant_ids,
+    )
+    return backend
 
 
 def _grounded_video_records(schema: str) -> list[dict[str, str]]:
@@ -326,7 +369,46 @@ async def _route_grounded_query(query: str, tenant_id: str) -> dict:
 async def _label_grounded_profile(
     query: str, available_profiles: list[str], tenant_id: str
 ) -> dict:
-    selected_profile = available_profiles[0]
+    lowered_query = query.lower()
+    preferred_modalities = (
+        ("video", ("video", "frame", "footage")),
+        ("audio", ("audio", "transcript")),
+        ("image", ("image", "visual", "diagram")),
+        ("document", ("document", "text", "notes")),
+        ("wiki", ("wiki",)),
+    )
+    selected_profile = None
+    for modality, keywords in preferred_modalities:
+        if not any(keyword in lowered_query for keyword in keywords):
+            continue
+        for profile_name in available_profiles:
+            normalized_profile = profile_name.lower()
+            if modality == "audio" and (
+                normalized_profile.startswith("audio") or profile_name == "profile_a"
+            ):
+                selected_profile = profile_name
+                break
+            if modality == "video" and normalized_profile.startswith("video"):
+                selected_profile = profile_name
+                break
+            if modality == "image" and normalized_profile.startswith("image"):
+                selected_profile = profile_name
+                break
+            if modality == "document" and (
+                normalized_profile.startswith("document")
+                or "text" in normalized_profile
+                or "visual" in normalized_profile
+                or profile_name == "profile_b"
+            ):
+                selected_profile = profile_name
+                break
+            if modality == "wiki" and "wiki" in normalized_profile:
+                selected_profile = profile_name
+                break
+        if selected_profile is not None:
+            break
+    if selected_profile is None:
+        selected_profile = available_profiles[0]
     if "audio" in selected_profile or selected_profile == "profile_a":
         modality = "audio"
     elif "document" in selected_profile or selected_profile == "profile_b":
@@ -362,9 +444,17 @@ def create_test_service(
     agents_config: dict | None = None,
     generator_config: SyntheticGeneratorConfig | None = None,
 ) -> SyntheticDataService:
+    backend_config = create_test_backend_config()
     return SyntheticDataService(
-        backend=_GroundedBackend(),
-        backend_config=create_test_backend_config(),
+        backend=_attach_profile_config_manager(
+            _GroundedBackend(),
+            backend_config.profiles,
+            tenant_id=backend_config.tenant_id,
+        ),
+        config_manager=_profile_generation_config_manager(
+            backend_config.profiles, tenant_id=backend_config.tenant_id
+        ),
+        backend_config=backend_config,
         generator_config=(
             create_test_generator_config()
             if generator_config is None
@@ -1355,7 +1445,14 @@ class TestServiceWithBackendConfig:
             for name in ("document_visual_colpali", "document_text_semantic")
         }
         service = SyntheticDataService(
-            backend=_GroundedBackend(),
+            backend=_attach_profile_config_manager(
+                _GroundedBackend(),
+                configured_profiles,
+                tenant_id="test:unit",
+            ),
+            config_manager=_profile_generation_config_manager(
+                configured_profiles, tenant_id="test:unit"
+            ),
             backend_config=BackendConfig(
                 profiles=configured_profiles,
                 tenant_id="test:unit",
@@ -1377,7 +1474,7 @@ class TestServiceWithBackendConfig:
         assert response.count == 1
         assert response.selected_profiles == ["document_text_semantic"]
         assert {item["available_profiles"] for item in response.data} == {
-            "document_text_semantic"
+            "document_text_semantic,document_visual_colpali"
         }
         assert {item["selected_profile"] for item in response.data} == {
             "document_text_semantic"
@@ -1482,7 +1579,14 @@ class TestServiceWithBackendConfig:
             pipeline_config={"transcribe_audio": True},
         )
         service = SyntheticDataService(
-            backend=_GroundedBackend(),
+            backend=_attach_profile_config_manager(
+                _GroundedBackend(),
+                {"audio_semantic": audio_profile},
+                tenant_id="test:unit",
+            ),
+            config_manager=_profile_generation_config_manager(
+                {"audio_semantic": audio_profile}, tenant_id="test:unit"
+            ),
             backend_config=BackendConfig(
                 profiles={"audio_semantic": audio_profile},
                 tenant_id="test:unit",
@@ -1533,7 +1637,14 @@ class TestServiceWithBackendConfig:
             ),
         }
         service = SyntheticDataService(
-            backend=_GroundedBackend(),
+            backend=_attach_profile_config_manager(
+                _GroundedBackend(),
+                profiles,
+                tenant_id="test:unit",
+            ),
+            config_manager=_profile_generation_config_manager(
+                profiles, tenant_id="test:unit"
+            ),
             backend_config=BackendConfig(profiles=profiles, tenant_id="test:unit"),
             generator_config=create_test_generator_config(),
             agents_config=create_test_agents_config(),
@@ -1559,7 +1670,7 @@ class TestServiceWithBackendConfig:
                     "find Curie lecture in audio content together with "
                     "Radium notes in document content"
                 ),
-                "available_profiles": "audio_semantic,document_semantic",
+                "available_profiles": "document_semantic,audio_semantic",
                 "selected_profile": "audio_semantic",
                 "reasoning": "Production selector chose audio_semantic.",
                 "query_intent": "audio_search",
@@ -1587,7 +1698,14 @@ class TestServiceWithBackendConfig:
             ),
         }
         service = SyntheticDataService(
-            backend=_GroundedBackend(),
+            backend=_attach_profile_config_manager(
+                _GroundedBackend(),
+                profiles,
+                tenant_id="test:unit",
+            ),
+            config_manager=_profile_generation_config_manager(
+                profiles, tenant_id="test:unit"
+            ),
             backend_config=BackendConfig(profiles=profiles, tenant_id="test:unit"),
             generator_config=create_test_generator_config(),
             agents_config=create_test_agents_config(),
@@ -1613,7 +1731,7 @@ class TestServiceWithBackendConfig:
                     "find Curie lecture in audio content together with "
                     "Radium notes in document content"
                 ),
-                "available_profiles": "audio_semantic,document_semantic",
+                "available_profiles": "document_semantic,audio_semantic",
                 "selected_profile": "audio_semantic",
                 "reasoning": "Production selector chose audio_semantic.",
                 "query_intent": "audio_search",
@@ -1625,7 +1743,7 @@ class TestServiceWithBackendConfig:
                     "find Radium notes in document content together with "
                     "Curie lecture in audio content"
                 ),
-                "available_profiles": "audio_semantic,document_semantic",
+                "available_profiles": "document_semantic,audio_semantic",
                 "selected_profile": "audio_semantic",
                 "reasoning": "Production selector chose audio_semantic.",
                 "query_intent": "audio_search",
@@ -1659,7 +1777,14 @@ class TestServiceWithBackendConfig:
             ),
         }
         service = SyntheticDataService(
-            backend=_GroundedBackend(),
+            backend=_attach_profile_config_manager(
+                _GroundedBackend(),
+                profiles,
+                tenant_id="test:unit",
+            ),
+            config_manager=_profile_generation_config_manager(
+                profiles, tenant_id="test:unit"
+            ),
             backend_config=BackendConfig(profiles=profiles, tenant_id="test:unit"),
             generator_config=create_test_generator_config(),
             agents_config=create_test_agents_config(),
@@ -1726,8 +1851,17 @@ def _tenant_profile_service(backend) -> SyntheticDataService:
             embedding_type="single_vector",
         ),
     }
+    tenant_ids = tuple(getattr(backend, "deployed_schemas", {}).keys()) or (
+        "test:unit",
+    )
+    _attach_profile_config_manager(
+        backend,
+        profiles,
+        tenant_ids=tenant_ids,
+    )
     return SyntheticDataService(
         backend=backend,
+        config_manager=backend.config_manager,
         backend_config=BackendConfig(profiles=profiles, tenant_id="test:unit"),
         generator_config=create_test_generator_config(),
         agents_config=create_test_agents_config(),
@@ -1741,19 +1875,22 @@ async def test_live_backend_samples_a_deployed_configured_profile_schema():
     profile_name = "video_frames"
     schema_name = "video_videoprism_large_mv_chunk_30s"
     backend = _TenantProfileBackend({tenant_id: {schema_name}})
+    profiles = {
+        profile_name: BackendProfileConfig(
+            profile_name=profile_name,
+            type="video",
+            schema_name=schema_name,
+            embedding_type="multi_vector",
+            pipeline_config={"extract_keyframes": True},
+        )
+    }
+    _attach_profile_config_manager(backend, profiles, tenant_id=tenant_id)
     service = SyntheticDataService(
         backend=backend,
+        config_manager=backend.config_manager,
         backend_config=BackendConfig(
             tenant_id="test:unit",
-            profiles={
-                profile_name: BackendProfileConfig(
-                    profile_name=profile_name,
-                    type="video",
-                    schema_name=schema_name,
-                    embedding_type="multi_vector",
-                    pipeline_config={"extract_keyframes": True},
-                )
-            },
+            profiles=profiles,
         ),
         generator_config=create_test_generator_config(),
         agents_config=create_test_agents_config(),
@@ -1808,6 +1945,7 @@ async def test_generation_uses_only_each_tenants_deployed_profiles_concurrently(
         ]
     )
 
+    expected_available_profiles = "profile_b,profile_a"
     for tenant, response in zip(tenants, responses, strict=True):
         expected_profile = (
             "profile_a" if deployed[tenant] == {"audio_content"} else "profile_b"
@@ -1815,7 +1953,7 @@ async def test_generation_uses_only_each_tenants_deployed_profiles_concurrently(
         expected_modality = "audio" if expected_profile == "profile_a" else "document"
         expected_schema = next(iter(deployed[tenant]))
         assert response.selected_profiles == [expected_profile]
-        assert response.data[0]["available_profiles"] == expected_profile
+        assert response.data[0]["available_profiles"] == expected_available_profiles
         assert response.data[0]["selected_profile"] == expected_profile
         assert response.data[0]["modality"] == expected_modality
         assert response.data[0]["query_intent"] == f"{expected_modality}_search"
