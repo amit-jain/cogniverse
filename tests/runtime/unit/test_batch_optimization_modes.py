@@ -1567,6 +1567,54 @@ def _qe_span_row(
     }
 
 
+def _profile_span_row(
+    query: str,
+    *,
+    span_id: str,
+    available_profiles: list[str],
+    selected_profile: str,
+    confidence: float = 0.9,
+) -> dict:
+    return {
+        "context.span_id": span_id,
+        "attributes.input.value": query,
+        "attributes.available_profiles": ", ".join(available_profiles),
+        "attributes.output.value": json.dumps(
+            {
+                "selected_profile": selected_profile,
+                "modality": "video",
+                "complexity": "simple",
+                "intent": "video_search",
+                "confidence": confidence,
+                "reasoning": f"Selected {selected_profile}",
+            }
+        ),
+    }
+
+
+def _profile_example(
+    *, selected: str, available: list[str] | str, query: str = "find a clip"
+):
+    import dspy
+
+    return dspy.Example(
+        query=query,
+        available_profiles=available,
+        selected_profile=selected,
+        confidence="0.9",
+        reasoning="Selected profile for the query.",
+        query_intent="video_search",
+        modality="video",
+        complexity="simple",
+    ).with_inputs("query", "available_profiles")
+
+
+def _sel(selected: str):
+    import dspy
+
+    return dspy.Prediction(selected_profile=selected)
+
+
 def _example(**kwargs):
     import dspy
 
@@ -2281,6 +2329,376 @@ class TestSimbaQueryEnhancement:
         assert lineage[0]["consumed_example_ids"] == ["span:span-0"]
         assert lineage[0]["scored"] is False
         assert self._active_version(provider, "simba_query_enhancement") is None
+
+
+class TestProfileSelectionOptimization:
+    @staticmethod
+    def _served_state() -> str:
+        from cogniverse_agents.profile_selection_agent import ProfileSelectionModule
+
+        state = json.loads(
+            json.dumps(ProfileSelectionModule().dump_state(), default=str)
+        )
+        state["selector.predict"]["demos"] = [
+            {
+                "query": "find basketball highlights",
+                "available_profiles": (
+                    "video_colpali_smol500_mv_frame,video_colqwen_omni_mv_chunk_30s"
+                ),
+                "selected_profile": "video_colpali_smol500_mv_frame",
+                "confidence": "0.9",
+                "reasoning": "Short clip search works best with frame-level ColPali",
+                "query_intent": "video_search",
+                "modality": "video",
+                "complexity": "simple",
+            }
+        ]
+        return json.dumps(state, default=str)
+
+    async def _run(
+        self,
+        provider,
+        *,
+        current_blob: str,
+        floor: tuple[int, int],
+        min_improvement: float = 0.05,
+        score: float = 1.0,
+        score_by_module=None,
+    ):
+        from cogniverse_runtime.optimization_cli import run_profile_optimization
+
+        state = {
+            "active_blob": current_blob,
+            "versioned_saves": [],
+            "activate_calls": [],
+        }
+
+        class FakeArtifactManager:
+            def __init__(self, received_provider, tenant_id):
+                assert received_provider is provider
+                assert tenant_id == "test:unit"
+
+            async def load_blob(self, kind, key):
+                assert (kind, key) == ("model", "profile_selection")
+                return state["active_blob"]
+
+            async def save_blob_versioned(
+                self,
+                kind,
+                key,
+                content,
+                *,
+                consumed_example_ids,
+                decision,
+                scored,
+                base_score,
+                candidate_score,
+            ):
+                state["versioned_saves"].append(
+                    {
+                        "kind": kind,
+                        "key": key,
+                        "content": content,
+                        "consumed_example_ids": list(consumed_example_ids),
+                        "decision": decision,
+                        "scored": scored,
+                        "base_score": base_score,
+                        "candidate_score": candidate_score,
+                    }
+                )
+                return f"artifact-{len(state['versioned_saves'])}", len(
+                    state["versioned_saves"]
+                )
+
+            async def activate_version(self, kind, key, version):
+                state["activate_calls"].append((kind, key, version))
+                state["active_blob"] = state["versioned_saves"][version - 1]["content"]
+                return {"active": {"version": version, "activated_at": "now"}}
+
+        class FakeTeleprompter:
+            def compile(self, module, trainset):
+                state["compiled_module"] = type(module).__name__
+                state["trainset"] = [
+                    example.toDict() if hasattr(example, "toDict") else example
+                    for example in trainset
+                ]
+
+                class Compiled:
+                    def dump_state(self):
+                        return {"compiled": "profile"}
+
+                return Compiled()
+
+        class FakeLLMConfig:
+            def resolve(self, purpose):
+                return "student-endpoint"
+
+            def resolve_teacher(self):
+                return "teacher-endpoint"
+
+        class FakeConfig:
+            def get_llm_config(self):
+                return FakeLLMConfig()
+
+        mgr = FakeTelemetryManager(provider)
+        p1, p2 = _patch_infra(mgr)
+        with (
+            p1,
+            p2,
+            patch(
+                "cogniverse_foundation.config.utils.get_config",
+                return_value=FakeConfig(),
+            ),
+            patch(
+                "cogniverse_foundation.config.llm_factory.create_dspy_lm",
+                return_value=object(),
+            ),
+            patch(
+                "cogniverse_runtime.optimization_cli._create_teleprompter",
+                return_value=FakeTeleprompter(),
+            ),
+            patch(
+                "cogniverse_runtime.optimization_cli._profile_selection_scores",
+                side_effect=score_by_module or (lambda module, holdout: score),
+            ),
+            patch(
+                "cogniverse_runtime.optimization_cli._min_improvement_from_config",
+                return_value=min_improvement,
+            ),
+            patch(
+                "cogniverse_runtime.optimization_cli._population_floor_from_config",
+                return_value=floor,
+            ),
+            patch(
+                "cogniverse_agents.optimizer.artifact_manager.ArtifactManager",
+                FakeArtifactManager,
+            ),
+            patch("dspy.configure", lambda **kwargs: None),
+        ):
+            result = await run_profile_optimization(
+                tenant_id="test:unit", lookback_hours=1
+            )
+        return state, result
+
+    @staticmethod
+    def _profile_selection_score_by_module(module, holdout) -> float:
+        state = json.loads(json.dumps(module.dump_state(), default=str))
+        if state.get("compiled") == "profile":
+            return 0.0
+        if state.get("selector.predict", {}).get("demos", []):
+            return 0.0
+        return 1.0
+
+    def test_profile_selection_quality_exact_table(self):
+        from cogniverse_runtime.optimization_cli import _profile_selection_quality
+
+        ex = _profile_example(
+            selected="video_colpali_smol500_mv_frame",
+            available=[
+                "video_colpali_smol500_mv_frame",
+                "wiki_semantic",
+            ],
+        )
+        assert {
+            "exact": _profile_selection_quality(
+                _sel("video_colpali_smol500_mv_frame"), ex
+            ),
+            "other_available": _profile_selection_quality(_sel("wiki_semantic"), ex),
+            "not_in_pool": _profile_selection_quality(_sel("image_colpali_mv"), ex),
+            "empty": _profile_selection_quality(_sel(""), ex),
+        } == {
+            "exact": 1.0,
+            "other_available": 0.0,
+            "not_in_pool": 0.0,
+            "empty": 0.0,
+        }
+
+    @pytest.mark.asyncio
+    async def test_profile_gate_persists_but_never_activates_a_losing_candidate(self):
+        rows = [
+            _profile_span_row(
+                f"find clip {i}",
+                span_id=f"profile-{i}",
+                available_profiles=[
+                    "video_colpali_smol500_mv_frame",
+                    "video_colqwen_omni_mv_chunk_30s",
+                ],
+                selected_profile="video_colpali_smol500_mv_frame",
+            )
+            for i in range(4)
+        ]
+        provider = FakeTelemetryProvider(
+            _make_spans_df("cogniverse.profile_selection", rows)
+        )
+        served_state = self._served_state()
+
+        state, result = await self._run(
+            provider,
+            current_blob=served_state,
+            floor=(1, 1),
+            min_improvement=0.05,
+            score=1.0,
+        )
+
+        assert result == {
+            "status": "success",
+            "spans_found": 4,
+            "training_examples": 3,
+            "holdout_examples": 1,
+            "holdout_source": "served",
+            "baseline_score": 1.0,
+            "current_score": 1.0,
+            "candidate_score": 1.0,
+            "decision": "keep",
+            "version": 1,
+            "consumed_example_ids": [
+                "span:profile-0",
+                "span:profile-1",
+                "span:profile-2",
+                "span:profile-3",
+            ],
+        }
+        assert state["versioned_saves"] == [
+            {
+                "kind": "model",
+                "key": "profile_selection",
+                "content": '{"compiled": "profile"}',
+                "consumed_example_ids": [
+                    "span:profile-0",
+                    "span:profile-1",
+                    "span:profile-2",
+                    "span:profile-3",
+                ],
+                "decision": "keep",
+                "scored": True,
+                "base_score": 1.0,
+                "candidate_score": 1.0,
+            }
+        ]
+        assert state["activate_calls"] == []
+        assert state["active_blob"] == served_state
+
+    @pytest.mark.asyncio
+    async def test_profile_rollback_persists_and_activates_base_state(self):
+        from cogniverse_agents.profile_selection_agent import ProfileSelectionModule
+
+        rows = [
+            _profile_span_row(
+                f"find clip {i}",
+                span_id=f"profile-{i}",
+                available_profiles=[
+                    "video_colpali_smol500_mv_frame",
+                    "video_colqwen_omni_mv_chunk_30s",
+                ],
+                selected_profile="video_colpali_smol500_mv_frame",
+            )
+            for i in range(4)
+        ]
+        provider = FakeTelemetryProvider(
+            _make_spans_df("cogniverse.profile_selection", rows)
+        )
+        current_blob = self._served_state()
+        base_state = json.dumps(ProfileSelectionModule().dump_state(), default=str)
+
+        state, result = await self._run(
+            provider,
+            current_blob=current_blob,
+            floor=(1, 1),
+            min_improvement=0.05,
+            score_by_module=self._profile_selection_score_by_module,
+        )
+
+        assert result == {
+            "status": "success",
+            "spans_found": 4,
+            "training_examples": 3,
+            "holdout_examples": 1,
+            "holdout_source": "served",
+            "baseline_score": 1.0,
+            "current_score": 0.0,
+            "candidate_score": 0.0,
+            "decision": "rollback",
+            "version": 1,
+            "consumed_example_ids": [
+                "span:profile-0",
+                "span:profile-1",
+                "span:profile-2",
+                "span:profile-3",
+            ],
+        }
+        assert state["versioned_saves"] == [
+            {
+                "kind": "model",
+                "key": "profile_selection",
+                "content": base_state,
+                "consumed_example_ids": [
+                    "span:profile-0",
+                    "span:profile-1",
+                    "span:profile-2",
+                    "span:profile-3",
+                ],
+                "decision": "rollback",
+                "scored": True,
+                "base_score": 1.0,
+                "candidate_score": 0.0,
+            }
+        ]
+        assert state["activate_calls"] == [("model", "profile_selection", 1)]
+        assert state["active_blob"] == base_state
+
+    @pytest.mark.asyncio
+    async def test_profile_below_population_floor_persists_without_activating(self):
+        rows = [
+            _profile_span_row(
+                f"find clip {i}",
+                span_id=f"profile-{i}",
+                available_profiles=[
+                    "video_colpali_smol500_mv_frame",
+                    "video_colqwen_omni_mv_chunk_30s",
+                ],
+                selected_profile="video_colpali_smol500_mv_frame",
+            )
+            for i in range(4)
+        ]
+        provider = FakeTelemetryProvider(
+            _make_spans_df("cogniverse.profile_selection", rows)
+        )
+        served_state = self._served_state()
+
+        state, result = await self._run(
+            provider,
+            current_blob=served_state,
+            floor=(100, 1),
+        )
+
+        assert result == {
+            "status": "insufficient_population",
+            "spans_found": 4,
+            "examples": 4,
+            "distinct_queries": 4,
+            "min_samples": 100,
+            "min_unique_queries": 1,
+            "version": 1,
+        }
+        assert state["versioned_saves"] == [
+            {
+                "kind": "model",
+                "key": "profile_selection",
+                "content": served_state,
+                "consumed_example_ids": [
+                    "span:profile-0",
+                    "span:profile-1",
+                    "span:profile-2",
+                    "span:profile-3",
+                ],
+                "decision": "insufficient_population",
+                "scored": False,
+                "base_score": None,
+                "candidate_score": None,
+            }
+        ]
+        assert state["activate_calls"] == []
+        assert state["active_blob"] == served_state
 
 
 # ---------------------------------------------------------------------------

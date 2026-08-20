@@ -291,8 +291,20 @@ async def run_profile_optimization(
 
     The agent reloads the artifact on each dispatch via am.load_blob("model", "profile_selection").
 
-    Returns: {"status": "success"|"no_data"|"failed", "spans_found": int,
-              "training_examples": int, "artifact_id": str}
+    Returns:
+      - {"status": "success", "spans_found": int, "training_examples": int,
+         "holdout_examples": int, "holdout_source": "served",
+         "baseline_score": float, "current_score": float | None,
+         "candidate_score": float | None,
+         "decision": "promote" | "keep" | "rollback" | "reject",
+         "version": int, "consumed_example_ids": list[str]}
+      - {"status": "no_data", "spans_found": int, "examples": 0}
+      - {"status": "no_eval_material", "spans_found": int, "training_examples": int,
+         "holdout_examples": 0, "holdout_source": "served"}
+      - {"status": "insufficient_population", "spans_found": int, "examples": int,
+         "distinct_queries": int, "min_samples": int, "min_unique_queries": int,
+         "version": int}
+      - {"status": "failed", "error": str}
     """
 ```
 
