@@ -4056,6 +4056,7 @@ async def run_synthetic_generation(
 
             service = SyntheticDataService(
                 backend=backend,
+                config_manager=config_manager,
                 backend_config=synthetic_runtime_config.backend_config,
                 generator_config=synthetic_runtime_config.generator_config,
                 agents_config=synthetic_runtime_config.agents_config,
