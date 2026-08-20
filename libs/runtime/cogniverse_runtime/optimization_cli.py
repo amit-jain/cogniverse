@@ -399,6 +399,86 @@ def _entity_extraction_pairs(spans_df) -> List[Dict[str, Any]]:
     return pairs
 
 
+def _entity_extraction_is_scoreable(record: dict) -> bool:
+    """True when the served entity span recorded at least one entity."""
+    return bool(record.get("entities"))
+
+
+def _entity_extraction_texts(raw: Any) -> list[str]:
+    """Extract entity texts from JSON records or pipe-delimited output lines."""
+    if raw is None:
+        return []
+    if isinstance(raw, str):
+        text = raw.strip()
+        if not text:
+            return []
+        try:
+            parsed = json.loads(text)
+        except Exception:
+            parsed = None
+        else:
+            raw = parsed
+
+        if parsed is None:
+            texts = []
+            for line in text.splitlines():
+                line = line.strip()
+                if not line:
+                    continue
+                head = line.split("|", 1)[0].strip()
+                if head:
+                    texts.append(head)
+            return texts
+
+    if isinstance(raw, dict):
+        raw = [raw]
+
+    if isinstance(raw, (list, tuple, set)):
+        texts = []
+        for entity in raw:
+            if isinstance(entity, dict):
+                value = entity.get("text", "")
+            elif isinstance(entity, str):
+                value = entity.split("|", 1)[0]
+            else:
+                value = getattr(entity, "text", "")
+            text = str(value or "").strip()
+            if text:
+                texts.append(text)
+        return texts
+
+    text = str(raw or "").strip()
+    return [text] if text else []
+
+
+def _entity_extraction_quality(prediction, example) -> float:
+    """Token-set F1 between predicted entity texts and the recorded texts."""
+    predicted_texts = _entity_extraction_texts(getattr(prediction, "entities", ""))
+    recorded_texts = _entity_extraction_texts(getattr(example, "entities", ""))
+    query = str(getattr(example, "query", "") or "").strip()
+    if not recorded_texts:
+        raise ValueError(
+            f"entity extraction example for query {query!r} carries no recorded "
+            "entities"
+        )
+    return _token_f1(" ".join(predicted_texts), " ".join(recorded_texts))
+
+
+def _entity_extraction_metric(example, prediction, trace=None) -> bool:
+    """BootstrapFewShot metric: keep only exact entity-text matches."""
+    del trace
+    return _entity_extraction_quality(prediction, example) == 1.0
+
+
+def _entity_extraction_scores(module, holdout) -> float:
+    """Mean ``_entity_extraction_quality`` over the held-out entity spans."""
+    scores = []
+    for example in holdout:
+        prediction = module(query=getattr(example, "query", ""))
+        scores.append(_entity_extraction_quality(prediction, example))
+    return sum(scores) / len(scores) if scores else 0.0
+
+
 def _span_available_profiles(row: Any) -> Optional[str]:
     """Read the candidate pool recorded on a profile_selection span."""
     getter = getattr(row, "get", None)
@@ -1223,9 +1303,9 @@ def _probe_score(pred, label: str, agent_name: str) -> float:
 
 
 def _token_f1(predicted: str, label: str) -> float:
-    """Whitespace-token set F1 between a predicted string and its label."""
-    pred = set(str(predicted or "").split())
-    lab = set(str(label or "").split())
+    """Whitespace-token set F1 between casefolded predicted and label tokens."""
+    pred = set(str(predicted or "").casefold().split())
+    lab = set(str(label or "").casefold().split())
     if not pred or not lab:
         return 0.0
     overlap = len(pred & lab)
@@ -1254,13 +1334,13 @@ def is_scoreable(record: dict) -> bool:
 
 
 def _split_served_holdout(
-    records: list[dict], min_holdout: int
+    records: list[dict], min_holdout: int, scoreable_predicate=is_scoreable
 ) -> tuple[list[dict], list[dict]]:
     """Serve the tail of scoreable span records and keep everything else in train."""
     served_scoreable_indices = [
         index
         for index, record in enumerate(records)
-        if record["example_id"].startswith("span:") and is_scoreable(record)
+        if record["example_id"].startswith("span:") and scoreable_predicate(record)
     ]
     if len(served_scoreable_indices) < min_holdout:
         return list(records), []
@@ -3244,39 +3324,116 @@ async def run_entity_extraction_optimization(
 
     import json as _json
 
-    import dspy
-
     entity_pairs = _entity_extraction_pairs(spans_df)
     consumed_example_ids = [pair["example_id"] for pair in entity_pairs]
-    trainset = [
-        dspy.Example(
-            query=pair["query"],
-            entities=_json.dumps(pair["entities"]),
-            entity_types="",
-        ).with_inputs("query")
+    records = [
+        {
+            "query": pair["query"],
+            "entities": pair["entities"],
+            "entity_types": "",
+            "example_id": pair["example_id"],
+        }
         for pair in entity_pairs
     ]
-
-    # Merge approved synthetic data
     synthetic_demos = await _load_approved_synthetic_data(
         telemetry_provider, tenant_id, "entity_extraction"
     )
-    consumed_example_ids.extend(demo["example_id"] for demo in synthetic_demos)
-    production_count = len(trainset)
     for demo in synthetic_demos:
         projected = _project_approved_optimizer_example("entity_extraction", demo)
-        example = dspy.Example(**projected).with_inputs("query")
-        trainset.append(example)
-    if not trainset:
+        consumed_example_ids.append(demo["example_id"])
+        records.append(
+            {
+                "query": projected["query"],
+                "entities": projected["entities"],
+                "entity_types": projected["entity_types"],
+                "example_id": demo["example_id"],
+            }
+        )
+    if not records:
         logger.info("No valid production or approved synthetic examples")
         return {"status": "no_data", "spans_found": len(spans_df), "examples": 0}
+
+    from cogniverse_agents.optimizer.artifact_manager import ArtifactManager
+
+    artifact_manager = ArtifactManager(telemetry_provider, tenant_id)
+    current_blob = await artifact_manager.load_blob("model", "entity_extraction")
+    min_samples, min_unique_queries = _population_floor_from_config(
+        tenant_id, config_manager
+    )
+    population = len(records)
+    distinct_queries = len({record["query"] for record in records})
+    if population < min_samples or distinct_queries < min_unique_queries:
+        logger.warning(
+            "Entity extraction below population floor for %s: population=%d "
+            "(min %d) distinct_queries=%d (min %d)",
+            tenant_id,
+            population,
+            min_samples,
+            distinct_queries,
+            min_unique_queries,
+        )
+        _, version = await artifact_manager.save_blob_versioned(
+            "model",
+            "entity_extraction",
+            current_blob or "{}",
+            consumed_example_ids=consumed_example_ids,
+            decision="insufficient_population",
+            scored=False,
+            base_score=None,
+            candidate_score=None,
+        )
+        return {
+            "status": "insufficient_population",
+            "spans_found": len(spans_df),
+            "examples": population,
+            "distinct_queries": distinct_queries,
+            "min_samples": min_samples,
+            "min_unique_queries": min_unique_queries,
+            "version": version,
+        }
+
+    min_holdout = max(1, min_samples // 10)
+    train_records, holdout_records = _split_served_holdout(
+        records,
+        min_holdout,
+        scoreable_predicate=_entity_extraction_is_scoreable,
+    )
+
+    import dspy
+
+    def _example_from_record(record: dict[str, Any]):
+        entities = record["entities"]
+        if isinstance(entities, str):
+            entities_value = entities
+        else:
+            entities_value = _json.dumps(entities)
+        return dspy.Example(
+            query=record["query"],
+            entities=entities_value,
+            entity_types=str(record.get("entity_types") or ""),
+        ).with_inputs("query")
+
+    trainset = [_example_from_record(record) for record in train_records]
+    holdout = [_example_from_record(record) for record in holdout_records]
     logger.info(
         "Merged %d synthetic + %d production = %d total training examples",
         len(synthetic_demos),
-        production_count,
-        len(trainset),
+        len(entity_pairs),
+        len(records),
     )
-
+    if not holdout:
+        logger.warning(
+            "No served-scoreable holdout material for %s entity extraction — "
+            "nothing persisted",
+            tenant_id,
+        )
+        return {
+            "status": "no_eval_material",
+            "spans_found": len(spans_df),
+            "training_examples": len(trainset),
+            "holdout_examples": 0,
+            "holdout_source": "served",
+        }
     from cogniverse_agents.entity_extraction_agent import EntityExtractionModule
     from cogniverse_foundation.config.llm_factory import create_dspy_lm
     from cogniverse_foundation.config.utils import get_config
@@ -3287,43 +3444,83 @@ async def run_entity_extraction_optimization(
 
     dspy.configure(lm=create_dspy_lm(llm_endpoint))
 
-    module = EntityExtractionModule()
-
-    teleprompter = _create_teleprompter(
-        len(trainset),
-        teacher_settings={"lm": create_dspy_lm(llm_config.resolve_teacher())},
-    )
-
     try:
-        compiled = teleprompter.compile(module, trainset=trainset)
+        baseline_score = _entity_extraction_scores(EntityExtractionModule(), holdout)
 
-        from cogniverse_agents.optimizer.artifact_manager import ArtifactManager
+        current_module = None
+        if current_blob:
+            current_module = EntityExtractionModule()
+            current_module.load_state(_json.loads(current_blob))
 
-        artifact_manager = ArtifactManager(telemetry_provider, tenant_id)
-        _, version = await artifact_manager.save_blob_versioned(
-            "model",
-            "entity_extraction",
-            _json.dumps(compiled.dump_state(), default=str),
-            consumed_example_ids=consumed_example_ids,
-            decision="promote",
-            scored=False,
-            base_score=None,
-            candidate_score=None,
+        compiled = None
+        if trainset:
+            teleprompter = _create_teleprompter(
+                len(trainset),
+                teacher_settings={"lm": create_dspy_lm(llm_config.resolve_teacher())},
+                metric=_entity_extraction_metric,
+            )
+            compiled = teleprompter.compile(EntityExtractionModule(), trainset=trainset)
+
+        current_score = (
+            _entity_extraction_scores(current_module, holdout)
+            if current_module is not None
+            else None
         )
-        await artifact_manager.activate_version("model", "entity_extraction", version)
-
-        logger.info("Entity extraction optimization complete — v%d", version)
-        return {
-            "status": "success",
-            "spans_found": len(spans_df),
-            "training_examples": len(trainset),
-            "version": version,
-            "consumed_example_ids": consumed_example_ids,
-        }
-
+        candidate_score = (
+            _entity_extraction_scores(compiled, holdout)
+            if compiled is not None
+            else None
+        )
     except Exception as e:
         logger.error("Entity extraction DSPy compilation failed: %s", e)
         return {"status": "failed", "error": str(e)}
+
+    decision = _select_simba_artifact(
+        baseline_score,
+        current_score,
+        candidate_score,
+        _min_improvement_from_config(tenant_id, config_manager),
+    )
+    run_module = {
+        "promote": compiled,
+        "rollback": EntityExtractionModule(),
+    }.get(decision, compiled or EntityExtractionModule())
+    _, version = await artifact_manager.save_blob_versioned(
+        "model",
+        "entity_extraction",
+        _json.dumps(run_module.dump_state(), default=str),
+        consumed_example_ids=consumed_example_ids,
+        decision=decision,
+        scored=candidate_score is not None,
+        base_score=baseline_score,
+        candidate_score=candidate_score,
+    )
+    if decision in ("promote", "rollback"):
+        await artifact_manager.activate_version("model", "entity_extraction", version)
+
+    logger.info(
+        "Entity extraction optimization %s v%d (baseline=%.3f current=%s "
+        "candidate=%s, %d examples)",
+        decision,
+        version,
+        baseline_score,
+        current_score,
+        candidate_score,
+        len(consumed_example_ids),
+    )
+    return {
+        "status": "success",
+        "spans_found": len(spans_df),
+        "training_examples": len(trainset),
+        "holdout_examples": len(holdout),
+        "holdout_source": "served",
+        "baseline_score": baseline_score,
+        "current_score": current_score,
+        "candidate_score": candidate_score,
+        "decision": decision,
+        "version": version,
+        "consumed_example_ids": consumed_example_ids,
+    }
 
 
 def _synthetic_aggregate_status(results: dict[str, dict[str, Any]]) -> str:

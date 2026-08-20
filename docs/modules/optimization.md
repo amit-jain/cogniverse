@@ -357,11 +357,29 @@ holdout the run returns `no_eval_material` and persists nothing. The artifact ke
 **CLI mode:** `--mode entity-extraction`
 
 `run_entity_extraction_optimization(tenant_id, lookback_hours=24.0)` reads `cogniverse.entity_extraction`
-spans, builds query/entity examples from spans with `entity_count > 0`, merges approved synthetic demos for
-`"entity_extraction"`, and projects approved entities to the production `text|type|confidence` line format
-plus the comma-separated `entity_types` output. It compiles `EntityExtractionModule` via
-`_create_teleprompter(len(trainset))`, and saves the artifact as `("model", "entity_extraction")`.
+spans, builds query/entity examples from served spans with recorded entities, merges approved synthetic demos
+for `"entity_extraction"`, projects approved entities to the production `text|type|confidence` line format
+plus the comma-separated `entity_types` output, splits a served-scoreable holdout, scores the base module,
+current artifact, and compiled candidate with token-set F1 over entity texts, and uses `_select_simba_artifact`
+to decide `promote` / `keep` / `rollback` / `reject`. It persists `no_eval_material` when no served-scoreable
+holdout exists, persists the current or base module for non-promote decisions, and activates the persisted
+version on `promote` or `rollback`. The artifact key is `("model", "entity_extraction")`;
 `EntityExtractionAgent` reloads it via `am.load_blob("model", "entity_extraction")`.
+
+Returns:
+  - {"status": "success", "spans_found": int, "training_examples": int,
+     "holdout_examples": int, "holdout_source": "served",
+     "baseline_score": float, "current_score": float | None,
+     "candidate_score": float | None,
+     "decision": "promote" | "keep" | "rollback" | "reject",
+     "version": int, "consumed_example_ids": list[str]}
+  - {"status": "no_data", "spans_found": int, "examples": 0}
+  - {"status": "no_eval_material", "spans_found": int, "training_examples": int,
+     "holdout_examples": 0, "holdout_source": "served"}
+  - {"status": "insufficient_population", "spans_found": int, "examples": int,
+     "distinct_queries": int, "min_samples": int, "min_unique_queries": int,
+     "version": int}
+  - {"status": "failed", "error": str}
 
 **File:** `libs/runtime/cogniverse_runtime/optimization_cli.py`
 

@@ -298,6 +298,17 @@ async def test_synthetic_only_data_compiles_the_actual_production_module(
         assert captured == {}
         return
 
+    if optimizer_type == "entity_extraction":
+        assert result == {
+            "status": "no_eval_material",
+            "spans_found": 0,
+            "training_examples": 1,
+            "holdout_examples": 0,
+            "holdout_source": "served",
+        }
+        assert captured == {}
+        return
+
     example = captured["example"]
     expected = _project_approved_optimizer_example(optimizer_type, demo)
     assert captured["module"] == module_type
