@@ -1615,6 +1615,22 @@ def _sel(selected: str):
     return dspy.Prediction(selected_profile=selected)
 
 
+def _entity_example(*, query: str = "find entities", entities: str = "[]"):
+    import dspy
+
+    return dspy.Example(
+        query=query,
+        entities=entities,
+        entity_types="",
+    ).with_inputs("query")
+
+
+def _ents(entities: str):
+    import dspy
+
+    return dspy.Prediction(entities=entities)
+
+
 def _example(**kwargs):
     import dspy
 
@@ -3093,6 +3109,166 @@ class TestWorkflowOptimization:
 class TestEntityExtractionOptimization:
     """Entity extraction optimization handles missing/empty span data."""
 
+    @staticmethod
+    def _base_state() -> str:
+        from cogniverse_agents.entity_extraction_agent import EntityExtractionModule
+
+        return json.dumps(
+            EntityExtractionModule().dump_state(),
+            default=str,
+        )
+
+    @staticmethod
+    def _served_state() -> str:
+        from cogniverse_agents.entity_extraction_agent import EntityExtractionModule
+
+        state = json.loads(
+            json.dumps(EntityExtractionModule().dump_state(), default=str)
+        )
+        state["extractor.predict"]["demos"] = [
+            {
+                "query": "find PyTorch tutorials",
+                "entities": "PyTorch|TECHNOLOGY|1.0",
+                "entity_types": "TECHNOLOGY",
+            }
+        ]
+        return json.dumps(state, default=str)
+
+    @staticmethod
+    def _entity_score_by_module(module, holdout) -> float:
+        state = json.loads(json.dumps(module.dump_state(), default=str))
+        if state.get("extractor.predict", {}).get("demos", []):
+            return 0.0
+        return 1.0
+
+    async def _run(
+        self,
+        provider,
+        *,
+        current_blob: str | None,
+        floor: tuple[int, int],
+        min_improvement: float = 0.05,
+        score: float = 1.0,
+        score_by_module=None,
+    ):
+        from cogniverse_runtime.optimization_cli import (
+            run_entity_extraction_optimization,
+        )
+
+        state = {
+            "active_blob": current_blob,
+            "versioned_saves": [],
+            "activate_calls": [],
+        }
+
+        class FakeArtifactManager:
+            def __init__(self, received_provider, tenant_id):
+                assert received_provider is provider
+                assert tenant_id == "test:unit"
+
+            async def load_blob(self, kind, key):
+                assert (kind, key) == ("model", "entity_extraction")
+                return state["active_blob"]
+
+            async def save_blob_versioned(
+                self,
+                kind,
+                key,
+                content,
+                *,
+                consumed_example_ids,
+                decision,
+                scored,
+                base_score,
+                candidate_score,
+            ):
+                state["versioned_saves"].append(
+                    {
+                        "kind": kind,
+                        "key": key,
+                        "content": content,
+                        "consumed_example_ids": list(consumed_example_ids),
+                        "decision": decision,
+                        "scored": scored,
+                        "base_score": base_score,
+                        "candidate_score": candidate_score,
+                    }
+                )
+                return f"artifact-{len(state['versioned_saves'])}", len(
+                    state["versioned_saves"]
+                )
+
+            async def activate_version(self, kind, key, version):
+                state["activate_calls"].append((kind, key, version))
+                state["active_blob"] = state["versioned_saves"][version - 1]["content"]
+                return {"active": {"version": version, "activated_at": "now"}}
+
+        class FakeTeleprompter:
+            def compile(self, module, trainset):
+                state["compiled_module"] = type(module).__name__
+                state["trainset"] = [
+                    example.toDict() if hasattr(example, "toDict") else example
+                    for example in trainset
+                ]
+
+                class Compiled:
+                    def dump_state(self):
+                        return {"compiled": "entity_extraction"}
+
+                return Compiled()
+
+        class FakeLLMConfig:
+            def resolve(self, purpose):
+                return "student-endpoint"
+
+            def resolve_teacher(self):
+                return "teacher-endpoint"
+
+        class FakeConfig:
+            def get_llm_config(self):
+                return FakeLLMConfig()
+
+        mgr = FakeTelemetryManager(provider)
+        p1, p2 = _patch_infra(mgr)
+        with (
+            p1,
+            p2,
+            patch(
+                "cogniverse_foundation.config.utils.get_config",
+                return_value=FakeConfig(),
+            ),
+            patch(
+                "cogniverse_foundation.config.llm_factory.create_dspy_lm",
+                return_value=object(),
+            ),
+            patch(
+                "cogniverse_runtime.optimization_cli._create_teleprompter",
+                return_value=FakeTeleprompter(),
+            ),
+            patch(
+                "cogniverse_runtime.optimization_cli._entity_extraction_scores",
+                side_effect=score_by_module or (lambda module, holdout: score),
+            ),
+            patch(
+                "cogniverse_runtime.optimization_cli._min_improvement_from_config",
+                return_value=min_improvement,
+            ),
+            patch(
+                "cogniverse_runtime.optimization_cli._population_floor_from_config",
+                return_value=floor,
+            ),
+            patch(
+                "cogniverse_agents.optimizer.artifact_manager.ArtifactManager",
+                FakeArtifactManager,
+            ),
+            patch("dspy.configure", lambda **kwargs: None),
+        ):
+            result = await run_entity_extraction_optimization(
+                tenant_id="test:unit",
+                lookback_hours=1,
+            )
+        return state, result
+
     @pytest.mark.asyncio
     async def test_entity_extraction_no_spans(self, fake_telemetry_manager):
         from cogniverse_runtime.optimization_cli import (
@@ -3106,6 +3282,33 @@ class TestEntityExtractionOptimization:
             )
         assert result["status"] == "no_data"
         assert result["spans_found"] == 0
+
+    def test_token_f1_casefolds_whitespace_tokens(self):
+        from cogniverse_runtime.optimization_cli import _token_f1
+
+        assert _token_f1("Marie Curie", "marie curie") == 1.0
+
+    def test_entity_quality_exact_table(self):
+        from cogniverse_runtime.optimization_cli import _entity_extraction_quality
+
+        ex = _entity_example(entities='[{"text": "Marie Curie"}, {"text": "radium"}]')
+        assert {
+            "exact": _entity_extraction_quality(
+                _ents("Marie Curie|PERSON|0.9\nradium|CONCEPT|0.8"), ex
+            ),
+            "half": round(
+                _entity_extraction_quality(_ents("Marie Curie|PERSON|0.9"), ex), 2
+            ),
+            "wrong": _entity_extraction_quality(_ents("Show|CONCEPT|0.5"), ex),
+            "empty": _entity_extraction_quality(_ents(""), ex),
+        } == {
+            "exact": 1.0,
+            "half": 0.8,
+            "wrong": 0.0,
+            "empty": 0.0,
+        }
+        with pytest.raises(ValueError, match="carries no recorded entities"):
+            _entity_extraction_quality(_ents("x|T|1.0"), _entity_example(entities="[]"))
 
     def test_entity_extraction_pairs_carry_span_ids(self):
         """Every entity record names the served span it came from."""
@@ -3184,6 +3387,218 @@ class TestEntityExtractionOptimization:
         assert result["status"] == "no_data"
         assert result["spans_found"] == 1
         assert result["examples"] == 0
+
+    @pytest.mark.asyncio
+    async def test_entity_extraction_promote_persists_and_activates_candidate(self):
+        rows = [
+            {
+                "context.span_id": f"ee-{i}",
+                "attributes.input.value": f"find entity {i}",
+                "attributes.output.value": json.dumps(
+                    {"entities": [{"text": f"Entity {i}", "type": "CONCEPT"}]}
+                ),
+            }
+            for i in range(2)
+        ]
+        provider = FakeTelemetryProvider(
+            _make_spans_df("cogniverse.entity_extraction", rows)
+        )
+
+        state, result = await self._run(
+            provider,
+            current_blob=None,
+            floor=(1, 1),
+            score_by_module=lambda module, holdout: (
+                1.0
+                if json.loads(json.dumps(module.dump_state(), default=str)).get(
+                    "compiled"
+                )
+                == "entity_extraction"
+                else 0.0
+            ),
+        )
+
+        assert result == {
+            "status": "success",
+            "spans_found": 2,
+            "training_examples": 1,
+            "holdout_examples": 1,
+            "holdout_source": "served",
+            "baseline_score": 0.0,
+            "current_score": None,
+            "candidate_score": 1.0,
+            "decision": "promote",
+            "version": 1,
+            "consumed_example_ids": ["span:ee-0", "span:ee-1"],
+        }
+        assert state["versioned_saves"] == [
+            {
+                "kind": "model",
+                "key": "entity_extraction",
+                "content": '{"compiled": "entity_extraction"}',
+                "consumed_example_ids": ["span:ee-0", "span:ee-1"],
+                "decision": "promote",
+                "scored": True,
+                "base_score": 0.0,
+                "candidate_score": 1.0,
+            }
+        ]
+        assert state["activate_calls"] == [("model", "entity_extraction", 1)]
+        assert state["active_blob"] == '{"compiled": "entity_extraction"}'
+
+    @pytest.mark.asyncio
+    async def test_entity_extraction_keeps_persisted_state_without_activating(self):
+        rows = [
+            {
+                "context.span_id": f"ee-{i}",
+                "attributes.input.value": f"find entity {i}",
+                "attributes.output.value": json.dumps(
+                    {"entities": [{"text": f"Entity {i}", "type": "CONCEPT"}]}
+                ),
+            }
+            for i in range(2)
+        ]
+        provider = FakeTelemetryProvider(
+            _make_spans_df("cogniverse.entity_extraction", rows)
+        )
+        current_blob = self._base_state()
+
+        state, result = await self._run(
+            provider,
+            current_blob=current_blob,
+            floor=(1, 1),
+            score_by_module=self._entity_score_by_module,
+        )
+
+        assert result == {
+            "status": "success",
+            "spans_found": 2,
+            "training_examples": 1,
+            "holdout_examples": 1,
+            "holdout_source": "served",
+            "baseline_score": 1.0,
+            "current_score": 1.0,
+            "candidate_score": 1.0,
+            "decision": "keep",
+            "version": 1,
+            "consumed_example_ids": ["span:ee-0", "span:ee-1"],
+        }
+        assert state["versioned_saves"] == [
+            {
+                "kind": "model",
+                "key": "entity_extraction",
+                "content": '{"compiled": "entity_extraction"}',
+                "consumed_example_ids": ["span:ee-0", "span:ee-1"],
+                "decision": "keep",
+                "scored": True,
+                "base_score": 1.0,
+                "candidate_score": 1.0,
+            }
+        ]
+        assert state["activate_calls"] == []
+        assert state["active_blob"] == current_blob
+
+    @pytest.mark.asyncio
+    async def test_entity_extraction_rollback_persists_and_activates_base_state(self):
+        rows = [
+            {
+                "context.span_id": f"ee-{i}",
+                "attributes.input.value": f"find entity {i}",
+                "attributes.output.value": json.dumps(
+                    {"entities": [{"text": f"Entity {i}", "type": "CONCEPT"}]}
+                ),
+            }
+            for i in range(2)
+        ]
+        provider = FakeTelemetryProvider(
+            _make_spans_df("cogniverse.entity_extraction", rows)
+        )
+        current_blob = self._served_state()
+        base_state = self._base_state()
+
+        state, result = await self._run(
+            provider,
+            current_blob=current_blob,
+            floor=(1, 1),
+            score_by_module=self._entity_score_by_module,
+        )
+
+        assert result == {
+            "status": "success",
+            "spans_found": 2,
+            "training_examples": 1,
+            "holdout_examples": 1,
+            "holdout_source": "served",
+            "baseline_score": 1.0,
+            "current_score": 0.0,
+            "candidate_score": 1.0,
+            "decision": "rollback",
+            "version": 1,
+            "consumed_example_ids": ["span:ee-0", "span:ee-1"],
+        }
+        assert state["versioned_saves"] == [
+            {
+                "kind": "model",
+                "key": "entity_extraction",
+                "content": base_state,
+                "consumed_example_ids": ["span:ee-0", "span:ee-1"],
+                "decision": "rollback",
+                "scored": True,
+                "base_score": 1.0,
+                "candidate_score": 1.0,
+            }
+        ]
+        assert state["activate_calls"] == [("model", "entity_extraction", 1)]
+        assert state["active_blob"] == base_state
+
+    @pytest.mark.asyncio
+    async def test_entity_extraction_below_population_floor_persists_without_activating(
+        self,
+    ):
+        rows = [
+            {
+                "context.span_id": f"ee-{i}",
+                "attributes.input.value": f"find entity {i}",
+                "attributes.output.value": json.dumps(
+                    {"entities": [{"text": f"Entity {i}", "type": "CONCEPT"}]}
+                ),
+            }
+            for i in range(2)
+        ]
+        provider = FakeTelemetryProvider(
+            _make_spans_df("cogniverse.entity_extraction", rows)
+        )
+        current_blob = self._base_state()
+
+        state, result = await self._run(
+            provider,
+            current_blob=current_blob,
+            floor=(100, 1),
+        )
+
+        assert result == {
+            "status": "insufficient_population",
+            "spans_found": 2,
+            "examples": 2,
+            "distinct_queries": 2,
+            "min_samples": 100,
+            "min_unique_queries": 1,
+            "version": 1,
+        }
+        assert state["versioned_saves"] == [
+            {
+                "kind": "model",
+                "key": "entity_extraction",
+                "content": current_blob,
+                "consumed_example_ids": ["span:ee-0", "span:ee-1"],
+                "decision": "insufficient_population",
+                "scored": False,
+                "base_score": None,
+                "candidate_score": None,
+            }
+        ]
+        assert state["activate_calls"] == []
+        assert state["active_blob"] == current_blob
 
 
 # ---------------------------------------------------------------------------
