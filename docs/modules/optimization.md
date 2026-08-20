@@ -1188,8 +1188,8 @@ Optimization artifacts are persisted to the telemetry store via `ArtifactManager
 
 | Area | Location |
 |---|---|
-| CLI argument parser, batch-mode branches (gateway-thresholds/workflow/entity-extraction/simba no-data paths, synthetic-data merge, `_create_teleprompter` tiering) | `tests/runtime/unit/test_optimization_cli_batch_modes.py` |
-| `_compute_gateway_thresholds` — tight per-field assertions across all 3 calibration branches | `tests/runtime/unit/test_optimization_cli_batch_modes.py::TestComputeGatewayThresholdsAlgorithm` |
+| CLI argument parser, batch-mode branches (gateway-thresholds/workflow/entity-extraction/simba no-data paths, synthetic-data merge, `_create_teleprompter` tiering) | `tests/runtime/unit/test_batch_optimization_modes.py` |
+| `_compute_gateway_thresholds` — tight per-field assertions across all 3 calibration branches | `tests/runtime/unit/test_batch_optimization_modes.py::TestComputeGatewayThresholdsAlgorithm` |
 | `run_rollback` / `ArtifactManager.rollback_to_version` round-trip | `tests/runtime/integration/test_optimization_cli_rollback.py` |
 | `run_cleanup` (memory/log/temp/config vacuum) | `tests/runtime/integration/test_optimization_cli_cleanup.py` |
 | `run_monthly_reports` | `tests/runtime/integration/test_optimization_cli_monthly_reports.py` |

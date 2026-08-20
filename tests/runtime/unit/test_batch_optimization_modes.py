@@ -1858,6 +1858,7 @@ class TestSimbaQueryEnhancement:
                 f"query {i}",
                 f"query {i} expanded",
                 expansion_terms=["expanded"],
+                source_text="src",
                 span_id=f"qe-{i}",
             )
             for i in range(4)
@@ -1874,6 +1875,7 @@ class TestSimbaQueryEnhancement:
             "examples": 4,
             "training_examples": 3,
             "holdout_examples": 1,
+            "holdout_source": "served",
             "baseline_score": 0.5,
             "current_score": None,
             "candidate_score": 1.0,
@@ -1912,7 +1914,11 @@ class TestSimbaQueryEnhancement:
         # persisted artifact is what produced them.
         rows = [
             _qe_span_row(
-                f"query {i}", f"Query {i}", expansion_terms=[], span_id=f"qe-{i}"
+                f"query {i}",
+                f"Query {i}",
+                expansion_terms=[],
+                source_text="src",
+                span_id=f"qe-{i}",
             )
             for i in range(4)
         ]
@@ -1939,6 +1945,7 @@ class TestSimbaQueryEnhancement:
             "examples": 4,
             "training_examples": 0,
             "holdout_examples": 1,
+            "holdout_source": "served",
             "baseline_score": 0.5,
             "current_score": 0.0,
             "candidate_score": None,
@@ -1968,6 +1975,7 @@ class TestSimbaQueryEnhancement:
                 f"query {i}",
                 f"query {i} expanded",
                 expansion_terms=["expanded"],
+                source_text="src",
                 span_id=f"qe-{i}",
             )
             for i in range(4)
@@ -1996,6 +2004,7 @@ class TestSimbaQueryEnhancement:
             "examples": 4,
             "training_examples": 3,
             "holdout_examples": 1,
+            "holdout_source": "served",
             "baseline_score": 1.0,
             "current_score": 1.0,
             "candidate_score": 1.0,
@@ -2021,6 +2030,7 @@ class TestSimbaQueryEnhancement:
                 f"query {i}",
                 f"query {i} expanded",
                 expansion_terms=["expanded"],
+                source_text="src",
                 span_id=f"qe-{i}",
             )
             for i in range(4)
@@ -2083,6 +2093,7 @@ class TestSimbaQueryEnhancement:
                 f"query {i}",
                 f"query {i} expanded",
                 expansion_terms=["expanded"],
+                source_text="src",
                 span_id=f"qe-{i}",
             )
             for i in range(4)
@@ -2099,6 +2110,7 @@ class TestSimbaQueryEnhancement:
             "examples": 4,
             "training_examples": 3,
             "holdout_examples": 1,
+            "holdout_source": "served",
             "baseline_score": 0.5,
             "current_score": None,
             "candidate_score": 1.0,
@@ -2115,24 +2127,42 @@ class TestSimbaQueryEnhancement:
         assert [(e["version"], e["decision"]) for e in lineage] == [(1, "promote")]
         assert self._active_version(provider, "simba_query_enhancement") == 1
 
-    def test_single_record_has_no_holdout_and_persists_nothing(self):
+    def test_single_record_is_scoreable_and_rejects_without_activation(self):
         provider = FakeTelemetryProvider(
             _make_spans_df(
                 "cogniverse.query_enhancement",
-                [_qe_span_row("q", "q expanded", expansion_terms=["expanded"])],
+                [
+                    _qe_span_row(
+                        "q",
+                        "q expanded",
+                        expansion_terms=["expanded"],
+                        source_text="src",
+                    )
+                ],
             )
         )
 
         result = self._run(provider, min_improvement=0.0)
 
         assert result == {
-            "status": "no_eval_material",
+            "status": "success",
             "spans_found": 1,
             "examples": 1,
-            "training_examples": 1,
-            "holdout_examples": 0,
+            "training_examples": 0,
+            "holdout_examples": 1,
+            "holdout_source": "served",
+            "baseline_score": 0.5,
+            "current_score": None,
+            "candidate_score": None,
+            "decision": "reject",
+            "version": 1,
+            "consumed_example_ids": ["span:span-0"],
         }
-        assert provider.datasets.created == []
+        lineage = self._lineage(provider)
+        assert [(e["version"], e["decision"]) for e in lineage] == [(1, "reject")]
+        assert lineage[0]["consumed_example_ids"] == ["span:span-0"]
+        assert lineage[0]["scored"] is False
+        assert self._active_version(provider, "simba_query_enhancement") is None
 
 
 # ---------------------------------------------------------------------------

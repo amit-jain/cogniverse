@@ -1174,6 +1174,37 @@ def _split_train_holdout(examples: list) -> tuple[list, list]:
     return list(examples[:-k]), list(examples[-k:])
 
 
+def is_scoreable(record: dict) -> bool:
+    """True when the served record has any scoreable context."""
+    return bool(
+        str(record.get("source_text") or "").strip()
+        or str(record.get("grounding_context") or "").strip()
+    )
+
+
+def _split_served_holdout(
+    records: list[dict], min_holdout: int
+) -> tuple[list[dict], list[dict]]:
+    """Serve the tail of scoreable span records and keep everything else in train."""
+    served_scoreable_indices = [
+        index
+        for index, record in enumerate(records)
+        if record["example_id"].startswith("span:") and is_scoreable(record)
+    ]
+    if len(served_scoreable_indices) < min_holdout:
+        return list(records), []
+
+    holdout_count = max(1, len(served_scoreable_indices) // 4)
+    holdout_indices = set(served_scoreable_indices[-holdout_count:])
+    train = [
+        record for index, record in enumerate(records) if index not in holdout_indices
+    ]
+    holdout = [
+        record for index, record in enumerate(records) if index in holdout_indices
+    ]
+    return train, holdout
+
+
 def _negative_probes(agent_name: str, low_scoring_df, limit: int = 20) -> list:
     """Known-bad probes from the human-flagged failures that triggered the
     recompile: ``(inputs, failing_output)`` pairs. For summary/report a
@@ -2036,12 +2067,11 @@ async def run_simba_optimization(
     """SIMBA query enhancement optimization.
 
     Reads cogniverse.query_enhancement spans into served-call records,
-    splits them (plus approved synthetic examples) into a training set and a
-    deterministic holdout, compiles the QueryEnhancementAgent's DSPy module
-    via BootstrapFewShot on the trainable records, then scores the base
-    module, the persisted artifact and the compiled candidate on the holdout
-    with ``_query_enhancement_quality``. Below
-    ``min_samples_for_optimization`` or ``min_unique_queries``, the run
+    splits them with a served-scoreable holdout, compiles the
+    QueryEnhancementAgent's DSPy module via BootstrapFewShot on the trainable
+    records, then scores the base module, the persisted artifact and the
+    compiled candidate on the holdout with ``_query_enhancement_quality``.
+    Below ``min_samples_for_optimization`` or ``min_unique_queries``, the run
     persists an ``insufficient_population`` version and leaves the served
     artifact unchanged.
     """
@@ -2109,6 +2139,7 @@ async def run_simba_optimization(
     min_samples, min_unique_queries = _population_floor_from_config(
         tenant_id, config_manager
     )
+    min_holdout = max(1, min_samples // 10)
     population = len(records)
     distinct_queries = len({record["query"] for record in records})
     if population < min_samples or distinct_queries < min_unique_queries:
@@ -2142,7 +2173,7 @@ async def run_simba_optimization(
             "version": version,
         }
 
-    train_records, holdout_records = _split_train_holdout(records)
+    train_records, holdout_records = _split_served_holdout(records, min_holdout)
     trainset = [_query_enhancement_example(r) for r in train_records if r["trainable"]]
     holdout = [_query_enhancement_example(r) for r in holdout_records]
     logger.info(
@@ -2155,7 +2186,8 @@ async def run_simba_optimization(
     )
     if not holdout:
         logger.warning(
-            "No holdout material for %s query enhancement — nothing persisted",
+            "No served-scoreable holdout material for %s query enhancement — "
+            "nothing persisted",
             tenant_id,
         )
         return {
@@ -2164,6 +2196,7 @@ async def run_simba_optimization(
             "examples": len(records),
             "training_examples": len(trainset),
             "holdout_examples": 0,
+            "holdout_source": "served",
         }
 
     import dspy
@@ -2250,6 +2283,7 @@ async def run_simba_optimization(
         "examples": len(records),
         "training_examples": len(trainset),
         "holdout_examples": len(holdout),
+        "holdout_source": "served",
         "baseline_score": baseline_score,
         "current_score": current_score,
         "candidate_score": candidate_score,

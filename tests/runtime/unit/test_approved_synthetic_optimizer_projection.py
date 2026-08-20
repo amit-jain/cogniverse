@@ -264,20 +264,31 @@ async def test_synthetic_only_data_compiles_the_actual_production_module(
     )
     monkeypatch.setattr(dspy, "configure", lambda **kwargs: None)
     monkeypatch.setattr(
+        optimization_cli,
+        "_population_floor_from_config",
+        lambda *args, **kwargs: (1, 1),
+    )
+    monkeypatch.setattr(
         "cogniverse_agents.optimizer.artifact_manager.ArtifactManager",
         ArtifactManager,
     )
 
     result = await getattr(optimization_cli, runner_name)("acme:production", 1)
 
+    if optimizer_type == "query_enhancement":
+        assert result == {
+            "status": "no_eval_material",
+            "spans_found": 0,
+            "examples": 2,
+            "training_examples": 2,
+            "holdout_examples": 0,
+            "holdout_source": "served",
+        }
+        assert captured == {}
+        return
+
     example = captured["example"]
     expected = _project_approved_optimizer_example(optimizer_type, demo)
-    if optimizer_type == "query_enhancement":
-        expected = {
-            **expected,
-            "source_text": "",
-            "grounding_context": "",
-        }
     assert captured["module"] == module_type
     assert example.toDict() == expected
     if optimizer_type == "query_enhancement":
