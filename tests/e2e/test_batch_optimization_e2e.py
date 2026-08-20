@@ -1,7 +1,8 @@
 """
 E2E tests for Argo batch optimization jobs.
 
-Tests the 4 optimization CLI modes (gateway-thresholds, workflow, simba, profile)
+Tests the 5 optimization CLI modes (gateway-thresholds, workflow, simba, profile,
+entity-extraction)
 by running them inside the k3d pod via kubectl exec. Verifies the full loop:
 spans exist in Phoenix -> batch job reads them -> produces artifact -> artifact
 contains correct data -> agent can load the artifact.
@@ -17,6 +18,7 @@ explicitly with `pytest -m slow tests/e2e/test_batch_optimization_e2e.py` on
 machines where the LLM is backed by a GPU or faster inference service.
 """
 
+import functools
 import json
 import os
 import subprocess
@@ -27,10 +29,8 @@ from pathlib import Path
 import httpx
 import pytest
 
+from cogniverse_agents.optimizer.artifact_manager import BLOB_VERSION_DECISIONS
 from cogniverse_agents.query_enhancement_agent import QueryEnhancementModule
-
-pytestmark = pytest.mark.slow
-
 from tests.e2e.conftest import (
     GATEWAY_VIDEO_QUERIES,
     IN_POD_TELEMETRY_PRELUDE,
@@ -41,6 +41,8 @@ from tests.e2e.conftest import (
     expected_gateway_routing,
     register_tenant_and_wait,
 )
+
+pytestmark = pytest.mark.slow
 from tests.e2e.test_api_e2e import _deploy_profile_for_tenant
 
 
@@ -385,7 +387,17 @@ def _count_spans_by_name_in_pod(tenant_id: str, span_name_symbol: str) -> int:
         text=True,
         timeout=180,
     )
-    assert result.returncode == 0, result.stderr[-2000:]
+    if result.returncode != 0:
+        raise RuntimeError(
+            _subprocess_failure_message(
+                f"count_spans_{span_name_symbol.lower()}",
+                result,
+                operation=(
+                    f"count_spans_by_name(span_name_symbol={span_name_symbol!r}, "
+                    f"tenant_id={tenant_id!r})"
+                ),
+            )
+        )
     line = result.stdout.strip().splitlines()[-1]
     assert line.startswith("__SPANS__"), result.stdout[-500:]
     return int(line[len("__SPANS__") :])
@@ -393,6 +405,97 @@ def _count_spans_by_name_in_pod(tenant_id: str, span_name_symbol: str) -> int:
 
 def _count_gateway_spans_in_pod(tenant_id: str) -> int:
     return _count_spans_by_name_in_pod(tenant_id, "SPAN_NAME_GATEWAY")
+
+
+def _write_subprocess_failure_log(
+    prefix: str, result: subprocess.CompletedProcess[str]
+) -> Path:
+    unix_ts = int(time.time())
+    path = Path("/tmp") / f"{prefix}_{unix_ts}.log"
+    path.write_text(
+        f"stdout:\n{result.stdout}\n\nstderr:\n{result.stderr}\n",
+        encoding="utf-8",
+    )
+    return path
+
+
+def _non_warning_stderr_tail(stderr: str, limit: int = 15) -> str:
+    lines = [
+        line
+        for line in stderr.splitlines()
+        if "Warning" not in line
+        and "warnings.warn" not in line
+        and "Deprecat" not in line
+    ]
+    return "\n".join(lines[-limit:])
+
+
+def _subprocess_failure_message(
+    prefix: str,
+    result: subprocess.CompletedProcess[str],
+    *,
+    operation: str,
+    count_requested: int | None = None,
+) -> str:
+    path = _write_subprocess_failure_log(prefix, result)
+    tail = _non_warning_stderr_tail(result.stderr)
+    lines = [f"{operation} failed (returncode={result.returncode})", f"log_path={path}"]
+    if count_requested is not None:
+        lines.append(f"count_requested={count_requested}")
+    lines.append("last_non_warning_stderr_lines=" + (tail if tail else "<none>"))
+    return "\n".join(lines)
+
+
+# Bridges optimizer types to span types.
+OPTIMIZER_TYPE_TO_SPAN_TYPE = {
+    "query_enhancement": "query_enhancement",
+    "profile": "profile_selection",
+    "entity_extraction": "entity_extraction",
+}
+
+
+@functools.lru_cache(maxsize=None)
+def _served_holdout_minimum_in_pod(tenant_id: str = TENANT_ID) -> int:
+    """The served-holdout minimum implied by the tenant's population floor."""
+    min_samples, _ = _population_floor_in_pod(tenant_id)
+    return max(1, min_samples // 10)
+
+
+def _wait_for_served_scoreable_span_floor_in_pod(
+    tenant_id: str = TENANT_ID,
+    timeout_s: float = 240.0,
+) -> dict[str, int]:
+    """Wait until each served-holdout-gated type clears min_holdout.
+
+    min_holdout is derived from the shipped population floor:
+    ``max(1, min_samples // 10)``.
+    """
+    minimum = _served_holdout_minimum_in_pod(tenant_id)
+    deadline = time.monotonic() + timeout_s
+    seen = {
+        "query_enhancement": 0,
+        "entity_extraction": 0,
+        "profile_selection": 0,
+    }
+    while time.monotonic() < deadline:
+        seen = {
+            "query_enhancement": _count_spans_by_name_in_pod(
+                tenant_id, "SPAN_NAME_QUERY_ENHANCEMENT"
+            ),
+            "entity_extraction": _count_spans_by_name_in_pod(
+                tenant_id, "SPAN_NAME_ENTITY_EXTRACTION"
+            ),
+            "profile_selection": _count_spans_by_name_in_pod(
+                tenant_id, "SPAN_NAME_PROFILE_SELECTION"
+            ),
+        }
+        if all(count >= minimum for count in seen.values()):
+            return seen
+        time.sleep(5.0)
+    raise AssertionError(
+        f"Phoenix served-scoreable counts below min_holdout={minimum} after "
+        f"{timeout_s:.0f}s: {seen}"
+    )
 
 
 def _wait_for_seeded_span_lower_bound_in_pod(
@@ -606,11 +709,53 @@ def generate_spans_for_batch_jobs(_kubectl_cluster_ready):
         TENANT_ID, "SPAN_NAME_ORCHESTRATION", len(COMPLEX_QUERIES)
     )
 
-    approved = _generate_and_approve_query_enhancement_synthetic_in_pod(TENANT_ID)
-    _wait_for_approved_query_enhancement_examples_in_pod(
-        TENANT_ID,
-        minimum=approved,
-    )
+    # Gateway and orchestration are already covered by the direct seeded-span
+    # waits above; only the served-holdout-gated types need this floor guard.
+    served_scoreable_counts = _wait_for_served_scoreable_span_floor_in_pod(TENANT_ID)
+    served_holdout_minimum = _served_holdout_minimum_in_pod(TENANT_ID)
+    assert all(
+        count >= served_holdout_minimum for count in served_scoreable_counts.values()
+    ), f"Phoenix served-scoreable counts below floor: {served_scoreable_counts}"
+
+    approved_floor = _synthetic_approve_count()
+    approved_counts: dict[str, int] = {}
+    for optimizer_type in (
+        "query_enhancement",
+        "profile",
+        "entity_extraction",
+    ):
+        span_type = OPTIMIZER_TYPE_TO_SPAN_TYPE[optimizer_type]
+        approved_before_examples = _approved_query_enhancement_examples_in_pod(
+            TENANT_ID,
+            optimizer_type=optimizer_type,
+        )
+        approved_before_count = len(approved_before_examples)
+        approved_count = _generate_and_approve_synthetic_in_pod(
+            TENANT_ID,
+            optimizer_type=optimizer_type,
+            count=max(approved_floor, 100 - served_scoreable_counts[span_type]),
+        )
+        approved_examples = _wait_for_approved_query_enhancement_examples_in_pod(
+            TENANT_ID,
+            optimizer_type=optimizer_type,
+            minimum=approved_before_count + approved_count,
+        )
+        assert len(approved_examples) == approved_before_count + approved_count, (
+            f"{optimizer_type} approved synthetic count drifted: "
+            f"before={approved_before_count} generated={approved_count} "
+            f"after={len(approved_examples)}"
+        )
+        approved_counts[optimizer_type] = approved_count
+
+    for optimizer_type in approved_counts:
+        span_type = OPTIMIZER_TYPE_TO_SPAN_TYPE[optimizer_type]
+        assert (
+            served_scoreable_counts[span_type] + approved_counts[optimizer_type] >= 100
+        ), (
+            f"{optimizer_type} served/approved floor not met: "
+            f"served={served_scoreable_counts[span_type]} "
+            f"approved={approved_counts[optimizer_type]}"
+        )
 
     yield
 
@@ -656,9 +801,11 @@ def _run_batch_job(
 
     if result.returncode != 0:
         raise RuntimeError(
-            f"Batch job '{mode}' failed (rc={result.returncode}).\n"
-            f"stderr: {result.stderr[-1000:]}\n"
-            f"stdout: {result.stdout[-500:]}"
+            _subprocess_failure_message(
+                f"batch_job_{mode.replace('-', '_')}",
+                result,
+                operation=f"batch job mode={mode!r}, tenant_id={tenant_id!r}",
+            )
         )
 
     # The CLI prints JSON as the last output via json.dumps().
@@ -722,8 +869,63 @@ def _load_blob_in_pod(kind: str, key: str, tenant_id: str = TENANT_ID) -> str:
         timeout=60,
     )
     if result.returncode != 0:
-        raise RuntimeError(f"load_blob({kind}, {key}) failed: {result.stderr[-500:]}")
+        raise RuntimeError(
+            _subprocess_failure_message(
+                f"load_blob_{kind}_{key}",
+                result,
+                operation=f"load_blob(kind={kind!r}, key={key!r})",
+            )
+        )
     return result.stdout.strip()
+
+
+def _load_blob_version_in_pod(
+    kind: str, key: str, version: int, tenant_id: str = TENANT_ID
+) -> tuple[str, dict[str, object]]:
+    """Load one versioned artifact blob and its ledger from inside the pod."""
+    script = IN_POD_TELEMETRY_PRELUDE + (
+        "import asyncio, json; "
+        "from cogniverse_foundation.telemetry.manager import get_telemetry_manager; "
+        "from cogniverse_agents.optimizer.artifact_manager import ArtifactManager; "
+        f"tp = get_telemetry_manager().get_provider(tenant_id={tenant_id!r}); "
+        f"am = ArtifactManager(tp, {tenant_id!r}); "
+        "blob, ledger = asyncio.run("
+        f"am.load_blob_version({kind!r}, {key!r}, {version})); "
+        "print('__VERSION__' + json.dumps({'blob': blob, 'ledger': ledger}, default=str))"
+    )
+    result = subprocess.run(
+        [
+            "kubectl",
+            "--context",
+            KUBECTL_CONTEXT,
+            "exec",
+            "-n",
+            NAMESPACE,
+            DEPLOYMENT,
+            "-c",
+            CONTAINER,
+            "--",
+            "python3",
+            "-c",
+            script,
+        ],
+        capture_output=True,
+        text=True,
+        timeout=60,
+    )
+    if result.returncode != 0:
+        raise RuntimeError(
+            _subprocess_failure_message(
+                f"load_blob_version_{kind}_{key}_{version}",
+                result,
+                operation=(
+                    f"load_blob_version(kind={kind!r}, key={key!r}, version={version})"
+                ),
+            )
+        )
+    line = next(ln for ln in result.stdout.splitlines() if ln.startswith("__VERSION__"))
+    payload = json.loads(line[len("__VERSION__") :])
+    return payload["blob"], payload["ledger"]
 
 
 def _blob_state_in_pod(
@@ -762,7 +964,11 @@ def _blob_state_in_pod(
     )
     if result.returncode != 0:
         raise RuntimeError(
-            f"get_blob_state({kind}, {key}) failed: {result.stderr[-500:]}"
+            _subprocess_failure_message(
+                f"blob_state_{kind}_{key}",
+                result,
+                operation=f"get_blob_state(kind={kind!r}, key={key!r})",
+            )
         )
     line = next(ln for ln in result.stdout.splitlines() if ln.startswith("__STATE__"))
     return json.loads(line[len("__STATE__") :])
@@ -804,7 +1010,11 @@ def _blob_version_lineage_in_pod(
     )
     if result.returncode != 0:
         raise RuntimeError(
-            f"get_version_lineage({kind}, {key}) failed: {result.stderr[-500:]}"
+            _subprocess_failure_message(
+                f"blob_lineage_{kind}_{key}",
+                result,
+                operation=f"get_version_lineage(kind={kind!r}, key={key!r})",
+            )
         )
     line = next(ln for ln in result.stdout.splitlines() if ln.startswith("__LINEAGE__"))
     return json.loads(line[len("__LINEAGE__") :])
@@ -844,7 +1054,11 @@ def _active_blob_version_in_pod(kind: str, key: str, tenant_id: str = TENANT_ID)
     )
     if result.returncode != 0:
         raise RuntimeError(
-            f"get_blob_state({kind}, {key}) failed: {result.stderr[-500:]}"
+            _subprocess_failure_message(
+                f"active_blob_{kind}_{key}",
+                result,
+                operation=f"get_blob_state(kind={kind!r}, key={key!r})",
+            )
         )
     line = next(ln for ln in result.stdout.splitlines() if ln.startswith("__ACTIVE__"))
     active = json.loads(line[len("__ACTIVE__") :])
@@ -892,7 +1106,14 @@ def _reset_query_enhancement_artifact_in_pod(tenant_id: str = TENANT_ID) -> bool
         text=True,
         timeout=180,
     )
-    assert result.returncode == 0, result.stderr[-2000:]
+    if result.returncode != 0:
+        raise RuntimeError(
+            _subprocess_failure_message(
+                "reset_query_enhancement_artifact",
+                result,
+                operation=f"reset query-enhancement artifact for tenant_id={tenant_id!r}",
+            )
+        )
     line = result.stdout.strip().splitlines()[-1]
     assert line in ("__RESET__0", "__RESET__1"), result.stdout[-500:]
     return line == "__RESET__1"
@@ -932,7 +1153,11 @@ def _population_floor_in_pod(tenant_id: str = TENANT_ID) -> tuple[int, int]:
     )
     if result.returncode != 0:
         raise RuntimeError(
-            f"_population_floor_from_config({tenant_id}) failed: {result.stderr[-500:]}"
+            _subprocess_failure_message(
+                "population_floor",
+                result,
+                operation=f"_population_floor_from_config(tenant_id={tenant_id!r})",
+            )
         )
     line = next(ln for ln in result.stdout.splitlines() if ln.startswith("__FLOOR__"))
     payload = json.loads(line[len("__FLOOR__") :])
@@ -1044,7 +1269,13 @@ def _read_pod_logs(pod_name: str, since: str = "5m", tail_lines: int = 5000) -> 
         timeout=30,
     )
     if result.returncode != 0:
-        raise RuntimeError(f"kubectl logs {pod_name} failed: {result.stderr[-500:]}")
+        raise RuntimeError(
+            _subprocess_failure_message(
+                f"kubectl_logs_{pod_name}",
+                result,
+                operation=f"kubectl logs pod={pod_name!r}",
+            )
+        )
     return result.stdout
 
 
@@ -1302,14 +1533,16 @@ class TestWorkflowOptimization:
 
 def _approved_query_enhancement_examples_in_pod(
     tenant_id: str = TENANT_ID,
+    optimizer_type: str = "query_enhancement",
 ) -> list[dict]:
-    """The tenant's approved synthetic query-enhancement examples, read in-pod."""
+    """The tenant's approved synthetic examples for one optimizer, read in-pod."""
     script = IN_POD_TELEMETRY_PRELUDE + (
         "import asyncio, json; "
         "from cogniverse_foundation.telemetry.manager import get_telemetry_manager; "
         "from cogniverse_runtime.optimization_cli import _load_approved_synthetic_data; "
         f"tp = get_telemetry_manager().get_provider(tenant_id={tenant_id!r}); "
-        f"rows = asyncio.run(_load_approved_synthetic_data(tp, {tenant_id!r}, 'query_enhancement')); "
+        "rows = asyncio.run(_load_approved_synthetic_data("
+        f"tp, {tenant_id!r}, {optimizer_type!r})); "
         "print('__APPROVED__' + json.dumps(rows, default=str))"
     )
     result = subprocess.run(
@@ -1332,7 +1565,17 @@ def _approved_query_enhancement_examples_in_pod(
         text=True,
         timeout=180,
     )
-    assert result.returncode == 0, result.stderr[-2000:]
+    if result.returncode != 0:
+        raise RuntimeError(
+            _subprocess_failure_message(
+                f"approved_examples_{optimizer_type}",
+                result,
+                operation=(
+                    "approved synthetic examples "
+                    f"optimizer_type={optimizer_type!r}, tenant_id={tenant_id!r}"
+                ),
+            )
+        )
     line = result.stdout.strip().splitlines()[-1]
     assert line.startswith("__APPROVED__"), result.stdout[-500:]
     return json.loads(line[len("__APPROVED__") :])
@@ -1381,7 +1624,16 @@ def _served_query_enhancement_queries_in_pod(
         text=True,
         timeout=180,
     )
-    assert result.returncode == 0, result.stderr[-2000:]
+    if result.returncode != 0:
+        raise RuntimeError(
+            _subprocess_failure_message(
+                "served_query_enhancement",
+                result,
+                operation=(
+                    f"served query-enhancement queries for tenant_id={tenant_id!r}"
+                ),
+            )
+        )
     line = result.stdout.strip().splitlines()[-1]
     assert line.startswith("__SERVED__"), result.stdout[-500:]
     return set(json.loads(line[len("__SERVED__") :]))
@@ -1389,19 +1641,22 @@ def _served_query_enhancement_queries_in_pod(
 
 def _wait_for_approved_query_enhancement_examples_in_pod(
     tenant_id: str = TENANT_ID,
+    optimizer_type: str = "query_enhancement",
     minimum: int = 1,
     timeout_s: float = 240.0,
 ) -> list[dict]:
-    """Wait until the tenant's approved query-enhancement examples are visible."""
+    """Wait until the tenant's approved synthetic examples are visible."""
     deadline = time.monotonic() + timeout_s
     approved: list[dict] = []
     while time.monotonic() < deadline:
-        approved = _approved_query_enhancement_examples_in_pod(tenant_id)
+        approved = _approved_query_enhancement_examples_in_pod(
+            tenant_id, optimizer_type
+        )
         if len(approved) >= minimum:
             return approved
         time.sleep(5.0)
     raise AssertionError(
-        f"Phoenix showed {len(approved)} approved query-enhancement examples "
+        f"Phoenix showed {len(approved)} approved {optimizer_type} examples "
         f"for tenant {tenant_id!r}; expected at least {minimum} within "
         f"{timeout_s:.0f}s"
     )
@@ -1432,11 +1687,12 @@ def _wait_for_seeded_query_enhancement_queries_in_pod(
     )
 
 
-def _generate_and_approve_query_enhancement_synthetic_in_pod(
+def _generate_and_approve_synthetic_in_pod(
     tenant_id: str = TENANT_ID,
+    optimizer_type: str = "query_enhancement",
     count: int | None = None,
 ) -> int:
-    """Generate query_enhancement synthetic rows and approve them in-pod."""
+    """Generate synthetic rows for one optimizer and approve them in-pod."""
     approve_count = _synthetic_approve_count() if count is None else count
     script = IN_POD_TELEMETRY_PRELUDE + (
         "import asyncio, json\n"
@@ -1457,9 +1713,9 @@ def _generate_and_approve_query_enhancement_synthetic_in_pod(
         "        grpc_endpoint = f'http://{grpc_endpoint}'\n"
         "    telemetry_manager = get_telemetry_manager()\n"
         f"    generation = await run_synthetic_generation(\n"
-        f"        {tenant_id!r}, optimizer_types=['query_enhancement'], count={approve_count}\n"
+        f"        {tenant_id!r}, optimizer_types=[{optimizer_type!r}], count={approve_count}\n"
         "    )\n"
-        "    outcome = generation['results']['query_enhancement']\n"
+        f"    outcome = generation['results'][{optimizer_type!r}]\n"
         "    assert outcome['status'] == 'success', outcome\n"
         "    storage = ApprovalStorageImpl(\n"
         "        grpc_endpoint=grpc_endpoint,\n"
@@ -1507,8 +1763,15 @@ def _generate_and_approve_query_enhancement_synthetic_in_pod(
     )
     if result.returncode != 0:
         raise RuntimeError(
-            "synthetic generation/approval failed: "
-            f"{result.stderr[-2000:]}\nstdout: {result.stdout[-2000:]}"
+            _subprocess_failure_message(
+                f"synthetic_fail_{optimizer_type}",
+                result,
+                operation=(
+                    "synthetic generation/approval "
+                    f"optimizer_type={optimizer_type!r}, tenant_id={tenant_id!r}"
+                ),
+                count_requested=approve_count,
+            )
         )
     line = next(
         ln for ln in result.stdout.splitlines() if ln.startswith("__APPROVED__")
@@ -1547,7 +1810,14 @@ def _usable_profile_names_in_pod(tenant_id: str = TENANT_ID) -> list[str]:
         text=True,
         timeout=180,
     )
-    assert result.returncode == 0, result.stderr[-2000:]
+    if result.returncode != 0:
+        raise RuntimeError(
+            _subprocess_failure_message(
+                "usable_profile_names",
+                result,
+                operation=f"usable profile names for tenant_id={tenant_id!r}",
+            )
+        )
     line = result.stdout.strip().splitlines()[-1]
     assert line.startswith("__USABLE__"), result.stdout[-500:]
     usable = json.loads(line[len("__USABLE__") :])
@@ -1575,6 +1845,7 @@ def _assert_simba_served_the_best_module(result: dict, blob_before: str) -> dict
         "examples",
         "training_examples",
         "holdout_examples",
+        "holdout_source",
         "baseline_score",
         "current_score",
         "candidate_score",
@@ -1588,20 +1859,52 @@ def _assert_simba_served_the_best_module(result: dict, blob_before: str) -> dict
     assert (
         result["training_examples"] <= result["examples"] - result["holdout_examples"]
     )
+    assert result["holdout_source"] == "served", result
+    assert result["decision"] in BLOB_VERSION_DECISIONS, result
     served_score = {
         "promote": result["candidate_score"],
         "keep": result["current_score"],
         "rollback": result["baseline_score"],
+        "reject": result["baseline_score"],
     }[result["decision"]]
     assert served_score >= result["baseline_score"], result
 
-    after = json.loads(_load_blob_in_pod("model", "simba_query_enhancement"))
-    assert list(after) == ["enhancer.predict"], list(after)
+    version = result["version"]
+    assert isinstance(version, int), result
+    version_blob, ledger = _load_blob_version_in_pod(
+        "model", "simba_query_enhancement", version
+    )
+    assert set(ledger) == {
+        "version",
+        "kind",
+        "key",
+        "consumed_example_ids",
+        "decision",
+        "scored",
+        "base_score",
+        "candidate_score",
+        "created_at",
+    }, ledger
+    assert ledger["version"] == version, ledger
+    assert ledger["kind"] == "model", ledger
+    assert ledger["key"] == "simba_query_enhancement", ledger
+    assert ledger["decision"] == result["decision"], ledger
+    assert ledger["consumed_example_ids"] == result["consumed_example_ids"], ledger
+    assert ledger["base_score"] == result["baseline_score"], ledger
+    assert ledger["candidate_score"] == result["candidate_score"], ledger
+    if result["candidate_score"] is None:
+        assert ledger["scored"] is False, ledger
+    else:
+        assert ledger["scored"] is True, ledger
+
+    after = _load_blob_in_pod("model", "simba_query_enhancement")
+    assert json.loads(after)
+    assert list(json.loads(after)) == ["enhancer.predict"], list(json.loads(after))
     # The persisted signature is the served module's: ChainOfThought places
     # its Reasoning field ahead of the signature's own outputs, so the order
     # comes from the real predictor, not from the class body.
     served_signature = QueryEnhancementModule().enhancer.predict.signature
-    sig = after["enhancer.predict"]["signature"]
+    sig = json.loads(after)["enhancer.predict"]["signature"]
     assert [f.get("prefix", "").rstrip(":").strip() for f in sig["fields"]] == [
         field.json_schema_extra["prefix"].rstrip(":").strip()
         for field in served_signature.fields.values()
@@ -1610,14 +1913,6 @@ def _assert_simba_served_the_best_module(result: dict, blob_before: str) -> dict
 
     # The run persisted a version whose ledger names exactly what it consumed;
     # promote/rollback activate it, keep/reject leave the pointer.
-    version = result["version"]
-    assert isinstance(version, int) and version >= 1, result
-    lineage = _blob_version_lineage_in_pod("model", "simba_query_enhancement")
-    newest = lineage[-1]
-    assert newest["version"] == version, lineage
-    assert newest["decision"] == result["decision"], newest
-    assert newest["consumed_example_ids"] == result["consumed_example_ids"], newest
-    assert newest["consumed_example_ids"] != [], newest
     served_queries = _served_query_enhancement_queries_in_pod()
     seeded_queries = set(ENHANCEMENT_QUERIES) | {
         q for q, _, _ in GROUNDED_ENHANCEMENT_QUERIES
@@ -1626,8 +1921,10 @@ def _assert_simba_served_the_best_module(result: dict, blob_before: str) -> dict
     # a fabricated attribution.
     for example_id in result["consumed_example_ids"]:
         assert example_id.startswith(("span:", "approved:")), example_id
+    assert len(result["consumed_example_ids"]) == result["examples"], result
 
-    demos = after["enhancer.predict"]["demos"]
+    persisted = json.loads(version_blob)
+    demos = persisted["enhancer.predict"]["demos"]
     if result["decision"] == "promote":
         # The fixture's seeded calls all landed as served spans ...
         assert seeded_queries <= served_queries, sorted(seeded_queries - served_queries)
@@ -1642,17 +1939,20 @@ def _assert_simba_served_the_best_module(result: dict, blob_before: str) -> dict
             ), demo
         assert (
             _active_blob_version_in_pod("model", "simba_query_enhancement") == version
-        ), lineage
+        ), persisted
     elif result["decision"] == "rollback":
-        assert after == _base_query_enhancement_state()
+        assert persisted == _base_query_enhancement_state()
         assert (
             _active_blob_version_in_pod("model", "simba_query_enhancement") == version
-        ), lineage
+        ), persisted
     else:
         # keep / reject record the version but never activate it; the served
         # blob is whatever the run started from.
-        assert after == json.loads(blob_before)
-    return after
+        assert json.loads(after) == json.loads(blob_before)
+        assert (
+            _active_blob_version_in_pod("model", "simba_query_enhancement") != version
+        )
+    return json.loads(after)
 
 
 @pytest.mark.e2e
@@ -1764,39 +2064,143 @@ class TestProfileOptimization:
     """Verify profile selection batch job compiles the profile module."""
 
     def test_profile_produces_model_artifact(self):
-        """Run --mode profile, assert it produces a compiled DSPy model."""
-        result = _run_batch_job("profile")
+        """Run --mode profile and pin the persisted version contract."""
+        blob_before = _load_blob_in_pod("model", "profile_selection")
+        assert blob_before != "", "the module fixture persists the base artifact"
 
-        assert result["status"] == "success"
-        assert result["spans_found"] > 0
-        assert result["training_examples"] >= 1
-        assert isinstance(result["version"], int) and result["version"] >= 1
-        assert result["consumed_example_ids"] != []
-        lineage = _blob_version_lineage_in_pod("model", "profile_selection")
-        assert lineage[-1]["version"] == result["version"], lineage
-        assert lineage[-1]["consumed_example_ids"] == result["consumed_example_ids"], (
-            lineage
+        result = _run_batch_job("profile")
+        approved = _approved_query_enhancement_examples_in_pod(TENANT_ID, "profile")
+        version_blob, ledger = _load_blob_version_in_pod(
+            "model", "profile_selection", result["version"]
         )
-        assert lineage[-1]["decision"] == "promote", lineage
-        assert (
-            _active_blob_version_in_pod("model", "profile_selection")
-            == result["version"]
-        ), lineage
+        active_blob = _load_blob_in_pod("model", "profile_selection")
+
+        assert set(result) == {
+            "status",
+            "spans_found",
+            "training_examples",
+            "holdout_examples",
+            "holdout_source",
+            "baseline_score",
+            "current_score",
+            "candidate_score",
+            "decision",
+            "version",
+            "consumed_example_ids",
+        }, result
+        assert result["status"] == "success", result
+        assert result["spans_found"] >= _served_holdout_minimum_in_pod(TENANT_ID), (
+            result
+        )
+        assert result["holdout_source"] == "served", result
+        assert result["decision"] in BLOB_VERSION_DECISIONS, result
+        assert result["holdout_examples"] == max(1, result["spans_found"] // 4), result
+        assert result["training_examples"] == (
+            result["spans_found"] - result["holdout_examples"] + len(approved)
+        ), result
+        assert len(result["consumed_example_ids"]) == (
+            result["spans_found"] + len(approved)
+        ), result
+        assert all(
+            example_id.startswith(("span:", "approved:"))
+            for example_id in result["consumed_example_ids"]
+        ), result
+
+        assert set(ledger) == {
+            "version",
+            "kind",
+            "key",
+            "consumed_example_ids",
+            "decision",
+            "scored",
+            "base_score",
+            "candidate_score",
+            "created_at",
+        }, ledger
+        assert ledger["version"] == result["version"], ledger
+        assert ledger["kind"] == "model", ledger
+        assert ledger["key"] == "profile_selection", ledger
+        assert ledger["consumed_example_ids"] == result["consumed_example_ids"], ledger
+        assert ledger["decision"] == result["decision"], ledger
+        assert ledger["scored"] is True, ledger
+        assert ledger["base_score"] == result["baseline_score"], ledger
+        assert ledger["candidate_score"] == result["candidate_score"], ledger
+
+        if result["decision"] == "promote" or result["decision"] == "rollback":
+            assert active_blob == version_blob, ledger
+            assert (
+                _active_blob_version_in_pod("model", "profile_selection")
+                == result["version"]
+            ), ledger
+        else:
+            assert active_blob == blob_before, ledger
+            assert (
+                _active_blob_version_in_pod("model", "profile_selection")
+                != result["version"]
+            ), ledger
 
     def test_profile_artifact_has_learned_demos(self):
         """Profile artifact must have demos with real query→profile pairs."""
-        _run_batch_job("profile")
-
-        blob = _load_blob_in_pod("model", "profile_selection")
-        assert blob, "Profile artifact blob is empty"
-
-        artifact = json.loads(blob)
-        assert "selector.predict" in artifact, (
-            f"Expected 'selector.predict' module, got: {list(artifact.keys())}"
+        approved = _approved_query_enhancement_examples_in_pod(TENANT_ID, "profile")
+        result = _run_batch_job("profile")
+        version_blob, ledger = _load_blob_version_in_pod(
+            "model", "profile_selection", result["version"]
         )
-        module = artifact["selector.predict"]
 
-        # Signature fields must match ProfileSelectionSignature
+        assert set(result) == {
+            "status",
+            "spans_found",
+            "training_examples",
+            "holdout_examples",
+            "holdout_source",
+            "baseline_score",
+            "current_score",
+            "candidate_score",
+            "decision",
+            "version",
+            "consumed_example_ids",
+        }, result
+        assert result["status"] == "success", result
+        assert result["spans_found"] >= _served_holdout_minimum_in_pod(TENANT_ID), (
+            result
+        )
+        assert result["holdout_source"] == "served", result
+        assert result["decision"] in BLOB_VERSION_DECISIONS, result
+        assert result["holdout_examples"] == max(1, result["spans_found"] // 4), result
+        assert result["training_examples"] == (
+            result["spans_found"] - result["holdout_examples"] + len(approved)
+        ), result
+        assert len(result["consumed_example_ids"]) == (
+            result["spans_found"] + len(approved)
+        ), result
+        assert all(
+            example_id.startswith(("span:", "approved:"))
+            for example_id in result["consumed_example_ids"]
+        ), result
+
+        assert set(ledger) == {
+            "version",
+            "kind",
+            "key",
+            "consumed_example_ids",
+            "decision",
+            "scored",
+            "base_score",
+            "candidate_score",
+            "created_at",
+        }, ledger
+        assert ledger["version"] == result["version"], ledger
+        assert ledger["kind"] == "model", ledger
+        assert ledger["key"] == "profile_selection", ledger
+        assert ledger["consumed_example_ids"] == result["consumed_example_ids"], ledger
+        assert ledger["decision"] == result["decision"], ledger
+        assert ledger["scored"] is True, ledger
+        assert ledger["base_score"] == result["baseline_score"], ledger
+        assert ledger["candidate_score"] == result["candidate_score"], ledger
+
+        artifact = json.loads(version_blob)
+        assert list(artifact) == ["selector.predict"], artifact
+        module = artifact["selector.predict"]
         sig = module["signature"]
         field_names = [f.get("prefix", "").rstrip(":").strip() for f in sig["fields"]]
         for expected in ("Query", "Available Profiles", "Selected Profile", "Modality"):
@@ -1806,15 +2210,10 @@ class TestProfileOptimization:
             == "Select optimal backend profile based on query analysis"
         )
 
-        # Must have learned demos
         demos = module.get("demos", [])
-        assert len(demos) >= 1, "Profile produced 0 demos — optimization was useless"
+        assert demos != [], "Profile produced 0 demos — optimization was useless"
 
         usable_profiles = _usable_profile_names_in_pod(TENANT_ID)
-
-        # Each demo: real query, and the pool it was labelled against is exactly
-        # the pool the agent shows the LM (recorded on the span, read back by
-        # the optimizer) — not a literal, not a subset, same order.
         for demo in demos:
             assert demo.get("query"), f"Demo missing query: {demo}"
             available = [
@@ -1847,30 +2246,81 @@ class TestProfileSelectionArtifactReload:
     """
 
     def test_profile_agent_loads_optimized_module_after_restart(self):
-        # 1. Run the profile optimizer to produce a fresh artifact.
-        result = _run_batch_job("profile")
-        assert result["status"] == "success"
-        assert result["training_examples"] >= 1
-
-        # 2. Verify the artifact has a non-trivial demo set before
-        # restart, so we know there is something for _load_artifact to
-        # actually load.
         blob_before = _load_blob_in_pod("model", "profile_selection")
-        assert blob_before, "Profile artifact blob is empty before restart"
-        artifact_before = json.loads(blob_before)
-        demos_before = artifact_before.get("selector.predict", {}).get("demos", [])
-        assert len(demos_before) >= 1, (
-            f"Pre-restart artifact has 0 demos — nothing to load. "
-            f"Keys present: {list(artifact_before.keys())}"
+        assert blob_before != "", "Profile artifact blob is empty before restart"
+
+        result = _run_batch_job("profile")
+        approved = _approved_query_enhancement_examples_in_pod(TENANT_ID, "profile")
+        version_blob, ledger = _load_blob_version_in_pod(
+            "model", "profile_selection", result["version"]
         )
+        blob_after_run = _load_blob_in_pod("model", "profile_selection")
 
-        # 3. Bounce the runtime pod.
+        assert set(result) == {
+            "status",
+            "spans_found",
+            "training_examples",
+            "holdout_examples",
+            "holdout_source",
+            "baseline_score",
+            "current_score",
+            "candidate_score",
+            "decision",
+            "version",
+            "consumed_example_ids",
+        }, result
+        assert result["status"] == "success", result
+        assert result["spans_found"] >= _served_holdout_minimum_in_pod(TENANT_ID), (
+            result
+        )
+        assert result["holdout_source"] == "served", result
+        assert result["decision"] in BLOB_VERSION_DECISIONS, result
+        assert result["holdout_examples"] == max(1, result["spans_found"] // 4), result
+        assert result["training_examples"] == (
+            result["spans_found"] - result["holdout_examples"] + len(approved)
+        ), result
+        assert len(result["consumed_example_ids"]) == (
+            result["spans_found"] + len(approved)
+        ), result
+        assert all(
+            example_id.startswith(("span:", "approved:"))
+            for example_id in result["consumed_example_ids"]
+        ), result
+
+        assert set(ledger) == {
+            "version",
+            "kind",
+            "key",
+            "consumed_example_ids",
+            "decision",
+            "scored",
+            "base_score",
+            "candidate_score",
+            "created_at",
+        }, ledger
+        assert ledger["version"] == result["version"], ledger
+        assert ledger["kind"] == "model", ledger
+        assert ledger["key"] == "profile_selection", ledger
+        assert ledger["consumed_example_ids"] == result["consumed_example_ids"], ledger
+        assert ledger["decision"] == result["decision"], ledger
+        assert ledger["scored"] is True, ledger
+        assert ledger["base_score"] == result["baseline_score"], ledger
+        assert ledger["candidate_score"] == result["candidate_score"], ledger
+
+        if result["decision"] in {"promote", "rollback"}:
+            assert blob_after_run == version_blob, ledger
+            assert (
+                _active_blob_version_in_pod("model", "profile_selection")
+                == result["version"]
+            ), ledger
+        else:
+            assert blob_after_run == blob_before, ledger
+            assert (
+                _active_blob_version_in_pod("model", "profile_selection")
+                != result["version"]
+            ), ledger
+
         new_pod = _bounce_runtime_pod()
-
-        # 4. Issue a query first — the dispatcher constructs each agent
-        # lazily on first dispatch, and ``_load_artifact`` only runs at
-        # construction time. Without driving traffic, the agent is never
-        # built and the load-success log line never fires.
         resp = httpx.post(
             f"{RUNTIME}/agents/profile_selection_agent/process",
             json={
@@ -1885,16 +2335,9 @@ class TestProfileSelectionArtifactReload:
             f"{resp.status_code} {resp.text[:300]}"
         )
         body = resp.json()
-        assert body.get("status") == "success", (
+        assert body["status"] == "success", (
             f"Agent dispatch did not succeed: {json.dumps(body, default=str)[:300]}"
         )
-
-        # 5. Now scrape logs. The success marker is emitted by
-        # ``ProfileSelectionAgent._load_artifact`` (profile_selection_agent.py
-        # line 254-255). Presence proves the artifact blob made it into
-        # the live ``dspy_module.load_state`` call. Absence means the
-        # agent silently fell back to the unoptimized module — the bug
-        # this test was added to catch.
         logs = _read_pod_logs(new_pod, since="10m")
         assert (
             "ProfileSelectionAgent loaded optimized DSPy module from artifact" in logs
@@ -1904,19 +2347,23 @@ class TestProfileSelectionArtifactReload:
             "swallowed an exception. Last 1500 chars of logs:\n"
             f"{logs[-1500:]}"
         )
-
-        # 6. Re-read the artifact from inside the pod and assert demo
-        # parity with the pre-restart state. This proves persistence
-        # across the restart and that ProfileSelectionModule's load
-        # didn't mutate the on-disk state.
         blob_after = _load_blob_in_pod("model", "profile_selection")
-        assert blob_after, "Profile artifact missing after restart"
-        artifact_after = json.loads(blob_after)
-        demos_after = artifact_after.get("selector.predict", {}).get("demos", [])
-        assert len(demos_after) == len(demos_before), (
-            f"Demo count drifted across restart: "
-            f"{len(demos_before)} -> {len(demos_after)}"
-        )
+        assert blob_after != "", "Profile artifact missing after restart"
+        assert blob_after == (
+            version_blob
+            if result["decision"] in {"promote", "rollback"}
+            else blob_before
+        ), ledger
+        if result["decision"] in {"promote", "rollback"}:
+            assert (
+                _active_blob_version_in_pod("model", "profile_selection")
+                == result["version"]
+            ), ledger
+        else:
+            assert (
+                _active_blob_version_in_pod("model", "profile_selection")
+                != result["version"]
+            ), ledger
 
 
 # ---------------------------------------------------------------------------
@@ -2008,55 +2455,155 @@ class TestEntityExtractionOptimization:
 
     def test_entity_extraction_produces_model_artifact(self):
         """Run --mode entity-extraction, assert it produces a compiled DSPy model."""
-        # ~2 min on an idle cluster (Phoenix span scan + DSPy compile with
-        # real LM calls); leave headroom for a loaded Phoenix/LM.
-        result = _run_batch_job("entity-extraction", timeout=600)
+        blob_before = _load_blob_in_pod("model", "entity_extraction")
+        assert blob_before != "", "the module fixture persists the base artifact"
 
-        assert result["status"] == "success"
-        assert result["spans_found"] > 0
-        assert result["training_examples"] >= 1
-        assert isinstance(result["version"], int) and result["version"] >= 1
-        assert result["consumed_example_ids"] != []
-        lineage = _blob_version_lineage_in_pod("model", "entity_extraction")
-        assert lineage[-1]["version"] == result["version"], lineage
-        assert lineage[-1]["consumed_example_ids"] == result["consumed_example_ids"], (
-            lineage
+        result = _run_batch_job("entity-extraction", timeout=600)
+        approved = _approved_query_enhancement_examples_in_pod(
+            TENANT_ID, "entity_extraction"
         )
-        assert lineage[-1]["decision"] == "promote", lineage
-        assert (
-            _active_blob_version_in_pod("model", "entity_extraction")
-            == result["version"]
-        ), lineage
+        version_blob, ledger = _load_blob_version_in_pod(
+            "model", "entity_extraction", result["version"]
+        )
+        active_blob = _load_blob_in_pod("model", "entity_extraction")
+
+        assert set(result) == {
+            "status",
+            "spans_found",
+            "training_examples",
+            "holdout_examples",
+            "holdout_source",
+            "baseline_score",
+            "current_score",
+            "candidate_score",
+            "decision",
+            "version",
+            "consumed_example_ids",
+        }, result
+        assert result["status"] == "success", result
+        assert result["spans_found"] >= _served_holdout_minimum_in_pod(TENANT_ID), (
+            result
+        )
+        assert result["holdout_source"] == "served", result
+        assert result["decision"] in BLOB_VERSION_DECISIONS, result
+        assert result["holdout_examples"] == max(1, result["spans_found"] // 4), result
+        assert result["training_examples"] == (
+            result["spans_found"] - result["holdout_examples"] + len(approved)
+        ), result
+        assert len(result["consumed_example_ids"]) == (
+            result["spans_found"] + len(approved)
+        ), result
+        assert all(
+            example_id.startswith(("span:", "approved:"))
+            for example_id in result["consumed_example_ids"]
+        ), result
+
+        assert set(ledger) == {
+            "version",
+            "kind",
+            "key",
+            "consumed_example_ids",
+            "decision",
+            "scored",
+            "base_score",
+            "candidate_score",
+            "created_at",
+        }, ledger
+        assert ledger["version"] == result["version"], ledger
+        assert ledger["kind"] == "model", ledger
+        assert ledger["key"] == "entity_extraction", ledger
+        assert ledger["consumed_example_ids"] == result["consumed_example_ids"], ledger
+        assert ledger["decision"] == result["decision"], ledger
+        assert ledger["scored"] is True, ledger
+        assert ledger["base_score"] == result["baseline_score"], ledger
+        assert ledger["candidate_score"] == result["candidate_score"], ledger
+
+        if result["decision"] in {"promote", "rollback"}:
+            assert active_blob == version_blob, ledger
+            assert (
+                _active_blob_version_in_pod("model", "entity_extraction")
+                == result["version"]
+            ), ledger
+        else:
+            assert active_blob == blob_before, ledger
+            assert (
+                _active_blob_version_in_pod("model", "entity_extraction")
+                != result["version"]
+            ), ledger
 
     def test_entity_extraction_artifact_has_learned_demos(self):
         """Entity extraction artifact must have demos with real entity data."""
-        _run_batch_job("entity-extraction", timeout=600)
-
-        blob = _load_blob_in_pod("model", "entity_extraction")
-        assert blob, "Entity extraction artifact blob is empty"
-
-        artifact = json.loads(blob)
-        assert "extractor.predict" in artifact, (
-            f"Expected 'extractor.predict' module, got: {list(artifact.keys())}"
+        approved = _approved_query_enhancement_examples_in_pod(
+            TENANT_ID, "entity_extraction"
         )
-        module = artifact["extractor.predict"]
+        result = _run_batch_job("entity-extraction", timeout=600)
+        version_blob, ledger = _load_blob_version_in_pod(
+            "model", "entity_extraction", result["version"]
+        )
 
-        # Signature fields must match EntityExtractionSignature exactly
+        assert set(result) == {
+            "status",
+            "spans_found",
+            "training_examples",
+            "holdout_examples",
+            "holdout_source",
+            "baseline_score",
+            "current_score",
+            "candidate_score",
+            "decision",
+            "version",
+            "consumed_example_ids",
+        }, result
+        assert result["status"] == "success", result
+        assert result["spans_found"] >= _served_holdout_minimum_in_pod(TENANT_ID), (
+            result
+        )
+        assert result["holdout_source"] == "served", result
+        assert result["decision"] in BLOB_VERSION_DECISIONS, result
+        assert result["holdout_examples"] == max(1, result["spans_found"] // 4), result
+        assert result["training_examples"] == (
+            result["spans_found"] - result["holdout_examples"] + len(approved)
+        ), result
+        assert len(result["consumed_example_ids"]) == (
+            result["spans_found"] + len(approved)
+        ), result
+        assert all(
+            example_id.startswith(("span:", "approved:"))
+            for example_id in result["consumed_example_ids"]
+        ), result
+
+        assert set(ledger) == {
+            "version",
+            "kind",
+            "key",
+            "consumed_example_ids",
+            "decision",
+            "scored",
+            "base_score",
+            "candidate_score",
+            "created_at",
+        }, ledger
+        assert ledger["version"] == result["version"], ledger
+        assert ledger["kind"] == "model", ledger
+        assert ledger["key"] == "entity_extraction", ledger
+        assert ledger["consumed_example_ids"] == result["consumed_example_ids"], ledger
+        assert ledger["decision"] == result["decision"], ledger
+        assert ledger["scored"] is True, ledger
+        assert ledger["base_score"] == result["baseline_score"], ledger
+        assert ledger["candidate_score"] == result["candidate_score"], ledger
+
+        artifact = json.loads(version_blob)
+        assert list(artifact) == ["extractor.predict"], artifact
+        module = artifact["extractor.predict"]
         sig = module["signature"]
         field_names = [f.get("prefix", "").rstrip(":").strip() for f in sig["fields"]]
         for expected in ("Query", "Entities", "Entity Types"):
             assert expected in field_names, f"Missing '{expected}', got: {field_names}"
         assert sig["instructions"] == "Extract named entities from text query"
-
-        # Must have learned demos — 0 demos means optimization did nothing
         demos = module.get("demos", [])
-        assert len(demos) >= 1, (
+        assert demos != [], (
             "Entity extraction produced 0 demos — optimization was useless"
         )
-
-        # Each demo: real query with entities extracted
-        # Entities may be pipe-delimited (DSPy fallback: "text|type|confidence")
-        # or JSON array (GLiNER fast path: [{"text": ..., "type": ..., "confidence": ...}])
         for demo in demos:
             assert demo.get("query"), f"Demo missing query: {demo}"
             assert demo.get("entities"), f"Demo missing entities: {demo}"
@@ -2067,9 +2614,6 @@ class TestEntityExtractionOptimization:
                 f"Entities should be pipe-delimited or JSON array, "
                 f"got: '{entities_str[:100]}'"
             )
-
-        # At least one demo should contain entity-related queries from our test data
-        # (fixture generates queries like "ML transformer", "find AI tutorials" etc.)
         demo_queries = " ".join(d["query"].lower() for d in demos)
         entity_terms = (
             "ml",
@@ -2262,87 +2806,252 @@ class TestArtifactLoadingRoundTrip:
         )
 
     def test_entity_extraction_artifact_survives_restart(self):
-        """Verify entity_extraction artifact is loadable after the gateway restart.
-
-        The prior test in this class bounces the runtime pod. The new pod
-        re-subscribes to Phoenix spans but the catch-up takes 30-120s on
-        first read. Running the batch job immediately can land in a
-        window where Phoenix returns ``training_examples=0`` (status is
-        still "success" — the optimizer just had nothing to learn from).
-        Retry the batch job until training examples appear OR the
-        wait-budget is exhausted; this distinguishes "Phoenix-catchup
-        race" (transient) from "no spans exist at all" (real bug).
-        """
-        deadline = time.monotonic() + 180.0
-        result = _run_batch_job("entity-extraction")
-        while (
-            result.get("status") == "success"
-            and result.get("training_examples", 0) < 1
-            and time.monotonic() < deadline
-        ):
-            time.sleep(15)
-            result = _run_batch_job("entity-extraction")
-        assert result["status"] == "success", (
-            f"entity-extraction batch job failed: {result}"
-        )
-        assert result["training_examples"] >= 1, (
-            f"Phoenix returned 0 training examples after 180s of post-bounce "
-            f"catch-up — either spans were never indexed or the bounce dropped "
-            f"persistent data. Last result: {result}"
+        """Verify entity_extraction artifact is loadable after restart."""
+        blob_before = _load_blob_in_pod("model", "entity_extraction")
+        assert blob_before != "", (
+            "Entity extraction artifact blob is empty before restart"
         )
 
-        # Load the artifact — the gateway test already restarted the pod,
-        # so this proves the artifact persists across restarts
-        blob = _load_blob_in_pod("model", "entity_extraction")
-        assert blob, "Entity extraction artifact not loadable after restart"
+        result = _run_batch_job("entity-extraction", timeout=600)
+        approved = _approved_query_enhancement_examples_in_pod(
+            TENANT_ID, "entity_extraction"
+        )
+        version_blob, ledger = _load_blob_version_in_pod(
+            "model", "entity_extraction", result["version"]
+        )
+        blob_after_run = _load_blob_in_pod("model", "entity_extraction")
 
-        artifact = json.loads(blob)
-        assert "extractor.predict" in artifact, (
-            f"Expected 'extractor.predict' module, got: {list(artifact.keys())}"
+        assert set(result) == {
+            "status",
+            "spans_found",
+            "training_examples",
+            "holdout_examples",
+            "holdout_source",
+            "baseline_score",
+            "current_score",
+            "candidate_score",
+            "decision",
+            "version",
+            "consumed_example_ids",
+        }, result
+        assert result["status"] == "success", result
+        assert result["spans_found"] >= _served_holdout_minimum_in_pod(TENANT_ID), (
+            result
+        )
+        assert result["holdout_source"] == "served", result
+        assert result["decision"] in BLOB_VERSION_DECISIONS, result
+        assert result["holdout_examples"] == max(1, result["spans_found"] // 4), result
+        assert result["training_examples"] == (
+            result["spans_found"] - result["holdout_examples"] + len(approved)
+        ), result
+        assert len(result["consumed_example_ids"]) == (
+            result["spans_found"] + len(approved)
+        ), result
+        assert all(
+            example_id.startswith(("span:", "approved:"))
+            for example_id in result["consumed_example_ids"]
+        ), result
+
+        assert set(ledger) == {
+            "version",
+            "kind",
+            "key",
+            "consumed_example_ids",
+            "decision",
+            "scored",
+            "base_score",
+            "candidate_score",
+            "created_at",
+        }, ledger
+        assert ledger["version"] == result["version"], ledger
+        assert ledger["kind"] == "model", ledger
+        assert ledger["key"] == "entity_extraction", ledger
+        assert ledger["consumed_example_ids"] == result["consumed_example_ids"], ledger
+        assert ledger["decision"] == result["decision"], ledger
+        assert ledger["scored"] is True, ledger
+        assert ledger["base_score"] == result["baseline_score"], ledger
+        assert ledger["candidate_score"] == result["candidate_score"], ledger
+
+        if result["decision"] in {"promote", "rollback"}:
+            expected_blob = version_blob
+            assert blob_after_run == version_blob, ledger
+            assert (
+                _active_blob_version_in_pod("model", "entity_extraction")
+                == result["version"]
+            ), ledger
+        else:
+            expected_blob = blob_before
+            assert blob_after_run == blob_before, ledger
+            assert (
+                _active_blob_version_in_pod("model", "entity_extraction")
+                != result["version"]
+            ), ledger
+
+        new_pod = _bounce_runtime_pod()
+        resp = httpx.post(
+            f"{RUNTIME}/agents/entity_extraction_agent/process",
+            json={
+                "agent_name": "entity_extraction_agent",
+                "query": "find PyTorch tutorials",
+                "context": {"tenant_id": TENANT_ID},
+            },
+            timeout=600.0,
+        )
+        assert resp.status_code == 200, (
+            f"entity_extraction_agent failed after restart: "
+            f"{resp.status_code} {resp.text[:300]}"
+        )
+        body = resp.json()
+        assert body["status"] == "success", (
+            f"Agent dispatch did not succeed: {json.dumps(body, default=str)[:300]}"
         )
 
-        demos = artifact["extractor.predict"].get("demos", [])
-        assert len(demos) >= 1, "Entity extraction artifact has 0 demos"
+        logs = _read_pod_logs(new_pod, since="10m")
+        assert (
+            "EntityExtractionAgent loaded optimized DSPy module from artifact" in logs
+        ), (
+            "Expected EntityExtractionAgent load-success log line in new "
+            f"pod {new_pod}; either _load_artifact didn't run or it "
+            "swallowed an exception. Last 1500 chars of logs:\n"
+            f"{logs[-1500:]}"
+        )
 
-        # Verify demo structure: each should have query and entities
-        for demo in demos:
-            assert demo.get("query"), f"Demo missing query: {demo}"
-            assert demo.get("entities"), f"Demo missing entities: {demo}"
-            entities_str = demo["entities"]
-            has_pipe = "|" in entities_str
-            has_json = entities_str.strip().startswith("[")
-            assert has_pipe or has_json, (
-                f"Entities should be pipe-delimited or JSON, got: '{entities_str[:100]}'"
-            )
+        blob_after = _load_blob_in_pod("model", "entity_extraction")
+        assert blob_after != "", "Entity extraction artifact missing after restart"
+        assert blob_after == expected_blob, ledger
+        if result["decision"] in {"promote", "rollback"}:
+            assert (
+                _active_blob_version_in_pod("model", "entity_extraction")
+                == result["version"]
+            ), ledger
+        else:
+            assert (
+                _active_blob_version_in_pod("model", "entity_extraction")
+                != result["version"]
+            ), ledger
 
     def test_profile_artifact_survives_restart(self):
-        """Verify profile selection artifact is loadable after the gateway restart."""
-        # Run batch job to ensure artifact exists
-        result = _run_batch_job("profile")
-        assert result["status"] == "success"
-        assert result["training_examples"] >= 1
-
-        # Load the artifact — proves persistence across the gateway restart
-        blob = _load_blob_in_pod("model", "profile_selection")
-        assert blob, "Profile selection artifact not loadable after restart"
-
-        artifact = json.loads(blob)
-        assert "selector.predict" in artifact, (
-            f"Expected 'selector.predict' module, got: {list(artifact.keys())}"
+        """Verify profile selection artifact is loadable after restart."""
+        blob_before = _load_blob_in_pod("model", "profile_selection")
+        assert blob_before != "", (
+            "Profile selection artifact blob is empty before restart"
         )
 
-        demos = artifact["selector.predict"].get("demos", [])
-        assert len(demos) >= 1, "Profile selection artifact has 0 demos"
+        result = _run_batch_job("profile")
+        approved = _approved_query_enhancement_examples_in_pod(TENANT_ID, "profile")
+        version_blob, ledger = _load_blob_version_in_pod(
+            "model", "profile_selection", result["version"]
+        )
+        blob_after_run = _load_blob_in_pod("model", "profile_selection")
 
-        usable_profiles = _usable_profile_names_in_pod(TENANT_ID)
+        assert set(result) == {
+            "status",
+            "spans_found",
+            "training_examples",
+            "holdout_examples",
+            "holdout_source",
+            "baseline_score",
+            "current_score",
+            "candidate_score",
+            "decision",
+            "version",
+            "consumed_example_ids",
+        }, result
+        assert result["status"] == "success", result
+        assert result["spans_found"] >= _served_holdout_minimum_in_pod(TENANT_ID), (
+            result
+        )
+        assert result["holdout_source"] == "served", result
+        assert result["decision"] in BLOB_VERSION_DECISIONS, result
+        assert result["holdout_examples"] == max(1, result["spans_found"] // 4), result
+        assert result["training_examples"] == (
+            result["spans_found"] - result["holdout_examples"] + len(approved)
+        ), result
+        assert len(result["consumed_example_ids"]) == (
+            result["spans_found"] + len(approved)
+        ), result
+        assert all(
+            example_id.startswith(("span:", "approved:"))
+            for example_id in result["consumed_example_ids"]
+        ), result
 
-        # Verify demo structure: each should have query and selected_profile
-        for demo in demos:
-            assert demo.get("query"), f"Demo missing query: {demo}"
-            assert demo.get("selected_profile") in usable_profiles, (
-                f"Demo selected unknown profile '{demo.get('selected_profile')}', "
-                f"expected one of {usable_profiles}"
-            )
+        assert set(ledger) == {
+            "version",
+            "kind",
+            "key",
+            "consumed_example_ids",
+            "decision",
+            "scored",
+            "base_score",
+            "candidate_score",
+            "created_at",
+        }, ledger
+        assert ledger["version"] == result["version"], ledger
+        assert ledger["kind"] == "model", ledger
+        assert ledger["key"] == "profile_selection", ledger
+        assert ledger["consumed_example_ids"] == result["consumed_example_ids"], ledger
+        assert ledger["decision"] == result["decision"], ledger
+        assert ledger["scored"] is True, ledger
+        assert ledger["base_score"] == result["baseline_score"], ledger
+        assert ledger["candidate_score"] == result["candidate_score"], ledger
+
+        if result["decision"] in {"promote", "rollback"}:
+            expected_blob = version_blob
+            assert blob_after_run == version_blob, ledger
+            assert (
+                _active_blob_version_in_pod("model", "profile_selection")
+                == result["version"]
+            ), ledger
+        else:
+            expected_blob = blob_before
+            assert blob_after_run == blob_before, ledger
+            assert (
+                _active_blob_version_in_pod("model", "profile_selection")
+                != result["version"]
+            ), ledger
+
+        new_pod = _bounce_runtime_pod()
+        resp = httpx.post(
+            f"{RUNTIME}/agents/profile_selection_agent/process",
+            json={
+                "agent_name": "profile_selection_agent",
+                "query": "find a clip about machine learning",
+                "context": {"tenant_id": TENANT_ID},
+            },
+            timeout=600.0,
+        )
+        assert resp.status_code == 200, (
+            f"profile_selection_agent failed after restart: "
+            f"{resp.status_code} {resp.text[:300]}"
+        )
+        body = resp.json()
+        assert body["status"] == "success", (
+            f"Agent dispatch did not succeed: {json.dumps(body, default=str)[:300]}"
+        )
+
+        logs = _read_pod_logs(new_pod, since="10m")
+        assert (
+            "ProfileSelectionAgent loaded optimized DSPy module from artifact" in logs
+        ), (
+            "Expected ProfileSelectionAgent load-success log line in new "
+            f"pod {new_pod}; either _load_artifact didn't run or it "
+            "swallowed an exception. Last 1500 chars of logs:\n"
+            f"{logs[-1500:]}"
+        )
+
+        blob_after = _load_blob_in_pod("model", "profile_selection")
+        assert blob_after != "", "Profile selection artifact missing after restart"
+        assert blob_after == expected_blob, ledger
+        if result["decision"] in {"promote", "rollback"}:
+            assert (
+                _active_blob_version_in_pod("model", "profile_selection")
+                == result["version"]
+            ), ledger
+        else:
+            assert (
+                _active_blob_version_in_pod("model", "profile_selection")
+                != result["version"]
+            ), ledger
 
 
 # ---------------------------------------------------------------------------
@@ -2393,6 +3102,6 @@ class TestSyntheticGeneration:
         assert stderr_lines[-2] == (
             "Error: synthetic optimizer types have no approved training-data "
             "consumer: ['simba']"
-        ), result.stderr[-1000:]
+        ), result.stderr
         # A configuration error is a one-line message, not a traceback.
-        assert "Traceback" not in result.stderr, result.stderr[-2000:]
+        assert "Traceback" not in result.stderr, result.stderr
