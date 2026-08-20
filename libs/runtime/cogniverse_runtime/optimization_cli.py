@@ -241,27 +241,44 @@ def _query_enhancement_pairs(spans_df) -> List[Dict[str, Any]]:
     return pairs
 
 
-def _query_enhancement_quality(prediction, example) -> float:
-    """1.0 for a usable enhancement of ``example``'s inputs, else 0.0.
+def _query_enhancement_quality(prediction, example) -> float | None:
+    """1.0 for a usable enhancement of ``example``'s inputs, else 0.0 or None.
 
     Usable: a non-empty enhanced query that differs from the query, at least
-    one expansion term, and — when a grounding context was supplied — at
-    least one of its entity names present in the enhanced query or the
-    expansion terms. Labels are not consulted: the score is a property of
-    the module's own output for real inputs.
+    one expansion term, and when a scoreable source context is present at
+    least one grounded expansion term. If the example has neither source text
+    nor grounding context, it is unscoreable and returns ``None``. When a
+    grounding context was supplied, at least one of its entity names must still
+    be present in the enhanced query or the expansion terms. Labels are not
+    consulted: the score is a property of the module's own output for real
+    inputs.
     """
     from cogniverse_agents.query_enhancement_agent import grounding_entity_names
+    from cogniverse_synthetic.grounding import source_term_keys, term_is_grounded
 
     query = str(getattr(example, "query", "") or "").strip().lower()
     enhanced = str(getattr(prediction, "enhanced_query", "") or "").strip()
-    terms = [
-        t.strip()
-        for t in str(getattr(prediction, "expansion_terms", "") or "").split(",")
-        if t.strip()
-    ]
+    source_text = str(getattr(example, "source_text", "") or "").strip()
+    grounding_context = str(getattr(example, "grounding_context", "") or "").strip()
+    raw_terms = getattr(prediction, "expansion_terms", "") or ""
+    if isinstance(raw_terms, str):
+        terms = [t.strip() for t in raw_terms.split(",") if t.strip()]
+    elif isinstance(raw_terms, (list, tuple, set)):
+        terms = [str(t).strip() for t in raw_terms if str(t).strip()]
+    else:
+        terms = [t.strip() for t in str(raw_terms).split(",") if t.strip()]
+
+    if not source_text and not grounding_context:
+        return None
     if not enhanced or enhanced.lower() == query or not terms:
         return 0.0
-    names = grounding_entity_names(str(getattr(example, "grounding_context", "")))
+
+    if source_text:
+        source_keys = source_term_keys(source_text)
+        if not any(term_is_grounded(term, source_keys) for term in terms):
+            return 0.0
+
+    names = grounding_entity_names(grounding_context)
     if names:
         haystack = " ".join([enhanced, *terms]).lower()
         if not any(name.lower() in haystack for name in names):
@@ -272,7 +289,7 @@ def _query_enhancement_quality(prediction, example) -> float:
 def _query_enhancement_metric(example, prediction, trace=None) -> bool:
     """BootstrapFewShot metric: keep a teacher trace only when it is usable."""
     del trace
-    return _query_enhancement_quality(prediction, example) >= 1.0
+    return _query_enhancement_quality(prediction, example) == 1.0
 
 
 def _select_simba_artifact(
@@ -2047,16 +2064,19 @@ def _query_enhancement_example(record: Dict[str, Any]):
     return dspy.Example(**fields).with_inputs(*_QUERY_ENHANCEMENT_INPUTS)
 
 
-def _query_enhancement_scores(module, holdout) -> float:
-    """Mean ``_query_enhancement_quality`` of ``module`` over the holdout inputs."""
-    scores = [
-        _query_enhancement_quality(
+def _query_enhancement_scores(module, holdout) -> tuple[float, int]:
+    """Mean ``_query_enhancement_quality`` over scoreable holdout inputs."""
+    scores = []
+    for example in holdout:
+        score = _query_enhancement_quality(
             module(**{k: getattr(example, k) for k in _QUERY_ENHANCEMENT_INPUTS}),
             example,
         )
-        for example in holdout
-    ]
-    return sum(scores) / len(scores)
+        if score is None:
+            continue
+        scores.append(score)
+    scored_count = len(scores)
+    return (sum(scores) / scored_count if scored_count else 0.0, scored_count)
 
 
 async def run_simba_optimization(
@@ -2209,12 +2229,30 @@ async def run_simba_optimization(
     llm_config = config.get_llm_config()
     dspy.configure(lm=create_dspy_lm(llm_config.resolve("optimization")))
 
-    current_module = None
-    if current_blob:
-        current_module = QueryEnhancementModule()
-        current_module.load_state(json.loads(current_blob))
-
     try:
+        baseline_score, scored_count = _query_enhancement_scores(
+            QueryEnhancementModule(), holdout
+        )
+        if scored_count == 0:
+            logger.warning(
+                "No served-scoreable holdout material for %s query enhancement — "
+                "nothing persisted",
+                tenant_id,
+            )
+            return {
+                "status": "no_eval_material",
+                "spans_found": len(spans_df),
+                "examples": len(records),
+                "training_examples": len(trainset),
+                "holdout_examples": 0,
+                "holdout_source": "served",
+            }
+
+        current_module = None
+        if current_blob:
+            current_module = QueryEnhancementModule()
+            current_module.load_state(json.loads(current_blob))
+
         compiled = None
         if trainset:
             teleprompter = _create_teleprompter(
@@ -2224,14 +2262,13 @@ async def run_simba_optimization(
             )
             compiled = teleprompter.compile(QueryEnhancementModule(), trainset=trainset)
 
-        baseline_score = _query_enhancement_scores(QueryEnhancementModule(), holdout)
         current_score = (
-            _query_enhancement_scores(current_module, holdout)
+            _query_enhancement_scores(current_module, holdout)[0]
             if current_module is not None
             else None
         )
         candidate_score = (
-            _query_enhancement_scores(compiled, holdout)
+            _query_enhancement_scores(compiled, holdout)[0]
             if compiled is not None
             else None
         )
