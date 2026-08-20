@@ -746,44 +746,56 @@ def generate_spans_for_batch_jobs(_kubectl_cluster_ready):
         for optimizer_type in served_scoreable_counts
     ), f"Phoenix served-scoreable counts below floor: {served_scoreable_counts}"
 
-    approved_floor = _synthetic_approve_count()
-    approved_counts: dict[str, int] = {}
+    approved_request_ceiling = _synthetic_approve_count()
     for optimizer_type in (
         "query_enhancement",
         "profile",
         "entity_extraction",
     ):
         span_type = OPTIMIZER_TYPE_TO_SPAN_TYPE[optimizer_type]
-        approved_before_examples = _approved_query_enhancement_examples_in_pod(
-            TENANT_ID,
-            optimizer_type=optimizer_type,
+        floor_min_samples, _ = _population_floor_from_shipped_config(span_type)
+        served = served_scoreable_counts[span_type]
+        approved_total = len(
+            _approved_query_enhancement_examples_in_pod(
+                TENANT_ID,
+                optimizer_type=optimizer_type,
+            )
         )
-        approved_before_count = len(approved_before_examples)
-        approved_count = _generate_and_approve_synthetic_in_pod(
-            TENANT_ID,
-            optimizer_type=optimizer_type,
-            count=max(approved_floor, 100 - served_scoreable_counts[span_type]),
-        )
-        approved_examples = _wait_for_approved_query_enhancement_examples_in_pod(
-            TENANT_ID,
-            optimizer_type=optimizer_type,
-            minimum=approved_before_count + approved_count,
-        )
-        assert len(approved_examples) == approved_before_count + approved_count, (
-            f"{optimizer_type} approved synthetic count drifted: "
-            f"before={approved_before_count} generated={approved_count} "
-            f"after={len(approved_examples)}"
-        )
-        approved_counts[optimizer_type] = approved_count
+        # The optimizer's population is served spans plus ALL approved rows,
+        # so the floor accounting must use the total, not this run's delta.
+        # One batch always runs (the generate->approve chain is itself under
+        # test); further batches run only while the tenant floor is unmet.
+        for attempt in range(5):
+            if attempt > 0 and served + approved_total >= floor_min_samples:
+                break
+            gap = max(floor_min_samples - served - approved_total, 1)
+            generated = _generate_and_approve_synthetic_in_pod(
+                TENANT_ID,
+                optimizer_type=optimizer_type,
+                count=max(approved_request_ceiling, gap),
+            )
+            approved_examples = _wait_for_approved_query_enhancement_examples_in_pod(
+                TENANT_ID,
+                optimizer_type=optimizer_type,
+                minimum=approved_total + generated,
+            )
+            assert len(approved_examples) == approved_total + generated, (
+                f"{optimizer_type} approved synthetic count drifted: "
+                f"before={approved_total} generated={generated} "
+                f"after={len(approved_examples)}"
+            )
+            if generated == 0 and served + approved_total < floor_min_samples:
+                raise AssertionError(
+                    f"{optimizer_type} synthetic capacity exhausted below the "
+                    f"tenant floor: served={served} "
+                    f"approved={approved_total} floor={floor_min_samples}"
+                )
+            approved_total = len(approved_examples)
 
-    for optimizer_type in approved_counts:
-        span_type = OPTIMIZER_TYPE_TO_SPAN_TYPE[optimizer_type]
-        assert (
-            served_scoreable_counts[span_type] + approved_counts[optimizer_type] >= 100
-        ), (
+        assert served + approved_total >= floor_min_samples, (
             f"{optimizer_type} served/approved floor not met: "
-            f"served={served_scoreable_counts[span_type]} "
-            f"approved={approved_counts[optimizer_type]}"
+            f"served={served} approved={approved_total} "
+            f"floor={floor_min_samples}"
         )
 
     yield
