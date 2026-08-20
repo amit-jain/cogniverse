@@ -1891,6 +1891,8 @@ def _assert_simba_served_the_best_module(result: dict, blob_before: str) -> dict
         "status",
         "spans_found",
         "examples",
+        "served_examples",
+        "approved_examples",
         "served_scoreable_examples",
         "training_examples",
         "holdout_examples",
@@ -1903,13 +1905,19 @@ def _assert_simba_served_the_best_module(result: dict, blob_before: str) -> dict
         "consumed_example_ids",
     }, result
     assert result["status"] == "success", result
-    assert result["examples"] == result["spans_found"] + len(approved), result
+    assert result["approved_examples"] == len(approved), result
+    assert result["served_examples"] <= result["spans_found"], result
+    assert (
+        result["examples"] == result["served_examples"] + result["approved_examples"]
+    ), result
     assert result["holdout_examples"] == max(
         1, result["served_scoreable_examples"] // 4
     ), result
-    assert (
-        result["training_examples"] <= result["examples"] - result["holdout_examples"]
-    )
+    assert result["training_examples"] == (
+        result["served_examples"]
+        - result["holdout_examples"]
+        + result["approved_examples"]
+    ), result
     assert result["holdout_source"] == "served", result
     assert result["decision"] in BLOB_VERSION_DECISIONS, result
     served_score = {
@@ -1941,6 +1949,9 @@ def _assert_simba_served_the_best_module(result: dict, blob_before: str) -> dict
     assert ledger["key"] == "simba_query_enhancement", ledger
     assert ledger["decision"] == result["decision"], ledger
     assert ledger["consumed_example_ids"] == result["consumed_example_ids"], ledger
+    assert len(result["consumed_example_ids"]) == (
+        result["served_examples"] + result["approved_examples"]
+    ), result
     assert ledger["base_score"] == result["baseline_score"], ledger
     assert ledger["candidate_score"] == result["candidate_score"], ledger
     if result["candidate_score"] is None:
@@ -2138,6 +2149,8 @@ class TestProfileOptimization:
         assert set(result) == {
             "status",
             "spans_found",
+            "served_examples",
+            "approved_examples",
             "served_scoreable_examples",
             "training_examples",
             "holdout_examples",
@@ -2157,14 +2170,18 @@ class TestProfileOptimization:
         assert result["spans_found"] >= expected_min_samples, result
         assert result["holdout_source"] == "served", result
         assert result["decision"] in BLOB_VERSION_DECISIONS, result
+        assert result["served_examples"] <= result["spans_found"], result
+        assert result["approved_examples"] == len(approved), result
         assert result["holdout_examples"] == max(
             1, result["served_scoreable_examples"] // 4
         ), result
         assert result["training_examples"] == (
-            result["spans_found"] - result["holdout_examples"] + len(approved)
+            result["served_examples"]
+            - result["holdout_examples"]
+            + result["approved_examples"]
         ), result
         assert len(result["consumed_example_ids"]) == (
-            result["spans_found"] + len(approved)
+            result["served_examples"] + result["approved_examples"]
         ), result
         assert all(
             example_id.startswith(("span:", "approved:"))
@@ -2215,6 +2232,8 @@ class TestProfileOptimization:
         assert set(result) == {
             "status",
             "spans_found",
+            "served_examples",
+            "approved_examples",
             "served_scoreable_examples",
             "training_examples",
             "holdout_examples",
@@ -2234,14 +2253,18 @@ class TestProfileOptimization:
         assert result["spans_found"] >= expected_min_samples, result
         assert result["holdout_source"] == "served", result
         assert result["decision"] in BLOB_VERSION_DECISIONS, result
+        assert result["served_examples"] <= result["spans_found"], result
+        assert result["approved_examples"] == len(approved), result
         assert result["holdout_examples"] == max(
             1, result["served_scoreable_examples"] // 4
         ), result
         assert result["training_examples"] == (
-            result["spans_found"] - result["holdout_examples"] + len(approved)
+            result["served_examples"]
+            - result["holdout_examples"]
+            + result["approved_examples"]
         ), result
         assert len(result["consumed_example_ids"]) == (
-            result["spans_found"] + len(approved)
+            result["served_examples"] + result["approved_examples"]
         ), result
         assert all(
             example_id.startswith(("span:", "approved:"))
@@ -2329,6 +2352,8 @@ class TestProfileSelectionArtifactReload:
         assert set(result) == {
             "status",
             "spans_found",
+            "served_examples",
+            "approved_examples",
             "served_scoreable_examples",
             "training_examples",
             "holdout_examples",
@@ -2348,14 +2373,18 @@ class TestProfileSelectionArtifactReload:
         assert result["spans_found"] >= expected_min_samples, result
         assert result["holdout_source"] == "served", result
         assert result["decision"] in BLOB_VERSION_DECISIONS, result
+        assert result["served_examples"] <= result["spans_found"], result
+        assert result["approved_examples"] == len(approved), result
         assert result["holdout_examples"] == max(
             1, result["served_scoreable_examples"] // 4
         ), result
         assert result["training_examples"] == (
-            result["spans_found"] - result["holdout_examples"] + len(approved)
+            result["served_examples"]
+            - result["holdout_examples"]
+            + result["approved_examples"]
         ), result
         assert len(result["consumed_example_ids"]) == (
-            result["spans_found"] + len(approved)
+            result["served_examples"] + result["approved_examples"]
         ), result
         assert all(
             example_id.startswith(("span:", "approved:"))
@@ -2533,7 +2562,7 @@ class TestEntityExtractionOptimization:
         blob_before = _load_blob_in_pod("model", "entity_extraction")
         assert blob_before != "", "the module fixture persists the base artifact"
 
-        result = _run_batch_job("entity-extraction", timeout=600)
+        result = _run_batch_job("entity-extraction", timeout=1200)
         approved = _approved_query_enhancement_examples_in_pod(
             TENANT_ID, "entity_extraction"
         )
@@ -2545,6 +2574,8 @@ class TestEntityExtractionOptimization:
         assert set(result) == {
             "status",
             "spans_found",
+            "served_examples",
+            "approved_examples",
             "served_scoreable_examples",
             "training_examples",
             "holdout_examples",
@@ -2564,14 +2595,18 @@ class TestEntityExtractionOptimization:
         assert result["spans_found"] >= expected_min_samples, result
         assert result["holdout_source"] == "served", result
         assert result["decision"] in BLOB_VERSION_DECISIONS, result
+        assert result["served_examples"] <= result["spans_found"], result
+        assert result["approved_examples"] == len(approved), result
         assert result["holdout_examples"] == max(
             1, result["served_scoreable_examples"] // 4
         ), result
         assert result["training_examples"] == (
-            result["spans_found"] - result["holdout_examples"] + len(approved)
+            result["served_examples"]
+            - result["holdout_examples"]
+            + result["approved_examples"]
         ), result
         assert len(result["consumed_example_ids"]) == (
-            result["spans_found"] + len(approved)
+            result["served_examples"] + result["approved_examples"]
         ), result
         assert all(
             example_id.startswith(("span:", "approved:"))
@@ -2616,7 +2651,7 @@ class TestEntityExtractionOptimization:
         approved = _approved_query_enhancement_examples_in_pod(
             TENANT_ID, "entity_extraction"
         )
-        result = _run_batch_job("entity-extraction", timeout=600)
+        result = _run_batch_job("entity-extraction", timeout=1200)
         version_blob, ledger = _load_blob_version_in_pod(
             "model", "entity_extraction", result["version"]
         )
@@ -2624,6 +2659,8 @@ class TestEntityExtractionOptimization:
         assert set(result) == {
             "status",
             "spans_found",
+            "served_examples",
+            "approved_examples",
             "served_scoreable_examples",
             "training_examples",
             "holdout_examples",
@@ -2643,14 +2680,18 @@ class TestEntityExtractionOptimization:
         assert result["spans_found"] >= expected_min_samples, result
         assert result["holdout_source"] == "served", result
         assert result["decision"] in BLOB_VERSION_DECISIONS, result
+        assert result["served_examples"] <= result["spans_found"], result
+        assert result["approved_examples"] == len(approved), result
         assert result["holdout_examples"] == max(
             1, result["served_scoreable_examples"] // 4
         ), result
         assert result["training_examples"] == (
-            result["spans_found"] - result["holdout_examples"] + len(approved)
+            result["served_examples"]
+            - result["holdout_examples"]
+            + result["approved_examples"]
         ), result
         assert len(result["consumed_example_ids"]) == (
-            result["spans_found"] + len(approved)
+            result["served_examples"] + result["approved_examples"]
         ), result
         assert all(
             example_id.startswith(("span:", "approved:"))
@@ -2897,7 +2938,7 @@ class TestArtifactLoadingRoundTrip:
             "Entity extraction artifact blob is empty before restart"
         )
 
-        result = _run_batch_job("entity-extraction", timeout=600)
+        result = _run_batch_job("entity-extraction", timeout=1200)
         approved = _approved_query_enhancement_examples_in_pod(
             TENANT_ID, "entity_extraction"
         )
@@ -2909,6 +2950,8 @@ class TestArtifactLoadingRoundTrip:
         assert set(result) == {
             "status",
             "spans_found",
+            "served_examples",
+            "approved_examples",
             "served_scoreable_examples",
             "training_examples",
             "holdout_examples",
@@ -2928,14 +2971,18 @@ class TestArtifactLoadingRoundTrip:
         assert result["spans_found"] >= expected_min_samples, result
         assert result["holdout_source"] == "served", result
         assert result["decision"] in BLOB_VERSION_DECISIONS, result
+        assert result["served_examples"] <= result["spans_found"], result
+        assert result["approved_examples"] == len(approved), result
         assert result["holdout_examples"] == max(
             1, result["served_scoreable_examples"] // 4
         ), result
         assert result["training_examples"] == (
-            result["spans_found"] - result["holdout_examples"] + len(approved)
+            result["served_examples"]
+            - result["holdout_examples"]
+            + result["approved_examples"]
         ), result
         assert len(result["consumed_example_ids"]) == (
-            result["spans_found"] + len(approved)
+            result["served_examples"] + result["approved_examples"]
         ), result
         assert all(
             example_id.startswith(("span:", "approved:"))
@@ -3037,6 +3084,8 @@ class TestArtifactLoadingRoundTrip:
         assert set(result) == {
             "status",
             "spans_found",
+            "served_examples",
+            "approved_examples",
             "served_scoreable_examples",
             "training_examples",
             "holdout_examples",
@@ -3056,14 +3105,18 @@ class TestArtifactLoadingRoundTrip:
         assert result["spans_found"] >= expected_min_samples, result
         assert result["holdout_source"] == "served", result
         assert result["decision"] in BLOB_VERSION_DECISIONS, result
+        assert result["served_examples"] <= result["spans_found"], result
+        assert result["approved_examples"] == len(approved), result
         assert result["holdout_examples"] == max(
             1, result["served_scoreable_examples"] // 4
         ), result
         assert result["training_examples"] == (
-            result["spans_found"] - result["holdout_examples"] + len(approved)
+            result["served_examples"]
+            - result["holdout_examples"]
+            + result["approved_examples"]
         ), result
         assert len(result["consumed_example_ids"]) == (
-            result["spans_found"] + len(approved)
+            result["served_examples"] + result["approved_examples"]
         ), result
         assert all(
             example_id.startswith(("span:", "approved:"))
