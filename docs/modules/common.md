@@ -365,6 +365,10 @@ class RoutingConfigUnified:
     min_samples_for_optimization: int = 100
     min_unique_queries: int = 3
 
+    # Optional per-optimizer overrides. Missing keys fall back to the global
+    # 100/3 defaults; query_enhancement keeps the global floor.
+    optimizer_floors: Dict[str, Dict[str, int]] = field(default_factory=dict)
+
     # Metadata
     metadata: Dict[str, Any] = field(default_factory=dict)
 ```

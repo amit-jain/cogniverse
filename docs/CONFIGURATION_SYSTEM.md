@@ -79,7 +79,7 @@ Routing strategy settings (`RoutingConfigUnified` in `cogniverse_foundation.conf
 - Tier toggles and confidence thresholds: `enable_fast_path` / `enable_slow_path` / `enable_fallback`, `fast_path_confidence_threshold`, `slow_path_confidence_threshold`, `max_routing_time_ms`
 - Fast-path GLiNER settings: model, threshold, device, labels
 - Slow-path LLM settings: provider, endpoint, temperature, max tokens, chain-of-thought toggle
-- DSPy auto-optimization: `dspy_enabled`, bootstrapped/labeled demo counts, `optimization_interval_seconds`, `min_samples_for_optimization`, `min_unique_queries`
+- DSPy auto-optimization: `dspy_enabled`, bootstrapped/labeled demo counts, `optimization_interval_seconds`, `min_samples_for_optimization`, `min_unique_queries`, and per-optimizer `optimizer_floors`
 - Caching: `enable_caching`, `cache_ttl_seconds`, `max_cache_size`
 - Multi-tenant routing rules (per-tenant `RoutingConfigUnified` via `set_routing_config`)
 

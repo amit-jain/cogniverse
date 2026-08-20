@@ -1671,24 +1671,33 @@ _TF_CONTEXT = (
 
 
 class TestPopulationFloorConfig:
-    def test_routing_config_round_trips_min_unique_queries(self):
+    def test_routing_config_round_trips_optimizer_floors(self):
         from cogniverse_foundation.config.unified_config import RoutingConfigUnified
 
         cfg = RoutingConfigUnified(
             tenant_id="acme:acme",
             min_samples_for_optimization=40,
             min_unique_queries=7,
+            optimizer_floors={
+                "profile_selection": {
+                    "min_samples_for_optimization": 20,
+                    "min_unique_queries": 6,
+                },
+                "entity_extraction": {
+                    "min_samples_for_optimization": 58,
+                    "min_unique_queries": 15,
+                },
+            },
         )
         restored = RoutingConfigUnified.from_dict(cfg.to_dict())
-        assert restored.min_samples_for_optimization == 40
-        assert restored.min_unique_queries == 7
+        assert restored == cfg
 
     def test_min_unique_queries_defaults_to_three(self):
         from cogniverse_foundation.config.unified_config import RoutingConfigUnified
 
         assert RoutingConfigUnified(tenant_id="acme:acme").min_unique_queries == 3
 
-    def test_population_floor_reads_routing_config(self):
+    def test_population_floor_reads_per_optimizer_mapping(self):
         from cogniverse_foundation.config.manager import ConfigManager
         from cogniverse_foundation.config.unified_config import RoutingConfigUnified
         from cogniverse_runtime.optimization_cli import _population_floor_from_config
@@ -1698,11 +1707,56 @@ class TestPopulationFloorConfig:
         manager.set_routing_config(
             RoutingConfigUnified(
                 tenant_id="acme:acme",
-                min_samples_for_optimization=55,
-                min_unique_queries=9,
+                optimizer_floors={
+                    "profile_selection": {
+                        "min_samples_for_optimization": 20,
+                        "min_unique_queries": 6,
+                    },
+                    "entity_extraction": {
+                        "min_samples_for_optimization": 58,
+                        "min_unique_queries": 15,
+                    },
+                },
             )
         )
-        assert _population_floor_from_config("acme:acme", manager) == (55, 9)
+        assert _population_floor_from_config(
+            "acme:acme", manager, "profile_selection"
+        ) == (20, 6)
+        assert _population_floor_from_config(
+            "acme:acme", manager, "entity_extraction"
+        ) == (58, 15)
+        assert _population_floor_from_config(
+            "acme:acme", manager, "query_enhancement"
+        ) == (100, 3)
+
+    def test_unlisted_optimizer_falls_back_to_tenant_global_floor(self):
+        """An optimizer absent from optimizer_floors inherits the tenant's
+        CONFIGURED global floor, never a hardcoded literal."""
+        from cogniverse_foundation.config.manager import ConfigManager
+        from cogniverse_foundation.config.unified_config import RoutingConfigUnified
+        from cogniverse_runtime.optimization_cli import _population_floor_from_config
+        from tests.utils.memory_store import InMemoryConfigStore
+
+        manager = ConfigManager(store=InMemoryConfigStore())
+        manager.set_routing_config(
+            RoutingConfigUnified(
+                tenant_id="acme:acme",
+                min_samples_for_optimization=40,
+                min_unique_queries=7,
+                optimizer_floors={
+                    "profile_selection": {
+                        "min_samples_for_optimization": 20,
+                        "min_unique_queries": 6,
+                    },
+                },
+            )
+        )
+        assert _population_floor_from_config(
+            "acme:acme", manager, "query_enhancement"
+        ) == (40, 7)
+        assert _population_floor_from_config(
+            "acme:acme", manager, "profile_selection"
+        ) == (20, 6)
 
 
 class TestSimbaQueryEnhancement:

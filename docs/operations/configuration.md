@@ -481,6 +481,16 @@ tenant_a_routing = RoutingConfigUnified(
     routing_mode="tiered",
     fast_path_confidence_threshold=0.7,
     cache_ttl_seconds=300,
+    optimizer_floors={
+        "profile_selection": {
+            "min_samples_for_optimization": 20,
+            "min_unique_queries": 6,
+        },
+        "entity_extraction": {
+            "min_samples_for_optimization": 58,
+            "min_unique_queries": 15,
+        },
+    },
 )
 manager.set_routing_config(tenant_a_routing, tenant_id="acme_corp")
 
