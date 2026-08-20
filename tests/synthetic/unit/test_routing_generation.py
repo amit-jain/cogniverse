@@ -25,6 +25,7 @@ from cogniverse_synthetic.generators.routing import (
     DuplicateLabelFilter,
     RoutingGenerator,
 )
+from tests.agents.unit._recording_telemetry import RecordingTelemetryManager
 
 pytestmark = pytest.mark.unit
 
@@ -1010,6 +1011,7 @@ async def test_generation_preserves_actual_gateway_routing_decision() -> None:
             return [{"text": "video", "label": "video_content", "score": 0.91}]
 
     gateway = GatewayAgent(deps=GatewayDeps())
+    gateway.telemetry_manager = RecordingTelemetryManager()
     gateway._gliner_model = _VideoEntityModel()
     gateway_calls = []
     gateway_outputs = []
