@@ -27,6 +27,7 @@ import os
 import sys
 import uuid
 from datetime import datetime, timedelta, timezone
+from pathlib import Path
 from typing import Any, Dict, List, Optional
 
 from cogniverse_core.durable import (
@@ -46,6 +47,7 @@ from cogniverse_foundation.telemetry.span_contract import (
 )
 
 logger = logging.getLogger(__name__)
+SHIPPED_CONFIG_PATH = Path(__file__).resolve().parents[3] / "configs" / "config.json"
 
 
 @contextlib.contextmanager
@@ -1019,19 +1021,97 @@ def _population_floor_from_config(
 
     manager = config_manager or create_default_config_manager()
     routing = manager.get_routing_config(tenant_id=tenant_id)
-    optimizer_floor = (routing.optimizer_floors or {}).get(optimizer_type)
-    if optimizer_floor is None:
-        return (
-            int(routing.min_samples_for_optimization),
-            int(routing.min_unique_queries),
+    optimizer_floor = routing.optimizer_floors.get(optimizer_type)
+    if isinstance(optimizer_floor, dict):
+        tenant_floor = _population_floor_from_floor_config(
+            optimizer_floor,
+            routing.min_samples_for_optimization,
+            routing.min_unique_queries,
         )
+        if tenant_floor is not None:
+            return tenant_floor
+
+    shipped_optimizer_floor = _shipped_population_floor_from_config(optimizer_type)
+    if shipped_optimizer_floor is not None:
+        return shipped_optimizer_floor
+
     return (
-        int(
-            optimizer_floor.get(
-                "min_samples_for_optimization", routing.min_samples_for_optimization
-            )
+        int(routing.min_samples_for_optimization),
+        int(routing.min_unique_queries),
+    )
+
+
+def _population_floor_from_floor_config(
+    floor_config: dict,
+    fallback_min_samples: int,
+    fallback_min_unique: int,
+) -> tuple[int, int] | None:
+    """Normalize a population-floor mapping into the promoted threshold pair."""
+    try:
+        return (
+            int(floor_config.get("min_samples_for_optimization", fallback_min_samples)),
+            int(floor_config.get("min_unique_queries", fallback_min_unique)),
+        )
+    except (TypeError, ValueError):
+        return None
+
+
+def _shipped_population_floor_from_config(
+    optimizer_type: str,
+) -> tuple[int, int] | None:
+    """Load the shipped optimizer floor for ``optimizer_type`` if present."""
+    try:
+        raw_config = json.loads(SHIPPED_CONFIG_PATH.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError) as exc:
+        logger.warning(
+            "Unable to read shipped optimization floors from %s: %s",
+            SHIPPED_CONFIG_PATH,
+            exc,
+        )
+        return None
+
+    routing_config = raw_config.get("routing")
+    if not isinstance(routing_config, dict):
+        logger.warning(
+            "Shipped optimization floors at %s are missing routing.optimization_config",
+            SHIPPED_CONFIG_PATH,
+        )
+        return None
+
+    optimization_config = routing_config.get("optimization_config")
+    if not isinstance(optimization_config, dict):
+        logger.warning(
+            "Shipped optimization floors at %s are missing routing.optimization_config",
+            SHIPPED_CONFIG_PATH,
+        )
+        return None
+
+    optimizer_floors = optimization_config.get("optimizer_floors")
+    if not isinstance(optimizer_floors, dict):
+        logger.warning(
+            "Shipped optimization floors at %s are missing routing.optimization_config.optimizer_floors",
+            SHIPPED_CONFIG_PATH,
+        )
+        return None
+
+    shipped_floor = optimizer_floors.get(optimizer_type)
+    if shipped_floor is None:
+        return None
+    if not isinstance(shipped_floor, dict):
+        logger.warning(
+            "Shipped optimization floor for %s at %s is malformed",
+            optimizer_type,
+            SHIPPED_CONFIG_PATH,
+        )
+        return None
+
+    return _population_floor_from_floor_config(
+        shipped_floor,
+        optimization_config.get(
+            "min_samples_for_optimization",
+            100,
         ),
-        int(optimizer_floor.get("min_unique_queries", routing.min_unique_queries)),
+        optimization_config.get("min_unique_queries", 3),
     )
 
 
