@@ -91,6 +91,26 @@ RUNTIME = "http://localhost:33000"
 CONFIG_PATH = Path(__file__).resolve().parents[2] / "configs" / "config.json"
 
 
+@functools.lru_cache(maxsize=None)
+def _population_floor_from_shipped_config(optimizer_type: str) -> tuple[int, int]:
+    """Read the shipped floor for ``optimizer_type`` from configs/config.json."""
+    config = json.loads(CONFIG_PATH.read_text())
+    optimization_config = config.get("routing", {}).get("optimization_config", {})
+    defaults = (
+        int(optimization_config.get("min_samples_for_optimization", 100)),
+        int(optimization_config.get("min_unique_queries", 3)),
+    )
+    optimizer_floor = optimization_config.get("optimizer_floors", {}).get(
+        optimizer_type
+    )
+    if not isinstance(optimizer_floor, dict):
+        return defaults
+    return (
+        int(optimizer_floor.get("min_samples_for_optimization", defaults[0])),
+        int(optimizer_floor.get("min_unique_queries", defaults[1])),
+    )
+
+
 def _configured_profile_names(profile_type: str | None = None) -> tuple[str, ...]:
     config = json.loads(CONFIG_PATH.read_text())
     profiles = config.get("backend", {}).get("profiles", {})
@@ -455,9 +475,9 @@ OPTIMIZER_TYPE_TO_SPAN_TYPE = {
 
 
 @functools.lru_cache(maxsize=None)
-def _served_holdout_minimum_in_pod(tenant_id: str = TENANT_ID) -> int:
-    """The served-holdout minimum implied by the tenant's population floor."""
-    min_samples, _ = _population_floor_in_pod(tenant_id)
+def _served_holdout_minimum_in_pod(optimizer_type: str = "query_enhancement") -> int:
+    """The served-holdout minimum implied by the shipped population floor."""
+    min_samples, _ = _population_floor_from_shipped_config(optimizer_type)
     return max(1, min_samples // 10)
 
 
@@ -467,15 +487,18 @@ def _wait_for_served_scoreable_span_floor_in_pod(
 ) -> dict[str, int]:
     """Wait until each served-holdout-gated type clears min_holdout.
 
-    min_holdout is derived from the shipped population floor:
+    min_holdout is derived from the shipped per-optimizer population floor:
     ``max(1, min_samples // 10)``.
     """
-    minimum = _served_holdout_minimum_in_pod(tenant_id)
     deadline = time.monotonic() + timeout_s
     seen = {
         "query_enhancement": 0,
         "entity_extraction": 0,
         "profile_selection": 0,
+    }
+    minimums = {
+        optimizer_type: _served_holdout_minimum_in_pod(optimizer_type)
+        for optimizer_type in seen
     }
     while time.monotonic() < deadline:
         seen = {
@@ -489,11 +512,13 @@ def _wait_for_served_scoreable_span_floor_in_pod(
                 tenant_id, "SPAN_NAME_PROFILE_SELECTION"
             ),
         }
-        if all(count >= minimum for count in seen.values()):
+        if all(
+            count >= minimums[optimizer_type] for optimizer_type, count in seen.items()
+        ):
             return seen
         time.sleep(5.0)
     raise AssertionError(
-        f"Phoenix served-scoreable counts below min_holdout={minimum} after "
+        f"Phoenix served-scoreable counts below min_holdout={minimums} after "
         f"{timeout_s:.0f}s: {seen}"
     )
 
@@ -712,9 +737,13 @@ def generate_spans_for_batch_jobs(_kubectl_cluster_ready):
     # Gateway and orchestration are already covered by the direct seeded-span
     # waits above; only the served-holdout-gated types need this floor guard.
     served_scoreable_counts = _wait_for_served_scoreable_span_floor_in_pod(TENANT_ID)
-    served_holdout_minimum = _served_holdout_minimum_in_pod(TENANT_ID)
+    assert all(count > 0 for count in served_scoreable_counts.values()), (
+        f"Phoenix served-scoreable counts were empty: {served_scoreable_counts}"
+    )
     assert all(
-        count >= served_holdout_minimum for count in served_scoreable_counts.values()
+        served_scoreable_counts[optimizer_type]
+        >= _served_holdout_minimum_in_pod(optimizer_type)
+        for optimizer_type in served_scoreable_counts
     ), f"Phoenix served-scoreable counts below floor: {served_scoreable_counts}"
 
     approved_floor = _synthetic_approve_count()
@@ -1119,14 +1148,17 @@ def _reset_query_enhancement_artifact_in_pod(tenant_id: str = TENANT_ID) -> bool
     return line == "__RESET__1"
 
 
-def _population_floor_in_pod(tenant_id: str = TENANT_ID) -> tuple[int, int]:
-    """The tenant's SIMBA population floor, read through the production helper."""
+def _population_floor_in_pod(
+    tenant_id: str = TENANT_ID,
+    optimizer_type: str = "query_enhancement",
+) -> tuple[int, int]:
+    """The tenant's optimizer-specific population floor, read through prod."""
     script = IN_POD_TELEMETRY_PRELUDE + (
         "import json; "
         "from cogniverse_foundation.config.utils import create_default_config_manager; "
         "from cogniverse_runtime.optimization_cli import _population_floor_from_config; "
         f"manager = create_default_config_manager(); "
-        f"min_samples, min_unique_queries = _population_floor_from_config({tenant_id!r}, manager); "
+        f"min_samples, min_unique_queries = _population_floor_from_config({tenant_id!r}, manager, {optimizer_type!r}); "
         "print('__FLOOR__' + json.dumps({"
         "'min_samples': min_samples, 'min_unique_queries': min_unique_queries"
         "}))"
@@ -1156,7 +1188,10 @@ def _population_floor_in_pod(tenant_id: str = TENANT_ID) -> tuple[int, int]:
             _subprocess_failure_message(
                 "population_floor",
                 result,
-                operation=f"_population_floor_from_config(tenant_id={tenant_id!r})",
+                operation=(
+                    f"_population_floor_from_config(tenant_id={tenant_id!r}, "
+                    f"optimizer_type={optimizer_type!r})"
+                ),
             )
         )
     line = next(ln for ln in result.stdout.splitlines() if ln.startswith("__FLOOR__"))
@@ -2030,9 +2065,15 @@ class TestSimbaPopulationFloor:
         )
 
         result = _run_batch_job("simba", tenant_id=simba_floor_tenant)
-        min_samples, min_unique_queries = _population_floor_in_pod(simba_floor_tenant)
+        expected_min_samples, expected_min_unique_queries = (
+            _population_floor_from_shipped_config("query_enhancement")
+        )
+        runtime_min_samples, runtime_min_unique_queries = _population_floor_in_pod(
+            simba_floor_tenant, "query_enhancement"
+        )
 
         assert result["status"] == "insufficient_population", result
+        assert result["spans_found"] > 0, result
         assert result["spans_found"] == len(BELOW_FLOOR_QUERY_ENHANCEMENT_QUERIES), (
             result
         )
@@ -2040,8 +2081,11 @@ class TestSimbaPopulationFloor:
         assert result["distinct_queries"] == len(
             BELOW_FLOOR_QUERY_ENHANCEMENT_QUERIES
         ), result
-        assert result["min_samples"] == min_samples, result
-        assert result["min_unique_queries"] == min_unique_queries, result
+        assert result["spans_found"] < expected_min_samples, result
+        assert runtime_min_samples == expected_min_samples, result
+        assert runtime_min_unique_queries == expected_min_unique_queries, result
+        assert result["min_samples"] == expected_min_samples, result
+        assert result["min_unique_queries"] == expected_min_unique_queries, result
         assert result["version"] == 1, result
         assert [
             (entry["version"], entry["decision"])
@@ -2089,9 +2133,11 @@ class TestProfileOptimization:
             "consumed_example_ids",
         }, result
         assert result["status"] == "success", result
-        assert result["spans_found"] >= _served_holdout_minimum_in_pod(TENANT_ID), (
-            result
+        expected_min_samples, _ = _population_floor_from_shipped_config(
+            "profile_selection"
         )
+        assert result["spans_found"] > 0, result
+        assert result["spans_found"] >= expected_min_samples, result
         assert result["holdout_source"] == "served", result
         assert result["decision"] in BLOB_VERSION_DECISIONS, result
         assert result["holdout_examples"] == max(1, result["spans_found"] // 4), result
@@ -2161,9 +2207,11 @@ class TestProfileOptimization:
             "consumed_example_ids",
         }, result
         assert result["status"] == "success", result
-        assert result["spans_found"] >= _served_holdout_minimum_in_pod(TENANT_ID), (
-            result
+        expected_min_samples, _ = _population_floor_from_shipped_config(
+            "profile_selection"
         )
+        assert result["spans_found"] > 0, result
+        assert result["spans_found"] >= expected_min_samples, result
         assert result["holdout_source"] == "served", result
         assert result["decision"] in BLOB_VERSION_DECISIONS, result
         assert result["holdout_examples"] == max(1, result["spans_found"] // 4), result
@@ -2270,9 +2318,11 @@ class TestProfileSelectionArtifactReload:
             "consumed_example_ids",
         }, result
         assert result["status"] == "success", result
-        assert result["spans_found"] >= _served_holdout_minimum_in_pod(TENANT_ID), (
-            result
+        expected_min_samples, _ = _population_floor_from_shipped_config(
+            "profile_selection"
         )
+        assert result["spans_found"] > 0, result
+        assert result["spans_found"] >= expected_min_samples, result
         assert result["holdout_source"] == "served", result
         assert result["decision"] in BLOB_VERSION_DECISIONS, result
         assert result["holdout_examples"] == max(1, result["spans_found"] // 4), result
@@ -2481,9 +2531,11 @@ class TestEntityExtractionOptimization:
             "consumed_example_ids",
         }, result
         assert result["status"] == "success", result
-        assert result["spans_found"] >= _served_holdout_minimum_in_pod(TENANT_ID), (
-            result
+        expected_min_samples, _ = _population_floor_from_shipped_config(
+            "entity_extraction"
         )
+        assert result["spans_found"] > 0, result
+        assert result["spans_found"] >= expected_min_samples, result
         assert result["holdout_source"] == "served", result
         assert result["decision"] in BLOB_VERSION_DECISIONS, result
         assert result["holdout_examples"] == max(1, result["spans_found"] // 4), result
@@ -2555,9 +2607,11 @@ class TestEntityExtractionOptimization:
             "consumed_example_ids",
         }, result
         assert result["status"] == "success", result
-        assert result["spans_found"] >= _served_holdout_minimum_in_pod(TENANT_ID), (
-            result
+        expected_min_samples, _ = _population_floor_from_shipped_config(
+            "entity_extraction"
         )
+        assert result["spans_found"] > 0, result
+        assert result["spans_found"] >= expected_min_samples, result
         assert result["holdout_source"] == "served", result
         assert result["decision"] in BLOB_VERSION_DECISIONS, result
         assert result["holdout_examples"] == max(1, result["spans_found"] // 4), result
@@ -2835,9 +2889,11 @@ class TestArtifactLoadingRoundTrip:
             "consumed_example_ids",
         }, result
         assert result["status"] == "success", result
-        assert result["spans_found"] >= _served_holdout_minimum_in_pod(TENANT_ID), (
-            result
+        expected_min_samples, _ = _population_floor_from_shipped_config(
+            "entity_extraction"
         )
+        assert result["spans_found"] > 0, result
+        assert result["spans_found"] >= expected_min_samples, result
         assert result["holdout_source"] == "served", result
         assert result["decision"] in BLOB_VERSION_DECISIONS, result
         assert result["holdout_examples"] == max(1, result["spans_found"] // 4), result
@@ -2958,9 +3014,11 @@ class TestArtifactLoadingRoundTrip:
             "consumed_example_ids",
         }, result
         assert result["status"] == "success", result
-        assert result["spans_found"] >= _served_holdout_minimum_in_pod(TENANT_ID), (
-            result
+        expected_min_samples, _ = _population_floor_from_shipped_config(
+            "profile_selection"
         )
+        assert result["spans_found"] > 0, result
+        assert result["spans_found"] >= expected_min_samples, result
         assert result["holdout_source"] == "served", result
         assert result["decision"] in BLOB_VERSION_DECISIONS, result
         assert result["holdout_examples"] == max(1, result["spans_found"] // 4), result

@@ -36,6 +36,10 @@ def _mappings(config: dict[str, Any]) -> list[tuple[str, str]]:
     return [(rule["modality"], rule["agent_name"]) for rule in rules]
 
 
+def _optimizer_floors(config: dict[str, Any]) -> dict[str, Any]:
+    return config["routing"]["optimization_config"]["optimizer_floors"]
+
+
 @pytest.mark.unit
 @pytest.mark.parametrize("path", CONFIGS, ids=lambda p: p.parent.name)
 def test_shipped_config_passes_system_tenant_startup_parse(path: Path):
@@ -81,6 +85,11 @@ def test_shared_agents_declare_identical_modalities_across_shipped_configs():
 @pytest.mark.unit
 def test_shipped_configs_declare_identical_agent_mappings():
     assert _mappings(_rendered(SHIPPED)) == _mappings(_rendered(CHART))
+
+
+@pytest.mark.unit
+def test_shipped_configs_declare_identical_optimizer_floors():
+    assert _optimizer_floors(_rendered(SHIPPED)) == _optimizer_floors(_rendered(CHART))
 
 
 @pytest.mark.unit

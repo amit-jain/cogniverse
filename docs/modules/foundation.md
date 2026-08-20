@@ -366,6 +366,19 @@ routing_config = RoutingConfigUnified(
     enable_fast_path=True,
     fast_path_confidence_threshold=0.4,
 )
+
+# Per-optimizer floors can override the global 100/3 defaults when a tenant
+# needs calibrated promotion thresholds for specific optimization modes.
+# routing_config.optimizer_floors = {
+#     "profile_selection": {
+#         "min_samples_for_optimization": 20,
+#         "min_unique_queries": 6,
+#     },
+#     "entity_extraction": {
+#         "min_samples_for_optimization": 58,
+#         "min_unique_queries": 15,
+#     },
+# }
 ```
 
 **DurableExecutionConfig** - Durable-execution enablement for long-running optimization/eval workflows:

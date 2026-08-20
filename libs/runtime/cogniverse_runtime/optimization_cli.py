@@ -1010,16 +1010,28 @@ def _min_improvement_from_config(tenant_id: str, config_manager=None) -> float:
 
 
 def _population_floor_from_config(
-    tenant_id: str, config_manager=None
+    tenant_id: str,
+    config_manager=None,
+    optimizer_type: str = "query_enhancement",
 ) -> tuple[int, int]:
     """The tenant's promotion floor: (min_samples, min_unique_queries)."""
     from cogniverse_foundation.config.utils import create_default_config_manager
 
     manager = config_manager or create_default_config_manager()
     routing = manager.get_routing_config(tenant_id=tenant_id)
+    optimizer_floor = (routing.optimizer_floors or {}).get(optimizer_type)
+    if optimizer_floor is None:
+        return (
+            int(routing.min_samples_for_optimization),
+            int(routing.min_unique_queries),
+        )
     return (
-        int(routing.min_samples_for_optimization),
-        int(routing.min_unique_queries),
+        int(
+            optimizer_floor.get(
+                "min_samples_for_optimization", routing.min_samples_for_optimization
+            )
+        ),
+        int(optimizer_floor.get("min_unique_queries", routing.min_unique_queries)),
     )
 
 
@@ -2312,7 +2324,7 @@ async def run_simba_optimization(
     artifact_manager = ArtifactManager(telemetry_provider, tenant_id)
     current_blob = await artifact_manager.load_blob("model", SIMBA_ARTIFACT_KEY)
     min_samples, min_unique_queries = _population_floor_from_config(
-        tenant_id, config_manager
+        tenant_id, config_manager, "query_enhancement"
     )
     min_holdout = max(1, min_samples // 10)
     population = len(records)
@@ -3123,7 +3135,7 @@ async def run_profile_optimization(
     artifact_manager = ArtifactManager(telemetry_provider, tenant_id)
     current_blob = await artifact_manager.load_blob("model", "profile_selection")
     min_samples, min_unique_queries = _population_floor_from_config(
-        tenant_id, config_manager
+        tenant_id, config_manager, "profile_selection"
     )
     population = len(records)
     distinct_queries = len({record["query"] for record in records})
@@ -3358,7 +3370,7 @@ async def run_entity_extraction_optimization(
     artifact_manager = ArtifactManager(telemetry_provider, tenant_id)
     current_blob = await artifact_manager.load_blob("model", "entity_extraction")
     min_samples, min_unique_queries = _population_floor_from_config(
-        tenant_id, config_manager
+        tenant_id, config_manager, "entity_extraction"
     )
     population = len(records)
     distinct_queries = len({record["query"] for record in records})

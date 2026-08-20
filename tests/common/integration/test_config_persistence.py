@@ -105,6 +105,16 @@ class TestConfigPersistence:
             routing_mode="ensemble",
             enable_fast_path=False,
             gliner_threshold=0.5,
+            optimizer_floors={
+                "profile_selection": {
+                    "min_samples_for_optimization": 20,
+                    "min_unique_queries": 6,
+                },
+                "entity_extraction": {
+                    "min_samples_for_optimization": 58,
+                    "min_unique_queries": 15,
+                },
+            },
         )
 
         config_manager.set_routing_config(routing_config)
@@ -114,6 +124,8 @@ class TestConfigPersistence:
         assert loaded_config.routing_mode == "ensemble"
         assert loaded_config.enable_fast_path is False
         assert loaded_config.gliner_threshold == 0.5
+        assert loaded_config.optimizer_floors == routing_config.optimizer_floors
+        assert loaded_config == routing_config
 
     def test_telemetry_config_persistence(self, config_manager):
         """Test telemetry configuration persists and loads"""

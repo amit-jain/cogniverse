@@ -223,6 +223,11 @@ class RoutingConfigUnified:
     enable_auto_optimization: bool = True
     optimization_interval_seconds: int = 3600
     min_samples_for_optimization: int = 100
+    min_unique_queries: int = 3
+
+    # Optional per-optimizer floor overrides. Missing optimizer keys fall back
+    # to the global 100/3 defaults; query_enhancement keeps the global floor.
+    optimizer_floors: Dict[str, Dict[str, int]] = field(default_factory=dict)
 
     metadata: Dict[str, Any] = field(default_factory=dict)
 ```
@@ -873,6 +878,16 @@ config.enable_auto_optimization = True
 config.optimization_interval_seconds = 3600
 config.min_samples_for_optimization = 100
 config.min_unique_queries = 3
+config.optimizer_floors = {
+    "profile_selection": {
+        "min_samples_for_optimization": 20,
+        "min_unique_queries": 6,
+    },
+    "entity_extraction": {
+        "min_samples_for_optimization": 58,
+        "min_unique_queries": 15,
+    },
+}
 
 # GLiNER device — seeded into GatewayDeps and applied to a locally-loaded model.
 config.gliner_device = "cuda"

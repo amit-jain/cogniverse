@@ -476,6 +476,7 @@ class RoutingConfigUnified:
     optimization_interval_seconds: int = 3600
     min_samples_for_optimization: int = 100
     min_unique_queries: int = 3
+    optimizer_floors: Dict[str, Dict[str, int]] = field(default_factory=dict)
 
     # Metadata
     metadata: Dict[str, Any] = field(default_factory=dict)
@@ -499,6 +500,10 @@ class RoutingConfigUnified:
             "optimization_interval_seconds": self.optimization_interval_seconds,
             "min_samples_for_optimization": self.min_samples_for_optimization,
             "min_unique_queries": self.min_unique_queries,
+            "optimizer_floors": {
+                optimizer_type: dict(floor)
+                for optimizer_type, floor in self.optimizer_floors.items()
+            },
             "metadata": self.metadata,
         }
 
@@ -526,6 +531,10 @@ class RoutingConfigUnified:
             ),
             min_samples_for_optimization=data.get("min_samples_for_optimization", 100),
             min_unique_queries=data.get("min_unique_queries", 3),
+            optimizer_floors={
+                optimizer_type: dict(floor)
+                for optimizer_type, floor in data.get("optimizer_floors", {}).items()
+            },
             metadata=data.get("metadata", {}),
         )
 
