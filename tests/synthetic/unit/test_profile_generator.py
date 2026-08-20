@@ -14,6 +14,7 @@ from cogniverse_foundation.config.manager import ConfigManager
 from cogniverse_foundation.config.unified_config import BackendProfileConfig
 from cogniverse_synthetic.generators import ProfileGenerator
 from cogniverse_synthetic.registry import get_optimizer_config
+from tests.agents.unit._recording_telemetry import RecordingTelemetryManager
 from tests.utils.memory_store import InMemoryConfigStore
 
 PROFILE_CONFIGS = {
@@ -196,6 +197,7 @@ class TestProfileGenerator:
                 available_profiles=["audio_semantic", "document_semantic"]
             )
         )
+        agent.telemetry_manager = RecordingTelemetryManager()
         agent._config_manager = config_manager
         agent.dspy_module.selector = lambda **_: dspy.Prediction(
             selected_profile="document_semantic",

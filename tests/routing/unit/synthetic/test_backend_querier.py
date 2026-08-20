@@ -3,7 +3,10 @@
 from __future__ import annotations
 
 import asyncio
+import json
+import logging
 import threading
+from pathlib import Path
 
 import pytest
 
@@ -15,6 +18,23 @@ from cogniverse_foundation.config.unified_config import (
 from cogniverse_synthetic.backend_querier import BackendQuerier
 
 pytestmark = [pytest.mark.unit]
+
+_REPO_ROOT = Path(__file__).resolve().parents[4]
+_SHIPPED_BACKEND_PROFILES = json.loads(
+    (_REPO_ROOT / "configs" / "config.json").read_text(encoding="utf-8")
+)["backend"]["profiles"]
+
+
+def _shipped_backend_profile(profile_name: str) -> BackendProfileConfig:
+    return BackendProfileConfig.from_dict(
+        profile_name, _SHIPPED_BACKEND_PROFILES[profile_name]
+    )
+
+
+def _shipped_backend_profile_dict(profile_name: str) -> dict:
+    profile = _shipped_backend_profile(profile_name).to_dict()
+    profile["profile_name"] = profile_name
+    return profile
 
 
 class _RecordingBackend:
@@ -32,6 +52,18 @@ class _RecordingBackend:
     def query_metadata_documents(self, schema, query=None, yql=None, **kwargs):
         self.calls.append({"schema": schema, "yql": yql, "kwargs": kwargs})
         return self.docs
+
+
+class _SchemaRecordingBackend:
+    """Record per-schema calls and return schema-specific documents."""
+
+    def __init__(self, docs_by_schema: dict[str, list[dict]]) -> None:
+        self.docs_by_schema = docs_by_schema
+        self.calls: list[dict] = []
+
+    def query_metadata_documents(self, schema, query=None, yql=None, **kwargs):
+        self.calls.append({"schema": schema, "yql": yql, "kwargs": kwargs})
+        return self.docs_by_schema[schema]
 
 
 def _querier(backend, *, profiles=None) -> BackendQuerier:
@@ -446,6 +478,151 @@ async def test_entity_rich_rejects_profile_without_text_producing_pipeline() -> 
 
     assert backend.schema_resolutions == []
     assert backend.calls == []
+
+
+@pytest.mark.asyncio
+async def test_entity_rich_query_profiles_skips_non_qualifying_shipped_profiles(
+    caplog,
+) -> None:
+    backend = _SchemaRecordingBackend(
+        {
+            "video_colpali_smol500_mv_frame": [
+                {
+                    "video_title": "Saturn V launch",
+                    "segment_description": (
+                        "The Saturn V rocket clears the launch tower."
+                    ),
+                    "audio_transcript": "Saturn V ignition is confirmed.",
+                }
+            ],
+            "audio_content": [
+                {
+                    "audio_title": "Curie lecture",
+                    "audio_transcript": (
+                        "Marie Curie and Pierre Curie discovered radium."
+                    ),
+                }
+            ],
+        }
+    )
+    querier = _querier(
+        backend,
+        profiles={
+            name: _shipped_backend_profile_dict(name)
+            for name in (
+                "video_videoprism_large_mv_chunk_30s",
+                "video_colpali_smol500_mv_frame",
+                "audio_clap_semantic",
+            )
+        },
+    )
+
+    with caplog.at_level(logging.WARNING):
+        samples = await querier.query_profiles(
+            [
+                _shipped_backend_profile_dict("video_videoprism_large_mv_chunk_30s"),
+                _shipped_backend_profile_dict("video_colpali_smol500_mv_frame"),
+                _shipped_backend_profile_dict("audio_clap_semantic"),
+            ],
+            sample_size=2,
+            strategy="entity_rich",
+            tenant_id="acme:media",
+        )
+
+    assert [sample["profile_name"] for sample in samples] == [
+        "video_colpali_smol500_mv_frame",
+        "audio_clap_semantic",
+    ]
+    assert [sample["schema_name"] for sample in samples] == [
+        "video_colpali_smol500_mv_frame",
+        "audio_content",
+    ]
+    assert [sample["topic"] for sample in samples] == [
+        "Saturn V launch",
+        "Curie lecture",
+    ]
+    assert [sample.get("description") for sample in samples] == [
+        "The Saturn V rocket clears the launch tower.",
+        None,
+    ]
+    assert [sample["transcript"] for sample in samples] == [
+        "Saturn V ignition is confirmed.",
+        "Marie Curie and Pierre Curie discovered radium.",
+    ]
+    assert backend.calls == [
+        {
+            "schema": "video_colpali_smol500_mv_frame",
+            "yql": (
+                "select * from sources video_colpali_smol500_mv_frame "
+                "where true order by creation_timestamp desc limit 10"
+            ),
+            "kwargs": {"hits": 10, "tenant_id": "acme:media"},
+        },
+        {
+            "schema": "audio_content",
+            "yql": (
+                "select * from sources audio_content "
+                "where true order by creation_timestamp desc limit 10"
+            ),
+            "kwargs": {"hits": 10, "tenant_id": "acme:media"},
+        },
+    ]
+    assert [
+        record.message for record in caplog.records if record.levelno == logging.WARNING
+    ] == [
+        (
+            "entity_rich skips non-qualifying backend profiles for tenant "
+            "'acme:media': video_videoprism_large_mv_chunk_30s (entity_rich "
+            "requires the profile pipeline to generate descriptions or "
+            "transcribe audio)"
+        )
+    ]
+
+
+@pytest.mark.asyncio
+async def test_entity_rich_query_profiles_raises_when_no_qualifying_profiles_remain(
+    caplog,
+) -> None:
+    backend = _SchemaRecordingBackend({})
+    querier = _querier(
+        backend,
+        profiles={
+            name: _shipped_backend_profile_dict(name)
+            for name in (
+                "video_videoprism_large_mv_chunk_30s",
+                "video_videoprism_base_mv_chunk_30s",
+            )
+        },
+    )
+
+    with caplog.at_level(logging.WARNING):
+        with pytest.raises(
+            ValueError,
+            match=(
+                "^entity_rich requires at least one qualifying backend profile "
+                "for tenant 'acme:media'; excluded profiles: "
+                "video_videoprism_large_mv_chunk_30s \\("
+                "entity_rich requires the profile pipeline to generate "
+                "descriptions or transcribe audio\\), "
+                "video_videoprism_base_mv_chunk_30s \\("
+                "entity_rich requires the profile pipeline to generate "
+                "descriptions or transcribe audio\\)$"
+            ),
+        ):
+            await querier.query_profiles(
+                [
+                    _shipped_backend_profile_dict(
+                        "video_videoprism_large_mv_chunk_30s"
+                    ),
+                    _shipped_backend_profile_dict("video_videoprism_base_mv_chunk_30s"),
+                ],
+                sample_size=1,
+                strategy="entity_rich",
+                tenant_id="acme:media",
+            )
+
+    assert backend.calls == []
+    assert caplog.records == []
 
 
 async def test_query_profile_raises_on_backend_runtime_error() -> None:
