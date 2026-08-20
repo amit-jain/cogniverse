@@ -1567,6 +1567,39 @@ def _qe_span_row(
     }
 
 
+def _example(**kwargs):
+    import dspy
+
+    fields = {
+        "query": "",
+        "source_text": "",
+        "grounding_context": "",
+    }
+    fields.update(kwargs)
+    return dspy.Example(**fields).with_inputs(
+        "query", "source_text", "grounding_context"
+    )
+
+
+def _pred(enhanced: str, terms):
+    import dspy
+
+    return dspy.Prediction(enhanced_query=enhanced, expansion_terms=terms)
+
+
+def _module_returning(prediction):
+    class _Module:
+        def __init__(self, value):
+            self._value = value
+            self.calls = []
+
+        def __call__(self, **kwargs):
+            self.calls.append(kwargs)
+            return self._value
+
+    return _Module(prediction)
+
+
 _TF_CONTEXT = (
     "Entities: TensorFlow (TECHNOLOGY), neural networks (CONCEPT); "
     "Relationships: TensorFlow -used_for-> neural networks"
@@ -1695,11 +1728,11 @@ class TestSimbaQueryEnhancement:
     @pytest.mark.parametrize(
         ("grounding_context", "enhanced", "expansion_terms", "expected"),
         [
-            ("", "find video tutorials", "guides, lessons", 1.0),
-            ("", "find tutorials", "guides", 0.0),
-            ("", "Find Tutorials ", "guides", 0.0),
-            ("", "find video tutorials", "", 0.0),
-            ("", "", "guides", 0.0),
+            ("", "find video tutorials", "guides, lessons", None),
+            ("", "find tutorials", "guides", None),
+            ("", "Find Tutorials ", "guides", None),
+            ("", "find video tutorials", "", None),
+            ("", "", "guides", None),
             (_TF_CONTEXT, "find tutorials locate", "locate, discover", 0.0),
             (_TF_CONTEXT, "find tensorflow tutorials", "guides", 1.0),
             (_TF_CONTEXT, "find tutorials online", "Neural Networks, guides", 1.0),
@@ -1726,6 +1759,51 @@ class TestSimbaQueryEnhancement:
 
         assert _query_enhancement_quality(prediction, example) == expected
         assert _query_enhancement_metric(example, prediction) is (expected == 1.0)
+
+    def test_quality_scores_against_source_text_exact_table(self):
+        from cogniverse_runtime.optimization_cli import _query_enhancement_quality
+
+        source = (
+            "The video begins with a man wearing a blue shirt pulling heavy "
+            "logs placed against each other with a thick rope."
+        )
+        ex = _example(query="cats", source_text=source, grounding_context="")
+        scores = {
+            "grounded": _query_enhancement_quality(
+                _pred("cats pulling heavy logs", "heavy logs, rope"), ex
+            ),
+            "junk": _query_enhancement_quality(
+                _pred("find The video is of zzzzzz", "zzzzzz"), ex
+            ),
+            "video_id": _query_enhancement_quality(
+                _pred("cats v_-6dz6tBH77I", "v_-6dz6tBH77I"), ex
+            ),
+            "off_topic": _query_enhancement_quality(
+                _pred("cats quantum chromodynamics", "quantum chromodynamics"), ex
+            ),
+        }
+        assert scores == {
+            "grounded": 1.0,
+            "junk": 0.0,
+            "video_id": 0.0,
+            "off_topic": 0.0,
+        }
+
+    def test_quality_returns_none_for_unscoreable_example(self):
+        from cogniverse_runtime.optimization_cli import (
+            _query_enhancement_quality,
+            _query_enhancement_scores,
+        )
+
+        ex = _example(query="cats", source_text="", grounding_context="")
+        prediction = _pred("cats playing piano", "piano")
+        quality = _query_enhancement_quality(prediction, ex)
+
+        assert [quality] == [None]
+        assert _query_enhancement_scores(
+            _module_returning(prediction),
+            [ex],
+        ) == (0.0, 0)
 
     @pytest.mark.parametrize(
         ("baseline", "current", "candidate", "min_improvement", "expected"),
@@ -1754,14 +1832,20 @@ class TestSimbaQueryEnhancement:
         )
 
     @staticmethod
-    def _score_by_module(module, holdout) -> float:
+    def _score_by_module(module, holdout) -> tuple[float, int]:
         """Base module 0.5, the persisted artifact 0.0, the compiled candidate 1.0."""
-        del holdout
+        scored_count = sum(
+            bool(
+                str(getattr(example, "source_text", "") or "").strip()
+                or str(getattr(example, "grounding_context", "") or "").strip()
+            )
+            for example in holdout
+        )
         if getattr(module, "_compiled_marker", False):
-            return 1.0
+            return 1.0, scored_count
         if module.enhancer.predict.demos:
-            return 0.0
-        return 0.5
+            return 0.0, scored_count
+        return 0.5, scored_count
 
     @staticmethod
     def _fake_teleprompter(*args, **kwargs):
@@ -1995,7 +2079,9 @@ class TestSimbaQueryEnhancement:
         # Every module scores 1.0: the candidate cannot clear the 0.05 bar
         # over the served artifact, which is not worse than base, so it stays.
         result = self._run(
-            provider, min_improvement=0.05, scorer=lambda module, holdout: 1.0
+            provider,
+            min_improvement=0.05,
+            scorer=lambda module, holdout: (1.0, len(holdout)),
         )
 
         assert result == {
@@ -2022,6 +2108,38 @@ class TestSimbaQueryEnhancement:
         assert self._persisted_state(provider) == json.loads(served_state)
         lineage = self._lineage(provider)
         assert [(e["version"], e["decision"]) for e in lineage] == [(1, "keep")]
+        assert self._active_version(provider, "simba_query_enhancement") is None
+
+    def test_refuses_when_no_holdout_rows_are_scoreable(self):
+        rows = [
+            _qe_span_row(
+                f"query {i}",
+                f"query {i} expanded",
+                expansion_terms=["expanded"],
+                source_text="src",
+                span_id=f"qe-{i}",
+            )
+            for i in range(4)
+        ]
+        provider = FakeTelemetryProvider(
+            _make_spans_df("cogniverse.query_enhancement", rows)
+        )
+
+        result = self._run(
+            provider,
+            min_improvement=0.0,
+            scorer=lambda module, holdout: (0.0, 0),
+        )
+
+        assert result == {
+            "status": "no_eval_material",
+            "spans_found": 4,
+            "examples": 4,
+            "training_examples": 3,
+            "holdout_examples": 0,
+            "holdout_source": "served",
+        }
+        assert provider.datasets.created == []
         assert self._active_version(provider, "simba_query_enhancement") is None
 
     def test_below_count_floor_persists_version_without_activating(self):
