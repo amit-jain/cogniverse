@@ -115,6 +115,7 @@ def configure_service(
     query_enhancer: Optional[QueryEnhancer] = None,
     profile_labeler: Optional[ProfileLabeler] = None,
     llm_client: Optional[Any] = None,
+    config_manager: Any = None,
 ) -> None:
     """
     Configure the global service instance
@@ -134,6 +135,7 @@ def configure_service(
     with _service_lock:
         _service = SyntheticDataService(
             backend=backend,
+            config_manager=config_manager,
             backend_config=backend_config,
             generator_config=generator_config,
             agents_config=agents_config,

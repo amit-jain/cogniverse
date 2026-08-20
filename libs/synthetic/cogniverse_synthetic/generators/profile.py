@@ -16,6 +16,7 @@ from typing import Any, Dict, List
 
 from pydantic import BaseModel, ValidationError
 
+from cogniverse_agents.profile_selection_agent import tenant_usable_profile_names
 from cogniverse_core.approval.training_schema import (
     PROFILE_TRAINING_MODALITIES,
     validate_approved_training_values,
@@ -87,6 +88,16 @@ class ProfileGenerator(BaseGenerator):
         tenant_id = kwargs.get("tenant_id")
         if not isinstance(tenant_id, str) or not tenant_id.strip():
             raise ValueError("tenant_id is required for profile generation")
+        config_manager = kwargs.get("config_manager")
+        if config_manager is None:
+            raise ValueError(
+                "ProfileGenerator requires config_manager for tenant profile selection"
+            )
+        available_profiles, profile_configs = self._tenant_profile_context(
+            profile_configs,
+            config_manager,
+            tenant_id,
+        )
         generation_tracker = kwargs.get("generation_tracker")
         floor_count = self._generation_floor_count(
             kwargs.get(
@@ -99,6 +110,7 @@ class ProfileGenerator(BaseGenerator):
                 sampled_content,
                 target_count,
                 profile_configs,
+                available_profiles,
                 tenant_id,
                 generation_tracker=generation_tracker
                 if isinstance(generation_tracker, GenerationTracker)
@@ -106,6 +118,12 @@ class ProfileGenerator(BaseGenerator):
                 floor_count=floor_count,
             )
 
+        sampled_content = self._sampleable_content_records(
+            sampled_content,
+            profile_configs,
+        )
+        if not sampled_content:
+            raise ValueError("sampled_content contains no usable profile topic")
         saliency = TopicSaliency.from_records(sampled_content)
         if not self._extract_topics(sampled_content, saliency):
             raise ValueError("sampled_content contains no usable profile topic")
@@ -120,7 +138,12 @@ class ProfileGenerator(BaseGenerator):
                 break
             try:
                 examples.append(
-                    await self._label_query(query, profile_configs, tenant_id)
+                    await self._label_query(
+                        query,
+                        available_profiles,
+                        profile_configs,
+                        tenant_id,
+                    )
                 )
             except (ValueError, ValidationError) as exc:
                 last_validation_error = exc
@@ -181,13 +204,71 @@ class ProfileGenerator(BaseGenerator):
 
         return profile_configs
 
+    def _tenant_profile_context(
+        self,
+        profile_configs: Dict[str, Dict[str, Any]],
+        config_manager: Any,
+        tenant_id: str,
+    ) -> tuple[List[str], Dict[str, Dict[str, Any]]]:
+        tenant_profiles = tenant_usable_profile_names(config_manager, tenant_id)
+        tenant_profile_names = set(tenant_profiles)
+        sampleable_profile_configs = {
+            profile_name: profile_config
+            for profile_name, profile_config in profile_configs.items()
+            if profile_name in tenant_profile_names
+        }
+        excluded_profiles = [
+            (profile_name, "not tenant-usable")
+            for profile_name in profile_configs
+            if profile_name not in tenant_profile_names
+        ]
+        if not sampleable_profile_configs:
+            excluded_summary = self._format_profile_selection_exclusions(
+                excluded_profiles
+            )
+            raise ValueError(
+                "ProfileGenerator requires at least one qualifying backend profile "
+                f"for tenant {tenant_id!r}; excluded profiles: {excluded_summary}"
+            )
+        if excluded_profiles:
+            logger.warning(
+                "ProfileGenerator skips non-qualifying backend profiles for tenant "
+                "%r: %s",
+                tenant_id,
+                self._format_profile_selection_exclusions(excluded_profiles),
+            )
+        return tenant_profiles, sampleable_profile_configs
+
+    @staticmethod
+    def _format_profile_selection_exclusions(
+        excluded_profiles: List[tuple[str, str]],
+    ) -> str:
+        return ", ".join(
+            f"{profile_name} ({reason})" for profile_name, reason in excluded_profiles
+        )
+
+    @staticmethod
+    def _sampleable_content_records(
+        sampled_content: List[Dict[str, Any]],
+        profile_configs: Dict[str, Dict[str, Any]],
+    ) -> List[Dict[str, Any]]:
+        sampleable_schema_names = {
+            profile_config["schema_name"] for profile_config in profile_configs.values()
+        }
+        return [
+            item
+            for item in sampled_content
+            if item.get("schema_name") in sampleable_schema_names
+        ]
+
     async def _label_query(
         self,
         query: str,
+        available_profiles: List[str],
         profile_configs: Dict[str, Dict[str, Any]],
         tenant_id: str,
     ) -> ProfileSelectionExampleSchema:
-        profiles = list(profile_configs)
+        profiles = list(available_profiles)
         selection = await self._request_profile_label(query, profiles, tenant_id)
         if isinstance(selection, BaseModel):
             selection = selection.model_dump()
@@ -202,6 +283,11 @@ class ProfileGenerator(BaseGenerator):
             raise ValueError(
                 "profile selection selected_profile must be one of the "
                 "available profiles"
+            )
+        if selected_profile not in profile_configs:
+            raise ValueError(
+                "profile selection selected_profile must be one of the "
+                "sampleable profiles"
             )
         output_fields = {}
         for field_name in (
@@ -298,6 +384,7 @@ class ProfileGenerator(BaseGenerator):
         sampled_content: List[Dict[str, Any]],
         target_count: int,
         profile_configs: Dict[str, Dict[str, Any]],
+        available_profiles: List[str],
         tenant_id: str,
         *,
         generation_tracker: GenerationTracker | None = None,
@@ -367,7 +454,12 @@ class ProfileGenerator(BaseGenerator):
                 break
             try:
                 examples.append(
-                    await self._label_query(query, profile_configs, tenant_id)
+                    await self._label_query(
+                        query,
+                        available_profiles,
+                        profile_configs,
+                        tenant_id,
+                    )
                 )
             except (ValueError, ValidationError) as exc:
                 last_validation_error = exc

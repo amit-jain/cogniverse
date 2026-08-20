@@ -12,11 +12,13 @@ from typing import Any
 import pytest
 
 from cogniverse_agents.workflow.intelligence import WorkflowIntelligence
+from cogniverse_foundation.config.manager import ConfigManager
 from cogniverse_foundation.config.unified_config import (
     AgentMappingRule,
     BackendProfileConfig,
     DSPyModuleConfig,
     OptimizerGenerationConfig,
+    SystemConfig,
 )
 from cogniverse_sdk.interfaces.workflow_store import (
     WorkflowExecution,
@@ -36,6 +38,7 @@ from cogniverse_synthetic.schemas import (
     WorkflowExecutionSchema,
 )
 from cogniverse_synthetic.utils import AgentInferrer
+from tests.utils.memory_store import InMemoryConfigStore
 
 pytestmark = [pytest.mark.unit]
 
@@ -49,6 +52,27 @@ def _shipped_backend_profile(profile_name: str) -> BackendProfileConfig:
     return BackendProfileConfig.from_dict(
         profile_name, _SHIPPED_BACKEND_PROFILES[profile_name]
     )
+
+
+def _profile_generation_config_manager(
+    profile_configs: dict[str, dict[str, Any]],
+    *,
+    tenant_id: str,
+) -> ConfigManager:
+    config_manager = ConfigManager(store=InMemoryConfigStore())
+    service_urls: dict[str, str] = {}
+    for profile_name, profile_config in profile_configs.items():
+        inference_services = profile_config.get("inference_services")
+        if isinstance(inference_services, dict):
+            embedding_service = inference_services.get("embedding")
+            if isinstance(embedding_service, str) and embedding_service.strip():
+                service_urls[embedding_service] = f"http://{embedding_service}.invalid"
+        config_manager.add_backend_profile(
+            BackendProfileConfig.from_dict(profile_name, profile_config),
+            tenant_id=tenant_id,
+        )
+    config_manager.set_system_config(SystemConfig(inference_service_urls=service_urls))
+    return config_manager
 
 
 def create_routing_config():
@@ -210,7 +234,43 @@ async def route_query(query: str, tenant_id: str):
 
 
 async def select_profile(query: str, profiles: list[str], tenant_id: str):
-    selected_profile = profiles[0]
+    lowered_query = query.lower()
+    preferred_modalities = (
+        ("audio", ("audio", "transcript")),
+        ("video", ("video", "frame", "footage")),
+        ("image", ("image", "visual", "diagram")),
+        ("document", ("document", "text", "notes")),
+        ("wiki", ("wiki",)),
+    )
+    selected_profile = None
+    for modality, keywords in preferred_modalities:
+        if not any(keyword in lowered_query for keyword in keywords):
+            continue
+        for profile_name in profiles:
+            normalized_profile = profile_name.lower()
+            if modality == "audio" and normalized_profile.startswith("audio"):
+                selected_profile = profile_name
+                break
+            if modality == "video" and normalized_profile.startswith("video"):
+                selected_profile = profile_name
+                break
+            if modality == "image" and normalized_profile.startswith("image"):
+                selected_profile = profile_name
+                break
+            if modality == "document" and (
+                normalized_profile.startswith("document")
+                or "text" in normalized_profile
+                or "visual" in normalized_profile
+            ):
+                selected_profile = profile_name
+                break
+            if modality == "wiki" and "wiki" in normalized_profile:
+                selected_profile = profile_name
+                break
+        if selected_profile is not None:
+            break
+    if selected_profile is None:
+        selected_profile = profiles[0]
     modality = selected_profile.split("_", 1)[0]
     return {
         "query": query,
@@ -325,21 +385,30 @@ def _build_label_invoker(kind: str, callback, timeout_seconds: float):
         return invoke
 
     if kind == "profile":
+        profile_configs = {
+            "document_text_semantic": _shipped_backend_profile(
+                "document_text_semantic"
+            ).to_dict(),
+        }
         generator = ProfileGenerator(
             profile_labeler=callback,
             production_label_timeout_seconds=timeout_seconds,
         )
 
         async def invoke(topic: str):
+            config_manager = _profile_generation_config_manager(
+                profile_configs,
+                tenant_id="tenant-a",
+            )
             examples = await generator.generate(
-                [title_sample(topic), title_sample("Apollo guidance computer")],
+                [
+                    topic_schema_sample(topic, "document_text"),
+                    topic_schema_sample("Apollo guidance computer", "document_text"),
+                ],
                 target_count=1,
                 tenant_id="tenant-a",
-                profile_configs={
-                    "document_text_semantic": _shipped_backend_profile(
-                        "document_text_semantic"
-                    ).to_dict(),
-                },
+                profile_configs=profile_configs,
+                config_manager=config_manager,
             )
             example = examples[0]
             return {
@@ -445,6 +514,10 @@ class TestProfileGeneratorIntegration:
             target_count=1,
             profile_configs={video_profile.profile_name: video_profile.to_dict()},
             tenant_id="acme:profiles",
+            config_manager=_profile_generation_config_manager(
+                {video_profile.profile_name: video_profile.to_dict()},
+                tenant_id="acme:profiles",
+            ),
         )
 
         assert len(examples) == 1
@@ -470,6 +543,10 @@ class TestProfileGeneratorIntegration:
                 "audio_clap_semantic": self.PROFILE_CONFIGS["audio_clap_semantic"]
             },
             tenant_id="acme:profiles",
+            config_manager=_profile_generation_config_manager(
+                {"audio_clap_semantic": self.PROFILE_CONFIGS["audio_clap_semantic"]},
+                tenant_id="acme:profiles",
+            ),
         )
 
         assert examples[0].model_dump() == {
@@ -507,6 +584,17 @@ class TestProfileGeneratorIntegration:
                         "type": modality,
                     }
                 },
+                config_manager=_profile_generation_config_manager(
+                    {
+                        "broken": {
+                            **_shipped_backend_profile(
+                                "document_text_semantic"
+                            ).to_dict(),
+                            "type": modality,
+                        }
+                    },
+                    tenant_id="acme:profiles",
+                ),
             )
 
     @pytest.mark.asyncio
@@ -522,6 +610,10 @@ class TestProfileGeneratorIntegration:
             profile_configs=self.PROFILE_CONFIGS,
             tenant_id="acme:profiles",
             cross_modal=True,
+            config_manager=_profile_generation_config_manager(
+                self.PROFILE_CONFIGS,
+                tenant_id="acme:profiles",
+            ),
         )
 
         assert [example.model_dump() for example in examples] == [
@@ -530,7 +622,7 @@ class TestProfileGeneratorIntegration:
                     "find Curie lecture in audio content together with "
                     "Radium notes in document content"
                 ),
-                "available_profiles": "audio_clap_semantic,document_text_semantic",
+                "available_profiles": "document_text_semantic,audio_clap_semantic",
                 "selected_profile": "audio_clap_semantic",
                 "reasoning": "Production selector chose audio_clap_semantic.",
                 "query_intent": "audio_search",
@@ -558,6 +650,14 @@ class TestProfileGeneratorIntegration:
                 },
                 tenant_id="acme:profiles",
                 cross_modal=True,
+                config_manager=_profile_generation_config_manager(
+                    {
+                        "audio_clap_semantic": self.PROFILE_CONFIGS[
+                            "audio_clap_semantic"
+                        ]
+                    },
+                    tenant_id="acme:profiles",
+                ),
             )
 
     @pytest.mark.asyncio
@@ -577,6 +677,10 @@ class TestProfileGeneratorIntegration:
                 profile_configs=self.PROFILE_CONFIGS,
                 tenant_id="acme:profiles",
                 cross_modal=True,
+                config_manager=_profile_generation_config_manager(
+                    self.PROFILE_CONFIGS,
+                    tenant_id="acme:profiles",
+                ),
             )
 
 

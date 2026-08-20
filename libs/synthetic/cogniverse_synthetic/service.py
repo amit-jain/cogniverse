@@ -92,6 +92,7 @@ class SyntheticDataService:
         routing_decider: Optional[RoutingDecider] = None,
         query_enhancer: Optional[QueryEnhancer] = None,
         profile_labeler: Optional[ProfileLabeler] = None,
+        config_manager: Any = None,
     ):
         """
         Initialize SyntheticDataService with configuration
@@ -125,6 +126,7 @@ class SyntheticDataService:
         self.routing_decider = routing_decider
         self.query_enhancer = query_enhancer
         self.profile_labeler = profile_labeler
+        self.config_manager = config_manager
 
         modality_config = self.generator_config.get_optimizer_config("modality")
         if modality_config is None:
@@ -524,10 +526,16 @@ class SyntheticDataService:
         }:
             generation_kwargs["tenant_id"] = request.tenant_id
         if request.optimizer in {"profile", "cross_modal"}:
+            if self.config_manager is None:
+                raise ValueError(
+                    "ProfileGenerator requires backend config_manager for "
+                    "tenant profile selection"
+                )
             generation_kwargs["profile_configs"] = (
                 available_profile_configs or selected_profile_configs
             )
             generation_kwargs["cross_modal"] = request.optimizer == "cross_modal"
+            generation_kwargs["config_manager"] = self.config_manager
         if generation_tracker is not None:
             generation_kwargs["generation_tracker"] = generation_tracker
             generation_kwargs["generation_floor_count"] = generation_tracker.floor_count
