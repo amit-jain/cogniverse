@@ -1022,14 +1022,22 @@ def _population_floor_from_config(
     manager = config_manager or create_default_config_manager()
     routing = manager.get_routing_config(tenant_id=tenant_id)
     optimizer_floor = routing.optimizer_floors.get(optimizer_type)
-    if isinstance(optimizer_floor, dict):
-        tenant_floor = _population_floor_from_floor_config(
-            optimizer_floor,
-            routing.min_samples_for_optimization,
-            routing.min_unique_queries,
-        )
+    if optimizer_floor is not None:
+        tenant_floor = None
+        if isinstance(optimizer_floor, dict):
+            tenant_floor = _population_floor_from_floor_config(
+                optimizer_floor,
+                routing.min_samples_for_optimization,
+                routing.min_unique_queries,
+            )
         if tenant_floor is not None:
             return tenant_floor
+        logger.warning(
+            "Ignoring malformed optimizer floor for tenant %r optimizer %r: %r",
+            tenant_id,
+            optimizer_type,
+            optimizer_floor,
+        )
 
     shipped_optimizer_floor = _shipped_population_floor_from_config(optimizer_type)
     if shipped_optimizer_floor is not None:

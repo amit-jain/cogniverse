@@ -1824,6 +1824,43 @@ class TestPopulationFloorConfig:
             "acme:acme", manager, "profile_selection"
         ) == (20, 6)
 
+    def test_malformed_store_floor_warns_and_falls_through(self, caplog):
+        """A malformed tenant override never silently vanishes: it is named in
+        a warning and resolution falls through to the shipped mapping."""
+        import logging
+
+        from cogniverse_foundation.config.manager import ConfigManager
+        from cogniverse_foundation.config.unified_config import RoutingConfigUnified
+        from cogniverse_runtime.optimization_cli import _population_floor_from_config
+        from tests.utils.memory_store import InMemoryConfigStore
+
+        manager = ConfigManager(store=InMemoryConfigStore())
+        manager.set_routing_config(
+            RoutingConfigUnified(
+                tenant_id="acme:acme",
+                optimizer_floors={
+                    "profile_selection": {
+                        "min_samples_for_optimization": "not-a-number",
+                    },
+                },
+            )
+        )
+        with caplog.at_level(logging.WARNING):
+            resolved = _population_floor_from_config(
+                "acme:acme", manager, "profile_selection"
+            )
+        assert resolved == (20, 6)
+        warning_lines = [
+            record.getMessage()
+            for record in caplog.records
+            if "malformed optimizer floor" in record.getMessage()
+        ]
+        assert warning_lines == [
+            "Ignoring malformed optimizer floor for tenant 'acme:acme' "
+            "optimizer 'profile_selection': "
+            "{'min_samples_for_optimization': 'not-a-number'}"
+        ]
+
 
 class TestSimbaQueryEnhancement:
     """The SIMBA path trains on served calls and only serves a module that

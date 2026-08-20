@@ -3056,7 +3056,9 @@ class TestArtifactLoadingRoundTrip:
         assert result["spans_found"] >= expected_min_samples, result
         assert result["holdout_source"] == "served", result
         assert result["decision"] in BLOB_VERSION_DECISIONS, result
-        assert result["holdout_examples"] == max(1, result["spans_found"] // 4), result
+        assert result["holdout_examples"] == max(
+            1, result["served_scoreable_examples"] // 4
+        ), result
         assert result["training_examples"] == (
             result["spans_found"] - result["holdout_examples"] + len(approved)
         ), result
