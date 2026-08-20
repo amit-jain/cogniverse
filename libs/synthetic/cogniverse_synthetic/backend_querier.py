@@ -89,6 +89,25 @@ class BackendQuerier:
             return []
         if sample_size < 1:
             raise ValueError("sample_size must be at least 1")
+        if strategy == "entity_rich":
+            profile_configs, excluded_profiles = self._partition_entity_rich_profiles(
+                profile_configs
+            )
+            if not profile_configs:
+                excluded_summary = self._format_entity_rich_exclusions(
+                    excluded_profiles
+                )
+                raise ValueError(
+                    "entity_rich requires at least one qualifying backend profile "
+                    f"for tenant {tenant_id!r}; excluded profiles: {excluded_summary}"
+                )
+            if excluded_profiles:
+                logger.warning(
+                    "entity_rich skips non-qualifying backend profiles for tenant "
+                    "%r: %s",
+                    tenant_id,
+                    self._format_entity_rich_exclusions(excluded_profiles),
+                )
 
         all_samples: List[Dict[str, Any]] = []
         base_size, remainder = divmod(sample_size, len(profile_configs))
@@ -271,12 +290,42 @@ class BackendQuerier:
         )
         return yql
 
+    def _partition_entity_rich_profiles(
+        self, profile_configs: List[Dict[str, Any]]
+    ) -> tuple[List[Dict[str, Any]], List[tuple[str, str]]]:
+        qualifying_profiles: List[Dict[str, Any]] = []
+        excluded_profiles: List[tuple[str, str]] = []
+
+        for index, profile_config in enumerate(profile_configs):
+            profile_name = self._profile_name(profile_config, index)
+            try:
+                self._entity_rich_fields(profile_config)
+            except ValueError as exc:
+                excluded_profiles.append((profile_name, str(exc)))
+                continue
+            qualifying_profiles.append(profile_config)
+
+        return qualifying_profiles, excluded_profiles
+
+    @staticmethod
+    def _format_entity_rich_exclusions(excluded_profiles: List[tuple[str, str]]) -> str:
+        return ", ".join(
+            f"{profile_name} ({reason})" for profile_name, reason in excluded_profiles
+        )
+
     def _validate_strategy(self, strategy: str) -> None:
         if strategy not in self._SUPPORTED_STRATEGIES:
             allowed = ", ".join(sorted(self._SUPPORTED_STRATEGIES))
             raise ValueError(
                 f"Unsupported sampling strategy '{strategy}'. Allowed: {allowed}"
             )
+
+    @staticmethod
+    def _profile_name(profile_config: Dict[str, Any], index: int) -> str:
+        profile_name = profile_config.get("profile_name")
+        if isinstance(profile_name, str) and profile_name.strip():
+            return profile_name
+        return f"profile[{index}]"
 
     def _source_key(self, document: Dict[str, Any]) -> str:
         for field_name in self.field_mappings.topic_fields:
