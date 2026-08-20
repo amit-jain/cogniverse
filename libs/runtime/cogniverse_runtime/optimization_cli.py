@@ -2456,6 +2456,8 @@ async def run_simba_optimization(
         }
 
     served_scoreable_examples = len(_served_scoreable_indices(records))
+    served_examples = production_count
+    approved_examples = len(synthetic_demos)
     train_records, holdout_records = _split_served_holdout(records, min_holdout)
     trainset = [_query_enhancement_example(r) for r in train_records if r["trainable"]]
     holdout = [_query_enhancement_example(r) for r in holdout_records]
@@ -2583,6 +2585,8 @@ async def run_simba_optimization(
         "status": "success",
         "spans_found": len(spans_df),
         "examples": len(records),
+        "served_examples": served_examples,
+        "approved_examples": approved_examples,
         "served_scoreable_examples": served_scoreable_examples,
         "training_examples": len(trainset),
         "holdout_examples": len(holdout),
@@ -3289,6 +3293,8 @@ async def run_profile_optimization(
             served_records,
         )
     )
+    served_examples = len(profile_pairs)
+    approved_examples = len(synthetic_demos)
     train_records, holdout_records = _split_served_holdout(served_records, min_holdout)
     trainset = [_profile_selection_example(record) for record in train_records]
     holdout = [_profile_selection_example(record) for record in holdout_records]
@@ -3392,6 +3398,8 @@ async def run_profile_optimization(
     return {
         "status": "success",
         "spans_found": len(spans_df),
+        "served_examples": served_examples,
+        "approved_examples": approved_examples,
         "served_scoreable_examples": served_scoreable_examples,
         "training_examples": len(trainset),
         "holdout_examples": len(holdout),
@@ -3517,6 +3525,8 @@ async def run_entity_extraction_optimization(
             scoreable_predicate=_entity_extraction_is_scoreable,
         )
     )
+    served_examples = len(entity_pairs)
+    approved_examples = len(synthetic_demos)
     train_records, holdout_records = _split_served_holdout(
         records,
         min_holdout,
@@ -3636,6 +3646,8 @@ async def run_entity_extraction_optimization(
     return {
         "status": "success",
         "spans_found": len(spans_df),
+        "served_examples": served_examples,
+        "approved_examples": approved_examples,
         "served_scoreable_examples": served_scoreable_examples,
         "training_examples": len(trainset),
         "holdout_examples": len(holdout),
