@@ -208,8 +208,8 @@ def _selection_summary_in_pod(
                         "query_enhancement", demo
                     )
                     records.append(
-                        {
-                "query": projected["query"],
+                        {{
+                            "query": projected["query"],
                             "source_text": "",
                             "grounding_context": "",
                             "enhanced_query": projected["enhanced_query"],
@@ -232,7 +232,7 @@ def _selection_summary_in_pod(
                             "reasoning": projected["reasoning"],
                             "example_id": demo["example_id"],
                             "trainable": True,
-                        }
+                        }}
                     )
                 min_samples, _ = _population_floor_from_config(
                     {tenant_id!r}, config_manager, "simba_query_enhancement"
@@ -311,8 +311,8 @@ def _selection_summary_in_pod(
                 for demo in synthetic_demos:
                     projected = _project_approved_optimizer_example("profile", demo)
                     records.append(
-                        {
-                "query": projected["query"],
+                        {{
+                            "query": projected["query"],
                             "available_profiles": projected["available_profiles"],
                             "selected_profile": projected["selected_profile"],
                             "confidence": 0.0,
@@ -321,7 +321,7 @@ def _selection_summary_in_pod(
                             "modality": projected["modality"],
                             "complexity": projected["complexity"],
                             "example_id": demo["example_id"],
-                        }
+                        }}
                     )
                 served_records = []
                 for record in records:
@@ -408,12 +408,12 @@ def _selection_summary_in_pod(
                 )
                 entity_pairs = _entity_extraction_pairs(spans_df)
                 records = [
-                    {
-                "query": pair["query"],
+                    {{
+                        "query": pair["query"],
                         "entities": pair["entities"],
                         "entity_types": "",
                         "example_id": pair["example_id"],
-                    }
+                    }}
                     for pair in entity_pairs
                 ]
                 synthetic_demos = await _load_approved_synthetic_data(
@@ -424,12 +424,12 @@ def _selection_summary_in_pod(
                         "entity_extraction", demo
                     )
                     records.append(
-                        {
-                "query": projected["query"],
+                        {{
+                            "query": projected["query"],
                             "entities": projected["entities"],
                             "entity_types": projected["entity_types"],
                             "example_id": demo["example_id"],
-                        }
+                        }}
                     )
                 min_samples, _ = _population_floor_from_config(
                     {tenant_id!r}, config_manager, "entity_extraction"
