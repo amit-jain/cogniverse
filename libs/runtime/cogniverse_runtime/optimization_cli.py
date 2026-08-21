@@ -26,11 +26,16 @@ import logging
 import os
 import sys
 import uuid
-from collections import namedtuple
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import Any, Dict, List, Optional
 
+from cogniverse_agents.optimizer.example_selection import (
+    TRAINING_SELECTION_DEFAULTS as _TRAINING_SELECTION_DEFAULTS,
+)
+from cogniverse_agents.optimizer.example_selection import (
+    TrainingSelectionKnobs,
+)
 from cogniverse_core.durable import (
     PipelineCheckpoint,
     PipelineCheckpointStatus,
@@ -49,11 +54,6 @@ from cogniverse_foundation.telemetry.span_contract import (
 
 logger = logging.getLogger(__name__)
 SHIPPED_CONFIG_PATH = Path(__file__).resolve().parents[3] / "configs" / "config.json"
-TrainingSelectionKnobs = namedtuple(
-    "TrainingSelectionKnobs",
-    "trainset_cap mmr_lambda low_confirmation_threshold downweight_age_days downweight_factor",
-)
-_TRAINING_SELECTION_DEFAULTS = TrainingSelectionKnobs(300, 0.7, 3, 14, 0.5)
 _TRAINING_SELECTION_FIELDS = (
     ("trainset_cap", int),
     ("mmr_lambda", float),
