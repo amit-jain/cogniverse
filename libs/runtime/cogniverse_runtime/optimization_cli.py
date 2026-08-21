@@ -2460,6 +2460,7 @@ async def run_simba_optimization(
     approved_examples = len(synthetic_demos)
     train_records, holdout_records = _split_served_holdout(records, min_holdout)
     trainset = [_query_enhancement_example(r) for r in train_records if r["trainable"]]
+    non_trainable_examples = len(train_records) - len(trainset)
     holdout = [_query_enhancement_example(r) for r in holdout_records]
     logger.info(
         "Merged %d synthetic + %d production = %d records: %d trainable, %d holdout",
@@ -2480,6 +2481,7 @@ async def run_simba_optimization(
             "spans_found": len(spans_df),
             "examples": len(records),
             "served_scoreable_examples": served_scoreable_examples,
+            "non_trainable_examples": non_trainable_examples,
             "training_examples": len(trainset),
             "holdout_examples": 0,
             "holdout_source": "served",
@@ -2510,6 +2512,7 @@ async def run_simba_optimization(
                 "spans_found": len(spans_df),
                 "examples": len(records),
                 "served_scoreable_examples": served_scoreable_examples,
+                "non_trainable_examples": non_trainable_examples,
                 "training_examples": len(trainset),
                 "holdout_examples": 0,
                 "holdout_source": "served",
@@ -2588,6 +2591,7 @@ async def run_simba_optimization(
         "served_examples": served_examples,
         "approved_examples": approved_examples,
         "served_scoreable_examples": served_scoreable_examples,
+        "non_trainable_examples": non_trainable_examples,
         "training_examples": len(trainset),
         "holdout_examples": len(holdout),
         "holdout_source": "served",
