@@ -46,6 +46,37 @@ pytestmark = pytest.mark.slow
 from tests.e2e.test_api_e2e import _deploy_profile_for_tenant
 
 
+RETRIEVAL_CAPABILITY_TOKENS = frozenset(
+    {
+        "search",
+        "video_search",
+        "image_search",
+        "retrieval",
+        "deep_research",
+        "document_analysis",
+        "audio_analysis",
+    }
+)
+
+
+def _retrieval_performing_agents_in_shipped_config() -> set[str]:
+    """Enabled agents whose declared capabilities include a retrieval-performing
+    token. deep_research qualifies: it dispatches parallel searches internally.
+    detailed_report does not: it CONSUMES search_results as an input field."""
+    config = json.loads(
+        (Path(__file__).resolve().parents[2] / "configs" / "config.json").read_text()
+    )
+    agents = config.get("agents", {})
+    performers = {
+        name
+        for name, spec in agents.items()
+        if spec.get("enabled", True)
+        and set(spec.get("capabilities", [])) & RETRIEVAL_CAPABILITY_TOKENS
+    }
+    assert performers, "shipped config yielded no retrieval-performing agents"
+    return performers
+
+
 def _enabled_agents_in_shipped_config() -> set[str]:
     """Agents the runtime routes to today: configs/config.json ``agents``
     entries not disabled — the optimizer's own stale-demo filter."""
@@ -1537,8 +1568,20 @@ class TestWorkflowOptimization:
         if isinstance(seq, str):
             seq = [a.strip() for a in seq.split(",") if a.strip()]
         assert compare_demo["success"] is True, compare_demo
-        # It must actually retrieve (the "retrieval-heavy execution") ...
-        assert {"search_agent"} <= executed, compare_demo
+        # It must actually retrieve (the "retrieval-heavy execution"). WHICH
+        # retrieval agent is the planner LM's free choice (a deep_research plan
+        # retrieves via its internal search dispatch just as a search_agent
+        # plan does), so the performer set derives from the shipped config's
+        # own capability vocabulary, never a hardcoded roster.
+        retrieval_performers = _retrieval_performing_agents_in_shipped_config()
+        assert retrieval_performers == {
+            "search_agent",
+            "image_search_agent",
+            "audio_analysis_agent",
+            "document_agent",
+            "deep_research_agent",
+        }, retrieval_performers
+        assert executed & retrieval_performers, compare_demo
         # ... and synthesize (the query's explicit "then summarize / write a
         # guide" step ran a report/summary agent) ...
         assert executed & {"summarizer_agent", "detailed_report_agent"}, compare_demo
