@@ -343,6 +343,58 @@ def test_dead_port_embedder_raises_runtime_error():
             embed_fn=lambda texts: embed_texts(
                 "http://127.0.0.1:29071",
                 texts,
-                timeout=1.0,
             ),
         )
+
+
+def test_embed_texts_sends_canonical_model_and_query_prompt():
+    """The live DenseOn sidecar rejects unknown model names with a 404 and
+    silently drifts vectors when the query prompt is missing, so the request
+    payload must match the production embedder contract exactly."""
+    import json as _json
+    import threading
+    from http.server import BaseHTTPRequestHandler, HTTPServer
+
+    from cogniverse_core.common.models.semantic_embedder import (
+        reset_semantic_embedder_cache,
+    )
+
+    captured: dict = {}
+
+    class _Handler(BaseHTTPRequestHandler):
+        def do_POST(self):
+            body = self.rfile.read(int(self.headers["Content-Length"]))
+            captured["path"] = self.path
+            captured["payload"] = _json.loads(body)
+            rows = [
+                {"index": index, "embedding": [1.0, 0.0]}
+                for index in range(len(captured["payload"]["input"]))
+            ]
+            out = _json.dumps({"data": rows}).encode()
+            self.send_response(200)
+            self.send_header("Content-Type", "application/json")
+            self.send_header("Content-Length", str(len(out)))
+            self.end_headers()
+            self.wfile.write(out)
+
+        def log_message(self, *args):
+            pass
+
+    server = HTTPServer(("127.0.0.1", 0), _Handler)
+    thread = threading.Thread(target=server.serve_forever, daemon=True)
+    thread.start()
+    try:
+        vectors = embed_texts(
+            f"http://127.0.0.1:{server.server_port}",
+            ["alpha caption", "beta caption"],
+        )
+        assert captured["path"] == "/v1/embeddings"
+        assert captured["payload"]["model"] == "lightonai/DenseOn"
+        assert captured["payload"]["input"] == [
+            "query: alpha caption",
+            "query: beta caption",
+        ]
+        assert vectors == [[1.0, 0.0], [1.0, 0.0]]
+    finally:
+        server.shutdown()
+        reset_semantic_embedder_cache()
