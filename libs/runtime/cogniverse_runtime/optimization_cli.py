@@ -2612,7 +2612,7 @@ async def run_simba_optimization(
     artifact_manager = ArtifactManager(telemetry_provider, tenant_id)
     current_blob = await artifact_manager.load_blob("model", SIMBA_ARTIFACT_KEY)
     min_samples, min_unique_queries = _population_floor_from_config(
-        tenant_id, config_manager, "query_enhancement"
+        tenant_id, config_manager, "simba_query_enhancement"
     )
     min_holdout = max(1, min_samples // 10)
     population = len(records)
@@ -2656,7 +2656,7 @@ async def run_simba_optimization(
         artifact_manager=artifact_manager,
         config_manager=config_manager,
         tenant_id=tenant_id,
-        optimizer_type="query_enhancement",
+        optimizer_type="simba_query_enhancement",
         artifact_key=SIMBA_ARTIFACT_KEY,
         train_records=train_records,
         embedder_url=embedder_url,
