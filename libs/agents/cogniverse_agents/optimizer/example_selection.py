@@ -6,7 +6,7 @@ from collections import namedtuple
 from datetime import datetime, timezone
 from typing import Any, Callable, Dict, List, Sequence
 
-import httpx
+from cogniverse_core.common.models.semantic_embedder import get_semantic_embedder
 
 ExampleStats = namedtuple("ExampleStats", "confirmations first_seen")
 SelectionReport = namedtuple(
@@ -128,36 +128,23 @@ def _validate_embeddings(
 def embed_texts(
     endpoint: str,
     texts: List[str],
-    *,
-    timeout: float = 60.0,
 ) -> List[List[float]]:
-    """Fetch and normalize DenseOn embeddings for a batch of texts."""
-    url = f"{endpoint.rstrip('/')}/v1/embeddings"
-    try:
-        response = httpx.post(
-            url,
-            json={"model": "embed", "input": texts},
-            timeout=timeout,
-        )
-        response.raise_for_status()
-        payload = response.json()
-        data = payload["data"]
-        if not isinstance(data, list):
-            raise TypeError("response data must be a list")
+    """Embed query texts through the production DenseOn embedder.
 
+    Delegates to ``get_semantic_embedder`` so the canonical model name, the
+    DenseOn query prompt, token truncation, auth headers, and normalization
+    all match the vectors production stores; a private transport here would
+    drift from that contract.
+    """
+    try:
+        embedder = get_semantic_embedder(remote_url=endpoint)
+        matrix = embedder.encode(list(texts), is_query=True)
         normalized: List[List[float]] = []
-        for index, item in enumerate(data):
-            if not isinstance(item, dict):
-                raise TypeError(f"response data item {index} must be a dict")
-            vector = item["embedding"]
-            if not isinstance(vector, Sequence) or isinstance(
-                vector, (str, bytes, bytearray)
-            ):
-                raise TypeError(f"response data item {index} embedding must be a list")
-            norm = _vector_norm(vector)
-            if norm == 0.0:
+        for index, row in enumerate(matrix):
+            vector = [float(component) for component in row]
+            if _vector_norm(vector) == 0.0:
                 raise ValueError(f"embedding {index} has zero norm")
-            normalized.append([float(component) / norm for component in vector])
+            normalized.append(vector)
         return normalized
     except Exception as exc:
         raise RuntimeError(
