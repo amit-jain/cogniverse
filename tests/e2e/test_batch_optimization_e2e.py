@@ -164,7 +164,7 @@ def _selection_summary_in_pod(
         lookback_hours = _module_lookback_hours()
 
     if optimizer_type == "simba_query_enhancement":
-        script = textwrap.dedent(
+        script = IN_POD_TELEMETRY_PRELUDE + textwrap.dedent(
             f"""\
             import asyncio
             import json
@@ -264,7 +264,7 @@ def _selection_summary_in_pod(
             """
         )
     elif optimizer_type == "profile_selection":
-        script = textwrap.dedent(
+        script = IN_POD_TELEMETRY_PRELUDE + textwrap.dedent(
             f"""\
             import asyncio
             import json
@@ -371,7 +371,7 @@ def _selection_summary_in_pod(
             """
         )
     elif optimizer_type == "entity_extraction":
-        script = textwrap.dedent(
+        script = IN_POD_TELEMETRY_PRELUDE + textwrap.dedent(
             f"""\
             import asyncio
             import json
