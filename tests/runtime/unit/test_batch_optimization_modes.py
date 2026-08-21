@@ -1861,6 +1861,268 @@ class TestPopulationFloorConfig:
             "{'min_samples_for_optimization': 'not-a-number'}"
         ]
 
+    def test_raw_store_malformed_floor_entry_falls_back(self, tmp_path, monkeypatch):
+        from cogniverse_foundation.config.manager import ConfigManager
+        from cogniverse_runtime import optimization_cli
+        from cogniverse_runtime.optimization_cli import _population_floor_from_config
+        from cogniverse_sdk.interfaces.config_store import ConfigScope
+        from tests.utils.memory_store import InMemoryConfigStore
+
+        shipped_config = tmp_path / "config.json"
+        shipped_config.write_text(
+            json.dumps(
+                {
+                    "routing": {
+                        "optimization_config": {
+                            "optimizer_floors": {
+                                "profile_selection": {
+                                    "min_samples_for_optimization": 20,
+                                    "min_unique_queries": 6,
+                                }
+                            }
+                        }
+                    }
+                }
+            )
+        )
+        monkeypatch.setattr(optimization_cli, "SHIPPED_CONFIG_PATH", shipped_config)
+
+        manager = ConfigManager(store=InMemoryConfigStore())
+        manager.store.set_config(
+            tenant_id="acme:acme",
+            scope=ConfigScope.ROUTING,
+            service="gateway_agent",
+            config_key="routing_config",
+            config_value={
+                "tenant_id": "acme:acme",
+                "optimizer_floors": {
+                    "profile_selection": "nonsense",
+                },
+            },
+        )
+
+        assert _population_floor_from_config(
+            "acme:acme", manager, "profile_selection"
+        ) == (20, 6)
+
+
+class TestTrainingSelectionConfig:
+    def test_routing_config_round_trips_training_selection(self):
+        from cogniverse_foundation.config.unified_config import RoutingConfigUnified
+
+        cfg = RoutingConfigUnified(
+            tenant_id="acme:acme",
+            training_selection={
+                "simba_query_enhancement": {
+                    "trainset_cap": 12,
+                    "mmr_lambda": 0.5,
+                    "low_confirmation_threshold": 4,
+                    "downweight_age_days": 21,
+                    "downweight_factor": 0.25,
+                }
+            },
+        )
+        restored = RoutingConfigUnified.from_dict(cfg.to_dict())
+        assert restored == cfg
+
+    def test_training_selection_prefers_store_then_shipped_then_defaults(
+        self, tmp_path, monkeypatch
+    ):
+        from cogniverse_foundation.config.manager import ConfigManager
+        from cogniverse_foundation.config.unified_config import RoutingConfigUnified
+        from cogniverse_runtime import optimization_cli
+        from cogniverse_runtime.optimization_cli import (
+            TrainingSelectionKnobs,
+            _training_selection_from_config,
+        )
+        from tests.utils.memory_store import InMemoryConfigStore
+
+        shipped_config = tmp_path / "config.json"
+        shipped_config.write_text(json.dumps({"routing": {"optimization_config": {}}}))
+        monkeypatch.setattr(optimization_cli, "SHIPPED_CONFIG_PATH", shipped_config)
+
+        manager = ConfigManager(store=InMemoryConfigStore())
+        manager.set_routing_config(
+            RoutingConfigUnified(
+                tenant_id="acme:acme",
+                training_selection={
+                    "simba_query_enhancement": {
+                        "trainset_cap": 12,
+                        "mmr_lambda": 0.5,
+                    }
+                },
+            )
+        )
+        assert _training_selection_from_config(
+            manager, "acme:acme", "simba_query_enhancement"
+        ) == TrainingSelectionKnobs(12, 0.5, 3, 14, 0.5)
+
+        shipped_config.write_text(
+            json.dumps(
+                {
+                    "routing": {
+                        "optimization_config": {
+                            "training_selection": {
+                                "simba_query_enhancement": {
+                                    "trainset_cap": 24,
+                                    "mmr_lambda": 0.9,
+                                    "low_confirmation_threshold": 5,
+                                    "downweight_age_days": 21,
+                                    "downweight_factor": 0.25,
+                                }
+                            }
+                        }
+                    }
+                }
+            )
+        )
+        manager = ConfigManager(store=InMemoryConfigStore())
+        manager.set_routing_config(RoutingConfigUnified(tenant_id="acme:acme"))
+        assert _training_selection_from_config(
+            manager, "acme:acme", "simba_query_enhancement"
+        ) == TrainingSelectionKnobs(24, 0.9, 5, 21, 0.25)
+
+        shipped_config.write_text(json.dumps({"routing": {"optimization_config": {}}}))
+        manager = ConfigManager(store=InMemoryConfigStore())
+        manager.set_routing_config(RoutingConfigUnified(tenant_id="acme:acme"))
+        assert _training_selection_from_config(
+            manager, "acme:acme", "simba_query_enhancement"
+        ) == TrainingSelectionKnobs(300, 0.7, 3, 14, 0.5)
+
+    def test_malformed_selection_entry_warns_and_falls_back(
+        self, tmp_path, monkeypatch, caplog
+    ):
+        import logging
+
+        from cogniverse_foundation.config.manager import ConfigManager
+        from cogniverse_runtime import optimization_cli
+        from cogniverse_runtime.optimization_cli import (
+            TrainingSelectionKnobs,
+            _training_selection_from_config,
+        )
+        from cogniverse_sdk.interfaces.config_store import ConfigScope
+        from tests.utils.memory_store import InMemoryConfigStore
+
+        shipped_config = tmp_path / "config.json"
+        shipped_config.write_text(
+            json.dumps(
+                {
+                    "routing": {
+                        "optimization_config": {
+                            "training_selection": {
+                                "simba_query_enhancement": {
+                                    "trainset_cap": 24,
+                                    "mmr_lambda": 0.9,
+                                }
+                            }
+                        }
+                    }
+                }
+            )
+        )
+        monkeypatch.setattr(optimization_cli, "SHIPPED_CONFIG_PATH", shipped_config)
+
+        manager = ConfigManager(store=InMemoryConfigStore())
+        manager.store.set_config(
+            tenant_id="t:t",
+            scope=ConfigScope.ROUTING,
+            service="gateway_agent",
+            config_key="routing_config",
+            config_value={
+                "tenant_id": "t:t",
+                "training_selection": {
+                    "simba_query_enhancement": "nonsense",
+                },
+            },
+        )
+        with caplog.at_level(logging.WARNING):
+            resolved = _training_selection_from_config(
+                manager, "t", "simba_query_enhancement"
+            )
+
+        assert resolved == TrainingSelectionKnobs(24, 0.9, 3, 14, 0.5)
+        warning_lines = [
+            record.getMessage()
+            for record in caplog.records
+            if "malformed training_selection entry" in record.getMessage()
+        ]
+        assert warning_lines == [
+            "tenant='t' optimizer='simba_query_enhancement' has malformed "
+            "training_selection entry: 'nonsense'"
+        ]
+
+
+class TestRoutingConfigSerialization:
+    @pytest.mark.parametrize(
+        "field_name,field_value,expected_serialized,expected_warning",
+        [
+            (
+                "optimizer_floors",
+                {
+                    "profile_selection": {
+                        "min_samples_for_optimization": 20,
+                        "min_unique_queries": 6,
+                    },
+                    "entity_extraction": "nonsense",
+                },
+                {
+                    "profile_selection": {
+                        "min_samples_for_optimization": 20,
+                        "min_unique_queries": 6,
+                    }
+                },
+                "Dropping malformed optimizer_floors entry for tenant 'acme:acme' optimizer 'entity_extraction': 'nonsense'",
+            ),
+            (
+                "training_selection",
+                {
+                    "simba_query_enhancement": {
+                        "trainset_cap": 12,
+                        "mmr_lambda": 0.5,
+                        "low_confirmation_threshold": 4,
+                        "downweight_age_days": 21,
+                        "downweight_factor": 0.25,
+                    },
+                    "profile_selection": "nonsense",
+                },
+                {
+                    "simba_query_enhancement": {
+                        "trainset_cap": 12,
+                        "mmr_lambda": 0.5,
+                        "low_confirmation_threshold": 4,
+                        "downweight_age_days": 21,
+                        "downweight_factor": 0.25,
+                    }
+                },
+                "Dropping malformed training_selection entry for tenant 'acme:acme' optimizer 'profile_selection': 'nonsense'",
+            ),
+        ],
+    )
+    def test_routing_config_to_dict_drops_malformed_entries(
+        self,
+        field_name: str,
+        field_value: dict[str, Any],
+        expected_serialized: dict[str, Any],
+        expected_warning: str,
+        caplog,
+    ):
+        import logging
+
+        from cogniverse_foundation.config.unified_config import RoutingConfigUnified
+
+        cfg = RoutingConfigUnified(tenant_id="acme:acme", **{field_name: field_value})
+
+        with caplog.at_level(logging.WARNING):
+            serialized = cfg.to_dict()
+
+        assert serialized[field_name] == expected_serialized
+        warning_lines = [
+            record.getMessage()
+            for record in caplog.records
+            if f"malformed {field_name} entry" in record.getMessage()
+        ]
+        assert warning_lines == [expected_warning]
+
 
 class TestSimbaQueryEnhancement:
     """The SIMBA path trains on served calls and only serves a module that
