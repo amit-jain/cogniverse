@@ -2467,7 +2467,7 @@ def _assert_simba_served_the_best_module(result: dict, blob_before: str) -> dict
     assert result["holdout_examples"] == max(
         1, result["served_scoreable_examples"] // 4
     ), result
-    assert result["training_examples"] == (
+    assert result["selection"]["pool"] == (
         result["served_examples"]
         - result["holdout_examples"]
         + result["approved_examples"]
@@ -2487,7 +2487,12 @@ def _assert_simba_served_the_best_module(result: dict, blob_before: str) -> dict
     assert result["selection"]["cap"] == _training_selection_cap_from_shipped_config(
         "simba_query_enhancement"
     ), result
-    assert result["selection"]["mmr_applied"] is False, result
+    assert result["training_examples"] == min(
+        result["selection"]["deduped"], result["selection"]["cap"]
+    ), result
+    assert result["selection"]["mmr_applied"] == (
+        result["selection"]["deduped"] > result["selection"]["cap"]
+    ), result
 
     version = result["version"]
     assert isinstance(version, int), result
@@ -2832,17 +2837,22 @@ class TestProfileOptimization:
         assert result["holdout_examples"] == max(
             1, result["served_scoreable_examples"] // 4
         ), result
-        assert result["training_examples"] == (
+        assert result["selection"]["pool"] == (
             result["served_examples"]
             - result["holdout_examples"]
             + result["approved_examples"]
+        ), result
+        assert result["training_examples"] == min(
+            result["selection"]["deduped"], result["selection"]["cap"]
         ), result
         expected_selection = _selection_summary_in_pod(TENANT_ID, "profile_selection")
         assert result["selection"] == expected_selection, result
         assert result["selection"][
             "cap"
         ] == _training_selection_cap_from_shipped_config("profile_selection"), result
-        assert result["selection"]["mmr_applied"] is False, result
+        assert result["selection"]["mmr_applied"] == (
+            result["selection"]["deduped"] > result["selection"]["cap"]
+        ), result
         assert len(result["consumed_example_ids"]) == (
             result["served_examples"] + result["approved_examples"]
         ), result
@@ -2922,17 +2932,22 @@ class TestProfileOptimization:
         assert result["holdout_examples"] == max(
             1, result["served_scoreable_examples"] // 4
         ), result
-        assert result["training_examples"] == (
+        assert result["selection"]["pool"] == (
             result["served_examples"]
             - result["holdout_examples"]
             + result["approved_examples"]
+        ), result
+        assert result["training_examples"] == min(
+            result["selection"]["deduped"], result["selection"]["cap"]
         ), result
         expected_selection = _selection_summary_in_pod(TENANT_ID, "profile_selection")
         assert result["selection"] == expected_selection, result
         assert result["selection"][
             "cap"
         ] == _training_selection_cap_from_shipped_config("profile_selection"), result
-        assert result["selection"]["mmr_applied"] is False, result
+        assert result["selection"]["mmr_applied"] == (
+            result["selection"]["deduped"] > result["selection"]["cap"]
+        ), result
         assert len(result["consumed_example_ids"]) == (
             result["served_examples"] + result["approved_examples"]
         ), result
@@ -3049,17 +3064,22 @@ class TestProfileSelectionArtifactReload:
         assert result["holdout_examples"] == max(
             1, result["served_scoreable_examples"] // 4
         ), result
-        assert result["training_examples"] == (
+        assert result["selection"]["pool"] == (
             result["served_examples"]
             - result["holdout_examples"]
             + result["approved_examples"]
+        ), result
+        assert result["training_examples"] == min(
+            result["selection"]["deduped"], result["selection"]["cap"]
         ), result
         expected_selection = _selection_summary_in_pod(TENANT_ID, "profile_selection")
         assert result["selection"] == expected_selection, result
         assert result["selection"][
             "cap"
         ] == _training_selection_cap_from_shipped_config("profile_selection"), result
-        assert result["selection"]["mmr_applied"] is False, result
+        assert result["selection"]["mmr_applied"] == (
+            result["selection"]["deduped"] > result["selection"]["cap"]
+        ), result
         assert len(result["consumed_example_ids"]) == (
             result["served_examples"] + result["approved_examples"]
         ), result
@@ -3278,17 +3298,22 @@ class TestEntityExtractionOptimization:
         assert result["holdout_examples"] == max(
             1, result["served_scoreable_examples"] // 4
         ), result
-        assert result["training_examples"] == (
+        assert result["selection"]["pool"] == (
             result["served_examples"]
             - result["holdout_examples"]
             + result["approved_examples"]
+        ), result
+        assert result["training_examples"] == min(
+            result["selection"]["deduped"], result["selection"]["cap"]
         ), result
         expected_selection = _selection_summary_in_pod(TENANT_ID, "entity_extraction")
         assert result["selection"] == expected_selection, result
         assert result["selection"][
             "cap"
         ] == _training_selection_cap_from_shipped_config("entity_extraction"), result
-        assert result["selection"]["mmr_applied"] is False, result
+        assert result["selection"]["mmr_applied"] == (
+            result["selection"]["deduped"] > result["selection"]["cap"]
+        ), result
         assert len(result["consumed_example_ids"]) == (
             result["served_examples"] + result["approved_examples"]
         ), result
@@ -3370,17 +3395,22 @@ class TestEntityExtractionOptimization:
         assert result["holdout_examples"] == max(
             1, result["served_scoreable_examples"] // 4
         ), result
-        assert result["training_examples"] == (
+        assert result["selection"]["pool"] == (
             result["served_examples"]
             - result["holdout_examples"]
             + result["approved_examples"]
+        ), result
+        assert result["training_examples"] == min(
+            result["selection"]["deduped"], result["selection"]["cap"]
         ), result
         expected_selection = _selection_summary_in_pod(TENANT_ID, "entity_extraction")
         assert result["selection"] == expected_selection, result
         assert result["selection"][
             "cap"
         ] == _training_selection_cap_from_shipped_config("entity_extraction"), result
-        assert result["selection"]["mmr_applied"] is False, result
+        assert result["selection"]["mmr_applied"] == (
+            result["selection"]["deduped"] > result["selection"]["cap"]
+        ), result
         assert len(result["consumed_example_ids"]) == (
             result["served_examples"] + result["approved_examples"]
         ), result
@@ -3668,17 +3698,22 @@ class TestArtifactLoadingRoundTrip:
         assert result["holdout_examples"] == max(
             1, result["served_scoreable_examples"] // 4
         ), result
-        assert result["training_examples"] == (
+        assert result["selection"]["pool"] == (
             result["served_examples"]
             - result["holdout_examples"]
             + result["approved_examples"]
+        ), result
+        assert result["training_examples"] == min(
+            result["selection"]["deduped"], result["selection"]["cap"]
         ), result
         expected_selection = _selection_summary_in_pod(TENANT_ID, "entity_extraction")
         assert result["selection"] == expected_selection, result
         assert result["selection"][
             "cap"
         ] == _training_selection_cap_from_shipped_config("entity_extraction"), result
-        assert result["selection"]["mmr_applied"] is False, result
+        assert result["selection"]["mmr_applied"] == (
+            result["selection"]["deduped"] > result["selection"]["cap"]
+        ), result
         assert len(result["consumed_example_ids"]) == (
             result["served_examples"] + result["approved_examples"]
         ), result
@@ -3809,17 +3844,22 @@ class TestArtifactLoadingRoundTrip:
         assert result["holdout_examples"] == max(
             1, result["served_scoreable_examples"] // 4
         ), result
-        assert result["training_examples"] == (
+        assert result["selection"]["pool"] == (
             result["served_examples"]
             - result["holdout_examples"]
             + result["approved_examples"]
+        ), result
+        assert result["training_examples"] == min(
+            result["selection"]["deduped"], result["selection"]["cap"]
         ), result
         expected_selection = _selection_summary_in_pod(TENANT_ID, "profile_selection")
         assert result["selection"] == expected_selection, result
         assert result["selection"][
             "cap"
         ] == _training_selection_cap_from_shipped_config("profile_selection"), result
-        assert result["selection"]["mmr_applied"] is False, result
+        assert result["selection"]["mmr_applied"] == (
+            result["selection"]["deduped"] > result["selection"]["cap"]
+        ), result
         assert len(result["consumed_example_ids"]) == (
             result["served_examples"] + result["approved_examples"]
         ), result
