@@ -206,8 +206,8 @@ def test_offset_forwarded_as_native_query_parameter(backend: VespaBackend) -> No
             hits=100,
             offset=100,
         )
-    assert fake.calls[0]["offset"] == 100
-    assert fake.calls[0]["hits"] == 100
+    assert fake.calls[0]["body"]["offset"] == 100
+    assert fake.calls[0]["body"]["hits"] == 100
 
 
 def test_offset_zero_omits_the_parameter(backend: VespaBackend) -> None:
@@ -221,7 +221,48 @@ def test_offset_zero_omits_the_parameter(backend: VespaBackend) -> None:
             hits=100,
             offset=0,
         )
-    assert "offset" not in fake.calls[0]
+    assert "offset" not in fake.calls[0]["body"]
+
+
+@pytest.mark.parametrize(
+    ("query_kwargs", "expected_query"),
+    [
+        (
+            {"hits": 500},
+            {
+                "hits": 500,
+                "maxHits": 500,
+                "maxOffset": 500,
+                "yql": "select * from agent_memories_acme where true order by id desc",
+            },
+        ),
+        (
+            {"hits": 500, "offset": 500},
+            {
+                "hits": 500,
+                "maxHits": 500,
+                "maxOffset": 1000,
+                "offset": 500,
+                "yql": "select * from agent_memories_acme where true order by id desc",
+            },
+        ),
+    ],
+)
+def test_hits_raise_native_query_limits(
+    backend: VespaBackend,
+    query_kwargs: dict[str, int],
+    expected_query: dict[str, int | str],
+) -> None:
+    """Paging requests must raise Vespa's native query caps with the same
+    requested window, including later pages."""
+    fake = _CapturingVespaClient()
+    with patch("cogniverse_vespa.backend.make_persistent_vespa_ops", return_value=fake):
+        backend.query_metadata_documents(
+            schema="agent_memories_acme",
+            yql="select * from agent_memories_acme where true order by id desc",
+            **query_kwargs,
+        )
+    assert fake.calls == [{"body": expected_query}]
 
 
 def test_vespa_error_propagates(backend: VespaBackend) -> None:

@@ -1725,6 +1725,12 @@ class VespaBackend(Backend):
             offset = kwargs.pop("offset", None)
             query_params = dict(kwargs)
             query_params["hits"] = hits
+            # The default query profile caps hits at 400. Raise the native
+            # Vespa window per request so large and paged metadata walks stay
+            # legal, while still honoring any explicit native caps callers
+            # already supplied.
+            query_params.setdefault("maxHits", hits)
+            query_params.setdefault("maxOffset", (offset or 0) + hits)
             # Forward paging offset as Vespa's native query parameter. A YQL
             # `offset` alone is bounded by `hits`, so the second page of a
             # walk lands outside the hits window and returns empty; the
@@ -1749,7 +1755,7 @@ class VespaBackend(Backend):
                 )
 
             # Execute query
-            results = vespa_client.query(**query_params)
+            results = vespa_client.query(body=query_params)
 
             # Belt-and-braces: pyvespa >=1.1 raises VespaError on non-2xx via
             # raise_for_status, but keep the explicit check so a rejected query
