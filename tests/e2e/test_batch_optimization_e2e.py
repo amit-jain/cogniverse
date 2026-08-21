@@ -22,6 +22,7 @@ import functools
 import json
 import os
 import subprocess
+import textwrap
 import time
 import uuid
 from pathlib import Path
@@ -139,6 +140,368 @@ def _population_floor_from_shipped_config(optimizer_type: str) -> tuple[int, int
         int(optimizer_floor.get("min_samples_for_optimization", defaults[0])),
         int(optimizer_floor.get("min_unique_queries", defaults[1])),
     )
+
+
+@functools.lru_cache(maxsize=None)
+def _training_selection_cap_from_shipped_config(optimizer_type: str) -> int:
+    """Read the shipped training-selection cap for ``optimizer_type``."""
+    config = json.loads(CONFIG_PATH.read_text())
+    optimization_config = config.get("routing", {}).get("optimization_config", {})
+    training_selection = optimization_config.get("training_selection", {})
+    shipped_selection = training_selection.get(optimizer_type)
+    if not isinstance(shipped_selection, dict):
+        raise AssertionError(f"shipped training_selection missing {optimizer_type!r}")
+    return int(shipped_selection["trainset_cap"])
+
+
+def _selection_summary_in_pod(
+    tenant_id: str,
+    optimizer_type: str,
+    lookback_hours: float | None = None,
+) -> dict[str, object]:
+    """Compute the live selection summary for one optimizer in the runtime pod."""
+    if lookback_hours is None:
+        lookback_hours = _module_lookback_hours()
+
+    if optimizer_type == "simba_query_enhancement":
+        script = textwrap.dedent(
+            f"""\
+            import asyncio
+            import json
+            import os
+            from cogniverse_agents.optimizer.artifact_manager import ArtifactManager
+            from cogniverse_foundation.config.utils import create_default_config_manager
+            from cogniverse_foundation.telemetry.config import SPAN_NAME_QUERY_ENHANCEMENT
+            from cogniverse_foundation.telemetry.manager import get_telemetry_manager
+            from cogniverse_runtime.inference_services import parse_inference_service_urls
+            from cogniverse_runtime.optimization_cli import (
+                SIMBA_ARTIFACT_KEY,
+                _apply_training_selection,
+                _load_approved_synthetic_data,
+                _population_floor_from_config,
+                _project_approved_optimizer_example,
+                _query_enhancement_pairs,
+                _query_spans_by_name,
+                _selection_summary,
+                _split_served_holdout,
+            )
+
+            async def _go():
+                config_manager = create_default_config_manager()
+                telemetry_manager = get_telemetry_manager()
+                telemetry_provider = telemetry_manager.get_provider(
+                    tenant_id={tenant_id!r}
+                )
+                spans_df = await _query_spans_by_name(
+                    telemetry_manager,
+                    telemetry_provider,
+                    {tenant_id!r},
+                    SPAN_NAME_QUERY_ENHANCEMENT,
+                    {lookback_hours!r},
+                )
+                records = _query_enhancement_pairs(spans_df)
+                synthetic_demos = await _load_approved_synthetic_data(
+                    telemetry_provider, {tenant_id!r}, "query_enhancement"
+                )
+                for demo in synthetic_demos:
+                    projected = _project_approved_optimizer_example(
+                        "query_enhancement", demo
+                    )
+                    records.append(
+                        {
+                "query": projected["query"],
+                            "source_text": "",
+                            "grounding_context": "",
+                            "enhanced_query": projected["enhanced_query"],
+                            "expansion_terms": [
+                                t.strip()
+                                for t in projected["expansion_terms"].split(",")
+                                if t.strip()
+                            ],
+                            "synonyms": [
+                                s.strip()
+                                for s in projected["synonyms"].split(",")
+                                if s.strip()
+                            ],
+                            "context": [
+                                c.strip()
+                                for c in projected["context"].split(",")
+                                if c.strip()
+                            ],
+                            "confidence": 0.0,
+                            "reasoning": projected["reasoning"],
+                            "example_id": demo["example_id"],
+                            "trainable": True,
+                        }
+                    )
+                min_samples, _ = _population_floor_from_config(
+                    {tenant_id!r}, config_manager, "simba_query_enhancement"
+                )
+                min_holdout = max(1, min_samples // 10)
+                train_records, _ = _split_served_holdout(records, min_holdout)
+                inference_service_urls = parse_inference_service_urls(
+                    os.environ.get("INFERENCE_SERVICE_URLS")
+                )
+                embedder_url = (
+                    inference_service_urls.get("denseon")
+                    if inference_service_urls is not None
+                    else None
+                )
+                _, selection_report = await _apply_training_selection(
+                    artifact_manager=ArtifactManager(
+                        telemetry_provider, {tenant_id!r}
+                    ),
+                    config_manager=config_manager,
+                    tenant_id={tenant_id!r},
+                    optimizer_type="simba_query_enhancement",
+                    artifact_key=SIMBA_ARTIFACT_KEY,
+                    train_records=train_records,
+                    embedder_url=embedder_url,
+                )
+                return _selection_summary(selection_report)["selection"]
+
+            print("__SELECTION__" + json.dumps(asyncio.run(_go()), default=str))
+            """
+        )
+    elif optimizer_type == "profile_selection":
+        script = textwrap.dedent(
+            f"""\
+            import asyncio
+            import json
+            import os
+            from cogniverse_agents.optimizer.artifact_manager import ArtifactManager
+            from cogniverse_foundation.config.utils import create_default_config_manager
+            from cogniverse_foundation.telemetry.config import SPAN_NAME_PROFILE_SELECTION
+            from cogniverse_foundation.telemetry.manager import get_telemetry_manager
+            from cogniverse_runtime.inference_services import parse_inference_service_urls
+            from cogniverse_runtime.optimization_cli import (
+                _apply_training_selection,
+                _load_approved_synthetic_data,
+                _population_floor_from_config,
+                _profile_selection_example,
+                _profile_selection_pairs,
+                _project_approved_optimizer_example,
+                _query_spans_by_name,
+                _selection_summary,
+                _split_served_holdout,
+            )
+
+            async def _go():
+                config_manager = create_default_config_manager()
+                telemetry_manager = get_telemetry_manager()
+                telemetry_provider = telemetry_manager.get_provider(
+                    tenant_id={tenant_id!r}
+                )
+                spans_df = await _query_spans_by_name(
+                    telemetry_manager,
+                    telemetry_provider,
+                    {tenant_id!r},
+                    SPAN_NAME_PROFILE_SELECTION,
+                    {lookback_hours!r},
+                )
+                profile_pairs = _profile_selection_pairs(
+                    spans_df,
+                    config_manager=config_manager,
+                    tenant_id={tenant_id!r},
+                )
+                synthetic_demos = await _load_approved_synthetic_data(
+                    telemetry_provider, {tenant_id!r}, "profile"
+                )
+                records = list(profile_pairs)
+                for demo in synthetic_demos:
+                    projected = _project_approved_optimizer_example("profile", demo)
+                    records.append(
+                        {
+                "query": projected["query"],
+                            "available_profiles": projected["available_profiles"],
+                            "selected_profile": projected["selected_profile"],
+                            "confidence": 0.0,
+                            "reasoning": projected["reasoning"],
+                            "query_intent": projected["query_intent"],
+                            "modality": projected["modality"],
+                            "complexity": projected["complexity"],
+                            "example_id": demo["example_id"],
+                        }
+                    )
+                served_records = []
+                for record in records:
+                    served_record = dict(record)
+                    if (
+                        served_record["example_id"].startswith("span:")
+                        and str(served_record.get("available_profiles") or "").strip()
+                        and str(served_record.get("selected_profile") or "").strip()
+                    ):
+                        served_record["source_text"] = served_record[
+                            "available_profiles"
+                        ]
+                        served_record["grounding_context"] = served_record[
+                            "selected_profile"
+                        ]
+                    else:
+                        served_record["source_text"] = ""
+                        served_record["grounding_context"] = ""
+                    served_records.append(served_record)
+                min_samples, _ = _population_floor_from_config(
+                    {tenant_id!r}, config_manager, "profile_selection"
+                )
+                min_holdout = max(1, min_samples // 10)
+                train_records, _ = _split_served_holdout(served_records, min_holdout)
+                inference_service_urls = parse_inference_service_urls(
+                    os.environ.get("INFERENCE_SERVICE_URLS")
+                )
+                embedder_url = (
+                    inference_service_urls.get("denseon")
+                    if inference_service_urls is not None
+                    else None
+                )
+                _, selection_report = await _apply_training_selection(
+                    artifact_manager=ArtifactManager(
+                        telemetry_provider, {tenant_id!r}
+                    ),
+                    config_manager=config_manager,
+                    tenant_id={tenant_id!r},
+                    optimizer_type="profile_selection",
+                    artifact_key="profile_selection",
+                    train_records=train_records,
+                    embedder_url=embedder_url,
+                )
+                return _selection_summary(selection_report)["selection"]
+
+            print("__SELECTION__" + json.dumps(asyncio.run(_go()), default=str))
+            """
+        )
+    elif optimizer_type == "entity_extraction":
+        script = textwrap.dedent(
+            f"""\
+            import asyncio
+            import json
+            import os
+            from cogniverse_agents.optimizer.artifact_manager import ArtifactManager
+            from cogniverse_foundation.config.utils import create_default_config_manager
+            from cogniverse_foundation.telemetry.config import SPAN_NAME_ENTITY_EXTRACTION
+            from cogniverse_foundation.telemetry.manager import get_telemetry_manager
+            from cogniverse_runtime.inference_services import parse_inference_service_urls
+            from cogniverse_runtime.optimization_cli import (
+                _apply_training_selection,
+                _entity_extraction_is_scoreable,
+                _entity_extraction_pairs,
+                _load_approved_synthetic_data,
+                _population_floor_from_config,
+                _project_approved_optimizer_example,
+                _query_spans_by_name,
+                _selection_summary,
+                _split_served_holdout,
+            )
+
+            async def _go():
+                config_manager = create_default_config_manager()
+                telemetry_manager = get_telemetry_manager()
+                telemetry_provider = telemetry_manager.get_provider(
+                    tenant_id={tenant_id!r}
+                )
+                spans_df = await _query_spans_by_name(
+                    telemetry_manager,
+                    telemetry_provider,
+                    {tenant_id!r},
+                    SPAN_NAME_ENTITY_EXTRACTION,
+                    {lookback_hours!r},
+                )
+                entity_pairs = _entity_extraction_pairs(spans_df)
+                records = [
+                    {
+                "query": pair["query"],
+                        "entities": pair["entities"],
+                        "entity_types": "",
+                        "example_id": pair["example_id"],
+                    }
+                    for pair in entity_pairs
+                ]
+                synthetic_demos = await _load_approved_synthetic_data(
+                    telemetry_provider, {tenant_id!r}, "entity_extraction"
+                )
+                for demo in synthetic_demos:
+                    projected = _project_approved_optimizer_example(
+                        "entity_extraction", demo
+                    )
+                    records.append(
+                        {
+                "query": projected["query"],
+                            "entities": projected["entities"],
+                            "entity_types": projected["entity_types"],
+                            "example_id": demo["example_id"],
+                        }
+                    )
+                min_samples, _ = _population_floor_from_config(
+                    {tenant_id!r}, config_manager, "entity_extraction"
+                )
+                min_holdout = max(1, min_samples // 10)
+                train_records, _ = _split_served_holdout(
+                    records,
+                    min_holdout,
+                    scoreable_predicate=_entity_extraction_is_scoreable,
+                )
+                inference_service_urls = parse_inference_service_urls(
+                    os.environ.get("INFERENCE_SERVICE_URLS")
+                )
+                embedder_url = (
+                    inference_service_urls.get("denseon")
+                    if inference_service_urls is not None
+                    else None
+                )
+                _, selection_report = await _apply_training_selection(
+                    artifact_manager=ArtifactManager(
+                        telemetry_provider, {tenant_id!r}
+                    ),
+                    config_manager=config_manager,
+                    tenant_id={tenant_id!r},
+                    optimizer_type="entity_extraction",
+                    artifact_key="entity_extraction",
+                    train_records=train_records,
+                    embedder_url=embedder_url,
+                )
+                return _selection_summary(selection_report)["selection"]
+
+            print("__SELECTION__" + json.dumps(asyncio.run(_go()), default=str))
+            """
+        )
+    else:
+        raise ValueError(f"unknown optimizer_type: {optimizer_type!r}")
+
+    result = subprocess.run(
+        [
+            "kubectl",
+            "--context",
+            KUBECTL_CONTEXT,
+            "exec",
+            "-n",
+            NAMESPACE,
+            DEPLOYMENT,
+            "-c",
+            CONTAINER,
+            "--",
+            "python3",
+            "-c",
+            script,
+        ],
+        capture_output=True,
+        text=True,
+        timeout=180,
+    )
+    if result.returncode != 0:
+        raise RuntimeError(
+            _subprocess_failure_message(
+                f"selection_summary_{optimizer_type}",
+                result,
+                operation=(
+                    f"selection summary for tenant_id={tenant_id!r}, "
+                    f"optimizer_type={optimizer_type!r}"
+                ),
+            )
+        )
+    line = next(
+        ln for ln in result.stdout.splitlines() if ln.startswith("__SELECTION__")
+    )
+    return json.loads(line[len("__SELECTION__") :])
 
 
 def _configured_profile_names(profile_type: str | None = None) -> tuple[str, ...]:
@@ -330,6 +693,20 @@ BELOW_FLOOR_QUERY_ENHANCEMENT_QUERIES = (
     "ML transformer videos",
     "find AI tutorials",
     "deep learning frameworks",
+)
+
+# Ungrounded query-enhancement spans keep the holdout split off, so the seeded
+# distinct queries are the full selection pool for the dedicated cap-8 tenant.
+CAP8_QUERY_ENHANCEMENT_QUERIES = (
+    "find neural network tutorials",
+    "compare transformer models",
+    "show AI explainers",
+    "deep learning tricks",
+    "find computer vision lessons",
+    "summarize RNN concepts",
+    "search for generative AI tips",
+    "explore reinforcement learning examples",
+    "locate recommendation system videos",
 )
 
 
@@ -602,6 +979,24 @@ class GatewayThresholdTenant:
         return expected_gateway_calibration(self.decisions)
 
 
+class SimbaSelectionTenant:
+    """A dedicated query-enhancement tenant plus the queries it seeded."""
+
+    def __init__(
+        self,
+        tenant_id: str,
+        seeded_queries: list[str],
+        approved_synthetic_count: int,
+    ):
+        self.tenant_id = tenant_id
+        self.seeded_queries = tuple(seeded_queries)
+        self.approved_synthetic_count = approved_synthetic_count
+
+    @property
+    def seeded_count(self) -> int:
+        return len(self.seeded_queries)
+
+
 @pytest.fixture(scope="module")
 def gateway_threshold_tenant(_kubectl_cluster_ready) -> GatewayThresholdTenant:
     """Create a dedicated tenant for gateway-threshold optimization runs and
@@ -659,6 +1054,121 @@ def gateway_threshold_tenant(_kubectl_cluster_ready) -> GatewayThresholdTenant:
     _wait_for_gateway_spans_in_pod(tenant_id, span_count)
     try:
         yield GatewayThresholdTenant(tenant_id, decisions)
+    finally:
+        with httpx.Client(timeout=60.0) as client:
+            try:
+                client.delete(f"{RUNTIME}/admin/tenants/{tenant_id}")
+            except httpx.HTTPError:
+                pass
+            try:
+                client.delete(f"{RUNTIME}/admin/organizations/{org_id}")
+            except httpx.HTTPError:
+                pass
+
+
+@pytest.fixture(scope="module")
+def simba_selection_tenant(_kubectl_cluster_ready) -> SimbaSelectionTenant:
+    """Create a fresh tenant whose QE pool crosses the cap-8 selection floor."""
+    suffix = uuid.uuid4().hex[:8]
+    org_id = f"opt_simba_select_{suffix}"
+    tenant_id = f"{org_id}:t1"
+
+    with httpx.Client(timeout=60.0) as client:
+        resp = client.post(
+            f"{RUNTIME}/admin/organizations",
+            json={
+                "org_id": org_id,
+                "org_name": f"opt-simba-select-{suffix}",
+                "created_by": "e2e",
+            },
+        )
+        assert resp.status_code in (200, 201, 409), resp.text
+
+    register_tenant_and_wait(tenant_id, created_by="e2e", timeout_s=600.0)
+
+    # Controller ruling: use the product's per-tenant optimizer_floors path
+    # here, not a test-only floor shim. The dedicated 9/3 floor lets the 11
+    # consumed records clear insufficient_population and reach selection.
+    script = IN_POD_TELEMETRY_PRELUDE + (
+        "from cogniverse_foundation.config.unified_config import RoutingConfigUnified; "
+        "from cogniverse_foundation.config.utils import create_default_config_manager; "
+        f"manager = create_default_config_manager(); "
+        f"manager.set_routing_config(RoutingConfigUnified(tenant_id={tenant_id!r}, "
+        "optimizer_floors={"
+        "'simba_query_enhancement': {'min_samples_for_optimization': 9, 'min_unique_queries': 3}"
+        "}, training_selection={"
+        "'simba_query_enhancement': {'trainset_cap': 8, 'mmr_lambda': 0.7}"
+        "})); "
+        "print('__CONFIG__ok')"
+    )
+    result = subprocess.run(
+        [
+            "kubectl",
+            "--context",
+            KUBECTL_CONTEXT,
+            "exec",
+            "-n",
+            NAMESPACE,
+            DEPLOYMENT,
+            "-c",
+            CONTAINER,
+            "--",
+            "python3",
+            "-c",
+            script,
+        ],
+        capture_output=True,
+        text=True,
+        timeout=180,
+    )
+    if result.returncode != 0:
+        raise RuntimeError(
+            _subprocess_failure_message(
+                "simba_selection_config",
+                result,
+                operation=f"set training_selection for tenant_id={tenant_id!r}",
+            )
+        )
+
+    seeded_queries = list(CAP8_QUERY_ENHANCEMENT_QUERIES)
+    with httpx.Client(base_url=RUNTIME, timeout=GATEWAY_PROCESS_TIMEOUT_S) as client:
+        for query in seeded_queries:
+            resp = client.post(
+                "/agents/query_enhancement_agent/process",
+                json={
+                    "agent_name": "query_enhancement_agent",
+                    "query": query,
+                    "context": {"tenant_id": tenant_id},
+                    "top_k": 3,
+                },
+            )
+            assert resp.status_code == 200, resp.text[:500]
+
+    _wait_for_seeded_span_lower_bound_in_pod(
+        tenant_id,
+        "SPAN_NAME_QUERY_ENHANCEMENT",
+        len(seeded_queries),
+    )
+
+    approved_synthetic_count = 2
+    # The 9 seeded spans plus 2 approved synthetic rows make 11 consumed
+    # records. With the dedicated 9/3 floor above, _split_served_holdout holds
+    # out 2 served spans and leaves 9 train records; MMR then trims that pool to
+    # cap 8 while the persisted ledger still records all 11 consumed examples.
+    generated = _generate_and_approve_synthetic_in_pod(
+        tenant_id,
+        optimizer_type="query_enhancement",
+        count=approved_synthetic_count,
+    )
+    assert generated == approved_synthetic_count, generated
+    _wait_for_approved_query_enhancement_examples_in_pod(
+        tenant_id,
+        optimizer_type="query_enhancement",
+        minimum=approved_synthetic_count,
+    )
+
+    try:
+        yield SimbaSelectionTenant(tenant_id, seeded_queries, approved_synthetic_count)
     finally:
         with httpx.Client(timeout=60.0) as client:
             try:
@@ -1945,6 +2455,7 @@ def _assert_simba_served_the_best_module(result: dict, blob_before: str) -> dict
         "candidate_score",
         "decision",
         "version",
+        "selection",
         "consumed_example_ids",
     }, result
     assert result["status"] == "success", result
@@ -1971,6 +2482,12 @@ def _assert_simba_served_the_best_module(result: dict, blob_before: str) -> dict
         "reject": result["baseline_score"],
     }[result["decision"]]
     assert served_score >= result["baseline_score"], result
+    expected_selection = _selection_summary_in_pod(TENANT_ID, "simba_query_enhancement")
+    assert result["selection"] == expected_selection, result
+    assert result["selection"]["cap"] == _training_selection_cap_from_shipped_config(
+        "simba_query_enhancement"
+    ), result
+    assert result["selection"]["mmr_applied"] is False, result
 
     version = result["version"]
     assert isinstance(version, int), result
@@ -2137,10 +2654,10 @@ class TestSimbaPopulationFloor:
 
         result = _run_batch_job("simba", tenant_id=simba_floor_tenant)
         expected_min_samples, expected_min_unique_queries = (
-            _population_floor_from_shipped_config("query_enhancement")
+            _population_floor_from_shipped_config("simba_query_enhancement")
         )
         runtime_min_samples, runtime_min_unique_queries = _population_floor_in_pod(
-            simba_floor_tenant, "query_enhancement"
+            simba_floor_tenant, "simba_query_enhancement"
         )
 
         assert result["status"] == "insufficient_population", result
@@ -2158,6 +2675,7 @@ class TestSimbaPopulationFloor:
         assert result["min_samples"] == expected_min_samples, result
         assert result["min_unique_queries"] == expected_min_unique_queries, result
         assert result["version"] == 1, result
+        assert "selection" not in result
         assert [
             (entry["version"], entry["decision"])
             for entry in _blob_version_lineage_in_pod(
@@ -2167,6 +2685,100 @@ class TestSimbaPopulationFloor:
         assert _blob_state_in_pod(
             "model", "simba_query_enhancement", tenant_id=simba_floor_tenant
         ) == {"active": None}
+
+
+@pytest.mark.e2e
+class TestSimbaSelectionCap:
+    """A tenant with a cap-8 training-selection override crosses the cap."""
+
+    def test_cap8_tenant_applies_mmr_and_keeps_all_seeded_queries(
+        self, simba_selection_tenant
+    ):
+        result = _run_batch_job("simba", tenant_id=simba_selection_tenant.tenant_id)
+        _version_blob, ledger = _load_blob_version_in_pod(
+            "model",
+            "simba_query_enhancement",
+            result["version"],
+            tenant_id=simba_selection_tenant.tenant_id,
+        )
+        selection = result["selection"]
+        expected_selection = _selection_summary_in_pod(
+            simba_selection_tenant.tenant_id, "simba_query_enhancement"
+        )
+        # The synthetic approvals occupy the holdout tail, so the 9 real
+        # query-enhancement spans remain the train pool while the version
+        # ledger still records all consumed examples.
+
+        assert set(result) == {
+            "status",
+            "spans_found",
+            "examples",
+            "served_examples",
+            "approved_examples",
+            "served_scoreable_examples",
+            "non_trainable_examples",
+            "training_examples",
+            "holdout_examples",
+            "holdout_source",
+            "baseline_score",
+            "current_score",
+            "candidate_score",
+            "decision",
+            "version",
+            "selection",
+            "consumed_example_ids",
+        }, result
+        assert result["status"] == "success", result
+        assert result["spans_found"] == simba_selection_tenant.seeded_count, result
+        assert result["served_examples"] == simba_selection_tenant.seeded_count, result
+        assert (
+            result["served_scoreable_examples"] == simba_selection_tenant.seeded_count
+        ), result
+        assert (
+            result["approved_examples"]
+            == simba_selection_tenant.approved_synthetic_count
+        ), result
+        assert result["examples"] == (
+            simba_selection_tenant.seeded_count
+            + simba_selection_tenant.approved_synthetic_count
+        ), result
+        assert result["selection"] == expected_selection, result
+        assert selection["cap"] == 8, selection
+        assert selection["pool"] == simba_selection_tenant.seeded_count, selection
+        assert selection["deduped"] == simba_selection_tenant.seeded_count, selection
+        assert selection["mmr_applied"] is True, selection
+        assert selection["decayed_count"] == 0, selection
+        assert result["holdout_examples"] == 2, result
+        assert result["training_examples"] == selection["cap"], result
+        assert len(result["consumed_example_ids"]) == (
+            simba_selection_tenant.seeded_count
+            + simba_selection_tenant.approved_synthetic_count
+        ), result
+        # The version ledger keeps the full consumed record set, not only the
+        # train slice that MMR retained.
+        assert set(ledger) == {
+            "version",
+            "kind",
+            "key",
+            "consumed_example_ids",
+            "decision",
+            "scored",
+            "base_score",
+            "candidate_score",
+            "created_at",
+        }, ledger
+        assert ledger["version"] == result["version"], ledger
+        assert ledger["kind"] == "model", ledger
+        assert ledger["key"] == "simba_query_enhancement", ledger
+        assert ledger["decision"] == result["decision"], ledger
+        assert ledger["consumed_example_ids"] == result["consumed_example_ids"], ledger
+        assert ledger["scored"] is True, ledger
+        assert ledger["base_score"] == result["baseline_score"], ledger
+        assert ledger["candidate_score"] == result["candidate_score"], ledger
+        assert len(ledger["consumed_example_ids"]) == (
+            simba_selection_tenant.seeded_count
+            + simba_selection_tenant.approved_synthetic_count
+        ), ledger
 
 
 # ---------------------------------------------------------------------------
@@ -2204,6 +2816,7 @@ class TestProfileOptimization:
             "candidate_score",
             "decision",
             "version",
+            "selection",
             "consumed_example_ids",
         }, result
         assert result["status"] == "success", result
@@ -2224,6 +2837,12 @@ class TestProfileOptimization:
             - result["holdout_examples"]
             + result["approved_examples"]
         ), result
+        expected_selection = _selection_summary_in_pod(TENANT_ID, "profile_selection")
+        assert result["selection"] == expected_selection, result
+        assert result["selection"][
+            "cap"
+        ] == _training_selection_cap_from_shipped_config("profile_selection"), result
+        assert result["selection"]["mmr_applied"] is False, result
         assert len(result["consumed_example_ids"]) == (
             result["served_examples"] + result["approved_examples"]
         ), result
@@ -2287,6 +2906,7 @@ class TestProfileOptimization:
             "candidate_score",
             "decision",
             "version",
+            "selection",
             "consumed_example_ids",
         }, result
         assert result["status"] == "success", result
@@ -2307,6 +2927,12 @@ class TestProfileOptimization:
             - result["holdout_examples"]
             + result["approved_examples"]
         ), result
+        expected_selection = _selection_summary_in_pod(TENANT_ID, "profile_selection")
+        assert result["selection"] == expected_selection, result
+        assert result["selection"][
+            "cap"
+        ] == _training_selection_cap_from_shipped_config("profile_selection"), result
+        assert result["selection"]["mmr_applied"] is False, result
         assert len(result["consumed_example_ids"]) == (
             result["served_examples"] + result["approved_examples"]
         ), result
@@ -2407,6 +3033,7 @@ class TestProfileSelectionArtifactReload:
             "candidate_score",
             "decision",
             "version",
+            "selection",
             "consumed_example_ids",
         }, result
         assert result["status"] == "success", result
@@ -2427,6 +3054,12 @@ class TestProfileSelectionArtifactReload:
             - result["holdout_examples"]
             + result["approved_examples"]
         ), result
+        expected_selection = _selection_summary_in_pod(TENANT_ID, "profile_selection")
+        assert result["selection"] == expected_selection, result
+        assert result["selection"][
+            "cap"
+        ] == _training_selection_cap_from_shipped_config("profile_selection"), result
+        assert result["selection"]["mmr_applied"] is False, result
         assert len(result["consumed_example_ids"]) == (
             result["served_examples"] + result["approved_examples"]
         ), result
@@ -2629,6 +3262,7 @@ class TestEntityExtractionOptimization:
             "candidate_score",
             "decision",
             "version",
+            "selection",
             "consumed_example_ids",
         }, result
         assert result["status"] == "success", result
@@ -2649,6 +3283,12 @@ class TestEntityExtractionOptimization:
             - result["holdout_examples"]
             + result["approved_examples"]
         ), result
+        expected_selection = _selection_summary_in_pod(TENANT_ID, "entity_extraction")
+        assert result["selection"] == expected_selection, result
+        assert result["selection"][
+            "cap"
+        ] == _training_selection_cap_from_shipped_config("entity_extraction"), result
+        assert result["selection"]["mmr_applied"] is False, result
         assert len(result["consumed_example_ids"]) == (
             result["served_examples"] + result["approved_examples"]
         ), result
@@ -2714,6 +3354,7 @@ class TestEntityExtractionOptimization:
             "candidate_score",
             "decision",
             "version",
+            "selection",
             "consumed_example_ids",
         }, result
         assert result["status"] == "success", result
@@ -2734,6 +3375,12 @@ class TestEntityExtractionOptimization:
             - result["holdout_examples"]
             + result["approved_examples"]
         ), result
+        expected_selection = _selection_summary_in_pod(TENANT_ID, "entity_extraction")
+        assert result["selection"] == expected_selection, result
+        assert result["selection"][
+            "cap"
+        ] == _training_selection_cap_from_shipped_config("entity_extraction"), result
+        assert result["selection"]["mmr_applied"] is False, result
         assert len(result["consumed_example_ids"]) == (
             result["served_examples"] + result["approved_examples"]
         ), result
@@ -3005,6 +3652,7 @@ class TestArtifactLoadingRoundTrip:
             "candidate_score",
             "decision",
             "version",
+            "selection",
             "consumed_example_ids",
         }, result
         assert result["status"] == "success", result
@@ -3025,6 +3673,12 @@ class TestArtifactLoadingRoundTrip:
             - result["holdout_examples"]
             + result["approved_examples"]
         ), result
+        expected_selection = _selection_summary_in_pod(TENANT_ID, "entity_extraction")
+        assert result["selection"] == expected_selection, result
+        assert result["selection"][
+            "cap"
+        ] == _training_selection_cap_from_shipped_config("entity_extraction"), result
+        assert result["selection"]["mmr_applied"] is False, result
         assert len(result["consumed_example_ids"]) == (
             result["served_examples"] + result["approved_examples"]
         ), result
@@ -3139,6 +3793,7 @@ class TestArtifactLoadingRoundTrip:
             "candidate_score",
             "decision",
             "version",
+            "selection",
             "consumed_example_ids",
         }, result
         assert result["status"] == "success", result
@@ -3159,6 +3814,12 @@ class TestArtifactLoadingRoundTrip:
             - result["holdout_examples"]
             + result["approved_examples"]
         ), result
+        expected_selection = _selection_summary_in_pod(TENANT_ID, "profile_selection")
+        assert result["selection"] == expected_selection, result
+        assert result["selection"][
+            "cap"
+        ] == _training_selection_cap_from_shipped_config("profile_selection"), result
+        assert result["selection"]["mmr_applied"] is False, result
         assert len(result["consumed_example_ids"]) == (
             result["served_examples"] + result["approved_examples"]
         ), result

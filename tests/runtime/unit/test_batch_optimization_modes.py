@@ -47,6 +47,24 @@ def _selection_block(
     }
 
 
+def _training_selection_config_manager(
+    tenant_id: str,
+    training_selection: dict[str, dict[str, float]],
+):
+    from cogniverse_foundation.config.manager import ConfigManager
+    from cogniverse_foundation.config.unified_config import RoutingConfigUnified
+    from tests.utils.memory_store import InMemoryConfigStore
+
+    manager = ConfigManager(store=InMemoryConfigStore())
+    manager.set_routing_config(
+        RoutingConfigUnified(
+            tenant_id=tenant_id,
+            training_selection=training_selection,
+        )
+    )
+    return manager
+
+
 def _signed_approved_record(record: dict[str, Any]) -> dict[str, Any]:
     signed = {
         "confidence": 0.9,
@@ -224,10 +242,15 @@ def _patch_telemetry(fake_mgr):
         yield
 
 
-def _patch_infra(fake_mgr):
+def _patch_infra(fake_mgr, *, config_manager=None):
     """Return a combined context manager patching config + telemetry."""
+    config_patch = (
+        patch(_PATCH_CONFIG, return_value=config_manager)
+        if config_manager is not None
+        else patch(_PATCH_CONFIG)
+    )
     return (
-        patch(_PATCH_CONFIG),
+        config_patch,
         _patch_telemetry(fake_mgr),
     )
 
@@ -2373,11 +2396,12 @@ class TestSimbaQueryEnhancement:
         min_improvement: float,
         scorer=None,
         floor=(1, 1),
+        config_manager=None,
     ):
         from cogniverse_runtime.optimization_cli import run_simba_optimization
 
         mgr = FakeTelemetryManager(provider)
-        p1, p2 = _patch_infra(mgr)
+        p1, p2 = _patch_infra(mgr, config_manager=config_manager)
         llm_config = SimpleNamespace(
             resolve=lambda purpose: "student-endpoint",
             resolve_teacher=lambda: "teacher-endpoint",
@@ -2899,6 +2923,33 @@ class TestSimbaQueryEnhancement:
         assert lineage[0]["scored"] is False
         assert self._active_version(provider, "simba_query_enhancement") is None
 
+    def test_training_selection_store_override_binds_simba_canonical_key(self):
+        rows = [
+            _qe_span_row(
+                f"query {i}",
+                f"query {i} expanded",
+                expansion_terms=["expanded"],
+                source_text="src",
+                span_id=f"qe-{i}",
+            )
+            for i in range(4)
+        ]
+        provider = FakeTelemetryProvider(
+            _make_spans_df("cogniverse.query_enhancement", rows)
+        )
+        config_manager = _training_selection_config_manager(
+            "test:unit",
+            {"simba_query_enhancement": {"trainset_cap": 42}},
+        )
+
+        result = self._run(
+            provider,
+            min_improvement=0.0,
+            config_manager=config_manager,
+        )
+
+        assert result["selection"]["cap"] == 42, result
+
 
 class TestProfileSelectionOptimization:
     @staticmethod
@@ -2933,6 +2984,7 @@ class TestProfileSelectionOptimization:
         min_improvement: float = 0.05,
         score: float = 1.0,
         score_by_module=None,
+        config_manager=None,
     ):
         from cogniverse_runtime.optimization_cli import run_profile_optimization
 
@@ -3014,7 +3066,7 @@ class TestProfileSelectionOptimization:
                 return FakeLLMConfig()
 
         mgr = FakeTelemetryManager(provider)
-        p1, p2 = _patch_infra(mgr)
+        p1, p2 = _patch_infra(mgr, config_manager=config_manager)
         with (
             p1,
             p2,
@@ -3264,6 +3316,38 @@ class TestProfileSelectionOptimization:
             "error": "profile scorer failed",
             **_selection_block(3, 3),
         }
+
+    @pytest.mark.asyncio
+    async def test_training_selection_store_override_binds_profile_key(self):
+        rows = [
+            _profile_span_row(
+                f"find clip {i}",
+                span_id=f"profile-{i}",
+                available_profiles=[
+                    "video_colpali_smol500_mv_frame",
+                    "video_colqwen_omni_mv_chunk_30s",
+                ],
+                selected_profile="video_colpali_smol500_mv_frame",
+            )
+            for i in range(4)
+        ]
+        provider = FakeTelemetryProvider(
+            _make_spans_df("cogniverse.profile_selection", rows)
+        )
+        served_state = self._served_state()
+        config_manager = _training_selection_config_manager(
+            "test:unit",
+            {"profile_selection": {"trainset_cap": 42}},
+        )
+
+        _, result = await self._run(
+            provider,
+            current_blob=served_state,
+            floor=(1, 1),
+            config_manager=config_manager,
+        )
+
+        assert result["selection"]["cap"] == 42, result
 
     @pytest.mark.asyncio
     async def test_profile_below_population_floor_persists_without_activating(self):
@@ -3754,6 +3838,7 @@ class TestEntityExtractionOptimization:
         min_improvement: float = 0.05,
         score: float = 1.0,
         score_by_module=None,
+        config_manager=None,
     ):
         from cogniverse_runtime.optimization_cli import (
             run_entity_extraction_optimization,
@@ -3837,7 +3922,7 @@ class TestEntityExtractionOptimization:
                 return FakeLLMConfig()
 
         mgr = FakeTelemetryManager(provider)
-        p1, p2 = _patch_infra(mgr)
+        p1, p2 = _patch_infra(mgr, config_manager=config_manager)
         with (
             p1,
             p2,
@@ -3997,6 +4082,35 @@ class TestEntityExtractionOptimization:
         assert result["spans_found"] == 1
         assert result["examples"] == 0
         assert "selection" not in result
+
+    @pytest.mark.asyncio
+    async def test_training_selection_store_override_binds_entity_key(self):
+        rows = [
+            {
+                "context.span_id": f"ee-{i}",
+                "attributes.input.value": f"find entity {i}",
+                "attributes.output.value": json.dumps(
+                    {"entities": [{"text": f"Entity {i}", "type": "CONCEPT"}]}
+                ),
+            }
+            for i in range(2)
+        ]
+        provider = FakeTelemetryProvider(
+            _make_spans_df("cogniverse.entity_extraction", rows)
+        )
+        config_manager = _training_selection_config_manager(
+            "test:unit",
+            {"entity_extraction": {"trainset_cap": 42}},
+        )
+
+        _, result = await self._run(
+            provider,
+            current_blob=None,
+            floor=(1, 1),
+            config_manager=config_manager,
+        )
+
+        assert result["selection"]["cap"] == 42, result
 
     @pytest.mark.asyncio
     async def test_entity_extraction_promote_persists_and_activates_candidate(self):
