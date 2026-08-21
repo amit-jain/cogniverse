@@ -40,6 +40,10 @@ def _optimizer_floors(config: dict[str, Any]) -> dict[str, Any]:
     return config["routing"]["optimization_config"]["optimizer_floors"]
 
 
+def _training_selection(config: dict[str, Any]) -> dict[str, Any]:
+    return config["routing"]["optimization_config"]["training_selection"]
+
+
 @pytest.mark.unit
 @pytest.mark.parametrize("path", CONFIGS, ids=lambda p: p.parent.name)
 def test_shipped_config_passes_system_tenant_startup_parse(path: Path):
@@ -90,6 +94,42 @@ def test_shipped_configs_declare_identical_agent_mappings():
 @pytest.mark.unit
 def test_shipped_configs_declare_identical_optimizer_floors():
     assert _optimizer_floors(_rendered(SHIPPED)) == _optimizer_floors(_rendered(CHART))
+
+
+@pytest.mark.unit
+def test_shipped_configs_declare_identical_training_selection():
+    # Drift guard: the charted config must match the shipped runtime config.
+    assert _training_selection(_rendered(SHIPPED)) == _training_selection(
+        _rendered(CHART)
+    )
+
+
+@pytest.mark.unit
+def test_shipped_training_selection_matches_canonical_block():
+    # Canonical pin: the shipped config carries the exact expected values.
+    assert _training_selection(_rendered(SHIPPED)) == {
+        "simba_query_enhancement": {
+            "trainset_cap": 300,
+            "mmr_lambda": 0.7,
+            "low_confirmation_threshold": 3,
+            "downweight_age_days": 14,
+            "downweight_factor": 0.5,
+        },
+        "profile_selection": {
+            "trainset_cap": 300,
+            "mmr_lambda": 0.7,
+            "low_confirmation_threshold": 3,
+            "downweight_age_days": 14,
+            "downweight_factor": 0.5,
+        },
+        "entity_extraction": {
+            "trainset_cap": 300,
+            "mmr_lambda": 0.7,
+            "low_confirmation_threshold": 3,
+            "downweight_age_days": 14,
+            "downweight_factor": 0.5,
+        },
+    }
 
 
 @pytest.mark.unit

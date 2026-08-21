@@ -33,6 +33,28 @@ PROFILE_SCORING_OPTIMIZERS = frozenset(
 SYNTHETIC_GENERATOR_CONFIG_TYPES = PROFILE_SCORING_OPTIMIZERS | {"modality"}
 
 
+def _serialize_nested_entries(
+    *,
+    tenant_id: str,
+    field_name: str,
+    entries: Dict[str, Any],
+) -> Dict[str, Dict[str, Any]]:
+    """Keep only dict-valued optimizer entries when serializing."""
+    serialized: Dict[str, Dict[str, Any]] = {}
+    for optimizer_type, entry in entries.items():
+        if isinstance(entry, dict):
+            serialized[optimizer_type] = dict(entry)
+            continue
+        logger.warning(
+            "Dropping malformed %s entry for tenant %r optimizer %r: %r",
+            field_name,
+            tenant_id,
+            optimizer_type,
+            entry,
+        )
+    return serialized
+
+
 @dataclass
 class LLMEndpointConfig:
     """
@@ -477,6 +499,7 @@ class RoutingConfigUnified:
     min_samples_for_optimization: int = 100
     min_unique_queries: int = 3
     optimizer_floors: Dict[str, Dict[str, int]] = field(default_factory=dict)
+    training_selection: Dict[str, Dict[str, float]] = field(default_factory=dict)
 
     # Metadata
     metadata: Dict[str, Any] = field(default_factory=dict)
@@ -500,10 +523,16 @@ class RoutingConfigUnified:
             "optimization_interval_seconds": self.optimization_interval_seconds,
             "min_samples_for_optimization": self.min_samples_for_optimization,
             "min_unique_queries": self.min_unique_queries,
-            "optimizer_floors": {
-                optimizer_type: dict(floor)
-                for optimizer_type, floor in self.optimizer_floors.items()
-            },
+            "optimizer_floors": _serialize_nested_entries(
+                tenant_id=self.tenant_id,
+                field_name="optimizer_floors",
+                entries=self.optimizer_floors,
+            ),
+            "training_selection": _serialize_nested_entries(
+                tenant_id=self.tenant_id,
+                field_name="training_selection",
+                entries=self.training_selection,
+            ),
             "metadata": self.metadata,
         }
 
@@ -531,10 +560,8 @@ class RoutingConfigUnified:
             ),
             min_samples_for_optimization=data.get("min_samples_for_optimization", 100),
             min_unique_queries=data.get("min_unique_queries", 3),
-            optimizer_floors={
-                optimizer_type: dict(floor)
-                for optimizer_type, floor in data.get("optimizer_floors", {}).items()
-            },
+            optimizer_floors=data.get("optimizer_floors", {}),
+            training_selection=data.get("training_selection", {}),
             metadata=data.get("metadata", {}),
         )
 

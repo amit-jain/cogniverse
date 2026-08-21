@@ -26,6 +26,7 @@ import logging
 import os
 import sys
 import uuid
+from collections import namedtuple
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import Any, Dict, List, Optional
@@ -48,6 +49,18 @@ from cogniverse_foundation.telemetry.span_contract import (
 
 logger = logging.getLogger(__name__)
 SHIPPED_CONFIG_PATH = Path(__file__).resolve().parents[3] / "configs" / "config.json"
+TrainingSelectionKnobs = namedtuple(
+    "TrainingSelectionKnobs",
+    "trainset_cap mmr_lambda low_confirmation_threshold downweight_age_days downweight_factor",
+)
+_TRAINING_SELECTION_DEFAULTS = TrainingSelectionKnobs(300, 0.7, 3, 14, 0.5)
+_TRAINING_SELECTION_FIELDS = (
+    ("trainset_cap", int),
+    ("mmr_lambda", float),
+    ("low_confirmation_threshold", int),
+    ("downweight_age_days", int),
+    ("downweight_factor", float),
+)
 
 
 @contextlib.contextmanager
@@ -1121,6 +1134,130 @@ def _shipped_population_floor_from_config(
         ),
         optimization_config.get("min_unique_queries", 3),
     )
+
+
+def _training_selection_from_config(
+    config_manager,
+    tenant_id: str,
+    optimizer_type: str,
+) -> TrainingSelectionKnobs:
+    """The tenant's training-selection knobs for a given optimizer."""
+    from cogniverse_foundation.config.utils import create_default_config_manager
+
+    manager = config_manager or create_default_config_manager()
+    routing = manager.get_routing_config(tenant_id=tenant_id)
+    resolved: Dict[str, Any] = {}
+
+    tenant_training_selection = routing.training_selection.get(optimizer_type)
+    if tenant_training_selection is not None:
+        if isinstance(tenant_training_selection, dict):
+            tenant_values, tenant_malformed = _training_selection_values_from_config(
+                tenant_training_selection
+            )
+            resolved.update(tenant_values)
+            if tenant_malformed:
+                logger.warning(
+                    "tenant=%r optimizer=%r has malformed training_selection entry: %r",
+                    tenant_id,
+                    optimizer_type,
+                    tenant_training_selection,
+                )
+        else:
+            logger.warning(
+                "tenant=%r optimizer=%r has malformed training_selection entry: %r",
+                tenant_id,
+                optimizer_type,
+                tenant_training_selection,
+            )
+
+    shipped_training_selection = _shipped_training_selection_from_config(optimizer_type)
+    if shipped_training_selection is not None:
+        shipped_values, _ = _training_selection_values_from_config(
+            shipped_training_selection
+        )
+        for field_name, value in shipped_values.items():
+            resolved.setdefault(field_name, value)
+
+    defaults = _TRAINING_SELECTION_DEFAULTS
+    return TrainingSelectionKnobs(
+        int(resolved.get("trainset_cap", defaults.trainset_cap)),
+        float(resolved.get("mmr_lambda", defaults.mmr_lambda)),
+        int(
+            resolved.get(
+                "low_confirmation_threshold", defaults.low_confirmation_threshold
+            )
+        ),
+        int(resolved.get("downweight_age_days", defaults.downweight_age_days)),
+        float(resolved.get("downweight_factor", defaults.downweight_factor)),
+    )
+
+
+def _training_selection_values_from_config(
+    training_selection_config: dict,
+) -> tuple[Dict[str, Any], bool]:
+    """Normalize a training-selection mapping into typed knob values."""
+    resolved: Dict[str, Any] = {}
+    malformed = False
+    for field_name, converter in _TRAINING_SELECTION_FIELDS:
+        if field_name not in training_selection_config:
+            continue
+        try:
+            resolved[field_name] = converter(training_selection_config[field_name])
+        except (TypeError, ValueError):
+            malformed = True
+    return resolved, malformed
+
+
+def _shipped_training_selection_from_config(
+    optimizer_type: str,
+) -> dict | None:
+    """Load the shipped training-selection mapping for ``optimizer_type``."""
+    try:
+        raw_config = json.loads(SHIPPED_CONFIG_PATH.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError) as exc:
+        logger.warning(
+            "Unable to read shipped training selection from %s: %s",
+            SHIPPED_CONFIG_PATH,
+            exc,
+        )
+        return None
+
+    routing_config = raw_config.get("routing")
+    if not isinstance(routing_config, dict):
+        logger.warning(
+            "Shipped training selection at %s are missing routing.optimization_config",
+            SHIPPED_CONFIG_PATH,
+        )
+        return None
+
+    optimization_config = routing_config.get("optimization_config")
+    if not isinstance(optimization_config, dict):
+        logger.warning(
+            "Shipped training selection at %s are missing routing.optimization_config",
+            SHIPPED_CONFIG_PATH,
+        )
+        return None
+
+    training_selection = optimization_config.get("training_selection")
+    if not isinstance(training_selection, dict):
+        logger.warning(
+            "Shipped training selection at %s are missing routing.optimization_config.training_selection",
+            SHIPPED_CONFIG_PATH,
+        )
+        return None
+
+    shipped_training_selection = training_selection.get(optimizer_type)
+    if shipped_training_selection is None:
+        return None
+    if not isinstance(shipped_training_selection, dict):
+        logger.warning(
+            "Shipped training selection for %s at %s is malformed",
+            optimizer_type,
+            SHIPPED_CONFIG_PATH,
+        )
+        return None
+
+    return shipped_training_selection
 
 
 def _reflective_settings_from_config(tenant_id: str, config_manager=None):
