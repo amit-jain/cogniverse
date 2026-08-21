@@ -161,8 +161,92 @@ async def test_query_profile_returns_real_vespa_content(
 
 
 @pytest.mark.asyncio
-async def test_service_samples_deployed_configured_profile_from_real_vespa(
+async def test_diverse_sampling_with_overfetch_past_default_limit(
     shared_vespa, config_manager, schema_loader
+):
+    base_schema = "video_colpali_smol500_mv_frame"
+    tenant = f"bqv{uuid.uuid4().hex[:6]}"
+    corpus_count = 90
+    sample_size = 90
+    schema = deploy_tenant_schema(
+        shared_vespa,
+        tenant_id=tenant,
+        base_schema_name=base_schema,
+        config_manager=config_manager,
+    )
+
+    vespa_app = make_vespa_app(
+        url="http://localhost",
+        port=shared_vespa["http_port"],
+    )
+    for index in range(corpus_count):
+        video_id = f"vid-{index:03d}"
+        feed = vespa_app.feed_data_point(
+            schema=schema,
+            data_id=f"{video_id}_seg_0",
+            fields={
+                "video_id": video_id,
+                "video_title": f"Robots scene {index:03d}",
+                "source_url": f"http://example.test/{video_id}",
+                "segment_id": 0,
+                "segment_description": f"robots in scene {index:03d}",
+                "start_time": float(index),
+                "end_time": float(index) + 5.0,
+            },
+        )
+        assert feed.is_successful(), feed.json
+
+    backend_config = _backend_config(
+        shared_vespa,
+        tenant,
+        base_schema,
+        "video",
+        "multi_vector",
+        {"extract_keyframes": True},
+    )
+    backend = VespaBackend(
+        backend_config=backend_config,
+        schema_loader=schema_loader,
+        config_manager=config_manager,
+    )
+    backend.initialize({"tenant_id": tenant})
+
+    visible_documents = []
+    for _ in range(20):
+        visible_documents = await asyncio.to_thread(
+            backend.query_metadata_documents,
+            schema=schema,
+            yql=f"select * from sources {schema} where true",
+            hits=corpus_count,
+        )
+        if len(visible_documents) == corpus_count:
+            break
+        await asyncio.sleep(0.5)
+
+    assert len(visible_documents) == corpus_count
+
+    querier = BackendQuerier(
+        backend=backend,
+        backend_config=backend_config,
+        field_mappings=FieldMappingConfig(),
+    )
+
+    samples = await querier._query_profile(
+        {
+            "profile_name": base_schema,
+            **backend_config.profiles[base_schema].to_dict(),
+        },
+        sample_size=sample_size,
+        strategy="diverse",
+        tenant_id=tenant,
+    )
+
+    assert len(samples) == min(sample_size, corpus_count)
+
+
+@pytest.mark.asyncio
+async def test_service_samples_deployed_configured_profile_from_real_vespa(
+    shared_vespa, config_manager, schema_loader, real_telemetry
 ):
     class _RecordingVespaBackend(VespaBackend):
         def __init__(self, *args, **kwargs):
@@ -229,37 +313,62 @@ async def test_service_samples_deployed_configured_profile_from_real_vespa(
             "video_title": "Robots playing soccer",
             "source_url": "http://example.test/vidDefault",
             "segment_id": 0,
-            "segment_description": "two robots play soccer on a field",
+            "segment_description": "Robots playing soccer",
             "start_time": 0.0,
             "end_time": 5.0,
         },
     )
     assert feed.is_successful(), feed.json
 
+    duplicate_feed = make_vespa_app(
+        url="http://localhost",
+        port=http_port,
+    ).feed_data_point(
+        schema=schema,
+        data_id="vidDefault_seg_1",
+        fields={
+            "video_id": "vidDefault",
+            "video_title": "Cats playing chess",
+            "source_url": "http://example.test/vidDefault",
+            "segment_id": 1,
+            "segment_description": "Cats playing chess",
+            "start_time": 5.0,
+            "end_time": 10.0,
+        },
+    )
+    assert duplicate_feed.is_successful(), duplicate_feed.json
+
     indexed = []
     for _ in range(20):
         indexed = backend.query_metadata_documents(
             schema=schema,
-            yql=f"select * from sources {schema} where true limit 1",
-            hits=1,
+            yql=f"select * from sources {schema} where true limit 2",
+            hits=2,
         )
-        if indexed:
+        if len(indexed) == 2:
             break
         await asyncio.sleep(0.5)
-    assert len(indexed) == 1
-    assert indexed[0]["video_id"] == "vidDefault"
-    assert indexed[0]["video_title"] == "Robots playing soccer"
-    assert indexed[0]["segment_description"] == ("two robots play soccer on a field")
+    assert len(indexed) == 2
+    assert {item["video_id"] for item in indexed} == {"vidDefault"}
+    assert {item["video_title"] for item in indexed} == {
+        "Robots playing soccer",
+        "Cats playing chess",
+    }
+    assert {item["segment_description"] for item in indexed} == {
+        "Robots playing soccer",
+        "Cats playing chess",
+    }
     backend.query_calls.clear()
 
     profile_agent = ProfileSelectionAgent(
         deps=ProfileSelectionDeps(available_profiles=[base_schema])
     )
+    profile_agent.set_telemetry_manager(real_telemetry)
     profile_agent.dspy_module.selector = lambda **_: dspy.Prediction(
         selected_profile=base_schema,
         confidence="0.95",
         reasoning="The production selector chose the indexed video profile.",
-        query_intent="sports_video_lookup",
+        query_intent="video_search",
         modality="video",
         complexity="medium",
     )
@@ -280,7 +389,13 @@ async def test_service_samples_deployed_configured_profile_from_real_vespa(
         backend_config=backend_config,
         generator_config=video_synthetic_generator_config(tenant),
         agents_config=json.loads(Path("configs/config.json").read_text())["agents"],
+        config_manager=config_manager,
         profile_labeler=label_profile,
+    )
+
+    config_manager.add_backend_profile(
+        backend_config.profiles[base_schema],
+        tenant_id=tenant,
     )
 
     response = await service.generate(
@@ -288,29 +403,34 @@ async def test_service_samples_deployed_configured_profile_from_real_vespa(
             tenant_id=tenant,
             optimizer="profile",
             count=1,
-            vespa_sample_size=1,
+            vespa_sample_size=2,
             strategy="diverse",
             max_profiles=1,
         )
     )
 
     assert response.selected_profiles == [base_schema]
-    assert response.metadata["sampled_content_count"] == 1
+    assert response.metadata["sampled_content_count"] == 2
     assert len(response.data) == 1
+    assert response.data[0]["query"] in {
+        "find a video frame showing Robots playing soccer",
+        "find a video frame showing Cats playing chess",
+    }
+    expected_query = response.data[0]["query"]
     assert response.data[0] == {
-        "query": "Robots playing soccer",
+        "query": expected_query,
         "available_profiles": base_schema,
         "selected_profile": base_schema,
         "modality": "video",
         "complexity": "medium",
-        "query_intent": "sports_video_lookup",
+        "query_intent": "video_search",
         "reasoning": "The production selector chose the indexed video profile.",
     }
     assert backend.schema_checks == [(base_schema, tenant, True)]
     assert backend.query_calls == [
         (
             base_schema,
-            f"select * from sources {base_schema} where true limit 1",
+            f"select * from sources {base_schema} where true limit 10",
             tenant,
         )
     ]
@@ -323,8 +443,9 @@ async def test_routing_service_keeps_real_vespa_sources_and_agents_aligned(
     config_manager,
     schema_loader,
     dspy_test_lm,
+    real_telemetry,
 ):
-    _ = dspy_test_lm
+    _ = (dspy_test_lm, real_telemetry)
     tenant = f"bqr{uuid.uuid4().hex[:6]}:media"
     profile_specs = {
         "document_text": BackendProfileConfig(
@@ -391,6 +512,24 @@ async def test_routing_service_keeps_real_vespa_sources_and_agents_aligned(
             fields=fields,
         )
         assert feed.is_successful(), feed.json
+        duplicate_fields = dict(fields)
+        duplicate_document_id = f"{document_id}-copy"
+        if "document_id" in duplicate_fields:
+            duplicate_fields["document_id"] = duplicate_document_id
+        elif "video_id" in duplicate_fields:
+            duplicate_fields["video_id"] = duplicate_document_id
+        elif "image_id" in duplicate_fields:
+            duplicate_fields["image_id"] = duplicate_document_id
+        elif "code_id" in duplicate_fields:
+            duplicate_fields["code_id"] = duplicate_document_id
+        elif "doc_id" in duplicate_fields:
+            duplicate_fields["doc_id"] = duplicate_document_id
+        feed = vespa_app.feed_data_point(
+            schema=schemas[profile_name],
+            data_id=duplicate_document_id,
+            fields=duplicate_fields,
+        )
+        assert feed.is_successful(), feed.json
 
     backend_config = BackendConfig(
         backend_type="vespa",
@@ -439,6 +578,7 @@ async def test_routing_service_keeps_real_vespa_sources_and_agents_aligned(
         "query_generator"
     ].metadata = {"max_retries": 3}
     entity_agent = EntityExtractionAgent(deps=EntityExtractionDeps())
+    entity_agent.set_telemetry_manager(real_telemetry)
 
     async def extract_entities(text: str, tenant_id: str):
         return await entity_agent.process(
@@ -679,6 +819,36 @@ async def test_default_field_mappings_read_real_non_video_content(
     ).feed_data_point(schema=schema, data_id=document_id, fields=fields)
     assert feed.is_successful(), feed.json
 
+    duplicate_fields = dict(fields)
+    duplicate_document_id = f"{document_id}-copy"
+    if "document_id" in duplicate_fields:
+        duplicate_fields["document_id"] = duplicate_document_id
+    elif "video_id" in duplicate_fields:
+        duplicate_fields["video_id"] = duplicate_document_id
+    elif "image_id" in duplicate_fields:
+        duplicate_fields["image_id"] = duplicate_document_id
+    elif "code_id" in duplicate_fields:
+        duplicate_fields["code_id"] = duplicate_document_id
+    elif "doc_id" in duplicate_fields:
+        duplicate_fields["doc_id"] = duplicate_document_id
+    if base_schema == "image_colpali_mv":
+        duplicate_fields["image_title"] = "Falcon V landing"
+    elif base_schema == "document_text":
+        duplicate_fields["document_title"] = "Gemini 11 flight report"
+    elif base_schema == "code_lateon_mv":
+        duplicate_fields["chunk_name"] = "load_runtime_metadata"
+    elif base_schema == "wiki_pages":
+        duplicate_fields["title"] = "Postgres lease management"
+    feed = make_vespa_app(
+        url="http://localhost",
+        port=shared_vespa["http_port"],
+    ).feed_data_point(
+        schema=schema,
+        data_id=duplicate_document_id,
+        fields=duplicate_fields,
+    )
+    assert feed.is_successful(), feed.json
+
     backend_config = _backend_config(
         shared_vespa,
         tenant,
@@ -705,20 +875,25 @@ async def test_default_field_mappings_read_real_non_video_content(
                 "profile_name": base_schema,
                 **backend_config.profiles[base_schema].to_dict(),
             },
-            sample_size=1,
+            sample_size=2,
             strategy="diverse",
             tenant_id=tenant,
         )
-        if samples:
+        if len(samples) == 2:
             break
         await asyncio.sleep(0.5)
 
-    assert len(samples) == 1
-    assert samples[0]["topic"] == expected_topic
-    assert samples[0]["description"] == expected_description
-    assert samples[0]["schema_name"] == base_schema
-    assert samples[0]["profile_type"] == modality
-    assert samples[0]["modality"] == expected_modality
+    assert len(samples) == 2
+    topics = [sample["topic"] for sample in samples]
+    assert expected_topic in topics
+    assert len({topic for topic in topics if topic}) == 2
+    assert {sample["description"] for sample in samples} == {expected_description}
+    primary_sample = next(
+        sample for sample in samples if sample["topic"] == expected_topic
+    )
+    assert primary_sample["schema_name"] == base_schema
+    assert primary_sample["profile_type"] == modality
+    assert primary_sample["modality"] == expected_modality
 
     required_capability = {
         "IMAGE": "image_search",
@@ -741,14 +916,24 @@ async def test_default_field_mappings_read_real_non_video_content(
             )
         ],
     )
+    ordered_samples = [
+        primary_sample,
+        *[sample for sample in samples if sample is not primary_sample],
+    ]
+    workflow_samples = [{**sample, "description": ""} for sample in ordered_samples]
+    workflow_expected_topic = (
+        expected_topic.replace("_", " ")
+        if base_schema == "code_lateon_mv"
+        else expected_topic
+    )
     example = (
         await WorkflowGenerator(agent_inferrer=inferrer).generate(
-            samples,
+            workflow_samples,
             target_count=1,
         )
     )[0]
 
-    assert example.query == f"find {expected_topic}"
+    assert example.query == f"find {workflow_expected_topic}"
     assert example.query_type == expected_modality
     assert example.agent_sequence == [expected_agent]
     assert example.task_count == 1

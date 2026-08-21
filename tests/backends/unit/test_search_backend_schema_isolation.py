@@ -208,9 +208,13 @@ def test_metadata_query_scopes_direct_yql_and_forwards_query_options():
 
     assert rows == [{"id": "best"}]
     assert client.query.call_args.kwargs == {
-        "hits": 2,
-        "ranking": "random",
-        "yql": ("select * from sources wiki_pages_acme_acme where true limit 2"),
+        "body": {
+            "hits": 2,
+            "maxHits": 2,
+            "maxOffset": 2,
+            "ranking": "random",
+            "yql": "select * from sources wiki_pages_acme_acme where true limit 2",
+        }
     }
 
 
