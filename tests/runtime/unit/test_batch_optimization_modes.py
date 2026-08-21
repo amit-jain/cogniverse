@@ -2181,6 +2181,7 @@ class TestSimbaQueryEnhancement:
             "served_examples": 4,
             "approved_examples": 0,
             "served_scoreable_examples": 4,
+            "non_trainable_examples": 0,
             "training_examples": 3,
             "holdout_examples": 1,
             "holdout_source": "served",
@@ -2213,6 +2214,62 @@ class TestSimbaQueryEnhancement:
         ]
         assert lineage[0]["scored"] is True
         assert self._active_version(provider, "simba_query_enhancement") == 1
+
+    def test_fallback_shaped_served_record_is_counted_and_excluded(self):
+        rows = [
+            _qe_span_row(
+                "fallback query",
+                "fallback query",
+                expansion_terms=[],
+                source_text="src",
+                span_id="qe-fallback",
+            )
+        ] + [
+            _qe_span_row(
+                f"query {i}",
+                f"query {i} expanded",
+                expansion_terms=["expanded"],
+                source_text="src",
+                span_id=f"qe-{i}",
+            )
+            for i in range(4)
+        ]
+        provider = FakeTelemetryProvider(
+            _make_spans_df("cogniverse.query_enhancement", rows)
+        )
+
+        result = self._run(provider, min_improvement=0.0)
+
+        assert result == {
+            "status": "success",
+            "spans_found": 5,
+            "examples": 5,
+            "served_examples": 5,
+            "approved_examples": 0,
+            "served_scoreable_examples": 5,
+            "non_trainable_examples": 1,
+            "training_examples": 3,
+            "holdout_examples": 1,
+            "holdout_source": "served",
+            "baseline_score": 0.5,
+            "current_score": None,
+            "candidate_score": 1.0,
+            "decision": "promote",
+            "version": 1,
+            "consumed_example_ids": [
+                "span:qe-fallback",
+                "span:qe-0",
+                "span:qe-1",
+                "span:qe-2",
+                "span:qe-3",
+            ],
+        }
+        state = self._persisted_state(provider)
+        assert [d["query"] for d in state["enhancer.predict"]["demos"]] == [
+            "query 0",
+            "query 1",
+            "query 2",
+        ]
 
     def test_rolls_a_worse_persisted_artifact_back_to_the_base_state(self):
         from cogniverse_agents.optimizer.artifact_manager import ArtifactManager
@@ -2254,6 +2311,7 @@ class TestSimbaQueryEnhancement:
             "served_examples": 4,
             "approved_examples": 0,
             "served_scoreable_examples": 4,
+            "non_trainable_examples": 3,
             "training_examples": 0,
             "holdout_examples": 1,
             "holdout_source": "served",
@@ -2318,6 +2376,7 @@ class TestSimbaQueryEnhancement:
             "served_examples": 4,
             "approved_examples": 0,
             "served_scoreable_examples": 4,
+            "non_trainable_examples": 0,
             "training_examples": 3,
             "holdout_examples": 1,
             "holdout_source": "served",
@@ -2366,6 +2425,7 @@ class TestSimbaQueryEnhancement:
             "spans_found": 4,
             "examples": 4,
             "served_scoreable_examples": 4,
+            "non_trainable_examples": 0,
             "training_examples": 3,
             "holdout_examples": 0,
             "holdout_source": "served",
@@ -2460,6 +2520,7 @@ class TestSimbaQueryEnhancement:
             "served_examples": 4,
             "approved_examples": 0,
             "served_scoreable_examples": 4,
+            "non_trainable_examples": 0,
             "training_examples": 3,
             "holdout_examples": 1,
             "holdout_source": "served",
@@ -2503,6 +2564,7 @@ class TestSimbaQueryEnhancement:
             "served_examples": 1,
             "approved_examples": 0,
             "served_scoreable_examples": 1,
+            "non_trainable_examples": 0,
             "training_examples": 0,
             "holdout_examples": 1,
             "holdout_source": "served",

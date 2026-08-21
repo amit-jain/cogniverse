@@ -45,7 +45,6 @@ from tests.e2e.conftest import (
 pytestmark = pytest.mark.slow
 from tests.e2e.test_api_e2e import _deploy_profile_for_tenant
 
-
 RETRIEVAL_CAPABILITY_TOKENS = frozenset(
     {
         "search",
@@ -1937,6 +1936,7 @@ def _assert_simba_served_the_best_module(result: dict, blob_before: str) -> dict
         "served_examples",
         "approved_examples",
         "served_scoreable_examples",
+        "non_trainable_examples",
         "training_examples",
         "holdout_examples",
         "holdout_source",
@@ -1960,6 +1960,7 @@ def _assert_simba_served_the_best_module(result: dict, blob_before: str) -> dict
         result["served_examples"]
         - result["holdout_examples"]
         + result["approved_examples"]
+        - result["non_trainable_examples"]
     ), result
     assert result["holdout_source"] == "served", result
     assert result["decision"] in BLOB_VERSION_DECISIONS, result
