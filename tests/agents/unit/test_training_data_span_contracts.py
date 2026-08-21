@@ -195,7 +195,9 @@ def _assert_emitter_contract(
     assert not any(
         isinstance(inner, ast.Attribute) and inner.attr == "required_span"
         for inner in ast.walk(node)
-    ), f"{where} uses required_span: synchronous export is not allowed on the request path"
+    ), (
+        f"{where} uses required_span: synchronous export is not allowed on the request path"
+    )
 
     assert not any(
         isinstance(inner, ast.Raise)

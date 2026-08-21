@@ -28,6 +28,25 @@ _PATCH_CONFIG = "cogniverse_foundation.config.utils.create_default_config_manage
 _PATCH_TELEMETRY = "cogniverse_foundation.telemetry.manager.get_telemetry_manager"
 
 
+def _selection_block(
+    pool: int,
+    deduped: int,
+    *,
+    cap: int = 300,
+    mmr_applied: bool = False,
+    decayed_count: int = 0,
+) -> dict[str, dict[str, int | bool]]:
+    return {
+        "selection": {
+            "pool": pool,
+            "deduped": deduped,
+            "cap": cap,
+            "mmr_applied": mmr_applied,
+            "decayed_count": decayed_count,
+        }
+    }
+
+
 def _signed_approved_record(record: dict[str, Any]) -> dict[str, Any]:
     signed = {
         "confidence": 0.9,
@@ -1173,6 +1192,7 @@ class TestEmptySpanHandling:
             )
         assert result["status"] == "no_data"
         assert result["spans_found"] == 0
+        assert "selection" not in result
 
     @pytest.mark.asyncio
     async def test_workflow_no_data(self, fake_telemetry_manager):
@@ -1211,6 +1231,7 @@ class TestEmptySpanHandling:
             )
         assert result["status"] == "no_data"
         assert result["spans_found"] == 0
+        assert "selection" not in result
 
 
 class TestProfileSelectionTrainingExamples:
@@ -2447,6 +2468,7 @@ class TestSimbaQueryEnhancement:
             "training_examples": 3,
             "holdout_examples": 1,
             "holdout_source": "served",
+            **_selection_block(3, 3),
             "baseline_score": 0.5,
             "current_score": None,
             "candidate_score": 1.0,
@@ -2513,6 +2535,7 @@ class TestSimbaQueryEnhancement:
             "training_examples": 3,
             "holdout_examples": 1,
             "holdout_source": "served",
+            **_selection_block(4, 4),
             "baseline_score": 0.5,
             "current_score": None,
             "candidate_score": 1.0,
@@ -2577,6 +2600,7 @@ class TestSimbaQueryEnhancement:
             "training_examples": 0,
             "holdout_examples": 1,
             "holdout_source": "served",
+            **_selection_block(3, 3),
             "baseline_score": 0.5,
             "current_score": 0.0,
             "candidate_score": None,
@@ -2642,6 +2666,7 @@ class TestSimbaQueryEnhancement:
             "training_examples": 3,
             "holdout_examples": 1,
             "holdout_source": "served",
+            **_selection_block(3, 3),
             "baseline_score": 1.0,
             "current_score": 1.0,
             "candidate_score": 1.0,
@@ -2660,6 +2685,32 @@ class TestSimbaQueryEnhancement:
         lineage = self._lineage(provider)
         assert [(e["version"], e["decision"]) for e in lineage] == [(1, "keep")]
         assert self._active_version(provider, "simba_query_enhancement") is None
+
+    def test_score_failure_preserves_selection_block(self):
+        rows = [
+            _qe_span_row(
+                f"query {i}",
+                f"query {i} expanded",
+                expansion_terms=["expanded"],
+                source_text="src",
+                span_id=f"qe-{i}",
+            )
+            for i in range(4)
+        ]
+        provider = FakeTelemetryProvider(
+            _make_spans_df("cogniverse.query_enhancement", rows)
+        )
+
+        def failing_score(module, holdout):
+            raise RuntimeError("simba scorer failed")
+
+        result = self._run(provider, min_improvement=0.0, scorer=failing_score)
+
+        assert result == {
+            "status": "failed",
+            "error": "simba scorer failed",
+            **_selection_block(3, 3),
+        }
 
     def test_refuses_when_no_holdout_rows_are_scoreable(self):
         rows = [
@@ -2691,6 +2742,7 @@ class TestSimbaQueryEnhancement:
             "training_examples": 3,
             "holdout_examples": 0,
             "holdout_source": "served",
+            **_selection_block(3, 3),
         }
         assert provider.datasets.created == []
         assert self._active_version(provider, "simba_query_enhancement") is None
@@ -2721,6 +2773,7 @@ class TestSimbaQueryEnhancement:
             "min_unique_queries": 1,
             "version": 1,
         }
+        assert "selection" not in result
         lineage = self._lineage(provider)
         assert [(e["version"], e["decision"]) for e in lineage] == [
             (1, "insufficient_population")
@@ -2752,6 +2805,7 @@ class TestSimbaQueryEnhancement:
             "min_unique_queries": 3,
             "version": 1,
         }
+        assert "selection" not in result
         lineage = self._lineage(provider)
         assert [(e["version"], e["decision"]) for e in lineage] == [
             (1, "insufficient_population")
@@ -2786,6 +2840,7 @@ class TestSimbaQueryEnhancement:
             "training_examples": 3,
             "holdout_examples": 1,
             "holdout_source": "served",
+            **_selection_block(3, 3),
             "baseline_score": 0.5,
             "current_score": None,
             "candidate_score": 1.0,
@@ -2830,6 +2885,7 @@ class TestSimbaQueryEnhancement:
             "training_examples": 0,
             "holdout_examples": 1,
             "holdout_source": "served",
+            **_selection_block(0, 0),
             "baseline_score": 0.5,
             "current_score": None,
             "candidate_score": None,
@@ -2927,6 +2983,10 @@ class TestProfileSelectionOptimization:
                 state["activate_calls"].append((kind, key, version))
                 state["active_blob"] = state["versioned_saves"][version - 1]["content"]
                 return {"active": {"version": version, "activated_at": "now"}}
+
+            async def get_version_lineage(self, kind, key):
+                assert (kind, key) == ("model", "profile_selection")
+                return []
 
         class FakeTeleprompter:
             def compile(self, module, trainset):
@@ -3062,6 +3122,7 @@ class TestProfileSelectionOptimization:
             "training_examples": 3,
             "holdout_examples": 1,
             "holdout_source": "served",
+            **_selection_block(3, 3),
             "baseline_score": 1.0,
             "current_score": 1.0,
             "candidate_score": 1.0,
@@ -3133,6 +3194,7 @@ class TestProfileSelectionOptimization:
             "training_examples": 3,
             "holdout_examples": 1,
             "holdout_source": "served",
+            **_selection_block(3, 3),
             "baseline_score": 1.0,
             "current_score": 0.0,
             "candidate_score": 0.0,
@@ -3164,6 +3226,44 @@ class TestProfileSelectionOptimization:
         ]
         assert state["activate_calls"] == [("model", "profile_selection", 1)]
         assert state["active_blob"] == base_state
+
+    @pytest.mark.asyncio
+    async def test_score_failure_preserves_selection_block(self):
+        rows = [
+            _profile_span_row(
+                f"find clip {i}",
+                span_id=f"profile-{i}",
+                available_profiles=[
+                    "video_colpali_smol500_mv_frame",
+                    "video_colqwen_omni_mv_chunk_30s",
+                ],
+                selected_profile="video_colpali_smol500_mv_frame",
+            )
+            for i in range(4)
+        ]
+        provider = FakeTelemetryProvider(
+            _make_spans_df("cogniverse.profile_selection", rows)
+        )
+        served_state = self._served_state()
+
+        def failing_score(module, holdout):
+            raise RuntimeError("profile scorer failed")
+
+        state, result = await self._run(
+            provider,
+            current_blob=served_state,
+            floor=(1, 1),
+            score_by_module=failing_score,
+        )
+
+        assert state["versioned_saves"] == []
+        assert state["activate_calls"] == []
+        assert state["active_blob"] == served_state
+        assert result == {
+            "status": "failed",
+            "error": "profile scorer failed",
+            **_selection_block(3, 3),
+        }
 
     @pytest.mark.asyncio
     async def test_profile_below_population_floor_persists_without_activating(self):
@@ -3199,6 +3299,7 @@ class TestProfileSelectionOptimization:
             "min_unique_queries": 1,
             "version": 1,
         }
+        assert "selection" not in result
         assert state["versioned_saves"] == [
             {
                 "kind": "model",
@@ -3706,6 +3807,10 @@ class TestEntityExtractionOptimization:
                 state["active_blob"] = state["versioned_saves"][version - 1]["content"]
                 return {"active": {"version": version, "activated_at": "now"}}
 
+            async def get_version_lineage(self, kind, key):
+                assert (kind, key) == ("model", "entity_extraction")
+                return []
+
         class FakeTeleprompter:
             def compile(self, module, trainset):
                 state["compiled_module"] = type(module).__name__
@@ -3785,6 +3890,7 @@ class TestEntityExtractionOptimization:
             )
         assert result["status"] == "no_data"
         assert result["spans_found"] == 0
+        assert "selection" not in result
 
     def test_token_f1_casefolds_whitespace_tokens(self):
         from cogniverse_runtime.optimization_cli import _token_f1
@@ -3890,6 +3996,7 @@ class TestEntityExtractionOptimization:
         assert result["status"] == "no_data"
         assert result["spans_found"] == 1
         assert result["examples"] == 0
+        assert "selection" not in result
 
     @pytest.mark.asyncio
     async def test_entity_extraction_promote_persists_and_activates_candidate(self):
@@ -3930,6 +4037,7 @@ class TestEntityExtractionOptimization:
             "training_examples": 1,
             "holdout_examples": 1,
             "holdout_source": "served",
+            **_selection_block(1, 1),
             "baseline_score": 0.0,
             "current_score": None,
             "candidate_score": 1.0,
@@ -3985,6 +4093,7 @@ class TestEntityExtractionOptimization:
             "training_examples": 1,
             "holdout_examples": 1,
             "holdout_source": "served",
+            **_selection_block(1, 1),
             "baseline_score": 1.0,
             "current_score": 1.0,
             "candidate_score": 1.0,
@@ -4041,6 +4150,7 @@ class TestEntityExtractionOptimization:
             "training_examples": 1,
             "holdout_examples": 1,
             "holdout_source": "served",
+            **_selection_block(1, 1),
             "baseline_score": 1.0,
             "current_score": 0.0,
             "candidate_score": 1.0,
@@ -4062,6 +4172,42 @@ class TestEntityExtractionOptimization:
         ]
         assert state["activate_calls"] == [("model", "entity_extraction", 1)]
         assert state["active_blob"] == base_state
+
+    @pytest.mark.asyncio
+    async def test_score_failure_preserves_selection_block(self):
+        rows = [
+            {
+                "context.span_id": f"ee-{i}",
+                "attributes.input.value": f"find entity {i}",
+                "attributes.output.value": json.dumps(
+                    {"entities": [{"text": f"Entity {i}", "type": "CONCEPT"}]}
+                ),
+            }
+            for i in range(2)
+        ]
+        provider = FakeTelemetryProvider(
+            _make_spans_df("cogniverse.entity_extraction", rows)
+        )
+        current_blob = self._served_state()
+
+        def failing_score(module, holdout):
+            raise RuntimeError("entity scorer failed")
+
+        state, result = await self._run(
+            provider,
+            current_blob=current_blob,
+            floor=(1, 1),
+            score_by_module=failing_score,
+        )
+
+        assert state["versioned_saves"] == []
+        assert state["activate_calls"] == []
+        assert state["active_blob"] == current_blob
+        assert result == {
+            "status": "failed",
+            "error": "entity scorer failed",
+            **_selection_block(1, 1),
+        }
 
     @pytest.mark.asyncio
     async def test_entity_extraction_below_population_floor_persists_without_activating(
@@ -4097,6 +4243,7 @@ class TestEntityExtractionOptimization:
             "min_unique_queries": 1,
             "version": 1,
         }
+        assert "selection" not in result
         assert state["versioned_saves"] == [
             {
                 "kind": "model",

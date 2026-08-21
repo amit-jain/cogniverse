@@ -34,7 +34,12 @@ from cogniverse_agents.optimizer.example_selection import (
     TRAINING_SELECTION_DEFAULTS as _TRAINING_SELECTION_DEFAULTS,
 )
 from cogniverse_agents.optimizer.example_selection import (
+    SelectionReport,
     TrainingSelectionKnobs,
+    confirmation_stats,
+    decay_weight,
+    embed_texts,
+    select_training_records,
 )
 from cogniverse_core.durable import (
     PipelineCheckpoint,
@@ -1260,6 +1265,56 @@ def _shipped_training_selection_from_config(
     return shipped_training_selection
 
 
+def _selection_summary(selection_report: SelectionReport) -> Dict[str, Any]:
+    return {
+        "selection": {
+            "pool": selection_report.pool,
+            "deduped": selection_report.deduped,
+            "cap": selection_report.cap,
+            "mmr_applied": selection_report.mmr_applied,
+            "decayed_count": selection_report.decayed_count,
+        }
+    }
+
+
+async def _apply_training_selection(
+    *,
+    artifact_manager,
+    config_manager,
+    tenant_id: str,
+    optimizer_type: str,
+    artifact_key: str,
+    train_records: List[Dict[str, Any]],
+    embedder_url: Optional[str],
+) -> tuple[List[Dict[str, Any]], SelectionReport]:
+    lineage = await artifact_manager.get_version_lineage("model", artifact_key)
+    stats = confirmation_stats(lineage)
+    knobs = _training_selection_from_config(config_manager, tenant_id, optimizer_type)
+    pool = len(train_records)
+    if embedder_url is None and pool > knobs.trainset_cap:
+        raise RuntimeError(
+            "training selection requires --embedder-url when the pool exceeds "
+            f"trainset_cap (pool={pool} cap={knobs.trainset_cap})"
+        )
+
+    weights = {
+        record["example_id"]: decay_weight(
+            stats,
+            record["example_id"],
+            now=datetime.now(timezone.utc),
+            knobs=knobs,
+        )
+        for record in train_records
+    }
+    selected_records, selection_report = select_training_records(
+        train_records,
+        weights=weights,
+        knobs=knobs,
+        embed_fn=lambda texts: embed_texts(embedder_url, texts),
+    )
+    return selected_records, selection_report
+
+
 def _reflective_settings_from_config(tenant_id: str, config_manager=None):
     """The tenant's reflective-recompile toggles: (enable, min_failures, budget)."""
     from cogniverse_runtime.quality_monitor_cli import _load_automation_rules
@@ -2482,6 +2537,7 @@ async def run_simba_optimization(
     tenant_id: str,
     lookback_hours: float = 24.0,
     telemetry_otlp_endpoint: str | None = None,
+    embedder_url: Optional[str] = None,
 ) -> dict:
     """SIMBA query enhancement optimization.
 
@@ -2596,6 +2652,16 @@ async def run_simba_optimization(
     served_examples = production_count
     approved_examples = len(synthetic_demos)
     train_records, holdout_records = _split_served_holdout(records, min_holdout)
+    train_records, selection_report = await _apply_training_selection(
+        artifact_manager=artifact_manager,
+        config_manager=config_manager,
+        tenant_id=tenant_id,
+        optimizer_type="query_enhancement",
+        artifact_key=SIMBA_ARTIFACT_KEY,
+        train_records=train_records,
+        embedder_url=embedder_url,
+    )
+    selection_summary = _selection_summary(selection_report)
     trainset = [_query_enhancement_example(r) for r in train_records if r["trainable"]]
     non_trainable_examples = len(train_records) - len(trainset)
     holdout = [_query_enhancement_example(r) for r in holdout_records]
@@ -2622,6 +2688,7 @@ async def run_simba_optimization(
             "training_examples": len(trainset),
             "holdout_examples": 0,
             "holdout_source": "served",
+            **selection_summary,
         }
 
     import dspy
@@ -2653,6 +2720,7 @@ async def run_simba_optimization(
                 "training_examples": len(trainset),
                 "holdout_examples": 0,
                 "holdout_source": "served",
+                **selection_summary,
             }
 
         current_module = None
@@ -2681,7 +2749,7 @@ async def run_simba_optimization(
         )
     except Exception as e:
         logger.error("SIMBA compilation failed: %s", e)
-        return {"status": "failed", "error": str(e)}
+        return {"status": "failed", "error": str(e), **selection_summary}
 
     decision = _select_simba_artifact(
         baseline_score,
@@ -2732,6 +2800,7 @@ async def run_simba_optimization(
         "training_examples": len(trainset),
         "holdout_examples": len(holdout),
         "holdout_source": "served",
+        **selection_summary,
         "baseline_score": baseline_score,
         "current_score": current_score,
         "candidate_score": candidate_score,
@@ -3314,6 +3383,7 @@ async def run_profile_optimization(
     tenant_id: str,
     lookback_hours: float = 24.0,
     telemetry_otlp_endpoint: str | None = None,
+    embedder_url: Optional[str] = None,
 ) -> dict:
     """Profile selection optimization.
 
@@ -3437,6 +3507,16 @@ async def run_profile_optimization(
     served_examples = len(profile_pairs)
     approved_examples = len(synthetic_demos)
     train_records, holdout_records = _split_served_holdout(served_records, min_holdout)
+    train_records, selection_report = await _apply_training_selection(
+        artifact_manager=artifact_manager,
+        config_manager=config_manager,
+        tenant_id=tenant_id,
+        optimizer_type="profile_selection",
+        artifact_key="profile_selection",
+        train_records=train_records,
+        embedder_url=embedder_url,
+    )
+    selection_summary = _selection_summary(selection_report)
     trainset = [_profile_selection_example(record) for record in train_records]
     holdout = [_profile_selection_example(record) for record in holdout_records]
     logger.info(
@@ -3458,6 +3538,7 @@ async def run_profile_optimization(
             "training_examples": len(trainset),
             "holdout_examples": 0,
             "holdout_source": "served",
+            **selection_summary,
         }
 
     import dspy
@@ -3501,7 +3582,7 @@ async def run_profile_optimization(
         )
     except Exception as e:
         logger.error("Profile DSPy compilation failed: %s", e)
-        return {"status": "failed", "error": str(e)}
+        return {"status": "failed", "error": str(e), **selection_summary}
 
     decision = _select_simba_artifact(
         baseline_score,
@@ -3545,6 +3626,7 @@ async def run_profile_optimization(
         "training_examples": len(trainset),
         "holdout_examples": len(holdout),
         "holdout_source": "served",
+        **selection_summary,
         "baseline_score": baseline_score,
         "current_score": current_score,
         "candidate_score": candidate_score,
@@ -3558,6 +3640,7 @@ async def run_entity_extraction_optimization(
     tenant_id: str,
     lookback_hours: float = 24.0,
     telemetry_otlp_endpoint: str | None = None,
+    embedder_url: Optional[str] = None,
 ) -> dict:
     """Entity extraction optimization.
 
@@ -3673,6 +3756,16 @@ async def run_entity_extraction_optimization(
         min_holdout,
         scoreable_predicate=_entity_extraction_is_scoreable,
     )
+    train_records, selection_report = await _apply_training_selection(
+        artifact_manager=artifact_manager,
+        config_manager=config_manager,
+        tenant_id=tenant_id,
+        optimizer_type="entity_extraction",
+        artifact_key="entity_extraction",
+        train_records=train_records,
+        embedder_url=embedder_url,
+    )
+    selection_summary = _selection_summary(selection_report)
 
     import dspy
 
@@ -3709,6 +3802,7 @@ async def run_entity_extraction_optimization(
             "training_examples": len(trainset),
             "holdout_examples": 0,
             "holdout_source": "served",
+            **selection_summary,
         }
     from cogniverse_agents.entity_extraction_agent import EntityExtractionModule
     from cogniverse_foundation.config.llm_factory import create_dspy_lm
@@ -3749,7 +3843,7 @@ async def run_entity_extraction_optimization(
         )
     except Exception as e:
         logger.error("Entity extraction DSPy compilation failed: %s", e)
-        return {"status": "failed", "error": str(e)}
+        return {"status": "failed", "error": str(e), **selection_summary}
 
     decision = _select_simba_artifact(
         baseline_score,
@@ -3793,6 +3887,7 @@ async def run_entity_extraction_optimization(
         "training_examples": len(trainset),
         "holdout_examples": len(holdout),
         "holdout_source": "served",
+        **selection_summary,
         "baseline_score": baseline_score,
         "current_score": current_score,
         "candidate_score": candidate_score,
@@ -4947,6 +5042,11 @@ def build_parser() -> argparse.ArgumentParser:
         "= 6 minutes) so e2e tests can scope to the current fixture "
         "window without picking up spans from earlier runs.",
     )
+    parser.add_argument(
+        "--embedder-url",
+        default=None,
+        help="DenseOn embeddings endpoint for training selection.",
+    )
     return parser
 
 
@@ -4984,9 +5084,16 @@ def main():
     )
 
     from cogniverse_runtime.entrypoint_env import resolve_library_env_defaults
+    from cogniverse_runtime.inference_services import parse_inference_service_urls
 
     runtime_env = resolve_library_env_defaults()
     telemetry_otlp_endpoint = runtime_env["telemetry_otlp_endpoint"]
+    inference_service_urls = parse_inference_service_urls(
+        os.environ.get("INFERENCE_SERVICE_URLS")
+    )
+    embedder_url = args.embedder_url
+    if embedder_url is None and inference_service_urls is not None:
+        embedder_url = inference_service_urls.get("denseon")
 
     if (
         args.mode not in ("cleanup", "egress-netpol", "monthly-reports")
@@ -5037,6 +5144,7 @@ def main():
                     tenant_id=args.tenant_id,
                     lookback_hours=args.lookback_hours,
                     telemetry_otlp_endpoint=telemetry_otlp_endpoint,
+                    embedder_url=embedder_url,
                 )
             )
         elif args.mode == "workflow":
@@ -5077,6 +5185,7 @@ def main():
                     tenant_id=args.tenant_id,
                     lookback_hours=args.lookback_hours,
                     telemetry_otlp_endpoint=telemetry_otlp_endpoint,
+                    embedder_url=embedder_url,
                 )
             )
         elif args.mode == "entity-extraction":
@@ -5085,6 +5194,7 @@ def main():
                     tenant_id=args.tenant_id,
                     lookback_hours=args.lookback_hours,
                     telemetry_otlp_endpoint=telemetry_otlp_endpoint,
+                    embedder_url=embedder_url,
                 )
             )
         elif args.mode == "rollback":

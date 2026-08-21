@@ -10,10 +10,30 @@ from cogniverse_agents.optimizer.example_selection import (
     TrainingSelectionKnobs,
     confirmation_stats,
     decay_weight,
+    embed_texts,
     select_training_records,
 )
 
 pytestmark = [pytest.mark.unit, pytest.mark.ci_fast]
+
+
+def _selection_block(
+    pool: int,
+    deduped: int,
+    *,
+    cap: int = 300,
+    mmr_applied: bool = False,
+    decayed_count: int = 0,
+) -> dict[str, dict[str, int | bool]]:
+    return {
+        "selection": {
+            "pool": pool,
+            "deduped": deduped,
+            "cap": cap,
+            "mmr_applied": mmr_applied,
+            "decayed_count": decayed_count,
+        }
+    }
 
 
 LEDGER = [
@@ -306,3 +326,23 @@ def test_mmr_embeds_deduped_queries_once_in_order():
         selected_ids=["span:a", "span:d"],
     )
     assert calls == [["Alpha", "beta", "Gamma"]]
+
+
+def test_dead_port_embedder_raises_runtime_error():
+    with pytest.raises(
+        RuntimeError,
+        match=r"training-selection embedder at http://127\.0\.0\.1:29071 failed:",
+    ):
+        select_training_records(
+            [
+                {"example_id": "span:a", "query": "alpha"},
+                {"example_id": "span:b", "query": "beta"},
+            ],
+            weights={"span:a": 1.0, "span:b": 1.0},
+            knobs=TrainingSelectionKnobs(1, 0.7, 3, 14, 0.5),
+            embed_fn=lambda texts: embed_texts(
+                "http://127.0.0.1:29071",
+                texts,
+                timeout=1.0,
+            ),
+        )
