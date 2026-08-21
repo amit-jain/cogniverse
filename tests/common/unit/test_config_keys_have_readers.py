@@ -102,7 +102,6 @@ COMMON_RATCHET_KEYS = {
     "ollama_bge",
     "ollama_config",
     "ollama_mxbai",
-    "optimization_config",
     "optimization_improvement_threshold",
     "output_rails",
     "performance_degradation_threshold",
