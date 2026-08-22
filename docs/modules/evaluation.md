@@ -1032,7 +1032,7 @@ metadata: dict[str, Any]
 
 **Main Methods:**
 
-#### `get_traces(start_time: datetime | None = None, end_time: datetime | None = None, operation_filter: str | None = None, limit: int = 10000, project_name: str | None = None) -> list[TraceMetrics]`
+#### `get_traces(start_time: datetime | None = None, end_time: datetime | None = None, operation_filter: str | None = None, limit: int = 10000, *, project_name: str) -> list[TraceMetrics]`
 Fetch traces from Phoenix with filters.
 
 **Parameters:**
@@ -1051,12 +1051,16 @@ Fetch traces from Phoenix with filters.
 
 **Example:**
 ```python
+tenant_id = "your_org:production"
+project_name = f"cogniverse-{tenant_id}"
+
 analytics = PhoenixAnalytics()
 
 # Get search operations from last hour
 traces = analytics.get_traces(
     start_time=datetime.now() - timedelta(hours=1),
-    operation_filter="search_service\\..*"
+    operation_filter="search_service\\..*",
+    project_name=project_name,
 )
 
 print(f"Fetched {len(traces)} search traces")
@@ -1091,8 +1095,11 @@ Calculate comprehensive statistics from traces.
 
 **Example:**
 ```python
+tenant_id = "your_org:production"
+project_name = f"cogniverse-{tenant_id}"
+
 analytics = PhoenixAnalytics()
-traces = analytics.get_traces()
+traces = analytics.get_traces(project_name=project_name)
 
 # Overall stats
 stats = analytics.calculate_statistics(traces)
@@ -1117,8 +1124,11 @@ Create interactive Plotly visualizations.
 
 **Example:**
 ```python
+tenant_id = "your_org:production"
+project_name = f"cogniverse-{tenant_id}"
+
 analytics = PhoenixAnalytics()
-traces = analytics.get_traces()
+traces = analytics.get_traces(project_name=project_name)
 
 # Time series with P50/P95 bands
 fig_time = analytics.create_time_series_plot(
@@ -1150,19 +1160,23 @@ fig_heat.show()
 
 ---
 
-#### `generate_report(start_time: datetime | None = None, end_time: datetime | None = None, output_file: str | None = None) -> dict[str, Any]`
+#### `generate_report(start_time: datetime | None = None, end_time: datetime | None = None, output_file: str | None = None, *, project_name: str) -> dict[str, Any]`
 Generate comprehensive analytics report.
 
 **Returns:** Report dictionary with summary, statistics, and visualizations (as JSON)
 
 **Example:**
 ```python
+tenant_id = "your_org:production"
+project_name = f"cogniverse-{tenant_id}"
+
 analytics = PhoenixAnalytics()
 
 # Generate last 24h report
 report = analytics.generate_report(
     start_time=datetime.now() - timedelta(days=1),
-    output_file="outputs/analytics_report.json"
+    output_file="outputs/analytics_report.json",
+    project_name=project_name,
 )
 
 print(f"Analyzed {report['summary']['total_requests']} requests")
@@ -1214,7 +1228,11 @@ in the window; a telemetry outage raises (never flattened into an empty frame).
 
 **Example:**
 ```python
-evaluator = SpanEvaluator(tenant_id="your_org:production")
+tenant_id = "your_org:production"
+evaluator = SpanEvaluator(
+    tenant_id=tenant_id,
+    project_name=f"cogniverse-{tenant_id}",
+)
 
 # Get last 6 hours of search spans
 spans_df = await evaluator.get_recent_spans(
@@ -1254,7 +1272,11 @@ Evaluate spans using specified evaluators.
 
 **Example:**
 ```python
-evaluator = SpanEvaluator(tenant_id="your_org:production")
+tenant_id = "your_org:production"
+evaluator = SpanEvaluator(
+    tenant_id=tenant_id,
+    project_name=f"cogniverse-{tenant_id}",
+)
 
 # Get spans
 spans_df = await evaluator.get_recent_spans(hours=24)
@@ -1278,7 +1300,11 @@ Upload evaluation results as annotations.
 
 **Example:**
 ```python
-evaluator = SpanEvaluator(tenant_id="your_org:production")
+tenant_id = "your_org:production"
+evaluator = SpanEvaluator(
+    tenant_id=tenant_id,
+    project_name=f"cogniverse-{tenant_id}",
+)
 
 # Evaluate spans
 spans_df = await evaluator.get_recent_spans()
@@ -1536,7 +1562,7 @@ class EvaluationProvider(ABC):
     def get_dataset_url(self, dataset_id: str) -> str: ...
 
 class AnalyticsProvider(ABC):
-    async def get_traces(self, start_time=None, end_time=None, operation_filter=None, limit=10000) -> list[TraceMetrics]: ...
+    async def get_traces(self, start_time=None, end_time=None, operation_filter=None, limit=10000, *, project_name: str) -> list[TraceMetrics]: ...
     def calculate_statistics(self, traces: list[TraceMetrics]) -> dict[str, Any]: ...
     def create_time_series_plot(self, traces, metric="duration") -> Any: ...
     def create_distribution_plot(self, traces, metric="duration") -> Any: ...
@@ -1793,7 +1819,7 @@ of masquerading as no-data.
 TelemetryStorage(config: ConnectionConfig | None = None)
 
 storage.log_experiment_results(...)
-storage.get_traces_for_evaluation(trace_ids: list[str] | None = None, start_time: datetime | None = None, limit: int = 1000) -> pd.DataFrame
+storage.get_traces_for_evaluation(trace_ids: list[str] | None = None, start_time: datetime | None = None, limit: int = 1000, *, project: str) -> pd.DataFrame
 storage.get_metrics() -> dict
 storage.shutdown()
 # Context-manager: `with TelemetryStorage() as storage: ...`
@@ -2250,13 +2276,16 @@ analytics = PhoenixAnalytics(telemetry_url="http://localhost:6006")
 # Define analysis period
 end_time = datetime.now()
 start_time = end_time - timedelta(days=7)
+tenant_id = "your_org:production"
+project_name = f"cogniverse-{tenant_id}"
 
 # Fetch traces
 traces = analytics.get_traces(
     start_time=start_time,
     end_time=end_time,
     operation_filter="search_service\\..*",
-    limit=10000
+    limit=10000,
+    project_name=project_name,
 )
 
 print(f"Analyzing {len(traces)} search traces from last 7 days")
@@ -2330,7 +2359,8 @@ print("✅ Visualizations saved to outputs/")
 report = analytics.generate_report(
     start_time=start_time,
     end_time=end_time,
-    output_file="outputs/analytics_report.json"
+    output_file="outputs/analytics_report.json",
+    project_name=project_name,
 )
 
 print(f"\n✅ Full report saved to outputs/analytics_report.json")
@@ -2349,7 +2379,11 @@ from cogniverse_evaluation.span_evaluator import SpanEvaluator
 
 async def evaluate_historical_spans():
     """Evaluate spans from the past week."""
-    evaluator = SpanEvaluator(tenant_id="your_org:production")
+    tenant_id = "your_org:production"
+    evaluator = SpanEvaluator(
+        tenant_id=tenant_id,
+        project_name=f"cogniverse-{tenant_id}",
+    )
 
     # Get spans from last week
     spans_df = await evaluator.get_recent_spans(
@@ -2478,11 +2512,14 @@ async def production_monitoring_pipeline():
 
     # 2. Analytics and outlier detection
     print("\n[2/3] Analyzing Search Performance...")
+    tenant_id = "your_org:production"
+    project_name = f"cogniverse-{tenant_id}"
     analytics = PhoenixAnalytics()
     traces = analytics.get_traces(
         start_time=start_time,
         end_time=end_time,
-        operation_filter="search_service\\..*"
+        operation_filter="search_service\\..*",
+        project_name=project_name,
     )
     stats = analytics.calculate_statistics(traces)
 
@@ -2501,7 +2538,10 @@ async def production_monitoring_pipeline():
 
     # 3. Span quality evaluation
     print("\n[3/3] Evaluating Search Quality...")
-    span_eval = SpanEvaluator(tenant_id="your_org:production")
+    span_eval = SpanEvaluator(
+        tenant_id=tenant_id,
+        project_name=project_name,
+    )
     spans_df = await span_eval.get_recent_spans(hours=6, limit=500)
     eval_results = await span_eval.evaluate_spans(
         spans_df,

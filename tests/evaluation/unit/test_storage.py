@@ -9,6 +9,7 @@ import pandas as pd
 import pytest
 from opentelemetry.sdk.trace.export import SpanExportResult
 
+from cogniverse_core.common.tenant_utils import TEST_TENANT_ID
 from cogniverse_evaluation.data.storage import (
     ConnectionConfig,
     ConnectionState,
@@ -16,6 +17,8 @@ from cogniverse_evaluation.data.storage import (
     MonitoredSpanExporter,
     TelemetryStorage,
 )
+
+TEST_PROJECT_NAME = f"cogniverse-{TEST_TENANT_ID}"
 
 
 class TestConnectionConfig:
@@ -387,14 +390,20 @@ class TestTelemetryStorage:
                 storage = TelemetryStorage(config)
 
                 # Test regular query
-                df = storage.get_traces_for_evaluation(limit=10)
+                df = storage.get_traces_for_evaluation(
+                    limit=10, project=TEST_PROJECT_NAME
+                )
                 assert len(df) == 2
 
-                df = storage.get_traces_for_evaluation(limit=10)
+                df = storage.get_traces_for_evaluation(
+                    limit=10, project=TEST_PROJECT_NAME
+                )
                 # Verify the async mock was called with expected args
+                assert mock_provider.telemetry.traces.get_spans.call_count == 3
                 assert (
-                    mock_provider.telemetry.traces.get_spans.call_count >= 2
-                )  # init + actual calls
+                    mock_provider.telemetry.traces.get_spans.call_args.kwargs["project"]
+                    == TEST_PROJECT_NAME
+                )
 
     @pytest.mark.unit
     def test_get_traces_with_trace_ids(
@@ -427,7 +436,9 @@ class TestTelemetryStorage:
             with patch("cogniverse_evaluation.data.storage.trace"):
                 storage = TelemetryStorage(config)
 
-                df = storage.get_traces_for_evaluation(trace_ids=["trace1", "trace2"])
+                df = storage.get_traces_for_evaluation(
+                    trace_ids=["trace1", "trace2"], project=TEST_PROJECT_NAME
+                )
 
                 # Only trace1 and trace2 are returned, trace3 is filtered out
                 assert len(df) == 2
@@ -445,7 +456,7 @@ class TestTelemetryStorage:
         storage.metrics = ExportMetrics()
 
         with pytest.raises(ConnectionError, match="not connected"):
-            storage.get_traces_for_evaluation()
+            storage.get_traces_for_evaluation(project=TEST_PROJECT_NAME)
 
     @pytest.mark.unit
     def test_get_traces_with_error(self, mock_phoenix_client, mock_provider, config):
@@ -465,7 +476,7 @@ class TestTelemetryStorage:
                 with pytest.raises(
                     RuntimeError, match="Failed to fetch traces: Query failed"
                 ):
-                    storage.get_traces_for_evaluation()
+                    storage.get_traces_for_evaluation(project=TEST_PROJECT_NAME)
 
     @pytest.mark.unit
     def test_get_metrics(self, mock_provider, config):
@@ -685,7 +696,9 @@ class TestDisconnectedReadContract:
                 storage.connection_state = ConnectionState.DISCONNECTED
 
                 with pytest.raises(ConnectionError, match="not connected"):
-                    storage.get_traces_for_evaluation(limit=5)
+                    storage.get_traces_for_evaluation(
+                        limit=5, project=TEST_PROJECT_NAME
+                    )
 
 
 class TestEnableMetricsToggle:
@@ -799,3 +812,48 @@ class TestShutdownReconnectRace:
                     "reconnect resurrected the provider after shutdown"
                 )
                 assert storage.connection_state == ConnectionState.DISCONNECTED
+
+
+class TestTraceReadProjectContract:
+    @pytest.mark.unit
+    def test_get_traces_for_evaluation_requires_project_and_uses_it(self):
+        from unittest.mock import AsyncMock
+
+        tenant_id = "acme:acme"
+        project = f"cogniverse-{tenant_id}"
+        expected = pd.DataFrame([{"trace_id": "trace-1", "name": "trace"}])
+
+        provider = Mock()
+        provider.telemetry = Mock()
+        provider.telemetry.traces = Mock()
+        provider.telemetry.traces.get_spans = AsyncMock(return_value=expected)
+
+        telemetry_manager = Mock()
+        telemetry_manager.register_project = Mock()
+
+        config = ConnectionConfig(
+            max_retries=1,
+            retry_delay_seconds=0.01,
+            enable_health_checks=False,
+        )
+
+        with patch(
+            "cogniverse_foundation.telemetry.manager.get_telemetry_manager",
+            return_value=telemetry_manager,
+        ):
+            with patch(
+                "cogniverse_evaluation.providers.get_evaluation_provider",
+                return_value=provider,
+            ):
+                with patch("cogniverse_evaluation.data.storage.trace"):
+                    storage = TelemetryStorage(config)
+
+                    with pytest.raises(TypeError, match="project"):
+                        storage.get_traces_for_evaluation(limit=10)
+
+                    df = storage.get_traces_for_evaluation(limit=10, project=project)
+
+        assert df.to_dict(orient="records") == expected.to_dict(orient="records")
+        assert (
+            provider.telemetry.traces.get_spans.call_args.kwargs["project"] == project
+        )

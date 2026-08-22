@@ -1,8 +1,7 @@
 """Real-Phoenix test for the Analytics tab's tenant-scoped trace fetch.
 
-The tab called get_traces() with no project, so it queried Phoenix's ``default``
-project and real tenant traffic showed "No traces found". fetch_tenant_traces
-derives the tenant project so it can't be forgotten.
+fetch_tenant_traces derives the tenant project, and get_traces requires an
+explicit project_name.
 """
 
 from __future__ import annotations
@@ -48,8 +47,7 @@ def test_fetch_tenant_traces_scopes_to_tenant_project(
         time.sleep(2)
     assert found is not None, "tenant trace not found via fetch_tenant_traces"
 
-    # Without the tenant project, get_traces queries Phoenix's 'default' project
-    # and misses tenant traffic — the exact bug the tab had.
+    # get_traces requires an explicit project_name.
     end = datetime.now(timezone.utc)
-    default_traces = analytics.get_traces(start_time=start, end_time=end)
-    assert not any(t.operation == op_name for t in default_traces)
+    with pytest.raises(TypeError, match="project_name"):
+        analytics.get_traces(start_time=start, end_time=end)

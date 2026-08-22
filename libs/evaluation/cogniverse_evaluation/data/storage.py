@@ -30,6 +30,8 @@ from cogniverse_core.common.utils.async_polling import wait_for_retry_backoff
 
 logger = logging.getLogger(__name__)
 
+EVALUATION_PROJECT_NAME = "evaluation"
+
 
 class ConnectionState(Enum):
     """Telemetry connection states."""
@@ -220,7 +222,7 @@ class TelemetryStorage:
                 telemetry_manager = get_telemetry_manager()
                 telemetry_manager.register_project(
                     tenant_id=SYSTEM_TENANT_ID,
-                    project_name="evaluation",
+                    project_name=EVALUATION_PROJECT_NAME,
                     http_endpoint=self.config.http_endpoint,
                     grpc_endpoint=self.config.otlp_endpoint,
                 )
@@ -228,7 +230,7 @@ class TelemetryStorage:
                 self.provider = get_evaluation_provider(
                     tenant_id=SYSTEM_TENANT_ID,
                     config={
-                        "project_name": "evaluation",
+                        "project_name": EVALUATION_PROJECT_NAME,
                         "http_endpoint": self.config.http_endpoint,
                         "grpc_endpoint": self.config.otlp_endpoint,
                     },
@@ -237,7 +239,7 @@ class TelemetryStorage:
                 async def _probe():
                     await asyncio.wait_for(
                         self.provider.telemetry.traces.get_spans(
-                            project="cogniverse-default", limit=1
+                            project=EVALUATION_PROJECT_NAME, limit=1
                         ),
                         timeout=self.config.connection_timeout_seconds,
                     )
@@ -361,14 +363,14 @@ class TelemetryStorage:
                             _ = pool.submit(
                                 lambda: asyncio.run(
                                     self.provider.telemetry.traces.get_spans(
-                                        project="cogniverse-default", limit=1
+                                        project=EVALUATION_PROJECT_NAME, limit=1
                                     )
                                 )
                             ).result()
                     except RuntimeError:
                         _ = asyncio.run(
                             self.provider.telemetry.traces.get_spans(
-                                project="cogniverse-default", limit=1
+                                project=EVALUATION_PROJECT_NAME, limit=1
                             )
                         )
                     return
@@ -467,7 +469,8 @@ class TelemetryStorage:
         trace_ids: Optional[List[str]] = None,
         start_time: Optional[datetime] = None,
         limit: int = 1000,
-        project: Optional[str] = None,
+        *,
+        project: str,
     ) -> pd.DataFrame:
         """
         Get traces from the telemetry backend for ``project``.
@@ -475,20 +478,20 @@ class TelemetryStorage:
         ``project`` MUST be a project that production agents write to (the
         canonical ``cogniverse-{org:tenant}``); the historical
         ``cogniverse-default`` fallback is a project no writer emits to, so
-        omitting it yields an always-empty read. Callers derive it from a
-        tenant.
+        the project is required and callers derive it from a tenant.
 
         Raises:
             ConnectionError: If telemetry is not connected.
             RuntimeError: If the fetch fails while connected.
         """
+        if not project:
+            raise ValueError("project is required")
+
         if self.connection_state != ConnectionState.CONNECTED:
             raise ConnectionError(
                 "Telemetry backend not connected — trace read unavailable "
                 f"(state={self.connection_state.value})"
             )
-
-        project = project or "cogniverse-default"
 
         import asyncio
         import concurrent.futures
