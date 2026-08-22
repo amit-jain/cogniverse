@@ -240,6 +240,14 @@ class TestReconcilePreserveBoth:
 # ---------------------------------------------------------------------------
 
 
+# entity_fact's default_trust (0.5) times each derivation weight, computed by
+# hand so the expectation does not restate the product's weights table.
+_EXPECTED_INITIAL_TRUST = {
+    DerivationKind.DIRECT_INGEST: 0.60,
+    DerivationKind.AGENT_INFERENCE: 0.35,
+}
+
+
 def _write_with_trust(
     mm: Mem0MemoryManager,
     *,
@@ -293,9 +301,10 @@ def _write_with_trust(
     ]
     assert provenance["trace_id"] is None
 
+    expected_trust = _EXPECTED_INITIAL_TRUST[derivation_kind]
     trust = persisted_meta["trust"]
-    assert trust["score"] == pytest.approx(0.6)
-    assert trust["initial_score"] == pytest.approx(0.6)
+    assert trust["score"] == pytest.approx(expected_trust)
+    assert trust["initial_score"] == pytest.approx(expected_trust)
     assert trust["endorsements"] == 0
     return mid
 
