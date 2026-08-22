@@ -99,15 +99,19 @@ class RoutingEvaluator:
     def __init__(
         self,
         provider: "TelemetryProvider",
-        project_name: str = "cogniverse-default-routing-optimization",
+        *,
+        project_name: str,
     ):
         """
         Initialize routing evaluator.
 
         Args:
             provider: Telemetry provider for querying spans
-            project_name: Project name for routing optimization (default: cogniverse-default-routing-optimization)
+            project_name: Project name for routing optimization
         """
+        if not project_name:
+            raise ValueError("project_name is required")
+
         self.provider = provider
         self.project_name = project_name
         self.logger = logging.getLogger(__name__)

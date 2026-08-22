@@ -18,6 +18,12 @@ from cogniverse_evaluation.evaluators.routing_evaluator import (
 
 pytestmark = pytest.mark.unit
 
+TEST_PROJECT_NAME = "cogniverse-test-routing-optimization"
+
+
+def _routing_evaluator(provider):
+    return RoutingEvaluator(provider=provider, project_name=TEST_PROJECT_NAME)
+
 
 @pytest.fixture
 def mock_provider():
@@ -30,16 +36,26 @@ def mock_provider():
 class TestRoutingEvaluator:
     """Test RoutingEvaluator initialization and basic functionality"""
 
+    def test_evaluator_requires_project_name(self, mock_provider):
+        """Test RoutingEvaluator rejects omission of the project name."""
+        with pytest.raises(TypeError) as excinfo:
+            RoutingEvaluator(provider=mock_provider)
+
+        assert (
+            str(excinfo.value)
+            == "RoutingEvaluator.__init__() missing 1 required keyword-only argument: 'project_name'"
+        )
+
     def test_evaluator_initialization(self, mock_provider):
         """Test RoutingEvaluator initializes correctly"""
-        evaluator = RoutingEvaluator(provider=mock_provider)
+        evaluator = _routing_evaluator(mock_provider)
         assert evaluator.provider is not None
         assert evaluator.logger is not None
 
     def test_evaluator_with_custom_provider(self, mock_provider):
         """Test RoutingEvaluator accepts custom provider"""
         custom_provider = MagicMock()
-        evaluator = RoutingEvaluator(provider=custom_provider)
+        evaluator = _routing_evaluator(custom_provider)
         assert evaluator.provider is custom_provider
 
 
@@ -48,7 +64,7 @@ class TestRoutingDecisionEvaluation:
 
     def test_evaluate_successful_routing_decision(self, mock_provider):
         """Test evaluation of a successful routing decision"""
-        evaluator = RoutingEvaluator(provider=mock_provider)
+        evaluator = _routing_evaluator(mock_provider)
 
         span_data = {
             "name": "cogniverse.routing",
@@ -73,7 +89,7 @@ class TestRoutingDecisionEvaluation:
 
     def test_evaluate_failed_routing_decision(self, mock_provider):
         """Test evaluation of a failed routing decision"""
-        evaluator = RoutingEvaluator(provider=mock_provider)
+        evaluator = _routing_evaluator(mock_provider)
 
         span_data = {
             "name": "cogniverse.routing",
@@ -96,7 +112,7 @@ class TestRoutingDecisionEvaluation:
 
     def test_evaluate_ambiguous_routing_decision(self, mock_provider):
         """Test evaluation of ambiguous routing decision (no parent span)"""
-        evaluator = RoutingEvaluator(provider=mock_provider)
+        evaluator = _routing_evaluator(mock_provider)
 
         span_data = {
             "name": "cogniverse.routing",
@@ -116,7 +132,7 @@ class TestRoutingDecisionEvaluation:
 
     def test_evaluate_invalid_span_name(self, mock_provider):
         """Test that evaluator raises error for non-routing spans"""
-        evaluator = RoutingEvaluator(provider=mock_provider)
+        evaluator = _routing_evaluator(mock_provider)
 
         span_data = {
             "name": "cogniverse.search",  # Wrong span name
@@ -128,7 +144,7 @@ class TestRoutingDecisionEvaluation:
 
     def test_evaluate_missing_required_attributes(self, mock_provider):
         """Test that evaluator raises error when required attributes are missing"""
-        evaluator = RoutingEvaluator(provider=mock_provider)
+        evaluator = _routing_evaluator(mock_provider)
 
         span_data = {
             "name": "cogniverse.routing",
@@ -146,7 +162,7 @@ class TestMetricsCalculation:
 
     def test_calculate_metrics_with_all_successful(self, mock_provider):
         """Test metrics calculation when all routing decisions succeed"""
-        evaluator = RoutingEvaluator(provider=mock_provider)
+        evaluator = _routing_evaluator(mock_provider)
 
         routing_spans = [
             {
@@ -184,7 +200,7 @@ class TestMetricsCalculation:
 
     def test_calculate_metrics_with_mixed_outcomes(self, mock_provider):
         """Test metrics calculation with mixed success/failure"""
-        evaluator = RoutingEvaluator(provider=mock_provider)
+        evaluator = _routing_evaluator(mock_provider)
 
         routing_spans = [
             {
@@ -231,14 +247,14 @@ class TestMetricsCalculation:
 
     def test_calculate_metrics_empty_list_raises_error(self, mock_provider):
         """Test that empty span list raises ValueError"""
-        evaluator = RoutingEvaluator(provider=mock_provider)
+        evaluator = _routing_evaluator(mock_provider)
 
         with pytest.raises(ValueError, match="Cannot calculate metrics from empty"):
             evaluator.calculate_metrics([])
 
     def test_calculate_metrics_all_invalid_spans_raises_error(self, mock_provider):
         """Test that list with only invalid spans raises ValueError"""
-        evaluator = RoutingEvaluator(provider=mock_provider)
+        evaluator = _routing_evaluator(mock_provider)
 
         invalid_spans = [
             {
@@ -256,7 +272,7 @@ class TestConfidenceCalibration:
 
     def test_perfect_calibration(self, mock_provider):
         """Test confidence calibration with perfect correlation"""
-        evaluator = RoutingEvaluator(provider=mock_provider)
+        evaluator = _routing_evaluator(mock_provider)
 
         # High confidence => success, low confidence => failure
         routing_spans = [
@@ -295,7 +311,7 @@ class TestPerAgentMetrics:
 
     def test_per_agent_precision(self, mock_provider):
         """Test precision calculation for different agents"""
-        evaluator = RoutingEvaluator(provider=mock_provider)
+        evaluator = _routing_evaluator(mock_provider)
 
         routing_spans = [
             # Video search: 2 success, 1 failure
@@ -381,7 +397,7 @@ class TestProviderQuery:
         )
         mock_provider.traces.get_spans = AsyncMock(return_value=mock_df)
 
-        evaluator = RoutingEvaluator(provider=mock_provider)
+        evaluator = _routing_evaluator(mock_provider)
         spans = await evaluator.query_routing_spans(limit=10)
 
         assert len(spans) == 1
@@ -396,7 +412,7 @@ class TestProviderQuery:
 
         mock_provider.traces.get_spans = AsyncMock(return_value=pd.DataFrame())
 
-        evaluator = RoutingEvaluator(provider=mock_provider)
+        evaluator = _routing_evaluator(mock_provider)
         spans = await evaluator.query_routing_spans()
 
         assert spans == []
@@ -410,7 +426,7 @@ class TestProviderQuery:
 
         mock_provider.traces.get_spans = AsyncMock(return_value=pd.DataFrame())
 
-        evaluator = RoutingEvaluator(provider=mock_provider)
+        evaluator = _routing_evaluator(mock_provider)
         start = datetime(2024, 1, 1)
         end = datetime(2024, 1, 31)
 
@@ -418,7 +434,7 @@ class TestProviderQuery:
 
         # Verify get_spans was called with time range and project name
         mock_provider.traces.get_spans.assert_called_once_with(
-            project="cogniverse-default-routing-optimization",
+            project=TEST_PROJECT_NAME,
             start_time=start,
             end_time=end,
             filters={"name": "cogniverse.routing"},
@@ -434,7 +450,7 @@ class TestProviderQuery:
             side_effect=Exception("Telemetry provider connection failed")
         )
 
-        evaluator = RoutingEvaluator(provider=mock_provider)
+        evaluator = _routing_evaluator(mock_provider)
 
         with pytest.raises(RuntimeError, match="Failed to query routing spans"):
             await evaluator.query_routing_spans()
@@ -483,7 +499,7 @@ class TestQueryRoutingSpansAwaited:
         provider = MagicMock()
         provider.traces = MagicMock()
         provider.traces.get_spans = AsyncMock(return_value=pd.DataFrame(spans))
-        evaluator = RoutingEvaluator(provider=provider)
+        evaluator = _routing_evaluator(provider)
 
         result = asyncio.run(evaluator.query_routing_spans(limit=1000))
         # Must be a concrete list, never a coroutine.
@@ -502,7 +518,7 @@ class TestConfidenceCoercion:
     router lost ALL routing metrics."""
 
     def test_label_confidence_is_coerced(self, mock_provider):
-        evaluator = RoutingEvaluator(provider=mock_provider)
+        evaluator = _routing_evaluator(mock_provider)
         span_data = {
             "name": "cogniverse.routing",
             "status_code": "OK",
@@ -519,7 +535,7 @@ class TestConfidenceCoercion:
         assert 0.0 < metrics["confidence"] <= 1.0
 
     def test_percent_confidence_is_coerced(self, mock_provider):
-        evaluator = RoutingEvaluator(provider=mock_provider)
+        evaluator = _routing_evaluator(mock_provider)
         span_data = {
             "name": "cogniverse.routing",
             "status_code": "OK",
@@ -541,7 +557,7 @@ class TestLatencyAndNumpyCoercion:
         """A span with a None/list processing_time must not raise a TypeError
         that aborts the whole calculate_metrics batch — the ValueError-only
         caller guard didn't catch it."""
-        evaluator = RoutingEvaluator(provider=mock_provider)
+        evaluator = _routing_evaluator(mock_provider)
         span = {
             "name": "cogniverse.routing",
             "status_code": "OK",
@@ -560,7 +576,7 @@ class TestLatencyAndNumpyCoercion:
         1.0, not silently to 0.0."""
         import numpy as np
 
-        evaluator = RoutingEvaluator(provider=mock_provider)
+        evaluator = _routing_evaluator(mock_provider)
         span = {
             "name": "cogniverse.routing",
             "status_code": "OK",
