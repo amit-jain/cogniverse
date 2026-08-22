@@ -2,6 +2,8 @@ from __future__ import annotations
 
 import importlib
 import inspect
+import os
+import subprocess
 from pathlib import Path
 from types import SimpleNamespace
 
@@ -174,3 +176,57 @@ def test_no_e2e_module_selects_the_workflow_controller_outside_the_helper():
         "argo_workflow_controller_probe_command(); found literal selectors:\n"
         + "\n".join(offenders)
     )
+
+
+def _e2e_env_loader_block() -> str:
+    """The runner's secret-loading block, executed verbatim by the tests below."""
+    text = (
+        Path(__file__).resolve().parents[3] / "scripts" / "run_e2e_batched.sh"
+    ).read_text()
+    start = text.index("# >>> e2e-env-loader")
+    end = text.index("# <<< e2e-env-loader")
+    return text[start:end]
+
+
+def _run_loader(repo_root: Path) -> str:
+    script = (
+        "set -euo pipefail\n"
+        + _e2e_env_loader_block()
+        + '\nprintf "%s|%s" "${TELEGRAM_BOT_TOKEN:-}" "${TELEGRAM_TEST_CHAT_ID:-}"\n'
+    )
+    done = subprocess.run(
+        ["bash", "-c", script],
+        env={**os.environ, "REPO_ROOT": str(repo_root)},
+        capture_output=True,
+        text=True,
+    )
+    assert done.returncode == 0, f"loader failed: {done.stderr!r}"
+    return done.stdout
+
+
+def test_loader_exports_secrets_from_a_per_key_env_directory(tmp_path):
+    """The shipped layout: `.env/` holding one bare-value file per secret."""
+    env_dir = tmp_path / ".env"
+    env_dir.mkdir()
+    (env_dir / "TELEGRAM_BOT_TOKEN.env").write_text("123456:AAHbotToken\n")
+    (env_dir / "TELEGRAM_TEST_CHAT_ID.env").write_text("-1001234567890\n")
+
+    assert _run_loader(tmp_path) == "123456:AAHbotToken|-1001234567890"
+
+
+def test_loader_exports_secrets_from_a_single_env_file(tmp_path):
+    (tmp_path / ".env").write_text(
+        "TELEGRAM_BOT_TOKEN=123456:AAHbotToken\nTELEGRAM_TEST_CHAT_ID=-1001234567890\n"
+    )
+
+    assert _run_loader(tmp_path) == "123456:AAHbotToken|-1001234567890"
+
+
+def test_loader_tolerates_a_key_file_written_as_key_equals_value(tmp_path):
+    env_dir = tmp_path / ".env"
+    env_dir.mkdir()
+    (env_dir / "TELEGRAM_BOT_TOKEN.env").write_text(
+        "# provisioned by hand\nTELEGRAM_BOT_TOKEN=123456:AAHbotToken\n"
+    )
+
+    assert _run_loader(tmp_path) == "123456:AAHbotToken|"
