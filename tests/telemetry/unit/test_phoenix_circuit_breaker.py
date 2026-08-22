@@ -8,11 +8,14 @@ from unittest.mock import AsyncMock, MagicMock
 
 import pytest
 
+from cogniverse_core.common.tenant_utils import TEST_TENANT_ID
 from cogniverse_core.common.utils.circuit_breaker import (
     BreakerConfig,
     CircuitBreaker,
     CircuitOpenError,
 )
+
+TEST_PROJECT_NAME = f"cogniverse-{TEST_TENANT_ID}"
 
 
 @pytest.fixture(autouse=True)
@@ -47,12 +50,12 @@ def test_analytics_raises_on_outage_and_fails_fast_when_breaker_open():
     # First two calls dial and raise the transport error.
     for _ in range(2):
         with pytest.raises(ConnectionError, match="phoenix down"):
-            analytics.get_traces()
+            analytics.get_traces(project_name=TEST_PROJECT_NAME)
     assert analytics.client.spans.get_spans_dataframe.call_count == 2
 
     # Third: breaker open -> raises CircuitOpenError WITHOUT dialing.
     with pytest.raises(CircuitOpenError):
-        analytics.get_traces()
+        analytics.get_traces(project_name=TEST_PROJECT_NAME)
     assert analytics.client.spans.get_spans_dataframe.call_count == 2
 
 
@@ -71,7 +74,7 @@ def test_analytics_raises_on_non_transport_error():
     analytics._breaker = _breaker("phoenix:analytics-nontransport")
 
     with pytest.raises(KeyError, match="unexpected frame shape"):
-        analytics.get_traces()
+        analytics.get_traces(project_name=TEST_PROJECT_NAME)
 
 
 @pytest.mark.asyncio

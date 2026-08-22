@@ -391,12 +391,14 @@ analytics = PhoenixAnalytics(telemetry_url="http://localhost:6006")
 # Fetch recent traces
 end_time = datetime.now()
 start_time = end_time - timedelta(hours=1)
+tenant_id = "your_org:production"
 
 traces = analytics.get_traces(
     start_time=start_time,
     end_time=end_time,
     operation_filter="cogniverse.routing",
-    limit=1000
+    limit=1000,
+    project_name=f"cogniverse-{tenant_id}",
 )
 
 # Analyze traces

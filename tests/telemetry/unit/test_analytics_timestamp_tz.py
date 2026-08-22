@@ -16,11 +16,14 @@ from unittest.mock import MagicMock, patch
 
 import pandas as pd
 
+from cogniverse_core.common.tenant_utils import TEST_TENANT_ID
 from cogniverse_core.common.utils.circuit_breaker import (
     BreakerConfig,
     CircuitBreaker,
 )
 from cogniverse_telemetry_phoenix.evaluation.analytics import PhoenixAnalytics
+
+TEST_PROJECT_NAME = f"cogniverse-{TEST_TENANT_ID}"
 
 
 def _disabled_breaker():
@@ -59,7 +62,7 @@ def test_missing_start_time_defaults_to_aware_utc() -> None:
     # Patch the parent_id mask to keep the test resilient to pandas API quirks
     # on the `isna()` check — feed a guaranteed-NaN value.
     with patch.object(analytics.client.spans, "get_spans_dataframe", return_value=df):
-        metrics = analytics.get_traces()
+        metrics = analytics.get_traces(project_name=TEST_PROJECT_NAME)
 
     assert len(metrics) == 1, f"expected 1 metric; got {len(metrics)}"
     ts = metrics[0].timestamp
@@ -109,7 +112,7 @@ def test_aware_and_default_timestamps_are_comparable() -> None:
     analytics._breaker = _disabled_breaker()
     analytics.client.spans.get_spans_dataframe = MagicMock(return_value=df)
 
-    metrics = analytics.get_traces()
+    metrics = analytics.get_traces(project_name=TEST_PROJECT_NAME)
 
     assert len(metrics) == 2
     # Both timestamps must be aware so sorting them does not raise.
@@ -158,7 +161,7 @@ def test_profile_and_strategy_extracted_from_flattened_columns() -> None:
     analytics._breaker = _disabled_breaker()
     analytics.client.spans.get_spans_dataframe = MagicMock(return_value=df)
 
-    metrics = analytics.get_traces()
+    metrics = analytics.get_traces(project_name=TEST_PROJECT_NAME)
 
     assert len(metrics) == 1
     assert metrics[0].profile == "video_colpali_smol500_mv_frame"
@@ -190,7 +193,7 @@ def test_flattened_metadata_dotted_keys_resolved() -> None:
     analytics._breaker = _disabled_breaker()
     analytics.client.spans.get_spans_dataframe = MagicMock(return_value=df)
 
-    metrics = analytics.get_traces()
+    metrics = analytics.get_traces(project_name=TEST_PROJECT_NAME)
     assert metrics[0].profile == "audio_clap_semantic"
     assert metrics[0].strategy == "default"
 
@@ -226,7 +229,7 @@ def test_naive_start_time_is_normalized_to_utc() -> None:
     )
     analytics._breaker = _disabled_breaker()
 
-    traces = analytics.get_traces()
+    traces = analytics.get_traces(project_name=TEST_PROJECT_NAME)
 
     assert len(traces) == 2
     for t in traces:
@@ -261,7 +264,7 @@ def test_mixed_tz_within_row_still_yields_duration() -> None:
     )
     analytics._breaker = _disabled_breaker()
 
-    traces = analytics.get_traces()
+    traces = analytics.get_traces(project_name=TEST_PROJECT_NAME)
 
     assert len(traces) == 1
     assert traces[0].duration_ms == 2000.0

@@ -513,8 +513,13 @@ from cogniverse_telemetry_phoenix.evaluation.analytics import PhoenixAnalytics
 analytics = PhoenixAnalytics(telemetry_url="http://localhost:6006")
 
 @st.cache_data(ttl=60)
-def load_traces(start_time, end_time):
-    return analytics.get_traces(start_time=start_time, end_time=end_time, limit=1000)
+def load_traces(tenant_id, start_time, end_time):
+    return analytics.get_traces(
+        start_time=start_time,
+        end_time=end_time,
+        limit=1000,
+        project_name=f"cogniverse-{tenant_id}",
+    )
 ```
 
 ### Pagination
