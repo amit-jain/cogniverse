@@ -65,6 +65,7 @@ _TRAINING_SELECTION_FIELDS = (
     ("low_confirmation_threshold", int),
     ("downweight_age_days", int),
     ("downweight_factor", float),
+    ("confirmation_score_threshold", float),
 )
 
 
@@ -1194,6 +1195,10 @@ def _training_selection_from_config(
         ),
         int(resolved.get("downweight_age_days", defaults.downweight_age_days)),
         float(resolved.get("downweight_factor", defaults.downweight_factor)),
+        resolved.get(
+            "confirmation_score_threshold",
+            defaults.confirmation_score_threshold,
+        ),
     )
 
 
@@ -1288,8 +1293,10 @@ async def _apply_training_selection(
     embedder_url: Optional[str],
 ) -> tuple[List[Dict[str, Any]], SelectionReport]:
     lineage = await artifact_manager.get_version_lineage("model", artifact_key)
-    stats = confirmation_stats(lineage)
     knobs = _training_selection_from_config(config_manager, tenant_id, optimizer_type)
+    stats = confirmation_stats(
+        lineage, score_threshold=knobs.confirmation_score_threshold
+    )
     pool = len(train_records)
     if embedder_url is None and pool > knobs.trainset_cap:
         raise RuntimeError(
@@ -2635,6 +2642,7 @@ async def run_simba_optimization(
             consumed_example_ids=consumed_example_ids,
             decision="insufficient_population",
             scored=False,
+            score=None,
             base_score=None,
             candidate_score=None,
         )
@@ -2774,6 +2782,7 @@ async def run_simba_optimization(
         consumed_example_ids=consumed_example_ids,
         decision=decision,
         scored=candidate_score is not None,
+        score=candidate_score,
         base_score=baseline_score,
         candidate_score=candidate_score,
     )
@@ -3470,6 +3479,7 @@ async def run_profile_optimization(
             consumed_example_ids=consumed_example_ids,
             decision="insufficient_population",
             scored=False,
+            score=None,
             base_score=None,
             candidate_score=None,
         )
@@ -3601,6 +3611,7 @@ async def run_profile_optimization(
         consumed_example_ids=consumed_example_ids,
         decision=decision,
         scored=candidate_score is not None,
+        score=candidate_score,
         base_score=baseline_score,
         candidate_score=candidate_score,
     )
@@ -3729,6 +3740,7 @@ async def run_entity_extraction_optimization(
             consumed_example_ids=consumed_example_ids,
             decision="insufficient_population",
             scored=False,
+            score=None,
             base_score=None,
             candidate_score=None,
         )
@@ -3862,6 +3874,7 @@ async def run_entity_extraction_optimization(
         consumed_example_ids=consumed_example_ids,
         decision=decision,
         scored=candidate_score is not None,
+        score=candidate_score,
         base_score=baseline_score,
         candidate_score=candidate_score,
     )

@@ -96,7 +96,9 @@ gateway agent refreshes on a `GATEWAY_ARTIFACT_TTL_S` interval).
   each approved record onto the exact production DSPy signature, compiles the agent's DSPy module, and saves it
   as a `("model", <key>)` blob via `ArtifactManager`. Bootstrap candidates are accepted only when every output
   field exactly matches the reviewed label; otherwise the compiled module retains the labeled example instead
-  of replacing it with teacher-generated content.
+  of replacing it with teacher-generated content. The versioned ledger keeps the legacy `scored` flag and the
+  numeric `score` used for confirmation when present; `training_selection.<optimizer>.confirmation_score_threshold`
+  makes confirmation score-aware, and omitted thresholds keep the old presence-based behavior.
   SIMBA also enforces the tenant floor from routing config: below `min_samples_for_optimization` or `min_unique_queries`, it saves a version with decision `insufficient_population` and leaves the active artifact unchanged.
 - **Monthly Performance Reports**: each tenant's complete bounded-time Phoenix window is read through the same
   lossless cursor walk before latency and error summaries are written; a tenant read failure is recorded and
@@ -1666,7 +1668,7 @@ After optimization, artifacts are persisted to the telemetry store via `Artifact
 
 > **Concurrency contract:** `replace_dataset` is single-writer, last-write-wins. It deletes then re-creates the named dataset and is **not atomic across concurrent writers** to the same stable `(tenant, agent)` name. Two simultaneous cross-process writers — e.g. a manual admin promote racing the optimization loop — can merge or lose the active dataset. There is no cross-process lock; this is an accepted bounded risk because writes to a given name are per-agent and low-QPS, and any lost write is recoverable by re-running optimization. Callers that must not race should serialize their own writes. A torn single write is still safe: the prior contents are pre-read and restored if the create fails after the delete committed, and a non-not-found error on that pre-read propagates before the destructive delete.
 - `dspy-experiments-{tenant_id}-{agent_type}` — Optimization run metrics as typed `ExperimentMetrics` rows (one per run via `save_experiment`; read the latest with `load_latest_experiment`)
-- `("model", <key>)` blobs — compiled DSPy module state for `profile_selection`, `entity_extraction`, `simba_query_enhancement` (triggered mode publishes compiled instructions as versioned prompts instead of a module-state blob)
+- `("model", <key>)` blobs — compiled DSPy module state for `profile_selection`, `entity_extraction`, `simba_query_enhancement` (triggered mode publishes compiled instructions as versioned prompts instead of a module-state blob); each version ledger stores `consumed_example_ids`, `decision`, `scored`, `score`, `base_score`, `candidate_score`, and `created_at`, and older rows simply omit `score`.
 - `("config", "gateway_thresholds")` blob — calibrated gateway thresholds
 
 **Stored prompt artifact structure (retrieved from DatasetStore):**

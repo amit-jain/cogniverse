@@ -626,6 +626,7 @@ class ArtifactManager:
         consumed_example_ids: List[str],
         decision: str,
         scored: bool,
+        score: Optional[float] = None,
         base_score: Optional[float],
         candidate_score: Optional[float],
     ) -> tuple[str, int]:
@@ -633,8 +634,9 @@ class ArtifactManager:
 
         The ledger row records exactly which examples produced this version
         (``consumed_example_ids``, ``span:<id>`` or ``approved:<id>``), the
-        run's decision, and how base and candidate scored. Saving never moves
-        the active pointer; ``activate_version`` does.
+        run's decision, the version score used for confirmation, and how base
+        and candidate scored. Saving never moves the active pointer;
+        ``activate_version`` does.
 
         Returns:
             ``(dataset_id, version)``.
@@ -653,6 +655,7 @@ class ArtifactManager:
             "consumed_example_ids": consumed,
             "decision": decision,
             "scored": bool(scored),
+            "score": score,
             "base_score": base_score,
             "candidate_score": candidate_score,
             "created_at": datetime.now(timezone.utc).isoformat(),
@@ -901,6 +904,7 @@ class ArtifactManager:
                             )
                         }
                     )
+                    entry["score"] = ledger.get("score")
             lineage.append(entry)
         return lineage
 

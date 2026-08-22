@@ -125,6 +125,80 @@ def test_decay_weight_fresh_unconfirmed_remains_full_weight():
     assert decay_weight(stats, "span:e", now=now, knobs=knobs) == 1.0
 
 
+def test_decay_weight_uses_score_threshold_and_rejects_legacy_missing_scores():
+    now = datetime(2026, 8, 30, tzinfo=timezone.utc)
+    knobs = TrainingSelectionKnobs(
+        300,
+        0.7,
+        3,
+        14,
+        0.5,
+        0.8,
+    )
+    lineage = [
+        {
+            "consumed_example_ids": ["span:high"],
+            "decision": "promote",
+            "score": 0.9,
+            "created_at": "2026-08-01T00:00:00+00:00",
+        },
+        {
+            "consumed_example_ids": ["span:high"],
+            "decision": "promote",
+            "score": 0.9,
+            "created_at": "2026-08-10T00:00:00+00:00",
+        },
+        {
+            "consumed_example_ids": ["span:high"],
+            "decision": "promote",
+            "score": 0.9,
+            "created_at": "2026-08-15T00:00:00+00:00",
+        },
+        {
+            "consumed_example_ids": ["span:low"],
+            "decision": "promote",
+            "score": 0.2,
+            "created_at": "2026-08-01T00:00:00+00:00",
+        },
+        {
+            "consumed_example_ids": ["span:low"],
+            "decision": "promote",
+            "score": 0.2,
+            "created_at": "2026-08-10T00:00:00+00:00",
+        },
+        {
+            "consumed_example_ids": ["span:low"],
+            "decision": "promote",
+            "score": 0.2,
+            "created_at": "2026-08-15T00:00:00+00:00",
+        },
+        {
+            "consumed_example_ids": ["span:legacy"],
+            "decision": "promote",
+            "created_at": "2026-08-01T00:00:00+00:00",
+        },
+    ]
+    stats = confirmation_stats(
+        lineage, score_threshold=knobs.confirmation_score_threshold
+    )
+
+    assert stats["span:high"] == ExampleStats(
+        3,
+        datetime(2026, 8, 1, tzinfo=timezone.utc),
+    )
+    assert stats["span:low"] == ExampleStats(
+        0,
+        datetime(2026, 8, 1, tzinfo=timezone.utc),
+    )
+    assert stats["span:legacy"] == ExampleStats(
+        0,
+        datetime(2026, 8, 1, tzinfo=timezone.utc),
+    )
+    assert decay_weight(stats, "span:high", now=now, knobs=knobs) == 1.0
+    assert decay_weight(stats, "span:low", now=now, knobs=knobs) == 0.5
+    assert decay_weight(stats, "span:legacy", now=now, knobs=knobs) == 0.5
+
+
 def test_mmr_prefers_diverse_over_duplicate_direction():
     calls: list[list[str]] = []
 

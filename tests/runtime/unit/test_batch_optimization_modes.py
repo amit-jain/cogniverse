@@ -2643,6 +2643,7 @@ class TestSimbaQueryEnhancement:
         )
         lineage = self._lineage(provider)
         assert [(e["version"], e["decision"]) for e in lineage] == [(1, "rollback")]
+        assert lineage[0]["score"] is None
         assert self._active_version(provider, "simba_query_enhancement") == 1
 
     def test_keeps_a_persisted_artifact_the_candidate_does_not_beat(self):
@@ -2708,6 +2709,7 @@ class TestSimbaQueryEnhancement:
         assert self._persisted_state(provider) == json.loads(served_state)
         lineage = self._lineage(provider)
         assert [(e["version"], e["decision"]) for e in lineage] == [(1, "keep")]
+        assert lineage[0]["score"] == 1.0
         assert self._active_version(provider, "simba_query_enhancement") is None
 
     def test_score_failure_preserves_selection_block(self):
@@ -2802,6 +2804,7 @@ class TestSimbaQueryEnhancement:
         assert [(e["version"], e["decision"]) for e in lineage] == [
             (1, "insufficient_population")
         ]
+        assert lineage[0]["score"] is None
         assert self._active_version(provider, "simba_query_enhancement") is None
 
     def test_below_distinct_query_floor_is_insufficient(self):
@@ -2834,6 +2837,7 @@ class TestSimbaQueryEnhancement:
         assert [(e["version"], e["decision"]) for e in lineage] == [
             (1, "insufficient_population")
         ]
+        assert lineage[0]["score"] is None
         assert self._active_version(provider, "simba_query_enhancement") is None
 
     def test_population_exactly_at_floor_proceeds_to_promotion(self):
@@ -2879,6 +2883,7 @@ class TestSimbaQueryEnhancement:
         }
         lineage = self._lineage(provider)
         assert [(e["version"], e["decision"]) for e in lineage] == [(1, "promote")]
+        assert lineage[0]["score"] == 1.0
         assert self._active_version(provider, "simba_query_enhancement") == 1
 
     def test_single_record_is_scoreable_and_rejects_without_activation(self):
@@ -2921,6 +2926,7 @@ class TestSimbaQueryEnhancement:
         assert [(e["version"], e["decision"]) for e in lineage] == [(1, "reject")]
         assert lineage[0]["consumed_example_ids"] == ["span:span-0"]
         assert lineage[0]["scored"] is False
+        assert lineage[0]["score"] is None
         assert self._active_version(provider, "simba_query_enhancement") is None
 
     def test_training_selection_store_override_binds_simba_canonical_key(self):
@@ -3012,6 +3018,7 @@ class TestProfileSelectionOptimization:
                 consumed_example_ids,
                 decision,
                 scored,
+                score,
                 base_score,
                 candidate_score,
             ):
@@ -3023,6 +3030,7 @@ class TestProfileSelectionOptimization:
                         "consumed_example_ids": list(consumed_example_ids),
                         "decision": decision,
                         "scored": scored,
+                        "score": score,
                         "base_score": base_score,
                         "candidate_score": candidate_score,
                     }
@@ -3200,6 +3208,7 @@ class TestProfileSelectionOptimization:
                 ],
                 "decision": "keep",
                 "scored": True,
+                "score": 1.0,
                 "base_score": 1.0,
                 "candidate_score": 1.0,
             }
@@ -3272,6 +3281,7 @@ class TestProfileSelectionOptimization:
                 ],
                 "decision": "rollback",
                 "scored": True,
+                "score": 0.0,
                 "base_score": 1.0,
                 "candidate_score": 0.0,
             }
@@ -3397,6 +3407,7 @@ class TestProfileSelectionOptimization:
                 ],
                 "decision": "insufficient_population",
                 "scored": False,
+                "score": None,
                 "base_score": None,
                 "candidate_score": None,
             }
@@ -3868,6 +3879,7 @@ class TestEntityExtractionOptimization:
                 consumed_example_ids,
                 decision,
                 scored,
+                score,
                 base_score,
                 candidate_score,
             ):
@@ -3879,6 +3891,7 @@ class TestEntityExtractionOptimization:
                         "consumed_example_ids": list(consumed_example_ids),
                         "decision": decision,
                         "scored": scored,
+                        "score": score,
                         "base_score": base_score,
                         "candidate_score": candidate_score,
                     }
@@ -4167,6 +4180,7 @@ class TestEntityExtractionOptimization:
                 "consumed_example_ids": ["span:ee-0", "span:ee-1"],
                 "decision": "promote",
                 "scored": True,
+                "score": 1.0,
                 "base_score": 0.0,
                 "candidate_score": 1.0,
             }
@@ -4223,6 +4237,7 @@ class TestEntityExtractionOptimization:
                 "consumed_example_ids": ["span:ee-0", "span:ee-1"],
                 "decision": "keep",
                 "scored": True,
+                "score": 1.0,
                 "base_score": 1.0,
                 "candidate_score": 1.0,
             }
@@ -4280,6 +4295,7 @@ class TestEntityExtractionOptimization:
                 "consumed_example_ids": ["span:ee-0", "span:ee-1"],
                 "decision": "rollback",
                 "scored": True,
+                "score": 1.0,
                 "base_score": 1.0,
                 "candidate_score": 1.0,
             }
@@ -4366,6 +4382,7 @@ class TestEntityExtractionOptimization:
                 "consumed_example_ids": ["span:ee-0", "span:ee-1"],
                 "decision": "insufficient_population",
                 "scored": False,
+                "score": None,
                 "base_score": None,
                 "candidate_score": None,
             }

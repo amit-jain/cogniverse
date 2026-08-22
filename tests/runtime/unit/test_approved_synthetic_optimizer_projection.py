@@ -227,6 +227,7 @@ async def test_synthetic_only_data_compiles_the_actual_production_module(
             consumed_example_ids,
             decision,
             scored,
+            score,
             base_score,
             candidate_score,
         ):
@@ -236,6 +237,7 @@ async def test_synthetic_only_data_compiles_the_actual_production_module(
                 "content": content,
                 "consumed_example_ids": consumed_example_ids,
                 "decision": decision,
+                "score": score,
             }
             return f"artifact-{optimizer_type}", 1
 
