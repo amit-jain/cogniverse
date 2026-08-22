@@ -1,9 +1,9 @@
-"""_annotation_loop sidecar and its launch/cancel in main()'s default branch.
+"""_annotation_loop sidecar and its launch/cancel in one monitor iteration.
 
 The infinite annotation loop had no coverage: these pin that one failing
 cycle does not stop the loop (the per-iteration ``except Exception`` swallow),
 that the inter-cycle sleep equals ``annotation_interval_minutes * 60`` seconds,
-and that main()'s default branch launches the loop as a task and cancels it in
+and that the monitor iteration launches the loop as a task and cancels it in
 the shutdown finally after ``monitor.run()`` returns.
 
 Every loop here is bounded: the patched cycle raises ``_BreakLoop`` (a
@@ -14,7 +14,6 @@ so no test can hang on the real ``while True``.
 from __future__ import annotations
 
 import asyncio
-import sys
 
 import pytest
 
@@ -109,9 +108,10 @@ class _StubTelemetry:
         self.config = type("_Cfg", (), {"provider_config": {}})()
 
 
-def test_default_branch_launches_and_cancels_annotation_task(monkeypatch):
-    """main()'s default branch launches _annotation_loop as a task and cancels
-    it in the shutdown finally once monitor.run() returns."""
+@pytest.mark.asyncio
+async def test_monitor_iteration_launches_and_cancels_annotation_task(monkeypatch):
+    """_run_quality_monitor_iteration launches _annotation_loop as a task and
+    cancels it in the shutdown finally once monitor.run() returns."""
     started = {"v": False}
     cancelled = {"v": False}
     # close() runs in the finally right after annotation_task.cancel() and
@@ -158,31 +158,21 @@ def test_default_branch_launches_and_cancels_annotation_task(monkeypatch):
         return task
 
     monkeypatch.setattr(qm, "_annotation_loop", stub_loop)
-    monkeypatch.setattr(qm, "_build_phoenix_provider", lambda **k: None)
-    monkeypatch.setattr(qm, "_workflow_pod_spec_from_env", lambda: None)
-    monkeypatch.setattr(qm, "_wait_for_runtime_search", lambda **kwargs: None)
-    monkeypatch.setattr(
-        "cogniverse_foundation.telemetry.manager.get_telemetry_manager",
-        lambda *a, **k: _StubTelemetry(),
-    )
-    monkeypatch.setattr(
-        "cogniverse_evaluation.quality_monitor.QualityMonitor", _StubMonitor
-    )
     monkeypatch.setattr(qm.asyncio, "create_task", spy_create_task)
-    monkeypatch.setattr(
-        sys,
-        "argv",
-        ["quality_monitor_cli.py", "--tenant-id", "acme", "--llm-model", "gemma"],
+    monitor = _StubMonitor()
+    result = await qm._run_quality_monitor_iteration(
+        monitor, "acme:acme", "http://localhost:28000"
     )
 
-    with pytest.raises(SystemExit) as exc:
-        qm.main()
-
-    assert exc.value.code == 0
+    # The iteration returns to its caller instead of ending the process: the
+    # retry loop in main() decides what happens next. Pinned here because the
+    # sidecar shares a pod with the serving API, so a terminating iteration
+    # would drop the runtime from the Service's endpoints.
+    assert result is None
     assert started["v"] is True  # the loop was launched in the default branch
     assert cancelled["v"] is True  # and cancelled on shutdown
     assert len(created) == 1  # exactly the annotation task, nothing else
     assert created[0].cancelled() is True  # the task ended in a cancelled state
     # cancel() ran in the finally itself, before asyncio.run's teardown-cancel.
     assert close_saw_cancel_requested["v"] is True
-    assert _StubMonitor.last.closed is True  # monitor.close() ran in the finally
+    assert monitor.closed is True  # monitor.close() ran in the finally

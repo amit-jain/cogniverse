@@ -35,27 +35,39 @@ def test_requests_outage_retries_until_exact_manager_recovers():
     assert attempts == 3
 
 
-def test_requests_outage_timeout_names_exact_cause_and_attempt_count():
+def test_requests_outage_keeps_retrying_past_timeout_and_logs_exact_failure_once(
+    caplog,
+):
+    expected_manager = object()
     attempts = 0
 
     def get_manager():
         nonlocal attempts
         attempts += 1
-        raise requests.ConnectionError("config endpoint refused")
+        if attempts < 3:
+            raise requests.ConnectionError("config endpoint refused")
+        return expected_manager
 
-    with pytest.raises(RuntimeError) as raised:
-        _wait_for_telemetry_manager(
+    with caplog.at_level("WARNING"):
+        manager = _wait_for_telemetry_manager(
             get_manager=get_manager,
             timeout_seconds=0,
-            poll_interval_seconds=0.001,
+            poll_interval_seconds=0,
         )
 
-    assert str(raised.value) == (
+    assert manager is expected_manager
+    assert attempts == 3
+    assert [record.levelname for record in caplog.records] == [
+        "ERROR",
+        "WARNING",
+    ]
+    assert [record.message for record in caplog.records] == [
         "Telemetry configuration dependency was not ready after 1 attempt "
-        "within 0.0s: ConnectionError: config endpoint refused"
-    )
-    assert isinstance(raised.value.__cause__, requests.ConnectionError)
-    assert attempts == 1
+        "within 0.0s: ConnectionError: config endpoint refused; keeping the "
+        "sidecar alive and retrying",
+        "Telemetry configuration dependency is still not ready (attempt 2, "
+        "retrying in 0.0s): ConnectionError: config endpoint refused",
+    ]
 
 
 def test_concurrent_waiters_keep_independent_attempts_and_managers():
