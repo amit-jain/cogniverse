@@ -32,6 +32,7 @@ from cogniverse_cli.argo import (
     ARGO_NAMESPACE,
     ARGO_WORKFLOW_CONTROLLER_LABEL_SELECTOR,
 )
+from cogniverse_cli.secrets import read_secret
 
 from cogniverse_agents.gateway_agent import SIMPLE_ROUTE_MAP, GatewayAgent
 from cogniverse_core.memory.provenance import DerivationKind
@@ -58,8 +59,11 @@ def _modal_inference_deselections(config, items):
 
 
 def _telegram_real_flow_deselections(items):
-    token = os.environ.get("TELEGRAM_BOT_TOKEN")
-    chat_id = os.environ.get("TELEGRAM_TEST_CHAT_ID")
+    # read_secret is the shared lookup: env var, then ./.env, then ~/.env, each
+    # of which may be a directory of per-key <VAR>.env files. Reading os.environ
+    # here instead would ignore a secret provisioned the documented way.
+    token = read_secret("TELEGRAM_BOT_TOKEN")
+    chat_id = read_secret("TELEGRAM_TEST_CHAT_ID")
     if token and chat_id:
         return [], None
     deselected = [
