@@ -267,7 +267,36 @@ def _write_with_trust(
         metadata=metadata,
         infer=False,
     )
-    assert mid is not None
+    if mid is None:
+        pytest.fail(f"Mem0.add_memory returned no id for subject={subject!r}")
+
+    raw = mm.memory.get(mid)
+    if not isinstance(raw, dict):
+        pytest.fail(
+            f"Persisted memory for subject={subject!r} had unexpected shape: {raw!r}"
+        )
+    assert raw["id"] == mid, raw
+    stored_content = raw.get("memory")
+    if stored_content is None:
+        stored_content = raw.get("text")
+    assert stored_content == content, raw
+
+    persisted_meta = mm._read_metadata(raw)
+    assert persisted_meta["kind"] == "entity_fact"
+    assert persisted_meta["subject_key"] == subject
+    provenance = persisted_meta["provenance"]
+    assert provenance["written_by"] == "agent:contra"
+    assert provenance["derivation_kind"] == derivation_kind.value
+    assert provenance["confidence"] == 0.9
+    assert provenance["derived_from"] == [
+        CitationRef.external("contra://src", label="src").to_dict()
+    ]
+    assert provenance["trace_id"] is None
+
+    trust = persisted_meta["trust"]
+    assert trust["score"] == pytest.approx(0.6)
+    assert trust["initial_score"] == pytest.approx(0.6)
+    assert trust["endorsements"] == 0
     return mid
 
 

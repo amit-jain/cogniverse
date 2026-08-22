@@ -74,6 +74,16 @@ def _build_manager(tenant_id: str) -> Mem0MemoryManager:
     return mm
 
 
+def _expected_initial_trust(kind: str, derivation_kind: DerivationKind) -> float:
+    base = {"external_doc": 0.7, "entity_fact": 0.5}[kind]
+    weights = {
+        DerivationKind.DIRECT_INGEST: 1.2,
+        DerivationKind.EXTRACTION: 1.0,
+        DerivationKind.SYNTHESIS: 0.85,
+    }
+    return base * weights[derivation_kind]
+
+
 def _warmup_provenance_schema(mm: Mem0MemoryManager, timeout_s: float = 120.0) -> None:
     """Block until the per-tenant provenance schema accepts writes."""
     import time
@@ -139,7 +149,39 @@ def _write_with_provenance(
         metadata=metadata,
         infer=False,
     )
-    assert mid is not None
+    if mid is None:
+        pytest.fail(
+            "Mem0.add_memory returned no id for "
+            f"kind={kind!r} subject_key={subject_key!r}"
+        )
+
+    raw = mm.memory.get(mid)
+    if not isinstance(raw, dict):
+        pytest.fail(
+            f"Persisted memory for kind={kind!r} subject_key={subject_key!r} "
+            f"had unexpected shape: {raw!r}"
+        )
+    assert raw["id"] == mid, raw
+    stored_content = raw.get("memory")
+    if stored_content is None:
+        stored_content = raw.get("text")
+    assert stored_content == content, raw
+
+    persisted_meta = mm._read_metadata(raw)
+    assert persisted_meta["kind"] == kind
+    assert persisted_meta["subject_key"] == subject_key
+    provenance = persisted_meta["provenance"]
+    assert provenance["written_by"] == "agent:citation"
+    assert provenance["derivation_kind"] == derivation_kind.value
+    assert provenance["confidence"] == confidence
+    assert provenance["derived_from"] == [ref.to_dict() for ref in derived_from]
+    assert provenance["trace_id"] is None
+
+    trust = persisted_meta["trust"]
+    expected_trust = _expected_initial_trust(kind, derivation_kind)
+    assert trust["score"] == pytest.approx(expected_trust)
+    assert trust["initial_score"] == pytest.approx(expected_trust)
+    assert trust["endorsements"] == 0
     return mid
 
 
@@ -282,24 +324,16 @@ def _write_entity_fact_no_prov(
     agent_name: str = "citation_agent",
 ) -> str:
     """Write an entity_fact with provenance (entity_fact is provenance_required)."""
-    prov = make_provenance(
-        written_by="agent:citation",
-        derivation_kind=derivation_kind,
-        confidence=confidence,
-        derived_from=[CitationRef.external("citation://src")],
-    )
-    metadata = attach_to_metadata(
-        {"kind": "entity_fact", "subject_key": subject_key}, prov
-    )
-    mid = mm.add_memory(
+    return _write_with_provenance(
+        mm,
+        kind="entity_fact",
         content=content,
-        tenant_id=mm.tenant_id,
+        derivation_kind=derivation_kind,
+        derived_from=[CitationRef.external("citation://src")],
+        subject_key=subject_key,
+        confidence=confidence,
         agent_name=agent_name,
-        metadata=metadata,
-        infer=False,
     )
-    assert mid is not None
-    return mid
 
 
 @pytest.mark.e2e
