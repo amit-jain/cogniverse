@@ -248,6 +248,34 @@ def test_at_cap_boundary_returns_all_without_embedding():
     )
 
 
+def test_deduped_below_cap_never_embeds():
+    records = [
+        {"example_id": "span:a", "query": "alpha"},
+        {"example_id": "span:b", "query": "ALPHA"},
+        {"example_id": "span:c", "query": "alpha"},
+    ]
+
+    def boom(_):
+        raise AssertionError("embed_fn called when deduped pool is at or below cap")
+
+    selected, report = select_training_records(
+        records,
+        weights={"span:a": 1.0, "span:b": 1.0, "span:c": 1.0},
+        knobs=TrainingSelectionKnobs(2, 0.7, 3, 14, 0.5),
+        embed_fn=boom,
+    )
+
+    assert selected == [{"example_id": "span:a", "query": "alpha"}]
+    assert report == SelectionReport(
+        pool=3,
+        deduped=1,
+        cap=2,
+        mmr_applied=False,
+        decayed_count=0,
+        selected_ids=["span:a"],
+    )
+
+
 def test_missing_weight_raises_key_error_for_missing_example_id():
     with pytest.raises(KeyError, match=r"span:missing"):
         select_training_records(

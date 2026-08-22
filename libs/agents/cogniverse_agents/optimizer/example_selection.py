@@ -166,7 +166,7 @@ def select_training_records(
         1 for record in deduped_records if weights[record["example_id"]] < 1.0
     )
 
-    if pool <= knobs.trainset_cap:
+    if deduped <= knobs.trainset_cap:
         selected_ids = [record["example_id"] for record in deduped_records]
         return (
             deduped_records,
