@@ -25,6 +25,7 @@ def _judge():
     j.evaluator_name = "visual"
     j.provider = "test"
     j.model = "test-model"
+    j.base_url = "http://vlm.test:8000/v1/"
     return j
 
 
@@ -71,7 +72,14 @@ def test_frames_unlinked_after_successful_scoring():
 
 def test_frames_unlinked_even_when_scoring_raises():
     frames = _make_temp_frames(3)
-    _run_with_frames(_judge(), frames, score_side_effect=RuntimeError("vlm down"))
+    with pytest.raises(
+        RuntimeError,
+        match=(
+            r"Visual evaluation failed for provider=test, model=test-model, "
+            r"endpoint=http://vlm\.test:8000/v1: vlm down"
+        ),
+    ):
+        _run_with_frames(_judge(), frames, score_side_effect=RuntimeError("vlm down"))
     assert all(not Path(f).exists() for f in frames), (
         "temp frames must be cleaned up on the error path too"
     )

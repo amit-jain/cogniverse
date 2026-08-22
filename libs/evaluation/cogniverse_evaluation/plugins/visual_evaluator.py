@@ -114,13 +114,8 @@ class VisualEvaluatorPlugin:
                     failed[config_key] = str(e)
                     continue
 
-                if (
-                    eval_result is None
-                    or getattr(eval_result, "label", None) == "evaluation_failed"
-                ):
-                    failed[config_key] = getattr(
-                        eval_result, "explanation", "evaluator returned no result"
-                    )
+                if eval_result is None:
+                    failed[config_key] = "visual judge returned no result"
                     continue
 
                 all_scores[config_key] = eval_result.score
