@@ -95,6 +95,15 @@ def _resolve_cli_tenant(tenant: str | None) -> str:
     )
 
 
+def _cluster_name_from_probe(cluster_probe: object) -> str | None:
+    """Normalize a cluster probe to a concrete cluster name."""
+    if isinstance(cluster_probe, str):
+        return cluster_probe
+    if cluster_probe:
+        return CLUSTER_NAME
+    return None
+
+
 SERVICE_HEALTH_URLS: dict[str, str] = {
     "Vespa": "http://localhost:19071/state/v1/health",
     "Runtime": "http://localhost:28000/health",
@@ -236,12 +245,18 @@ def up(
 ) -> None:
     """Deploy the full Cogniverse stack."""
     # 1. Detect environment — a running k3d cluster counts as local, not prod
-    k3d_running = cluster_exists()
+    try:
+        k3d_cluster_name = _cluster_name_from_probe(cluster_exists())
+    except ClusterStartError as exc:
+        console.print(f"[red]{exc}[/red]", soft_wrap=True)
+        sys.exit(1)
+    k3d_running = bool(k3d_cluster_name)
     if k3d_running:
         use_k3d = True
     else:
         existing_k8s = has_existing_k8s()
         use_k3d = not existing_k8s
+    resolved_cluster_name = k3d_cluster_name or CLUSTER_NAME
 
     # 2. Check prerequisites (require k3d only if no existing K8s)
     missing = check_prerequisites(require_k3d=use_k3d)
@@ -289,6 +304,7 @@ def up(
             exclude = [11434] if host_llm_detected else None
             try:
                 create_cluster(
+                    name=resolved_cluster_name,
                     exclude_ports=exclude,
                     workspace_path=str(project_root) if project_root else None,
                 )
@@ -355,14 +371,16 @@ def up(
         )
         if use_k3d:
             console.print("[cyan]Importing images into k3d...[/cyan]")
-            import_images(CLUSTER_NAME, tags)
+            import_images(resolved_cluster_name, tags)
         # Reclaim the superseded generation's ~25GB of images (host + k3d
         # node) so repeated deploys don't fill the disk into Vespa's feed
         # block; keeps the current build and one previous for rollback.
         try:
             prune_superseded_images(
                 image_version,
-                node_container=f"k3d-{CLUSTER_NAME}-server-0" if use_k3d else None,
+                node_container=(
+                    f"k3d-{resolved_cluster_name}-server-0" if use_k3d else None
+                ),
             )
         except Exception as exc:
             console.print(f"[yellow]Image prune skipped: {exc}[/yellow]")
@@ -429,7 +447,7 @@ def up(
         console.print("[cyan]Pre-pulling third-party images...[/cyan]")
         for vf in values_files:
             pull_and_import_third_party(
-                CLUSTER_NAME,
+                resolved_cluster_name,
                 vf,
                 skip_llm=llm_is_external,
             )
@@ -598,9 +616,14 @@ def down(keep_data: bool) -> None:
             failed.append(ns)
 
     # Delete k3d cluster if one exists
-    if cluster_exists():
+    try:
+        cluster_name = _cluster_name_from_probe(cluster_exists())
+    except ClusterStartError as exc:
+        console.print(f"[red]{exc}[/red]", soft_wrap=True)
+        raise SystemExit(1) from None
+    if cluster_name:
         console.print("[cyan]Deleting k3d cluster...[/cyan]")
-        delete_cluster()
+        delete_cluster(cluster_name)
 
     if failed:
         raise SystemExit(
@@ -636,46 +659,64 @@ def status() -> None:
 @cli.command()
 @click.option(
     "--name",
-    default=CLUSTER_NAME,
-    show_default=True,
-    help="k3d cluster to stop (e.g. cogniverse-e2e).",
+    default=None,
+    help="k3d cluster to stop. Omit to resolve the active cogniverse* cluster.",
 )
-def stop(name: str) -> None:
+def stop(name: str | None) -> None:
     """Stop a cluster's containers, keeping all data (frees RAM/GPU)."""
-    if not cluster_exists(name):
-        console.print(f"[red]No k3d cluster named {name!r}.[/red]")
+    resolved_name = name
+    if resolved_name is None:
+        try:
+            resolved_name = _cluster_name_from_probe(cluster_exists())
+        except ClusterStartError as exc:
+            console.print(f"[red]{exc}[/red]", soft_wrap=True)
+            raise SystemExit(1) from None
+        if resolved_name is None:
+            console.print("[red]No cogniverse k3d cluster found.[/red]")
+            raise SystemExit(1)
+    if not cluster_exists(resolved_name):
+        console.print(f"[red]No k3d cluster named {resolved_name!r}.[/red]")
         raise SystemExit(1)
-    console.print(f"[cyan]Stopping cluster {name}...[/cyan]")
-    stop_cluster(name)
-    if name == CLUSTER_NAME:
+    console.print(f"[cyan]Stopping cluster {resolved_name}...[/cyan]")
+    stop_cluster(resolved_name)
+    if resolved_name == CLUSTER_NAME:
         # The dev stack's kubectl port-forwards are dead once the cluster
         # halts; reap their restart-loops so a later start rebinds cleanly.
         stop_port_forwards()
     console.print(
-        f"[green]Cluster {name} stopped — data preserved; "
-        f"resume with `cogniverse start --name {name}`.[/green]"
+        f"[green]Cluster {resolved_name} stopped — data preserved; "
+        f"resume with `cogniverse start --name {resolved_name}`.[/green]"
     )
 
 
 @cli.command()
 @click.option(
     "--name",
-    default=CLUSTER_NAME,
-    show_default=True,
-    help="k3d cluster to start.",
+    default=None,
+    help="k3d cluster to start. Omit to resolve the active cogniverse* cluster.",
 )
-def start(name: str) -> None:
+def start(name: str | None) -> None:
     """Start a previously stopped cluster (volumes intact)."""
-    if not cluster_exists(name):
-        console.print(f"[red]No k3d cluster named {name!r}.[/red]")
+    resolved_name = name
+    if resolved_name is None:
+        try:
+            resolved_name = _cluster_name_from_probe(cluster_exists())
+        except ClusterStartError as exc:
+            console.print(f"[red]{exc}[/red]", soft_wrap=True)
+            raise SystemExit(1) from None
+        if resolved_name is None:
+            console.print("[red]No cogniverse k3d cluster found.[/red]")
+            raise SystemExit(1)
+    if not cluster_exists(resolved_name):
+        console.print(f"[red]No k3d cluster named {resolved_name!r}.[/red]")
         raise SystemExit(1)
-    console.print(f"[cyan]Starting cluster {name}...[/cyan]")
+    console.print(f"[cyan]Starting cluster {resolved_name}...[/cyan]")
     try:
-        start_cluster(name)
+        start_cluster(resolved_name)
     except ClusterStartError as exc:
         console.print(f"[red]{exc}[/red]", soft_wrap=True)
         raise SystemExit(1) from None
-    if name == CLUSTER_NAME:
+    if resolved_name == CLUSTER_NAME:
         # The dev stack is reached through kubectl port-forwards (29xxx);
         # the e2e cluster maps NodePorts directly (33xxx) and needs none.
         try:
@@ -685,7 +726,7 @@ def start(name: str) -> None:
                 f"[yellow]Cluster started but port-forwards failed ({exc}); "
                 "re-run `cogniverse start` once pods are ready.[/yellow]"
             )
-    console.print(f"[green]Cluster {name} started.[/green]")
+    console.print(f"[green]Cluster {resolved_name} started.[/green]")
 
 
 @cli.group()

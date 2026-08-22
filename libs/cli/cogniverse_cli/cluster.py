@@ -189,13 +189,42 @@ def has_existing_k8s() -> bool:
         return False
 
 
-def cluster_exists(name: str = CLUSTER_NAME) -> bool:
-    """Check if a k3d cluster with the given name exists.
+def cluster_exists(name: str | None = None) -> bool | str | None:
+    """Check whether a k3d cluster exists.
 
-    A missing or hung k3d binary reads as "no cluster" — the same guard
-    has_existing_k8s uses — so `up` reaches its install-prerequisites
-    prompt instead of dying on a FileNotFoundError traceback.
+    When *name* is omitted, discover the active ``cogniverse*`` cluster from
+    the full k3d inventory and return its actual name. A missing or hung k3d
+    binary reads as "no cluster" for the explicit-name path; discovery raises a
+    display-safe error because the deploy path must not guess.
     """
+    if name is None:
+        try:
+            clusters = list_cluster_states()
+        except FileNotFoundError:
+            raise ClusterStartError("k3d not found on PATH") from None
+        except subprocess.TimeoutExpired:
+            raise ClusterStartError("Timed out inspecting k3d clusters") from None
+        except subprocess.CalledProcessError as exc:
+            detail = (exc.stderr or "").strip()
+            suffix = f": {detail}" if detail else ""
+            raise ClusterStartError(f"Could not inspect k3d clusters{suffix}") from None
+
+        matches: list[str] = []
+        for cluster in clusters:
+            if not isinstance(cluster, dict):
+                continue
+            cluster_name = cluster.get("name")
+            if isinstance(cluster_name, str) and cluster_name.startswith(CLUSTER_NAME):
+                matches.append(cluster_name)
+
+        if len(matches) == 1:
+            return matches[0]
+        if len(matches) == 0:
+            return None
+        raise ClusterStartError(
+            "Could not resolve cogniverse k3d cluster name: "
+            + ", ".join(repr(cluster_name) for cluster_name in matches)
+        )
     try:
         result = subprocess.run(
             ["k3d", "cluster", "list", name],

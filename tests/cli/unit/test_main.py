@@ -115,6 +115,19 @@ def _cluster_state(host_port: int) -> dict:
     }
 
 
+def _cluster_inventory(*names: str) -> str:
+    return json.dumps(
+        [
+            {
+                "name": name,
+                "serversRunning": 1,
+                "serversCount": 1,
+            }
+            for name in names
+        ]
+    )
+
+
 class TestCli:
     """Tests for the top-level CLI group."""
 
@@ -389,6 +402,96 @@ class TestUpCommand:
         mock_prereq.assert_called_once_with(require_k3d=False)
         mock_values.assert_called_once_with(prod=True)
 
+    def test_up_uses_dev_values_for_discovered_cluster(self) -> None:
+        import contextlib
+
+        def _cluster_run(cmd, **kwargs):
+            if cmd == ["k3d", "cluster", "list", "-o", "json"]:
+                return subprocess.CompletedProcess(
+                    args=cmd,
+                    returncode=0,
+                    stdout=_cluster_inventory("cogniverse-e2e"),
+                )
+            if cmd == ["k3d", "cluster", "list", "cogniverse"]:
+                return subprocess.CompletedProcess(args=cmd, returncode=1, stdout="")
+            return subprocess.CompletedProcess(args=cmd, returncode=0, stdout="")
+
+        with contextlib.ExitStack() as stack:
+            stack.enter_context(
+                patch(
+                    "cogniverse_cli.cluster.subprocess.run",
+                    side_effect=_cluster_run,
+                )
+            )
+            mock_status = stack.enter_context(
+                patch("cogniverse_cli.main._print_status_table")
+            )
+            mock_deploy_wf = stack.enter_context(
+                patch("cogniverse_cli.main.deploy_workflow_templates")
+            )
+            mock_argo = stack.enter_context(
+                patch("cogniverse_cli.main.install_argo_controller")
+            )
+            mock_wait = stack.enter_context(
+                patch("cogniverse_cli.main.wait_for_url", return_value=True)
+            )
+            mock_helm = stack.enter_context(patch("cogniverse_cli.main.helm_install"))
+            mock_pull = stack.enter_context(
+                patch("cogniverse_cli.main.pull_and_import_third_party")
+            )
+            mock_values = stack.enter_context(
+                patch(
+                    "cogniverse_cli.main.get_values_file", return_value=Path("/v.yaml")
+                )
+            )
+            stack.enter_context(
+                patch("cogniverse_cli.main.get_chart_path", return_value=Path("/chart"))
+            )
+            stack.enter_context(
+                patch(
+                    "cogniverse_cli.main.get_workflows_path", return_value=Path("/wf")
+                )
+            )
+            stack.enter_context(
+                patch("cogniverse_cli.main._probe_host_llm", return_value=False)
+            )
+            stack.enter_context(
+                patch("cogniverse_cli.main.has_workspace_source", return_value=False)
+            )
+            stack.enter_context(
+                patch(
+                    "cogniverse_cli.main.resolve_project_root",
+                    return_value=Path("/root"),
+                )
+            )
+            mock_prereq = stack.enter_context(
+                patch("cogniverse_cli.main.check_prerequisites", return_value=[])
+            )
+            stack.enter_context(
+                patch("cogniverse_cli.main.has_existing_k8s", return_value=True)
+            )
+            stack.enter_context(
+                patch("cogniverse_cli.main.get_device_values_file", return_value=None)
+            )
+            stack.enter_context(
+                patch("cogniverse_cli.main.detect_torch_backend", return_value="cpu")
+            )
+            stack.enter_context(patch("cogniverse_cli.main.start_port_forwards"))
+
+            result = CliRunner().invoke(cli, ["up"])
+
+        assert result.exit_code == 0, result.output
+        mock_prereq.assert_called_once_with(require_k3d=True)
+        mock_values.assert_called_once_with(prod=False)
+        mock_pull.assert_called_once_with(
+            "cogniverse-e2e", Path("/v.yaml"), skip_llm=False
+        )
+        mock_helm.assert_called_once()
+        mock_wait.assert_called()
+        mock_status.assert_called_once()
+        mock_argo.assert_called_once()
+        mock_deploy_wf.assert_called_once()
+
     @patch("cogniverse_cli.main.has_workspace_source", return_value=False)
     @patch("cogniverse_cli.main.resolve_project_root", return_value=Path("/root"))
     @patch("cogniverse_cli.main.cluster_exists", return_value=False)
@@ -407,6 +510,85 @@ class TestUpCommand:
         result = runner.invoke(cli, ["up", "--llm", "external"])
         assert result.exit_code != 0
         assert "--llm-url is required" in result.output
+
+    def test_up_refuses_ambiguous_cluster_inventory(self) -> None:
+        import contextlib
+
+        def _cluster_run(cmd, **kwargs):
+            if cmd == ["k3d", "cluster", "list", "-o", "json"]:
+                return subprocess.CompletedProcess(
+                    args=cmd,
+                    returncode=0,
+                    stdout=_cluster_inventory("cogniverse-alpha", "cogniverse-beta"),
+                )
+            if cmd == ["k3d", "cluster", "list", "cogniverse"]:
+                return subprocess.CompletedProcess(args=cmd, returncode=1, stdout="")
+            return subprocess.CompletedProcess(args=cmd, returncode=0, stdout="")
+
+        with contextlib.ExitStack() as stack:
+            stack.enter_context(
+                patch(
+                    "cogniverse_cli.cluster.subprocess.run",
+                    side_effect=_cluster_run,
+                )
+            )
+            mock_values = stack.enter_context(
+                patch(
+                    "cogniverse_cli.main.get_values_file", return_value=Path("/v.yaml")
+                )
+            )
+            mock_helm = stack.enter_context(patch("cogniverse_cli.main.helm_install"))
+            stack.enter_context(
+                patch("cogniverse_cli.main.get_chart_path", return_value=Path("/chart"))
+            )
+            stack.enter_context(
+                patch(
+                    "cogniverse_cli.main.get_workflows_path", return_value=Path("/wf")
+                )
+            )
+            stack.enter_context(
+                patch("cogniverse_cli.main._probe_host_llm", return_value=False)
+            )
+            stack.enter_context(
+                patch("cogniverse_cli.main.has_workspace_source", return_value=False)
+            )
+            stack.enter_context(
+                patch(
+                    "cogniverse_cli.main.resolve_project_root",
+                    return_value=Path("/root"),
+                )
+            )
+            stack.enter_context(
+                patch("cogniverse_cli.main.check_prerequisites", return_value=[])
+            )
+            stack.enter_context(
+                patch("cogniverse_cli.main.has_existing_k8s", return_value=True)
+            )
+            stack.enter_context(patch("cogniverse_cli.main.start_port_forwards"))
+            stack.enter_context(patch("cogniverse_cli.main.install_argo_controller"))
+            stack.enter_context(patch("cogniverse_cli.main.deploy_workflow_templates"))
+            stack.enter_context(
+                patch("cogniverse_cli.main.wait_for_url", return_value=True)
+            )
+            stack.enter_context(
+                patch("cogniverse_cli.main.pull_and_import_third_party")
+            )
+            stack.enter_context(
+                patch("cogniverse_cli.main.detect_torch_backend", return_value="cpu")
+            )
+            stack.enter_context(
+                patch("cogniverse_cli.main.get_device_values_file", return_value=None)
+            )
+            stack.enter_context(patch("cogniverse_cli.main._print_status_table"))
+
+            result = CliRunner().invoke(cli, ["up"])
+
+        assert result.exit_code == 1
+        assert "Could not resolve" in result.output
+        assert "cogniverse-alpha" in result.output
+        assert "cogniverse-beta" in result.output
+        mock_values.assert_not_called()
+        mock_helm.assert_not_called()
 
     @patch("cogniverse_cli.main.start_port_forwards")
     @patch("cogniverse_cli.main._print_status_table")
@@ -1018,7 +1200,7 @@ class TestIndexCommandGate:
     def _invoke(self, tmp_path: Path, args: list[str], record: dict):
         import cogniverse_cli.index as index_mod
 
-        def _fake_index_files(root, content_type, tenant_id, profile=None):
+        def _fake_index_files(root, content_type, tenant_id, profile=None, **kwargs):
             record.update(root=root, content_type=content_type, tenant_id=tenant_id)
 
         with patch.object(index_mod, "index_files", _fake_index_files):

@@ -82,26 +82,27 @@ and `modal_inference_lifecycle.py` define the Modal service contracts and lifecy
 ### Stack lifecycle
 
 ```bash
-# Deploy the full stack (creates a k3d cluster if none exists). Builds the
-# images at the git-derived dev version, pulls third-party images one at a
-# time, then imports each image with `k3d image import --mode direct` in a
-# separate operation to bound peak memory use. A failed pull or import stops
-# the remaining image operations and aborts deployment. After all imports, `up`
-# helm-upgrades with the chart stamped to the same version. In dev mode the
-# pods mount the working tree over the images, so day-to-day code changes
-# only need a `kubectl rollout restart` of the affected deployment — rerun
-# `cogniverse up` when dependencies, Dockerfiles, or the chart change (see
-# "Development Workflow: Three Loops" in docs/DEVELOPER_GUIDE.md).
+# Deploy the full stack (creates a k3d cluster if none exists, otherwise uses
+# the discovered cogniverse* cluster). Builds the images at the git-derived
+# dev version, pulls third-party images one at a time, then imports each image
+# with `k3d image import --mode direct` in a separate operation to bound peak
+# memory use. A failed pull or import stops the remaining image operations and
+# aborts deployment. After all imports, `up` helm-upgrades with the chart
+# stamped to the same version. In dev mode the pods mount the working tree
+# over the images, so day-to-day code changes only need a `kubectl rollout
+# restart` of the affected deployment — rerun `cogniverse up` when
+# dependencies, Dockerfiles, or the chart change (see "Development Workflow:
+# Three Loops" in docs/DEVELOPER_GUIDE.md).
 cogniverse up
 cogniverse up --llm external --llm-url http://my-llm:8000/v1
 cogniverse up --messaging  # also enable the Telegram gateway (needs TELEGRAM_BOT_TOKEN)
 
-# Pause / resume a cluster without losing data. Stopping frees the RAM/GPU
-# its pods hold — the supported way to switch between the dev cluster and
-# the self-booted e2e cluster on a host that cannot run both.
-cogniverse stop                        # stop the dev cluster
-cogniverse stop --name cogniverse-e2e  # stop the e2e cluster
-cogniverse start                       # resume dev (restores port-forwards)
+# Pause / resume a cluster without losing data. With no `--name`, the command
+# resolves the active cogniverse* cluster; the dev cluster restores
+# port-forwards, while the e2e cluster does not use them.
+cogniverse stop                        # stop the active cluster
+cogniverse stop --name cogniverse-e2e  # stop the e2e cluster explicitly
+cogniverse start                       # resume the active cluster
 cogniverse start --name cogniverse-e2e
 # Both `up` (create) and `start` pin the cluster's CoreDNS upstreams to
 # 1.1.1.1/8.8.8.8 (idempotent). k3d's default forwards to the host's
@@ -121,7 +122,7 @@ cogniverse logs runtime --follow
 
 `up` accepts `--llm {auto,builtin,external}` (default `auto`, which probes `localhost:11434` for a host LLM before falling back to the chart's builtin model) and `--image-source` to override the workspace directory used for image builds. `logs` targets one of `runtime`, `dashboard`, `vespa`, `phoenix`, `llm`, `argo`; `logs llm` checks for the `cogniverse-llm` statefulset first and prints a notice instead of erroring when the stack is running in external-LLM mode (no builtin pod).
 
-Services with no NodePort — currently the Argo server (it runs in its own namespace) reachable at `localhost:2746` — are bridged by detached, self-restarting `kubectl port-forward` daemons recorded in `/tmp/cogniverse-port-forwards.pids`. `up` and `start` (dev cluster only) establish them; each first reaps the daemons a prior run recorded, so repeated runs never orphan an earlier restart-loop still retrying its bind. `down` and `stop` (dev cluster only) reap them.
+Services with no NodePort — currently the Argo server (it runs in its own namespace) reachable at `localhost:2746` — are bridged by detached, self-restarting `kubectl port-forward` daemons recorded in `/tmp/cogniverse-port-forwards.pids`. `up` and `start` establish them when the resolved cluster is the canonical dev cluster; each first reaps the daemons a prior run recorded, so repeated runs never orphan an earlier restart-loop still retrying its bind. `down` and `stop` reap them for that same cluster.
 
 ### Modal inference
 
