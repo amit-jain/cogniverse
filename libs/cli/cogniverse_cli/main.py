@@ -677,7 +677,9 @@ def stop(name: str | None) -> None:
         if resolved_name is None:
             console.print("[red]No cogniverse k3d cluster found.[/red]")
             raise SystemExit(1)
-    if not cluster_exists(resolved_name):
+    elif not cluster_exists(resolved_name):
+        # Only the explicit --name needs checking; discovery read the name
+        # off the live cluster list, so it is known to exist.
         console.print(f"[red]No k3d cluster named {resolved_name!r}.[/red]")
         raise SystemExit(1)
     console.print(f"[cyan]Stopping cluster {resolved_name}...[/cyan]")
@@ -710,7 +712,9 @@ def start(name: str | None) -> None:
         if resolved_name is None:
             console.print("[red]No cogniverse k3d cluster found.[/red]")
             raise SystemExit(1)
-    if not cluster_exists(resolved_name):
+    elif not cluster_exists(resolved_name):
+        # Only the explicit --name needs checking; discovery read the name
+        # off the live cluster list, so it is known to exist.
         console.print(f"[red]No k3d cluster named {resolved_name!r}.[/red]")
         raise SystemExit(1)
     console.print(f"[cyan]Starting cluster {resolved_name}...[/cyan]")
