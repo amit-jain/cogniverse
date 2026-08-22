@@ -483,3 +483,34 @@ class TestConfigErrorExitsCleanly:
         assert "Error:" in result.stderr
         assert "BACKEND_URL" in result.stderr
         assert "Traceback" not in result.stderr
+
+
+def test_one_shot_startup_dependency_fails_instead_of_retrying_forever():
+    """--annotation-cycle/--annotation-feedback must exit, not hang, when the
+    config store stays down.
+
+    The CronWorkflow fires every 30 minutes. A one-shot job that retries past
+    its grace window holds its CPU/memory reservation and never reports
+    failure, so stuck jobs stack up until the node is exhausted.
+    """
+    attempts = 0
+
+    def get_manager():
+        nonlocal attempts
+        attempts += 1
+        raise httpr.ConnectError("Vespa config query refused")
+
+    with pytest.raises(RuntimeError) as excinfo:
+        qm._wait_for_telemetry_manager(
+            get_manager=get_manager,
+            timeout_seconds=0,
+            poll_interval_seconds=0,
+            retry_forever=False,
+        )
+
+    assert attempts == 1
+    assert str(excinfo.value) == (
+        "Telemetry configuration dependency was not ready after 1 attempt "
+        "within 0.0s: ConnectError: Vespa config query refused"
+    )
+    assert isinstance(excinfo.value.__cause__, httpr.ConnectError)

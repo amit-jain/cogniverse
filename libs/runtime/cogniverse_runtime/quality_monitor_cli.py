@@ -32,11 +32,15 @@ def _wait_for_telemetry_manager(
     telemetry_otlp_endpoint: str | None = None,
     timeout_seconds: float = 300.0,
     poll_interval_seconds: float = 2.0,
+    retry_forever: bool = True,
 ):
     """Wait for the config store used by the telemetry manager to be ready.
 
-    The startup timeout is a grace window for noisy logging only. Once it
-    elapses, keep retrying until the telemetry manager becomes available.
+    For the long-running sidecar the startup timeout is a grace window for
+    noisy logging only: once it elapses, keep retrying, because a restart
+    loop is worse than waiting. One-shot CronWorkflow runs pass
+    ``retry_forever=False`` so the grace window is a real deadline and the
+    job reports failure instead of holding its reservation forever.
     """
     import httpr
     import requests
@@ -60,8 +64,14 @@ def _wait_for_telemetry_manager(
 
         remaining = deadline - time.monotonic()
         if remaining <= 0:
+            attempt_word = "attempt" if attempts == 1 else "attempts"
+            if not retry_forever:
+                raise RuntimeError(
+                    "Telemetry configuration dependency was not ready after "
+                    f"{attempts} {attempt_word} within {timeout_seconds:.1f}s: "
+                    f"{type(last_error).__name__}: {last_error}"
+                ) from last_error
             if not timed_out:
-                attempt_word = "attempt" if attempts == 1 else "attempts"
                 logger.error(
                     "Telemetry configuration dependency was not ready after "
                     f"{attempts} {attempt_word} within {timeout_seconds:.1f}s: "
@@ -861,13 +871,15 @@ def main():
     # AnnotationAgent, dataset store) derive Phoenix's HTTP endpoint from
     # TELEMETRY_OTLP_ENDPOINT's host on the fixed :6006 port; point them at
     # --phoenix-url before any provider is constructed and cached.
+    one_shot = bool(args.annotation_cycle or args.annotation_feedback)
     telemetry_manager = _wait_for_telemetry_manager(
         telemetry_otlp_endpoint=telemetry_otlp_endpoint,
         timeout_seconds=args.startup_timeout,
         poll_interval_seconds=args.startup_poll_interval,
+        retry_forever=not one_shot,
     )
     telemetry_manager.config.provider_config["http_endpoint"] = telemetry_http_endpoint
-    if not args.annotation_cycle and not args.annotation_feedback:
+    if not one_shot:
         _wait_for_runtime_search(
             runtime_url=args.runtime_url,
             tenant_id=args.tenant_id,
