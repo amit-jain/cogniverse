@@ -1772,6 +1772,21 @@ def _stamp_e2e_deploy_state(deploy_state: dict) -> None:
     _require_kubectl_success(applied, apply_command)
 
 
+def _e2e_action_for_cluster_state(cluster_state: str) -> str:
+    """Map a cluster state to the action the session fixture takes.
+
+    ``stale`` deploys rather than failing: deploy_stack rebuilds only the
+    changed images and helm upgrades an existing release, so the repair keeps
+    every seeded corpus. Deleting the cluster costs the recreate plus all of
+    that data, so it is never the automatic remedy.
+    """
+    if cluster_state == "reusable":
+        return "reuse"
+    if cluster_state in ("absent", "stale"):
+        return "deploy"
+    return "fail"
+
+
 def _e2e_deploy_reuse_state(
     repo_root: Path,
     deployed_state: dict | None,
@@ -2040,13 +2055,13 @@ def e2e_stack(request, resolved_inference_endpoints):
             f"`{reset_command}`, then rerun."
         )
     if cluster_state == "stale":
-        pytest.fail(
-            f"Existing shared e2e cluster {E2E_CLUSTER_NAME!r} deploy "
-            f"state is stale ({state_detail}). Delete it explicitly with "
-            f"`{reset_command}`, then rerun."
+        print(
+            f"Repairing stale e2e cluster {E2E_CLUSTER_NAME} in place "
+            f"({state_detail}): rebuilding changed images, upgrading the "
+            "release, restamping. Seeded data is preserved."
         )
 
-    if cluster_state == "reusable":
+    if _e2e_action_for_cluster_state(cluster_state) == "reuse":
         print(
             f"Reusing warm e2e cluster {E2E_CLUSTER_NAME} "
             f"(deploy SHA {deploy_sha} unchanged)"
@@ -2054,14 +2069,14 @@ def e2e_stack(request, resolved_inference_endpoints):
         _sync_sandbox_into_cluster(KUBECTL_CONTEXT, roll_runtime=True)
     else:
         _require_clean_e2e_worktree(repo_root)
-        _stop_dev_cluster_and_free_ports()
-
-        create_test_cluster(
-            E2E_CLUSTER_NAME,
-            ports=[f"{host}:{node}" for host, node in E2E_HOST_PORTS.items()],
-            share_host_storage=False,
-        )
-        created_this_session = True
+        if cluster_state == "absent":
+            _stop_dev_cluster_and_free_ports()
+            create_test_cluster(
+                E2E_CLUSTER_NAME,
+                ports=[f"{host}:{node}" for host, node in E2E_HOST_PORTS.items()],
+                share_host_storage=False,
+            )
+            created_this_session = True
         deploy_identity = _effective_e2e_deployment_identity(repo_root)
         sandbox_overrides = _e2e_deployment_overrides()
         # Test-cluster-only helm overrides (never touch the shipped chart):

@@ -212,6 +212,30 @@ def _drive_reset_fixture_cycle(*, fixturenames: tuple[str, ...] = ()) -> None:
         pass
 
 
+class TestE2EClusterStateAction:
+    """A stale cluster is repaired, never deleted; only real faults abort."""
+
+    def test_every_cluster_state_maps_to_its_action(self):
+        assert {
+            state: e2e_conftest._e2e_action_for_cluster_state(state)
+            for state in ("reusable", "absent", "stale", "unhealthy", "stopped")
+        } == {
+            "reusable": "reuse",
+            "absent": "deploy",
+            "stale": "deploy",
+            "unhealthy": "fail",
+            "stopped": "fail",
+        }
+
+    def test_stale_deploys_rather_than_demanding_a_delete(self):
+        """Deleting a stale cluster costs every seeded corpus.
+
+        deploy_stack rebuilds only changed images and helm upgrades an existing
+        release, so repairing in place preserves the data.
+        """
+        assert e2e_conftest._e2e_action_for_cluster_state("stale") == "deploy"
+
+
 class TestEventLoopStateReset:
     """Pure asyncio-state contract; needs no cluster."""
 
