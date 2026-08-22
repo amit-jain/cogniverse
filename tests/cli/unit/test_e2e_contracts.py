@@ -25,9 +25,13 @@ class _FakeItem:
             yield SimpleNamespace(name=name)
 
 
-def test_telegram_real_flow_is_deselected_without_required_env(monkeypatch):
+def test_telegram_real_flow_is_deselected_without_required_env(monkeypatch, tmp_path):
+    # The gate resolves through read_secret, which also consults ./.env and
+    # ~/.env, so an empty cwd and home are what "unset" actually means here.
     monkeypatch.delenv("TELEGRAM_BOT_TOKEN", raising=False)
     monkeypatch.delenv("TELEGRAM_TEST_CHAT_ID", raising=False)
+    monkeypatch.chdir(tmp_path)
+    monkeypatch.setenv("HOME", str(tmp_path))
     item = _FakeItem(
         "tests/e2e/test_messaging_e2e.py::TestTelegramRealFlow::test_bot_can_send_message",
         {"requires_telegram_bot"},
@@ -261,3 +265,46 @@ def test_expected_initial_trust_rejects_an_unknown_schema_kind():
 
     with pytest.raises(KeyError):
         expected_initial_trust("not_a_schema_kind", DerivationKind.DIRECT_INGEST)
+
+
+def test_telegram_gate_resolves_secrets_from_a_per_key_env_directory(
+    monkeypatch, tmp_path
+):
+    """A secret provisioned the documented way must satisfy the gate.
+
+    ``.env`` is a directory of bare-value ``<VAR>.env`` files; reading
+    os.environ instead of read_secret ignored it and deselected the suite.
+    """
+    monkeypatch.delenv("TELEGRAM_BOT_TOKEN", raising=False)
+    monkeypatch.delenv("TELEGRAM_TEST_CHAT_ID", raising=False)
+    monkeypatch.chdir(tmp_path)
+    monkeypatch.setenv("HOME", str(tmp_path))
+    env_dir = tmp_path / ".env"
+    env_dir.mkdir()
+    (env_dir / "TELEGRAM_BOT_TOKEN.env").write_text("123456:AAHbotToken\n")
+    (env_dir / "TELEGRAM_TEST_CHAT_ID.env").write_text("-1001234567890\n")
+    item = _FakeItem(
+        "tests/e2e/test_messaging_e2e.py::TestTelegramRealFlow::test_bot_can_send_message",
+        {"requires_telegram_bot"},
+    )
+
+    assert _telegram_real_flow_deselections([item]) == ([], None)
+
+
+def test_telegram_gate_names_only_the_key_that_is_missing(monkeypatch, tmp_path):
+    monkeypatch.delenv("TELEGRAM_BOT_TOKEN", raising=False)
+    monkeypatch.delenv("TELEGRAM_TEST_CHAT_ID", raising=False)
+    monkeypatch.chdir(tmp_path)
+    monkeypatch.setenv("HOME", str(tmp_path))
+    env_dir = tmp_path / ".env"
+    env_dir.mkdir()
+    (env_dir / "TELEGRAM_BOT_TOKEN.env").write_text("123456:AAHbotToken\n")
+    item = _FakeItem(
+        "tests/e2e/test_messaging_e2e.py::TestTelegramRealFlow::test_bot_can_send_message",
+        {"requires_telegram_bot"},
+    )
+
+    deselected, reason = _telegram_real_flow_deselections([item])
+
+    assert deselected == [item]
+    assert reason == "missing TELEGRAM_TEST_CHAT_ID"
