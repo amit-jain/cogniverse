@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+import socket
 import subprocess
 from pathlib import Path
 from unittest.mock import MagicMock, patch
@@ -511,3 +512,69 @@ class TestEnsureSandboxReady:
             sandbox_mod.ensure_sandbox_ready(kube_context="k3d-cogniverse-e2e") is True
         )
         assert sync_calls == ["k3d-cogniverse-e2e"]
+
+
+class TestGatewayRunningRequiresAReachablePort:
+    """Registration outlives the process, so readiness must dial the port."""
+
+    @staticmethod
+    def _write_active_gateway(home: Path, port: int) -> None:
+        gateway_dir = home / ".config" / "openshell" / "gateways" / "gw"
+        gateway_dir.mkdir(parents=True)
+        (gateway_dir / "metadata.json").write_text(
+            json.dumps({"name": "gw", "gateway_port": port}), encoding="utf-8"
+        )
+        (home / ".config" / "openshell" / "active_gateway").write_text(
+            "gw", encoding="utf-8"
+        )
+
+    @staticmethod
+    def _closed_port() -> int:
+        with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as probe:
+            probe.bind(("127.0.0.1", 0))
+            return int(probe.getsockname()[1])
+
+    def test_dead_port_is_not_accepting(self, tmp_path, monkeypatch):
+        monkeypatch.setenv("HOME", str(tmp_path))
+        self._write_active_gateway(tmp_path, self._closed_port())
+        assert sandbox_mod.gateway_port_accepting_connections(timeout_s=1.0) is False
+
+    def test_live_listener_is_accepting(self, tmp_path, monkeypatch):
+        monkeypatch.setenv("HOME", str(tmp_path))
+        with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as listener:
+            listener.bind(("127.0.0.1", 0))
+            listener.listen(1)
+            self._write_active_gateway(tmp_path, int(listener.getsockname()[1]))
+            assert sandbox_mod.gateway_port_accepting_connections(timeout_s=1.0) is True
+
+    def test_registered_but_dead_gateway_is_not_running(self, tmp_path, monkeypatch):
+        """The reported bug: `gateway info` succeeds for a gateway with no listener."""
+        monkeypatch.setenv("HOME", str(tmp_path))
+        self._write_active_gateway(tmp_path, self._closed_port())
+        monkeypatch.setattr(sandbox_mod, "openshell_installed", lambda: True)
+        monkeypatch.setattr(
+            sandbox_mod.subprocess,
+            "run",
+            lambda *a, **k: subprocess.CompletedProcess(
+                a[0] if a else [], 0, "Gateway endpoint: https://127.0.0.1:1\n", ""
+            ),
+        )
+        assert sandbox_mod.gateway_running() is False
+
+    def test_dead_gateway_is_restarted_rather_than_reused(self, tmp_path, monkeypatch):
+        monkeypatch.setenv("HOME", str(tmp_path))
+        self._write_active_gateway(tmp_path, self._closed_port())
+        monkeypatch.setattr(sandbox_mod, "openshell_installed", lambda: True)
+        monkeypatch.setattr(
+            sandbox_mod.subprocess,
+            "run",
+            lambda *a, **k: subprocess.CompletedProcess(
+                a[0] if a else [], 0, "Gateway endpoint: https://127.0.0.1:1\n", ""
+            ),
+        )
+        started: list[bool] = []
+        monkeypatch.setattr(
+            sandbox_mod, "start_gateway", lambda: (started.append(True), True)[1]
+        )
+        assert sandbox_mod.ensure_host_gateway() is True
+        assert started == [True]
