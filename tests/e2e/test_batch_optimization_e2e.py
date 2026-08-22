@@ -940,14 +940,21 @@ def _kubectl_cluster_ready() -> None:
         )
 
 
-def _count_spans_by_name_in_pod(tenant_id: str, span_name_symbol: str) -> int:
+def _count_spans_by_name_in_pod(
+    tenant_id: str,
+    span_name_symbol: str,
+    lookback_hours: float | None = None,
+) -> int:
     """Count spans of one training-span type for a tenant, via the runtime pod.
 
     ``span_name_symbol`` is a ``SPAN_NAME_*`` name in
     ``cogniverse_foundation.telemetry.config`` (e.g. ``SPAN_NAME_PROFILE_SELECTION``).
     Seeding emits best-effort onto the batch queue (~500ms), so callers poll
     this until the directly-seeded lower bound is present before optimizing.
+    ``lookback_hours`` defaults to the module's seeding-start window.
     """
+    if lookback_hours is None:
+        lookback_hours = _module_lookback_hours()
     script = IN_POD_TELEMETRY_PRELUDE + (
         "import asyncio; "
         f"from cogniverse_foundation.telemetry.config import {span_name_symbol}; "
@@ -955,7 +962,7 @@ def _count_spans_by_name_in_pod(tenant_id: str, span_name_symbol: str) -> int:
         "from cogniverse_runtime.optimization_cli import _query_spans_by_name; "
         f"tm = get_telemetry_manager(); "
         f"tp = tm.get_provider(tenant_id={tenant_id!r}); "
-        f"df = asyncio.run(_query_spans_by_name(tm, tp, {tenant_id!r}, {span_name_symbol}, 1)); "
+        f"df = asyncio.run(_query_spans_by_name(tm, tp, {tenant_id!r}, {span_name_symbol}, {lookback_hours!r})); "
         "print('__SPANS__' + str(len(df)))"
     )
     result = subprocess.run(
@@ -1095,7 +1102,11 @@ def _wait_for_served_scoreable_span_floor_in_pod(
 
 
 def _wait_for_seeded_span_lower_bound_in_pod(
-    tenant_id: str, span_name_symbol: str, minimum: int, timeout_s: float = 240.0
+    tenant_id: str,
+    span_name_symbol: str,
+    minimum: int,
+    lookback_hours: float | None = None,
+    timeout_s: float = 240.0,
 ) -> None:
     """Poll until at least ``minimum`` spans of this type are queryable.
 
@@ -1104,10 +1115,12 @@ def _wait_for_seeded_span_lower_bound_in_pod(
     optimizer read deterministic without forcing synchronous export on the
     request path.
     """
+    if lookback_hours is None:
+        lookback_hours = _module_lookback_hours()
     deadline = time.monotonic() + timeout_s
     seen = -1
     while time.monotonic() < deadline:
-        seen = _count_spans_by_name_in_pod(tenant_id, span_name_symbol)
+        seen = _count_spans_by_name_in_pod(tenant_id, span_name_symbol, lookback_hours)
         if seen >= minimum:
             return
         time.sleep(5.0)
@@ -1313,16 +1326,20 @@ def simba_selection_tenant(_kubectl_cluster_ready) -> SimbaSelectionTenant:
             )
             assert resp.status_code == 200, resp.text[:500]
 
+    lookback_hours = _module_lookback_hours()
     _wait_for_seeded_span_lower_bound_in_pod(
         tenant_id,
         "SPAN_NAME_QUERY_ENHANCEMENT",
         len(seeded_queries),
+        lookback_hours,
     )
     # This tenant is created fresh for this module and nothing else writes to
     # it, so the seeded spans are the whole population: pin it exactly rather
     # than trusting the lower-bound wait above.
     seeded_span_count = _count_spans_by_name_in_pod(
-        tenant_id, "SPAN_NAME_QUERY_ENHANCEMENT"
+        tenant_id,
+        "SPAN_NAME_QUERY_ENHANCEMENT",
+        lookback_hours,
     )
     assert seeded_span_count == len(seeded_queries), seeded_span_count
 
@@ -1426,18 +1443,22 @@ def generate_spans_for_batch_jobs(_kubectl_cluster_ready):
     # export on the request path — is what keeps the batch-job reads
     # deterministic. QE waits on the exact seeded query set; the others wait
     # on the directly-seeded lower bound (complex-query fan-out adds more).
-    _wait_for_seeded_query_enhancement_queries_in_pod()
+    lookback_hours = _module_lookback_hours()
+    _wait_for_seeded_query_enhancement_queries_in_pod(lookback_hours=lookback_hours)
     _wait_for_seeded_span_lower_bound_in_pod(
-        TENANT_ID, "SPAN_NAME_GATEWAY", spans_per_agent
+        TENANT_ID, "SPAN_NAME_GATEWAY", spans_per_agent, lookback_hours
     )
     _wait_for_seeded_span_lower_bound_in_pod(
-        TENANT_ID, "SPAN_NAME_ENTITY_EXTRACTION", spans_per_agent
+        TENANT_ID, "SPAN_NAME_ENTITY_EXTRACTION", spans_per_agent, lookback_hours
     )
     _wait_for_seeded_span_lower_bound_in_pod(
-        TENANT_ID, "SPAN_NAME_PROFILE_SELECTION", spans_per_agent
+        TENANT_ID, "SPAN_NAME_PROFILE_SELECTION", spans_per_agent, lookback_hours
     )
     _wait_for_seeded_span_lower_bound_in_pod(
-        TENANT_ID, "SPAN_NAME_ORCHESTRATION", len(COMPLEX_QUERIES)
+        TENANT_ID,
+        "SPAN_NAME_ORCHESTRATION",
+        len(COMPLEX_QUERIES),
+        lookback_hours,
     )
 
     # Gateway and orchestration are already covered by the direct seeded-span
@@ -2816,12 +2837,14 @@ class TestSimbaPopulationFloor:
     insufficient_population version."""
 
     def test_fresh_tenant_below_floor_does_not_promote(self, simba_floor_tenant):
+        lookback_hours = _module_lookback_hours()
         for query in BELOW_FLOOR_QUERY_ENHANCEMENT_QUERIES:
             _call_agent("query_enhancement_agent", query, tenant_id=simba_floor_tenant)
         _wait_for_seeded_span_lower_bound_in_pod(
             simba_floor_tenant,
             "SPAN_NAME_QUERY_ENHANCEMENT",
             len(BELOW_FLOOR_QUERY_ENHANCEMENT_QUERIES),
+            lookback_hours,
         )
 
         result = _run_batch_job("simba", tenant_id=simba_floor_tenant)
