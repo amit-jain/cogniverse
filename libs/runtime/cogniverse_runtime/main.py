@@ -1340,6 +1340,7 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
         ) from exc
     configure_synthetic(
         backend=synthetic_backend,
+        config_manager=config_manager,
         backend_config=synthetic_runtime_config.backend_config,
         generator_config=synthetic_runtime_config.generator_config,
         agents_config=synthetic_runtime_config.agents_config,
