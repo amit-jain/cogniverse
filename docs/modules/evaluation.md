@@ -3012,11 +3012,11 @@ sample through `ConfigurableVisualJudge`; `create_quality_scorer()` scores
 each sample through the synchronous evaluators from
 `evaluators.sync_reference_free.create_sync_evaluators()`.
 
-Judge failures (a raised vision call or an `evaluation_failed` result) are
-excluded from the mean and reported under `metadata["failed_evaluations"]`;
-genuine zeros (no results, no video id) still score 0.0. When every attempted
-judge call fails the scorer raises instead of reporting a score, so a judge
-outage cannot masquerade as a uniform quality collapse.
+Judge failures from raised vision calls are excluded from the mean and
+reported under `metadata["failed_evaluations"]`; genuine zeros (no results,
+no video id) still score 0.0. When every attempted judge call fails the
+scorer raises instead of reporting a score, so a judge outage cannot
+masquerade as a uniform quality collapse.
 
 **ConfigurableVisualJudge:**
 
@@ -3025,7 +3025,9 @@ frames via cv2, and asks the configured LLM (provider, model, endpoint all
 sourced from the evaluator config — never constructor defaults) whether they
 match the query. Each vision call is bounded by the evaluator config's
 `request_timeout_s` (default 120) so an unresponsive endpoint fails the
-evaluation instead of hanging the run.
+evaluation instead of hanging the run. Backend failures raise
+`RuntimeError` with the provider, model, and endpoint in the message; the
+judge never returns a partial result for an outage.
 
 ```python
 from cogniverse_core.common.media import MediaConfig, MediaLocator
