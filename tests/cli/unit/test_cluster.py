@@ -12,11 +12,13 @@ from unittest.mock import MagicMock, patch
 import cogniverse_cli.cluster as cluster
 import pytest
 from cogniverse_cli.cluster import (
+    CLUSTER_NAME,
     DEFAULT_PORTS,
     check_prerequisites,
     cluster_exists,
     create_cluster,
     delete_cluster,
+    discover_cluster_name,
     has_existing_k8s,
     install_missing_prerequisites,
     install_prerequisite,
@@ -97,92 +99,161 @@ class TestClusterExists:
 
     @patch("cogniverse_cli.cluster.subprocess.run")
     def test_cluster_exists_true(self, mock_run: object) -> None:
-        """Returns True when k3d reports the cluster exists."""
+        """Returns True when k3d reports the named cluster exists."""
         mock_run.return_value = subprocess.CompletedProcess(  # type: ignore[attr-defined]
             args=[], returncode=0
         )
 
-        assert cluster_exists("cogniverse") is True
+        assert cluster_exists("known") is True
+        mock_run.assert_called_once_with(
+            ["k3d", "cluster", "list", "known"], capture_output=True, timeout=10
+        )
 
     @patch("cogniverse_cli.cluster.subprocess.run")
     def test_cluster_exists_false(self, mock_run: object) -> None:
-        """Returns False when k3d reports the cluster does not exist."""
+        """Returns False when k3d reports the named cluster does not exist."""
         mock_run.return_value = subprocess.CompletedProcess(  # type: ignore[attr-defined]
             args=[], returncode=1
         )
 
-        assert cluster_exists("cogniverse") is False
+        assert cluster_exists("absent") is False
+        mock_run.assert_called_once_with(
+            ["k3d", "cluster", "list", "absent"], capture_output=True, timeout=10
+        )
 
 
 class TestClusterDiscovery:
     """Tests for discovery-based cluster lookup."""
 
     @patch("cogniverse_cli.cluster.subprocess.run")
-    def test_cluster_exists_discovers_non_default_cluster(
-        self, mock_run: object
-    ) -> None:
-        """A discovered `cogniverse*` cluster returns its actual name."""
+    def test_discover_cluster_name_returns_exact_match(self, mock_run: object) -> None:
+        """A single matching cluster with the CLUSTER_NAME prefix returns its name."""
 
-        def _side_effect(cmd, **kwargs):
-            if cmd == ["k3d", "cluster", "list", "-o", "json"]:
-                return subprocess.CompletedProcess(
-                    args=cmd,
-                    returncode=0,
-                    stdout=json.dumps(
-                        [
-                            {
-                                "name": "cogniverse-e2e",
-                                "serversRunning": 1,
-                                "serversCount": 1,
-                            }
-                        ]
-                    ),
-                )
-            if cmd == ["k3d", "cluster", "list", "cogniverse"]:
-                return subprocess.CompletedProcess(args=cmd, returncode=1, stdout="")
-            raise AssertionError(f"unexpected command: {cmd!r}")
+        mock_run.return_value = subprocess.CompletedProcess(  # type: ignore[attr-defined]
+            args=[],
+            returncode=0,
+            stdout=json.dumps(
+                [
+                    {
+                        "name": f"{CLUSTER_NAME}-e2e",
+                        "serversRunning": 1,
+                        "serversCount": 1,
+                    },
+                    {
+                        "name": "other-cluster",
+                        "serversRunning": 1,
+                        "serversCount": 1,
+                    },
+                ]
+            ),
+        )
 
-        mock_run.side_effect = _side_effect  # type: ignore[attr-defined]
-
-        assert cluster_exists() == "cogniverse-e2e"
+        assert discover_cluster_name() == f"{CLUSTER_NAME}-e2e"
+        mock_run.assert_called_once_with(
+            ["k3d", "cluster", "list", "-o", "json"],
+            check=True,
+            capture_output=True,
+            text=True,
+            timeout=30,
+        )
 
     @patch("cogniverse_cli.cluster.subprocess.run")
-    def test_cluster_exists_rejects_ambiguous_inventory(self, mock_run: object) -> None:
-        """Discovery fails when more than one `cogniverse*` cluster exists."""
+    def test_discover_cluster_name_returns_none_when_no_match(
+        self, mock_run: object
+    ) -> None:
+        """Discovery returns None when no matching cluster exists."""
 
-        def _side_effect(cmd, **kwargs):
-            if cmd == ["k3d", "cluster", "list", "-o", "json"]:
-                return subprocess.CompletedProcess(
-                    args=cmd,
-                    returncode=0,
-                    stdout=json.dumps(
-                        [
-                            {
-                                "name": "cogniverse-alpha",
-                                "serversRunning": 1,
-                                "serversCount": 1,
-                            },
-                            {
-                                "name": "cogniverse-beta",
-                                "serversRunning": 1,
-                                "serversCount": 1,
-                            },
-                        ]
-                    ),
-                )
-            if cmd == ["k3d", "cluster", "list", "cogniverse"]:
-                return subprocess.CompletedProcess(args=cmd, returncode=1, stdout="")
-            raise AssertionError(f"unexpected command: {cmd!r}")
+        mock_run.return_value = subprocess.CompletedProcess(  # type: ignore[attr-defined]
+            args=[],
+            returncode=0,
+            stdout=json.dumps(
+                [
+                    {
+                        "name": "other-cluster",
+                        "serversRunning": 1,
+                        "serversCount": 1,
+                    }
+                ]
+            ),
+        )
 
-        mock_run.side_effect = _side_effect  # type: ignore[attr-defined]
+        assert discover_cluster_name() is None
+        mock_run.assert_called_once_with(
+            ["k3d", "cluster", "list", "-o", "json"],
+            check=True,
+            capture_output=True,
+            text=True,
+            timeout=30,
+        )
+
+    @patch("cogniverse_cli.cluster.subprocess.run")
+    def test_discover_cluster_name_rejects_ambiguous_inventory(
+        self, mock_run: object
+    ) -> None:
+        """Discovery fails when more than one cluster with the CLUSTER_NAME prefix exists."""
+
+        mock_run.return_value = subprocess.CompletedProcess(  # type: ignore[attr-defined]
+            args=[],
+            returncode=0,
+            stdout=json.dumps(
+                [
+                    {
+                        "name": f"{CLUSTER_NAME}-alpha",
+                        "serversRunning": 1,
+                        "serversCount": 1,
+                    },
+                    {
+                        "name": f"{CLUSTER_NAME}-beta",
+                        "serversRunning": 1,
+                        "serversCount": 1,
+                    },
+                    {
+                        "name": "other-cluster",
+                        "serversRunning": 1,
+                        "serversCount": 1,
+                    },
+                ]
+            ),
+        )
 
         from cogniverse_cli.cluster import ClusterStartError
 
         with pytest.raises(ClusterStartError) as exc:
-            cluster_exists()
+            discover_cluster_name()
 
-        assert "cogniverse-alpha" in str(exc.value)
-        assert "cogniverse-beta" in str(exc.value)
+        assert (
+            str(exc.value) == f"Could not resolve {CLUSTER_NAME} k3d cluster name: "
+            f"'{CLUSTER_NAME}-alpha', '{CLUSTER_NAME}-beta'"
+        )
+        mock_run.assert_called_once_with(
+            ["k3d", "cluster", "list", "-o", "json"],
+            check=True,
+            capture_output=True,
+            text=True,
+            timeout=30,
+        )
+
+    @patch("cogniverse_cli.cluster.subprocess.run")
+    def test_discover_cluster_name_missing_k3d_raises_clear_error(
+        self, mock_run: object
+    ) -> None:
+        """A missing k3d binary raises the operator-safe cluster error."""
+
+        mock_run.side_effect = FileNotFoundError("k3d")  # type: ignore[attr-defined]
+
+        from cogniverse_cli.cluster import ClusterStartError
+
+        with pytest.raises(ClusterStartError) as exc:
+            discover_cluster_name()
+
+        assert str(exc.value) == "k3d not found on PATH"
+        mock_run.assert_called_once_with(
+            ["k3d", "cluster", "list", "-o", "json"],
+            check=True,
+            capture_output=True,
+            text=True,
+            timeout=30,
+        )
 
 
 class TestCreateCluster:
