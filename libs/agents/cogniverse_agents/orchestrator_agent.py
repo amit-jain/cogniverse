@@ -182,6 +182,19 @@ _ENRICHMENT_FIELD_MAP: Dict[str, Dict[str, str]] = {
     },
 }
 
+_COVERAGE_CAPABILITIES_BY_MODALITY: Dict[str, frozenset[str]] = {
+    "video": frozenset({"search", "video_search", "retrieval"}),
+    "image": frozenset({"image_search", "visual_analysis"}),
+    "audio": frozenset({"audio_analysis", "transcription"}),
+    "document": frozenset({"document_analysis", "pdf_processing"}),
+}
+
+# Gateway labels can be coarser than the shipped config's canonical
+# modality vocabulary. Keep the carrier label intact, but resolve
+# `text` onto the DOCUMENT retrieval family because the shipped config
+# declares text-bearing retrieval agents under DOCUMENT.
+_COVERAGE_MODALITY_ALIASES: Dict[str, str] = {"text": "document"}
+
 
 def _normalize_query_variants(
     variants: List[Any],
@@ -285,6 +298,14 @@ class OrchestratorInput(AgentInput):
             "Content modality hint from GatewayAgent GLiNER classification "
             "(video/image/audio/document/text). Fed to the DSPy planner "
             "as a prior."
+        ),
+    )
+    detected_modalities: Optional[List[str]] = Field(
+        default=None,
+        description=(
+            "Full ordered modality set preserved from the gateway. Used by "
+            "the orchestrator to guarantee one retrieval per detected "
+            "content type."
         ),
     )
     generation_type: Optional[str] = Field(
@@ -1193,6 +1214,15 @@ class OrchestratorAgent(
         self.active_workflows[workflow_id] = plan
 
         try:
+            coverage_evidence: List[Dict[str, Any]] = []
+            if input.detected_modalities:
+                coverage_evidence = await self._collect_detected_modality_evidence(
+                    query=query,
+                    tenant_id=tenant_id,
+                    detected_modalities=input.detected_modalities,
+                    top_k=10,
+                )
+
             # Action: drive the iterative retrieval loop.
             # The loop IS the retrieval path — it calls ``_execute_plan``
             # internally, once per iteration, and feeds the
@@ -1211,6 +1241,7 @@ class OrchestratorAgent(
                 inbound_queue=inbound_queue,
                 execution_order_sink=telemetry_state.execution_order,
                 agent_observations_sink=telemetry_state.agent_observations,
+                seed_evidence=coverage_evidence,
             )
 
             # Record error entries for agents the LLM proposed but aren't registered
@@ -1830,6 +1861,8 @@ class OrchestratorAgent(
             raw.get("source_doc_id")
             or raw.get("document_id")
             or raw.get("documentid")
+            or raw.get("image_id")
+            or raw.get("audio_id")
             or metadata.get("source_doc_id")
             or metadata.get("video_id")
             or raw.get("id")
@@ -1854,9 +1887,13 @@ class OrchestratorAgent(
         text = (
             raw.get("text")
             or raw.get("transcript")
+            or raw.get("content_preview")
+            or raw.get("description")
+            or raw.get("summary")
             or metadata.get("transcript")
             or metadata.get("description")
             or metadata.get("text")
+            or raw.get("title")
             or ""
         )
 
@@ -1899,6 +1936,168 @@ class OrchestratorAgent(
                 if snippet is not None:
                     snippets.append(snippet)
         return snippets
+
+    @staticmethod
+    def _normalize_detected_modalities(
+        detected_modalities: Optional[List[str]],
+    ) -> List[str]:
+        """Return a stable, de-duplicated detected-modality list."""
+        if not detected_modalities:
+            return []
+        normalized: List[str] = []
+        seen: set[str] = set()
+        for modality in detected_modalities:
+            normalized_modality = str(modality).strip().lower()
+            if not normalized_modality or normalized_modality in seen:
+                continue
+            seen.add(normalized_modality)
+            normalized.append(normalized_modality)
+        return normalized
+
+    @staticmethod
+    def _agent_supports_detected_modality(
+        modality: str,
+        declared_modalities: set[str],
+        capabilities: set[str],
+    ) -> bool:
+        """Return True when a tenant agent can retrieve the given modality.
+
+        Gateway labels can differ from the config's canonical modality
+        vocabulary. Resolve the label to the canonical retrieval family
+        first, then require both a matching declared modality and a
+        retrieval-capability family. That keeps the consumer aligned with the
+        shipped config instead of the stale ``*_search`` convention.
+        """
+        resolved_modality = _COVERAGE_MODALITY_ALIASES.get(modality, modality)
+
+        if resolved_modality not in declared_modalities:
+            return False
+
+        return bool(
+            capabilities
+            & _COVERAGE_CAPABILITIES_BY_MODALITY.get(resolved_modality, set())
+        )
+
+    def _resolve_detected_modality_endpoint(
+        self,
+        modality: str,
+        tenant_id: str,
+        agents_config: Optional[Dict[str, Any]] = None,
+    ):
+        """Resolve the first tenant-available agent capable of the modality."""
+        normalized_modality = str(modality).strip().lower()
+        if not normalized_modality:
+            raise ValueError("Detected modality must be a non-empty string")
+
+        if agents_config is None:
+            from cogniverse_foundation.config.utils import get_config
+
+            agents_config = get_config(
+                tenant_id=tenant_id, config_manager=self._config_manager
+            ).get("agents", {})
+
+        if not isinstance(agents_config, dict):
+            raise ValueError("Configured agents section must be a mapping")
+
+        candidates = []
+        for agent_name, agent_config in agents_config.items():
+            if not isinstance(agent_config, dict):
+                continue
+            if agent_config.get("enabled", True) is not True:
+                continue
+
+            declared_modalities = {
+                str(value).strip().lower()
+                for value in agent_config.get("modalities", [])
+                if str(value).strip()
+            }
+            capabilities = {
+                str(value).strip().lower()
+                for value in agent_config.get("capabilities", [])
+                if str(value).strip()
+            }
+            if not self._agent_supports_detected_modality(
+                normalized_modality, declared_modalities, capabilities
+            ):
+                continue
+
+            endpoint = self.registry.get_agent(agent_name)
+            if endpoint is not None:
+                candidates.append(endpoint)
+
+        if not candidates:
+            raise ValueError(
+                f"Detected modality '{normalized_modality}' has no retrieval agent "
+                f"registered for tenant '{tenant_id}'"
+            )
+        return candidates[0]
+
+    async def _collect_detected_modality_evidence(
+        self,
+        *,
+        query: str,
+        tenant_id: str,
+        detected_modalities: List[str],
+        top_k: int = 10,
+    ) -> List[Dict[str, Any]]:
+        """Run one retrieval per detected modality and return evidence."""
+        modality_evidence: List[Dict[str, Any]] = []
+        from cogniverse_foundation.config.utils import get_config
+
+        agents_config = get_config(
+            tenant_id=tenant_id, config_manager=self._config_manager
+        ).get("agents", {})
+        for modality in self._normalize_detected_modalities(detected_modalities):
+            endpoint = self._resolve_detected_modality_endpoint(
+                modality,
+                tenant_id,
+                agents_config,
+            )
+            payload = {
+                "agent_name": endpoint.name,
+                "query": query,
+                "context": {"tenant_id": tenant_id},
+                "modality": modality,
+                "top_k": top_k,
+                "limit": top_k,
+            }
+            client = (
+                self._http_client_override
+                if self._http_client_override is not None
+                else await _get_http_client()
+            )
+            response = await client.post(
+                f"{endpoint.url}{endpoint.process_endpoint}",
+                json=payload,
+                timeout=httpx.Timeout(endpoint.timeout, connect=10.0),
+            )
+            response.raise_for_status()
+            result = response.json()
+            if not isinstance(result, dict):
+                raise RuntimeError(
+                    f"Coverage retrieval for modality '{modality}' returned "
+                    f"unexpected payload type {type(result).__name__}"
+                )
+
+            status = str(result.get("status", "")).lower()
+            if status in {"error", "failed"}:
+                raise RuntimeError(
+                    f"Coverage retrieval for modality '{modality}' via "
+                    f"{endpoint.name} failed with status '{result.get('status')}'"
+                )
+
+            snippets = self._extract_evidence_from_results({endpoint.name: result})
+            if result.get("results") and not snippets:
+                raise RuntimeError(
+                    f"Coverage retrieval for modality '{modality}' via "
+                    f"{endpoint.name} returned results but none could be "
+                    "coerced into evidence"
+                )
+            for snippet in snippets:
+                snippet.setdefault("modality", modality)
+            modality_evidence.extend(snippets)
+
+        return modality_evidence
 
     @staticmethod
     def _rank_evidence_for_metadata(
@@ -2312,6 +2511,7 @@ class OrchestratorAgent(
         inbound_queue: Optional["_InboundQueue"] = None,
         execution_order_sink: Optional[List[str]] = None,
         agent_observations_sink: Optional[List[Dict[str, Any]]] = None,
+        seed_evidence: Optional[List[Dict[str, Any]]] = None,
     ) -> AccumulatedEvidence:
         """Run the retrieve → gate → reformulate loop bounded by hard caps.
 
@@ -2319,7 +2519,9 @@ class OrchestratorAgent(
         single-shot execution. Bounded by ``SystemConfig.iter_retrieval_max_iter``
         iterations, ``SystemConfig.iter_retrieval_token_budget`` cumulative tokens
         across all evidence, and ``SystemConfig.iter_retrieval_wall_clock_ms``
-        wall-clock milliseconds.
+        wall-clock milliseconds. ``seed_evidence`` lets the caller preload
+        coverage evidence so the gate sees the full multi-modal set from the
+        outset.
 
         ``agent_results_sink`` receives the per-agent results from each
         iteration so the caller can keep emitting them (the orchestration
@@ -2335,8 +2537,8 @@ class OrchestratorAgent(
         # come back, the raw JSON pushes ``evidence_chars`` above the
         # promotion threshold and the gate runs through the RLM substrate
         # instead of a single CoT call.
-        raw_accumulated: List[Dict[str, Any]] = []
-        accumulated: List[Dict[str, Any]] = []
+        raw_accumulated: List[Dict[str, Any]] = list(seed_evidence or [])
+        accumulated: List[Dict[str, Any]] = self._deduplicate_evidence(raw_accumulated)
         gate_output: Dict[str, Any] = {}
         exit_reason = "max_iter"
         partial_due_to_budget = False
