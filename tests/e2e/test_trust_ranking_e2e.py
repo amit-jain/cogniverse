@@ -1,10 +1,8 @@
 """Trust ranking + endorsement end-to-end.
 
 Pins:
-  * the initial-trust-from-derivation-kind multiplier table
-    (``_DERIVATION_WEIGHTS``);
-  * the endorsement HTTP route's exact arithmetic
-    (``new_score = old + _ENDORSEMENT_DELTA[role]``) plus the persisted
+  * the shared initial-trust expectation for each derivation kind;
+  * the endorsement HTTP route's exact arithmetic plus the persisted
     state surviving a Mem0 read-back;
   * the composite ranker's ordering (relevance × trust × confidence) on
     synthetic memories;
@@ -29,8 +27,6 @@ from cogniverse_core.memory.provenance import (
 )
 from cogniverse_core.memory.schema import build_default_registry
 from cogniverse_core.memory.trust import (
-    _DERIVATION_WEIGHTS,
-    _ENDORSEMENT_DELTA,
     TrustRecord,
     attach_trust_to_metadata,
     extract_trust,
@@ -40,7 +36,7 @@ from cogniverse_core.schemas.filesystem_loader import FilesystemSchemaLoader
 from cogniverse_foundation.config.manager import ConfigManager
 from cogniverse_foundation.config.unified_config import SystemConfig
 from cogniverse_vespa.config.config_store import VespaConfigStore
-from tests.e2e.conftest import RUNTIME, unique_id
+from tests.e2e.conftest import RUNTIME, expected_initial_trust, unique_id
 
 VESPA_HTTP_PORT = 33080
 VESPA_CONFIG_PORT = 33071
@@ -127,13 +123,11 @@ def _fetch_memory(mm: Mem0MemoryManager, memory_id: str) -> Dict[str, Any] | Non
 
 @pytest.mark.e2e
 class TestInitialTrustFromDerivationKind:
-    """compute_initial_trust pins (default_trust × _DERIVATION_WEIGHTS[kind])."""
+    """compute_initial_trust pins the shared initial-trust expectation table."""
 
     def test_each_derivation_kind_yields_expected_initial_trust(self) -> None:
         tenant_id = unique_id("trust_init")
         mm = _build_manager(tenant_id)
-        # entity_fact schema's default_trust is 0.5.
-        DEFAULT_TRUST = 0.5
         try:
             ids_by_kind: Dict[DerivationKind, str] = {}
             for dk in DerivationKind:
@@ -151,9 +145,7 @@ class TestInitialTrustFromDerivationKind:
                 assert trust is not None, (
                     f"no trust attached to memory written under {dk.value!r}"
                 )
-                expected = min(
-                    1.0, max(0.0, DEFAULT_TRUST * _DERIVATION_WEIGHTS[dk.value])
-                )
+                expected = expected_initial_trust("entity_fact", dk)
                 assert trust.score == pytest.approx(expected, rel=1e-3), (
                     f"trust score drift for derivation={dk.value!r}: "
                     f"got {trust.score!r}, expected {expected!r}"
@@ -193,9 +185,7 @@ class TestEndorsementBumpsTrust:
             assert r1.status_code == 200, r1.text[:300]
             body1 = r1.json()
             assert body1["memory_id"] == mid
-            assert body1["new_score"] == pytest.approx(
-                0.5 + _ENDORSEMENT_DELTA["user"], rel=1e-3
-            )
+            assert body1["new_score"] == pytest.approx(0.55, rel=1e-3)
             assert body1["endorsements"] == 1
 
             # Read-back through Mem0 — the trust record must have been
@@ -215,9 +205,7 @@ class TestEndorsementBumpsTrust:
             assert r2.status_code == 200, r2.text[:300]
             body2 = r2.json()
             # 0.55 + 0.20 = 0.75
-            assert body2["new_score"] == pytest.approx(
-                0.55 + _ENDORSEMENT_DELTA["org_admin"], rel=1e-3
-            )
+            assert body2["new_score"] == pytest.approx(0.75, rel=1e-3)
             assert body2["endorsements"] == 2
         finally:
             mm.clear_agent_memory(tenant_id, "trust_rank_agent")
