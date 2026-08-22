@@ -9,13 +9,17 @@ values on a constructed trace set and prove every figure assembles.
 from __future__ import annotations
 
 from datetime import datetime, timezone
+from unittest.mock import MagicMock
 
 import pytest
 
+from cogniverse_core.common.tenant_utils import TEST_TENANT_ID
 from cogniverse_evaluation.providers.base import TraceMetrics
 from cogniverse_telemetry_phoenix.evaluation.analytics import PhoenixAnalytics
 
 pytestmark = [pytest.mark.unit, pytest.mark.ci_fast]
+
+TEST_PROJECT_NAME = f"cogniverse-{TEST_TENANT_ID}"
 
 
 def _traces() -> list[TraceMetrics]:
@@ -128,9 +132,13 @@ def test_every_plot_assembles_a_real_figure(analytics):
 def test_generate_report_assembles_stats_and_visualizations(analytics, monkeypatch):
     import json
 
-    monkeypatch.setattr(analytics, "get_traces", lambda *a, **k: _traces())
+    get_traces = MagicMock(return_value=_traces())
+    monkeypatch.setattr(analytics, "get_traces", get_traces)
 
-    report = analytics.generate_report()
+    report = analytics.generate_report(project_name=TEST_PROJECT_NAME)
+
+    assert get_traces.call_args.args == (None, None)
+    assert get_traces.call_args.kwargs == {"project_name": TEST_PROJECT_NAME}
 
     assert report["summary"]["total_requests"] == 10
     assert report["summary"]["mean_response_time"] == 550.0

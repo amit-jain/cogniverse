@@ -179,10 +179,10 @@ The app renders 16 tabs in order. The table below shows the tab label, the tab i
 
 ```python
 # For programmatic access to Phoenix traces, import from the telemetry-phoenix package.
-# project_name scopes the query to a tenant's project — omitting it queries Phoenix's
-# "default" project, which is why the tab itself fetches through
+# project_name scopes the query to a tenant's project — omitting it is no
+# longer valid, which is why the tab itself fetches through
 # cogniverse_dashboard.utils.traces.fetch_tenant_traces() rather than calling
-# get_traces() directly.
+# get_traces(project_name=...) directly.
 from cogniverse_telemetry_phoenix.evaluation.analytics import PhoenixAnalytics
 
 analytics = PhoenixAnalytics(telemetry_url="http://localhost:6006")

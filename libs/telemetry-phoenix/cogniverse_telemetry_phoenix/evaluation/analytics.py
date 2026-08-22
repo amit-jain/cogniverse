@@ -121,7 +121,8 @@ class PhoenixAnalytics:
         end_time: datetime | None = None,
         operation_filter: str | None = None,
         limit: int = 10000,
-        project_name: str | None = None,
+        *,
+        project_name: str,
     ) -> list[TraceMetrics]:
         """
         Fetch traces from Phoenix with optional filters
@@ -131,11 +132,14 @@ class PhoenixAnalytics:
             end_time: End of time range
             operation_filter: Filter by operation name
             limit: Maximum traces to fetch
-            project_name: Phoenix project name (e.g. 'cogniverse-tenant_id')
+            project_name: Required Phoenix project name
 
         Returns:
             List of TraceMetrics objects
         """
+        if not project_name:
+            raise ValueError("project_name is required")
+
         # Fetch spans using the new Phoenix API
         try:
             kwargs = {
@@ -980,6 +984,8 @@ class PhoenixAnalytics:
         start_time: datetime | None = None,
         end_time: datetime | None = None,
         output_file: str | None = None,
+        *,
+        project_name: str,
     ) -> dict[str, Any]:
         """
         Generate comprehensive analytics report
@@ -988,12 +994,13 @@ class PhoenixAnalytics:
             start_time: Start of analysis period
             end_time: End of analysis period
             output_file: Optional file to save report
+            project_name: Required Phoenix project name
 
         Returns:
             Report dictionary with all analytics
         """
         # Fetch traces
-        traces = self.get_traces(start_time, end_time)
+        traces = self.get_traces(start_time, end_time, project_name=project_name)
 
         if not traces:
             return {"error": "No traces found in the specified time range"}

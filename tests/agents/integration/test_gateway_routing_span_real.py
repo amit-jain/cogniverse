@@ -92,8 +92,9 @@ async def test_real_gateway_and_routing_spans_read_by_consumers(real_telemetry):
     assert routing_out["gliner_threshold"] == agent.deps.gliner_threshold
 
     # RoutingEvaluator reads the same decision from the routing span.
-    outcome, metrics = RoutingEvaluator(provider).evaluate_routing_decision(
-        routing_row.to_dict()
-    )
+    project = real_telemetry.config.get_project_name(canonical_tenant_id(tenant_id))
+    outcome, metrics = RoutingEvaluator(
+        provider=provider, project_name=project
+    ).evaluate_routing_decision(routing_row.to_dict())
     assert metrics["chosen_agent"] == gw_out["routed_to"]
     assert metrics["confidence"] == gw_out["confidence"]

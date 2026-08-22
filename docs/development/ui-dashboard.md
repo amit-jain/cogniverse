@@ -1112,13 +1112,18 @@ detailed_report_agent 80.0%  75.0%     77.4%
 ```python
 # Cache expensive data fetches
 @st.cache_data(ttl=300)  # 5 minute TTL
-def get_phoenix_metrics(start_time, end_time):
+def get_phoenix_metrics(tenant_id, start_time, end_time):
     """Fetch metrics from Phoenix"""
     # Import from evaluation package (implementation layer)
     from cogniverse_telemetry_phoenix.evaluation.analytics import PhoenixAnalytics
     analytics = PhoenixAnalytics()
+    project_name = f"cogniverse-{tenant_id}"
     # Expensive API call - get traces for the specified time range
-    return analytics.get_traces(start_time=start_time, end_time=end_time)
+    return analytics.get_traces(
+        start_time=start_time,
+        end_time=end_time,
+        project_name=project_name,
+    )
 
 # Cache resource initialization
 @st.cache_resource
@@ -1180,11 +1185,17 @@ try:
     # Import from evaluation package (implementation layer)
     from cogniverse_telemetry_phoenix.evaluation.analytics import PhoenixAnalytics
     from datetime import datetime, timedelta
+    tenant_id = st.session_state.tenant_id
+    project_name = f"cogniverse-{tenant_id}"
     analytics = PhoenixAnalytics()
     # Get traces for the last 24 hours
     end_time = datetime.now()
     start_time = end_time - timedelta(hours=24)
-    metrics = analytics.get_traces(start_time=start_time, end_time=end_time)
+    metrics = analytics.get_traces(
+        start_time=start_time,
+        end_time=end_time,
+        project_name=project_name,
+    )
     plot_metrics(metrics)
 except ConnectionError:
     st.warning("⚠️ Phoenix unavailable. Showing cached data.")
