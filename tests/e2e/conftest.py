@@ -539,8 +539,17 @@ def _reset_event_loop_state_before_each_test(request):
         _clear_stale_running_loop()
     yield
     _LAST_FINISHED_TEST = request.node.nodeid
+    if _requests_browser(request):
+        # Playwright's sync API leaves its own loop in the running-loop slot
+        # after every call. Cache that loop, and only that loop: it is the one
+        # ``browser.close()`` needs at session teardown. Caching a loop leaked
+        # by a non-browser test instead is what left teardown holding a closed
+        # loop and raising ``no running event loop``.
+        current = asyncio.events._get_running_loop()
+        if current is not None and not current.is_closed():
+            _PARKED_RUNNING_LOOP = current
     # Session-scoped teardown (Playwright's ``browser.close()``) runs after
-    # the last test; keep the cached Playwright loop available.
+    # the last test; give it back the cached Playwright loop.
     parked = _PARKED_RUNNING_LOOP
     if (
         asyncio.events._get_running_loop() is None

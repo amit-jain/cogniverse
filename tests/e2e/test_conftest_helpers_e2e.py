@@ -192,6 +192,26 @@ def _drive_reset_fixture(*, fixturenames: tuple[str, ...] = ()) -> None:
     reset.close()
 
 
+def _drive_reset_fixture_cycle(*, fixturenames: tuple[str, ...] = ()) -> None:
+    """Run the reset fixture's setup AND teardown phases on this thread.
+
+    ``_drive_reset_fixture`` closes the generator at the yield, so anything the
+    fixture does after it never executes. The loop cache is written in that
+    teardown half, so it needs the full cycle.
+    """
+    reset = e2e_conftest._reset_event_loop_state_before_each_test.__wrapped__(
+        SimpleNamespace(
+            node=SimpleNamespace(nodeid="drive_reset_fixture"),
+            fixturenames=fixturenames,
+        )
+    )
+    next(reset)
+    try:
+        next(reset)
+    except StopIteration:
+        pass
+
+
 class TestEventLoopStateReset:
     """Pure asyncio-state contract; needs no cluster."""
 
@@ -323,6 +343,51 @@ class TestEventLoopStateReset:
             foreign_loop.close()
             browser_loop._thread_id = None
             browser_loop.close()
+
+    def test_a_browser_test_populates_the_loop_cache_for_session_teardown(self):
+        """The cache needs a producer, or session teardown gets no loop at all.
+
+        Playwright's sync API leaves its own loop in the running-loop slot after
+        every call. A browser test must cache exactly that loop; a later
+        non-browser test must not replace it; and it must still be attached when
+        ``browser.close()`` runs after the final test. Injecting the cache by
+        hand cannot catch a missing producer, which is how a version with no
+        writer at all passed its own regression test.
+        """
+        import threading
+
+        tid = threading.get_ident()
+        playwright_loop = asyncio.new_event_loop()
+        playwright_loop._thread_id = tid
+        foreign_loop = asyncio.new_event_loop()
+        foreign_loop._thread_id = tid
+        e2e_conftest._PARKED_RUNNING_LOOP = None
+        try:
+            asyncio.events._set_running_loop(playwright_loop)
+            with warnings.catch_warnings():
+                warnings.simplefilter("ignore")
+                _drive_reset_fixture_cycle(fixturenames=("request", "page", "context"))
+            assert e2e_conftest._PARKED_RUNNING_LOOP is playwright_loop, (
+                "a browser test must cache the sync-API loop it leaves behind"
+            )
+
+            asyncio.events._set_running_loop(foreign_loop)
+            with warnings.catch_warnings():
+                warnings.simplefilter("ignore")
+                _drive_reset_fixture_cycle()
+            assert e2e_conftest._PARKED_RUNNING_LOOP is playwright_loop, (
+                "a non-browser test must not replace the cached browser loop"
+            )
+            assert asyncio.events._get_running_loop() is playwright_loop, (
+                "browser.close() at session teardown must find the browser loop"
+            )
+        finally:
+            asyncio.events._set_running_loop(None)
+            e2e_conftest._PARKED_RUNNING_LOOP = None
+            playwright_loop._thread_id = None
+            foreign_loop._thread_id = None
+            playwright_loop.close()
+            foreign_loop.close()
 
     def test_reset_does_not_reattach_a_closed_parked_loop(self):
         parked = asyncio.new_event_loop()
