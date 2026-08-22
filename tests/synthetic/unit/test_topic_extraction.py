@@ -190,6 +190,21 @@ def test_extract_topic_uses_document_body_and_strips_bom():
     )
 
 
+def test_saliency_extract_topic_preserves_interior_punctuation():
+    source = "He appears to be in motion or posing, with his arms slightly raised."
+    saliency = TopicSaliency.from_records(
+        [
+            {"description": source},
+            {"description": "Different content for saliency computation."},
+        ]
+    )
+
+    assert (
+        saliency_extract_topic({"description": source}, saliency=saliency)
+        == "posing, with his arms slightly raised"
+    )
+
+
 def test_extract_topic_rejects_annotation_only_transcript():
     item = {"audio_transcript": "*Screaming*"}
 

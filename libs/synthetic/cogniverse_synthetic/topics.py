@@ -82,9 +82,11 @@ class TopicSaliency:
         best_score = -1.0
         best_span: str | None = None
         for sentence in _SENTENCE_RE.split(normalize_text(text)):
-            words = _WORD_RE.findall(sentence)
-            if not words:
+            word_matches = list(_WORD_RE.finditer(sentence))
+            if not word_matches:
                 continue
+            words = [match.group(0) for match in word_matches]
+            spans = [match.span() for match in word_matches]
             weights = [self.token_weight(word) for word in words]
             width = min(span_words, len(words))
             for start in range(len(words) - width + 1):
@@ -97,7 +99,7 @@ class TopicSaliency:
                 if low == high or score <= best_score:
                     continue
                 best_score = score
-                best_span = " ".join(words[low:high])
+                best_span = sentence[spans[low][0] : spans[high - 1][1]]
         return best_span
 
 
