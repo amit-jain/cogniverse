@@ -46,6 +46,8 @@ def test_fetch_tenant_traces_scopes_to_tenant_project(
             break
         time.sleep(2)
     assert found is not None, "tenant trace not found via fetch_tenant_traces"
+    assert len(found) == 1
+    assert [t.operation for t in found] == [op_name]
 
     # get_traces requires an explicit project_name.
     end = datetime.now(timezone.utc)
