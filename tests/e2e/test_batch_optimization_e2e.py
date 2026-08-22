@@ -707,6 +707,8 @@ CAP8_QUERY_ENHANCEMENT_QUERIES = (
     "search for generative AI tips",
     "explore reinforcement learning examples",
     "locate recommendation system videos",
+    "map self-attention patterns",
+    "outline diffusion model basics",
 )
 
 
@@ -1088,7 +1090,8 @@ def simba_selection_tenant(_kubectl_cluster_ready) -> SimbaSelectionTenant:
 
     # Controller ruling: use the product's per-tenant optimizer_floors path
     # here, not a test-only floor shim. The dedicated 9/3 floor lets the 11
-    # consumed records clear insufficient_population and reach selection.
+    # served records clear insufficient_population and leave 9 train records
+    # after the 2-row served holdout.
     script = IN_POD_TELEMETRY_PRELUDE + (
         "from cogniverse_foundation.config.unified_config import RoutingConfigUnified; "
         "from cogniverse_foundation.config.utils import create_default_config_manager; "
@@ -1149,23 +1152,18 @@ def simba_selection_tenant(_kubectl_cluster_ready) -> SimbaSelectionTenant:
         "SPAN_NAME_QUERY_ENHANCEMENT",
         len(seeded_queries),
     )
+    # This tenant is created fresh for this module and nothing else writes to
+    # it, so the seeded spans are the whole population: pin it exactly rather
+    # than trusting the lower-bound wait above.
+    seeded_span_count = _count_spans_by_name_in_pod(
+        tenant_id, "SPAN_NAME_QUERY_ENHANCEMENT"
+    )
+    assert seeded_span_count == len(seeded_queries), seeded_span_count
 
-    approved_synthetic_count = 2
-    # The 9 seeded spans plus 2 approved synthetic rows make 11 consumed
-    # records. With the dedicated 9/3 floor above, _split_served_holdout holds
-    # out 2 served spans and leaves 9 train records; MMR then trims that pool to
+    approved_synthetic_count = 0
+    # The 11 seeded spans clear the 9/3 floor. _split_served_holdout holds out
+    # 2 served spans and leaves 9 train records; MMR then trims that pool to
     # cap 8 while the persisted ledger still records all 11 consumed examples.
-    generated = _generate_and_approve_synthetic_in_pod(
-        tenant_id,
-        optimizer_type="query_enhancement",
-        count=approved_synthetic_count,
-    )
-    assert generated == approved_synthetic_count, generated
-    _wait_for_approved_query_enhancement_examples_in_pod(
-        tenant_id,
-        optimizer_type="query_enhancement",
-        minimum=approved_synthetic_count,
-    )
 
     try:
         yield SimbaSelectionTenant(tenant_id, seeded_queries, approved_synthetic_count)
@@ -2697,7 +2695,7 @@ class TestSimbaPopulationFloor:
 class TestSimbaSelectionCap:
     """A tenant with a cap-8 training-selection override crosses the cap."""
 
-    def test_cap8_tenant_applies_mmr_and_keeps_all_seeded_queries(
+    def test_cap8_tenant_applies_mmr_with_served_only_pool(
         self, simba_selection_tenant
     ):
         result = _run_batch_job("simba", tenant_id=simba_selection_tenant.tenant_id)
@@ -2711,9 +2709,8 @@ class TestSimbaSelectionCap:
         expected_selection = _selection_summary_in_pod(
             simba_selection_tenant.tenant_id, "simba_query_enhancement"
         )
-        # The synthetic approvals occupy the holdout tail, so the 9 real
-        # query-enhancement spans remain the train pool while the version
-        # ledger still records all consumed examples.
+        # The 11 seeded spans leave 9 train rows after the served holdout,
+        # while the version ledger still records all consumed examples.
 
         assert set(result) == {
             "status",
@@ -2744,21 +2741,20 @@ class TestSimbaSelectionCap:
             result["approved_examples"]
             == simba_selection_tenant.approved_synthetic_count
         ), result
-        assert result["examples"] == (
-            simba_selection_tenant.seeded_count
-            + simba_selection_tenant.approved_synthetic_count
-        ), result
+        assert result["examples"] == simba_selection_tenant.seeded_count, result
         assert result["selection"] == expected_selection, result
         assert selection["cap"] == 8, selection
-        assert selection["pool"] == simba_selection_tenant.seeded_count, selection
-        assert selection["deduped"] == simba_selection_tenant.seeded_count, selection
+        assert (
+            selection["pool"]
+            == simba_selection_tenant.seeded_count - result["holdout_examples"]
+        ), selection
+        assert selection["deduped"] == selection["cap"] + 1, selection
         assert selection["mmr_applied"] is True, selection
         assert selection["decayed_count"] == 0, selection
         assert result["holdout_examples"] == 2, result
         assert result["training_examples"] == selection["cap"], result
-        assert len(result["consumed_example_ids"]) == (
-            simba_selection_tenant.seeded_count
-            + simba_selection_tenant.approved_synthetic_count
+        assert (
+            len(result["consumed_example_ids"]) == simba_selection_tenant.seeded_count
         ), result
         # The version ledger keeps the full consumed record set, not only the
         # train slice that MMR retained.
