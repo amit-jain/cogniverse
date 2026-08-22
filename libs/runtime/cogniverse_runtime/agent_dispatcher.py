@@ -2132,10 +2132,16 @@ class AgentDispatcher:
         result = await gateway_agent._process_impl(input_data)
 
         if result.complexity == "complex":
+            orchestration_context = dict(context)
+            detected_modalities = getattr(result, "__dict__", {}).get(
+                "detected_modalities"
+            )
+            if isinstance(detected_modalities, (list, tuple)) and detected_modalities:
+                orchestration_context["detected_modalities"] = list(detected_modalities)
             final = dict(
                 await self._execute_orchestration_task(
                     query,
-                    context,
+                    orchestration_context,
                     tenant_id,
                     gateway_context={
                         "modality": result.modality,
@@ -2251,6 +2257,7 @@ class AgentDispatcher:
             session_id=context.get("session_id"),
             conversation_history=context.get("conversation_history"),
             modality=gateway_ctx.get("modality"),
+            detected_modalities=context.get("detected_modalities"),
             generation_type=gateway_ctx.get("generation_type"),
             synthesis_depth=synthesis_depth,
         )

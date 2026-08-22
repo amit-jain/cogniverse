@@ -426,6 +426,41 @@ class TestGatewayComplexRouting:
             {"agent_name", "reasoning", "depends_on"}
         ] * len(plan_steps), plan_steps
 
+    def test_complex_query_records_both_detected_modalities(self):
+        """The recorded orchestration evidence must keep every detected
+        modality for a multi-modal query."""
+        query = "find videos and documents about neural networks"
+        with httpx.Client(base_url=RUNTIME, timeout=900.0) as client:
+            resp = client.post(
+                "/agents/gateway_agent/process",
+                json={
+                    "agent_name": "gateway_agent",
+                    "query": query,
+                    "context": {"tenant_id": TENANT_ID},
+                    "top_k": 5,
+                },
+            )
+
+        assert resp.status_code == 200, (
+            f"Complex query failed with {resp.status_code}. "
+            f"E2E tests require orchestrator + LM running."
+        )
+        data = resp.json()
+        gw = data["gateway"]
+        assert (gw["complexity"], gw["routed_to"]) == expected_gateway_routing(
+            query, gw
+        )
+        assert gw["modality"] == "both", gw
+        assert_orchestrated(data, query, gw)
+
+        iterative_loop = data["orchestration_result"]["metadata"]["iterative_loop"]
+        evidence_modalities = {
+            hit["modality"]
+            for hit in iterative_loop["accumulated_evidence"]
+            if isinstance(hit, dict) and hit.get("modality")
+        }
+        assert evidence_modalities == {"video", "document"}, iterative_loop
+
     def test_planner_repeating_an_agent_still_orchestrates(self):
         """The planner LM listed deep_research_agent twice for this exact
         query and the request came back 400; the plan must instead
