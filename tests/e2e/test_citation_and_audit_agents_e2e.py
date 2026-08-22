@@ -33,7 +33,7 @@ from cogniverse_core.schemas.filesystem_loader import FilesystemSchemaLoader
 from cogniverse_foundation.config.manager import ConfigManager
 from cogniverse_foundation.config.unified_config import SystemConfig
 from cogniverse_vespa.config.config_store import VespaConfigStore
-from tests.e2e.conftest import RUNTIME, unique_id
+from tests.e2e.conftest import RUNTIME, expected_initial_trust, unique_id
 
 VESPA_HTTP_PORT = 33080
 VESPA_CONFIG_PORT = 33071
@@ -72,16 +72,6 @@ def _build_manager(tenant_id: str) -> Mem0MemoryManager:
     )
     _warmup_provenance_schema(mm)
     return mm
-
-
-def _expected_initial_trust(kind: str, derivation_kind: DerivationKind) -> float:
-    base = {"external_doc": 0.7, "entity_fact": 0.5}[kind]
-    weights = {
-        DerivationKind.DIRECT_INGEST: 1.2,
-        DerivationKind.EXTRACTION: 1.0,
-        DerivationKind.SYNTHESIS: 0.85,
-    }
-    return base * weights[derivation_kind]
 
 
 def _warmup_provenance_schema(mm: Mem0MemoryManager, timeout_s: float = 120.0) -> None:
@@ -178,7 +168,7 @@ def _write_with_provenance(
     assert provenance["trace_id"] is None
 
     trust = persisted_meta["trust"]
-    expected_trust = _expected_initial_trust(kind, derivation_kind)
+    expected_trust = expected_initial_trust(kind, derivation_kind)
     assert trust["score"] == pytest.approx(expected_trust)
     assert trust["initial_score"] == pytest.approx(expected_trust)
     assert trust["endorsements"] == 0
