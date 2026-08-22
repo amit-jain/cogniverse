@@ -1,11 +1,10 @@
-"""quality_monitor_cli.main() branch dispatch + exit-code contract.
+"""quality_monitor_cli.main() branch dispatch + serving-loop retry contract.
 
-Argo CronWorkflows key run success/failure off these process exit codes, and
+Argo CronWorkflows key run success/failure off the one-shot exit codes, and
 only --annotation-cycle was exercised before. These pin the --annotation-feedback
 --argo-url guard, the result-driven codes (errored agents → 1), the --once
-force-cycle codes (status ok → 0, else 1), and that the --once path awaits
-monitor.close() in the same loop (the "Event loop is closed" guard against a
-second asyncio.run).
+force-cycle codes (status ok → 0, else 1), and that the serving path keeps the
+process alive when the monitor loop raises or returns unexpectedly.
 """
 
 from __future__ import annotations
@@ -26,6 +25,8 @@ pytestmark = [pytest.mark.unit, pytest.mark.ci_fast]
 class _StubMonitor:
     force_result = {"status": "ok"}
     run_exc: BaseException | None = None
+    run_side_effects: list = []
+    run_calls = 0
     instances: list = []
 
     def __init__(self, **kwargs):
@@ -37,6 +38,12 @@ class _StubMonitor:
         return type(self).force_result
 
     async def run(self):
+        type(self).run_calls += 1
+        if type(self).run_side_effects:
+            effect = type(self).run_side_effects.pop(0)
+            if isinstance(effect, BaseException):
+                raise effect
+            return effect
         if type(self).run_exc is not None:
             raise type(self).run_exc
         return None
@@ -48,6 +55,10 @@ class _StubMonitor:
 class _StubTelemetry:
     def __init__(self):
         self.config = type("_Cfg", (), {"provider_config": {}})()
+
+
+class _BreakLoop(BaseException):
+    """Sentinel that forces the monitor runner to stop after a retry."""
 
 
 @pytest.fixture
@@ -66,6 +77,8 @@ def patched(monkeypatch):
     )
     _StubMonitor.force_result = {"status": "ok"}
     _StubMonitor.run_exc = None
+    _StubMonitor.run_side_effects = []
+    _StubMonitor.run_calls = 0
     _StubMonitor.instances = []
     return monkeypatch
 
@@ -78,6 +91,11 @@ def _main_exit(monkeypatch, argv):
     with pytest.raises(SystemExit) as exc:
         qm.main()
     return exc.value.code
+
+
+def _main_run(monkeypatch, argv):
+    monkeypatch.setattr(sys, "argv", ["quality_monitor_cli.py", *argv])
+    return qm.main()
 
 
 def test_annotation_feedback_without_argo_url_exits_2(patched):
@@ -171,15 +189,46 @@ def _silence_annotation_loop(monkeypatch):
     monkeypatch.setattr(qm, "_load_automation_rules", lambda tenant_id: None)
 
 
-def test_default_monitor_run_error_exits_1_and_logs(patched, caplog):
+def test_default_monitor_run_error_retries_and_logs(patched, caplog):
     _silence_annotation_loop(patched)
-    _StubMonitor.run_exc = RuntimeError("boom")
+    sleep_calls = []
+
+    def fake_sleep(delay):
+        sleep_calls.append(delay)
+
+    patched.setattr(qm.time, "sleep", fake_sleep)
+    _StubMonitor.run_side_effects = [RuntimeError("boom"), _BreakLoop()]
     with caplog.at_level("ERROR"):
-        code = _main_exit(patched, _BASE)
-    assert code == 1
-    assert "boom" in caplog.text
-    # The monitor still closed cleanly before the non-zero exit.
-    assert _StubMonitor.instances[-1].closed is True
+        with pytest.raises(_BreakLoop):
+            _main_run(patched, _BASE)
+    assert sleep_calls == [1.0]
+    assert len(_StubMonitor.instances) == 2
+    assert [instance.closed for instance in _StubMonitor.instances] == [True, True]
+    assert [record.levelname for record in caplog.records] == ["ERROR"]
+    assert [record.message for record in caplog.records] == [
+        "Quality monitor loop crashed; retrying in 1.0s"
+    ]
+
+
+def test_default_monitor_return_retries_and_logs(patched, caplog):
+    _silence_annotation_loop(patched)
+    sleep_calls = []
+
+    def fake_sleep(delay):
+        sleep_calls.append(delay)
+
+    patched.setattr(qm.time, "sleep", fake_sleep)
+    _StubMonitor.run_side_effects = [None, _BreakLoop()]
+    with caplog.at_level("ERROR"):
+        with pytest.raises(_BreakLoop):
+            _main_run(patched, _BASE)
+    assert sleep_calls == [1.0]
+    assert len(_StubMonitor.instances) == 2
+    assert [instance.closed for instance in _StubMonitor.instances] == [True, True]
+    assert [record.levelname for record in caplog.records] == ["ERROR"]
+    assert [record.message for record in caplog.records] == [
+        "Quality monitor loop returned unexpectedly; retrying in 1.0s"
+    ]
 
 
 def test_default_monitor_keyboard_interrupt_exits_0(patched):
@@ -223,22 +272,39 @@ def test_startup_dependency_retry_isolated_across_concurrent_waiters():
     assert attempt_count == waiter_count * 2
 
 
-def test_startup_dependency_timeout_raises_with_last_transport_failure():
-    def unavailable_manager():
-        raise httpr.ConnectError("Vespa config query refused")
+def test_startup_dependency_retries_past_timeout_and_logs_exact_failure_once(
+    caplog,
+):
+    expected_manager = object()
+    attempts = 0
 
-    with pytest.raises(RuntimeError) as exc_info:
-        qm._wait_for_telemetry_manager(
-            get_manager=unavailable_manager,
+    def get_manager():
+        nonlocal attempts
+        attempts += 1
+        if attempts < 3:
+            raise httpr.ConnectError("Vespa config query refused")
+        return expected_manager
+
+    with caplog.at_level("WARNING"):
+        manager = qm._wait_for_telemetry_manager(
+            get_manager=get_manager,
             timeout_seconds=0,
             poll_interval_seconds=0,
         )
 
-    assert str(exc_info.value) == (
+    assert manager is expected_manager
+    assert attempts == 3
+    assert [record.levelname for record in caplog.records] == [
+        "ERROR",
+        "WARNING",
+    ]
+    assert [record.message for record in caplog.records] == [
         "Telemetry configuration dependency was not ready after 1 attempt "
-        "within 0.0s: ConnectError: Vespa config query refused"
-    )
-    assert isinstance(exc_info.value.__cause__, httpr.ConnectError)
+        "within 0.0s: ConnectError: Vespa config query refused; keeping the "
+        "sidecar alive and retrying",
+        "Telemetry configuration dependency is still not ready (attempt 2, "
+        "retrying in 0.0s): ConnectError: Vespa config query refused",
+    ]
 
 
 def test_runtime_search_readiness_uses_real_request_and_exact_payload(tmp_path):
@@ -342,6 +408,46 @@ def test_runtime_search_waiters_keep_independent_attempt_counts():
 
     assert results == [{"results": []}] * waiter_count
     assert observed_attempts == [2] * waiter_count
+
+
+def test_runtime_search_keeps_retrying_past_startup_timeout():
+    attempts = 0
+
+    class Response:
+        status_code = 200
+
+        @staticmethod
+        def json():
+            return {"results": [{"source_id": "video-7", "score": 1.0}]}
+
+    def post(*args, **kwargs):
+        nonlocal attempts
+        attempts += 1
+        if attempts < 3:
+            raise ConnectionError(f"runtime not ready attempt {attempts}")
+        return Response()
+
+    observed = {}
+    try:
+        observed["result"] = qm._wait_for_runtime_search(
+            runtime_url="http://runtime",
+            tenant_id="acme:production",
+            golden_queries=[{"query": "probe"}],
+            timeout_seconds=0,
+            poll_interval_seconds=0,
+            post=post,
+        )
+    except Exception as exc:
+        observed["result"] = {
+            "error": type(exc).__name__,
+            "message": str(exc),
+        }
+    observed["attempts"] = attempts
+
+    assert observed == {
+        "result": {"results": [{"source_id": "video-7", "score": 1.0}]},
+        "attempts": 3,
+    }
 
 
 class TestConfigErrorExitsCleanly:

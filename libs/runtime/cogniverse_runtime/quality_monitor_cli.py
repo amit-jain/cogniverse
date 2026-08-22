@@ -18,6 +18,7 @@ import logging
 import os
 import sys
 import time
+from contextlib import suppress
 from datetime import datetime, timedelta, timezone
 from typing import Optional
 from urllib.parse import urlparse
@@ -32,7 +33,11 @@ def _wait_for_telemetry_manager(
     timeout_seconds: float = 300.0,
     poll_interval_seconds: float = 2.0,
 ):
-    """Wait for the config store used by the telemetry manager to be ready."""
+    """Wait for the config store used by the telemetry manager to be ready.
+
+    The startup timeout is a grace window for noisy logging only. Once it
+    elapses, keep retrying until the telemetry manager becomes available.
+    """
     import httpr
     import requests
 
@@ -43,29 +48,48 @@ def _wait_for_telemetry_manager(
             return get_telemetry_manager(otlp_endpoint=telemetry_otlp_endpoint)
 
     deadline = time.monotonic() + timeout_seconds
+    timed_out = False
     attempts = 0
+    last_error: Exception | None = None
     while True:
         attempts += 1
         try:
             return get_manager()
         except (httpr.TransportError, requests.RequestException) as error:
-            remaining = deadline - time.monotonic()
-            if remaining <= 0:
+            last_error = error
+
+        remaining = deadline - time.monotonic()
+        if remaining <= 0:
+            if not timed_out:
                 attempt_word = "attempt" if attempts == 1 else "attempts"
-                raise RuntimeError(
+                logger.error(
                     "Telemetry configuration dependency was not ready after "
                     f"{attempts} {attempt_word} within {timeout_seconds:.1f}s: "
-                    f"{type(error).__name__}: {error}"
-                ) from error
+                    f"{type(last_error).__name__}: {last_error}; "
+                    "keeping the sidecar alive and retrying"
+                )
+                timed_out = True
+            else:
+                logger.warning(
+                    "Telemetry configuration dependency is still not ready "
+                    "(attempt %d, retrying in %.1fs): %s: %s",
+                    attempts,
+                    poll_interval_seconds,
+                    type(last_error).__name__,
+                    last_error,
+                )
+            sleep_for = poll_interval_seconds
+        else:
+            sleep_for = min(poll_interval_seconds, remaining)
             logger.warning(
                 "Telemetry configuration dependency is not ready "
                 "(attempt %d, retrying in %.1fs): %s: %s",
                 attempts,
-                min(poll_interval_seconds, remaining),
-                type(error).__name__,
-                error,
+                sleep_for,
+                type(last_error).__name__,
+                last_error,
             )
-            time.sleep(min(poll_interval_seconds, remaining))
+        time.sleep(max(sleep_for, 0))
 
 
 def _wait_for_runtime_search(
@@ -78,7 +102,11 @@ def _wait_for_runtime_search(
     poll_interval_seconds: float = 2.0,
     post=None,
 ) -> dict:
-    """Wait until the production search route accepts a real golden query."""
+    """Wait until the production search route accepts a real golden query.
+
+    The startup timeout is a grace window for noisy logging only. Once it
+    elapses, keep retrying until the tenant exists and search succeeds.
+    """
     import requests
 
     if golden_queries is None:
@@ -107,6 +135,7 @@ def _wait_for_runtime_search(
         "tenant_id": tenant_id,
     }
     deadline = time.monotonic() + timeout_seconds
+    timed_out = False
     attempts = 0
     last_error: Exception | None = None
     while True:
@@ -132,21 +161,36 @@ def _wait_for_runtime_search(
 
         remaining = deadline - time.monotonic()
         if remaining <= 0:
-            attempt_word = "attempt" if attempts == 1 else "attempts"
-            raise RuntimeError(
-                "Runtime search dependency was not ready after "
-                f"{attempts} {attempt_word} within {timeout_seconds:.1f}s: "
-                f"{type(last_error).__name__}: {last_error}"
-            ) from last_error
-        logger.warning(
-            "Runtime search dependency is not ready "
-            "(attempt %d, retrying in %.1fs): %s: %s",
-            attempts,
-            min(poll_interval_seconds, remaining),
-            type(last_error).__name__,
-            last_error,
-        )
-        time.sleep(min(poll_interval_seconds, remaining))
+            if not timed_out:
+                attempt_word = "attempt" if attempts == 1 else "attempts"
+                logger.error(
+                    "Runtime search dependency was not ready after "
+                    f"{attempts} {attempt_word} within {timeout_seconds:.1f}s: "
+                    f"{type(last_error).__name__}: {last_error}; "
+                    "keeping the sidecar alive and retrying"
+                )
+                timed_out = True
+            else:
+                logger.warning(
+                    "Runtime search dependency is still not ready "
+                    "(attempt %d, retrying in %.1fs): %s: %s",
+                    attempts,
+                    poll_interval_seconds,
+                    type(last_error).__name__,
+                    last_error,
+                )
+            sleep_for = poll_interval_seconds
+        else:
+            sleep_for = min(poll_interval_seconds, remaining)
+            logger.warning(
+                "Runtime search dependency is not ready "
+                "(attempt %d, retrying in %.1fs): %s: %s",
+                attempts,
+                sleep_for,
+                type(last_error).__name__,
+                last_error,
+            )
+        time.sleep(max(sleep_for, 0))
 
 
 def _load_automation_rules(tenant_id: str, config_manager=None):
@@ -683,6 +727,21 @@ def _build_phoenix_provider(tenant_id: str, http_endpoint: str) -> Optional[obje
         return None
 
 
+async def _run_quality_monitor_iteration(
+    monitor, tenant_id: str, runtime_url: str
+) -> None:
+    # The annotation-identification loop rides next to the quality monitor so
+    # the runtime's in-memory worklist stays fed while the serving path runs.
+    annotation_task = asyncio.create_task(_annotation_loop(tenant_id, runtime_url))
+    try:
+        await monitor.run()
+    finally:
+        annotation_task.cancel()
+        with suppress(asyncio.CancelledError):
+            await annotation_task
+        await monitor.close()
+
+
 def main():
     parser = argparse.ArgumentParser(description="Cogniverse Quality Monitor")
     parser.add_argument("--tenant-id", required=True, help="Tenant ID to monitor")
@@ -829,7 +888,7 @@ def main():
     )
 
     workflow_pod_spec = _workflow_pod_spec_from_env()
-    monitor = QualityMonitor(
+    monitor_kwargs = dict(
         tenant_id=args.tenant_id,
         runtime_url=args.runtime_url,
         phoenix_http_endpoint=telemetry_http_endpoint,
@@ -844,6 +903,7 @@ def main():
         telemetry_provider=telemetry_provider,
         workflow_pod_spec=workflow_pod_spec,
     )
+    monitor = QualityMonitor(**monitor_kwargs)
 
     if args.annotation_cycle:
         # One-shot annotation-identification pass for Argo CronWorkflows:
@@ -898,28 +958,31 @@ def main():
         f"(golden every {args.golden_interval}s, live every {args.live_interval}s)"
     )
 
-    async def _run_and_close():
-        # The annotation-identification loop rides in the sidecar next to the
-        # quality-drop loop: detection belongs in the long-lived service, and
-        # the runtime's in-memory worklist needs a feeder in the same pod.
-        annotation_task = asyncio.create_task(
-            _annotation_loop(args.tenant_id, args.runtime_url)
-        )
-        try:
-            await monitor.run()
-        finally:
-            annotation_task.cancel()
-            await monitor.close()
-
     try:
-        asyncio.run(_run_and_close())
+        retry_delay_seconds = 1.0
+        while True:
+            try:
+                asyncio.run(
+                    _run_quality_monitor_iteration(
+                        monitor, args.tenant_id, args.runtime_url
+                    )
+                )
+            except Exception:
+                logger.exception(
+                    "Quality monitor loop crashed; retrying in %.1fs",
+                    retry_delay_seconds,
+                )
+            else:
+                logger.error(
+                    "Quality monitor loop returned unexpectedly; retrying in %.1fs",
+                    retry_delay_seconds,
+                )
+            time.sleep(retry_delay_seconds)
+            retry_delay_seconds = min(retry_delay_seconds * 2, 60.0)
+            monitor = QualityMonitor(**monitor_kwargs)
     except KeyboardInterrupt:
         logger.info("Quality monitor stopped by user")
         sys.exit(0)
-    except Exception:
-        logger.exception("Quality monitor exited with a fatal error")
-        sys.exit(1)
-    sys.exit(0)
 
 
 if __name__ == "__main__":
