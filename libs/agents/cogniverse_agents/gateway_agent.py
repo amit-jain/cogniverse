@@ -11,7 +11,7 @@ Extracted from ComprehensiveRouter's fast path in routing/router.py.
 import asyncio
 import logging
 import re
-from typing import Any, Dict, List, Literal, NamedTuple, Optional, Set, Tuple
+from typing import Any, Dict, List, Literal, NamedTuple, Optional, Tuple
 
 from pydantic import Field
 
@@ -135,6 +135,13 @@ class GatewayOutput(AgentOutput):
     )
     modality: Literal["video", "text", "audio", "image", "document", "both"] = Field(
         ..., description="Detected content modality"
+    )
+    detected_modalities: List[str] = Field(
+        default_factory=list,
+        description=(
+            "Full ordered set of detected content modalities. 'both' remains "
+            "a derived compatibility view for existing consumers."
+        ),
     )
     generation_type: Literal["raw_results", "summary", "detailed_report"] = Field(
         ..., description="Requested generation type"
@@ -426,14 +433,37 @@ class GatewayAgent(A2AAgent[GatewayInput, GatewayOutput, GatewayDeps]):
             for e in entities
         ], False
 
-    def _keyword_modalities(self, query: str) -> Set[str]:
+    def _keyword_modalities(self, query: str) -> Tuple[str, ...]:
         """Modalities named by literal keyword in the query (model-independent)."""
         words = set(re.findall(r"[a-z]+", query.lower()))
-        return {
+        return tuple(
             modality
             for modality, keywords in MODALITY_KEYWORDS.items()
             if words & keywords
-        }
+        )
+
+    def _modality_scores(
+        self, entities: List[Dict[str, Any]], query: str = ""
+    ) -> Dict[str, float]:
+        """Return modality scores across every detected modality."""
+        modality_scores: Dict[str, float] = {}
+        for entity in entities:
+            for modality, labels in MODALITY_LABELS.items():
+                if entity["label"] in labels:
+                    modality_scores[modality] = max(
+                        modality_scores.get(modality, 0.0), entity["score"]
+                    )
+
+        for modality in self._keyword_modalities(query):
+            modality_scores.setdefault(modality, KEYWORD_MODALITY_CONFIDENCE)
+        return modality_scores
+
+    def _detected_modalities(
+        self, entities: List[Dict[str, Any]], query: str = ""
+    ) -> List[str]:
+        """Return the full ordered detected modality set."""
+        modality_scores = self._modality_scores(entities, query)
+        return [modality for modality in MODALITY_LABELS if modality in modality_scores]
 
     def _classify_modality(
         self, entities: List[Dict[str, Any]], query: str = ""
@@ -446,16 +476,7 @@ class GatewayAgent(A2AAgent[GatewayInput, GatewayOutput, GatewayDeps]):
         misses and partial multi-modal tagging. If the combined set spans
         multiple modalities, returns ("both", max_score).
         """
-        modality_scores: Dict[str, float] = {}
-        for entity in entities:
-            for modality, labels in MODALITY_LABELS.items():
-                if entity["label"] in labels:
-                    modality_scores[modality] = max(
-                        modality_scores.get(modality, 0.0), entity["score"]
-                    )
-
-        for modality in self._keyword_modalities(query):
-            modality_scores.setdefault(modality, KEYWORD_MODALITY_CONFIDENCE)
+        modality_scores = self._modality_scores(entities, query)
 
         if not modality_scores:
             return "video", 0.0  # default modality, zero confidence
@@ -716,6 +737,7 @@ class GatewayAgent(A2AAgent[GatewayInput, GatewayOutput, GatewayDeps]):
             self._extract_entities, input.query, thresholds.gliner
         )
         modality, modality_confidence = self._classify_modality(entities, input.query)
+        detected_modalities = self._detected_modalities(entities, input.query)
         generation_type, gen_confidence = self._classify_generation_type(entities)
 
         # Conservative: low confidence in either dimension pushes borderline queries
@@ -782,6 +804,7 @@ class GatewayAgent(A2AAgent[GatewayInput, GatewayOutput, GatewayDeps]):
             query=input.query,
             complexity=complexity,
             modality=modality,
+            detected_modalities=detected_modalities,
             generation_type=generation_type,
             routed_to=routed_to,
             confidence=overall_confidence,

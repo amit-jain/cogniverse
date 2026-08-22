@@ -344,6 +344,68 @@ class TestGatewayOrchestrationHandoff:
 
     @pytest.mark.asyncio
     @pytest.mark.ci_fast
+    async def test_complex_query_carries_detected_modalities(self, dispatcher):
+        """The dispatcher must keep the gateway's full modality set in the
+        orchestration handoff payload."""
+        gateway_output = _make_gateway_output(
+            complexity="complex",
+            routed_to="orchestrator_agent",
+            modality="both",
+            confidence=0.4,
+            fast_path_confidence_threshold=0.55,
+            gliner_threshold=0.35,
+        )
+        gateway_output.detected_modalities = ["video", "document"]
+
+        gateway_ep = MagicMock()
+        gateway_ep.capabilities = ["gateway"]
+        dispatcher._registry.get_agent.return_value = gateway_ep
+
+        captured = {}
+
+        async def _spy_orchestration(query, context, tenant_id, gateway_context):
+            captured.update(
+                query=query,
+                context=context,
+                tenant_id=tenant_id,
+                gateway_context=gateway_context,
+            )
+            return {
+                "status": "success",
+                "agent": "orchestrator_agent",
+                "answer": "orchestrated",
+            }
+
+        with (
+            patch(
+                "cogniverse_agents.gateway_agent.GatewayAgent._process_impl",
+                new_callable=AsyncMock,
+                return_value=gateway_output,
+            ),
+            patch(
+                "cogniverse_agents.gateway_agent.GatewayAgent.__init__",
+                return_value=None,
+            ),
+        ):
+            dispatcher._execute_orchestration_task = _spy_orchestration
+            await dispatcher._execute_gateway_task(
+                "compare videos and documents about neural networks",
+                {"tenant_id": "acme:prod", "top_k": 10},
+                "acme:prod",
+            )
+
+        assert captured["context"]["detected_modalities"] == [
+            "video",
+            "document",
+        ]
+        assert captured["gateway_context"] == {
+            "modality": "both",
+            "generation_type": "raw_results",
+            "confidence": 0.4,
+        }
+
+    @pytest.mark.asyncio
+    @pytest.mark.ci_fast
     async def test_routing_capability_triggers_gateway(self, dispatcher):
         """Agent with 'routing' capability also routes through gateway (backward compat)."""
         routing_ep = MagicMock()
