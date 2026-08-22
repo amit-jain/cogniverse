@@ -169,12 +169,20 @@ class ConfigurableVisualJudge(Evaluator):
             )
 
         except Exception as e:
-            logger.error(f"Visual evaluation failed: {e}")
-            return create_evaluation_result(
-                score=0.0,
-                label="evaluation_failed",
-                explanation=f"Visual evaluation failed: {str(e)}",
+            # provider/model/base_url are set unconditionally in __init__, so a
+            # rename must fail loudly here rather than degrade the message.
+            endpoint = self.base_url.rstrip("/")
+            logger.error(
+                "Visual evaluation failed for provider=%s model=%s endpoint=%s: %s",
+                self.provider,
+                self.model,
+                endpoint,
+                e,
             )
+            raise RuntimeError(
+                "Visual evaluation failed for provider="
+                f"{self.provider}, model={self.model}, endpoint={endpoint}: {e}"
+            ) from e
         finally:
             # extract_frames writes temp JPEGs with delete=False; unlink them
             # once scored so large eval runs don't fill the temp dir.
