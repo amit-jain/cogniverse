@@ -695,20 +695,182 @@ BELOW_FLOOR_QUERY_ENHANCEMENT_QUERIES = (
     "deep learning frameworks",
 )
 
-# Ungrounded query-enhancement spans keep the holdout split off, so the seeded
-# distinct queries are the full selection pool for the dedicated cap-8 tenant.
+# Grounded query-enhancement spans keep the cap-8 tenant scoreable.
 CAP8_QUERY_ENHANCEMENT_QUERIES = (
-    "find neural network tutorials",
-    "compare transformer models",
-    "show AI explainers",
-    "deep learning tricks",
-    "find computer vision lessons",
-    "summarize RNN concepts",
-    "search for generative AI tips",
-    "explore reinforcement learning examples",
-    "locate recommendation system videos",
-    "map self-attention patterns",
-    "outline diffusion model basics",
+    (
+        "find neural network tutorials",
+        [
+            {"text": "neural networks", "type": "CONCEPT", "confidence": 0.92},
+            {"text": "tutorial videos", "type": "CONCEPT", "confidence": 0.84},
+        ],
+        [
+            {
+                "subject": "neural networks",
+                "relation": "covered_in",
+                "object": "tutorial videos",
+            }
+        ],
+    ),
+    (
+        "compare transformer models",
+        [
+            {"text": "transformer models", "type": "CONCEPT", "confidence": 0.91},
+            {
+                "text": "attention mechanisms",
+                "type": "CONCEPT",
+                "confidence": 0.83,
+            },
+        ],
+        [
+            {
+                "subject": "transformer models",
+                "relation": "differ_by",
+                "object": "attention mechanisms",
+            }
+        ],
+    ),
+    (
+        "show AI explainers",
+        [
+            {"text": "AI explainers", "type": "CONCEPT", "confidence": 0.9},
+            {
+                "text": "artificial intelligence",
+                "type": "CONCEPT",
+                "confidence": 0.82,
+            },
+        ],
+        [
+            {
+                "subject": "AI explainers",
+                "relation": "explain",
+                "object": "artificial intelligence",
+            }
+        ],
+    ),
+    (
+        "deep learning tricks",
+        [
+            {"text": "deep learning", "type": "CONCEPT", "confidence": 0.93},
+            {"text": "optimization tricks", "type": "CONCEPT", "confidence": 0.81},
+        ],
+        [
+            {
+                "subject": "optimization tricks",
+                "relation": "applies_to",
+                "object": "deep learning",
+            }
+        ],
+    ),
+    (
+        "find computer vision lessons",
+        [
+            {"text": "computer vision", "type": "CONCEPT", "confidence": 0.92},
+            {"text": "lesson series", "type": "CONCEPT", "confidence": 0.8},
+        ],
+        [
+            {
+                "subject": "computer vision",
+                "relation": "taught_in",
+                "object": "lesson series",
+            }
+        ],
+    ),
+    (
+        "summarize RNN concepts",
+        [
+            {
+                "text": "recurrent neural networks",
+                "type": "CONCEPT",
+                "confidence": 0.91,
+            },
+            {"text": "sequence modeling", "type": "CONCEPT", "confidence": 0.84},
+        ],
+        [
+            {
+                "subject": "recurrent neural networks",
+                "relation": "supports",
+                "object": "sequence modeling",
+            }
+        ],
+    ),
+    (
+        "search for generative AI tips",
+        [
+            {"text": "generative AI", "type": "CONCEPT", "confidence": 0.9},
+            {"text": "prompting tips", "type": "CONCEPT", "confidence": 0.8},
+        ],
+        [
+            {
+                "subject": "generative AI",
+                "relation": "benefits_from",
+                "object": "prompting tips",
+            }
+        ],
+    ),
+    (
+        "explore reinforcement learning examples",
+        [
+            {
+                "text": "reinforcement learning",
+                "type": "CONCEPT",
+                "confidence": 0.91,
+            },
+            {"text": "worked examples", "type": "CONCEPT", "confidence": 0.83},
+        ],
+        [
+            {
+                "subject": "reinforcement learning",
+                "relation": "illustrated_by",
+                "object": "worked examples",
+            }
+        ],
+    ),
+    (
+        "locate recommendation system videos",
+        [
+            {
+                "text": "recommendation systems",
+                "type": "CONCEPT",
+                "confidence": 0.9,
+            },
+            {"text": "video lectures", "type": "CONCEPT", "confidence": 0.8},
+        ],
+        [
+            {
+                "subject": "recommendation systems",
+                "relation": "presented_in",
+                "object": "video lectures",
+            }
+        ],
+    ),
+    (
+        "map self-attention patterns",
+        [
+            {"text": "self-attention", "type": "CONCEPT", "confidence": 0.93},
+            {"text": "attention heads", "type": "CONCEPT", "confidence": 0.82},
+        ],
+        [
+            {
+                "subject": "self-attention",
+                "relation": "analyzed_via",
+                "object": "attention heads",
+            }
+        ],
+    ),
+    (
+        "outline diffusion model basics",
+        [
+            {"text": "diffusion models", "type": "CONCEPT", "confidence": 0.92},
+            {"text": "denoising process", "type": "CONCEPT", "confidence": 0.85},
+        ],
+        [
+            {
+                "subject": "diffusion models",
+                "relation": "relies_on",
+                "object": "denoising process",
+            }
+        ],
+    ),
 )
 
 
@@ -987,7 +1149,7 @@ class SimbaSelectionTenant:
     def __init__(
         self,
         tenant_id: str,
-        seeded_queries: list[str],
+        seeded_queries: list[tuple[str, list[dict], list[dict]]],
         approved_synthetic_count: int,
     ):
         self.tenant_id = tenant_id
@@ -1135,13 +1297,17 @@ def simba_selection_tenant(_kubectl_cluster_ready) -> SimbaSelectionTenant:
 
     seeded_queries = list(CAP8_QUERY_ENHANCEMENT_QUERIES)
     with httpx.Client(base_url=RUNTIME, timeout=GATEWAY_PROCESS_TIMEOUT_S) as client:
-        for query in seeded_queries:
+        for query, entities, relationships in seeded_queries:
             resp = client.post(
                 "/agents/query_enhancement_agent/process",
                 json={
                     "agent_name": "query_enhancement_agent",
                     "query": query,
-                    "context": {"tenant_id": tenant_id},
+                    "context": {
+                        "tenant_id": tenant_id,
+                        "entities": entities,
+                        "relationships": relationships,
+                    },
                     "top_k": 3,
                 },
             )
@@ -1161,9 +1327,11 @@ def simba_selection_tenant(_kubectl_cluster_ready) -> SimbaSelectionTenant:
     assert seeded_span_count == len(seeded_queries), seeded_span_count
 
     approved_synthetic_count = 0
-    # The 11 seeded spans clear the 9/3 floor. _split_served_holdout holds out
-    # 2 served spans and leaves 9 train records; MMR then trims that pool to
-    # cap 8 while the persisted ledger still records all 11 consumed examples.
+    # optimizer_floors sets min_samples=9 and min_unique=3, so
+    # min_holdout=max(1, 9//10)=1. With 11 grounded spans,
+    # _split_served_holdout holds out max(1, 11//4)=2, leaving 9 train rows;
+    # deduped 9 > cap 8, so MMR fires and training_examples=8 while the ledger
+    # still records all 11 consumed examples.
 
     try:
         yield SimbaSelectionTenant(tenant_id, seeded_queries, approved_synthetic_count)
@@ -2699,19 +2867,6 @@ class TestSimbaSelectionCap:
         self, simba_selection_tenant
     ):
         result = _run_batch_job("simba", tenant_id=simba_selection_tenant.tenant_id)
-        _version_blob, ledger = _load_blob_version_in_pod(
-            "model",
-            "simba_query_enhancement",
-            result["version"],
-            tenant_id=simba_selection_tenant.tenant_id,
-        )
-        selection = result["selection"]
-        expected_selection = _selection_summary_in_pod(
-            simba_selection_tenant.tenant_id, "simba_query_enhancement"
-        )
-        # The 11 seeded spans leave 9 train rows after the served holdout,
-        # while the version ledger still records all consumed examples.
-
         assert set(result) == {
             "status",
             "spans_found",
@@ -2732,6 +2887,16 @@ class TestSimbaSelectionCap:
             "consumed_example_ids",
         }, result
         assert result["status"] == "success", result
+        selection = result["selection"]
+        _version_blob, ledger = _load_blob_version_in_pod(
+            "model",
+            "simba_query_enhancement",
+            result["version"],
+            tenant_id=simba_selection_tenant.tenant_id,
+        )
+        expected_selection = _selection_summary_in_pod(
+            simba_selection_tenant.tenant_id, "simba_query_enhancement"
+        )
         assert result["spans_found"] == simba_selection_tenant.seeded_count, result
         assert result["served_examples"] == simba_selection_tenant.seeded_count, result
         assert (
