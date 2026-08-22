@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import json
 import os
 import signal
 import subprocess
@@ -111,6 +112,77 @@ class TestClusterExists:
         )
 
         assert cluster_exists("cogniverse") is False
+
+
+class TestClusterDiscovery:
+    """Tests for discovery-based cluster lookup."""
+
+    @patch("cogniverse_cli.cluster.subprocess.run")
+    def test_cluster_exists_discovers_non_default_cluster(
+        self, mock_run: object
+    ) -> None:
+        """A discovered `cogniverse*` cluster returns its actual name."""
+
+        def _side_effect(cmd, **kwargs):
+            if cmd == ["k3d", "cluster", "list", "-o", "json"]:
+                return subprocess.CompletedProcess(
+                    args=cmd,
+                    returncode=0,
+                    stdout=json.dumps(
+                        [
+                            {
+                                "name": "cogniverse-e2e",
+                                "serversRunning": 1,
+                                "serversCount": 1,
+                            }
+                        ]
+                    ),
+                )
+            if cmd == ["k3d", "cluster", "list", "cogniverse"]:
+                return subprocess.CompletedProcess(args=cmd, returncode=1, stdout="")
+            raise AssertionError(f"unexpected command: {cmd!r}")
+
+        mock_run.side_effect = _side_effect  # type: ignore[attr-defined]
+
+        assert cluster_exists() == "cogniverse-e2e"
+
+    @patch("cogniverse_cli.cluster.subprocess.run")
+    def test_cluster_exists_rejects_ambiguous_inventory(self, mock_run: object) -> None:
+        """Discovery fails when more than one `cogniverse*` cluster exists."""
+
+        def _side_effect(cmd, **kwargs):
+            if cmd == ["k3d", "cluster", "list", "-o", "json"]:
+                return subprocess.CompletedProcess(
+                    args=cmd,
+                    returncode=0,
+                    stdout=json.dumps(
+                        [
+                            {
+                                "name": "cogniverse-alpha",
+                                "serversRunning": 1,
+                                "serversCount": 1,
+                            },
+                            {
+                                "name": "cogniverse-beta",
+                                "serversRunning": 1,
+                                "serversCount": 1,
+                            },
+                        ]
+                    ),
+                )
+            if cmd == ["k3d", "cluster", "list", "cogniverse"]:
+                return subprocess.CompletedProcess(args=cmd, returncode=1, stdout="")
+            raise AssertionError(f"unexpected command: {cmd!r}")
+
+        mock_run.side_effect = _side_effect  # type: ignore[attr-defined]
+
+        from cogniverse_cli.cluster import ClusterStartError
+
+        with pytest.raises(ClusterStartError) as exc:
+            cluster_exists()
+
+        assert "cogniverse-alpha" in str(exc.value)
+        assert "cogniverse-beta" in str(exc.value)
 
 
 class TestCreateCluster:
