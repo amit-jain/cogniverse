@@ -16,6 +16,7 @@ from __future__ import annotations
 import json
 import os
 import shutil
+import socket
 import subprocess
 from pathlib import Path
 from typing import Optional
@@ -134,7 +135,13 @@ def get_active_gateway_dir() -> Optional[Path]:
 
 
 def gateway_running() -> bool:
-    """Return True if the openshell gateway is healthy."""
+    """Return True if a registered openshell gateway is accepting connections.
+
+    Registration is not liveness: ``metadata.json`` and the
+    ``active_gateway`` pointer outlive the process they describe, so a
+    gateway that died still reports an endpoint. Callers use this to decide
+    whether to start one, so the advertised port is dialled here.
+    """
     if not openshell_installed():
         return False
     try:
@@ -145,9 +152,24 @@ def gateway_running() -> bool:
             timeout=10,
             check=False,
         )
-        return result.returncode == 0 and "Gateway endpoint" in result.stdout
     except (subprocess.TimeoutExpired, FileNotFoundError):
         return False
+    if result.returncode != 0 or "Gateway endpoint" not in result.stdout:
+        return False
+    return gateway_port_accepting_connections()
+
+
+def gateway_port_accepting_connections(timeout_s: float = 2.0) -> bool:
+    """Return True if the active gateway's advertised port accepts a TCP connect."""
+    try:
+        port = active_gateway_metadata().get("gateway_port")
+    except (RuntimeError, ValueError, OSError, json.JSONDecodeError):
+        return False
+    if not isinstance(port, int) or port <= 0:
+        return False
+    with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as probe:
+        probe.settimeout(timeout_s)
+        return probe.connect_ex(("127.0.0.1", port)) == 0
 
 
 def start_gateway() -> bool:
