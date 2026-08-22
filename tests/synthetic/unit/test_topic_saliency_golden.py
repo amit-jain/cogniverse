@@ -1,9 +1,7 @@
 """Topic selection over verbatim corpus captions, pinned as a complete golden.
 
 The input is the shipped human-written caption corpus, read verbatim. The
-expected output is written out in full: a positional word slice collapses
-distinct videos onto the same narrative opener, and that is visible here as
-duplicate strings in the golden.
+expected output is written out in full so the exact selected span stays fixed.
 """
 
 from pathlib import Path
@@ -24,11 +22,11 @@ GOLDEN_TOPICS = {
     "v_-HpCLXdtcas.txt": "bends down to lift the barbell",
     "v_-IMXSEIabMM.txt": "house has a red brick facade",
     "v_-MbZ-W0AbN0.txt": "pours some liquid onto a cloth",
-    "v_-cAcA8dO7kA.txt": "biker approaches the middle he tries",
+    "v_-cAcA8dO7kA.txt": "biker approaches the middle, he tries",
     "v_-nl4G-00PtA.txt": "woman wearing an orange top walks",
     "v_-pkfcMUIEMo.txt": "show how to shovel snow using",
     "v_-uJnucdW6DY.txt": "metal fence with huge light poles",
-    "v_-vnSFKJNB94.txt": "performs dives using tucks twists forwards",
+    "v_-vnSFKJNB94.txt": "performs dives using tucks, twists, forwards",
     "v_0BtHd6dvm78.txt": "kitchen implements like a coffee machine",
     "v_0DFz3sgfda0.txt": "various food items including things like",
 }

@@ -1005,13 +1005,20 @@ class TestSyntheticDataAPI:
                     },
                 )
                 assert search.status_code == 200, search.text
-                ingested_topics = {
-                    " ".join(result["metadata"]["segment_description"].split()[:20])
+                ingested_descriptions = [
+                    " ".join(result["metadata"]["segment_description"].split())
                     for result in search.json()["results"]
                     if isinstance(result.get("metadata"), dict)
                     and isinstance(result["metadata"].get("segment_description"), str)
-                }
-                assert topic in ingested_topics, topic
+                ]
+                normalized_topic = " ".join(topic.split())
+                assert (
+                    sum(
+                        normalized_topic in description
+                        for description in ingested_descriptions
+                    )
+                    == 1
+                ), topic
 
         assert all(
             example["available_profiles"].split(",") == expected_available_profiles
@@ -1060,8 +1067,7 @@ class TestSyntheticDataAPI:
                 for record, topic in zip(records, topics)
                 if topic is None
             ] == []
-            # Distinct sources never collapse onto one topic, which is what a
-            # positional slice produced when captions shared an opening.
+            # Distinct sources never collapse onto one topic.
             assert sorted(set(topics)) == sorted(topics)
 
             expected_extractions = []
@@ -1377,10 +1383,10 @@ class TestSyntheticDataAPI:
                 },
             )
             # topic extraction collapses whitespace, so compare normalized forms
-            ingested_video_topics = {
+            ingested_video_descriptions = [
                 " ".join(result["metadata"]["segment_description"].split())
                 for result in self._tenant_video_results(client)
-            }
+            ]
 
         assert agents_response.status_code == 200, agents_response.text
         registered_agents = set(agents_response.json()["agents"])
@@ -1415,10 +1421,9 @@ class TestSyntheticDataAPI:
             target_count=4,
             vespa_sample_size=2,
         )
-        # Topics are verbatim source text, and the VLM captions that supply
-        # them are regenerated on every ingest, so their exact wording is not
-        # pinnable. Pin the template shape exactly, and require the video topic
-        # to be verbatim text of a real ingested segment.
+        # Topics are saliency spans from the ingested captions, so pin the
+        # template shape exactly and require each topic to appear in exactly
+        # one ingested segment description.
         queries = [example["query"] for example in data["data"]]
         video_topic = queries[0].removeprefix("find ")
         document_topic = queries[3].removeprefix("find ")
@@ -1429,7 +1434,19 @@ class TestSyntheticDataAPI:
             f"find {document_topic}",
         ]
         assert video_topic != document_topic
-        assert " ".join(video_topic.split()) in ingested_video_topics
+        ingested_descriptions = ingested_video_descriptions + [
+            " ".join(path.read_text(encoding="utf-8-sig").split())
+            for path in sorted(CAPTION_CORPUS_DIR.glob("*.txt"))[:CAPTION_CORPUS_LIMIT]
+        ]
+        for topic in (video_topic, document_topic):
+            normalized_topic = " ".join(topic.split())
+            assert (
+                sum(
+                    normalized_topic in description
+                    for description in ingested_descriptions
+                )
+                == 1
+            ), topic
         workflow_ids = [example["workflow_id"] for example in data["data"]]
         assert len(set(workflow_ids)) == 4
         assert all(
