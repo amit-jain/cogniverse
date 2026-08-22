@@ -1138,8 +1138,10 @@ def test_schema_corrections_parse_as_exact_canonical_fields(
             },
             '{"complexity":"extreme"}',
             (
-                "ProfileSelectionExampleSchema corrected record has unsupported "
-                "complexity 'extreme'"
+                "invalid ProfileSelectionExampleSchema record: 1 validation "
+                "error for ProfileSelectionExampleSchema\ncomplexity\n  Input "
+                "should be 'simple', 'medium' or 'complex' "
+                "[type=literal_error, input_value='extreme', input_type=str]"
             ),
         ),
         (
@@ -1165,7 +1167,10 @@ def test_schema_corrections_reject_unsupported_or_inconsistent_shapes(
     with pytest.raises(ValueError) as error:
         approval_queue._parse_schema_corrections(item_data, raw_value)
 
-    assert str(error.value) == message
+    # Drop pydantic's trailing docs URL, which carries its minor version; the
+    # rest of the message is pinned exactly.
+    detail = str(error.value).split("\n    For further information visit")[0]
+    assert detail == message
 
 
 @pytest.mark.unit

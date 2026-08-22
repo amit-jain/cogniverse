@@ -10,6 +10,7 @@ dispatch wiring with the workers stubbed so no Argo/Phoenix/Vespa/LM is touched.
 
 from __future__ import annotations
 
+import inspect
 import json
 import sys
 
@@ -92,6 +93,27 @@ _LOOKBACK_MODES = [
 ]
 
 
+# Resolved at import, before any test monkeypatches a worker, so the
+# expectation follows each worker's real signature instead of a transcribed
+# list that drifts when a worker gains or loses the parameter.
+_EMBEDDER_URL_WORKERS = frozenset(
+    attr
+    for _, attr in _LOOKBACK_MODES
+    if "embedder_url" in inspect.signature(getattr(oc, attr)).parameters
+)
+
+
+def _expected_lookback_kwargs(worker_attr: str, embedder_url: str | None):
+    expected = {
+        "tenant_id": "acme:acme",
+        "lookback_hours": 2.5,
+        "telemetry_otlp_endpoint": None,
+    }
+    if worker_attr in _EMBEDDER_URL_WORKERS:
+        expected["embedder_url"] = embedder_url
+    return expected
+
+
 @pytest.mark.parametrize("mode,worker_attr", _LOOKBACK_MODES)
 def test_lookback_mode_success_dispatch(monkeypatch, mode, worker_attr):
     rec = _Recorder(_OK)
@@ -102,11 +124,34 @@ def test_lookback_mode_success_dispatch(monkeypatch, mode, worker_attr):
     assert code == 0
     assert rec.calls == 1
     assert rec.args == ()
-    assert rec.kwargs == {
-        "tenant_id": "acme:acme",
-        "lookback_hours": 2.5,
-        "telemetry_otlp_endpoint": None,
-    }
+    assert rec.kwargs == _expected_lookback_kwargs(worker_attr, None)
+
+
+@pytest.mark.parametrize("mode,worker_attr", _LOOKBACK_MODES)
+def test_lookback_mode_forwards_embedder_url(monkeypatch, mode, worker_attr):
+    """--embedder-url must reach the worker: it gates trainset capping and the
+    embed_fn used for training selection (optimization_cli.py:1294,1313)."""
+    rec = _Recorder(_OK)
+    monkeypatch.setattr(oc, worker_attr, rec)
+    code = _run_main(
+        monkeypatch,
+        [
+            "--mode",
+            mode,
+            "--tenant-id",
+            "acme",
+            "--lookback-hours",
+            "2.5",
+            "--embedder-url",
+            "http://denseon.test:8000",
+        ],
+    )
+    assert code == 0
+    assert rec.calls == 1
+    assert rec.args == ()
+    assert rec.kwargs == _expected_lookback_kwargs(
+        worker_attr, "http://denseon.test:8000"
+    )
 
 
 @pytest.mark.parametrize("mode,worker_attr", _LOOKBACK_MODES)

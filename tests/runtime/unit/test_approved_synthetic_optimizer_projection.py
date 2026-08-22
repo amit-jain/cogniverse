@@ -3,6 +3,7 @@ from types import SimpleNamespace
 import pandas as pd
 import pytest
 
+from cogniverse_foundation.config.unified_config import RoutingConfigUnified
 from cogniverse_runtime.optimization_cli import _project_approved_optimizer_example
 
 pytestmark = pytest.mark.unit
@@ -208,6 +209,11 @@ async def test_synthetic_only_data_compiles_the_actual_production_module(
         async def load_blob(self, kind, key):
             return None
 
+        async def get_version_lineage(self, kind, agent_type):
+            # Real contract for a key with no prior versions: an empty lineage
+            # (artifact_manager.py:868 -> list_versions).
+            return []
+
         async def save_blob(self, kind, key, content):
             captured["artifact"] = (kind, key, content)
             return f"artifact-{optimizer_type}"
@@ -246,9 +252,18 @@ async def test_synthetic_only_data_compiles_the_actual_production_module(
         "_create_teleprompter",
         lambda *args, **kwargs: Teleprompter(),
     )
+
+    class _ConfigManager:
+        """Stands in for the config manager, which reads the backend at
+        construction. Returns the real RoutingConfigUnified so training
+        selection resolves through production's own code path."""
+
+        def get_routing_config(self, tenant_id=None, service="gateway_agent"):
+            return RoutingConfigUnified(tenant_id=tenant_id)
+
     monkeypatch.setattr(
         "cogniverse_foundation.config.utils.create_default_config_manager",
-        lambda: object(),
+        _ConfigManager,
     )
     monkeypatch.setattr(
         "cogniverse_foundation.telemetry.manager.get_telemetry_manager",
@@ -276,13 +291,25 @@ async def test_synthetic_only_data_compiles_the_actual_production_module(
     result = await getattr(optimization_cli, runner_name)("acme:production", 1)
 
     if optimizer_type == "query_enhancement":
+        # Both approved records carry identical content under distinct
+        # example_ids, so training selection dedupes the pool of 2 to a single
+        # trainable example.
         assert result == {
             "status": "no_eval_material",
             "spans_found": 0,
             "examples": 2,
-            "training_examples": 2,
+            "served_scoreable_examples": 0,
+            "non_trainable_examples": 0,
+            "training_examples": 1,
             "holdout_examples": 0,
             "holdout_source": "served",
+            "selection": {
+                "pool": 2,
+                "deduped": 1,
+                "cap": 300,
+                "mmr_applied": False,
+                "decayed_count": 0,
+            },
         }
         assert captured == {}
         return
@@ -291,9 +318,17 @@ async def test_synthetic_only_data_compiles_the_actual_production_module(
         assert result == {
             "status": "no_eval_material",
             "spans_found": 0,
+            "served_scoreable_examples": 0,
             "training_examples": 1,
             "holdout_examples": 0,
             "holdout_source": "served",
+            "selection": {
+                "pool": 1,
+                "deduped": 1,
+                "cap": 300,
+                "mmr_applied": False,
+                "decayed_count": 0,
+            },
         }
         assert captured == {}
         return
@@ -302,9 +337,17 @@ async def test_synthetic_only_data_compiles_the_actual_production_module(
         assert result == {
             "status": "no_eval_material",
             "spans_found": 0,
+            "served_scoreable_examples": 0,
             "training_examples": 1,
             "holdout_examples": 0,
             "holdout_source": "served",
+            "selection": {
+                "pool": 1,
+                "deduped": 1,
+                "cap": 300,
+                "mmr_applied": False,
+                "decayed_count": 0,
+            },
         }
         assert captured == {}
         return
