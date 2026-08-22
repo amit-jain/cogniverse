@@ -10,6 +10,7 @@ from datetime import datetime, timedelta
 import pandas as pd
 import pytest
 
+from cogniverse_core.common.tenant_utils import TEST_TENANT_ID
 from cogniverse_evaluation.data.storage import (
     ConnectionConfig,
     ConnectionState,
@@ -96,8 +97,11 @@ class TestTelemetryStorageIntegration:
     def test_trace_retrieval(self, storage):
         """Test retrieving traces from Phoenix."""
         # Get recent traces
+        project = f"cogniverse-{TEST_TENANT_ID}"
         df = storage.get_traces_for_evaluation(
-            start_time=datetime.now() - timedelta(hours=1), limit=10
+            start_time=datetime.now() - timedelta(hours=1),
+            limit=10,
+            project=project,
         )
 
         # Should return a DataFrame (might be empty if no recent traces)

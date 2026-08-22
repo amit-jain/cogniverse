@@ -34,7 +34,8 @@ class SpanEvaluator:
         self,
         tenant_id: str,
         provider: Optional["EvaluationProvider"] = None,
-        project_name: str = "cogniverse-default",
+        *,
+        project_name: str,
     ):
         """
         Initialize span evaluator.
@@ -42,16 +43,19 @@ class SpanEvaluator:
         Args:
             provider: Optional evaluator provider (None = use default)
             tenant_id: Tenant identifier
-            project_name: Project name for telemetry
+            project_name: Required Phoenix project for telemetry
         """
+        if not project_name:
+            raise ValueError("project_name is required")
+
         # Get provider (lazy import to avoid circular deps)
         if provider is None:
             from .providers import get_evaluation_provider
 
-            # Pass project_name via config, not as a direct argument
+            # Pass the tenant project through the provider config so the
+            # reader stays aligned with the writer's project.
             provider = get_evaluation_provider(
-                tenant_id=tenant_id,
-                config={"project_name": project_name} if project_name else None,
+                tenant_id=tenant_id, config={"project_name": project_name}
             )
 
         self.provider = provider

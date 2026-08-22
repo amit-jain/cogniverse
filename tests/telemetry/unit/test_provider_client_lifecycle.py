@@ -72,12 +72,14 @@ def test_run_per_call_does_not_leak_loops_or_sockets(stub_endpoint):
     )
 
     store = PhoenixTraceStore(http_endpoint=stub_endpoint)
+    tenant_id = "acme:acme"
+    project = f"cogniverse-{tenant_id}"
 
     gc.collect()
     base_sockets = _socket_fds()
 
     for _ in range(40):
-        df = asyncio.run(store.get_spans(project="cogniverse-default", limit=1))
+        df = asyncio.run(store.get_spans(project=project, limit=1))
         assert df.empty
     gc.collect()
     gc.collect()
@@ -101,8 +103,10 @@ async def test_same_loop_reuses_one_client(stub_endpoint):
     )
 
     store = PhoenixTraceStore(http_endpoint=stub_endpoint)
-    await store.get_spans(project="p", limit=1)
+    tenant_id = "acme:acme"
+    project = f"cogniverse-{tenant_id}"
+    await store.get_spans(project=project, limit=1)
     c1 = _client_for_current_loop(stub_endpoint)
-    await store.get_spans(project="p", limit=1)
+    await store.get_spans(project=project, limit=1)
     c2 = _client_for_current_loop(stub_endpoint)
     assert c1 is c2
