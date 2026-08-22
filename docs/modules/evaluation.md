@@ -310,7 +310,7 @@ sequenceDiagram
 
     Note over Evaluator: Step 1: Query Phoenix for Routing Spans
     Evaluator->>Phoenix: query_routing_spans(start_time, end_time, limit)
-    Note over Phoenix: Project: cogniverse-default-routing-optimization<br/>Filter: name == "cogniverse.routing"<br/>Time range: last N hours<br/>Sort: most recent first
+    Note over Phoenix: Project: cogniverse-{tenant_id}<br/>Filter: name == "cogniverse.routing"<br/>Time range: last N hours<br/>Sort: most recent first
     Phoenix-->>Evaluator: routing_spans[]
 
     Note over Evaluator: Step 2: Evaluate Each Routing Decision
@@ -900,7 +900,10 @@ from cogniverse_foundation.telemetry.registry import TelemetryRegistry
 # Get telemetry provider
 provider = TelemetryRegistry.get(name="phoenix", tenant_id="your_org:production")
 
-evaluator = RoutingEvaluator(provider=provider)
+tenant_id = "your_org:production"
+project_name = f"cogniverse-{tenant_id}"
+
+evaluator = RoutingEvaluator(provider=provider, project_name=project_name)
 
 span_data = {
     "name": "cogniverse.routing",
@@ -942,9 +945,11 @@ from cogniverse_foundation.telemetry.registry import TelemetryRegistry
 
 async def calculate_routing_metrics():
     # Get telemetry provider
-    provider = TelemetryRegistry.get(name="phoenix", tenant_id="your_org:production")
+    tenant_id = "your_org:production"
+    provider = TelemetryRegistry.get(name="phoenix", tenant_id=tenant_id)
+    project_name = f"cogniverse-{tenant_id}"
 
-    evaluator = RoutingEvaluator(provider=provider)
+    evaluator = RoutingEvaluator(provider=provider, project_name=project_name)
 
     # Get routing spans from Phoenix
     spans = await evaluator.query_routing_spans(limit=100)
@@ -983,9 +988,11 @@ from cogniverse_foundation.telemetry.registry import TelemetryRegistry
 
 async def get_routing_spans():
     # Get telemetry provider
-    provider = TelemetryRegistry.get(name="phoenix", tenant_id="your_org:production")
+    tenant_id = "your_org:production"
+    provider = TelemetryRegistry.get(name="phoenix", tenant_id=tenant_id)
+    project_name = f"cogniverse-{tenant_id}"
 
-    evaluator = RoutingEvaluator(provider=provider)
+    evaluator = RoutingEvaluator(provider=provider, project_name=project_name)
 
     # Get last 6 hours of routing decisions
     end_time = datetime.now()
@@ -1659,10 +1666,12 @@ from cogniverse_evaluation.online_evaluator import OnlineEvaluator
 from cogniverse_foundation.telemetry.registry import TelemetryRegistry
 
 async def score_live_span(span_data: dict):
-    provider = TelemetryRegistry.get(name="phoenix", tenant_id="your_org:production")
+    tenant_id = "your_org:production"
+    provider = TelemetryRegistry.get(name="phoenix", tenant_id=tenant_id)
+    project_name = f"cogniverse-{tenant_id}"
     online_eval = OnlineEvaluator(
         provider=provider,
-        project_name="cogniverse-default-routing-optimization",
+        project_name=project_name,
     )
     results = await online_eval.evaluate_span(span_data)
     for r in results:
@@ -2183,12 +2192,13 @@ from datetime import datetime, timedelta
 async def evaluate_routing_decisions():
     """Evaluate routing decision quality."""
     # Get telemetry provider
-    provider = TelemetryRegistry.get(name="phoenix", tenant_id="your_org:production")
+    tenant_id = "your_org:production"
+    provider = TelemetryRegistry.get(name="phoenix", tenant_id=tenant_id)
 
     # Initialize evaluator for routing project
     evaluator = RoutingEvaluator(
         provider=provider,
-        project_name="cogniverse-default-routing-optimization"
+        project_name=f"cogniverse-{tenant_id}"
     )
 
     # Get routing spans from last 24 hours
@@ -2492,9 +2502,14 @@ async def production_monitoring_pipeline():
 
     # Get telemetry provider
     from cogniverse_foundation.telemetry.registry import TelemetryRegistry
-    provider = TelemetryRegistry.get(name="phoenix", tenant_id="your_org:production")
+    tenant_id = "your_org:production"
+    provider = TelemetryRegistry.get(name="phoenix", tenant_id=tenant_id)
+    project_name = f"cogniverse-{tenant_id}"
 
-    routing_eval = RoutingEvaluator(provider=provider)
+    routing_eval = RoutingEvaluator(
+        provider=provider,
+        project_name=project_name,
+    )
     routing_spans = await routing_eval.query_routing_spans(
         start_time=start_time,
         end_time=end_time,
@@ -3099,9 +3114,11 @@ def test_routing_metrics_calculation():
     from cogniverse_foundation.telemetry.registry import TelemetryRegistry
 
     # Get telemetry provider
-    provider = TelemetryRegistry.get(name="phoenix", tenant_id="your_org:production")
+    tenant_id = "your_org:production"
+    provider = TelemetryRegistry.get(name="phoenix", tenant_id=tenant_id)
+    project_name = f"cogniverse-{tenant_id}"
 
-    evaluator = RoutingEvaluator(provider=provider)
+    evaluator = RoutingEvaluator(provider=provider, project_name=project_name)
 
     # Mock spans with known outcomes
     spans = create_mock_routing_spans(
