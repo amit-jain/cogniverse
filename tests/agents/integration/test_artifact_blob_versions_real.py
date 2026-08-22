@@ -43,6 +43,7 @@ async def test_save_blob_versioned_records_consumed_ids(manager, phoenix_contain
         consumed_example_ids=["span:s-1", "span:s-2", "approved:batch-a_0"],
         decision="reject",
         scored=True,
+        score=0.55,
         base_score=0.6,
         candidate_score=0.55,
     )
@@ -71,6 +72,7 @@ async def test_save_blob_versioned_records_consumed_ids(manager, phoenix_contain
     ]
     assert lineage[0]["decision"] == "reject"
     assert lineage[0]["scored"] is True
+    assert lineage[0]["score"] == 0.55
     assert lineage[0]["base_score"] == 0.6
     assert lineage[0]["candidate_score"] == 0.55
     assert lineage[0]["created_at"].endswith("+00:00")
@@ -84,6 +86,7 @@ async def test_save_blob_versioned_records_consumed_ids(manager, phoenix_contain
         "span:s-2",
         "approved:batch-a_0",
     ]
+    assert ledger["score"] == 0.55
     assert ledger["version"] == 1
 
     # A rejected version never touches what the pod serves.
@@ -105,6 +108,7 @@ async def test_save_blob_versioned_accepts_insufficient_population(
         consumed_example_ids=["span:a", "span:b"],
         decision="insufficient_population",
         scored=False,
+        score=None,
         base_score=None,
         candidate_score=None,
     )
@@ -125,6 +129,7 @@ async def test_save_blob_versioned_accepts_insufficient_population(
     assert lineage[0]["consumed_example_ids"] == ["span:a", "span:b"]
     assert lineage[0]["decision"] == "insufficient_population"
     assert lineage[0]["scored"] is False
+    assert lineage[0]["score"] is None
     assert lineage[0]["base_score"] is None
     assert lineage[0]["candidate_score"] is None
     assert lineage[0]["created_at"].endswith("+00:00")
@@ -133,9 +138,61 @@ async def test_save_blob_versioned_accepts_insufficient_population(
     assert content == "{}"
     assert ledger["decision"] == "insufficient_population"
     assert ledger["consumed_example_ids"] == ["span:a", "span:b"]
+    assert ledger["score"] is None
     assert ledger["version"] == 1
     assert await manager.load_blob("model", key) is None
     assert await manager.get_blob_state("model", key) == {"active": None}
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    ("key", "score", "base_score", "content"),
+    [
+        ("profile_selection", 0.66, 0.56, "profile-version"),
+        ("entity_extraction", 0.77, 0.67, "entity-version"),
+    ],
+)
+async def test_save_blob_versioned_round_trips_score_for_other_optimizers(
+    manager, phoenix_container, key, score, base_score, content
+):
+    dataset_id, version = await manager.save_blob_versioned(
+        "model",
+        key,
+        content,
+        consumed_example_ids=["span:s-1"],
+        decision="promote",
+        scored=True,
+        score=score,
+        base_score=base_score,
+        candidate_score=score,
+    )
+
+    assert version == 1
+    from phoenix.client import Client
+
+    dataset_name = manager._versioned_dataset_name("model", key, version)
+    raw = Client(base_url=phoenix_container["http_endpoint"]).datasets.get_dataset(
+        dataset=dataset_name
+    )
+    assert dataset_id == raw.id
+
+    lineage = await manager.get_version_lineage("model", key)
+    assert [entry["version"] for entry in lineage] == [1]
+    assert lineage[0]["name"] == dataset_name
+    assert lineage[0]["row_count"] == 1
+    assert lineage[0]["consumed_example_ids"] == ["span:s-1"]
+    assert lineage[0]["decision"] == "promote"
+    assert lineage[0]["scored"] is True
+    assert lineage[0]["score"] == score
+    assert lineage[0]["base_score"] == base_score
+    assert lineage[0]["candidate_score"] == score
+    assert lineage[0]["created_at"].endswith("+00:00")
+
+    content_value, ledger = await manager.load_blob_version("model", key, 1)
+    assert content_value == content
+    assert ledger["score"] == score
+    assert ledger["consumed_example_ids"] == ["span:s-1"]
+    assert ledger["version"] == 1
 
 
 @pytest.mark.asyncio

@@ -15,7 +15,9 @@ SelectionReport = namedtuple(
 )
 TrainingSelectionKnobs = namedtuple(
     "TrainingSelectionKnobs",
-    "trainset_cap mmr_lambda low_confirmation_threshold downweight_age_days downweight_factor",
+    "trainset_cap mmr_lambda low_confirmation_threshold downweight_age_days "
+    "downweight_factor confirmation_score_threshold",
+    defaults=(None,),
 )
 TRAINING_SELECTION_DEFAULTS = TrainingSelectionKnobs(300, 0.7, 3, 14, 0.5)
 
@@ -39,19 +41,32 @@ def _parse_created_at(created_at: Any) -> datetime:
     return parsed
 
 
-def confirmation_stats(lineage: List[dict]) -> Dict[str, ExampleStats]:
-    """Aggregate confirmations and first-seen timestamps per example id."""
+def confirmation_stats(
+    lineage: List[dict], *, score_threshold: float | None = None
+) -> Dict[str, ExampleStats]:
+    """Aggregate confirmations and first-seen timestamps per example id.
+
+    When ``score_threshold`` is set, only promoted versions with a recorded
+    score at or above the threshold count as confirmations. Legacy rows with no
+    recorded score stay unconfirmed under the thresholded path.
+    """
     buckets: Dict[str, list[Any]] = {}
     for version in lineage:
         created_at = _parse_created_at(version["created_at"])
         consumed_example_ids = version.get("consumed_example_ids") or []
         promote = version.get("decision") == "promote"
+        score = version.get("score")
+        confirmed = (
+            promote
+            if score_threshold is None
+            else promote and score is not None and score >= score_threshold
+        )
         for example_id in consumed_example_ids:
             entry = buckets.get(example_id)
             if entry is None:
-                buckets[example_id] = [1 if promote else 0, created_at]
+                buckets[example_id] = [1 if confirmed else 0, created_at]
                 continue
-            if promote:
+            if confirmed:
                 entry[0] += 1
             if created_at < entry[1]:
                 entry[1] = created_at
