@@ -12,6 +12,7 @@ from unittest.mock import MagicMock, patch
 
 import pytest
 from click.testing import CliRunner
+from cogniverse_cli.cluster import CLUSTER_NAME
 from cogniverse_cli.main import (
     SERVICE_ENDPOINTS,
     SERVICE_HEALTH_URLS,
@@ -219,7 +220,7 @@ class TestUpCommand:
     @patch("cogniverse_cli.main._probe_host_llm", return_value=False)
     @patch("cogniverse_cli.main.has_workspace_source", return_value=False)
     @patch("cogniverse_cli.main.resolve_project_root", return_value=Path("/root"))
-    @patch("cogniverse_cli.main.cluster_exists", return_value=True)
+    @patch("cogniverse_cli.main.discover_cluster_name", return_value=CLUSTER_NAME)
     @patch("cogniverse_cli.main.check_prerequisites", return_value=[])
     @patch("cogniverse_cli.main.has_existing_k8s", return_value=False)
     @patch("cogniverse_cli.main.start_port_forwards")
@@ -271,7 +272,7 @@ class TestUpCommand:
     @patch("cogniverse_cli.main._probe_host_llm", return_value=False)
     @patch("cogniverse_cli.main.has_workspace_source", return_value=False)
     @patch("cogniverse_cli.main.resolve_project_root", return_value=Path("/root"))
-    @patch("cogniverse_cli.main.cluster_exists", return_value=True)
+    @patch("cogniverse_cli.main.discover_cluster_name", return_value=CLUSTER_NAME)
     @patch("cogniverse_cli.main.check_prerequisites", return_value=[])
     @patch("cogniverse_cli.main.has_existing_k8s", return_value=False)
     @patch("cogniverse_cli.main.start_port_forwards")
@@ -320,7 +321,7 @@ class TestUpCommand:
     @patch("cogniverse_cli.main._probe_host_llm", return_value=True)
     @patch("cogniverse_cli.main.has_workspace_source", return_value=False)
     @patch("cogniverse_cli.main.resolve_project_root", return_value=Path("/root"))
-    @patch("cogniverse_cli.main.cluster_exists", return_value=True)
+    @patch("cogniverse_cli.main.discover_cluster_name", return_value=CLUSTER_NAME)
     @patch("cogniverse_cli.main.check_prerequisites", return_value=[])
     @patch("cogniverse_cli.main.has_existing_k8s", return_value=False)
     @patch("cogniverse_cli.main.start_port_forwards")
@@ -372,7 +373,7 @@ class TestUpCommand:
     @patch("cogniverse_cli.main.get_workflows_path", return_value=Path("/wf"))
     @patch("cogniverse_cli.main.has_workspace_source", return_value=False)
     @patch("cogniverse_cli.main.resolve_project_root", return_value=Path("/root"))
-    @patch("cogniverse_cli.main.cluster_exists", return_value=False)
+    @patch("cogniverse_cli.main.discover_cluster_name", return_value=None)
     @patch("cogniverse_cli.main.check_prerequisites", return_value=[])
     @patch("cogniverse_cli.main.has_existing_k8s", return_value=True)
     @patch("cogniverse_cli.main.start_port_forwards")
@@ -410,10 +411,8 @@ class TestUpCommand:
                 return subprocess.CompletedProcess(
                     args=cmd,
                     returncode=0,
-                    stdout=_cluster_inventory("cogniverse-e2e"),
+                    stdout=_cluster_inventory(f"{CLUSTER_NAME}-e2e"),
                 )
-            if cmd == ["k3d", "cluster", "list", "cogniverse"]:
-                return subprocess.CompletedProcess(args=cmd, returncode=1, stdout="")
             return subprocess.CompletedProcess(args=cmd, returncode=0, stdout="")
 
         with contextlib.ExitStack() as stack:
@@ -484,7 +483,7 @@ class TestUpCommand:
         mock_prereq.assert_called_once_with(require_k3d=True)
         mock_values.assert_called_once_with(prod=False)
         mock_pull.assert_called_once_with(
-            "cogniverse-e2e", Path("/v.yaml"), skip_llm=False
+            f"{CLUSTER_NAME}-e2e", Path("/v.yaml"), skip_llm=False
         )
         mock_helm.assert_called_once()
         mock_wait.assert_called()
@@ -494,7 +493,7 @@ class TestUpCommand:
 
     @patch("cogniverse_cli.main.has_workspace_source", return_value=False)
     @patch("cogniverse_cli.main.resolve_project_root", return_value=Path("/root"))
-    @patch("cogniverse_cli.main.cluster_exists", return_value=False)
+    @patch("cogniverse_cli.main.discover_cluster_name", return_value=None)
     @patch("cogniverse_cli.main.check_prerequisites", return_value=[])
     @patch("cogniverse_cli.main.has_existing_k8s", return_value=True)
     def test_up_external_llm_requires_url_on_existing_k8s(
@@ -519,10 +518,10 @@ class TestUpCommand:
                 return subprocess.CompletedProcess(
                     args=cmd,
                     returncode=0,
-                    stdout=_cluster_inventory("cogniverse-alpha", "cogniverse-beta"),
+                    stdout=_cluster_inventory(
+                        f"{CLUSTER_NAME}-alpha", f"{CLUSTER_NAME}-beta"
+                    ),
                 )
-            if cmd == ["k3d", "cluster", "list", "cogniverse"]:
-                return subprocess.CompletedProcess(args=cmd, returncode=1, stdout="")
             return subprocess.CompletedProcess(args=cmd, returncode=0, stdout="")
 
         with contextlib.ExitStack() as stack:
@@ -585,8 +584,8 @@ class TestUpCommand:
 
         assert result.exit_code == 1
         assert "Could not resolve" in result.output
-        assert "cogniverse-alpha" in result.output
-        assert "cogniverse-beta" in result.output
+        assert f"{CLUSTER_NAME}-alpha" in result.output
+        assert f"{CLUSTER_NAME}-beta" in result.output
         mock_values.assert_not_called()
         mock_helm.assert_not_called()
 
@@ -604,7 +603,7 @@ class TestUpCommand:
     @patch("cogniverse_cli.main._probe_host_llm", return_value=False)
     @patch("cogniverse_cli.main.has_workspace_source", return_value=False)
     @patch("cogniverse_cli.main.resolve_project_root", return_value=Path("/root"))
-    @patch("cogniverse_cli.main.cluster_exists", return_value=True)
+    @patch("cogniverse_cli.main.discover_cluster_name", return_value=CLUSTER_NAME)
     @patch("cogniverse_cli.main.check_prerequisites", return_value=[])
     @patch("cogniverse_cli.main.has_existing_k8s", return_value=False)
     def test_up_starts_port_forwards(
@@ -639,7 +638,7 @@ class TestUpCommand:
         with (
             patch("cogniverse_cli.main.check_prerequisites", return_value=[]),
             patch("cogniverse_cli.main.has_existing_k8s", return_value=False),
-            patch("cogniverse_cli.main.cluster_exists", return_value=False),
+            patch("cogniverse_cli.main.discover_cluster_name", return_value=None),
             patch("cogniverse_cli.main.has_workspace_source", return_value=False),
             patch(
                 "cogniverse_cli.main.resolve_project_root", return_value=Path("/root")
@@ -667,7 +666,7 @@ class TestUpImagePrune:
     def _patches(self, *, existing_k8s: bool):
         return {
             "has_existing_k8s": existing_k8s,
-            "cluster_exists": not existing_k8s,
+            "discover_cluster_name": CLUSTER_NAME if not existing_k8s else None,
             "check_prerequisites": [],
             "resolve_project_root": Path("/root"),
             "has_workspace_source": True,
@@ -683,7 +682,7 @@ class TestUpImagePrune:
         vals = self._patches(existing_k8s=existing_k8s)
         returns = {
             "has_existing_k8s": vals["has_existing_k8s"],
-            "cluster_exists": vals["cluster_exists"],
+            "discover_cluster_name": vals["discover_cluster_name"],
             "check_prerequisites": vals["check_prerequisites"],
             "resolve_project_root": vals["resolve_project_root"],
             "has_workspace_source": vals["has_workspace_source"],
@@ -754,7 +753,7 @@ class TestUpImagePrune:
 class TestDownCommand:
     """Tests for the ``down`` command."""
 
-    @patch("cogniverse_cli.main.cluster_exists", return_value=True)
+    @patch("cogniverse_cli.main.discover_cluster_name", return_value=CLUSTER_NAME)
     @patch("cogniverse_cli.main.delete_cluster")
     @patch("cogniverse_cli.main.subprocess.run")
     @patch("cogniverse_cli.main.helm_uninstall")
@@ -781,7 +780,7 @@ class TestDownCommand:
         assert "argo" in namespaces_deleted
 
     @patch("cogniverse_cli.main.stop_port_forwards")
-    @patch("cogniverse_cli.main.cluster_exists", return_value=False)
+    @patch("cogniverse_cli.main.discover_cluster_name", return_value=None)
     @patch("cogniverse_cli.main.subprocess.run")
     @patch("cogniverse_cli.main.helm_uninstall")
     def test_down_surfaces_namespace_delete_failure(
@@ -931,10 +930,10 @@ class TestStopStartCommands:
         self, mock_exists: MagicMock, mock_stop: MagicMock
     ) -> None:
         runner = CliRunner()
-        result = runner.invoke(cli, ["stop", "--name", "cogniverse-e2e"])
+        result = runner.invoke(cli, ["stop", "--name", f"{CLUSTER_NAME}-e2e"])
 
         assert result.exit_code == 0
-        mock_stop.assert_called_once_with("cogniverse-e2e")
+        mock_stop.assert_called_once_with(f"{CLUSTER_NAME}-e2e")
 
     @patch("cogniverse_cli.main.stop_cluster")
     @patch("cogniverse_cli.main.cluster_exists", return_value=False)
@@ -950,9 +949,11 @@ class TestStopStartCommands:
     @patch("cogniverse_cli.main.stop_port_forwards")
     @patch("cogniverse_cli.main.stop_cluster")
     @patch("cogniverse_cli.main.cluster_exists", return_value=True)
+    @patch("cogniverse_cli.main.discover_cluster_name", return_value=CLUSTER_NAME)
     def test_stop_dev_cluster_reaps_port_forwards(
         self,
-        mock_exists: MagicMock,
+        mock_discover: MagicMock,
+        mock_cluster_exists: MagicMock,
         mock_stop: MagicMock,
         mock_forwards: MagicMock,
     ) -> None:
@@ -966,9 +967,11 @@ class TestStopStartCommands:
     @patch("cogniverse_cli.main.start_port_forwards")
     @patch("cogniverse_cli.main.start_cluster")
     @patch("cogniverse_cli.main.cluster_exists", return_value=True)
+    @patch("cogniverse_cli.main.discover_cluster_name", return_value=CLUSTER_NAME)
     def test_start_dev_cluster_restores_port_forwards(
         self,
-        mock_exists: MagicMock,
+        mock_discover: MagicMock,
+        mock_cluster_exists: MagicMock,
         mock_start: MagicMock,
         mock_forwards: MagicMock,
     ) -> None:
@@ -989,14 +992,14 @@ class TestStopStartCommands:
         mock_forwards: MagicMock,
     ) -> None:
         runner = CliRunner()
-        result = runner.invoke(cli, ["start", "--name", "cogniverse-e2e"])
+        result = runner.invoke(cli, ["start", "--name", f"{CLUSTER_NAME}-e2e"])
 
         assert result.exit_code == 0
-        mock_start.assert_called_once_with("cogniverse-e2e")
+        mock_start.assert_called_once_with(f"{CLUSTER_NAME}-e2e")
         mock_forwards.assert_not_called()
 
     @patch("cogniverse_cli.main.start_port_forwards")
-    @patch("cogniverse_cli.main.cluster_exists", return_value=True)
+    @patch("cogniverse_cli.main.discover_cluster_name", return_value=CLUSTER_NAME)
     def test_start_refuses_occupied_loadbalancer_port_before_k3d(
         self,
         mock_exists: MagicMock,
@@ -1034,7 +1037,7 @@ class TestStopStartCommands:
         mock_forwards.assert_not_called()
 
     @patch("cogniverse_cli.main.start_port_forwards")
-    @patch("cogniverse_cli.main.cluster_exists", return_value=True)
+    @patch("cogniverse_cli.main.discover_cluster_name", return_value=CLUSTER_NAME)
     def test_start_reports_mapping_inspection_failure_without_starting(
         self,
         mock_exists: MagicMock,
@@ -1062,7 +1065,7 @@ class TestStopStartCommands:
         mock_forwards.assert_not_called()
 
     @patch("cogniverse_cli.main.start_port_forwards")
-    @patch("cogniverse_cli.main.cluster_exists", return_value=True)
+    @patch("cogniverse_cli.main.discover_cluster_name", return_value=CLUSTER_NAME)
     def test_start_reports_k3d_failure_without_calledprocesserror_traceback(
         self,
         mock_exists: MagicMock,
@@ -1094,7 +1097,7 @@ class TestStopStartCommands:
         mock_forwards.assert_not_called()
 
     @patch("cogniverse_cli.main.start_port_forwards")
-    @patch("cogniverse_cli.main.cluster_exists", return_value=True)
+    @patch("cogniverse_cli.main.discover_cluster_name", return_value=CLUSTER_NAME)
     def test_start_delegates_after_clean_preflight(
         self,
         mock_exists: MagicMock,
@@ -1119,7 +1122,7 @@ class TestStopStartCommands:
         mock_forwards.assert_called_once()
 
     @patch("cogniverse_cli.main.start_port_forwards")
-    @patch("cogniverse_cli.main.cluster_exists", return_value=True)
+    @patch("cogniverse_cli.main.discover_cluster_name", return_value=CLUSTER_NAME)
     def test_start_reports_loadbalancer_detached_from_cluster_network(
         self,
         mock_exists: MagicMock,
@@ -1316,7 +1319,7 @@ class TestUpImageSource:
             "cogniverse_cli.main.resolve_project_root",
             {"return_value": Path("/checkout")},
         ),
-        ("cogniverse_cli.main.cluster_exists", {"return_value": True}),
+        ("cogniverse_cli.main.discover_cluster_name", {"return_value": CLUSTER_NAME}),
         ("cogniverse_cli.main.check_prerequisites", {"return_value": []}),
         ("cogniverse_cli.main.has_existing_k8s", {"return_value": False}),
         ("cogniverse_cli.main.prune_superseded_images", {}),

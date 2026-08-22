@@ -24,6 +24,7 @@ from cogniverse_cli.cluster import (
     cluster_exists,
     create_cluster,
     delete_cluster,
+    discover_cluster_name,
     get_install_commands,
     has_existing_k8s,
     install_missing_prerequisites,
@@ -246,17 +247,19 @@ def up(
     """Deploy the full Cogniverse stack."""
     # 1. Detect environment — a running k3d cluster counts as local, not prod
     try:
-        k3d_cluster_name = _cluster_name_from_probe(cluster_exists())
+        k3d_cluster_name = discover_cluster_name()
     except ClusterStartError as exc:
         console.print(f"[red]{exc}[/red]", soft_wrap=True)
         sys.exit(1)
-    k3d_running = bool(k3d_cluster_name)
+    k3d_running = k3d_cluster_name is not None
     if k3d_running:
         use_k3d = True
     else:
         existing_k8s = has_existing_k8s()
         use_k3d = not existing_k8s
-    resolved_cluster_name = k3d_cluster_name or CLUSTER_NAME
+    resolved_cluster_name = (
+        k3d_cluster_name if k3d_cluster_name is not None else CLUSTER_NAME
+    )
 
     # 2. Check prerequisites (require k3d only if no existing K8s)
     missing = check_prerequisites(require_k3d=use_k3d)
@@ -617,11 +620,11 @@ def down(keep_data: bool) -> None:
 
     # Delete k3d cluster if one exists
     try:
-        cluster_name = _cluster_name_from_probe(cluster_exists())
+        cluster_name = discover_cluster_name()
     except ClusterStartError as exc:
         console.print(f"[red]{exc}[/red]", soft_wrap=True)
         raise SystemExit(1) from None
-    if cluster_name:
+    if cluster_name is not None:
         console.print("[cyan]Deleting k3d cluster...[/cyan]")
         delete_cluster(cluster_name)
 
@@ -667,7 +670,7 @@ def stop(name: str | None) -> None:
     resolved_name = name
     if resolved_name is None:
         try:
-            resolved_name = _cluster_name_from_probe(cluster_exists())
+            resolved_name = discover_cluster_name()
         except ClusterStartError as exc:
             console.print(f"[red]{exc}[/red]", soft_wrap=True)
             raise SystemExit(1) from None
@@ -700,7 +703,7 @@ def start(name: str | None) -> None:
     resolved_name = name
     if resolved_name is None:
         try:
-            resolved_name = _cluster_name_from_probe(cluster_exists())
+            resolved_name = discover_cluster_name()
         except ClusterStartError as exc:
             console.print(f"[red]{exc}[/red]", soft_wrap=True)
             raise SystemExit(1) from None
