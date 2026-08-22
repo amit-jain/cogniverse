@@ -7,8 +7,9 @@ Exercises the canonical chain the unified-MediaLocator rollout was built for:
    surface it — ``source_url`` on the result dict is the only thing that
    works.
 2. ``ConfigurableVisualJudge`` is constructed against a user-supplied LLM
-   endpoint (provided by the ``llm_endpoint`` fixture in conftest) and run
-   on result dicts shaped like the eval normalizer's output.
+   endpoint (provided by the shared ``llm_endpoint`` fixture in conftest,
+   which is owned by the suite LM provisioner) and run on result dicts
+   shaped like the eval normalizer's output.
 3. The judge resolves ``source_url`` through ``MediaLocator``, extracts
    frames from the local video, feeds them to the configured LLM, and
    returns a score.
@@ -16,8 +17,8 @@ Exercises the canonical chain the unified-MediaLocator rollout was built for:
 The test class does not reference any specific LLM provider, model, or
 container manager. Set ``COGNIVERSE_TEST_LLM_PROVIDER_URI`` (and optionally
 ``COGNIVERSE_TEST_LLM_BASE_URL``) to point at a vision-capable model — see
-``conftest.py`` for the resolution chain. The test skips when no endpoint
-is configured.
+``conftest.py`` for the resolution chain. The fixture provisions the local
+endpoint when needed, so this test does not skip on an empty LM slot.
 """
 
 from __future__ import annotations

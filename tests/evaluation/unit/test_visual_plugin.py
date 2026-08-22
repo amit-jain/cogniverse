@@ -346,7 +346,7 @@ class TestVisualJudgeScorerFailureContract:
 
     @pytest.mark.unit
     @pytest.mark.asyncio
-    async def test_evaluation_failed_label_is_failure_not_zero(self):
+    async def test_raised_failure_is_failure_not_zero(self):
         scorer = VisualEvaluatorPlugin.create_visual_judge_scorer("test_judge")
         state = self._state(
             {
@@ -355,17 +355,18 @@ class TestVisualJudgeScorerFailureContract:
             }
         )
 
-        failed_result = Mock()
-        failed_result.score = 0.0
-        failed_result.label = "evaluation_failed"
-        failed_result.explanation = "Visual evaluation failed: timeout"
-
         good = Mock()
         good.score = 0.6
         good.label = "good_match"
 
         judge = Mock()
-        judge.evaluate.side_effect = [failed_result, good]
+        judge.evaluate.side_effect = [
+            RuntimeError(
+                "Visual evaluation failed for provider=openai, "
+                "model=m, endpoint=http://127.0.0.1:29071/v1: timeout"
+            ),
+            good,
+        ]
 
         with (
             self._config_patch(),
@@ -463,3 +464,44 @@ class TestVisualJudgeRequestTimeout:
         judge = self._judge("http://127.0.0.1:29071", timeout_s=1.0)
         with pytest.raises(requests_lib.exceptions.RequestException):
             judge._score_frames("query", [str(frame)])
+
+    @pytest.mark.unit
+    def test_dead_endpoint_evaluate_raises_with_context(self, tmp_path):
+        frame = tmp_path / "frame.jpg"
+        frame.write_bytes(b"\xff\xd8\xff\xdbfakejpeg")
+
+        judge = self._judge("http://127.0.0.1:29071/v1", timeout_s=1.0)
+
+        with (
+            patch(
+                "cogniverse_evaluation.evaluators.configurable_visual_judge.get_config",
+                return_value={
+                    "evaluators": {
+                        "visual_judge": {
+                            "frames_per_video": 1,
+                            "max_videos": 1,
+                            "max_total_frames": 1,
+                        }
+                    }
+                },
+            ),
+            patch(
+                "cogniverse_foundation.config.utils.create_default_config_manager",
+                return_value=object(),
+            ),
+            patch.object(judge, "_get_video_path", return_value="/tmp/clip.mp4"),
+            patch.object(
+                judge, "_extract_frames_from_video", return_value=[str(frame)]
+            ),
+        ):
+            with pytest.raises(
+                RuntimeError,
+                match=(
+                    r"Visual evaluation failed for provider=openai, "
+                    r"model=m, endpoint=http://127\.0\.0\.1:29071/v1: .*"
+                ),
+            ):
+                judge.evaluate(
+                    input={"query": "query"},
+                    output={"results": [{"video_id": "v1"}]},
+                )

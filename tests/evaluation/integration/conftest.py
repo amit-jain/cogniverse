@@ -1,23 +1,12 @@
-"""Auto-skip integration tests when their managed services aren't available,
-plus the provider-agnostic ``llm_endpoint`` fixture used by Inspect-AI-driven
-tests.
+"""Provider-agnostic LLM endpoint fixture used by Inspect-AI-driven tests.
 
 The eval framework runs Inspect AI tasks via ``inspect_ai.eval(task,
 model=<provider_uri>)``. The provider URI (e.g. ``openai/gpt-4o``,
-``openai/gpt-4o``, ``vllm/...``) is configuration, not test code: tests must
-not hard-code one. ``llm_endpoint`` resolves it from, in order:
-
-1. Env vars ``COGNIVERSE_TEST_LLM_PROVIDER_URI`` (required) and
-   ``COGNIVERSE_TEST_LLM_BASE_URL`` (optional, sets ``OPENAI_BASE_URL`` /
-   ``OPENAI_API_KEY``, ``ANTHROPIC_API_KEY`` etc. for the chosen provider).
-2. JSON file at ``tests/evaluation/integration/resources/test_llm.json``
-   (same keys as the env vars, lower-cased).
-3. ``llm_config.primary`` from ``configs/config.json`` — the same model the
-   rest of the project uses (typically ``openai/gpt-4o`` at
-   ``http://localhost:11434``). Skipping was the historical default but
-   the project's other LLM tests all default to this same source, so
-   diverging here just buried the suite behind an env var nobody set.
-4. Otherwise the fixture skips with a reason explaining how to configure.
+``vllm/...``) is configuration, not test code: tests must not hard-code one.
+``llm_endpoint`` resolves it from explicit env vars, the test JSON config, or
+``configs/config.json``. Tests that need the local LM request the shared
+``ensure_host_ollama`` provisioner first, so this fixture reads the exported
+``TEST_LLM_*`` values instead of skipping.
 """
 
 from __future__ import annotations
@@ -48,8 +37,8 @@ _PROJECT_CONFIG = Path(__file__).resolve().parents[3] / "configs" / "config.json
 
 def _config_path() -> Path:
     """The session config when ``COGNIVERSE_CONFIG`` is exported (the
-    hermetic test-LM sidecar writes one via ``ensure_llm``), otherwise the
-    project's ``configs/config.json``."""
+    session LM provisioner writes one), otherwise the project's
+    ``configs/config.json``."""
     override = os.environ.get("COGNIVERSE_CONFIG")
     return Path(override) if override else _PROJECT_CONFIG
 
@@ -115,23 +104,15 @@ def _load_llm_config() -> dict[str, Any] | None:
 
 
 @pytest.fixture(scope="module")
-def llm_endpoint(monkeypatch_module):
+def llm_endpoint(monkeypatch_module, ensure_host_ollama):
     """Provider-agnostic LLM endpoint for ``inspect_ai.eval(task, model=...)``.
 
-    The fixture skips the test when no endpoint is configured — the test
-    class does not reference any specific provider, model, or default URL.
+    The session-scoped LM provisioner owns the local test endpoint before this
+    resolver reads the config, so tests fail loudly if nothing can be resolved.
     """
-    if not os.environ.get("COGNIVERSE_TEST_LLM_PROVIDER_URI"):
-        # Self-provision the hermetic test-LM sidecar; ensure_llm exports
-        # COGNIVERSE_CONFIG pointing llm_config.primary at it, which the
-        # config-file resolution path below then picks up. Integration
-        # tests must not depend on the k3d cluster's student pod.
-        from tests.utils.hermetic_llm import ensure_llm
-
-        ensure_llm()
     config = _load_llm_config()
     if config is None:
-        pytest.skip(
+        raise RuntimeError(
             "No LLM endpoint configured. Set "
             "COGNIVERSE_TEST_LLM_PROVIDER_URI (and optionally "
             "COGNIVERSE_TEST_LLM_BASE_URL), or create "
