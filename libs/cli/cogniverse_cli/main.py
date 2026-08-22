@@ -96,15 +96,6 @@ def _resolve_cli_tenant(tenant: str | None) -> str:
     )
 
 
-def _cluster_name_from_probe(cluster_probe: object) -> str | None:
-    """Normalize a cluster probe to a concrete cluster name."""
-    if isinstance(cluster_probe, str):
-        return cluster_probe
-    if cluster_probe:
-        return CLUSTER_NAME
-    return None
-
-
 SERVICE_HEALTH_URLS: dict[str, str] = {
     "Vespa": "http://localhost:19071/state/v1/health",
     "Runtime": "http://localhost:28000/health",
