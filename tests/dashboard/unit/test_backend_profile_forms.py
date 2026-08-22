@@ -39,16 +39,25 @@ def test_backend_profile_and_tenant_management_share_one_helper():
     assert bp.get_runtime_api_url is tm.get_runtime_api_url
 
 
+_MISSING = object()
+
+
 @pytest.fixture(autouse=True)
-def _restore_delete_profile_api():
-    """The AppTest scripts below monkey-patch the real module attribute
-    ``backend_profile.delete_profile_via_api`` in-process; without restoring
-    it, every later test file that imports the function gets the fake."""
+def _restore_backend_profile_module():
+    """The AppTest scripts below run in-process and rebind real attributes on
+    ``backend_profile``; without restoring them, every later test that imports
+    those names gets the fake. Restores the whole module namespace so a script
+    patching a new attribute cannot leak the way ``get_profile_schema_status``
+    did."""
     import cogniverse_dashboard.tabs.backend_profile as bp
 
-    original = bp.delete_profile_via_api
+    original = dict(bp.__dict__)
     yield
-    bp.delete_profile_via_api = original
+    for name, value in original.items():
+        if bp.__dict__.get(name, _MISSING) is not value:
+            setattr(bp, name, value)
+    for name in set(bp.__dict__) - set(original):
+        delattr(bp, name)
 
 
 def _delete_profile_app(tmp_path: Path) -> AppTest:
