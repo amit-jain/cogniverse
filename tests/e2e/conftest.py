@@ -534,13 +534,13 @@ def _reset_event_loop_state_before_each_test(request):
         ):
             asyncio.events._set_running_loop(parked)
     else:
-        detached = _clear_stale_running_loop()
-        if detached is not None and not detached.is_closed():
-            _PARKED_RUNNING_LOOP = detached
+        # Detach a leaked loop from this non-browser test, but keep the
+        # cached Playwright loop intact for later browser teardown.
+        _clear_stale_running_loop()
     yield
     _LAST_FINISHED_TEST = request.node.nodeid
     # Session-scoped teardown (Playwright's ``browser.close()``) runs after
-    # the last test; give it back the loop the last async test parked.
+    # the last test; keep the cached Playwright loop available.
     parked = _PARKED_RUNNING_LOOP
     if (
         asyncio.events._get_running_loop() is None

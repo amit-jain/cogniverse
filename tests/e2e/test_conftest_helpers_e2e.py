@@ -264,35 +264,65 @@ class TestEventLoopStateReset:
     def test_reset_reattaches_the_parked_loop_for_a_browser_test(self):
         """Playwright's sync API keeps the running-loop slot pointing at its own
         loop between calls (``_sync`` re-sets it after every call) and its next
-        call needs it there. Detaching it for a pytest-asyncio test is right;
-        a later test that requests a Playwright fixture must find it attached
-        again, or ``Browser.new_context`` dies with ``no running event loop``.
+        call needs it there. A later test that requests a Playwright fixture
+        must find the cached browser loop attached again, or
+        ``Browser.new_context`` dies with ``no running event loop``.
         """
         import threading
 
         parked = asyncio.new_event_loop()
         parked._thread_id = threading.get_ident()
-        asyncio.events._set_running_loop(parked)
         try:
-            with warnings.catch_warnings():
-                warnings.simplefilter("ignore")
-                _drive_reset_fixture()
-            assert asyncio.events._get_running_loop() is None
-
-            _drive_reset_fixture(fixturenames=("request", "page", "context"))
+            e2e_conftest._PARKED_RUNNING_LOOP = parked
+            reset = e2e_conftest._reset_event_loop_state_before_each_test.__wrapped__(
+                SimpleNamespace(
+                    node=SimpleNamespace(nodeid="drive_reset_fixture"),
+                    fixturenames=("request", "page", "context"),
+                )
+            )
+            next(reset)
             assert asyncio.events._get_running_loop() is parked, (
                 "a browser test must get the parked sync-API loop back"
             )
-
-            with warnings.catch_warnings():
-                warnings.simplefilter("ignore")
-                _drive_reset_fixture()
-            assert asyncio.events._get_running_loop() is None
+            reset.close()
         finally:
             asyncio.events._set_running_loop(None)
             e2e_conftest._PARKED_RUNNING_LOOP = None
             parked._thread_id = None
             parked.close()
+
+    def test_reset_keeps_the_cached_browser_loop_across_non_browser_tests(self):
+        """A later non-browser test must not replace the cached browser loop.
+
+        The Playwright browser fixtures need their own loop cached across test
+        boundaries. A stray pytest-asyncio loop from an unrelated test must be
+        detached, but it must not overwrite the cached browser loop that the
+        next browser teardown will need.
+        """
+        import threading
+
+        browser_loop = asyncio.new_event_loop()
+        browser_loop._thread_id = threading.get_ident()
+        foreign_loop = asyncio.new_event_loop()
+        foreign_loop._thread_id = threading.get_ident()
+        e2e_conftest._PARKED_RUNNING_LOOP = browser_loop
+        asyncio.events._set_running_loop(foreign_loop)
+        try:
+            with warnings.catch_warnings(record=True):
+                warnings.simplefilter("ignore")
+                _drive_reset_fixture()
+
+            assert e2e_conftest._PARKED_RUNNING_LOOP is browser_loop, (
+                "non-browser tests must not overwrite the cached browser loop"
+            )
+            assert asyncio.events._get_running_loop() is None
+        finally:
+            asyncio.events._set_running_loop(None)
+            e2e_conftest._PARKED_RUNNING_LOOP = None
+            foreign_loop._thread_id = None
+            foreign_loop.close()
+            browser_loop._thread_id = None
+            browser_loop.close()
 
     def test_reset_does_not_reattach_a_closed_parked_loop(self):
         parked = asyncio.new_event_loop()
