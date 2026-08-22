@@ -36,7 +36,7 @@ from cogniverse_core.schemas.filesystem_loader import FilesystemSchemaLoader
 from cogniverse_foundation.config.manager import ConfigManager
 from cogniverse_foundation.config.unified_config import SystemConfig
 from cogniverse_vespa.config.config_store import VespaConfigStore
-from tests.e2e.conftest import RUNTIME, unique_id
+from tests.e2e.conftest import RUNTIME, expected_initial_trust, unique_id
 
 VESPA_HTTP_PORT = 33080
 VESPA_CONFIG_PORT = 33071
@@ -88,7 +88,6 @@ def _assert_written_fact(
     derivation_kind: DerivationKind,
     confidence: float,
     source_url: str,
-    expected_trust: float,
 ) -> None:
     raw = mm.memory.get(memory_id)
     if not isinstance(raw, dict):
@@ -112,6 +111,7 @@ def _assert_written_fact(
     assert provenance["derived_from"] == [CitationRef.external(source_url).to_dict()]
     assert provenance["trace_id"] is None
 
+    expected_trust = expected_initial_trust("entity_fact", derivation_kind)
     trust = persisted_meta["trust"]
     assert trust["score"] == pytest.approx(expected_trust)
     assert trust["initial_score"] == pytest.approx(expected_trust)
@@ -163,7 +163,6 @@ def _write_conflicting(
         derivation_kind=DerivationKind.DIRECT_INGEST,
         confidence=0.95,
         source_url="recon://high",
-        expected_trust=0.6,
     )
 
     low_meta = attach_to_metadata(
@@ -197,7 +196,6 @@ def _write_conflicting(
         derivation_kind=DerivationKind.AGENT_INFERENCE,
         confidence=0.5,
         source_url="recon://low",
-        expected_trust=0.35,
     )
     return high_id, low_id
 

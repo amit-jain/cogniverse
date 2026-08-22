@@ -7,6 +7,8 @@ import subprocess
 from pathlib import Path
 from types import SimpleNamespace
 
+import pytest
+
 import tests.e2e.test_manual_optimization_e2e as manual_optimization
 import tests.e2e.test_messaging_e2e as messaging
 import tests.e2e.test_quality_monitor_e2e as quality_monitor
@@ -230,3 +232,32 @@ def test_loader_tolerates_a_key_file_written_as_key_equals_value(tmp_path):
     )
 
     assert _run_loader(tmp_path) == "123456:AAHbotToken|"
+
+
+def test_expected_initial_trust_pins_every_kind_and_derivation_pair():
+    """The e2e trust expectation, written out so drift is visible in review."""
+    from cogniverse_core.memory.provenance import DerivationKind
+    from tests.e2e.conftest import expected_initial_trust
+
+    pairs = {
+        ("entity_fact", DerivationKind.DIRECT_INGEST): 0.60,
+        ("entity_fact", DerivationKind.AGENT_INFERENCE): 0.35,
+        ("entity_fact", DerivationKind.EXTRACTION): 0.50,
+        ("external_doc", DerivationKind.DIRECT_INGEST): 0.84,
+        ("external_doc", DerivationKind.SYNTHESIS): 0.595,
+        ("session_scratch", DerivationKind.SUMMARIZATION): 0.27,
+        ("learned_strategy", DerivationKind.USER_ASSERT): 0.66,
+        # 0.95 x 1.20 = 1.14, clamped to the [0.0, 1.0] range the product uses.
+        ("tenant_instruction", DerivationKind.DIRECT_INGEST): 1.0,
+    }
+    assert {
+        key: round(expected_initial_trust(*key), 10) for key in pairs
+    } == pytest.approx(pairs)
+
+
+def test_expected_initial_trust_rejects_an_unknown_schema_kind():
+    from cogniverse_core.memory.provenance import DerivationKind
+    from tests.e2e.conftest import expected_initial_trust
+
+    with pytest.raises(KeyError):
+        expected_initial_trust("not_a_schema_kind", DerivationKind.DIRECT_INGEST)
