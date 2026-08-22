@@ -79,6 +79,45 @@ def _build_manager(tenant_id: str) -> Mem0MemoryManager:
     return mm
 
 
+def _assert_written_fact(
+    mm: Mem0MemoryManager,
+    *,
+    memory_id: str,
+    subject: str,
+    content: str,
+    derivation_kind: DerivationKind,
+    confidence: float,
+    source_url: str,
+    expected_trust: float,
+) -> None:
+    raw = mm.memory.get(memory_id)
+    if not isinstance(raw, dict):
+        pytest.fail(
+            f"Persisted memory {memory_id!r} for subject={subject!r} "
+            f"had unexpected shape: {raw!r}"
+        )
+    assert raw["id"] == memory_id, raw
+    stored_content = raw.get("memory")
+    if stored_content is None:
+        stored_content = raw.get("text")
+    assert stored_content == content, raw
+
+    persisted_meta = mm._read_metadata(raw)
+    assert persisted_meta["kind"] == "entity_fact"
+    assert persisted_meta["subject_key"] == subject
+    provenance = persisted_meta["provenance"]
+    assert provenance["written_by"] == "agent:recon"
+    assert provenance["derivation_kind"] == derivation_kind.value
+    assert provenance["confidence"] == confidence
+    assert provenance["derived_from"] == [CitationRef.external(source_url).to_dict()]
+    assert provenance["trace_id"] is None
+
+    trust = persisted_meta["trust"]
+    assert trust["score"] == pytest.approx(expected_trust)
+    assert trust["initial_score"] == pytest.approx(expected_trust)
+    assert trust["endorsements"] == 0
+
+
 def _write_conflicting(
     mm: Mem0MemoryManager,
     *,
@@ -111,7 +150,21 @@ def _write_conflicting(
         metadata=high_meta,
         infer=False,
     )
-    assert high_id is not None
+    if high_id is None:
+        pytest.fail(
+            f"Mem0.add_memory returned no id for subject={subject!r} "
+            f"content={high_trust_content!r}"
+        )
+    _assert_written_fact(
+        mm,
+        memory_id=high_id,
+        subject=subject,
+        content=high_trust_content,
+        derivation_kind=DerivationKind.DIRECT_INGEST,
+        confidence=0.95,
+        source_url="recon://high",
+        expected_trust=0.6,
+    )
 
     low_meta = attach_to_metadata(
         {"kind": "entity_fact", "subject_key": subject},
@@ -131,7 +184,21 @@ def _write_conflicting(
         metadata=low_meta,
         infer=False,
     )
-    assert low_id is not None
+    if low_id is None:
+        pytest.fail(
+            f"Mem0.add_memory returned no id for subject={subject!r} "
+            f"content={low_trust_content!r}"
+        )
+    _assert_written_fact(
+        mm,
+        memory_id=low_id,
+        subject=subject,
+        content=low_trust_content,
+        derivation_kind=DerivationKind.AGENT_INFERENCE,
+        confidence=0.5,
+        source_url="recon://low",
+        expected_trust=0.35,
+    )
     return high_id, low_id
 
 

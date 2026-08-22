@@ -270,7 +270,7 @@ class TestDeepSynthesisOverHundredDocuments:
                 if isinstance(memory, dict):
                     return (
                         memory.get("memory")
-                        or memory.get("content")
+                        or memory.get("text")
                         or f"(empty memory for {name})"
                     )
                 return f"(memory shape unexpected for {name})"
