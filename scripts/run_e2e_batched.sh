@@ -25,16 +25,30 @@ NS=cogniverse
 LOG_DIR=${LOG_DIR:-/tmp/cogniverse_e2e_runs}
 mkdir -p "$LOG_DIR"
 
-# Load repo-level .env so tests like the Telegram flow pick up
+# Load repo-level secrets so tests like the Telegram flow pick up
 # TELEGRAM_BOT_TOKEN / TELEGRAM_TEST_CHAT_ID without relying on the caller's
-# shell having exported them. Without this the tests skipif-out.
-REPO_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+# shell having exported them. Without this the tests deselect out.
+# `.env` is either a single file of KEY=VALUE lines or a directory of
+# per-key `KEY.env` files holding a bare value; cogniverse_cli.secrets
+# resolves both forms and this must match it.
+# >>> e2e-env-loader
+REPO_ROOT="${REPO_ROOT:-$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)}"
 if [[ -f "$REPO_ROOT/.env" ]]; then
   set -a
   # shellcheck disable=SC1091
   source "$REPO_ROOT/.env"
   set +a
+elif [[ -d "$REPO_ROOT/.env" ]]; then
+  for _secret_file in "$REPO_ROOT"/.env/*.env; do
+    [[ -e "$_secret_file" ]] || continue
+    _secret_name="$(basename "$_secret_file" .env)"
+    _secret_value="$(grep -vE '^[[:space:]]*(#|$)' "$_secret_file" | head -1 || true)"
+    [[ -n "$_secret_value" ]] || continue
+    export "$_secret_name=${_secret_value#"$_secret_name"=}"
+  done
+  unset _secret_file _secret_name _secret_value
 fi
+# <<< e2e-env-loader
 
 # Batch 1: light/medium tests that don't exercise the heavy ingestion
 # pipeline. Gateway classification, orchestration (LLM-bound but no
