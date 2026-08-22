@@ -1,14 +1,18 @@
 """Unit tests for OrchestratorAgent"""
 
 import asyncio
+import json
 import logging
 from contextlib import nullcontext
+from pathlib import Path
 from unittest.mock import AsyncMock, MagicMock, Mock, patch
 
 import dspy
 import pytest
 
+from cogniverse_agents.gateway_agent import MODALITY_LABELS
 from cogniverse_agents.orchestrator_agent import (
+    AccumulatedEvidence,
     AgentStep,
     FusionStrategy,
     OrchestrationModule,
@@ -180,6 +184,159 @@ class TestOrchestratorInputValidation:
         assert inp.tenant_id == "acme:production"
         assert inp.query == "find ML videos"
 
+    def test_accepts_detected_modalities_payload(self):
+        """The input model must carry the full detected modality set."""
+        inp = OrchestratorInput(
+            query="find ML videos and documents",
+            tenant_id="acme:production",
+            detected_modalities=["video", "document"],
+        )
+        assert inp.model_dump().get("detected_modalities") == [
+            "video",
+            "document",
+        ]
+
+
+class TestDetectedModalityCoverage:
+    """Coverage prepass must resolve every detected modality exactly once."""
+
+    @pytest.mark.asyncio
+    async def test_collect_detected_modality_evidence_resolves_all_detected_modalities(
+        self, orchestrator_agent
+    ):
+        endpoint_names = [
+            "search_agent",
+            "image_search_agent",
+            "audio_analysis_agent",
+            "document_agent",
+        ]
+        endpoints = {}
+        for idx, agent_name in enumerate(endpoint_names):
+            endpoint = Mock()
+            endpoint.name = agent_name
+            endpoint.url = f"http://localhost:80{idx:02d}"
+            endpoint.process_endpoint = "/process"
+            endpoint.timeout = 5
+            endpoints[agent_name] = endpoint
+
+        orchestrator_agent.registry.get_agent = Mock(
+            side_effect=lambda name: endpoints.get(name)
+        )
+        from cogniverse_foundation.config.unified_config import BackendConfig
+
+        orchestrator_agent._config_manager.get_backend_config = Mock(
+            return_value=BackendConfig(tenant_id="test:unit")
+        )
+
+        async def _fake_post(url, json, timeout):
+            response = Mock()
+            response.raise_for_status = Mock()
+            response.json.return_value = {
+                "status": "success",
+                "results": [
+                    {
+                        "document_id": f"{json['modality']}-doc",
+                        "segment_id": "0",
+                        "text": f"{json['modality']} evidence",
+                        "metadata": {"modality": json["modality"]},
+                        "score": 1.0,
+                    }
+                ],
+            }
+            return response
+
+        client = Mock()
+        client.post = AsyncMock(side_effect=_fake_post)
+        orchestrator_agent._http_client_override = client
+
+        evidence = await orchestrator_agent._collect_detected_modality_evidence(
+            query="compare videos, documents, audio, image, and text",
+            tenant_id="test:unit",
+            detected_modalities=[
+                "video",
+                "document",
+                "audio",
+                "image",
+                "text",
+            ],
+            top_k=2,
+        )
+
+        assert [
+            call.kwargs["json"]["modality"] for call in client.post.await_args_list
+        ] == [
+            "video",
+            "document",
+            "audio",
+            "image",
+            "text",
+        ]
+        assert [
+            call.kwargs["json"]["agent_name"] for call in client.post.await_args_list
+        ] == [
+            "search_agent",
+            "document_agent",
+            "audio_analysis_agent",
+            "image_search_agent",
+            "document_agent",
+        ]
+        assert {snippet["modality"] for snippet in evidence} == {
+            "video",
+            "document",
+            "audio",
+            "image",
+            "text",
+        }
+
+    @pytest.mark.asyncio
+    async def test_shipped_config_resolves_every_gateway_detectable_modality(
+        self, orchestrator_agent
+    ):
+        shipped_config = json.loads(
+            (Path(__file__).resolve().parents[3] / "configs" / "config.json").read_text(
+                encoding="utf-8"
+            )
+        )
+        agents_config = shipped_config["agents"]
+        gateway_modalities = list(MODALITY_LABELS)
+        assert gateway_modalities, "Gateway modality set must not be empty"
+
+        endpoint_names = [
+            "search_agent",
+            "image_search_agent",
+            "audio_analysis_agent",
+            "document_agent",
+        ]
+        endpoints = {}
+        for idx, agent_name in enumerate(endpoint_names):
+            endpoint = Mock()
+            endpoint.name = agent_name
+            endpoint.url = f"http://localhost:81{idx:02d}"
+            endpoint.process_endpoint = "/process"
+            endpoint.timeout = 5
+            endpoints[agent_name] = endpoint
+
+        orchestrator_agent.registry.get_agent = Mock(
+            side_effect=lambda name: endpoints.get(name)
+        )
+
+        resolved = {
+            modality: orchestrator_agent._resolve_detected_modality_endpoint(
+                modality,
+                tenant_id="test:unit",
+                agents_config=agents_config,
+            ).name
+            for modality in gateway_modalities
+        }
+
+        assert resolved == {
+            "video": "search_agent",
+            "text": "document_agent",
+            "audio": "audio_analysis_agent",
+            "image": "image_search_agent",
+            "document": "document_agent",
+        }
+
 
 class TestOrchestrationModule:
     """Test DSPy module for orchestration"""
@@ -324,6 +481,87 @@ class TestOrchestratorAgent:
             assert all(0 <= d < len(plan.steps) for d in step.depends_on)
         # The readiness loop in _execute_plan must terminate (no deadlock).
         assert _plan_executes_to_completion(plan)
+
+    @pytest.mark.asyncio
+    async def test_detected_modalities_seed_coverage_prepass(
+        self, orchestrator_agent, monkeypatch
+    ):
+        """The orchestrator must call the modality-coverage prepass with the
+        full detected modality set."""
+        coverage = AsyncMock(
+            return_value=[
+                {
+                    "source_doc_id": "video-1",
+                    "segment_id": "0",
+                    "ts_start": 0.0,
+                    "ts_end": 1.0,
+                    "text": "video evidence",
+                    "modality": "video",
+                },
+                {
+                    "source_doc_id": "doc-1",
+                    "segment_id": "0",
+                    "ts_start": 0.0,
+                    "ts_end": 1.0,
+                    "text": "document evidence",
+                    "modality": "document",
+                },
+            ]
+        )
+        monkeypatch.setattr(
+            orchestrator_agent,
+            "_collect_detected_modality_evidence",
+            coverage,
+            raising=False,
+        )
+        orchestrator_agent._ensure_memory_for_tenant = Mock()
+        orchestrator_agent.get_relevant_context = Mock(return_value="")
+        orchestrator_agent._create_plan = AsyncMock(
+            return_value=OrchestrationPlan(
+                query="compare videos and documents about neural networks",
+                steps=[
+                    AgentStep(
+                        agent_name="search_agent",
+                        input_data={
+                            "query": "compare videos and documents about neural networks"
+                        },
+                        depends_on=[],
+                        reasoning="search",
+                    )
+                ],
+                parallel_groups=[],
+                reasoning="search",
+            )
+        )
+        orchestrator_agent._iterative_retrieval_loop = AsyncMock(
+            return_value=AccumulatedEvidence(
+                evidence=[],
+                iterations_executed=1,
+                exit_reason="sufficient",
+                final_gate_output={},
+            )
+        )
+        orchestrator_agent._aggregate_results = Mock(
+            return_value={"status": "success", "results": {}}
+        )
+        orchestrator_agent.remember_success = Mock()
+        orchestrator_agent._emit_orchestration_outcome = AsyncMock()
+
+        await orchestrator_agent._process_impl(
+            OrchestratorInput(
+                query="compare videos and documents about neural networks",
+                tenant_id="acme:prod",
+                modality="both",
+                detected_modalities=["video", "document"],
+            )
+        )
+
+        coverage.assert_awaited_once_with(
+            query="compare videos and documents about neural networks",
+            tenant_id="acme:prod",
+            detected_modalities=["video", "document"],
+            top_k=10,
+        )
 
     @pytest.mark.asyncio
     async def test_create_plan_filtered_agent_remaps_parallel_groups(

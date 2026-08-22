@@ -401,6 +401,29 @@ class TestProcessImpl:
         assert result.routed_to == "orchestrator_agent"
 
     @pytest.mark.asyncio
+    async def test_complex_multimodal_query_preserves_detected_modalities(
+        self, gateway_agent, mock_gliner_model
+    ):
+        """The gateway must surface the full modality set, not only 'both'."""
+        mock_gliner_model.predict_entities.return_value = [
+            {"text": "videos", "label": "video_content", "score": 0.85},
+            {"text": "documents", "label": "document_content", "score": 0.80},
+        ]
+        result = await gateway_agent._process_impl(
+            GatewayInput(
+                query="Compare the video with the PDF document",
+                tenant_id=TEST_TENANT_ID,
+            )
+        )
+        assert result.complexity == "complex"
+        assert result.modality == "both"
+        assert result.routed_to == "orchestrator_agent"
+        assert result.model_dump().get("detected_modalities") == [
+            "video",
+            "document",
+        ]
+
+    @pytest.mark.asyncio
     async def test_no_modality_signal_is_complex(
         self, gateway_agent, mock_gliner_model
     ):
