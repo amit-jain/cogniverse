@@ -16,6 +16,7 @@ import pytest
 
 from cogniverse_foundation.telemetry import manager as manager_mod
 from cogniverse_foundation.telemetry.config import (
+    SPAN_NAME_GATEWAY,
     BatchExportConfig,
     TelemetryConfig,
     TelemetryLevel,
@@ -596,8 +597,333 @@ class TestGetSpansNameFilterRealPhoenix:
         }
         assert len(unfiltered) == 5
 
+    def test_limit_slice_client_side_filter_misses_gateway_span_but_spanquery_finds_it(
+        self, phoenix_container
+    ):
+        """Server-side name filtering survives the same limit slice."""
+        TelemetryManager._instance = None
+        phoenix_config = TelemetryConfig(
+            enabled=True,
+            level=TelemetryLevel.VERBOSE,
+            otlp_endpoint=phoenix_container["grpc_endpoint"],
+            provider_config={
+                "http_endpoint": phoenix_container["http_endpoint"],
+                "grpc_endpoint": phoenix_container["grpc_endpoint"],
+            },
+            service_name="integration-test",
+            environment="test",
+            batch_config=BatchExportConfig(use_sync_export=True),
+        )
+        manager = TelemetryManager(phoenix_config)
+        run_id = uuid.uuid4().hex[:8]
+        tenant = f"limit-{run_id}"
+        project = phoenix_config.get_project_name(tenant, "routing")
+
+        for i in range(51):
+            with manager.span(
+                name=f"noise_before_{run_id}_{i}",
+                tenant_id=tenant,
+                project_name="routing",
+            ):
+                pass
+
+        with manager.span(
+            name=SPAN_NAME_GATEWAY,
+            tenant_id=tenant,
+            project_name="routing",
+            attributes={"run_id": run_id},
+        ):
+            pass
+
+        for i in range(51):
+            with manager.span(
+                name=f"noise_after_{run_id}_{i}",
+                tenant_id=tenant,
+                project_name="routing",
+            ):
+                pass
+
+        assert manager.force_flush(timeout_millis=10000)
+        wait_for_phoenix_processing(delay=2, description="Phoenix processing")
+
+        from phoenix.client import Client
+        from phoenix.client.types.spans import SpanQuery
+
+        client = Client(base_url=phoenix_container["http_endpoint"])
+        predicate = f"name == '{SPAN_NAME_GATEWAY}'"
+        query = SpanQuery().where(predicate)
+        legacy = client.spans.get_spans_dataframe(
+            project_identifier=project,
+            limit=50,
+            timeout=30,
+        )
+        legacy_matches = legacy[
+            legacy["name"].str.contains("gateway", case=False, na=False)
+        ]
+
+        assert len(legacy) == 50, (
+            f"Legacy client-side slice should still be capped at 50 rows; "
+            f"got {len(legacy)} for {project}"
+        )
+        assert legacy_matches.empty, (
+            f"Client-side name filtering should miss {SPAN_NAME_GATEWAY} in {project}; "
+            f"limit=50 returned {len(legacy)} rows and {len(legacy_matches)} matches"
+        )
+
+        server = client.spans.get_spans_dataframe(
+            project_identifier=project,
+            query=query,
+            timeout=30,
+        )
+        server_matches = server[server["name"] == SPAN_NAME_GATEWAY]
+        assert len(server_matches) == 1, (
+            f"SpanQuery predicate {predicate!r} should find exactly one "
+            f"{SPAN_NAME_GATEWAY} span in {project}; got {len(server_matches)} rows"
+        )
+        assert set(server_matches["name"].unique()) == {SPAN_NAME_GATEWAY}
+
         manager.shutdown()
         TelemetryManager._instance = None
+
+
+@pytest.mark.integration
+@pytest.mark.telemetry
+@pytest.mark.ci_fast
+class TestWaitForSpanHelperRealPhoenix:
+    """`wait_for_span` must find exact spans even when the old limit slice
+    would have hidden them behind unrelated traffic."""
+
+    def test_wait_for_span_finds_gateway_span_beyond_legacy_limit_slice(
+        self, phoenix_container
+    ):
+        from datetime import datetime, timedelta, timezone
+
+        from phoenix.client import Client
+
+        from tests.e2e.conftest import wait_for_span
+
+        TelemetryManager._instance = None
+        phoenix_config = TelemetryConfig(
+            enabled=True,
+            level=TelemetryLevel.VERBOSE,
+            otlp_endpoint=phoenix_container["grpc_endpoint"],
+            provider_config={
+                "http_endpoint": phoenix_container["http_endpoint"],
+                "grpc_endpoint": phoenix_container["grpc_endpoint"],
+            },
+            service_name="integration-test",
+            environment="test",
+            batch_config=BatchExportConfig(use_sync_export=True),
+        )
+        manager = TelemetryManager(phoenix_config)
+        run_id = uuid.uuid4().hex[:8]
+        tenant = f"wait-span-{run_id}"
+        project = phoenix_config.get_project_name(tenant, "routing")
+        start_time = datetime.now(timezone.utc) - timedelta(seconds=5)
+
+        with manager.span(
+            name=SPAN_NAME_GATEWAY,
+            tenant_id=tenant,
+            project_name="routing",
+            attributes={"run_id": run_id},
+        ):
+            pass
+
+        for i in range(201):
+            with manager.span(
+                name=f"noise_after_{run_id}_{i}",
+                tenant_id=tenant,
+                project_name="routing",
+            ):
+                pass
+
+        assert manager.force_flush(timeout_millis=10000)
+        wait_for_phoenix_processing(delay=2, description="Phoenix processing")
+
+        client = Client(base_url=phoenix_container["http_endpoint"])
+        legacy = client.spans.get_spans_dataframe(
+            project_identifier=project,
+            limit=200,
+            timeout=30,
+        )
+        legacy_matches = legacy[
+            legacy["name"].str.contains("gateway", case=False, na=False)
+        ]
+
+        assert len(legacy) == 200, (
+            f"Legacy client-side slice should still be capped at 200 rows; "
+            f"got {len(legacy)} for {project}"
+        )
+        assert legacy_matches.empty, (
+            f"Client-side name filtering should miss {SPAN_NAME_GATEWAY} in {project}; "
+            f"limit=200 returned {len(legacy)} rows and {len(legacy_matches)} matches"
+        )
+
+        found = wait_for_span(
+            client,
+            project,
+            SPAN_NAME_GATEWAY,
+            start_time=start_time,
+            timeout_s=5.0,
+            poll_interval_s=0.5,
+        )
+        assert found["name"] == SPAN_NAME_GATEWAY, (
+            f"wait_for_span should return the exact {SPAN_NAME_GATEWAY!r} span "
+            f"from {project}; got {found!r}"
+        )
+        assert found["attributes.run_id"] == run_id
+
+        manager.shutdown()
+        TelemetryManager._instance = None
+
+    def test_wait_for_span_returns_none_for_missing_exact_span_in_loaded_project(
+        self, phoenix_container
+    ):
+        from datetime import datetime, timedelta, timezone
+
+        from phoenix.client import Client
+        from phoenix.client.types.spans import SpanQuery
+
+        from tests.e2e.conftest import wait_for_span
+
+        TelemetryManager._instance = None
+        phoenix_config = TelemetryConfig(
+            enabled=True,
+            level=TelemetryLevel.VERBOSE,
+            otlp_endpoint=phoenix_container["grpc_endpoint"],
+            provider_config={
+                "http_endpoint": phoenix_container["http_endpoint"],
+                "grpc_endpoint": phoenix_container["grpc_endpoint"],
+            },
+            service_name="integration-test",
+            environment="test",
+            batch_config=BatchExportConfig(use_sync_export=True),
+        )
+        manager = TelemetryManager(phoenix_config)
+        run_id = uuid.uuid4().hex[:8]
+        tenant = f"wait-miss-{run_id}"
+        project = phoenix_config.get_project_name(tenant, "routing")
+        start_time = datetime.now(timezone.utc) - timedelta(seconds=5)
+        missing_name = f"{SPAN_NAME_GATEWAY}.missing"
+
+        for i in range(201):
+            with manager.span(
+                name=f"noise_only_{run_id}_{i}",
+                tenant_id=tenant,
+                project_name="routing",
+            ):
+                pass
+
+        assert manager.force_flush(timeout_millis=10000)
+        wait_for_phoenix_processing(delay=2, description="Phoenix processing")
+
+        client = Client(base_url=phoenix_container["http_endpoint"])
+        missing = client.spans.get_spans_dataframe(
+            project_identifier=project,
+            query=SpanQuery().where(f"name == '{missing_name}'"),
+            start_time=start_time,
+            timeout=30,
+        )
+        assert missing.empty, (
+            f"Exact server-side lookup should not find {missing_name!r} in {project}"
+        )
+
+        found = wait_for_span(
+            client,
+            project,
+            missing_name,
+            start_time=start_time,
+            timeout_s=2.0,
+            poll_interval_s=0.2,
+        )
+        assert found is None, (
+            f"wait_for_span should return None for the missing span {missing_name!r} "
+            f"in {project}; got {found!r}"
+        )
+
+        manager.shutdown()
+        TelemetryManager._instance = None
+
+
+@pytest.mark.integration
+@pytest.mark.telemetry
+@pytest.mark.ci_fast
+class TestWaitForSpanHelperFailures:
+    """Phoenix read failures must raise with enough context to debug them."""
+
+    def test_wait_for_span_raises_with_context_on_read_failure(self):
+        from datetime import datetime, timedelta, timezone
+
+        from tests.e2e.conftest import wait_for_span
+
+        class _BoomSpans:
+            def get_spans_dataframe(self, **kwargs):
+                raise RuntimeError("phoenix unavailable")
+
+        class _BoomClient:
+            spans = _BoomSpans()
+
+        started = time.monotonic()
+        with pytest.raises(
+            RuntimeError,
+            match=(
+                r"wait_for_span read failed while polling Phoenix: "
+                r"project='cogniverse-read_failure_project' "
+                r"span_name='cogniverse\.gateway' "
+                r".*phoenix unavailable"
+            ),
+        ):
+            wait_for_span(
+                _BoomClient(),
+                project="cogniverse-read_failure_project",
+                span_name="cogniverse.gateway",
+                start_time=datetime.now(timezone.utc) - timedelta(minutes=10),
+                timeout_s=1.0,
+                poll_interval_s=0.1,
+            )
+        elapsed = time.monotonic() - started
+        assert elapsed >= 1.0, (
+            f"wait_for_span returned too early on read failure: elapsed={elapsed:.2f}s"
+        )
+
+    def test_wait_for_span_returns_none_when_blip_precedes_clean_reads(self):
+        """A transient read failure followed by successful empty reads is
+        not-found, not an outage. Only a trailing run of failures may raise."""
+        from datetime import datetime, timedelta, timezone
+
+        import pandas as pd
+
+        from tests.e2e.conftest import wait_for_span
+
+        class _BlipSpans:
+            def __init__(self):
+                self.calls = 0
+
+            def get_spans_dataframe(self, **kwargs):
+                self.calls += 1
+                if self.calls == 1:
+                    raise RuntimeError("phoenix transient 503")
+                return pd.DataFrame()
+
+        class _BlipClient:
+            def __init__(self):
+                self.spans = _BlipSpans()
+
+        client = _BlipClient()
+        found = wait_for_span(
+            client,
+            project="cogniverse-blip_project",
+            span_name="cogniverse.gateway",
+            start_time=datetime.now(timezone.utc) - timedelta(minutes=10),
+            timeout_s=1.0,
+            poll_interval_s=0.1,
+        )
+
+        assert found is None, (
+            f"wait_for_span must report not-found after a transient blip "
+            f"followed by clean reads; got {found!r} "
+            f"after {client.spans.calls} reads"
+        )
 
 
 @pytest.mark.integration

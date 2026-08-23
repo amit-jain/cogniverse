@@ -1053,21 +1053,21 @@ class TestUploadRealStack:
         # stack's telemetry must export to the Phoenix this fixture provides,
         # never the default localhost:4317.
         from phoenix.client import Client as PhoenixClient
+        from phoenix.client.types.spans import SpanQuery
 
         phoenix = PhoenixClient(base_url=real_stack["phoenix_http_endpoint"])
+        query = SpanQuery().where("name == 'pipeline.worker.process_job'")
         span_deadline = time.time() + 30
         worker_span = None
         while time.time() < span_deadline:
             spans_df = phoenix.spans.get_spans_dataframe(
                 project_identifier=f"cogniverse-{canonical_tenant}",
-                limit=200,
+                query=query,
                 timeout=10,
             )
             if spans_df is not None and not spans_df.empty:
-                matches = spans_df[spans_df["name"] == "pipeline.worker.process_job"]
-                if not matches.empty:
-                    worker_span = matches.iloc[0]
-                    break
+                worker_span = spans_df.iloc[0]
+                break
             time.sleep(1)
         assert worker_span is not None, (
             "pipeline.worker.process_job span did not arrive in the test "
