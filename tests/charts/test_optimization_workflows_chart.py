@@ -8,6 +8,7 @@ Friday 3 AM cron to surface them as a workflow ``Failed``.
 
 from __future__ import annotations
 
+import json
 import shutil
 import subprocess
 from pathlib import Path
@@ -17,6 +18,12 @@ import yaml
 
 REPO_ROOT = Path(__file__).resolve().parents[2]
 CHART_PATH = REPO_ROOT / "charts" / "cogniverse"
+EXPECTED_INFERENCE_SERVICE_URLS = {
+    "colbert_pylate": "http://cogniverse-colbert-pylate:8000",
+    "denseon": "http://cogniverse-denseon:8000",
+    "gliner": "http://cogniverse-gliner:8080",
+    "vllm_asr": "http://cogniverse-vllm-asr:8000",
+}
 
 pytestmark = pytest.mark.skipif(
     shutil.which("helm") is None,
@@ -51,6 +58,15 @@ def _find_role(docs: list, name: str) -> dict:
         if d.get("kind") == "Role" and d.get("metadata", {}).get("name") == name:
             return d
     raise AssertionError(f"Role {name!r} not found in rendered chart")
+
+
+def _find_workflow_template(docs: list, name_suffix: str) -> dict:
+    for d in docs:
+        if d.get("kind") == "WorkflowTemplate" and d.get("metadata", {}).get(
+            "name", ""
+        ).endswith(name_suffix):
+            return d
+    raise AssertionError(f"No WorkflowTemplate ending in {name_suffix!r} rendered")
 
 
 class TestWorkflowSubmitterRoleGrantsEveryStepNeeds:
@@ -121,6 +137,24 @@ def _find_cron_workflow(docs: list, name_suffix: str) -> dict:
     raise AssertionError(f"No CronWorkflow ending in {name_suffix!r} rendered")
 
 
+def _container_env(workload: dict) -> dict[str, str]:
+    if workload.get("kind") == "WorkflowTemplate":
+        container = workload["spec"]["templates"][0]["container"]
+    elif workload.get("kind") == "CronWorkflow":
+        templates = workload["spec"]["workflowSpec"]["templates"]
+        for template in templates:
+            container = template.get("container")
+            if container is not None:
+                break
+        else:
+            raise AssertionError(
+                f"no pod container found in CronWorkflow {workload['metadata']['name']!r}"
+            )
+    else:
+        raise AssertionError(f"unsupported workload kind: {workload.get('kind')!r}")
+    return {entry["name"]: entry.get("value") for entry in container.get("env", [])}
+
+
 class TestDailyGatewayHasNoRestartStep:
     def test_daily_gateway_relies_on_the_reload_interval(self):
         """The runtime picks up recalibrated gateway thresholds on warm pods
@@ -177,3 +211,39 @@ class TestSyntheticGenerationUsesOnlyApprovedOptimizers:
                 "synthetic-generation requests optimizer types with no "
                 f"approved training-data consumer: {sorted(unapproved)}"
             )
+
+
+@pytest.mark.parametrize(
+    ("kind", "name_suffix"),
+    [
+        ("WorkflowTemplate", "-optimization-runner"),
+        ("CronWorkflow", "-daily-cleanup"),
+        ("CronWorkflow", "-synthetic-generation"),
+        ("CronWorkflow", "-monthly-reports"),
+    ],
+)
+def test_optimizer_workloads_carry_inference_service_urls(kind: str, name_suffix: str):
+    """Every optimizer pod needs the denseon URL map entry.
+
+    The shared WorkflowTemplate feeds agent-optimization and daily-gateway
+    through templateRef, while the direct CronWorkflows here launch their own
+    optimizer pods.
+    """
+    docs = _render()
+    workload = (
+        _find_workflow_template(docs, name_suffix)
+        if kind == "WorkflowTemplate"
+        else _find_cron_workflow(docs, name_suffix)
+    )
+    env = _container_env(workload)
+
+    assert json.loads(env["INFERENCE_SERVICE_URLS"]) == EXPECTED_INFERENCE_SERVICE_URLS
+
+
+def test_job_workflow_template_carries_inference_service_urls():
+    """job_executor routes post-actions through denseon using the same map."""
+    docs = _render()
+    workload = _find_workflow_template(docs, "-job-runner")
+    env = _container_env(workload)
+
+    assert json.loads(env["INFERENCE_SERVICE_URLS"]) == EXPECTED_INFERENCE_SERVICE_URLS
