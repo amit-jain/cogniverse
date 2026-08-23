@@ -48,6 +48,9 @@ spec:
           value: "http://{{ $fullName }}-vespa"
         - name: BACKEND_PORT
           value: "{{ .Values.vespa.service.ports.query }}"
+        - name: INFERENCE_SERVICE_URLS
+          value: |-
+            {{- include "cogniverse.inferenceServiceUrls" $ | nindent 12 }}
         resources:
           requests:
             cpu: 500m
@@ -336,6 +339,9 @@ spec:
           value: "http://{{ $fullName }}-phoenix:{{ .Values.phoenix.service.port }}"
         - name: TELEMETRY_OTLP_ENDPOINT
           value: "{{ $fullName }}-phoenix:4317"
+        - name: INFERENCE_SERVICE_URLS
+          value: |-
+            {{- include "cogniverse.inferenceServiceUrls" $ | nindent 12 }}
         - name: LLM_ENDPOINT
           value: {{ include "cogniverse.primaryLLMEndpoint" . | quote }}
         - name: LLM_ENGINE
@@ -741,6 +747,9 @@ spec:
           value: "http://{{ $fullName }}-phoenix:{{ .Values.phoenix.service.port }}"
         - name: TELEMETRY_OTLP_ENDPOINT
           value: "{{ $fullName }}-phoenix:4317"
+        - name: INFERENCE_SERVICE_URLS
+          value: |-
+            {{- include "cogniverse.inferenceServiceUrls" $ | nindent 12 }}
         resources:
           requests:
             cpu: "500m"
