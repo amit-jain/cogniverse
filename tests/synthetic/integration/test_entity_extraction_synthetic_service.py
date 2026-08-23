@@ -32,6 +32,7 @@ from cogniverse_synthetic.schemas import (
 from cogniverse_synthetic.service import SyntheticDataService
 from cogniverse_vespa._vespa_factory import make_vespa_app
 from cogniverse_vespa.backend import VespaBackend
+from tests.agents.unit._recording_telemetry import RecordingTelemetryManager
 from tests.utils.vespa_test_helpers import make_config_manager
 
 pytestmark = pytest.mark.integration
@@ -112,6 +113,7 @@ def ee_service(shared_vespa):
         pytest.fail("PyTorch source document was not indexed by Vespa")
 
     entity_agent = EntityExtractionAgent(deps=EntityExtractionDeps())
+    entity_agent.telemetry_manager = RecordingTelemetryManager()
     extraction_paths = []
 
     async def extract_entities(text: str, tenant_id: str):

@@ -35,12 +35,16 @@ from cogniverse_foundation.config.unified_config import (
     SyntheticGeneratorConfig,
 )
 from cogniverse_synthetic.schemas import ProfileSelectionExampleSchema
-from cogniverse_synthetic.topics import TopicSaliency, extract_topic
+from cogniverse_synthetic.topics import (
+    TopicSaliency,
+    extract_topic,
+    topic_source_text,
+)
 from cogniverse_synthetic.utils import profile_can_ground_topic
 from cogniverse_synthetic.utils.agent_inference import AgentInferrer
 from tests.e2e.conftest import (
     RUNTIME,
-    SAMPLE_VIDEO_CONTENT_ID,
+    SAMPLE_VIDEO_PATH,
     TENANT_ID,
     _content_sha256,
     _ensure_sample_content_ingested,
@@ -61,6 +65,13 @@ CAPTION_CORPUS_DIR = (
     / "Test_Human_Annotated_Captions"
 )
 CAPTION_CORPUS_LIMIT = 50
+SECOND_SAMPLE_VIDEO_PATH = (
+    Path(__file__).resolve().parent.parent
+    / "system"
+    / "resources"
+    / "videos"
+    / "v_-D1gdv_gQyw.mp4"
+)
 CONFIG_PATH = Path(__file__).resolve().parents[2] / "configs" / "config.json"
 
 
@@ -77,6 +88,14 @@ def _default_video_profile_name() -> str:
 
 
 PROFILE = _default_video_profile_name()
+_PROFILE_TYPE_ORDER = {
+    "video": 0,
+    "document": 1,
+    "image": 2,
+    "audio": 3,
+    "code": 4,
+    "wiki": 5,
+}
 
 
 def _configured_profile_name(
@@ -808,50 +827,42 @@ class TestSyntheticDataAPI:
             )
 
     @staticmethod
-    def _tenant_video_results(client: httpx.Client) -> list[dict]:
-        """Every video document the tenant serves on PROFILE — the population
-        the synthetic sampler draws from, read live rather than assumed."""
-        response = client.post(
-            "/search/",
-            json={
-                "query": "video",
-                "profile": PROFILE,
-                "strategy": "default",
-                "top_k": 1000,
-                "tenant_id": TENANT_ID,
-            },
+    def _seeded_video_fixture_results(client: httpx.Client) -> list[dict]:
+        """Exact seeded video docs the synthetic sampler should ground on."""
+        seeded_video_paths = (
+            SAMPLE_VIDEO_PATH,
+            SECOND_SAMPLE_VIDEO_PATH,
         )
-        assert response.status_code == 200, response.text
-        body = response.json()
-        results = body["results"]
-        assert body["results_count"] == len(results)
-        assert [
-            {"segment_description", "video_id"} <= set(result["metadata"])
-            for result in results
-        ] == [True for _ in results]
+        results = []
+        for video_path in seeded_video_paths:
+            _ensure_sample_content_ingested(
+                video_path,
+                profile=PROFILE,
+                media_type="video/mp4",
+            )
+            content_id = _content_sha256(video_path)
+            response = client.post(
+                "/search/",
+                json={
+                    "query": content_id,
+                    "profile": PROFILE,
+                    "strategy": "default",
+                    "top_k": 1000,
+                    "tenant_id": TENANT_ID,
+                },
+            )
+            assert response.status_code == 200, response.text
+            matches = _matching_sample_results(
+                response.json(),
+                content_id=content_id,
+                tenant_id=TENANT_ID,
+                profile=PROFILE,
+                suffix=video_path.suffix,
+                media_type="video",
+            )
+            assert matches, f"expected exact seeded video results for {video_path.name}"
+            results.extend(matches)
         return results
-
-    @staticmethod
-    def _exact_video_fixture_results(client: httpx.Client) -> list[dict]:
-        response = client.post(
-            "/search/",
-            json={
-                "query": SAMPLE_VIDEO_CONTENT_ID,
-                "profile": PROFILE,
-                "strategy": "default",
-                "top_k": 1000,
-                "tenant_id": TENANT_ID,
-            },
-        )
-        assert response.status_code == 200, response.text
-        return _matching_sample_results(
-            response.json(),
-            content_id=SAMPLE_VIDEO_CONTENT_ID,
-            tenant_id=TENANT_ID,
-            profile=PROFILE,
-            suffix=".mp4",
-            media_type="video",
-        )
 
     def test_synthetic_health(self):
         """GET /synthetic/health returns healthy status."""
@@ -937,6 +948,7 @@ class TestSyntheticDataAPI:
     def test_profile_generation_uses_ingested_tenant_content(self):
         expected_available_profiles = _expected_available_profile_names(TENANT_ID)
         with httpx.Client(base_url=RUNTIME, timeout=900.0) as client:
+            fixture_results = self._seeded_video_fixture_results(client)
             resp = client.post(
                 "/synthetic/generate",
                 json={
@@ -982,47 +994,39 @@ class TestSyntheticDataAPI:
             "complexity",
         }
         assert all(set(example) == profile_fields for example in data["data"])
+        source_texts = []
+        missing_source_texts = []
+        for result in fixture_results:
+            metadata = result["metadata"]
+            assert isinstance(metadata, dict), result
+            source_text = topic_source_text(metadata)
+            if source_text is None:
+                missing_source_texts.append(metadata)
+                continue
+            source_texts.append(source_text)
+        assert missing_source_texts == [], missing_source_texts
+        assert len(set(source_texts)) == len(fixture_results)
+        records = [
+            {"description": text, "source_text": text, "topic": f"video_{i}"}
+            for i, text in enumerate(source_texts)
+        ]
+        saliency = TopicSaliency.from_records(records)
+        topics = [extract_topic(record, saliency=saliency) for record in records]
+        assert [
+            record["topic"] for record, topic in zip(records, topics) if topic is None
+        ] == []
+        assert [example["query"] for example in data["data"]] == [
+            f"find a video frame showing {topic}" for topic in topics
+        ], [
+            (example["query"], record["source_text"])
+            for example, record in zip(data["data"], records, strict=True)
+        ]
 
-        query_prefix = "find a video frame showing "
-        topics = []
-        for example in data["data"]:
-            assert example["query"].startswith(query_prefix), example["query"]
-            topic = example["query"].removeprefix(query_prefix)
-            assert 1 <= len(topic.split()) <= 20, example["query"]
-            topics.append(topic)
-        assert len(set(topics)) == 2
-
-        with httpx.Client(base_url=RUNTIME, timeout=900.0) as client:
-            for topic in topics:
-                search = client.post(
-                    "/search/",
-                    json={
-                        "query": topic,
-                        "profile": PROFILE,
-                        "strategy": "default",
-                        "top_k": 1000,
-                        "tenant_id": TENANT_ID,
-                    },
-                )
-                assert search.status_code == 200, search.text
-                ingested_descriptions = [
-                    " ".join(result["metadata"]["segment_description"].split())
-                    for result in search.json()["results"]
-                    if isinstance(result.get("metadata"), dict)
-                    and isinstance(result["metadata"].get("segment_description"), str)
-                ]
-                normalized_topic = " ".join(topic.split())
-                assert (
-                    sum(
-                        normalized_topic in description
-                        for description in ingested_descriptions
-                    )
-                    == 1
-                ), topic
-
-        assert all(
-            example["available_profiles"].split(",") == expected_available_profiles
-            for example in data["data"]
+        actual_available_profiles = [
+            example["available_profiles"].split(",") for example in data["data"]
+        ]
+        assert actual_available_profiles == [expected_available_profiles] * len(
+            data["data"]
         )
         assert {example["selected_profile"] for example in data["data"]} == {PROFILE}
         assert {example["modality"] for example in data["data"]} == {"video"}
@@ -1045,18 +1049,23 @@ class TestSyntheticDataAPI:
     def test_generate_synthetic_data(self):
         """POST /synthetic/generate creates real synthetic training examples."""
         with httpx.Client(base_url=RUNTIME, timeout=900.0) as client:
-            fixture_results = self._tenant_video_results(client)
-            source_texts = {
-                result["metadata"]["segment_description"]
-                for result in fixture_results
-                if isinstance(result["metadata"].get("segment_description"), str)
-                and result["metadata"]["segment_description"].strip()
-            }
-            assert len(source_texts) == len(fixture_results)
+            fixture_results = self._seeded_video_fixture_results(client)
+            source_texts = []
+            missing_source_texts = []
+            for result in fixture_results:
+                metadata = result["metadata"]
+                assert isinstance(metadata, dict), result
+                source_text = topic_source_text(metadata)
+                if source_text is None:
+                    missing_source_texts.append(metadata)
+                    continue
+                source_texts.append(source_text)
+            assert missing_source_texts == [], missing_source_texts
+            assert len(set(source_texts)) == len(fixture_results)
             # Build saliency from all source texts and extract distinctive topics.
             records = [
-                {"description": text, "topic": f"video_{i}"}
-                for i, text in enumerate(sorted(source_texts))
+                {"description": text, "source_text": text, "topic": f"video_{i}"}
+                for i, text in enumerate(source_texts)
             ]
             saliency = TopicSaliency.from_records(records)
 
@@ -1072,13 +1081,15 @@ class TestSyntheticDataAPI:
 
             expected_extractions = []
             for record, topic in zip(records, topics):
-                source_text = record["description"]
+                source_text = record["source_text"]
                 # The topic is a contiguous span of its own source text ...
-                assert topic in source_text, f"topic {topic!r} must be a span of source"
+                assert topic in source_text, (
+                    f"topic {topic!r} must be a span of source text {source_text!r}"
+                )
                 # ... and never that source's leading words, compared over the
                 # same width as the topic itself.
                 assert topic != " ".join(source_text.split()[: len(topic.split())]), (
-                    f"topic is the source prefix: {topic!r}"
+                    f"topic is the source prefix: {topic!r} from {source_text!r}"
                 )
                 extraction_response = client.post(
                     "/agents/entity_extraction_agent/process",
@@ -1109,6 +1120,8 @@ class TestSyntheticDataAPI:
                     )
                 expected_extractions.append(
                     {
+                        "query": topic,
+                        "source_text": source_text,
                         "entities": canonical_entities,
                         "relationships": [
                             {
@@ -1120,7 +1133,15 @@ class TestSyntheticDataAPI:
                         ],
                     }
                 )
-            assert all(item["entities"] for item in expected_extractions)
+            expected_grounded_examples = [
+                {
+                    "query": item["query"],
+                    "entities": item["entities"],
+                    "relationships": item["relationships"],
+                }
+                for item in expected_extractions
+                if item["entities"]
+            ]
 
             resp = client.post(
                 "/synthetic/generate",
@@ -1172,6 +1193,18 @@ class TestSyntheticDataAPI:
         ] == [True] * generation["dropped_count"]
         assert generation["returned_count"] == len(
             {(example["query"], example["chosen_agent"]) for example in data["data"]}
+        )
+        actual_grounded_examples = [
+            {
+                "query": example["query"],
+                "entities": example["entities"],
+                "relationships": example["relationships"],
+            }
+            for example in data["data"]
+        ]
+        assert actual_grounded_examples == expected_grounded_examples, (
+            "Dropped entity-free topics: "
+            f"{[(item['query'], item['source_text']) for item in expected_extractions if not item['entities']]}"
         )
         fixture_corpus = " ".join(
             " ".join(str(value).split())
@@ -1370,6 +1403,7 @@ class TestSyntheticDataAPI:
     def test_generate_workflow_ids_are_unique_and_schema_specific(self):
         expected_available_profiles = _expected_available_profile_names(TENANT_ID)
         with httpx.Client(base_url=RUNTIME, timeout=900.0) as client:
+            seeded_video_results = self._seeded_video_fixture_results(client)
             agents_response = client.get("/agents/")
             resp = client.post(
                 "/synthetic/generate",
@@ -1383,10 +1417,17 @@ class TestSyntheticDataAPI:
                 },
             )
             # topic extraction collapses whitespace, so compare normalized forms
-            ingested_video_descriptions = [
-                " ".join(result["metadata"]["segment_description"].split())
-                for result in self._tenant_video_results(client)
-            ]
+            ingested_video_sources = []
+            missing_video_sources = []
+            for result in seeded_video_results:
+                metadata = result["metadata"]
+                assert isinstance(metadata, dict), result
+                source_text = topic_source_text(metadata)
+                if source_text is None:
+                    missing_video_sources.append(metadata)
+                    continue
+                ingested_video_sources.append(" ".join(source_text.split()))
+            assert missing_video_sources == [], missing_video_sources
 
         assert agents_response.status_code == 200, agents_response.text
         registered_agents = set(agents_response.json()["agents"])
@@ -1434,7 +1475,7 @@ class TestSyntheticDataAPI:
             f"find {document_topic}",
         ]
         assert video_topic != document_topic
-        ingested_descriptions = ingested_video_descriptions + [
+        ingested_descriptions = ingested_video_sources + [
             " ".join(path.read_text(encoding="utf-8-sig").split())
             for path in sorted(CAPTION_CORPUS_DIR.glob("*.txt"))[:CAPTION_CORPUS_LIMIT]
         ]
@@ -2142,6 +2183,15 @@ def _expected_available_profile_names(tenant_id: str) -> list[str]:
             )
         ):
             expected.append(profile_name)
+    profile_types = _profile_type_map()
+    expected.sort(
+        key=lambda profile_name: (
+            _PROFILE_TYPE_ORDER.get(
+                profile_types.get(profile_name, ""), len(_PROFILE_TYPE_ORDER)
+            ),
+            profile_name,
+        )
+    )
     return expected
 
 
