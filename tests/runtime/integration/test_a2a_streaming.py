@@ -30,6 +30,7 @@ from cogniverse_core.common.agent_models import AgentEndpoint
 from cogniverse_core.registries.agent_registry import AgentRegistry
 from cogniverse_runtime.a2a_executor import CogniverseAgentExecutor
 from cogniverse_runtime.agent_dispatcher import AgentDispatcher
+from tests.agents.unit._recording_telemetry import RecordingTelemetryManager
 from tests.runtime.integration.conftest import skip_if_no_lm
 from tests.utils.vespa_test_helpers import (
     deploy_tenant_schema,
@@ -605,6 +606,7 @@ class TestEntityExtractionAgentStreaming:
         )
 
         agent = EntityExtractionAgent(deps=EntityExtractionDeps())
+        agent.telemetry_manager = RecordingTelemetryManager()
 
         events = _collect_stream_events(
             agent,
