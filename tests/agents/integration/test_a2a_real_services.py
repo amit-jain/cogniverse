@@ -549,21 +549,21 @@ def _query_phoenix_for_span(
     seconds to account for Phoenix ingestion delay.
     """
     from phoenix.client import Client
+    from phoenix.client.types.spans import SpanQuery
 
     client = Client(base_url=phoenix_http_url)
+    query = SpanQuery().where(f"name == '{span_name}'")
 
     deadline = time.time() + max_wait
     while time.time() < deadline:
         try:
-            # get_spans_dataframe's own default timeout is short enough that a
-            # loaded project reads back as "no spans"; set it explicitly.
             spans_df = client.spans.get_spans_dataframe(
+                query=query,
                 project_identifier=project_name,
-                limit=200,
                 timeout=30,
             )
             if spans_df is not None and not spans_df.empty:
-                matches = spans_df[spans_df["name"] == span_name]
+                matches = spans_df
                 for column, value in (where or {}).items():
                     if column not in matches.columns:
                         matches = matches.iloc[0:0]
