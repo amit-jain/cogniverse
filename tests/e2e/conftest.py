@@ -2022,6 +2022,11 @@ def e2e_stack(request, resolved_inference_endpoints):
         resolved_inference_endpoints,
     )
 
+    from tests.e2e import run_lock
+
+    if run_lock.acquire(run_lock.default_lock_path()):
+        request.addfinalizer(lambda: run_lock.release(run_lock.default_lock_path()))
+
     from cogniverse_cli.cluster import start_cluster
 
     from tests.e2e.deployment.conftest import (

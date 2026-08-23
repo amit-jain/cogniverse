@@ -50,6 +50,68 @@ elif [[ -d "$REPO_ROOT/.env" ]]; then
 fi
 # <<< e2e-env-loader
 
+# Only one e2e run may touch the cluster at a time. Concurrent runs multiply
+# concurrent LM/ingestion load on a serving stack whose memory scales with it;
+# on this unified-memory host the GPU pool is pinned and unswappable, so the
+# kernel reclaims from everything else until it OOMs the desktop.
+# >>> e2e-run-lock
+E2E_LOCK_FILE="${E2E_LOCK_FILE:-/tmp/cogniverse_e2e_run.lock}"
+E2E_LOCK_SCAN_PATTERN="${E2E_LOCK_SCAN_PATTERN:-pytest.*tests/e2e}"
+
+_e2e_lock_live_holder() {
+  local pid
+  pid="$(head -1 "$E2E_LOCK_FILE" 2>/dev/null | tr -dc '0-9' || true)"
+  [[ -n "$pid" ]] || return 0
+  kill -0 "$pid" 2>/dev/null && printf '%s' "$pid"
+  return 0
+}
+
+# Skips our own process group: a scan by command line otherwise matches the
+# very shell running the scan, because that shell's argv contains the pattern.
+# A second run launched from this same group is caught by the lock file above.
+_e2e_foreign_run() {
+  local mypgid
+  mypgid="$(ps -o pgid= -p "$$" 2>/dev/null | tr -d ' ')"
+  ps -eo pid=,pgid=,args= 2>/dev/null | awk -v skip="$mypgid" -v pat="$E2E_LOCK_SCAN_PATTERN" '
+    $2 == skip { next }
+    $0 ~ pat { print $1; exit }
+  '
+  return 0
+}
+
+_e2e_release_lock() {
+  local owner
+  owner="$(head -1 "$E2E_LOCK_FILE" 2>/dev/null | tr -dc '0-9' || true)"
+  [[ "$owner" == "$$" ]] && rm -f "$E2E_LOCK_FILE"
+  return 0
+}
+
+_e2e_acquire_lock() {
+  local holder foreign
+  holder="$(_e2e_lock_live_holder)"
+  if [[ -n "$holder" ]]; then
+    echo "REFUSING: an e2e run already holds the lock (pid $holder)." >&2
+    echo "  lock: $E2E_LOCK_FILE" >&2
+    echo "  cmd : $(ps -o args= -p "$holder" 2>/dev/null | head -1)" >&2
+    echo "  Concurrent e2e runs have OOMed this host. Wait for it, or kill it." >&2
+    exit 3
+  fi
+  foreign="$(_e2e_foreign_run)"
+  if [[ -n "$foreign" ]]; then
+    echo "REFUSING: another e2e run is already in flight (pid $foreign)." >&2
+    echo "  cmd : $(ps -o args= -p "$foreign" 2>/dev/null | head -1)" >&2
+    echo "  Concurrent e2e runs have OOMed this host. Wait for it, or kill it." >&2
+    exit 3
+  fi
+  [[ -e "$E2E_LOCK_FILE" ]] && echo "Taking over a stale e2e lock at $E2E_LOCK_FILE." >&2
+  printf '%s\n' "$$" > "$E2E_LOCK_FILE"
+  trap _e2e_release_lock EXIT
+  return 0
+}
+
+_e2e_acquire_lock
+# <<< e2e-run-lock
+
 # Batch 1: light/medium tests that don't exercise the heavy ingestion
 # pipeline. Gateway classification, orchestration (LLM-bound but no
 # ColPali frame-encoding), search, CRUD, registry, multi-turn, synthetic
