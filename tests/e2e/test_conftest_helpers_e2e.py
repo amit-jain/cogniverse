@@ -1791,7 +1791,6 @@ class TestSharedClusterOwnership:
     @pytest.mark.parametrize(
         ("force_fresh", "runtime_ready", "cluster_state", "reason"),
         [
-            (False, True, "stale", "state is stale"),
             (False, False, "current-build", "is unhealthy"),
             (True, True, "current-build", "E2E_FRESH cannot replace"),
         ],
@@ -1899,6 +1898,51 @@ class TestSharedClusterOwnership:
         assert deleted == []
         assert reason in str(raised.value)
         assert "k3d cluster delete cogniverse-e2e" in str(raised.value)
+
+    def test_cluster_state_actions_are_pinned_for_every_state(self):
+        """A stale cluster is repaired in place; it is never a delete."""
+        states = ("reusable", "absent", "stale", "stopped", "unhealthy", "banana")
+
+        assert {
+            state: e2e_conftest._e2e_action_for_cluster_state(state) for state in states
+        } == {
+            "reusable": "reuse",
+            "absent": "deploy",
+            "stale": "deploy",
+            "stopped": "fail",
+            "unhealthy": "fail",
+            "banana": "fail",
+        }
+
+    def test_stale_shared_cluster_refuses_to_deploy_from_a_dirty_tree(
+        self, monkeypatch
+    ):
+        """Tree cleanliness is an explicit input, not a side effect of a stub.
+
+        The deploy path a stale cluster now takes calls
+        _require_clean_e2e_worktree, which shells out to `git status
+        --porcelain`. A test that stubs subprocess broadly for kubectl would
+        otherwise decide git cleanliness by accident.
+        """
+        calls: list[str] = []
+        monkeypatch.setattr(
+            e2e_conftest,
+            "_require_clean_e2e_worktree",
+            lambda repo_root=None: (_ for _ in ()).throw(
+                RuntimeError("refusing to deploy from a dirty git tree")
+            ),
+        )
+        monkeypatch.setattr(
+            e2e_conftest,
+            "_git_e2e",
+            lambda *args, **kwargs: calls.append("git") or None,
+        )
+
+        with pytest.raises(RuntimeError) as raised:
+            e2e_conftest._require_clean_e2e_worktree()
+
+        assert str(raised.value) == "refusing to deploy from a dirty git tree"
+        assert calls == []
 
     def test_stopped_shared_cluster_is_started_then_reused(self, monkeypatch):
         """A stopped shared cluster resumes through the supported lifecycle."""
