@@ -107,21 +107,30 @@ def _query_pipeline_spans(ingest_id: str, timeout_s: float = 60.0) -> list[dict]
     """Poll Phoenix for the ``pipeline.*`` spans emitted by one ingest.
 
     Anchors on the worker span's ``job.id == ingest_id`` attribute,
-    then collects every ``pipeline.*`` span sharing that span's
-    trace_id (so we get the children too). The KG-extract span runs
-    in a separate trace, so we also add any
-    ``pipeline.kg.extract_per_segment`` span whose
-    ``kg.source_doc_id`` matches the trace's video_id.
+    then collects the fixed pipeline span names for that ingest and
+    filters them by trace_id (so we get the children too). The
+    KG-extract span runs in a separate trace, so we also add any
+    ``pipeline.kg.extract_per_segment`` span whose ``kg.source_doc_id``
+    matches the trace's video_id.
     """
     from datetime import datetime, timedelta, timezone
 
     from phoenix.client import Client
+    from phoenix.client.types.spans import SpanQuery
 
     project = f"cogniverse-{_TENANT}"
     px = Client(base_url=PHOENIX_BASE)
-    # Window + explicit timeout: the unscoped scan with the client's 5s
-    # method default times out on a loaded span store, and the swallowed
-    # exception reads as "no spans yet" until the poll budget dies.
+    pipeline_names = [
+        "pipeline.run",
+        "pipeline.worker.process_job",
+        "pipeline.keyframes",
+        "pipeline.transcription",
+        "pipeline.descriptions",
+        "pipeline.embeddings",
+        "pipeline.kg.extract_per_segment",
+    ]
+    predicate = "name in [" + ", ".join(f"'{name}'" for name in pipeline_names) + "]"
+    query = SpanQuery().where(predicate)
     window_start = datetime.now(timezone.utc) - timedelta(hours=1)
     deadline = time.time() + timeout_s
     last_error: Exception | None = None
@@ -130,7 +139,7 @@ def _query_pipeline_spans(ingest_id: str, timeout_s: float = 60.0) -> list[dict]
             spans = px.spans.get_spans_dataframe(
                 project_identifier=project,
                 start_time=window_start,
-                limit=2000,
+                query=query,
                 timeout=90,
             )
             last_error = None
@@ -141,10 +150,7 @@ def _query_pipeline_spans(ingest_id: str, timeout_s: float = 60.0) -> list[dict]
         if len(spans) == 0:
             time.sleep(1.0)
             continue
-        pipeline_spans = spans[spans["name"].fillna("").str.startswith("pipeline.")]
-        if len(pipeline_spans) == 0:
-            time.sleep(1.0)
-            continue
+        pipeline_spans = spans
 
         # Anchor on worker span carrying job.id == ingest_id.
         worker_only = pipeline_spans[

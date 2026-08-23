@@ -798,20 +798,23 @@ def test_with_constraint_run_emits_retrieval_iteration_spans_for_each_iter():
     # querying Phoenix for retrieval_iteration spans tagged with the
     # base session_id OR any of its retry-suffix variants. The tenant
     # project accumulates spans from every run on the cluster, so scope
-    # the query to this test's time window — an unscoped limit=500 slice
-    # can consist entirely of other runs' spans, and the bigger scan can
-    # blow the client's 5s default timeout while the runtime is loaded.
+    # the query to this test's time window — the exact server-side name
+    # predicate still needs a real timeout budget while the runtime is
+    # loaded.
     from datetime import datetime, timedelta, timezone
 
     _window_start = datetime.now(timezone.utc) - timedelta(minutes=30)
 
     def _tenant_spans(px_client):
+        from phoenix.client.types.spans import SpanQuery
+
+        query = SpanQuery().where("name == 'retrieval_iteration'")
         for retry in range(3):
             try:
                 return px_client.spans.get_spans_dataframe(
                     project_identifier="cogniverse-flywheel_org:production",
                     start_time=_window_start,
-                    limit=500,
+                    query=query,
                     # The method's own default is 5s and Phoenix scans of a
                     # loaded project routinely exceed it.
                     timeout=90,
@@ -832,8 +835,7 @@ def test_with_constraint_run_emits_retrieval_iteration_spans_for_each_iter():
     while time.time() < deadline:
         spans_for_match = _tenant_spans(px_initial)
         candidates = spans_for_match[
-            (spans_for_match["name"] == "retrieval_iteration")
-            & spans_for_match["attributes.session_id"]
+            spans_for_match["attributes.session_id"]
             .fillna("")
             .str.startswith(base_session_id)
         ]

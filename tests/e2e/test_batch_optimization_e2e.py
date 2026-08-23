@@ -3145,19 +3145,22 @@ class TestBatchJobsReadCorrectSpanTypes:
         """
         from datetime import datetime, timedelta, timezone
 
+        from phoenix.client.types.spans import SpanQuery
+
         project_name = f"cogniverse-{TENANT_ID}"
         window_start = datetime.now(timezone.utc) - timedelta(hours=3)
+        query = SpanQuery().where(f"name == '{span_name}'")
         last_error: Exception | None = None
         for _ in range(3):
             try:
                 df = self.client.spans.get_spans_dataframe(
                     project_identifier=project_name,
                     start_time=window_start,
-                    limit=2000,
+                    query=query,
                     timeout=90,
                 )
                 if df is not None and not df.empty and "name" in df.columns:
-                    return span_name in df["name"].values
+                    return set(df["name"].dropna().unique()) == {span_name}
                 return False
             except Exception as e:  # noqa: BLE001 — retried, then surfaced
                 last_error = e

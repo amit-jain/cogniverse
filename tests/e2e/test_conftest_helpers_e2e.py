@@ -5,8 +5,7 @@ e2e coverage work end-to-end:
   - the 9 new tenant prefixes are registered for session-end cleanup,
   - unique_id() produces the expected shape,
   - the session-scoped Phoenix client is constructed once and reused,
-  - the wait_for_span helper polls and times out cleanly on a nonexistent
-    span (the deterministic-timeout contract every later phase relies on).
+  - the wait_for_span helper raises with context when Phoenix reads fail.
 
 All later phase tests assume these helpers behave as asserted here, so a
 failure here is a load-bearing failure for the whole e2e knowledge-system
@@ -2090,33 +2089,43 @@ def test_conftest_helpers_self_check(phoenix_client_session):
         "phoenix_client_session.spans is missing get_spans_dataframe"
     )
 
-    # 4) wait_for_span polling contract: when no span matches, the helper
-    # MUST poll until the deadline and then return None — never raise on
-    # a missing span and never short-circuit before the deadline. This is
-    # what every later phase relies on when it asserts a positive match
-    # within a known window. We test the negative path here because it's
-    # deterministic; the positive path is exercised by every later
-    # test that drives a real span (e.g. RLM telemetry, sandbox.exec).
-    bogus_project = f"cogniverse-{unique_id('know_selfcheck_bogus')}"
+    # 4) wait_for_span fault contract: Phoenix read failures must surface
+    # with project/span context instead of returning None.
+    from datetime import datetime, timedelta, timezone
+
+    class _BoomSpans:
+        def get_spans_dataframe(self, **kwargs):
+            raise RuntimeError("phoenix unavailable")
+
+    class _BoomClient:
+        spans = _BoomSpans()
+
     started = time.monotonic()
-    found = wait_for_span(
-        phoenix_client_session,
-        project=bogus_project,
-        name_substr="never_emitted_span_name_xyz",
-        timeout_s=3.0,
-        poll_interval_s=0.5,
-    )
+    with pytest.raises(
+        RuntimeError,
+        match=(
+            r"wait_for_span read failed while polling Phoenix: "
+            r"project='cogniverse-know_selfcheck_read_failure' "
+            r"span_name='cogniverse\.gateway' "
+            r".*phoenix unavailable"
+        ),
+    ) as excinfo:
+        wait_for_span(
+            _BoomClient(),
+            project="cogniverse-know_selfcheck_read_failure",
+            span_name="cogniverse.gateway",
+            start_time=datetime.now(timezone.utc) - timedelta(minutes=10),
+            timeout_s=1.0,
+            poll_interval_s=0.1,
+        )
+    message = str(excinfo.value)
+    assert "wait_for_span read failed while polling Phoenix" in message
+    assert "project='cogniverse-know_selfcheck_read_failure'" in message
+    assert "span_name='cogniverse.gateway'" in message
+    assert "phoenix unavailable" in message
     elapsed = time.monotonic() - started
-    assert found is None, (
-        f"wait_for_span returned a span for a nonexistent project/name; "
-        f"polling logic is broken. Got: {found!r}"
-    )
-    # Helper must respect the timeout — allow a small grace for the last
-    # poll iteration (network jitter, dataframe build) but reject a
-    # runaway loop or premature return.
-    assert 2.5 <= elapsed <= 8.0, (
-        f"wait_for_span timeout drifted: elapsed={elapsed:.2f}s "
-        f"(expected ~3s with 0.5s poll). Polling deadline contract broken."
+    assert elapsed >= 1.0, (
+        f"wait_for_span returned too early on read failure: elapsed={elapsed:.2f}s"
     )
 
 

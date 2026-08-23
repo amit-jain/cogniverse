@@ -129,11 +129,13 @@ def _query_dspy_lm_spans_with_text(text: str, timeout_s: float = 30.0) -> list:
     from datetime import datetime, timedelta, timezone
 
     from phoenix.client import Client
+    from phoenix.client.types.spans import SpanQuery
 
     px = Client(base_url=PHOENIX_BASE)
+    query = SpanQuery().where("name == 'LM.__call__'")
     # The tenant project accumulates spans across every run on the
-    # cluster; without a time window the unsorted `limit` slice can
-    # consist entirely of historic spans and hide this run's.
+    # cluster; keep the time window so the exact LM.__call__ lookup
+    # stays on this run's traffic.
     window_start = datetime.now(timezone.utc) - timedelta(minutes=30)
     deadline = time.time() + timeout_s
     while time.time() < deadline:
@@ -141,7 +143,7 @@ def _query_dspy_lm_spans_with_text(text: str, timeout_s: float = 30.0) -> list:
             spans = px.spans.get_spans_dataframe(
                 project_identifier=f"cogniverse-{_TENANT}",
                 start_time=window_start,
-                limit=500,
+                query=query,
                 timeout=90,
             )
         except Exception:
@@ -151,9 +153,8 @@ def _query_dspy_lm_spans_with_text(text: str, timeout_s: float = 30.0) -> list:
             time.sleep(0.5)
             continue
         # LM.__call__ spans have the full prompt in input.value
-        lm_spans = spans[spans["name"] == "LM.__call__"]
-        matching = lm_spans[
-            lm_spans["attributes.input.value"]
+        matching = spans[
+            spans["attributes.input.value"]
             .fillna("")
             .str.contains(text, na=False, regex=False)
         ]
