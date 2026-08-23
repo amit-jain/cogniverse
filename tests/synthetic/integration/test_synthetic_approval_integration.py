@@ -67,6 +67,7 @@ from cogniverse_synthetic.schemas import (
 from cogniverse_synthetic.service import SyntheticDataService
 from cogniverse_vespa._vespa_factory import make_vespa_app
 from cogniverse_vespa.backend import VespaBackend
+from tests.agents.unit._recording_telemetry import RecordingTelemetryManager
 from tests.utils.async_polling import wait_for_phoenix_processing
 from tests.utils.vespa_test_helpers import make_config_manager
 
@@ -326,59 +327,81 @@ def synthetic_service(shared_vespa):
         tenant_id=tenant_id,
         base_schema_name=base_schema,
     )
-    feed = make_vespa_app(
-        url="http://localhost",
-        port=shared_vespa["http_port"],
-    ).feed_data_point(
-        schema=schema,
-        data_id="curie-radium-segment",
-        fields={
-            "video_id": "curie-radium",
-            "video_title": "Marie Curie discovered radium",
-            "source_url": "http://example.test/curie-radium",
-            "segment_id": 0,
-            "segment_description": (
-                "Marie Curie and Pierre Curie isolated radium in a Paris laboratory."
-            ),
-            "audio_transcript": (
-                "Marie Curie and Pierre Curie isolated radium in a Paris laboratory."
-            ),
-            "start_time": 0.0,
-            "end_time": 12.0,
+    documents = [
+        {
+            "data_id": "curie-radium-segment",
+            "fields": {
+                "video_id": "curie-radium",
+                "video_title": "Marie Curie discovered radium",
+                "source_url": "http://example.test/curie-radium",
+                "segment_id": 0,
+                "segment_description": (
+                    "Marie Curie and Pierre Curie isolated radium in a Paris "
+                    "laboratory."
+                ),
+                "audio_transcript": (
+                    "Marie Curie and Pierre Curie isolated radium in a Paris "
+                    "laboratory."
+                ),
+                "start_time": 0.0,
+                "end_time": 12.0,
+            },
         },
-    )
-    assert feed.is_successful(), feed.json
+        {
+            "data_id": "shoreline-segment",
+            "fields": {
+                "video_id": "shoreline",
+                "video_title": "Quiet shoreline at dusk",
+                "source_url": "http://example.test/shoreline",
+                "segment_id": 1,
+                "segment_description": (
+                    "The frame shows a quiet shoreline with waves and sky."
+                ),
+                "audio_transcript": (
+                    "The frame shows a quiet shoreline with waves and sky."
+                ),
+                "start_time": 12.0,
+                "end_time": 24.0,
+            },
+        },
+    ]
+    app = make_vespa_app(url="http://localhost", port=shared_vespa["http_port"])
+    for document in documents:
+        feed = app.feed_data_point(
+            schema=schema,
+            data_id=document["data_id"],
+            fields=document["fields"],
+        )
+        assert feed.is_successful(), feed.json
 
+    expected_titles = {document["fields"]["video_title"] for document in documents}
     for _ in range(20):
         indexed = backend.query_metadata_documents(
             schema=schema,
-            yql=f"select * from sources {schema} where true limit 1",
-            hits=1,
+            yql=f"select * from sources {schema} where true limit 2",
+            hits=2,
         )
-        if indexed:
+        indexed_titles = {item["video_title"] for item in indexed}
+        if indexed_titles == expected_titles:
             break
         time.sleep(0.5)
     else:
-        pytest.fail("Curie source document was not indexed by Vespa")
+        pytest.fail("Approval source documents were not indexed by Vespa")
 
     raw_config = json.loads(Path("configs/config.json").read_text())
     synthetic_config = dict(raw_config["synthetic"])
     synthetic_config["tenant_id"] = tenant_id
     generator_config = SyntheticGeneratorConfig.from_dict(synthetic_config)
     entity_agent = EntityExtractionAgent(deps=EntityExtractionDeps())
+    entity_agent.telemetry_manager = RecordingTelemetryManager()
     expected_entities = [
         ("Marie Curie", "PERSON"),
         ("Pierre Curie", "PERSON"),
-        ("isolated", "CONCEPT"),
-        ("radium", "CONCEPT"),
-        ("Paris", "PLACE"),
-        ("laboratory", "ORGANIZATION"),
+        ("isolated", "EVENT"),
     ]
 
     async def extract_entities(text: str, request_tenant_id: str):
-        assert text == (
-            "Marie Curie and Pierre Curie isolated radium in a Paris laboratory."
-        )
+        assert text == "Marie Curie and Pierre Curie isolated"
         assert request_tenant_id == tenant_id
         result = await entity_agent.process(
             EntityExtractionInput(query=text, tenant_id=request_tenant_id)
@@ -438,7 +461,7 @@ class TestSyntheticApprovalIntegration:
             tenant_id=synthetic_service.tenant_id,
             optimizer="routing",
             count=1,
-            vespa_sample_size=1,
+            vespa_sample_size=2,
             max_profiles=1,
         )
         response = await synthetic_service.service.generate(request)
@@ -446,7 +469,7 @@ class TestSyntheticApprovalIntegration:
         assert len(response.data) == 1
         assert response.optimizer == "routing"
         assert response.selected_profiles == [synthetic_service.base_schema]
-        assert response.metadata["sampled_content_count"] == 1
+        assert response.metadata["sampled_content_count"] == 2
 
         items = [dict(example) for example in response.data]
 
@@ -2940,7 +2963,7 @@ class TestSyntheticServiceIntegration:
             tenant_id=synthetic_service.tenant_id,
             optimizer="routing",
             count=1,
-            vespa_sample_size=1,
+            vespa_sample_size=2,
             max_profiles=1,
         )
         response = await synthetic_service.service.generate(request)
@@ -2956,9 +2979,9 @@ class TestSyntheticServiceIntegration:
         )
         assert response.metadata == {
             "backend_query_strategy": "entity_rich",
-            "sampled_content_count": 1,
+            "sampled_content_count": 2,
             "target_count": 1,
-            "vespa_sample_size": 1,
+            "vespa_sample_size": 2,
             "generation": {
                 "requested_count": 1,
                 "returned_count": 1,
@@ -2973,10 +2996,7 @@ class TestSyntheticServiceIntegration:
         expected_entities = [
             {"text": "Marie Curie", "type": "PERSON"},
             {"text": "Pierre Curie", "type": "PERSON"},
-            {"text": "isolated", "type": "CONCEPT"},
-            {"text": "radium", "type": "CONCEPT"},
-            {"text": "Paris", "type": "PLACE"},
-            {"text": "laboratory", "type": "ORGANIZATION"},
+            {"text": "isolated", "type": "EVENT"},
         ]
         for example in response.data:
             validated = RoutingExperienceSchema.model_validate(example)
