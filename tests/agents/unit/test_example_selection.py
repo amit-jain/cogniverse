@@ -125,75 +125,60 @@ def test_decay_weight_fresh_unconfirmed_remains_full_weight():
     assert decay_weight(stats, "span:e", now=now, knobs=knobs) == 1.0
 
 
-def test_decay_weight_uses_score_threshold_and_rejects_legacy_missing_scores():
-    now = datetime(2026, 8, 30, tzinfo=timezone.utc)
-    knobs = TrainingSelectionKnobs(
-        300,
-        0.7,
-        3,
-        14,
-        0.5,
-        0.8,
+def test_decay_weight_uses_shipped_entity_threshold_and_real_ledger_shape():
+    from cogniverse_foundation.config.manager import ConfigManager
+    from cogniverse_foundation.config.unified_config import RoutingConfigUnified
+    from cogniverse_runtime.optimization_cli import _training_selection_from_config
+    from tests.utils.memory_store import InMemoryConfigStore
+
+    def _version(version: int, example_id: str, day: int, score: float | None) -> dict:
+        row = {
+            "version": version,
+            "name": "entity_extraction",
+            "decision": "promote",
+            "base_score": 0.666,
+            "consumed_example_ids": [example_id],
+            "created_at": f"2026-08-{day:02d}T00:00:00+00:00",
+            "scored": score is not None,
+            "row_count": 30,
+        }
+        if score is not None:
+            row["score"] = score
+            row["candidate_score"] = score
+        return row
+
+    manager = ConfigManager(store=InMemoryConfigStore())
+    manager.set_routing_config(
+        RoutingConfigUnified(tenant_id="flywheel_org:production")
     )
-    lineage = [
-        {
-            "consumed_example_ids": ["span:high"],
-            "decision": "promote",
-            "score": 0.9,
-            "created_at": "2026-08-01T00:00:00+00:00",
-        },
-        {
-            "consumed_example_ids": ["span:high"],
-            "decision": "promote",
-            "score": 0.9,
-            "created_at": "2026-08-10T00:00:00+00:00",
-        },
-        {
-            "consumed_example_ids": ["span:high"],
-            "decision": "promote",
-            "score": 0.9,
-            "created_at": "2026-08-15T00:00:00+00:00",
-        },
-        {
-            "consumed_example_ids": ["span:low"],
-            "decision": "promote",
-            "score": 0.2,
-            "created_at": "2026-08-01T00:00:00+00:00",
-        },
-        {
-            "consumed_example_ids": ["span:low"],
-            "decision": "promote",
-            "score": 0.2,
-            "created_at": "2026-08-10T00:00:00+00:00",
-        },
-        {
-            "consumed_example_ids": ["span:low"],
-            "decision": "promote",
-            "score": 0.2,
-            "created_at": "2026-08-15T00:00:00+00:00",
-        },
-        {
-            "consumed_example_ids": ["span:legacy"],
-            "decision": "promote",
-            "created_at": "2026-08-01T00:00:00+00:00",
-        },
-    ]
+    knobs = _training_selection_from_config(
+        manager, "flywheel_org:production", "entity_extraction"
+    )
+    now = datetime(2026, 8, 30, tzinfo=timezone.utc)
+    first_seen = datetime(2026, 8, 1, tzinfo=timezone.utc)
+    days = (1, 10, 15)
+    lineage = (
+        [_version(97 + i, "span:high", d, 0.714) for i, d in enumerate(days)]
+        + [_version(100 + i, "span:low", d, 0.666) for i, d in enumerate(days)]
+        + [_version(103 + i, "span:legacy", d, None) for i, d in enumerate(days)]
+    )
+
     stats = confirmation_stats(
         lineage, score_threshold=knobs.confirmation_score_threshold
     )
+    unthresholded = confirmation_stats(lineage)
 
-    assert stats["span:high"] == ExampleStats(
-        3,
-        datetime(2026, 8, 1, tzinfo=timezone.utc),
-    )
-    assert stats["span:low"] == ExampleStats(
-        0,
-        datetime(2026, 8, 1, tzinfo=timezone.utc),
-    )
-    assert stats["span:legacy"] == ExampleStats(
-        0,
-        datetime(2026, 8, 1, tzinfo=timezone.utc),
-    )
+    assert knobs == TrainingSelectionKnobs(300, 0.7, 3, 14, 0.5, 0.7)
+    assert stats == {
+        "span:high": ExampleStats(3, first_seen),
+        "span:low": ExampleStats(0, first_seen),
+        "span:legacy": ExampleStats(0, first_seen),
+    }
+    assert unthresholded == {
+        "span:high": ExampleStats(3, first_seen),
+        "span:low": ExampleStats(3, first_seen),
+        "span:legacy": ExampleStats(3, first_seen),
+    }
     assert decay_weight(stats, "span:high", now=now, knobs=knobs) == 1.0
     assert decay_weight(stats, "span:low", now=now, knobs=knobs) == 0.5
     assert decay_weight(stats, "span:legacy", now=now, knobs=knobs) == 0.5

@@ -596,7 +596,8 @@
           "mmr_lambda": 0.7,
           "low_confirmation_threshold": 3,
           "downweight_age_days": 14,
-          "downweight_factor": 0.5
+          "downweight_factor": 0.5,
+          "confirmation_score_threshold": 0.7
         }
       },
       "performance_degradation_threshold": 0.1,
