@@ -128,6 +128,7 @@ def test_shipped_training_selection_matches_canonical_block():
             "low_confirmation_threshold": 3,
             "downweight_age_days": 14,
             "downweight_factor": 0.5,
+            "confirmation_score_threshold": 0.7,
         },
     }
 
