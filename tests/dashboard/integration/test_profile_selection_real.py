@@ -39,15 +39,20 @@ def test_profile_selection_tab_shows_search_spans(
 
     # Poll via the raw Phoenix client so no TelemetryProvider is cached here.
     from phoenix.client import Client
+    from phoenix.client.types.spans import SpanQuery
 
     client = Client(base_url=phoenix_container["http_endpoint"])
+    query = SpanQuery().where("name == 'video_search'")
 
     def _indexed() -> bool:
         try:
-            df = client.spans.get_spans_dataframe(project_identifier=project, limit=200)
+            df = client.spans.get_spans_dataframe(
+                project_identifier=project,
+                query=query,
+            )
         except Exception:
             return False
-        return df is not None and not df.empty and (df["name"] == "video_search").any()
+        return df is not None and len(df) == 1 and df.iloc[0]["name"] == "video_search"
 
     deadline = time.monotonic() + 60
     while time.monotonic() < deadline and not _indexed():

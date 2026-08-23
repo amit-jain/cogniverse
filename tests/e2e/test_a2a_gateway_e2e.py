@@ -1296,39 +1296,44 @@ class TestTelemetrySpans:
         # Spans go to tenant-specific project: cogniverse-{tenant_id}
         project_name = f"cogniverse-{TENANT_ID}"
 
-        # Scope to this test's window — an unscoped limit slice over a
-        # project holding a day of spans can consist entirely of other
-        # runs' spans. The method's own 5s timeout default also needs a
-        # budget Phoenix can meet while loaded.
+        # Scope to this test's window — the server-side gateway predicate
+        # keeps the query narrow, but Phoenix still needs a real timeout
+        # budget while the project is under load.
         from datetime import datetime, timedelta, timezone
 
+        from phoenix.client.types.spans import SpanQuery
+
+        from cogniverse_foundation.telemetry.config import SPAN_NAME_GATEWAY
+
         window_start = datetime.now(timezone.utc) - timedelta(minutes=10)
+        predicate = f"name == '{SPAN_NAME_GATEWAY}'"
+        query = SpanQuery().where(predicate)
 
         deadline = time.time() + 30
         found_span = None
+        last_rows = 0
         while time.time() < deadline:
             try:
                 spans_df = phoenix_client.spans.get_spans_dataframe(
                     project_identifier=project_name,
                     start_time=window_start,
-                    limit=50,
+                    query=query,
                     timeout=90,
                 )
+                last_rows = 0 if spans_df is None else len(spans_df)
                 if spans_df is not None and not spans_df.empty:
-                    matches = spans_df[
-                        spans_df["name"].str.contains("gateway", case=False, na=False)
-                    ]
-                    if not matches.empty:
-                        found_span = matches.iloc[0]
-                        break
+                    found_span = spans_df.iloc[0]
+                    break
             except Exception:
                 pass
             time.sleep(2)
 
         assert found_span is not None, (
-            f"No gateway spans found in Phoenix project '{project_name}' after 30s. "
-            f"Phoenix is at {PHOENIX_URL}. Span emission or OTLP export is broken."
+            f"No spans matched Phoenix predicate {predicate!r} in project "
+            f"'{project_name}' after 30s; last query returned {last_rows} rows "
+            f"for window_start={window_start.isoformat()} against {PHOENIX_URL}. "
+            "Span emission or OTLP export is broken."
         )
-        assert "gateway" in found_span["name"].lower(), (
-            f"Span name should contain 'gateway', got: {found_span['name']}"
+        assert found_span["name"] == SPAN_NAME_GATEWAY, (
+            f"Span name should be {SPAN_NAME_GATEWAY!r}, got: {found_span['name']}"
         )
