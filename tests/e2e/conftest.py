@@ -1455,6 +1455,21 @@ _CAPTION_CORPUS_DIR = (
     / "testset"
     / "Test_Human_Annotated_Captions"
 )
+_EVALUATION_CORPUS_DIR = Path(__file__).resolve().parents[2] / "data" / "testset"
+_EVALUATION_TEXT_CORPUS_DIR = _EVALUATION_CORPUS_DIR / "evaluation" / "processed"
+
+
+def _evaluation_text_corpus_paths() -> tuple[Path, ...]:
+    return (
+        _EVALUATION_CORPUS_DIR / "evaluation" / "sample_videos_retrieval_queries.json",
+        _EVALUATION_CORPUS_DIR / "dataset_summary.md",
+        *_sorted_evaluation_corpus_paths("descriptions"),
+        *_sorted_evaluation_corpus_paths("transcripts"),
+    )
+
+
+def _sorted_evaluation_corpus_paths(subdir: str) -> tuple[Path, ...]:
+    return tuple(sorted((_EVALUATION_TEXT_CORPUS_DIR / subdir).glob("*.json")))
 
 
 def _ingest_sample_documents() -> dict[str, str]:
@@ -1469,6 +1484,21 @@ def _ingest_sample_documents() -> dict[str, str]:
             media_type="text/plain",
         )
         for title in SAMPLE_DOCUMENT_TITLES
+    }
+
+
+def _ingest_evaluation_text_corpus() -> dict[str, str]:
+    """Ensure the evaluation text corpus is persisted as document content."""
+    config_path = DATA_ROOT.parent / "configs" / "config.json"
+    config = json.loads(config_path.read_text()) if config_path.exists() else {}
+    profile = _configured_document_profile_name(config)
+    return {
+        path.relative_to(DATA_ROOT).as_posix(): _ensure_sample_content_ingested(
+            path,
+            profile=profile,
+            media_type="text/plain",
+        )
+        for path in _evaluation_text_corpus_paths()
     }
 
 
@@ -2161,6 +2191,8 @@ def e2e_stack(request, resolved_inference_endpoints):
         _ingest_sample_video()
         _ingest_sample_frame()
         _ingest_sample_audio()
+        _ingest_sample_documents()
+        _ingest_evaluation_text_corpus()
         try:
             yield
         finally:

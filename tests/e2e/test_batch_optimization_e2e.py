@@ -96,6 +96,7 @@ def _enabled_agents_in_shipped_config() -> set[str]:
 NAMESPACE = "cogniverse"
 DEPLOYMENT = "deploy/cogniverse-runtime"
 CONTAINER = "runtime"
+DATA_ROOT = Path(__file__).resolve().parents[2] / "data"
 # Each batch job analyses the spans this module's fixtures emitted: the
 # lookback is measured from the moment span seeding started (plus a small
 # margin), so it neither drags in earlier sessions' traffic nor expires the
@@ -120,6 +121,46 @@ def _synthetic_approve_count() -> int:
 
 RUNTIME = "http://localhost:33000"
 CONFIG_PATH = Path(__file__).resolve().parents[2] / "configs" / "config.json"
+EVALUATION_QUERY_ASSET = (
+    DATA_ROOT / "testset" / "evaluation" / "sample_videos_retrieval_queries.json"
+)
+
+
+@functools.lru_cache(maxsize=1)
+def _evaluation_query_rows() -> tuple[dict[str, object], ...]:
+    rows = json.loads(EVALUATION_QUERY_ASSET.read_text())
+    if not isinstance(rows, list):
+        raise AssertionError(f"{EVALUATION_QUERY_ASSET} did not load a JSON list")
+    return tuple(row for row in rows if isinstance(row, dict))
+
+
+def _evaluation_query_values(field: str) -> tuple[str, ...]:
+    values: list[str] = []
+    seen: set[str] = set()
+    for row in _evaluation_query_rows():
+        value = str(row.get(field, "") or "").strip()
+        if not value or value in seen:
+            continue
+        seen.add(value)
+        values.append(value)
+    if not values:
+        raise AssertionError(f"{EVALUATION_QUERY_ASSET} yielded no {field!r} values")
+    return tuple(values)
+
+
+def _grounded_query(
+    query: str,
+    *entity_texts: str,
+) -> tuple[str, list[dict[str, object]], list[dict[str, str]]]:
+    entities = [
+        {
+            "text": entity_text,
+            "type": "CONCEPT",
+            "confidence": round(0.95 - index * 0.02, 2),
+        }
+        for index, entity_text in enumerate(entity_texts)
+    ]
+    return (query, entities, [])
 
 
 @functools.lru_cache(maxsize=None)
@@ -520,113 +561,29 @@ def _configured_profile_names(profile_type: str | None = None) -> tuple[str, ...
 # Module-scoped fixture: generate spans for all batch job tests
 # ---------------------------------------------------------------------------
 
-ENHANCEMENT_QUERIES = [
-    "ML transformer videos",
-    "find AI tutorials",
-    "deep learning frameworks",
-    "neural network architecture",
-    "computer vision applications",
-    "NLP text processing",
-    "reinforcement learning robotics",
-    "generative AI models",
-    "transfer learning techniques",
-    "autoML tools",
-    "object detection algorithms",
-    "semantic segmentation methods",
-    "speech recognition systems",
-    "recommendation engines",
-    "time series forecasting",
-    "graph neural networks",
-    "attention mechanisms explained",
-    "CNN architectures",
-    "RNN LSTM tutorials",
-    "GAN image generation",
-]
+ENHANCEMENT_QUERIES = _evaluation_query_values("query")
 
-PROFILE_QUERIES = [
-    "find basketball highlights",
-    "cooking tutorial videos",
-    "robotics engineering",
-    "music production content",
-    "science experiments",
-    "yoga workout videos",
-    "photography tutorials",
-    "coding bootcamp recordings",
-    "language learning videos",
-    "art history lectures",
-    "wildlife documentary",
-    "architecture design videos",
-    "gardening how-to",
-    "chess strategy tutorials",
-    "piano lessons online",
-    "fitness training clips",
-    "travel vlog compilation",
-    "astronomy lectures",
-    "medical education videos",
-    "business strategy talks",
-]
+PROFILE_QUERIES = _evaluation_query_values("query")
 
-ENTITY_QUERIES = [
-    "Obama speaking at MIT about climate change",
-    "Tesla cars driving in San Francisco near Google",
-    "Python programming with TensorFlow for deep learning",
-    "Google acquiring DeepMind in London",
-    "Elon Musk presenting at Stanford University",
-    "Microsoft Azure running PyTorch models",
-    "Amazon AWS hosting Kubernetes clusters",
-    "Apple releasing new MacBook with M4 chip",
-    "NASA launching Artemis mission to Mars",
-    "UNESCO declaring World Heritage sites in Japan",
-    "Netflix producing documentaries about coral reefs",
-    "OpenAI releasing GPT models in San Francisco",
-    "Toyota manufacturing robots in Nagoya factory",
-    "Samsung developing OLED displays in Seoul",
-    "SpaceX Starship launching from Texas",
-    "MIT researchers publishing papers on quantum computing",
-    "Harvard Medical School studying gene therapy",
-    "CERN operating Large Hadron Collider in Geneva",
-    "Boeing testing autonomous drones in Seattle",
-    "Nvidia designing GPU architectures in Santa Clara",
-]
+ENTITY_QUERIES = _evaluation_query_values("ground_truth")
 
-GATEWAY_QUERIES = [
-    "find videos about machine learning",
-    "search for video content about AI",
-    "show me cooking videos",
-    "find images of neural network architectures",
-    "listen to podcasts about deep learning",
-    "find PDF documents about Python",
-    "show me robotics tutorials",
-    "search for audio recordings of bird songs",
-    "find basketball highlights",
-    "search for video content about climate change",
-    "find documentary footage of wildlife",
-    "search for lecture recordings about physics",
-    "show me guitar tutorial videos",
-    "find photography editing tutorials",
-    "search for meditation audio guides",
-    "find cooking recipe demonstrations",
-    "search for language learning content",
-    "show me fitness workout videos",
-    "find architecture design presentations",
-    "search for music theory lectures",
-]
+GATEWAY_QUERIES = _evaluation_query_values("query")[:20]
 
 # Live cue-less gateway/orchestrator calls measured 176s, 136s, and 229s here;
 # use the shared 480s endpoint budget from ORCHESTRATOR_PROCESS_TIMEOUT_S.
 GATEWAY_PROCESS_TIMEOUT_S = 480.0
 
 COMPLEX_QUERIES = [
+    "Find videos about machine learning, compare them with the PDF research papers, and write a detailed report",
     "analyze the video transcripts for key themes",
-    "compare videos and documents about neural networks then summarize",
-    "investigate the relationship between AI research papers and video tutorials",
-    "evaluate the quality of machine learning course videos and create a report",
-    "synthesize findings from multiple robotics engineering lectures",
-    "analyze trends in deep learning research and summarize progress",
-    "compare cooking technique videos then write a detailed guide",
-    "review all physics lecture recordings and identify common topics",
-    "examine the relationship between AI ethics papers and tutorial content",
-    "analyze video transcripts about climate change and create a summary report",
+    "Compare how TensorFlow and PyTorch frameworks handle training Google Vision Transformer models for image classification",
+    "summarize the research papers into a report",
+    "find robots then summarize and create report",
+    "compare videos, documents, audio, image, and text",
+    "compare videos and documents about neural networks",
+    "find machine learning videos and summarize them",
+    "summarize AI research",
+    "comprehensive AI research report based on summary",
 ]
 
 GATEWAY_THRESHOLD_PROFILES = _configured_profile_names("video")
@@ -636,241 +593,49 @@ GATEWAY_THRESHOLD_PROFILES = _configured_profile_names("video")
 # input: the enhancement must surface the entity names. Seeding them puts
 # grounded records in the SIMBA training set and holdout.
 GROUNDED_ENHANCEMENT_QUERIES = [
-    (
-        "find tutorials",
-        [
-            {"text": "TensorFlow", "type": "TECHNOLOGY", "confidence": 0.9},
-            {"text": "neural networks", "type": "CONCEPT", "confidence": 0.85},
-        ],
-        [
-            {
-                "subject": "TensorFlow",
-                "relation": "used_for",
-                "object": "neural networks",
-            }
-        ],
+    _grounded_query("find videos about machine learning", "machine learning"),
+    _grounded_query("search for video content about AI", "AI"),
+    _grounded_query(
+        "find videos and documents about neural networks", "neural networks"
     ),
-    (
-        "compare frameworks",
-        [
-            {"text": "PyTorch", "type": "TECHNOLOGY", "confidence": 0.9},
-            {"text": "JAX", "type": "TECHNOLOGY", "confidence": 0.8},
-        ],
-        [],
+    _grounded_query(
+        "find machine learning videos and summarize them", "machine learning"
     ),
-    (
-        "show lectures",
-        [
-            {"text": "linear algebra", "type": "CONCEPT", "confidence": 0.9},
-            {"text": "eigenvalues", "type": "CONCEPT", "confidence": 0.8},
-        ],
-        [{"subject": "eigenvalues", "relation": "part_of", "object": "linear algebra"}],
-    ),
-    (
-        "find demos",
-        [{"text": "Kubernetes", "type": "TECHNOLOGY", "confidence": 0.9}],
-        [],
-    ),
-    (
-        "search recordings",
-        [
-            {"text": "jazz piano", "type": "GENRE", "confidence": 0.9},
-            {"text": "Bill Evans", "type": "PERSON", "confidence": 0.9},
-        ],
-        [{"subject": "Bill Evans", "relation": "plays", "object": "jazz piano"}],
-    ),
-    (
-        "get footage",
-        [
-            {"text": "volcano", "type": "LOCATION", "confidence": 0.9},
-            {"text": "lava flow", "type": "EVENT", "confidence": 0.8},
-        ],
-        [],
-    ),
+    _grounded_query("summarize the research papers into a report", "research papers"),
+    _grounded_query("find robots then summarize and create report", "robots"),
 ]
 
-BELOW_FLOOR_QUERY_ENHANCEMENT_QUERIES = (
-    "ML transformer videos",
-    "find AI tutorials",
-    "deep learning frameworks",
-)
+BELOW_FLOOR_QUERY_ENHANCEMENT_QUERIES = _evaluation_query_values("query")[:3]
 
 # Grounded query-enhancement spans keep the cap-8 tenant scoreable.
 CAP8_QUERY_ENHANCEMENT_QUERIES = (
-    (
-        "find neural network tutorials",
-        [
-            {"text": "neural networks", "type": "CONCEPT", "confidence": 0.92},
-            {"text": "tutorial videos", "type": "CONCEPT", "confidence": 0.84},
-        ],
-        [
-            {
-                "subject": "neural networks",
-                "relation": "covered_in",
-                "object": "tutorial videos",
-            }
-        ],
+    _grounded_query("find videos about machine learning", "machine learning"),
+    _grounded_query("search for video content about AI", "AI"),
+    _grounded_query(
+        "find videos and documents about neural networks", "neural networks"
     ),
-    (
-        "compare transformer models",
-        [
-            {"text": "transformer models", "type": "CONCEPT", "confidence": 0.91},
-            {
-                "text": "attention mechanisms",
-                "type": "CONCEPT",
-                "confidence": 0.83,
-            },
-        ],
-        [
-            {
-                "subject": "transformer models",
-                "relation": "differ_by",
-                "object": "attention mechanisms",
-            }
-        ],
+    _grounded_query(
+        "compare videos, documents, audio, image, and text",
+        "videos",
+        "documents",
+        "audio",
+        "image",
+        "text",
     ),
-    (
-        "show AI explainers",
-        [
-            {"text": "AI explainers", "type": "CONCEPT", "confidence": 0.9},
-            {
-                "text": "artificial intelligence",
-                "type": "CONCEPT",
-                "confidence": 0.82,
-            },
-        ],
-        [
-            {
-                "subject": "AI explainers",
-                "relation": "explain",
-                "object": "artificial intelligence",
-            }
-        ],
+    _grounded_query(
+        "Compare how TensorFlow and PyTorch frameworks handle training Google Vision Transformer models for image classification",
+        "TensorFlow",
+        "PyTorch",
+        "Google Vision Transformer",
     ),
-    (
-        "deep learning tricks",
-        [
-            {"text": "deep learning", "type": "CONCEPT", "confidence": 0.93},
-            {"text": "optimization tricks", "type": "CONCEPT", "confidence": 0.81},
-        ],
-        [
-            {
-                "subject": "optimization tricks",
-                "relation": "applies_to",
-                "object": "deep learning",
-            }
-        ],
+    _grounded_query(
+        "find machine learning videos and summarize them", "machine learning"
     ),
-    (
-        "find computer vision lessons",
-        [
-            {"text": "computer vision", "type": "CONCEPT", "confidence": 0.92},
-            {"text": "lesson series", "type": "CONCEPT", "confidence": 0.8},
-        ],
-        [
-            {
-                "subject": "computer vision",
-                "relation": "taught_in",
-                "object": "lesson series",
-            }
-        ],
-    ),
-    (
-        "summarize RNN concepts",
-        [
-            {
-                "text": "recurrent neural networks",
-                "type": "CONCEPT",
-                "confidence": 0.91,
-            },
-            {"text": "sequence modeling", "type": "CONCEPT", "confidence": 0.84},
-        ],
-        [
-            {
-                "subject": "recurrent neural networks",
-                "relation": "supports",
-                "object": "sequence modeling",
-            }
-        ],
-    ),
-    (
-        "search for generative AI tips",
-        [
-            {"text": "generative AI", "type": "CONCEPT", "confidence": 0.9},
-            {"text": "prompting tips", "type": "CONCEPT", "confidence": 0.8},
-        ],
-        [
-            {
-                "subject": "generative AI",
-                "relation": "benefits_from",
-                "object": "prompting tips",
-            }
-        ],
-    ),
-    (
-        "explore reinforcement learning examples",
-        [
-            {
-                "text": "reinforcement learning",
-                "type": "CONCEPT",
-                "confidence": 0.91,
-            },
-            {"text": "worked examples", "type": "CONCEPT", "confidence": 0.83},
-        ],
-        [
-            {
-                "subject": "reinforcement learning",
-                "relation": "illustrated_by",
-                "object": "worked examples",
-            }
-        ],
-    ),
-    (
-        "locate recommendation system videos",
-        [
-            {
-                "text": "recommendation systems",
-                "type": "CONCEPT",
-                "confidence": 0.9,
-            },
-            {"text": "video lectures", "type": "CONCEPT", "confidence": 0.8},
-        ],
-        [
-            {
-                "subject": "recommendation systems",
-                "relation": "presented_in",
-                "object": "video lectures",
-            }
-        ],
-    ),
-    (
-        "map self-attention patterns",
-        [
-            {"text": "self-attention", "type": "CONCEPT", "confidence": 0.93},
-            {"text": "attention heads", "type": "CONCEPT", "confidence": 0.82},
-        ],
-        [
-            {
-                "subject": "self-attention",
-                "relation": "analyzed_via",
-                "object": "attention heads",
-            }
-        ],
-    ),
-    (
-        "outline diffusion model basics",
-        [
-            {"text": "diffusion models", "type": "CONCEPT", "confidence": 0.92},
-            {"text": "denoising process", "type": "CONCEPT", "confidence": 0.85},
-        ],
-        [
-            {
-                "subject": "diffusion models",
-                "relation": "relies_on",
-                "object": "denoising process",
-            }
-        ],
-    ),
+    _grounded_query("summarize the research papers into a report", "research papers"),
+    _grounded_query("find robots then summarize and create report", "robots"),
+    _grounded_query("summarize AI research", "AI research"),
+    _grounded_query("detailed AI research report", "AI research"),
+    _grounded_query("comprehensive AI research report based on summary", "AI research"),
 )
 
 
@@ -1404,12 +1169,12 @@ def generate_spans_for_batch_jobs(_kubectl_cluster_ready):
 
     # Gateway spans — simple queries through gateway
     for i in range(spans_per_agent):
-        q = f"{GATEWAY_QUERIES[i % len(GATEWAY_QUERIES)]} run {i}"
+        q = GATEWAY_QUERIES[i % len(GATEWAY_QUERIES)]
         _call_agent("gateway_agent", q)
 
     # Entity extraction spans
     for i in range(spans_per_agent):
-        q = f"{ENTITY_QUERIES[i % len(ENTITY_QUERIES)]} case {i}"
+        q = ENTITY_QUERIES[i % len(ENTITY_QUERIES)]
         _call_agent("entity_extraction_agent", q)
 
     # Query enhancement spans.  Do NOT append a numeric suffix here: small
@@ -1429,7 +1194,7 @@ def generate_spans_for_batch_jobs(_kubectl_cluster_ready):
 
     # Profile selection spans
     for i in range(spans_per_agent):
-        q = f"{PROFILE_QUERIES[i % len(PROFILE_QUERIES)]} variant {i}"
+        q = PROFILE_QUERIES[i % len(PROFILE_QUERIES)]
         _call_agent("profile_selection_agent", q)
 
     # Orchestration spans (10+ complex queries — each also produces
