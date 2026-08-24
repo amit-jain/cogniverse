@@ -155,3 +155,118 @@ async def test_real_phoenix_approved_examples_compile_into_actual_dspy_modules(
         assert demos[0].inputs().toDict() == {
             name: projected[name] for name in input_names
         }
+
+
+@pytest.mark.asyncio
+async def test_generator_output_survives_validation_and_persists(
+    phoenix_container,
+    real_telemetry,
+    workflow_state_redis_url,
+):
+    """Real generator output must satisfy the approval validator.
+
+    The other cases in this module hand-build the approved example, so the
+    generators' own output never reaches validate_approved_training_values.
+    That join is where a restated relationship triple and a case-variant
+    entity endpoint both failed: each produced an item the validator
+    rejects, which fails persist_approved_item and the whole batch.
+
+    The payloads below carry exactly those shapes.
+    """
+    from cogniverse_synthetic.generators.entity_extraction import (
+        EntityExtractionGenerator,
+    )
+    from cogniverse_synthetic.generators.routing import RoutingGenerator
+
+    tenant_id = f"generator-persist:{uuid.uuid4().hex[:12]}"
+    storage = ApprovalStorageImpl(
+        grpc_endpoint=phoenix_container["grpc_endpoint"],
+        http_endpoint=phoenix_container["http_endpoint"],
+        tenant_id=tenant_id,
+        telemetry_manager=real_telemetry,
+        redis_url=workflow_state_redis_url,
+    )
+    agent = HumanApprovalAgent(
+        storage=storage,
+        confidence_extractor=SyntheticDataConfidenceExtractor(),
+        confidence_threshold=1.0,
+    )
+
+    text = "Marie Curie isolated radium at the Sorbonne."
+    generated = EntityExtractionGenerator._to_example(
+        text,
+        {
+            "query": text,
+            "entities": [
+                {"text": "Marie Curie", "type": "PERSON"},
+                {"text": "radium", "type": "SUBSTANCE"},
+                {"text": "Sorbonne", "type": "ORGANIZATION"},
+            ],
+            # the same triple restated, as a teacher LM does
+            "relationships": [
+                {"subject": "Marie Curie", "relation": "isolated", "object": "radium"},
+                {"subject": "Marie Curie", "relation": "isolated", "object": "radium"},
+                {
+                    "subject": "Marie Curie",
+                    "relation": "worked_at",
+                    "object": "Sorbonne",
+                },
+            ],
+        },
+    )
+    example = generated.model_dump()
+    assert example == {
+        "query": text,
+        "entities": [
+            {"text": "Marie Curie", "type": "PERSON"},
+            {"text": "radium", "type": "SUBSTANCE"},
+            {"text": "Sorbonne", "type": "ORGANIZATION"},
+        ],
+        "entity_types": "PERSON,SUBSTANCE,ORGANIZATION",
+        "relationships": [
+            {"source": "Marie Curie", "target": "radium", "type": "isolated"},
+            {"source": "Marie Curie", "target": "Sorbonne", "type": "worked_at"},
+        ],
+    }
+
+    item_id = await _approve_example(
+        agent, "entity_extraction", "entity_extraction", example
+    )
+    provider = real_telemetry.get_provider(tenant_id=tenant_id)
+    loaded = await _load_approved_synthetic_data(
+        provider, tenant_id, "entity_extraction"
+    )
+    assert loaded == [{**example, "example_id": f"approved:{item_id}"}]
+
+    # routing collapses case variants; endpoints must follow the kept spelling
+    entities = RoutingGenerator._canonicalize_entities(
+        [
+            {"text": "Sorbonne", "type": "ORGANIZATION"},
+            {"text": "sorbonne", "type": "ORGANIZATION"},
+            {"text": "Marie Curie", "type": "PERSON"},
+        ]
+    )
+    relationships = RoutingGenerator._canonicalize_relationships(
+        [{"source": "Marie Curie", "target": "sorbonne", "type": "taught_at"}],
+        entities,
+    )
+    routing_example = {
+        "query": "Where did Marie Curie teach?",
+        "entities": entities,
+        "entity_types": "ORGANIZATION,PERSON",
+        "relationships": relationships,
+    }
+    assert routing_example["relationships"] == [
+        {"source": "Marie Curie", "target": "Sorbonne", "type": "taught_at"}
+    ]
+
+    routing_item_id = await _approve_example(
+        agent, "entity_extraction", "entity_extraction", routing_example
+    )
+    loaded_routing = await _load_approved_synthetic_data(
+        provider, tenant_id, "entity_extraction"
+    )
+    assert loaded_routing == [
+        {**example, "example_id": f"approved:{item_id}"},
+        {**routing_example, "example_id": f"approved:{routing_item_id}"},
+    ]
