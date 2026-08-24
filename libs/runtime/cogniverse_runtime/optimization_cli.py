@@ -412,6 +412,30 @@ def _profile_selection_query_key(
     return f"row:{position}"
 
 
+def _profile_selection_expected_videos(record: dict[str, Any]) -> list[str]:
+    for key in ("expected_items", "expected_videos", "ground_truth"):
+        value = record.get(key)
+        if not value:
+            continue
+        if isinstance(value, str):
+            return [item.strip() for item in value.split(",") if item.strip()]
+        if isinstance(value, list):
+            return [str(item).strip() for item in value if str(item).strip()]
+        item = str(value).strip()
+        return [item] if item else []
+    return []
+
+
+def _profile_selection_recovery_score(
+    expected_videos: Sequence[str], retrieved_ids: Sequence[str]
+) -> float:
+    expected = {str(item).strip() for item in expected_videos if str(item).strip()}
+    if not expected:
+        return 0.0
+    retrieved = {str(item).strip() for item in retrieved_ids if str(item).strip()}
+    return len(expected & retrieved) / len(expected)
+
+
 def _load_profile_selection_label_source(
     queries_path: Path = PROFILE_SELECTION_LABEL_SOURCE_PATH,
 ) -> list[dict[str, Any]]:
@@ -445,8 +469,6 @@ def derive_profile_labels(
     candidate_profiles: Iterable[str],
     retrieve: Callable[[str, str], Sequence[str] | list[str]],
 ) -> ProfileLabelDerivationResult:
-    from cogniverse_evaluation.core.ground_truth import _resolve_expected_items
-
     query_rows = list(queries)
     if not query_rows:
         raise ValueError("Profile selection label source is empty")
@@ -473,11 +495,7 @@ def derive_profile_labels(
 
         query = str(query_record.get("query", "") or "").strip()
         query_key = _profile_selection_query_key(query, position, query_counts)
-        expected_videos = [
-            str(item).strip()
-            for item in _resolve_expected_items(query_record)
-            if str(item).strip()
-        ]
+        expected_videos = _profile_selection_expected_videos(query_record)
 
         if not query:
             exclusions.append(
@@ -500,7 +518,7 @@ def derive_profile_labels(
             )
             continue
 
-        selected_profile = None
+        scored_profiles: list[dict[str, Any]] = []
         last_error: Exception | None = None
         for profile in profiles:
             try:
@@ -509,41 +527,68 @@ def derive_profile_labels(
                 last_error = exc
                 continue
 
-            if set(expected_videos).issubset(set(retrieved)):
-                selected_profile = profile
-                break
+            scored_profiles.append(
+                {
+                    "profile": profile,
+                    "retrieved": retrieved,
+                    "score": _profile_selection_recovery_score(
+                        expected_videos, retrieved
+                    ),
+                }
+            )
 
-        if selected_profile is None:
+        if not scored_profiles:
+            raise RuntimeError(
+                f"Profile selection retrieval failed for query {query!r}"
+            ) from last_error
+
+        best_score = max(profile_result["score"] for profile_result in scored_profiles)
+        best_profiles = [
+            profile_result["profile"]
+            for profile_result in scored_profiles
+            if profile_result["score"] == best_score
+        ]
+
+        if best_score < 1.0:
             exclusion: dict[str, Any] = {
                 "query": query,
                 "reason": "no_profile_recovered_expected_videos",
                 "expected_videos": expected_videos,
                 "position": position,
+                "best_score": best_score,
+                "candidate_profiles": [result["profile"] for result in scored_profiles],
             }
-            if last_error is not None:
-                exclusion["error"] = f"{type(last_error).__name__}: {last_error}"
             exclusions.append(exclusion)
             continue
 
-        available_profiles = ", ".join(profiles)
+        if len(best_profiles) > 1:
+            exclusions.append(
+                {
+                    "query": query,
+                    "reason": "ambiguous_profile_tie",
+                    "expected_videos": expected_videos,
+                    "tied_profiles": best_profiles,
+                    "best_score": best_score,
+                    "position": position,
+                }
+            )
+            continue
+
+        selected_profile = best_profiles[0]
         labels[query_key] = selected_profile
-        records.append(
-            {
-                "query": query,
-                "available_profiles": available_profiles,
-                "selected_profile": selected_profile,
-                "confidence": 1.0,
-                "reasoning": (
-                    f"{selected_profile} recovered {', '.join(expected_videos)}"
-                ),
-                "query_intent": "video_search",
-                "modality": "video",
-                "complexity": "simple",
-                "source_text": available_profiles,
-                "grounding_context": selected_profile,
-                "example_id": f"span:profile-label:{position}",
-            }
-        )
+        record = {
+            "query": query,
+            "expected_videos": expected_videos,
+            "available_profiles": list(profiles),
+            "selected_profile": selected_profile,
+            "confidence": best_score,
+            "reasoning": f"{selected_profile} recovered {', '.join(expected_videos)}",
+            "example_id": f"span:profile-label:{position}",
+        }
+        for key in ("ground_truth", "query_type", "source"):
+            if key in query_record and query_record[key] not in (None, ""):
+                record[key] = query_record[key]
+        records.append(record)
 
     return ProfileLabelDerivationResult(labels, records, exclusions)
 
@@ -2750,7 +2795,6 @@ def _profile_selection_example(record: Dict[str, Any]):
     """A DSPy example carrying a profile-selection span or approved record."""
     import dspy
 
-    query_intent = record.get("query_intent", record.get("intent", ""))
     available_profiles = record.get("available_profiles", "")
     if isinstance(available_profiles, (list, tuple, set)):
         available_profiles = ", ".join(
@@ -2762,12 +2806,10 @@ def _profile_selection_example(record: Dict[str, Any]):
         "query": record["query"],
         "available_profiles": available_profiles,
         "selected_profile": record["selected_profile"],
-        "confidence": str(record.get("confidence", 0.0)),
-        "reasoning": record.get("reasoning", ""),
-        "query_intent": query_intent or "video_search",
-        "modality": record.get("modality", "video"),
-        "complexity": record.get("complexity", "simple"),
     }
+    for key in ("confidence", "reasoning", "query_intent", "modality", "complexity"):
+        if key in record and record[key] not in (None, ""):
+            fields[key] = str(record[key]) if key == "confidence" else record[key]
     return dspy.Example(**fields).with_inputs(*_PROFILE_SELECTION_INPUTS)
 
 
@@ -3796,20 +3838,7 @@ async def run_profile_optimization(
         }
 
     min_holdout = max(1, min_samples // 10)
-    served_records = []
-    for record in records:
-        served_record = dict(record)
-        if (
-            served_record["example_id"].startswith("span:")
-            and str(served_record.get("available_profiles") or "").strip()
-            and str(served_record.get("selected_profile") or "").strip()
-        ):
-            served_record["source_text"] = served_record["available_profiles"]
-            served_record["grounding_context"] = served_record["selected_profile"]
-        else:
-            served_record["source_text"] = ""
-            served_record["grounding_context"] = ""
-        served_records.append(served_record)
+    served_records = [dict(record) for record in records]
 
     served_scoreable_examples = len(
         _served_scoreable_indices(
