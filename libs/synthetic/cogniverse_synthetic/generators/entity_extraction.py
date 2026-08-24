@@ -206,6 +206,7 @@ class EntityExtractionGenerator(BaseGenerator):
         if not isinstance(raw_relationships, list):
             raise ValueError("entity extractor result relationships must be a list")
         relationships: List[Dict[str, str]] = []
+        seen_relationships: set[tuple[str, str, str]] = set()
         entity_texts = {entity["text"] for entity in entities}
         for index, raw_relationship in enumerate(raw_relationships):
             relationship = cls._to_mapping(
@@ -237,6 +238,10 @@ class EntityExtractionGenerator(BaseGenerator):
                     f"entity extractor relationships[{index}] references "
                     "an entity absent from the result"
                 )
+            identity = (subject, object_, relation)
+            if identity in seen_relationships:
+                continue
+            seen_relationships.add(identity)
             relationships.append(
                 {"source": subject, "target": object_, "type": relation}
             )

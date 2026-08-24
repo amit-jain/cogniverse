@@ -21,6 +21,9 @@ from cogniverse_synthetic.dspy_modules import (
     ValidatedEntityQueryGenerator,
 )
 from cogniverse_synthetic.generators.base import GenerationTracker
+from cogniverse_synthetic.generators.entity_extraction import (
+    EntityExtractionGenerator,
+)
 from cogniverse_synthetic.generators.routing import (
     DuplicateLabelFilter,
     RoutingGenerator,
@@ -1574,3 +1577,86 @@ async def test_generation_still_raises_when_query_generator_is_unavailable() -> 
 
     assert type(error.value.__cause__) is TimeoutError
     assert tracker.dropped_examples == []
+
+
+def test_to_example_collapses_repeated_relationship_triples() -> None:
+    """An exactly-repeated triple collapses to one, mirroring entity handling.
+
+    The entity loop already skips an exact duplicate text/type pair, so a
+    teacher LM that restates the same relationship must not produce a second
+    identical triple. ``_validate_training_item`` rejects duplicates outright,
+    so passing them through fails the whole approval batch.
+    """
+    text = "Marie Curie isolated radium at the Sorbonne."
+    example = EntityExtractionGenerator._to_example(
+        text,
+        {
+            "query": text,
+            "entities": [
+                {"text": "Marie Curie", "type": "PERSON"},
+                {"text": "radium", "type": "SUBSTANCE"},
+                {"text": "Sorbonne", "type": "ORGANIZATION"},
+            ],
+            "relationships": [
+                {
+                    "subject": "Marie Curie",
+                    "relation": "isolated",
+                    "object": "radium",
+                },
+                {
+                    "subject": "Marie Curie",
+                    "relation": "isolated",
+                    "object": "radium",
+                },
+                {
+                    "subject": "Marie Curie",
+                    "relation": "worked_at",
+                    "object": "Sorbonne",
+                },
+            ],
+        },
+    )
+
+    assert example.query == text
+    assert example.entities == [
+        {"text": "Marie Curie", "type": "PERSON"},
+        {"text": "radium", "type": "SUBSTANCE"},
+        {"text": "Sorbonne", "type": "ORGANIZATION"},
+    ]
+    assert example.entity_types == "PERSON,SUBSTANCE,ORGANIZATION"
+    assert example.relationships == [
+        {"source": "Marie Curie", "target": "radium", "type": "isolated"},
+        {"source": "Marie Curie", "target": "Sorbonne", "type": "worked_at"},
+    ]
+
+
+def test_to_example_keeps_distinct_relations_between_one_entity_pair() -> None:
+    """Same endpoints under a different relation are separate facts."""
+    text = "Marie Curie studied at the Sorbonne and later taught at the Sorbonne."
+    example = EntityExtractionGenerator._to_example(
+        text,
+        {
+            "query": text,
+            "entities": [
+                {"text": "Marie Curie", "type": "PERSON"},
+                {"text": "Sorbonne", "type": "ORGANIZATION"},
+            ],
+            "relationships": [
+                {
+                    "subject": "Marie Curie",
+                    "relation": "studied_at",
+                    "object": "Sorbonne",
+                },
+                {
+                    "subject": "Marie Curie",
+                    "relation": "taught_at",
+                    "object": "Sorbonne",
+                },
+            ],
+        },
+    )
+
+    assert example.relationships == [
+        {"source": "Marie Curie", "target": "Sorbonne", "type": "studied_at"},
+        {"source": "Marie Curie", "target": "Sorbonne", "type": "taught_at"},
+    ]
