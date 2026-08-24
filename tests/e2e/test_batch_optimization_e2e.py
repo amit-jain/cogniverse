@@ -2478,6 +2478,7 @@ def _assert_simba_served_the_best_module(result: dict, blob_before: str) -> dict
         "consumed_example_ids",
         "decision",
         "scored",
+        "score",
         "base_score",
         "candidate_score",
         "created_at",
@@ -2492,6 +2493,7 @@ def _assert_simba_served_the_best_module(result: dict, blob_before: str) -> dict
     ), result
     assert ledger["base_score"] == result["baseline_score"], ledger
     assert ledger["candidate_score"] == result["candidate_score"], ledger
+    assert ledger["score"] == result["candidate_score"], ledger
     if result["candidate_score"] is None:
         assert ledger["scored"] is False, ledger
     else:
@@ -2735,6 +2737,7 @@ class TestSimbaSelectionCap:
             "consumed_example_ids",
             "decision",
             "scored",
+            "score",
             "base_score",
             "candidate_score",
             "created_at",
@@ -2747,6 +2750,7 @@ class TestSimbaSelectionCap:
         assert ledger["scored"] is True, ledger
         assert ledger["base_score"] == result["baseline_score"], ledger
         assert ledger["candidate_score"] == result["candidate_score"], ledger
+        assert ledger["score"] == result["candidate_score"], ledger
         assert len(ledger["consumed_example_ids"]) == (
             simba_selection_tenant.seeded_count
             + simba_selection_tenant.approved_synthetic_count
@@ -2835,6 +2839,7 @@ class TestProfileOptimization:
             "consumed_example_ids",
             "decision",
             "scored",
+            "score",
             "base_score",
             "candidate_score",
             "created_at",
@@ -2847,6 +2852,7 @@ class TestProfileOptimization:
         assert ledger["scored"] is True, ledger
         assert ledger["base_score"] == result["baseline_score"], ledger
         assert ledger["candidate_score"] == result["candidate_score"], ledger
+        assert ledger["score"] == result["candidate_score"], ledger
 
         if result["decision"] == "promote" or result["decision"] == "rollback":
             assert active_blob == version_blob, ledger
@@ -2930,6 +2936,7 @@ class TestProfileOptimization:
             "consumed_example_ids",
             "decision",
             "scored",
+            "score",
             "base_score",
             "candidate_score",
             "created_at",
@@ -2942,6 +2949,7 @@ class TestProfileOptimization:
         assert ledger["scored"] is True, ledger
         assert ledger["base_score"] == result["baseline_score"], ledger
         assert ledger["candidate_score"] == result["candidate_score"], ledger
+        assert ledger["score"] == result["candidate_score"], ledger
 
         artifact = json.loads(version_blob)
         assert list(artifact) == ["selector.predict"], artifact
@@ -3062,6 +3070,7 @@ class TestProfileSelectionArtifactReload:
             "consumed_example_ids",
             "decision",
             "scored",
+            "score",
             "base_score",
             "candidate_score",
             "created_at",
@@ -3074,6 +3083,7 @@ class TestProfileSelectionArtifactReload:
         assert ledger["scored"] is True, ledger
         assert ledger["base_score"] == result["baseline_score"], ledger
         assert ledger["candidate_score"] == result["candidate_score"], ledger
+        assert ledger["score"] == result["candidate_score"], ledger
 
         if result["decision"] in {"promote", "rollback"}:
             assert blob_after_run == version_blob, ledger
@@ -3299,6 +3309,7 @@ class TestEntityExtractionOptimization:
             "consumed_example_ids",
             "decision",
             "scored",
+            "score",
             "base_score",
             "candidate_score",
             "created_at",
@@ -3311,6 +3322,7 @@ class TestEntityExtractionOptimization:
         assert ledger["scored"] is True, ledger
         assert ledger["base_score"] == result["baseline_score"], ledger
         assert ledger["candidate_score"] == result["candidate_score"], ledger
+        assert ledger["score"] == result["candidate_score"], ledger
 
         if result["decision"] in {"promote", "rollback"}:
             assert active_blob == version_blob, ledger
@@ -3396,6 +3408,7 @@ class TestEntityExtractionOptimization:
             "consumed_example_ids",
             "decision",
             "scored",
+            "score",
             "base_score",
             "candidate_score",
             "created_at",
@@ -3408,6 +3421,7 @@ class TestEntityExtractionOptimization:
         assert ledger["scored"] is True, ledger
         assert ledger["base_score"] == result["baseline_score"], ledger
         assert ledger["candidate_score"] == result["candidate_score"], ledger
+        assert ledger["score"] == result["candidate_score"], ledger
 
         artifact = json.loads(version_blob)
         assert list(artifact) == ["extractor.predict"], artifact
@@ -3699,6 +3713,7 @@ class TestArtifactLoadingRoundTrip:
             "consumed_example_ids",
             "decision",
             "scored",
+            "score",
             "base_score",
             "candidate_score",
             "created_at",
@@ -3711,6 +3726,7 @@ class TestArtifactLoadingRoundTrip:
         assert ledger["scored"] is True, ledger
         assert ledger["base_score"] == result["baseline_score"], ledger
         assert ledger["candidate_score"] == result["candidate_score"], ledger
+        assert ledger["score"] == result["candidate_score"], ledger
 
         if result["decision"] in {"promote", "rollback"}:
             expected_blob = version_blob
@@ -3845,6 +3861,7 @@ class TestArtifactLoadingRoundTrip:
             "consumed_example_ids",
             "decision",
             "scored",
+            "score",
             "base_score",
             "candidate_score",
             "created_at",
@@ -3857,6 +3874,7 @@ class TestArtifactLoadingRoundTrip:
         assert ledger["scored"] is True, ledger
         assert ledger["base_score"] == result["baseline_score"], ledger
         assert ledger["candidate_score"] == result["candidate_score"], ledger
+        assert ledger["score"] == result["candidate_score"], ledger
 
         if result["decision"] in {"promote", "rollback"}:
             expected_blob = version_blob
