@@ -586,6 +586,29 @@ COMPLEX_QUERIES = [
     "comprehensive AI research report based on summary",
 ]
 
+
+def _batch_span_count() -> int:
+    """The per-agent seeding count the module fixture drives."""
+    count = int(os.environ.get("BATCH_SPAN_COUNT", "20"))
+    assert count > 0, "BATCH_SPAN_COUNT must be a positive integer"
+    return count
+
+
+def _seeded_enhancement_queries() -> set[str]:
+    """Exactly the query-enhancement queries the module fixture seeds.
+
+    The seeding loop cycles ENHANCEMENT_QUERIES ``_batch_span_count()`` times,
+    so it sends a prefix of that list rather than all of it. Waits and
+    assertions derive from this one rule; expecting the whole list is
+    unsatisfiable whenever the count is below ``len(ENHANCEMENT_QUERIES)``.
+    """
+    span_count = _batch_span_count()
+    cycled = {
+        ENHANCEMENT_QUERIES[i % len(ENHANCEMENT_QUERIES)] for i in range(span_count)
+    }
+    return cycled | {q for q, _, _ in GROUNDED_ENHANCEMENT_QUERIES}
+
+
 GATEWAY_THRESHOLD_PROFILES = _configured_profile_names("video")
 
 
@@ -1162,9 +1185,7 @@ def generate_spans_for_batch_jobs(_kubectl_cluster_ready):
     # the local LM. 20 per agent is enough to bootstrap 3-4 demos while keeping the
     # fixture under ~2 hours on CPU. Override via BATCH_SPAN_COUNT for
     # GPU-backed runs where 100+ is cheap.
-    import os as _os
-
-    spans_per_agent = int(_os.environ.get("BATCH_SPAN_COUNT", "20"))
+    spans_per_agent = _batch_span_count()
     assert spans_per_agent > 0, "BATCH_SPAN_COUNT must be a positive integer"
 
     # Gateway spans — simple queries through gateway
@@ -2219,9 +2240,7 @@ def _wait_for_seeded_query_enhancement_queries_in_pod(
     timeout_s: float = 240.0,
 ) -> set[str]:
     """Wait until this module's seeded query-enhancement queries are visible."""
-    expected_queries = set(ENHANCEMENT_QUERIES) | {
-        q for q, _, _ in GROUNDED_ENHANCEMENT_QUERIES
-    }
+    expected_queries = _seeded_enhancement_queries()
     deadline = time.monotonic() + timeout_s
     served_queries: set[str] = set()
     while time.monotonic() < deadline:
@@ -2495,9 +2514,7 @@ def _assert_simba_served_the_best_module(result: dict, blob_before: str) -> dict
     # The run persisted a version whose ledger names exactly what it consumed;
     # promote/rollback activate it, keep/reject leave the pointer.
     served_queries = _served_query_enhancement_queries_in_pod()
-    seeded_queries = set(ENHANCEMENT_QUERIES) | {
-        q for q, _, _ in GROUNDED_ENHANCEMENT_QUERIES
-    }
+    seeded_queries = _seeded_enhancement_queries()
     # Every consumed id is a served span or an approved example — never
     # a fabricated attribution.
     for example_id in result["consumed_example_ids"]:
