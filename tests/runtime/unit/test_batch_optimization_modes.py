@@ -1270,10 +1270,26 @@ class TestEmptySpanHandling:
 
     @pytest.mark.asyncio
     async def test_profile_no_data(self, fake_telemetry_manager):
-        from cogniverse_runtime.optimization_cli import run_profile_optimization
+        from cogniverse_runtime.optimization_cli import (
+            ProfileLabelDerivationResult,
+            run_profile_optimization,
+        )
+
+        empty_label_source = ProfileLabelDerivationResult({}, [], [])
 
         p1, p2 = _patch_infra(fake_telemetry_manager)
-        with p1, p2:
+        with (
+            p1,
+            p2,
+            patch(
+                "cogniverse_agents.profile_selection_agent.tenant_usable_profile_names",
+                return_value=["video_colpali_smol500_mv_frame"],
+            ),
+            patch(
+                "cogniverse_runtime.optimization_cli._load_profile_selection_labels",
+                return_value=empty_label_source,
+            ),
+        ):
             result = await run_profile_optimization(
                 tenant_id="test:unit", lookback_hours=1
             )
@@ -1595,10 +1611,26 @@ class TestSpansWithNoExamples:
         provider = FakeTelemetryProvider(spans_df)
         mgr = FakeTelemetryManager(provider)
 
-        from cogniverse_runtime.optimization_cli import run_profile_optimization
+        from cogniverse_runtime.optimization_cli import (
+            ProfileLabelDerivationResult,
+            run_profile_optimization,
+        )
+
+        empty_label_source = ProfileLabelDerivationResult({}, [], [])
 
         p1, p2 = _patch_infra(mgr)
-        with p1, p2:
+        with (
+            p1,
+            p2,
+            patch(
+                "cogniverse_agents.profile_selection_agent.tenant_usable_profile_names",
+                return_value=["video_colpali_smol500_mv_frame"],
+            ),
+            patch(
+                "cogniverse_runtime.optimization_cli._load_profile_selection_labels",
+                return_value=empty_label_source,
+            ),
+        ):
             result = await run_profile_optimization(
                 tenant_id="test:unit", lookback_hours=1
             )
@@ -1682,6 +1714,33 @@ def _sel(selected: str):
     import dspy
 
     return dspy.Prediction(selected_profile=selected)
+
+
+def _profile_selection_query_record(
+    query: str,
+    *,
+    expected_videos: list[str],
+    ground_truth: str,
+    query_type: str = "question",
+    source: str = "synthetic.json",
+) -> dict[str, Any]:
+    return {
+        "query": query,
+        "expected_videos": expected_videos,
+        "ground_truth": ground_truth,
+        "query_type": query_type,
+        "source": source,
+    }
+
+
+class _ProfileSelectionByQuery:
+    def __init__(self, labels: dict[str, str], *, default: str):
+        self.labels = labels
+        self.default = default
+
+    def __call__(self, query: str, available_profiles: str):
+        del available_profiles
+        return _sel(self.labels.get(query, self.default))
 
 
 def _entity_example(*, query: str = "find entities", entities: str = "[]"):
@@ -3017,13 +3076,68 @@ class TestProfileSelectionOptimization:
         score_by_module=None,
         config_manager=None,
     ):
-        from cogniverse_runtime.optimization_cli import run_profile_optimization
+        from cogniverse_runtime.optimization_cli import (
+            ProfileLabelDerivationResult,
+            run_profile_optimization,
+        )
 
         state = {
             "active_blob": current_blob,
             "versioned_saves": [],
             "activate_calls": [],
         }
+
+        spans_df = provider.traces._spans_df.copy(deep=True)
+        span_rows = spans_df.to_dict("records")
+        label_records = []
+        label_map = {}
+        candidate_profiles = []
+        for position, row in enumerate(span_rows):
+            query = str(row.get("attributes.input.value", "") or "").strip()
+            available_raw = row.get("attributes.available_profiles", "")
+            if isinstance(available_raw, list):
+                available_profiles = [
+                    str(profile).strip()
+                    for profile in available_raw
+                    if str(profile).strip()
+                ]
+            else:
+                available_profiles = [
+                    profile.strip()
+                    for profile in str(available_raw or "").split(",")
+                    if profile.strip()
+                ]
+            output_raw = row.get("attributes.output.value", "{}")
+            if isinstance(output_raw, str):
+                output = json.loads(output_raw)
+            elif isinstance(output_raw, dict):
+                output = output_raw
+            else:
+                output = {}
+            selected_profile = str(output.get("selected_profile", "") or "").strip()
+            if not candidate_profiles and available_profiles:
+                candidate_profiles = list(available_profiles)
+            if query and selected_profile:
+                label_map[query] = selected_profile
+                label_records.append(
+                    {
+                        "query": query,
+                        "available_profiles": ", ".join(available_profiles),
+                        "selected_profile": selected_profile,
+                        "confidence": float(output.get("confidence", 0.0) or 0.0),
+                        "reasoning": str(
+                            output.get("reasoning") or f"Selected {selected_profile}"
+                        ),
+                        "query_intent": str(output.get("intent") or "video_search"),
+                        "modality": str(output.get("modality") or "video"),
+                        "complexity": str(output.get("complexity") or "simple"),
+                        "source_text": ", ".join(available_profiles),
+                        "grounding_context": selected_profile,
+                        "example_id": f"span:profile-label:{position}",
+                    }
+                )
+
+        label_source = ProfileLabelDerivationResult(label_map, label_records, [])
 
         class FakeArtifactManager:
             def __init__(self, received_provider, tenant_id):
@@ -3104,6 +3218,10 @@ class TestProfileSelectionOptimization:
             p1,
             p2,
             patch(
+                "cogniverse_agents.profile_selection_agent.tenant_usable_profile_names",
+                return_value=candidate_profiles,
+            ),
+            patch(
                 "cogniverse_foundation.config.utils.get_config",
                 return_value=FakeConfig(),
             ),
@@ -3114,6 +3232,10 @@ class TestProfileSelectionOptimization:
             patch(
                 "cogniverse_runtime.optimization_cli._create_teleprompter",
                 return_value=FakeTeleprompter(),
+            ),
+            patch(
+                "cogniverse_runtime.optimization_cli._load_profile_selection_labels",
+                return_value=label_source,
             ),
             patch(
                 "cogniverse_runtime.optimization_cli._profile_selection_scores",
@@ -3171,6 +3293,175 @@ class TestProfileSelectionOptimization:
             "empty": 0.0,
         }
 
+    def test_profile_selection_quality_rejects_out_of_pool_predictions(self):
+        from cogniverse_runtime.optimization_cli import _profile_selection_quality
+
+        ex = _profile_example(
+            selected="video_colpali_smol500_mv_frame",
+            available=[
+                "video_colpali_smol500_mv_frame",
+                "video_colqwen_omni_mv_chunk_30s",
+            ],
+        )
+        assert _profile_selection_quality(_sel("video_videoprism_base"), ex) == 0.0
+
+    def test_profile_selection_floor_gap_is_exact(self):
+        from cogniverse_runtime.optimization_cli import (
+            _profile_selection_scores,
+            derive_profile_labels,
+        )
+
+        queries = [
+            _profile_selection_query_record(
+                "q1",
+                expected_videos=["v1"],
+                ground_truth="one",
+            ),
+            _profile_selection_query_record(
+                "q2",
+                expected_videos=["v2"],
+                ground_truth="two",
+            ),
+            _profile_selection_query_record(
+                "q3",
+                expected_videos=["v3"],
+                ground_truth="three",
+            ),
+            _profile_selection_query_record(
+                "q4",
+                expected_videos=["v4"],
+                ground_truth="four",
+            ),
+        ]
+        candidate_profiles = [
+            "video_colpali_smol500_mv_frame",
+            "video_colqwen_omni_mv_chunk_30s",
+        ]
+        corpus = {
+            ("q1", "video_colpali_smol500_mv_frame"): ["v1"],
+            ("q1", "video_colqwen_omni_mv_chunk_30s"): ["z1"],
+            ("q2", "video_colpali_smol500_mv_frame"): ["z2"],
+            ("q2", "video_colqwen_omni_mv_chunk_30s"): ["v2"],
+            ("q3", "video_colpali_smol500_mv_frame"): ["v3"],
+            ("q3", "video_colqwen_omni_mv_chunk_30s"): ["z3"],
+            ("q4", "video_colpali_smol500_mv_frame"): ["z4"],
+            ("q4", "video_colqwen_omni_mv_chunk_30s"): ["v4"],
+        }
+
+        def retrieve(query: str, profile: str) -> list[str]:
+            return corpus[(query, profile)]
+
+        labels = derive_profile_labels(queries, candidate_profiles, retrieve)
+        assert labels == {
+            "q1": "video_colpali_smol500_mv_frame",
+            "q2": "video_colqwen_omni_mv_chunk_30s",
+            "q3": "video_colpali_smol500_mv_frame",
+            "q4": "video_colqwen_omni_mv_chunk_30s",
+        }
+        assert labels.excluded_count == 0
+        assert labels.excluded_queries == ()
+
+        holdout = [
+            _profile_example(
+                query=query["query"],
+                available=candidate_profiles,
+                selected=labels[query["query"]],
+            )
+            for query in queries
+        ]
+        correct_selector = _ProfileSelectionByQuery(
+            labels, default="video_colpali_smol500_mv_frame"
+        )
+
+        def broken_selector(query: str, available_profiles: str):
+            del query, available_profiles
+            return _sel("video_colpali_smol500_mv_frame")
+
+        scores = {
+            "correct": _profile_selection_scores(correct_selector, holdout),
+            "broken": _profile_selection_scores(broken_selector, holdout),
+        }
+        assert scores == {"correct": 1.0, "broken": 0.5}
+
+    def test_profile_selection_labels_surface_explicit_exclusions(self):
+        from cogniverse_runtime.optimization_cli import derive_profile_labels
+
+        queries = [
+            _profile_selection_query_record(
+                "q1",
+                expected_videos=["v1"],
+                ground_truth="one",
+            ),
+            _profile_selection_query_record(
+                "q2",
+                expected_videos=["v2"],
+                ground_truth="two",
+            ),
+            _profile_selection_query_record(
+                "q3",
+                expected_videos=["missing"],
+                ground_truth="three",
+            ),
+        ]
+        candidate_profiles = [
+            "video_colpali_smol500_mv_frame",
+            "video_colqwen_omni_mv_chunk_30s",
+        ]
+        corpus = {
+            ("q1", "video_colpali_smol500_mv_frame"): ["v1"],
+            ("q1", "video_colqwen_omni_mv_chunk_30s"): ["z1"],
+            ("q2", "video_colpali_smol500_mv_frame"): ["z2"],
+            ("q2", "video_colqwen_omni_mv_chunk_30s"): ["v2"],
+            ("q3", "video_colpali_smol500_mv_frame"): ["z3"],
+            ("q3", "video_colqwen_omni_mv_chunk_30s"): ["z4"],
+        }
+
+        def retrieve(query: str, profile: str) -> list[str]:
+            return corpus[(query, profile)]
+
+        labels = derive_profile_labels(queries, candidate_profiles, retrieve)
+        assert labels == {
+            "q1": "video_colpali_smol500_mv_frame",
+            "q2": "video_colqwen_omni_mv_chunk_30s",
+        }
+        assert labels.excluded_count == 1
+        assert labels.excluded_queries == ("q3",)
+
+    def test_profile_selection_label_source_missing_raises(self, tmp_path):
+        from cogniverse_runtime.optimization_cli import _load_profile_selection_labels
+
+        missing = tmp_path / "missing.json"
+
+        with pytest.raises(FileNotFoundError) as err:
+            _load_profile_selection_labels(
+                queries_path=missing,
+                candidate_profiles=[
+                    "video_colpali_smol500_mv_frame",
+                    "video_colqwen_omni_mv_chunk_30s",
+                ],
+                retrieve=lambda query, profile: [],
+            )
+
+        assert str(err.value) == (f"Profile selection label source missing: {missing}")
+
+    def test_profile_selection_label_source_empty_raises(self, tmp_path):
+        from cogniverse_runtime.optimization_cli import _load_profile_selection_labels
+
+        source = tmp_path / "empty.json"
+        source.write_text("[]")
+
+        with pytest.raises(ValueError) as err:
+            _load_profile_selection_labels(
+                queries_path=source,
+                candidate_profiles=[
+                    "video_colpali_smol500_mv_frame",
+                    "video_colqwen_omni_mv_chunk_30s",
+                ],
+                retrieve=lambda query, profile: [],
+            )
+
+        assert str(err.value) == (f"Profile selection label source is empty: {source}")
+
     @pytest.mark.asyncio
     async def test_profile_gate_persists_but_never_activates_a_losing_candidate(self):
         rows = [
@@ -3207,6 +3498,7 @@ class TestProfileSelectionOptimization:
             "training_examples": 3,
             "holdout_examples": 1,
             "holdout_source": "served",
+            "label_exclusions": {"count": 0, "queries": []},
             **_selection_block(3, 3),
             "baseline_score": 1.0,
             "current_score": 1.0,
@@ -3214,10 +3506,10 @@ class TestProfileSelectionOptimization:
             "decision": "keep",
             "version": 1,
             "consumed_example_ids": [
-                "span:profile-0",
-                "span:profile-1",
-                "span:profile-2",
-                "span:profile-3",
+                "span:profile-label:0",
+                "span:profile-label:1",
+                "span:profile-label:2",
+                "span:profile-label:3",
             ],
         }
         assert state["versioned_saves"] == [
@@ -3226,10 +3518,10 @@ class TestProfileSelectionOptimization:
                 "key": "profile_selection",
                 "content": '{"compiled": "profile"}',
                 "consumed_example_ids": [
-                    "span:profile-0",
-                    "span:profile-1",
-                    "span:profile-2",
-                    "span:profile-3",
+                    "span:profile-label:0",
+                    "span:profile-label:1",
+                    "span:profile-label:2",
+                    "span:profile-label:3",
                 ],
                 "decision": "keep",
                 "scored": True,
@@ -3280,6 +3572,7 @@ class TestProfileSelectionOptimization:
             "training_examples": 3,
             "holdout_examples": 1,
             "holdout_source": "served",
+            "label_exclusions": {"count": 0, "queries": []},
             **_selection_block(3, 3),
             "baseline_score": 1.0,
             "current_score": 0.0,
@@ -3287,10 +3580,10 @@ class TestProfileSelectionOptimization:
             "decision": "rollback",
             "version": 1,
             "consumed_example_ids": [
-                "span:profile-0",
-                "span:profile-1",
-                "span:profile-2",
-                "span:profile-3",
+                "span:profile-label:0",
+                "span:profile-label:1",
+                "span:profile-label:2",
+                "span:profile-label:3",
             ],
         }
         assert state["versioned_saves"] == [
@@ -3299,10 +3592,10 @@ class TestProfileSelectionOptimization:
                 "key": "profile_selection",
                 "content": base_state,
                 "consumed_example_ids": [
-                    "span:profile-0",
-                    "span:profile-1",
-                    "span:profile-2",
-                    "span:profile-3",
+                    "span:profile-label:0",
+                    "span:profile-label:1",
+                    "span:profile-label:2",
+                    "span:profile-label:3",
                 ],
                 "decision": "rollback",
                 "scored": True,
@@ -3349,6 +3642,7 @@ class TestProfileSelectionOptimization:
         assert result == {
             "status": "failed",
             "error": "profile scorer failed",
+            "label_exclusions": {"count": 0, "queries": []},
             **_selection_block(3, 3),
         }
 
@@ -3417,6 +3711,7 @@ class TestProfileSelectionOptimization:
             "min_samples": 100,
             "min_unique_queries": 1,
             "version": 1,
+            "label_exclusions": {"count": 0, "queries": []},
         }
         assert "selection" not in result
         assert state["versioned_saves"] == [
@@ -3425,10 +3720,10 @@ class TestProfileSelectionOptimization:
                 "key": "profile_selection",
                 "content": served_state,
                 "consumed_example_ids": [
-                    "span:profile-0",
-                    "span:profile-1",
-                    "span:profile-2",
-                    "span:profile-3",
+                    "span:profile-label:0",
+                    "span:profile-label:1",
+                    "span:profile-label:2",
+                    "span:profile-label:3",
                 ],
                 "decision": "insufficient_population",
                 "scored": False,
