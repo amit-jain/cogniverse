@@ -157,11 +157,11 @@ async def test_generator_accepts_grounded_morphological_variants():
         tenant_id="acme:synthetic",
     )
 
-    # Saliency extracts "rodeo or similar competition viewed through"
+    # Saliency extracts "rodeo or similar competition, viewed through"
     assert examples[0].context == "video"
-    assert examples[0].query == "rodeo or similar competition viewed through"
+    assert examples[0].query == "rodeo or similar competition, viewed through"
     assert examples[0].enhanced_query == (
-        "rodeo or similar competition viewed through wire mesh fence view men watching event"
+        "rodeo or similar competition, viewed through wire mesh fence view men watching event"
     )
     assert examples[0].expansion_terms == [
         "wire mesh fence view",
@@ -174,7 +174,7 @@ async def test_generator_accepts_grounded_morphological_variants():
     )
     assert enhance_calls == [
         (
-            "rodeo or similar competition viewed through",
+            "rodeo or similar competition, viewed through",
             f"{MORPHOLOGY_SOURCE_TEXT}\nv_morph.txt",
         )
     ]
@@ -484,7 +484,7 @@ async def test_generator_rejects_all_stopword_expansion_phrase():
             tenant_id="acme:synthetic",
         )
 
-    # Saliency: "rodeo or similar competition viewed through"
+    # Saliency: "rodeo or similar competition, viewed through"
     assert str(error.value) == (
         "QueryEnhancementGenerator generated 0 unique grounded examples "
         "but target_count=1; source_context=10 unique source-template queries"
@@ -494,18 +494,18 @@ async def test_generator_rejects_all_stopword_expansion_phrase():
         "different video showing various outdoor activities",
         "different video showing various outdoor activities tutorial",
         "explain different video showing various outdoor activities",
-        "explain rodeo or similar competition viewed through",
+        "explain rodeo or similar competition, viewed through",
         "find different video showing various outdoor activities",
-        "find rodeo or similar competition viewed through",
-        "rodeo or similar competition viewed through",
-        "rodeo or similar competition viewed through tutorial",
+        "find rodeo or similar competition, viewed through",
+        "rodeo or similar competition, viewed through",
+        "rodeo or similar competition, viewed through tutorial",
         "show me different video showing various outdoor activities",
-        "show me rodeo or similar competition viewed through",
+        "show me rodeo or similar competition, viewed through",
     ]
     assert str(error.value.__cause__) == (
         "query_enhancement optimizer callback query_enhancer returned "
         "expansion_terms absent from sampled source for "
-        "tenant='acme:synthetic' query='explain rodeo or similar competition viewed through': "
+        "tenant='acme:synthetic' query='explain rodeo or similar competition, viewed through': "
         "['the this']"
     )
 
