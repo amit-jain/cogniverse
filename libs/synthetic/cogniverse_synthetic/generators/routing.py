@@ -262,7 +262,9 @@ class RoutingGenerator(BaseGenerator):
                     tenant_id=tenant_id,
                 )
                 entities = self._canonicalize_entities(labelled[0].entities)
-                relationships = labelled[0].relationships
+                relationships = self._canonicalize_relationships(
+                    labelled[0].relationships, entities
+                )
                 query, generation_metadata = await self._generate_entity_query(
                     entities, topic
                 )
@@ -537,6 +539,40 @@ class RoutingGenerator(BaseGenerator):
             seen_casefold.add(entity_key)
             canonical_entities.append({"text": entity_text, "type": entity_type})
         return canonical_entities
+
+    @staticmethod
+    def _canonicalize_relationships(
+        relationships: List[Dict], entities: List[Dict[str, str]]
+    ) -> List[Dict[str, str]]:
+        """Repoint endpoints at the spelling _canonicalize_entities kept."""
+        canonical_by_key = {
+            entity["text"].casefold(): entity["text"] for entity in entities
+        }
+        canonical: List[Dict[str, str]] = []
+        seen: set[tuple[str, str, str]] = set()
+        for index, relationship in enumerate(relationships):
+            resolved: Dict[str, str] = {}
+            for endpoint in ("source", "target"):
+                value = relationship[endpoint]
+                canonical_text = canonical_by_key.get(value.casefold())
+                if canonical_text is None:
+                    raise ValueError(
+                        f"relationships[{index}].{endpoint} {value!r} is absent "
+                        "from the canonical entities"
+                    )
+                resolved[endpoint] = canonical_text
+            identity = (resolved["source"], resolved["target"], relationship["type"])
+            if identity in seen:
+                continue
+            seen.add(identity)
+            canonical.append(
+                {
+                    "source": resolved["source"],
+                    "target": resolved["target"],
+                    "type": relationship["type"],
+                }
+            )
+        return canonical
 
     def _enhance_query(self, query: str, entities: List[Dict]) -> str:
         """Add entity annotations to query (case-insensitive)"""
