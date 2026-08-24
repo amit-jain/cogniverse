@@ -3427,6 +3427,184 @@ class TestProfileSelectionOptimization:
         assert labels.excluded_count == 1
         assert labels.excluded_queries == ("q3",)
 
+    def test_profile_selection_backend_outage_raises_for_query(self):
+        from cogniverse_runtime.optimization_cli import derive_profile_labels
+
+        queries = [
+            _profile_selection_query_record(
+                "q-outage",
+                expected_videos=["v1"],
+                ground_truth="one",
+            )
+        ]
+        candidate_profiles = [
+            "video_colpali_smol500_mv_frame",
+            "video_colqwen_omni_mv_chunk_30s",
+        ]
+
+        def retrieve(query: str, profile: str) -> list[str]:
+            del query, profile
+            raise ConnectionError("backend unavailable")
+
+        with pytest.raises(RuntimeError) as err:
+            derive_profile_labels(queries, candidate_profiles, retrieve)
+
+        assert (
+            str(err.value) == "Profile selection retrieval failed for query 'q-outage'"
+        )
+        assert type(err.value.__cause__) is ConnectionError
+        assert str(err.value.__cause__) == "backend unavailable"
+
+    def test_profile_selection_record_contains_only_derivable_fields(self):
+        from cogniverse_runtime.optimization_cli import derive_profile_labels
+
+        queries = [
+            _profile_selection_query_record(
+                "man lifting",
+                expected_videos=["v_-HpCLXdtcas"],
+                ground_truth=(
+                    "The man is lifting a barbell over his head. He is wearing a "
+                    "black polo shirt and shorts."
+                ),
+                query_type="answer_phrase",
+                source="generic_qa.json",
+            )
+        ]
+        candidate_profiles = [
+            "video_colpali_smol500_mv_frame",
+            "video_colqwen_omni_mv_chunk_30s",
+        ]
+        corpus = {
+            ("man lifting", "video_colpali_smol500_mv_frame"): ["v_-HpCLXdtcas"],
+            ("man lifting", "video_colqwen_omni_mv_chunk_30s"): ["z1"],
+        }
+
+        def retrieve(query: str, profile: str) -> list[str]:
+            return corpus[(query, profile)]
+
+        labels = derive_profile_labels(queries, candidate_profiles, retrieve)
+        assert labels == {
+            "man lifting": "video_colpali_smol500_mv_frame",
+        }
+        assert labels.records == (
+            {
+                "query": "man lifting",
+                "ground_truth": (
+                    "The man is lifting a barbell over his head. He is wearing a "
+                    "black polo shirt and shorts."
+                ),
+                "query_type": "answer_phrase",
+                "source": "generic_qa.json",
+                "expected_videos": ["v_-HpCLXdtcas"],
+                "available_profiles": [
+                    "video_colpali_smol500_mv_frame",
+                    "video_colqwen_omni_mv_chunk_30s",
+                ],
+                "selected_profile": "video_colpali_smol500_mv_frame",
+                "confidence": 1.0,
+                "reasoning": "video_colpali_smol500_mv_frame recovered v_-HpCLXdtcas",
+                "example_id": "span:profile-label:0",
+            },
+        )
+        assert labels.excluded_count == 0
+        assert labels.excluded_queries == ()
+
+    def test_profile_selection_tie_is_explicitly_reported(self):
+        from cogniverse_runtime.optimization_cli import derive_profile_labels
+
+        queries = [
+            _profile_selection_query_record(
+                "ambiguous query",
+                expected_videos=["v1"],
+                ground_truth="one",
+            )
+        ]
+        candidate_profiles = [
+            "video_colpali_smol500_mv_frame",
+            "video_colqwen_omni_mv_chunk_30s",
+        ]
+
+        def retrieve(query: str, profile: str) -> list[str]:
+            del query, profile
+            return ["v1"]
+
+        labels = derive_profile_labels(queries, candidate_profiles, retrieve)
+        assert labels == {}
+        assert labels.records == ()
+        assert labels.excluded_count == 1
+        assert labels.excluded_queries == ("ambiguous query",)
+        assert labels.exclusions == (
+            {
+                "query": "ambiguous query",
+                "reason": "ambiguous_profile_tie",
+                "expected_videos": ["v1"],
+                "tied_profiles": [
+                    "video_colpali_smol500_mv_frame",
+                    "video_colqwen_omni_mv_chunk_30s",
+                ],
+                "best_score": 1.0,
+                "position": 0,
+            },
+        )
+
+    def test_profile_selection_derivation_does_not_import_evaluation_package(
+        self, monkeypatch
+    ):
+        import builtins
+
+        from cogniverse_runtime.optimization_cli import derive_profile_labels
+
+        queries = [
+            _profile_selection_query_record(
+                "clean import query",
+                expected_videos=["v1"],
+                ground_truth="one",
+            )
+        ]
+        candidate_profiles = [
+            "video_colpali_smol500_mv_frame",
+            "video_colqwen_omni_mv_chunk_30s",
+        ]
+
+        def retrieve(query: str, profile: str) -> list[str]:
+            if (
+                query == "clean import query"
+                and profile == "video_colpali_smol500_mv_frame"
+            ):
+                return ["v1"]
+            return ["z1"]
+
+        original_import = builtins.__import__
+
+        def guarded_import(name, globals=None, locals=None, fromlist=(), level=0):
+            if name.startswith("cogniverse_evaluation"):
+                raise ModuleNotFoundError(name)
+            return original_import(name, globals, locals, fromlist, level)
+
+        monkeypatch.setattr(builtins, "__import__", guarded_import)
+
+        labels = derive_profile_labels(queries, candidate_profiles, retrieve)
+        assert labels == {
+            "clean import query": "video_colpali_smol500_mv_frame",
+        }
+        assert labels.records == (
+            {
+                "query": "clean import query",
+                "ground_truth": "one",
+                "query_type": "question",
+                "source": "synthetic.json",
+                "expected_videos": ["v1"],
+                "available_profiles": [
+                    "video_colpali_smol500_mv_frame",
+                    "video_colqwen_omni_mv_chunk_30s",
+                ],
+                "selected_profile": "video_colpali_smol500_mv_frame",
+                "confidence": 1.0,
+                "reasoning": "video_colpali_smol500_mv_frame recovered v1",
+                "example_id": "span:profile-label:0",
+            },
+        )
+
     def test_profile_selection_label_source_missing_raises(self, tmp_path):
         from cogniverse_runtime.optimization_cli import _load_profile_selection_labels
 
