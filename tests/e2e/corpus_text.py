@@ -23,6 +23,7 @@ __all__ = [
 # filler tokens ("Oh", "Music Music", runs of "."). Distinct-word count
 # separates those from real speech without enumerating filler words.
 _MIN_DISTINCT_WORDS = 5
+_MAX_FRAME_DESCRIPTIONS = 20
 
 _WORD = re.compile(r"[^\W\d_]+", re.UNICODE)
 
@@ -33,9 +34,19 @@ def has_substantive_prose(text: str) -> bool:
 
 
 def _frame_descriptions_prose(payload: dict[str, Any], path: Path) -> str:
-    """Join frame descriptions in frame order.
+    """Join evenly-spaced frame descriptions in frame order.
 
     Shape: ``{"0": "...", "1": "..."}`` keyed by stringified frame index.
+
+    A frame-description member holds one independently generated caption per
+    sampled frame -- 2150 of them for a two-minute clip -- so joining every
+    caption yields 1.3MB of prose for a single document. The whole corpus
+    materializes to 4.41MB, which exceeds the ingest budget the fixture allows
+    per member. Consecutive captions describe the same scene, so the member is
+    sampled at ``_MAX_FRAME_DESCRIPTIONS`` evenly-spaced frames: the sample
+    spans the full clip rather than its opening seconds, and each member stays
+    the size of a real prose document. Document count is unchanged, so the
+    population floors the fixture seeds for are unaffected.
     """
     try:
         ordered = sorted(payload.items(), key=lambda kv: int(kv[0]))
@@ -44,8 +55,15 @@ def _frame_descriptions_prose(payload: dict[str, Any], path: Path) -> str:
             f"Frame-description keys must be integer indices: {path}"
         ) from exc
 
-    parts = [value.strip() for _, value in ordered if isinstance(value, str)]
-    return "\n\n".join(part for part in parts if part)
+    parts = [
+        value.strip()
+        for _, value in ordered
+        if isinstance(value, str) and value.strip()
+    ]
+    if len(parts) > _MAX_FRAME_DESCRIPTIONS:
+        step = len(parts) / _MAX_FRAME_DESCRIPTIONS
+        parts = [parts[int(i * step)] for i in range(_MAX_FRAME_DESCRIPTIONS)]
+    return "\n\n".join(parts)
 
 
 def _transcript_prose(payload: list[Any], path: Path) -> str:
