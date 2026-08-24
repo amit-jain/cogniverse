@@ -9,6 +9,7 @@ from types import SimpleNamespace
 import pytest
 
 from cogniverse_agents.gateway_agent import GatewayAgent, GatewayDeps, GatewayInput
+from cogniverse_core.approval.training_schema import _validate_entities
 from cogniverse_foundation.config.unified_config import (
     DSPyModuleConfig,
     OptimizerGenerationConfig,
@@ -1660,3 +1661,74 @@ def test_to_example_keeps_distinct_relations_between_one_entity_pair() -> None:
         {"source": "Marie Curie", "target": "Sorbonne", "type": "studied_at"},
         {"source": "Marie Curie", "target": "Sorbonne", "type": "taught_at"},
     ]
+
+
+def test_canonicalized_relationships_follow_the_kept_entity_spelling() -> None:
+    """Endpoints repoint at the spelling _canonicalize_entities kept.
+
+    Entity canonicalization collapses case variants and keeps the first
+    spelling, so a relationship naming a dropped variant would reference an
+    entity the item no longer carries. ``_validate_entities`` rejects that,
+    which fails the whole approval batch.
+    """
+    entities = [
+        {"text": "Sorbonne", "type": "ORGANIZATION"},
+        {"text": "sorbonne", "type": "ORGANIZATION"},
+        {"text": "Marie Curie", "type": "PERSON"},
+    ]
+    canonical_entities = RoutingGenerator._canonicalize_entities(entities)
+    canonical_relationships = RoutingGenerator._canonicalize_relationships(
+        [{"source": "Marie Curie", "target": "sorbonne", "type": "taught_at"}],
+        canonical_entities,
+    )
+
+    assert canonical_relationships == [
+        {"source": "Marie Curie", "target": "Sorbonne", "type": "taught_at"}
+    ]
+    _validate_entities(
+        {
+            "entities": canonical_entities,
+            "entity_types": "ORGANIZATION,PERSON",
+            "relationships": canonical_relationships,
+        },
+        "routing_item",
+    )
+
+
+def test_canonicalized_relationships_collapse_triples_made_equal() -> None:
+    """Repointing can make two triples identical; keep one."""
+    canonical_entities = RoutingGenerator._canonicalize_entities(
+        [
+            {"text": "Sorbonne", "type": "ORGANIZATION"},
+            {"text": "sorbonne", "type": "ORGANIZATION"},
+            {"text": "Marie Curie", "type": "PERSON"},
+        ]
+    )
+    canonical_relationships = RoutingGenerator._canonicalize_relationships(
+        [
+            {"source": "Marie Curie", "target": "Sorbonne", "type": "taught_at"},
+            {"source": "Marie Curie", "target": "sorbonne", "type": "taught_at"},
+        ],
+        canonical_entities,
+    )
+
+    assert canonical_relationships == [
+        {"source": "Marie Curie", "target": "Sorbonne", "type": "taught_at"}
+    ]
+
+
+def test_canonicalized_relationships_reject_an_unknown_endpoint() -> None:
+    """An endpoint naming no canonical entity is an upstream defect."""
+    canonical_entities = RoutingGenerator._canonicalize_entities(
+        [{"text": "Marie Curie", "type": "PERSON"}]
+    )
+
+    with pytest.raises(ValueError) as error:
+        RoutingGenerator._canonicalize_relationships(
+            [{"source": "Marie Curie", "target": "Sorbonne", "type": "taught_at"}],
+            canonical_entities,
+        )
+
+    assert str(error.value) == (
+        "relationships[0].target 'Sorbonne' is absent from the canonical entities"
+    )
