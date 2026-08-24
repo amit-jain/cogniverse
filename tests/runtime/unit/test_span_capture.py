@@ -1,5 +1,8 @@
 from __future__ import annotations
 
+import collections
+import json
+import pathlib
 import time
 from datetime import datetime, timezone
 
@@ -386,3 +389,160 @@ def test_replay_refuses_a_record_whose_attributes_are_not_a_mapping():
         "captured span 'cogniverse.query_enhancement' has attributes of type "
         "NoneType, expected a mapping"
     )
+
+
+COMMITTED_CAPTURE = (
+    pathlib.Path(__file__).resolve().parents[3]
+    / "tests/e2e/data/optimizer_span_capture.json"
+)
+
+# The shape the optimizer reads. Span names come from the production
+# constants, so renaming one there fails this test and says the recorded
+# corpus must be re-captured rather than silently feeding the old shape.
+_EXPECTED_CAPTURE = {
+    "cogniverse.gateway": (
+        70,
+        {
+            "environment",
+            "input.value",
+            "operation",
+            "output.value",
+            "service.name",
+            "tenant.id",
+        },
+    ),
+    "cogniverse.orchestration": (
+        60,
+        {
+            "environment",
+            "input.value",
+            "operation",
+            "output.value",
+            "service.name",
+            "tenant.id",
+        },
+    ),
+    "cogniverse.entity_extraction": (
+        110,
+        {
+            "environment",
+            "input.value",
+            "operation",
+            "output.value",
+            "service.name",
+            "tenant.id",
+        },
+    ),
+    "cogniverse.profile_selection": (
+        204,
+        {
+            "available_profiles",
+            "environment",
+            "input.value",
+            "operation",
+            "output.value",
+            "service.name",
+            "tenant.id",
+        },
+    ),
+    "cogniverse.query_enhancement": (
+        343,
+        {
+            "environment",
+            "input.grounding_context",
+            "input.source_text",
+            "input.value",
+            "operation",
+            "output.value",
+            "service.name",
+            "tenant.id",
+        },
+    ),
+}
+
+
+def test_committed_capture_matches_the_span_names_production_emits():
+    """The recorded corpus covers exactly the span names the optimizer reads."""
+    from cogniverse_foundation.telemetry.config import (
+        SPAN_NAME_ENTITY_EXTRACTION,
+        SPAN_NAME_GATEWAY,
+        SPAN_NAME_ORCHESTRATION,
+        SPAN_NAME_PROFILE_SELECTION,
+        SPAN_NAME_QUERY_ENHANCEMENT,
+    )
+
+    records = load_capture_json(COMMITTED_CAPTURE)
+    assert {record["name"] for record in records} == {
+        SPAN_NAME_GATEWAY,
+        SPAN_NAME_QUERY_ENHANCEMENT,
+        SPAN_NAME_ENTITY_EXTRACTION,
+        SPAN_NAME_PROFILE_SELECTION,
+        SPAN_NAME_ORCHESTRATION,
+    }
+
+
+def test_committed_capture_holds_the_exact_recorded_counts_and_attributes():
+    """Counts and per-type attribute keys are pinned exactly.
+
+    Replay seeds the optimizer from this file instead of two hours of live
+    agent traffic, so a corpus re-recorded against a changed span contract
+    must fail here rather than train the optimizer on a shape production no
+    longer emits.
+    """
+    records = load_capture_json(COMMITTED_CAPTURE)
+
+    counts = collections.Counter(record["name"] for record in records)
+    assert dict(counts) == {
+        name: expected_count for name, (expected_count, _) in _EXPECTED_CAPTURE.items()
+    }
+
+    attributes_by_name = collections.defaultdict(set)
+    for record in records:
+        attributes_by_name[record["name"]] |= set(record["attributes"])
+    assert dict(attributes_by_name) == {
+        name: expected_attributes
+        for name, (_, expected_attributes) in _EXPECTED_CAPTURE.items()
+    }
+
+
+def test_committed_capture_clears_every_shipped_population_floor():
+    """The corpus alone meets each optimizer floor, so no synthetic top-up."""
+    config = json.loads(
+        (
+            pathlib.Path(__file__).resolve().parents[3] / "configs/config.json"
+        ).read_text()
+    )
+    optimization = config["routing"]["optimization_config"]
+    optimizer_floors = optimization.get("optimizer_floors", {})
+
+    def floor_for(span_type: str) -> int:
+        return optimizer_floors.get(span_type, {}).get(
+            "min_samples_for_optimization",
+            optimization["min_samples_for_optimization"],
+        )
+
+    records = load_capture_json(COMMITTED_CAPTURE)
+    counts = collections.Counter(record["name"] for record in records)
+    floors = {
+        "cogniverse.query_enhancement": floor_for("query_enhancement"),
+        "cogniverse.entity_extraction": floor_for("entity_extraction"),
+        "cogniverse.profile_selection": floor_for("profile_selection"),
+    }
+    below = {
+        name: (counts[name], floor)
+        for name, floor in floors.items()
+        if counts[name] < floor
+    }
+    assert below == {}
+
+
+def test_committed_capture_carries_the_canonical_io_slots():
+    """Every recorded span has the input/output the optimizer trains on."""
+    records = load_capture_json(COMMITTED_CAPTURE)
+    missing = [
+        (record["name"], record["context"]["span_id"])
+        for record in records
+        if not str(record["attributes"].get("input.value") or "").strip()
+        or not str(record["attributes"].get("output.value") or "").strip()
+    ]
+    assert missing == []
