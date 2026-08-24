@@ -3075,6 +3075,7 @@ class TestProfileSelectionOptimization:
         score: float = 1.0,
         score_by_module=None,
         config_manager=None,
+        scoreable_fields: bool = True,
     ):
         from cogniverse_runtime.optimization_cli import (
             ProfileLabelDerivationResult,
@@ -3119,23 +3120,23 @@ class TestProfileSelectionOptimization:
                 candidate_profiles = list(available_profiles)
             if query and selected_profile:
                 label_map[query] = selected_profile
-                label_records.append(
-                    {
-                        "query": query,
-                        "available_profiles": ", ".join(available_profiles),
-                        "selected_profile": selected_profile,
-                        "confidence": float(output.get("confidence", 0.0) or 0.0),
-                        "reasoning": str(
-                            output.get("reasoning") or f"Selected {selected_profile}"
-                        ),
-                        "query_intent": str(output.get("intent") or "video_search"),
-                        "modality": str(output.get("modality") or "video"),
-                        "complexity": str(output.get("complexity") or "simple"),
-                        "source_text": ", ".join(available_profiles),
-                        "grounding_context": selected_profile,
-                        "example_id": f"span:profile-label:{position}",
-                    }
-                )
+                record = {
+                    "query": query,
+                    "available_profiles": ", ".join(available_profiles),
+                    "selected_profile": selected_profile,
+                    "confidence": float(output.get("confidence", 0.0) or 0.0),
+                    "reasoning": str(
+                        output.get("reasoning") or f"Selected {selected_profile}"
+                    ),
+                    "query_intent": str(output.get("intent") or "video_search"),
+                    "modality": str(output.get("modality") or "video"),
+                    "complexity": str(output.get("complexity") or "simple"),
+                    "example_id": f"span:profile-label:{position}",
+                }
+                if scoreable_fields:
+                    record["source_text"] = ", ".join(available_profiles)
+                    record["grounding_context"] = selected_profile
+                label_records.append(record)
 
         label_source = ProfileLabelDerivationResult(label_map, label_records, [])
 
@@ -3605,6 +3606,217 @@ class TestProfileSelectionOptimization:
             },
         )
 
+    @pytest.mark.asyncio
+    async def test_profile_selection_label_based_holdout_is_non_empty(self):
+        from cogniverse_runtime import optimization_cli
+
+        rows = [
+            _profile_span_row(
+                f"find clip {index}",
+                span_id=f"profile-{index}",
+                available_profiles=[
+                    "video_colpali_smol500_mv_frame",
+                    "video_colqwen_omni_mv_chunk_30s",
+                ],
+                selected_profile=(
+                    "video_colpali_smol500_mv_frame"
+                    if index % 2 == 0
+                    else "video_colqwen_omni_mv_chunk_30s"
+                ),
+            )
+            for index in range(4)
+        ]
+        provider = FakeTelemetryProvider(
+            _make_spans_df("cogniverse.profile_selection", rows)
+        )
+        served_state = self._served_state()
+        captured: dict[str, Any] = {}
+        real_split = optimization_cli._split_served_holdout
+
+        def wrapped_split(
+            records, min_holdout, scoreable_predicate=optimization_cli.is_scoreable
+        ):
+            train_records, holdout_records = real_split(
+                records,
+                min_holdout,
+                scoreable_predicate=scoreable_predicate,
+            )
+            captured["train_ids"] = tuple(
+                record["example_id"] for record in train_records
+            )
+            captured["holdout_ids"] = tuple(
+                record["example_id"] for record in holdout_records
+            )
+            captured["train_size"] = len(train_records)
+            captured["holdout_size"] = len(holdout_records)
+            return train_records, holdout_records
+
+        with patch(
+            "cogniverse_runtime.optimization_cli._split_served_holdout",
+            side_effect=wrapped_split,
+        ):
+            await self._run(
+                provider,
+                current_blob=served_state,
+                floor=(1, 1),
+                min_improvement=0.05,
+                score=1.0,
+                scoreable_fields=False,
+            )
+
+        assert captured == {
+            "train_ids": (
+                "span:profile-label:0",
+                "span:profile-label:1",
+                "span:profile-label:2",
+            ),
+            "holdout_ids": ("span:profile-label:3",),
+            "train_size": 3,
+            "holdout_size": 1,
+        }
+
+    @pytest.mark.asyncio
+    async def test_profile_selection_holdout_scores_are_exact(self):
+        from cogniverse_runtime import optimization_cli
+        from cogniverse_runtime.optimization_cli import (
+            _profile_selection_example,
+            _profile_selection_scores,
+            derive_profile_labels,
+        )
+
+        queries = [
+            _profile_selection_query_record(
+                "q1",
+                expected_videos=["v1"],
+                ground_truth="one",
+            ),
+            _profile_selection_query_record(
+                "q2",
+                expected_videos=["v2"],
+                ground_truth="two",
+            ),
+            _profile_selection_query_record(
+                "q3",
+                expected_videos=["v3"],
+                ground_truth="three",
+            ),
+            _profile_selection_query_record(
+                "q4",
+                expected_videos=["v4"],
+                ground_truth="four",
+            ),
+        ]
+        candidate_profiles = [
+            "video_colpali_smol500_mv_frame",
+            "video_colqwen_omni_mv_chunk_30s",
+        ]
+        corpus = {
+            ("q1", "video_colpali_smol500_mv_frame"): ["v1"],
+            ("q1", "video_colqwen_omni_mv_chunk_30s"): ["z1"],
+            ("q2", "video_colpali_smol500_mv_frame"): ["z2"],
+            ("q2", "video_colqwen_omni_mv_chunk_30s"): ["v2"],
+            ("q3", "video_colpali_smol500_mv_frame"): ["v3"],
+            ("q3", "video_colqwen_omni_mv_chunk_30s"): ["z3"],
+            ("q4", "video_colpali_smol500_mv_frame"): ["z4"],
+            ("q4", "video_colqwen_omni_mv_chunk_30s"): ["v4"],
+        }
+
+        def retrieve(query: str, profile: str) -> list[str]:
+            return corpus[(query, profile)]
+
+        labels = derive_profile_labels(queries, candidate_profiles, retrieve)
+        rows = [
+            _profile_span_row(
+                query["query"],
+                span_id=f"profile-{index}",
+                available_profiles=candidate_profiles,
+                selected_profile=labels[query["query"]],
+            )
+            for index, query in enumerate(queries)
+        ]
+        provider = FakeTelemetryProvider(
+            _make_spans_df("cogniverse.profile_selection", rows)
+        )
+        served_state = self._served_state()
+        captured: dict[str, Any] = {}
+        real_split = optimization_cli._split_served_holdout
+
+        def wrapped_split(
+            records, min_holdout, scoreable_predicate=optimization_cli.is_scoreable
+        ):
+            train_records, holdout_records = real_split(
+                records,
+                min_holdout,
+                scoreable_predicate=scoreable_predicate,
+            )
+            captured["train_ids"] = tuple(
+                record["example_id"] for record in train_records
+            )
+            captured["holdout_ids"] = tuple(
+                record["example_id"] for record in holdout_records
+            )
+            captured["holdout_records"] = [dict(record) for record in holdout_records]
+            captured["train_size"] = len(train_records)
+            captured["holdout_size"] = len(holdout_records)
+            return train_records, holdout_records
+
+        with patch(
+            "cogniverse_runtime.optimization_cli._split_served_holdout",
+            side_effect=wrapped_split,
+        ):
+            await self._run(
+                provider,
+                current_blob=served_state,
+                floor=(1, 1),
+                min_improvement=0.05,
+                score=1.0,
+                scoreable_fields=False,
+            )
+
+        assert captured == {
+            "train_ids": (
+                "span:profile-label:0",
+                "span:profile-label:1",
+                "span:profile-label:2",
+            ),
+            "holdout_ids": ("span:profile-label:3",),
+            "train_size": 3,
+            "holdout_size": 1,
+            "holdout_records": [
+                {
+                    "query": "q4",
+                    "available_profiles": (
+                        "video_colpali_smol500_mv_frame, "
+                        "video_colqwen_omni_mv_chunk_30s"
+                    ),
+                    "selected_profile": "video_colqwen_omni_mv_chunk_30s",
+                    "confidence": 0.9,
+                    "reasoning": "Selected video_colqwen_omni_mv_chunk_30s",
+                    "query_intent": "video_search",
+                    "modality": "video",
+                    "complexity": "simple",
+                    "example_id": "span:profile-label:3",
+                }
+            ],
+        }
+
+        holdout_examples = [
+            _profile_selection_example(record) for record in captured["holdout_records"]
+        ]
+        correct_selector = _ProfileSelectionByQuery(
+            labels, default="video_colpali_smol500_mv_frame"
+        )
+
+        def broken_selector(query: str, available_profiles: str):
+            del query, available_profiles
+            return _sel("video_colpali_smol500_mv_frame")
+
+        scores = {
+            "correct": _profile_selection_scores(correct_selector, holdout_examples),
+            "broken": _profile_selection_scores(broken_selector, holdout_examples),
+        }
+        assert scores == {"correct": 1.0, "broken": 0.0}
+
     def test_profile_selection_label_source_missing_raises(self, tmp_path):
         from cogniverse_runtime.optimization_cli import _load_profile_selection_labels
 
@@ -3639,6 +3851,37 @@ class TestProfileSelectionOptimization:
             )
 
         assert str(err.value) == (f"Profile selection label source is empty: {source}")
+
+    def test_query_enhancement_holdout_size_is_unchanged(self):
+        from cogniverse_runtime.optimization_cli import _split_served_holdout
+
+        records = [
+            {
+                "query": f"qe-{index}",
+                "source_text": f"source-{index}",
+                "grounding_context": f"context-{index}",
+                "example_id": f"span:query-enhancement:{index}",
+            }
+            for index in range(4)
+        ]
+
+        train_records, holdout_records = _split_served_holdout(records, 1)
+
+        assert {
+            "train_ids": tuple(record["example_id"] for record in train_records),
+            "holdout_ids": tuple(record["example_id"] for record in holdout_records),
+            "train_size": len(train_records),
+            "holdout_size": len(holdout_records),
+        } == {
+            "train_ids": (
+                "span:query-enhancement:0",
+                "span:query-enhancement:1",
+                "span:query-enhancement:2",
+            ),
+            "holdout_ids": ("span:query-enhancement:3",),
+            "train_size": 3,
+            "holdout_size": 1,
+        }
 
     @pytest.mark.asyncio
     async def test_profile_gate_persists_but_never_activates_a_losing_candidate(self):

@@ -1916,6 +1916,11 @@ def is_scoreable(record: dict) -> bool:
     )
 
 
+def _profile_selection_is_scoreable(record: dict) -> bool:
+    """Profile selection records are labeled by ``selected_profile`` itself."""
+    return bool(str(record.get("selected_profile") or "").strip())
+
+
 def _served_scoreable_indices(
     records: list[dict], scoreable_predicate=is_scoreable
 ) -> list[int]:
@@ -3843,11 +3848,16 @@ async def run_profile_optimization(
     served_scoreable_examples = len(
         _served_scoreable_indices(
             served_records,
+            scoreable_predicate=_profile_selection_is_scoreable,
         )
     )
     served_examples = len(profile_pairs)
     approved_examples = len(synthetic_demos)
-    train_records, holdout_records = _split_served_holdout(served_records, min_holdout)
+    train_records, holdout_records = _split_served_holdout(
+        served_records,
+        min_holdout,
+        scoreable_predicate=_profile_selection_is_scoreable,
+    )
     train_records, selection_report = await _apply_training_selection(
         artifact_manager=artifact_manager,
         config_manager=config_manager,
