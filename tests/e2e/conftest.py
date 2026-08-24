@@ -1510,18 +1510,33 @@ def _ingest_sample_documents() -> dict[str, str]:
 
 
 def _ingest_evaluation_text_corpus() -> dict[str, str]:
-    """Ensure the evaluation text corpus is persisted as document content."""
+    """Ensure the evaluation text corpus is persisted as document content.
+
+    The corpus stores prose inside JSON structures; document profiles accept
+    prose formats only, so JSON members are materialized to text first.
+    """
+    from tests.e2e.corpus_text import materialize_corpus_text
+
     config_path = DATA_ROOT.parent / "configs" / "config.json"
     config = json.loads(config_path.read_text()) if config_path.exists() else {}
     profile = _configured_document_profile_name(config)
-    return {
-        path.relative_to(DATA_ROOT).as_posix(): _ensure_sample_content_ingested(
-            path,
+    dest_dir = Path(tempfile.gettempdir()) / "cogniverse-e2e-corpus-text"
+
+    ingested: dict[str, str] = {}
+    for path in _evaluation_text_corpus_paths():
+        key = path.relative_to(DATA_ROOT).as_posix()
+        if path.suffix.lower() == ".json":
+            source = materialize_corpus_text(path, key, dest_dir)
+            if source is None:
+                continue
+        else:
+            source = path
+        ingested[key] = _ensure_sample_content_ingested(
+            source,
             profile=profile,
             media_type="text/plain",
         )
-        for path in _evaluation_text_corpus_paths()
-    }
+    return ingested
 
 
 def _ingest_sample_frame() -> str:
