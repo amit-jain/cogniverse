@@ -42,6 +42,24 @@ load, assert equality — in the same commit. "It initializes without error" is
 not coverage. A regression test that passes against the pre-fix code tests
 nothing; verify it fails first.
 
+**Bulk corpora are recorded once, committed, and shape-pinned.** When a test
+needs volume — spans, documents, training rows — producing it live on every run
+is fixture cost, not coverage: it buys nothing the assertions check, and a
+fixture that takes hours is one that never completes, leaving every test in the
+module unrun. Record it once from a real run, commit it, replay it. Keep the
+live path as the way to re-record.
+
+A recording rots silently, so it ships with its own pins in the same commit:
+the exact record count, the exact per-type field/attribute sets, and the
+identifiers compared against the PRODUCTION constants that emit them — never
+restated as literals, or a rename in production is absorbed instead of flagged.
+Pin what the consumer requires of the corpus (population floors, required
+slots) by deriving it from shipped config. Prove each pin fires by mutating a
+copy and watching it go red; a drift guard that has never been red guards
+nothing. Whatever the live path was covering incidentally — that the producers
+still emit this shape, that generation still validates and persists — gets a
+named test in the same commit. A recording never silently replaces coverage.
+
 **Any change with shared/cached state, an async path, or a boundary call also
 ships two more tests in that same commit:**
 - **Concurrency invariant** — what holds under N concurrent requests: single
