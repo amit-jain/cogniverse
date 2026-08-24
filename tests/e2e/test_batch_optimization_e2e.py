@@ -112,13 +112,6 @@ def _module_lookback_hours() -> float:
     return (time.time() - _SPAN_SEED_STARTED_AT) / 3600.0 + _LOOKBACK_MARGIN_HOURS
 
 
-def _synthetic_approve_count() -> int:
-    approve_count = int(os.environ.get("SYNTHETIC_APPROVE_COUNT", "90"))
-    if approve_count <= 0:
-        raise AssertionError("SYNTHETIC_APPROVE_COUNT must be a positive integer")
-    return approve_count
-
-
 RUNTIME = "http://localhost:33000"
 CONFIG_PATH = Path(__file__).resolve().parents[2] / "configs" / "config.json"
 EVALUATION_QUERY_ASSET = (
@@ -1156,15 +1149,12 @@ def simba_selection_tenant(_kubectl_cluster_ready) -> SimbaSelectionTenant:
 def generate_spans_for_batch_jobs(_kubectl_cluster_ready):
     """Generate enough spans in Phoenix for all batch job tests.
 
-    Calls agent endpoints to produce:
-    - 100+ cogniverse.gateway spans (simple queries)
-    - 100+ cogniverse.query_enhancement spans
-    - 100+ cogniverse.profile_selection spans
-    - 3+ cogniverse.orchestration spans (complex queries)
-    Then generates and approves synthetic query-enhancement examples through
-    the production CLI and approval agent. ``SYNTHETIC_APPROVE_COUNT``
-    defaults to 90, so the synthetic pass adds a real QE generation call per
-    approved example and materially increases fixture runtime.
+    Calls agent endpoints to seed ``BATCH_SPAN_COUNT`` spans per agent for
+    gateway, query_enhancement, entity_extraction and profile_selection, plus
+    one orchestration span per COMPLEX_QUERIES entry. Synthetic rows then top
+    the population up to each optimizer's shipped floor; the request size is
+    the measured shortfall, so a tenant already at its floor generates the
+    unique-query minimum rather than a fixed batch.
 
     Runs once per module, before any batch job test.
     """
@@ -1259,14 +1249,17 @@ def generate_spans_for_batch_jobs(_kubectl_cluster_ready):
         for optimizer_type in served_scoreable_counts
     ), f"Phoenix served-scoreable counts below floor: {served_scoreable_counts}"
 
-    approved_request_ceiling = _synthetic_approve_count()
+    _clear_approved_synthetic_in_pod(TENANT_ID)
+
     for optimizer_type in (
         "query_enhancement",
         "profile",
         "entity_extraction",
     ):
         span_type = OPTIMIZER_TYPE_TO_SPAN_TYPE[optimizer_type]
-        floor_min_samples, _ = _population_floor_from_shipped_config(span_type)
+        floor_min_samples, floor_min_unique = _population_floor_from_shipped_config(
+            span_type
+        )
         served = served_scoreable_counts[span_type]
         approved_total = len(
             _approved_query_enhancement_examples_in_pod(
@@ -1285,7 +1278,7 @@ def generate_spans_for_batch_jobs(_kubectl_cluster_ready):
             generated = _generate_and_approve_synthetic_in_pod(
                 TENANT_ID,
                 optimizer_type=optimizer_type,
-                count=max(approved_request_ceiling, gap),
+                count=max(gap, floor_min_unique),
             )
             approved_examples = _wait_for_approved_query_enhancement_examples_in_pod(
                 TENANT_ID,
@@ -2103,6 +2096,57 @@ class TestWorkflowOptimization:
 # ---------------------------------------------------------------------------
 
 
+def _clear_approved_synthetic_in_pod(tenant_id: str = TENANT_ID) -> bool:
+    """Drop the tenant's approved-synthetic dataset so the run owns its rows.
+
+    Approved rows persist in the tenant dataset, and the optimizer's
+    population is served spans plus ALL approved rows. Without this the
+    population, the generated batch size and the floor arithmetic all depend
+    on what earlier runs left behind.
+    """
+    script = IN_POD_TELEMETRY_PRELUDE + (
+        "import asyncio, json; "
+        "from cogniverse_foundation.telemetry.manager import get_telemetry_manager; "
+        "from cogniverse_core.approval.interfaces import "
+        "approved_synthetic_dataset_name; "
+        f"tp = get_telemetry_manager().get_provider(tenant_id={tenant_id!r}); "
+        f"name = approved_synthetic_dataset_name({tenant_id!r}); "
+        "deleted = asyncio.run(tp.datasets.delete_dataset(name)); "
+        "print('__CLEARED__' + json.dumps({'dataset': name, 'deleted': deleted}))"
+    )
+    result = subprocess.run(
+        [
+            "kubectl",
+            "--context",
+            KUBECTL_CONTEXT,
+            "exec",
+            "-n",
+            NAMESPACE,
+            DEPLOYMENT,
+            "-c",
+            CONTAINER,
+            "--",
+            "python3",
+            "-c",
+            script,
+        ],
+        capture_output=True,
+        text=True,
+        timeout=180,
+    )
+    if result.returncode != 0:
+        raise RuntimeError(
+            _subprocess_failure_message(
+                "clear_approved_synthetic",
+                result,
+                operation=f"clear approved synthetic dataset for {tenant_id}",
+            )
+        )
+    marker = "__CLEARED__"
+    line = next(line for line in result.stdout.splitlines() if line.startswith(marker))
+    return bool(json.loads(line[len(marker) :])["deleted"])
+
+
 def _approved_query_enhancement_examples_in_pod(
     tenant_id: str = TENANT_ID,
     optimizer_type: str = "query_enhancement",
@@ -2260,10 +2304,10 @@ def _wait_for_seeded_query_enhancement_queries_in_pod(
 def _generate_and_approve_synthetic_in_pod(
     tenant_id: str = TENANT_ID,
     optimizer_type: str = "query_enhancement",
-    count: int | None = None,
+    count: int = 1,
 ) -> int:
     """Generate synthetic rows for one optimizer and approve them in-pod."""
-    approve_count = _synthetic_approve_count() if count is None else count
+    approve_count = count
     script = IN_POD_TELEMETRY_PRELUDE + (
         "import asyncio, json\n"
         "from cogniverse_agents.approval.approval_storage import ApprovalStorageImpl\n"
