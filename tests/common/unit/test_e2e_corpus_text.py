@@ -75,6 +75,62 @@ class TestFrameDescriptionGoldens:
             "a barbell placed acros"
         )
 
+    def test_dense_member_is_sampled_evenly_not_truncated(self, tmp_path):
+        """A 100-frame member yields every fifth caption, spanning the clip.
+
+        Head truncation would return frames 0-19 and describe only the opening
+        seconds; even spacing keeps the sample representative of the whole clip.
+        """
+        path = tmp_path / "frames.json"
+        path.write_text(
+            json.dumps({str(i): f"Frame {i} caption." for i in range(100)}),
+            encoding="utf-8",
+        )
+        assert corpus_prose(path) == "\n\n".join(
+            f"Frame {i} caption." for i in range(0, 100, 5)
+        )
+
+    def test_member_at_the_bound_keeps_every_caption(self, tmp_path):
+        path = tmp_path / "frames.json"
+        path.write_text(
+            json.dumps({str(i): f"Frame {i}." for i in range(20)}),
+            encoding="utf-8",
+        )
+        assert corpus_prose(path) == "\n\n".join(f"Frame {i}." for i in range(20))
+
+
+class TestCorpusIngestBudget:
+    """The materialized corpus is what the session fixture ingests.
+
+    Unbounded, the 13 frame-description members joined every caption and the
+    corpus reached 4,409,957 characters, which exceeded the fixture's 2400s
+    per-member ingest budget and errored every e2e test at ``e2e_stack`` setup.
+    These pin both halves of the fix: the volume stays bounded, and the
+    document count -- which is what the seeded population floors depend on --
+    does not shrink to buy that.
+    """
+
+    def _materialized(self):
+        members = []
+        for path in sorted((REPO_ROOT / "data" / "testset").rglob("*.json")):
+            try:
+                prose = corpus_prose(path)
+            except ValueError:
+                continue
+            if prose and has_substantive_prose(prose):
+                members.append((path, prose))
+        return members
+
+    def test_document_count_is_unchanged_by_the_bound(self):
+        assert len(self._materialized()) == 21
+
+    def test_corpus_stays_within_the_ingest_budget(self):
+        members = self._materialized()
+        total = sum(len(prose) for _, prose in members)
+        largest = max(len(prose) for _, prose in members)
+        assert total == 169808
+        assert largest == 18628
+
 
 class TestRetrievalQueryGoldens:
     def test_queries_then_passages_each_deduplicated(self, tmp_path):
