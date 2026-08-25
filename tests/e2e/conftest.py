@@ -1625,7 +1625,6 @@ def _e2e_deployment_overrides() -> dict[str, str]:
     from cogniverse_cli.sandbox import active_gateway_metadata, pod_gateway_endpoint
 
     overrides = {
-        "inference.vllm_llm_teacher.enabled": "false",
         "runtime.sandbox.enabled": "true",
         "runtime.sandbox.inCluster.enabled": "false",
         "runtime.sandbox.gatewayEndpoint": pod_gateway_endpoint(
@@ -1633,7 +1632,12 @@ def _e2e_deployment_overrides() -> dict[str, str]:
         ),
         "runtime.sandbox.hostGatewayIP": _e2e_docker_network_gateway_ip(),
     }
-    for service in ("vllm_colpali", "vllm_asr", "vllm_llm_student"):
+    for service in (
+        "vllm_colpali",
+        "vllm_asr",
+        "vllm_llm_student",
+        "vllm_llm_teacher",
+    ):
         overrides[f"inference.{service}.livenessProbe.initialDelaySeconds"] = "1200"
         overrides[f"inference.{service}.livenessProbe.failureThreshold"] = "60"
     return overrides
@@ -2152,9 +2156,6 @@ def e2e_stack(request, resolved_inference_endpoints):
         deploy_identity = _effective_e2e_deployment_identity(repo_root)
         sandbox_overrides = _e2e_deployment_overrides()
         # Test-cluster-only helm overrides (never touch the shipped chart):
-        #  - teacher LM off: only the opt-in teacher-optimization e2e uses it,
-        #    and it can't coexist with colpali + student during GPU weight
-        #    load; the dev cluster keeps it scaled to zero for the same reason.
         #  - vLLM liveness grace widened: on a COLD cluster the GPU engines
         #    load weights from disk for ~12 min (vs instant off the warm dev
         #    cache), then profile — overrunning the shipped 22-min liveness
