@@ -334,6 +334,26 @@ class TestMem0MemoryManager:
         mock_memory.get_all.assert_not_called()
 
     @patch("cogniverse_core.memory.manager.Memory")
+    def test_tenant_partition_schema_exists(self, mock_memory_class, manager):
+        """The public schema-exists predicate forwards the backend verdict."""
+        mock_memory = MagicMock()
+        manager.memory = mock_memory
+        manager.config = {"vector_store": {"config": {"profile": "agent_memories"}}}
+
+        mock_backend = MagicMock()
+        mock_backend.schema_exists.return_value = True
+        manager._backend = mock_backend
+
+        assert (
+            manager.tenant_partition_schema_exists(canonical_tenant_id("tenant1"))
+            is True
+        )
+        mock_backend.schema_exists.assert_called_once_with(
+            "agent_memories",
+            tenant_id=canonical_tenant_id("tenant1"),
+        )
+
+    @patch("cogniverse_core.memory.manager.Memory")
     def test_get_all_memories_propagates_schema_lookup_failure(
         self, mock_memory_class, manager
     ):

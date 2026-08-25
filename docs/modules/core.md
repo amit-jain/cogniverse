@@ -874,6 +874,11 @@ memory.delete_memory(
 )
 ```
 
+`Mem0MemoryManager.tenant_partition_schema_exists(tenant_id)` reports
+whether the tenant partition schema is deployed. `get_all_memories()`
+uses it to return an empty result for schema-less tenants before any
+store read runs.
+
 #### DenseOn embedder adapter
 
 The manager configures Mem0's embedder with the `cogniverse_denseon`
@@ -1213,9 +1218,10 @@ caller-supplied `session_id` in metadata always wins over the dispatcher
 stamp.
 
 The tick summary returned by `LifecycleScheduler.tick_once()` reports
-`{"tenants": {tenant_id: {kind: deleted_count}}, "total_deleted": int}`.
+`{"tenants": {tenant_id: {kind: deleted_count} | "schema absent" | "error: <ExceptionName>"}, "total_deleted": int}`.
 Soft-delete events appear under the `{kind}:archived` key; hard-deletes
-appear under `{kind}` directly.
+appear under `{kind}` directly. Schema-less tenants are skipped after a
+schema-exists probe and logged at INFO.
 
 ### Scheduled lifecycle cleanup
 
