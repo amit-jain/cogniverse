@@ -55,3 +55,31 @@ def test_seeded_span_wait_uses_seed_start_lookback(monkeypatch):
     expected = _MOD._module_lookback_hours()
     assert lookbacks == [expected]
     assert expected > elapsed_hours
+
+
+def test_committed_span_capture_clears_the_optimizer_floors_without_top_up():
+    capture_counts = {
+        "query_enhancement": 343,
+        "profile_selection": 204,
+        "entity_extraction": 110,
+    }
+    expected_floors = {
+        "query_enhancement": (100, 3),
+        "profile_selection": (20, 6),
+        "entity_extraction": (58, 15),
+    }
+
+    for span_type, served in capture_counts.items():
+        floor_min_samples, floor_min_unique = (
+            _MOD._population_floor_from_shipped_config(span_type)
+        )
+        assert (floor_min_samples, floor_min_unique) == expected_floors[span_type]
+        assert (
+            _MOD._synthetic_top_up_counts(
+                served=served,
+                approved_total=0,
+                floor_min_samples=floor_min_samples,
+                floor_min_unique=floor_min_unique,
+            )
+            == []
+        )

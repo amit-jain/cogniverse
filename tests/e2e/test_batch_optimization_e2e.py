@@ -1,23 +1,24 @@
 """
 E2E tests for Argo batch optimization jobs.
 
-Tests the 5 optimization CLI modes (gateway-thresholds, workflow, simba, profile,
-entity-extraction)
-by running them inside the k3d pod via kubectl exec. Verifies the full loop:
-spans exist in Phoenix -> batch job reads them -> produces artifact -> artifact
-contains correct data -> agent can load the artifact.
+Tests the 5 optimization CLI modes (gateway-thresholds, workflow, simba,
+profile, entity-extraction) by running them inside the k3d pod via kubectl
+exec. Verifies the full loop: spans exist in Phoenix -> batch job reads them ->
+produces artifact -> artifact contains correct data -> agent can load the
+artifact.
+
+The module fixture replays the committed span capture by default so the batch
+jobs see the production-shaped corpus in minutes. Set
+``BATCH_SPAN_CAPTURE_MODE=record`` or ``re-record`` to regenerate the capture
+from live agent calls.
 
 Requires live k3d stack via `cogniverse up` with:
 - Runtime at localhost:33000
 - Phoenix at localhost:33006
 - kubectl context: k3d-cogniverse
-
-MARKED AS SLOW: the module fixture seeds ~80 DSPy spans via real agent calls
-(each is ~60-80s on a CPU-served LM — the entire fixture takes ~2 hours). Run
-explicitly with `pytest -m slow tests/e2e/test_batch_optimization_e2e.py` on
-machines where the LLM is backed by a GPU or faster inference service.
 """
 
+import collections
 import functools
 import json
 import os
@@ -42,9 +43,15 @@ from tests.e2e.conftest import (
     expected_gateway_routing,
     register_tenant_and_wait,
 )
+from tests.e2e.span_capture import (
+    capture_spans,
+    load_capture_json,
+    replay_spans,
+    write_capture_json,
+)
+from tests.e2e.test_api_e2e import _deploy_profile_for_tenant
 
 pytestmark = pytest.mark.slow
-from tests.e2e.test_api_e2e import _deploy_profile_for_tenant
 
 RETRIEVAL_CAPABILITY_TOKENS = frozenset(
     {
@@ -97,6 +104,8 @@ NAMESPACE = "cogniverse"
 DEPLOYMENT = "deploy/cogniverse-runtime"
 CONTAINER = "runtime"
 DATA_ROOT = Path(__file__).resolve().parents[2] / "data"
+OPTIMIZER_SPAN_CAPTURE_PATH = DATA_ROOT / "optimizer_span_capture.json"
+OPTIMIZER_SPAN_CAPTURE_MODE_ENV = "BATCH_SPAN_CAPTURE_MODE"
 # Each batch job analyses the spans this module's fixtures emitted: the
 # lookback is measured from the moment span seeding started (plus a small
 # margin), so it neither drags in earlier sessions' traffic nor expires the
@@ -110,6 +119,48 @@ def _module_lookback_hours() -> float:
         "batch job requested before this module's span seeding started"
     )
     return (time.time() - _SPAN_SEED_STARTED_AT) / 3600.0 + _LOOKBACK_MARGIN_HOURS
+
+
+def _optimizer_span_capture_names() -> tuple[str, ...]:
+    from cogniverse_foundation.telemetry.config import (
+        SPAN_NAME_ENTITY_EXTRACTION,
+        SPAN_NAME_GATEWAY,
+        SPAN_NAME_ORCHESTRATION,
+        SPAN_NAME_PROFILE_SELECTION,
+        SPAN_NAME_QUERY_ENHANCEMENT,
+    )
+
+    return (
+        SPAN_NAME_GATEWAY,
+        SPAN_NAME_ENTITY_EXTRACTION,
+        SPAN_NAME_QUERY_ENHANCEMENT,
+        SPAN_NAME_PROFILE_SELECTION,
+        SPAN_NAME_ORCHESTRATION,
+    )
+
+
+def _synthetic_top_up_counts(
+    *,
+    served: int,
+    approved_total: int,
+    floor_min_samples: int,
+    floor_min_unique: int,
+    max_attempts: int = 5,
+) -> list[int]:
+    """Return the requested synthetic batch sizes needed to clear the floor."""
+    total = served + approved_total
+    if total >= floor_min_samples:
+        return []
+
+    requested_counts: list[int] = []
+    for _ in range(max_attempts):
+        gap = max(floor_min_samples - total, 1)
+        requested = max(gap, floor_min_unique)
+        requested_counts.append(requested)
+        total += requested
+        if total >= floor_min_samples:
+            break
+    return requested_counts
 
 
 RUNTIME = "http://localhost:33000"
@@ -1147,16 +1198,13 @@ def simba_selection_tenant(_kubectl_cluster_ready) -> SimbaSelectionTenant:
 
 @pytest.fixture(scope="module", autouse=True)
 def generate_spans_for_batch_jobs(_kubectl_cluster_ready):
-    """Generate enough spans in Phoenix for all batch job tests.
+    """Populate Phoenix with the spans the batch jobs train on.
 
-    Calls agent endpoints to seed ``BATCH_SPAN_COUNT`` spans per agent for
-    gateway, query_enhancement, entity_extraction and profile_selection, plus
-    one orchestration span per COMPLEX_QUERIES entry. Synthetic rows then top
-    the population up to each optimizer's shipped floor; the request size is
-    the measured shortfall, so a tenant already at its floor generates the
-    unique-query minimum rather than a fixed batch.
-
-    Runs once per module, before any batch job test.
+    Default path: replay the committed span capture so the optimizer sees the
+    production-shaped corpus and the synthetic top-up loop can short-circuit.
+    Re-record path: set ``BATCH_SPAN_CAPTURE_MODE=record`` or ``re-record`` to
+    drive the live agent endpoints, capture the emitted spans, and overwrite
+    ``tests/e2e/data/optimizer_span_capture.json``.
     """
     global _SPAN_SEED_STARTED_AT
     _SPAN_SEED_STARTED_AT = time.time()
@@ -1170,84 +1218,140 @@ def generate_spans_for_batch_jobs(_kubectl_cluster_ready):
     if _reset_query_enhancement_artifact_in_pod():
         _bounce_runtime_pod()
 
-    # Per-agent span count. BootstrapFewShot samples demos from these; the
-    # project originally generated 100 per agent which takes ~9 hours on CPU
-    # the local LM. 20 per agent is enough to bootstrap 3-4 demos while keeping the
-    # fixture under ~2 hours on CPU. Override via BATCH_SPAN_COUNT for
-    # GPU-backed runs where 100+ is cheap.
+    # Per-agent span count used by the live re-record path. BootstrapFewShot
+    # samples demos from these; the project originally generated 100 per agent
+    # which takes ~9 hours on CPU the local LM. 20 per agent is enough to
+    # bootstrap 3-4 demos while keeping the re-record path reasonable.
+    # Override via BATCH_SPAN_COUNT for GPU-backed re-records where 100+ is
+    # cheap.
     spans_per_agent = _batch_span_count()
-    assert spans_per_agent > 0, "BATCH_SPAN_COUNT must be a positive integer"
+    if spans_per_agent < 1:
+        raise AssertionError("BATCH_SPAN_COUNT must be a positive integer")
 
-    # Gateway spans — simple queries through gateway
-    for i in range(spans_per_agent):
-        q = GATEWAY_QUERIES[i % len(GATEWAY_QUERIES)]
-        _call_agent("gateway_agent", q)
-
-    # Entity extraction spans
-    for i in range(spans_per_agent):
-        q = ENTITY_QUERIES[i % len(ENTITY_QUERIES)]
-        _call_agent("entity_extraction_agent", q)
-
-    # Query enhancement spans.  Do NOT append a numeric suffix here: small
-    # models (gemma4:e2b) treat "variant 5" as opaque content they must
-    # preserve and end up echoing the whole input back unchanged, which
-    # makes SIMBA train on degenerate identity pairs.  Cycling through the
-    # base list is fine — spans are unique by span_id, not query text.
-    for i in range(spans_per_agent):
-        q = ENHANCEMENT_QUERIES[i % len(ENHANCEMENT_QUERIES)]
-        _call_agent("query_enhancement_agent", q)
-    for q, entities, relationships in GROUNDED_ENHANCEMENT_QUERIES:
-        _call_agent(
-            "query_enhancement_agent",
-            q,
-            context_extra={"entities": entities, "relationships": relationships},
+    capture_mode = os.environ.get(OPTIMIZER_SPAN_CAPTURE_MODE_ENV, "replay").strip()
+    capture_mode = capture_mode.lower()
+    if capture_mode not in {"replay", "record", "re-record"}:
+        raise AssertionError(
+            f"{OPTIMIZER_SPAN_CAPTURE_MODE_ENV} must be 'replay', 'record', or "
+            f"'re-record'; "
+            f"got {capture_mode!r}"
         )
 
-    # Profile selection spans
-    for i in range(spans_per_agent):
-        q = PROFILE_QUERIES[i % len(PROFILE_QUERIES)]
-        _call_agent("profile_selection_agent", q)
+    span_names = _optimizer_span_capture_names()
+    if capture_mode in {"record", "re-record"}:
+        # Gateway spans — simple queries through gateway
+        for i in range(spans_per_agent):
+            q = GATEWAY_QUERIES[i % len(GATEWAY_QUERIES)]
+            _call_agent("gateway_agent", q)
 
-    # Orchestration spans (10+ complex queries — each also produces
-    # entity_extraction, routing, and search spans via A2A pipeline)
-    for q in COMPLEX_QUERIES:
-        _call_agent("gateway_agent", q)
+        # Entity extraction spans
+        for i in range(spans_per_agent):
+            q = ENTITY_QUERIES[i % len(ENTITY_QUERIES)]
+            _call_agent("entity_extraction_agent", q)
 
-    # Wait for Phoenix to ingest EVERY seeded span type before any optimizer
-    # reads them. Emitters are async best-effort (batch export), so seeded
-    # spans are eventually consistent; polling here — not forcing synchronous
-    # export on the request path — is what keeps the batch-job reads
-    # deterministic. QE waits on the exact seeded query set; the others wait
-    # on the directly-seeded lower bound (complex-query fan-out adds more).
-    lookback_hours = _module_lookback_hours()
-    _wait_for_seeded_query_enhancement_queries_in_pod(lookback_hours=lookback_hours)
-    _wait_for_seeded_span_lower_bound_in_pod(
-        TENANT_ID, "SPAN_NAME_GATEWAY", spans_per_agent, lookback_hours
-    )
-    _wait_for_seeded_span_lower_bound_in_pod(
-        TENANT_ID, "SPAN_NAME_ENTITY_EXTRACTION", spans_per_agent, lookback_hours
-    )
-    _wait_for_seeded_span_lower_bound_in_pod(
-        TENANT_ID, "SPAN_NAME_PROFILE_SELECTION", spans_per_agent, lookback_hours
-    )
-    _wait_for_seeded_span_lower_bound_in_pod(
-        TENANT_ID,
-        "SPAN_NAME_ORCHESTRATION",
-        len(COMPLEX_QUERIES),
-        lookback_hours,
-    )
+        # Query enhancement spans.  Do NOT append a numeric suffix here: small
+        # models (gemma4:e2b) treat "variant 5" as opaque content they must
+        # preserve and end up echoing the whole input back unchanged, which
+        # makes SIMBA train on degenerate identity pairs.  Cycling through the
+        # base list is fine — spans are unique by span_id, not query text.
+        for i in range(spans_per_agent):
+            q = ENHANCEMENT_QUERIES[i % len(ENHANCEMENT_QUERIES)]
+            _call_agent("query_enhancement_agent", q)
+        for q, entities, relationships in GROUNDED_ENHANCEMENT_QUERIES:
+            _call_agent(
+                "query_enhancement_agent",
+                q,
+                context_extra={"entities": entities, "relationships": relationships},
+            )
 
-    # Gateway and orchestration are already covered by the direct seeded-span
-    # waits above; only the served-holdout-gated types need this floor guard.
+        # Profile selection spans
+        for i in range(spans_per_agent):
+            q = PROFILE_QUERIES[i % len(PROFILE_QUERIES)]
+            _call_agent("profile_selection_agent", q)
+
+        # Orchestration spans (10+ complex queries — each also produces
+        # entity_extraction, routing, and search spans via A2A pipeline)
+        for q in COMPLEX_QUERIES:
+            _call_agent("gateway_agent", q)
+
+        # Wait for Phoenix to ingest EVERY seeded span type before any optimizer
+        # reads them. Emitters are async best-effort (batch export), so seeded
+        # spans are eventually consistent; polling here — not forcing synchronous
+        # export on the request path — is what keeps the batch-job reads
+        # deterministic. QE waits on the exact seeded query set; the others wait
+        # on the directly-seeded lower bound (complex-query fan-out adds more).
+        lookback_hours = _module_lookback_hours()
+        _wait_for_seeded_query_enhancement_queries_in_pod(lookback_hours=lookback_hours)
+        _wait_for_seeded_span_lower_bound_in_pod(
+            TENANT_ID, span_names[0], spans_per_agent, lookback_hours
+        )
+        _wait_for_seeded_span_lower_bound_in_pod(
+            TENANT_ID, span_names[1], spans_per_agent, lookback_hours
+        )
+        _wait_for_seeded_span_lower_bound_in_pod(
+            TENANT_ID, span_names[3], spans_per_agent, lookback_hours
+        )
+        _wait_for_seeded_span_lower_bound_in_pod(
+            TENANT_ID,
+            span_names[4],
+            len(COMPLEX_QUERIES),
+            lookback_hours,
+        )
+
+        from datetime import datetime, timezone
+
+        capture_records = capture_spans(
+            phoenix_http_endpoint=PHOENIX_URL,
+            tenant_id=TENANT_ID,
+            start_time=datetime.fromtimestamp(_SPAN_SEED_STARTED_AT, tz=timezone.utc),
+            span_names=span_names,
+        )
+        write_capture_json(OPTIMIZER_SPAN_CAPTURE_PATH, capture_records)
+    else:
+        replay_spans(
+            capture_path=OPTIMIZER_SPAN_CAPTURE_PATH,
+            phoenix_http_endpoint=PHOENIX_URL,
+            tenant_id=TENANT_ID,
+        )
+        capture_records = load_capture_json(OPTIMIZER_SPAN_CAPTURE_PATH)
+        captured_counts = collections.Counter(
+            record["name"] for record in capture_records
+        )
+        assert len(capture_records) == 787, (
+            f"committed optimizer span capture drifted in size: {len(capture_records)}"
+        )
+        assert captured_counts[span_names[0]] == 70, captured_counts
+        assert captured_counts[span_names[1]] == 110, captured_counts
+        assert captured_counts[span_names[2]] == 343, captured_counts
+        assert captured_counts[span_names[3]] == 204, captured_counts
+        assert captured_counts[span_names[4]] == 60, captured_counts
+        captured_query_enhancement_queries = {
+            str(record["attributes"].get("input.value") or "")
+            for record in capture_records
+            if record["name"] == span_names[2]
+        }
+        lookback_hours = _module_lookback_hours()
+        _wait_for_seeded_span_coverage_in_pod(
+            tenant_id=TENANT_ID,
+            lookback_hours=lookback_hours,
+            expected_query_enhancement_queries=captured_query_enhancement_queries,
+            gateway_minimum=captured_counts[span_names[0]],
+            entity_extraction_minimum=captured_counts[span_names[1]],
+            profile_selection_minimum=captured_counts[span_names[3]],
+            orchestration_minimum=captured_counts[span_names[4]],
+        )
+
+    capture_counts = collections.Counter(record["name"] for record in capture_records)
     served_scoreable_counts = _wait_for_served_scoreable_span_floor_in_pod(TENANT_ID)
-    assert all(count > 0 for count in served_scoreable_counts.values()), (
-        f"Phoenix served-scoreable counts were empty: {served_scoreable_counts}"
+    expected_served_scoreable_counts = {
+        "query_enhancement": capture_counts[span_names[2]],
+        "entity_extraction": capture_counts[span_names[1]],
+        "profile_selection": capture_counts[span_names[3]],
+    }
+    assert served_scoreable_counts == expected_served_scoreable_counts, (
+        f"Phoenix served-scoreable counts drifted from the committed capture: "
+        f"served={served_scoreable_counts} expected={expected_served_scoreable_counts}"
     )
-    assert all(
-        served_scoreable_counts[optimizer_type]
-        >= _served_holdout_minimum_in_pod(optimizer_type)
-        for optimizer_type in served_scoreable_counts
-    ), f"Phoenix served-scoreable counts below floor: {served_scoreable_counts}"
 
     _clear_approved_synthetic_in_pod(TENANT_ID)
 
@@ -1269,16 +1373,18 @@ def generate_spans_for_batch_jobs(_kubectl_cluster_ready):
         )
         # The optimizer's population is served spans plus ALL approved rows,
         # so the floor accounting must use the total, not this run's delta.
-        # One batch always runs (the generate->approve chain is itself under
-        # test); further batches run only while the tenant floor is unmet.
-        for attempt in range(5):
-            if attempt > 0 and served + approved_total >= floor_min_samples:
-                break
-            gap = max(floor_min_samples - served - approved_total, 1)
+        # A replayed capture already clears the shipped floor, so this plans no
+        # synthetic batches on the normal path.
+        for requested_count in _synthetic_top_up_counts(
+            served=served,
+            approved_total=approved_total,
+            floor_min_samples=floor_min_samples,
+            floor_min_unique=floor_min_unique,
+        ):
             generated = _generate_and_approve_synthetic_in_pod(
                 TENANT_ID,
                 optimizer_type=optimizer_type,
-                count=max(gap, floor_min_unique),
+                count=requested_count,
             )
             approved_examples = _wait_for_approved_query_enhancement_examples_in_pod(
                 TENANT_ID,
@@ -1290,19 +1396,14 @@ def generate_spans_for_batch_jobs(_kubectl_cluster_ready):
                 f"before={approved_total} generated={generated} "
                 f"after={len(approved_examples)}"
             )
-            if generated == 0 and served + approved_total < floor_min_samples:
-                raise AssertionError(
-                    f"{optimizer_type} synthetic capacity exhausted below the "
-                    f"tenant floor: served={served} "
-                    f"approved={approved_total} floor={floor_min_samples}"
-                )
             approved_total = len(approved_examples)
 
-        assert served + approved_total >= floor_min_samples, (
-            f"{optimizer_type} served/approved floor not met: "
-            f"served={served} approved={approved_total} "
-            f"floor={floor_min_samples}"
-        )
+        if served + approved_total < floor_min_samples:
+            raise AssertionError(
+                f"{optimizer_type} served/approved floor not met: "
+                f"served={served} approved={approved_total} "
+                f"floor={floor_min_samples}"
+            )
 
     yield
 
@@ -2281,10 +2382,12 @@ def _wait_for_approved_query_enhancement_examples_in_pod(
 def _wait_for_seeded_query_enhancement_queries_in_pod(
     tenant_id: str = TENANT_ID,
     lookback_hours: float | None = None,
+    expected_queries: set[str] | None = None,
     timeout_s: float = 240.0,
 ) -> set[str]:
     """Wait until this module's seeded query-enhancement queries are visible."""
-    expected_queries = _seeded_enhancement_queries()
+    if expected_queries is None:
+        expected_queries = _seeded_enhancement_queries()
     deadline = time.monotonic() + timeout_s
     served_queries: set[str] = set()
     while time.monotonic() < deadline:
@@ -2298,6 +2401,53 @@ def _wait_for_seeded_query_enhancement_queries_in_pod(
     raise AssertionError(
         f"Phoenix showed {len(served_queries & expected_queries)}/{len(expected_queries)} "
         f"seeded query-enhancement queries after {timeout_s:.0f}s; missing: {missing}"
+    )
+
+
+def _wait_for_seeded_span_coverage_in_pod(
+    tenant_id: str = TENANT_ID,
+    lookback_hours: float | None = None,
+    expected_query_enhancement_queries: set[str] | None = None,
+    gateway_minimum: int = 0,
+    entity_extraction_minimum: int = 0,
+    profile_selection_minimum: int = 0,
+    orchestration_minimum: int = 0,
+    timeout_s: float = 240.0,
+) -> None:
+    """Wait until the seeded spans and their query set are queryable."""
+    _wait_for_seeded_query_enhancement_queries_in_pod(
+        tenant_id=tenant_id,
+        lookback_hours=lookback_hours,
+        expected_queries=expected_query_enhancement_queries,
+        timeout_s=timeout_s,
+    )
+    _wait_for_seeded_span_lower_bound_in_pod(
+        tenant_id,
+        "SPAN_NAME_GATEWAY",
+        gateway_minimum,
+        lookback_hours,
+        timeout_s=timeout_s,
+    )
+    _wait_for_seeded_span_lower_bound_in_pod(
+        tenant_id,
+        "SPAN_NAME_ENTITY_EXTRACTION",
+        entity_extraction_minimum,
+        lookback_hours,
+        timeout_s=timeout_s,
+    )
+    _wait_for_seeded_span_lower_bound_in_pod(
+        tenant_id,
+        "SPAN_NAME_PROFILE_SELECTION",
+        profile_selection_minimum,
+        lookback_hours,
+        timeout_s=timeout_s,
+    )
+    _wait_for_seeded_span_lower_bound_in_pod(
+        tenant_id,
+        "SPAN_NAME_ORCHESTRATION",
+        orchestration_minimum,
+        lookback_hours,
+        timeout_s=timeout_s,
     )
 
 
