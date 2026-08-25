@@ -391,10 +391,29 @@ def test_replay_refuses_a_record_whose_attributes_are_not_a_mapping():
     )
 
 
-COMMITTED_CAPTURE = (
-    pathlib.Path(__file__).resolve().parents[3]
-    / "tests/e2e/data/optimizer_span_capture.json"
-)
+def _committed_capture_path() -> pathlib.Path:
+    """The exact path the e2e fixture replays from.
+
+    Derived from the fixture module rather than restated here: a second
+    literal can drift from the one the fixture loads, and the fixture would
+    then fail at run time while this pin stayed green.
+    """
+    import importlib.util
+
+    script = (
+        pathlib.Path(__file__).resolve().parents[3]
+        / "tests"
+        / "e2e"
+        / "test_batch_optimization_e2e.py"
+    )
+    spec = importlib.util.spec_from_file_location("_batch_opt_e2e_for_pin", script)
+    assert spec is not None and spec.loader is not None
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+    return module.OPTIMIZER_SPAN_CAPTURE_PATH
+
+
+COMMITTED_CAPTURE = _committed_capture_path()
 
 # The shape the optimizer reads. Span names come from the production
 # constants, so renaming one there fails this test and says the recorded
