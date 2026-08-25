@@ -216,6 +216,7 @@ def _existing_span_ids(
     phoenix_http_endpoint: str,
     project_name: str,
     span_ids: Sequence[str],
+    start_time: Any | None = None,
 ) -> set[str]:
     if not span_ids:
         return set()
@@ -230,6 +231,7 @@ def _existing_span_ids(
             query=SpanQuery().where(predicate),
             limit=len(batch),
             timeout=120,
+            start_time=start_time,
         )
         if spans.empty or "context.span_id" not in spans.columns:
             continue
@@ -334,16 +336,22 @@ def replay_spans(
     project_name: str | None = None,
     span_exporter: SpanExporter | None = None,
     existing_span_ids: Sequence[str] | None = None,
+    existing_since: Any | None = None,
 ) -> list[SpanRecord]:
     """Replay a capture file into Phoenix with current timestamps."""
     records = load_capture_json(capture_path)
     project = project_name or _project_name(tenant_id)
     span_ids = [_capture_identity(record) for record in records]
     if existing_span_ids is None:
+        # Scoped to the window the caller will read: the corpus was recorded
+        # from this same project, so every recorded id still matches its own
+        # original. Unscoped, that original suppresses the replay it came
+        # from and the readable window stays empty.
         existing_ids = _existing_span_ids(
             phoenix_http_endpoint=phoenix_http_endpoint,
             project_name=project,
             span_ids=span_ids,
+            start_time=existing_since,
         )
     else:
         existing_ids = {str(span_id) for span_id in existing_span_ids}

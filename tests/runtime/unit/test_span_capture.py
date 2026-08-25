@@ -5,6 +5,7 @@ import json
 import pathlib
 import time
 from datetime import datetime, timezone
+from unittest.mock import patch
 
 import pytest
 from opentelemetry.sdk.trace.export.in_memory_span_exporter import (
@@ -633,3 +634,52 @@ class TestReplayExportContract:
             )
 
         assert "export failed" in str(excinfo.value), str(excinfo.value)
+
+
+class TestReplayDedupIsWindowScoped:
+    """A span outside the readable window must not suppress its own replay.
+
+    The corpus was recorded from the tenant it replays into, so every
+    recorded span_id still matches its own original. An unscoped existence
+    check therefore reports all of them present, replay becomes a permanent
+    no-op, and the optimizer reads an empty window while replay reports
+    success.
+    """
+
+    def test_existence_check_is_scoped_to_the_replay_window(self, tmp_path):
+        seen: dict[str, object] = {}
+
+        def fake_existing(*, phoenix_http_endpoint, project_name, span_ids, **kwargs):
+            seen["start_time"] = kwargs.get("start_time")
+            return set()
+
+        record = _span_record(
+            name="cogniverse.query_enhancement",
+            span_id="cc" * 8,
+            trace_id="dd" * 16,
+            start_time="2026-08-25T10:00:00+00:00",
+            end_time="2026-08-25T10:00:01+00:00",
+            attributes={"input.value": "q", "output.value": "e"},
+        )
+        path = tmp_path / "capture.json"
+        path.write_text(json.dumps([record]))
+
+        window_start = datetime(2026, 8, 25, 9, tzinfo=timezone.utc)
+        exporter = InMemorySpanExporter()
+        with patch.object(span_capture, "_existing_span_ids", fake_existing):
+            replayed = span_capture.replay_spans(
+                capture_path=path,
+                phoenix_http_endpoint="http://localhost:33006",
+                tenant_id="acme:prod",
+                span_exporter=exporter,
+                existing_since=window_start,
+            )
+
+        assert seen["start_time"] == window_start, (
+            "the existence check must be bounded by the replay window; "
+            f"got start_time={seen['start_time']!r}"
+        )
+        assert [r["name"] for r in replayed] == ["cogniverse.query_enhancement"]
+        assert [s.name for s in exporter.get_finished_spans()] == [
+            "cogniverse.query_enhancement"
+        ]
