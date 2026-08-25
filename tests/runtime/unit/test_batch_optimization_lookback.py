@@ -106,3 +106,102 @@ def test_committed_span_capture_clears_the_optimizer_floors_without_top_up():
             f"{span_type}: capture has {captured[span_type]} spans against a floor "
             f"of {floor_min_samples}; synthetic top-up would still run"
         )
+
+
+class TestOptimizerCaptureSampleCaps:
+    """The replayed corpus is bounded by the shipped floors, not the recording."""
+
+    def test_caps_are_derived_from_the_shipped_population_floors(self):
+        from cogniverse_foundation.telemetry.config import (
+            SPAN_NAME_ENTITY_EXTRACTION,
+            SPAN_NAME_PROFILE_SELECTION,
+            SPAN_NAME_QUERY_ENHANCEMENT,
+        )
+
+        caps = _MOD._optimizer_capture_sample_caps()
+
+        assert caps == {
+            SPAN_NAME_QUERY_ENHANCEMENT: 120,
+            SPAN_NAME_PROFILE_SELECTION: 24,
+            SPAN_NAME_ENTITY_EXTRACTION: 70,
+        }
+
+    def test_uncapped_names_are_absent_so_they_replay_whole(self):
+        from cogniverse_foundation.telemetry.config import (
+            SPAN_NAME_GATEWAY,
+            SPAN_NAME_ORCHESTRATION,
+        )
+
+        caps = _MOD._optimizer_capture_sample_caps()
+
+        assert SPAN_NAME_GATEWAY not in caps
+        assert SPAN_NAME_ORCHESTRATION not in caps
+
+    def test_sampled_corpus_counts_are_exactly_the_caps(self):
+        import collections
+
+        from tests.e2e.span_capture import load_capture_json, sample_capture_by_name
+
+        caps = _MOD._optimizer_capture_sample_caps()
+        sampled = sample_capture_by_name(
+            load_capture_json(_MOD.OPTIMIZER_SPAN_CAPTURE_PATH), caps
+        )
+
+        assert collections.Counter(record["name"] for record in sampled) == {
+            "cogniverse.query_enhancement": 120,
+            "cogniverse.profile_selection": 24,
+            "cogniverse.entity_extraction": 70,
+            "cogniverse.gateway": 70,
+            "cogniverse.orchestration": 60,
+        }
+
+    def test_sampled_corpus_clears_every_shipped_floor_and_unique_minimum(self):
+        import collections
+
+        from cogniverse_foundation.telemetry.config import (
+            SPAN_NAME_ENTITY_EXTRACTION,
+            SPAN_NAME_PROFILE_SELECTION,
+            SPAN_NAME_QUERY_ENHANCEMENT,
+        )
+        from tests.e2e.span_capture import load_capture_json, sample_capture_by_name
+
+        caps = _MOD._optimizer_capture_sample_caps()
+        sampled = sample_capture_by_name(
+            load_capture_json(_MOD.OPTIMIZER_SPAN_CAPTURE_PATH), caps
+        )
+        counts = collections.Counter(record["name"] for record in sampled)
+
+        measured = {}
+        for span_name, optimizer_type in (
+            (SPAN_NAME_QUERY_ENHANCEMENT, "simba_query_enhancement"),
+            (SPAN_NAME_PROFILE_SELECTION, "profile_selection"),
+            (SPAN_NAME_ENTITY_EXTRACTION, "entity_extraction"),
+        ):
+            floor, min_unique = _MOD._population_floor_from_shipped_config(
+                optimizer_type
+            )
+            distinct = {
+                str(record["attributes"].get("input.value") or "")
+                for record in sampled
+                if record["name"] == span_name
+            }
+            measured[optimizer_type] = (
+                counts[span_name],
+                floor,
+                len(distinct),
+                min_unique,
+            )
+
+        assert measured == {
+            "simba_query_enhancement": (120, 100, 91, 3),
+            "profile_selection": (24, 20, 12, 6),
+            "entity_extraction": (70, 58, 57, 15),
+        }
+
+    def test_sampling_reduces_the_replayed_corpus_below_the_recording(self):
+        from tests.e2e.span_capture import load_capture_json, sample_capture_by_name
+
+        archive = load_capture_json(_MOD.OPTIMIZER_SPAN_CAPTURE_PATH)
+        sampled = sample_capture_by_name(archive, _MOD._optimizer_capture_sample_caps())
+
+        assert (len(archive), len(sampled)) == (787, 344)
