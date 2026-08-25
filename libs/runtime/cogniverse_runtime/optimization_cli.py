@@ -307,6 +307,52 @@ def _query_enhancement_quality(prediction, example) -> float | None:
     return 1.0
 
 
+def teacher_lm_or_raise(llm_config, *, probe=None):
+    """Build the DSPy teacher LM, refusing when nothing serves the endpoint.
+
+    BootstrapFewShot asks the teacher for every demonstration, so a declared
+    but unserved teacher turns each request into a failure the caller degrades
+    to a fallback: the job walks the whole trainset, collects no demos and
+    hits its timeout with no indication of why. Probe first and refuse,
+    naming the endpoint and the model mismatch when there is one.
+    """
+    from cogniverse_foundation.config.llm_factory import create_dspy_lm
+
+    endpoint = require_reachable_teacher(llm_config, probe=probe)
+    return create_dspy_lm(endpoint)
+
+
+def require_reachable_teacher(llm_config, *, probe=None):
+    """Return the teacher endpoint, refusing when nothing serves it."""
+    from cogniverse_runtime.inference_health_check import probe_service_model
+
+    endpoint = llm_config.resolve_teacher()
+    api_base = (getattr(endpoint, "api_base", None) or "").rstrip("/")
+    if not api_base:
+        raise RuntimeError(
+            "LLM teacher endpoint declares no api_base; DSPy bootstrap "
+            "requires a reachable teacher service"
+        )
+    service_root = api_base[: -len("/v1")] if api_base.endswith("/v1") else api_base
+
+    served = (probe or probe_service_model)(service_root)
+    if served is None:
+        raise RuntimeError(
+            f"LLM teacher endpoint {api_base} is unreachable; DSPy bootstrap "
+            f"requires it to generate demonstrations. Enable "
+            f"inference.vllm_llm_teacher and wait for the pod to report ready."
+        )
+
+    configured = getattr(endpoint, "model", "") or ""
+    if served not in configured:
+        raise RuntimeError(
+            f"LLM teacher endpoint {api_base} serves {served!r} but the "
+            f"configured teacher model is {configured!r}; requests for an "
+            f"unserved model id are rejected"
+        )
+    return endpoint
+
+
 def _query_enhancement_metric(example, prediction, trace=None) -> bool:
     """BootstrapFewShot metric: keep a teacher trace only when it is usable."""
     del trace
@@ -672,7 +718,7 @@ async def run_triggered_optimization(
                 config_manager=config_manager,
                 telemetry_provider=telemetry_provider,
                 tenant_id=tenant_id,
-                teacher_endpoint=llm_config.resolve_teacher(),
+                teacher_endpoint=require_reachable_teacher(llm_config),
             )
             results[agent_name] = result
             if checkpointer is not None:
@@ -2741,7 +2787,7 @@ async def run_simba_optimization(
         if trainset:
             teleprompter = _create_teleprompter(
                 len(trainset),
-                teacher_settings={"lm": create_dspy_lm(llm_config.resolve_teacher())},
+                teacher_settings={"lm": teacher_lm_or_raise(llm_config)},
                 metric=_query_enhancement_metric,
             )
             compiled = teleprompter.compile(QueryEnhancementModule(), trainset=trainset)
@@ -3576,7 +3622,7 @@ async def run_profile_optimization(
         if trainset:
             teleprompter = _create_teleprompter(
                 len(trainset),
-                teacher_settings={"lm": create_dspy_lm(llm_config.resolve_teacher())},
+                teacher_settings={"lm": teacher_lm_or_raise(llm_config)},
                 metric=_profile_selection_metric,
             )
             compiled = teleprompter.compile(ProfileSelectionModule(), trainset=trainset)
@@ -3839,7 +3885,7 @@ async def run_entity_extraction_optimization(
         if trainset:
             teleprompter = _create_teleprompter(
                 len(trainset),
-                teacher_settings={"lm": create_dspy_lm(llm_config.resolve_teacher())},
+                teacher_settings={"lm": teacher_lm_or_raise(llm_config)},
                 metric=_entity_extraction_metric,
             )
             compiled = teleprompter.compile(EntityExtractionModule(), trainset=trainset)

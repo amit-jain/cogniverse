@@ -242,6 +242,31 @@ def _patch_telemetry(fake_mgr):
         yield
 
 
+_TEACHER_SERVED_MODEL = "test/teacher-model"
+
+
+def _teacher_endpoint():
+    """The concrete type production hands to the teacher probe."""
+    from cogniverse_foundation.config.unified_config import LLMEndpointConfig
+
+    return LLMEndpointConfig(
+        model=f"openai/{_TEACHER_SERVED_MODEL}",
+        api_base="http://teacher-svc:8000/v1",
+    )
+
+
+@pytest.fixture(autouse=True)
+def _teacher_service_reports_configured_model(monkeypatch):
+    """Report the configured teacher model so unit tests never dial a service."""
+    import cogniverse_runtime.inference_health_check as inference_health_check
+
+    monkeypatch.setattr(
+        inference_health_check,
+        "probe_service_model",
+        lambda url, **kwargs: _TEACHER_SERVED_MODEL,
+    )
+
+
 def _patch_infra(fake_mgr, *, config_manager=None):
     """Return a combined context manager patching config + telemetry."""
     config_patch = (
@@ -2404,7 +2429,7 @@ class TestSimbaQueryEnhancement:
         p1, p2 = _patch_infra(mgr, config_manager=config_manager)
         llm_config = SimpleNamespace(
             resolve=lambda purpose: "student-endpoint",
-            resolve_teacher=lambda: "teacher-endpoint",
+            resolve_teacher=_teacher_endpoint,
         )
         with (
             p1,
@@ -3067,7 +3092,7 @@ class TestProfileSelectionOptimization:
                 return "student-endpoint"
 
             def resolve_teacher(self):
-                return "teacher-endpoint"
+                return _teacher_endpoint()
 
         class FakeConfig:
             def get_llm_config(self):
@@ -3928,7 +3953,7 @@ class TestEntityExtractionOptimization:
                 return "student-endpoint"
 
             def resolve_teacher(self):
-                return "teacher-endpoint"
+                return _teacher_endpoint()
 
         class FakeConfig:
             def get_llm_config(self):
@@ -6424,3 +6449,56 @@ class TestMainExitCode:
             monkeypatch, {"status": "success", "training_examples": 3}
         )
         assert code == 0
+
+
+@pytest.mark.unit
+class TestTeacherEndpointReachability:
+    """BootstrapFewShot asks the teacher for every demonstration. When the
+    teacher endpoint is declared but nothing serves it, each request fails,
+    litellm retries, and the caller swallows it into a fallback -- so the job
+    walks the whole trainset collecting no demos and hits its timeout. Refuse
+    at job start instead, naming the endpoint.
+    """
+
+    def _endpoint(self, model="openai/cyankiwi/Qwen3.6-27B-AWQ-INT4"):
+        from cogniverse_foundation.config.unified_config import LLMEndpointConfig
+
+        return LLMEndpointConfig(model=model, api_base="http://teacher-svc:8000/v1")
+
+    def test_raises_naming_the_endpoint_when_nothing_serves_it(self):
+        from cogniverse_runtime.optimization_cli import teacher_lm_or_raise
+
+        cfg = SimpleNamespace(resolve_teacher=self._endpoint)
+        with pytest.raises(RuntimeError) as exc:
+            teacher_lm_or_raise(cfg, probe=lambda url: None)
+        message = str(exc.value)
+        assert "http://teacher-svc:8000/v1" in message
+        assert "unreachable" in message
+
+    def test_probes_the_service_root_and_returns_the_lm_when_served(self):
+        from cogniverse_runtime.optimization_cli import teacher_lm_or_raise
+
+        cfg = SimpleNamespace(resolve_teacher=self._endpoint)
+        probed = []
+
+        def probe(url):
+            probed.append(url)
+            return "cyankiwi/Qwen3.6-27B-AWQ-INT4"
+
+        with patch(
+            "cogniverse_foundation.config.llm_factory.create_dspy_lm",
+            return_value="TEACHER_LM",
+        ):
+            built = teacher_lm_or_raise(cfg, probe=probe)
+        assert built == "TEACHER_LM"
+        assert probed == ["http://teacher-svc:8000"]
+
+    def test_raises_when_the_service_serves_a_different_model(self):
+        from cogniverse_runtime.optimization_cli import teacher_lm_or_raise
+
+        cfg = SimpleNamespace(resolve_teacher=self._endpoint)
+        with pytest.raises(RuntimeError) as exc:
+            teacher_lm_or_raise(cfg, probe=lambda url: "google/gemma-4-26b-a4b-it")
+        message = str(exc.value)
+        assert "cyankiwi/Qwen3.6-27B-AWQ-INT4" in message
+        assert "google/gemma-4-26b-a4b-it" in message
