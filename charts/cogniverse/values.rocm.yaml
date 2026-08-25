@@ -86,10 +86,10 @@ inference:
     resources:
       limits:
         cpu: "2"
-        memory: "8Gi"
+        memory: "6Gi"
       requests:
         cpu: "2"
-        memory: "8Gi"
+        memory: "6Gi"
 
   vllm_llm_student:
     enabled: true
@@ -131,10 +131,10 @@ inference:
     resources:
       limits:
         cpu: "4"
-        memory: "32Gi"
+        memory: "24Gi"
       requests:
         cpu: "4"
-        memory: "32Gi"
+        memory: "24Gi"
 
   # Qwen3 14B at AWQ-INT4 needs ~9.29 GiB of weights before any KV cache.
   # Resident alongside the serving set: the enabled fractions sum to 0.66 of
