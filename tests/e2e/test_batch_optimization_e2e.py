@@ -45,6 +45,7 @@ from tests.e2e.conftest import (
     register_tenant_and_wait,
 )
 from tests.e2e.span_capture import (
+    REPLAY_IDENTITY_ATTRIBUTE,
     capture_spans,
     load_capture_json,
     replay_spans,
@@ -813,6 +814,8 @@ def _count_spans_by_name_in_pod(
     tenant_id: str,
     span_name_symbol: str,
     lookback_hours: float | None = None,
+    *,
+    replayed_only: bool = False,
 ) -> int:
     """Count spans of one training-span type for a tenant, via the runtime pod.
 
@@ -832,7 +835,17 @@ def _count_spans_by_name_in_pod(
         f"tm = get_telemetry_manager(); "
         f"tp = tm.get_provider(tenant_id={tenant_id!r}); "
         f"df = asyncio.run(_query_spans_by_name(tm, tp, {tenant_id!r}, {span_name_symbol}, {lookback_hours!r})); "
-        "print('__SPANS__' + str(len(df)))"
+        + (
+            # Replayed spans carry the capture identity; organic spans the
+            # agents emit during a run do not. Counting only the marked ones
+            # keeps the corpus check exact while the served population grows.
+            (
+                f"cols = [c for c in df.columns if c.endswith({REPLAY_IDENTITY_ATTRIBUTE!r})]; "
+                "print('__SPANS__' + str(int(df[cols[0]].notna().sum()) if cols else -1))"
+            )
+            if replayed_only
+            else "print('__SPANS__' + str(len(df)))"
+        )
     )
     result = subprocess.run(
         [
@@ -1438,9 +1451,32 @@ def generate_spans_for_batch_jobs(_kubectl_cluster_ready):
         "entity_extraction": capture_counts[span_names[1]],
         "profile_selection": capture_counts[span_names[3]],
     }
-    assert served_scoreable_counts == expected_served_scoreable_counts, (
-        f"Phoenix served-scoreable counts drifted from the committed capture: "
-        f"served={served_scoreable_counts} expected={expected_served_scoreable_counts}"
+    # The replayed corpus must be present EXACTLY -- that is what pins the
+    # committed capture. The SERVED population is a superset: agents emit
+    # organic spans of these same types while a run optimizes, so requiring
+    # equality there fails on whatever the previous run happened to emit.
+    replayed_counts = {
+        "query_enhancement": _count_spans_by_name_in_pod(
+            TENANT_ID, span_names[2], replayed_only=True
+        ),
+        "entity_extraction": _count_spans_by_name_in_pod(
+            TENANT_ID, span_names[1], replayed_only=True
+        ),
+        "profile_selection": _count_spans_by_name_in_pod(
+            TENANT_ID, span_names[3], replayed_only=True
+        ),
+    }
+    assert replayed_counts == expected_served_scoreable_counts, (
+        f"Replayed corpus drifted from the committed capture: "
+        f"replayed={replayed_counts} expected={expected_served_scoreable_counts}"
+    )
+    missing_floor = {
+        key: (served_scoreable_counts[key], floor)
+        for key, floor in expected_served_scoreable_counts.items()
+        if served_scoreable_counts[key] < floor
+    }
+    assert missing_floor == {}, (
+        f"Served population fell below the replayed corpus: {missing_floor}"
     )
 
     _clear_approved_synthetic_in_pod(TENANT_ID)
