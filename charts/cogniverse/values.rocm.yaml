@@ -137,11 +137,12 @@ inference:
         memory: "32Gi"
 
   # Qwen3.6-27B at AWQ-INT4 needs ~14.5 GiB of weights before any KV cache.
-  # Added to the serving set it puts the pool past the budget above, so it is
-  # not resident on this host. Enable it for a distillation run, which scales
-  # the serving models it does not need down first.
+  # Resident alongside the serving set: the enabled fractions sum to 0.66 of
+  # the pool with it. Required by the DSPy compile path, which builds
+  # teacher_settings for every optimization job.
   vllm_llm_teacher:
-    enabled: false
+    enabled: true
+    replicaCount: 1
     device: rocm
     gpuCount: 1
     imagesByDevice: *vllmRocmImage
