@@ -1457,13 +1457,13 @@ def generate_spans_for_batch_jobs(_kubectl_cluster_ready):
     # equality there fails on whatever the previous run happened to emit.
     replayed_counts = {
         "query_enhancement": _count_spans_by_name_in_pod(
-            TENANT_ID, span_names[2], replayed_only=True
+            TENANT_ID, "SPAN_NAME_QUERY_ENHANCEMENT", replayed_only=True
         ),
         "entity_extraction": _count_spans_by_name_in_pod(
-            TENANT_ID, span_names[1], replayed_only=True
+            TENANT_ID, "SPAN_NAME_ENTITY_EXTRACTION", replayed_only=True
         ),
         "profile_selection": _count_spans_by_name_in_pod(
-            TENANT_ID, span_names[3], replayed_only=True
+            TENANT_ID, "SPAN_NAME_PROFILE_SELECTION", replayed_only=True
         ),
     }
     assert replayed_counts == expected_served_scoreable_counts, (
