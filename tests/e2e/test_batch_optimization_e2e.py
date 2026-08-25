@@ -2740,8 +2740,32 @@ def _assert_simba_served_the_best_module(result: dict, blob_before: str) -> dict
         "reject": result["baseline_score"],
     }[result["decision"]]
     assert served_score >= result["baseline_score"], result
-    expected_selection = _selection_summary_in_pod(TENANT_ID, "simba_query_enhancement")
-    assert result["selection"] == expected_selection, result
+    # query_enhancement is self-referential: the optimizer's own evaluation calls
+    # emit query_enhancement spans into the same lookback window, so the served
+    # pool grows as a result of being read. Comparing the recorded selection to a
+    # live re-read can only match if nothing ran in between. Pin the recorded
+    # selection's internal invariants exactly, and require the live view to differ
+    # from it only by that growth.
+    live_selection = _selection_summary_in_pod(TENANT_ID, "simba_query_enhancement")
+    selection = result["selection"]
+    assert selection["cap"] == live_selection["cap"], (selection, live_selection)
+    assert selection["decayed_count"] == live_selection["decayed_count"], (
+        selection,
+        live_selection,
+    )
+    assert selection["mmr_applied"] == (selection["deduped"] > selection["cap"]), (
+        selection
+    )
+    assert live_selection["mmr_applied"] == (
+        live_selection["deduped"] > live_selection["cap"]
+    ), live_selection
+    assert selection["deduped"] <= selection["pool"], selection
+    assert live_selection["deduped"] <= live_selection["pool"], live_selection
+    assert selection["pool"] <= live_selection["pool"], (selection, live_selection)
+    assert selection["deduped"] <= live_selection["deduped"], (
+        selection,
+        live_selection,
+    )
     assert result["selection"]["cap"] == _training_selection_cap_from_shipped_config(
         "simba_query_enhancement"
     ), result
