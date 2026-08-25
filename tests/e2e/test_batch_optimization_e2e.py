@@ -104,7 +104,9 @@ NAMESPACE = "cogniverse"
 DEPLOYMENT = "deploy/cogniverse-runtime"
 CONTAINER = "runtime"
 DATA_ROOT = Path(__file__).resolve().parents[2] / "data"
-OPTIMIZER_SPAN_CAPTURE_PATH = DATA_ROOT / "optimizer_span_capture.json"
+OPTIMIZER_SPAN_CAPTURE_PATH = (
+    Path(__file__).resolve().parent / "data" / "optimizer_span_capture.json"
+)
 OPTIMIZER_SPAN_CAPTURE_MODE_ENV = "BATCH_SPAN_CAPTURE_MODE"
 # Each batch job analyses the spans this module's fixtures emitted: the
 # lookback is measured from the moment span seeding started (plus a small
@@ -3394,41 +3396,72 @@ class TestBatchJobsReadCorrectSpanTypes:
             f"Phoenix span query for {span_name!r} kept failing: {last_error!r}"
         )
 
-    def test_gateway_spans_exist(self):
-        """Phoenix has cogniverse.gateway spans for gateway-thresholds job."""
-        assert self._project_has_spans_named("cogniverse.gateway"), (
-            "No cogniverse.gateway spans found in Phoenix. "
-            "Run some queries through the gateway first."
+    def _span_counts_by_name(self, span_names: tuple[str, ...]) -> dict[str, int]:
+        """Exact per-name span counts in the tenant's project, session-scoped."""
+        from datetime import datetime, timedelta, timezone
+
+        from phoenix.client.types.spans import SpanQuery
+
+        project_name = f"cogniverse-{TENANT_ID}"
+        window_start = datetime.now(timezone.utc) - timedelta(hours=3)
+        predicate = " or ".join(f"name == '{name}'" for name in span_names)
+        query = SpanQuery().where(predicate)
+        last_error: Exception | None = None
+        for _ in range(3):
+            try:
+                df = self.client.spans.get_spans_dataframe(
+                    project_identifier=project_name,
+                    start_time=window_start,
+                    query=query,
+                    timeout=90,
+                )
+                if df is None or df.empty or "name" not in df.columns:
+                    return {}
+                return {
+                    str(name): int(count)
+                    for name, count in df["name"].value_counts().items()
+                }
+            except Exception as e:  # noqa: BLE001 - retried, then surfaced
+                last_error = e
+                time.sleep(3)
+        raise AssertionError(f"Phoenix span count query kept failing: {last_error!r}")
+
+    def test_every_recorded_span_reached_phoenix(self):
+        """Replay delivered the committed corpus in full, name for name.
+
+        The optimizer trains on what this project holds, so a replay that
+        drops a name or under-delivers a count silently shrinks the training
+        population below the shipped floor. Names come from the production
+        SPAN_NAME_* constants and counts from the committed capture, so a
+        rename or a thinner re-record breaks this test rather than being
+        absorbed by it. The tenant is shared with other e2e modules that also
+        drive agents, so the count contract is "nothing recorded was dropped",
+        not an equality that another module's traffic would falsify.
+        """
+        span_names = _optimizer_span_capture_names()
+        expected = collections.Counter(
+            record["name"] for record in load_capture_json(OPTIMIZER_SPAN_CAPTURE_PATH)
+        )
+        assert set(expected) == set(span_names), (
+            "committed capture names diverged from the production constants: "
+            f"capture={sorted(expected)} constants={sorted(span_names)}"
         )
 
-    def test_query_enhancement_spans_exist(self):
-        """Phoenix has cogniverse.query_enhancement spans for SIMBA job."""
-        assert self._project_has_spans_named("cogniverse.query_enhancement"), (
-            "No cogniverse.query_enhancement spans found in Phoenix. "
-            "Run some complex queries that trigger enhancement first."
+        observed = self._span_counts_by_name(span_names)
+        assert set(observed) == set(span_names), (
+            "Phoenix is missing recorded span names: "
+            f"expected={sorted(span_names)} observed={sorted(observed)}"
         )
-
-    def test_orchestration_spans_exist(self):
-        """Phoenix has cogniverse.orchestration spans for workflow job."""
-        assert self._project_has_spans_named("cogniverse.orchestration"), (
-            "No cogniverse.orchestration spans found in Phoenix. "
-            "Run some complex queries that trigger orchestration first."
-        )
-
-    def test_profile_selection_spans_exist(self):
-        """Phoenix has cogniverse.profile_selection spans for profile job."""
-        assert self._project_has_spans_named("cogniverse.profile_selection"), (
-            "No cogniverse.profile_selection spans found in Phoenix. "
-            "Run some queries that trigger profile selection first."
+        shortfalls = {
+            name: (observed[name], expected[name])
+            for name in span_names
+            if observed[name] < expected[name]
+        }
+        assert shortfalls == {}, (
+            f"replay under-delivered (phoenix, capture): {shortfalls}"
         )
 
 
-# ---------------------------------------------------------------------------
-# 5. Entity extraction optimization
-# ---------------------------------------------------------------------------
-
-
-@pytest.mark.e2e
 class TestEntityExtractionOptimization:
     """Verify entity extraction batch job compiles the entity extraction module."""
 
