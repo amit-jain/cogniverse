@@ -2457,9 +2457,13 @@ def _assert_simba_served_the_best_module(result: dict, blob_before: str) -> dict
     assert result["selection"]["cap"] == _training_selection_cap_from_shipped_config(
         "simba_query_enhancement"
     ), result
+    assert result["training_examples"] == min(
+        result["selection"]["deduped"], result["selection"]["cap"]
+    ), result
     assert (
-        result["training_examples"]
-        == min(result["selection"]["deduped"], result["selection"]["cap"])
+        result["selection"]["pool"]
+        == result["examples"]
+        - result["holdout_examples"]
         - result["non_trainable_examples"]
     ), result
     assert result["selection"]["mmr_applied"] == (

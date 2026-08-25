@@ -2660,18 +2660,19 @@ async def run_simba_optimization(
     served_examples = production_count
     approved_examples = len(synthetic_demos)
     train_records, holdout_records = _split_served_holdout(records, min_holdout)
+    trainable_records = [r for r in train_records if r["trainable"]]
+    non_trainable_examples = len(train_records) - len(trainable_records)
     train_records, selection_report = await _apply_training_selection(
         artifact_manager=artifact_manager,
         config_manager=config_manager,
         tenant_id=tenant_id,
         optimizer_type="simba_query_enhancement",
         artifact_key=SIMBA_ARTIFACT_KEY,
-        train_records=train_records,
+        train_records=trainable_records,
         embedder_url=embedder_url,
     )
     selection_summary = _selection_summary(selection_report)
-    trainset = [_query_enhancement_example(r) for r in train_records if r["trainable"]]
-    non_trainable_examples = len(train_records) - len(trainset)
+    trainset = [_query_enhancement_example(r) for r in train_records]
     holdout = [_query_enhancement_example(r) for r in holdout_records]
     logger.info(
         "Merged %d synthetic + %d production = %d records: %d trainable, %d holdout",
