@@ -66,6 +66,9 @@ def _normalize_name_filter(
     return list(span_names)
 
 
+REPLAY_IDENTITY_ATTRIBUTE = "cogniverse.replay.capture_span_id"
+
+
 def _capture_identity(record: SpanRecord) -> str:
     context = record.get("context")
     if isinstance(context, dict):
@@ -225,7 +228,10 @@ def _existing_span_ids(
     existing: set[str] = set()
     for start in range(0, len(span_ids), _QUERY_BATCH_SIZE):
         batch = span_ids[start : start + _QUERY_BATCH_SIZE]
-        predicate = "span_id in [" + ", ".join(repr(span_id) for span_id in batch) + "]"
+        quoted = ", ".join(repr(span_id) for span_id in batch)
+        # Replay mints fresh span ids, so a replayed span is identified by the
+        # marker it carries, never by context.span_id.
+        predicate = f"attributes['{REPLAY_IDENTITY_ATTRIBUTE}'] in [{quoted}]"
         spans = client.spans.get_spans_dataframe(
             project_identifier=project_name,
             query=SpanQuery().where(predicate),
@@ -233,9 +239,14 @@ def _existing_span_ids(
             timeout=120,
             start_time=start_time,
         )
-        if spans.empty or "context.span_id" not in spans.columns:
+        column = f"attributes.{REPLAY_IDENTITY_ATTRIBUTE}"
+        if spans.empty:
             continue
-        existing.update(str(span_id) for span_id in spans["context.span_id"].dropna())
+        if column not in spans.columns:
+            column = REPLAY_IDENTITY_ATTRIBUTE
+            if column not in spans.columns:
+                continue
+        existing.update(str(value) for value in spans[column].dropna())
     return existing
 
 
@@ -408,7 +419,10 @@ def replay_spans(
                 record["name"],
                 context=parent_context,
                 kind=OTelSpanKind.INTERNAL,
-                attributes=_span_attributes(record),
+                attributes={
+                    **_span_attributes(record),
+                    REPLAY_IDENTITY_ATTRIBUTE: _capture_identity(record),
+                },
                 start_time=start_ns,
             )
 

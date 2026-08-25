@@ -1315,10 +1315,12 @@ def generate_spans_for_batch_jobs(_kubectl_cluster_ready):
         from datetime import timezone as _tz
 
         replay_spans(
-            # The corpus was recorded from this tenant, so its ids still match
-            # their own originals. Bound the dedup to the run's own window or
-            # those originals suppress the replay and the window stays empty.
-            existing_since=_dt.now(_tz.utc) - _td(minutes=30),
+            # Dedup over exactly the window the counts are read from. The
+            # corpus was recorded from this tenant, so an unbounded check
+            # matches each record against its own original and suppresses
+            # the replay; a window wider than the read window would skip a
+            # replay whose spans have already aged out of it.
+            existing_since=_dt.now(_tz.utc) - _td(hours=_module_lookback_hours()),
             capture_path=OPTIMIZER_SPAN_CAPTURE_PATH,
             phoenix_http_endpoint=PHOENIX_URL,
             tenant_id=TENANT_ID,
