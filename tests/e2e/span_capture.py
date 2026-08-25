@@ -5,7 +5,7 @@ from __future__ import annotations
 import copy
 import json
 import time
-from collections.abc import Sequence
+from collections.abc import Mapping, Sequence
 from dataclasses import asdict, is_dataclass
 from datetime import date, datetime, timedelta, timezone
 from enum import Enum
@@ -145,6 +145,34 @@ def load_capture_json(path: str | Path) -> list[SpanRecord]:
             raise SpanCaptureFileError(f"capture file is unreadable: {capture_path}")
         _validate_record(record, path=capture_path)
     return loaded
+
+
+def sample_capture_by_name(
+    records: Sequence[SpanRecord], caps: Mapping[str, int]
+) -> list[SpanRecord]:
+    """Bound each capped span name to ``cap`` evenly-spaced records.
+
+    Selection walks the whole recording rather than its head, so a bounded
+    corpus still spans the traffic the recording covers. Names absent from
+    ``caps`` pass through whole, and the recording's relative order is kept.
+    """
+    for name, cap in caps.items():
+        if cap < 1:
+            raise SpanCaptureError(
+                f"capture sample cap for {name!r} must be >= 1; got {cap}"
+            )
+    positions: dict[str, list[int]] = {}
+    for index, record in enumerate(records):
+        positions.setdefault(str(record.get("name", "")), []).append(index)
+    keep: set[int] = set()
+    for name, indices in positions.items():
+        cap = caps.get(name)
+        if cap is None or cap >= len(indices):
+            keep.update(indices)
+            continue
+        population = len(indices)
+        keep.update(indices[slot * population // cap] for slot in range(cap))
+    return [record for index, record in enumerate(records) if index in keep]
 
 
 def write_capture_json(path: str | Path, spans: Sequence[SpanRecord]) -> None:
@@ -348,9 +376,17 @@ def replay_spans(
     span_exporter: SpanExporter | None = None,
     existing_span_ids: Sequence[str] | None = None,
     existing_since: Any | None = None,
+    sample_caps: Mapping[str, int] | None = None,
 ) -> list[SpanRecord]:
-    """Replay a capture file into Phoenix with current timestamps."""
+    """Replay a capture file into Phoenix with current timestamps.
+
+    ``sample_caps`` bounds each named span type to that many evenly-spaced
+    records, so a recording can exceed what a run needs without the run
+    paying for the surplus.
+    """
     records = load_capture_json(capture_path)
+    if sample_caps:
+        records = sample_capture_by_name(records, sample_caps)
     project = project_name or _project_name(tenant_id)
     span_ids = [_capture_identity(record) for record in records]
     if existing_span_ids is None:
