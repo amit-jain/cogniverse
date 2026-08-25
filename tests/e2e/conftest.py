@@ -1621,10 +1621,12 @@ def _e2e_docker_network_gateway_ip() -> str:
     return gateway_ip
 
 
-# The teacher requests 20Gi and the node has ~11Gi of schedulable memory left
-# once the rest of the stack is placed, so video embedding makes room for it.
-# Span replay and the DSPy compile issue no video queries.
-_E2E_DISABLED_INFERENCE_SERVICES = frozenset({"vllm_colpali"})
+# The teacher needs 20Gi of the node's 123.5Gi. Video embedding and
+# transcription cannot make room for it -- the session fixture ingests the
+# corpus, and the shipped profiles bind embedding to vllm_colpali and
+# transcription to vllm_asr. Only the code retriever is unused here, so the
+# rest of the room comes from right-sizing requests to measured usage.
+_E2E_DISABLED_INFERENCE_SERVICES = frozenset({"code_colbert_pylate"})
 
 
 def _e2e_deployment_overrides() -> dict[str, str]:
