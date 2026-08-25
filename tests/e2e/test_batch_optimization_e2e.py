@@ -21,6 +21,7 @@ Requires live k3d stack via `cogniverse up` with:
 import collections
 import functools
 import json
+import math
 import os
 import subprocess
 import textwrap
@@ -47,6 +48,7 @@ from tests.e2e.span_capture import (
     capture_spans,
     load_capture_json,
     replay_spans,
+    sample_capture_by_name,
     write_capture_json,
 )
 from tests.e2e.test_api_e2e import _deploy_profile_for_tenant
@@ -207,6 +209,39 @@ def _grounded_query(
         for index, entity_text in enumerate(entity_texts)
     ]
     return (query, entities, [])
+
+
+# A run needs a population above each optimizer's shipped floor, not the
+# largest population the recording happens to hold: every surplus record is
+# another sequential LM call in the DSPy compile. The margin keeps the corpus
+# clear of the floor without paying for the surplus.
+OPTIMIZER_CAPTURE_FLOOR_MARGIN = 1.2
+
+
+def _optimizer_capture_sample_caps() -> dict[str, int]:
+    """Per-span-name replay caps derived from the shipped population floors.
+
+    Span names carrying no shipped floor are left uncapped: the recording
+    already holds only what their tests consume.
+    """
+    from cogniverse_foundation.telemetry.config import (
+        SPAN_NAME_ENTITY_EXTRACTION,
+        SPAN_NAME_PROFILE_SELECTION,
+        SPAN_NAME_QUERY_ENHANCEMENT,
+    )
+
+    floored_names = {
+        SPAN_NAME_QUERY_ENHANCEMENT: "simba_query_enhancement",
+        SPAN_NAME_PROFILE_SELECTION: "profile_selection",
+        SPAN_NAME_ENTITY_EXTRACTION: "entity_extraction",
+    }
+    caps: dict[str, int] = {}
+    for span_name, optimizer_type in floored_names.items():
+        floor, min_unique = _population_floor_from_shipped_config(optimizer_type)
+        caps[span_name] = max(
+            math.ceil(floor * OPTIMIZER_CAPTURE_FLOOR_MARGIN), min_unique
+        )
+    return caps
 
 
 @functools.lru_cache(maxsize=None)
@@ -1314,6 +1349,7 @@ def generate_spans_for_batch_jobs(_kubectl_cluster_ready):
         from datetime import timedelta as _td
         from datetime import timezone as _tz
 
+        sample_caps = _optimizer_capture_sample_caps()
         replay_spans(
             # Dedup over exactly the window the counts are read from. The
             # corpus was recorded from this tenant, so an unbounded check
@@ -1324,6 +1360,7 @@ def generate_spans_for_batch_jobs(_kubectl_cluster_ready):
             capture_path=OPTIMIZER_SPAN_CAPTURE_PATH,
             phoenix_http_endpoint=PHOENIX_URL,
             tenant_id=TENANT_ID,
+            sample_caps=sample_caps,
         )
         capture_records = load_capture_json(OPTIMIZER_SPAN_CAPTURE_PATH)
         captured_counts = collections.Counter(
@@ -1337,9 +1374,43 @@ def generate_spans_for_batch_jobs(_kubectl_cluster_ready):
         assert captured_counts[span_names[2]] == 343, captured_counts
         assert captured_counts[span_names[3]] == 204, captured_counts
         assert captured_counts[span_names[4]] == 60, captured_counts
+        # Every downstream expectation reads the REPLAYED subset, never the
+        # archive: expecting spans the replay never sent is unsatisfiable by
+        # construction and no timeout can rescue it.
+        replayed_records = sample_capture_by_name(capture_records, sample_caps)
+        replayed_counts = collections.Counter(
+            record["name"] for record in replayed_records
+        )
+        for capped_name, cap in sample_caps.items():
+            assert replayed_counts[capped_name] == cap, replayed_counts
+        assert replayed_counts[span_names[0]] == captured_counts[span_names[0]], (
+            replayed_counts
+        )
+        assert replayed_counts[span_names[4]] == captured_counts[span_names[4]], (
+            replayed_counts
+        )
+        for capped_name, optimizer_type in (
+            (span_names[2], "simba_query_enhancement"),
+            (span_names[3], "profile_selection"),
+            (span_names[1], "entity_extraction"),
+        ):
+            floor, min_unique = _population_floor_from_shipped_config(optimizer_type)
+            distinct = {
+                str(record["attributes"].get("input.value") or "")
+                for record in replayed_records
+                if record["name"] == capped_name
+            }
+            assert replayed_counts[capped_name] >= floor, (
+                f"{capped_name} replay {replayed_counts[capped_name]} is below the "
+                f"shipped floor {floor}; synthetic top-up would run"
+            )
+            assert len(distinct) >= min_unique, (
+                f"{capped_name} replay carries {len(distinct)} distinct queries, "
+                f"below the shipped minimum {min_unique}"
+            )
         captured_query_enhancement_queries = {
             str(record["attributes"].get("input.value") or "")
-            for record in capture_records
+            for record in replayed_records
             if record["name"] == span_names[2]
         }
         lookback_hours = _module_lookback_hours()
@@ -2644,10 +2715,14 @@ def _assert_simba_served_the_best_module(result: dict, blob_before: str) -> dict
     assert result["holdout_examples"] == max(
         1, result["served_scoreable_examples"] // 4
     ), result
+    # Simba filters non-trainable records BEFORE selection, so the pool
+    # selection sees is the trainable remainder of the train split. Profile
+    # and entity extraction have no such filter and keep the plain identity.
     assert result["selection"]["pool"] == (
         result["served_examples"]
         - result["holdout_examples"]
         + result["approved_examples"]
+        - result["non_trainable_examples"]
     ), result
     assert result["holdout_source"] == "served", result
     assert result["decision"] in BLOB_VERSION_DECISIONS, result
@@ -3449,8 +3524,19 @@ class TestBatchJobsReadCorrectSpanTypes:
         not an equality that another module's traffic would falsify.
         """
         span_names = _optimizer_span_capture_names()
+        # The archive pins the NAMES; the replayed subset pins the COUNTS.
+        # Comparing Phoenix against the archive would demand spans the run
+        # deliberately did not send.
+        archive_records = load_capture_json(OPTIMIZER_SPAN_CAPTURE_PATH)
         expected = collections.Counter(
-            record["name"] for record in load_capture_json(OPTIMIZER_SPAN_CAPTURE_PATH)
+            record["name"]
+            for record in sample_capture_by_name(
+                archive_records, _optimizer_capture_sample_caps()
+            )
+        )
+        assert set(expected) == set(record["name"] for record in archive_records), (
+            "sampling dropped a recorded span name entirely: "
+            f"sampled={sorted(expected)}"
         )
         assert set(expected) == set(span_names), (
             "committed capture names diverged from the production constants: "

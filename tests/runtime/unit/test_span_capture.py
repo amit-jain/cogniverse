@@ -20,6 +20,7 @@ from tests.e2e.span_capture import (
     capture_spans,
     load_capture_json,
     replay_spans,
+    sample_capture_by_name,
     write_capture_json,
 )
 
@@ -729,3 +730,86 @@ class TestReplayIsIdempotentWithinTheWindow:
             "the replayed span must carry the recorded span_id so a later "
             f"replay can skip it; attributes={dict(finished[0].attributes)}"
         )
+
+
+def _named_records(name: str, count: int) -> list[dict[str, object]]:
+    """``count`` records for ``name``, each tagged with its ordinal."""
+    return [
+        _span_record(
+            name=name,
+            trace_id=f"t{index:04d}",
+            span_id=f"s-{name}-{index:04d}",
+            start_time="2026-08-25T10:00:00+00:00",
+            end_time="2026-08-25T10:00:01+00:00",
+            attributes={"input.value": f"{name}-{index}", "output.value": "out"},
+        )
+        for index in range(count)
+    ]
+
+
+class TestSampleCaptureByName:
+    """``sample_capture_by_name`` bounds a recording without truncating it."""
+
+    def test_selects_evenly_spaced_records_not_the_head(self):
+        records = _named_records("cogniverse.query_enhancement", 10)
+
+        sampled = sample_capture_by_name(records, {"cogniverse.query_enhancement": 4})
+
+        assert [record["attributes"]["input.value"] for record in sampled] == [
+            "cogniverse.query_enhancement-0",
+            "cogniverse.query_enhancement-2",
+            "cogniverse.query_enhancement-5",
+            "cogniverse.query_enhancement-7",
+        ]
+
+    def test_names_absent_from_caps_pass_through_whole(self):
+        records = _named_records("cogniverse.gateway", 3) + _named_records(
+            "cogniverse.query_enhancement", 6
+        )
+
+        sampled = sample_capture_by_name(records, {"cogniverse.query_enhancement": 2})
+
+        assert collections.Counter(record["name"] for record in sampled) == {
+            "cogniverse.gateway": 3,
+            "cogniverse.query_enhancement": 2,
+        }
+
+    def test_cap_at_or_above_population_returns_every_record(self):
+        records = _named_records("cogniverse.entity_extraction", 5)
+
+        sampled = sample_capture_by_name(records, {"cogniverse.entity_extraction": 9})
+
+        assert sampled == records
+
+    def test_preserves_the_recordings_relative_order_across_names(self):
+        records = [
+            _named_records("cogniverse.gateway", 1)[0],
+            _named_records("cogniverse.query_enhancement", 4)[0],
+            _named_records("cogniverse.gateway", 2)[1],
+        ]
+
+        sampled = sample_capture_by_name(records, {"cogniverse.gateway": 2})
+
+        assert [record["context"]["span_id"] for record in sampled] == [
+            record["context"]["span_id"] for record in records
+        ]
+
+    def test_is_deterministic_across_calls(self):
+        records = _named_records("cogniverse.profile_selection", 37)
+        caps = {"cogniverse.profile_selection": 11}
+
+        first = sample_capture_by_name(records, caps)
+        second = sample_capture_by_name(records, caps)
+
+        assert [record["context"]["span_id"] for record in first] == [
+            record["context"]["span_id"] for record in second
+        ]
+
+    def test_rejects_a_cap_below_one(self):
+        records = _named_records("cogniverse.query_enhancement", 3)
+
+        with pytest.raises(SpanCaptureError) as excinfo:
+            sample_capture_by_name(records, {"cogniverse.query_enhancement": 0})
+
+        assert "cogniverse.query_enhancement" in str(excinfo.value)
+        assert "0" in str(excinfo.value)
