@@ -136,7 +136,7 @@ inference:
         cpu: "4"
         memory: "32Gi"
 
-  # Qwen3.6-27B at AWQ-INT4 needs ~14.5 GiB of weights before any KV cache.
+  # Qwen3 14B at AWQ-INT4 needs ~9.29 GiB of weights before any KV cache.
   # Resident alongside the serving set: the enabled fractions sum to 0.66 of
   # the pool with it. Required by the DSPy compile path, which builds
   # teacher_settings for every optimization job.

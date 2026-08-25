@@ -2,6 +2,7 @@ import pytest
 from cogniverse_cli.modal_inference_config import (
     INFERENCE_SERVICE_SPECS,
     EndpointAuth,
+    InferenceServiceSpec,
     get_inference_service_spec,
 )
 
@@ -41,6 +42,11 @@ EXPECTED_MODELS = {
         "ee0ef6023621cff504d758262d4e04895a5af4a2",
         None,
     ),
+    "vllm_llm_teacher": (
+        "Qwen/Qwen3-14B-AWQ",
+        "31c69efc29464b6bb0aee1398b5a7b50a99340c3",
+        None,
+    ),
     "vllm_asr": (
         "openai/whisper-large-v3-turbo",
         "41f01f3fe87f28c78e2fbf8b568835947dd65ed9",
@@ -57,6 +63,8 @@ EXPECTED_MODELS = {
         512,
     ),
 }
+
+EXPECTED_HF_TOKEN_SERVICES = {"vllm_llm_student", "vllm_llm_teacher"}
 
 
 def test_definitions_pin_every_production_model_contract():
@@ -77,6 +85,27 @@ def test_tomoro_definition_retains_the_production_encoder_dimension():
     assert spec.min_containers == 0
 
 
+def test_teacher_definition_pins_the_production_chat_contract():
+    spec = get_inference_service_spec("vllm_llm_teacher")
+
+    assert spec == InferenceServiceSpec(
+        name="vllm_llm_teacher",
+        model_id="Qwen/Qwen3-14B-AWQ",
+        model_revision="31c69efc29464b6bb0aee1398b5a7b50a99340c3",
+        output_dimension=None,
+        gpu_candidates=("L4", "A10", "L40S"),
+        requires_hf_token=True,
+    )
+
+
+def test_exact_hf_token_services_are_the_chat_models():
+    observed = {
+        name for name, spec in INFERENCE_SERVICE_SPECS.items() if spec.requires_hf_token
+    }
+
+    assert observed == EXPECTED_HF_TOKEN_SERVICES
+
+
 def test_videoprism_definition_pins_source_and_checkpoint_independently():
     spec = get_inference_service_spec("videoprism_jax")
 
@@ -87,8 +116,8 @@ def test_videoprism_definition_pins_source_and_checkpoint_independently():
 def test_each_service_has_an_independent_scale_to_zero_app():
     specs = tuple(INFERENCE_SERVICE_SPECS.values())
 
-    assert len(specs) == 10
-    assert len({spec.modal_app for spec in specs}) == 10
+    assert len(specs) == 11
+    assert len({spec.modal_app for spec in specs}) == 11
     assert all(
         spec.modal_app == f"cogniverse-{spec.name.replace('_', '-')}" for spec in specs
     )

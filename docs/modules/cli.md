@@ -72,8 +72,12 @@ graph TD
 ```
 
 Top-level command modules live directly under `cogniverse_cli/`. `modal_inference/`
-holds the service apps, and `modal_inference_config.py`, `inference_endpoints.py`,
-and `modal_inference_lifecycle.py` define the Modal service contracts and lifecycle.
+holds the service apps, including the student and teacher vLLM Modal apps, and
+`modal_inference_config.py`, `inference_endpoints.py`, and
+`modal_inference_lifecycle.py` define the Modal service contracts and lifecycle.
+`modal_inference_config.py` is the canonical source for each service's immutable
+model revision, GPU candidates, and secret requirements such as
+`requires_hf_token`.
 
 ---
 
