@@ -11,6 +11,7 @@ from opentelemetry.sdk.trace.export.in_memory_span_exporter import (
     InMemorySpanExporter,
 )
 
+from tests.e2e import span_capture
 from tests.e2e.span_capture import (
     SpanCaptureError,
     SpanCaptureFileError,
@@ -565,3 +566,70 @@ def test_committed_capture_carries_the_canonical_io_slots():
         or not str(record["attributes"].get("output.value") or "").strip()
     ]
     assert missing == []
+
+
+class TestReplayExportContract:
+    """Replay must reach Phoenix over the protocol the endpoint speaks.
+
+    OTLP exporters log and drop on failure, so a wrong protocol or port is
+    silently successful: the caller sees a full record list while Phoenix
+    receives nothing, and the only symptom is an optimizer training on an
+    empty population.
+    """
+
+    def _one_record_capture(self, tmp_path):
+        record = _span_record(
+            name="cogniverse.query_enhancement",
+            span_id="aa" * 8,
+            trace_id="bb" * 16,
+            start_time="2026-08-25T10:00:00+00:00",
+            end_time="2026-08-25T10:00:01+00:00",
+            attributes={"input.value": "q", "output.value": "enhanced q"},
+        )
+        path = tmp_path / "capture.json"
+        path.write_text(json.dumps([record]))
+        return path
+
+    def test_default_exporter_targets_the_otlp_http_traces_path(
+        self, tmp_path, monkeypatch
+    ):
+        """The endpoint is an HTTP API URL, so the HTTP exporter is required."""
+        seen: dict[str, object] = {}
+
+        class RecordingHttpExporter(InMemorySpanExporter):
+            def __init__(self, **kwargs):
+                super().__init__()
+                seen.update(kwargs)
+
+        import opentelemetry.exporter.otlp.proto.http.trace_exporter as http_mod
+
+        monkeypatch.setattr(http_mod, "OTLPSpanExporter", RecordingHttpExporter)
+
+        span_capture.replay_spans(
+            capture_path=self._one_record_capture(tmp_path),
+            phoenix_http_endpoint="http://localhost:33006",
+            tenant_id="acme:prod",
+        )
+
+        assert seen.get("endpoint") == "http://localhost:33006/v1/traces", (
+            f"replay must post to the OTLP HTTP traces path; exporter kwargs={seen}"
+        )
+
+    def test_failed_export_raises_instead_of_reporting_success(self, tmp_path):
+        """A dropped export must surface, not return a full record list."""
+
+        class FailingExporter(InMemorySpanExporter):
+            def export(self, spans):
+                from opentelemetry.sdk.trace.export import SpanExportResult
+
+                return SpanExportResult.FAILURE
+
+        with pytest.raises(span_capture.SpanCaptureError) as excinfo:
+            span_capture.replay_spans(
+                capture_path=self._one_record_capture(tmp_path),
+                phoenix_http_endpoint="http://localhost:33006",
+                tenant_id="acme:prod",
+                span_exporter=FailingExporter(),
+            )
+
+        assert "export failed" in str(excinfo.value), str(excinfo.value)
