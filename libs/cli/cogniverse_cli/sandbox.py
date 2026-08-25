@@ -142,6 +142,17 @@ def gateway_running() -> bool:
     gateway that died still reports an endpoint. Callers use this to decide
     whether to start one, so the advertised port is dialled here.
     """
+    return gateway_registered() and gateway_port_accepting_connections()
+
+
+def gateway_registered() -> bool:
+    """Return True if a gateway registration exists, live or not.
+
+    ``gateway info`` reads ``metadata.json`` and the ``active_gateway``
+    pointer, both of which outlive the process. Callers pair this with
+    ``gateway_port_accepting_connections`` to tell a live gateway from a
+    stale record.
+    """
     if not openshell_installed():
         return False
     try:
@@ -154,9 +165,7 @@ def gateway_running() -> bool:
         )
     except (subprocess.TimeoutExpired, FileNotFoundError):
         return False
-    if result.returncode != 0 or "Gateway endpoint" not in result.stdout:
-        return False
-    return gateway_port_accepting_connections()
+    return result.returncode == 0 and "Gateway endpoint" in result.stdout
 
 
 def gateway_port_accepting_connections(timeout_s: float = 2.0) -> bool:
@@ -192,10 +201,21 @@ def start_gateway() -> bool:
         return False
 
     host_port = os.environ.get("OPENSHELL_GATEWAY_HOST_PORT", "28080")
-    console.print(f"Starting OpenShell gateway on port {host_port}...")
+    argv = ["openshell", "gateway", "start", "--port", str(host_port)]
+    if gateway_registered() and not gateway_port_accepting_connections():
+        # The registration survived the process it describes. Without
+        # --recreate the CLI reuses it silently when non-interactive, so the
+        # port stays closed and every later start is a no-op.
+        argv.append("--recreate")
+        console.print(
+            f"Recreating OpenShell gateway on port {host_port} "
+            "(registered but not accepting connections)..."
+        )
+    else:
+        console.print(f"Starting OpenShell gateway on port {host_port}...")
     try:
         result = subprocess.run(
-            ["openshell", "gateway", "start", "--port", str(host_port)],
+            argv,
             capture_output=True,
             text=True,
             timeout=120,
