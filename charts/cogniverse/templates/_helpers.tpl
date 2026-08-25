@@ -140,11 +140,19 @@ generic OpenAI-compatible client can hit /v1/chat/completions.
 
 {{/*
 vLLM teacher LLM endpoint — DSPy compile-time only. Resolves to the
-in-cluster vllm-llm-teacher service. Scale-to-zero by default
-(replicaCount: 0); spun up on-demand by optimization_cli runs.
+teacher entry in ``cogniverse.inferenceServiceUrls`` when that service is
+rendered with ``externalUrl``; otherwise resolves to the in-cluster
+vllm-llm-teacher service. Scale-to-zero by default (replicaCount: 0);
+spun up on-demand by optimization_cli runs.
 */}}
 {{- define "cogniverse.llmTeacherEndpoint" -}}
+{{- $urls := include "cogniverse.inferenceServiceUrls" . | fromJson -}}
+{{- $teacher := index $urls "vllm_llm_teacher" -}}
+{{- if $teacher -}}
+{{- printf "%s/v1" $teacher -}}
+{{- else -}}
 {{- printf "http://%s-vllm-llm-teacher:%d/v1" (include "cogniverse.fullname" .) (int .Values.inference.vllm_llm_teacher.service.port) -}}
+{{- end -}}
 {{- end -}}
 
 {{/*
@@ -356,14 +364,14 @@ service overrides the engine-derived default with `tunableOp`.
 INFERENCE_SERVICE_URLS JSON body — one {service_key: url} entry per enabled
 inference service. A non-empty ``externalUrl`` (an absolute https URL, e.g. a
 Modal endpoint) replaces the cluster-internal Service URL. The LLM services
-are excluded: their endpoints are derived by their own helpers and overridden
-via ``runtime.primaryLLM``.
+use their own helpers: the student is overridden via ``runtime.primaryLLM``,
+while the teacher keeps its key in this map and can point at Modal.
 */}}
 {{- define "cogniverse.inferenceServiceUrls" -}}
 {{- $fullName := include "cogniverse.fullname" . -}}
 {{- range $name, $cfg := .Values.inference -}}
-{{- if and $cfg.externalUrl (or (eq $name "vllm_llm_student") (eq $name "vllm_llm_teacher")) -}}
-{{- fail (printf "inference.%s.externalUrl is unsupported: the LLM endpoint is derived by its own helper; set runtime.primaryLLM.apiBase/model/apiKey instead" $name) -}}
+{{- if and $cfg.externalUrl (eq $name "vllm_llm_student") -}}
+{{- fail (printf "inference.%s.externalUrl is unsupported: the LLM endpoint is derived by runtime.primaryLLM instead" $name) -}}
 {{- end -}}
 {{- end -}}
 {

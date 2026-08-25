@@ -113,6 +113,15 @@ def _service_urls(docs: list[dict]) -> dict[str, str]:
     return json.loads(raw)
 
 
+def _teacher_api_base(docs: list[dict]) -> str:
+    cm = next(
+        d
+        for d in docs
+        if d.get("kind") == "ConfigMap" and "config.json" in (d.get("data") or {})
+    )
+    return json.loads(cm["data"]["config.json"])["llm_config"]["teacher"]["api_base"]
+
+
 def test_default_runs_colbert_pylate_and_denseon_services():
     """Default-enabled inference services: colbert_pylate (LateOn text
     multi-vector), denseon (DenseOn dense single-vector), gliner
@@ -604,11 +613,18 @@ def test_rocm_overlay_wires_tunableop_env_on_rocm_pods_only():
         "vllm_colpali",
         "vllm_asr",
         "vllm_llm_student",
+        "vllm_llm_teacher",
         "denseon",
         "colbert_pylate",
         "code_colbert_pylate",
     }, rocm_pods
-    for key in ("vllm_colpali", "vllm_asr", "vllm_llm_student", "denseon"):
+    for key in (
+        "vllm_colpali",
+        "vllm_asr",
+        "vllm_llm_student",
+        "vllm_llm_teacher",
+        "denseon",
+    ):
         env = _inference_env(deps, key)
         assert env["PYTORCH_TUNABLEOP_ENABLED"] == "1", key
         assert env["PYTORCH_TUNABLEOP_TUNING"] == "1", key
@@ -758,15 +774,15 @@ def test_vllm_transcription_serve_script_pins_the_revision():
 
 
 def test_service_without_a_pinned_revision_renders_no_revision_flag():
-    """vllm_llm_teacher has no entry in the spec map and no pin in values, so
-    the serve args carry no revision rather than an empty one."""
+    """The chart values keep the teacher unpinned even after the spec exists,
+    so the in-cluster Deployment still renders without a revision flag."""
     docs = _render("inference.vllm_llm_teacher.enabled=true")
     c = _inference_deployments(docs)["vllm_llm_teacher"]["spec"]["template"]["spec"][
         "containers"
     ][0]
-    assert "vllm_llm_teacher" not in INFERENCE_SERVICE_SPECS
+    assert "vllm_llm_teacher" in INFERENCE_SERVICE_SPECS
     assert "--revision" not in c["args"]
-    assert c["args"][:2] == ["serve", "cyankiwi/Qwen3.6-27B-AWQ-INT4"]
+    assert c["args"][:2] == ["serve", "Qwen/Qwen3-14B-AWQ"]
 
 
 def test_cpu_overlay_swaps_whisper_without_inheriting_the_turbo_revision():
@@ -914,16 +930,35 @@ def test_external_url_on_denseon_redirects_the_semantic_embed_url():
     assert _runtime_env(docs)["COGNIVERSE_SEMANTIC_EMBED_URL"] == modal_url
 
 
-def test_external_url_on_the_llm_services_fails_the_render():
+def test_teacher_endpoint_uses_the_in_cluster_url_when_not_external():
+    docs = _render("inference.vllm_llm_teacher.enabled=true")
+
+    assert _service_urls(docs)["vllm_llm_teacher"] == (
+        "http://cogniverse-vllm-llm-teacher:8000"
+    )
+    assert _teacher_api_base(docs) == ("http://cogniverse-vllm-llm-teacher:8000/v1")
+
+
+def test_teacher_endpoint_uses_the_modal_url_when_external():
+    modal_url = "https://amit--cogniverse-vllm-llm-teacher.modal.run"
+    docs = _render(
+        "inference.vllm_llm_teacher.enabled=true",
+        f"inference.vllm_llm_teacher.externalUrl={modal_url}",
+    )
+
+    assert _service_urls(docs)["vllm_llm_teacher"] == modal_url
+    assert _teacher_api_base(docs) == f"{modal_url}/v1"
+
+
+def test_external_url_on_the_student_llm_fails_the_render():
     """The primary/teacher LLM endpoints are derived by their own helpers
     with their own override (runtime.primaryLLM.*); externalUrl on the LLM
     services would skip the pod while LLM_ENDPOINT still points at it."""
-    for service in ("vllm_llm_student", "vllm_llm_teacher"):
-        with pytest.raises(AssertionError, match="runtime.primaryLLM"):
-            _render(
-                f"inference.{service}.enabled=true",
-                f"inference.{service}.externalUrl=https://amit--llm.modal.run",
-            )
+    with pytest.raises(AssertionError, match="runtime.primaryLLM"):
+        _render(
+            "inference.vllm_llm_student.enabled=true",
+            "inference.vllm_llm_student.externalUrl=https://amit--llm.modal.run",
+        )
     # Invalid even while the service is disabled: the key would silently
     # start lying the moment the service is enabled.
     with pytest.raises(AssertionError, match="runtime.primaryLLM"):
