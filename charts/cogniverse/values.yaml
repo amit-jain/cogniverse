@@ -879,8 +879,9 @@ inferenceStartup:
 # the INFERENCE_SERVICE_URLS map. A non-empty externalUrl (absolute https URL,
 # e.g. a Modal endpoint) keeps the map entry, points it at the external
 # endpoint, and skips the local Deployment/Service/model-cache PVC and image
-# build. Unsupported on vllm_llm_student / vllm_llm_teacher — override the LLM
-# endpoint via runtime.primaryLLM instead.
+# build. Unsupported on vllm_llm_student — override the student LLM endpoint
+# via runtime.primaryLLM instead. The teacher keeps its key in
+# INFERENCE_SERVICE_URLS and can point at Modal through externalUrl.
 inference:
   # vLLM-served visual multi-vector retrieval (ColPali family). Replaces
   # the legacy custom FastAPI sidecar (deploy/colpali). Uses vLLM's

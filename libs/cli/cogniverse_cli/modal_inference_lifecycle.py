@@ -34,6 +34,7 @@ _DEPLOYMENT_MODULES = {
     "gliner": "cogniverse_cli.modal_inference.gliner",
     "videoprism_jax": "cogniverse_cli.modal_inference.videoprism",
     "vllm_llm_student": "cogniverse_cli.modal_inference.gemma",
+    "vllm_llm_teacher": "cogniverse_cli.modal_inference.teacher",
     "vllm_asr": "cogniverse_cli.modal_inference.whisper",
     "clap_embed": "cogniverse_cli.modal_inference.clap",
     "face_embed": "cogniverse_cli.modal_inference.face",
