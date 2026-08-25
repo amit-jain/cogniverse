@@ -1621,10 +1621,23 @@ def _e2e_docker_network_gateway_ip() -> str:
     return gateway_ip
 
 
+# The 27B teacher requests 32Gi and the node has ~11Gi of schedulable memory
+# left once the rest of the stack is placed, so it stays Pending unless the
+# services this cluster does not need make room. Span replay and the DSPy
+# compile use neither video embedding, transcription, nor the code retriever.
+_E2E_DISABLED_INFERENCE_SERVICES = frozenset(
+    {"vllm_colpali", "vllm_asr", "code_colbert_pylate"}
+)
+
+
 def _e2e_deployment_overrides() -> dict[str, str]:
     from cogniverse_cli.sandbox import active_gateway_metadata, pod_gateway_endpoint
 
     overrides = {
+        **{
+            f"inference.{service}.enabled": "false"
+            for service in sorted(_E2E_DISABLED_INFERENCE_SERVICES)
+        },
         "runtime.sandbox.enabled": "true",
         "runtime.sandbox.inCluster.enabled": "false",
         "runtime.sandbox.gatewayEndpoint": pod_gateway_endpoint(
@@ -1938,25 +1951,35 @@ def _require_kubectl_success(
     )
 
 
+def _e2e_required_model_probes(backend: str) -> list[tuple[str, str]]:
+    """Model endpoints this cluster must serve, derived from the enabled set.
+
+    A service switched off by the deployment overrides has no pod to probe, so
+    gating on it would fail readiness for a model nothing deployed.
+    """
+    probes: list[tuple[str, str]] = []
+    if (
+        backend in {"cuda", "rocm"}
+        and "vllm_colpali" not in _E2E_DISABLED_INFERENCE_SERVICES
+    ):
+        probes.append(("http://127.0.0.1:33901", _E2E_TOMORO_MODEL))
+    if "vllm_asr" not in _E2E_DISABLED_INFERENCE_SERVICES:
+        probes.append(
+            (
+                "http://127.0.0.1:33905",
+                _E2E_ASR_MODELS.get(backend, "openai/whisper-large-v3-turbo"),
+            )
+        )
+    return probes
+
+
 def _required_e2e_models_ready(backend: str | None = None) -> tuple[bool, str]:
     from cogniverse_cli.images import detect_torch_backend
 
     from tests.utils.vllm_sidecar import serves_exact_model
 
     resolved_backend = backend or detect_torch_backend()
-    required_models: list[tuple[str, str]] = []
-    if resolved_backend in {"cuda", "rocm"}:
-        required_models.append(("http://127.0.0.1:33901", _E2E_TOMORO_MODEL))
-    required_models.append(
-        (
-            "http://127.0.0.1:33905",
-            _E2E_ASR_MODELS.get(
-                resolved_backend,
-                "openai/whisper-large-v3-turbo",
-            ),
-        )
-    )
-    for url, model in required_models:
+    for url, model in _e2e_required_model_probes(resolved_backend):
         if not serves_exact_model(url, model, timeout=5.0):
             return False, f"{model} is not served exactly at {url}/v1/models"
     return True, ""
