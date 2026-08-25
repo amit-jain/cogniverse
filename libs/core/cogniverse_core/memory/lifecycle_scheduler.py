@@ -18,11 +18,13 @@ import asyncio
 import logging
 from typing import Callable, Iterable, Optional
 
+from cogniverse_core.common.tenant_utils import canonical_tenant_id
 from cogniverse_core.memory.schema import KnowledgeRegistry
 
 logger = logging.getLogger(__name__)
 
 _DEFAULT_INTERVAL_SECONDS = 3600.0  # 1 hour
+_SCHEMA_ABSENT_MARKER = "schema absent"
 
 
 class LifecycleScheduler:
@@ -79,31 +81,16 @@ class LifecycleScheduler:
         recorded in the summary so operators can investigate.
 
         Per-tenant entries are ``{kind: deleted_count}`` dicts (with
-        ``{kind}:archived`` keys for soft-delete events).
+        ``{kind}:archived`` keys for soft-delete events), the explicit
+        ``schema absent`` marker, or ``error: <ExceptionName>``.
         """
         per_tenant: dict[str, object] = {}
         total = 0
 
         for manager in list(self._get_warm()):
-            tenant_id = getattr(manager, "tenant_id", None) or "unknown"
-            try:
-                pinned_ids = (
-                    await asyncio.to_thread(self._pin_lookup, manager)
-                    if self._pin_lookup
-                    else set()
-                )
-                deleted_by_kind = await asyncio.to_thread(
-                    manager.cleanup_with_schema,
-                    self._registry,
-                    pinned_ids,
-                )
-                per_tenant[tenant_id] = deleted_by_kind
-                total += sum(v for v in deleted_by_kind.values() if isinstance(v, int))
-            except Exception as exc:
-                logger.warning(
-                    "Lifecycle cleanup failed for tenant %s: %s", tenant_id, exc
-                )
-                per_tenant[tenant_id] = f"error: {type(exc).__name__}"
+            tenant_id, outcome, deleted_count = await self._tick_manager(manager)
+            per_tenant[tenant_id] = outcome
+            total += deleted_count
 
         summary = {
             "tenants": per_tenant,
@@ -116,6 +103,45 @@ class LifecycleScheduler:
             len(per_tenant),
         )
         return summary
+
+    async def _tick_manager(self, manager: object) -> tuple[str, object, int]:
+        tenant_id = getattr(manager, "tenant_id", None) or "unknown"
+        storage_tenant_id = (
+            canonical_tenant_id(tenant_id) if tenant_id != "unknown" else tenant_id
+        )
+        try:
+            schema_exists = await asyncio.to_thread(
+                manager.tenant_partition_schema_exists,
+                storage_tenant_id,
+            )
+            if not schema_exists:
+                logger.info(
+                    "No deployed schema for tenant %s; skipping lifecycle cleanup",
+                    storage_tenant_id,
+                )
+                return tenant_id, _SCHEMA_ABSENT_MARKER, 0
+
+            pinned_ids = (
+                await asyncio.to_thread(self._pin_lookup, manager)
+                if self._pin_lookup
+                else set()
+            )
+            deleted_by_kind = await asyncio.to_thread(
+                manager.cleanup_with_schema,
+                self._registry,
+                pinned_ids,
+            )
+            deleted_count = sum(
+                value for value in deleted_by_kind.values() if isinstance(value, int)
+            )
+            return tenant_id, deleted_by_kind, deleted_count
+        except Exception as exc:
+            logger.warning(
+                "Lifecycle cleanup failed for tenant %s: %s",
+                storage_tenant_id,
+                exc,
+            )
+            return tenant_id, f"error: {type(exc).__name__}", 0
 
     def start(self) -> None:
         """Schedule the periodic tick on the running event loop."""
