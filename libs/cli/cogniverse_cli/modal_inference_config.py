@@ -24,6 +24,7 @@ class InferenceServiceSpec:
     model_revision: str
     output_dimension: int | None
     gpu_candidates: tuple[str, ...]
+    requires_hf_token: bool = False
     source_revision: str | None = None
     auth: EndpointAuth = EndpointAuth.BEARER
     modal_object: str = "Inference"
@@ -57,6 +58,7 @@ def _spec(
     model_revision: str,
     output_dimension: int | None,
     *gpu_candidates: str,
+    requires_hf_token: bool = False,
     source_revision: str | None = None,
 ) -> InferenceServiceSpec:
     return InferenceServiceSpec(
@@ -65,6 +67,7 @@ def _spec(
         model_revision=model_revision,
         output_dimension=output_dimension,
         gpu_candidates=gpu_candidates,
+        requires_hf_token=requires_hf_token,
         source_revision=source_revision,
     )
 
@@ -129,6 +132,17 @@ INFERENCE_SERVICE_SPECS: Mapping[str, InferenceServiceSpec] = MappingProxyType(
             "L4",
             "A10",
             "L40S",
+            requires_hf_token=True,
+        ),
+        "vllm_llm_teacher": _spec(
+            "vllm_llm_teacher",
+            "Qwen/Qwen3-14B-AWQ",
+            "31c69efc29464b6bb0aee1398b5a7b50a99340c3",
+            None,
+            "L4",
+            "A10",
+            "L40S",
+            requires_hf_token=True,
         ),
         "vllm_asr": _spec(
             "vllm_asr",

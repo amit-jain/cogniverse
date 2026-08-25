@@ -214,6 +214,40 @@ def test_modal_app_registers_the_canonical_authenticated_inference_function():
     ]
 
 
+@pytest.mark.parametrize(
+    ("service", "expected_secrets"),
+    [
+        (
+            "vllm_llm_student",
+            [
+                "modal.Secret.from_name('cogniverse-inference-api-key')",
+                "modal.Secret.from_name('hf-token')",
+            ],
+        ),
+        (
+            "vllm_llm_teacher",
+            [
+                "modal.Secret.from_name('cogniverse-inference-api-key')",
+                "modal.Secret.from_name('hf-token')",
+            ],
+        ),
+        (
+            "vllm_colpali",
+            ["modal.Secret.from_name('cogniverse-inference-api-key')"],
+        ),
+    ],
+)
+def test_vllm_secret_selection_follows_requires_hf_token(
+    service: str,
+    expected_secrets: list[str],
+):
+    spec = get_inference_service_spec(service)
+    app = build_vllm_app(spec)
+    function = app.registered_functions["Inference"]
+
+    assert [repr(secret) for secret in function.spec.secrets] == expected_secrets
+
+
 def test_registered_modal_function_builds_the_authenticated_asgi_app(monkeypatch):
     monkeypatch.setenv("COGNIVERSE_INFERENCE_API_KEY", API_KEY)
     spec = get_inference_service_spec("vllm_colpali")

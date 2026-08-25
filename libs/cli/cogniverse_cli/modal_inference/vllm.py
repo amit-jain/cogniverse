@@ -57,12 +57,20 @@ _SERVICE_ARGUMENTS: dict[str, tuple[str, ...]] = {
         "--limit-mm-per-prompt",
         '{"video":0,"image":4}',
     ),
+    "vllm_llm_teacher": (
+        "--max-model-len",
+        "4096",
+        "--enforce-eager",
+        "--max-num-seqs",
+        "1",
+    ),
     "vllm_asr": ("--runner", "generate", "--max-model-len", "448"),
 }
 
 _KV_CACHE_GIB = {
     "vllm_colpali": "2",
     "vllm_llm_student": "4",
+    "vllm_llm_teacher": "4",
     "vllm_asr": "1",
 }
 
@@ -104,6 +112,20 @@ def _vllm_environment(spec: InferenceServiceSpec) -> dict[str, str]:
     if cache_size := _KV_CACHE_GIB.get(spec.name):
         environment["VLLM_CPU_KVCACHE_SPACE"] = cache_size
     return environment
+
+
+def _vllm_secrets(spec: InferenceServiceSpec) -> list[modal.Secret]:
+    secrets = [
+        modal.Secret.from_name(
+            _API_KEY_SECRET,
+            required_keys=["COGNIVERSE_INFERENCE_API_KEY"],
+        )
+    ]
+    if spec.requires_hf_token:
+        secrets.append(
+            modal.Secret.from_name(_HF_TOKEN_SECRET, required_keys=["HF_TOKEN"])
+        )
+    return secrets
 
 
 class _ServingProcessError(RuntimeError):
@@ -338,16 +360,6 @@ def build_vllm_app(spec: InferenceServiceSpec) -> modal.App:
     command = _vllm_command(spec)
     image = _vllm_image(spec)
     volume = modal.Volume.from_name(_HF_CACHE_NAME, create_if_missing=True)
-    secrets = [
-        modal.Secret.from_name(
-            _API_KEY_SECRET,
-            required_keys=["COGNIVERSE_INFERENCE_API_KEY"],
-        )
-    ]
-    if spec.name == "vllm_llm_student":
-        secrets.append(
-            modal.Secret.from_name(_HF_TOKEN_SECRET, required_keys=["HF_TOKEN"])
-        )
 
     app = modal.App(spec.modal_app)
 
@@ -355,7 +367,7 @@ def build_vllm_app(spec: InferenceServiceSpec) -> modal.App:
         image=image,
         gpu=list(spec.gpu_candidates),
         volumes={_HF_CACHE_PATH: volume},
-        secrets=secrets,
+        secrets=_vllm_secrets(spec),
         min_containers=spec.min_containers,
         scaledown_window=spec.scaledown_window,
         timeout=900,
