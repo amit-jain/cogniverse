@@ -2715,10 +2715,14 @@ def _assert_simba_served_the_best_module(result: dict, blob_before: str) -> dict
     assert result["holdout_examples"] == max(
         1, result["served_scoreable_examples"] // 4
     ), result
+    # Simba filters non-trainable records BEFORE selection, so the pool
+    # selection sees is the trainable remainder of the train split. Profile
+    # and entity extraction have no such filter and keep the plain identity.
     assert result["selection"]["pool"] == (
         result["served_examples"]
         - result["holdout_examples"]
         + result["approved_examples"]
+        - result["non_trainable_examples"]
     ), result
     assert result["holdout_source"] == "served", result
     assert result["decision"] in BLOB_VERSION_DECISIONS, result
