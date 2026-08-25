@@ -43,3 +43,23 @@ class TestE2EDeploymentOverrides:
             o["inference.vllm_llm_teacher.livenessProbe.initialDelaySeconds"] == "1200"
         )
         assert o["inference.vllm_llm_teacher.livenessProbe.failureThreshold"] == "60"
+
+    def test_disables_the_services_the_optimizer_run_does_not_use(self):
+        o = self._overrides()
+        disabled = {
+            k.split(".")[1]
+            for k, v in o.items()
+            if k.endswith(".enabled") and v == "false" and k.startswith("inference.")
+        }
+        assert disabled == {"vllm_colpali", "vllm_asr", "code_colbert_pylate"}
+
+    def test_readiness_probes_skip_the_disabled_services(self):
+        mod = _load()
+        probes = mod._e2e_required_model_probes("rocm")
+        assert probes == [], probes
+
+    def test_readiness_probes_cover_enabled_services(self):
+        mod = _load()
+        with patch.object(mod, "_E2E_DISABLED_INFERENCE_SERVICES", frozenset()):
+            urls = [url for url, _ in mod._e2e_required_model_probes("rocm")]
+        assert urls == ["http://127.0.0.1:33901", "http://127.0.0.1:33905"]
