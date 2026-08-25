@@ -55,3 +55,54 @@ def test_seeded_span_wait_uses_seed_start_lookback(monkeypatch):
     expected = _MOD._module_lookback_hours()
     assert lookbacks == [expected]
     assert expected > elapsed_hours
+
+
+def test_committed_span_capture_clears_the_optimizer_floors_without_top_up():
+    """The shipped corpus makes synthetic top-up unnecessary, read from the file.
+
+    Counts are derived from the committed capture, not restated here: a
+    thinner re-record must fail this test rather than be absorbed by a stale
+    literal, because the top-up short-circuit is only sound while the corpus
+    genuinely clears every shipped floor.
+    """
+    import collections
+
+    records = _MOD.load_capture_json(_MOD.OPTIMIZER_SPAN_CAPTURE_PATH)
+    by_name = collections.Counter(record["name"] for record in records)
+    captured = {
+        name.removeprefix("cogniverse."): count for name, count in by_name.items()
+    }
+
+    expected_floors = {
+        "query_enhancement": (100, 3),
+        "profile_selection": (20, 6),
+        "entity_extraction": (58, 15),
+    }
+    assert set(expected_floors) <= set(captured), (
+        "committed capture is missing an optimizer span type: "
+        f"captured={sorted(captured)} required={sorted(expected_floors)}"
+    )
+
+    for span_type, (
+        expected_min_samples,
+        expected_min_unique,
+    ) in expected_floors.items():
+        floor_min_samples, floor_min_unique = (
+            _MOD._population_floor_from_shipped_config(span_type)
+        )
+        assert (floor_min_samples, floor_min_unique) == (
+            expected_min_samples,
+            expected_min_unique,
+        )
+        assert (
+            _MOD._synthetic_top_up_counts(
+                served=captured[span_type],
+                approved_total=0,
+                floor_min_samples=floor_min_samples,
+                floor_min_unique=floor_min_unique,
+            )
+            == []
+        ), (
+            f"{span_type}: capture has {captured[span_type]} spans against a floor "
+            f"of {floor_min_samples}; synthetic top-up would still run"
+        )
