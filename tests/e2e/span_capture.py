@@ -297,6 +297,35 @@ def _event_timestamp_ns(
     return min(scaled_ns, replay_end_ns)
 
 
+class _FailureRecordingExporter(SpanExporter):
+    """Surface a dropped export instead of letting the SDK swallow it.
+
+    SimpleSpanProcessor discards the export result, so a Phoenix that is
+    down, wrong-ported or speaking another protocol produces a full return
+    value and an empty project.
+    """
+
+    def __init__(self, inner: SpanExporter, failures: list[str]) -> None:
+        self._inner = inner
+        self._failures = failures
+
+    def export(self, spans):
+        from opentelemetry.sdk.trace.export import SpanExportResult
+
+        result = self._inner.export(spans)
+        if result is not SpanExportResult.SUCCESS:
+            self._failures.append(
+                f"{len(list(spans))} span(s) -> {getattr(result, 'name', result)}"
+            )
+        return result
+
+    def shutdown(self) -> None:
+        self._inner.shutdown()
+
+    def force_flush(self, timeout_millis: int = 30_000) -> bool:
+        return self._inner.force_flush(timeout_millis)
+
+
 def replay_spans(
     *,
     capture_path: str | Path,
@@ -329,11 +358,16 @@ def replay_spans(
 
     exporter = span_exporter
     if exporter is None:
-        from opentelemetry.exporter.otlp.proto.grpc.trace_exporter import (
-            OTLPSpanExporter,
-        )
+        import opentelemetry.exporter.otlp.proto.http.trace_exporter as _otlp_http
 
-        exporter = OTLPSpanExporter(endpoint=phoenix_http_endpoint, insecure=True)
+        # phoenix_http_endpoint is Phoenix's HTTP API. The gRPC exporter
+        # cannot speak to it, and OTLP exporters log-and-drop rather than
+        # raise, so the wrong protocol replays as a silent no-op.
+        traces_url = phoenix_http_endpoint.rstrip("/") + "/v1/traces"
+        exporter = _otlp_http.OTLPSpanExporter(endpoint=traces_url)
+
+    failures: list[str] = []
+    exporter = _FailureRecordingExporter(exporter, failures)
     provider.add_span_processor(SimpleSpanProcessor(exporter))
     tracer = provider.get_tracer("cogniverse.span_capture")
 
@@ -409,6 +443,13 @@ def replay_spans(
             start_ns = start_base_ns + (index * _REPLAY_STEP_NS)
             span.end(end_time=start_ns + _REPLAY_STEP_NS)
             replayed.append(record)
+        provider.force_flush()
+        if failures:
+            raise SpanCaptureError(
+                "span replay export failed; Phoenix received nothing for "
+                f"{len(failures)} batch(es) at {phoenix_http_endpoint}: "
+                f"{failures[:3]}"
+            )
         return replayed
     finally:
         provider.shutdown()
