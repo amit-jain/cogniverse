@@ -1310,7 +1310,15 @@ def generate_spans_for_batch_jobs(_kubectl_cluster_ready):
         )
         write_capture_json(OPTIMIZER_SPAN_CAPTURE_PATH, capture_records)
     else:
+        from datetime import datetime as _dt
+        from datetime import timedelta as _td
+        from datetime import timezone as _tz
+
         replay_spans(
+            # The corpus was recorded from this tenant, so its ids still match
+            # their own originals. Bound the dedup to the run's own window or
+            # those originals suppress the replay and the window stays empty.
+            existing_since=_dt.now(_tz.utc) - _td(minutes=30),
             capture_path=OPTIMIZER_SPAN_CAPTURE_PATH,
             phoenix_http_endpoint=PHOENIX_URL,
             tenant_id=TENANT_ID,
