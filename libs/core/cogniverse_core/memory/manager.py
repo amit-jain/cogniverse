@@ -957,7 +957,7 @@ class Mem0MemoryManager:
             logger.error(f"Memory search failed: {e}")
             raise
 
-    def _tenant_partition_schema_exists(self, tenant_id: str) -> bool:
+    def tenant_partition_schema_exists(self, tenant_id: str) -> bool:
         """Whether the tenant's memory partition schema is deployed.
 
         Raises when the backend / registry lookup itself fails.
@@ -1082,7 +1082,7 @@ class Mem0MemoryManager:
 
         try:
             storage_tenant_id = canonical_tenant_id(tenant_id)
-            if not self._tenant_partition_schema_exists(storage_tenant_id):
+            if not self.tenant_partition_schema_exists(storage_tenant_id):
                 logger.info(
                     "No deployed schema for tenant %s; returning no memories",
                     storage_tenant_id,
