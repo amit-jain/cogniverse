@@ -237,7 +237,10 @@ def test_replay_spans_emits_exact_name_and_attribute_mapping(tmp_path):
     finished = exporter.get_finished_spans()
     assert len(finished) == 1
     assert finished[0].name == record["name"]
-    assert dict(finished[0].attributes) == record["attributes"]
+    assert dict(finished[0].attributes) == {
+        **record["attributes"],
+        span_capture.REPLAY_IDENTITY_ATTRIBUTE: "span-a",
+    }
     assert (
         finished[0].resource.attributes["openinference.project.name"]
         == "cogniverse-tenant-x"
@@ -344,7 +347,10 @@ def test_replay_spans_skips_existing_span_ids(tmp_path):
     finished = exporter.get_finished_spans()
     assert len(finished) == 1
     assert finished[0].name == "second"
-    assert dict(finished[0].attributes) == records[1]["attributes"]
+    assert dict(finished[0].attributes) == {
+        **records[1]["attributes"],
+        span_capture.REPLAY_IDENTITY_ATTRIBUTE: "span-b",
+    }
 
 
 def test_load_capture_missing_raises_with_path(tmp_path):
@@ -683,3 +689,43 @@ class TestReplayDedupIsWindowScoped:
         assert [s.name for s in exporter.get_finished_spans()] == [
             "cogniverse.query_enhancement"
         ]
+
+
+class TestReplayIsIdempotentWithinTheWindow:
+    """A replayed span must be recognisable as a replay of its record.
+
+    The OTel tracer mints a fresh span_id for every replayed span, so an
+    identity taken from the recorded span_id can never match what replay
+    wrote. Without a stable marker the same corpus lands again on every
+    replay and the optimizer's population silently multiplies.
+    """
+
+    def test_replayed_span_carries_its_capture_identity(self, tmp_path):
+        record = _span_record(
+            name="cogniverse.query_enhancement",
+            span_id="ab" * 8,
+            trace_id="cd" * 16,
+            start_time="2026-08-25T10:00:00+00:00",
+            end_time="2026-08-25T10:00:01+00:00",
+            attributes={"input.value": "q", "output.value": "e"},
+        )
+        path = tmp_path / "capture.json"
+        path.write_text(json.dumps([record]))
+
+        exporter = InMemorySpanExporter()
+        with patch.object(span_capture, "_existing_span_ids", lambda **kw: set()):
+            span_capture.replay_spans(
+                capture_path=path,
+                phoenix_http_endpoint="http://localhost:33006",
+                tenant_id="acme:prod",
+                span_exporter=exporter,
+            )
+
+        finished = exporter.get_finished_spans()
+        assert [s.name for s in finished] == ["cogniverse.query_enhancement"]
+        assert finished[0].attributes[span_capture.REPLAY_IDENTITY_ATTRIBUTE] == (
+            "ab" * 8
+        ), (
+            "the replayed span must carry the recorded span_id so a later "
+            f"replay can skip it; attributes={dict(finished[0].attributes)}"
+        )
