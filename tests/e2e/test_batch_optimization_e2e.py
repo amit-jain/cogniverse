@@ -1418,13 +1418,20 @@ def generate_spans_for_batch_jobs(_kubectl_cluster_ready):
             tenant_id=TENANT_ID,
             lookback_hours=lookback_hours,
             expected_query_enhancement_queries=captured_query_enhancement_queries,
-            gateway_minimum=captured_counts[span_names[0]],
-            entity_extraction_minimum=captured_counts[span_names[1]],
-            profile_selection_minimum=captured_counts[span_names[3]],
-            orchestration_minimum=captured_counts[span_names[4]],
+            gateway_minimum=replayed_counts[span_names[0]],
+            entity_extraction_minimum=replayed_counts[span_names[1]],
+            profile_selection_minimum=replayed_counts[span_names[3]],
+            orchestration_minimum=replayed_counts[span_names[4]],
         )
 
-    capture_counts = collections.Counter(record["name"] for record in capture_records)
+    # The replayed subset is what Phoenix holds; the archive is a superset the
+    # replay deliberately samples down, so expectations read the subset.
+    capture_counts = collections.Counter(
+        record["name"]
+        for record in sample_capture_by_name(
+            capture_records, _optimizer_capture_sample_caps()
+        )
+    )
     served_scoreable_counts = _wait_for_served_scoreable_span_floor_in_pod(TENANT_ID)
     expected_served_scoreable_counts = {
         "query_enhancement": capture_counts[span_names[2]],
