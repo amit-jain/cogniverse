@@ -578,3 +578,49 @@ class TestGatewayRunningRequiresAReachablePort:
         )
         assert sandbox_mod.ensure_host_gateway() is True
         assert started == [True]
+
+
+class TestStartGatewayRecoversStaleRegistration:
+    """A registered-but-dead gateway must be recreated, not reused.
+
+    ``openshell gateway start`` reuses an existing registration silently in
+    non-interactive mode, and the registration outlives the process it
+    describes. Reusing one whose port is closed leaves the port closed for
+    good, so a host reboot or an OOM kill wedges every caller permanently.
+    """
+
+    def _run_start(self, monkeypatch, *, registered: bool, port_open: bool):
+        calls: list[list[str]] = []
+
+        def fake_run(argv, **kwargs):
+            calls.append(list(argv))
+            return _completed(returncode=0)
+
+        monkeypatch.setattr(sandbox_mod, "openshell_installed", lambda: True)
+        monkeypatch.setattr(sandbox_mod.subprocess, "run", fake_run)
+        monkeypatch.setattr(
+            sandbox_mod, "gateway_registered", lambda: registered, raising=False
+        )
+        monkeypatch.setattr(
+            sandbox_mod, "gateway_port_accepting_connections", lambda: port_open
+        )
+        monkeypatch.setattr(sandbox_mod, "gateway_running", lambda: port_open)
+        result = sandbox_mod.start_gateway()
+        return result, calls
+
+    def test_stale_registration_forces_recreate(self, monkeypatch):
+        _, calls = self._run_start(monkeypatch, registered=True, port_open=False)
+
+        assert calls == [
+            ["openshell", "gateway", "start", "--port", "28080", "--recreate"]
+        ], (
+            "a registered gateway whose port is closed must be recreated; "
+            f"argv was {calls}"
+        )
+
+    def test_unregistered_gateway_starts_without_recreate(self, monkeypatch):
+        _, calls = self._run_start(monkeypatch, registered=False, port_open=True)
+
+        assert calls == [["openshell", "gateway", "start", "--port", "28080"]], (
+            f"a first start must not destroy anything; argv was {calls}"
+        )
