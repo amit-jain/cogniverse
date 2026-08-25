@@ -1621,13 +1621,10 @@ def _e2e_docker_network_gateway_ip() -> str:
     return gateway_ip
 
 
-# The 27B teacher requests 32Gi and the node has ~11Gi of schedulable memory
-# left once the rest of the stack is placed, so it stays Pending unless the
-# services this cluster does not need make room. Span replay and the DSPy
-# compile use neither video embedding, transcription, nor the code retriever.
-_E2E_DISABLED_INFERENCE_SERVICES = frozenset(
-    {"vllm_colpali", "vllm_asr", "code_colbert_pylate"}
-)
+# The teacher requests 20Gi and the node has ~11Gi of schedulable memory left
+# once the rest of the stack is placed, so video embedding makes room for it.
+# Span replay and the DSPy compile issue no video queries.
+_E2E_DISABLED_INFERENCE_SERVICES = frozenset({"vllm_colpali"})
 
 
 def _e2e_deployment_overrides() -> dict[str, str]:

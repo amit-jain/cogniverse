@@ -253,7 +253,7 @@
       "api_base": "http://localhost:29010/v1"
     },
     "teacher": {
-      "model": "openai/cyankiwi/Qwen3.6-27B-AWQ-INT4",
+      "model": "openai/Qwen/Qwen3-14B-AWQ",
       "api_base": "http://localhost:29011/v1",
       "api_key": null,
       "temperature": 0.7,
