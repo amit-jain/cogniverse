@@ -51,12 +51,12 @@ class TestE2EDeploymentOverrides:
             for k, v in o.items()
             if k.endswith(".enabled") and v == "false" and k.startswith("inference.")
         }
-        assert disabled == {"vllm_colpali", "vllm_asr", "code_colbert_pylate"}
+        assert disabled == {"vllm_colpali"}
 
     def test_readiness_probes_skip_the_disabled_services(self):
         mod = _load()
-        probes = mod._e2e_required_model_probes("rocm")
-        assert probes == [], probes
+        urls = [url for url, _ in mod._e2e_required_model_probes("rocm")]
+        assert urls == ["http://127.0.0.1:33905"], urls
 
     def test_readiness_probes_cover_enabled_services(self):
         mod = _load()

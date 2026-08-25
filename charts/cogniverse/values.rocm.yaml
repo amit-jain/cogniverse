@@ -150,21 +150,20 @@ inference:
       - "--max-model-len"
       - "4096"
       - "--enforce-eager"
-      # 0.17 = 16.3 GiB, sized for the INT4 weights plus a 4096-token cache
-      # at low concurrency. Only applies while the service is enabled.
+      # 0.20 = 19.2 GiB against the 96 GiB pool: 9.3 GiB of AWQ weights
+      # plus activation and a 4096-token cache at max-num-seqs 1. vLLM
+      # charges this budget against its own process only.
       - "--gpu-memory-utilization"
-      - "0.17"
+      - "0.20"
       - "--max-num-seqs"
       - "1"
-      - "--limit-mm-per-prompt"
-      - '{"image":0,"video":0}'
     resources:
       limits:
         cpu: "4"
-        memory: "32Gi"
+        memory: "20Gi"
       requests:
         cpu: "4"
-        memory: "32Gi"
+        memory: "20Gi"
 
   # PyLate pods reuse the locally built cogniverse/pylate image — the
   # build bakes the host's torch backend (rocm here), so no per-device

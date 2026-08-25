@@ -1436,7 +1436,10 @@ inference:
     enabled: false
     engine: vllm_chat
     type: chat
-    # AWQ-INT4 Qwen 3.6 27B (~14 GiB). FP8 was tried first but vLLM
+    # AWQ-INT4 Qwen3 14B (9.3 GiB of weights). Dense, so its activation
+    # footprint stays small; the hybrid-mamba Qwen3.6 27B needed 44.5 GiB
+    # before any KV cache and could not be resident beside the student.
+    # FP8 was tried first but vLLM
     # 0.20.0 on ROCm/gfx1151 (Strix Halo, RDNA 3.5) cannot run FP8
     # weights at all — both the MoE and dense FP8 paths bottom out in
     # ``torch._scaled_mm`` which requires CUDA SM>=8.9 or ROCm MI300+
@@ -1444,7 +1447,7 @@ inference:
     # FP8 nor Gemma-4-31B FP8 would load. AWQ-INT4 uses Marlin/Triton
     # INT4 kernels that do work on RDNA. Update this once vLLM ships
     # an FP8 RDNA path or we move to MI300-class hardware.
-    model: cyankiwi/Qwen3.6-27B-AWQ-INT4
+    model: Qwen/Qwen3-14B-AWQ
     device: cpu
     gpuCount: 1
     nodeSelector: {}
