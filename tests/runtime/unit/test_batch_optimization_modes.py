@@ -2034,6 +2034,13 @@ class TestPopulationFloorConfig:
             "acme:acme", manager, "query_enhancement"
         ) == (100, 3)
 
+    def test_profile_selection_max_label_share_reads_shipped_floor(self):
+        from cogniverse_runtime.optimization_cli import (
+            _shipped_profile_selection_max_label_share_from_config,
+        )
+
+        assert _shipped_profile_selection_max_label_share_from_config() == 0.8
+
     def test_population_floor_store_override_wins_over_shipped_floor(
         self, tmp_path, monkeypatch
     ):
@@ -3484,6 +3491,7 @@ class TestProfileSelectionOptimization:
                 score,
                 base_score,
                 candidate_score,
+                extra_ledger_fields=None,
             ):
                 state["versioned_saves"].append(
                     {
@@ -3496,6 +3504,7 @@ class TestProfileSelectionOptimization:
                         "score": score,
                         "base_score": base_score,
                         "candidate_score": candidate_score,
+                        "extra_ledger_fields": dict(extra_ledger_fields or {}),
                     }
                 )
                 return f"artifact-{len(state['versioned_saves'])}", len(
@@ -3787,6 +3796,121 @@ class TestProfileSelectionOptimization:
         }
         assert labels.excluded_count == 1
         assert labels.excluded_queries == ("q3",)
+
+    def test_profile_selection_media_type_filter_keeps_video_candidates_only(self):
+        from cogniverse_runtime.optimization_cli import derive_profile_labels
+
+        video_profile = "video_colpali_smol500_mv_frame"
+        document_profile = "document_text_semantic"
+        queries = [
+            _profile_selection_query_record(
+                "q1",
+                expected_videos=["v1"],
+                ground_truth="one",
+            ),
+            _profile_selection_query_record(
+                "q2",
+                expected_videos=["v2"],
+                ground_truth="two",
+            ),
+        ]
+        candidate_profiles = [video_profile, document_profile]
+        title_fields = {
+            video_profile: "video_title",
+            document_profile: "document_title",
+        }
+        profile_types = {
+            video_profile: "video",
+            document_profile: "document",
+        }
+        corpus = {
+            ("q1", video_profile): [_profile_hit("v1.mp4")],
+            ("q1", document_profile): [
+                _profile_hit("v1.txt", title_field="document_title")
+            ],
+            ("q2", video_profile): [_profile_hit("v2.mp4")],
+            ("q2", document_profile): [
+                _profile_hit("v2.txt", title_field="document_title")
+            ],
+        }
+
+        def retrieve(query: str, profile: str) -> list[dict[str, Any]]:
+            return corpus[(query, profile)]
+
+        labels = derive_profile_labels(
+            queries,
+            candidate_profiles,
+            retrieve,
+            title_fields=title_fields,
+            profile_types=profile_types,
+        )
+        assert labels == {
+            "q1": video_profile,
+            "q2": video_profile,
+        }
+        assert labels.records == (
+            {
+                "query": "q1",
+                "ground_truth": "one",
+                "query_type": "question",
+                "source": "synthetic.json",
+                "expected_videos": ["v1"],
+                "available_profiles": [video_profile],
+                "selected_profile": video_profile,
+                "confidence": 1.0,
+                "reasoning": f"{video_profile} recovered v1",
+                "example_id": "span:profile-label:0",
+            },
+            {
+                "query": "q2",
+                "ground_truth": "two",
+                "query_type": "question",
+                "source": "synthetic.json",
+                "expected_videos": ["v2"],
+                "available_profiles": [video_profile],
+                "selected_profile": video_profile,
+                "confidence": 1.0,
+                "reasoning": f"{video_profile} recovered v2",
+                "example_id": "span:profile-label:1",
+            },
+        )
+        assert labels.exclusions == ()
+        assert labels.labels_by_profile == {video_profile: 2}
+        assert labels.exclusions_by_reason == {}
+
+        def retrieve_no_video(query: str, profile: str) -> list[dict[str, Any]]:
+            del query, profile
+            raise AssertionError(
+                "retrieval must not run without a serving video profile"
+            )
+
+        document_only = derive_profile_labels(
+            [
+                _profile_selection_query_record(
+                    "q3",
+                    expected_videos=["v3"],
+                    ground_truth="three",
+                )
+            ],
+            [document_profile],
+            retrieve_no_video,
+            title_fields={document_profile: "document_title"},
+            profile_types={document_profile: "document"},
+        )
+        assert document_only == {}
+        assert document_only.records == ()
+        assert document_only.exclusions == (
+            {
+                "query": "q3",
+                "reason": "no_profile_serves_media_type",
+                "expected_videos": ["v3"],
+                "position": 0,
+                "required_media_type": "video",
+                "candidate_profiles": [],
+            },
+        )
+        assert document_only.labels_by_profile == {}
+        assert document_only.exclusions_by_reason == {"no_profile_serves_media_type": 1}
 
     def test_profile_selection_backend_outage_raises_for_query(self):
         from cogniverse_runtime.optimization_cli import derive_profile_labels
@@ -4454,83 +4578,26 @@ class TestProfileSelectionOptimization:
             for profile in profiles
         )
         assert result == {
-            "status": "success",
+            "status": "profile_labels_degenerate",
             "spans_found": 1,
             "served_examples": 3,
             "approved_examples": 0,
             "served_scoreable_examples": 3,
-            "training_examples": 2,
-            "holdout_examples": 1,
-            "holdout_source": "derived_labels",
             "label_exclusions": {
                 "count": 1,
                 "queries": ["tenant clip nobody can recover"],
             },
-            "selection": {
-                "pool": 2,
-                "deduped": 2,
-                "cap": 300,
-                "mmr_applied": False,
-                "decayed_count": 0,
-                "decayed_example_ids": [],
-            },
-            "baseline_score": 1.0,
-            "current_score": 1.0,
-            "candidate_score": 1.0,
-            "decision": "keep",
-            "version": 1,
-            "consumed_example_ids": [
-                "span:profile-label:0",
-                "span:profile-label:1",
-                "span:profile-label:2",
-            ],
+            "labels_by_profile": {profiles[0]: 3},
+            "exclusions_by_reason": {"no_profile_recovered_expected_videos": 1},
         }
-        available = ", ".join(profiles)
-        assert state["trainset"] == [
-            {
-                "query": "tenant clip of a robot welding a seam",
-                "available_profiles": available,
-                "selected_profile": profiles[0],
-                "confidence": "1.0",
-                "reasoning": f"{profiles[0]} recovered tenant_v_weld_01",
-            },
-            {
-                "query": "tenant clip of a kite surfer jumping",
-                "available_profiles": available,
-                "selected_profile": profiles[0],
-                "confidence": "1.0",
-                "reasoning": (
-                    f"{profiles[0]} recovered tenant_v_kite_02, tenant_v_kite_03"
-                ),
-            },
-        ]
-        assert state["score_calls"] == [
-            {"module": "ProfileSelectionModule", "holdout": 1},
-            {"module": "ProfileSelectionModule", "holdout": 1},
-            {"module": "Compiled", "holdout": 1},
-        ]
-        assert state["versioned_saves"] == [
-            {
-                "kind": "model",
-                "key": "profile_selection",
-                "content": json.dumps({"compiled": "profile"}, default=str),
-                "consumed_example_ids": [
-                    "span:profile-label:0",
-                    "span:profile-label:1",
-                    "span:profile-label:2",
-                ],
-                "decision": "keep",
-                "scored": True,
-                "score": 1.0,
-                "base_score": 1.0,
-                "candidate_score": 1.0,
-            }
-        ]
-        assert state["activate_calls"] == []
         assert state["load_blob_calls"] == [
-            ("config", "profile_selection_ground_truth"),
-            ("model", "profile_selection"),
+            ("config", "profile_selection_ground_truth")
         ]
+        assert state["versioned_saves"] == []
+        assert state["activate_calls"] == []
+        assert state["score_calls"] == []
+        assert "compiled_module" not in state
+        assert "trainset" not in state
         assert constructed == [
             {
                 "config_manager": config_manager,
@@ -4580,12 +4647,19 @@ class TestProfileSelectionOptimization:
             seen["loader_rows"] = loaded
             return loaded
 
-        def spy_derive(queries, candidate_profiles, retrieve, *, title_fields):
+        def spy_derive(
+            queries, candidate_profiles, retrieve, *, title_fields, profile_types=None
+        ):
             seen["derive_queries"] = queries
             seen["derive_candidate_profiles"] = list(candidate_profiles)
             seen["derive_title_fields"] = dict(title_fields)
+            seen["derive_profile_types"] = dict(profile_types or {})
             return real_derive(
-                queries, candidate_profiles, retrieve, title_fields=title_fields
+                queries,
+                candidate_profiles,
+                retrieve,
+                title_fields=title_fields,
+                profile_types=profile_types,
             )
 
         with (
@@ -4606,12 +4680,34 @@ class TestProfileSelectionOptimization:
             _TENANT_GROUND_TRUTH_ROWS
         )
         assert seen["derive_candidate_profiles"] == profiles
+        assert seen["derive_profile_types"] == {
+            profiles[0]: "video",
+            profiles[1]: "video",
+        }
         assert seen["derive_title_fields"] == {
             profiles[0]: "video_title",
             profiles[1]: "video_title",
         }
-        assert result["status"] == "success"
-        assert result["served_examples"] == 3
+        assert result == {
+            "status": "profile_labels_degenerate",
+            "spans_found": 1,
+            "served_examples": 3,
+            "approved_examples": 0,
+            "served_scoreable_examples": 3,
+            "label_exclusions": {
+                "count": 1,
+                "queries": ["tenant clip nobody can recover"],
+            },
+            "labels_by_profile": {profiles[0]: 3},
+            "exclusions_by_reason": {"no_profile_recovered_expected_videos": 1},
+        }
+        assert _state["load_blob_calls"] == [
+            ("config", "profile_selection_ground_truth")
+        ]
+        assert _state["versioned_saves"] == []
+        assert _state["activate_calls"] == []
+        assert _state["score_calls"] == []
+        assert "compiled_module" not in _state
 
     def test_profile_selection_derivation_does_not_import_evaluation_package(
         self, monkeypatch
@@ -4927,7 +5023,11 @@ class TestProfileSelectionOptimization:
                     "video_colpali_smol500_mv_frame",
                     "video_colqwen_omni_mv_chunk_30s",
                 ],
-                selected_profile="video_colpali_smol500_mv_frame",
+                selected_profile=(
+                    "video_colpali_smol500_mv_frame"
+                    if i % 2 == 0
+                    else "video_colqwen_omni_mv_chunk_30s"
+                ),
             )
             for i in range(4)
         ]
@@ -4954,6 +5054,11 @@ class TestProfileSelectionOptimization:
             "holdout_examples": 1,
             "holdout_source": "derived_labels",
             "label_exclusions": {"count": 0, "queries": []},
+            "labels_by_profile": {
+                "video_colpali_smol500_mv_frame": 2,
+                "video_colqwen_omni_mv_chunk_30s": 2,
+            },
+            "exclusions_by_reason": {},
             **_selection_block(3, 3),
             "baseline_score": 1.0,
             "current_score": 1.0,
@@ -4983,6 +5088,13 @@ class TestProfileSelectionOptimization:
                 "score": 1.0,
                 "base_score": 1.0,
                 "candidate_score": 1.0,
+                "extra_ledger_fields": {
+                    "labels_by_profile": {
+                        "video_colpali_smol500_mv_frame": 2,
+                        "video_colqwen_omni_mv_chunk_30s": 2,
+                    },
+                    "exclusions_by_reason": {},
+                },
             }
         ]
         assert state["activate_calls"] == []
@@ -5000,7 +5112,11 @@ class TestProfileSelectionOptimization:
                     "video_colpali_smol500_mv_frame",
                     "video_colqwen_omni_mv_chunk_30s",
                 ],
-                selected_profile="video_colpali_smol500_mv_frame",
+                selected_profile=(
+                    "video_colpali_smol500_mv_frame"
+                    if i % 2 == 0
+                    else "video_colqwen_omni_mv_chunk_30s"
+                ),
             )
             for i in range(4)
         ]
@@ -5028,6 +5144,11 @@ class TestProfileSelectionOptimization:
             "holdout_examples": 1,
             "holdout_source": "derived_labels",
             "label_exclusions": {"count": 0, "queries": []},
+            "labels_by_profile": {
+                "video_colpali_smol500_mv_frame": 2,
+                "video_colqwen_omni_mv_chunk_30s": 2,
+            },
+            "exclusions_by_reason": {},
             **_selection_block(3, 3),
             "baseline_score": 1.0,
             "current_score": 0.0,
@@ -5057,6 +5178,13 @@ class TestProfileSelectionOptimization:
                 "score": 0.0,
                 "base_score": 1.0,
                 "candidate_score": 0.0,
+                "extra_ledger_fields": {
+                    "labels_by_profile": {
+                        "video_colpali_smol500_mv_frame": 2,
+                        "video_colqwen_omni_mv_chunk_30s": 2,
+                    },
+                    "exclusions_by_reason": {},
+                },
             }
         ]
         assert state["activate_calls"] == [("model", "profile_selection", 1)]
@@ -5072,7 +5200,11 @@ class TestProfileSelectionOptimization:
                     "video_colpali_smol500_mv_frame",
                     "video_colqwen_omni_mv_chunk_30s",
                 ],
-                selected_profile="video_colpali_smol500_mv_frame",
+                selected_profile=(
+                    "video_colpali_smol500_mv_frame"
+                    if i % 2 == 0
+                    else "video_colqwen_omni_mv_chunk_30s"
+                ),
             )
             for i in range(4)
         ]
@@ -5098,6 +5230,11 @@ class TestProfileSelectionOptimization:
             "status": "failed",
             "error": "profile scorer failed",
             "label_exclusions": {"count": 0, "queries": []},
+            "labels_by_profile": {
+                "video_colpali_smol500_mv_frame": 2,
+                "video_colqwen_omni_mv_chunk_30s": 2,
+            },
+            "exclusions_by_reason": {},
             **_selection_block(3, 3),
         }
 
@@ -5111,7 +5248,11 @@ class TestProfileSelectionOptimization:
                     "video_colpali_smol500_mv_frame",
                     "video_colqwen_omni_mv_chunk_30s",
                 ],
-                selected_profile="video_colpali_smol500_mv_frame",
+                selected_profile=(
+                    "video_colpali_smol500_mv_frame"
+                    if i % 2 == 0
+                    else "video_colqwen_omni_mv_chunk_30s"
+                ),
             )
             for i in range(4)
         ]
@@ -5219,15 +5360,16 @@ class TestProfileSelectionOptimization:
 
     @pytest.mark.asyncio
     async def test_profile_below_population_floor_persists_without_activating(self):
+        profiles = [
+            "video_colpali_smol500_mv_frame",
+            "video_colqwen_omni_mv_chunk_30s",
+        ]
         rows = [
             _profile_span_row(
                 f"find clip {i}",
                 span_id=f"profile-{i}",
-                available_profiles=[
-                    "video_colpali_smol500_mv_frame",
-                    "video_colqwen_omni_mv_chunk_30s",
-                ],
-                selected_profile="video_colpali_smol500_mv_frame",
+                available_profiles=profiles,
+                selected_profile=profiles[i % len(profiles)],
             )
             for i in range(4)
         ]
@@ -5251,6 +5393,11 @@ class TestProfileSelectionOptimization:
             "min_unique_queries": 1,
             "version": 1,
             "label_exclusions": {"count": 0, "queries": []},
+            "labels_by_profile": {
+                "video_colpali_smol500_mv_frame": 2,
+                "video_colqwen_omni_mv_chunk_30s": 2,
+            },
+            "exclusions_by_reason": {},
         }
         assert "selection" not in result
         assert state["versioned_saves"] == [
@@ -5269,6 +5416,13 @@ class TestProfileSelectionOptimization:
                 "score": None,
                 "base_score": None,
                 "candidate_score": None,
+                "extra_ledger_fields": {
+                    "labels_by_profile": {
+                        "video_colpali_smol500_mv_frame": 2,
+                        "video_colqwen_omni_mv_chunk_30s": 2,
+                    },
+                    "exclusions_by_reason": {},
+                },
             }
         ]
         assert state["activate_calls"] == []
@@ -5741,6 +5895,7 @@ class TestEntityExtractionOptimization:
                 score,
                 base_score,
                 candidate_score,
+                extra_ledger_fields=None,
             ):
                 state["versioned_saves"].append(
                     {
@@ -5753,6 +5908,7 @@ class TestEntityExtractionOptimization:
                         "score": score,
                         "base_score": base_score,
                         "candidate_score": candidate_score,
+                        "extra_ledger_fields": dict(extra_ledger_fields or {}),
                     }
                 )
                 return f"artifact-{len(state['versioned_saves'])}", len(
@@ -6137,6 +6293,7 @@ class TestEntityExtractionOptimization:
                 "score": 1.0,
                 "base_score": 0.0,
                 "candidate_score": 1.0,
+                "extra_ledger_fields": {},
             }
         ]
         assert state["activate_calls"] == [("model", "entity_extraction", 1)]
@@ -6195,6 +6352,7 @@ class TestEntityExtractionOptimization:
                 "score": 1.0,
                 "base_score": 1.0,
                 "candidate_score": 1.0,
+                "extra_ledger_fields": {},
             }
         ]
         assert state["activate_calls"] == []
@@ -6254,6 +6412,7 @@ class TestEntityExtractionOptimization:
                 "score": 1.0,
                 "base_score": 1.0,
                 "candidate_score": 1.0,
+                "extra_ledger_fields": {},
             }
         ]
         assert state["activate_calls"] == [("model", "entity_extraction", 1)]
@@ -6341,6 +6500,7 @@ class TestEntityExtractionOptimization:
                 "score": None,
                 "base_score": None,
                 "candidate_score": None,
+                "extra_ledger_fields": {},
             }
         ]
         assert state["activate_calls"] == []

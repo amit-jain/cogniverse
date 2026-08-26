@@ -205,7 +205,7 @@ flowchart TB
 
     Source --> Derive["<span style='color:#000'>derive_profile_labels<br/>• SearchService.search per query × usable profile, top_k 10<br/>• Result matches an expected video when its title basename (schema document_mapping.title, extension stripped) equals the expected id<br/>• Label = the one profile whose results match every expected video<br/>• Unrecovered, untitled-result and tied queries reported under label_exclusions</span>"]
 
-    Derive --> RunOpt["<span style='color:#000'>run_profile_optimization tenant_id, lookback_hours<br/>• Build dspy.Example trainset from derived labels<br/>• Holdout = tail of the derived labels</span>"]
+    Derive --> RunOpt["<span style='color:#000'>run_profile_optimization tenant_id, lookback_hours<br/>• Build dspy.Example trainset from derived labels<br/>• Holdout = tail of the derived labels<br/>• Guard on label collapse with max_label_share</span>"]
 
     Synthetic["<span style='color:#000'>Approved synthetic demos<br/>• _load_approved_synthetic_data 'profile'<br/>• Merged into trainset</span>"] --> RunOpt
 
@@ -296,10 +296,13 @@ async def run_profile_optimization(
        result matches an expected video when the basename of its title,
        extension stripped, equals the expected id; the title field is the one
        the profile's schema names under document_mapping.title (video_title,
-       audio_title, document_title, image_title, title, chunk_name). The label
-       is the single profile whose results match all of the row's
-       expected_videos. Queries no profile recovers, whose results carry no
-       title, or that two profiles tie on, are excluded and reported under
+       audio_title, document_title, image_title, title, chunk_name). Candidate
+       profiles are first restricted to the shipped backend types that can
+       serve the row's expected media type, so video rows only score video
+       profiles. The label is the single profile whose results match all of the
+       row's expected_videos. Queries with no serving profile emit the named
+       `no_profile_serves_media_type` exclusion; no recovered video, untitled
+       results, or profile ties are also excluded and reported under
        label_exclusions. cogniverse.profile_selection spans are counted as
        spans_found and not read.
     3. Merge in approved synthetic demos for optimizer type "profile". The
@@ -320,7 +323,14 @@ async def run_profile_optimization(
          "baseline_score": float, "current_score": float | None,
          "candidate_score": float | None,
          "decision": "promote" | "keep" | "rollback" | "reject",
-         "version": int, "consumed_example_ids": list[str]}
+         "version": int, "consumed_example_ids": list[str],
+         "labels_by_profile": dict[str, int],
+         "exclusions_by_reason": dict[str, int]}
+      - {"status": "profile_labels_degenerate", "spans_found": int,
+         "served_examples": int, "approved_examples": int,
+         "served_scoreable_examples": int, "label_exclusions": {...},
+         "labels_by_profile": dict[str, int],
+         "exclusions_by_reason": dict[str, int]}
       - {"status": "no_data", "spans_found": int, "examples": 0}
       - {"status": "profile_selection_ground_truth_missing", "retryable": False,
          "error": str}
@@ -337,7 +347,7 @@ async def run_profile_optimization(
     """
 ```
 
-Profile-selection ground truth is tenant-owned state in the artifact store, not a bundled runtime asset. The optimizer reads `("config", "profile_selection_ground_truth")` first and only then builds scored examples from spans. Upload validation rejects blank queries and empty normalized `expected_videos` so tenants never persist a silent placeholder label set.
+Profile-selection ground truth is tenant-owned state in the artifact store, not a bundled runtime asset. The optimizer reads `("config", "profile_selection_ground_truth")` first and only then builds scored examples from spans. Upload validation rejects blank queries and empty normalized `expected_videos` so tenants never persist a silent placeholder label set. All post-derivation profile results also carry `labels_by_profile` and `exclusions_by_reason`. The shipped `optimizer_floors.profile_selection.max_label_share` knob defaults to `0.8` and stops compiles when one profile owns too much of the derived label distribution.
 
 **Training:** Always **BootstrapFewShot**; the 50-example threshold only changes its
 `max_bootstrapped_demos`/`max_labeled_demos`/`max_rounds` settings, it does not switch optimizers.
