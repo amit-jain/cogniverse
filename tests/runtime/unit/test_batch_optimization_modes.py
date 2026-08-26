@@ -6104,13 +6104,11 @@ class TestEntityExtractionOptimization:
             {
                 "query": "approved0 query",
                 "entities": [{"text": "approved0", "type": "CONCEPT"}],
-                "entity_types": "CONCEPT",
                 "example_id": "approved:entity-approved-0",
             },
             {
                 "query": "approved1 query",
                 "entities": [{"text": "approved1", "type": "CONCEPT"}],
-                "entity_types": "CONCEPT",
                 "example_id": "approved:entity-approved-1",
             },
         ]
@@ -6151,7 +6149,6 @@ class TestEntityExtractionOptimization:
             {
                 "reasoning": f"truth reasoning {i}",
                 "entities": f"truth{i}|CONCEPT|1.0",
-                "entity_types": "CONCEPT",
             }
             for i in range(8)
         ]
