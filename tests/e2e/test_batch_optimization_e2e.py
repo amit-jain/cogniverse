@@ -4496,3 +4496,424 @@ class TestSyntheticGeneration:
         ), result.stderr
         # A configuration error is a one-line message, not a traceback.
         assert "Traceback" not in result.stderr, result.stderr
+
+
+def _seed_backdated_training_selection_rows_in_pod(
+    tenant_id: str,
+    artifact_key: str,
+    rows: list[dict[str, object]],
+) -> None:
+    rows_json = json.dumps(rows)
+    script = IN_POD_TELEMETRY_PRELUDE + textwrap.dedent(
+        f"""\
+        import asyncio
+        import json
+        import pandas as pd
+        from cogniverse_agents.optimizer.artifact_manager import ArtifactManager
+        from cogniverse_foundation.telemetry.manager import get_telemetry_manager
+
+        async def _go():
+            tp = get_telemetry_manager().get_provider(tenant_id={tenant_id!r})
+            am = ArtifactManager(tp, {tenant_id!r})
+            rows = json.loads({rows_json!r})
+            for version, row in enumerate(rows, start=1):
+                ledger = {{
+                    "version": version,
+                    "kind": "model",
+                    "key": {artifact_key!r},
+                    "consumed_example_ids": [row["example_id"]],
+                    "decision": row["decision"],
+                    "scored": row["scored"],
+                    "score": row["score"],
+                    "base_score": row["base_score"],
+                    "candidate_score": row["candidate_score"],
+                    "created_at": row["created_at"],
+                }}
+                await am._provider.datasets.create_dataset(
+                    name=am._versioned_dataset_name("model", {artifact_key!r}, version),
+                    data=pd.DataFrame(
+                        [{"content": row["content"], "ledger": json.dumps(ledger)}]
+                    ),
+                    metadata={{
+                        "artifact_type": "blob_model",
+                        "key": {artifact_key!r},
+                        "tenant_id": {tenant_id!r},
+                        "version": version,
+                        "created_at": row["created_at"],
+                        "input_keys": ["content", "ledger"],
+                        "output_keys": [],
+                    }},
+                )
+
+        asyncio.run(_go())
+        """
+    )
+    result = subprocess.run(
+        [
+            "kubectl",
+            "--context",
+            KUBECTL_CONTEXT,
+            "exec",
+            "-n",
+            NAMESPACE,
+            DEPLOYMENT,
+            "-c",
+            CONTAINER,
+            "--",
+            "python3",
+            "-c",
+            script,
+        ],
+        capture_output=True,
+        text=True,
+        timeout=120,
+    )
+    if result.returncode != 0:
+        raise RuntimeError(
+            _subprocess_failure_message(
+                "seed_backdated_training_selection_rows",
+                result,
+                operation=(
+                    "seed backdated training-selection ledger rows "
+                    f"tenant_id={tenant_id!r}, artifact_key={artifact_key!r}"
+                ),
+            )
+        )
+
+
+@pytest.fixture(scope="function")
+def decay_selection_tenant(_kubectl_cluster_ready) -> str:
+    suffix = uuid.uuid4().hex[:8]
+    org_id = f"opt_decay_{suffix}"
+    tenant_id = f"{org_id}:t1"
+
+    with httpx.Client(timeout=60.0) as client:
+        resp = client.post(
+            f"{RUNTIME}/admin/organizations",
+            json={
+                "org_id": org_id,
+                "org_name": f"opt-decay-{suffix}",
+                "created_by": "e2e",
+            },
+        )
+        assert resp.status_code in (200, 201, 409), resp.text
+
+    register_tenant_and_wait(tenant_id, created_by="e2e", timeout_s=600.0)
+
+    try:
+        yield tenant_id
+    finally:
+        with httpx.Client(timeout=60.0) as client:
+            try:
+                client.delete(f"{RUNTIME}/admin/tenants/{tenant_id}")
+            except httpx.HTTPError:
+                pass
+            try:
+                client.delete(f"{RUNTIME}/admin/organizations/{org_id}")
+            except httpx.HTTPError:
+                pass
+
+
+@pytest.mark.e2e
+class TestTrainingSelectionDecay:
+    def test_backdated_ledger_rows_decay_exactly_one_example(
+        self, decay_selection_tenant
+    ):
+        from datetime import datetime, timezone
+
+        from cogniverse_agents.optimizer.example_selection import (
+            TRAINING_SELECTION_DEFAULTS,
+            ExampleStats,
+            SelectionReport,
+            confirmation_stats,
+            decay_weight,
+            select_training_records,
+        )
+
+        tenant_id = decay_selection_tenant
+        artifact_key = "training_selection_decay"
+        rows = [
+            {
+                "example_id": "span:old-unconfirmed",
+                "content": "old-unconfirmed",
+                "created_at": "2026-08-01T00:00:00+00:00",
+                "decision": "keep",
+                "scored": False,
+                "score": None,
+                "base_score": None,
+                "candidate_score": None,
+            },
+            {
+                "example_id": "span:old-confirmed",
+                "content": "old-confirmed-1",
+                "created_at": "2026-08-01T00:00:00+00:00",
+                "decision": "promote",
+                "scored": True,
+                "score": 0.8,
+                "base_score": 0.6,
+                "candidate_score": 0.8,
+            },
+            {
+                "example_id": "span:old-confirmed",
+                "content": "old-confirmed-2",
+                "created_at": "2026-08-05T00:00:00+00:00",
+                "decision": "promote",
+                "scored": True,
+                "score": 0.8,
+                "base_score": 0.6,
+                "candidate_score": 0.8,
+            },
+            {
+                "example_id": "span:old-confirmed",
+                "content": "old-confirmed-3",
+                "created_at": "2026-08-09T00:00:00+00:00",
+                "decision": "promote",
+                "scored": True,
+                "score": 0.8,
+                "base_score": 0.6,
+                "candidate_score": 0.8,
+            },
+            {
+                "example_id": "span:fresh-unconfirmed",
+                "content": "fresh-unconfirmed",
+                "created_at": "2026-08-29T00:00:00+00:00",
+                "decision": "keep",
+                "scored": False,
+                "score": None,
+                "base_score": None,
+                "candidate_score": None,
+            },
+            {
+                "example_id": "span:fresh-confirmed",
+                "content": "fresh-confirmed-1",
+                "created_at": "2026-08-28T00:00:00+00:00",
+                "decision": "promote",
+                "scored": True,
+                "score": 0.8,
+                "base_score": 0.6,
+                "candidate_score": 0.8,
+            },
+            {
+                "example_id": "span:fresh-confirmed",
+                "content": "fresh-confirmed-2",
+                "created_at": "2026-08-29T00:00:00+00:00",
+                "decision": "promote",
+                "scored": True,
+                "score": 0.8,
+                "base_score": 0.6,
+                "candidate_score": 0.8,
+            },
+            {
+                "example_id": "span:fresh-confirmed",
+                "content": "fresh-confirmed-3",
+                "created_at": "2026-08-30T00:00:00+00:00",
+                "decision": "promote",
+                "scored": True,
+                "score": 0.8,
+                "base_score": 0.6,
+                "candidate_score": 0.8,
+            },
+        ]
+        _seed_backdated_training_selection_rows_in_pod(
+            tenant_id,
+            artifact_key,
+            rows,
+        )
+
+        lineage = _blob_version_lineage_in_pod(
+            "model", artifact_key, tenant_id=tenant_id
+        )
+        assert lineage == [
+            {
+                "version": 1,
+                "name": f"dspy-model-{tenant_id}-{artifact_key}-v1",
+                "row_count": 1,
+                "consumed_example_ids": ["span:old-unconfirmed"],
+                "decision": "keep",
+                "scored": False,
+                "base_score": None,
+                "candidate_score": None,
+                "created_at": "2026-08-01T00:00:00+00:00",
+                "score": None,
+            },
+            {
+                "version": 2,
+                "name": f"dspy-model-{tenant_id}-{artifact_key}-v2",
+                "row_count": 1,
+                "consumed_example_ids": ["span:old-confirmed"],
+                "decision": "promote",
+                "scored": True,
+                "base_score": 0.6,
+                "candidate_score": 0.8,
+                "created_at": "2026-08-01T00:00:00+00:00",
+                "score": 0.8,
+            },
+            {
+                "version": 3,
+                "name": f"dspy-model-{tenant_id}-{artifact_key}-v3",
+                "row_count": 1,
+                "consumed_example_ids": ["span:old-confirmed"],
+                "decision": "promote",
+                "scored": True,
+                "base_score": 0.6,
+                "candidate_score": 0.8,
+                "created_at": "2026-08-05T00:00:00+00:00",
+                "score": 0.8,
+            },
+            {
+                "version": 4,
+                "name": f"dspy-model-{tenant_id}-{artifact_key}-v4",
+                "row_count": 1,
+                "consumed_example_ids": ["span:old-confirmed"],
+                "decision": "promote",
+                "scored": True,
+                "base_score": 0.6,
+                "candidate_score": 0.8,
+                "created_at": "2026-08-09T00:00:00+00:00",
+                "score": 0.8,
+            },
+            {
+                "version": 5,
+                "name": f"dspy-model-{tenant_id}-{artifact_key}-v5",
+                "row_count": 1,
+                "consumed_example_ids": ["span:fresh-unconfirmed"],
+                "decision": "keep",
+                "scored": False,
+                "base_score": None,
+                "candidate_score": None,
+                "created_at": "2026-08-29T00:00:00+00:00",
+                "score": None,
+            },
+            {
+                "version": 6,
+                "name": f"dspy-model-{tenant_id}-{artifact_key}-v6",
+                "row_count": 1,
+                "consumed_example_ids": ["span:fresh-confirmed"],
+                "decision": "promote",
+                "scored": True,
+                "base_score": 0.6,
+                "candidate_score": 0.8,
+                "created_at": "2026-08-28T00:00:00+00:00",
+                "score": 0.8,
+            },
+            {
+                "version": 7,
+                "name": f"dspy-model-{tenant_id}-{artifact_key}-v7",
+                "row_count": 1,
+                "consumed_example_ids": ["span:fresh-confirmed"],
+                "decision": "promote",
+                "scored": True,
+                "base_score": 0.6,
+                "candidate_score": 0.8,
+                "created_at": "2026-08-29T00:00:00+00:00",
+                "score": 0.8,
+            },
+            {
+                "version": 8,
+                "name": f"dspy-model-{tenant_id}-{artifact_key}-v8",
+                "row_count": 1,
+                "consumed_example_ids": ["span:fresh-confirmed"],
+                "decision": "promote",
+                "scored": True,
+                "base_score": 0.6,
+                "candidate_score": 0.8,
+                "created_at": "2026-08-30T00:00:00+00:00",
+                "score": 0.8,
+            },
+        ]
+
+        config = json.loads(CONFIG_PATH.read_text())
+        score_threshold = config["routing"]["optimization_config"][
+            "training_selection"
+        ]["entity_extraction"]["confirmation_score_threshold"]
+        stats = confirmation_stats(lineage, score_threshold=score_threshold)
+        now = datetime(2026, 8, 30, tzinfo=timezone.utc)
+        assert stats == {
+            "span:old-unconfirmed": ExampleStats(
+                0, datetime(2026, 8, 1, tzinfo=timezone.utc)
+            ),
+            "span:old-confirmed": ExampleStats(
+                3, datetime(2026, 8, 1, tzinfo=timezone.utc)
+            ),
+            "span:fresh-unconfirmed": ExampleStats(
+                0, datetime(2026, 8, 29, tzinfo=timezone.utc)
+            ),
+            "span:fresh-confirmed": ExampleStats(
+                3, datetime(2026, 8, 28, tzinfo=timezone.utc)
+            ),
+        }
+
+        weights = {
+            example_id: decay_weight(
+                stats,
+                example_id,
+                now=now,
+                knobs=TRAINING_SELECTION_DEFAULTS,
+            )
+            for example_id in stats
+        }
+        assert weights == {
+            "span:old-unconfirmed": 0.5,
+            "span:old-confirmed": 1.0,
+            "span:fresh-unconfirmed": 1.0,
+            "span:fresh-confirmed": 1.0,
+        }
+        selected, report = select_training_records(
+            [
+                {
+                    "example_id": "span:old-unconfirmed",
+                    "query": "old unconfirmed",
+                },
+                {
+                    "example_id": "span:old-confirmed",
+                    "query": "old confirmed",
+                },
+                {
+                    "example_id": "span:fresh-unconfirmed",
+                    "query": "fresh unconfirmed",
+                },
+                {
+                    "example_id": "span:fresh-confirmed",
+                    "query": "fresh confirmed",
+                },
+            ],
+            weights=weights,
+            knobs=TRAINING_SELECTION_DEFAULTS,
+            embed_fn=lambda texts: (_ for _ in ()).throw(
+                AssertionError("embed_fn called below cap")
+            ),
+        )
+        assert selected == [
+            {
+                "example_id": "span:old-unconfirmed",
+                "query": "old unconfirmed",
+            },
+            {
+                "example_id": "span:old-confirmed",
+                "query": "old confirmed",
+            },
+            {
+                "example_id": "span:fresh-unconfirmed",
+                "query": "fresh unconfirmed",
+            },
+            {
+                "example_id": "span:fresh-confirmed",
+                "query": "fresh confirmed",
+            },
+        ]
+        assert report == SelectionReport(
+            pool=4,
+            deduped=4,
+            cap=TRAINING_SELECTION_DEFAULTS.trainset_cap,
+            mmr_applied=False,
+            decayed_count=1,
+            selected_ids=[
+                "span:old-unconfirmed",
+                "span:old-confirmed",
+                "span:fresh-unconfirmed",
+                "span:fresh-confirmed",
+            ],
+        )
+        assert {
+            example_id for example_id, weight in weights.items() if weight < 1.0
+        } == {"span:old-unconfirmed"}
