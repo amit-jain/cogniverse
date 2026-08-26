@@ -308,6 +308,7 @@ class TestEntityExtractionAgent:
         assert result.has_entities is False
         assert result.entities == []
         assert result.relationships == []
+        assert result.dominant_types == []
         assert result.path_used == "dspy"
 
     @pytest.mark.asyncio
@@ -320,6 +321,8 @@ class TestEntityExtractionAgent:
         assert result.query == ""
         assert result.entity_count == 0
         assert result.has_entities is False
+        assert result.dominant_types == []
+        assert result.path_used == "dspy"
 
     @pytest.mark.asyncio
     async def test_process_missing_query(self, entity_agent):
@@ -331,6 +334,8 @@ class TestEntityExtractionAgent:
 
         assert result.query == ""
         assert result.entity_count == 0
+        assert result.dominant_types == []
+        assert result.path_used == "dspy"
 
     @pytest.mark.asyncio
     async def test_process_uses_dspy_primary_and_skips_gliner(self, entity_agent):
@@ -377,6 +382,8 @@ class TestEntityExtractionAgent:
             "dominant_types": ["PERSON", "PLACE"],
             "path_used": "dspy",
         }
+        assert result.relationships == []
+        assert result.path_used == "dspy"
         assert gliner.calls == 0
         assert lm.calls == 1
 
@@ -429,6 +436,21 @@ class TestEntityExtractionAgent:
             "dominant_types": ["PERSON", "PLACE"],
             "path_used": "fast",
         }
+        assert result.relationships == [
+            Relationship(
+                subject="Barack Obama",
+                relation="in",
+                object="Chicago",
+                confidence=0.7,
+            )
+        ]
+        assert result.entity_count == 2
+        assert result.dominant_types == ["PERSON", "PLACE"]
+        assert result.entities[0].context == "Barack Obama in Chicago"
+        assert result.entities[1].context == "Barack Obama in Chicago"
+        assert result.relationships[0].subject == "Barack Obama"
+        assert result.relationships[0].object == "Chicago"
+        assert result.path_used == "fast"
         assert lm.calls == 2
 
     @pytest.mark.asyncio
@@ -473,6 +495,13 @@ class TestEntityExtractionAgent:
             (rel.subject, rel.relation, rel.object, rel.confidence)
             for rel in fast_result.relationships
         ]
+        assert [
+            (entity.text, entity.type) for entity in dspy_result.entities
+        ] == [
+            (entity.text, entity.type) for entity in fast_result.entities
+        ]
+        assert dspy_result.path_used == "dspy"
+        assert fast_result.path_used == "fast"
 
     @pytest.mark.asyncio
     async def test_process_raises_when_both_paths_fail(self, entity_agent):
@@ -614,6 +643,7 @@ class TestEntityExtractionAgent:
         context = entity_agent._extract_context(entity_text, query)
 
         assert "Barack Obama" in context
+        assert context == query
         assert len(context) <= 80  # Max 30 chars before + entity + 30 chars after
 
     def test_extract_context_entity_not_found(self, entity_agent):
@@ -720,6 +750,7 @@ class TestEntityExtractionAgent:
 
         assert result.entities == []
         assert result.relationships == []
+        assert result.entity_count == 0
         assert result.path_used == "dspy"
 
 

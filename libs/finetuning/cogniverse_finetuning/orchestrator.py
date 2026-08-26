@@ -120,13 +120,6 @@ def _validate_entity_record(record: Dict[str, Any], position: int) -> None:
                 "and type strings"
             )
 
-    entity_types = record.get("entity_types")
-    if not isinstance(entity_types, str):
-        raise ValueError(
-            f"approved entity_extraction record at position {position} requires "
-            "an entity_types string"
-        )
-
     relationships = _validated_list(
         record,
         field="relationships",

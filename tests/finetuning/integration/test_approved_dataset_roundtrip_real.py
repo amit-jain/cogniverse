@@ -122,7 +122,6 @@ def test_reader_rejects_approved_record_without_agent_type():
                 "metadata.agent_type": "entity_extraction",
                 "query": "PyTorch was released by Meta AI",
                 "entities": "not-a-list",
-                "entity_types": "TECHNOLOGY,ORG",
                 "relationships": "[]",
             },
             "entity_extraction",
@@ -367,7 +366,6 @@ def telemetry_manager(phoenix_container):
             {
                 "query": "PyTorch was released by Meta AI",
                 "entities": "[]",
-                "entity_types": "TECHNOLOGY,ORG",
                 "relationships": [],
             },
             (
@@ -723,7 +721,6 @@ async def test_approved_synthetic_dataset_roundtrip(
                     {"text": "PyTorch", "type": "TECHNOLOGY"},
                     {"text": "Meta AI", "type": "ORG"},
                 ],
-                "entity_types": "TECHNOLOGY,ORG",
                 "relationships": [
                     {
                         "source": "PyTorch",
@@ -738,7 +735,6 @@ async def test_approved_synthetic_dataset_roundtrip(
                     {"text": "JAX", "type": "TECHNOLOGY"},
                     {"text": "Google", "type": "ORG"},
                 ],
-                "entity_types": "TECHNOLOGY,ORG",
                 "relationships": [
                     {
                         "source": "JAX",
@@ -755,7 +751,6 @@ async def test_approved_synthetic_dataset_roundtrip(
                     {"text": "Vespa", "type": "TECHNOLOGY"},
                     {"text": "Yahoo", "type": "ORG"},
                 ],
-                "entity_types": "TECHNOLOGY,ORG",
                 "relationships": [
                     {
                         "source": "Vespa",
@@ -770,7 +765,6 @@ async def test_approved_synthetic_dataset_roundtrip(
                     {"text": "Phoenix", "type": "TECHNOLOGY"},
                     {"text": "Arize", "type": "ORG"},
                 ],
-                "entity_types": "TECHNOLOGY,ORG",
                 "relationships": [
                     {
                         "source": "Phoenix",
@@ -821,7 +815,6 @@ async def test_approved_synthetic_dataset_roundtrip(
             "metadata.agent_type": "entity_extraction",
             "query": "This obsolete shared row must never be consumed",
             "entities": [{"text": "obsolete", "type": "CONCEPT"}],
-            "entity_types": "CONCEPT",
             "relationships": [],
         },
     )
