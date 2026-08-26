@@ -382,7 +382,10 @@ def ensure_host_gateway() -> bool:
             return False
 
     if not gateway_running():
-        if not start_gateway():
+        # An unclean shutdown corrupts the gateway's internal cluster state.
+        # The recreate removes the corrupt registration and then fails on it;
+        # the retry builds clean because the first attempt cleared it.
+        if not start_gateway() and not start_gateway():
             return False
     return True
 
