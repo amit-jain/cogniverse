@@ -512,9 +512,15 @@ class DatasetStore(ABC):
 callers distinguish a genuinely missing dataset from a backend outage.
 
 The telemetry provider exposes these store interfaces. `replace_dataset` is the
-safe helper for stable-name overwrites. Experiment tracking lives on the
-separate `EvaluationProvider` stack (`PhoenixEvaluationProvider.create_experiment`),
-and metric aggregation via `PhoenixAnalytics` — not on the telemetry provider.
+safe helper for stable-name overwrites: same-name writers are serialized only
+within one store instance on one event loop, and a torn delete/create that
+cannot restore the prior frame raises `DatasetReplaceRestoreFailedError` with
+the dataset name, the original error, and the restore error. That protection is
+in-process only; a hard kill between delete and create can still lose the
+dataset because Phoenix exposes no atomic swap primitive. Experiment tracking
+lives on the separate `EvaluationProvider` stack
+(`PhoenixEvaluationProvider.create_experiment`), and metric aggregation via
+`PhoenixAnalytics` — not on the telemetry provider.
 
 ### TelemetryProvider Base Class
 
