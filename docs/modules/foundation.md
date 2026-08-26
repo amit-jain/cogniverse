@@ -452,6 +452,8 @@ resolved = llm_config.resolve("summarizer_agent")
 
 `primary` is the global default for all DSPy modules and also the student model during optimization. `teacher` is optional for non-optimization processes, but every teacher-dependent optimization must configure it explicitly: `resolve_teacher()` returns an isolated copy for `BootstrapFewShot(teacher_settings={"lm": ...})` and raises when the role is absent instead of falling back to `primary`. `overrides` holds per-component partial dicts — only differing fields need to be specified; `resolve(component)` merges them field-by-field onto a copy of `primary` (never through `to_dict()`, which masks `api_key` — the resolved endpoint keeps the real key).
 
+`is_modal_inference_url(base_url)` classifies canonical inference roots: it returns `True` only for root HTTPS `*.modal.run` URLs, and `inference_headers(base_url)` uses that predicate to return the shared Modal bearer only for those roots. Non-Modal roots remain keyless.
+
 `create_dspy_lm(config: LLMEndpointConfig) -> dspy.LM` (`cogniverse_foundation.config.llm_factory`) is the single chokepoint every `dspy.LM()` construction in the codebase goes through. It wires `api_base`/`api_key`/`temperature`/`max_tokens`/`timeout`/`num_retries` onto the LM, merges `seed` into `extra_body`, forwards `extra_headers`, and substitutes a placeholder `api_key` when `api_base` is set but no key is configured (self-hosted OAI-compat servers ignore it). Raises `ValueError` if `config.model` is empty.
 
 ```python

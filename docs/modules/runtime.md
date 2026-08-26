@@ -193,10 +193,11 @@ single-flight one replacement. The public Modal function is named `Inference`,
 starts at zero containers, and uses the service's ordered GPU candidates and
 scaledown window.
 
-When the teacher is routed to a Modal `externalUrl`, the runtime teacher probe
-retries through the shared `COGNIVERSE_INFERENCE_API_KEY` bearer and waits up
-to the service spec's pre-measurement `boot_deadline_seconds`; in-cluster
-teachers keep the no-auth placeholder and the existing one-shot failure path.
+When the teacher is routed to a Modal `externalUrl`, the runtime first resolves
+the shared `COGNIVERSE_INFERENCE_API_KEY` bearer onto the teacher endpoint and
+then retries the probe through that authenticated session up to the service
+spec's pre-measurement `boot_deadline_seconds`; in-cluster teachers keep the
+no-auth placeholder and the existing one-shot failure path.
 
 Create the Modal Secret `cogniverse-inference-api-key` with the key
 `COGNIVERSE_INFERENCE_API_KEY` before deployment. The gated Gemma service also

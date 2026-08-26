@@ -194,7 +194,7 @@ valueFrom:
   secretKeyRef:
     name: cogniverse-inference-api-key
     key: COGNIVERSE_INFERENCE_API_KEY
-    optional: true
+    optional: false
 {{- else -}}
 value: {{ include "cogniverse.llmPlaceholderApiKey" . | quote }}
 {{- end -}}
@@ -388,15 +388,21 @@ service overrides the engine-derived default with `tunableOp`.
 {{/*
 INFERENCE_SERVICE_URLS JSON body — one {service_key: url} entry per enabled
 inference service. A non-empty ``externalUrl`` (an absolute https URL, e.g. a
-Modal endpoint) replaces the cluster-internal Service URL. The LLM services
-use their own helpers: the student is overridden via ``runtime.primaryLLM``,
-while the teacher keeps its key in this map and can point at Modal.
+Modal endpoint service root) replaces the cluster-internal Service URL. The
+LLM services use their own helpers: the student is overridden via
+``runtime.primaryLLM``, while the teacher keeps its key in this map and can
+point at Modal.
 */}}
 {{- define "cogniverse.inferenceServiceUrls" -}}
 {{- $fullName := include "cogniverse.fullname" . -}}
 {{- range $name, $cfg := .Values.inference -}}
 {{- if and $cfg.externalUrl (eq $name "vllm_llm_student") -}}
 {{- fail (printf "inference.%s.externalUrl is unsupported: the LLM endpoint is derived by runtime.primaryLLM instead" $name) -}}
+{{- end -}}
+{{- if and $cfg.enabled $cfg.externalUrl -}}
+{{- if or (hasSuffix "/v1" $cfg.externalUrl) (hasSuffix "/" $cfg.externalUrl) -}}
+{{- fail (printf "inference.%s.externalUrl must be the service root URL (no trailing / or /v1)" $name) -}}
+{{- end -}}
 {{- end -}}
 {{- end -}}
 {
