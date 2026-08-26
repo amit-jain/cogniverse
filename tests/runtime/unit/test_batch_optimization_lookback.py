@@ -318,6 +318,11 @@ def test_batch_job_duration_survives_pytest_stdout_capture(tmp_path, monkeypatch
     """
     record = tmp_path / "durations.jsonl"
     monkeypatch.setattr(_MOD, "BATCH_JOB_DURATIONS_PATH", record)
+    monkeypatch.setattr(
+        _MOD,
+        "_host_memory_conditions",
+        lambda: {"mem_available_gib": 12.0, "swap_used_gib": 0.0, "gtt_used_gib": 3.0},
+    )
     _MOD.BATCH_JOB_DURATIONS.clear()
 
     _MOD._record_batch_job_duration("entity-extraction", 913.5, timed_out=False)
@@ -327,7 +332,78 @@ def test_batch_job_duration_survives_pytest_stdout_capture(tmp_path, monkeypatch
 
     lines = record.read_text().splitlines()
     assert [json.loads(line) for line in lines] == [
-        {"mode": "entity-extraction", "seconds": 913.5, "timed_out": False},
-        {"mode": "simba", "seconds": 1200.0, "timed_out": True},
+        {
+            "mode": "entity-extraction",
+            "seconds": 913.5,
+            "timed_out": False,
+            "mem_available_gib": 12.0,
+            "swap_used_gib": 0.0,
+            "gtt_used_gib": 3.0,
+        },
+        {
+            "mode": "simba",
+            "seconds": 1200.0,
+            "timed_out": True,
+            "mem_available_gib": 12.0,
+            "swap_used_gib": 0.0,
+            "gtt_used_gib": 3.0,
+        },
+    ]
+    _MOD.BATCH_JOB_DURATIONS.clear()
+
+
+def test_batch_job_durations_path_survives_a_reboot():
+    """The durations file accumulates samples ACROSS runs, so it must persist.
+
+    A budget is derived from the recorded distribution, which only tightens
+    as samples accumulate. The system temp directory is cleared on reboot,
+    and this host reboots out of memory freezes, so a temp-dir path silently
+    discards every sample and leaves the budget a guess again.
+    """
+    import tempfile
+
+    path = _MOD.BATCH_JOB_DURATIONS_PATH
+    system_tmp = Path(tempfile.gettempdir()).resolve()
+    assert system_tmp not in path.resolve().parents, (
+        f"durations recorded under the reboot-cleared temp dir: {path}"
+    )
+    assert path.name == "batch_job_durations.jsonl"
+    assert path.parent.name == "cogniverse"
+
+
+def test_batch_job_duration_records_host_memory_conditions(tmp_path, monkeypatch):
+    """A duration measured under memory thrash is not a measurement.
+
+    Budgets are derived from these records. A job that ran while the host was
+    swapping reports a cost that says nothing about the job, so each record
+    carries the conditions it was measured under and a contaminated sample
+    identifies itself instead of silently becoming the budget.
+    """
+    record = tmp_path / "durations.jsonl"
+    monkeypatch.setattr(_MOD, "BATCH_JOB_DURATIONS_PATH", record)
+    monkeypatch.setattr(
+        _MOD,
+        "_host_memory_conditions",
+        lambda: {
+            "mem_available_gib": 34.0,
+            "swap_used_gib": 55.0,
+            "gtt_used_gib": 57.0,
+        },
+    )
+    _MOD.BATCH_JOB_DURATIONS.clear()
+
+    _MOD._record_batch_job_duration("entity-extraction", 2456.0, timed_out=False)
+
+    import json
+
+    assert [json.loads(line) for line in record.read_text().splitlines()] == [
+        {
+            "mode": "entity-extraction",
+            "seconds": 2456.0,
+            "timed_out": False,
+            "mem_available_gib": 34.0,
+            "swap_used_gib": 55.0,
+            "gtt_used_gib": 57.0,
+        }
     ]
     _MOD.BATCH_JOB_DURATIONS.clear()

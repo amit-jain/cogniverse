@@ -24,7 +24,6 @@ import json
 import math
 import os
 import subprocess
-import tempfile
 import textwrap
 import time
 import uuid
@@ -1664,9 +1663,43 @@ BATCH_JOB_DEFAULT_TIMEOUT_S = 3600
 BATCH_JOB_DURATIONS: list[tuple[str, float, bool]] = []
 # pytest captures stdout and surfaces it only for FAILING tests, so a printed
 # measurement is invisible for exactly the runs that prove a budget adequate.
+# The system temp dir is cleared on reboot and this host reboots out of memory
+# freezes, which discards every accumulated sample. Budgets tighten only as
+# samples accumulate, so the record lives somewhere that survives a restart.
 BATCH_JOB_DURATIONS_PATH = (
-    Path(tempfile.gettempdir()) / "cogniverse_batch_job_durations.jsonl"
+    Path(os.environ.get("XDG_CACHE_HOME") or (Path.home() / ".cache"))
+    / "cogniverse"
+    / "batch_job_durations.jsonl"
 )
+
+
+def _host_memory_conditions() -> dict[str, float]:
+    """Host memory state, so a duration measured under thrash says so.
+
+    A job that ran while the kernel was swapping reports a cost that measures
+    the host, not the job. Recording the conditions keeps a contaminated
+    sample out of the budget instead of silently becoming it.
+    """
+    conditions: dict[str, float] = {}
+    gib = 1024**3
+    try:
+        fields = {}
+        for line in Path("/proc/meminfo").read_text().splitlines():
+            key, _, rest = line.partition(":")
+            fields[key] = float(rest.strip().split()[0]) * 1024
+        conditions["mem_available_gib"] = round(fields["MemAvailable"] / gib, 2)
+        conditions["swap_used_gib"] = round(
+            (fields["SwapTotal"] - fields["SwapFree"]) / gib, 2
+        )
+    except (OSError, KeyError, ValueError, IndexError):
+        pass
+    for card in sorted(Path("/sys/class/drm").glob("card*/device/mem_info_gtt_used")):
+        try:
+            conditions["gtt_used_gib"] = round(int(card.read_text().strip()) / gib, 2)
+            break
+        except (OSError, ValueError):
+            continue
+    return conditions
 
 
 def _batch_job_timeout_s() -> int:
@@ -1677,9 +1710,13 @@ def _batch_job_timeout_s() -> int:
 def _record_batch_job_duration(mode: str, seconds: float, *, timed_out: bool) -> None:
     """Record a job's real cost so budgets are set from data, not guesses."""
     BATCH_JOB_DURATIONS.append((mode, seconds, timed_out))
+    BATCH_JOB_DURATIONS_PATH.parent.mkdir(parents=True, exist_ok=True)
     with BATCH_JOB_DURATIONS_PATH.open("a", encoding="utf-8") as handle:
         handle.write(
-            json.dumps({"mode": mode, "seconds": seconds, "timed_out": timed_out})
+            json.dumps(
+                {"mode": mode, "seconds": seconds, "timed_out": timed_out}
+                | _host_memory_conditions()
+            )
             + "\n"
         )
     print(
