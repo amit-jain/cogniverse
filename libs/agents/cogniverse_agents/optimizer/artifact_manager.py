@@ -26,7 +26,10 @@ from cogniverse_agents.optimizer.signature_variants import (
     DEFAULT_VARIANT_ID,
     variant_qualified_agent_key,
 )
-from cogniverse_foundation.telemetry.providers.base import TelemetryProvider
+from cogniverse_foundation.telemetry.providers.base import (
+    DatasetNotFoundError,
+    TelemetryProvider,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -564,7 +567,7 @@ class ArtifactManager:
         dataset_name = self._blob_dataset_name(kind, key)
         try:
             df = await self._provider.datasets.get_dataset(name=dataset_name)
-        except (KeyError, ValueError):
+        except (KeyError, DatasetNotFoundError):
             logger.debug(
                 "No blob dataset found for %s/%s/%s",
                 self._tenant_id,
