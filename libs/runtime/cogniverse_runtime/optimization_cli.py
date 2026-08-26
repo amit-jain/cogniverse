@@ -1324,6 +1324,7 @@ def _selection_summary(selection_report: SelectionReport) -> Dict[str, Any]:
             "cap": selection_report.cap,
             "mmr_applied": selection_report.mmr_applied,
             "decayed_count": selection_report.decayed_count,
+            "decayed_example_ids": selection_report.decayed_example_ids,
         }
     }
 
