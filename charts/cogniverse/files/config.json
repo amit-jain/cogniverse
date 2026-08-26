@@ -481,7 +481,7 @@
           "max_label_share": 0.8
         },
         "entity_extraction": {
-          "min_samples_for_optimization": 58,
+          "min_samples_for_optimization": 30,
           "min_unique_queries": 15
         }
       },
