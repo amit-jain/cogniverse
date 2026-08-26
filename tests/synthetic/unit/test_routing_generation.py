@@ -1619,12 +1619,12 @@ def test_to_example_collapses_repeated_relationship_triples() -> None:
     )
 
     assert example.query == text
+    assert set(example.model_dump()) == {"query", "entities", "relationships"}
     assert example.entities == [
         {"text": "Marie Curie", "type": "PERSON"},
         {"text": "radium", "type": "SUBSTANCE"},
         {"text": "Sorbonne", "type": "ORGANIZATION"},
     ]
-    assert example.entity_types == "PERSON,SUBSTANCE,ORGANIZATION"
     assert example.relationships == [
         {"source": "Marie Curie", "target": "radium", "type": "isolated"},
         {"source": "Marie Curie", "target": "Sorbonne", "type": "worked_at"},

@@ -1043,7 +1043,6 @@ def _entity_extraction_example(record: Dict[str, Any]):
         entities=entities
         if isinstance(entities, str)
         else _entity_pipe_lines(entities),
-        entity_types=str(record.get("entity_types") or ""),
     ).with_inputs("query")
 
 
@@ -2950,7 +2949,6 @@ def _project_approved_optimizer_example(
         return {
             "query": example["query"],
             "entities": entities,
-            "entity_types": example["entity_types"],
         }
     raise ValueError(
         f"optimizer {optimizer_type!r} has no approved DSPy example projection"
@@ -4585,7 +4583,6 @@ async def run_entity_extraction_optimization(
             {
                 "query": projected["query"],
                 "entities": projected["entities"],
-                "entity_types": projected["entity_types"],
                 "example_id": demo["example_id"],
             }
         )

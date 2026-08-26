@@ -548,7 +548,6 @@ def test_inline_rejection_persists_exact_canonical_corrections(monkeypatch) -> N
                 {"text": "PyTorch", "type": "PRODUCT"},
                 {"text": "Meta AI", "type": "ORG"},
             ],
-            "entity_types": "PRODUCT,ORG",
             "relationships": [
                 {"source": "Meta AI", "target": "PyTorch", "type": "created"}
             ],
@@ -792,7 +791,6 @@ def test_synthetic_batch_persistence_failure_does_not_publish_session_batch(
                     {"text": "Marie Curie", "type": "PERSON"},
                     {"text": "radium", "type": "CONCEPT"},
                 ],
-                "entity_types": "PERSON,CONCEPT",
                 "relationships": [
                     {
                         "source": "Marie Curie",

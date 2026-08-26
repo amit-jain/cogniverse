@@ -736,9 +736,11 @@ class RelationshipExtractorTool:
             )
 
         # Multiple entity types
-        entity_types = set(entity["label"] for entity in entities)
-        if len(entity_types) > 3:
-            indicators.append(f"Multiple entity types ({len(entity_types)} types)")
+        entity_type_labels = set(entity["label"] for entity in entities)
+        if len(entity_type_labels) > 3:
+            indicators.append(
+                f"Multiple entity types ({len(entity_type_labels)} types)"
+            )
 
         return indicators
 

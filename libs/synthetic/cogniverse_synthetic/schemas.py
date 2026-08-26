@@ -121,7 +121,7 @@ class EntityExtractionExampleSchema(BaseModel):
 
     Feeds ``run_entity_extraction_optimization`` in
     ``libs/runtime/cogniverse_runtime/optimization_cli.py``, which builds a
-    ``dspy.Example`` from ``query`` (DSPy input) + ``entities`` + ``entity_types``.
+    ``dspy.Example`` from ``query`` (DSPy input) + ``entities`` + ``relationships``.
     The finetuning evaluator (``adapter_evaluator._check_entity_prediction``)
     scores each ``entities`` item on its ``text`` and ``type``.
     """
@@ -130,7 +130,6 @@ class EntityExtractionExampleSchema(BaseModel):
     entities: List[Dict[str, str]] = Field(
         ..., description="Extracted entities, each with 'text' and 'type'"
     )
-    entity_types: str = Field("", description="Comma-separated distinct entity types")
     relationships: List[Dict[str, str]] = Field(
         default_factory=list,
         description="Optional relationships, each {source, target, type}",
@@ -146,7 +145,6 @@ class EntityExtractionExampleSchema(BaseModel):
                     {"text": "Meta AI", "type": "ORG"},
                     {"text": "Menlo Park", "type": "PLACE"},
                 ],
-                "entity_types": "PRODUCT,ORG,PLACE",
                 "relationships": [
                     {"source": "Meta AI", "target": "PyTorch", "type": "created"}
                 ],

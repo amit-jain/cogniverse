@@ -180,6 +180,7 @@ async def test_run_reports_pending_approval_not_failure(
     assert indexed[0]["segment_description"] == description
 
     entity_agent = EntityExtractionAgent(deps=EntityExtractionDeps())
+    entity_agent.telemetry_manager = telemetry_manager
     extraction_paths = []
 
     async def extract_entities(text: str, tenant_id: str):

@@ -391,7 +391,6 @@ class TestConfidenceExtractor:
                 {"text": "Marie Curie", "type": "PERSON"},
                 {"text": "radium", "type": "CONCEPT"},
             ],
-            "entity_types": "PERSON,CONCEPT",
             "relationships": [],
         }
 
@@ -840,7 +839,6 @@ class TestFeedbackHandler:
                         {"text": "TensorFlow", "type": "TECHNOLOGY"},
                         {"text": "Google Brain", "type": "ORG"},
                     ],
-                    "entity_types": "TECHNOLOGY,ORG",
                     "relationships": [],
                 },
                 {
@@ -862,7 +860,6 @@ class TestFeedbackHandler:
                         {"text": "PyTorch", "type": "TECHNOLOGY"},
                         {"text": "Meta AI", "type": "ORG"},
                     ],
-                    "entity_types": "TECHNOLOGY,ORG",
                     "relationships": [],
                 },
                 id="entity",
@@ -1040,7 +1037,6 @@ class TestFeedbackHandler:
                 {
                     "query": "TensorFlow tutorial",
                     "entities": [{"text": "TensorFlow", "type": "TECHNOLOGY"}],
-                    "entity_types": "TECHNOLOGY",
                     "relationships": [],
                 },
                 "EntityExtractionExampleSchema",
@@ -1285,7 +1281,6 @@ class TestFeedbackHandler:
                 data={
                     "query": f"{framework} tutorial",
                     "entities": [{"text": framework, "type": "TECHNOLOGY"}],
-                    "entity_types": "TECHNOLOGY",
                     "relationships": [],
                 },
                 confidence=0.4,

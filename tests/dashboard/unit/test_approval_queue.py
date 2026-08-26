@@ -983,7 +983,6 @@ class TestPersistDecision:
                     {"text": "PyTorch", "type": "PRODUCT"},
                     {"text": "Meta AI", "type": "ORG"},
                 ],
-                "entity_types": "PRODUCT,ORG",
                 "relationships": [
                     {"source": "Meta AI", "target": "PyTorch", "type": "created"}
                 ],
@@ -1063,7 +1062,6 @@ def test_schema_corrections_parse_as_exact_canonical_fields(
             {
                 "query": "extract Curie",
                 "entities": [{"text": "Curie", "type": "PERSON"}],
-                "entity_types": "PERSON",
                 "relationships": [],
             },
             '{"topics":["radioactivity"]}',
@@ -1073,7 +1071,6 @@ def test_schema_corrections_parse_as_exact_canonical_fields(
             {
                 "query": "extract Curie",
                 "entities": [{"text": "Curie", "type": "PERSON"}],
-                "entity_types": "PERSON",
                 "relationships": [],
             },
             '{"entities":["Marie Curie"]}',
@@ -1086,7 +1083,6 @@ def test_schema_corrections_parse_as_exact_canonical_fields(
                     {"text": "PyTorch", "type": "PRODUCT"},
                     {"text": "Meta AI", "type": "ORG"},
                 ],
-                "entity_types": "PRODUCT,ORG",
                 "relationships": [],
             },
             '{"entities":[{"text":"JAX","type":"PRODUCT"}],'

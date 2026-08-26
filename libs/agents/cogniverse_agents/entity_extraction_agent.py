@@ -105,15 +105,25 @@ ENTITY_TYPES = frozenset(
 """The entity types the agent emits; every GLiNER label maps into this set."""
 
 
+def entity_is_valid_for_query(text: str, entity_type: str, query: str) -> bool:
+    """Return True when the entity text is a query substring and the type is valid."""
+    text = str(text or "").strip()
+    entity_type = str(entity_type or "").strip()
+    query = str(query or "")
+    return (
+        bool(text)
+        and bool(entity_type)
+        and entity_type in ENTITY_TYPES
+        and (text.casefold() in query.casefold())
+    )
+
+
 class EntityExtractionSignature(dspy.Signature):
     """Extract named entities from text query"""
 
     query: str = dspy.InputField(desc="User query to analyze")
     entities: str = dspy.OutputField(
         desc="Extracted entities in format: text|type|confidence, one per line"
-    )
-    entity_types: str = dspy.OutputField(
-        desc="Comma-separated list of entity types found"
     )
 
 
@@ -126,22 +136,7 @@ class EntityExtractionModule(dspy.Module):
 
     def forward(self, query: str) -> dspy.Prediction:
         """Extract entities from query"""
-        try:
-            return self.extractor(query=query)
-        except Exception as e:
-            logger.warning(f"Entity extraction failed: {e}, using fallback")
-            # Fallback: basic keyword extraction
-            words = query.split()
-            capitalized = [w for w in words if w and w[0].isupper() and len(w) > 2]
-
-            if capitalized:
-                entities_str = "\n".join([f"{w}|CONCEPT|0.5" for w in capitalized])
-                types_str = "CONCEPT"
-            else:
-                entities_str = ""
-                types_str = ""
-
-            return dspy.Prediction(entities=entities_str, entity_types=types_str)
+        return self.extractor(query=query)
 
 
 class EntityExtractionAgent(
@@ -243,10 +238,10 @@ class EntityExtractionAgent(
         self, input: EntityExtractionInput
     ) -> EntityExtractionOutput:
         """
-        Process entity extraction request with tiered fast/slow path.
+        Process entity extraction request with DSPy primary and GLiNER fallback.
 
-        Fast path (GLiNER + SpaCy): No LLM call, sub-second latency.
-        Fallback (DSPy ChainOfThought): Requires LLM, higher quality.
+        DSPy is the primary path. If the LM call fails, fall back to
+        GLiNER + SpaCy. ``path_used`` records which branch actually ran.
 
         Args:
             input: Typed input with query field
@@ -277,7 +272,22 @@ class EntityExtractionAgent(
         relationships: List[Relationship] = []
         path_used = "dspy"
 
-        if self._gliner_extractor is not None:
+        try:
+            entities = await self._extract_dspy_path(prompt_query)
+            relationships = self._extract_spacy_relationships(
+                query=query, entities=entities
+            )
+        except Exception as dspy_exc:
+            logger.warning(
+                "DSPy entity extraction failed; falling back to fast path: %s",
+                dspy_exc,
+            )
+            if self._gliner_extractor is None:
+                raise RuntimeError(
+                    "Entity extraction failed: DSPy path failed with "
+                    f"{dspy_exc!r}; fast path unavailable"
+                ) from dspy_exc
+
             try:
                 # GLiNER inference + spaCy is sync and CPU-heavy (~200-500ms);
                 # offload it so it doesn't stall the event loop, like the
@@ -285,16 +295,13 @@ class EntityExtractionAgent(
                 entities, relationships, path_used = await asyncio.to_thread(
                     self._extract_fast_path, query
                 )
-            except Exception as e:
-                logger.warning(
-                    "Fast path extraction failed, falling back to DSPy: %s", e
-                )
-                entities = await self._extract_dspy_path(prompt_query)
-                relationships = []
-                path_used = "dspy"
+            except Exception as fast_exc:
+                raise RuntimeError(
+                    "Entity extraction failed: DSPy path failed with "
+                    f"{dspy_exc!r}; fast path failed with {fast_exc!r}"
+                ) from fast_exc
         else:
-            # --- DSPy fallback ---
-            entities = await self._extract_dspy_path(prompt_query)
+            path_used = "dspy"
 
         # Compute dominant types
         type_counts: Dict[str, int] = {}
@@ -350,20 +357,32 @@ class EntityExtractionAgent(
         raw_entities = self._gliner_extractor.extract_entities(query)
         entity_records = self._build_entity_records(raw_entities, query)
         entities = [record["entity"] for record in entity_records]
-
-        relationships: List[Relationship] = []
-        if len(entities) >= 2 and self._spacy_analyzer is not None:
-            self.emit_progress(
-                "relationships", "Extracting relationships with SpaCy..."
-            )
-            raw_rels = self._spacy_analyzer.extract_semantic_relationships(query)
-            relationships = self._reconcile_relationships(
-                query=query,
-                entity_records=entity_records,
-                raw_relationships=raw_rels,
-            )
-
+        relationships = self._extract_spacy_relationships(
+            query=query, entities=entities, entity_records=entity_records
+        )
         return entities, relationships, "fast"
+
+    def _extract_spacy_relationships(
+        self,
+        *,
+        query: str,
+        entities: List[Entity],
+        entity_records: Optional[List[Dict[str, Any]]] = None,
+    ) -> List[Relationship]:
+        """Run the SpaCy relationship pass over validated entities."""
+        if len(entities) < 2 or self._spacy_analyzer is None:
+            return []
+
+        self.emit_progress("relationships", "Extracting relationships with SpaCy...")
+        if entity_records is None:
+            entity_records = self._build_entity_records_from_entities(entities, query)
+
+        raw_rels = self._spacy_analyzer.extract_semantic_relationships(query)
+        return self._reconcile_relationships(
+            query=query,
+            entity_records=entity_records,
+            raw_relationships=raw_rels,
+        )
 
     def _build_entity_records(
         self, raw_entities: List[Dict[str, Any]], query: str
@@ -388,6 +407,29 @@ class EntityExtractionAgent(
                 start = query.lower().find(entity_text.lower())
                 end = start + len(entity_text) if start >= 0 else -1
 
+            entity_records.append(
+                {
+                    "entity": entity,
+                    "start": start,
+                    "end": end,
+                }
+            )
+
+        return entity_records
+
+    def _build_entity_records_from_entities(
+        self, entities: List[Entity], query: str
+    ) -> List[Dict[str, Any]]:
+        """Attach span metadata to validated DSPy entities for grounding."""
+        entity_records: List[Dict[str, Any]] = []
+
+        for entity in entities:
+            start = query.find(entity.text)
+            if start < 0:
+                raise RuntimeError(
+                    f"Validated entity {entity.text!r} was not found in query {query!r}"
+                )
+            end = start + len(entity.text)
             entity_records.append(
                 {
                     "entity": entity,
@@ -599,7 +641,10 @@ class EntityExtractionAgent(
 
     def _parse_entities(self, entities_str: str, query: str) -> List[Entity]:
         """Parse entities from DSPy output format"""
-        entities = []
+        entities: List[Entity] = []
+        seen: set[tuple[str, str]] = set()
+        invalid_count = 0
+        duplicate_count = 0
 
         if not entities_str:
             return entities
@@ -613,6 +658,21 @@ class EntityExtractionAgent(
             if len(parts) >= 2:
                 text = parts[0].strip()
                 entity_type = parts[1].strip()
+                if not entity_is_valid_for_query(text, entity_type, query):
+                    invalid_count += 1
+                    logger.warning(
+                        "Dropping invalid entity text=%r type=%r for query %r",
+                        text,
+                        entity_type,
+                        query,
+                    )
+                    continue
+
+                key = (text.casefold(), entity_type)
+                if key in seen:
+                    duplicate_count += 1
+                    continue
+                seen.add(key)
 
                 # Parse confidence with robust handling of different formats
                 confidence = 0.7  # Default
@@ -638,6 +698,19 @@ class EntityExtractionAgent(
                         context=context,
                     )
                 )
+
+        if invalid_count:
+            logger.warning(
+                "Dropped %d invalid entity candidates for query %r",
+                invalid_count,
+                query,
+            )
+        if duplicate_count:
+            logger.warning(
+                "Dropped %d duplicate entity candidates for query %r",
+                duplicate_count,
+                query,
+            )
 
         return entities
 

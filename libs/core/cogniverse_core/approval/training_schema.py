@@ -119,13 +119,6 @@ def _validate_entities(values: Mapping[str, Any], context: str) -> None:
         if entity_type not in ordered_types:
             ordered_types.append(entity_type)
 
-    expected_types = ",".join(ordered_types)
-    actual_types = _non_empty_string(values, "entity_types", context)
-    if actual_types != expected_types:
-        raise ValueError(
-            f"{context} entity_types must exactly equal {expected_types!r}"
-        )
-
     relationships = values.get("relationships")
     if not isinstance(relationships, list):
         raise ValueError(f"{context} relationships must be a list")

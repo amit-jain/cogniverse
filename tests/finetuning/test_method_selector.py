@@ -866,7 +866,6 @@ class TestSyntheticApprovalWiring:
                 {"text": "Marie Curie", "type": "PERSON"},
                 {"text": "radium", "type": "MATERIAL"},
             ],
-            "entity_types": "PERSON,MATERIAL",
             "relationships": [],
         }
         synthetic_service = Mock()

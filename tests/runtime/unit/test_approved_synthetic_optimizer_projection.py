@@ -76,7 +76,6 @@ def test_entity_projection_matches_production_signature_and_omits_relationships(
                 {"text": "Meta AI", "type": "ORG"},
                 {"text": "Menlo Park", "type": "PLACE"},
             ],
-            "entity_types": "PRODUCT,ORG,PLACE",
             "relationships": [
                 {"source": "Meta AI", "target": "PyTorch", "type": "created"}
             ],
@@ -86,7 +85,6 @@ def test_entity_projection_matches_production_signature_and_omits_relationships(
     assert projected == {
         "query": "PyTorch was created by Meta AI in Menlo Park",
         "entities": ("PyTorch|PRODUCT|1.0\nMeta AI|ORG|1.0\nMenlo Park|PLACE|1.0"),
-        "entity_types": "PRODUCT,ORG,PLACE",
     }
 
 
@@ -143,7 +141,6 @@ def test_projection_rejects_optimizer_without_a_signature_contract():
                     {"text": "PyTorch", "type": "PRODUCT"},
                     {"text": "Meta AI", "type": "ORG"},
                 ],
-                "entity_types": "PRODUCT,ORG",
                 "relationships": [
                     {"source": "Meta AI", "target": "PyTorch", "type": "created"}
                 ],

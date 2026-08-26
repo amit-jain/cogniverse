@@ -644,7 +644,7 @@ to be empty.
 | `routing` | `query`; `chosen_agent`. |
 | `profile_selection` | `query`; comma-separated `available_profiles` containing distinct non-empty names with no surrounding whitespace; `selected_profile` present in that list; `reasoning`; `query_intent`; `modality` in `audio`, `code`, `document`, `image`, `text`, `video`, or `wiki`; `complexity` in `simple`, `medium`, or `complex`. |
 | `query_enhancement` | `query`; a different `enhanced_query`; `expansion_terms` and `synonyms` as native lists of trimmed non-empty strings; `context` as a trimmed string that may be empty; non-empty `reasoning`. |
-| `entity_extraction` | `query`; a non-empty `entities` list; each entity has exactly trimmed non-empty `text` and `type`; entity texts are unique; `entity_types` exactly equals the comma-joined first-seen entity types; `relationships` is a list; each relationship has exactly trimmed non-empty `source`, `target`, and `type`; both endpoints exist in `entities`; relationship triplets are unique. |
+| `entity_extraction` | `query`; a non-empty `entities` list; each entity has exactly trimmed non-empty `text` and `type`; entity texts are unique; `relationships` is a list; each relationship has exactly trimmed non-empty `source`, `target`, and `type`; both endpoints exist in `entities`; relationship triplets are unique. The ordered entity-type set is derived from `entities`. |
 
 The synthetic reader surface is:
 
