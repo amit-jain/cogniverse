@@ -11,6 +11,7 @@ itself fails.
 from __future__ import annotations
 
 import asyncio
+import gc
 
 import pandas as pd
 import pytest
@@ -331,3 +332,14 @@ async def test_replace_serializes_concurrent_writes():
     assert store.delete_calls == ["d", "d"]
     assert store.create_calls == ["d", "d"]
     assert store.max_active_creates == 1
+
+
+@pytest.mark.asyncio
+async def test_replace_lock_registry_drops_released_locks():
+    store = _ControlledReplaceStore()
+
+    await store.replace_dataset("d", pd.DataFrame([{"v": "seed"}]))
+    gc.collect()
+
+    locks = getattr(store, "_replace_dataset_locks")
+    assert list(locks.keys()) == []
