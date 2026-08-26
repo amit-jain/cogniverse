@@ -3,12 +3,12 @@ from __future__ import annotations
 import json
 from datetime import datetime, timezone
 from pathlib import Path
+from types import SimpleNamespace
 
 import pytest
 
 from cogniverse_agents.optimizer.example_selection import (
     TRAINING_SELECTION_DEFAULTS,
-    ExampleStats,
     SelectionReport,
     TrainingSelectionKnobs,
     confirmation_stats,
@@ -72,20 +72,55 @@ def _training_selection_knobs_from_config(
     )
 
 
+def _assert_example_stats(
+    stats_row,
+    *,
+    confirmations: int,
+    unscored_promotions: int,
+    scored_promotions: int,
+    first_seen: datetime,
+) -> None:
+    assert stats_row._fields == (
+        "confirmations",
+        "unscored_promotions",
+        "scored_promotions",
+        "first_seen",
+    )
+    assert stats_row._asdict() == {
+        "confirmations": confirmations,
+        "unscored_promotions": unscored_promotions,
+        "scored_promotions": scored_promotions,
+        "first_seen": first_seen,
+    }
+    assert stats_row.confirmations == confirmations
+    assert stats_row.unscored_promotions == unscored_promotions
+    assert stats_row.scored_promotions == scored_promotions
+    assert stats_row.first_seen == first_seen
+
+
 LEDGER = [
     {
         "consumed_example_ids": ["span:a", "approved:b"],
         "decision": "promote",
+        "scored": True,
+        "score": 0.8,
+        "candidate_score": 0.8,
         "created_at": "2026-08-01T00:00:00+00:00",
     },
     {
         "consumed_example_ids": ["span:a", "span:c"],
         "decision": "keep",
+        "scored": False,
+        "score": None,
+        "candidate_score": None,
         "created_at": "2026-08-10T00:00:00+00:00",
     },
     {
         "consumed_example_ids": ["span:a"],
         "decision": "promote",
+        "scored": False,
+        "score": None,
+        "candidate_score": None,
         "created_at": "2026-08-15T00:00:00+00:00",
     },
 ]
@@ -94,16 +129,52 @@ LEDGER_CONFIRMED_OLD = [
     {
         "consumed_example_ids": ["span:d"],
         "decision": "promote",
+        "scored": True,
+        "score": 0.8,
+        "candidate_score": 0.8,
         "created_at": "2026-08-01T00:00:00+00:00",
     },
     {
         "consumed_example_ids": ["span:d"],
         "decision": "promote",
+        "scored": True,
+        "score": 0.8,
+        "candidate_score": 0.8,
         "created_at": "2026-08-10T00:00:00+00:00",
     },
     {
         "consumed_example_ids": ["span:d"],
         "decision": "promote",
+        "scored": True,
+        "score": 0.8,
+        "candidate_score": 0.8,
+        "created_at": "2026-08-15T00:00:00+00:00",
+    },
+]
+
+LEDGER_UNSCORED_OLD = [
+    {
+        "consumed_example_ids": ["span:f"],
+        "decision": "promote",
+        "scored": False,
+        "score": None,
+        "candidate_score": None,
+        "created_at": "2026-08-01T00:00:00+00:00",
+    },
+    {
+        "consumed_example_ids": ["span:f"],
+        "decision": "promote",
+        "scored": False,
+        "score": None,
+        "candidate_score": None,
+        "created_at": "2026-08-10T00:00:00+00:00",
+    },
+    {
+        "consumed_example_ids": ["span:f"],
+        "decision": "promote",
+        "scored": False,
+        "score": None,
+        "candidate_score": None,
         "created_at": "2026-08-15T00:00:00+00:00",
     },
 ]
@@ -112,6 +183,9 @@ LEDGER_FRESH_UNCONFIRMED = [
     {
         "consumed_example_ids": ["span:e"],
         "decision": "keep",
+        "scored": False,
+        "score": None,
+        "candidate_score": None,
         "created_at": "2026-08-25T00:00:00+00:00",
     }
 ]
@@ -120,21 +194,43 @@ LEDGER_FRESH_UNCONFIRMED = [
 def test_confirmation_stats_complete_golden():
     stats = confirmation_stats(LEDGER)
 
-    assert stats == {
-        "span:a": ExampleStats(2, datetime(2026, 8, 1, tzinfo=timezone.utc)),
-        "approved:b": ExampleStats(1, datetime(2026, 8, 1, tzinfo=timezone.utc)),
-        "span:c": ExampleStats(0, datetime(2026, 8, 10, tzinfo=timezone.utc)),
-    }
+    assert set(stats) == {"approved:b", "span:a", "span:c"}
+    _assert_example_stats(
+        stats["span:a"],
+        confirmations=2,
+        unscored_promotions=1,
+        scored_promotions=1,
+        first_seen=datetime(2026, 8, 1, tzinfo=timezone.utc),
+    )
+    _assert_example_stats(
+        stats["approved:b"],
+        confirmations=1,
+        unscored_promotions=0,
+        scored_promotions=1,
+        first_seen=datetime(2026, 8, 1, tzinfo=timezone.utc),
+    )
+    _assert_example_stats(
+        stats["span:c"],
+        confirmations=0,
+        unscored_promotions=0,
+        scored_promotions=0,
+        first_seen=datetime(2026, 8, 10, tzinfo=timezone.utc),
+    )
 
 
-def test_decay_weight_old_unconfirmed_halves_when_under_threshold():
+def test_decay_weight_old_unscored_remains_full_weight():
     now = datetime(2026, 8, 30, tzinfo=timezone.utc)
-    knobs = TrainingSelectionKnobs(300, 0.7, 3, 14, 0.5)
-    stats = confirmation_stats(LEDGER)
+    knobs = TrainingSelectionKnobs(300, 0.7, 3, 14, 0.5, 0.7)
+    stats = confirmation_stats(LEDGER_UNSCORED_OLD, score_threshold=0.7)
 
-    assert decay_weight(stats, "span:c", now=now, knobs=knobs) == 0.5
-    assert decay_weight(stats, "span:a", now=now, knobs=knobs) == 0.5
-    assert decay_weight(stats, "approved:b", now=now, knobs=knobs) == 0.5
+    _assert_example_stats(
+        stats["span:f"],
+        confirmations=0,
+        unscored_promotions=3,
+        scored_promotions=0,
+        first_seen=datetime(2026, 8, 1, tzinfo=timezone.utc),
+    )
+    assert decay_weight(stats, "span:f", now=now, knobs=knobs) == 1.0
 
 
 def test_decay_weight_unknown_id_is_fresh():
@@ -148,8 +244,15 @@ def test_decay_weight_unknown_id_is_fresh():
 def test_decay_weight_confirmed_old_remains_full_weight():
     now = datetime(2026, 8, 30, tzinfo=timezone.utc)
     knobs = TrainingSelectionKnobs(300, 0.7, 3, 14, 0.5)
-    stats = confirmation_stats(LEDGER_CONFIRMED_OLD)
+    stats = confirmation_stats(LEDGER_CONFIRMED_OLD, score_threshold=0.7)
 
+    _assert_example_stats(
+        stats["span:d"],
+        confirmations=3,
+        unscored_promotions=0,
+        scored_promotions=3,
+        first_seen=datetime(2026, 8, 1, tzinfo=timezone.utc),
+    )
     assert decay_weight(stats, "span:d", now=now, knobs=knobs) == 1.0
 
 
@@ -158,6 +261,13 @@ def test_decay_weight_fresh_unconfirmed_remains_full_weight():
     knobs = TrainingSelectionKnobs(300, 0.7, 3, 14, 0.5)
     stats = confirmation_stats(LEDGER_FRESH_UNCONFIRMED)
 
+    _assert_example_stats(
+        stats["span:e"],
+        confirmations=0,
+        unscored_promotions=0,
+        scored_promotions=0,
+        first_seen=datetime(2026, 8, 25, tzinfo=timezone.utc),
+    )
     assert decay_weight(stats, "span:e", now=now, knobs=knobs) == 1.0
 
 
@@ -166,11 +276,17 @@ def test_decay_weight_and_selection_report_cover_all_corners():
     old_seen = datetime(2026, 8, 1, tzinfo=timezone.utc)
     fresh_seen = datetime(2026, 8, 29, tzinfo=timezone.utc)
     stats = {
-        "span:old-a": ExampleStats(0, old_seen),
-        "span:old-confirmed": ExampleStats(3, old_seen),
-        "span:old-z": ExampleStats(0, old_seen),
-        "span:fresh-unconfirmed": ExampleStats(0, fresh_seen),
-        "span:fresh-confirmed": ExampleStats(3, fresh_seen),
+        "span:old-a": SimpleNamespace(confirmations=0, first_seen=old_seen),
+        "span:old-confirmed": SimpleNamespace(confirmations=3, first_seen=old_seen),
+        "span:old-z": SimpleNamespace(confirmations=0, first_seen=old_seen),
+        "span:fresh-unconfirmed": SimpleNamespace(
+            confirmations=0,
+            first_seen=fresh_seen,
+        ),
+        "span:fresh-confirmed": SimpleNamespace(
+            confirmations=3,
+            first_seen=fresh_seen,
+        ),
     }
     knobs = TRAINING_SELECTION_DEFAULTS
 
@@ -228,7 +344,14 @@ def test_decay_weight_uses_shipped_entity_threshold_and_real_ledger_shape():
     from cogniverse_runtime.optimization_cli import _training_selection_from_config
     from tests.utils.memory_store import InMemoryConfigStore
 
-    def _version(version: int, example_id: str, day: int, score: float | None) -> dict:
+    def _version(
+        version: int,
+        example_id: str,
+        day: int,
+        *,
+        scored: bool,
+        score: float | None,
+    ) -> dict:
         row = {
             "version": version,
             "name": "entity_extraction",
@@ -236,11 +359,11 @@ def test_decay_weight_uses_shipped_entity_threshold_and_real_ledger_shape():
             "base_score": 0.666,
             "consumed_example_ids": [example_id],
             "created_at": f"2026-08-{day:02d}T00:00:00+00:00",
-            "scored": score is not None,
+            "scored": scored,
+            "score": score,
             "row_count": 30,
         }
-        if score is not None:
-            row["score"] = score
+        if scored:
             row["candidate_score"] = score
         return row
 
@@ -255,9 +378,18 @@ def test_decay_weight_uses_shipped_entity_threshold_and_real_ledger_shape():
     first_seen = datetime(2026, 8, 1, tzinfo=timezone.utc)
     days = (1, 10, 15)
     lineage = (
-        [_version(97 + i, "span:high", d, 0.714) for i, d in enumerate(days)]
-        + [_version(100 + i, "span:low", d, 0.666) for i, d in enumerate(days)]
-        + [_version(103 + i, "span:legacy", d, None) for i, d in enumerate(days)]
+        [
+            _version(97 + i, "span:high", d, scored=True, score=0.714)
+            for i, d in enumerate(days)
+        ]
+        + [
+            _version(100 + i, "span:low", d, scored=True, score=0.666)
+            for i, d in enumerate(days)
+        ]
+        + [
+            _version(103 + i, "span:legacy", d, scored=False, score=None)
+            for i, d in enumerate(days)
+        ]
     )
 
     stats = confirmation_stats(
@@ -269,19 +401,51 @@ def test_decay_weight_uses_shipped_entity_threshold_and_real_ledger_shape():
         "entity_extraction", include_score_threshold=True
     )
     assert knobs == expected
-    assert stats == {
-        "span:high": ExampleStats(3, first_seen),
-        "span:low": ExampleStats(0, first_seen),
-        "span:legacy": ExampleStats(0, first_seen),
-    }
-    assert unthresholded == {
-        "span:high": ExampleStats(3, first_seen),
-        "span:low": ExampleStats(3, first_seen),
-        "span:legacy": ExampleStats(3, first_seen),
-    }
+    _assert_example_stats(
+        stats["span:high"],
+        confirmations=3,
+        unscored_promotions=0,
+        scored_promotions=3,
+        first_seen=first_seen,
+    )
+    _assert_example_stats(
+        stats["span:low"],
+        confirmations=0,
+        unscored_promotions=0,
+        scored_promotions=3,
+        first_seen=first_seen,
+    )
+    _assert_example_stats(
+        stats["span:legacy"],
+        confirmations=0,
+        unscored_promotions=3,
+        scored_promotions=0,
+        first_seen=first_seen,
+    )
+    _assert_example_stats(
+        unthresholded["span:high"],
+        confirmations=3,
+        unscored_promotions=0,
+        scored_promotions=3,
+        first_seen=first_seen,
+    )
+    _assert_example_stats(
+        unthresholded["span:low"],
+        confirmations=3,
+        unscored_promotions=0,
+        scored_promotions=3,
+        first_seen=first_seen,
+    )
+    _assert_example_stats(
+        unthresholded["span:legacy"],
+        confirmations=3,
+        unscored_promotions=3,
+        scored_promotions=0,
+        first_seen=first_seen,
+    )
     assert decay_weight(stats, "span:high", now=now, knobs=knobs) == 1.0
     assert decay_weight(stats, "span:low", now=now, knobs=knobs) == 0.5
-    assert decay_weight(stats, "span:legacy", now=now, knobs=knobs) == 0.5
+    assert decay_weight(stats, "span:legacy", now=now, knobs=knobs) == 1.0
 
 
 def test_training_selection_defaults_match_shipped_config():

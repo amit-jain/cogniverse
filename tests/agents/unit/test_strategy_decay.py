@@ -1,324 +1,315 @@
-"""Unit tests — bump-on-dedup, retrieval downweighting, retirement hook."""
-
 from __future__ import annotations
 
-import json
-from datetime import datetime, timedelta
-from typing import Any, Dict
-from unittest.mock import MagicMock
+from datetime import datetime, timezone
 
 import pytest
 
-from cogniverse_agents.optimizer.strategy_learner import (
-    DEDUP_SIMILARITY_THRESHOLD,
-    STRATEGY_AGENT_NAME,
-    Strategy,
-    StrategyLearner,
-)
-from cogniverse_core.memory.schema import (
-    Retention,
-    _retire_unconfirmed_strategy,
-    build_default_registry,
+from cogniverse_agents.optimizer.example_selection import (
+    TrainingSelectionKnobs,
+    confirmation_stats,
+    decay_weight,
 )
 
 pytestmark = [pytest.mark.unit, pytest.mark.ci_fast]
 
-
-class FakeMemoryManager:
-    """Mem0MemoryManager-shaped stub that tracks add/delete/search calls."""
-
-    def __init__(self, search_results=None):
-        self._next_id = 0
-        self.store: Dict[str, Dict[str, Any]] = {}
-        self.add_calls: list[Dict[str, Any]] = []
-        self.delete_calls: list[str] = []
-        self._search_results = search_results or []
-        # Mem0-shaped object so the learner's `is None` checks pass.
-        self.memory = MagicMock()
-
-    def add_memory(self, *, content, tenant_id, agent_name, metadata=None, infer=False):
-        self._next_id += 1
-        mid = f"m{self._next_id}"
-        record = {
-            "id": mid,
-            "memory": content,
-            "tenant_id": tenant_id,
-            "agent_name": agent_name,
-            "metadata": dict(metadata or {}),
-        }
-        self.store[mid] = record
-        self.add_calls.append(record)
-        return mid
-
-    def delete_memory(self, *, memory_id, tenant_id, agent_name):
-        self.delete_calls.append(memory_id)
-        return self.store.pop(memory_id, None) is not None
-
-    def search_memory(self, *, query, tenant_id, agent_name, top_k=5, filters=None):
-        return list(self._search_results)
-
-    def get_all_memories(self, *, tenant_id, agent_name):
-        # The dedup read in _store_strategy uses get_all_memories (it raises on
-        # a real outage) rather than search_memory; return the seeded existing
-        # strategies so the bump-vs-fresh-write path is exercised.
-        return list(self._search_results)
+NOW = datetime(2026, 8, 26, tzinfo=timezone.utc)
+OLD = datetime(2026, 8, 1, tzinfo=timezone.utc)
+FRESH = datetime(2026, 8, 25, tzinfo=timezone.utc)
+EXPECTED_FIELDS = (
+    "confirmations",
+    "unscored_promotions",
+    "scored_promotions",
+    "first_seen",
+)
 
 
-def _strategy(text: str = "use ColPali for video", confirmation_count: int = 1):
-    return Strategy(
-        text=text,
-        applies_when="query is video search",
-        agent="search_agent",
-        level="user",
-        confidence=0.7,
-        source="llm_distillation",
-        tenant_id="acme",
-        trace_count=5,
-        confirmation_count=confirmation_count,
-    )
+def _row(
+    day: int,
+    *,
+    example_id: str,
+    decision: str,
+    scored: bool,
+    score: float | None,
+) -> dict:
+    return {
+        "consumed_example_ids": [example_id],
+        "decision": decision,
+        "scored": scored,
+        "score": score,
+        "candidate_score": score,
+        "created_at": f"2026-08-{day:02d}T00:00:00+00:00",
+    }
 
 
-class TestStrategyMetadata:
-    def test_kind_is_learned_strategy(self):
-        meta = _strategy().to_metadata()
-        assert meta["kind"] == "learned_strategy"
-
-    def test_includes_confirmation_fields(self):
-        meta = _strategy(confirmation_count=4).to_metadata()
-        assert meta["confirmation_count"] == 4
-        assert meta["last_confirmed_at"]
-
-
-class TestBumpOnDedup:
-    def test_dedup_hit_replaces_with_bumped_record(self):
-        # Existing memory near-identical to the incoming strategy.
-        existing_strategy = _strategy(confirmation_count=2)
-        existing_memory = {
-            "id": "m_existing",
-            "memory": existing_strategy.to_memory_content(),
-            "metadata": existing_strategy.to_metadata(),
-        }
-        mm = FakeMemoryManager(search_results=[existing_memory])
-        learner = StrategyLearner(mm, tenant_id="acme")
-
-        ok = learner._store_strategy(_strategy(confirmation_count=1))
-        assert ok is True
-
-        # The existing memory must have been deleted...
-        assert "m_existing" in mm.delete_calls
-        # ...and replaced with a new memory whose count is bumped to 3.
-        bumped_records = [
-            r for r in mm.add_calls if r["metadata"]["confirmation_count"] == 3
-        ]
-        assert len(bumped_records) == 1, f"got {[r['metadata'] for r in mm.add_calls]}"
-        # trace_count accumulates across bumps so the agent can see total weight.
-        assert bumped_records[0]["metadata"]["trace_count"] >= 5
-
-    def test_no_dedup_hit_writes_fresh_strategy(self):
-        # Search returns a memory that does NOT overlap.
-        unrelated = {
-            "id": "m_unrelated",
-            "memory": "completely different unrelated strategy text about audio",
-            "metadata": Strategy(
-                text="use whisper for audio",
-                applies_when="audio query",
-                agent="search_agent",
-                level="user",
-                confidence=0.6,
-                source="llm_distillation",
-                tenant_id="acme",
-                trace_count=3,
-            ).to_metadata(),
-        }
-        mm = FakeMemoryManager(search_results=[unrelated])
-        learner = StrategyLearner(mm, tenant_id="acme")
-
-        ok = learner._store_strategy(_strategy())
-        assert ok is True
-        # No delete (existing was unrelated).
-        assert mm.delete_calls == []
-        # Fresh add with confirmation_count=1.
-        added = mm.add_calls[-1]
-        assert added["metadata"]["confirmation_count"] == 1
-
-    def test_overlap_below_threshold_treated_as_distinct(self):
-        # Identical-prefix but different tail; word-level Jaccard is below threshold.
-        mostly_different = {
-            "id": "m_x",
-            "memory": "I prefer the following approach for search_agent: completely "
-            "unrelated audio strategy about whisper. I use this when listening.",
-            "metadata": Strategy(
-                text="use whisper for audio",
-                applies_when="audio query",
-                agent="search_agent",
-                level="user",
-                confidence=0.6,
-                source="llm_distillation",
-                tenant_id="acme",
-                trace_count=3,
-            ).to_metadata(),
-        }
-        mm = FakeMemoryManager(search_results=[mostly_different])
-        learner = StrategyLearner(mm, tenant_id="acme")
-
-        learner._store_strategy(_strategy())
-        # Fresh write, no bump.
-        assert mm.delete_calls == []
+def _assert_example_stats(
+    stats_row,
+    *,
+    confirmations: int,
+    unscored_promotions: int,
+    scored_promotions: int,
+    first_seen: datetime,
+) -> None:
+    assert stats_row._fields == EXPECTED_FIELDS
+    assert stats_row._asdict() == {
+        "confirmations": confirmations,
+        "unscored_promotions": unscored_promotions,
+        "scored_promotions": scored_promotions,
+        "first_seen": first_seen,
+    }
+    assert stats_row.confirmations == confirmations
+    assert stats_row.unscored_promotions == unscored_promotions
+    assert stats_row.scored_promotions == scored_promotions
+    assert stats_row.first_seen == first_seen
 
 
-class TestRetrievalDecay:
-    def _build_strategies(self):
-        """Mix of strategies: high+old, low+old (target for downweight), low+new."""
-        now = datetime.utcnow()
-        ts_old = (now - timedelta(days=30)).isoformat()
-        ts_new = now.isoformat()
-
-        return [
-            {
-                "memory": "high-confirm old strategy",
-                "score": 0.6,
-                "metadata": {
-                    "kind": "learned_strategy",
-                    "confidence": 0.6,
-                    "confirmation_count": 5,
-                    "created_at": ts_old,
-                },
-            },
-            {
-                "memory": "low-confirm old strategy",
-                "score": 0.7,
-                "metadata": {
-                    "kind": "learned_strategy",
-                    "confidence": 0.7,
-                    "confirmation_count": 1,
-                    "created_at": ts_old,
-                },
-            },
-            {
-                "memory": "low-confirm fresh strategy",
-                "score": 0.5,
-                "metadata": {
-                    "kind": "learned_strategy",
-                    "confidence": 0.5,
-                    "confirmation_count": 1,
-                    "created_at": ts_new,
-                },
-            },
-        ]
-
-    def test_low_confirmation_old_strategy_downweighted_below_high_confirmation(
-        self,
-    ):
-        strategies = self._build_strategies()
-        ranked = StrategyLearner.rank_strategies_with_decay(
-            strategies,
-            low_confirmation_threshold=3,
-            downweight_age_days=14,
-            downweight_factor=0.5,
-        )
-
-        ids = [s["memory"] for s in ranked]
-        # high-confirm old (0.6) must outrank low-confirm old (0.7 * 0.5 = 0.35).
-        assert ids.index("high-confirm old strategy") < ids.index(
-            "low-confirm old strategy"
-        )
-        # low-confirm fresh keeps its original score 0.5; not downweighted.
-        assert ranked[0]["memory"] == "high-confirm old strategy"
-
-    def test_empty_input_returns_empty(self):
-        assert StrategyLearner.rank_strategies_with_decay([]) == []
-
-    def test_string_metadata_accepted(self):
-        strategies = self._build_strategies()
-        # Stringify one of them to mimic Vespa round-trip.
-        strategies[0]["metadata"] = json.dumps(strategies[0]["metadata"])
-        # Must not raise.
-        ranked = StrategyLearner.rank_strategies_with_decay(strategies)
-        assert len(ranked) == 3
-
-
-class TestRetirementHook:
-    def test_unconfirmed_old_strategy_retired(self):
-        old_ts = (datetime.utcnow() - timedelta(days=45)).isoformat()
-        memory = {
-            "id": "m1",
-            "memory": "fading strategy",
-            "metadata": {
-                "kind": "learned_strategy",
-                "confirmation_count": 1,
-                "created_at": old_ts,
-            },
-        }
-        schema = build_default_registry().get("learned_strategy")
-        assert _retire_unconfirmed_strategy(memory, schema) is True
-
-    def test_recent_strategy_kept_even_if_unconfirmed(self):
-        recent_ts = datetime.utcnow().isoformat()
-        memory = {
-            "id": "m1",
-            "memory": "fresh strategy",
-            "metadata": {
-                "kind": "learned_strategy",
-                "confirmation_count": 1,
-                "created_at": recent_ts,
-            },
-        }
-        schema = build_default_registry().get("learned_strategy")
-        assert _retire_unconfirmed_strategy(memory, schema) is False
-
-    def test_confirmed_strategy_kept_even_when_old(self):
-        old_ts = (datetime.utcnow() - timedelta(days=90)).isoformat()
-        memory = {
-            "id": "m1",
-            "memory": "battle-tested strategy",
-            "metadata": {
-                "kind": "learned_strategy",
-                "confirmation_count": 7,
-                "created_at": old_ts,
-            },
-        }
-        schema = build_default_registry().get("learned_strategy")
-        assert _retire_unconfirmed_strategy(memory, schema) is False
-
-    def test_non_learned_strategy_kind_ignored(self):
-        old_ts = (datetime.utcnow() - timedelta(days=90)).isoformat()
-        memory = {
-            "id": "m1",
-            "memory": "an unrelated old fact",
-            "metadata": {
-                "kind": "entity_fact",
-                "confirmation_count": 1,
-                "created_at": old_ts,
-            },
-        }
-        schema = build_default_registry().get("learned_strategy")
-        assert _retire_unconfirmed_strategy(memory, schema) is False
-
-    def test_string_metadata_accepted(self):
-        old_ts = (datetime.utcnow() - timedelta(days=90)).isoformat()
-        memory = {
-            "id": "m1",
-            "memory": "x",
-            "metadata": json.dumps(
-                {
-                    "kind": "learned_strategy",
-                    "confirmation_count": 1,
-                    "created_at": old_ts,
-                }
+CASES = [
+    pytest.param(
+        "old + 3 scored-above-threshold promotions -> no decay",
+        "span:confirmed",
+        [
+            _row(
+                1,
+                example_id="span:confirmed",
+                decision="promote",
+                scored=True,
+                score=0.8,
             ),
-        }
-        schema = build_default_registry().get("learned_strategy")
-        assert _retire_unconfirmed_strategy(memory, schema) is True
+            _row(
+                10,
+                example_id="span:confirmed",
+                decision="promote",
+                scored=True,
+                score=0.8,
+            ),
+            _row(
+                15,
+                example_id="span:confirmed",
+                decision="promote",
+                scored=True,
+                score=0.8,
+            ),
+        ],
+        0.7,
+        1.0,
+        {
+            "confirmations": 3,
+            "unscored_promotions": 0,
+            "scored_promotions": 3,
+            "first_seen": OLD,
+        },
+        id="confirmed-above",
+    ),
+    pytest.param(
+        "old + 3 scored-below-threshold promotions -> decays",
+        "span:below",
+        [
+            _row(
+                1, example_id="span:below", decision="promote", scored=True, score=0.6
+            ),
+            _row(
+                10, example_id="span:below", decision="promote", scored=True, score=0.6
+            ),
+            _row(
+                15, example_id="span:below", decision="promote", scored=True, score=0.6
+            ),
+        ],
+        0.7,
+        0.5,
+        {
+            "confirmations": 0,
+            "unscored_promotions": 0,
+            "scored_promotions": 3,
+            "first_seen": OLD,
+        },
+        id="confirmed-below",
+    ),
+    pytest.param(
+        "old + 3 unscored promotions -> no decay",
+        "span:unknown",
+        [
+            _row(
+                1,
+                example_id="span:unknown",
+                decision="promote",
+                scored=False,
+                score=None,
+            ),
+            _row(
+                10,
+                example_id="span:unknown",
+                decision="promote",
+                scored=False,
+                score=None,
+            ),
+            _row(
+                15,
+                example_id="span:unknown",
+                decision="promote",
+                scored=False,
+                score=None,
+            ),
+        ],
+        0.7,
+        1.0,
+        {
+            "confirmations": 0,
+            "unscored_promotions": 3,
+            "scored_promotions": 0,
+            "first_seen": OLD,
+        },
+        id="unknown-only",
+    ),
+    pytest.param(
+        "old + mixed: 1 scored-above, 2 unscored -> no decay",
+        "span:mixed",
+        [
+            _row(
+                1, example_id="span:mixed", decision="promote", scored=True, score=0.8
+            ),
+            _row(
+                10,
+                example_id="span:mixed",
+                decision="promote",
+                scored=False,
+                score=None,
+            ),
+            _row(
+                15,
+                example_id="span:mixed",
+                decision="promote",
+                scored=False,
+                score=None,
+            ),
+        ],
+        0.7,
+        1.0,
+        {
+            "confirmations": 1,
+            "unscored_promotions": 2,
+            "scored_promotions": 1,
+            "first_seen": OLD,
+        },
+        id="mixed-unknown",
+    ),
+    pytest.param(
+        "old + zero promotions at all -> decays",
+        "span:none",
+        [
+            _row(1, example_id="span:none", decision="keep", scored=False, score=None),
+            _row(10, example_id="span:none", decision="keep", scored=False, score=None),
+            _row(15, example_id="span:none", decision="keep", scored=False, score=None),
+        ],
+        0.7,
+        0.5,
+        {
+            "confirmations": 0,
+            "unscored_promotions": 0,
+            "scored_promotions": 0,
+            "first_seen": OLD,
+        },
+        id="no-promotions",
+    ),
+    pytest.param(
+        "fresh, any history -> no decay",
+        "span:fresh",
+        [
+            _row(
+                25, example_id="span:fresh", decision="promote", scored=True, score=0.6
+            ),
+            _row(
+                25, example_id="span:fresh", decision="promote", scored=True, score=0.6
+            ),
+            _row(
+                25, example_id="span:fresh", decision="promote", scored=True, score=0.6
+            ),
+        ],
+        0.7,
+        1.0,
+        {
+            "confirmations": 0,
+            "unscored_promotions": 0,
+            "scored_promotions": 3,
+            "first_seen": FRESH,
+        },
+        id="fresh-history",
+    ),
+    pytest.param(
+        "threshold unset -> current behavior preserved exactly",
+        "span:legacy",
+        [
+            _row(
+                1,
+                example_id="span:legacy",
+                decision="promote",
+                scored=False,
+                score=None,
+            ),
+            _row(
+                10,
+                example_id="span:legacy",
+                decision="promote",
+                scored=False,
+                score=None,
+            ),
+        ],
+        None,
+        0.5,
+        {
+            "confirmations": 2,
+            "unscored_promotions": 2,
+            "scored_promotions": 0,
+            "first_seen": OLD,
+        },
+        id="threshold-none",
+    ),
+]
 
 
-class TestRegistryWiring:
-    def test_default_registry_attaches_retirement_hook(self):
-        s = build_default_registry().get("learned_strategy")
-        assert s.retention is Retention.SCHEMA_DRIVEN
-        assert callable(s.cleanup_hook)
+@pytest.mark.parametrize(
+    "_label, example_id, lineage, score_threshold, expected_weight, expected_stats",
+    CASES,
+)
+def test_decay_state_matrix(
+    _label,
+    example_id,
+    lineage,
+    score_threshold,
+    expected_weight,
+    expected_stats,
+):
+    now = NOW
+    knobs = TrainingSelectionKnobs(300, 0.7, 3, 14, 0.5, score_threshold)
 
-    def test_dedup_threshold_constant_in_band(self):
-        """Sanity: the dedup threshold is in (0,1] so the bump path triggers."""
-        assert 0 < DEDUP_SIMILARITY_THRESHOLD <= 1
-        # Retain identifier so import isn't dead code.
-        assert STRATEGY_AGENT_NAME == "_strategy_store"
+    stats = confirmation_stats(lineage, score_threshold=score_threshold)
+    assert set(stats) == {example_id}
+    _assert_example_stats(stats[example_id], **expected_stats)
+    if _label == "old + 3 scored-above-threshold promotions -> no decay":
+        assert stats[example_id].confirmations == 3
+        assert stats[example_id].unscored_promotions == 0
+        assert stats[example_id].scored_promotions == 3
+    elif _label == "old + 3 scored-below-threshold promotions -> decays":
+        assert stats[example_id].confirmations == 0
+        assert stats[example_id].unscored_promotions == 0
+        assert stats[example_id].scored_promotions == 3
+    elif _label == "old + 3 unscored promotions -> no decay":
+        assert stats[example_id].confirmations == 0
+        assert stats[example_id].unscored_promotions == 3
+        assert stats[example_id].scored_promotions == 0
+    elif _label == "old + mixed: 1 scored-above, 2 unscored -> no decay":
+        assert stats[example_id].confirmations == 1
+        assert stats[example_id].unscored_promotions == 2
+        assert stats[example_id].scored_promotions == 1
+    elif _label == "old + zero promotions at all -> decays":
+        assert stats[example_id].confirmations == 0
+        assert stats[example_id].unscored_promotions == 0
+        assert stats[example_id].scored_promotions == 0
+    elif _label == "fresh, any history -> no decay":
+        assert stats[example_id].confirmations == 0
+        assert stats[example_id].unscored_promotions == 0
+        assert stats[example_id].scored_promotions == 3
+    else:
+        assert _label == "threshold unset -> current behavior preserved exactly"
+        assert stats[example_id].confirmations == 2
+        assert stats[example_id].unscored_promotions == 2
+        assert stats[example_id].scored_promotions == 0
+    assert decay_weight(stats, example_id, now=now, knobs=knobs) == expected_weight
