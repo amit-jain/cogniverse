@@ -16,6 +16,7 @@ from cogniverse_cli.modal_inference_config import (
     EndpointAuth,
     InferenceServiceSpec,
 )
+from cogniverse_foundation.config.inference_auth import is_modal_inference_url
 
 EndpointProvider = Literal["modal", "e2e", "dev", "local"]
 _PROVIDER_ORDER: tuple[EndpointProvider, ...] = ("modal", "e2e", "dev", "local")
@@ -127,9 +128,7 @@ class CandidateEndpoint:
             or parsed.path not in {"", "/"}
         ):
             raise ValueError("endpoint base_url must be a root HTTP(S) URL")
-        if self.provider == "modal" and (
-            parsed.scheme != "https" or not parsed.host.endswith(".modal.run")
-        ):
+        if self.provider == "modal" and not is_modal_inference_url(self.base_url):
             raise ValueError("Modal endpoint must be an HTTPS *.modal.run root URL")
         normalized = str(parsed).rstrip("/")
         object.__setattr__(self, "base_url", normalized)

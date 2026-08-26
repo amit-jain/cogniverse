@@ -383,7 +383,7 @@ def build_vllm_app(spec: InferenceServiceSpec) -> modal.App:
             command=command,
             host="127.0.0.1",
             port=_VLLM_PORT,
-            startup_timeout=600,
+            startup_timeout=spec.boot_deadline_seconds,
         )
         return build_authenticated_asgi_app(
             _build_process_proxy_app(process),
