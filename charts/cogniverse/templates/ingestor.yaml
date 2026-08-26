@@ -103,15 +103,11 @@ spec:
         - name: INFERENCE_SERVICE_URLS
           value: |-
             {{- include "cogniverse.inferenceServiceUrls" $ | nindent 12 }}
-        # Bearer key for Modal-hosted entries in the URL map; synced by
-        # `cogniverse secrets sync`, optional so a fully-local stack starts
-        # without it.
+        # Bearer key for Modal-hosted entries in the URL map. External
+        # inference URLs consume the synced Secret; fully in-cluster renders
+        # keep the placeholder so the stack starts without any Secret.
         - name: COGNIVERSE_INFERENCE_API_KEY
-          valueFrom:
-            secretKeyRef:
-              name: cogniverse-inference-api-key
-              key: COGNIVERSE_INFERENCE_API_KEY
-              optional: true
+{{ include "cogniverse.inferenceApiKeyEnv" . | nindent 10 }}
         livenessProbe:
           {{- toYaml .Values.ingestor.livenessProbe | nindent 10 }}
         readinessProbe:

@@ -360,10 +360,13 @@ class ModalEndpointProvider:
         self._warmed.add(spec.name)
         return endpoint
 
-    def close(self) -> None:
+    def release_warmed_services(self) -> None:
         if self._lifecycle is not None and self._warmed:
             self._lifecycle.release(tuple(sorted(self._warmed)))
             self._warmed.clear()
+
+    def close(self) -> None:
+        self.release_warmed_services()
 
 
 @dataclass(frozen=True, slots=True)
@@ -1045,12 +1048,10 @@ def requested_inference_services(request):
         for service in getattr(item, _MODAL_SERVICES_ATTR, ())
     )
     resolver = _build_resolver(required, modal_services=modal_services)
-    try:
-        endpoints = resolver.resolve_required(sorted(required))
-        with publish_inference_endpoints(endpoints):
-            yield endpoints
-    finally:
-        resolver.close()
+    endpoints = resolver.resolve_required(sorted(required))
+    request.addfinalizer(resolver.close)
+    with publish_inference_endpoints(endpoints):
+        yield endpoints
 
 
 @pytest.fixture(scope="session")

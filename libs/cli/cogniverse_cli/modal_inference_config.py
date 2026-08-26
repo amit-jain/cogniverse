@@ -31,6 +31,10 @@ class InferenceServiceSpec:
     health_path: str = "/health"
     models_path: str = "/v1/models"
     scaledown_window: int = 300
+    # Pre-measurement cold-start budget for the scale-to-zero Modal app.
+    # This is the shared deadline the runtime teacher probe uses when the
+    # endpoint is external and needs to wake from zero.
+    boot_deadline_seconds: float = 600.0
     min_containers: int = 0
 
     def __post_init__(self) -> None:
