@@ -323,3 +323,38 @@ class TestLoadBlobErrorBoundary:
 
         with pytest.raises(ValueError, match="boom-bad-shape"):
             await manager.load_blob("config", "missing")
+
+
+@pytest.mark.asyncio
+class TestArtifactPromptDemoErrorBoundary:
+    async def test_load_prompts_dataset_not_found_error_still_returns_none(self):
+        provider = SimpleNamespace(datasets=_DatasetNotFoundStore())
+        manager = ArtifactManager(provider, tenant_id="acme")
+
+        result = await manager.load_prompts("router")
+
+        assert result is None
+
+    async def test_load_prompts_plain_value_error_propagates(self):
+        provider = SimpleNamespace(datasets=_ValueErrorStore())
+        manager = ArtifactManager(provider, tenant_id="acme")
+
+        with pytest.raises(ValueError, match="boom-bad-shape"):
+            await manager.load_prompts("router")
+
+    async def test_load_demonstrations_dataset_not_found_error_still_returns_none(
+        self,
+    ):
+        provider = SimpleNamespace(datasets=_DatasetNotFoundStore())
+        manager = ArtifactManager(provider, tenant_id="acme")
+
+        result = await manager.load_demonstrations("router")
+
+        assert result is None
+
+    async def test_load_demonstrations_plain_value_error_propagates(self):
+        provider = SimpleNamespace(datasets=_ValueErrorStore())
+        manager = ArtifactManager(provider, tenant_id="acme")
+
+        with pytest.raises(ValueError, match="boom-bad-shape"):
+            await manager.load_demonstrations("router")
