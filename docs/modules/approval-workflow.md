@@ -630,10 +630,11 @@ uses the primary LM request deadline, and keeps concurrent source records and
 review instructions separate. It serializes the complete source, corrections,
 and JSON Schema only at the DSPy signature boundary. Routing results persist
 retry and reasoning details under
-`metadata._generation_metadata`; entity-extraction results retain the
-comma-separated `entity_types` result shape. If every configured regeneration
-attempt fails, the handler raises a `RuntimeError` with the item ID and chains
-the final generator exception.
+`metadata._generation_metadata`; entity-extraction results stay on the
+`query`/`entities`/`relationships` shape, with entity types derived from the
+entity list when needed. If every configured regeneration attempt fails, the
+handler raises a `RuntimeError` with the item ID and chains the final
+generator exception.
 
 `HumanApprovalAgent` persists a successful regeneration through
 `ApprovalStorage.replace_item()`. The replacement event contains the exact

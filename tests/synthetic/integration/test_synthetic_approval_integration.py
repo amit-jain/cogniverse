@@ -397,7 +397,6 @@ def synthetic_service(shared_vespa):
     expected_entities = [
         ("Marie Curie", "PERSON"),
         ("Pierre Curie", "PERSON"),
-        ("isolated", "EVENT"),
     ]
 
     async def extract_entities(text: str, request_tenant_id: str):
@@ -406,7 +405,7 @@ def synthetic_service(shared_vespa):
         result = await entity_agent.process(
             EntityExtractionInput(query=text, tenant_id=request_tenant_id)
         )
-        assert result.path_used == "fast"
+        assert result.path_used == "dspy"
         assert [(entity.text, entity.type) for entity in result.entities] == (
             expected_entities
         )
@@ -1536,7 +1535,6 @@ class TestSyntheticApprovalIntegration:
                     {"text": "TensorFlow", "type": "TECHNOLOGY"},
                     {"text": "Google Brain", "type": "ORG"},
                 ],
-                "entity_types": "TECHNOLOGY,ORG",
                 "relationships": [
                     {
                         "source": "TensorFlow",
@@ -2996,7 +2994,6 @@ class TestSyntheticServiceIntegration:
         expected_entities = [
             {"text": "Marie Curie", "type": "PERSON"},
             {"text": "Pierre Curie", "type": "PERSON"},
-            {"text": "isolated", "type": "EVENT"},
         ]
         for example in response.data:
             validated = RoutingExperienceSchema.model_validate(example)

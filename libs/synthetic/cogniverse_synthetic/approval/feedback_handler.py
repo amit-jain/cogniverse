@@ -394,7 +394,7 @@ class SyntheticDataFeedbackHandler(FeedbackHandler):
                 )
 
         if schema in {EntityExtractionExampleSchema, RoutingExperienceSchema}:
-            entities, entity_texts, _entity_types = _canonical_entities(
+            entities, entity_texts, _entity_type_labels = _canonical_entities(
                 regenerated_data.get("entities"),
                 "regenerated data entities",
             )

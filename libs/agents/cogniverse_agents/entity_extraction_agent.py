@@ -238,10 +238,10 @@ class EntityExtractionAgent(
         self, input: EntityExtractionInput
     ) -> EntityExtractionOutput:
         """
-        Process entity extraction request with tiered fast/slow path.
+        Process entity extraction request with DSPy primary and GLiNER fallback.
 
-        Fast path (GLiNER + SpaCy): No LLM call, sub-second latency.
-        Fallback (DSPy ChainOfThought): Requires LLM, higher quality.
+        DSPy is the primary path. If the LM call fails, fall back to
+        GLiNER + SpaCy. ``path_used`` records which branch actually ran.
 
         Args:
             input: Typed input with query field

@@ -238,7 +238,7 @@ class TestEntityExtractionRealGLiNERSpaCy:
         )
 
         # Check entity types are reasonable (ORG, PLACE, GPE, COMPANY, LOCATION, etc.)
-        entity_types = {e.type.upper() for e in result.entities}
+        observed_types = {e.type.upper() for e in result.entities}
         reasonable_org_types = {"ORG", "ORGANIZATION", "COMPANY", "CORPORATION"}
         reasonable_loc_types = {"PLACE", "GPE", "LOCATION", "CITY", "LOC"}
         all_reasonable = (
@@ -247,8 +247,8 @@ class TestEntityExtractionRealGLiNERSpaCy:
             | {"PERSON", "CONCEPT", "TECHNOLOGY"}
         )
 
-        assert entity_types & all_reasonable, (
-            f"Entity types should include recognizable categories, got: {entity_types}"
+        assert observed_types & all_reasonable, (
+            f"Entity types should include recognizable categories, got: {observed_types}"
         )
 
         # Fast path should be used (GLiNER available)

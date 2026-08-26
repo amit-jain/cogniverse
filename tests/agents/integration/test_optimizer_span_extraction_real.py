@@ -115,7 +115,6 @@ async def test_entity_extraction_span_yields_training_pair(real_telemetry):
 
     mock_prediction = MagicMock()
     mock_prediction.entities = "machine learning|CONCEPT|0.9"
-    mock_prediction.entity_types = "CONCEPT"
 
     with patch.object(agent, "call_dspy", return_value=mock_prediction):
         await agent.process(
