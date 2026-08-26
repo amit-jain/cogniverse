@@ -62,13 +62,6 @@ from cogniverse_sdk.interfaces.schema_loader import SchemaLoader
 
 logger = logging.getLogger(__name__)
 SHIPPED_CONFIG_PATH = Path(__file__).resolve().parents[3] / "configs" / "config.json"
-PROFILE_SELECTION_LABEL_SOURCE_PATH = (
-    Path(__file__).resolve().parents[3]
-    / "data"
-    / "testset"
-    / "evaluation"
-    / "sample_videos_retrieval_queries.json"
-)
 _TRAINING_SELECTION_FIELDS = (
     ("trainset_cap", int),
     ("mmr_lambda", float),
@@ -508,34 +501,6 @@ def _profile_selection_recovery_score(
     return len(expected & retrieved) / len(expected)
 
 
-def _load_profile_selection_label_source(
-    queries_path: Path = PROFILE_SELECTION_LABEL_SOURCE_PATH,
-) -> list[dict[str, Any]]:
-    try:
-        with queries_path.open(encoding="utf-8") as source_file:
-            loaded = json.load(source_file)
-    except FileNotFoundError as exc:
-        raise FileNotFoundError(
-            f"Profile selection label source missing: {queries_path}"
-        ) from exc
-    except OSError as exc:
-        raise OSError(
-            f"Profile selection label source unreadable: {queries_path}"
-        ) from exc
-    except json.JSONDecodeError as exc:
-        raise ValueError(
-            f"Profile selection label source unreadable JSON: {queries_path}"
-        ) from exc
-
-    if not isinstance(loaded, list):
-        raise ValueError(
-            f"Profile selection label source must be a JSON list: {queries_path}"
-        )
-    if not loaded:
-        raise ValueError(f"Profile selection label source is empty: {queries_path}")
-    return loaded
-
-
 def derive_profile_labels(
     queries: Iterable[dict[str, Any]],
     candidate_profiles: Iterable[str],
@@ -699,19 +664,6 @@ def derive_profile_labels(
         records.append(record)
 
     return ProfileLabelDerivationResult(labels, records, exclusions)
-
-
-def _load_profile_selection_labels(
-    *,
-    queries_path: Path = PROFILE_SELECTION_LABEL_SOURCE_PATH,
-    candidate_profiles: Iterable[str],
-    retrieve: Callable[[str, str], Sequence[Mapping[str, Any]]],
-    title_fields: Mapping[str, str],
-) -> ProfileLabelDerivationResult:
-    queries = _load_profile_selection_label_source(queries_path)
-    return derive_profile_labels(
-        queries, candidate_profiles, retrieve, title_fields=title_fields
-    )
 
 
 def _profile_selection_label_source(
