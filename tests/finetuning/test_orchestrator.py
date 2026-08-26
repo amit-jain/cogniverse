@@ -253,7 +253,6 @@ class TestApprovedSyntheticLoader:
                 {"text": "PyTorch", "type": "TECHNOLOGY"},
                 {"text": "Meta AI", "type": "ORG"},
             ],
-            "entity_types": "TECHNOLOGY,ORG",
             "relationships": [
                 {
                     "source": "PyTorch",

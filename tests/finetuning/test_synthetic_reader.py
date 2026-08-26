@@ -16,6 +16,7 @@ from cogniverse_core.approval.training_schema import (
 )
 from cogniverse_finetuning.dataset.synthetic_reader import (
     format_synthetic_sft,
+    derive_entity_types,
     load_approved_synthetic_examples,
     synthetic_examples_to_instruction,
 )
@@ -77,7 +78,7 @@ async def test_entity_synthetic_examples_become_sft_records():
         assert rec["metadata"]["agent_type"] == "entity_extraction"
 
 
-def test_approved_reader_preserves_canonical_entity_lists() -> None:
+def test_approved_reader_derives_entity_types_from_entities() -> None:
     record = {
         "status": "approved",
         "metadata.agent_type": "entity_extraction",
@@ -86,7 +87,6 @@ def test_approved_reader_preserves_canonical_entity_lists() -> None:
             {"text": "PyTorch", "type": "TECHNOLOGY"},
             {"text": "Meta AI", "type": "ORGANIZATION"},
         ],
-        "entity_types": "TECHNOLOGY,ORGANIZATION",
         "relationships": [
             {
                 "source": "PyTorch",
@@ -96,16 +96,17 @@ def test_approved_reader_preserves_canonical_entity_lists() -> None:
         ],
     }
 
-    assert load_approved_synthetic_examples(
+    loaded = load_approved_synthetic_examples(
         pd.DataFrame([{"input": record}]), "entity_extraction"
-    ) == [
+    )
+
+    assert loaded == [
         {
             "query": "PyTorch was released by Meta AI",
             "entities": [
                 {"text": "PyTorch", "type": "TECHNOLOGY"},
                 {"text": "Meta AI", "type": "ORGANIZATION"},
             ],
-            "entity_types": "TECHNOLOGY,ORGANIZATION",
             "relationships": [
                 {
                     "source": "PyTorch",
@@ -114,6 +115,11 @@ def test_approved_reader_preserves_canonical_entity_lists() -> None:
                 }
             ],
         }
+    ]
+
+    assert derive_entity_types(loaded[0]["entities"]) == [
+        "TECHNOLOGY",
+        "ORGANIZATION",
     ]
 
 
@@ -151,7 +157,6 @@ def test_approved_reader_rejects_serialized_entity_lists() -> None:
         "metadata.agent_type": "entity_extraction",
         "query": "PyTorch was released by Meta AI",
         "entities": "[{'text': 'PyTorch', 'type': 'TECHNOLOGY'}]",
-        "entity_types": "TECHNOLOGY",
         "relationships": [],
     }
 
@@ -244,7 +249,6 @@ def test_profile_selection_output_is_the_selected_profile():
                     {"text": "PyTorch", "type": "TECHNOLOGY"},
                     {"text": "Meta AI", "type": "ORGANIZATION"},
                 ],
-                "entity_types": "TECHNOLOGY,ORGANIZATION",
                 "relationships": [
                     {
                         "source": "PyTorch",
@@ -300,22 +304,7 @@ def test_real_and_synthetic_rows_share_exact_output_shape(
                 "status": "approved",
                 "metadata.agent_type": "entity_extraction",
                 "query": "PyTorch was released by Meta AI",
-                "entities": [
-                    {"text": "PyTorch", "type": "TECHNOLOGY"},
-                    {"text": "Meta AI", "type": "ORGANIZATION"},
-                ],
-                "entity_types": "TECHNOLOGY",
-                "relationships": [],
-            },
-            "entity_types must exactly equal 'TECHNOLOGY,ORGANIZATION'",
-        ),
-        (
-            {
-                "status": "approved",
-                "metadata.agent_type": "entity_extraction",
-                "query": "PyTorch was released by Meta AI",
                 "entities": [{"text": "PyTorch", "type": "TECHNOLOGY"}],
-                "entity_types": "TECHNOLOGY",
                 "relationships": [
                     {
                         "source": "PyTorch",
@@ -427,7 +416,6 @@ def test_entity_training_contract_rejects_duplicate_relationships():
             {"text": "PyTorch", "type": "TECHNOLOGY"},
             {"text": "Meta AI", "type": "ORGANIZATION"},
         ],
-        "entity_types": "TECHNOLOGY,ORGANIZATION",
         "relationships": [
             {"source": "Meta AI", "target": "PyTorch", "type": "created"},
             {"source": "Meta AI", "target": "PyTorch", "type": "created"},

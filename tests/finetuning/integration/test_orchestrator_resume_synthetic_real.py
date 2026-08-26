@@ -152,7 +152,6 @@ async def test_resumed_run_trains_on_approved_synthetic(
                     {"text": f"Company{i}", "type": "ORG"},
                     {"text": f"Person{i}", "type": "PERSON"},
                 ],
-                "entity_types": "ORG,PERSON",
                 "relationships": [],
             },
             confidence=0.9,
