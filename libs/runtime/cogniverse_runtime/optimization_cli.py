@@ -531,10 +531,100 @@ def _entity_extraction_quality(prediction, example) -> float:
     return _token_f1(" ".join(predicted_texts), " ".join(recorded_texts))
 
 
-def _entity_extraction_metric(example, prediction, trace=None) -> bool:
-    """BootstrapFewShot metric: keep only exact entity-text matches."""
-    del trace
-    return _entity_extraction_quality(prediction, example) == 1.0
+ENTITY_BOOTSTRAP_METRIC_THRESHOLD = 1.0
+
+
+def _entity_bootstrap_threshold(
+    baseline_score: float,
+    current_score: Optional[float],
+    *,
+    bar: float = ENTITY_BOOTSTRAP_METRIC_THRESHOLD,
+) -> float:
+    """Token-set F1 a teacher trace must reach to become a bootstrapped demo:
+    ``bar``, never below what the served module already scores on the holdout.
+    """
+    served = (
+        baseline_score if current_score is None else max(baseline_score, current_score)
+    )
+    return max(bar, served)
+
+
+def _entity_pipe_lines(entities) -> str:
+    """Recorded entity dicts as the signature's ``text|type|confidence`` lines."""
+    lines = []
+    for entity in entities:
+        text = str(entity.get("text") or "").strip()
+        if not text:
+            continue
+        confidence = entity.get("confidence")
+        confidence = 1.0 if confidence is None else round(float(confidence), 2)
+        lines.append(f"{text}|{entity.get('type') or 'CONCEPT'}|{confidence}")
+    return "\n".join(lines)
+
+
+def _entity_extraction_example(record: Dict[str, Any]):
+    """A served or approved entity record as the module's training example."""
+    import dspy
+
+    entities = record["entities"]
+    return dspy.Example(
+        query=record["query"],
+        entities=entities
+        if isinstance(entities, str)
+        else _entity_pipe_lines(entities),
+        entity_types=str(record.get("entity_types") or ""),
+    ).with_inputs("query")
+
+
+class BootstrapMetricRecorder:
+    """BootstrapFewShot metric returning the quality score of every teacher
+    trace and recording it, so one compile yields the acceptance histogram.
+    BootstrapFewShot compares the score against its ``metric_threshold``.
+    """
+
+    def __init__(self, quality, *, threshold: float):
+        self._quality = quality
+        self.threshold = threshold
+        self.attempts: list[tuple[str, float]] = []
+
+    def __call__(self, example, prediction, trace=None) -> float:
+        del trace
+        score = float(self._quality(prediction, example))
+        query = str(getattr(example, "query", "") or "")
+        self.attempts.append((query, score))
+        logger.info(
+            "bootstrap attempt %d query=%r metric=%.3f accepted=%s",
+            len(self.attempts),
+            query,
+            score,
+            score >= self.threshold,
+        )
+        return score
+
+
+def _bootstrap_report(
+    recorder: BootstrapMetricRecorder, teleprompter, compiled, trainset_size: int
+) -> Dict[str, Any]:
+    """What the bootstrap walk cost and what the compiled module carries."""
+    scores = [score for _, score in recorder.attempts]
+    demos = [
+        demo for _, predictor in compiled.named_predictors() for demo in predictor.demos
+    ]
+    bootstrapped = sum(1 for demo in demos if demo.get("augmented", False))
+    return {
+        "trainset": trainset_size,
+        "max_bootstrapped_demos": teleprompter.max_bootstrapped_demos,
+        "max_labeled_demos": teleprompter.max_labeled_demos,
+        "max_rounds": teleprompter.max_rounds,
+        "metric_threshold": teleprompter.metric_threshold,
+        "attempts": len(scores),
+        "errors": teleprompter.error_count,
+        "examples_walked": len({query for query, _ in recorder.attempts}),
+        "accepted": sum(1 for score in scores if score >= recorder.threshold),
+        "bootstrapped_demos": bootstrapped,
+        "labeled_demos": len(demos) - bootstrapped,
+        "metric_values": sorted(scores),
+    }
 
 
 def _entity_extraction_scores(module, holdout) -> float:
@@ -1690,6 +1780,20 @@ def _served_scoreable_indices(
     ]
 
 
+def _scoreable_first(records: list[dict]) -> tuple[list[dict], int]:
+    """Scoreable records first, unscoreable after, each in original order.
+
+    BootstrapFewShot walks the trainset in order and stops once it has its
+    demos. A record ``_query_enhancement_quality`` cannot score is a
+    guaranteed rejection, so it is walked last and only when the scoreable
+    records did not fill the demos. Returns the ordering and the unscoreable
+    count.
+    """
+    scoreable = [record for record in records if is_scoreable(record)]
+    unscoreable = [record for record in records if not is_scoreable(record)]
+    return scoreable + unscoreable, len(unscoreable)
+
+
 def _split_served_holdout(
     records: list[dict], min_holdout: int, scoreable_predicate=is_scoreable
 ) -> tuple[list[dict], list[dict]]:
@@ -2153,6 +2257,7 @@ def _create_teleprompter(
     trainset_size: int,
     teacher_settings: dict | None = None,
     metric=_approved_example_exact_metric,
+    metric_threshold: float | None = None,
 ):
     """Select DSPy optimizer config based on training set size.
 
@@ -2163,7 +2268,8 @@ def _create_teleprompter(
     teacher_settings (e.g. ``{"lm": teacher_lm}``) makes DSPy run the
     bootstrap teacher on the configured teacher endpoint instead of the
     student model teaching itself. ``metric`` decides which teacher traces
-    become bootstrapped demos.
+    become bootstrapped demos; with ``metric_threshold`` a trace is kept when
+    the metric's score reaches it.
     """
     from dspy.teleprompt import BootstrapFewShot
 
@@ -2174,6 +2280,7 @@ def _create_teleprompter(
         )
         return BootstrapFewShot(
             metric=metric,
+            metric_threshold=metric_threshold,
             max_bootstrapped_demos=8,
             max_labeled_demos=16,
             max_rounds=2,
@@ -2184,6 +2291,7 @@ def _create_teleprompter(
     logger.info("Using BootstrapFewShot for %d examples", trainset_size)
     return BootstrapFewShot(
         metric=metric,
+        metric_threshold=metric_threshold,
         max_bootstrapped_demos=4,
         max_labeled_demos=8,
         max_rounds=1,
@@ -2718,6 +2826,7 @@ async def run_simba_optimization(
         train_records=trainable_records,
         embedder_url=embedder_url,
     )
+    train_records, unscoreable_examples = _scoreable_first(train_records)
     selection_summary = _selection_summary(selection_report)
     trainset = [_query_enhancement_example(r) for r in train_records]
     holdout = [_query_enhancement_example(r) for r in holdout_records]
@@ -2741,6 +2850,7 @@ async def run_simba_optimization(
             "examples": len(records),
             "served_scoreable_examples": served_scoreable_examples,
             "non_trainable_examples": non_trainable_examples,
+            "unscoreable_examples": unscoreable_examples,
             "training_examples": len(trainset),
             "holdout_examples": 0,
             "holdout_source": "served",
@@ -2773,6 +2883,7 @@ async def run_simba_optimization(
                 "examples": len(records),
                 "served_scoreable_examples": served_scoreable_examples,
                 "non_trainable_examples": non_trainable_examples,
+                "unscoreable_examples": unscoreable_examples,
                 "training_examples": len(trainset),
                 "holdout_examples": 0,
                 "holdout_source": "served",
@@ -2854,6 +2965,7 @@ async def run_simba_optimization(
         "approved_examples": approved_examples,
         "served_scoreable_examples": served_scoreable_examples,
         "non_trainable_examples": non_trainable_examples,
+        "unscoreable_examples": unscoreable_examples,
         "training_examples": len(trainset),
         "holdout_examples": len(holdout),
         "holdout_source": "served",
@@ -3849,20 +3961,8 @@ async def run_entity_extraction_optimization(
 
     import dspy
 
-    def _example_from_record(record: dict[str, Any]):
-        entities = record["entities"]
-        if isinstance(entities, str):
-            entities_value = entities
-        else:
-            entities_value = _json.dumps(entities)
-        return dspy.Example(
-            query=record["query"],
-            entities=entities_value,
-            entity_types=str(record.get("entity_types") or ""),
-        ).with_inputs("query")
-
-    trainset = [_example_from_record(record) for record in train_records]
-    holdout = [_example_from_record(record) for record in holdout_records]
+    trainset = [_entity_extraction_example(record) for record in train_records]
+    holdout = [_entity_extraction_example(record) for record in holdout_records]
     logger.info(
         "Merged %d synthetic + %d production = %d total training examples",
         len(synthetic_demos),
@@ -3901,21 +4001,31 @@ async def run_entity_extraction_optimization(
         if current_blob:
             current_module = EntityExtractionModule()
             current_module.load_state(_json.loads(current_blob))
-
-        compiled = None
-        if trainset:
-            teleprompter = _create_teleprompter(
-                len(trainset),
-                teacher_settings={"lm": teacher_lm_or_raise(llm_config)},
-                metric=_entity_extraction_metric,
-            )
-            compiled = teleprompter.compile(EntityExtractionModule(), trainset=trainset)
-
         current_score = (
             _entity_extraction_scores(current_module, holdout)
             if current_module is not None
             else None
         )
+
+        compiled = None
+        bootstrap = None
+        if trainset:
+            recorder = BootstrapMetricRecorder(
+                _entity_extraction_quality,
+                threshold=_entity_bootstrap_threshold(baseline_score, current_score),
+            )
+            teleprompter = _create_teleprompter(
+                len(trainset),
+                teacher_settings={"lm": teacher_lm_or_raise(llm_config)},
+                metric=recorder,
+                metric_threshold=recorder.threshold,
+            )
+            compiled = teleprompter.compile(EntityExtractionModule(), trainset=trainset)
+            bootstrap = _bootstrap_report(
+                recorder, teleprompter, compiled, len(trainset)
+            )
+            logger.info("Entity extraction bootstrap for %s: %s", tenant_id, bootstrap)
+
         candidate_score = (
             _entity_extraction_scores(compiled, holdout)
             if compiled is not None
@@ -3969,6 +4079,7 @@ async def run_entity_extraction_optimization(
         "holdout_examples": len(holdout),
         "holdout_source": "served",
         **selection_summary,
+        "bootstrap": bootstrap,
         "baseline_score": baseline_score,
         "current_score": current_score,
         "candidate_score": candidate_score,

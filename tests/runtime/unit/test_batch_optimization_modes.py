@@ -9,6 +9,7 @@ Tests:
 import asyncio
 import hashlib
 import json
+import logging
 import threading
 from contextlib import contextmanager
 from datetime import datetime, timedelta, timezone
@@ -46,6 +47,24 @@ def _selection_block(
             "decayed_count": decayed_count,
             "decayed_example_ids": decayed_example_ids or [],
         }
+    }
+
+
+def _fake_bootstrap_block(trainset: int) -> dict:
+    """The bootstrap report for a teleprompter that never calls the metric."""
+    return {
+        "trainset": trainset,
+        "max_bootstrapped_demos": 4,
+        "max_labeled_demos": 8,
+        "max_rounds": 1,
+        "metric_threshold": 1.0,
+        "attempts": 0,
+        "errors": 0,
+        "examples_walked": 0,
+        "accepted": 0,
+        "bootstrapped_demos": 0,
+        "labeled_demos": 0,
+        "metric_values": [],
     }
 
 
@@ -2520,6 +2539,7 @@ class TestSimbaQueryEnhancement:
             "approved_examples": 0,
             "served_scoreable_examples": 4,
             "non_trainable_examples": 0,
+            "unscoreable_examples": 0,
             "training_examples": 3,
             "holdout_examples": 1,
             "holdout_source": "served",
@@ -2587,6 +2607,7 @@ class TestSimbaQueryEnhancement:
             "approved_examples": 0,
             "served_scoreable_examples": 5,
             "non_trainable_examples": 1,
+            "unscoreable_examples": 0,
             "training_examples": 3,
             "holdout_examples": 1,
             "holdout_source": "served",
@@ -2652,6 +2673,7 @@ class TestSimbaQueryEnhancement:
             "approved_examples": 0,
             "served_scoreable_examples": 4,
             "non_trainable_examples": 3,
+            "unscoreable_examples": 0,
             "training_examples": 0,
             "holdout_examples": 1,
             "holdout_source": "served",
@@ -2719,6 +2741,7 @@ class TestSimbaQueryEnhancement:
             "approved_examples": 0,
             "served_scoreable_examples": 4,
             "non_trainable_examples": 0,
+            "unscoreable_examples": 0,
             "training_examples": 3,
             "holdout_examples": 1,
             "holdout_source": "served",
@@ -2796,6 +2819,7 @@ class TestSimbaQueryEnhancement:
             "examples": 4,
             "served_scoreable_examples": 4,
             "non_trainable_examples": 0,
+            "unscoreable_examples": 0,
             "training_examples": 3,
             "holdout_examples": 0,
             "holdout_source": "served",
@@ -2896,6 +2920,7 @@ class TestSimbaQueryEnhancement:
             "approved_examples": 0,
             "served_scoreable_examples": 4,
             "non_trainable_examples": 0,
+            "unscoreable_examples": 0,
             "training_examples": 3,
             "holdout_examples": 1,
             "holdout_source": "served",
@@ -2942,6 +2967,7 @@ class TestSimbaQueryEnhancement:
             "approved_examples": 0,
             "served_scoreable_examples": 1,
             "non_trainable_examples": 0,
+            "unscoreable_examples": 0,
             "training_examples": 0,
             "holdout_examples": 1,
             "holdout_source": "served",
@@ -2986,6 +3012,100 @@ class TestSimbaQueryEnhancement:
         )
 
         assert result["selection"]["cap"] == 42, result
+
+    def test_unscoreable_records_train_last_and_are_counted(self):
+        """A record without source text or grounding context can never pass
+        the bootstrap metric, so every scoreable record precedes it in the
+        trainset and the run reports how many there were."""
+        rows = [
+            _qe_span_row(
+                "plain 0",
+                "plain 0 expanded",
+                expansion_terms=["expanded"],
+                span_id="qe-u0",
+            ),
+            _qe_span_row(
+                "plain 1",
+                "plain 1 expanded",
+                expansion_terms=["expanded"],
+                span_id="qe-u1",
+            ),
+            _qe_span_row(
+                "grounded 2",
+                "grounded 2 expanded",
+                expansion_terms=["expanded"],
+                source_text="src",
+                span_id="qe-s2",
+            ),
+            _qe_span_row(
+                "grounded 3",
+                "grounded 3 expanded",
+                expansion_terms=["expanded"],
+                source_text="src",
+                span_id="qe-s3",
+            ),
+            _qe_span_row(
+                "grounded 4",
+                "grounded 4 expanded",
+                expansion_terms=["expanded"],
+                source_text="src",
+                span_id="qe-s4",
+            ),
+        ]
+        provider = FakeTelemetryProvider(
+            _make_spans_df("cogniverse.query_enhancement", rows)
+        )
+
+        result = self._run(provider, min_improvement=0.0)
+
+        assert result == {
+            "status": "success",
+            "spans_found": 5,
+            "examples": 5,
+            "served_examples": 5,
+            "approved_examples": 0,
+            "served_scoreable_examples": 3,
+            "non_trainable_examples": 0,
+            "unscoreable_examples": 2,
+            "training_examples": 4,
+            "holdout_examples": 1,
+            "holdout_source": "served",
+            **_selection_block(4, 4),
+            "baseline_score": 0.5,
+            "current_score": None,
+            "candidate_score": 1.0,
+            "decision": "promote",
+            "version": 1,
+            "consumed_example_ids": [
+                "span:qe-u0",
+                "span:qe-u1",
+                "span:qe-s2",
+                "span:qe-s3",
+                "span:qe-s4",
+            ],
+        }
+        demos = self._persisted_state(provider)["enhancer.predict"]["demos"]
+        assert [demo["query"] for demo in demos] == [
+            "grounded 2",
+            "grounded 3",
+            "plain 0",
+            "plain 1",
+        ]
+
+    def test_scoreable_first_keeps_relative_order(self):
+        from cogniverse_runtime.optimization_cli import _scoreable_first
+
+        records = [
+            {"query": "a", "source_text": "", "grounding_context": ""},
+            {"query": "b", "source_text": "s", "grounding_context": ""},
+            {"query": "c", "source_text": "", "grounding_context": "g"},
+            {"query": "d", "source_text": "", "grounding_context": ""},
+        ]
+
+        assert _scoreable_first(records) == (
+            [records[1], records[2], records[0], records[3]],
+            2,
+        )
 
 
 class TestProfileSelectionOptimization:
@@ -4082,7 +4202,16 @@ class TestEntityExtractionOptimization:
                 assert (kind, key) == ("model", "entity_extraction")
                 return []
 
+        class FakePredictor:
+            demos: list = []
+
         class FakeTeleprompter:
+            max_bootstrapped_demos = 4
+            max_labeled_demos = 8
+            max_rounds = 1
+            metric_threshold = 1.0
+            error_count = 0
+
             def compile(self, module, trainset):
                 state["compiled_module"] = type(module).__name__
                 state["trainset"] = [
@@ -4093,6 +4222,9 @@ class TestEntityExtractionOptimization:
                 class Compiled:
                     def dump_state(self):
                         return {"compiled": "entity_extraction"}
+
+                    def named_predictors(self):
+                        return [("extractor.predict", FakePredictor())]
 
                 return Compiled()
 
@@ -4189,6 +4321,88 @@ class TestEntityExtractionOptimization:
         }
         with pytest.raises(ValueError, match="carries no recorded entities"):
             _entity_extraction_quality(_ents("x|T|1.0"), _entity_example(entities="[]"))
+
+    def test_served_entities_become_pipe_lines_that_serving_parses(self):
+        """A served GLiNER record trains in the signature's pipe format, and
+        the demo text parses through the agent's own parser to the same
+        entities. A JSON-array demo would parse to nothing at serve time."""
+        from cogniverse_agents.entity_extraction_agent import (
+            Entity,
+            EntityExtractionAgent,
+            EntityExtractionDeps,
+        )
+        from cogniverse_runtime.optimization_cli import _entity_extraction_example
+
+        query = "The video begins with a man riding a dirt bike in a dirt field"
+        record = {
+            "query": query,
+            "entities": [
+                {
+                    "text": "man",
+                    "type": "PERSON",
+                    "confidence": 0.9509217143058777,
+                    "context": "The video begins with a man riding a dirt bike in a dirt",
+                },
+                {
+                    "text": "dirt bike",
+                    "type": "CONCEPT",
+                    "confidence": 0.9843305945396423,
+                    "context": "eo begins with a man riding a dirt bike in a dirt field",
+                },
+                {"text": "houses", "type": "PLACE"},
+            ],
+            "entity_types": "",
+            "example_id": "span:ee-1",
+        }
+
+        example = _entity_extraction_example(record)
+
+        assert example.toDict() == {
+            "query": query,
+            "entities": "man|PERSON|0.95\ndirt bike|CONCEPT|0.98\nhouses|PLACE|1.0",
+            "entity_types": "",
+        }
+        assert list(example.inputs().toDict()) == ["query"]
+
+        agent = EntityExtractionAgent(deps=EntityExtractionDeps(), port=8010)
+        assert agent._parse_entities(example.entities, query) == [
+            Entity(
+                text="man",
+                type="PERSON",
+                confidence=0.95,
+                context="The video begins with a man riding a dirt bike in a dirt",
+            ),
+            Entity(
+                text="dirt bike",
+                type="CONCEPT",
+                confidence=0.98,
+                context="eo begins with a man riding a dirt bike in a dirt field",
+            ),
+            Entity(
+                text="houses",
+                type="PLACE",
+                confidence=1.0,
+                context="The video begins with a man riding a dirt bike in ",
+            ),
+        ]
+
+    def test_approved_pipe_lines_pass_through_unchanged(self):
+        from cogniverse_runtime.optimization_cli import _entity_extraction_example
+
+        example = _entity_extraction_example(
+            {
+                "query": "find PyTorch tutorials",
+                "entities": "PyTorch|TECHNOLOGY|1.0",
+                "entity_types": "TECHNOLOGY",
+                "example_id": "approved:1",
+            }
+        )
+
+        assert example.toDict() == {
+            "query": "find PyTorch tutorials",
+            "entities": "PyTorch|TECHNOLOGY|1.0",
+            "entity_types": "TECHNOLOGY",
+        }
 
     def test_entity_extraction_pairs_carry_span_ids(self):
         """Every entity record names the served span it came from."""
@@ -4338,6 +4552,7 @@ class TestEntityExtractionOptimization:
             "holdout_examples": 1,
             "holdout_source": "served",
             **_selection_block(1, 1),
+            "bootstrap": _fake_bootstrap_block(1),
             "baseline_score": 0.0,
             "current_score": None,
             "candidate_score": 1.0,
@@ -4395,6 +4610,7 @@ class TestEntityExtractionOptimization:
             "holdout_examples": 1,
             "holdout_source": "served",
             **_selection_block(1, 1),
+            "bootstrap": _fake_bootstrap_block(1),
             "baseline_score": 1.0,
             "current_score": 1.0,
             "candidate_score": 1.0,
@@ -4453,6 +4669,7 @@ class TestEntityExtractionOptimization:
             "holdout_examples": 1,
             "holdout_source": "served",
             **_selection_block(1, 1),
+            "bootstrap": _fake_bootstrap_block(1),
             "baseline_score": 1.0,
             "current_score": 0.0,
             "candidate_score": 1.0,
@@ -4572,6 +4789,148 @@ class TestEntityExtractionOptimization:
 # ---------------------------------------------------------------------------
 # Test: synthetic data merge helper
 # ---------------------------------------------------------------------------
+
+
+class TestEntityBootstrapThreshold:
+    """The entity bootstrap accepts a teacher trace by token-set F1 against
+    ``metric_threshold`` and records every attempt's score, so one run yields
+    the acceptance histogram."""
+
+    _ANSWERS = [
+        {
+            "reasoning": "r1",
+            "entities": "Marie Curie|PERSON|0.9",
+            "entity_types": "PERSON",
+        },
+        {
+            "reasoning": "r2",
+            "entities": "Alan Turing|PERSON|0.9",
+            "entity_types": "PERSON",
+        },
+        {
+            "reasoning": "r3",
+            "entities": "Ada Lovelace|PERSON|0.9",
+            "entity_types": "PERSON",
+        },
+    ]
+
+    @staticmethod
+    def _trainset(tag: str) -> list:
+        import dspy
+
+        rows = [
+            (f"{tag} curie", "Marie Curie|PERSON|1.0"),
+            (f"{tag} turing", "Alan Turing|PERSON|1.0\nEnigma|CONCEPT|1.0"),
+            (f"{tag} lovelace", "Ada Lovelace|PERSON|1.0"),
+        ]
+        return [
+            dspy.Example(query=query, entities=entities, entity_types="").with_inputs(
+                "query"
+            )
+            for query, entities in rows
+        ]
+
+    def _compile(self, tag: str, threshold: float):
+        import dspy
+        from dspy.utils.dummies import DummyLM
+
+        from cogniverse_agents.entity_extraction_agent import EntityExtractionModule
+        from cogniverse_runtime.optimization_cli import (
+            BootstrapMetricRecorder,
+            _bootstrap_report,
+            _create_teleprompter,
+            _entity_extraction_quality,
+        )
+
+        trainset = self._trainset(tag)
+        recorder = BootstrapMetricRecorder(
+            _entity_extraction_quality, threshold=threshold
+        )
+        with dspy.context(lm=DummyLM(list(self._ANSWERS))):
+            teleprompter = _create_teleprompter(
+                len(trainset), metric=recorder, metric_threshold=threshold
+            )
+            compiled = teleprompter.compile(EntityExtractionModule(), trainset=trainset)
+        report = _bootstrap_report(recorder, teleprompter, compiled, len(trainset))
+        ((_, predictor),) = compiled.named_predictors()
+        demos = [
+            (demo.get("augmented", False), demo["entities"]) for demo in predictor.demos
+        ]
+        return recorder, report, demos
+
+    def test_exact_bar_keeps_only_exact_traces_and_records_every_attempt(self, caplog):
+        caplog.set_level(logging.INFO, logger="cogniverse_runtime.optimization_cli")
+
+        recorder, report, demos = self._compile("t1", 1.0)
+
+        assert recorder.attempts == [
+            ("t1 curie", 1.0),
+            ("t1 turing", 0.8),
+            ("t1 lovelace", 1.0),
+        ]
+        assert report == {
+            "trainset": 3,
+            "max_bootstrapped_demos": 4,
+            "max_labeled_demos": 8,
+            "max_rounds": 1,
+            "metric_threshold": 1.0,
+            "attempts": 3,
+            "errors": 0,
+            "examples_walked": 3,
+            "accepted": 2,
+            "bootstrapped_demos": 2,
+            "labeled_demos": 1,
+            "metric_values": [0.8, 1.0, 1.0],
+        }
+        assert demos == [
+            (True, "Marie Curie|PERSON|0.9"),
+            (True, "Ada Lovelace|PERSON|0.9"),
+            (False, "Alan Turing|PERSON|1.0\nEnigma|CONCEPT|1.0"),
+        ]
+        assert [
+            record.getMessage()
+            for record in caplog.records
+            if record.getMessage().startswith("bootstrap attempt")
+        ] == [
+            "bootstrap attempt 1 query='t1 curie' metric=1.000 accepted=True",
+            "bootstrap attempt 2 query='t1 turing' metric=0.800 accepted=False",
+            "bootstrap attempt 3 query='t1 lovelace' metric=1.000 accepted=True",
+        ]
+
+    def test_lower_bar_accepts_partial_traces(self):
+        recorder, report, demos = self._compile("t2", 0.75)
+
+        assert [score for _, score in recorder.attempts] == [1.0, 0.8, 1.0]
+        assert (
+            report["accepted"],
+            report["bootstrapped_demos"],
+            report["labeled_demos"],
+            report["metric_threshold"],
+        ) == (3, 3, 0, 0.75)
+        assert demos == [
+            (True, "Marie Curie|PERSON|0.9"),
+            (True, "Alan Turing|PERSON|0.9"),
+            (True, "Ada Lovelace|PERSON|0.9"),
+        ]
+
+    def test_bar_never_drops_below_the_served_score(self):
+        from cogniverse_runtime.optimization_cli import (
+            ENTITY_BOOTSTRAP_METRIC_THRESHOLD,
+            _entity_bootstrap_threshold,
+        )
+
+        assert ENTITY_BOOTSTRAP_METRIC_THRESHOLD == 1.0
+        assert {
+            "bar_above_served": _entity_bootstrap_threshold(0.392, 0.621, bar=0.9),
+            "served_above_bar": _entity_bootstrap_threshold(0.392, 0.621, bar=0.5),
+            "no_current_artifact": _entity_bootstrap_threshold(0.7, None, bar=0.5),
+            "default_bar": _entity_bootstrap_threshold(0.392, 0.621),
+        } == {
+            "bar_above_served": 0.9,
+            "served_above_bar": 0.621,
+            "no_current_artifact": 0.7,
+            "default_bar": 1.0,
+        }
 
 
 class TestSyntheticDataMerge:
@@ -5008,6 +5367,21 @@ class TestCreateTeleprompter:
 
         tp = _create_teleprompter(0)
         assert isinstance(tp, BootstrapFewShot)
+
+    def test_metric_threshold_forwarded_to_bootstrap(self):
+        from cogniverse_runtime.optimization_cli import (
+            _create_teleprompter,
+            _entity_extraction_quality,
+        )
+
+        assert _create_teleprompter(10).metric_threshold is None
+        scaled = _create_teleprompter(
+            50, metric=_entity_extraction_quality, metric_threshold=0.7
+        )
+        assert (scaled.metric, scaled.metric_threshold) == (
+            _entity_extraction_quality,
+            0.7,
+        )
 
 
 # ---------------------------------------------------------------------------
