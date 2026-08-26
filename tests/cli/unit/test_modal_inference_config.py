@@ -96,6 +96,7 @@ def test_teacher_definition_pins_the_production_chat_contract():
         gpu_candidates=("L4", "A10", "L40S"),
         requires_hf_token=True,
     )
+    assert spec.boot_deadline_seconds == 600.0
 
 
 def test_exact_hf_token_services_are_the_chat_models():
@@ -123,6 +124,7 @@ def test_each_service_has_an_independent_scale_to_zero_app():
     )
     assert all(spec.min_containers == 0 for spec in specs)
     assert all(spec.scaledown_window == 300 for spec in specs)
+    assert all(spec.boot_deadline_seconds == 600.0 for spec in specs)
 
 
 def test_mutable_or_missing_model_revisions_are_rejected():

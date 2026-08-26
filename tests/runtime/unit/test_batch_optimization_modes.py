@@ -124,6 +124,27 @@ def _signed_approved_record(record: dict[str, Any]) -> dict[str, Any]:
     return signed
 
 
+class _ProbeClock:
+    def __init__(self, start: float = 0.0) -> None:
+        self._now = start
+
+    def __call__(self) -> float:
+        return self._now
+
+    def advance(self, seconds: float) -> None:
+        self._now += seconds
+
+
+class _ProbeSleep:
+    def __init__(self, clock: _ProbeClock) -> None:
+        self._clock = clock
+        self.calls: list[float] = []
+
+    def __call__(self, seconds: float) -> None:
+        self.calls.append(seconds)
+        self._clock.advance(seconds)
+
+
 # ---------------------------------------------------------------------------
 # Fixtures
 # ---------------------------------------------------------------------------
@@ -273,6 +294,7 @@ def _teacher_endpoint():
     return LLMEndpointConfig(
         model=f"openai/{_TEACHER_SERVED_MODEL}",
         api_base="http://teacher-svc:8000/v1",
+        api_key="placeholder-no-auth-needed",
     )
 
 
@@ -9205,45 +9227,211 @@ class TestTeacherEndpointReachability:
     at job start instead, naming the endpoint.
     """
 
-    def _endpoint(self, model="openai/cyankiwi/Qwen3.6-27B-AWQ-INT4"):
+    def _in_cluster_endpoint(self, model="openai/cyankiwi/Qwen3.6-27B-AWQ-INT4"):
         from cogniverse_foundation.config.unified_config import LLMEndpointConfig
 
-        return LLMEndpointConfig(model=model, api_base="http://teacher-svc:8000/v1")
+        return LLMEndpointConfig(
+            model=model,
+            api_base="http://teacher-svc:8000/v1",
+            api_key="placeholder-no-auth-needed",
+        )
 
-    def test_raises_naming_the_endpoint_when_nothing_serves_it(self):
+    def _modal_endpoint(self, model="openai/cyankiwi/Qwen3.6-27B-AWQ-INT4"):
+        from cogniverse_foundation.config.unified_config import LLMEndpointConfig
+
+        return LLMEndpointConfig(
+            model=model,
+            api_base="https://teacher-svc.modal.run/v1",
+            api_key="placeholder-no-auth-needed",
+        )
+
+    def test_external_path_resolves_the_modal_bearer_before_any_probe_runs(
+        self, monkeypatch
+    ):
+        from cogniverse_runtime.optimization_cli import resolve_teacher_endpoint
+
+        monkeypatch.setenv("COGNIVERSE_INFERENCE_API_KEY", "shared-production-key")
+        cfg = SimpleNamespace(resolve_teacher=self._modal_endpoint)
+
+        resolved = resolve_teacher_endpoint(cfg)
+
+        assert resolved.api_key == "shared-production-key"
+        assert resolved.api_base == "https://teacher-svc.modal.run/v1"
+
+    def test_in_cluster_path_keeps_the_placeholder_api_key_unchanged(self):
+        from cogniverse_runtime.optimization_cli import resolve_teacher_endpoint
+
+        cfg = SimpleNamespace(resolve_teacher=self._in_cluster_endpoint)
+
+        resolved = resolve_teacher_endpoint(cfg)
+
+        assert resolved.api_key == "placeholder-no-auth-needed"
+        assert resolved.api_base == "http://teacher-svc:8000/v1"
+
+    def test_external_path_uses_an_authorized_session_for_the_probe_request(
+        self, monkeypatch
+    ):
         from cogniverse_runtime.optimization_cli import teacher_lm_or_raise
 
-        cfg = SimpleNamespace(resolve_teacher=self._endpoint)
-        with pytest.raises(RuntimeError) as exc:
-            teacher_lm_or_raise(cfg, probe=lambda url: None)
-        message = str(exc.value)
-        assert "http://teacher-svc:8000/v1" in message
-        assert "unreachable" in message
+        monkeypatch.setenv("COGNIVERSE_INFERENCE_API_KEY", "shared-production-key")
+        cfg = SimpleNamespace(resolve_teacher=self._modal_endpoint)
+        clock = _ProbeClock()
+        sleeper = _ProbeSleep(clock)
+        requests_seen = []
+        served_model = self._modal_endpoint().model.removeprefix("openai/")
 
-    def test_probes_the_service_root_and_returns_the_lm_when_served(self):
-        from cogniverse_runtime.optimization_cli import teacher_lm_or_raise
+        class FakeResponse:
+            ok = True
 
-        cfg = SimpleNamespace(resolve_teacher=self._endpoint)
-        probed = []
+            def __init__(self, request_url: str):
+                self.request_url = request_url
 
-        def probe(url):
-            probed.append(url)
-            return "cyankiwi/Qwen3.6-27B-AWQ-INT4"
+            def json(self):
+                return {"data": [{"id": served_model}]}
+
+        class FakeSession:
+            def __init__(self):
+                self.headers = {}
+                self.closed = False
+
+            def get(self, url, timeout):
+                requests_seen.append((url, dict(self.headers), timeout))
+                return FakeResponse(url)
+
+            def close(self):
+                self.closed = True
+
+        def fake_probe_service_model(url, *, timeout_seconds=5.0, session=None):
+            response = session.get(f"{url.rstrip('/')}/health", timeout=timeout_seconds)
+            if response.ok:
+                return served_model
+            return None
+
+        monkeypatch.setattr(
+            "cogniverse_runtime.inference_health_check.probe_service_model",
+            fake_probe_service_model,
+        )
 
         with patch(
             "cogniverse_foundation.config.llm_factory.create_dspy_lm",
             return_value="TEACHER_LM",
         ):
-            built = teacher_lm_or_raise(cfg, probe=probe)
-        assert built == "TEACHER_LM"
-        assert probed == ["http://teacher-svc:8000"]
+            built = teacher_lm_or_raise(
+                cfg,
+                session=FakeSession(),
+                now=clock,
+                sleep=sleeper,
+            )
 
-    def test_raises_when_the_service_serves_a_different_model(self):
+        assert built == "TEACHER_LM"
+        assert requests_seen == [
+            (
+                "https://teacher-svc.modal.run/health",
+                {"Authorization": "Bearer shared-production-key"},
+                5.0,
+            )
+        ]
+
+    def test_in_cluster_path_keeps_the_existing_one_shot_failure_message(self):
         from cogniverse_runtime.optimization_cli import teacher_lm_or_raise
 
-        cfg = SimpleNamespace(resolve_teacher=self._endpoint)
+        cfg = SimpleNamespace(resolve_teacher=self._in_cluster_endpoint)
+        probed = []
+
+        def probe(url):
+            probed.append(url)
+            return None
+
         with pytest.raises(RuntimeError) as exc:
-            teacher_lm_or_raise(cfg, probe=lambda url: "google/gemma-4-26b-a4b-it")
-        message = str(exc.value)
-        assert "cyankiwi/Qwen3.6-27B-AWQ-INT4" in message
-        assert "google/gemma-4-26b-a4b-it" in message
+            teacher_lm_or_raise(cfg, probe=probe)
+        assert str(exc.value) == (
+            "LLM teacher endpoint http://teacher-svc:8000/v1 is unreachable; "
+            "DSPy bootstrap requires it to generate demonstrations. Enable "
+            "inference.vllm_llm_teacher and wait for the pod to report ready."
+        )
+        assert probed == ["http://teacher-svc:8000"]
+
+    def test_external_path_retries_until_the_modal_teacher_reports_its_model(
+        self, monkeypatch
+    ):
+        from cogniverse_runtime.optimization_cli import teacher_lm_or_raise
+
+        monkeypatch.setenv("COGNIVERSE_INFERENCE_API_KEY", "shared-production-key")
+        cfg = SimpleNamespace(resolve_teacher=self._modal_endpoint)
+        clock = _ProbeClock()
+        sleeper = _ProbeSleep(clock)
+        probed = []
+        responses = iter([None, None, "cyankiwi/Qwen3.6-27B-AWQ-INT4"])
+
+        def probe(url):
+            probed.append(url)
+            return next(responses)
+
+        with patch(
+            "cogniverse_foundation.config.llm_factory.create_dspy_lm",
+            return_value="TEACHER_LM",
+        ):
+            built = teacher_lm_or_raise(
+                cfg,
+                probe=probe,
+                now=clock,
+                sleep=sleeper,
+            )
+        assert built == "TEACHER_LM"
+        assert probed == ["https://teacher-svc.modal.run"] * 3
+        assert sleeper.calls == [5.0, 5.0]
+
+    def test_external_path_names_the_endpoint_and_boot_deadline_on_timeout(
+        self, monkeypatch
+    ):
+        from cogniverse_runtime.optimization_cli import teacher_lm_or_raise
+
+        monkeypatch.setenv("COGNIVERSE_INFERENCE_API_KEY", "shared-production-key")
+        cfg = SimpleNamespace(resolve_teacher=self._modal_endpoint)
+        clock = _ProbeClock()
+        sleeper = _ProbeSleep(clock)
+        probed = []
+
+        def probe(url):
+            probed.append(url)
+            return None
+
+        monkeypatch.setattr(
+            "cogniverse_runtime.optimization_cli._teacher_boot_deadline_seconds",
+            lambda: 10.0,
+        )
+
+        with pytest.raises(RuntimeError) as exc:
+            teacher_lm_or_raise(
+                cfg,
+                probe=probe,
+                now=clock,
+                sleep=sleeper,
+            )
+        assert str(exc.value) == (
+            "LLM teacher endpoint https://teacher-svc.modal.run/v1 did not "
+            "respond with a model identifier within 10s; DSPy bootstrap "
+            "requires it to generate demonstrations. Enable "
+            "inference.vllm_llm_teacher and wait for the pod to report ready."
+        )
+        assert probed == ["https://teacher-svc.modal.run"] * 3
+        assert sleeper.calls == [5.0, 5.0]
+
+    def test_external_path_raises_when_the_service_serves_a_different_model(
+        self, monkeypatch
+    ):
+        from cogniverse_runtime.optimization_cli import teacher_lm_or_raise
+
+        monkeypatch.setenv("COGNIVERSE_INFERENCE_API_KEY", "shared-production-key")
+        cfg = SimpleNamespace(resolve_teacher=self._modal_endpoint)
+        with pytest.raises(RuntimeError) as exc:
+            teacher_lm_or_raise(
+                cfg,
+                probe=lambda url: "google/gemma-4-26b-a4b-it",
+            )
+        assert str(exc.value) == (
+            "LLM teacher endpoint https://teacher-svc.modal.run/v1 serves "
+            "'google/gemma-4-26b-a4b-it' but the configured teacher model is "
+            "'openai/cyankiwi/Qwen3.6-27B-AWQ-INT4'; requests for an unserved "
+            "model id are rejected"
+        )

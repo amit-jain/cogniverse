@@ -15,6 +15,7 @@ The runtime receives one ``INFERENCE_SERVICE_URLS`` JSON env var containing
 
 import copy
 import json
+import re
 import shutil
 import subprocess
 from pathlib import Path
@@ -948,6 +949,26 @@ def test_teacher_endpoint_uses_the_modal_url_when_external():
 
     assert _service_urls(docs)["vllm_llm_teacher"] == modal_url
     assert _teacher_api_base(docs) == f"{modal_url}/v1"
+
+
+@pytest.mark.parametrize(
+    "external_url",
+    (
+        "https://amit--cogniverse-vllm-llm-teacher.modal.run/v1",
+        "https://amit--cogniverse-vllm-llm-teacher.modal.run/",
+    ),
+)
+def test_teacher_external_url_rejects_trailing_slash_or_v1_suffix(external_url):
+    expected = (
+        "inference.vllm_llm_teacher.externalUrl must be the service root URL "
+        "(no trailing / or /v1)"
+    )
+
+    with pytest.raises(AssertionError, match=re.escape(expected)):
+        _render(
+            "inference.vllm_llm_teacher.enabled=true",
+            f"inference.vllm_llm_teacher.externalUrl={external_url}",
+        )
 
 
 def test_external_url_on_the_student_llm_fails_the_render():

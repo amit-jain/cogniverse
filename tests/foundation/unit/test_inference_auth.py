@@ -5,7 +5,10 @@ import pytest
 from cogniverse_foundation.config.bootstrap import (
     inference_api_key_from_environment,
 )
-from cogniverse_foundation.config.inference_auth import inference_headers
+from cogniverse_foundation.config.inference_auth import (
+    inference_headers,
+    is_modal_inference_url,
+)
 
 
 def test_bootstrap_reads_one_canonical_inference_key(monkeypatch):
@@ -29,6 +32,19 @@ def test_modal_endpoint_requires_https_before_reading_the_bearer_key(monkeypatch
         match="Modal inference endpoints require HTTPS",
     ):
         inference_headers("http://service.modal.run")
+
+
+@pytest.mark.parametrize(
+    "endpoint_url, expected",
+    (
+        ("https://service.modal.run", True),
+        ("http://service.modal.run", False),
+        ("https://service.example.com", False),
+        ("https://service.modal.run/v1", False),
+    ),
+)
+def test_modal_inference_url_classifies_only_https_modal_roots(endpoint_url, expected):
+    assert is_modal_inference_url(endpoint_url) is expected
 
 
 def test_modal_endpoint_requires_one_canonical_bearer_key(monkeypatch):

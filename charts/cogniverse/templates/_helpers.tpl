@@ -176,6 +176,31 @@ or by injecting the real secret into the runtime pod's environment.
 {{- define "cogniverse.llmPlaceholderApiKey" -}}placeholder-no-auth-needed{{- end -}}
 
 {{/*
+Runtime inference API key source. When any enabled inference service
+is rendered with a non-empty externalUrl, the runtime and ingestor
+consume the synced cogniverse-inference-api-key Secret. Fully in-cluster
+renders keep the no-auth placeholder so local-only stacks do not need the
+Secret at all.
+*/}}
+{{- define "cogniverse.inferenceApiKeyEnv" -}}
+{{- $needsExternalKey := false -}}
+{{- range $name, $cfg := .Values.inference -}}
+{{- if and $cfg.enabled $cfg.externalUrl -}}
+{{- $needsExternalKey = true -}}
+{{- end -}}
+{{- end -}}
+{{- if $needsExternalKey -}}
+valueFrom:
+  secretKeyRef:
+    name: cogniverse-inference-api-key
+    key: COGNIVERSE_INFERENCE_API_KEY
+    optional: false
+{{- else -}}
+value: {{ include "cogniverse.llmPlaceholderApiKey" . | quote }}
+{{- end -}}
+{{- end -}}
+
+{{/*
 Teacher LLM model id passed to litellm. ``inference.vllm_llm_teacher.model``
 is the bare model name vLLM serves; the prefix is supplied by
 ``cogniverse.llmProviderPrefix``. config.json's teacher.model and the
@@ -363,15 +388,21 @@ service overrides the engine-derived default with `tunableOp`.
 {{/*
 INFERENCE_SERVICE_URLS JSON body — one {service_key: url} entry per enabled
 inference service. A non-empty ``externalUrl`` (an absolute https URL, e.g. a
-Modal endpoint) replaces the cluster-internal Service URL. The LLM services
-use their own helpers: the student is overridden via ``runtime.primaryLLM``,
-while the teacher keeps its key in this map and can point at Modal.
+Modal endpoint service root) replaces the cluster-internal Service URL. The
+LLM services use their own helpers: the student is overridden via
+``runtime.primaryLLM``, while the teacher keeps its key in this map and can
+point at Modal.
 */}}
 {{- define "cogniverse.inferenceServiceUrls" -}}
 {{- $fullName := include "cogniverse.fullname" . -}}
 {{- range $name, $cfg := .Values.inference -}}
 {{- if and $cfg.externalUrl (eq $name "vllm_llm_student") -}}
 {{- fail (printf "inference.%s.externalUrl is unsupported: the LLM endpoint is derived by runtime.primaryLLM instead" $name) -}}
+{{- end -}}
+{{- if and $cfg.enabled $cfg.externalUrl -}}
+{{- if or (hasSuffix "/v1" $cfg.externalUrl) (hasSuffix "/" $cfg.externalUrl) -}}
+{{- fail (printf "inference.%s.externalUrl must be the service root URL (no trailing / or /v1)" $name) -}}
+{{- end -}}
 {{- end -}}
 {{- end -}}
 {
