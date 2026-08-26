@@ -237,6 +237,7 @@ async def test_synthetic_only_data_compiles_the_actual_production_module(
             score,
             base_score,
             candidate_score,
+            extra_ledger_fields=None,
         ):
             captured["versioned"] = {
                 "kind": kind,
@@ -245,6 +246,7 @@ async def test_synthetic_only_data_compiles_the_actual_production_module(
                 "consumed_example_ids": consumed_example_ids,
                 "decision": decision,
                 "score": score,
+                "extra_ledger_fields": dict(extra_ledger_fields or {}),
             }
             return f"artifact-{optimizer_type}", 1
 
@@ -354,21 +356,14 @@ async def test_synthetic_only_data_compiles_the_actual_production_module(
 
     if optimizer_type == "profile":
         assert result == {
-            "status": "no_eval_material",
+            "status": "profile_labels_degenerate",
             "spans_found": 0,
+            "served_examples": 0,
+            "approved_examples": 1,
             "served_scoreable_examples": 0,
-            "training_examples": 1,
-            "holdout_examples": 0,
-            "holdout_source": "derived_labels",
             "label_exclusions": {"count": 0, "queries": []},
-            "selection": {
-                "pool": 1,
-                "deduped": 1,
-                "cap": 300,
-                "mmr_applied": False,
-                "decayed_count": 0,
-                "decayed_example_ids": [],
-            },
+            "labels_by_profile": {},
+            "exclusions_by_reason": {},
         }
         assert captured == {}
         return

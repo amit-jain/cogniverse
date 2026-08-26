@@ -18,7 +18,7 @@ import logging
 import time
 from dataclasses import asdict, dataclass, field
 from datetime import datetime, timezone
-from typing import Any, Dict, List, Optional
+from typing import Any, Dict, List, Mapping, Optional
 
 import pandas as pd
 
@@ -633,6 +633,7 @@ class ArtifactManager:
         score: Optional[float] = None,
         base_score: Optional[float],
         candidate_score: Optional[float],
+        extra_ledger_fields: Optional[Mapping[str, Any]] = None,
     ) -> tuple[str, int]:
         """Persist ``content`` as the next version of blob ``kind/key`` with its ledger.
 
@@ -664,6 +665,15 @@ class ArtifactManager:
             "candidate_score": candidate_score,
             "created_at": datetime.now(timezone.utc).isoformat(),
         }
+        if extra_ledger_fields:
+            extra_ledger = dict(extra_ledger_fields)
+            reserved = set(ledger).intersection(extra_ledger)
+            if reserved:
+                raise ValueError(
+                    "extra_ledger_fields overlaps reserved ledger keys: "
+                    f"{sorted(reserved)}"
+                )
+            ledger.update(extra_ledger)
         dataset_name = self._versioned_dataset_name(kind, key, version)
         dataset_id = await self._provider.datasets.create_dataset(
             name=dataset_name,
