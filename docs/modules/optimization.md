@@ -399,25 +399,28 @@ holdout the run returns `no_eval_material` and persists nothing. The artifact ke
 
 **CLI mode:** `--mode entity-extraction`
 
-`run_entity_extraction_optimization(tenant_id, lookback_hours=24.0)` reads `cogniverse.entity_extraction`
-spans, builds query/entity examples from served spans with recorded entities, merges approved synthetic demos
-for `"entity_extraction"`, projects approved entities to the production `text|type|confidence` line format
-plus the comma-separated `entity_types` output, renders served GLiNER entities to the same lines via
-`_entity_extraction_example`, splits a served-scoreable holdout, scores the base module,
-current artifact, and compiled candidate with token-set F1 over entity texts, and uses `_select_simba_artifact`
-to decide `promote` / `keep` / `rollback` / `reject`. The bootstrap keeps a teacher trace whose F1 reaches
-`_entity_bootstrap_threshold` — `ENTITY_BOOTSTRAP_METRIC_THRESHOLD` (1.0), never below the served module's
-holdout score — through `BootstrapFewShot(metric=BootstrapMetricRecorder(...), metric_threshold=...)`; the
-recorder logs every attempt's score and the run reports the walk under `bootstrap`. It persists `no_eval_material` when no served-scoreable
-holdout exists, persists the current or base module for non-promote decisions, and activates the persisted
-version on `promote` or `rollback`. The artifact key is `("model", "entity_extraction")`;
-`EntityExtractionAgent` reloads it via `am.load_blob("model", "entity_extraction")`.
-The tenant-owned `("config", "entity_extraction_ground_truth")` blob holds the query/entity labels uploaded
-through the admin route.
+`run_entity_extraction_optimization(tenant_id, lookback_hours=24.0)` loads the tenant-owned
+`("config", "entity_extraction_ground_truth")` blob, loads approved synthetic rows for
+`"entity_extraction"`, and queries `cogniverse.entity_extraction` spans only to report
+`spans_found`, `served_examples`, and `served_scoreable_examples`. The labeled population is
+`truth_rows + approved_rows`, and `_split_served_holdout(..., scoreable_predicate=_entity_extraction_is_scoreable)`
+splits that population by distinct casefold query with the holdout excluded from train.
+The metric is F1 over `(casefold text, type)` pairs parsed from `text|type|confidence` lines;
+an empty recorded label set raises. Bootstrap uses `BootstrapMetricRecorder` with
+`_entity_bootstrap_threshold(...)`, which keeps the bar at `ENTITY_BOOTSTRAP_METRIC_THRESHOLD`
+(1.0) and never below the served module's holdout score. The recorder appends each attempt as a
+JSONL row under `~/.cache/cogniverse/bootstrap_attempts.jsonl`. The entity floor is
+`min_samples_for_optimization: 30` and `min_unique_queries: 15`. Missing ground truth returns
+`entity_extraction_ground_truth_missing`; store outages raise
+`EntityExtractionGroundTruthStoreUnavailableError`. The artifact key is
+`("model", "entity_extraction")`; `EntityExtractionAgent` reloads it via
+`am.load_blob("model", "entity_extraction")`.
 
 Returns:
-  - {"status": "success", "spans_found": int, "served_scoreable_examples": int,
-     "training_examples": int, "holdout_examples": int, "holdout_source": "served",
+  - {"status": "success", "spans_found": int, "served_examples": int,
+     "served_scoreable_examples": int, "label_rows": int, "truth_rows": int,
+     "approved_rows": int, "training_examples": int, "holdout_examples": int,
+     "holdout_source": "ground_truth",
      "bootstrap": {"trainset": int, "max_bootstrapped_demos": int,
                    "max_labeled_demos": int, "max_rounds": int,
                    "metric_threshold": float, "attempts": int, "errors": int,
@@ -428,10 +431,11 @@ Returns:
      "candidate_score": float | None,
      "decision": "promote" | "keep" | "rollback" | "reject",
      "version": int, "consumed_example_ids": list[str]}
-  - {"status": "no_data", "spans_found": int, "examples": 0}
-  - {"status": "no_eval_material", "spans_found": int,
-     "served_scoreable_examples": int, "training_examples": int,
-     "holdout_examples": 0, "holdout_source": "served"}
+  - {"status": "entity_extraction_ground_truth_missing", "retryable": False,
+     "error": str}
+  - {"status": "no_data", "spans_found": int, "served_examples": int,
+     "served_scoreable_examples": int, "label_rows": int, "truth_rows": int,
+     "approved_rows": int, "examples": 0}
   - {"status": "insufficient_population", "spans_found": int, "examples": int,
      "distinct_queries": int, "min_samples": int, "min_unique_queries": int,
      "version": int}

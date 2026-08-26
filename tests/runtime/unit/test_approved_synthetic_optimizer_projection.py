@@ -210,6 +210,7 @@ async def test_synthetic_only_data_compiles_the_actual_production_module(
         def __init__(self, received_provider, tenant_id):
             assert received_provider is provider
             assert tenant_id == "acme:production"
+            self._tenant_id = tenant_id
 
         async def load_blob(self, kind, key):
             if (kind, key) == ("config", "profile_selection_ground_truth"):
@@ -370,20 +371,12 @@ async def test_synthetic_only_data_compiles_the_actual_production_module(
 
     if optimizer_type == "entity_extraction":
         assert result == {
-            "status": "no_eval_material",
-            "spans_found": 0,
-            "served_scoreable_examples": 0,
-            "training_examples": 1,
-            "holdout_examples": 0,
-            "holdout_source": "served",
-            "selection": {
-                "pool": 1,
-                "deduped": 1,
-                "cap": 300,
-                "mmr_applied": False,
-                "decayed_count": 0,
-                "decayed_example_ids": [],
-            },
+            "status": "entity_extraction_ground_truth_missing",
+            "retryable": False,
+            "error": (
+                "entity_extraction_ground_truth is not configured for tenant "
+                "acme:production"
+            ),
         }
         assert captured == {}
         return
