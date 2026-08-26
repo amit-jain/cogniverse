@@ -742,6 +742,18 @@ CAP8_QUERY_ENHANCEMENT_QUERIES = (
     _grounded_query("summarize AI research", "AI research"),
     _grounded_query("detailed AI research report", "AI research"),
     _grounded_query("comprehensive AI research report based on summary", "AI research"),
+    _grounded_query(
+        "find audio recordings about speech recognition", "speech recognition"
+    ),
+    _grounded_query(
+        "search documents describing reinforcement learning agents",
+        "reinforcement learning",
+    ),
+    _grounded_query(
+        "compare image and video retrieval quality",
+        "image retrieval",
+        "video retrieval",
+    ),
 )
 
 
@@ -3134,13 +3146,38 @@ class TestSimbaSelectionCap:
             == simba_selection_tenant.approved_synthetic_count
         ), result
         assert result["examples"] == simba_selection_tenant.seeded_count, result
-        assert result["selection"] == expected_selection, result
+        # The recorded view is bounded by the live one: this optimizer reads
+        # query_enhancement spans and its own evaluation calls emit more of
+        # them, so the live pool grows while the job runs.
+        assert selection["cap"] == expected_selection["cap"], (
+            selection,
+            expected_selection,
+        )
+        assert selection["pool"] <= expected_selection["pool"], (
+            selection,
+            expected_selection,
+        )
+        assert selection["decayed_count"] == expected_selection["decayed_count"], (
+            selection,
+            expected_selection,
+        )
         assert selection["cap"] == 8, selection
+        # Trainability is LM-decided (enhanced must differ from the original
+        # and carry expansion terms), and the trainable filter runs BEFORE
+        # selection, so the pool is the served rows minus the holdout minus
+        # whatever the model left unenhanced. Pin that arithmetic exactly
+        # rather than a fixed pool size.
         assert (
             selection["pool"]
-            == simba_selection_tenant.seeded_count - result["holdout_examples"]
-        ), selection
-        assert selection["deduped"] == selection["cap"] + 1, selection
+            == simba_selection_tenant.seeded_count
+            - result["holdout_examples"]
+            - result["non_trainable_examples"]
+        ), (selection, result["non_trainable_examples"])
+        # Every seeded query is distinct, so dedup removes nothing.
+        assert selection["deduped"] == selection["pool"], selection
+        # The premise this test exists to exercise: a pool that crosses the
+        # cap, so MMR must run and the trainset must land exactly on the cap.
+        assert selection["pool"] > selection["cap"], selection
         assert selection["mmr_applied"] is True, selection
         assert selection["decayed_count"] == 0, selection
         assert result["holdout_examples"] == 2, result
