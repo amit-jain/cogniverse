@@ -700,7 +700,7 @@ class ArtifactManager:
         dataset_name = self._versioned_dataset_name(kind, key, version)
         try:
             df = await self._provider.datasets.get_dataset(name=dataset_name)
-        except (KeyError, ValueError) as exc:
+        except (KeyError, DatasetNotFoundError) as exc:
             raise ValueError(
                 f"No version {version} of blob {kind}/{key} exists for tenant "
                 f"{self._tenant_id}"
@@ -763,7 +763,7 @@ class ArtifactManager:
         """Probe versioned dataset names sequentially to find the next version.
 
         DatasetStore has no list_datasets(), so we probe v1, v2, ... until
-        get_dataset raises KeyError/ValueError (not found).
+        get_dataset raises DatasetNotFoundError/KeyError (not found).
         """
         v = 1
         while True:
@@ -773,7 +773,7 @@ class ArtifactManager:
                 if df is None or df.empty:
                     break
                 v += 1
-            except (KeyError, ValueError):
+            except (KeyError, DatasetNotFoundError):
                 break
         return v
 
@@ -868,7 +868,7 @@ class ArtifactManager:
                     break
                 versions.append({"version": v, "name": name})
                 v += 1
-            except (KeyError, ValueError):
+            except (KeyError, DatasetNotFoundError):
                 break
         return versions
 
@@ -887,7 +887,7 @@ class ArtifactManager:
             try:
                 df = await self._provider.datasets.get_dataset(name=v_info["name"])
                 entry["row_count"] = len(df) if df is not None else 0
-            except (KeyError, ValueError):
+            except (KeyError, DatasetNotFoundError):
                 entry["row_count"] = 0
                 df = None
             if df is not None and not df.empty:
@@ -1096,7 +1096,7 @@ class ArtifactManager:
         state blob claims the new version. Refuse that with a raise so the
         caller's compensation restores the previous active. Reads happen before
         any write, so a refusal writes nothing; a real backend outage (any
-        non-KeyError/ValueError from get_dataset) propagates unchanged.
+        non-KeyError/DatasetNotFoundError from get_dataset) propagates unchanged.
         """
         prompts_name = self._versioned_dataset_name("prompts", agent_type, version)
         demos_name = self._versioned_dataset_name("demos", agent_type, version)
@@ -1106,13 +1106,13 @@ class ArtifactManager:
         try:
             df = await self._provider.datasets.get_dataset(name=prompts_name)
             prompts = self._extract_prompts_from_dataframe(df)
-        except (KeyError, ValueError):
+        except (KeyError, DatasetNotFoundError):
             pass
         demos: Any = _absent
         try:
             df = await self._provider.datasets.get_dataset(name=demos_name)
             demos = df.to_dict(orient="records")
-        except (KeyError, ValueError):
+        except (KeyError, DatasetNotFoundError):
             pass
 
         prompts_present = prompts is not _absent
@@ -1185,7 +1185,7 @@ class ArtifactManager:
                     "version": int(canary["version"]),
                     "variant_id": variant_id,
                 }
-            except (KeyError, ValueError):
+            except (KeyError, DatasetNotFoundError):
                 logger.warning(
                     "canary v%d dataset missing for %s/%s (variant=%s); falling back",
                     canary["version"],
@@ -1207,7 +1207,7 @@ class ArtifactManager:
                     "version": int(active["version"]),
                     "variant_id": variant_id,
                 }
-            except (KeyError, ValueError):
+            except (KeyError, DatasetNotFoundError):
                 pass
 
         return {
@@ -1301,7 +1301,7 @@ class ArtifactManager:
             name = self._versioned_dataset_name("prompts", agent_type, prompts_version)
             try:
                 df = await self._provider.datasets.get_dataset(name=name)
-            except (KeyError, ValueError) as exc:
+            except (KeyError, DatasetNotFoundError) as exc:
                 raise ValueError(
                     f"prompts version {prompts_version} not found for "
                     f"{self._tenant_id}/{agent_type}"
@@ -1313,7 +1313,7 @@ class ArtifactManager:
             name = self._versioned_dataset_name("demos", agent_type, demos_version)
             try:
                 df = await self._provider.datasets.get_dataset(name=name)
-            except (KeyError, ValueError) as exc:
+            except (KeyError, DatasetNotFoundError) as exc:
                 raise ValueError(
                     f"demos version {demos_version} not found for "
                     f"{self._tenant_id}/{agent_type}"
@@ -1666,7 +1666,7 @@ class ArtifactManager:
         try:
             df = await self._provider.datasets.get_dataset(name=base_name)
             return df
-        except (KeyError, ValueError):
+        except (KeyError, DatasetNotFoundError):
             pass
 
         # Otherwise enumerate ``base_name_vYYYYMMDD_HHMMSS`` datasets via

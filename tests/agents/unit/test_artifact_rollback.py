@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import ast
+from pathlib import Path
 from types import SimpleNamespace
 from typing import Any, Dict, Optional
 
@@ -358,3 +360,81 @@ class TestArtifactPromptDemoErrorBoundary:
 
         with pytest.raises(ValueError, match="boom-bad-shape"):
             await manager.load_demonstrations("router")
+
+
+def _try_calls_get_dataset(node: ast.Try) -> bool:
+    seen = [False]
+
+    class Visitor(ast.NodeVisitor):
+        def visit_Call(self, call):  # type: ignore[override]
+            if isinstance(call.func, ast.Attribute) and call.func.attr == "get_dataset":
+                seen[0] = True
+            self.generic_visit(call)
+
+    Visitor().visit(node)
+    return seen[0]
+
+
+def _handler_type_names(handler: ast.ExceptHandler) -> set[str]:
+    def names(node: ast.AST) -> set[str]:
+        if isinstance(node, ast.Name):
+            return {node.id}
+        if isinstance(node, ast.Tuple):
+            out: set[str] = set()
+            for element in node.elts:
+                out.update(names(element))
+            return out
+        if isinstance(node, ast.Attribute):
+            return {node.attr}
+        return set()
+
+    if handler.type is None:
+        return set()
+    return names(handler.type)
+
+
+def _has_source_opt_out(source_lines: list[str], lineno: int) -> bool:
+    line = source_lines[lineno - 1]
+    if "get_dataset_valueerror_ok" in line:
+        return True
+    if lineno == 1:
+        return False
+    previous = source_lines[lineno - 2]
+    return "get_dataset_valueerror_ok" in previous
+
+
+class TestArtifactManagerGetDatasetValueErrorGuard:
+    def test_direct_get_dataset_calls_must_not_swallow_valueerror(self):
+        module_path = (
+            Path(__file__).resolve().parents[3]
+            / "libs"
+            / "agents"
+            / "cogniverse_agents"
+            / "optimizer"
+            / "artifact_manager.py"
+        )
+        source = module_path.read_text()
+        source_lines = source.splitlines()
+        tree = ast.parse(source)
+
+        offenders: list[str] = []
+        for node in ast.walk(tree):
+            if not isinstance(node, ast.Try):
+                continue
+            if not _try_calls_get_dataset(node):
+                continue
+            for handler in node.handlers:
+                if "ValueError" not in _handler_type_names(handler):
+                    continue
+                if _has_source_opt_out(source_lines, handler.lineno):
+                    continue
+                offenders.append(
+                    f"{module_path}:{handler.lineno}:{ast.unparse(handler.type)}"
+                )
+
+        assert offenders == [], (
+            "artifact_manager.py may not swallow bare ValueError in a try body "
+            "that calls datasets.get_dataset; narrow it to DatasetNotFoundError "
+            "or add a visible # get_dataset_valueerror_ok opt-out in source: "
+            f"{offenders}"
+        )
