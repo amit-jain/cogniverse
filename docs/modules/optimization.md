@@ -201,7 +201,7 @@ flowchart TB
 flowchart TB
     Source["<span style='color:#000'>Shipped label source<br/>data/testset/evaluation/sample_videos_retrieval_queries.json<br/>• One query + expected_videos per row</span>"]
 
-    Source --> Derive["<span style='color:#000'>derive_profile_labels<br/>• SearchService.search per query × usable profile, top_k 10<br/>• Label = the one profile that recovers every expected video<br/>• Unrecovered and tied queries reported under label_exclusions</span>"]
+    Source --> Derive["<span style='color:#000'>derive_profile_labels<br/>• SearchService.search per query × usable profile, top_k 10<br/>• Result matches an expected video when its title basename (schema document_mapping.title, extension stripped) equals the expected id<br/>• Label = the one profile whose results match every expected video<br/>• Unrecovered, untitled-result and tied queries reported under label_exclusions</span>"]
 
     Derive --> RunOpt["<span style='color:#000'>run_profile_optimization tenant_id, lookback_hours<br/>• Build dspy.Example trainset from derived labels<br/>• Holdout = tail of the derived labels</span>"]
 
@@ -286,11 +286,16 @@ async def run_profile_optimization(
        shipped label source (PROFILE_SELECTION_LABEL_SOURCE_PATH) with
        derive_profile_labels: the tenant's SearchService runs every query
        against each profile from tenant_usable_profile_names(ConfigManager,
-       tenant_id) at top_k=10; the label is the single profile whose results
-       contain all of the row's expected_videos. Queries no profile recovers,
-       or that two profiles tie on, are excluded and reported under
-       label_exclusions. cogniverse.profile_selection spans are counted as
-       spans_found and not read.
+       tenant_id) at top_k=10. A result matches an expected video when the
+       basename of its title, extension stripped, equals the expected id; the
+       title field is the one the profile's schema names under
+       document_mapping.title (video_title, audio_title, document_title,
+       image_title, title, chunk_name). The label is the single profile whose
+       results match all of the row's expected_videos. Queries no profile
+       recovers, whose results carry no title, or that two profiles tie on,
+       are excluded and reported under label_exclusions.
+       cogniverse.profile_selection spans are counted as spans_found and not
+       read.
     2. Merge in approved synthetic demos for optimizer type "profile". The
        consumer projection supplies the signature-required string confidence
        sentinel and preserves the two exact input fields.
@@ -986,8 +991,9 @@ print(f"Status URL: {result['status_url']}")
 **Label Derivation:**
 ```python
 # Profile optimization trains only on queries that exactly one usable profile
-# recovers in full (derive_profile_labels); unrecovered and tied queries are
-# reported under label_exclusions and never trained on.
+# recovers in full, matched on result title basenames (derive_profile_labels);
+# unrecovered, untitled-result and tied queries are reported under
+# label_exclusions and never trained on.
 ```
 
 **Synthetic Data Control (`TrainingStrategyModel`, `routing/xgboost_meta_models.py`):**
