@@ -938,24 +938,71 @@ def _entity_extraction_texts(raw: Any) -> list[str]:
     return [text] if text else []
 
 
+def _entity_extraction_pair_set(raw: Any) -> set[tuple[str, str]]:
+    """Extract ``(text, type)`` pairs from pipe-delimited entity lines."""
+    if raw is None:
+        return set()
+
+    if isinstance(raw, dict):
+        raw = [raw]
+
+    if isinstance(raw, (list, tuple, set)):
+        lines: list[str] = []
+        for item in raw:
+            if isinstance(item, dict):
+                text = str(item.get("text") or "").strip()
+                entity_type = str(item.get("type") or "").strip()
+                if text and entity_type:
+                    lines.append(f"{text}|{entity_type}|0.0")
+                continue
+            if isinstance(item, str):
+                lines.append(item)
+                continue
+            text = str(item or "").strip()
+            if text:
+                lines.append(text)
+        raw = "\n".join(lines)
+
+    lines = []
+    for line in str(raw or "").splitlines():
+        line = line.strip()
+        if not line:
+            continue
+        parts = line.split("|")
+        if len(parts) < 2:
+            continue
+        text = parts[0].strip()
+        entity_type = parts[1].strip().upper()
+        if not text or not entity_type:
+            continue
+        lines.append((text.casefold(), entity_type))
+    return set(lines)
+
+
 def _entity_extraction_quality(prediction, example) -> float:
-    """Token-set F1 between predicted entity texts and the recorded texts."""
-    predicted_texts = _entity_extraction_texts(getattr(prediction, "entities", ""))
-    recorded_texts = _entity_extraction_texts(getattr(example, "entities", ""))
+    """Pair-set F1 over ``(casefold text, type)`` entity labels."""
+    predicted_pairs = _entity_extraction_pair_set(getattr(prediction, "entities", ""))
+    recorded_pairs = _entity_extraction_pair_set(getattr(example, "entities", ""))
     query = str(getattr(example, "query", "") or "").strip()
-    if not recorded_texts:
+    if not recorded_pairs:
         raise ValueError(
             f"entity extraction example for query {query!r} carries no recorded "
             "entities"
         )
-    return _token_f1(" ".join(predicted_texts), " ".join(recorded_texts))
+    if not predicted_pairs:
+        return 0.0
+
+    overlap = predicted_pairs & recorded_pairs
+    if not overlap:
+        return 0.0
+
+    precision = len(overlap) / len(predicted_pairs)
+    recall = len(overlap) / len(recorded_pairs)
+    return 2.0 * precision * recall / (precision + recall)
 
 
-# Leaves the served-holdout score as the operative bound. A fixed bar of 1.0
-# demands a perfect token-set match, which the measured distribution does not
-# reach, so BootstrapFewShot never collects its demo quota and walks the whole
-# trainset every round.
-ENTITY_BOOTSTRAP_METRIC_THRESHOLD = 0.0
+# The current bootstrap bar is fixed at 1.0.
+ENTITY_BOOTSTRAP_METRIC_THRESHOLD = 1.0
 
 
 def _entity_bootstrap_threshold(
@@ -1006,8 +1053,17 @@ class BootstrapMetricRecorder:
     BootstrapFewShot compares the score against its ``metric_threshold``.
     """
 
-    def __init__(self, quality, *, threshold: float):
+    def __init__(
+        self,
+        quality,
+        *,
+        tenant: str,
+        threshold: float,
+        optimizer: str = "entity_extraction",
+    ):
         self._quality = quality
+        self.optimizer = optimizer
+        self.tenant = tenant
         self.threshold = threshold
         self.attempts: list[tuple[str, float]] = []
 
@@ -1015,6 +1071,26 @@ class BootstrapMetricRecorder:
         del trace
         score = float(self._quality(prediction, example))
         query = str(getattr(example, "query", "") or "")
+        record = {
+            "optimizer": self.optimizer,
+            "tenant": self.tenant,
+            "query": query,
+            "metric": score,
+            "threshold": self.threshold,
+            "accepted": score >= self.threshold,
+            "ts": datetime.now(timezone.utc).isoformat(),
+        }
+        attempts_path = _bootstrap_attempts_path()
+        try:
+            attempts_path.parent.mkdir(parents=True, exist_ok=True)
+            with attempts_path.open("a", encoding="utf-8") as handle:
+                handle.write(
+                    json.dumps(record, separators=(",", ":"), ensure_ascii=False) + "\n"
+                )
+        except Exception as exc:  # noqa: BLE001
+            logger.warning(
+                "Failed to persist bootstrap attempt to %s: %s", attempts_path, exc
+            )
         self.attempts.append((query, score))
         logger.info(
             "bootstrap attempt %d query=%r metric=%.3f accepted=%s",
@@ -1024,6 +1100,13 @@ class BootstrapMetricRecorder:
             score >= self.threshold,
         )
         return score
+
+
+def _bootstrap_attempts_path() -> Path:
+    """Path for bootstrap attempt telemetry under the user cache root."""
+    xdg_cache_home = os.environ.get("XDG_CACHE_HOME")
+    cache_root = Path(xdg_cache_home) if xdg_cache_home else Path.home() / ".cache"
+    return cache_root / "cogniverse" / "bootstrap_attempts.jsonl"
 
 
 def _bootstrap_report(
@@ -4452,6 +4535,20 @@ async def run_entity_extraction_optimization(
     telemetry_manager = get_telemetry_manager(otlp_endpoint=telemetry_otlp_endpoint)
     telemetry_provider = telemetry_manager.get_provider(tenant_id=tenant_id)
 
+    from cogniverse_agents.optimizer.artifact_manager import ArtifactManager
+    from cogniverse_agents.optimizer.entity_extraction_ground_truth import (
+        EntityExtractionGroundTruthMissingError,
+        load_entity_extraction_ground_truth_rows,
+    )
+
+    artifact_manager = ArtifactManager(telemetry_provider, tenant_id)
+    try:
+        ground_truth_rows = await load_entity_extraction_ground_truth_rows(
+            artifact_manager
+        )
+    except EntityExtractionGroundTruthMissingError as exc:
+        return exc.to_result()
+
     spans_df = await _query_spans_by_name(
         telemetry_manager,
         telemetry_provider,
@@ -4464,20 +4561,23 @@ async def run_entity_extraction_optimization(
 
     import json as _json
 
-    entity_pairs = _entity_extraction_pairs(spans_df)
-    consumed_example_ids = [pair["example_id"] for pair in entity_pairs]
-    records = [
-        {
-            "query": pair["query"],
-            "entities": pair["entities"],
-            "entity_types": "",
-            "example_id": pair["example_id"],
-        }
-        for pair in entity_pairs
-    ]
+    served_pairs = _entity_extraction_pairs(spans_df)
+    served_examples = len(spans_df)
+    served_scoreable_examples = len(served_pairs)
     synthetic_demos = await _load_approved_synthetic_data(
         telemetry_provider, tenant_id, "entity_extraction"
     )
+
+    truth_records = [
+        {
+            "query": row["query"],
+            "entities": row["entities"],
+            "example_id": f"truth:{index}",
+        }
+        for index, row in enumerate(ground_truth_rows)
+    ]
+    consumed_example_ids = [record["example_id"] for record in truth_records]
+    records = list(truth_records)
     for demo in synthetic_demos:
         projected = _project_approved_optimizer_example("entity_extraction", demo)
         consumed_example_ids.append(demo["example_id"])
@@ -4489,18 +4589,27 @@ async def run_entity_extraction_optimization(
                 "example_id": demo["example_id"],
             }
         )
+    truth_rows = len(truth_records)
+    approved_rows = len(synthetic_demos)
+    label_rows = len(records)
     if not records:
         logger.info("No valid production or approved synthetic examples")
-        return {"status": "no_data", "spans_found": len(spans_df), "examples": 0}
+        return {
+            "status": "no_data",
+            "spans_found": len(spans_df),
+            "served_examples": served_examples,
+            "served_scoreable_examples": served_scoreable_examples,
+            "label_rows": label_rows,
+            "truth_rows": truth_rows,
+            "approved_rows": approved_rows,
+            "examples": 0,
+        }
 
-    from cogniverse_agents.optimizer.artifact_manager import ArtifactManager
-
-    artifact_manager = ArtifactManager(telemetry_provider, tenant_id)
     current_blob = await artifact_manager.load_blob("model", "entity_extraction")
     min_samples, min_unique_queries = _population_floor_from_config(
         tenant_id, config_manager, "entity_extraction"
     )
-    population = len(records)
+    population = label_rows
     distinct_queries = len({record["query"] for record in records})
     if population < min_samples or distinct_queries < min_unique_queries:
         logger.warning(
@@ -4526,6 +4635,11 @@ async def run_entity_extraction_optimization(
         return {
             "status": "insufficient_population",
             "spans_found": len(spans_df),
+            "served_examples": served_examples,
+            "served_scoreable_examples": served_scoreable_examples,
+            "label_rows": label_rows,
+            "truth_rows": truth_rows,
+            "approved_rows": approved_rows,
             "examples": population,
             "distinct_queries": distinct_queries,
             "min_samples": min_samples,
@@ -4534,19 +4648,26 @@ async def run_entity_extraction_optimization(
         }
 
     min_holdout = max(1, min_samples // 10)
-    served_scoreable_examples = len(
-        _served_scoreable_indices(
-            records,
-            scoreable_predicate=_entity_extraction_is_scoreable,
-        )
-    )
-    served_examples = len(entity_pairs)
-    approved_examples = len(synthetic_demos)
-    train_records, holdout_records = _split_served_holdout(
-        records,
+    split_records = [
+        {**record, "example_id": f"span:{record['example_id']}"} for record in records
+    ]
+    split_train_records, split_holdout_records = _split_served_holdout(
+        split_records,
         min_holdout,
         scoreable_predicate=_entity_extraction_is_scoreable,
     )
+    train_record_ids = {
+        record["example_id"].removeprefix("span:") for record in split_train_records
+    }
+    holdout_record_ids = {
+        record["example_id"].removeprefix("span:") for record in split_holdout_records
+    }
+    train_records = [
+        record for record in records if record["example_id"] in train_record_ids
+    ]
+    holdout_records = [
+        record for record in records if record["example_id"] in holdout_record_ids
+    ]
     train_records, selection_report = await _apply_training_selection(
         artifact_manager=artifact_manager,
         config_manager=config_manager,
@@ -4563,24 +4684,28 @@ async def run_entity_extraction_optimization(
     trainset = [_entity_extraction_example(record) for record in train_records]
     holdout = [_entity_extraction_example(record) for record in holdout_records]
     logger.info(
-        "Merged %d synthetic + %d production = %d total training examples",
-        len(synthetic_demos),
-        len(entity_pairs),
+        "Merged %d synthetic + %d truth = %d total training examples",
+        approved_rows,
+        truth_rows,
         len(records),
     )
     if not holdout:
         logger.warning(
-            "No served-scoreable holdout material for %s entity extraction — "
+            "No ground-truth holdout material for %s entity extraction — "
             "nothing persisted",
             tenant_id,
         )
         return {
             "status": "no_eval_material",
             "spans_found": len(spans_df),
+            "served_examples": served_examples,
             "served_scoreable_examples": served_scoreable_examples,
+            "label_rows": label_rows,
+            "truth_rows": truth_rows,
+            "approved_rows": approved_rows,
             "training_examples": len(trainset),
             "holdout_examples": 0,
-            "holdout_source": "served",
+            "holdout_source": "ground_truth",
             **selection_summary,
         }
     from cogniverse_agents.entity_extraction_agent import EntityExtractionModule
@@ -4611,6 +4736,7 @@ async def run_entity_extraction_optimization(
         if trainset:
             recorder = BootstrapMetricRecorder(
                 _entity_extraction_quality,
+                tenant=tenant_id,
                 threshold=_entity_bootstrap_threshold(baseline_score, current_score),
             )
             teleprompter = _create_teleprompter(
@@ -4672,11 +4798,13 @@ async def run_entity_extraction_optimization(
         "status": "success",
         "spans_found": len(spans_df),
         "served_examples": served_examples,
-        "approved_examples": approved_examples,
         "served_scoreable_examples": served_scoreable_examples,
+        "label_rows": label_rows,
+        "truth_rows": truth_rows,
+        "approved_rows": approved_rows,
         "training_examples": len(trainset),
         "holdout_examples": len(holdout),
-        "holdout_source": "served",
+        "holdout_source": "ground_truth",
         **selection_summary,
         "bootstrap": bootstrap,
         "baseline_score": baseline_score,
