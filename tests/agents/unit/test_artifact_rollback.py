@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from types import SimpleNamespace
 from typing import Any, Dict, Optional
 
 import pandas as pd
@@ -236,6 +237,20 @@ class _BlobProvider:
         self.datasets = _BlobStore()
 
 
+class _DatasetNotFoundStore:
+    async def get_dataset(self, name: str) -> pd.DataFrame:
+        from cogniverse_foundation.telemetry.providers.base import (
+            DatasetNotFoundError,
+        )
+
+        raise DatasetNotFoundError(f"missing dataset {name}")
+
+
+class _ValueErrorStore:
+    async def get_dataset(self, name: str) -> pd.DataFrame:
+        raise ValueError("boom-bad-shape")
+
+
 @pytest.mark.asyncio
 class TestSaveBlobCompensation:
     """A failed overwrite must not destroy the previously-saved blob.
@@ -290,3 +305,21 @@ class TestSaveBlobCompensation:
         assert await manager.load_blob("config", "k") == "v2"
         name = manager._blob_dataset_name("config", "k")
         assert len(provider.datasets.datasets[name]) == 1
+
+
+@pytest.mark.asyncio
+class TestLoadBlobErrorBoundary:
+    async def test_dataset_not_found_error_still_returns_none(self):
+        provider = SimpleNamespace(datasets=_DatasetNotFoundStore())
+        manager = ArtifactManager(provider, tenant_id="acme")
+
+        result = await manager.load_blob("config", "missing")
+
+        assert result is None
+
+    async def test_plain_value_error_propagates(self):
+        provider = SimpleNamespace(datasets=_ValueErrorStore())
+        manager = ArtifactManager(provider, tenant_id="acme")
+
+        with pytest.raises(ValueError, match="boom-bad-shape"):
+            await manager.load_blob("config", "missing")

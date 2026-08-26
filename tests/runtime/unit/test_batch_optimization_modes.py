@@ -1227,7 +1227,7 @@ class TestSyntheticEntityExtractorWiring:
 
 
 class TestEmptySpanHandling:
-    """Each optimization function returns no_data when Phoenix has no matching spans."""
+    """Most optimization functions return no_data when Phoenix has no matching spans."""
 
     @pytest.mark.asyncio
     async def test_simba_no_data(self, fake_telemetry_manager):
@@ -1277,9 +1277,11 @@ class TestEmptySpanHandling:
             result = await run_profile_optimization(
                 tenant_id="test:unit", lookback_hours=1
             )
-        assert result["status"] == "no_data"
-        assert result["spans_found"] == 0
-        assert "selection" not in result
+        assert result == {
+            "status": "profile_selection_ground_truth_missing",
+            "retryable": False,
+            "error": "profile_selection_ground_truth is not configured for tenant test:unit",
+        }
 
 
 class TestProfileSelectionTrainingExamples:
@@ -1602,9 +1604,11 @@ class TestSpansWithNoExamples:
             result = await run_profile_optimization(
                 tenant_id="test:unit", lookback_hours=1
             )
-        assert result["status"] == "no_data"
-        assert result["spans_found"] == 1
-        assert result["examples"] == 0
+        assert result == {
+            "status": "profile_selection_ground_truth_missing",
+            "retryable": False,
+            "error": "profile_selection_ground_truth is not configured for tenant test:unit",
+        }
 
 
 def _qe_span_row(
@@ -3016,21 +3020,53 @@ class TestProfileSelectionOptimization:
         score: float = 1.0,
         score_by_module=None,
         config_manager=None,
+        ground_truth_blob: str | None = None,
+        ground_truth_present: bool = True,
+        ground_truth_error: Exception | None = None,
     ):
         from cogniverse_runtime.optimization_cli import run_profile_optimization
+
+        if ground_truth_blob is None:
+            ground_truth_blob = json.dumps(
+                [
+                    {
+                        "query": "find basketball highlights",
+                        "expected_videos": ["video_colpali_smol500_mv_frame"],
+                        "ground_truth": "basketball",
+                        "query_type": "question",
+                        "source": "fixture",
+                    }
+                ],
+                separators=(",", ":"),
+            )
 
         state = {
             "active_blob": current_blob,
             "versioned_saves": [],
             "activate_calls": [],
+            "load_blob_calls": [],
+            "query_spans_calls": [],
+            "score_calls": [],
+            "ground_truth_blob": ground_truth_blob,
+            "ground_truth_present": ground_truth_present,
+            "ground_truth_error": ground_truth_error,
         }
 
         class FakeArtifactManager:
             def __init__(self, received_provider, tenant_id):
                 assert received_provider is provider
                 assert tenant_id == "test:unit"
+                self._tenant_id = tenant_id
 
             async def load_blob(self, kind, key):
+                state["load_blob_calls"].append((kind, key))
+                if (kind, key) == ("config", "profile_selection_ground_truth"):
+                    error = state["ground_truth_error"]
+                    if error is not None:
+                        raise error
+                    if not state["ground_truth_present"]:
+                        return None
+                    return state["ground_truth_blob"]
                 assert (kind, key) == ("model", "profile_selection")
                 return state["active_blob"]
 
@@ -3099,6 +3135,28 @@ class TestProfileSelectionOptimization:
                 return FakeLLMConfig()
 
         mgr = FakeTelemetryManager(provider)
+
+        async def _query_spans_by_name(
+            telemetry_manager,
+            telemetry_provider,
+            tenant_id,
+            span_name,
+            lookback_hours,
+        ):
+            state["query_spans_calls"].append((tenant_id, span_name, lookback_hours))
+            return provider.traces._spans_df.copy(deep=True)
+
+        def _score(module, holdout):
+            state["score_calls"].append(
+                {
+                    "module": type(module).__name__,
+                    "holdout": len(holdout),
+                }
+            )
+            if score_by_module is not None:
+                return score_by_module(module, holdout)
+            return score
+
         p1, p2 = _patch_infra(mgr, config_manager=config_manager)
         with (
             p1,
@@ -3116,8 +3174,12 @@ class TestProfileSelectionOptimization:
                 return_value=FakeTeleprompter(),
             ),
             patch(
+                "cogniverse_runtime.optimization_cli._query_spans_by_name",
+                side_effect=_query_spans_by_name,
+            ),
+            patch(
                 "cogniverse_runtime.optimization_cli._profile_selection_scores",
-                side_effect=score_by_module or (lambda module, holdout: score),
+                side_effect=_score,
             ),
             patch(
                 "cogniverse_runtime.optimization_cli._min_improvement_from_config",
@@ -3383,6 +3445,90 @@ class TestProfileSelectionOptimization:
         )
 
         assert result["selection"]["cap"] == 42, result
+
+    @pytest.mark.asyncio
+    async def test_profile_ground_truth_missing_stops_before_scoring_or_compile(self):
+        rows = [
+            _profile_span_row(
+                f"find clip {i}",
+                span_id=f"profile-{i}",
+                available_profiles=[
+                    "video_colpali_smol500_mv_frame",
+                    "video_colqwen_omni_mv_chunk_30s",
+                ],
+                selected_profile="video_colpali_smol500_mv_frame",
+            )
+            for i in range(4)
+        ]
+        provider = FakeTelemetryProvider(
+            _make_spans_df("cogniverse.profile_selection", rows)
+        )
+        served_state = self._served_state()
+
+        state, result = await self._run(
+            provider,
+            current_blob=served_state,
+            floor=(1, 1),
+            ground_truth_present=False,
+        )
+
+        assert result == {
+            "status": "profile_selection_ground_truth_missing",
+            "retryable": False,
+            "error": "profile_selection_ground_truth is not configured for tenant test:unit",
+        }
+        assert state["load_blob_calls"] == [
+            ("config", "profile_selection_ground_truth")
+        ]
+        assert state["query_spans_calls"] == []
+        assert state["score_calls"] == []
+        assert state["versioned_saves"] == []
+        assert state["activate_calls"] == []
+        assert "compiled_module" not in state
+
+    @pytest.mark.asyncio
+    async def test_profile_ground_truth_store_unavailable_sets_retryable_true(self):
+        rows = [
+            _profile_span_row(
+                f"find clip {i}",
+                span_id=f"profile-{i}",
+                available_profiles=[
+                    "video_colpali_smol500_mv_frame",
+                    "video_colqwen_omni_mv_chunk_30s",
+                ],
+                selected_profile="video_colpali_smol500_mv_frame",
+            )
+            for i in range(4)
+        ]
+        provider = FakeTelemetryProvider(
+            _make_spans_df("cogniverse.profile_selection", rows)
+        )
+        served_state = self._served_state()
+
+        state, result = await self._run(
+            provider,
+            current_blob=served_state,
+            floor=(1, 1),
+            ground_truth_error=ConnectionError("blob store down"),
+        )
+
+        assert result == {
+            "status": "profile_selection_ground_truth_store_unavailable",
+            "retryable": True,
+            "error": "profile_selection_ground_truth store unavailable",
+            "cause": {
+                "type": "ConnectionError",
+                "message": "blob store down",
+            },
+        }
+        assert state["load_blob_calls"] == [
+            ("config", "profile_selection_ground_truth")
+        ]
+        assert state["query_spans_calls"] == []
+        assert state["score_calls"] == []
+        assert state["versioned_saves"] == []
+        assert state["activate_calls"] == []
+        assert "compiled_module" not in state
 
     @pytest.mark.asyncio
     async def test_profile_below_population_floor_persists_without_activating(self):
