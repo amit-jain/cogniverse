@@ -5863,6 +5863,10 @@ class TestEntityExtractionOptimization:
         score: float = 1.0,
         score_by_module=None,
         config_manager=None,
+        truth_rows: list[dict[str, Any]] | None = None,
+        approved_data: list[dict[str, Any]] | None = None,
+        ground_truth_missing: bool = False,
+        ground_truth_error: Exception | None = None,
     ):
         from cogniverse_runtime.optimization_cli import (
             run_entity_extraction_optimization,
@@ -5872,14 +5876,44 @@ class TestEntityExtractionOptimization:
             "active_blob": current_blob,
             "versioned_saves": [],
             "activate_calls": [],
+            "load_blob_calls": [],
+            "trainset_queries": [],
         }
+
+        spans_df = provider._trace_store._spans_df.copy(deep=True)
+        if truth_rows is None:
+            truth_rows = []
+            for _, row in spans_df.iterrows():
+                query = str(row.get("attributes.input.value") or "").strip()
+                output = row.get("attributes.output.value", "{}")
+                if isinstance(output, str):
+                    try:
+                        output = json.loads(output)
+                    except Exception:
+                        output = {}
+                if not isinstance(output, dict):
+                    output = {}
+                entities = output.get("entities", [])
+                if query and entities:
+                    truth_rows.append({"query": query, "entities": entities})
 
         class FakeArtifactManager:
             def __init__(self, received_provider, tenant_id):
                 assert received_provider is provider
                 assert tenant_id == "test:unit"
+                self._tenant_id = tenant_id
 
             async def load_blob(self, kind, key):
+                state["load_blob_calls"].append((kind, key))
+                if (kind, key) == (
+                    "config",
+                    "entity_extraction_ground_truth",
+                ):
+                    if ground_truth_error is not None:
+                        raise ground_truth_error
+                    if ground_truth_missing:
+                        return None
+                    return json.dumps(truth_rows, separators=(",", ":"))
                 assert (kind, key) == ("model", "entity_extraction")
                 return state["active_blob"]
 
@@ -5940,6 +5974,10 @@ class TestEntityExtractionOptimization:
                     example.toDict() if hasattr(example, "toDict") else example
                     for example in trainset
                 ]
+                state["trainset_queries"] = [
+                    example.query if hasattr(example, "query") else example["query"]
+                    for example in trainset
+                ]
 
                 class Compiled:
                     def dump_state(self):
@@ -5962,7 +6000,12 @@ class TestEntityExtractionOptimization:
                 return FakeLLMConfig()
 
         mgr = FakeTelemetryManager(provider)
-        p1, p2 = _patch_infra(mgr, config_manager=config_manager)
+        approved_rows = approved_data or []
+        effective_config_manager = config_manager or _training_selection_config_manager(
+            "test:unit",
+            {"entity_extraction": {}},
+        )
+        p1, p2 = _patch_infra(mgr, config_manager=effective_config_manager)
         with (
             p1,
             p2,
@@ -5973,6 +6016,12 @@ class TestEntityExtractionOptimization:
             patch(
                 "cogniverse_foundation.config.llm_factory.create_dspy_lm",
                 return_value=object(),
+            ),
+            patch(
+                "cogniverse_runtime.optimization_cli._load_approved_synthetic_data",
+                side_effect=lambda received_provider, tenant_id, optimizer_type: (
+                    approved_rows
+                ),
             ),
             patch(
                 "cogniverse_runtime.optimization_cli._create_teleprompter",
@@ -6003,46 +6052,359 @@ class TestEntityExtractionOptimization:
         return state, result
 
     @pytest.mark.asyncio
-    async def test_entity_extraction_no_spans(self, fake_telemetry_manager):
+    async def test_entity_extraction_missing_ground_truth_returns_named_status(
+        self, fake_telemetry_manager
+    ):
+        spans = _make_spans_df(
+            "cogniverse.entity_extraction",
+            [
+                {
+                    "attributes.input.value": "served query one",
+                    "attributes.output.value": json.dumps(
+                        {"entities": [{"text": "served", "type": "CONCEPT"}]}
+                    ),
+                }
+            ],
+        )
+        provider = FakeTelemetryProvider(spans)
+
+        state, result = await self._run(
+            provider,
+            current_blob=None,
+            floor=(1, 1),
+            ground_truth_missing=True,
+        )
+
+        assert result == {
+            "status": "entity_extraction_ground_truth_missing",
+            "retryable": False,
+            "error": "entity_extraction_ground_truth is not configured for tenant test:unit",
+        }
+        assert state["versioned_saves"] == []
+
+    @pytest.mark.asyncio
+    async def test_entity_extraction_uses_truth_and_approved_rows_not_served_spans(
+        self, monkeypatch, tmp_path
+    ):
+        from dspy.utils.dummies import DummyLM
+
+        import cogniverse_runtime.optimization_cli as optimization_cli
         from cogniverse_runtime.optimization_cli import (
             run_entity_extraction_optimization,
         )
 
-        p1, p2 = _patch_infra(fake_telemetry_manager)
-        with p1, p2:
+        monkeypatch.setenv("XDG_CACHE_HOME", str(tmp_path))
+
+        truth_rows = [
+            {
+                "query": f"truth{i} query",
+                "entities": [{"text": f"truth{i}", "type": "CONCEPT"}],
+            }
+            for i in range(8)
+        ]
+        approved_rows = [
+            {
+                "query": "approved0 query",
+                "entities": [{"text": "approved0", "type": "CONCEPT"}],
+                "entity_types": "CONCEPT",
+                "example_id": "approved:entity-approved-0",
+            },
+            {
+                "query": "approved1 query",
+                "entities": [{"text": "approved1", "type": "CONCEPT"}],
+                "entity_types": "CONCEPT",
+                "example_id": "approved:entity-approved-1",
+            },
+        ]
+        served_rows = [
+            {
+                "context.span_id": f"served-{i}",
+                "attributes.input.value": f"served{i} query",
+                "attributes.output.value": json.dumps(
+                    {"entities": [{"text": f"served{i}", "type": "CONCEPT"}]}
+                ),
+            }
+            for i in range(6)
+        ]
+        provider = FakeTelemetryProvider(
+            _make_spans_df("cogniverse.entity_extraction", served_rows)
+        )
+        manager = FakeTelemetryManager(provider)
+        state = {"holdout_queries": []}
+
+        class FakeLLMConfig:
+            def resolve(self, purpose):
+                return SimpleNamespace(
+                    api_base="http://student:8000/v1",
+                    model="student-model",
+                )
+
+            def resolve_teacher(self):
+                return SimpleNamespace(
+                    api_base="http://teacher:8000/v1",
+                    model="test/teacher-model",
+                )
+
+        class FakeConfig:
+            def get_llm_config(self):
+                return FakeLLMConfig()
+
+        teacher_answers = [
+            {
+                "reasoning": f"truth reasoning {i}",
+                "entities": f"truth{i}|CONCEPT|1.0",
+                "entity_types": "CONCEPT",
+            }
+            for i in range(8)
+        ]
+        student_answers = [teacher_answers[0]] * 20
+        real_create_teleprompter = optimization_cli._create_teleprompter
+
+        class RecordingTeleprompter:
+            def __init__(self, inner):
+                self._inner = inner
+                self.max_bootstrapped_demos = inner.max_bootstrapped_demos
+                self.max_labeled_demos = inner.max_labeled_demos
+                self.max_rounds = inner.max_rounds
+                self.metric_threshold = inner.metric_threshold
+                self.error_count = inner.error_count
+
+            def __getattr__(self, name):
+                return getattr(self._inner, name)
+
+            def compile(self, module, trainset):
+                state["trainset_queries"] = [example.query for example in trainset]
+                compiled = self._inner.compile(module, trainset=trainset)
+                state["compiled_state"] = compiled.dump_state()
+                return compiled
+
+        def fake_create_dspy_lm(endpoint):
+            if getattr(endpoint, "api_base", "") == "http://teacher:8000/v1":
+                return DummyLM(list(teacher_answers))
+            return DummyLM(list(student_answers))
+
+        def wrapped_create_teleprompter(*args, **kwargs):
+            return RecordingTeleprompter(real_create_teleprompter(*args, **kwargs))
+
+        def score_by_module(module, holdout):
+            state["holdout_queries"] = [example.query for example in holdout]
+            dump = json.loads(json.dumps(module.dump_state(), default=str))
+            demos = dump.get("extractor.predict", {}).get("demos", [])
+            return 1.0 if demos else 0.0
+
+        async def approved_data(received_provider, tenant_id, optimizer_type):
+            assert received_provider is provider
+            assert tenant_id == "test:unit"
+            assert optimizer_type == "entity_extraction"
+            return approved_rows
+
+        class FakeArtifactManager:
+            def __init__(self, received_provider, tenant_id):
+                assert received_provider is provider
+                assert tenant_id == "test:unit"
+                self._tenant_id = tenant_id
+
+            async def load_blob(self, kind, key):
+                if (kind, key) == ("config", "entity_extraction_ground_truth"):
+                    return json.dumps(truth_rows, separators=(",", ":"))
+                if (kind, key) == ("model", "entity_extraction"):
+                    return None
+                raise AssertionError((kind, key))
+
+            async def save_blob_versioned(self, *args, **kwargs):
+                state.setdefault("versioned_saves", []).append(
+                    {"args": args, "kwargs": kwargs}
+                )
+                return "artifact-1", 1
+
+            async def activate_version(self, kind, key, version):
+                state.setdefault("activate_calls", []).append((kind, key, version))
+                return {"active": {"version": version, "activated_at": "now"}}
+
+            async def get_version_lineage(self, kind, key):
+                return []
+
+        async def identity_training_selection(**kwargs):
+            train_records = kwargs["train_records"]
+            return train_records, SimpleNamespace(
+                pool=len(train_records),
+                deduped=len(train_records),
+                cap=300,
+                mmr_applied=False,
+                decayed_count=0,
+                decayed_example_ids=[],
+            )
+
+        p1, p2 = _patch_infra(manager)
+        with (
+            p1,
+            p2,
+            patch(
+                "cogniverse_foundation.config.utils.create_default_config_manager",
+                return_value=SimpleNamespace(),
+            ),
+            patch(
+                "cogniverse_foundation.config.utils.get_config",
+                return_value=FakeConfig(),
+            ),
+            patch(
+                "cogniverse_foundation.config.llm_factory.create_dspy_lm",
+                side_effect=fake_create_dspy_lm,
+            ),
+            patch(
+                "cogniverse_runtime.optimization_cli._create_teleprompter",
+                side_effect=wrapped_create_teleprompter,
+            ),
+            patch(
+                "cogniverse_runtime.optimization_cli._entity_extraction_scores",
+                side_effect=score_by_module,
+            ),
+            patch(
+                "cogniverse_runtime.optimization_cli._load_approved_synthetic_data",
+                side_effect=approved_data,
+            ),
+            patch(
+                "cogniverse_runtime.optimization_cli._population_floor_from_config",
+                return_value=(1, 1),
+            ),
+            patch(
+                "cogniverse_runtime.optimization_cli._min_improvement_from_config",
+                return_value=0.05,
+            ),
+            patch(
+                "cogniverse_runtime.optimization_cli._apply_training_selection",
+                side_effect=identity_training_selection,
+            ),
+            patch(
+                "cogniverse_agents.optimizer.artifact_manager.ArtifactManager",
+                FakeArtifactManager,
+            ),
+            patch("dspy.configure", lambda **kwargs: None),
+        ):
             result = await run_entity_extraction_optimization(
                 tenant_id="test:unit", lookback_hours=1
             )
-        assert result["status"] == "no_data"
-        assert result["spans_found"] == 0
-        assert "selection" not in result
+
+        assert result == {
+            "status": "success",
+            "spans_found": 6,
+            "served_examples": 6,
+            "served_scoreable_examples": 6,
+            "label_rows": 10,
+            "truth_rows": 8,
+            "approved_rows": 2,
+            "training_examples": 8,
+            "holdout_examples": 2,
+            "holdout_source": "ground_truth",
+            "selection": {
+                "pool": 8,
+                "deduped": 8,
+                "cap": 300,
+                "mmr_applied": False,
+                "decayed_count": 0,
+                "decayed_example_ids": [],
+            },
+            "bootstrap": {
+                "trainset": 8,
+                "max_bootstrapped_demos": 4,
+                "max_labeled_demos": 8,
+                "max_rounds": 1,
+                "metric_threshold": 1.0,
+                "attempts": 4,
+                "errors": 0,
+                "examples_walked": 4,
+                "accepted": 4,
+                "bootstrapped_demos": 4,
+                "labeled_demos": 4,
+                "metric_values": [1.0, 1.0, 1.0, 1.0],
+            },
+            "baseline_score": 0.0,
+            "current_score": None,
+            "candidate_score": 1.0,
+            "decision": "promote",
+            "version": 1,
+            "consumed_example_ids": [
+                "truth:0",
+                "truth:1",
+                "truth:2",
+                "truth:3",
+                "truth:4",
+                "truth:5",
+                "truth:6",
+                "truth:7",
+                "approved:entity-approved-0",
+                "approved:entity-approved-1",
+            ],
+        }
+        assert state["trainset_queries"] == [
+            "truth0 query",
+            "truth1 query",
+            "truth2 query",
+            "truth3 query",
+            "truth4 query",
+            "truth5 query",
+            "truth6 query",
+            "truth7 query",
+        ]
+        assert state["holdout_queries"] == ["approved0 query", "approved1 query"]
+        assert set(state["trainset_queries"]).isdisjoint(
+            {
+                "served0 query",
+                "served1 query",
+                "served2 query",
+                "served3 query",
+                "served4 query",
+                "served5 query",
+            }
+        )
+        assert set(state["holdout_queries"]).isdisjoint(
+            {
+                "served0 query",
+                "served1 query",
+                "served2 query",
+                "served3 query",
+                "served4 query",
+                "served5 query",
+            }
+        )
 
     def test_token_f1_casefolds_whitespace_tokens(self):
         from cogniverse_runtime.optimization_cli import _token_f1
 
         assert _token_f1("Marie Curie", "marie curie") == 1.0
 
-    def test_entity_quality_exact_table(self):
+    def test_entity_quality_pair_f1_table(self):
         from cogniverse_runtime.optimization_cli import _entity_extraction_quality
 
-        ex = _entity_example(entities='[{"text": "Marie Curie"}, {"text": "radium"}]')
+        ex = _entity_example(entities=("Marie Curie|PERSON|1.0\nradium|CONCEPT|1.0"))
         assert {
             "exact": _entity_extraction_quality(
                 _ents("Marie Curie|PERSON|0.9\nradium|CONCEPT|0.8"), ex
             ),
-            "half": round(
-                _entity_extraction_quality(_ents("Marie Curie|PERSON|0.9"), ex), 2
+            "wrong_type": _entity_extraction_quality(
+                _ents("Marie Curie|CONCEPT|0.9"), ex
             ),
-            "wrong": _entity_extraction_quality(_ents("Show|CONCEPT|0.5"), ex),
+            "partial": _entity_extraction_quality(
+                _ents("Marie Curie|PERSON|0.9\nwrong|CONCEPT|0.5"), ex
+            ),
+            "extra": _entity_extraction_quality(
+                _ents("Marie Curie|PERSON|0.9\nwrong1|CONCEPT|0.5\nwrong2|PERSON|0.5"),
+                ex,
+            ),
+            "case": _entity_extraction_quality(
+                _ents("marie curie|person|0.9\nRADIUM|concept|0.8"), ex
+            ),
             "empty": _entity_extraction_quality(_ents(""), ex),
         } == {
             "exact": 1.0,
-            "half": 0.8,
-            "wrong": 0.0,
+            "wrong_type": 0.0,
+            "partial": 0.5,
+            "extra": 0.4,
+            "case": 1.0,
             "empty": 0.0,
         }
         with pytest.raises(ValueError, match="carries no recorded entities"):
-            _entity_extraction_quality(_ents("x|T|1.0"), _entity_example(entities="[]"))
+            _entity_extraction_quality(_ents("x|T|1.0"), _entity_example(entities=""))
 
     def test_served_entities_become_pipe_lines_that_serving_parses(self):
         """A served GLiNER record trains in the signature's pipe format, and
@@ -6177,8 +6539,11 @@ class TestEntityExtractionOptimization:
         ]
 
     @pytest.mark.asyncio
-    async def test_entity_extraction_spans_no_entities(self):
-        """Spans with no entities produce no training examples."""
+    async def test_entity_extraction_ground_truth_store_outage_raises(self):
+        from cogniverse_agents.optimizer.entity_extraction_ground_truth import (
+            EntityExtractionGroundTruthStoreUnavailableError,
+        )
+
         spans_df = _make_spans_df(
             "cogniverse.entity_extraction",
             [
@@ -6189,21 +6554,19 @@ class TestEntityExtractionOptimization:
             ],
         )
         provider = FakeTelemetryProvider(spans_df)
-        mgr = FakeTelemetryManager(provider)
 
-        from cogniverse_runtime.optimization_cli import (
-            run_entity_extraction_optimization,
-        )
-
-        p1, p2 = _patch_infra(mgr)
-        with p1, p2:
-            result = await run_entity_extraction_optimization(
-                tenant_id="test:unit", lookback_hours=1
+        with pytest.raises(
+            EntityExtractionGroundTruthStoreUnavailableError,
+            match="entity_extraction_ground_truth store unavailable",
+        ):
+            await self._run(
+                provider,
+                current_blob=None,
+                floor=(1, 1),
+                ground_truth_error=ConnectionError(
+                    "Phoenix refused the dataset request"
+                ),
             )
-        assert result["status"] == "no_data"
-        assert result["spans_found"] == 1
-        assert result["examples"] == 0
-        assert "selection" not in result
 
     @pytest.mark.asyncio
     async def test_training_selection_store_override_binds_entity_key(self):
@@ -6268,11 +6631,13 @@ class TestEntityExtractionOptimization:
             "status": "success",
             "spans_found": 2,
             "served_examples": 2,
-            "approved_examples": 0,
             "served_scoreable_examples": 2,
+            "label_rows": 2,
+            "truth_rows": 2,
+            "approved_rows": 0,
             "training_examples": 1,
             "holdout_examples": 1,
-            "holdout_source": "served",
+            "holdout_source": "ground_truth",
             **_selection_block(1, 1),
             "bootstrap": _fake_bootstrap_block(1),
             "baseline_score": 0.0,
@@ -6280,14 +6645,14 @@ class TestEntityExtractionOptimization:
             "candidate_score": 1.0,
             "decision": "promote",
             "version": 1,
-            "consumed_example_ids": ["span:ee-0", "span:ee-1"],
+            "consumed_example_ids": ["truth:0", "truth:1"],
         }
         assert state["versioned_saves"] == [
             {
                 "kind": "model",
                 "key": "entity_extraction",
                 "content": '{"compiled": "entity_extraction"}',
-                "consumed_example_ids": ["span:ee-0", "span:ee-1"],
+                "consumed_example_ids": ["truth:0", "truth:1"],
                 "decision": "promote",
                 "scored": True,
                 "score": 1.0,
@@ -6327,11 +6692,13 @@ class TestEntityExtractionOptimization:
             "status": "success",
             "spans_found": 2,
             "served_examples": 2,
-            "approved_examples": 0,
             "served_scoreable_examples": 2,
+            "label_rows": 2,
+            "truth_rows": 2,
+            "approved_rows": 0,
             "training_examples": 1,
             "holdout_examples": 1,
-            "holdout_source": "served",
+            "holdout_source": "ground_truth",
             **_selection_block(1, 1),
             "bootstrap": _fake_bootstrap_block(1),
             "baseline_score": 1.0,
@@ -6339,14 +6706,14 @@ class TestEntityExtractionOptimization:
             "candidate_score": 1.0,
             "decision": "keep",
             "version": 1,
-            "consumed_example_ids": ["span:ee-0", "span:ee-1"],
+            "consumed_example_ids": ["truth:0", "truth:1"],
         }
         assert state["versioned_saves"] == [
             {
                 "kind": "model",
                 "key": "entity_extraction",
                 "content": '{"compiled": "entity_extraction"}',
-                "consumed_example_ids": ["span:ee-0", "span:ee-1"],
+                "consumed_example_ids": ["truth:0", "truth:1"],
                 "decision": "keep",
                 "scored": True,
                 "score": 1.0,
@@ -6387,11 +6754,13 @@ class TestEntityExtractionOptimization:
             "status": "success",
             "spans_found": 2,
             "served_examples": 2,
-            "approved_examples": 0,
             "served_scoreable_examples": 2,
+            "label_rows": 2,
+            "truth_rows": 2,
+            "approved_rows": 0,
             "training_examples": 1,
             "holdout_examples": 1,
-            "holdout_source": "served",
+            "holdout_source": "ground_truth",
             **_selection_block(1, 1),
             "bootstrap": _fake_bootstrap_block(1),
             "baseline_score": 1.0,
@@ -6399,14 +6768,14 @@ class TestEntityExtractionOptimization:
             "candidate_score": 1.0,
             "decision": "rollback",
             "version": 1,
-            "consumed_example_ids": ["span:ee-0", "span:ee-1"],
+            "consumed_example_ids": ["truth:0", "truth:1"],
         }
         assert state["versioned_saves"] == [
             {
                 "kind": "model",
                 "key": "entity_extraction",
                 "content": base_state,
-                "consumed_example_ids": ["span:ee-0", "span:ee-1"],
+                "consumed_example_ids": ["truth:0", "truth:1"],
                 "decision": "rollback",
                 "scored": True,
                 "score": 1.0,
@@ -6466,7 +6835,7 @@ class TestEntityExtractionOptimization:
                     {"entities": [{"text": f"Entity {i}", "type": "CONCEPT"}]}
                 ),
             }
-            for i in range(2)
+            for i in range(29)
         ]
         provider = FakeTelemetryProvider(
             _make_spans_df("cogniverse.entity_extraction", rows)
@@ -6476,16 +6845,21 @@ class TestEntityExtractionOptimization:
         state, result = await self._run(
             provider,
             current_blob=current_blob,
-            floor=(100, 1),
+            floor=(30, 15),
         )
 
         assert result == {
             "status": "insufficient_population",
-            "spans_found": 2,
-            "examples": 2,
-            "distinct_queries": 2,
-            "min_samples": 100,
-            "min_unique_queries": 1,
+            "spans_found": 29,
+            "served_examples": 29,
+            "served_scoreable_examples": 29,
+            "label_rows": 29,
+            "truth_rows": 29,
+            "approved_rows": 0,
+            "examples": 29,
+            "distinct_queries": 29,
+            "min_samples": 30,
+            "min_unique_queries": 15,
             "version": 1,
         }
         assert "selection" not in result
@@ -6494,12 +6868,91 @@ class TestEntityExtractionOptimization:
                 "kind": "model",
                 "key": "entity_extraction",
                 "content": current_blob,
-                "consumed_example_ids": ["span:ee-0", "span:ee-1"],
+                "consumed_example_ids": [f"truth:{i}" for i in range(29)],
                 "decision": "insufficient_population",
                 "scored": False,
                 "score": None,
                 "base_score": None,
                 "candidate_score": None,
+                "extra_ledger_fields": {},
+            }
+        ]
+        assert state["activate_calls"] == []
+        assert state["active_blob"] == current_blob
+
+    @pytest.mark.asyncio
+    async def test_entity_extraction_at_population_floor_compiles_and_persists(
+        self, monkeypatch
+    ):
+        rows = [
+            {
+                "context.span_id": f"ee-{i}",
+                "attributes.input.value": f"find entity {i}",
+                "attributes.output.value": json.dumps(
+                    {"entities": [{"text": f"Entity {i}", "type": "CONCEPT"}]}
+                ),
+            }
+            for i in range(30)
+        ]
+        provider = FakeTelemetryProvider(
+            _make_spans_df("cogniverse.entity_extraction", rows)
+        )
+        current_blob = self._base_state()
+
+        async def identity_training_selection(**kwargs):
+            train_records = kwargs["train_records"]
+            return train_records, SimpleNamespace(
+                pool=len(train_records),
+                deduped=len(train_records),
+                cap=300,
+                mmr_applied=False,
+                decayed_count=0,
+                decayed_example_ids=[],
+            )
+
+        monkeypatch.setattr(
+            "cogniverse_runtime.optimization_cli._apply_training_selection",
+            identity_training_selection,
+        )
+
+        state, result = await self._run(
+            provider,
+            current_blob=current_blob,
+            floor=(30, 15),
+            score_by_module=self._entity_score_by_module,
+        )
+
+        assert result == {
+            "status": "success",
+            "spans_found": 30,
+            "served_examples": 30,
+            "served_scoreable_examples": 30,
+            "label_rows": 30,
+            "truth_rows": 30,
+            "approved_rows": 0,
+            "training_examples": 23,
+            "holdout_examples": 7,
+            "holdout_source": "ground_truth",
+            **_selection_block(23, 23),
+            "bootstrap": _fake_bootstrap_block(23),
+            "baseline_score": 1.0,
+            "current_score": 1.0,
+            "candidate_score": 1.0,
+            "decision": "keep",
+            "version": 1,
+            "consumed_example_ids": [f"truth:{i}" for i in range(30)],
+        }
+        assert state["versioned_saves"] == [
+            {
+                "kind": "model",
+                "key": "entity_extraction",
+                "content": '{"compiled": "entity_extraction"}',
+                "consumed_example_ids": [f"truth:{i}" for i in range(30)],
+                "decision": "keep",
+                "scored": True,
+                "score": 1.0,
+                "base_score": 1.0,
+                "candidate_score": 1.0,
                 "extra_ledger_fields": {},
             }
         ]
@@ -6570,7 +7023,9 @@ class TestEntityBootstrapThreshold:
 
         trainset = self._trainset(tag)
         recorder = BootstrapMetricRecorder(
-            _entity_extraction_quality, threshold=threshold
+            _entity_extraction_quality,
+            tenant="test:unit",
+            threshold=threshold,
         )
         with dspy.context(lm=DummyLM(list(self._ANSWERS))):
             teleprompter = _create_teleprompter(
@@ -6591,7 +7046,7 @@ class TestEntityBootstrapThreshold:
 
         assert recorder.attempts == [
             ("t1 curie", 1.0),
-            ("t1 turing", 0.8),
+            ("t1 turing", 0.6666666666666666),
             ("t1 lovelace", 1.0),
         ]
         assert report == {
@@ -6606,7 +7061,7 @@ class TestEntityBootstrapThreshold:
             "accepted": 2,
             "bootstrapped_demos": 2,
             "labeled_demos": 1,
-            "metric_values": [0.8, 1.0, 1.0],
+            "metric_values": [0.6666666666666666, 1.0, 1.0],
         }
         assert demos == [
             (True, "Marie Curie|PERSON|0.9"),
@@ -6619,24 +7074,28 @@ class TestEntityBootstrapThreshold:
             if record.getMessage().startswith("bootstrap attempt")
         ] == [
             "bootstrap attempt 1 query='t1 curie' metric=1.000 accepted=True",
-            "bootstrap attempt 2 query='t1 turing' metric=0.800 accepted=False",
+            "bootstrap attempt 2 query='t1 turing' metric=0.667 accepted=False",
             "bootstrap attempt 3 query='t1 lovelace' metric=1.000 accepted=True",
         ]
 
     def test_lower_bar_accepts_partial_traces(self):
         recorder, report, demos = self._compile("t2", 0.75)
 
-        assert [score for _, score in recorder.attempts] == [1.0, 0.8, 1.0]
+        assert [score for _, score in recorder.attempts] == [
+            1.0,
+            0.6666666666666666,
+            1.0,
+        ]
         assert (
             report["accepted"],
             report["bootstrapped_demos"],
             report["labeled_demos"],
             report["metric_threshold"],
-        ) == (3, 3, 0, 0.75)
+        ) == (2, 2, 1, 0.75)
         assert demos == [
             (True, "Marie Curie|PERSON|0.9"),
-            (True, "Alan Turing|PERSON|0.9"),
             (True, "Ada Lovelace|PERSON|0.9"),
+            (False, "Alan Turing|PERSON|1.0\nEnigma|CONCEPT|1.0"),
         ]
 
     def test_bar_never_drops_below_the_served_score(self):
@@ -6645,7 +7104,7 @@ class TestEntityBootstrapThreshold:
             _entity_bootstrap_threshold,
         )
 
-        assert ENTITY_BOOTSTRAP_METRIC_THRESHOLD == 0.0
+        assert ENTITY_BOOTSTRAP_METRIC_THRESHOLD == 1.0
         assert {
             "bar_above_served": _entity_bootstrap_threshold(0.392, 0.621, bar=0.9),
             "served_above_bar": _entity_bootstrap_threshold(0.392, 0.621, bar=0.5),
@@ -6655,15 +7114,10 @@ class TestEntityBootstrapThreshold:
             "bar_above_served": 0.9,
             "served_above_bar": 0.621,
             "no_current_artifact": 0.7,
-            "default_bar": 0.621,
+            "default_bar": 1.0,
         }
 
-    def test_the_served_floor_is_reachable_by_a_real_trace(self):
-        """A bar of 1.0 demands a perfect token-set match, which the measured
-        distribution never reaches, so BootstrapFewShot never collects its
-        demo quota and walks the entire trainset every round. The default bar
-        must therefore leave the served-holdout floor as the operative bound.
-        """
+    def test_the_default_bar_stays_at_one(self):
         from cogniverse_runtime.optimization_cli import (
             ENTITY_BOOTSTRAP_METRIC_THRESHOLD as bar,
         )
@@ -6671,16 +7125,54 @@ class TestEntityBootstrapThreshold:
             _entity_bootstrap_threshold,
         )
 
-        served_baseline, served_current = 0.392, 0.621
-        assert (
-            _entity_bootstrap_threshold(served_baseline, served_current)
-            == max(bar, served_current)
-            == served_current
-        ), "the default bar must not mask the served floor"
-        assert bar < served_baseline, (
-            f"bar {bar} is at or above the served score, so the floor can never "
-            "engage and the bar is a constant"
+        assert bar == 1.0
+        assert _entity_bootstrap_threshold(0.392, 0.621) == 1.0
+        assert _entity_bootstrap_threshold(0.392, 0.621, bar=0.5) == 0.621
+
+    def test_recorder_appends_one_jsonl_row_per_attempt(self, monkeypatch, tmp_path):
+        from datetime import datetime as _datetime
+        from datetime import timezone as _timezone
+
+        from cogniverse_runtime import optimization_cli
+        from cogniverse_runtime.optimization_cli import BootstrapMetricRecorder
+
+        class FixedDatetime(_datetime):
+            @classmethod
+            def now(cls, tz=None):
+                return _datetime(2026, 8, 26, 12, 34, 56, tzinfo=_timezone.utc)
+
+        monkeypatch.setenv("XDG_CACHE_HOME", str(tmp_path))
+        monkeypatch.setattr(optimization_cli, "datetime", FixedDatetime)
+
+        recorder = BootstrapMetricRecorder(
+            lambda prediction, example: (
+                1.0 if prediction.entities == example.entities else 0.0
+            ),
+            tenant="acme:production",
+            threshold=0.75,
         )
+        example_one = SimpleNamespace(query="alpha", entities="alpha|CONCEPT|1.0")
+        example_two = SimpleNamespace(query="beta", entities="beta|CONCEPT|1.0")
+
+        assert (
+            recorder(example_one, SimpleNamespace(entities="alpha|CONCEPT|1.0")) == 1.0
+        )
+        assert recorder(example_two, SimpleNamespace(entities="wrong")) == 0.0
+        assert recorder.attempts == [("alpha", 1.0), ("beta", 0.0)]
+
+        path = tmp_path / "cogniverse" / "bootstrap_attempts.jsonl"
+        assert path.read_text(encoding="utf-8").splitlines() == [
+            (
+                '{"optimizer":"entity_extraction","tenant":"acme:production",'
+                '"query":"alpha","metric":1.0,"threshold":0.75,"accepted":true,'
+                '"ts":"2026-08-26T12:34:56+00:00"}'
+            ),
+            (
+                '{"optimizer":"entity_extraction","tenant":"acme:production",'
+                '"query":"beta","metric":0.0,"threshold":0.75,"accepted":false,'
+                '"ts":"2026-08-26T12:34:56+00:00"}'
+            ),
+        ]
 
 
 class TestSyntheticDataMerge:
