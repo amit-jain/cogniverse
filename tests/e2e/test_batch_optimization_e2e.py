@@ -1573,13 +1573,19 @@ def generate_spans_for_batch_jobs(_kubectl_cluster_ready):
 
 
 BATCH_JOB_TIMEOUT_ENV = "COGNIVERSE_E2E_BATCH_JOB_TIMEOUT_S"
-# Measured on the live cluster with the teacher serving:
-# test_entity_extraction_produces_model_artifact took 1732s end to end, of
-# which the batch job is the dominant part. The previous 1200s ceiling was
-# set when the teacher was unreachable and every call failed instantly, so
-# no job ever approached it. Raise via BATCH_JOB_TIMEOUT_ENV for a
+# A safety net sized to the observed tail, not to a mean. Recorded job
+# costs on the live cluster with the teacher serving:
+#   gateway-thresholds  10s
+#   workflow            13s
+#   simba               12s / 25s / 208s / 592s
+#   profile             15s / 15s / 453s
+#   entity-extraction   1732s, then >2400s on the next run
+# A DSPy compile is stochastic, so one sample does not bound it: 2400s was
+# set from the single 1732s observation and the very next run exceeded it.
+# Every job records its own duration (BATCH_JOB_DURATIONS_PATH), so this
+# tightens as samples accumulate. Raise via BATCH_JOB_TIMEOUT_ENV for a
 # measurement run, never by editing call sites.
-BATCH_JOB_DEFAULT_TIMEOUT_S = 2400
+BATCH_JOB_DEFAULT_TIMEOUT_S = 3600
 BATCH_JOB_DURATIONS: list[tuple[str, float, bool]] = []
 # pytest captures stdout and surfaces it only for FAILING tests, so a printed
 # measurement is invisible for exactly the runs that prove a budget adequate.
