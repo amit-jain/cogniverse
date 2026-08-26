@@ -201,7 +201,7 @@ flowchart TB
 
 ```mermaid
 flowchart TB
-    Source["<span style='color:#000'>Shipped label source<br/>data/testset/evaluation/sample_videos_retrieval_queries.json<br/>• One query + expected_videos per row</span>"]
+    Source["<span style='color:#000'>Tenant ground truth<br/>ArtifactManager blob kind config, key profile_selection_ground_truth<br/>• Uploaded through the admin profile_selection_ground_truth route<br/>• One query + expected_videos per row</span>"]
 
     Source --> Derive["<span style='color:#000'>derive_profile_labels<br/>• SearchService.search per query × usable profile, top_k 10<br/>• Result matches an expected video when its title basename (schema document_mapping.title, extension stripped) equals the expected id<br/>• Label = the one profile whose results match every expected video<br/>• Unrecovered, untitled-result and tied queries reported under label_exclusions</span>"]
 

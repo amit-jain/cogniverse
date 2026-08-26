@@ -721,8 +721,9 @@ def _profile_selection_label_source(
     tenant_id: str,
     candidate_profiles: Sequence[str],
     schema_loader: SchemaLoader,
+    ground_truth_rows: Sequence[Mapping[str, Any]],
 ) -> ProfileLabelDerivationResult:
-    """Derive the tenant's profile labels by running the shipped label source
+    """Derive the tenant's profile labels by running its ground-truth rows
     through its SearchService per candidate profile."""
     title_fields = _profile_selection_title_fields(
         config_manager, tenant_id, candidate_profiles, schema_loader
@@ -748,9 +749,10 @@ def _profile_selection_label_source(
         )
         return [result.to_dict() for result in results]
 
-    return _load_profile_selection_labels(
-        candidate_profiles=candidate_profiles,
-        retrieve=retrieve,
+    return derive_profile_labels(
+        ground_truth_rows,
+        candidate_profiles,
+        retrieve,
         title_fields=title_fields,
     )
 
@@ -3955,8 +3957,8 @@ async def run_profile_optimization(
 ) -> dict:
     """Profile selection optimization.
 
-    Reads the shipped sample query corpus, derives one profile label per
-    recoverable query by running the tenant's real search backend against each
+    Loads the tenant's ground-truth rows, derives one profile label per
+    recoverable row by running the tenant's real search backend against each
     candidate profile, compiles the ProfileSelectionAgent's DSPy module, and
     saves the optimized module as an artifact.
     """
@@ -4022,6 +4024,7 @@ async def run_profile_optimization(
         tenant_id=tenant_id,
         candidate_profiles=candidate_profiles,
         schema_loader=FilesystemSchemaLoader(schemas_dir),
+        ground_truth_rows=ground_truth_rows,
     )
 
     profile_pairs = list(label_source.records)

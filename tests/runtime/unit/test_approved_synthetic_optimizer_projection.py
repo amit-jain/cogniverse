@@ -1,3 +1,4 @@
+import json
 from types import SimpleNamespace
 
 import pandas as pd
@@ -7,6 +8,10 @@ from cogniverse_foundation.config.unified_config import RoutingConfigUnified
 from cogniverse_runtime.optimization_cli import _project_approved_optimizer_example
 
 pytestmark = pytest.mark.unit
+
+_PROJECTION_GROUND_TRUTH_ROWS = [
+    {"query": "acme projection query", "expected_videos": ["acme_video_1"]}
+]
 
 
 def test_query_enhancement_projection_matches_production_signature_exactly():
@@ -207,6 +212,8 @@ async def test_synthetic_only_data_compiles_the_actual_production_module(
             assert tenant_id == "acme:production"
 
         async def load_blob(self, kind, key):
+            if (kind, key) == ("config", "profile_selection_ground_truth"):
+                return json.dumps(_PROJECTION_GROUND_TRUTH_ROWS)
             return None
 
         async def get_version_lineage(self, kind, agent_type):
@@ -252,11 +259,18 @@ async def test_synthetic_only_data_compiles_the_actual_production_module(
         return ["video_colpali", "document_colpali"]
 
     def no_derived_labels(
-        *, config, config_manager, tenant_id, candidate_profiles, schema_loader
+        *,
+        config,
+        config_manager,
+        tenant_id,
+        candidate_profiles,
+        schema_loader,
+        ground_truth_rows,
     ):
         del config, config_manager, schema_loader
         assert tenant_id == "acme:production"
         assert candidate_profiles == ["video_colpali", "document_colpali"]
+        assert ground_truth_rows == _PROJECTION_GROUND_TRUTH_ROWS
         return optimization_cli.ProfileLabelDerivationResult({}, [], [])
 
     monkeypatch.setattr(
