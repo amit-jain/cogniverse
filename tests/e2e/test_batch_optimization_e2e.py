@@ -278,6 +278,40 @@ def _training_selection_cap_from_shipped_config(optimizer_type: str) -> int:
     return int(shipped_selection["trainset_cap"])
 
 
+def _profile_label_source_queries() -> list[str]:
+    """Queries of the shipped profile label source, in file order; a row with
+    no query is keyed ``row:<position>``, the form its exclusion reports."""
+    from cogniverse_runtime.optimization_cli import PROFILE_SELECTION_LABEL_SOURCE_PATH
+
+    rows = json.loads(PROFILE_SELECTION_LABEL_SOURCE_PATH.read_text())
+    return [
+        str(row.get("query", "")).strip() or f"row:{position}"
+        for position, row in enumerate(rows)
+    ]
+
+
+def _assert_profile_labels_partition_label_source(result: dict) -> None:
+    """Every label-source row is either a derived label or a reported exclusion."""
+    source_queries = _profile_label_source_queries()
+    exclusions = result["label_exclusions"]
+    assert set(exclusions) == {"count", "queries"}, result
+    assert exclusions["count"] == len(exclusions["queries"]), result
+    assert result["served_examples"] == len(source_queries) - exclusions["count"], (
+        result
+    )
+    assert result["served_scoreable_examples"] == result["served_examples"], result
+
+    prefix = "span:profile-label:"
+    derived_ids = result["consumed_example_ids"][: result["served_examples"]]
+    assert all(example_id.startswith(prefix) for example_id in derived_ids), result
+    positions = [int(example_id[len(prefix) :]) for example_id in derived_ids]
+    assert positions == sorted(set(positions)), result
+    assert set(positions) <= set(range(len(source_queries))), result
+    labelled = collections.Counter(source_queries[position] for position in positions)
+    excluded = collections.Counter(exclusions["queries"])
+    assert labelled + excluded == collections.Counter(source_queries), result
+
+
 def _selection_summary_in_pod(
     tenant_id: str,
     optimizer_type: str,
@@ -3264,6 +3298,7 @@ class TestProfileOptimization:
             "training_examples",
             "holdout_examples",
             "holdout_source",
+            "label_exclusions",
             "baseline_score",
             "current_score",
             "candidate_score",
@@ -3278,9 +3313,9 @@ class TestProfileOptimization:
         )
         assert result["spans_found"] > 0, result
         assert result["spans_found"] >= expected_min_samples, result
-        assert result["holdout_source"] == "served", result
+        assert result["holdout_source"] == "derived_labels", result
         assert result["decision"] in BLOB_VERSION_DECISIONS, result
-        assert result["served_examples"] <= result["spans_found"], result
+        _assert_profile_labels_partition_label_source(result)
         assert result["approved_examples"] == len(approved), result
         assert result["holdout_examples"] == max(
             1, result["served_scoreable_examples"] // 4
@@ -3361,6 +3396,7 @@ class TestProfileOptimization:
             "training_examples",
             "holdout_examples",
             "holdout_source",
+            "label_exclusions",
             "baseline_score",
             "current_score",
             "candidate_score",
@@ -3375,9 +3411,9 @@ class TestProfileOptimization:
         )
         assert result["spans_found"] > 0, result
         assert result["spans_found"] >= expected_min_samples, result
-        assert result["holdout_source"] == "served", result
+        assert result["holdout_source"] == "derived_labels", result
         assert result["decision"] in BLOB_VERSION_DECISIONS, result
-        assert result["served_examples"] <= result["spans_found"], result
+        _assert_profile_labels_partition_label_source(result)
         assert result["approved_examples"] == len(approved), result
         assert result["holdout_examples"] == max(
             1, result["served_scoreable_examples"] // 4
@@ -3495,6 +3531,7 @@ class TestProfileSelectionArtifactReload:
             "training_examples",
             "holdout_examples",
             "holdout_source",
+            "label_exclusions",
             "baseline_score",
             "current_score",
             "candidate_score",
@@ -3509,9 +3546,9 @@ class TestProfileSelectionArtifactReload:
         )
         assert result["spans_found"] > 0, result
         assert result["spans_found"] >= expected_min_samples, result
-        assert result["holdout_source"] == "served", result
+        assert result["holdout_source"] == "derived_labels", result
         assert result["decision"] in BLOB_VERSION_DECISIONS, result
-        assert result["served_examples"] <= result["spans_found"], result
+        _assert_profile_labels_partition_label_source(result)
         assert result["approved_examples"] == len(approved), result
         assert result["holdout_examples"] == max(
             1, result["served_scoreable_examples"] // 4
@@ -4368,6 +4405,7 @@ class TestArtifactLoadingRoundTrip:
             "training_examples",
             "holdout_examples",
             "holdout_source",
+            "label_exclusions",
             "baseline_score",
             "current_score",
             "candidate_score",
@@ -4382,9 +4420,9 @@ class TestArtifactLoadingRoundTrip:
         )
         assert result["spans_found"] > 0, result
         assert result["spans_found"] >= expected_min_samples, result
-        assert result["holdout_source"] == "served", result
+        assert result["holdout_source"] == "derived_labels", result
         assert result["decision"] in BLOB_VERSION_DECISIONS, result
-        assert result["served_examples"] <= result["spans_found"], result
+        _assert_profile_labels_partition_label_source(result)
         assert result["approved_examples"] == len(approved), result
         assert result["holdout_examples"] == max(
             1, result["served_scoreable_examples"] // 4

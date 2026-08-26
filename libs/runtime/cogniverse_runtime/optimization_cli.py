@@ -26,9 +26,11 @@ import logging
 import os
 import sys
 import uuid
+from collections import Counter
+from collections.abc import Mapping
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
-from typing import Any, Dict, List, Optional
+from typing import Any, Callable, Dict, Iterable, List, Optional, Sequence
 
 from cogniverse_agents.optimizer.example_selection import (
     TRAINING_SELECTION_DEFAULTS as _TRAINING_SELECTION_DEFAULTS,
@@ -56,9 +58,17 @@ from cogniverse_foundation.telemetry.span_contract import (
     read_span_id,
     read_span_io,
 )
+from cogniverse_sdk.interfaces.schema_loader import SchemaLoader
 
 logger = logging.getLogger(__name__)
 SHIPPED_CONFIG_PATH = Path(__file__).resolve().parents[3] / "configs" / "config.json"
+PROFILE_SELECTION_LABEL_SOURCE_PATH = (
+    Path(__file__).resolve().parents[3]
+    / "data"
+    / "testset"
+    / "evaluation"
+    / "sample_videos_retrieval_queries.json"
+)
 _TRAINING_SELECTION_FIELDS = (
     ("trainset_cap", int),
     ("mmr_lambda", float),
@@ -363,6 +373,386 @@ def _profile_selection_value(record, key: str):
     if isinstance(record, dict):
         return record.get(key)
     return getattr(record, key, None)
+
+
+class ProfileLabelDerivationResult(dict):
+    """Derived profile labels plus the exclusions the producer surfaced."""
+
+    def __init__(
+        self,
+        labels: Dict[str, str],
+        records: list[Dict[str, Any]],
+        exclusions: list[Dict[str, Any]],
+    ):
+        super().__init__(labels)
+        self.records = tuple(records)
+        self.exclusions = tuple(exclusions)
+        self.excluded_count = len(exclusions)
+        self.excluded_queries = tuple(
+            str(exclusion.get("query", "")).strip() for exclusion in exclusions
+        )
+
+
+def _profile_selection_content_key(value: Any) -> str:
+    """Basename of ``value`` without its file extension."""
+    name = Path(str(value).strip()).name
+    suffix = Path(name).suffix
+    extension = suffix[1:]
+    if extension.isalnum() and any(ch.isalpha() for ch in extension):
+        return name[: -len(suffix)]
+    return name
+
+
+def _profile_selection_result_titles(
+    rows: Any, profile: str, title_field: str
+) -> tuple[list[str], list[str]]:
+    """Content keys of the titled ``SearchResult.to_dict()`` rows, plus the
+    document ids of the rows that carry no title."""
+    if isinstance(rows, (str, bytes, Mapping)):
+        raise TypeError(
+            f"Profile selection retrieval for profile {profile!r} must return "
+            f"a sequence of mappings, got {type(rows).__name__}"
+        )
+    keys: list[str] = []
+    untitled: list[str] = []
+    for index, row in enumerate(rows):
+        if not isinstance(row, Mapping):
+            raise TypeError(
+                f"Profile selection retrieval row {index} for profile {profile!r} "
+                f"must be a mapping, got {type(row).__name__}"
+            )
+        metadata = row.get("metadata")
+        title = metadata.get(title_field) if isinstance(metadata, Mapping) else None
+        key = _profile_selection_content_key(title) if isinstance(title, str) else ""
+        if key:
+            keys.append(key)
+        else:
+            untitled.append(str(row.get("document_id", "")) or f"row:{index}")
+    return keys, untitled
+
+
+def _profile_selection_title_fields(
+    config_manager: Any,
+    tenant_id: str,
+    candidate_profiles: Iterable[str],
+    schema_loader: SchemaLoader,
+) -> dict[str, str]:
+    """Title field of each candidate profile, read from its schema's
+    ``document_mapping``."""
+    from cogniverse_sdk.document import DocumentFieldMapping
+
+    title_fields: dict[str, str] = {}
+    for profile in candidate_profiles:
+        profile_config = config_manager.get_backend_profile(
+            profile, tenant_id=tenant_id
+        )
+        if profile_config is None:
+            raise ValueError(
+                f"Profile selection derivation: profile {profile!r} is not "
+                f"configured for tenant {tenant_id!r}"
+            )
+        schema_name = profile_config.schema_name
+        if not schema_name:
+            raise ValueError(
+                f"Profile selection derivation: profile {profile!r} declares no "
+                "schema_name"
+            )
+        schema = schema_loader.load_schema(schema_name)
+        mapping_config = schema.get("document_mapping")
+        if mapping_config is None:
+            raise ValueError(
+                f"Profile selection derivation: schema {schema_name!r} for profile "
+                f"{profile!r} declares no document_mapping"
+            )
+        title_field = DocumentFieldMapping.from_dict(mapping_config).title
+        if not title_field:
+            raise ValueError(
+                f"Profile selection derivation: schema {schema_name!r} for profile "
+                f"{profile!r} declares no document_mapping.title"
+            )
+        title_fields[profile] = title_field
+    return title_fields
+
+
+def _profile_selection_query_key(
+    query: str, position: int, query_counts: Counter[str]
+) -> str:
+    if query and query_counts[query] == 1:
+        return query
+    if query:
+        return f"{query}#{position}"
+    return f"row:{position}"
+
+
+def _profile_selection_expected_videos(record: dict[str, Any]) -> list[str]:
+    for key in ("expected_items", "expected_videos", "ground_truth"):
+        value = record.get(key)
+        if not value:
+            continue
+        if isinstance(value, str):
+            return [item.strip() for item in value.split(",") if item.strip()]
+        if isinstance(value, list):
+            return [str(item).strip() for item in value if str(item).strip()]
+        item = str(value).strip()
+        return [item] if item else []
+    return []
+
+
+def _profile_selection_recovery_score(
+    expected_videos: Sequence[str], retrieved_ids: Sequence[str]
+) -> float:
+    expected = {str(item).strip() for item in expected_videos if str(item).strip()}
+    if not expected:
+        return 0.0
+    retrieved = {str(item).strip() for item in retrieved_ids if str(item).strip()}
+    return len(expected & retrieved) / len(expected)
+
+
+def _load_profile_selection_label_source(
+    queries_path: Path = PROFILE_SELECTION_LABEL_SOURCE_PATH,
+) -> list[dict[str, Any]]:
+    try:
+        with queries_path.open(encoding="utf-8") as source_file:
+            loaded = json.load(source_file)
+    except FileNotFoundError as exc:
+        raise FileNotFoundError(
+            f"Profile selection label source missing: {queries_path}"
+        ) from exc
+    except OSError as exc:
+        raise OSError(
+            f"Profile selection label source unreadable: {queries_path}"
+        ) from exc
+    except json.JSONDecodeError as exc:
+        raise ValueError(
+            f"Profile selection label source unreadable JSON: {queries_path}"
+        ) from exc
+
+    if not isinstance(loaded, list):
+        raise ValueError(
+            f"Profile selection label source must be a JSON list: {queries_path}"
+        )
+    if not loaded:
+        raise ValueError(f"Profile selection label source is empty: {queries_path}")
+    return loaded
+
+
+def derive_profile_labels(
+    queries: Iterable[dict[str, Any]],
+    candidate_profiles: Iterable[str],
+    retrieve: Callable[[str, str], Sequence[Mapping[str, Any]]],
+    *,
+    title_fields: Mapping[str, str],
+) -> ProfileLabelDerivationResult:
+    query_rows = list(queries)
+    if not query_rows:
+        raise ValueError("Profile selection label source is empty")
+
+    profiles = [
+        str(profile).strip() for profile in candidate_profiles if str(profile).strip()
+    ]
+    if not profiles:
+        raise ValueError("Profile selection derivation requires candidate profiles")
+    for profile in profiles:
+        title_field = title_fields.get(profile)
+        if not isinstance(title_field, str) or not title_field.strip():
+            raise ValueError(
+                f"Profile selection derivation has no title field for profile "
+                f"{profile!r}"
+            )
+
+    query_counts = Counter(
+        str(row.get("query", "")).strip() for row in query_rows if isinstance(row, dict)
+    )
+
+    labels: Dict[str, str] = {}
+    records: list[Dict[str, Any]] = []
+    exclusions: list[Dict[str, Any]] = []
+
+    for position, query_record in enumerate(query_rows):
+        if not isinstance(query_record, dict):
+            raise TypeError(
+                f"Profile selection label source row {position} must be a dict"
+            )
+
+        query = str(query_record.get("query", "") or "").strip()
+        query_key = _profile_selection_query_key(query, position, query_counts)
+        expected_videos = _profile_selection_expected_videos(query_record)
+
+        if not query:
+            exclusions.append(
+                {
+                    "query": query_key,
+                    "reason": "missing_query",
+                    "position": position,
+                    "expected_videos": expected_videos,
+                }
+            )
+            continue
+
+        if not expected_videos:
+            exclusions.append(
+                {
+                    "query": query,
+                    "reason": "missing_expected_videos",
+                    "position": position,
+                }
+            )
+            continue
+
+        expected_keys = [
+            _profile_selection_content_key(video) for video in expected_videos
+        ]
+        scored_profiles: list[dict[str, Any]] = []
+        untitled_results: list[dict[str, Any]] = []
+        last_error: Exception | None = None
+        for profile in profiles:
+            try:
+                rows = retrieve(query, profile)
+            except Exception as exc:
+                last_error = exc
+                continue
+
+            retrieved, untitled = _profile_selection_result_titles(
+                rows, profile, title_fields[profile]
+            )
+            if untitled:
+                untitled_results.append(
+                    {
+                        "profile": profile,
+                        "title_field": title_fields[profile],
+                        "document_ids": untitled,
+                    }
+                )
+            scored_profiles.append(
+                {
+                    "profile": profile,
+                    "retrieved": retrieved,
+                    "score": _profile_selection_recovery_score(
+                        expected_keys, retrieved
+                    ),
+                }
+            )
+
+        if not scored_profiles:
+            raise RuntimeError(
+                f"Profile selection retrieval failed for query {query!r}"
+            ) from last_error
+
+        if untitled_results:
+            exclusions.append(
+                {
+                    "query": query,
+                    "reason": "result_missing_title",
+                    "expected_videos": expected_videos,
+                    "position": position,
+                    "untitled_results": untitled_results,
+                }
+            )
+            continue
+
+        best_score = max(profile_result["score"] for profile_result in scored_profiles)
+        best_profiles = [
+            profile_result["profile"]
+            for profile_result in scored_profiles
+            if profile_result["score"] == best_score
+        ]
+
+        if best_score < 1.0:
+            exclusion: dict[str, Any] = {
+                "query": query,
+                "reason": "no_profile_recovered_expected_videos",
+                "expected_videos": expected_videos,
+                "position": position,
+                "best_score": best_score,
+                "candidate_profiles": [result["profile"] for result in scored_profiles],
+            }
+            exclusions.append(exclusion)
+            continue
+
+        if len(best_profiles) > 1:
+            exclusions.append(
+                {
+                    "query": query,
+                    "reason": "ambiguous_profile_tie",
+                    "expected_videos": expected_videos,
+                    "tied_profiles": best_profiles,
+                    "best_score": best_score,
+                    "position": position,
+                }
+            )
+            continue
+
+        selected_profile = best_profiles[0]
+        labels[query_key] = selected_profile
+        record = {
+            "query": query,
+            "expected_videos": expected_videos,
+            "available_profiles": list(profiles),
+            "selected_profile": selected_profile,
+            "confidence": best_score,
+            "reasoning": f"{selected_profile} recovered {', '.join(expected_videos)}",
+            "example_id": f"span:profile-label:{position}",
+        }
+        for key in ("ground_truth", "query_type", "source"):
+            if key in query_record and query_record[key] not in (None, ""):
+                record[key] = query_record[key]
+        records.append(record)
+
+    return ProfileLabelDerivationResult(labels, records, exclusions)
+
+
+def _load_profile_selection_labels(
+    *,
+    queries_path: Path = PROFILE_SELECTION_LABEL_SOURCE_PATH,
+    candidate_profiles: Iterable[str],
+    retrieve: Callable[[str, str], Sequence[Mapping[str, Any]]],
+    title_fields: Mapping[str, str],
+) -> ProfileLabelDerivationResult:
+    queries = _load_profile_selection_label_source(queries_path)
+    return derive_profile_labels(
+        queries, candidate_profiles, retrieve, title_fields=title_fields
+    )
+
+
+def _profile_selection_label_source(
+    *,
+    config: Any,
+    config_manager: Any,
+    tenant_id: str,
+    candidate_profiles: Sequence[str],
+    schema_loader: SchemaLoader,
+) -> ProfileLabelDerivationResult:
+    """Derive the tenant's profile labels by running the shipped label source
+    through its SearchService per candidate profile."""
+    title_fields = _profile_selection_title_fields(
+        config_manager, tenant_id, candidate_profiles, schema_loader
+    )
+    search_service: Any | None = None
+
+    def retrieve(query: str, profile: str) -> list[dict[str, Any]]:
+        nonlocal search_service
+        if search_service is None:
+            from cogniverse_agents.search.service import SearchService
+
+            search_service = SearchService(
+                config=config,
+                config_manager=config_manager,
+                schema_loader=schema_loader,
+            )
+
+        results = search_service.search(
+            query=query,
+            profile=profile,
+            tenant_id=tenant_id,
+            top_k=10,
+        )
+        return [result.to_dict() for result in results]
+
+    return _load_profile_selection_labels(
+        candidate_profiles=candidate_profiles,
+        retrieve=retrieve,
+        title_fields=title_fields,
+    )
 
 
 def _profile_selection_pool(available_profiles) -> list[str]:
@@ -1769,6 +2159,11 @@ def is_scoreable(record: dict) -> bool:
     )
 
 
+def _profile_selection_is_scoreable(record: dict) -> bool:
+    """Profile selection records are labeled by ``selected_profile`` itself."""
+    return bool(str(record.get("selected_profile") or "").strip())
+
+
 def _served_scoreable_indices(
     records: list[dict], scoreable_predicate=is_scoreable
 ) -> list[int]:
@@ -2666,17 +3061,21 @@ def _profile_selection_example(record: Dict[str, Any]):
     """A DSPy example carrying a profile-selection span or approved record."""
     import dspy
 
-    query_intent = record.get("query_intent", record.get("intent", ""))
+    available_profiles = record.get("available_profiles", "")
+    if isinstance(available_profiles, (list, tuple, set)):
+        available_profiles = ", ".join(
+            str(profile).strip()
+            for profile in available_profiles
+            if str(profile).strip()
+        )
     fields = {
         "query": record["query"],
-        "available_profiles": record["available_profiles"],
+        "available_profiles": available_profiles,
         "selected_profile": record["selected_profile"],
-        "confidence": str(record.get("confidence", 0.0)),
-        "reasoning": record.get("reasoning", ""),
-        "query_intent": query_intent,
-        "modality": record.get("modality", "video"),
-        "complexity": record.get("complexity", "simple"),
     }
+    for key in ("confidence", "reasoning", "query_intent", "modality", "complexity"):
+        if key in record and record[key] not in (None, ""):
+            fields[key] = str(record[key]) if key == "confidence" else record[key]
     return dspy.Example(**fields).with_inputs(*_PROFILE_SELECTION_INPUTS)
 
 
@@ -3556,12 +3955,17 @@ async def run_profile_optimization(
 ) -> dict:
     """Profile selection optimization.
 
-    Reads cogniverse.profile_selection spans, builds training examples
-    from (query, available_profiles) -> selected_profile pairs, compiles
-    the ProfileSelectionAgent's DSPy module, and saves the optimized
-    module as an artifact.
+    Reads the shipped sample query corpus, derives one profile label per
+    recoverable query by running the tenant's real search backend against each
+    candidate profile, compiles the ProfileSelectionAgent's DSPy module, and
+    saves the optimized module as an artifact.
     """
-    from cogniverse_foundation.config.utils import create_default_config_manager
+    from cogniverse_agents.profile_selection_agent import tenant_usable_profile_names
+    from cogniverse_core.schemas.filesystem_loader import FilesystemSchemaLoader
+    from cogniverse_foundation.config.utils import (
+        create_default_config_manager,
+        get_config,
+    )
     from cogniverse_foundation.telemetry.config import SPAN_NAME_PROFILE_SELECTION
     from cogniverse_foundation.telemetry.manager import get_telemetry_manager
 
@@ -3608,14 +4012,28 @@ async def run_profile_optimization(
 
     logger.info("Found %d profile_selection spans", len(spans_df))
 
-    profile_pairs = _profile_selection_pairs(
-        spans_df, config_manager=config_manager, tenant_id=tenant_id
+    config = get_config(tenant_id=tenant_id, config_manager=config_manager)
+    candidate_profiles = tenant_usable_profile_names(config_manager, tenant_id)
+    schemas_dir = Path(os.environ.get("COGNIVERSE_SCHEMAS_DIR", "configs/schemas"))
+    label_source = await asyncio.to_thread(
+        _profile_selection_label_source,
+        config=config,
+        config_manager=config_manager,
+        tenant_id=tenant_id,
+        candidate_profiles=candidate_profiles,
+        schema_loader=FilesystemSchemaLoader(schemas_dir),
     )
+
+    profile_pairs = list(label_source.records)
     synthetic_demos = await _load_approved_synthetic_data(
         telemetry_provider, tenant_id, "profile"
     )
     consumed_example_ids = [pair["example_id"] for pair in profile_pairs]
     records = list(profile_pairs)
+    label_exclusions = {
+        "count": label_source.excluded_count,
+        "queries": list(label_source.excluded_queries),
+    }
     for demo in synthetic_demos:
         projected = _project_approved_optimizer_example("profile", demo)
         consumed_example_ids.append(demo["example_id"])
@@ -3634,7 +4052,12 @@ async def run_profile_optimization(
         )
     if not records:
         logger.info("No valid production or approved synthetic examples")
-        return {"status": "no_data", "spans_found": len(spans_df), "examples": 0}
+        return {
+            "status": "no_data",
+            "spans_found": len(spans_df),
+            "examples": 0,
+            "label_exclusions": label_exclusions,
+        }
 
     current_blob = await artifact_manager.load_blob("model", "profile_selection")
     min_samples, min_unique_queries = _population_floor_from_config(
@@ -3671,32 +4094,25 @@ async def run_profile_optimization(
             "min_samples": min_samples,
             "min_unique_queries": min_unique_queries,
             "version": version,
+            "label_exclusions": label_exclusions,
         }
 
     min_holdout = max(1, min_samples // 10)
-    served_records = []
-    for record in records:
-        served_record = dict(record)
-        if (
-            served_record["example_id"].startswith("span:")
-            and str(served_record.get("available_profiles") or "").strip()
-            and str(served_record.get("selected_profile") or "").strip()
-        ):
-            served_record["source_text"] = served_record["available_profiles"]
-            served_record["grounding_context"] = served_record["selected_profile"]
-        else:
-            served_record["source_text"] = ""
-            served_record["grounding_context"] = ""
-        served_records.append(served_record)
+    served_records = [dict(record) for record in records]
 
     served_scoreable_examples = len(
         _served_scoreable_indices(
             served_records,
+            scoreable_predicate=_profile_selection_is_scoreable,
         )
     )
     served_examples = len(profile_pairs)
     approved_examples = len(synthetic_demos)
-    train_records, holdout_records = _split_served_holdout(served_records, min_holdout)
+    train_records, holdout_records = _split_served_holdout(
+        served_records,
+        min_holdout,
+        scoreable_predicate=_profile_selection_is_scoreable,
+    )
     train_records, selection_report = await _apply_training_selection(
         artifact_manager=artifact_manager,
         config_manager=config_manager,
@@ -3727,7 +4143,8 @@ async def run_profile_optimization(
             "served_scoreable_examples": served_scoreable_examples,
             "training_examples": len(trainset),
             "holdout_examples": 0,
-            "holdout_source": "served",
+            "holdout_source": "derived_labels",
+            "label_exclusions": label_exclusions,
             **selection_summary,
         }
 
@@ -3735,9 +4152,7 @@ async def run_profile_optimization(
 
     from cogniverse_agents.profile_selection_agent import ProfileSelectionModule
     from cogniverse_foundation.config.llm_factory import create_dspy_lm
-    from cogniverse_foundation.config.utils import get_config
 
-    config = get_config(tenant_id=tenant_id, config_manager=config_manager)
     llm_config = config.get_llm_config()
     llm_endpoint = llm_config.resolve("optimization")
 
@@ -3772,7 +4187,12 @@ async def run_profile_optimization(
         )
     except Exception as e:
         logger.error("Profile DSPy compilation failed: %s", e)
-        return {"status": "failed", "error": str(e), **selection_summary}
+        return {
+            "status": "failed",
+            "error": str(e),
+            "label_exclusions": label_exclusions,
+            **selection_summary,
+        }
 
     decision = _select_simba_artifact(
         baseline_score,
@@ -3816,7 +4236,8 @@ async def run_profile_optimization(
         "served_scoreable_examples": served_scoreable_examples,
         "training_examples": len(trainset),
         "holdout_examples": len(holdout),
-        "holdout_source": "served",
+        "holdout_source": "derived_labels",
+        "label_exclusions": label_exclusions,
         **selection_summary,
         "baseline_score": baseline_score,
         "current_score": current_score,

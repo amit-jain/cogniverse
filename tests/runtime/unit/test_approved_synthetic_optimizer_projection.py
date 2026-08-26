@@ -246,6 +246,26 @@ async def test_synthetic_only_data_compiles_the_actual_production_module(
             return {"active": {"version": version, "activated_at": "now"}}
 
     monkeypatch.setattr(optimization_cli, "_query_spans_by_name", empty_spans)
+
+    def usable_profiles(config_manager, tenant_id):
+        assert tenant_id == "acme:production"
+        return ["video_colpali", "document_colpali"]
+
+    def no_derived_labels(
+        *, config, config_manager, tenant_id, candidate_profiles, schema_loader
+    ):
+        del config, config_manager, schema_loader
+        assert tenant_id == "acme:production"
+        assert candidate_profiles == ["video_colpali", "document_colpali"]
+        return optimization_cli.ProfileLabelDerivationResult({}, [], [])
+
+    monkeypatch.setattr(
+        "cogniverse_agents.profile_selection_agent.tenant_usable_profile_names",
+        usable_profiles,
+    )
+    monkeypatch.setattr(
+        optimization_cli, "_profile_selection_label_source", no_derived_labels
+    )
     monkeypatch.setattr(
         optimization_cli, "_load_approved_synthetic_data", approved_data
     )
@@ -325,7 +345,8 @@ async def test_synthetic_only_data_compiles_the_actual_production_module(
             "served_scoreable_examples": 0,
             "training_examples": 1,
             "holdout_examples": 0,
-            "holdout_source": "served",
+            "holdout_source": "derived_labels",
+            "label_exclusions": {"count": 0, "queries": []},
             "selection": {
                 "pool": 1,
                 "deduped": 1,
