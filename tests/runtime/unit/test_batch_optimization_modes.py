@@ -1912,7 +1912,6 @@ def _entity_example(*, query: str = "find entities", entities: str = "[]"):
     return dspy.Example(
         query=query,
         entities=entities,
-        entity_types="",
     ).with_inputs("query")
 
 
@@ -5841,7 +5840,6 @@ class TestEntityExtractionOptimization:
             {
                 "query": "find PyTorch tutorials",
                 "entities": "PyTorch|TECHNOLOGY|1.0",
-                "entity_types": "TECHNOLOGY",
             }
         ]
         return json.dumps(state, default=str)
@@ -6106,13 +6104,11 @@ class TestEntityExtractionOptimization:
             {
                 "query": "approved0 query",
                 "entities": [{"text": "approved0", "type": "CONCEPT"}],
-                "entity_types": "CONCEPT",
                 "example_id": "approved:entity-approved-0",
             },
             {
                 "query": "approved1 query",
                 "entities": [{"text": "approved1", "type": "CONCEPT"}],
-                "entity_types": "CONCEPT",
                 "example_id": "approved:entity-approved-1",
             },
         ]
@@ -6153,7 +6149,6 @@ class TestEntityExtractionOptimization:
             {
                 "reasoning": f"truth reasoning {i}",
                 "entities": f"truth{i}|CONCEPT|1.0",
-                "entity_types": "CONCEPT",
             }
             for i in range(8)
         ]
@@ -6435,16 +6430,15 @@ class TestEntityExtractionOptimization:
                 },
                 {"text": "houses", "type": "PLACE"},
             ],
-            "entity_types": "",
             "example_id": "span:ee-1",
         }
 
         example = _entity_extraction_example(record)
 
+        assert list(example.toDict()) == ["query", "entities"]
         assert example.toDict() == {
             "query": query,
             "entities": "man|PERSON|0.95\ndirt bike|CONCEPT|0.98\nhouses|PLACE|1.0",
-            "entity_types": "",
         }
         assert list(example.inputs().toDict()) == ["query"]
 
@@ -6462,12 +6456,6 @@ class TestEntityExtractionOptimization:
                 confidence=0.98,
                 context="eo begins with a man riding a dirt bike in a dirt field",
             ),
-            Entity(
-                text="houses",
-                type="PLACE",
-                confidence=1.0,
-                context="The video begins with a man riding a dirt bike in ",
-            ),
         ]
 
     def test_approved_pipe_lines_pass_through_unchanged(self):
@@ -6477,15 +6465,14 @@ class TestEntityExtractionOptimization:
             {
                 "query": "find PyTorch tutorials",
                 "entities": "PyTorch|TECHNOLOGY|1.0",
-                "entity_types": "TECHNOLOGY",
                 "example_id": "approved:1",
             }
         )
 
+        assert list(example.toDict()) == ["query", "entities"]
         assert example.toDict() == {
             "query": "find PyTorch tutorials",
             "entities": "PyTorch|TECHNOLOGY|1.0",
-            "entity_types": "TECHNOLOGY",
         }
 
     def test_entity_extraction_pairs_carry_span_ids(self):
@@ -6979,17 +6966,14 @@ class TestEntityBootstrapThreshold:
         {
             "reasoning": "r1",
             "entities": "Marie Curie|PERSON|0.9",
-            "entity_types": "PERSON",
         },
         {
             "reasoning": "r2",
             "entities": "Alan Turing|PERSON|0.9",
-            "entity_types": "PERSON",
         },
         {
             "reasoning": "r3",
             "entities": "Ada Lovelace|PERSON|0.9",
-            "entity_types": "PERSON",
         },
     ]
 
@@ -7003,9 +6987,7 @@ class TestEntityBootstrapThreshold:
             (f"{tag} lovelace", "Ada Lovelace|PERSON|1.0"),
         ]
         return [
-            dspy.Example(query=query, entities=entities, entity_types="").with_inputs(
-                "query"
-            )
+            dspy.Example(query=query, entities=entities).with_inputs("query")
             for query, entities in rows
         ]
 
@@ -8209,7 +8191,6 @@ class TestSyntheticGeneration:
                         {"text": "Marie Curie", "type": "PERSON"},
                         {"text": "radium", "type": "CONCEPT"},
                     ],
-                    "entity_types": "PERSON,CONCEPT",
                     "relationships": [],
                 },
                 0.0,

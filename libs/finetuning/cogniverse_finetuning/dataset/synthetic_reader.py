@@ -38,9 +38,7 @@ _REQUIRED_DATA_FIELDS = {
             "reasoning",
         }
     ),
-    "entity_extraction": frozenset(
-        {"query", "entities", "entity_types", "relationships"}
-    ),
+    "entity_extraction": frozenset({"query", "entities", "relationships"}),
 }
 
 
@@ -68,6 +66,24 @@ def _validated_list(
     return value
 
 
+def derive_entity_types(entities: List[Dict[str, Any]]) -> List[str]:
+    """Derive the ordered unique entity types from a canonical entity list."""
+    derived_types: List[str] = []
+    seen_types: set[str] = set()
+    for position, entity in enumerate(entities):
+        if not isinstance(entity, dict):
+            raise ValueError(f"entities at position {position} must be dictionaries")
+        entity_type = entity.get("type")
+        if not isinstance(entity_type, str) or not entity_type.strip():
+            raise ValueError(
+                f"entities at position {position} require a non-empty type string"
+            )
+        if entity_type not in seen_types:
+            seen_types.add(entity_type)
+            derived_types.append(entity_type)
+    return derived_types
+
+
 def _validate_entity_values(
     values: Dict[str, Any],
     *,
@@ -91,9 +107,6 @@ def _validate_entity_values(
                 f"{context} entity at position {position} requires exactly "
                 "non-empty text and type strings"
             )
-
-    if not isinstance(values.get("entity_types"), str):
-        raise ValueError(f"{context} requires an entity_types string")
 
     relationships = _validated_list(
         values,

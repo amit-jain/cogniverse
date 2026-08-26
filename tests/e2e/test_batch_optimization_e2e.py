@@ -4103,7 +4103,7 @@ class TestEntityExtractionOptimization:
         module = artifact["extractor.predict"]
         sig = module["signature"]
         field_names = [f.get("prefix", "").rstrip(":").strip() for f in sig["fields"]]
-        for expected in ("Query", "Entities", "Entity Types"):
+        for expected in ("Query", "Entities"):
             assert expected in field_names, f"Missing '{expected}', got: {field_names}"
         assert sig["instructions"] == "Extract named entities from text query"
         bootstrap = result["bootstrap"]
@@ -4147,11 +4147,11 @@ class TestEntityExtractionOptimization:
             bootstrap["max_labeled_demos"], result["training_examples"]
         ), demos
         assert [sorted(demo) for demo in augmented] == [
-            ["augmented", "entities", "entity_types", "query", "reasoning"]
+            ["augmented", "entities", "query", "reasoning"]
         ] * len(augmented), augmented
-        assert [sorted(demo) for demo in labeled] == [
-            ["entities", "entity_types", "query"]
-        ] * len(labeled), labeled
+        assert [sorted(demo) for demo in labeled] == [["entities", "query"]] * len(
+            labeled
+        ), labeled
         # Demos teach the signature's text|type|confidence lines, the only
         # form EntityExtractionAgent._parse_entities reads.
         assert [

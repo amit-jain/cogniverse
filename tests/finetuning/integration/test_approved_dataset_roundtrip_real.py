@@ -122,7 +122,6 @@ def test_reader_rejects_approved_record_without_agent_type():
                 "metadata.agent_type": "entity_extraction",
                 "query": "PyTorch was released by Meta AI",
                 "entities": "not-a-list",
-                "entity_types": "TECHNOLOGY,ORG",
                 "relationships": "[]",
             },
             "entity_extraction",
@@ -367,7 +366,6 @@ def telemetry_manager(phoenix_container):
             {
                 "query": "PyTorch was released by Meta AI",
                 "entities": "[]",
-                "entity_types": "TECHNOLOGY,ORG",
                 "relationships": [],
             },
             (
@@ -723,7 +721,6 @@ async def test_approved_synthetic_dataset_roundtrip(
                     {"text": "PyTorch", "type": "TECHNOLOGY"},
                     {"text": "Meta AI", "type": "ORG"},
                 ],
-                "entity_types": "TECHNOLOGY,ORG",
                 "relationships": [
                     {
                         "source": "PyTorch",
@@ -738,7 +735,6 @@ async def test_approved_synthetic_dataset_roundtrip(
                     {"text": "JAX", "type": "TECHNOLOGY"},
                     {"text": "Google", "type": "ORG"},
                 ],
-                "entity_types": "TECHNOLOGY,ORG",
                 "relationships": [
                     {
                         "source": "JAX",
@@ -755,7 +751,6 @@ async def test_approved_synthetic_dataset_roundtrip(
                     {"text": "Vespa", "type": "TECHNOLOGY"},
                     {"text": "Yahoo", "type": "ORG"},
                 ],
-                "entity_types": "TECHNOLOGY,ORG",
                 "relationships": [
                     {
                         "source": "Vespa",
@@ -770,7 +765,6 @@ async def test_approved_synthetic_dataset_roundtrip(
                     {"text": "Phoenix", "type": "TECHNOLOGY"},
                     {"text": "Arize", "type": "ORG"},
                 ],
-                "entity_types": "TECHNOLOGY,ORG",
                 "relationships": [
                     {
                         "source": "Phoenix",
@@ -821,7 +815,6 @@ async def test_approved_synthetic_dataset_roundtrip(
             "metadata.agent_type": "entity_extraction",
             "query": "This obsolete shared row must never be consumed",
             "entities": [{"text": "obsolete", "type": "CONCEPT"}],
-            "entity_types": "CONCEPT",
             "relationships": [],
         },
     )
@@ -864,7 +857,7 @@ async def test_approved_synthetic_dataset_roundtrip(
                     ),
                     "selected_profile": "video_colpali_smol500_mv_frame",
                     "reasoning": "Exact slide text requires frame retrieval.",
-                    "query_intent": "exact_text_retrieval",
+                    "query_intent": "document_search",
                     "modality": "video",
                     "complexity": "medium",
                 },
@@ -983,7 +976,7 @@ async def test_approved_synthetic_dataset_roundtrip(
             "available_profiles": "video_colpali_smol500_mv_frame,video_search",
             "selected_profile": "video_colpali_smol500_mv_frame",
             "reasoning": "Exact slide text requires frame retrieval.",
-            "query_intent": "exact_text_retrieval",
+            "query_intent": "document_search",
             "modality": "video",
             "complexity": "medium",
         }
@@ -1083,7 +1076,7 @@ async def test_approved_synthetic_dataset_roundtrip(
             "available_profiles": "video_colpali_smol500_mv_frame,video_search",
             "selected_profile": "video_colpali_smol500_mv_frame",
             "reasoning": "Exact slide text requires frame retrieval.",
-            "query_intent": "exact_text_retrieval",
+            "query_intent": "document_search",
             "modality": "video",
             "complexity": "medium",
             "metadata.agent_type": "profile_selection",
@@ -1105,14 +1098,14 @@ async def test_approved_synthetic_dataset_roundtrip(
                 '"2026-08-05T00:00:00+00:00","metadata.synthetic":true,'
                 '"modality":"video",'
                 '"query":"find exact text in presentation slides",'
-                '"query_intent":"exact_text_retrieval",'
+                '"query_intent":"document_search",'
                 '"reasoning":"Exact slide text requires frame retrieval.",'
                 '"reviewed_at":"2026-08-05T00:00:00+00:00",'
                 '"selected_profile":"video_colpali_smol500_mv_frame",'
                 '"status":"approved"}'
             ),
             "metadata.approval_record_sha256": (
-                "52724689c6ccd6fee1085555378f133da0305aab65645f415759ff365ce30d72"
+                "01bac8270d158211e37b3861a2dc9bc22af72938e3617268dfcecf737d19f5fa"
             ),
         },
     ]

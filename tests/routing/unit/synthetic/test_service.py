@@ -1219,7 +1219,6 @@ class TestSyntheticDataService:
             {
                 "query": calls[1],
                 "entities": [{"text": "Saturn V", "type": "TECHNOLOGY"}],
-                "entity_types": "TECHNOLOGY",
                 "relationships": [],
             }
         ]

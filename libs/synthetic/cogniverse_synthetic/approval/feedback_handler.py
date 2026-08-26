@@ -83,7 +83,7 @@ def _schema_for(data: dict[str, Any]) -> type[BaseModel]:
         return ProfileSelectionExampleSchema
     if "chosen_agent" in data:
         return RoutingExperienceSchema
-    if "entities" in data or "entity_types" in data or "relationships" in data:
+    if "entities" in data or "relationships" in data:
         return EntityExtractionExampleSchema
     if "enhanced_query" in data:
         return QueryEnhancementExampleSchema
@@ -394,7 +394,7 @@ class SyntheticDataFeedbackHandler(FeedbackHandler):
                 )
 
         if schema in {EntityExtractionExampleSchema, RoutingExperienceSchema}:
-            entities, entity_texts, entity_types = _canonical_entities(
+            entities, entity_texts, _entity_type_labels = _canonical_entities(
                 regenerated_data.get("entities"),
                 "regenerated data entities",
             )
@@ -406,9 +406,7 @@ class SyntheticDataFeedbackHandler(FeedbackHandler):
                 schema_name=schema.__name__,
                 field_name="regenerated data relationships",
             )
-            if schema is EntityExtractionExampleSchema:
-                regenerated_data["entity_types"] = ",".join(entity_types)
-            else:
+            if schema is not EntityExtractionExampleSchema:
                 regenerated_data["enhanced_query"] = _enhance_entity_query(
                     regenerated_data["query"], entities
                 )

@@ -60,7 +60,7 @@ def _schema_for_item_data(data: dict) -> type[BaseModel]:
         return ProfileSelectionExampleSchema
     if "chosen_agent" in data:
         return RoutingExperienceSchema
-    if "entities" in data or "entity_types" in data or "relationships" in data:
+    if "entities" in data or "relationships" in data:
         return EntityExtractionExampleSchema
     if "enhanced_query" in data:
         return QueryEnhancementExampleSchema

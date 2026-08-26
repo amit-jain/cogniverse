@@ -370,8 +370,9 @@ render_enhanced_optimization_tab()
 
   Entity objects contain exactly non-empty `text` and `type` strings. Relationship objects
   contain exactly non-empty `source`, `target`, and `type` strings, and both endpoints must
-  name an entity in the corrected entity list. Query regeneration derives `entity_types` and
-  routing query fields, so the dashboard does not submit those as entity/routing corrections.
+  name an entity in the corrected entity list. Query regeneration derives the entity type
+  information from the corrected entity list and routing fields separately, so the dashboard
+  does not submit those as entity/routing corrections.
 
 - Approval and rejection both call `HumanApprovalAgent.apply_decision()` with the item's
   owning batch ID. The UI changes local status only after the decision has persisted. Approval
