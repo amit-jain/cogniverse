@@ -25,7 +25,7 @@ pytestmark = pytest.mark.skipif(
 )
 
 
-def _render_chart(*set_args: str) -> list:
+def _render_chart(*set_args: str, values: str | tuple[str, ...] | None = None) -> list:
     args = [
         "helm",
         "template",
@@ -34,6 +34,8 @@ def _render_chart(*set_args: str) -> list:
         "--set",
         "runtime.qualityMonitor.tenantId=test-tenant",
     ]
+    for values_file in (values,) if isinstance(values, str) else (values or ()):
+        args += ["-f", str(CHART_PATH / values_file)]
     for s in set_args:
         args += ["--set", s]
     result = subprocess.run(args, capture_output=True, text=True, check=False)
@@ -358,12 +360,15 @@ def _ingestor_container_env_entries(manifests: list) -> list[dict]:
 @pytest.mark.unit
 @pytest.mark.ci_fast
 class TestInferenceApiKeyDelivery:
-    """Pods that dial INFERENCE_SERVICE_URLS endpoints authenticate to
-    https://*.modal.run via COGNIVERSE_INFERENCE_API_KEY. The CLI syncs the
-    key into Secret cogniverse-inference-api-key; the secretKeyRef is
-    optional so a fully-local stack starts without it."""
+    """Pods that dial inference endpoints use the shared Modal bearer when
+    any enabled inference service is external. Fully in-cluster renders keep
+    the no-auth placeholder so the stack still starts without the Secret."""
 
-    EXPECTED_ENTRY = {
+    PLACEHOLDER_ENTRY = {
+        "name": "COGNIVERSE_INFERENCE_API_KEY",
+        "value": "placeholder-no-auth-needed",
+    }
+    SECRET_ENTRY = {
         "name": "COGNIVERSE_INFERENCE_API_KEY",
         "valueFrom": {
             "secretKeyRef": {
@@ -374,12 +379,35 @@ class TestInferenceApiKeyDelivery:
         },
     }
 
-    def test_runtime_receives_the_key_from_the_synced_secret(self):
-        entries = _runtime_container_env_entries(_render_chart())
+    @staticmethod
+    def _api_key_entry(entries: list[dict]) -> dict:
         matches = [e for e in entries if e["name"] == "COGNIVERSE_INFERENCE_API_KEY"]
-        assert matches == [self.EXPECTED_ENTRY]
+        assert len(matches) == 1
+        return matches[0]
 
-    def test_ingestor_receives_the_key_from_the_synced_secret(self):
-        entries = _ingestor_container_env_entries(_render_chart())
-        matches = [e for e in entries if e["name"] == "COGNIVERSE_INFERENCE_API_KEY"]
-        assert matches == [self.EXPECTED_ENTRY]
+    def test_runtime_and_ingestor_receive_the_placeholder_when_teacher_stays_cluster_local(
+        self,
+    ):
+        manifests = _render_chart(values="values.rocm.yaml")
+
+        assert self._api_key_entry(_runtime_container_env_entries(manifests)) == (
+            self.PLACEHOLDER_ENTRY
+        )
+        assert self._api_key_entry(_ingestor_container_env_entries(manifests)) == (
+            self.PLACEHOLDER_ENTRY
+        )
+
+    def test_runtime_and_ingestor_switch_to_the_synced_secret_for_an_external_teacher(
+        self,
+    ):
+        manifests = _render_chart(
+            "inference.vllm_llm_teacher.externalUrl=https://example.modal.run/v1",
+            values="values.rocm.yaml",
+        )
+
+        assert self._api_key_entry(_runtime_container_env_entries(manifests)) == (
+            self.SECRET_ENTRY
+        )
+        assert self._api_key_entry(_ingestor_container_env_entries(manifests)) == (
+            self.SECRET_ENTRY
+        )

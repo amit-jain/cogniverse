@@ -1187,6 +1187,53 @@ def test_successful_session_releases_each_provider_once():
 
 
 @pytest.mark.unit
+def test_modal_endpoint_provider_releases_only_the_services_it_warmed():
+    class RecordingLifecycle:
+        def __init__(self) -> None:
+            self.warm_calls: list[tuple[str, ...]] = []
+            self.release_calls: list[tuple[str, ...]] = []
+
+        def warm(self, services):
+            services = tuple(services)
+            self.warm_calls.append(services)
+            return tuple(
+                _resolved(service, "modal", f"https://{service}.modal.run")
+                for service in services
+            )
+
+        def release(self, services):
+            self.release_calls.append(tuple(services))
+
+    lifecycle = RecordingLifecycle()
+    provider = ModalEndpointProvider(lifecycle)
+    provider.resolve(get_inference_service_spec("vllm_colpali"))
+    provider.close()
+    provider.close()
+
+    assert lifecycle.warm_calls == [("vllm_colpali",)]
+    assert lifecycle.release_calls == [("vllm_colpali",)]
+
+
+@pytest.mark.unit
+def test_modal_endpoint_provider_close_without_warm_does_not_release():
+    class RecordingLifecycle:
+        def __init__(self) -> None:
+            self.release_calls: list[tuple[str, ...]] = []
+
+        def warm(self, services):
+            raise AssertionError("warm should not be called")
+
+        def release(self, services):
+            self.release_calls.append(tuple(services))
+
+    lifecycle = RecordingLifecycle()
+    provider = ModalEndpointProvider(lifecycle)
+    provider.close()
+
+    assert lifecycle.release_calls == []
+
+
+@pytest.mark.unit
 def test_closed_resolver_rejects_resolve_and_resolve_required_without_provider_calls():
     provider = _Provider(
         "local",

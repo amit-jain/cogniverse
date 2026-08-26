@@ -141,6 +141,11 @@ cogniverse inference modal undeploy vllm_colpali --confirm-service vllm_colpali
 
 `cogniverse inference modal` uses `ModalInferenceLifecycle` from `modal_inference_lifecycle.py`. `deploy`, `release`, and `status` operate on one or more canonical Modal services; `warm` fetches authenticated endpoints and live runner counts; `qualify` picks the earliest configured GPU from the supplied candidates; `undeploy` requires an exact `--confirm-service` match.
 
+`modal_inference_config.py` is the contract source for each service's immutable
+model revision, GPU candidates, secret requirements, and the pre-measurement
+`boot_deadline_seconds` that Modal serving and the runtime teacher probe share
+for scale-to-zero services.
+
 ### Coding agent
 
 ```bash

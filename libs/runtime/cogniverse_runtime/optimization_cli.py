@@ -25,12 +25,14 @@ import json
 import logging
 import os
 import sys
+import time
 import uuid
 from collections import Counter
 from collections.abc import Mapping
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import Any, Callable, Dict, Iterable, List, Optional, Sequence
+from urllib.parse import urlsplit
 
 from cogniverse_agents.optimizer.example_selection import (
     TRAINING_SELECTION_DEFAULTS as _TRAINING_SELECTION_DEFAULTS,
@@ -70,6 +72,21 @@ _TRAINING_SELECTION_FIELDS = (
     ("downweight_factor", float),
     ("confirmation_score_threshold", float),
 )
+
+
+def _teacher_boot_deadline_seconds() -> float:
+    from cogniverse_cli.modal_inference_config import get_inference_service_spec
+
+    return get_inference_service_spec("vllm_llm_teacher").boot_deadline_seconds
+
+
+def _teacher_endpoint_is_modal(api_base: str) -> bool:
+    parsed = urlsplit(api_base)
+    return (
+        parsed.scheme == "https"
+        and parsed.hostname is not None
+        and parsed.hostname.endswith(".modal.run")
+    )
 
 
 @contextlib.contextmanager
@@ -310,7 +327,9 @@ def _query_enhancement_quality(prediction, example) -> float | None:
     return 1.0
 
 
-def teacher_lm_or_raise(llm_config, *, probe=None):
+def teacher_lm_or_raise(
+    llm_config, *, probe=None, now=time.monotonic, sleep=time.sleep
+):
     """Build the DSPy teacher LM, refusing when nothing serves the endpoint.
 
     BootstrapFewShot asks the teacher for every demonstration, so a declared
@@ -321,13 +340,30 @@ def teacher_lm_or_raise(llm_config, *, probe=None):
     """
     from cogniverse_foundation.config.llm_factory import create_dspy_lm
 
-    endpoint = require_reachable_teacher(llm_config, probe=probe)
+    endpoint = require_reachable_teacher(
+        llm_config,
+        probe=probe,
+        now=now,
+        sleep=sleep,
+    )
     return create_dspy_lm(endpoint)
 
 
-def require_reachable_teacher(llm_config, *, probe=None):
+def require_reachable_teacher(
+    llm_config,
+    *,
+    probe=None,
+    now=time.monotonic,
+    sleep=time.sleep,
+):
     """Return the teacher endpoint, refusing when nothing serves it."""
-    from cogniverse_runtime.inference_health_check import probe_service_model
+    from cogniverse_foundation.config.inference_auth import inference_headers
+    from cogniverse_runtime.inference_health_check import (
+        DEFAULT_RETRY_INTERVAL_SECONDS,
+        InferenceServiceMismatch,
+        _probe_until_reachable,
+        probe_service_model,
+    )
 
     endpoint = llm_config.resolve_teacher()
     api_base = (getattr(endpoint, "api_base", None) or "").rstrip("/")
@@ -338,7 +374,48 @@ def require_reachable_teacher(llm_config, *, probe=None):
         )
     service_root = api_base[: -len("/v1")] if api_base.endswith("/v1") else api_base
 
-    served = (probe or probe_service_model)(service_root)
+    if _teacher_endpoint_is_modal(api_base):
+        boot_deadline_seconds = _teacher_boot_deadline_seconds()
+        probe_fn = probe or probe_service_model
+        session = None
+        owns_session = False
+        if probe is None:
+            import requests
+
+            headers = inference_headers(api_base)
+            endpoint.api_key = headers["Authorization"].removeprefix("Bearer ")
+            session = requests.Session()
+            session.headers.update(headers)
+
+            def probe_with_auth(url: str):
+                return probe_service_model(url, session=session)
+
+            probe_fn = probe_with_auth
+            owns_session = True
+        try:
+            try:
+                served = _probe_until_reachable(
+                    probe_fn,
+                    "LLM teacher endpoint",
+                    service_root,
+                    now() + boot_deadline_seconds,
+                    DEFAULT_RETRY_INTERVAL_SECONDS,
+                    sleep,
+                    now,
+                )
+            except InferenceServiceMismatch:
+                raise RuntimeError(
+                    f"LLM teacher endpoint {api_base} did not respond with a "
+                    f"model identifier within {boot_deadline_seconds:g}s; DSPy "
+                    "bootstrap requires it to generate demonstrations. Enable "
+                    "inference.vllm_llm_teacher and wait for the pod to "
+                    "report ready."
+                ) from None
+        finally:
+            if owns_session and session is not None:
+                session.close()
+    else:
+        served = (probe or probe_service_model)(service_root)
     if served is None:
         raise RuntimeError(
             f"LLM teacher endpoint {api_base} is unreachable; DSPy bootstrap "
