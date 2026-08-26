@@ -3463,6 +3463,29 @@ async def run_profile_optimization(
     telemetry_manager = get_telemetry_manager(otlp_endpoint=telemetry_otlp_endpoint)
     telemetry_provider = telemetry_manager.get_provider(tenant_id=tenant_id)
 
+    from cogniverse_agents.optimizer.artifact_manager import ArtifactManager
+    from cogniverse_agents.optimizer.profile_selection_ground_truth import (
+        ProfileSelectionGroundTruthMissingError,
+        ProfileSelectionGroundTruthStoreUnavailableError,
+        load_profile_selection_ground_truth_rows,
+    )
+
+    artifact_manager = ArtifactManager(telemetry_provider, tenant_id)
+    try:
+        ground_truth_rows = await load_profile_selection_ground_truth_rows(
+            artifact_manager
+        )
+    except ProfileSelectionGroundTruthMissingError as exc:
+        return exc.to_result()
+    except ProfileSelectionGroundTruthStoreUnavailableError as exc:
+        return exc.to_result()
+
+    logger.info(
+        "Loaded %d profile_selection ground-truth rows for tenant=%s",
+        len(ground_truth_rows),
+        tenant_id,
+    )
+
     spans_df = await _query_spans_by_name(
         telemetry_manager,
         telemetry_provider,
@@ -3501,9 +3524,6 @@ async def run_profile_optimization(
         logger.info("No valid production or approved synthetic examples")
         return {"status": "no_data", "spans_found": len(spans_df), "examples": 0}
 
-    from cogniverse_agents.optimizer.artifact_manager import ArtifactManager
-
-    artifact_manager = ArtifactManager(telemetry_provider, tenant_id)
     current_blob = await artifact_manager.load_blob("model", "profile_selection")
     min_samples, min_unique_queries = _population_floor_from_config(
         tenant_id, config_manager, "profile_selection"
