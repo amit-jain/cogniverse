@@ -731,6 +731,16 @@ class ArtifactManager:
         state = json.loads(raw)
         return {"active": state.get("active")}
 
+    async def _active_blob_version(self, kind: str, key: str) -> int | None:
+        state = await self.get_blob_state(kind, key)
+        active = state.get("active")
+        if not isinstance(active, dict):
+            return None
+        version = active.get("version")
+        if version is None:
+            return None
+        return int(version)
+
     async def activate_version(
         self, kind: str, key: str, version: int
     ) -> Dict[str, Any]:
@@ -755,6 +765,70 @@ class ArtifactManager:
             "Activated blob %s/%s v%d for %s", kind, key, version, self._tenant_id
         )
         return state
+
+    def _active_blob_state(self, version: int) -> Dict[str, Any]:
+        return {
+            "active": {
+                "version": version,
+                "activated_at": datetime.now(timezone.utc).isoformat(),
+            }
+        }
+
+    async def activate_version_guarded(
+        self, kind: str, key: str, version: int
+    ) -> Dict[str, Any]:
+        """Serve ``version`` unless a newer active version has already won.
+
+        This helper is optimistic, not transactional: it re-reads the active
+        version marker and the saved version history after publishing. If a
+        newer version is visible, it repairs the active blob to that newer
+        content before returning. That keeps the final active marker/content
+        pair aligned with the highest version observed during the call, but it
+        does not coordinate concurrent replicas.
+        """
+        desired_version = version
+        desired_content, _ = await self.load_blob_version(kind, key, desired_version)
+
+        while True:
+            current_version = await self._active_blob_version(kind, key)
+
+            if current_version is not None and current_version > desired_version:
+                desired_version = current_version
+                desired_content, _ = await self.load_blob_version(
+                    kind, key, desired_version
+                )
+
+            await self.save_blob(kind, key, desired_content)
+            await self.save_blob(
+                "config",
+                self._blob_state_key(kind, key),
+                json.dumps(self._active_blob_state(desired_version)),
+            )
+
+            confirmed_version = await self._active_blob_version(kind, key)
+            if confirmed_version is not None and confirmed_version > desired_version:
+                desired_version = confirmed_version
+                desired_content, _ = await self.load_blob_version(
+                    kind, key, desired_version
+                )
+                continue
+
+            latest_version = await self._get_next_version(kind, key) - 1
+            if latest_version > desired_version:
+                desired_version = latest_version
+                desired_content, _ = await self.load_blob_version(
+                    kind, key, desired_version
+                )
+                continue
+
+            logger.info(
+                "Activated blob %s/%s v%d for %s",
+                kind,
+                key,
+                desired_version,
+                self._tenant_id,
+            )
+            return await self.get_blob_state(kind, key)
 
     def _versioned_dataset_name(self, kind: str, agent_type: str, version: int) -> str:
         return f"dspy-{kind}-{self._tenant_id}-{agent_type}-v{version}"
