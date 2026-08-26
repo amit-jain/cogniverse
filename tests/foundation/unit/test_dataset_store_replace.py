@@ -1,13 +1,15 @@
-"""DatasetStore.replace_dataset: last-write-wins with torn-create compensation.
+"""DatasetStore.replace_dataset: serialized last-write-wins with compensation.
 
 ``create_dataset`` appends a new version when the name already exists, so the
 stable artefact names accumulated stale rows every save. ``replace_dataset``
-deletes then creates so the read returns only the latest write — and restores
-the previous contents if the create fails after the delete committed, so a torn
-replace never destroys the prior dataset.
+serializes same-name writes, deletes then creates so the read returns only the
+latest write, and restores the previous contents if the delete or create fails
+after the old data is gone.
 """
 
 from __future__ import annotations
+
+import asyncio
 
 import pandas as pd
 import pytest
@@ -56,7 +58,7 @@ async def test_replace_returns_only_latest_write():
     await store.replace_dataset("d", pd.DataFrame([{"v": "first"}]))
     await store.replace_dataset("d", pd.DataFrame([{"v": "second"}]))
     got = await store.get_dataset("d")
-    assert list(got["v"]) == ["second"], "replace must not accumulate prior rows"
+    pd.testing.assert_frame_equal(got, pd.DataFrame([{"v": "second"}]))
 
 
 @pytest.mark.asyncio
@@ -69,7 +71,7 @@ async def test_replace_restores_previous_on_torn_create():
     # The delete committed and the new create failed — the previous contents
     # must have been restored, not left destroyed.
     restored = await store.get_dataset("d")
-    assert list(restored["v"]) == ["original"], "torn replace destroyed prior data"
+    pd.testing.assert_frame_equal(restored, pd.DataFrame([{"v": "original"}]))
 
 
 @pytest.mark.asyncio
@@ -92,7 +94,9 @@ async def test_replace_on_absent_name_creates_fresh():
     store = _FakeStore()
     # No prior dataset — replace must simply create it (no restore attempted).
     await store.replace_dataset("d", pd.DataFrame([{"v": "x"}]))
-    assert list((await store.get_dataset("d"))["v"]) == ["x"]
+    pd.testing.assert_frame_equal(
+        await store.get_dataset("d"), pd.DataFrame([{"v": "x"}])
+    )
 
 
 class _OutageOnPreReadStore(DatasetStore):
@@ -158,6 +162,55 @@ class _AbsentDatasetStore(_FakeStore):
         return self.data[name]
 
 
+class _ControlledReplaceStore(DatasetStore):
+    """In-memory DatasetStore with fault and concurrency hooks."""
+
+    def __init__(self):
+        self.data: dict[str, pd.DataFrame] = {}
+        self.create_calls: list[str] = []
+        self.delete_calls: list[str] = []
+        self.fail_next_create = False
+        self.fail_delete_after_commit = False
+        self.block_first_create = False
+        self.first_create_entered = asyncio.Event()
+        self.release_first_create = asyncio.Event()
+        self.active_creates = 0
+        self.max_active_creates = 0
+
+    async def create_dataset(self, name, data, metadata=None):
+        self.create_calls.append(name)
+        self.active_creates += 1
+        if self.active_creates > self.max_active_creates:
+            self.max_active_creates = self.active_creates
+        try:
+            if self.block_first_create and not self.first_create_entered.is_set():
+                self.first_create_entered.set()
+                await self.release_first_create.wait()
+            if self.fail_next_create:
+                self.fail_next_create = False
+                raise ConnectionError("create failed inside create")
+            self.data[name] = data.copy()
+            return name
+        finally:
+            self.active_creates -= 1
+
+    async def get_dataset(self, name):
+        if name not in self.data:
+            raise KeyError(name)
+        return self.data[name]
+
+    async def append_to_dataset(self, name, data, metadata=None):
+        raise NotImplementedError
+
+    async def delete_dataset(self, name):
+        self.delete_calls.append(name)
+        existed = self.data.pop(name, None) is not None
+        if self.fail_delete_after_commit:
+            self.fail_delete_after_commit = False
+            raise ConnectionError("delete failed after commit")
+        return existed
+
+
 @pytest.mark.asyncio
 async def test_replace_typed_not_found_creates_fresh():
     store = _AbsentDatasetStore()
@@ -165,4 +218,67 @@ async def test_replace_typed_not_found_creates_fresh():
     result = await store.replace_dataset("d", pd.DataFrame([{"v": "new"}]))
 
     assert result == "d"
-    assert list((await store.get_dataset("d"))["v"]) == ["new"]
+    pd.testing.assert_frame_equal(
+        await store.get_dataset("d"), pd.DataFrame([{"v": "new"}])
+    )
+
+
+@pytest.mark.asyncio
+async def test_replace_restores_previous_when_delete_commits_then_raises():
+    store = _ControlledReplaceStore()
+    original = pd.DataFrame([{"v": "original"}])
+    store.data["d"] = original.copy()
+    store.fail_delete_after_commit = True
+
+    with pytest.raises(ConnectionError, match="delete failed after commit"):
+        await store.replace_dataset("d", pd.DataFrame([{"v": "new"}]))
+
+    restored = await store.get_dataset("d")
+    pd.testing.assert_frame_equal(restored, original)
+    assert store.delete_calls == ["d"]
+    assert store.create_calls == ["d"]
+
+
+@pytest.mark.asyncio
+async def test_replace_restores_previous_when_create_raises():
+    store = _ControlledReplaceStore()
+    original = pd.DataFrame([{"v": "original"}])
+    store.data["d"] = original.copy()
+    store.fail_next_create = True
+
+    with pytest.raises(ConnectionError, match="create failed inside create"):
+        await store.replace_dataset("d", pd.DataFrame([{"v": "new"}]))
+
+    restored = await store.get_dataset("d")
+    pd.testing.assert_frame_equal(restored, original)
+    assert store.delete_calls == ["d"]
+    assert store.create_calls == ["d", "d"]
+
+
+@pytest.mark.asyncio
+async def test_replace_serializes_concurrent_writes():
+    store = _ControlledReplaceStore()
+    first = pd.DataFrame([{"v": "first"}])
+    second = pd.DataFrame([{"v": "second"}])
+    store.data["d"] = pd.DataFrame([{"v": "seed"}])
+    store.block_first_create = True
+
+    first_task = asyncio.create_task(store.replace_dataset("d", first))
+    await asyncio.wait_for(store.first_create_entered.wait(), timeout=5)
+
+    second_task = asyncio.create_task(store.replace_dataset("d", second))
+    await asyncio.sleep(0)
+
+    assert store.active_creates == 1
+    assert store.max_active_creates == 1
+    assert store.delete_calls == ["d"]
+    assert store.create_calls == ["d"]
+
+    store.release_first_create.set()
+    await asyncio.gather(first_task, second_task)
+
+    final = await store.get_dataset("d")
+    pd.testing.assert_frame_equal(final, second)
+    assert store.delete_calls == ["d", "d"]
+    assert store.create_calls == ["d", "d"]
+    assert store.max_active_creates == 1
