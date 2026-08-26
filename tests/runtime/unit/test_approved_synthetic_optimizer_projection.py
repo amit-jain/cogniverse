@@ -311,6 +311,7 @@ async def test_synthetic_only_data_compiles_the_actual_production_module(
                 "cap": 300,
                 "mmr_applied": False,
                 "decayed_count": 0,
+                "decayed_example_ids": [],
             },
         }
         assert captured == {}
@@ -330,6 +331,7 @@ async def test_synthetic_only_data_compiles_the_actual_production_module(
                 "cap": 300,
                 "mmr_applied": False,
                 "decayed_count": 0,
+                "decayed_example_ids": [],
             },
         }
         assert captured == {}
@@ -349,6 +351,7 @@ async def test_synthetic_only_data_compiles_the_actual_production_module(
                 "cap": 300,
                 "mmr_applied": False,
                 "decayed_count": 0,
+                "decayed_example_ids": [],
             },
         }
         assert captured == {}

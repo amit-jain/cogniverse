@@ -29,7 +29,8 @@ def _selection_block(
     cap: int = 300,
     mmr_applied: bool = False,
     decayed_count: int = 0,
-) -> dict[str, dict[str, int | bool]]:
+    decayed_example_ids: list[str] | None = None,
+) -> dict[str, dict[str, int | bool | list[str]]]:
     return {
         "selection": {
             "pool": pool,
@@ -37,6 +38,7 @@ def _selection_block(
             "cap": cap,
             "mmr_applied": mmr_applied,
             "decayed_count": decayed_count,
+            "decayed_example_ids": decayed_example_ids or [],
         }
     }
 
@@ -164,8 +166,9 @@ def test_decay_weight_and_selection_report_cover_all_corners():
     old_seen = datetime(2026, 8, 1, tzinfo=timezone.utc)
     fresh_seen = datetime(2026, 8, 29, tzinfo=timezone.utc)
     stats = {
-        "span:old-unconfirmed": ExampleStats(0, old_seen),
+        "span:old-a": ExampleStats(0, old_seen),
         "span:old-confirmed": ExampleStats(3, old_seen),
+        "span:old-z": ExampleStats(0, old_seen),
         "span:fresh-unconfirmed": ExampleStats(0, fresh_seen),
         "span:fresh-confirmed": ExampleStats(3, fresh_seen),
     }
@@ -176,8 +179,9 @@ def test_decay_weight_and_selection_report_cover_all_corners():
         for example_id in stats
     }
     assert weights == {
-        "span:old-unconfirmed": 0.5,
+        "span:old-a": 0.5,
         "span:old-confirmed": 1.0,
+        "span:old-z": 0.5,
         "span:fresh-unconfirmed": 1.0,
         "span:fresh-confirmed": 1.0,
     }
@@ -186,9 +190,10 @@ def test_decay_weight_and_selection_report_cover_all_corners():
         raise AssertionError("embed_fn called below cap")
 
     records = [
-        {"example_id": "span:old-unconfirmed", "query": "old unconfirmed"},
-        {"example_id": "span:old-confirmed", "query": "old confirmed"},
         {"example_id": "span:fresh-unconfirmed", "query": "fresh unconfirmed"},
+        {"example_id": "span:old-z", "query": "old z"},
+        {"example_id": "span:old-confirmed", "query": "old confirmed"},
+        {"example_id": "span:old-a", "query": "old a"},
         {"example_id": "span:fresh-confirmed", "query": "fresh confirmed"},
     ]
     selected, report = select_training_records(
@@ -200,18 +205,21 @@ def test_decay_weight_and_selection_report_cover_all_corners():
 
     assert selected == records
     assert report == SelectionReport(
-        pool=4,
-        deduped=4,
+        pool=5,
+        deduped=5,
         cap=knobs.trainset_cap,
         mmr_applied=False,
-        decayed_count=1,
+        decayed_count=2,
+        decayed_example_ids=["span:old-a", "span:old-z"],
         selected_ids=[
-            "span:old-unconfirmed",
-            "span:old-confirmed",
             "span:fresh-unconfirmed",
+            "span:old-z",
+            "span:old-confirmed",
+            "span:old-a",
             "span:fresh-confirmed",
         ],
     )
+    assert report.decayed_count == len(report.decayed_example_ids)
 
 
 def test_decay_weight_uses_shipped_entity_threshold_and_real_ledger_shape():
@@ -315,6 +323,7 @@ def test_mmr_prefers_diverse_over_duplicate_direction():
         cap=2,
         mmr_applied=True,
         decayed_count=1,
+        decayed_example_ids=["span:c"],
         selected_ids=["span:a", "span:b"],
     )
     assert calls == [["alpha one", "alpha two", "beta"]]

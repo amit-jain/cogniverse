@@ -5054,6 +5054,7 @@ class TestTrainingSelectionDecay:
             cap=TRAINING_SELECTION_DEFAULTS.trainset_cap,
             mmr_applied=False,
             decayed_count=1,
+            decayed_example_ids=["span:old-unconfirmed"],
             selected_ids=[
                 "span:old-unconfirmed",
                 "span:old-confirmed",
@@ -5061,6 +5062,7 @@ class TestTrainingSelectionDecay:
                 "span:fresh-confirmed",
             ],
         )
+        assert report.decayed_count == len(report.decayed_example_ids)
         assert {
             example_id for example_id, weight in weights.items() if weight < 1.0
         } == {"span:old-unconfirmed"}
@@ -5354,10 +5356,9 @@ class TestTrainingSelectionDecay:
         assert result["selection"]["decayed_count"] == len(
             expected_decayed_example_ids
         ), result
-        assert expected_decayed_example_ids == {result["consumed_example_ids"][1]}, (
-            result,
-            expected_decayed_example_ids,
-        )
+        assert set(result["selection"]["decayed_example_ids"]) == (
+            expected_decayed_example_ids
+        ), result
         assert result["consumed_example_ids"][0].startswith("span:"), result
         assert result["consumed_example_ids"][1:] == [
             "approved:entity-old-unconfirmed",
