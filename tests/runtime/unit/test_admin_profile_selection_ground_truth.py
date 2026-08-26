@@ -52,6 +52,9 @@ class _StubArtifactManager:
         return "dataset-1", 1
 
     async def activate_version(self, kind, key, version):
+        return await self.activate_version_guarded(kind, key, version)
+
+    async def activate_version_guarded(self, kind, key, version):
         self.activate_calls.append((kind, key, version))
         return {
             "active": {"version": version, "activated_at": "2026-08-26T00:00:00+00:00"}

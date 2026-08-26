@@ -180,6 +180,8 @@ async def test_upload_round_trip_persists_canonical_rows_and_reads_back(monkeypa
         versioned_name,
         active_name,
         state_name,
+        state_name,
+        state_name,
     ]
     assert store.datasets[versioned_name].to_dict("records") == [
         {
@@ -408,21 +410,94 @@ async def test_concurrent_puts_last_writer_wins(monkeypatch):
     assert second_response.status_code == 200, second_response.text
     assert first_response.json()["version"] == 1
     assert second_response.json()["version"] == 2
+    assert first_response.json()["active"]["version"] == 2
+    assert second_response.json()["active"]["version"] == 2
     assert build_calls == ["acme:acme", "acme:acme"]
 
     from cogniverse_agents.optimizer.entity_extraction_ground_truth import (
         load_entity_extraction_ground_truth_rows,
     )
 
-    loaded = await load_entity_extraction_ground_truth_rows(am)
-    assert loaded == first_expected
-    assert loaded != second_expected
-
+    version1_name = am._versioned_dataset_name(
+        "config", "entity_extraction_ground_truth", 1
+    )
+    version2_name = am._versioned_dataset_name(
+        "config", "entity_extraction_ground_truth", 2
+    )
     active_name = am._blob_dataset_name("config", "entity_extraction_ground_truth")
-    assert store.datasets[active_name].to_dict("records") == [
+    state_name = am._blob_dataset_name(
+        "config", "blob_state_config_entity_extraction_ground_truth"
+    )
+
+    assert store.datasets[version1_name].to_dict("records") == [
         {
             "content": json.dumps(
                 first_expected, separators=(",", ":"), ensure_ascii=False
+            ),
+            "ledger": json.dumps(
+                {
+                    "version": 1,
+                    "kind": "config",
+                    "key": "entity_extraction_ground_truth",
+                    "consumed_example_ids": [
+                        "admin_upload:entity_extraction_ground_truth"
+                    ],
+                    "decision": "promote",
+                    "scored": False,
+                    "score": None,
+                    "base_score": None,
+                    "candidate_score": None,
+                    "created_at": FIXED_NOW.isoformat(),
+                },
+                ensure_ascii=False,
+            ),
+        }
+    ]
+    assert store.datasets[version2_name].to_dict("records") == [
+        {
+            "content": json.dumps(
+                second_expected, separators=(",", ":"), ensure_ascii=False
+            ),
+            "ledger": json.dumps(
+                {
+                    "version": 2,
+                    "kind": "config",
+                    "key": "entity_extraction_ground_truth",
+                    "consumed_example_ids": [
+                        "admin_upload:entity_extraction_ground_truth"
+                    ],
+                    "decision": "promote",
+                    "scored": False,
+                    "score": None,
+                    "base_score": None,
+                    "candidate_score": None,
+                    "created_at": FIXED_NOW.isoformat(),
+                },
+                ensure_ascii=False,
+            ),
+        }
+    ]
+    assert store.datasets[active_name].to_dict("records") == [
+        {
+            "content": json.dumps(
+                second_expected, separators=(",", ":"), ensure_ascii=False
             )
         }
     ]
+    assert store.datasets[state_name].to_dict("records") == [
+        {
+            "content": json.dumps(
+                {
+                    "active": {
+                        "version": 2,
+                        "activated_at": FIXED_NOW.isoformat(),
+                    }
+                },
+                ensure_ascii=False,
+            )
+        }
+    ]
+
+    loaded = await load_entity_extraction_ground_truth_rows(am)
+    assert loaded == second_expected
+    assert loaded != first_expected
