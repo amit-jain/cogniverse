@@ -3376,6 +3376,8 @@ class TestProfileOptimization:
             "holdout_examples",
             "holdout_source",
             "label_exclusions",
+            "labels_by_profile",
+            "exclusions_by_reason",
             "baseline_score",
             "current_score",
             "candidate_score",
@@ -3442,6 +3444,8 @@ class TestProfileOptimization:
             "base_score",
             "candidate_score",
             "created_at",
+            "labels_by_profile",
+            "exclusions_by_reason",
         }, ledger
         assert ledger["version"] == result["version"], ledger
         assert ledger["kind"] == "model", ledger
@@ -3484,6 +3488,8 @@ class TestProfileOptimization:
             "holdout_examples",
             "holdout_source",
             "label_exclusions",
+            "labels_by_profile",
+            "exclusions_by_reason",
             "baseline_score",
             "current_score",
             "candidate_score",
@@ -3550,6 +3556,8 @@ class TestProfileOptimization:
             "base_score",
             "candidate_score",
             "created_at",
+            "labels_by_profile",
+            "exclusions_by_reason",
         }, ledger
         assert ledger["version"] == result["version"], ledger
         assert ledger["kind"] == "model", ledger
@@ -3629,6 +3637,8 @@ class TestProfileSelectionArtifactReload:
             "holdout_examples",
             "holdout_source",
             "label_exclusions",
+            "labels_by_profile",
+            "exclusions_by_reason",
             "baseline_score",
             "current_score",
             "candidate_score",
@@ -3695,6 +3705,8 @@ class TestProfileSelectionArtifactReload:
             "base_score",
             "candidate_score",
             "created_at",
+            "labels_by_profile",
+            "exclusions_by_reason",
         }, ledger
         assert ledger["version"] == result["version"], ledger
         assert ledger["kind"] == "model", ledger
@@ -4510,6 +4522,8 @@ class TestArtifactLoadingRoundTrip:
             "holdout_examples",
             "holdout_source",
             "label_exclusions",
+            "labels_by_profile",
+            "exclusions_by_reason",
             "baseline_score",
             "current_score",
             "candidate_score",
@@ -4576,6 +4590,8 @@ class TestArtifactLoadingRoundTrip:
             "base_score",
             "candidate_score",
             "created_at",
+            "labels_by_profile",
+            "exclusions_by_reason",
         }, ledger
         assert ledger["version"] == result["version"], ledger
         assert ledger["kind"] == "model", ledger

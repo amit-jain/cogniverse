@@ -385,6 +385,16 @@ class ProfileLabelDerivationResult(dict):
             str(exclusion.get("query", "")).strip() for exclusion in exclusions
         )
 
+    @property
+    def labels_by_profile(self) -> dict[str, int]:
+        return dict(Counter(self.values()))
+
+    @property
+    def exclusions_by_reason(self) -> dict[str, int]:
+        return dict(
+            Counter(exclusion.get("reason", "") for exclusion in self.exclusions)
+        )
+
 
 def _profile_selection_content_key(value: Any) -> str:
     """Basename of ``value`` without its file extension."""
@@ -467,6 +477,31 @@ def _profile_selection_title_fields(
     return title_fields
 
 
+def _profile_selection_profile_types(
+    config_manager: Any,
+    tenant_id: str,
+    candidate_profiles: Iterable[str],
+) -> dict[str, str]:
+    """Media type of each candidate profile from its shipped config."""
+    profile_types: dict[str, str] = {}
+    for profile in candidate_profiles:
+        profile_config = config_manager.get_backend_profile(
+            profile, tenant_id=tenant_id
+        )
+        if profile_config is None:
+            raise ValueError(
+                f"Profile selection derivation: profile {profile!r} is not "
+                f"configured for tenant {tenant_id!r}"
+            )
+        profile_type = str(getattr(profile_config, "type", "") or "").strip().lower()
+        if not profile_type:
+            raise ValueError(
+                f"Profile selection derivation: profile {profile!r} declares no type"
+            )
+        profile_types[profile] = profile_type
+    return profile_types
+
+
 def _profile_selection_query_key(
     query: str, position: int, query_counts: Counter[str]
 ) -> str:
@@ -491,6 +526,10 @@ def _profile_selection_expected_videos(record: dict[str, Any]) -> list[str]:
     return []
 
 
+def _profile_selection_expected_media_type(record: dict[str, Any]) -> str:
+    return "video" if _profile_selection_expected_videos(record) else ""
+
+
 def _profile_selection_recovery_score(
     expected_videos: Sequence[str], retrieved_ids: Sequence[str]
 ) -> float:
@@ -507,6 +546,7 @@ def derive_profile_labels(
     retrieve: Callable[[str, str], Sequence[Mapping[str, Any]]],
     *,
     title_fields: Mapping[str, str],
+    profile_types: Mapping[str, str] | None = None,
 ) -> ProfileLabelDerivationResult:
     query_rows = list(queries)
     if not query_rows:
@@ -524,6 +564,18 @@ def derive_profile_labels(
                 f"Profile selection derivation has no title field for profile "
                 f"{profile!r}"
             )
+
+    profile_type_lookup: dict[str, str] | None = None
+    if profile_types is not None:
+        profile_type_lookup = {}
+        for profile in profiles:
+            profile_type = str(profile_types.get(profile, "") or "").strip().lower()
+            if not profile_type:
+                raise ValueError(
+                    f"Profile selection derivation has no media type for profile "
+                    f"{profile!r}"
+                )
+            profile_type_lookup[profile] = profile_type
 
     query_counts = Counter(
         str(row.get("query", "")).strip() for row in query_rows if isinstance(row, dict)
@@ -564,13 +616,34 @@ def derive_profile_labels(
             )
             continue
 
+        required_media_type = _profile_selection_expected_media_type(query_record)
+        row_profiles = profiles
+        if profile_type_lookup is not None:
+            row_profiles = [
+                profile
+                for profile in profiles
+                if profile_type_lookup[profile] == required_media_type
+            ]
+        if not row_profiles:
+            exclusions.append(
+                {
+                    "query": query,
+                    "reason": "no_profile_serves_media_type",
+                    "expected_videos": expected_videos,
+                    "position": position,
+                    "required_media_type": required_media_type,
+                    "candidate_profiles": [],
+                }
+            )
+            continue
+
         expected_keys = [
             _profile_selection_content_key(video) for video in expected_videos
         ]
         scored_profiles: list[dict[str, Any]] = []
         untitled_results: list[dict[str, Any]] = []
         last_error: Exception | None = None
-        for profile in profiles:
+        for profile in row_profiles:
             try:
                 rows = retrieve(query, profile)
             except Exception as exc:
@@ -652,7 +725,7 @@ def derive_profile_labels(
         record = {
             "query": query,
             "expected_videos": expected_videos,
-            "available_profiles": list(profiles),
+            "available_profiles": list(row_profiles),
             "selected_profile": selected_profile,
             "confidence": best_score,
             "reasoning": f"{selected_profile} recovered {', '.join(expected_videos)}",
@@ -706,6 +779,9 @@ def _profile_selection_label_source(
         candidate_profiles,
         retrieve,
         title_fields=title_fields,
+        profile_types=_profile_selection_profile_types(
+            config_manager, tenant_id, candidate_profiles
+        ),
     )
 
 
@@ -1626,6 +1702,98 @@ def _shipped_population_floor_from_config(
     )
 
 
+def _profile_selection_max_label_share_from_config(
+    tenant_id: str,
+    config_manager=None,
+) -> float:
+    """The tenant's max share for one profile's derived labels."""
+    from cogniverse_foundation.config.utils import create_default_config_manager
+
+    manager = config_manager or create_default_config_manager()
+    routing = manager.get_routing_config(tenant_id=tenant_id)
+    optimizer_floor = routing.optimizer_floors.get("profile_selection")
+    if optimizer_floor is not None:
+        if isinstance(optimizer_floor, dict):
+            tenant_share = _profile_selection_max_label_share_from_floor_config(
+                optimizer_floor,
+                _shipped_profile_selection_max_label_share_from_config() or 0.8,
+            )
+            if tenant_share is not None:
+                return tenant_share
+        logger.warning(
+            "Ignoring malformed optimizer floor for tenant %r optimizer %r: %r",
+            tenant_id,
+            "profile_selection",
+            optimizer_floor,
+        )
+
+    shipped_share = _shipped_profile_selection_max_label_share_from_config()
+    if shipped_share is not None:
+        return shipped_share
+
+    return 0.8
+
+
+def _profile_selection_max_label_share_from_floor_config(
+    floor_config: dict,
+    fallback: float,
+) -> float | None:
+    """Normalize a label-share mapping into a numeric knob."""
+    try:
+        return float(floor_config.get("max_label_share", fallback))
+    except (TypeError, ValueError):
+        return None
+
+
+def _shipped_profile_selection_max_label_share_from_config() -> float | None:
+    """Load the shipped label-share knob for profile selection."""
+    try:
+        raw_config = json.loads(SHIPPED_CONFIG_PATH.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError) as exc:
+        logger.warning(
+            "Unable to read shipped profile label share from %s: %s",
+            SHIPPED_CONFIG_PATH,
+            exc,
+        )
+        return None
+
+    routing_config = raw_config.get("routing")
+    if not isinstance(routing_config, dict):
+        logger.warning(
+            "Shipped profile label share at %s are missing routing.optimization_config",
+            SHIPPED_CONFIG_PATH,
+        )
+        return None
+
+    optimization_config = routing_config.get("optimization_config")
+    if not isinstance(optimization_config, dict):
+        logger.warning(
+            "Shipped profile label share at %s are missing routing.optimization_config",
+            SHIPPED_CONFIG_PATH,
+        )
+        return None
+
+    optimizer_floors = optimization_config.get("optimizer_floors")
+    if not isinstance(optimizer_floors, dict):
+        logger.warning(
+            "Shipped profile label share at %s are missing routing.optimization_config.optimizer_floors",
+            SHIPPED_CONFIG_PATH,
+        )
+        return None
+
+    shipped_floor = optimizer_floors.get("profile_selection")
+    if shipped_floor is None:
+        return None
+    if not isinstance(shipped_floor, dict):
+        logger.warning(
+            "Shipped profile label share for profile_selection at %s is malformed",
+            SHIPPED_CONFIG_PATH,
+        )
+        return None
+
+    return _profile_selection_max_label_share_from_floor_config(shipped_floor, 0.8)
+
+
 def _training_selection_from_config(
     config_manager,
     tenant_id: str,
@@ -2150,18 +2318,32 @@ def _scoreable_first(records: list[dict]) -> tuple[list[dict], int]:
 def _split_served_holdout(
     records: list[dict], min_holdout: int, scoreable_predicate=is_scoreable
 ) -> tuple[list[dict], list[dict]]:
-    """Serve the tail of scoreable span records and keep everything else in train."""
+    """Serve the tail of distinct scoreable query keys and keep the rest in train."""
     served_scoreable_indices = _served_scoreable_indices(records, scoreable_predicate)
     if len(served_scoreable_indices) < min_holdout:
         return list(records), []
 
-    holdout_count = max(1, len(served_scoreable_indices) // 4)
-    holdout_indices = set(served_scoreable_indices[-holdout_count:])
+    query_positions: dict[str, list[int]] = {}
+    for index in served_scoreable_indices:
+        query = str(records[index].get("query", "") or "").strip().casefold()
+        query_positions.setdefault(query, []).append(index)
+
+    distinct_query_indices = [positions[0] for positions in query_positions.values()]
+    holdout_count = max(1, len(distinct_query_indices) // 4)
+    holdout_query_keys = {
+        str(records[index].get("query", "") or "").strip().casefold()
+        for index in distinct_query_indices[-holdout_count:]
+    }
     train = [
-        record for index, record in enumerate(records) if index not in holdout_indices
+        record
+        for record in records
+        if str(record.get("query", "") or "").strip().casefold()
+        not in holdout_query_keys
     ]
     holdout = [
-        record for index, record in enumerate(records) if index in holdout_indices
+        record
+        for record in records
+        if str(record.get("query", "") or "").strip().casefold() in holdout_query_keys
     ]
     return train, holdout
 
@@ -4009,6 +4191,12 @@ async def run_profile_optimization(
                 "example_id": demo["example_id"],
             }
         )
+    labels_by_profile = label_source.labels_by_profile
+    exclusions_by_reason = label_source.exclusions_by_reason
+    result_distribution = {
+        "labels_by_profile": labels_by_profile,
+        "exclusions_by_reason": exclusions_by_reason,
+    }
     if not records:
         logger.info("No valid production or approved synthetic examples")
         return {
@@ -4016,6 +4204,41 @@ async def run_profile_optimization(
             "spans_found": len(spans_df),
             "examples": 0,
             "label_exclusions": label_exclusions,
+            **result_distribution,
+        }
+
+    served_records = [dict(record) for record in records]
+
+    served_scoreable_examples = len(
+        _served_scoreable_indices(
+            served_records,
+            scoreable_predicate=_profile_selection_is_scoreable,
+        )
+    )
+    served_examples = len(profile_pairs)
+    approved_examples = len(synthetic_demos)
+    max_label_share = _profile_selection_max_label_share_from_config(
+        tenant_id, config_manager
+    )
+    total_labels = sum(labels_by_profile.values())
+    dominant_label_share = (
+        max(labels_by_profile.values()) / total_labels if total_labels else 0.0
+    )
+    if len(labels_by_profile) < 2 or dominant_label_share > max_label_share:
+        logger.warning(
+            "Profile labels degenerate for %s: distribution=%s max_label_share=%.3f",
+            tenant_id,
+            labels_by_profile,
+            max_label_share,
+        )
+        return {
+            "status": "profile_labels_degenerate",
+            "spans_found": len(spans_df),
+            "served_examples": served_examples,
+            "approved_examples": approved_examples,
+            "served_scoreable_examples": served_scoreable_examples,
+            "label_exclusions": label_exclusions,
+            **result_distribution,
         }
 
     current_blob = await artifact_manager.load_blob("model", "profile_selection")
@@ -4044,6 +4267,7 @@ async def run_profile_optimization(
             score=None,
             base_score=None,
             candidate_score=None,
+            extra_ledger_fields=result_distribution,
         )
         return {
             "status": "insufficient_population",
@@ -4054,19 +4278,10 @@ async def run_profile_optimization(
             "min_unique_queries": min_unique_queries,
             "version": version,
             "label_exclusions": label_exclusions,
+            **result_distribution,
         }
 
     min_holdout = max(1, min_samples // 10)
-    served_records = [dict(record) for record in records]
-
-    served_scoreable_examples = len(
-        _served_scoreable_indices(
-            served_records,
-            scoreable_predicate=_profile_selection_is_scoreable,
-        )
-    )
-    served_examples = len(profile_pairs)
-    approved_examples = len(synthetic_demos)
     train_records, holdout_records = _split_served_holdout(
         served_records,
         min_holdout,
@@ -4104,6 +4319,7 @@ async def run_profile_optimization(
             "holdout_examples": 0,
             "holdout_source": "derived_labels",
             "label_exclusions": label_exclusions,
+            **result_distribution,
             **selection_summary,
         }
 
@@ -4150,6 +4366,7 @@ async def run_profile_optimization(
             "status": "failed",
             "error": str(e),
             "label_exclusions": label_exclusions,
+            **result_distribution,
             **selection_summary,
         }
 
@@ -4173,6 +4390,7 @@ async def run_profile_optimization(
         score=candidate_score,
         base_score=baseline_score,
         candidate_score=candidate_score,
+        extra_ledger_fields=result_distribution,
     )
     if decision in ("promote", "rollback"):
         await artifact_manager.activate_version("model", "profile_selection", version)
@@ -4204,6 +4422,7 @@ async def run_profile_optimization(
         "decision": decision,
         "version": version,
         "consumed_example_ids": consumed_example_ids,
+        **result_distribution,
     }
 
 
