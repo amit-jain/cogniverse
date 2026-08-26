@@ -3184,7 +3184,14 @@ class TestSimbaSelectionCap:
         assert selection["pool"] > selection["cap"], selection
         assert selection["mmr_applied"] is True, selection
         assert selection["decayed_count"] == 0, selection
-        assert result["holdout_examples"] == 2, result
+        # Derived, not restated: the served holdout is
+        # max(1, served_scoreable // 4) at optimization_cli.py:1700, so the
+        # count moves with the seeded pool. Seven sibling assertions in this
+        # file already pin it this way; a literal here drifts the moment the
+        # fixture seeds a different number of queries.
+        assert result["holdout_examples"] == max(
+            1, result["served_scoreable_examples"] // 4
+        ), result
         assert result["training_examples"] == selection["cap"], result
         assert (
             len(result["consumed_example_ids"]) == simba_selection_tenant.seeded_count
