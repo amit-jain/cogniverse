@@ -188,12 +188,12 @@ The routing decision includes:
 
 ### Routing Optimization (Offline)
 
-Routing and orchestration quality is improved offline, not inline with the per-query flow above. The batch jobs in `libs/runtime/cogniverse_runtime/optimization_cli.py` each read one span type and compile or recompute one target:
+Routing and orchestration quality is improved offline, not inline with the per-query flow above. The batch jobs in `libs/runtime/cogniverse_runtime/optimization_cli.py` each compile or recompute one target from the input listed:
 
-| Job | Reads Spans | Compiles / Computes |
+| Job | Input | Compiles / Computes |
 |---|---|---|
 | `run_simba_optimization` | `cogniverse.query_enhancement` | `QueryEnhancementAgent`'s own `QueryEnhancementModule` via `dspy.teleprompt.BootstrapFewShot` (despite the function's name, it does not call `dspy.SIMBA`) |
-| `run_profile_optimization` | `cogniverse.profile_selection` | `ProfileSelectionAgent`'s DSPy module via `BootstrapFewShot` |
+| `run_profile_optimization` | Labels from `derive_profile_labels`: every query of the shipped label source is run through the tenant's `SearchService` per usable profile, and the label is the single profile that recovers all of its `expected_videos` (`cogniverse.profile_selection` spans are counted, not read) | `ProfileSelectionAgent`'s DSPy module via `BootstrapFewShot` |
 | `run_entity_extraction_optimization` | `cogniverse.entity_extraction` | `EntityExtractionAgent`'s DSPy module via `BootstrapFewShot` |
 | `run_gateway_thresholds_optimization` | `cogniverse.gateway` | `GatewayAgent.fast_path_confidence_threshold`, recalibrated deterministically from classification accuracy (`_compute_gateway_thresholds`) — not a DSPy signature compile |
 | `run_workflow_optimization` | `cogniverse.orchestration` | Workflow templates + agent performance profiles, via `OrchestrationEvaluator` extracting `WorkflowExecution` records and feeding `WorkflowIntelligence` — deterministic template mining, not DSPy prompt compilation |
