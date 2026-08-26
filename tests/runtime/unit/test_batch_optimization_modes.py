@@ -4380,6 +4380,16 @@ class TestProfileSelectionOptimization:
             f"Schema 'video_orphan' not found at {tmp_path / 'video_orphan_schema.json'}"
         )
 
+    def test_shipped_label_reader_stays_removed(self):
+        """Tenant ground-truth blobs are the sole label source. The shipped-file
+        reader was deleted; re-adding any of its symbols re-opens the path where
+        every tenant is graded against one bundled fixture."""
+        import cogniverse_runtime.optimization_cli as cli
+
+        assert not hasattr(cli, "PROFILE_SELECTION_LABEL_SOURCE_PATH")
+        assert not hasattr(cli, "_load_profile_selection_label_source")
+        assert not hasattr(cli, "_load_profile_selection_labels")
+
     @pytest.mark.asyncio
     async def test_profile_selection_labels_derive_from_tenant_ground_truth_rows(
         self,
@@ -4388,10 +4398,9 @@ class TestProfileSelectionOptimization:
         shipped label source is never opened."""
         import collections
         import io
+        from pathlib import Path
 
-        from cogniverse_runtime.optimization_cli import (
-            PROFILE_SELECTION_LABEL_SOURCE_PATH,
-        )
+        shipped_data_root = Path(__file__).resolve().parents[3] / "data"
 
         profiles = [
             "video_colpali_smol500_mv_frame",
@@ -4438,9 +4447,7 @@ class TestProfileSelectionOptimization:
         assert sorted({query for query, _profile, _tenant, _top_k in calls}) == sorted(
             row["query"] for row in _TENANT_GROUND_TRUTH_ROWS
         )
-        assert [
-            path for path in opened if path == str(PROFILE_SELECTION_LABEL_SOURCE_PATH)
-        ] == []
+        assert [path for path in opened if str(shipped_data_root) in path] == []
         assert collections.Counter(calls) == collections.Counter(
             (row["query"], profile, "test:unit", 10)
             for row in _TENANT_GROUND_TRUTH_ROWS
@@ -4878,43 +4885,6 @@ class TestProfileSelectionOptimization:
             "broken": _profile_selection_scores(broken_selector, holdout_examples),
         }
         assert scores == {"correct": 1.0, "broken": 0.0}
-
-    def test_profile_selection_label_source_missing_raises(self, tmp_path):
-        from cogniverse_runtime.optimization_cli import _load_profile_selection_labels
-
-        missing = tmp_path / "missing.json"
-
-        with pytest.raises(FileNotFoundError) as err:
-            _load_profile_selection_labels(
-                queries_path=missing,
-                candidate_profiles=[
-                    "video_colpali_smol500_mv_frame",
-                    "video_colqwen_omni_mv_chunk_30s",
-                ],
-                retrieve=lambda query, profile: [],
-                title_fields=_VIDEO_TITLE_FIELDS,
-            )
-
-        assert str(err.value) == (f"Profile selection label source missing: {missing}")
-
-    def test_profile_selection_label_source_empty_raises(self, tmp_path):
-        from cogniverse_runtime.optimization_cli import _load_profile_selection_labels
-
-        source = tmp_path / "empty.json"
-        source.write_text("[]")
-
-        with pytest.raises(ValueError) as err:
-            _load_profile_selection_labels(
-                queries_path=source,
-                candidate_profiles=[
-                    "video_colpali_smol500_mv_frame",
-                    "video_colqwen_omni_mv_chunk_30s",
-                ],
-                retrieve=lambda query, profile: [],
-                title_fields=_VIDEO_TITLE_FIELDS,
-            )
-
-        assert str(err.value) == (f"Profile selection label source is empty: {source}")
 
     def test_query_enhancement_holdout_size_is_unchanged(self):
         from cogniverse_runtime.optimization_cli import _split_served_holdout
