@@ -262,3 +262,33 @@ def test_count_spans_script_total_mode_counts_every_row():
     assert "print('__SPANS__' + str(len(df)))" in script, script
     assert "nunique" not in script, script
     assert "1.25" in script, script
+
+
+def test_batch_job_timeout_defaults_and_env_override(monkeypatch):
+    """One derivation for the job budget, overridable for measurement runs.
+
+    Six call sites each restated ``timeout=1200``; a budget that must be
+    edited in six places is one that drifts.
+    """
+    monkeypatch.delenv(_MOD.BATCH_JOB_TIMEOUT_ENV, raising=False)
+    assert _MOD.BATCH_JOB_DEFAULT_TIMEOUT_S == 1200
+    assert _MOD._batch_job_timeout_s() == 1200
+
+    monkeypatch.setenv(_MOD.BATCH_JOB_TIMEOUT_ENV, "3600")
+    assert _MOD._batch_job_timeout_s() == 3600
+
+
+def test_batch_job_durations_record_measured_cost():
+    """Every job records its real cost so a budget comes from data.
+
+    ``entity-extraction`` exceeded 1200s once the teacher actually answered;
+    raising the number without a measurement is a guess.
+    """
+    _MOD.BATCH_JOB_DURATIONS.clear()
+    _MOD._record_batch_job_duration("entity-extraction", 913.5, timed_out=False)
+    _MOD._record_batch_job_duration("simba", 1200.0, timed_out=True)
+    assert _MOD.BATCH_JOB_DURATIONS == [
+        ("entity-extraction", 913.5, False),
+        ("simba", 1200.0, True),
+    ]
+    _MOD.BATCH_JOB_DURATIONS.clear()

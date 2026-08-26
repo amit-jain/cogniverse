@@ -1559,6 +1559,28 @@ def generate_spans_for_batch_jobs(_kubectl_cluster_ready):
     yield
 
 
+BATCH_JOB_TIMEOUT_ENV = "COGNIVERSE_E2E_BATCH_JOB_TIMEOUT_S"
+# Measured on the live cluster with the teacher serving; raise via
+# BATCH_JOB_TIMEOUT_ENV for a measurement run, never by editing call sites.
+BATCH_JOB_DEFAULT_TIMEOUT_S = 1200
+BATCH_JOB_DURATIONS: list[tuple[str, float, bool]] = []
+
+
+def _batch_job_timeout_s() -> int:
+    """Resolve the per-job budget: one derivation, overridable for measuring."""
+    return int(os.environ.get(BATCH_JOB_TIMEOUT_ENV, str(BATCH_JOB_DEFAULT_TIMEOUT_S)))
+
+
+def _record_batch_job_duration(mode: str, seconds: float, *, timed_out: bool) -> None:
+    """Record a job's real cost so budgets are set from data, not guesses."""
+    BATCH_JOB_DURATIONS.append((mode, seconds, timed_out))
+    print(
+        f"__BATCH_JOB_DURATION__ mode={mode} seconds={seconds:.1f} "
+        f"timed_out={timed_out} budget={_batch_job_timeout_s()}",
+        flush=True,
+    )
+
+
 def _run_batch_job(
     mode: str,
     tenant_id: str = TENANT_ID,
@@ -1566,37 +1588,47 @@ def _run_batch_job(
     # A job is a Phoenix span scan (tens of seconds on a project holding a
     # day of traffic) plus a DSPy compile with real LM calls at ~12 tok/s —
     # ~2 min solo, more when the cluster is loaded.
-    timeout: int = 600,
+    timeout: int | None = None,
 ) -> dict:
     """Run a batch optimization job inside the k3d pod and return parsed JSON."""
     if lookback_hours is None:
         lookback_hours = _module_lookback_hours()
-    result = subprocess.run(
-        [
-            "kubectl",
-            "--context",
-            KUBECTL_CONTEXT,
-            "exec",
-            "-n",
-            NAMESPACE,
-            DEPLOYMENT,
-            "-c",
-            CONTAINER,
-            "--",
-            "python3",
-            "-m",
-            "cogniverse_runtime.optimization_cli",
-            "--mode",
-            mode,
-            "--tenant-id",
-            tenant_id,
-            "--lookback-hours",
-            str(lookback_hours),
-        ],
-        capture_output=True,
-        text=True,
-        timeout=timeout,
-    )
+    if timeout is None:
+        timeout = _batch_job_timeout_s()
+    started_at = time.monotonic()
+    try:
+        result = subprocess.run(
+            [
+                "kubectl",
+                "--context",
+                KUBECTL_CONTEXT,
+                "exec",
+                "-n",
+                NAMESPACE,
+                DEPLOYMENT,
+                "-c",
+                CONTAINER,
+                "--",
+                "python3",
+                "-m",
+                "cogniverse_runtime.optimization_cli",
+                "--mode",
+                mode,
+                "--tenant-id",
+                tenant_id,
+                "--lookback-hours",
+                str(lookback_hours),
+            ],
+            capture_output=True,
+            text=True,
+            timeout=timeout,
+        )
+    except subprocess.TimeoutExpired:
+        # Record the exhausted budget before re-raising: a bare TimeoutExpired
+        # says nothing about which job or how close the budget was.
+        _record_batch_job_duration(mode, time.monotonic() - started_at, timed_out=True)
+        raise
+    _record_batch_job_duration(mode, time.monotonic() - started_at, timed_out=False)
 
     if result.returncode != 0:
         raise RuntimeError(
@@ -2942,7 +2974,7 @@ class TestSimbaOptimization:
         blob_before = _load_blob_in_pod("model", "simba_query_enhancement")
         assert blob_before != "", "the module fixture persists the base artifact"
 
-        result = _run_batch_job("simba", timeout=1200)
+        result = _run_batch_job("simba")
 
         _assert_simba_served_the_best_module(result, blob_before)
 
@@ -2952,7 +2984,7 @@ class TestSimbaOptimization:
         blob_before = _load_blob_in_pod("model", "simba_query_enhancement")
         first = json.loads(blob_before)
 
-        result = _run_batch_job("simba", timeout=1200)
+        result = _run_batch_job("simba")
 
         after = _assert_simba_served_the_best_module(result, blob_before)
         assert isinstance(result["current_score"], float), result
@@ -3658,7 +3690,7 @@ class TestEntityExtractionOptimization:
         blob_before = _load_blob_in_pod("model", "entity_extraction")
         assert blob_before != "", "the module fixture persists the base artifact"
 
-        result = _run_batch_job("entity-extraction", timeout=1200)
+        result = _run_batch_job("entity-extraction")
         approved = _approved_query_enhancement_examples_in_pod(
             TENANT_ID, "entity_extraction"
         )
@@ -3761,7 +3793,7 @@ class TestEntityExtractionOptimization:
         approved = _approved_query_enhancement_examples_in_pod(
             TENANT_ID, "entity_extraction"
         )
-        result = _run_batch_job("entity-extraction", timeout=1200)
+        result = _run_batch_job("entity-extraction")
         version_blob, ledger = _load_blob_version_in_pod(
             "model", "entity_extraction", result["version"]
         )
@@ -4048,7 +4080,7 @@ class TestArtifactLoadingRoundTrip:
         blob_before = _load_blob_in_pod("model", "simba_query_enhancement")
         assert blob_before != "", "earlier SIMBA runs persisted an artifact"
 
-        result = _run_batch_job("simba", timeout=1200)
+        result = _run_batch_job("simba")
 
         after = _assert_simba_served_the_best_module(result, blob_before)
         assert json.loads(_load_blob_in_pod("model", "simba_query_enhancement")) == (
@@ -4062,7 +4094,7 @@ class TestArtifactLoadingRoundTrip:
             "Entity extraction artifact blob is empty before restart"
         )
 
-        result = _run_batch_job("entity-extraction", timeout=1200)
+        result = _run_batch_job("entity-extraction")
         approved = _approved_query_enhancement_examples_in_pod(
             TENANT_ID, "entity_extraction"
         )
