@@ -39,6 +39,7 @@ class _InMemoryDatasetStore:
         *,
         get_error: Exception | None = None,
         block_first_active_write: bool = False,
+        block_first_state_write: bool = False,
     ) -> None:
         self.datasets: dict[str, Any] = {}
         self.create_calls: list[dict[str, Any]] = []
@@ -46,13 +47,21 @@ class _InMemoryDatasetStore:
         self.get_calls: list[str] = []
         self._get_error = get_error
         self._block_first_active_write = block_first_active_write
+        self._block_first_state_write = block_first_state_write
         self._active_dataset_name: str | None = None
+        self._state_dataset_name: str | None = None
         self._first_active_write_seen = False
+        self._first_state_write_seen = False
         self.first_active_write_started = asyncio.Event()
         self.release_first_active_write = asyncio.Event()
+        self.first_state_write_started = asyncio.Event()
+        self.release_first_state_write = asyncio.Event()
 
     def set_active_dataset_name(self, name: str) -> None:
         self._active_dataset_name = name
+
+    def set_state_dataset_name(self, name: str) -> None:
+        self._state_dataset_name = name
 
     async def replace_dataset(self, name, data, metadata=None):
         return await self.create_dataset(name=name, data=data, metadata=metadata)
@@ -66,6 +75,15 @@ class _InMemoryDatasetStore:
             self._first_active_write_seen = True
             self.first_active_write_started.set()
             await self.release_first_active_write.wait()
+
+        if (
+            self._block_first_state_write
+            and name == self._state_dataset_name
+            and not self._first_state_write_seen
+        ):
+            self._first_state_write_seen = True
+            self.first_state_write_started.set()
+            await self.release_first_state_write.wait()
 
         frame = data.copy(deep=True)
         self.create_calls.append(
@@ -133,20 +151,20 @@ async def test_upload_round_trip_persists_canonical_rows_and_reads_back(monkeypa
 
     rows = [
         {
-            "query": "  find named people  ",
+            "query": "  find Marie Curie in Paris  ",
             "entities": [
                 {"text": "  Marie Curie ", "type": "PERSON", "confidence": 0.91},
-                {"text": "Paris", "type": "LOCATION"},
+                {"text": "Paris", "type": "PLACE"},
             ],
             "source": "tenant_upload",
         }
     ]
     expected_rows = [
         {
-            "query": "find named people",
+            "query": "find Marie Curie in Paris",
             "entities": [
                 {"text": "Marie Curie", "type": "PERSON", "confidence": 0.91},
-                {"text": "Paris", "type": "LOCATION"},
+                {"text": "Paris", "type": "PLACE"},
             ],
             "source": "tenant_upload",
         }
@@ -172,17 +190,6 @@ async def test_upload_round_trip_persists_canonical_rows_and_reads_back(monkeypa
         "config", "entity_extraction_ground_truth", 1
     )
     active_name = am._blob_dataset_name("config", "entity_extraction_ground_truth")
-    state_name = am._blob_dataset_name(
-        "config", "blob_state_config_entity_extraction_ground_truth"
-    )
-    assert store.get_calls == [
-        versioned_name,
-        versioned_name,
-        active_name,
-        state_name,
-        state_name,
-        state_name,
-    ]
     assert store.datasets[versioned_name].to_dict("records") == [
         {
             "content": json.dumps(
@@ -255,7 +262,7 @@ async def test_upload_round_trip_persists_canonical_rows_and_reads_back(monkeypa
         (
             [
                 {
-                    "query": "identify",
+                    "query": "find Marie Curie",
                     "entities": [
                         {"text": "Marie Curie", "type": "PERSON"},
                         {"text": "marie curie", "type": "PERSON"},
@@ -267,15 +274,33 @@ async def test_upload_round_trip_persists_canonical_rows_and_reads_back(monkeypa
         (
             [
                 {
-                    "query": "identify",
+                    "query": "find Alpha",
                     "entities": [{"text": "Alpha", "type": "PERSON"}],
                 },
                 {
-                    "query": " identify ",
-                    "entities": [{"text": "Beta", "type": "ORG"}],
+                    "query": " find Alpha ",
+                    "entities": [{"text": "Alpha", "type": "PERSON"}],
                 },
             ],
             "entity_extraction_ground_truth row 2 query duplicates row 1",
+        ),
+        (
+            [
+                {
+                    "query": "find named people",
+                    "entities": [{"text": "people", "type": "HUMAN"}],
+                }
+            ],
+            "entity_extraction_ground_truth row 1 entities entry 1 type must be in ENTITY_TYPES",
+        ),
+        (
+            [
+                {
+                    "query": "find scientists",
+                    "entities": [{"text": "Albert Einstein", "type": "PERSON"}],
+                }
+            ],
+            "entity_extraction_ground_truth row 1 entities entry 1 text must be a casefold verbatim substring of query",
         ),
     ],
 )
@@ -353,35 +378,38 @@ async def test_loader_store_error_raises_fault_contract(monkeypatch):
 @pytest.mark.asyncio
 async def test_concurrent_puts_last_writer_wins(monkeypatch):
     _fixed_artifact_datetime(monkeypatch)
-    store = _InMemoryDatasetStore(block_first_active_write=True)
+    store = _InMemoryDatasetStore(block_first_state_write=True)
     provider = _FakeTelemetryProvider(store)
     am = ArtifactManager(provider, tenant_id="acme")
-    store.set_active_dataset_name(
-        am._blob_dataset_name("config", "entity_extraction_ground_truth")
+    active_name = am._blob_dataset_name("config", "entity_extraction_ground_truth")
+    state_name = am._blob_dataset_name(
+        "config", "blob_state_config_entity_extraction_ground_truth"
     )
+    store.set_active_dataset_name(active_name)
+    store.set_state_dataset_name(state_name)
     app, build_calls = _build_app(monkeypatch, am)
 
     first_rows = [
         {
-            "query": "find scientists",
+            "query": "find Marie Curie",
             "entities": [{"text": "Marie Curie", "type": "PERSON"}],
         }
     ]
     second_rows = [
         {
-            "query": "find physicists",
+            "query": "find Albert Einstein",
             "entities": [{"text": "Albert Einstein", "type": "PERSON"}],
         }
     ]
     first_expected = [
         {
-            "query": "find scientists",
+            "query": "find Marie Curie",
             "entities": [{"text": "Marie Curie", "type": "PERSON"}],
         }
     ]
     second_expected = [
         {
-            "query": "find physicists",
+            "query": "find Albert Einstein",
             "entities": [{"text": "Albert Einstein", "type": "PERSON"}],
         }
     ]
@@ -393,7 +421,7 @@ async def test_concurrent_puts_last_writer_wins(monkeypatch):
             first_rows,
         )
     )
-    await asyncio.wait_for(store.first_active_write_started.wait(), timeout=5)
+    await asyncio.wait_for(store.first_state_write_started.wait(), timeout=5)
 
     second_task = asyncio.create_task(
         _put(
@@ -403,7 +431,7 @@ async def test_concurrent_puts_last_writer_wins(monkeypatch):
         )
     )
     second_response = await asyncio.wait_for(second_task, timeout=5)
-    store.release_first_active_write.set()
+    store.release_first_state_write.set()
     first_response = await asyncio.wait_for(first_task, timeout=5)
 
     assert first_response.status_code == 200, first_response.text
@@ -424,11 +452,6 @@ async def test_concurrent_puts_last_writer_wins(monkeypatch):
     version2_name = am._versioned_dataset_name(
         "config", "entity_extraction_ground_truth", 2
     )
-    active_name = am._blob_dataset_name("config", "entity_extraction_ground_truth")
-    state_name = am._blob_dataset_name(
-        "config", "blob_state_config_entity_extraction_ground_truth"
-    )
-
     assert store.datasets[version1_name].to_dict("records") == [
         {
             "content": json.dumps(

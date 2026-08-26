@@ -10,6 +10,7 @@ from __future__ import annotations
 import json
 from typing import Any
 
+from cogniverse_agents.entity_extraction_agent import ENTITY_TYPES
 from cogniverse_foundation.telemetry.providers.base import DatasetNotFoundError
 
 ENTITY_EXTRACTION_GROUND_TRUTH_BLOB_KIND = "config"
@@ -154,6 +155,18 @@ def canonicalize_entity_extraction_ground_truth_rows(
                 entity_index=entity_index,
                 field_name="type",
             )
+            if entity_type not in ENTITY_TYPES:
+                raise ValueError(
+                    "entity_extraction_ground_truth row "
+                    f"{row_index} entities entry {entity_index} type must be in "
+                    "ENTITY_TYPES"
+                )
+            if text.casefold() not in query.casefold():
+                raise ValueError(
+                    "entity_extraction_ground_truth row "
+                    f"{row_index} entities entry {entity_index} text must be a "
+                    "casefold verbatim substring of query"
+                )
 
             pair = (text.casefold(), entity_type)
             if pair in seen_pairs:
