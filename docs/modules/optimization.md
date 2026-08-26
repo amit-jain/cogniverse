@@ -402,6 +402,8 @@ recorder logs every attempt's score and the run reports the walk under `bootstra
 holdout exists, persists the current or base module for non-promote decisions, and activates the persisted
 version on `promote` or `rollback`. The artifact key is `("model", "entity_extraction")`;
 `EntityExtractionAgent` reloads it via `am.load_blob("model", "entity_extraction")`.
+The tenant-owned `("config", "entity_extraction_ground_truth")` blob holds the query/entity labels uploaded
+through the admin route.
 
 Returns:
   - {"status": "success", "spans_found": int, "served_scoreable_examples": int,
@@ -1718,6 +1720,7 @@ After optimization, artifacts are persisted to the telemetry store via `Artifact
 - `("model", <key>)` blobs — compiled DSPy module state for `profile_selection`, `entity_extraction`, `simba_query_enhancement` (triggered mode publishes compiled instructions as versioned prompts instead of a module-state blob); each version ledger stores `consumed_example_ids`, `decision`, `scored`, `score`, `base_score`, `candidate_score`, and `created_at`, and older rows simply omit `score`.
 - `("config", "gateway_thresholds")` blob — calibrated gateway thresholds
 - `("config", "profile_selection_ground_truth")` blob — tenant-uploaded profile-selection labels, validated as rows with `query` plus normalized `expected_videos`
+- `("config", "entity_extraction_ground_truth")` blob — tenant-uploaded entity-extraction labels, validated as rows with `query` plus normalized `entities[{text, type}]`
 
 **Stored prompt artifact structure (retrieved from DatasetStore):**
 

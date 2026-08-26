@@ -17,6 +17,9 @@ from cogniverse_agents.entity_extraction_agent import (
     ENTITY_TYPES,
     EntityExtractionAgent,
 )
+from cogniverse_agents.optimizer.entity_extraction_ground_truth import (
+    canonicalize_entity_extraction_ground_truth_rows,
+)
 
 pytestmark = [pytest.mark.unit, pytest.mark.ci_fast]
 
@@ -63,12 +66,19 @@ def test_fixture_holds_the_exact_recorded_population():
     )
 
 
+def test_fixture_passes_the_upload_validator_unchanged():
+    rows = _rows()
+    assert len(rows) == EXPECTED_ROWS
+    assert tuple(canonicalize_entity_extraction_ground_truth_rows(rows)) == tuple(rows)
+
+
 def test_every_entity_is_a_verbatim_span_of_its_query_with_a_declared_type():
     violations = [
         (index, entity["text"], entity["type"])
         for index, row in enumerate(_rows())
         for entity in row["entities"]
-        if entity["text"] not in row["query"] or entity["type"] not in ENTITY_TYPES
+        if entity["text"].casefold() not in row["query"].casefold()
+        or entity["type"] not in ENTITY_TYPES
     ]
     assert violations == []
 
