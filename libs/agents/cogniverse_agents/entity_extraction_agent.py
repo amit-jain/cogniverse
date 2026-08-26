@@ -99,6 +99,12 @@ class EntityExtractionDeps(AgentDeps):
     )
 
 
+ENTITY_TYPES = frozenset(
+    {"PERSON", "ORGANIZATION", "CONCEPT", "PLACE", "EVENT", "TECHNOLOGY"}
+)
+"""The entity types the agent emits; every GLiNER label maps into this set."""
+
+
 class EntityExtractionSignature(dspy.Signature):
     """Extract named entities from text query"""
 
@@ -321,8 +327,7 @@ class EntityExtractionAgent(
         return output
 
     # GLiNER's broader 15-label set (used by the routing relationship
-    # extractor) maps onto the agent's normalized 6-type output:
-    # PERSON, ORGANIZATION, CONCEPT, PLACE, EVENT, TECHNOLOGY.
+    # extractor) maps onto the agent's normalized output types.
     _GLINER_TYPE_MAP = {
         "LOCATION": "PLACE",
         "PRODUCT": "TECHNOLOGY",
