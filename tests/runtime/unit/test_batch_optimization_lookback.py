@@ -281,19 +281,31 @@ def test_batch_job_timeout_defaults_and_env_override(monkeypatch):
     assert _MOD._batch_job_timeout_s() == 3600
 
 
-def test_batch_job_durations_record_measured_cost():
+def test_batch_job_durations_record_measured_cost(tmp_path, monkeypatch):
     """Every job records its real cost so a budget comes from data.
 
-    ``entity-extraction`` exceeded 1200s once the teacher actually answered;
-    raising the number without a measurement is a guess.
+    The recorder appends to a shared file that real runs also write, and
+    those recordings are what set the job budget. A test that does not
+    redirect the path writes its fixture values into that file and corrupts
+    the measurement: 913.5 and 1200.0 below were read back as if they were
+    observed job costs.
     """
+    shared = _MOD.BATCH_JOB_DURATIONS_PATH
+    before = shared.read_text() if shared.exists() else None
+    monkeypatch.setattr(_MOD, "BATCH_JOB_DURATIONS_PATH", tmp_path / "durations.jsonl")
     _MOD.BATCH_JOB_DURATIONS.clear()
+
     _MOD._record_batch_job_duration("entity-extraction", 913.5, timed_out=False)
     _MOD._record_batch_job_duration("simba", 1200.0, timed_out=True)
+
     assert _MOD.BATCH_JOB_DURATIONS == [
         ("entity-extraction", 913.5, False),
         ("simba", 1200.0, True),
     ]
+    after = shared.read_text() if shared.exists() else None
+    assert after == before, (
+        "the recorder wrote fixture values into the shared durations file"
+    )
     _MOD.BATCH_JOB_DURATIONS.clear()
 
 
