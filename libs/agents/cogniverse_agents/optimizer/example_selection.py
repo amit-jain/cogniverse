@@ -8,7 +8,10 @@ from typing import Any, Callable, Dict, List, Sequence
 
 from cogniverse_core.common.models.semantic_embedder import get_semantic_embedder
 
-ExampleStats = namedtuple("ExampleStats", "confirmations first_seen")
+ExampleStats = namedtuple(
+    "ExampleStats",
+    "confirmations unscored_promotions scored_promotions first_seen",
+)
 SelectionReport = namedtuple(
     "SelectionReport",
     "pool deduped cap mmr_applied decayed_count selected_ids decayed_example_ids",
@@ -47,33 +50,43 @@ def confirmation_stats(
 ) -> Dict[str, ExampleStats]:
     """Aggregate confirmations and first-seen timestamps per example id.
 
-    When ``score_threshold`` is set, only promoted versions with a recorded
-    score at or above the threshold count as confirmations. Legacy rows with no
-    recorded score stay unconfirmed under the thresholded path.
+    When ``score_threshold`` is set, confirmations only count promoted versions
+    with a recorded score at or above the threshold. Legacy rows with no
+    recorded score stay separate in ``unscored_promotions`` so decay can treat
+    missing evidence as unknown, not negative.
     """
     buckets: Dict[str, list[Any]] = {}
     for version in lineage:
         created_at = _parse_created_at(version["created_at"])
         consumed_example_ids = version.get("consumed_example_ids") or []
         promote = version.get("decision") == "promote"
+        scored = bool(version.get("scored"))
         score = version.get("score")
-        confirmed = (
-            promote
-            if score_threshold is None
-            else promote and score is not None and score >= score_threshold
-        )
         for example_id in consumed_example_ids:
             entry = buckets.get(example_id)
             if entry is None:
-                buckets[example_id] = [1 if confirmed else 0, created_at]
+                buckets[example_id] = [0, 0, 0, created_at]
+                entry = buckets[example_id]
+            if created_at < entry[3]:
+                entry[3] = created_at
+            if not promote:
                 continue
-            if confirmed:
+            if score_threshold is None:
                 entry[0] += 1
-            if created_at < entry[1]:
-                entry[1] = created_at
+                if scored:
+                    entry[2] += 1
+                else:
+                    entry[1] += 1
+                continue
+            if scored:
+                entry[2] += 1
+                if score is not None and score >= score_threshold:
+                    entry[0] += 1
+            else:
+                entry[1] += 1
 
     return {
-        example_id: ExampleStats(entry[0], entry[1])
+        example_id: ExampleStats(entry[0], entry[1], entry[2], entry[3])
         for example_id, entry in buckets.items()
     }
 
@@ -90,8 +103,18 @@ def decay_weight(
     if example_stats is None:
         return 1.0
 
+    if knobs.confirmation_score_threshold is None:
+        if (
+            example_stats.confirmations < knobs.low_confirmation_threshold
+            and (now - example_stats.first_seen).days > knobs.downweight_age_days
+        ):
+            return knobs.downweight_factor
+        return 1.0
+
     if (
         example_stats.confirmations < knobs.low_confirmation_threshold
+        and example_stats.confirmations + example_stats.unscored_promotions
+        < knobs.low_confirmation_threshold
         and (now - example_stats.first_seen).days > knobs.downweight_age_days
     ):
         return knobs.downweight_factor
