@@ -810,12 +810,49 @@ def _kubectl_cluster_ready() -> None:
         )
 
 
+def _count_spans_script(
+    *,
+    tenant_id: str,
+    span_name_symbol: str,
+    lookback_hours: float,
+    distinct_replay_identities: bool,
+) -> str:
+    """Build the in-pod span-count script.
+
+    ``span_name_symbol`` is interpolated into an ``import`` statement, so it
+    must be a ``SPAN_NAME_*`` SYMBOL (``SPAN_NAME_GATEWAY``), never a span
+    NAME value (``cogniverse.gateway``).
+
+    With ``distinct_replay_identities`` the script counts UNIQUE capture ids
+    among replayed spans. Consecutive runs re-replay the same deterministic
+    sample into one lookback window, so a row count reports a multiple of the
+    corpus; the distinct-id count is exactly the corpus size regardless.
+    """
+    if distinct_replay_identities:
+        tail = (
+            f"cols = [c for c in df.columns if c.endswith({REPLAY_IDENTITY_ATTRIBUTE!r})]; "
+            "print('__SPANS__' + str(int(df[cols[0]].nunique()) if cols else -1))"
+        )
+    else:
+        tail = "print('__SPANS__' + str(len(df)))"
+    return IN_POD_TELEMETRY_PRELUDE + (
+        "import asyncio; "
+        f"from cogniverse_foundation.telemetry.config import {span_name_symbol}; "
+        "from cogniverse_foundation.telemetry.manager import get_telemetry_manager; "
+        "from cogniverse_runtime.optimization_cli import _query_spans_by_name; "
+        "tm = get_telemetry_manager(); "
+        f"tp = tm.get_provider(tenant_id={tenant_id!r}); "
+        f"df = asyncio.run(_query_spans_by_name(tm, tp, {tenant_id!r}, {span_name_symbol}, {lookback_hours!r})); "
+        + tail
+    )
+
+
 def _count_spans_by_name_in_pod(
     tenant_id: str,
     span_name_symbol: str,
     lookback_hours: float | None = None,
     *,
-    replayed_only: bool = False,
+    distinct_replay_identities: bool = False,
 ) -> int:
     """Count spans of one training-span type for a tenant, via the runtime pod.
 
@@ -827,25 +864,11 @@ def _count_spans_by_name_in_pod(
     """
     if lookback_hours is None:
         lookback_hours = _module_lookback_hours()
-    script = IN_POD_TELEMETRY_PRELUDE + (
-        "import asyncio; "
-        f"from cogniverse_foundation.telemetry.config import {span_name_symbol}; "
-        "from cogniverse_foundation.telemetry.manager import get_telemetry_manager; "
-        "from cogniverse_runtime.optimization_cli import _query_spans_by_name; "
-        f"tm = get_telemetry_manager(); "
-        f"tp = tm.get_provider(tenant_id={tenant_id!r}); "
-        f"df = asyncio.run(_query_spans_by_name(tm, tp, {tenant_id!r}, {span_name_symbol}, {lookback_hours!r})); "
-        + (
-            # Replayed spans carry the capture identity; organic spans the
-            # agents emit during a run do not. Counting only the marked ones
-            # keeps the corpus check exact while the served population grows.
-            (
-                f"cols = [c for c in df.columns if c.endswith({REPLAY_IDENTITY_ATTRIBUTE!r})]; "
-                "print('__SPANS__' + str(int(df[cols[0]].notna().sum()) if cols else -1))"
-            )
-            if replayed_only
-            else "print('__SPANS__' + str(len(df)))"
-        )
+    script = _count_spans_script(
+        tenant_id=tenant_id,
+        span_name_symbol=span_name_symbol,
+        lookback_hours=lookback_hours,
+        distinct_replay_identities=distinct_replay_identities,
     )
     result = subprocess.run(
         [
@@ -1451,19 +1474,21 @@ def generate_spans_for_batch_jobs(_kubectl_cluster_ready):
         "entity_extraction": capture_counts[span_names[1]],
         "profile_selection": capture_counts[span_names[3]],
     }
-    # The replayed corpus must be present EXACTLY -- that is what pins the
-    # committed capture. The SERVED population is a superset: agents emit
-    # organic spans of these same types while a run optimizes, so requiring
-    # equality there fails on whatever the previous run happened to emit.
+    # Count DISTINCT capture ids, not replayed rows: consecutive runs
+    # re-replay the same deterministic sample into one lookback window, so a
+    # row count reports a multiple of the corpus. Distinct ids pin the
+    # committed capture exactly however many runs preceded this one. The
+    # SERVED population is a superset -- agents emit organic spans of these
+    # same types while a run optimizes -- so it is checked as a floor.
     replayed_counts = {
         "query_enhancement": _count_spans_by_name_in_pod(
-            TENANT_ID, "SPAN_NAME_QUERY_ENHANCEMENT", replayed_only=True
+            TENANT_ID, "SPAN_NAME_QUERY_ENHANCEMENT", distinct_replay_identities=True
         ),
         "entity_extraction": _count_spans_by_name_in_pod(
-            TENANT_ID, "SPAN_NAME_ENTITY_EXTRACTION", replayed_only=True
+            TENANT_ID, "SPAN_NAME_ENTITY_EXTRACTION", distinct_replay_identities=True
         ),
         "profile_selection": _count_spans_by_name_in_pod(
-            TENANT_ID, "SPAN_NAME_PROFILE_SELECTION", replayed_only=True
+            TENANT_ID, "SPAN_NAME_PROFILE_SELECTION", distinct_replay_identities=True
         ),
     }
     assert replayed_counts == expected_served_scoreable_counts, (

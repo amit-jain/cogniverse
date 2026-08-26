@@ -205,3 +205,60 @@ class TestOptimizerCaptureSampleCaps:
         sampled = sample_capture_by_name(archive, _MOD._optimizer_capture_sample_caps())
 
         assert (len(archive), len(sampled)) == (787, 344)
+
+
+def test_count_spans_script_is_valid_python_for_both_modes():
+    """The in-pod script must PARSE; a bad interpolation is a lost 15-min run.
+
+    Run 21 shipped span NAME values where the builder interpolates a
+    ``SPAN_NAME_*`` SYMBOL into an ``import`` statement, producing
+    ``import cogniverse.query_enhancement`` -- a SyntaxError that only
+    surfaced after a full fixture cycle.
+    """
+    import ast
+
+    for distinct in (False, True):
+        script = _MOD._count_spans_script(
+            tenant_id="flywheel_org:production",
+            span_name_symbol="SPAN_NAME_QUERY_ENHANCEMENT",
+            lookback_hours=0.5,
+            distinct_replay_identities=distinct,
+        )
+        ast.parse(script)
+        assert (
+            "from cogniverse_foundation.telemetry.config import "
+            "SPAN_NAME_QUERY_ENHANCEMENT; " in script
+        ), script
+
+
+def test_count_spans_script_counts_distinct_capture_identities():
+    """Distinct-identity mode counts UNIQUE capture ids, not replayed rows.
+
+    Consecutive runs re-replay the same deterministic sample into one
+    lookback window, so a row count reports N x the corpus. The number of
+    DISTINCT capture ids is exactly the corpus size however many runs ran.
+    """
+    script = _MOD._count_spans_script(
+        tenant_id="flywheel_org:production",
+        span_name_symbol="SPAN_NAME_PROFILE_SELECTION",
+        lookback_hours=0.5,
+        distinct_replay_identities=True,
+    )
+    assert "nunique()" in script, script
+    assert "notna()" not in script, script
+    assert _MOD.REPLAY_IDENTITY_ATTRIBUTE in script, script
+    assert "print('__SPANS__' + str(int(df[cols[0]].nunique()) if cols else -1))" in (
+        script
+    ), script
+
+
+def test_count_spans_script_total_mode_counts_every_row():
+    script = _MOD._count_spans_script(
+        tenant_id="flywheel_org:production",
+        span_name_symbol="SPAN_NAME_GATEWAY",
+        lookback_hours=1.25,
+        distinct_replay_identities=False,
+    )
+    assert "print('__SPANS__' + str(len(df)))" in script, script
+    assert "nunique" not in script, script
+    assert "1.25" in script, script
