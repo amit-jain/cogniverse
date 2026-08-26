@@ -332,7 +332,8 @@ from cogniverse_runtime.optimization_cli import (
 # Compile QueryEnhancementAgent's DSPy module from query_enhancement spans
 simba_result = await run_simba_optimization(tenant_id="customer_a", lookback_hours=24.0)
 
-# Compile ProfileSelectionAgent's DSPy module from profile_selection spans
+# Compile ProfileSelectionAgent's DSPy module from labels derived by running the
+# shipped label-source queries through the tenant's search backend per profile
 profile_result = await run_profile_optimization(tenant_id="customer_a", lookback_hours=24.0)
 ```
 
