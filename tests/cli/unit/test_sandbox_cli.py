@@ -624,3 +624,47 @@ class TestStartGatewayRecoversStaleRegistration:
         assert calls == [["openshell", "gateway", "start", "--port", "28080"]], (
             f"a first start must not destroy anything; argv was {calls}"
         )
+
+
+class TestEnsureHostGatewayRecoversCorruptedState:
+    """An unclean shutdown corrupts the gateway's internal cluster state.
+
+    The recreate path removes the corrupt registration and then fails on it,
+    reporting "Corrupted cluster state"; a second attempt builds clean
+    because the first one cleared it. A single attempt therefore leaves
+    every caller wedged after a power cycle, which is exactly when the
+    corruption happens.
+    """
+
+    def test_retries_once_after_a_failed_start(self, monkeypatch):
+        attempts: list[int] = []
+
+        def fake_start() -> bool:
+            attempts.append(len(attempts) + 1)
+            return len(attempts) > 1
+
+        monkeypatch.setattr(sandbox_mod, "openshell_installed", lambda: True)
+        monkeypatch.setattr(sandbox_mod, "gateway_running", lambda: False)
+        monkeypatch.setattr(sandbox_mod, "start_gateway", fake_start)
+
+        assert sandbox_mod.ensure_host_gateway() is True
+        assert attempts == [1, 2], (
+            "a failed start clears the corrupt state, so the retry is what "
+            f"recovers it; attempts were {attempts}"
+        )
+
+    def test_gives_up_after_the_retry(self, monkeypatch):
+        attempts: list[int] = []
+
+        def fake_start() -> bool:
+            attempts.append(len(attempts) + 1)
+            return False
+
+        monkeypatch.setattr(sandbox_mod, "openshell_installed", lambda: True)
+        monkeypatch.setattr(sandbox_mod, "gateway_running", lambda: False)
+        monkeypatch.setattr(sandbox_mod, "start_gateway", fake_start)
+
+        assert sandbox_mod.ensure_host_gateway() is False
+        assert attempts == [1, 2], (
+            f"two failures is a real failure, not a loop; attempts were {attempts}"
+        )
