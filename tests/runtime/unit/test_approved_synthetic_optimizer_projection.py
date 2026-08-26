@@ -302,6 +302,7 @@ async def test_synthetic_only_data_compiles_the_actual_production_module(
             "examples": 2,
             "served_scoreable_examples": 0,
             "non_trainable_examples": 0,
+            "unscoreable_examples": 1,
             "training_examples": 1,
             "holdout_examples": 0,
             "holdout_source": "served",

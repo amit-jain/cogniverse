@@ -340,8 +340,10 @@ not the SIMBA algorithm.
 `confidence`), appends approved synthetic demos for `"query_enhancement"`, and splits the records with
 `_split_served_holdout` (deterministic ~25% tail holdout over served-scoreable spans). Trainable records
 — a non-identity enhancement with at least one expansion term — compile the module via
-`_create_teleprompter(len(trainset), metric=_query_enhancement_metric)`; every holdout record is an
-evaluation probe. `_query_enhancement_quality` scores a module's own output for the probe inputs (1.0 when
+`_create_teleprompter(len(trainset), metric=_query_enhancement_metric)`; records the metric cannot score
+(no source text and no grounding context) are ordered after every scoreable record so the bootstrap walk
+reaches them only when the scoreable records did not fill the demos, and their count is reported as
+`unscoreable_examples`. Every holdout record is an evaluation probe. `_query_enhancement_quality` scores a module's own output for the probe inputs (1.0 when
 the enhanced query differs from the query, has expansion terms and, given a grounding context, names one
 of its entities; else 0.0). The base module, the persisted artifact and the compiled candidate are scored
 on the same holdout and `_select_simba_artifact` decides: `promote` persists the candidate (it beats the
@@ -362,9 +364,13 @@ holdout the run returns `no_eval_material` and persists nothing. The artifact ke
 `run_entity_extraction_optimization(tenant_id, lookback_hours=24.0)` reads `cogniverse.entity_extraction`
 spans, builds query/entity examples from served spans with recorded entities, merges approved synthetic demos
 for `"entity_extraction"`, projects approved entities to the production `text|type|confidence` line format
-plus the comma-separated `entity_types` output, splits a served-scoreable holdout, scores the base module,
+plus the comma-separated `entity_types` output, renders served GLiNER entities to the same lines via
+`_entity_extraction_example`, splits a served-scoreable holdout, scores the base module,
 current artifact, and compiled candidate with token-set F1 over entity texts, and uses `_select_simba_artifact`
-to decide `promote` / `keep` / `rollback` / `reject`. It persists `no_eval_material` when no served-scoreable
+to decide `promote` / `keep` / `rollback` / `reject`. The bootstrap keeps a teacher trace whose F1 reaches
+`_entity_bootstrap_threshold` — `ENTITY_BOOTSTRAP_METRIC_THRESHOLD` (1.0), never below the served module's
+holdout score — through `BootstrapFewShot(metric=BootstrapMetricRecorder(...), metric_threshold=...)`; the
+recorder logs every attempt's score and the run reports the walk under `bootstrap`. It persists `no_eval_material` when no served-scoreable
 holdout exists, persists the current or base module for non-promote decisions, and activates the persisted
 version on `promote` or `rollback`. The artifact key is `("model", "entity_extraction")`;
 `EntityExtractionAgent` reloads it via `am.load_blob("model", "entity_extraction")`.
@@ -372,6 +378,12 @@ version on `promote` or `rollback`. The artifact key is `("model", "entity_extra
 Returns:
   - {"status": "success", "spans_found": int, "served_scoreable_examples": int,
      "training_examples": int, "holdout_examples": int, "holdout_source": "served",
+     "bootstrap": {"trainset": int, "max_bootstrapped_demos": int,
+                   "max_labeled_demos": int, "max_rounds": int,
+                   "metric_threshold": float, "attempts": int, "errors": int,
+                   "examples_walked": int, "accepted": int,
+                   "bootstrapped_demos": int, "labeled_demos": int,
+                   "metric_values": list[float]} | None,
      "baseline_score": float, "current_score": float | None,
      "candidate_score": float | None,
      "decision": "promote" | "keep" | "rollback" | "reject",
@@ -1107,12 +1119,16 @@ uv run python -m cogniverse_runtime.optimization_cli \
 
 **DSPy Optimizer Selection (actual behavior):**
 The `simba`, `profile`, and `entity-extraction` modes use
-`_create_teleprompter(trainset_size, teacher_settings=None)`, which always returns
+`_create_teleprompter(trainset_size, teacher_settings=None, metric=..., metric_threshold=None)`, which always returns
 `dspy.teleprompt.BootstrapFewShot` — scaled by a single threshold, not a multi-tier optimizer
 selection:
 
-- < 50 examples → `BootstrapFewShot(metric=_approved_example_exact_metric, max_bootstrapped_demos=4, max_labeled_demos=8, max_rounds=1, max_errors=5)`
-- ≥ 50 examples → `BootstrapFewShot(metric=_approved_example_exact_metric, max_bootstrapped_demos=8, max_labeled_demos=16, max_rounds=2, max_errors=10)`
+- < 50 examples → `BootstrapFewShot(metric=metric, metric_threshold=metric_threshold, max_bootstrapped_demos=4, max_labeled_demos=8, max_rounds=1, max_errors=5)`
+- ≥ 50 examples → `BootstrapFewShot(metric=metric, metric_threshold=metric_threshold, max_bootstrapped_demos=8, max_labeled_demos=16, max_rounds=2, max_errors=10)`
+
+`metric` defaults to `_approved_example_exact_metric`; simba passes `_query_enhancement_metric`, profile
+`_profile_selection_metric`, entity-extraction a `BootstrapMetricRecorder` over `_entity_extraction_quality`
+with `metric_threshold=_entity_bootstrap_threshold(...)`.
 
 All three pass `teacher_settings={"lm": create_dspy_lm(llm_config.resolve_teacher())}`, so the
 bootstrap teacher runs on the centralized `llm_config.teacher` endpoint. The student LM
