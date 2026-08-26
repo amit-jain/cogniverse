@@ -1,10 +1,11 @@
-"""DatasetStore.replace_dataset: serialized last-write-wins with compensation.
+"""DatasetStore.replace_dataset: serialized last-write-wins with typed loss.
 
 ``create_dataset`` appends a new version when the name already exists, so the
 stable artefact names accumulated stale rows every save. ``replace_dataset``
 serializes same-name writes, deletes then creates so the read returns only the
-latest write, and restores the previous contents if the delete or create fails
-after the old data is gone.
+latest write, restores the previous contents if the delete or create fails
+after the old data is gone, and raises a distinct loss error when that restore
+itself fails.
 """
 
 from __future__ import annotations
@@ -16,6 +17,7 @@ import pytest
 
 from cogniverse_foundation.telemetry.providers.base import (
     DatasetNotFoundError,
+    DatasetReplaceRestoreFailedError,
     DatasetStore,
 )
 
@@ -169,7 +171,7 @@ class _ControlledReplaceStore(DatasetStore):
         self.data: dict[str, pd.DataFrame] = {}
         self.create_calls: list[str] = []
         self.delete_calls: list[str] = []
-        self.fail_next_create = False
+        self.create_failures: list[BaseException] = []
         self.fail_delete_after_commit = False
         self.block_first_create = False
         self.first_create_entered = asyncio.Event()
@@ -186,9 +188,8 @@ class _ControlledReplaceStore(DatasetStore):
             if self.block_first_create and not self.first_create_entered.is_set():
                 self.first_create_entered.set()
                 await self.release_first_create.wait()
-            if self.fail_next_create:
-                self.fail_next_create = False
-                raise ConnectionError("create failed inside create")
+            if self.create_failures:
+                raise self.create_failures.pop(0)
             self.data[name] = data.copy()
             return name
         finally:
@@ -230,9 +231,10 @@ async def test_replace_restores_previous_when_delete_commits_then_raises():
     store.data["d"] = original.copy()
     store.fail_delete_after_commit = True
 
-    with pytest.raises(ConnectionError, match="delete failed after commit"):
+    with pytest.raises(ConnectionError) as excinfo:
         await store.replace_dataset("d", pd.DataFrame([{"v": "new"}]))
 
+    assert excinfo.type is ConnectionError
     restored = await store.get_dataset("d")
     pd.testing.assert_frame_equal(restored, original)
     assert store.delete_calls == ["d"]
@@ -244,15 +246,62 @@ async def test_replace_restores_previous_when_create_raises():
     store = _ControlledReplaceStore()
     original = pd.DataFrame([{"v": "original"}])
     store.data["d"] = original.copy()
-    store.fail_next_create = True
+    store.create_failures = [ConnectionError("create failed inside create")]
 
-    with pytest.raises(ConnectionError, match="create failed inside create"):
+    with pytest.raises(ConnectionError) as excinfo:
         await store.replace_dataset("d", pd.DataFrame([{"v": "new"}]))
 
+    assert excinfo.type is ConnectionError
     restored = await store.get_dataset("d")
     pd.testing.assert_frame_equal(restored, original)
     assert store.delete_calls == ["d"]
     assert store.create_calls == ["d", "d"]
+
+
+@pytest.mark.asyncio
+async def test_replace_raises_restore_failure_type_when_delete_commits_then_restore_fails():
+    store = _ControlledReplaceStore()
+    original = pd.DataFrame([{"v": "original"}])
+    store.data["d"] = original.copy()
+    store.fail_delete_after_commit = True
+    store.create_failures = [ConnectionError("restore failed after delete")]
+
+    with pytest.raises(DatasetReplaceRestoreFailedError) as excinfo:
+        await store.replace_dataset("d", pd.DataFrame([{"v": "new"}]))
+
+    assert excinfo.type is DatasetReplaceRestoreFailedError
+    assert excinfo.value.dataset_name == "d"
+    assert type(excinfo.value.operation_error) is ConnectionError
+    assert str(excinfo.value.operation_error) == "delete failed after commit"
+    assert type(excinfo.value.restore_error) is ConnectionError
+    assert str(excinfo.value.restore_error) == "restore failed after delete"
+    assert type(excinfo.value.__cause__) is ConnectionError
+    with pytest.raises(KeyError):
+        await store.get_dataset("d")
+
+
+@pytest.mark.asyncio
+async def test_replace_raises_restore_failure_type_when_create_fails_inside_create():
+    store = _ControlledReplaceStore()
+    original = pd.DataFrame([{"v": "original"}])
+    store.data["d"] = original.copy()
+    store.create_failures = [
+        ConnectionError("create failed inside create"),
+        ConnectionError("restore failed after create"),
+    ]
+
+    with pytest.raises(DatasetReplaceRestoreFailedError) as excinfo:
+        await store.replace_dataset("d", pd.DataFrame([{"v": "new"}]))
+
+    assert excinfo.type is DatasetReplaceRestoreFailedError
+    assert excinfo.value.dataset_name == "d"
+    assert type(excinfo.value.operation_error) is ConnectionError
+    assert str(excinfo.value.operation_error) == "create failed inside create"
+    assert type(excinfo.value.restore_error) is ConnectionError
+    assert str(excinfo.value.restore_error) == "restore failed after create"
+    assert type(excinfo.value.__cause__) is ConnectionError
+    with pytest.raises(KeyError):
+        await store.get_dataset("d")
 
 
 @pytest.mark.asyncio

@@ -7,6 +7,7 @@ Provider packages (cogniverse-telemetry-phoenix) implement these interfaces.
 
 import asyncio
 import logging
+import weakref
 from abc import ABC, abstractmethod
 from contextlib import contextmanager
 from datetime import datetime
@@ -176,6 +177,28 @@ class DatasetNotFoundError(ValueError):
     """
 
 
+class DatasetReplaceRestoreFailedError(RuntimeError):
+    """Dataset replacement lost the previous contents while restoring.
+
+    The original replace failure is chained as ``__cause__``. The restore
+    failure is carried in ``restore_error`` so callers can distinguish
+    "failed but intact" from "failed and lost" without parsing strings.
+    """
+
+    def __init__(
+        self,
+        dataset_name: str,
+        operation_error: BaseException,
+        restore_error: BaseException,
+    ) -> None:
+        self.dataset_name = dataset_name
+        self.operation_error = operation_error
+        self.restore_error = restore_error
+        super().__init__(
+            f"replace_dataset lost previous contents for dataset {dataset_name!r}"
+        )
+
+
 class DatasetStore(ABC):
     """
     Manage training datasets.
@@ -253,15 +276,42 @@ class DatasetStore(ABC):
         )
 
     def _replace_dataset_lock(self, name: str) -> asyncio.Lock:
+        """Return the per-name lock for this store instance.
+
+        The lock registry is a weak cache keyed by dataset name. It only
+        serializes same-name writes that share this store object on the same
+        event loop. It does not coordinate across threads, processes, or
+        backend replicas.
+        """
         locks = getattr(self, "_replace_dataset_locks", None)
         if locks is None:
-            locks = {}
+            locks = weakref.WeakValueDictionary()
             setattr(self, "_replace_dataset_locks", locks)
         lock = locks.get(name)
         if lock is None:
             lock = asyncio.Lock()
             locks[name] = lock
         return lock
+
+    async def _restore_previous_dataset(
+        self,
+        name: str,
+        previous: pd.DataFrame,
+        metadata: Optional[Dict[str, Any]],
+        operation_error: BaseException,
+    ) -> None:
+        try:
+            await self.create_dataset(name, previous, metadata)
+        except Exception as restore_error:
+            logger.exception(
+                "replace_dataset: failed to restore previous contents of '%s'",
+                name,
+            )
+            raise DatasetReplaceRestoreFailedError(
+                dataset_name=name,
+                operation_error=operation_error,
+                restore_error=restore_error,
+            ) from operation_error
 
     async def replace_dataset(
         self, name: str, data: pd.DataFrame, metadata: Optional[Dict[str, Any]] = None
@@ -270,11 +320,16 @@ class DatasetStore(ABC):
 
         ``create_dataset`` APPENDS a new version when the name already exists,
         so repeated saves to a stable (un-versioned) name accumulate stale and
-        duplicate rows. This helper serializes same-name writes per store
-        instance, deletes the named dataset, then recreates it with the new
-        content. If the destructive step or the create fails after the old
-        content is gone, the previous frame is recreated before the exception
-        propagates. A pre-read outage still propagates before deletion.
+        duplicate rows. This helper serializes same-name writes on one store
+        instance in one event loop, deletes the named dataset, then recreates
+        it with the new content. If the destructive step or the create fails
+        after the old content is gone, the previous frame is recreated before
+        the exception propagates. If that restore also fails, the caller gets
+        ``DatasetReplaceRestoreFailedError`` with the dataset name, the
+        original operation error, and the restore error. A pre-read outage
+        still propagates before deletion. This is in-process compensation only;
+        a SIGKILL between delete and create can still lose the dataset because
+        Phoenix offers no atomic swap primitive.
 
         Returns:
             The new dataset identifier.
@@ -287,7 +342,7 @@ class DatasetStore(ABC):
 
             try:
                 await self.delete_dataset(name)
-            except Exception:
+            except Exception as operation_error:
                 delete_missing = False
                 try:
                     await self.get_dataset(name)
@@ -296,28 +351,18 @@ class DatasetStore(ABC):
                 except Exception:
                     pass
                 if delete_missing and previous is not None:
-                    try:
-                        await self.create_dataset(name, previous, metadata)
-                    except Exception:
-                        logger.exception(
-                            "replace_dataset: failed to restore previous contents "
-                            "of '%s' after a torn delete",
-                            name,
-                        )
+                    await self._restore_previous_dataset(
+                        name, previous, metadata, operation_error
+                    )
                 raise
 
             try:
                 return await self.create_dataset(name, data, metadata)
-            except Exception:
+            except Exception as operation_error:
                 if previous is not None:
-                    try:
-                        await self.create_dataset(name, previous, metadata)
-                    except Exception:
-                        logger.exception(
-                            "replace_dataset: failed to restore previous contents "
-                            "of '%s' after a torn create",
-                            name,
-                        )
+                    await self._restore_previous_dataset(
+                        name, previous, metadata, operation_error
+                    )
                 raise
 
 
