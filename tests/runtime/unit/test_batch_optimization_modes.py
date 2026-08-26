@@ -6485,7 +6485,7 @@ class TestEntityBootstrapThreshold:
             _entity_bootstrap_threshold,
         )
 
-        assert ENTITY_BOOTSTRAP_METRIC_THRESHOLD == 1.0
+        assert ENTITY_BOOTSTRAP_METRIC_THRESHOLD == 0.0
         assert {
             "bar_above_served": _entity_bootstrap_threshold(0.392, 0.621, bar=0.9),
             "served_above_bar": _entity_bootstrap_threshold(0.392, 0.621, bar=0.5),
@@ -6495,8 +6495,32 @@ class TestEntityBootstrapThreshold:
             "bar_above_served": 0.9,
             "served_above_bar": 0.621,
             "no_current_artifact": 0.7,
-            "default_bar": 1.0,
+            "default_bar": 0.621,
         }
+
+    def test_the_served_floor_is_reachable_by_a_real_trace(self):
+        """A bar of 1.0 demands a perfect token-set match, which the measured
+        distribution never reaches, so BootstrapFewShot never collects its
+        demo quota and walks the entire trainset every round. The default bar
+        must therefore leave the served-holdout floor as the operative bound.
+        """
+        from cogniverse_runtime.optimization_cli import (
+            ENTITY_BOOTSTRAP_METRIC_THRESHOLD as bar,
+        )
+        from cogniverse_runtime.optimization_cli import (
+            _entity_bootstrap_threshold,
+        )
+
+        served_baseline, served_current = 0.392, 0.621
+        assert (
+            _entity_bootstrap_threshold(served_baseline, served_current)
+            == max(bar, served_current)
+            == served_current
+        ), "the default bar must not mask the served floor"
+        assert bar < served_baseline, (
+            f"bar {bar} is at or above the served score, so the floor can never "
+            "engage and the bar is a constant"
+        )
 
 
 class TestSyntheticDataMerge:
