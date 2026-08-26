@@ -24,6 +24,7 @@ import json
 import math
 import os
 import subprocess
+import tempfile
 import textwrap
 import time
 import uuid
@@ -1564,6 +1565,11 @@ BATCH_JOB_TIMEOUT_ENV = "COGNIVERSE_E2E_BATCH_JOB_TIMEOUT_S"
 # BATCH_JOB_TIMEOUT_ENV for a measurement run, never by editing call sites.
 BATCH_JOB_DEFAULT_TIMEOUT_S = 1200
 BATCH_JOB_DURATIONS: list[tuple[str, float, bool]] = []
+# pytest captures stdout and surfaces it only for FAILING tests, so a printed
+# measurement is invisible for exactly the runs that prove a budget adequate.
+BATCH_JOB_DURATIONS_PATH = (
+    Path(tempfile.gettempdir()) / "cogniverse_batch_job_durations.jsonl"
+)
 
 
 def _batch_job_timeout_s() -> int:
@@ -1574,6 +1580,11 @@ def _batch_job_timeout_s() -> int:
 def _record_batch_job_duration(mode: str, seconds: float, *, timed_out: bool) -> None:
     """Record a job's real cost so budgets are set from data, not guesses."""
     BATCH_JOB_DURATIONS.append((mode, seconds, timed_out))
+    with BATCH_JOB_DURATIONS_PATH.open("a", encoding="utf-8") as handle:
+        handle.write(
+            json.dumps({"mode": mode, "seconds": seconds, "timed_out": timed_out})
+            + "\n"
+        )
     print(
         f"__BATCH_JOB_DURATION__ mode={mode} seconds={seconds:.1f} "
         f"timed_out={timed_out} budget={_batch_job_timeout_s()}",
