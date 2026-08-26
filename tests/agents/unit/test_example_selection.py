@@ -92,6 +92,10 @@ def _assert_example_stats(
         "scored_promotions": scored_promotions,
         "first_seen": first_seen,
     }
+    assert stats_row.confirmations == confirmations
+    assert stats_row.unscored_promotions == unscored_promotions
+    assert stats_row.scored_promotions == scored_promotions
+    assert stats_row.first_seen == first_seen
 
 
 LEDGER = [

@@ -56,6 +56,10 @@ def _assert_example_stats(
         "scored_promotions": scored_promotions,
         "first_seen": first_seen,
     }
+    assert stats_row.confirmations == confirmations
+    assert stats_row.unscored_promotions == unscored_promotions
+    assert stats_row.scored_promotions == scored_promotions
+    assert stats_row.first_seen == first_seen
 
 
 CASES = [
@@ -279,4 +283,33 @@ def test_decay_state_matrix(
     stats = confirmation_stats(lineage, score_threshold=score_threshold)
     assert set(stats) == {example_id}
     _assert_example_stats(stats[example_id], **expected_stats)
+    if _label == "old + 3 scored-above-threshold promotions -> no decay":
+        assert stats[example_id].confirmations == 3
+        assert stats[example_id].unscored_promotions == 0
+        assert stats[example_id].scored_promotions == 3
+    elif _label == "old + 3 scored-below-threshold promotions -> decays":
+        assert stats[example_id].confirmations == 0
+        assert stats[example_id].unscored_promotions == 0
+        assert stats[example_id].scored_promotions == 3
+    elif _label == "old + 3 unscored promotions -> no decay":
+        assert stats[example_id].confirmations == 0
+        assert stats[example_id].unscored_promotions == 3
+        assert stats[example_id].scored_promotions == 0
+    elif _label == "old + mixed: 1 scored-above, 2 unscored -> no decay":
+        assert stats[example_id].confirmations == 1
+        assert stats[example_id].unscored_promotions == 2
+        assert stats[example_id].scored_promotions == 1
+    elif _label == "old + zero promotions at all -> decays":
+        assert stats[example_id].confirmations == 0
+        assert stats[example_id].unscored_promotions == 0
+        assert stats[example_id].scored_promotions == 0
+    elif _label == "fresh, any history -> no decay":
+        assert stats[example_id].confirmations == 0
+        assert stats[example_id].unscored_promotions == 0
+        assert stats[example_id].scored_promotions == 3
+    else:
+        assert _label == "threshold unset -> current behavior preserved exactly"
+        assert stats[example_id].confirmations == 2
+        assert stats[example_id].unscored_promotions == 2
+        assert stats[example_id].scored_promotions == 0
     assert decay_weight(stats, example_id, now=now, knobs=knobs) == expected_weight
