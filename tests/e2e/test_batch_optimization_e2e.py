@@ -4581,6 +4581,152 @@ def _seed_backdated_training_selection_rows_in_pod(
         )
 
 
+def _set_entity_extraction_floor_in_pod(tenant_id: str) -> None:
+    script = IN_POD_TELEMETRY_PRELUDE + textwrap.dedent(
+        f"""\
+        from cogniverse_foundation.config.unified_config import RoutingConfigUnified
+        from cogniverse_foundation.config.utils import create_default_config_manager
+
+        manager = create_default_config_manager()
+        manager.set_routing_config(
+            RoutingConfigUnified(
+                tenant_id={tenant_id!r},
+                optimizer_floors={{
+                    "entity_extraction": {{
+                        "min_samples_for_optimization": 4,
+                        "min_unique_queries": 4,
+                    }},
+                }},
+            )
+        )
+        print("__CONFIG__ok")
+        """
+    )
+    result = subprocess.run(
+        [
+            "kubectl",
+            "--context",
+            KUBECTL_CONTEXT,
+            "exec",
+            "-n",
+            NAMESPACE,
+            DEPLOYMENT,
+            "-c",
+            CONTAINER,
+            "--",
+            "python3",
+            "-c",
+            script,
+        ],
+        capture_output=True,
+        text=True,
+        timeout=120,
+    )
+    if result.returncode != 0:
+        raise RuntimeError(
+            _subprocess_failure_message(
+                "set_entity_extraction_floor",
+                result,
+                operation=f"set entity-extraction floor for tenant_id={tenant_id!r}",
+            )
+        )
+    line = result.stdout.strip().splitlines()[-1]
+    assert line == "__CONFIG__ok", result.stdout
+
+
+def _seed_approved_training_examples_in_pod(
+    tenant_id: str,
+    optimizer_type: str,
+    rows: list[dict[str, object]],
+) -> None:
+    rows_json = json.dumps(rows)
+    script = IN_POD_TELEMETRY_PRELUDE + textwrap.dedent(
+        f"""\
+        import asyncio
+        import json
+        from datetime import datetime
+
+        from cogniverse_agents.approval.approval_storage import ApprovalStorageImpl
+        from cogniverse_core.approval.interfaces import (
+            ApprovalStatus,
+            ReviewItem,
+            approved_synthetic_dataset_name,
+        )
+        from cogniverse_foundation.config.utils import create_default_config_manager
+        from cogniverse_foundation.telemetry.manager import get_telemetry_manager
+
+        async def _go():
+            config_manager = create_default_config_manager()
+            system_config = config_manager.get_system_config()
+            grpc_endpoint = system_config.telemetry_collector_endpoint
+            if not grpc_endpoint.startswith("http"):
+                grpc_endpoint = "http://" + grpc_endpoint
+            telemetry_manager = get_telemetry_manager()
+            storage = ApprovalStorageImpl(
+                grpc_endpoint=grpc_endpoint,
+                http_endpoint=system_config.telemetry_url,
+                tenant_id={tenant_id!r},
+                telemetry_manager=telemetry_manager,
+                redis_url=system_config.redis_url,
+            )
+            items = []
+            for row in json.loads({rows_json!r}):
+                items.append(
+                    ReviewItem(
+                        item_id=row["item_id"],
+                        data=row["data"],
+                        confidence=row["confidence"],
+                        metadata=row["metadata"],
+                        status=ApprovalStatus.APPROVED,
+                        created_at=datetime.fromisoformat(row["created_at"]),
+                        reviewed_at=datetime.fromisoformat(row["reviewed_at"]),
+                    )
+                )
+            await storage.append_to_training_dataset(
+                approved_synthetic_dataset_name({tenant_id!r}),
+                items,
+                project_context={{"optimizer": {optimizer_type!r}}},
+            )
+            print("__APPROVED__ok")
+
+        asyncio.run(_go())
+        """
+    )
+    result = subprocess.run(
+        [
+            "kubectl",
+            "--context",
+            KUBECTL_CONTEXT,
+            "exec",
+            "-n",
+            NAMESPACE,
+            DEPLOYMENT,
+            "-c",
+            CONTAINER,
+            "--",
+            "python3",
+            "-c",
+            script,
+        ],
+        capture_output=True,
+        text=True,
+        timeout=120,
+    )
+    if result.returncode != 0:
+        raise RuntimeError(
+            _subprocess_failure_message(
+                "seed_approved_training_examples",
+                result,
+                operation=(
+                    "seed approved synthetic examples "
+                    f"tenant_id={tenant_id!r}, optimizer_type={optimizer_type!r}"
+                ),
+            )
+        )
+    line = result.stdout.strip().splitlines()[-1]
+    assert line == "__APPROVED__ok", result.stdout
+
+
 @pytest.fixture(scope="function")
 def decay_selection_tenant(_kubectl_cluster_ready) -> str:
     suffix = uuid.uuid4().hex[:8]
@@ -4599,6 +4745,7 @@ def decay_selection_tenant(_kubectl_cluster_ready) -> str:
         assert resp.status_code in (200, 201, 409), resp.text
 
     register_tenant_and_wait(tenant_id, created_by="e2e", timeout_s=600.0)
+    _set_entity_extraction_floor_in_pod(tenant_id)
 
     try:
         yield tenant_id
@@ -4616,7 +4763,7 @@ def decay_selection_tenant(_kubectl_cluster_ready) -> str:
 
 @pytest.mark.e2e
 class TestTrainingSelectionDecay:
-    def test_backdated_ledger_rows_decay_exactly_one_example(
+    def test_backdated_ledger_rows_round_trip_lineage_and_selection_math(
         self, decay_selection_tenant
     ):
         from datetime import datetime, timezone
@@ -4917,3 +5064,330 @@ class TestTrainingSelectionDecay:
         assert {
             example_id for example_id, weight in weights.items() if weight < 1.0
         } == {"span:old-unconfirmed"}
+
+    def test_approved_entity_extraction_rows_decay_in_real_optimizer_run(
+        self, decay_selection_tenant
+    ):
+        from datetime import datetime, timedelta, timezone
+
+        tenant_id = decay_selection_tenant
+        artifact_key = "entity_extraction"
+        now = datetime.now(timezone.utc).replace(microsecond=0)
+        approved_created_at = (now - timedelta(days=3)).isoformat()
+        approved_reviewed_at = (now - timedelta(days=2)).isoformat()
+        approved_specs = [
+            {
+                "item_id": "entity-old-unconfirmed",
+                "data": {
+                    "query": "old unconfirmed entity example",
+                    "entities": [{"text": "alpha", "type": "CONCEPT"}],
+                    "entity_types": "CONCEPT",
+                    "relationships": [],
+                },
+                "confidence": 0.91,
+                "metadata": {"agent_type": "entity_extraction", "synthetic": True},
+                "created_at": approved_created_at,
+                "reviewed_at": approved_reviewed_at,
+            },
+            {
+                "item_id": "entity-old-confirmed",
+                "data": {
+                    "query": "old confirmed entity example",
+                    "entities": [{"text": "beta", "type": "CONCEPT"}],
+                    "entity_types": "CONCEPT",
+                    "relationships": [],
+                },
+                "confidence": 0.92,
+                "metadata": {"agent_type": "entity_extraction", "synthetic": True},
+                "created_at": approved_created_at,
+                "reviewed_at": approved_reviewed_at,
+            },
+            {
+                "item_id": "entity-fresh-unconfirmed",
+                "data": {
+                    "query": "fresh unconfirmed entity example",
+                    "entities": [{"text": "gamma", "type": "CONCEPT"}],
+                    "entity_types": "CONCEPT",
+                    "relationships": [],
+                },
+                "confidence": 0.93,
+                "metadata": {"agent_type": "entity_extraction", "synthetic": True},
+                "created_at": approved_created_at,
+                "reviewed_at": approved_reviewed_at,
+            },
+            {
+                "item_id": "entity-fresh-confirmed",
+                "data": {
+                    "query": "fresh confirmed entity example",
+                    "entities": [{"text": "delta", "type": "CONCEPT"}],
+                    "entity_types": "CONCEPT",
+                    "relationships": [],
+                },
+                "confidence": 0.94,
+                "metadata": {"agent_type": "entity_extraction", "synthetic": True},
+                "created_at": approved_created_at,
+                "reviewed_at": approved_reviewed_at,
+            },
+        ]
+        expected_approved_item_ids = [spec["item_id"] for spec in approved_specs]
+        _seed_approved_training_examples_in_pod(tenant_id, artifact_key, approved_specs)
+
+        approved_examples = _approved_query_enhancement_examples_in_pod(
+            tenant_id, artifact_key
+        )
+        assert [row["example_id"] for row in approved_examples] == [
+            f"approved:{item_id}" for item_id in expected_approved_item_ids
+        ]
+
+        lineage_rows = [
+            {
+                "example_id": "approved:entity-old-unconfirmed",
+                "content": "old-unconfirmed-1",
+                "created_at": (now - timedelta(days=16)).isoformat(),
+                "decision": "keep",
+                "scored": False,
+                "score": None,
+                "base_score": None,
+                "candidate_score": None,
+            },
+            {
+                "example_id": "approved:entity-old-confirmed",
+                "content": "old-confirmed-1",
+                "created_at": (now - timedelta(days=18)).isoformat(),
+                "decision": "promote",
+                "scored": True,
+                "score": 0.8,
+                "base_score": 0.6,
+                "candidate_score": 0.8,
+            },
+            {
+                "example_id": "approved:entity-old-confirmed",
+                "content": "old-confirmed-2",
+                "created_at": (now - timedelta(days=17)).isoformat(),
+                "decision": "promote",
+                "scored": True,
+                "score": 0.8,
+                "base_score": 0.6,
+                "candidate_score": 0.8,
+            },
+            {
+                "example_id": "approved:entity-old-confirmed",
+                "content": "old-confirmed-3",
+                "created_at": (now - timedelta(days=16)).isoformat(),
+                "decision": "promote",
+                "scored": True,
+                "score": 0.8,
+                "base_score": 0.6,
+                "candidate_score": 0.8,
+            },
+            {
+                "example_id": "approved:entity-fresh-unconfirmed",
+                "content": "fresh-unconfirmed",
+                "created_at": (now - timedelta(days=2)).isoformat(),
+                "decision": "keep",
+                "scored": False,
+                "score": None,
+                "base_score": None,
+                "candidate_score": None,
+            },
+            {
+                "example_id": "approved:entity-fresh-confirmed",
+                "content": "fresh-confirmed-1",
+                "created_at": (now - timedelta(days=2)).isoformat(),
+                "decision": "promote",
+                "scored": True,
+                "score": 0.8,
+                "base_score": 0.6,
+                "candidate_score": 0.8,
+            },
+            {
+                "example_id": "approved:entity-fresh-confirmed",
+                "content": "fresh-confirmed-2",
+                "created_at": (now - timedelta(days=1)).isoformat(),
+                "decision": "promote",
+                "scored": True,
+                "score": 0.8,
+                "base_score": 0.6,
+                "candidate_score": 0.8,
+            },
+            {
+                "example_id": "approved:entity-fresh-confirmed",
+                "content": "fresh-confirmed-3",
+                "created_at": now.isoformat(),
+                "decision": "promote",
+                "scored": True,
+                "score": 0.8,
+                "base_score": 0.6,
+                "candidate_score": 0.8,
+            },
+        ]
+        _seed_backdated_training_selection_rows_in_pod(
+            tenant_id,
+            artifact_key,
+            lineage_rows,
+        )
+
+        lineage = _blob_version_lineage_in_pod(
+            "model", artifact_key, tenant_id=tenant_id
+        )
+        assert lineage == [
+            {
+                "version": 1,
+                "name": f"dspy-model-{tenant_id}-{artifact_key}-v1",
+                "row_count": 1,
+                "consumed_example_ids": ["approved:entity-old-unconfirmed"],
+                "decision": "keep",
+                "scored": False,
+                "base_score": None,
+                "candidate_score": None,
+                "created_at": (now - timedelta(days=16)).isoformat(),
+                "score": None,
+            },
+            {
+                "version": 2,
+                "name": f"dspy-model-{tenant_id}-{artifact_key}-v2",
+                "row_count": 1,
+                "consumed_example_ids": ["approved:entity-old-confirmed"],
+                "decision": "promote",
+                "scored": True,
+                "base_score": 0.6,
+                "candidate_score": 0.8,
+                "created_at": (now - timedelta(days=18)).isoformat(),
+                "score": 0.8,
+            },
+            {
+                "version": 3,
+                "name": f"dspy-model-{tenant_id}-{artifact_key}-v3",
+                "row_count": 1,
+                "consumed_example_ids": ["approved:entity-old-confirmed"],
+                "decision": "promote",
+                "scored": True,
+                "base_score": 0.6,
+                "candidate_score": 0.8,
+                "created_at": (now - timedelta(days=17)).isoformat(),
+                "score": 0.8,
+            },
+            {
+                "version": 4,
+                "name": f"dspy-model-{tenant_id}-{artifact_key}-v4",
+                "row_count": 1,
+                "consumed_example_ids": ["approved:entity-old-confirmed"],
+                "decision": "promote",
+                "scored": True,
+                "base_score": 0.6,
+                "candidate_score": 0.8,
+                "created_at": (now - timedelta(days=16)).isoformat(),
+                "score": 0.8,
+            },
+            {
+                "version": 5,
+                "name": f"dspy-model-{tenant_id}-{artifact_key}-v5",
+                "row_count": 1,
+                "consumed_example_ids": ["approved:entity-fresh-unconfirmed"],
+                "decision": "keep",
+                "scored": False,
+                "base_score": None,
+                "candidate_score": None,
+                "created_at": (now - timedelta(days=2)).isoformat(),
+                "score": None,
+            },
+            {
+                "version": 6,
+                "name": f"dspy-model-{tenant_id}-{artifact_key}-v6",
+                "row_count": 1,
+                "consumed_example_ids": ["approved:entity-fresh-confirmed"],
+                "decision": "promote",
+                "scored": True,
+                "base_score": 0.6,
+                "candidate_score": 0.8,
+                "created_at": (now - timedelta(days=2)).isoformat(),
+                "score": 0.8,
+            },
+            {
+                "version": 7,
+                "name": f"dspy-model-{tenant_id}-{artifact_key}-v7",
+                "row_count": 1,
+                "consumed_example_ids": ["approved:entity-fresh-confirmed"],
+                "decision": "promote",
+                "scored": True,
+                "base_score": 0.6,
+                "candidate_score": 0.8,
+                "created_at": (now - timedelta(days=1)).isoformat(),
+                "score": 0.8,
+            },
+            {
+                "version": 8,
+                "name": f"dspy-model-{tenant_id}-{artifact_key}-v8",
+                "row_count": 1,
+                "consumed_example_ids": ["approved:entity-fresh-confirmed"],
+                "decision": "promote",
+                "scored": True,
+                "base_score": 0.6,
+                "candidate_score": 0.8,
+                "created_at": now.isoformat(),
+                "score": 0.8,
+            },
+        ]
+
+        served_query = "PyTorch was released by Meta AI"
+        _call_agent("entity_extraction_agent", served_query, tenant_id=tenant_id)
+        _wait_for_seeded_span_lower_bound_in_pod(
+            tenant_id,
+            "SPAN_NAME_ENTITY_EXTRACTION",
+            1,
+            _module_lookback_hours(),
+        )
+
+        expected_decayed_example_ids = {"approved:entity-old-unconfirmed"}
+        result = _run_batch_job("entity-extraction", tenant_id=tenant_id)
+        assert result["status"] == "success", result
+        assert result["spans_found"] == 1, result
+        assert result["served_examples"] == 1, result
+        assert result["approved_examples"] == 4, result
+        assert result["served_scoreable_examples"] == 1, result
+        assert result["holdout_source"] == "served", result
+        assert result["holdout_examples"] == 1, result
+        assert result["training_examples"] == 4, result
+        assert result["selection"]["pool"] == 4, result
+        assert result["selection"]["deduped"] == 4, result
+        assert result["selection"]["mmr_applied"] is False, result
+        assert result["selection"]["decayed_count"] == len(
+            expected_decayed_example_ids
+        ), result
+        assert expected_decayed_example_ids == {result["consumed_example_ids"][1]}, (
+            result,
+            expected_decayed_example_ids,
+        )
+        assert result["consumed_example_ids"][0].startswith("span:"), result
+        assert result["consumed_example_ids"][1:] == [
+            "approved:entity-old-unconfirmed",
+            "approved:entity-old-confirmed",
+            "approved:entity-fresh-unconfirmed",
+            "approved:entity-fresh-confirmed",
+        ], result
+
+        version_blob, ledger = _load_blob_version_in_pod(
+            "model", artifact_key, result["version"], tenant_id=tenant_id
+        )
+        assert set(ledger) == {
+            "version",
+            "kind",
+            "key",
+            "consumed_example_ids",
+            "decision",
+            "scored",
+            "score",
+            "base_score",
+            "candidate_score",
+            "created_at",
+        }, ledger
+        assert ledger["version"] == result["version"], ledger
+        assert ledger["kind"] == "model", ledger
+        assert ledger["key"] == artifact_key, ledger
+        assert ledger["consumed_example_ids"] == result["consumed_example_ids"], ledger
+        assert ledger["decision"] == result["decision"], ledger
+        assert ledger["scored"] is True, ledger
+        assert ledger["base_score"] == result["baseline_score"], ledger
+        assert ledger["candidate_score"] == result["candidate_score"], ledger
+        assert ledger["score"] == result["candidate_score"], ledger
+        assert version_blob != "", ledger
