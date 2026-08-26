@@ -32,7 +32,6 @@ from collections.abc import Mapping
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import Any, Callable, Dict, Iterable, List, Optional, Sequence
-from urllib.parse import urlsplit
 
 from cogniverse_agents.optimizer.example_selection import (
     TRAINING_SELECTION_DEFAULTS as _TRAINING_SELECTION_DEFAULTS,
@@ -80,13 +79,119 @@ def _teacher_boot_deadline_seconds() -> float:
     return get_inference_service_spec("vllm_llm_teacher").boot_deadline_seconds
 
 
-def _teacher_endpoint_is_modal(api_base: str) -> bool:
-    parsed = urlsplit(api_base)
-    return (
-        parsed.scheme == "https"
-        and parsed.hostname is not None
-        and parsed.hostname.endswith(".modal.run")
+def _teacher_service_root(api_base: str) -> str:
+    return api_base[: -len("/v1")] if api_base.endswith("/v1") else api_base
+
+
+def resolve_teacher_endpoint(llm_config):
+    """Resolve the teacher endpoint and attach Modal bearer auth when needed."""
+
+    from cogniverse_foundation.config.inference_auth import (
+        inference_headers,
+        is_modal_inference_url,
     )
+
+    endpoint = llm_config.resolve_teacher()
+    api_base = (getattr(endpoint, "api_base", None) or "").rstrip("/")
+    if not api_base:
+        raise RuntimeError(
+            "LLM teacher endpoint declares no api_base; DSPy bootstrap "
+            "requires a reachable teacher service"
+        )
+
+    service_root = _teacher_service_root(api_base)
+    if is_modal_inference_url(service_root):
+        headers = inference_headers(service_root)
+        endpoint.api_key = headers["Authorization"].removeprefix("Bearer ")
+    return endpoint
+
+
+def probe_teacher_endpoint(
+    endpoint,
+    *,
+    probe=None,
+    session=None,
+    now=time.monotonic,
+    sleep=time.sleep,
+):
+    """Return the model served by the teacher endpoint, raising on failure."""
+
+    from cogniverse_foundation.config.inference_auth import (
+        inference_headers,
+        is_modal_inference_url,
+    )
+    from cogniverse_runtime.inference_health_check import (
+        DEFAULT_RETRY_INTERVAL_SECONDS,
+        InferenceServiceMismatch,
+        _probe_until_reachable,
+        probe_service_model,
+    )
+
+    api_base = (getattr(endpoint, "api_base", None) or "").rstrip("/")
+    if not api_base:
+        raise RuntimeError(
+            "LLM teacher endpoint declares no api_base; DSPy bootstrap "
+            "requires a reachable teacher service"
+        )
+    service_root = _teacher_service_root(api_base)
+
+    if is_modal_inference_url(service_root):
+        boot_deadline_seconds = _teacher_boot_deadline_seconds()
+        probe_fn = probe or probe_service_model
+        headers = inference_headers(service_root)
+        owns_session = False
+        if session is None:
+            import requests
+
+            session = requests.Session()
+            owns_session = True
+        session.headers.update(headers)
+
+        if probe is None:
+
+            def probe_with_auth(url: str):
+                return probe_service_model(url, session=session)
+
+            probe_fn = probe_with_auth
+        try:
+            try:
+                served = _probe_until_reachable(
+                    probe_fn,
+                    "LLM teacher endpoint",
+                    service_root,
+                    now() + boot_deadline_seconds,
+                    DEFAULT_RETRY_INTERVAL_SECONDS,
+                    sleep,
+                    now,
+                )
+            except InferenceServiceMismatch:
+                raise RuntimeError(
+                    f"LLM teacher endpoint {api_base} did not respond with a "
+                    f"model identifier within {boot_deadline_seconds:g}s; DSPy "
+                    "bootstrap requires it to generate demonstrations. Enable "
+                    "inference.vllm_llm_teacher and wait for the pod to "
+                    "report ready."
+                ) from None
+        finally:
+            if owns_session and session is not None:
+                session.close()
+    else:
+        served = (probe or probe_service_model)(service_root)
+    if served is None:
+        raise RuntimeError(
+            f"LLM teacher endpoint {api_base} is unreachable; DSPy bootstrap "
+            f"requires it to generate demonstrations. Enable "
+            f"inference.vllm_llm_teacher and wait for the pod to report ready."
+        )
+
+    configured = getattr(endpoint, "model", "") or ""
+    if served not in configured:
+        raise RuntimeError(
+            f"LLM teacher endpoint {api_base} serves {served!r} but the "
+            f"configured teacher model is {configured!r}; requests for an "
+            f"unserved model id are rejected"
+        )
+    return served
 
 
 @contextlib.contextmanager
@@ -328,7 +433,7 @@ def _query_enhancement_quality(prediction, example) -> float | None:
 
 
 def teacher_lm_or_raise(
-    llm_config, *, probe=None, now=time.monotonic, sleep=time.sleep
+    llm_config, *, probe=None, session=None, now=time.monotonic, sleep=time.sleep
 ):
     """Build the DSPy teacher LM, refusing when nothing serves the endpoint.
 
@@ -340,97 +445,15 @@ def teacher_lm_or_raise(
     """
     from cogniverse_foundation.config.llm_factory import create_dspy_lm
 
-    endpoint = require_reachable_teacher(
-        llm_config,
+    endpoint = resolve_teacher_endpoint(llm_config)
+    probe_teacher_endpoint(
+        endpoint,
         probe=probe,
+        session=session,
         now=now,
         sleep=sleep,
     )
     return create_dspy_lm(endpoint)
-
-
-def require_reachable_teacher(
-    llm_config,
-    *,
-    probe=None,
-    now=time.monotonic,
-    sleep=time.sleep,
-):
-    """Return the teacher endpoint, refusing when nothing serves it."""
-    from cogniverse_foundation.config.inference_auth import inference_headers
-    from cogniverse_runtime.inference_health_check import (
-        DEFAULT_RETRY_INTERVAL_SECONDS,
-        InferenceServiceMismatch,
-        _probe_until_reachable,
-        probe_service_model,
-    )
-
-    endpoint = llm_config.resolve_teacher()
-    api_base = (getattr(endpoint, "api_base", None) or "").rstrip("/")
-    if not api_base:
-        raise RuntimeError(
-            "LLM teacher endpoint declares no api_base; DSPy bootstrap "
-            "requires a reachable teacher service"
-        )
-    service_root = api_base[: -len("/v1")] if api_base.endswith("/v1") else api_base
-
-    if _teacher_endpoint_is_modal(api_base):
-        boot_deadline_seconds = _teacher_boot_deadline_seconds()
-        probe_fn = probe or probe_service_model
-        session = None
-        owns_session = False
-        if probe is None:
-            import requests
-
-            headers = inference_headers(api_base)
-            endpoint.api_key = headers["Authorization"].removeprefix("Bearer ")
-            session = requests.Session()
-            session.headers.update(headers)
-
-            def probe_with_auth(url: str):
-                return probe_service_model(url, session=session)
-
-            probe_fn = probe_with_auth
-            owns_session = True
-        try:
-            try:
-                served = _probe_until_reachable(
-                    probe_fn,
-                    "LLM teacher endpoint",
-                    service_root,
-                    now() + boot_deadline_seconds,
-                    DEFAULT_RETRY_INTERVAL_SECONDS,
-                    sleep,
-                    now,
-                )
-            except InferenceServiceMismatch:
-                raise RuntimeError(
-                    f"LLM teacher endpoint {api_base} did not respond with a "
-                    f"model identifier within {boot_deadline_seconds:g}s; DSPy "
-                    "bootstrap requires it to generate demonstrations. Enable "
-                    "inference.vllm_llm_teacher and wait for the pod to "
-                    "report ready."
-                ) from None
-        finally:
-            if owns_session and session is not None:
-                session.close()
-    else:
-        served = (probe or probe_service_model)(service_root)
-    if served is None:
-        raise RuntimeError(
-            f"LLM teacher endpoint {api_base} is unreachable; DSPy bootstrap "
-            f"requires it to generate demonstrations. Enable "
-            f"inference.vllm_llm_teacher and wait for the pod to report ready."
-        )
-
-    configured = getattr(endpoint, "model", "") or ""
-    if served not in configured:
-        raise RuntimeError(
-            f"LLM teacher endpoint {api_base} serves {served!r} but the "
-            f"configured teacher model is {configured!r}; requests for an "
-            f"unserved model id are rejected"
-        )
-    return endpoint
 
 
 def _query_enhancement_metric(example, prediction, trace=None) -> bool:
@@ -1384,6 +1407,8 @@ async def run_triggered_optimization(
         )
 
         try:
+            teacher_endpoint = resolve_teacher_endpoint(llm_config)
+            probe_teacher_endpoint(teacher_endpoint)
             result = await _optimize_agent(
                 agent_name=agent_name,
                 low_scoring_df=low_scoring,
@@ -1392,7 +1417,7 @@ async def run_triggered_optimization(
                 config_manager=config_manager,
                 telemetry_provider=telemetry_provider,
                 tenant_id=tenant_id,
-                teacher_endpoint=require_reachable_teacher(llm_config),
+                teacher_endpoint=teacher_endpoint,
             )
             results[agent_name] = result
             if checkpointer is not None:

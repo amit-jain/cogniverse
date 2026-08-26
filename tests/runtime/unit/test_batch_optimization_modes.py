@@ -294,6 +294,7 @@ def _teacher_endpoint():
     return LLMEndpointConfig(
         model=f"openai/{_TEACHER_SERVED_MODEL}",
         api_base="http://teacher-svc:8000/v1",
+        api_key="placeholder-no-auth-needed",
     )
 
 
@@ -9248,7 +9249,11 @@ class TestTeacherEndpointReachability:
     def _in_cluster_endpoint(self, model="openai/cyankiwi/Qwen3.6-27B-AWQ-INT4"):
         from cogniverse_foundation.config.unified_config import LLMEndpointConfig
 
-        return LLMEndpointConfig(model=model, api_base="http://teacher-svc:8000/v1")
+        return LLMEndpointConfig(
+            model=model,
+            api_base="http://teacher-svc:8000/v1",
+            api_key="placeholder-no-auth-needed",
+        )
 
     def _modal_endpoint(self, model="openai/cyankiwi/Qwen3.6-27B-AWQ-INT4"):
         from cogniverse_foundation.config.unified_config import LLMEndpointConfig
@@ -9256,7 +9261,95 @@ class TestTeacherEndpointReachability:
         return LLMEndpointConfig(
             model=model,
             api_base="https://teacher-svc.modal.run/v1",
+            api_key="placeholder-no-auth-needed",
         )
+
+    def test_external_path_resolves_the_modal_bearer_before_any_probe_runs(
+        self, monkeypatch
+    ):
+        from cogniverse_runtime.optimization_cli import resolve_teacher_endpoint
+
+        monkeypatch.setenv("COGNIVERSE_INFERENCE_API_KEY", "shared-production-key")
+        cfg = SimpleNamespace(resolve_teacher=self._modal_endpoint)
+
+        resolved = resolve_teacher_endpoint(cfg)
+
+        assert resolved.api_key == "shared-production-key"
+        assert resolved.api_base == "https://teacher-svc.modal.run/v1"
+
+    def test_in_cluster_path_keeps_the_placeholder_api_key_unchanged(self):
+        from cogniverse_runtime.optimization_cli import resolve_teacher_endpoint
+
+        cfg = SimpleNamespace(resolve_teacher=self._in_cluster_endpoint)
+
+        resolved = resolve_teacher_endpoint(cfg)
+
+        assert resolved.api_key == "placeholder-no-auth-needed"
+        assert resolved.api_base == "http://teacher-svc:8000/v1"
+
+    def test_external_path_uses_an_authorized_session_for_the_probe_request(
+        self, monkeypatch
+    ):
+        from cogniverse_runtime.optimization_cli import teacher_lm_or_raise
+
+        monkeypatch.setenv("COGNIVERSE_INFERENCE_API_KEY", "shared-production-key")
+        cfg = SimpleNamespace(resolve_teacher=self._modal_endpoint)
+        clock = _ProbeClock()
+        sleeper = _ProbeSleep(clock)
+        requests_seen = []
+        served_model = self._modal_endpoint().model.removeprefix("openai/")
+
+        class FakeResponse:
+            ok = True
+
+            def __init__(self, request_url: str):
+                self.request_url = request_url
+
+            def json(self):
+                return {"data": [{"id": served_model}]}
+
+        class FakeSession:
+            def __init__(self):
+                self.headers = {}
+                self.closed = False
+
+            def get(self, url, timeout):
+                requests_seen.append((url, dict(self.headers), timeout))
+                return FakeResponse(url)
+
+            def close(self):
+                self.closed = True
+
+        def fake_probe_service_model(url, *, timeout_seconds=5.0, session=None):
+            response = session.get(f"{url.rstrip('/')}/health", timeout=timeout_seconds)
+            if response.ok:
+                return served_model
+            return None
+
+        monkeypatch.setattr(
+            "cogniverse_runtime.inference_health_check.probe_service_model",
+            fake_probe_service_model,
+        )
+
+        with patch(
+            "cogniverse_foundation.config.llm_factory.create_dspy_lm",
+            return_value="TEACHER_LM",
+        ):
+            built = teacher_lm_or_raise(
+                cfg,
+                session=FakeSession(),
+                now=clock,
+                sleep=sleeper,
+            )
+
+        assert built == "TEACHER_LM"
+        assert requests_seen == [
+            (
+                "https://teacher-svc.modal.run/health",
+                {"Authorization": "Bearer shared-production-key"},
+                5.0,
+            )
+        ]
 
     def test_in_cluster_path_keeps_the_existing_one_shot_failure_message(self):
         from cogniverse_runtime.optimization_cli import teacher_lm_or_raise
@@ -9277,9 +9370,12 @@ class TestTeacherEndpointReachability:
         )
         assert probed == ["http://teacher-svc:8000"]
 
-    def test_external_path_retries_until_the_modal_teacher_reports_its_model(self):
+    def test_external_path_retries_until_the_modal_teacher_reports_its_model(
+        self, monkeypatch
+    ):
         from cogniverse_runtime.optimization_cli import teacher_lm_or_raise
 
+        monkeypatch.setenv("COGNIVERSE_INFERENCE_API_KEY", "shared-production-key")
         cfg = SimpleNamespace(resolve_teacher=self._modal_endpoint)
         clock = _ProbeClock()
         sleeper = _ProbeSleep(clock)
@@ -9309,6 +9405,7 @@ class TestTeacherEndpointReachability:
     ):
         from cogniverse_runtime.optimization_cli import teacher_lm_or_raise
 
+        monkeypatch.setenv("COGNIVERSE_INFERENCE_API_KEY", "shared-production-key")
         cfg = SimpleNamespace(resolve_teacher=self._modal_endpoint)
         clock = _ProbeClock()
         sleeper = _ProbeSleep(clock)
@@ -9340,10 +9437,11 @@ class TestTeacherEndpointReachability:
         assert sleeper.calls == [5.0, 5.0]
 
     def test_external_path_raises_when_the_service_serves_a_different_model(
-        self,
+        self, monkeypatch
     ):
         from cogniverse_runtime.optimization_cli import teacher_lm_or_raise
 
+        monkeypatch.setenv("COGNIVERSE_INFERENCE_API_KEY", "shared-production-key")
         cfg = SimpleNamespace(resolve_teacher=self._modal_endpoint)
         with pytest.raises(RuntimeError) as exc:
             teacher_lm_or_raise(

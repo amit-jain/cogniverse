@@ -374,7 +374,7 @@ class TestInferenceApiKeyDelivery:
             "secretKeyRef": {
                 "name": "cogniverse-inference-api-key",
                 "key": "COGNIVERSE_INFERENCE_API_KEY",
-                "optional": True,
+                "optional": False,
             }
         },
     }
@@ -401,7 +401,7 @@ class TestInferenceApiKeyDelivery:
         self,
     ):
         manifests = _render_chart(
-            "inference.vllm_llm_teacher.externalUrl=https://example.modal.run/v1",
+            "inference.vllm_llm_teacher.externalUrl=https://example.modal.run",
             values="values.rocm.yaml",
         )
 
