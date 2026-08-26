@@ -41,7 +41,6 @@ pytestmark = [pytest.mark.unit]
                     {"text": "Marie Curie", "type": "PERSON"},
                     {"text": "radium", "type": "SUBSTANCE"},
                 ],
-                "entity_types": "PERSON,SUBSTANCE",
                 "relationships": [
                     {
                         "source": "Marie Curie",
@@ -187,7 +186,6 @@ def _probe_example(schema_class, query: str):
         EntityExtractionExampleSchema: {
             "query": query,
             "entities": [{"text": "source", "type": "TOPIC"}],
-            "entity_types": "TOPIC",
             "relationships": [],
         },
         RoutingExperienceSchema: {

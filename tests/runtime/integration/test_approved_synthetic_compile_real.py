@@ -182,7 +182,6 @@ async def test_real_phoenix_approved_examples_compile_into_actual_dspy_modules(
                     {"text": "Meta AI", "type": "ORG"},
                     {"text": "Menlo Park", "type": "PLACE"},
                 ],
-                "entity_types": "PRODUCT,ORG,PLACE",
                 "relationships": [
                     {
                         "source": "Meta AI",
@@ -289,17 +288,17 @@ async def test_generator_output_survives_validation_and_persists(
         sampled_content=[
             {
                 "title": "transformer architecture",
-                "description": "attention mechanism neural network model",
+                "description": "transformer architecture attention mechanism neural network model",
                 "content_type": "video",
             },
             {
                 "title": "compiler passes",
-                "description": "attention mechanism neural network model",
+                "description": "compiler passes attention mechanism neural network model",
                 "content_type": "video",
             },
             {
                 "title": "search ranking",
-                "description": "attention mechanism neural network model",
+                "description": "search ranking attention mechanism neural network model",
                 "content_type": "video",
             },
         ],

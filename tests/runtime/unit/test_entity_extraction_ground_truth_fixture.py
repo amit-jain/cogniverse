@@ -16,6 +16,7 @@ import pytest
 from cogniverse_agents.entity_extraction_agent import (
     ENTITY_TYPES,
     EntityExtractionAgent,
+    EntityExtractionSignature,
 )
 from cogniverse_agents.optimizer.entity_extraction_ground_truth import (
     canonicalize_entity_extraction_ground_truth_rows,
@@ -54,6 +55,10 @@ def test_every_gliner_label_maps_into_the_declared_type_set():
         "EVENT",
         "TECHNOLOGY",
     }
+
+
+def test_entity_extraction_signature_outputs_entities_only():
+    assert list(EntityExtractionSignature.output_fields.keys()) == ["entities"]
 
 
 def test_fixture_holds_the_exact_recorded_population():

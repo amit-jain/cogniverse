@@ -958,16 +958,17 @@ deps = ProfileSelectionDeps()
 
 #### Overview
 
-EntityExtractionAgent extracts named entities and relationships from user queries using a tiered fast/slow approach. The fast path uses GLiNER NER + SpaCy dependency analysis (no LLM needed). The fallback uses DSPy ChainOfThought (requires LLM).
+EntityExtractionAgent extracts named entities and relationships from user queries with DSPy as the primary path. When the LM call fails, it falls back to GLiNER NER + SpaCy dependency analysis. If the fallback is unavailable or also fails, the request raises.
 
 **Key Capabilities**:
 
-- Fast path: GLiNER entity extraction + SpaCy relationship extraction (sub-second, no LLM)
-- Fallback: DSPy ChainOfThought entity extraction (requires LLM)
+- Primary path: DSPy ChainOfThought entity extraction
+- Fallback path: GLiNER entity extraction + SpaCy relationship extraction
 - Entity type classification (PERSON, PLACE, ORG, CONCEPT, DATE, etc.)
 - Relationship extraction between entities (subject-relation-object triples)
 - Confidence scoring per entity and relationship
 - Dominant entity type detection
+- Structural validity via `entity_is_valid_for_query(text, entity_type, query)`
 - Telemetry span emission (`cogniverse.entity_extraction`)
 
 #### Architecture
@@ -976,8 +977,8 @@ EntityExtractionAgent extracts named entities and relationships from user querie
 flowchart LR
     Query["<span style='color:#000'>User Query</span>"] --> EntityAgent["<span style='color:#000'>EntityExtractionAgent</span>"]
 
-    EntityAgent --> FastPath["<span style='color:#000'>GLiNER + SpaCy<br/>(fast path)</span>"]
-    EntityAgent --> DSPy["<span style='color:#000'>DSPy ChainOfThought<br/>(fallback)</span>"]
+    EntityAgent --> DSPy["<span style='color:#000'>DSPy ChainOfThought<br/>(primary path)</span>"]
+    EntityAgent --> FastPath["<span style='color:#000'>GLiNER + SpaCy<br/>(fallback path)</span>"]
 
     FastPath --> Entities["<span style='color:#000'>List[Entity]</span>"]
     FastPath --> Rels["<span style='color:#000'>List[Relationship]</span>"]
@@ -1039,14 +1040,14 @@ class EntityExtractionOutput(AgentOutput):
     entity_count: int = Field(0, description="Number of entities found")
     has_entities: bool = Field(False, description="Whether entities were found")
     dominant_types: List[str] = Field(default_factory=list, description="Most common entity types")
-    path_used: str = Field("dspy", description="Extraction path: fast or dspy")
+    path_used: str = Field("dspy", description="Extraction path: dspy or fast")
 
 class EntityExtractionDeps(AgentDeps):
     """Dependencies for entity extraction agent (tenant-agnostic at startup)."""
     gliner_model_name: Optional[str] = Field(
         None,
         description=(
-            "GLiNER model identifier for the fast path. None resolves to "
+            "GLiNER model identifier for the fallback path. None resolves to "
             "DEFAULT_GLINER_MODEL in GLiNERRelationshipExtractor."
         ),
     )
@@ -1054,7 +1055,7 @@ class EntityExtractionDeps(AgentDeps):
         None,
         description=(
             "Optional remote GLiNER service URL (GLiNER inference service). "
-            "When set, the fast path posts to this endpoint instead of "
+            "When set, the fallback path posts to this endpoint instead of "
             "loading gliner in-process — required on slim runtime images."
         ),
     )
@@ -1079,7 +1080,7 @@ class EntityExtractionAgent(
         )
         super().__init__(deps=deps, config=config, dspy_module=extraction_module)
 
-        # GLiNER + SpaCy for fast path (no LLM required)
+        # GLiNER + SpaCy for the fallback path.
         self._gliner_extractor = None
         self._spacy_analyzer = None
         self._initialize_extractors()
@@ -1090,10 +1091,12 @@ class EntityExtractionAgent(
 
 **`_process_impl(input: EntityExtractionInput) -> EntityExtractionOutput`**
 
-Main processing method (required by AgentBase). Uses tiered fast/slow path:
+Main processing method (required by AgentBase). Uses DSPy primary routing:
 
-1. **Fast path** (GLiNER + SpaCy available): `_extract_fast_path(query)` -- GLiNER extracts typed entities, SpaCy extracts relationships when 2+ entities found.
-2. **DSPy fallback** (GLiNER/SpaCy unavailable): `_extract_dspy_path(query)` -- Uses DSPy ChainOfThought, parses pipe-delimited output. No relationships in fallback.
+1. **DSPy primary path**: `_extract_dspy_path(prompt_query)` runs first and parses pipe-delimited output.
+2. **GLiNER + SpaCy fallback**: `_extract_fast_path(query)` runs only when the LM call raises. It extracts entities with GLiNER and relationships with SpaCy.
+
+If the fallback is unavailable or also raises, the request fails with an error that names both failures. The `path_used` output is `"dspy"` for the primary path and `"fast"` for the fallback path.
 
 After extraction, emits a `cogniverse.entity_extraction` telemetry span through
 the canonical span contract (`record_span_io`): `input.value` is the query,
@@ -1104,51 +1107,24 @@ entity-extraction optimizer reads the (query -> entities) training pair back via
 
 **`_parse_entities(entities_str: str, query: str) -> List[Entity]`**
 
-Helper method to parse entities from DSPy output.
+Helper method to parse entities from DSPy output. Validity is enforced by
+`entity_is_valid_for_query(text, entity_type, query)` in the agent module:
 
-```text
-def _parse_entities(self, entities_str: str, query: str) -> List[Entity]:
-    """Parse entities from DSPy output format"""
-    entities = []
+- `text` must be non-empty and appear verbatim in the query, case-insensitively
+- `entity_type` must be a member of `ENTITY_TYPES`
+- duplicate `(text.casefold(), entity_type)` pairs are collapsed
+- invalid candidates are dropped and logged with the offending text
 
-    if not entities_str:
-        return entities
-
-    for line in entities_str.strip().split("\n"):
-        line = line.strip()
-        if not line:
-            continue
-
-        parts = line.split("|")
-        if len(parts) >= 2:
-            text = parts[0].strip()
-            entity_type = parts[1].strip()
-
-            # Parse confidence with robust handling
-            confidence = 0.7  # Default
-            if len(parts) > 2:
-                confidence_str = parts[2].strip()
-                try:
-                    confidence = float(confidence_str)
-                    confidence = max(0.0, min(1.0, confidence))
-                except (ValueError, IndexError):
-                    pass
-
-            entities.append(
-                Entity(text=text, type=entity_type, confidence=confidence)
-            )
-
-    return entities
-```
+The agent never fabricates a replacement span for invalid output.
 
 #### Configuration
 
-`EntityExtractionDeps` has two optional fields that control the GLiNER fast path:
+`EntityExtractionDeps` has two optional fields that control the GLiNER fallback path:
 
 - `gliner_model_name` — GLiNER model identifier (`None` resolves to the default in `GLiNERRelationshipExtractor`).
-- `gliner_inference_url` — URL of the remote GLiNER inference service. When set, the fast path POSTs to it instead of loading GLiNER in-process — required on slim runtime images that omit the heavy torch stack. The canonical server is `cogniverse_cli.modal_inference.servers.gliner`.
+- `gliner_inference_url` — URL of the remote GLiNER inference service. When set, the fallback path POSTs to it instead of loading GLiNER in-process — required on slim runtime images that omit the heavy torch stack. The canonical server is `cogniverse_cli.modal_inference.servers.gliner`.
 
-The DSPy LLM fallback is scoped per-call via `dspy.context(lm=...)` using `create_dspy_lm()` from the centralized `llm_config`.
+The DSPy primary path is scoped per-call via `dspy.context(lm=...)` using `create_dspy_lm()` from the centralized `llm_config`.
 
 ```text
 from cogniverse_foundation.config.llm_factory import create_dspy_lm
