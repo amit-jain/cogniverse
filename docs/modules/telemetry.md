@@ -495,13 +495,32 @@ class DatasetStore(ABC):
         NotImplementedError from the default.
         """
         raise NotImplementedError
+
+    async def replace_dataset(
+        self, name: str, data: pd.DataFrame, metadata: Optional[Dict[str, Any]] = None
+    ) -> str:
+        """Replace a dataset's contents.
+
+        Same-name writers are serialized per store instance. If the delete /
+        create path faults after the old dataset is gone, the previous frame is
+        recreated before the exception propagates.
+        """
 ```
 
 `DatasetNotFoundError` (`cogniverse_foundation.telemetry.providers.base`) subclasses
 `ValueError` so existing `except ValueError` callers keep working, while letting
 callers distinguish a genuinely missing dataset from a backend outage.
 
-The telemetry provider exposes only these three stores. Experiment tracking lives on the separate `EvaluationProvider` stack (`PhoenixEvaluationProvider.create_experiment`), and metric aggregation via `PhoenixAnalytics` — not on the telemetry provider.
+The telemetry provider exposes these store interfaces. `replace_dataset` is the
+safe helper for stable-name overwrites: same-name writers are serialized only
+within one store instance on one event loop, and a torn delete/create that
+cannot restore the prior frame raises `DatasetReplaceRestoreFailedError` with
+the dataset name, the original error, and the restore error. That protection is
+in-process only; a hard kill between delete and create can still lose the
+dataset because Phoenix exposes no atomic swap primitive. Experiment tracking
+lives on the separate `EvaluationProvider` stack
+(`PhoenixEvaluationProvider.create_experiment`), and metric aggregation via
+`PhoenixAnalytics` — not on the telemetry provider.
 
 ### TelemetryProvider Base Class
 
