@@ -271,8 +271,10 @@ def test_batch_job_timeout_defaults_and_env_override(monkeypatch):
     edited in six places is one that drifts.
     """
     monkeypatch.delenv(_MOD.BATCH_JOB_TIMEOUT_ENV, raising=False)
-    assert _MOD.BATCH_JOB_DEFAULT_TIMEOUT_S == 1200
-    assert _MOD._batch_job_timeout_s() == 1200
+    # 2400s: entity-extraction measured 1732s end to end on the live cluster
+    # with the teacher serving. The prior 1200s predates a working teacher.
+    assert _MOD.BATCH_JOB_DEFAULT_TIMEOUT_S == 2400
+    assert _MOD._batch_job_timeout_s() == 2400
 
     monkeypatch.setenv(_MOD.BATCH_JOB_TIMEOUT_ENV, "3600")
     assert _MOD._batch_job_timeout_s() == 3600
