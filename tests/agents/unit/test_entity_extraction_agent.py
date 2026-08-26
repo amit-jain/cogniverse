@@ -6,6 +6,7 @@ from unittest.mock import MagicMock, Mock, patch
 
 import dspy
 import pytest
+from dspy.utils.dummies import DummyLM
 
 from cogniverse_agents.entity_extraction_agent import (
     Entity,
@@ -36,6 +37,42 @@ def _make_extraction_agent():
 
 def _messages(caplog, logger_name: str) -> list[str]:
     return [r.getMessage() for r in caplog.records if r.name == logger_name]
+
+
+class _CountingExtractor:
+    def __init__(self, result=None, exc: Exception | None = None):
+        self.result = result or []
+        self.exc = exc
+        self.calls = 0
+
+    def extract_entities(self, query: str):
+        del query
+        self.calls += 1
+        if self.exc is not None:
+            raise self.exc
+        return self.result
+
+
+class _CountingDummyLM(DummyLM):
+    def __init__(self, answers):
+        super().__init__(answers)
+        self.calls = 0
+
+    def __call__(self, prompt=None, messages=None, **kwargs):
+        self.calls += 1
+        return super().__call__(prompt=prompt, messages=messages, **kwargs)
+
+
+class _RaisingDummyLM(DummyLM):
+    def __init__(self, message: str):
+        super().__init__([{"reasoning": "unused", "entities": ""}])
+        self.calls = 0
+        self.message = message
+
+    def __call__(self, prompt=None, messages=None, **kwargs):
+        del prompt, messages, kwargs
+        self.calls += 1
+        raise RuntimeError(self.message)
 
 
 class _FakeToken:
@@ -165,7 +202,6 @@ def mock_dspy_lm():
     lm = Mock()
     lm.return_value = dspy.Prediction(
         entities="Barack Obama|PERSON|0.95\nChicago|PLACE|0.9",
-        entity_types="PERSON, PLACE",
     )
     return lm
 
@@ -201,18 +237,14 @@ class TestEntityExtractionModule:
         result = module.forward(query="Show me Barack Obama in Chicago")
 
         assert result.entities == "Barack Obama|PERSON|0.95\nChicago|PLACE|0.9"
-        assert result.entity_types == "PERSON, PLACE"
 
-    def test_forward_fallback(self):
-        """Test fallback when DSPy fails"""
+    def test_forward_raises_when_dspy_fails(self):
+        """DSPy failures propagate out of the module."""
         module = EntityExtractionModule()
-        module.extractor = Mock(side_effect=Exception("DSPy failed"))
+        module.extractor = Mock(side_effect=RuntimeError("DSPy failed"))
 
-        result = module.forward(query="Show me Barack Obama videos")
-
-        # Fallback should extract capitalized words
-        assert "Barack" in result.entities or "Obama" in result.entities
-        assert result.entity_types == "CONCEPT"
+        with pytest.raises(RuntimeError, match="DSPy failed"):
+            module.forward(query="Barack Obama videos")
 
 
 class TestEntityExtractionAgent:
@@ -230,7 +262,6 @@ class TestEntityExtractionAgent:
         entity_agent.dspy_module.forward = Mock(
             return_value=dspy.Prediction(
                 entities="Barack Obama|PERSON|0.95\nChicago|PLACE|0.9",
-                entity_types="PERSON, PLACE",
             )
         )
 
@@ -244,26 +275,40 @@ class TestEntityExtractionAgent:
         assert result.query == "Show me Barack Obama in Chicago"
         assert result.entity_count == 2
         assert result.has_entities is True
-        assert len(result.entities) == 2
-        assert result.entities[0].text == "Barack Obama"
-        assert result.entities[0].type == "PERSON"
-        assert result.entities[1].text == "Chicago"
-        assert result.entities[1].type == "PLACE"
+        assert result.entities == [
+            Entity(
+                text="Barack Obama",
+                type="PERSON",
+                confidence=0.95,
+                context="Show me Barack Obama in Chicago",
+            ),
+            Entity(
+                text="Chicago",
+                type="PLACE",
+                confidence=0.9,
+                context="Show me Barack Obama in Chicago",
+            ),
+        ]
+        assert result.relationships == []
+        assert result.path_used == "dspy"
 
     @pytest.mark.asyncio
     async def test_process_no_entities(self, entity_agent):
         """Test processing query with no entities"""
         entity_agent.dspy_module.forward = Mock(
-            return_value=dspy.Prediction(entities="", entity_types="")
+            return_value=dspy.Prediction(entities="")
         )
 
         result = await entity_agent._process_impl(
             EntityExtractionInput(query="show me some videos", tenant_id=TEST_TENANT_ID)
         )
 
+        assert result.query == "show me some videos"
         assert result.entity_count == 0
         assert result.has_entities is False
-        assert len(result.entities) == 0
+        assert result.entities == []
+        assert result.relationships == []
+        assert result.path_used == "dspy"
 
     @pytest.mark.asyncio
     async def test_process_empty_query(self, entity_agent):
@@ -287,6 +332,178 @@ class TestEntityExtractionAgent:
         assert result.query == ""
         assert result.entity_count == 0
 
+    @pytest.mark.asyncio
+    async def test_process_uses_dspy_primary_and_skips_gliner(self, entity_agent):
+        """DSPy succeeds first; GLiNER is not called."""
+        entity_agent.dspy_module = EntityExtractionModule()
+        gliner = _CountingExtractor()
+        entity_agent._gliner_extractor = gliner
+        entity_agent._spacy_analyzer = None
+        lm = _CountingDummyLM(
+            [
+                {
+                    "reasoning": "extract the exact query entities",
+                    "entities": "Barack Obama|PERSON|0.95\nChicago|PLACE|0.9",
+                }
+            ]
+        )
+
+        with dspy.context(lm=lm):
+            result = await entity_agent._process_impl(
+                EntityExtractionInput(
+                    query="Barack Obama in Chicago", tenant_id=TEST_TENANT_ID
+                )
+            )
+
+        assert result.model_dump() == {
+            "query": "Barack Obama in Chicago",
+            "entities": [
+                {
+                    "text": "Barack Obama",
+                    "type": "PERSON",
+                    "confidence": 0.95,
+                    "context": "Barack Obama in Chicago",
+                },
+                {
+                    "text": "Chicago",
+                    "type": "PLACE",
+                    "confidence": 0.9,
+                    "context": "Barack Obama in Chicago",
+                },
+            ],
+            "relationships": [],
+            "entity_count": 2,
+            "has_entities": True,
+            "dominant_types": ["PERSON", "PLACE"],
+            "path_used": "dspy",
+        }
+        assert gliner.calls == 0
+        assert lm.calls == 1
+
+    @pytest.mark.asyncio
+    async def test_process_falls_back_to_fast_path_when_dspy_raises(self, entity_agent):
+        """DSPy failure falls through to the real GLiNER + SpaCy path."""
+        from cogniverse_agents.routing.relationship_extraction_tools import (
+            GLiNERRelationshipExtractor,
+            SpaCyDependencyAnalyzer,
+        )
+
+        entity_agent.dspy_module = EntityExtractionModule()
+        entity_agent._gliner_extractor = GLiNERRelationshipExtractor()
+        entity_agent._spacy_analyzer = SpaCyDependencyAnalyzer()
+        lm = _RaisingDummyLM("planned LM failure")
+
+        with dspy.context(lm=lm):
+            result = await entity_agent._process_impl(
+                EntityExtractionInput(
+                    query="Barack Obama in Chicago", tenant_id=TEST_TENANT_ID
+                )
+            )
+
+        assert result.model_dump() == {
+            "query": "Barack Obama in Chicago",
+            "entities": [
+                {
+                    "text": "Barack Obama",
+                    "type": "PERSON",
+                    "confidence": 0.9916797280311584,
+                    "context": "Barack Obama in Chicago",
+                },
+                {
+                    "text": "Chicago",
+                    "type": "PLACE",
+                    "confidence": 0.9902434945106506,
+                    "context": "Barack Obama in Chicago",
+                },
+            ],
+            "relationships": [
+                {
+                    "subject": "Barack Obama",
+                    "relation": "in",
+                    "object": "Chicago",
+                    "confidence": 0.7,
+                }
+            ],
+            "entity_count": 2,
+            "has_entities": True,
+            "dominant_types": ["PERSON", "PLACE"],
+            "path_used": "fast",
+        }
+        assert lm.calls == 2
+
+    @pytest.mark.asyncio
+    async def test_relationships_match_between_dspy_and_fast_path(self):
+        """The DSPy path uses the same SpaCy grounding as the fast path."""
+        from cogniverse_agents.routing.relationship_extraction_tools import (
+            GLiNERRelationshipExtractor,
+            SpaCyDependencyAnalyzer,
+        )
+
+        agent = _make_extraction_agent()
+        agent.dspy_module = EntityExtractionModule()
+        agent._gliner_extractor = GLiNERRelationshipExtractor()
+        agent._spacy_analyzer = SpaCyDependencyAnalyzer()
+        query = "Barack Obama in Chicago"
+
+        with patch.object(
+            agent, "_extract_dspy_path", side_effect=RuntimeError("LM failed")
+        ):
+            fast_result = await agent._process_impl(
+                EntityExtractionInput(query=query, tenant_id=TEST_TENANT_ID)
+            )
+
+        with dspy.context(
+            lm=DummyLM(
+                [
+                    {
+                        "reasoning": "extract the exact query entities",
+                        "entities": "Barack Obama|PERSON|0.95\nChicago|PLACE|0.9",
+                    }
+                ]
+            )
+        ):
+            dspy_result = await agent._process_impl(
+                EntityExtractionInput(query=query, tenant_id=TEST_TENANT_ID)
+            )
+
+        assert [
+            (rel.subject, rel.relation, rel.object, rel.confidence)
+            for rel in dspy_result.relationships
+        ] == [
+            (rel.subject, rel.relation, rel.object, rel.confidence)
+            for rel in fast_result.relationships
+        ]
+
+    @pytest.mark.asyncio
+    async def test_process_raises_when_both_paths_fail(self, entity_agent):
+        """The final exception names both the LM failure and the fast failure."""
+        entity_agent.dspy_module = EntityExtractionModule()
+        entity_agent._gliner_extractor = _CountingExtractor(
+            exc=RuntimeError("gliner boom")
+        )
+        entity_agent._spacy_analyzer = None
+        lm = _RaisingDummyLM("dspy boom")
+
+        with (
+            dspy.context(lm=lm),
+            pytest.raises(
+                RuntimeError,
+                match=(
+                    r"^Entity extraction failed: DSPy path failed with "
+                    r"RuntimeError\('dspy boom'\); fast path failed with "
+                    r"RuntimeError\('gliner boom'\)$"
+                ),
+            ),
+        ):
+            await entity_agent._process_impl(
+                EntityExtractionInput(
+                    query="Barack Obama in Chicago", tenant_id=TEST_TENANT_ID
+                )
+            )
+
+        assert lm.calls == 2
+        assert entity_agent._gliner_extractor.calls == 1
+
     def test_parse_entities_valid(self, entity_agent):
         """Test parsing valid entity string"""
         entities_str = "Barack Obama|PERSON|0.95\nChicago|PLACE|0.9"
@@ -294,24 +511,42 @@ class TestEntityExtractionAgent:
 
         entities = entity_agent._parse_entities(entities_str, query)
 
-        assert len(entities) == 2
-        assert entities[0].text == "Barack Obama"
-        assert entities[0].type == "PERSON"
-        assert entities[0].confidence == 0.95
-        assert entities[1].text == "Chicago"
-        assert entities[1].type == "PLACE"
-        assert entities[1].confidence == 0.9
+        assert entities == [
+            Entity(
+                text="Barack Obama",
+                type="PERSON",
+                confidence=0.95,
+                context="Barack Obama in Chicago",
+            ),
+            Entity(
+                text="Chicago",
+                type="PLACE",
+                confidence=0.9,
+                context="Barack Obama in Chicago",
+            ),
+        ]
 
     def test_parse_entities_no_confidence(self, entity_agent):
         """Test parsing entities without confidence scores"""
-        entities_str = "Apple|ORG\nCalifornia|PLACE"
+        entities_str = "Apple|ORGANIZATION\nCalifornia|PLACE"
         query = "Apple in California"
 
         entities = entity_agent._parse_entities(entities_str, query)
 
-        assert len(entities) == 2
-        assert entities[0].confidence == 0.7  # Default confidence
-        assert entities[1].confidence == 0.7
+        assert entities == [
+            Entity(
+                text="Apple",
+                type="ORGANIZATION",
+                confidence=0.7,
+                context="Apple in California",
+            ),
+            Entity(
+                text="California",
+                type="PLACE",
+                confidence=0.7,
+                context="Apple in California",
+            ),
+        ]
 
     def test_parse_entities_label_and_percent_confidence(self, entity_agent):
         """LM may emit confidence as a label or percent string. parse_confidence
@@ -319,13 +554,57 @@ class TestEntityExtractionAgent:
         entities_str = "Obama|PERSON|high\nChicago|PLACE|85%"
         entities = entity_agent._parse_entities(entities_str, "Obama in Chicago")
 
-        assert entities[0].confidence == 0.9
-        assert entities[1].confidence == 0.85
+        assert entities == [
+            Entity(
+                text="Obama",
+                type="PERSON",
+                confidence=0.9,
+                context="Obama in Chicago",
+            ),
+            Entity(
+                text="Chicago",
+                type="PLACE",
+                confidence=0.85,
+                context="Obama in Chicago",
+            ),
+        ]
 
     def test_parse_entities_empty(self, entity_agent):
         """Test parsing empty entity string"""
         entities = entity_agent._parse_entities("", "test query")
-        assert len(entities) == 0
+        assert entities == []
+
+    def test_parse_entities_drops_invalid_and_duplicate_entities(
+        self, entity_agent, caplog
+    ):
+        """Invalid entities are dropped; duplicates collapse on casefold/type."""
+        entities_str = (
+            "Barack Obama|PERSON|0.95\nNotInQuery|CONCEPT|0.7\nBARACK OBAMA|PERSON|0.8"
+        )
+        query = "Barack Obama visited Chicago and spoke at the conference"
+
+        with caplog.at_level(
+            logging.WARNING, logger="cogniverse_agents.entity_extraction_agent"
+        ):
+            entities = entity_agent._parse_entities(entities_str, query)
+
+        assert entities == [
+            Entity(
+                text="Barack Obama",
+                type="PERSON",
+                confidence=0.95,
+                context=entity_agent._extract_context("Barack Obama", query),
+            )
+        ]
+        assert query[:50] not in {entity.text for entity in entities}
+        assert _messages(caplog, "cogniverse_agents.entity_extraction_agent") == [
+            "Dropping invalid entity text='NotInQuery' type='CONCEPT' for query "
+            "'Barack Obama visited Chicago and spoke at the conference'",
+            "Dropped 1 invalid entity candidates for query "
+            "'Barack Obama visited Chicago and spoke at the conference'",
+            "Dropped 1 duplicate entity candidates for query "
+            "'Barack Obama visited Chicago and spoke at the conference'",
+        ]
 
     def test_extract_context(self, entity_agent):
         """Test context extraction"""
@@ -352,7 +631,6 @@ class TestEntityExtractionAgent:
         entity_agent.dspy_module.forward = Mock(
             return_value=dspy.Prediction(
                 entities="Obama|PERSON|0.9\nTrump|PERSON|0.9\nWhite House|PLACE|0.8",
-                entity_types="PERSON, PLACE",
             )
         )
 
@@ -362,8 +640,7 @@ class TestEntityExtractionAgent:
             )
         )
 
-        assert result.dominant_types[0] == "PERSON"  # Most common type
-        assert "PLACE" in result.dominant_types
+        assert result.dominant_types == ["PERSON", "PLACE"]
 
     def test_dspy_to_a2a_output(self, entity_agent):
         """Test conversion to A2A output format"""
@@ -412,15 +689,21 @@ class TestEntityExtractionAgent:
     async def test_dspy_fallback_sets_path_used(self, entity_agent):
         """DSPy fallback path sets path_used='dspy' in output."""
         entity_agent.dspy_module.forward = Mock(
-            return_value=dspy.Prediction(
-                entities="Obama|PERSON|0.9", entity_types="PERSON"
-            )
+            return_value=dspy.Prediction(entities="Obama|PERSON|0.9")
         )
 
         result = await entity_agent._process_impl(
             EntityExtractionInput(query="Obama speech", tenant_id=TEST_TENANT_ID)
         )
 
+        assert result.entities == [
+            Entity(
+                text="Obama",
+                type="PERSON",
+                confidence=0.9,
+                context="Obama speech",
+            )
+        ]
         assert result.path_used == "dspy"
         assert result.relationships == []
 
@@ -428,14 +711,15 @@ class TestEntityExtractionAgent:
     async def test_dspy_fallback_output_has_new_fields(self, entity_agent):
         """DSPy fallback output includes relationships (empty) and path_used."""
         entity_agent.dspy_module.forward = Mock(
-            return_value=dspy.Prediction(entities="", entity_types="")
+            return_value=dspy.Prediction(entities="")
         )
 
         result = await entity_agent._process_impl(
             EntityExtractionInput(query="hello", tenant_id=TEST_TENANT_ID)
         )
 
-        assert isinstance(result.relationships, list)
+        assert result.entities == []
+        assert result.relationships == []
         assert result.path_used == "dspy"
 
 
@@ -477,21 +761,32 @@ class TestGLiNERFastPath:
         ]
         fast_agent._spacy_analyzer.extract_semantic_relationships.return_value = []
 
-        result = await fast_agent._process_impl(
-            EntityExtractionInput(
-                query="Barack Obama in Chicago", tenant_id=TEST_TENANT_ID
+        with patch.object(
+            fast_agent, "_extract_dspy_path", side_effect=RuntimeError("LM failed")
+        ):
+            result = await fast_agent._process_impl(
+                EntityExtractionInput(
+                    query="Barack Obama in Chicago", tenant_id=TEST_TENANT_ID
+                )
             )
-        )
 
         assert result.path_used == "fast"
         assert result.entity_count == 2
-        assert result.entities[0].text == "Barack Obama"
-        assert result.entities[0].type == "PERSON"
-        assert result.entities[0].confidence == 0.95
-        assert result.entities[1].text == "Chicago"
-        # EntityExtractionAgent maps GLiNER's LOCATION label → PLACE via
-        # _GLINER_TYPE_MAP (added in ffec8f35).
-        assert result.entities[1].type == "PLACE"
+        assert result.entities == [
+            Entity(
+                text="Barack Obama",
+                type="PERSON",
+                confidence=0.95,
+                context="Barack Obama in Chicago",
+            ),
+            Entity(
+                text="Chicago",
+                type="PLACE",
+                confidence=0.88,
+                context="Barack Obama in Chicago",
+            ),
+        ]
+        assert result.relationships == []
 
     @pytest.mark.asyncio
     async def test_fast_path_extracts_relationships(self, fast_agent):
@@ -548,9 +843,12 @@ class TestGLiNERFastPath:
         ]
         fast_agent._spacy_analyzer.nlp = Mock(return_value=_make_caption_doc())
 
-        result = await fast_agent._process_impl(
-            EntityExtractionInput(query=query, tenant_id=TEST_TENANT_ID)
-        )
+        with patch.object(
+            fast_agent, "_extract_dspy_path", side_effect=RuntimeError("LM failed")
+        ):
+            result = await fast_agent._process_impl(
+                EntityExtractionInput(query=query, tenant_id=TEST_TENANT_ID)
+            )
 
         assert result.path_used == "fast"
         assert [
@@ -616,9 +914,12 @@ class TestGLiNERFastPath:
         ]
         fast_agent._spacy_analyzer.nlp = Mock(return_value=_make_caption_doc())
 
-        result = await fast_agent._process_impl(
-            EntityExtractionInput(query=query, tenant_id=TEST_TENANT_ID)
-        )
+        with patch.object(
+            fast_agent, "_extract_dspy_path", side_effect=RuntimeError("LM failed")
+        ):
+            result = await fast_agent._process_impl(
+                EntityExtractionInput(query=query, tenant_id=TEST_TENANT_ID)
+            )
 
         entity_texts = {entity.text for entity in result.entities}
         assert entity_texts == {
@@ -645,9 +946,12 @@ class TestGLiNERFastPath:
             },
         ]
 
-        result = await fast_agent._process_impl(
-            EntityExtractionInput(query="Obama speech", tenant_id=TEST_TENANT_ID)
-        )
+        with patch.object(
+            fast_agent, "_extract_dspy_path", side_effect=RuntimeError("LM failed")
+        ):
+            result = await fast_agent._process_impl(
+                EntityExtractionInput(query="Obama speech", tenant_id=TEST_TENANT_ID)
+            )
 
         assert result.path_used == "fast"
         assert result.entity_count == 1
@@ -659,9 +963,7 @@ class TestGLiNERFastPath:
         """When GLiNER is None, DSPy fallback is used."""
         fast_agent._gliner_extractor = None
         fast_agent.dspy_module.forward = Mock(
-            return_value=dspy.Prediction(
-                entities="Obama|PERSON|0.9", entity_types="PERSON"
-            )
+            return_value=dspy.Prediction(entities="Obama|PERSON|0.9")
         )
 
         result = await fast_agent._process_impl(
@@ -673,8 +975,8 @@ class TestGLiNERFastPath:
         assert result.entities[0].text == "Obama"
 
     @pytest.mark.asyncio
-    async def test_fast_path_runtime_failure_falls_back_to_dspy(self):
-        """If GLiNER raises at runtime, should fall back to DSPy."""
+    async def test_dspy_primary_wins_over_gliner_failure(self):
+        """DSPy primary wins even if GLiNER would fail."""
         agent = _make_extraction_agent()
         agent._gliner_extractor = MagicMock()
         agent._gliner_extractor.extract_entities.side_effect = RuntimeError(
@@ -685,7 +987,6 @@ class TestGLiNERFastPath:
         # Mock DSPy fallback
         mock_result = MagicMock()
         mock_result.entities = "Python|TECHNOLOGY|0.8"
-        mock_result.entity_types = "TECHNOLOGY"
         # call_dspy invokes module(**kwargs) (__call__), not .forward —
         # forward bypasses DSPy's instrumentation.
         agent.dspy_module = MagicMock(return_value=mock_result)
@@ -695,8 +996,16 @@ class TestGLiNERFastPath:
         )
         result = await agent._process_impl(input_data)
 
-        assert result.entity_count >= 1
+        assert result.entities == [
+            Entity(
+                text="Python",
+                type="TECHNOLOGY",
+                confidence=0.8,
+                context="Python programming",
+            )
+        ]
         assert result.path_used == "dspy"
+        assert agent._gliner_extractor.extract_entities.call_count == 0
 
     @pytest.mark.asyncio
     async def test_a2a_output_includes_relationships(self, fast_agent):
@@ -742,7 +1051,6 @@ class TestTelemetrySpanEmission:
         agent.dspy_module.forward = Mock(
             return_value=dspy.Prediction(
                 entities="Obama|PERSON|0.9\nChicago|PLACE|0.8",
-                entity_types="PERSON, PLACE",
             )
         )
 
@@ -760,10 +1068,26 @@ class TestTelemetrySpanEmission:
         assert recorded["operation"] == "entity_extraction"
         assert recorded["input.value"] == "Obama in Chicago"
         output = json.loads(recorded["output.value"])
-        assert output["entity_count"] == 2
-        assert output["relationship_count"] == 0
-        assert output["path_used"] == "dspy"
-        assert any(e["text"] == "Obama" for e in output["entities"])
+        assert output == {
+            "entities": [
+                {
+                    "text": "Obama",
+                    "type": "PERSON",
+                    "confidence": 0.9,
+                    "context": "Obama in Chicago",
+                },
+                {
+                    "text": "Chicago",
+                    "type": "PLACE",
+                    "confidence": 0.8,
+                    "context": "Obama in Chicago",
+                },
+            ],
+            "relationships": [],
+            "entity_count": 2,
+            "relationship_count": 0,
+            "path_used": "dspy",
+        }
 
     @pytest.mark.expects_telemetry_loss_warning
     def test_emit_extraction_span_warns_without_telemetry_manager(self, caplog):
@@ -827,9 +1151,7 @@ class TestTelemetrySpanEmission:
         emitting the span under "default". The telemetry hook in AgentBase now
         calls require_tenant_id."""
         agent = agent_with_telemetry
-        agent.dspy_module.forward = Mock(
-            return_value=dspy.Prediction(entities="", entity_types="")
-        )
+        agent.dspy_module.forward = Mock(return_value=dspy.Prediction(entities=""))
 
         with pytest.raises(ValueError, match="tenant_id is required"):
             await agent._process_impl(EntityExtractionInput(query="hello"))
@@ -839,9 +1161,7 @@ class TestTelemetrySpanEmission:
     async def test_span_records_full_query(self, agent_with_telemetry):
         """The full query is recorded on input.value (no truncation)."""
         agent = agent_with_telemetry
-        agent.dspy_module.forward = Mock(
-            return_value=dspy.Prediction(entities="", entity_types="")
-        )
+        agent.dspy_module.forward = Mock(return_value=dspy.Prediction(entities=""))
 
         long_query = "x" * 500
         await agent._process_impl(
@@ -995,9 +1315,12 @@ async def test_gliner_fast_path_offloaded_from_event_loop():
             ticks += 1
 
     t = asyncio.create_task(ticker())
-    await agent._process_impl(
-        EntityExtractionInput(query="tell me about Obama", tenant_id=TEST_TENANT_ID)
-    )
+    with patch.object(
+        agent, "_extract_dspy_path", side_effect=RuntimeError("LM failed")
+    ):
+        await agent._process_impl(
+            EntityExtractionInput(query="tell me about Obama", tenant_id=TEST_TENANT_ID)
+        )
     stop.set()
     await t
 

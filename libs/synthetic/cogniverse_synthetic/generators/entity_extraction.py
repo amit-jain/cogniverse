@@ -246,11 +246,9 @@ class EntityExtractionGenerator(BaseGenerator):
                 {"source": subject, "target": object_, "type": relation}
             )
 
-        entity_types = ",".join(dict.fromkeys(e["type"] for e in entities))
         return EntityExtractionExampleSchema(
             query=text,
             entities=entities,
-            entity_types=entity_types,
             relationships=relationships,
         )
 

@@ -289,7 +289,6 @@ async def test_entity_extraction_without_native_confidence_requires_review() -> 
     item = EntityExtractionExampleSchema(
         query="TensorFlow was developed by Google Brain",
         entities=[{"text": "TensorFlow", "type": "TECHNOLOGY"}],
-        entity_types="TECHNOLOGY",
         relationships=[],
     ).model_dump()
     extractor = SyntheticDataConfidenceExtractor()

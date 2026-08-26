@@ -103,11 +103,6 @@ def _validate_training_entity_values(item: ReviewItem) -> None:
                 f"{position} requires exactly non-empty text and type strings"
             )
 
-    if not isinstance(item.data.get("entity_types"), str):
-        raise ValueError(
-            f"Training dataset item {item.item_id!r} requires an entity_types string"
-        )
-
     relationships = item.data.get("relationships")
     if not isinstance(relationships, list):
         raise ValueError(
