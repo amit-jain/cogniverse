@@ -3328,10 +3328,19 @@ class E2EReportCollector:
             return None
 
     @staticmethod
-    def _extract_request_fields(body: dict | None, url: str) -> dict:
+    def _extract_request_fields(body: dict | list | None, url: str) -> dict:
         """Extract semantically meaningful request fields based on endpoint."""
         if body is None:
             return {}
+        # Some endpoints take a JSON array rather than an object (e.g. the
+        # profile-selection ground-truth upload). This wraps every request the
+        # suite makes, so an unhandled shape fails the fixture and errors the
+        # whole module rather than one test.
+        if isinstance(body, list):
+            return {"type": "json_array", "items_count": len(body)}
+        if not isinstance(body, dict):
+            # A JSON body is any JSON type, not just an object.
+            return {"type": "json_scalar", "value_type": type(body).__name__}
         if body.get("_multipart"):
             return {"type": "file_upload"}
 
@@ -3374,7 +3383,9 @@ class E2EReportCollector:
         return fields
 
     @staticmethod
-    def _extract_response_fields(body: dict | None, url: str, status_code: int) -> dict:
+    def _extract_response_fields(
+        body: dict | list | None, url: str, status_code: int
+    ) -> dict:
         """Extract semantically meaningful response fields based on endpoint."""
         if body is None:
             return {"status_code": status_code}
@@ -3382,6 +3393,13 @@ class E2EReportCollector:
         # Some endpoints return a list instead of a dict (e.g., /events/queues)
         if isinstance(body, list):
             return {"status_code": status_code, "items_count": len(body)}
+        if not isinstance(body, dict):
+            # A JSON body is any JSON type, not just an object.
+            return {
+                "status_code": status_code,
+                "type": "json_scalar",
+                "value_type": type(body).__name__,
+            }
 
         fields = {"status_code": status_code}
 
