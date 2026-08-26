@@ -5,6 +5,7 @@ Core package defines ONLY abstractions - zero knowledge of Phoenix, LangSmith, e
 Provider packages (cogniverse-telemetry-phoenix) implement these interfaces.
 """
 
+import asyncio
 import logging
 from abc import ABC, abstractmethod
 from contextlib import contextmanager
@@ -251,54 +252,73 @@ class DatasetStore(ABC):
             f"{type(self).__name__} does not support delete_dataset"
         )
 
+    def _replace_dataset_lock(self, name: str) -> asyncio.Lock:
+        locks = getattr(self, "_replace_dataset_locks", None)
+        if locks is None:
+            locks = {}
+            setattr(self, "_replace_dataset_locks", locks)
+        lock = locks.get(name)
+        if lock is None:
+            lock = asyncio.Lock()
+            locks[name] = lock
+        return lock
+
     async def replace_dataset(
         self, name: str, data: pd.DataFrame, metadata: Optional[Dict[str, Any]] = None
     ) -> str:
-        """Replace a dataset's contents: delete any existing dataset by this
-        name, then create it fresh.
+        """Replace a dataset's contents.
 
         ``create_dataset`` APPENDS a new version when the name already exists,
-        so repeated saves to a STABLE (un-versioned) name accumulate stale +
-        duplicate rows and ``get_dataset`` returns the whole history. For the
-        stable artefact names (active prompts / demonstrations) that must hold
-        exactly the latest write, use this so the read returns only the current
-        content and a "restore previous" truly reverts rather than re-appending.
-
-        Requires a backend that supports ``delete_dataset``. The previous
-        contents are pre-read and restored if the create fails after the delete
-        committed, so a torn replace never destroys the prior dataset (mirrors
-        ArtifactManager.save_blob's last-write-wins compensation). Only a genuine
-        not-found on the pre-read (KeyError/DatasetNotFoundError) is treated as
-        "nothing to restore"; any other pre-read error propagates BEFORE the destructive
-        delete, so a flapping backend can never destroy the prior dataset.
-
-        This is a single-writer, last-write-wins operation: it is NOT atomic
-        across concurrent writers to the same stable (tenant, agent) name. Two
-        simultaneous cross-process writers can merge or lose the active dataset;
-        callers must serialize writes to a given name (see the concurrency note
-        in docs/modules/optimization.md).
+        so repeated saves to a stable (un-versioned) name accumulate stale and
+        duplicate rows. This helper serializes same-name writes per store
+        instance, deletes the named dataset, then recreates it with the new
+        content. If the destructive step or the create fails after the old
+        content is gone, the previous frame is recreated before the exception
+        propagates. A pre-read outage still propagates before deletion.
 
         Returns:
             The new dataset identifier.
         """
-        try:
-            previous = await self.get_dataset(name)
-        except (KeyError, DatasetNotFoundError):
-            previous = None  # no prior dataset — nothing to restore
-        await self.delete_dataset(name)
-        try:
-            return await self.create_dataset(name, data, metadata)
-        except Exception:
-            if previous is not None:
+        async with self._replace_dataset_lock(name):
+            try:
+                previous = await self.get_dataset(name)
+            except (KeyError, DatasetNotFoundError):
+                previous = None
+
+            try:
+                await self.delete_dataset(name)
+            except Exception:
+                delete_missing = False
                 try:
-                    await self.create_dataset(name, previous, metadata)
+                    await self.get_dataset(name)
+                except (KeyError, DatasetNotFoundError):
+                    delete_missing = True
                 except Exception:
-                    logger.exception(
-                        "replace_dataset: failed to restore previous contents of "
-                        "'%s' after a torn create",
-                        name,
-                    )
-            raise
+                    pass
+                if delete_missing and previous is not None:
+                    try:
+                        await self.create_dataset(name, previous, metadata)
+                    except Exception:
+                        logger.exception(
+                            "replace_dataset: failed to restore previous contents "
+                            "of '%s' after a torn delete",
+                            name,
+                        )
+                raise
+
+            try:
+                return await self.create_dataset(name, data, metadata)
+            except Exception:
+                if previous is not None:
+                    try:
+                        await self.create_dataset(name, previous, metadata)
+                    except Exception:
+                        logger.exception(
+                            "replace_dataset: failed to restore previous contents "
+                            "of '%s' after a torn create",
+                            name,
+                        )
+                raise
 
 
 class TelemetryProvider(ABC):
