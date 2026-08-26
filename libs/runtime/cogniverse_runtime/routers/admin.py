@@ -10,6 +10,12 @@ from typing import Any, Dict, List, Mapping, Optional
 from fastapi import APIRouter, Depends, HTTPException, Query
 from pydantic import BaseModel
 
+from cogniverse_agents.optimizer.profile_selection_ground_truth import (
+    PROFILE_SELECTION_GROUND_TRUTH_BLOB_KEY,
+    PROFILE_SELECTION_GROUND_TRUTH_BLOB_KIND,
+    canonicalize_profile_selection_ground_truth_rows,
+    serialize_profile_selection_ground_truth_rows,
+)
 from cogniverse_core.common.tenant_utils import canonical_tenant_id
 from cogniverse_core.registries.backend_registry import BackendRegistry
 from cogniverse_core.validation.profile_validator import ProfileValidator
@@ -1280,6 +1286,13 @@ class PinQuotasResponse(BaseModel):
     quotas: Dict[str, int]
 
 
+class ProfileSelectionGroundTruthResponse(BaseModel):
+    tenant_id: str
+    row_count: int
+    version: int
+    active: Dict[str, Any]
+
+
 def _default_pin_quotas() -> Dict[str, int]:
     from cogniverse_core.memory.pinning import PinQuotas
 
@@ -1473,6 +1486,60 @@ async def set_pin_quotas(
         _pin_quota_cache_ts[key] = time.monotonic()
         logger.info("Updated + persisted pin quotas for tenant=%s: %s", key, current)
     return PinQuotasResponse(tenant_id=tenant_id, quotas=current)
+
+
+@router.put(
+    "/tenants/{tenant_id}/profile_selection_ground_truth",
+    response_model=ProfileSelectionGroundTruthResponse,
+)
+async def set_profile_selection_ground_truth(
+    tenant_id: str, rows: List[Dict[str, Any]]
+) -> ProfileSelectionGroundTruthResponse:
+    """Persist tenant-owned profile-selection ground truth as the active blob."""
+
+    try:
+        canonical_rows = canonicalize_profile_selection_ground_truth_rows(rows)
+    except ValueError as exc:
+        raise HTTPException(400, str(exc)) from exc
+
+    key = canonical_tenant_id(tenant_id)
+    content = serialize_profile_selection_ground_truth_rows(canonical_rows)
+    try:
+        am = _build_artifact_manager(key)
+        _, version = await am.save_blob_versioned(
+            PROFILE_SELECTION_GROUND_TRUTH_BLOB_KIND,
+            PROFILE_SELECTION_GROUND_TRUTH_BLOB_KEY,
+            content,
+            consumed_example_ids=["admin_upload:profile_selection_ground_truth"],
+            decision="promote",
+            scored=False,
+            score=None,
+            base_score=None,
+            candidate_score=None,
+        )
+        state = await am.activate_version(
+            PROFILE_SELECTION_GROUND_TRUTH_BLOB_KIND,
+            PROFILE_SELECTION_GROUND_TRUTH_BLOB_KEY,
+            version,
+        )
+    except HTTPException:
+        raise
+    except Exception as exc:
+        raise HTTPException(
+            503, f"profile_selection_ground_truth store unavailable: {exc}"
+        ) from exc
+
+    logger.info(
+        "Updated + persisted profile_selection_ground_truth for tenant=%s with %d rows",
+        key,
+        len(canonical_rows),
+    )
+    return ProfileSelectionGroundTruthResponse(
+        tenant_id=key,
+        row_count=len(canonical_rows),
+        version=version,
+        active=state["active"],
+    )
 
 
 # Memory pin / unpin / list endpoints. Pinned memories survive lifecycle

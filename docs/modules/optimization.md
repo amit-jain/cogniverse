@@ -279,17 +279,22 @@ async def run_profile_optimization(
     """
     Optimize ProfileSelectionAgent's DSPy module:
 
-    1. Collect (query, available_profiles) -> selected_profile examples from
+    1. Load the tenant's versioned ground-truth blob
+       ("config", "profile_selection_ground_truth") before any span scoring.
+       If the blob is absent, return the named missing-label status. If the
+       artifact store is unreachable or the payload is malformed, return the
+       named store-unavailable status with a chained cause.
+    2. Collect (query, available_profiles) -> selected_profile examples from
        cogniverse.profile_selection Phoenix spans; use the span's recorded
        available_profiles pool when present and derive the live tenant pool via
        tenant_usable_profile_names(ConfigManager, tenant_id) for legacy spans;
        keep only confidence >= 0.5.
-    2. Merge in approved synthetic demos for optimizer type "profile". The
+    3. Merge in approved synthetic demos for optimizer type "profile". The
        consumer projection supplies the signature-required string confidence
        sentinel and preserves the two exact input fields.
-    3. Compile ProfileSelectionModule via BootstrapFewShot (scaled: 8/16/2-round
+    4. Compile ProfileSelectionModule via BootstrapFewShot (scaled: 8/16/2-round
        once >= 50 examples, else 4/8/1-round).
-    4. Save compiled module as artifact ("model", "profile_selection").
+    5. Save compiled module as artifact ("model", "profile_selection").
 
     The agent reloads the artifact on each dispatch via am.load_blob("model", "profile_selection").
 
@@ -301,6 +306,10 @@ async def run_profile_optimization(
          "decision": "promote" | "keep" | "rollback" | "reject",
          "version": int, "consumed_example_ids": list[str]}
       - {"status": "no_data", "spans_found": int, "examples": 0}
+      - {"status": "profile_selection_ground_truth_missing", "retryable": False,
+         "error": str}
+      - {"status": "profile_selection_ground_truth_store_unavailable", "retryable": True,
+         "error": str, "cause": {"type": str, "message": str}}
       - {"status": "no_eval_material", "spans_found": int,
          "served_scoreable_examples": int, "training_examples": int,
          "holdout_examples": 0, "holdout_source": "served"}
@@ -310,6 +319,8 @@ async def run_profile_optimization(
       - {"status": "failed", "error": str}
     """
 ```
+
+Profile-selection ground truth is tenant-owned state in the artifact store, not a bundled runtime asset. The optimizer reads `("config", "profile_selection_ground_truth")` first and only then builds scored examples from spans. Upload validation rejects blank queries and empty normalized `expected_videos` so tenants never persist a silent placeholder label set.
 
 **Training:** Always **BootstrapFewShot**; the 50-example threshold only changes its
 `max_bootstrapped_demos`/`max_labeled_demos`/`max_rounds` settings, it does not switch optimizers.
@@ -1665,11 +1676,13 @@ After optimization, artifacts are persisted to the telemetry store via `Artifact
   demonstrations, and blobs.
 - `dspy-prompts-{tenant_id}-{agent_type}` — Optimized system prompts for an agent (last-write-wins: `save_prompts` uses `DatasetStore.replace_dataset`, so each save replaces the prior rather than appending a version)
 - `dspy-demos-{tenant_id}-{agent_type}` — Few-shot demonstration examples (last-write-wins via `replace_dataset`, same as prompts). Saving the empty set clears the store: `save_demonstrations([])` is expressed as `clear_demonstrations`, which deletes the dataset (an empty frame cannot be persisted), so a later `load_demonstrations` returns `None`. `TelemetryWorkflowStore` relies on this to roll an empty-prior learning corpus back on a failed multi-step write.
+- `ArtifactManager` dataset readers treat `DatasetNotFoundError` as the absent-artifact signal and let other store `ValueError`s propagate, so a real store failure is not mistaken for "no optimized prompts", "no demonstrations", or a missing versioned snapshot.
 
 > **Concurrency contract:** `replace_dataset` serializes same-name writers only within one shared `DatasetStore` instance on one event loop. If a torn delete/create cannot restore the old frame, it raises `DatasetReplaceRestoreFailedError`. The protection does not extend across threads, processes, or replicas, and a hard kill between delete and create can still lose the dataset because Phoenix has no atomic swap primitive.
 - `dspy-experiments-{tenant_id}-{agent_type}` — Optimization run metrics as typed `ExperimentMetrics` rows (one per run via `save_experiment`; read the latest with `load_latest_experiment`)
 - `("model", <key>)` blobs — compiled DSPy module state for `profile_selection`, `entity_extraction`, `simba_query_enhancement` (triggered mode publishes compiled instructions as versioned prompts instead of a module-state blob); each version ledger stores `consumed_example_ids`, `decision`, `scored`, `score`, `base_score`, `candidate_score`, and `created_at`, and older rows simply omit `score`.
 - `("config", "gateway_thresholds")` blob — calibrated gateway thresholds
+- `("config", "profile_selection_ground_truth")` blob — tenant-uploaded profile-selection labels, validated as rows with `query` plus normalized `expected_videos`
 
 **Stored prompt artifact structure (retrieved from DatasetStore):**
 
