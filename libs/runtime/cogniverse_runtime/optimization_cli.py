@@ -875,7 +875,11 @@ def _entity_extraction_quality(prediction, example) -> float:
     return _token_f1(" ".join(predicted_texts), " ".join(recorded_texts))
 
 
-ENTITY_BOOTSTRAP_METRIC_THRESHOLD = 1.0
+# Leaves the served-holdout score as the operative bound. A fixed bar of 1.0
+# demands a perfect token-set match, which the measured distribution does not
+# reach, so BootstrapFewShot never collects its demo quota and walks the whole
+# trainset every round.
+ENTITY_BOOTSTRAP_METRIC_THRESHOLD = 0.0
 
 
 def _entity_bootstrap_threshold(
