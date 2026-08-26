@@ -315,13 +315,14 @@ class ArtifactManager:
 
         Raises:
             Exception: Propagates store errors (connection, deserialization).
-                ``ValueError``/``KeyError`` raised by the store when the dataset
-                does not exist is treated as "no artifacts" and returns ``None``.
+                ``DatasetNotFoundError``/``KeyError`` raised by the store when
+                the dataset does not exist is treated as "no artifacts" and
+                returns ``None``.
         """
         dataset_name = self._prompt_dataset_name(agent_type)
         try:
             df = await self._provider.datasets.get_dataset(name=dataset_name)
-        except (KeyError, ValueError):
+        except (KeyError, DatasetNotFoundError):
             logger.debug(
                 "No prompt dataset found for %s/%s",
                 self._tenant_id,
@@ -423,7 +424,7 @@ class ArtifactManager:
         dataset_name = self._demo_dataset_name(agent_type)
         try:
             df = await self._provider.datasets.get_dataset(name=dataset_name)
-        except (KeyError, ValueError):
+        except (KeyError, DatasetNotFoundError):
             logger.debug(
                 "No demo dataset found for %s/%s",
                 self._tenant_id,
