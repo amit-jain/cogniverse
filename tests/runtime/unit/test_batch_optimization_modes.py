@@ -1286,7 +1286,7 @@ class TestEmptySpanHandling:
                 return_value=["video_colpali_smol500_mv_frame"],
             ),
             patch(
-                "cogniverse_runtime.optimization_cli._load_profile_selection_labels",
+                "cogniverse_runtime.optimization_cli._profile_selection_label_source",
                 return_value=empty_label_source,
             ),
         ):
@@ -1627,7 +1627,7 @@ class TestSpansWithNoExamples:
                 return_value=["video_colpali_smol500_mv_frame"],
             ),
             patch(
-                "cogniverse_runtime.optimization_cli._load_profile_selection_labels",
+                "cogniverse_runtime.optimization_cli._profile_selection_label_source",
                 return_value=empty_label_source,
             ),
         ):
@@ -1730,6 +1730,34 @@ def _profile_selection_query_record(
         "ground_truth": ground_truth,
         "query_type": query_type,
         "source": source,
+    }
+
+
+_CONTENT_HASH = "9f86d081884c7d659a2feaa0c55ad015a3bf4f1b2b0b822cd15d6c15b0f00a08"
+_OTHER_CONTENT_HASH = "2c26b46b68ffc68ff99b453c1d30413413422d706483bfa0f98a5e886266e7ae"
+_VIDEO_TITLE_FIELDS = {
+    "video_colpali_smol500_mv_frame": "video_title",
+    "video_colqwen_omni_mv_chunk_30s": "video_title",
+}
+
+
+def _profile_hit(
+    title: str | None,
+    *,
+    title_field: str = "video_title",
+    content_hash: str = _CONTENT_HASH,
+    segment: int = 0,
+) -> dict[str, Any]:
+    """One ``SearchResult.to_dict()`` row for a content-addressed segment."""
+    metadata: dict[str, Any] = {"video_id": content_hash, "source_id": content_hash}
+    if title is not None:
+        metadata[title_field] = title
+    return {
+        "document_id": f"{content_hash}_seg_{segment}",
+        "score": 0.5,
+        "metadata": metadata,
+        "highlights": {},
+        "source_id": content_hash,
     }
 
 
@@ -3076,6 +3104,7 @@ class TestProfileSelectionOptimization:
         score_by_module=None,
         config_manager=None,
         scoreable_fields: bool = True,
+        search_service_factory=None,
     ):
         from cogniverse_runtime.optimization_cli import (
             ProfileLabelDerivationResult,
@@ -3234,9 +3263,16 @@ class TestProfileSelectionOptimization:
                 "cogniverse_runtime.optimization_cli._create_teleprompter",
                 return_value=FakeTeleprompter(),
             ),
-            patch(
-                "cogniverse_runtime.optimization_cli._load_profile_selection_labels",
-                return_value=label_source,
+            (
+                patch(
+                    "cogniverse_agents.search.service.SearchService",
+                    search_service_factory,
+                )
+                if search_service_factory is not None
+                else patch(
+                    "cogniverse_runtime.optimization_cli._profile_selection_label_source",
+                    return_value=label_source,
+                )
             ),
             patch(
                 "cogniverse_runtime.optimization_cli._profile_selection_scores",
@@ -3339,20 +3375,22 @@ class TestProfileSelectionOptimization:
             "video_colqwen_omni_mv_chunk_30s",
         ]
         corpus = {
-            ("q1", "video_colpali_smol500_mv_frame"): ["v1"],
-            ("q1", "video_colqwen_omni_mv_chunk_30s"): ["z1"],
-            ("q2", "video_colpali_smol500_mv_frame"): ["z2"],
-            ("q2", "video_colqwen_omni_mv_chunk_30s"): ["v2"],
-            ("q3", "video_colpali_smol500_mv_frame"): ["v3"],
-            ("q3", "video_colqwen_omni_mv_chunk_30s"): ["z3"],
-            ("q4", "video_colpali_smol500_mv_frame"): ["z4"],
-            ("q4", "video_colqwen_omni_mv_chunk_30s"): ["v4"],
+            ("q1", "video_colpali_smol500_mv_frame"): [_profile_hit("v1.mp4")],
+            ("q1", "video_colqwen_omni_mv_chunk_30s"): [_profile_hit("z1.mp4")],
+            ("q2", "video_colpali_smol500_mv_frame"): [_profile_hit("z2.mp4")],
+            ("q2", "video_colqwen_omni_mv_chunk_30s"): [_profile_hit("v2.mp4")],
+            ("q3", "video_colpali_smol500_mv_frame"): [_profile_hit("v3.mp4")],
+            ("q3", "video_colqwen_omni_mv_chunk_30s"): [_profile_hit("z3.mp4")],
+            ("q4", "video_colpali_smol500_mv_frame"): [_profile_hit("z4.mp4")],
+            ("q4", "video_colqwen_omni_mv_chunk_30s"): [_profile_hit("v4.mp4")],
         }
 
-        def retrieve(query: str, profile: str) -> list[str]:
+        def retrieve(query: str, profile: str) -> list[dict[str, Any]]:
             return corpus[(query, profile)]
 
-        labels = derive_profile_labels(queries, candidate_profiles, retrieve)
+        labels = derive_profile_labels(
+            queries, candidate_profiles, retrieve, title_fields=_VIDEO_TITLE_FIELDS
+        )
         assert labels == {
             "q1": "video_colpali_smol500_mv_frame",
             "q2": "video_colqwen_omni_mv_chunk_30s",
@@ -3409,18 +3447,20 @@ class TestProfileSelectionOptimization:
             "video_colqwen_omni_mv_chunk_30s",
         ]
         corpus = {
-            ("q1", "video_colpali_smol500_mv_frame"): ["v1"],
-            ("q1", "video_colqwen_omni_mv_chunk_30s"): ["z1"],
-            ("q2", "video_colpali_smol500_mv_frame"): ["z2"],
-            ("q2", "video_colqwen_omni_mv_chunk_30s"): ["v2"],
-            ("q3", "video_colpali_smol500_mv_frame"): ["z3"],
-            ("q3", "video_colqwen_omni_mv_chunk_30s"): ["z4"],
+            ("q1", "video_colpali_smol500_mv_frame"): [_profile_hit("v1.mp4")],
+            ("q1", "video_colqwen_omni_mv_chunk_30s"): [_profile_hit("z1.mp4")],
+            ("q2", "video_colpali_smol500_mv_frame"): [_profile_hit("z2.mp4")],
+            ("q2", "video_colqwen_omni_mv_chunk_30s"): [_profile_hit("v2.mp4")],
+            ("q3", "video_colpali_smol500_mv_frame"): [_profile_hit("z3.mp4")],
+            ("q3", "video_colqwen_omni_mv_chunk_30s"): [_profile_hit("z4.mp4")],
         }
 
-        def retrieve(query: str, profile: str) -> list[str]:
+        def retrieve(query: str, profile: str) -> list[dict[str, Any]]:
             return corpus[(query, profile)]
 
-        labels = derive_profile_labels(queries, candidate_profiles, retrieve)
+        labels = derive_profile_labels(
+            queries, candidate_profiles, retrieve, title_fields=_VIDEO_TITLE_FIELDS
+        )
         assert labels == {
             "q1": "video_colpali_smol500_mv_frame",
             "q2": "video_colqwen_omni_mv_chunk_30s",
@@ -3443,12 +3483,17 @@ class TestProfileSelectionOptimization:
             "video_colqwen_omni_mv_chunk_30s",
         ]
 
-        def retrieve(query: str, profile: str) -> list[str]:
+        def retrieve(query: str, profile: str) -> list[dict[str, Any]]:
             del query, profile
             raise ConnectionError("backend unavailable")
 
         with pytest.raises(RuntimeError) as err:
-            derive_profile_labels(queries, candidate_profiles, retrieve)
+            derive_profile_labels(
+                queries,
+                candidate_profiles,
+                retrieve,
+                title_fields=_VIDEO_TITLE_FIELDS,
+            )
 
         assert (
             str(err.value) == "Profile selection retrieval failed for query 'q-outage'"
@@ -3476,14 +3521,20 @@ class TestProfileSelectionOptimization:
             "video_colqwen_omni_mv_chunk_30s",
         ]
         corpus = {
-            ("man lifting", "video_colpali_smol500_mv_frame"): ["v_-HpCLXdtcas"],
-            ("man lifting", "video_colqwen_omni_mv_chunk_30s"): ["z1"],
+            ("man lifting", "video_colpali_smol500_mv_frame"): [
+                _profile_hit("v_-HpCLXdtcas.mp4")
+            ],
+            ("man lifting", "video_colqwen_omni_mv_chunk_30s"): [
+                _profile_hit("z1.mp4")
+            ],
         }
 
-        def retrieve(query: str, profile: str) -> list[str]:
+        def retrieve(query: str, profile: str) -> list[dict[str, Any]]:
             return corpus[(query, profile)]
 
-        labels = derive_profile_labels(queries, candidate_profiles, retrieve)
+        labels = derive_profile_labels(
+            queries, candidate_profiles, retrieve, title_fields=_VIDEO_TITLE_FIELDS
+        )
         assert labels == {
             "man lifting": "video_colpali_smol500_mv_frame",
         }
@@ -3525,11 +3576,13 @@ class TestProfileSelectionOptimization:
             "video_colqwen_omni_mv_chunk_30s",
         ]
 
-        def retrieve(query: str, profile: str) -> list[str]:
+        def retrieve(query: str, profile: str) -> list[dict[str, Any]]:
             del query, profile
-            return ["v1"]
+            return [_profile_hit("v1.mp4")]
 
-        labels = derive_profile_labels(queries, candidate_profiles, retrieve)
+        labels = derive_profile_labels(
+            queries, candidate_profiles, retrieve, title_fields=_VIDEO_TITLE_FIELDS
+        )
         assert labels == {}
         assert labels.records == ()
         assert labels.excluded_count == 1
@@ -3547,6 +3600,580 @@ class TestProfileSelectionOptimization:
                 "position": 0,
             },
         )
+
+    def test_profile_selection_label_matches_preserved_upload_basename(self):
+        from cogniverse_runtime.optimization_cli import derive_profile_labels
+
+        queries = [
+            _profile_selection_query_record(
+                "man lifting",
+                expected_videos=["v_-6dz6tBH77I"],
+                ground_truth="one",
+            )
+        ]
+        candidate_profiles = [
+            "video_colpali_smol500_mv_frame",
+            "video_colqwen_omni_mv_chunk_30s",
+        ]
+        corpus = {
+            ("man lifting", "video_colpali_smol500_mv_frame"): [
+                _profile_hit("v_-6dz6tBH77I.mp4")
+            ],
+            ("man lifting", "video_colqwen_omni_mv_chunk_30s"): [
+                _profile_hit("v_-cAcA8dO7kA.mp4")
+            ],
+        }
+
+        def retrieve(query: str, profile: str) -> list[dict[str, Any]]:
+            return corpus[(query, profile)]
+
+        labels = derive_profile_labels(
+            queries, candidate_profiles, retrieve, title_fields=_VIDEO_TITLE_FIELDS
+        )
+        assert labels == {"man lifting": "video_colpali_smol500_mv_frame"}
+        assert labels.records == (
+            {
+                "query": "man lifting",
+                "ground_truth": "one",
+                "query_type": "question",
+                "source": "synthetic.json",
+                "expected_videos": ["v_-6dz6tBH77I"],
+                "available_profiles": [
+                    "video_colpali_smol500_mv_frame",
+                    "video_colqwen_omni_mv_chunk_30s",
+                ],
+                "selected_profile": "video_colpali_smol500_mv_frame",
+                "confidence": 1.0,
+                "reasoning": "video_colpali_smol500_mv_frame recovered v_-6dz6tBH77I",
+                "example_id": "span:profile-label:0",
+            },
+        )
+        assert labels.exclusions == ()
+
+    def test_profile_selection_unmatched_titles_are_excluded(self):
+        from cogniverse_runtime.optimization_cli import derive_profile_labels
+
+        queries = [
+            _profile_selection_query_record(
+                "man lifting",
+                expected_videos=["v_-6dz6tBH77I"],
+                ground_truth="one",
+            )
+        ]
+        candidate_profiles = [
+            "video_colpali_smol500_mv_frame",
+            "video_colqwen_omni_mv_chunk_30s",
+        ]
+        corpus = {
+            ("man lifting", "video_colpali_smol500_mv_frame"): [
+                _profile_hit("v_-cAcA8dO7kA.mp4")
+            ],
+            ("man lifting", "video_colqwen_omni_mv_chunk_30s"): [
+                _profile_hit("v_-IMXSEIabMM.mp4")
+            ],
+        }
+
+        def retrieve(query: str, profile: str) -> list[dict[str, Any]]:
+            return corpus[(query, profile)]
+
+        labels = derive_profile_labels(
+            queries, candidate_profiles, retrieve, title_fields=_VIDEO_TITLE_FIELDS
+        )
+        assert labels == {}
+        assert labels.records == ()
+        assert labels.exclusions == (
+            {
+                "query": "man lifting",
+                "reason": "no_profile_recovered_expected_videos",
+                "expected_videos": ["v_-6dz6tBH77I"],
+                "position": 0,
+                "best_score": 0.0,
+                "candidate_profiles": [
+                    "video_colpali_smol500_mv_frame",
+                    "video_colqwen_omni_mv_chunk_30s",
+                ],
+            },
+        )
+        assert labels.excluded_count == 1
+        assert labels.excluded_queries == ("man lifting",)
+
+    def test_profile_selection_untitled_result_is_excluded(self):
+        from cogniverse_runtime.optimization_cli import derive_profile_labels
+
+        queries = [
+            _profile_selection_query_record(
+                "man lifting",
+                expected_videos=["v_-6dz6tBH77I"],
+                ground_truth="one",
+            )
+        ]
+        candidate_profiles = [
+            "video_colpali_smol500_mv_frame",
+            "video_colqwen_omni_mv_chunk_30s",
+        ]
+        corpus = {
+            ("man lifting", "video_colpali_smol500_mv_frame"): [
+                _profile_hit("v_-6dz6tBH77I.mp4"),
+                _profile_hit(None, content_hash=_OTHER_CONTENT_HASH, segment=4),
+            ],
+            ("man lifting", "video_colqwen_omni_mv_chunk_30s"): [
+                _profile_hit("v_-cAcA8dO7kA.mp4")
+            ],
+        }
+
+        def retrieve(query: str, profile: str) -> list[dict[str, Any]]:
+            return corpus[(query, profile)]
+
+        labels = derive_profile_labels(
+            queries, candidate_profiles, retrieve, title_fields=_VIDEO_TITLE_FIELDS
+        )
+        assert labels == {}
+        assert labels.records == ()
+        assert labels.exclusions == (
+            {
+                "query": "man lifting",
+                "reason": "result_missing_title",
+                "expected_videos": ["v_-6dz6tBH77I"],
+                "position": 0,
+                "untitled_results": [
+                    {
+                        "profile": "video_colpali_smol500_mv_frame",
+                        "title_field": "video_title",
+                        "document_ids": [f"{_OTHER_CONTENT_HASH}_seg_4"],
+                    }
+                ],
+            },
+        )
+        assert labels.excluded_count == 1
+        assert labels.excluded_queries == ("man lifting",)
+
+    def test_profile_selection_title_tie_across_media_types_is_excluded(self):
+        from cogniverse_runtime.optimization_cli import derive_profile_labels
+
+        queries = [
+            _profile_selection_query_record(
+                "keynote audio",
+                expected_videos=["talk_01"],
+                ground_truth="one",
+            )
+        ]
+        candidate_profiles = ["video_colpali_smol500_mv_frame", "audio_clap_semantic"]
+        title_fields = {
+            "video_colpali_smol500_mv_frame": "video_title",
+            "audio_clap_semantic": "audio_title",
+        }
+        corpus = {
+            ("keynote audio", "video_colpali_smol500_mv_frame"): [
+                _profile_hit("talk_01.mp4")
+            ],
+            ("keynote audio", "audio_clap_semantic"): [
+                _profile_hit("uploads/talk_01.wav", title_field="audio_title")
+            ],
+        }
+
+        def retrieve(query: str, profile: str) -> list[dict[str, Any]]:
+            return corpus[(query, profile)]
+
+        labels = derive_profile_labels(
+            queries, candidate_profiles, retrieve, title_fields=title_fields
+        )
+        assert labels == {}
+        assert labels.records == ()
+        assert labels.exclusions == (
+            {
+                "query": "keynote audio",
+                "reason": "ambiguous_profile_tie",
+                "expected_videos": ["talk_01"],
+                "tied_profiles": [
+                    "video_colpali_smol500_mv_frame",
+                    "audio_clap_semantic",
+                ],
+                "best_score": 1.0,
+                "position": 0,
+            },
+        )
+
+    def test_profile_selection_title_field_is_read_per_profile(self):
+        from cogniverse_runtime.optimization_cli import derive_profile_labels
+
+        queries = [
+            _profile_selection_query_record(
+                "keynote audio",
+                expected_videos=["talk_01"],
+                ground_truth="one",
+            )
+        ]
+        candidate_profiles = ["video_colpali_smol500_mv_frame", "audio_clap_semantic"]
+        title_fields = {
+            "video_colpali_smol500_mv_frame": "video_title",
+            "audio_clap_semantic": "audio_title",
+        }
+        corpus = {
+            ("keynote audio", "video_colpali_smol500_mv_frame"): [
+                _profile_hit("v_-cAcA8dO7kA.mp4")
+            ],
+            ("keynote audio", "audio_clap_semantic"): [
+                _profile_hit("uploads/talk_01.wav", title_field="audio_title")
+            ],
+        }
+
+        def retrieve(query: str, profile: str) -> list[dict[str, Any]]:
+            return corpus[(query, profile)]
+
+        labels = derive_profile_labels(
+            queries, candidate_profiles, retrieve, title_fields=title_fields
+        )
+        assert labels == {"keynote audio": "audio_clap_semantic"}
+        assert labels.records == (
+            {
+                "query": "keynote audio",
+                "ground_truth": "one",
+                "query_type": "question",
+                "source": "synthetic.json",
+                "expected_videos": ["talk_01"],
+                "available_profiles": [
+                    "video_colpali_smol500_mv_frame",
+                    "audio_clap_semantic",
+                ],
+                "selected_profile": "audio_clap_semantic",
+                "confidence": 1.0,
+                "reasoning": "audio_clap_semantic recovered talk_01",
+                "example_id": "span:profile-label:0",
+            },
+        )
+        assert labels.exclusions == ()
+
+    def test_profile_selection_requires_title_field_for_every_candidate(self):
+        from cogniverse_runtime.optimization_cli import derive_profile_labels
+
+        queries = [
+            _profile_selection_query_record(
+                "man lifting",
+                expected_videos=["v_-6dz6tBH77I"],
+                ground_truth="one",
+            )
+        ]
+        candidate_profiles = [
+            "video_colpali_smol500_mv_frame",
+            "video_colqwen_omni_mv_chunk_30s",
+        ]
+
+        def retrieve(query: str, profile: str) -> list[dict[str, Any]]:
+            raise AssertionError("retrieval must not run without title fields")
+
+        with pytest.raises(ValueError) as err:
+            derive_profile_labels(
+                queries,
+                candidate_profiles,
+                retrieve,
+                title_fields={"video_colpali_smol500_mv_frame": "video_title"},
+            )
+
+        assert str(err.value) == (
+            "Profile selection derivation has no title field for profile "
+            "'video_colqwen_omni_mv_chunk_30s'"
+        )
+
+    def test_profile_selection_retrieval_rows_must_be_mappings(self):
+        from cogniverse_runtime.optimization_cli import derive_profile_labels
+
+        queries = [
+            _profile_selection_query_record(
+                "man lifting",
+                expected_videos=["v_-6dz6tBH77I"],
+                ground_truth="one",
+            )
+        ]
+        candidate_profiles = [
+            "video_colpali_smol500_mv_frame",
+            "video_colqwen_omni_mv_chunk_30s",
+        ]
+
+        def retrieve(query: str, profile: str) -> list[str]:
+            del query, profile
+            return ["v_-6dz6tBH77I"]
+
+        with pytest.raises(TypeError) as err:
+            derive_profile_labels(
+                queries,
+                candidate_profiles,
+                retrieve,
+                title_fields=_VIDEO_TITLE_FIELDS,
+            )
+
+        assert str(err.value) == (
+            "Profile selection retrieval row 0 for profile "
+            "'video_colpali_smol500_mv_frame' must be a mapping, got str"
+        )
+
+    @staticmethod
+    def _title_field_config_manager(profile_name: str, schema_name: str):
+        from cogniverse_foundation.config.manager import ConfigManager
+        from cogniverse_foundation.config.unified_config import BackendProfileConfig
+        from tests.utils.memory_store import InMemoryConfigStore
+
+        config_manager = ConfigManager(store=InMemoryConfigStore())
+        config_manager.add_backend_profile(
+            BackendProfileConfig.from_dict(
+                profile_name, {"type": "video", "schema_name": schema_name}
+            ),
+            tenant_id="acme:docs",
+        )
+        return config_manager
+
+    def test_profile_selection_title_fields_derive_from_shipped_schemas(self):
+        from cogniverse_core.schemas.filesystem_loader import FilesystemSchemaLoader
+        from cogniverse_foundation.config.manager import ConfigManager
+        from cogniverse_foundation.config.unified_config import BackendProfileConfig
+        from cogniverse_runtime.optimization_cli import (
+            SHIPPED_CONFIG_PATH,
+            _profile_selection_title_fields,
+        )
+        from tests.utils.memory_store import InMemoryConfigStore
+
+        shipped_profiles = json.loads(SHIPPED_CONFIG_PATH.read_text())["backend"][
+            "profiles"
+        ]
+        config_manager = ConfigManager(store=InMemoryConfigStore())
+        for profile_name, profile in shipped_profiles.items():
+            config_manager.add_backend_profile(
+                BackendProfileConfig.from_dict(profile_name, profile),
+                tenant_id="acme:docs",
+            )
+
+        title_fields = _profile_selection_title_fields(
+            config_manager,
+            "acme:docs",
+            list(shipped_profiles),
+            FilesystemSchemaLoader(SHIPPED_CONFIG_PATH.parent / "schemas"),
+        )
+
+        assert title_fields == {
+            "video_colpali_smol500_mv_frame": "video_title",
+            "image_colpali_mv": "image_title",
+            "audio_clap_semantic": "audio_title",
+            "document_text_semantic": "document_title",
+            "document_visual_colpali": "document_title",
+            "lateon_mv": "title",
+            "video_colqwen_omni_mv_chunk_30s": "video_title",
+            "video_videoprism_base_mv_chunk_30s": "video_title",
+            "video_videoprism_large_mv_chunk_30s": "video_title",
+            "video_videoprism_lvt_base_sv_chunk_6s": "video_title",
+            "video_videoprism_lvt_large_sv_chunk_6s": "video_title",
+            "code_lateon_mv": "chunk_name",
+            "wiki_semantic": "title",
+        }
+
+    def test_profile_selection_title_field_requires_document_mapping(self, tmp_path):
+        from cogniverse_core.schemas.filesystem_loader import FilesystemSchemaLoader
+        from cogniverse_runtime.optimization_cli import _profile_selection_title_fields
+
+        (tmp_path / "video_unmapped_schema.json").write_text(
+            json.dumps({"name": "video_unmapped", "document": {"fields": []}})
+        )
+        config_manager = self._title_field_config_manager(
+            "video_unmapped_profile", "video_unmapped"
+        )
+
+        with pytest.raises(ValueError) as err:
+            _profile_selection_title_fields(
+                config_manager,
+                "acme:docs",
+                ["video_unmapped_profile"],
+                FilesystemSchemaLoader(tmp_path),
+            )
+
+        assert str(err.value) == (
+            "Profile selection derivation: schema 'video_unmapped' for profile "
+            "'video_unmapped_profile' declares no document_mapping"
+        )
+
+    def test_profile_selection_title_field_requires_mapped_title(self, tmp_path):
+        from cogniverse_core.schemas.filesystem_loader import FilesystemSchemaLoader
+        from cogniverse_runtime.optimization_cli import _profile_selection_title_fields
+
+        (tmp_path / "video_untitled_schema.json").write_text(
+            json.dumps(
+                {
+                    "name": "video_untitled",
+                    "document": {"fields": []},
+                    "document_mapping": {"id": "video_id"},
+                }
+            )
+        )
+        config_manager = self._title_field_config_manager(
+            "video_untitled_profile", "video_untitled"
+        )
+
+        with pytest.raises(ValueError) as err:
+            _profile_selection_title_fields(
+                config_manager,
+                "acme:docs",
+                ["video_untitled_profile"],
+                FilesystemSchemaLoader(tmp_path),
+            )
+
+        assert str(err.value) == (
+            "Profile selection derivation: schema 'video_untitled' for profile "
+            "'video_untitled_profile' declares no document_mapping.title"
+        )
+
+    def test_profile_selection_title_field_unknown_profile_raises(self, tmp_path):
+        from cogniverse_core.schemas.filesystem_loader import FilesystemSchemaLoader
+        from cogniverse_runtime.optimization_cli import _profile_selection_title_fields
+
+        config_manager = self._title_field_config_manager(
+            "video_colpali_smol500_mv_frame", "video_colpali_smol500_mv_frame"
+        )
+
+        with pytest.raises(ValueError) as err:
+            _profile_selection_title_fields(
+                config_manager,
+                "acme:docs",
+                ["ghost_profile"],
+                FilesystemSchemaLoader(tmp_path),
+            )
+
+        assert str(err.value) == (
+            "Profile selection derivation: profile 'ghost_profile' is not "
+            "configured for tenant 'acme:docs'"
+        )
+
+    def test_profile_selection_title_field_missing_schema_raises(self, tmp_path):
+        from cogniverse_core.schemas.filesystem_loader import FilesystemSchemaLoader
+        from cogniverse_runtime.optimization_cli import _profile_selection_title_fields
+        from cogniverse_sdk.interfaces.schema_loader import SchemaNotFoundException
+
+        config_manager = self._title_field_config_manager(
+            "video_orphan_profile", "video_orphan"
+        )
+
+        with pytest.raises(SchemaNotFoundException) as err:
+            _profile_selection_title_fields(
+                config_manager,
+                "acme:docs",
+                ["video_orphan_profile"],
+                FilesystemSchemaLoader(tmp_path),
+            )
+
+        assert str(err.value) == (
+            f"Schema 'video_orphan' not found at {tmp_path / 'video_orphan_schema.json'}"
+        )
+
+    @pytest.mark.asyncio
+    async def test_profile_selection_labels_read_titles_from_search_results(self):
+        import collections
+
+        from cogniverse_foundation.config.manager import ConfigManager
+        from cogniverse_foundation.config.unified_config import BackendProfileConfig
+        from cogniverse_runtime.optimization_cli import (
+            PROFILE_SELECTION_LABEL_SOURCE_PATH,
+        )
+        from cogniverse_sdk.document import (
+            ContentType,
+            Document,
+            ProcessingStatus,
+            SearchResult,
+        )
+        from tests.utils.memory_store import InMemoryConfigStore
+
+        profiles = [
+            "video_colpali_smol500_mv_frame",
+            "video_colqwen_omni_mv_chunk_30s",
+        ]
+        source_rows = json.loads(PROFILE_SELECTION_LABEL_SOURCE_PATH.read_text())
+        queried_rows = [row for row in source_rows if str(row.get("query", "")).strip()]
+        unqueried_keys = [
+            f"row:{position}"
+            for position, row in enumerate(source_rows)
+            if not str(row.get("query", "")).strip()
+        ]
+        expected_by_query: dict[str, list[str]] = {}
+        for row in queried_rows:
+            bucket = expected_by_query.setdefault(row["query"], [])
+            for video in row["expected_videos"]:
+                if video not in bucket:
+                    bucket.append(video)
+
+        config_manager = ConfigManager(store=InMemoryConfigStore())
+        for profile in profiles:
+            config_manager.add_backend_profile(
+                BackendProfileConfig.from_dict(
+                    profile, {"type": "video", "schema_name": profile}
+                ),
+                tenant_id="test:unit",
+            )
+
+        calls: list[tuple[str, str, str, int]] = []
+        constructed: list[dict[str, Any]] = []
+
+        def titled_result(title: str, segment: int) -> SearchResult:
+            document = Document(
+                id=f"{_CONTENT_HASH}_seg_{segment}",
+                content_type=ContentType.VIDEO,
+                status=ProcessingStatus.COMPLETED,
+            )
+            document.add_metadata("video_id", _CONTENT_HASH)
+            document.add_metadata("video_title", title)
+            document.add_metadata("source_id", _CONTENT_HASH)
+            return SearchResult(document, 0.5)
+
+        class FakeSearchService:
+            def __init__(self, *, config, config_manager, schema_loader):
+                del config
+                constructed.append(
+                    {
+                        "config_manager": config_manager,
+                        "schema_loader": type(schema_loader).__name__,
+                    }
+                )
+
+            def search(self, *, query, profile, tenant_id, top_k):
+                calls.append((query, profile, tenant_id, top_k))
+                if profile == "video_colpali_smol500_mv_frame":
+                    titles = [f"{video}.mp4" for video in expected_by_query[query]]
+                else:
+                    titles = ["v_unrelated.mp4"]
+                return [
+                    titled_result(title, index) for index, title in enumerate(titles)
+                ]
+
+        rows = [
+            _profile_span_row(
+                "find clip",
+                span_id="profile-0",
+                available_profiles=profiles,
+                selected_profile=profiles[0],
+            )
+        ]
+        provider = FakeTelemetryProvider(
+            _make_spans_df("cogniverse.profile_selection", rows)
+        )
+        state, result = await self._run(
+            provider,
+            current_blob=self._served_state(),
+            floor=(1, 1),
+            config_manager=config_manager,
+            search_service_factory=FakeSearchService,
+        )
+
+        assert result["label_exclusions"] == {
+            "count": len(unqueried_keys),
+            "queries": unqueried_keys,
+        }
+        assert result["served_examples"] == len(queried_rows)
+        assert collections.Counter(calls) == collections.Counter(
+            (row["query"], profile, "test:unit", 10)
+            for row in queried_rows
+            for profile in profiles
+        )
+        assert [entry["schema_loader"] for entry in constructed] == [
+            "FilesystemSchemaLoader"
+        ]
+        assert constructed[0]["config_manager"] is config_manager
+        assert {example["selected_profile"] for example in state["trainset"]} == {
+            "video_colpali_smol500_mv_frame"
+        }
 
     def test_profile_selection_derivation_does_not_import_evaluation_package(
         self, monkeypatch
@@ -3567,13 +4194,13 @@ class TestProfileSelectionOptimization:
             "video_colqwen_omni_mv_chunk_30s",
         ]
 
-        def retrieve(query: str, profile: str) -> list[str]:
+        def retrieve(query: str, profile: str) -> list[dict[str, Any]]:
             if (
                 query == "clean import query"
                 and profile == "video_colpali_smol500_mv_frame"
             ):
-                return ["v1"]
-            return ["z1"]
+                return [_profile_hit("v1.mp4")]
+            return [_profile_hit("z1.mp4")]
 
         original_import = builtins.__import__
 
@@ -3584,7 +4211,9 @@ class TestProfileSelectionOptimization:
 
         monkeypatch.setattr(builtins, "__import__", guarded_import)
 
-        labels = derive_profile_labels(queries, candidate_profiles, retrieve)
+        labels = derive_profile_labels(
+            queries, candidate_profiles, retrieve, title_fields=_VIDEO_TITLE_FIELDS
+        )
         assert labels == {
             "clean import query": "video_colpali_smol500_mv_frame",
         }
@@ -3711,20 +4340,22 @@ class TestProfileSelectionOptimization:
             "video_colqwen_omni_mv_chunk_30s",
         ]
         corpus = {
-            ("q1", "video_colpali_smol500_mv_frame"): ["v1"],
-            ("q1", "video_colqwen_omni_mv_chunk_30s"): ["z1"],
-            ("q2", "video_colpali_smol500_mv_frame"): ["z2"],
-            ("q2", "video_colqwen_omni_mv_chunk_30s"): ["v2"],
-            ("q3", "video_colpali_smol500_mv_frame"): ["v3"],
-            ("q3", "video_colqwen_omni_mv_chunk_30s"): ["z3"],
-            ("q4", "video_colpali_smol500_mv_frame"): ["z4"],
-            ("q4", "video_colqwen_omni_mv_chunk_30s"): ["v4"],
+            ("q1", "video_colpali_smol500_mv_frame"): [_profile_hit("v1.mp4")],
+            ("q1", "video_colqwen_omni_mv_chunk_30s"): [_profile_hit("z1.mp4")],
+            ("q2", "video_colpali_smol500_mv_frame"): [_profile_hit("z2.mp4")],
+            ("q2", "video_colqwen_omni_mv_chunk_30s"): [_profile_hit("v2.mp4")],
+            ("q3", "video_colpali_smol500_mv_frame"): [_profile_hit("v3.mp4")],
+            ("q3", "video_colqwen_omni_mv_chunk_30s"): [_profile_hit("z3.mp4")],
+            ("q4", "video_colpali_smol500_mv_frame"): [_profile_hit("z4.mp4")],
+            ("q4", "video_colqwen_omni_mv_chunk_30s"): [_profile_hit("v4.mp4")],
         }
 
-        def retrieve(query: str, profile: str) -> list[str]:
+        def retrieve(query: str, profile: str) -> list[dict[str, Any]]:
             return corpus[(query, profile)]
 
-        labels = derive_profile_labels(queries, candidate_profiles, retrieve)
+        labels = derive_profile_labels(
+            queries, candidate_profiles, retrieve, title_fields=_VIDEO_TITLE_FIELDS
+        )
         rows = [
             _profile_span_row(
                 query["query"],
@@ -3830,6 +4461,7 @@ class TestProfileSelectionOptimization:
                     "video_colqwen_omni_mv_chunk_30s",
                 ],
                 retrieve=lambda query, profile: [],
+                title_fields=_VIDEO_TITLE_FIELDS,
             )
 
         assert str(err.value) == (f"Profile selection label source missing: {missing}")
@@ -3848,6 +4480,7 @@ class TestProfileSelectionOptimization:
                     "video_colqwen_omni_mv_chunk_30s",
                 ],
                 retrieve=lambda query, profile: [],
+                title_fields=_VIDEO_TITLE_FIELDS,
             )
 
         assert str(err.value) == (f"Profile selection label source is empty: {source}")

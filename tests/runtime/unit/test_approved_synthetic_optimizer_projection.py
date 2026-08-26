@@ -251,7 +251,11 @@ async def test_synthetic_only_data_compiles_the_actual_production_module(
         assert tenant_id == "acme:production"
         return ["video_colpali", "document_colpali"]
 
-    def no_derived_labels(*, candidate_profiles, retrieve):
+    def no_derived_labels(
+        *, config, config_manager, tenant_id, candidate_profiles, schema_loader
+    ):
+        del config, config_manager, schema_loader
+        assert tenant_id == "acme:production"
         assert candidate_profiles == ["video_colpali", "document_colpali"]
         return optimization_cli.ProfileLabelDerivationResult({}, [], [])
 
@@ -260,7 +264,7 @@ async def test_synthetic_only_data_compiles_the_actual_production_module(
         usable_profiles,
     )
     monkeypatch.setattr(
-        optimization_cli, "_load_profile_selection_labels", no_derived_labels
+        optimization_cli, "_profile_selection_label_source", no_derived_labels
     )
     monkeypatch.setattr(
         optimization_cli, "_load_approved_synthetic_data", approved_data

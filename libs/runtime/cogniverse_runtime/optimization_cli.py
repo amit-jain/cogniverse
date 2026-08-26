@@ -27,6 +27,7 @@ import os
 import sys
 import uuid
 from collections import Counter
+from collections.abc import Mapping
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import Any, Callable, Dict, Iterable, List, Optional, Sequence
@@ -57,6 +58,7 @@ from cogniverse_foundation.telemetry.span_contract import (
     read_span_id,
     read_span_io,
 )
+from cogniverse_sdk.interfaces.schema_loader import SchemaLoader
 
 logger = logging.getLogger(__name__)
 SHIPPED_CONFIG_PATH = Path(__file__).resolve().parents[3] / "configs" / "config.json"
@@ -391,15 +393,85 @@ class ProfileLabelDerivationResult(dict):
         )
 
 
-def _profile_selection_retrieved_ids(retrieved: Any) -> list[str]:
-    if retrieved is None:
-        return []
-    if isinstance(retrieved, str):
-        return [item.strip() for item in retrieved.split(",") if item.strip()]
-    if isinstance(retrieved, (list, tuple, set)):
-        return [str(item).strip() for item in retrieved if str(item).strip()]
-    value = str(retrieved).strip()
-    return [value] if value else []
+def _profile_selection_content_key(value: Any) -> str:
+    """Basename of ``value`` without its file extension."""
+    name = Path(str(value).strip()).name
+    suffix = Path(name).suffix
+    extension = suffix[1:]
+    if extension.isalnum() and any(ch.isalpha() for ch in extension):
+        return name[: -len(suffix)]
+    return name
+
+
+def _profile_selection_result_titles(
+    rows: Any, profile: str, title_field: str
+) -> tuple[list[str], list[str]]:
+    """Content keys of the titled ``SearchResult.to_dict()`` rows, plus the
+    document ids of the rows that carry no title."""
+    if isinstance(rows, (str, bytes, Mapping)):
+        raise TypeError(
+            f"Profile selection retrieval for profile {profile!r} must return "
+            f"a sequence of mappings, got {type(rows).__name__}"
+        )
+    keys: list[str] = []
+    untitled: list[str] = []
+    for index, row in enumerate(rows):
+        if not isinstance(row, Mapping):
+            raise TypeError(
+                f"Profile selection retrieval row {index} for profile {profile!r} "
+                f"must be a mapping, got {type(row).__name__}"
+            )
+        metadata = row.get("metadata")
+        title = metadata.get(title_field) if isinstance(metadata, Mapping) else None
+        key = _profile_selection_content_key(title) if isinstance(title, str) else ""
+        if key:
+            keys.append(key)
+        else:
+            untitled.append(str(row.get("document_id", "")) or f"row:{index}")
+    return keys, untitled
+
+
+def _profile_selection_title_fields(
+    config_manager: Any,
+    tenant_id: str,
+    candidate_profiles: Iterable[str],
+    schema_loader: SchemaLoader,
+) -> dict[str, str]:
+    """Title field of each candidate profile, read from its schema's
+    ``document_mapping``."""
+    from cogniverse_sdk.document import DocumentFieldMapping
+
+    title_fields: dict[str, str] = {}
+    for profile in candidate_profiles:
+        profile_config = config_manager.get_backend_profile(
+            profile, tenant_id=tenant_id
+        )
+        if profile_config is None:
+            raise ValueError(
+                f"Profile selection derivation: profile {profile!r} is not "
+                f"configured for tenant {tenant_id!r}"
+            )
+        schema_name = profile_config.schema_name
+        if not schema_name:
+            raise ValueError(
+                f"Profile selection derivation: profile {profile!r} declares no "
+                "schema_name"
+            )
+        schema = schema_loader.load_schema(schema_name)
+        mapping_config = schema.get("document_mapping")
+        if mapping_config is None:
+            raise ValueError(
+                f"Profile selection derivation: schema {schema_name!r} for profile "
+                f"{profile!r} declares no document_mapping"
+            )
+        title_field = DocumentFieldMapping.from_dict(mapping_config).title
+        if not title_field:
+            raise ValueError(
+                f"Profile selection derivation: schema {schema_name!r} for profile "
+                f"{profile!r} declares no document_mapping.title"
+            )
+        title_fields[profile] = title_field
+    return title_fields
 
 
 def _profile_selection_query_key(
@@ -467,7 +539,9 @@ def _load_profile_selection_label_source(
 def derive_profile_labels(
     queries: Iterable[dict[str, Any]],
     candidate_profiles: Iterable[str],
-    retrieve: Callable[[str, str], Sequence[str] | list[str]],
+    retrieve: Callable[[str, str], Sequence[Mapping[str, Any]]],
+    *,
+    title_fields: Mapping[str, str],
 ) -> ProfileLabelDerivationResult:
     query_rows = list(queries)
     if not query_rows:
@@ -478,6 +552,13 @@ def derive_profile_labels(
     ]
     if not profiles:
         raise ValueError("Profile selection derivation requires candidate profiles")
+    for profile in profiles:
+        title_field = title_fields.get(profile)
+        if not isinstance(title_field, str) or not title_field.strip():
+            raise ValueError(
+                f"Profile selection derivation has no title field for profile "
+                f"{profile!r}"
+            )
 
     query_counts = Counter(
         str(row.get("query", "")).strip() for row in query_rows if isinstance(row, dict)
@@ -518,21 +599,36 @@ def derive_profile_labels(
             )
             continue
 
+        expected_keys = [
+            _profile_selection_content_key(video) for video in expected_videos
+        ]
         scored_profiles: list[dict[str, Any]] = []
+        untitled_results: list[dict[str, Any]] = []
         last_error: Exception | None = None
         for profile in profiles:
             try:
-                retrieved = _profile_selection_retrieved_ids(retrieve(query, profile))
+                rows = retrieve(query, profile)
             except Exception as exc:
                 last_error = exc
                 continue
 
+            retrieved, untitled = _profile_selection_result_titles(
+                rows, profile, title_fields[profile]
+            )
+            if untitled:
+                untitled_results.append(
+                    {
+                        "profile": profile,
+                        "title_field": title_fields[profile],
+                        "document_ids": untitled,
+                    }
+                )
             scored_profiles.append(
                 {
                     "profile": profile,
                     "retrieved": retrieved,
                     "score": _profile_selection_recovery_score(
-                        expected_videos, retrieved
+                        expected_keys, retrieved
                     ),
                 }
             )
@@ -541,6 +637,18 @@ def derive_profile_labels(
             raise RuntimeError(
                 f"Profile selection retrieval failed for query {query!r}"
             ) from last_error
+
+        if untitled_results:
+            exclusions.append(
+                {
+                    "query": query,
+                    "reason": "result_missing_title",
+                    "expected_videos": expected_videos,
+                    "position": position,
+                    "untitled_results": untitled_results,
+                }
+            )
+            continue
 
         best_score = max(profile_result["score"] for profile_result in scored_profiles)
         best_profiles = [
@@ -597,10 +705,54 @@ def _load_profile_selection_labels(
     *,
     queries_path: Path = PROFILE_SELECTION_LABEL_SOURCE_PATH,
     candidate_profiles: Iterable[str],
-    retrieve: Callable[[str, str], Sequence[str] | list[str]],
+    retrieve: Callable[[str, str], Sequence[Mapping[str, Any]]],
+    title_fields: Mapping[str, str],
 ) -> ProfileLabelDerivationResult:
     queries = _load_profile_selection_label_source(queries_path)
-    return derive_profile_labels(queries, candidate_profiles, retrieve)
+    return derive_profile_labels(
+        queries, candidate_profiles, retrieve, title_fields=title_fields
+    )
+
+
+def _profile_selection_label_source(
+    *,
+    config: Any,
+    config_manager: Any,
+    tenant_id: str,
+    candidate_profiles: Sequence[str],
+    schema_loader: SchemaLoader,
+) -> ProfileLabelDerivationResult:
+    """Derive the tenant's profile labels by running the shipped label source
+    through its SearchService per candidate profile."""
+    title_fields = _profile_selection_title_fields(
+        config_manager, tenant_id, candidate_profiles, schema_loader
+    )
+    search_service: Any | None = None
+
+    def retrieve(query: str, profile: str) -> list[dict[str, Any]]:
+        nonlocal search_service
+        if search_service is None:
+            from cogniverse_agents.search.service import SearchService
+
+            search_service = SearchService(
+                config=config,
+                config_manager=config_manager,
+                schema_loader=schema_loader,
+            )
+
+        results = search_service.search(
+            query=query,
+            profile=profile,
+            tenant_id=tenant_id,
+            top_k=10,
+        )
+        return [result.to_dict() for result in results]
+
+    return _load_profile_selection_labels(
+        candidate_profiles=candidate_profiles,
+        retrieve=retrieve,
+        title_fields=title_fields,
+    )
 
 
 def _profile_selection_pool(available_profiles) -> list[str]:
@@ -3696,6 +3848,7 @@ async def run_profile_optimization(
     saves the optimized module as an artifact.
     """
     from cogniverse_agents.profile_selection_agent import tenant_usable_profile_names
+    from cogniverse_core.schemas.filesystem_loader import FilesystemSchemaLoader
     from cogniverse_foundation.config.utils import (
         create_default_config_manager,
         get_config,
@@ -3726,44 +3879,13 @@ async def run_profile_optimization(
     config = get_config(tenant_id=tenant_id, config_manager=config_manager)
     candidate_profiles = tenant_usable_profile_names(config_manager, tenant_id)
     schemas_dir = Path(os.environ.get("COGNIVERSE_SCHEMAS_DIR", "configs/schemas"))
-    search_service: Any | None = None
-
-    def retrieve(query: str, profile: str) -> list[str]:
-        nonlocal search_service
-        if search_service is None:
-            from cogniverse_agents.search.service import SearchService
-            from cogniverse_core.schemas.filesystem_loader import (
-                FilesystemSchemaLoader,
-            )
-
-            search_service = SearchService(
-                config=config,
-                config_manager=config_manager,
-                schema_loader=FilesystemSchemaLoader(schemas_dir),
-            )
-
-        results = search_service.search(
-            query=query,
-            profile=profile,
-            tenant_id=tenant_id,
-            top_k=10,
-        )
-        retrieved_ids = []
-        for result in results:
-            row = result.to_dict()
-            source_id = row.get("source_id") or row.get("video_id")
-            if not source_id:
-                document = getattr(result, "document", None)
-                if document is not None:
-                    source_id = getattr(document, "id", "")
-            if source_id:
-                retrieved_ids.append(str(source_id))
-        return retrieved_ids
-
     label_source = await asyncio.to_thread(
-        _load_profile_selection_labels,
+        _profile_selection_label_source,
+        config=config,
+        config_manager=config_manager,
+        tenant_id=tenant_id,
         candidate_profiles=candidate_profiles,
-        retrieve=retrieve,
+        schema_loader=FilesystemSchemaLoader(schemas_dir),
     )
 
     profile_pairs = list(label_source.records)
