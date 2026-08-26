@@ -1530,7 +1530,7 @@ async def set_profile_selection_ground_truth(
             base_score=None,
             candidate_score=None,
         )
-        state = await am.activate_version(
+        state = await am.activate_version_guarded(
             PROFILE_SELECTION_GROUND_TRUTH_BLOB_KIND,
             PROFILE_SELECTION_GROUND_TRUTH_BLOB_KEY,
             version,
@@ -1584,7 +1584,7 @@ async def set_entity_extraction_ground_truth(
             base_score=None,
             candidate_score=None,
         )
-        state = await am.activate_version(
+        state = await am.activate_version_guarded(
             ENTITY_EXTRACTION_GROUND_TRUTH_BLOB_KIND,
             ENTITY_EXTRACTION_GROUND_TRUTH_BLOB_KEY,
             version,
