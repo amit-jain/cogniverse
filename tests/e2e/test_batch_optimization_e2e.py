@@ -2828,6 +2828,7 @@ def _assert_simba_served_the_best_module(result: dict, blob_before: str) -> dict
         "approved_examples",
         "served_scoreable_examples",
         "non_trainable_examples",
+        "unscoreable_examples",
         "training_examples",
         "holdout_examples",
         "holdout_source",
@@ -3124,6 +3125,8 @@ class TestSimbaSelectionCap:
             "approved_examples",
             "served_scoreable_examples",
             "non_trainable_examples",
+            "unscoreable_examples",
+            "unscoreable_examples",
             "training_examples",
             "holdout_examples",
             "holdout_source",
@@ -3779,6 +3782,7 @@ class TestEntityExtractionOptimization:
             "decision",
             "version",
             "selection",
+            "bootstrap",
             "consumed_example_ids",
         }, result
         assert result["status"] == "success", result
@@ -3878,6 +3882,7 @@ class TestEntityExtractionOptimization:
             "decision",
             "version",
             "selection",
+            "bootstrap",
             "consumed_example_ids",
         }, result
         assert result["status"] == "success", result
@@ -3947,20 +3952,57 @@ class TestEntityExtractionOptimization:
         for expected in ("Query", "Entities", "Entity Types"):
             assert expected in field_names, f"Missing '{expected}', got: {field_names}"
         assert sig["instructions"] == "Extract named entities from text query"
-        demos = module.get("demos", [])
-        assert demos != [], (
-            "Entity extraction produced 0 demos — optimization was useless"
-        )
-        for demo in demos:
-            assert demo.get("query"), f"Demo missing query: {demo}"
-            assert demo.get("entities"), f"Demo missing entities: {demo}"
-            entities_str = demo["entities"]
-            has_pipe_format = "|" in entities_str
-            has_json_format = entities_str.strip().startswith("[")
-            assert has_pipe_format or has_json_format, (
-                f"Entities should be pipe-delimited or JSON array, "
-                f"got: '{entities_str[:100]}'"
-            )
+        bootstrap = result["bootstrap"]
+        assert set(bootstrap) == {
+            "trainset",
+            "max_bootstrapped_demos",
+            "max_labeled_demos",
+            "max_rounds",
+            "metric_threshold",
+            "attempts",
+            "errors",
+            "examples_walked",
+            "accepted",
+            "bootstrapped_demos",
+            "labeled_demos",
+            "metric_values",
+        }, bootstrap
+        assert bootstrap["trainset"] == result["training_examples"], bootstrap
+        assert bootstrap["attempts"] == len(bootstrap["metric_values"]), bootstrap
+        assert bootstrap["accepted"] == sum(
+            1
+            for value in bootstrap["metric_values"]
+            if value >= bootstrap["metric_threshold"]
+        ), bootstrap
+        assert bootstrap["bootstrapped_demos"] == min(
+            bootstrap["accepted"], bootstrap["max_bootstrapped_demos"]
+        ), bootstrap
+        # The teacher samples at temperature 0.7, so how many traces clear
+        # the bar varies run to run. A run that collects none learned nothing.
+        assert (
+            1 <= bootstrap["bootstrapped_demos"] <= bootstrap["max_bootstrapped_demos"]
+        ), bootstrap
+
+        demos = module["demos"]
+        augmented = [demo for demo in demos if demo.get("augmented") is True]
+        labeled = [demo for demo in demos if "augmented" not in demo]
+        assert len(augmented) == bootstrap["bootstrapped_demos"], demos
+        assert len(labeled) == bootstrap["labeled_demos"], demos
+        assert len(demos) == len(augmented) + len(labeled), demos
+        assert len(demos) == min(
+            bootstrap["max_labeled_demos"], result["training_examples"]
+        ), demos
+        assert [sorted(demo) for demo in augmented] == [
+            ["augmented", "entities", "entity_types", "query", "reasoning"]
+        ] * len(augmented), augmented
+        assert [sorted(demo) for demo in labeled] == [
+            ["entities", "entity_types", "query"]
+        ] * len(labeled), labeled
+        # Demos teach the signature's text|type|confidence lines, the only
+        # form EntityExtractionAgent._parse_entities reads.
+        assert [
+            all("|" in line for line in demo["entities"].splitlines()) for demo in demos
+        ] == [True] * len(demos), demos
         demo_queries = " ".join(d["query"].lower() for d in demos)
         entity_terms = (
             "ml",
@@ -4183,6 +4225,7 @@ class TestArtifactLoadingRoundTrip:
             "decision",
             "version",
             "selection",
+            "bootstrap",
             "consumed_example_ids",
         }, result
         assert result["status"] == "success", result
