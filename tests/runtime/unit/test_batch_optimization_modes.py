@@ -1786,6 +1786,116 @@ def _profile_hit(
     }
 
 
+_TENANT_GROUND_TRUTH_ROWS: list[dict[str, Any]] = [
+    {
+        "query": "tenant clip of a robot welding a seam",
+        "expected_videos": ["tenant_v_weld_01"],
+        "ground_truth": "A robot arm welds a seam on a steel frame.",
+        "query_type": "question",
+        "source": "tenant_upload.json",
+    },
+    {
+        "query": "tenant clip of a kite surfer jumping",
+        "expected_videos": ["tenant_v_kite_02", "tenant_v_kite_03"],
+        "ground_truth": "A kite surfer jumps a wave and lands.",
+        "query_type": "answer_phrase",
+        "source": "tenant_upload.json",
+    },
+    {
+        "query": "tenant clip of a drone landing on a roof",
+        "expected_videos": ["tenant_v_drone_04"],
+        "ground_truth": "A quadcopter lands on a flat rooftop.",
+        "query_type": "question",
+        "source": "tenant_upload.json",
+    },
+    {
+        "query": "tenant clip nobody can recover",
+        "expected_videos": ["tenant_v_missing_05"],
+        "ground_truth": "No indexed video matches this row.",
+        "query_type": "question",
+        "source": "tenant_upload.json",
+    },
+]
+_TENANT_RECOVERABLE_QUERIES = {
+    row["query"]: list(row["expected_videos"]) for row in _TENANT_GROUND_TRUTH_ROWS[:3]
+}
+
+
+def _tenant_ground_truth_blob() -> str:
+    return json.dumps(_TENANT_GROUND_TRUTH_ROWS, separators=(",", ":"))
+
+
+def _titled_search_result(title: str, segment: int):
+    """A real ``SearchResult`` whose document carries ``video_title``."""
+    from cogniverse_sdk.document import (
+        ContentType,
+        Document,
+        ProcessingStatus,
+        SearchResult,
+    )
+
+    document = Document(
+        id=f"{_CONTENT_HASH}_seg_{segment}",
+        content_type=ContentType.VIDEO,
+        status=ProcessingStatus.COMPLETED,
+    )
+    document.add_metadata("video_id", _CONTENT_HASH)
+    document.add_metadata("video_title", title)
+    document.add_metadata("source_id", _CONTENT_HASH)
+    return SearchResult(document, 0.5)
+
+
+def _search_service_recovering(
+    expected_by_query: dict[str, list[str]],
+    *,
+    recovering_profile: str,
+    calls: list[tuple[str, str, str, int]],
+    constructed: list[dict[str, Any]],
+):
+    """A ``SearchService`` stand-in: ``recovering_profile`` returns every
+    expected video of a known query as a titled result; anything else returns
+    one unrelated title."""
+
+    class FakeSearchService:
+        def __init__(self, *, config, config_manager, schema_loader):
+            del config
+            constructed.append(
+                {
+                    "config_manager": config_manager,
+                    "schema_loader": type(schema_loader).__name__,
+                }
+            )
+
+        def search(self, *, query, profile, tenant_id, top_k):
+            calls.append((query, profile, tenant_id, top_k))
+            if profile == recovering_profile and query in expected_by_query:
+                titles = [f"{video}.mp4" for video in expected_by_query[query]]
+            else:
+                titles = ["v_unrelated.mp4"]
+            return [
+                _titled_search_result(title, index)
+                for index, title in enumerate(titles)
+            ]
+
+    return FakeSearchService
+
+
+def _video_profile_config_manager(profiles: list[str]):
+    from cogniverse_foundation.config.manager import ConfigManager
+    from cogniverse_foundation.config.unified_config import BackendProfileConfig
+    from tests.utils.memory_store import InMemoryConfigStore
+
+    config_manager = ConfigManager(store=InMemoryConfigStore())
+    for profile in profiles:
+        config_manager.add_backend_profile(
+            BackendProfileConfig.from_dict(
+                profile, {"type": "video", "schema_name": profile}
+            ),
+            tenant_id="test:unit",
+        )
+    return config_manager
+
+
 class _ProfileSelectionByQuery:
     def __init__(self, labels: dict[str, str], *, default: str):
         self.labels = labels
@@ -3235,6 +3345,9 @@ class TestProfileSelectionOptimization:
         scoreable_fields: bool = True,
         search_service_factory=None,
     ):
+        from cogniverse_agents.optimizer.profile_selection_ground_truth import (
+            canonicalize_profile_selection_ground_truth_rows,
+        )
         from cogniverse_runtime.optimization_cli import (
             ProfileLabelDerivationResult,
             run_profile_optimization,
@@ -3317,6 +3430,29 @@ class TestProfileSelectionOptimization:
                 label_records.append(record)
 
         label_source = ProfileLabelDerivationResult(label_map, label_records, [])
+
+        def _label_source_from_ground_truth(
+            *,
+            config,
+            config_manager,
+            tenant_id,
+            candidate_profiles,
+            schema_loader,
+            ground_truth_rows,
+        ):
+            del config, config_manager, schema_loader
+            assert tenant_id == "test:unit"
+            assert list(candidate_profiles) == candidate_profiles_expected
+            assert (
+                ground_truth_rows
+                == canonicalize_profile_selection_ground_truth_rows(
+                    json.loads(state["ground_truth_blob"])
+                )
+            )
+            state["label_source_ground_truth_rows"] = ground_truth_rows
+            return label_source
+
+        candidate_profiles_expected = list(candidate_profiles)
 
         class FakeArtifactManager:
             def __init__(self, received_provider, tenant_id):
@@ -3451,7 +3587,7 @@ class TestProfileSelectionOptimization:
                 if search_service_factory is not None
                 else patch(
                     "cogniverse_runtime.optimization_cli._profile_selection_label_source",
-                    return_value=label_source,
+                    side_effect=_label_source_from_ground_truth,
                 )
             ),
             patch(
@@ -4245,83 +4381,31 @@ class TestProfileSelectionOptimization:
         )
 
     @pytest.mark.asyncio
-    async def test_profile_selection_labels_read_titles_from_search_results(self):
+    async def test_profile_selection_labels_derive_from_tenant_ground_truth_rows(
+        self,
+    ):
+        """The labels come from the tenant's uploaded blob, row for row; the
+        shipped label source is never opened."""
         import collections
+        import io
 
-        from cogniverse_foundation.config.manager import ConfigManager
-        from cogniverse_foundation.config.unified_config import BackendProfileConfig
         from cogniverse_runtime.optimization_cli import (
             PROFILE_SELECTION_LABEL_SOURCE_PATH,
         )
-        from cogniverse_sdk.document import (
-            ContentType,
-            Document,
-            ProcessingStatus,
-            SearchResult,
-        )
-        from tests.utils.memory_store import InMemoryConfigStore
 
         profiles = [
             "video_colpali_smol500_mv_frame",
             "video_colqwen_omni_mv_chunk_30s",
         ]
-        source_rows = json.loads(PROFILE_SELECTION_LABEL_SOURCE_PATH.read_text())
-        queried_rows = [row for row in source_rows if str(row.get("query", "")).strip()]
-        unqueried_keys = [
-            f"row:{position}"
-            for position, row in enumerate(source_rows)
-            if not str(row.get("query", "")).strip()
-        ]
-        expected_by_query: dict[str, list[str]] = {}
-        for row in queried_rows:
-            bucket = expected_by_query.setdefault(row["query"], [])
-            for video in row["expected_videos"]:
-                if video not in bucket:
-                    bucket.append(video)
-
-        config_manager = ConfigManager(store=InMemoryConfigStore())
-        for profile in profiles:
-            config_manager.add_backend_profile(
-                BackendProfileConfig.from_dict(
-                    profile, {"type": "video", "schema_name": profile}
-                ),
-                tenant_id="test:unit",
-            )
-
+        config_manager = _video_profile_config_manager(profiles)
         calls: list[tuple[str, str, str, int]] = []
         constructed: list[dict[str, Any]] = []
-
-        def titled_result(title: str, segment: int) -> SearchResult:
-            document = Document(
-                id=f"{_CONTENT_HASH}_seg_{segment}",
-                content_type=ContentType.VIDEO,
-                status=ProcessingStatus.COMPLETED,
-            )
-            document.add_metadata("video_id", _CONTENT_HASH)
-            document.add_metadata("video_title", title)
-            document.add_metadata("source_id", _CONTENT_HASH)
-            return SearchResult(document, 0.5)
-
-        class FakeSearchService:
-            def __init__(self, *, config, config_manager, schema_loader):
-                del config
-                constructed.append(
-                    {
-                        "config_manager": config_manager,
-                        "schema_loader": type(schema_loader).__name__,
-                    }
-                )
-
-            def search(self, *, query, profile, tenant_id, top_k):
-                calls.append((query, profile, tenant_id, top_k))
-                if profile == "video_colpali_smol500_mv_frame":
-                    titles = [f"{video}.mp4" for video in expected_by_query[query]]
-                else:
-                    titles = ["v_unrelated.mp4"]
-                return [
-                    titled_result(title, index) for index, title in enumerate(titles)
-                ]
-
+        search_service = _search_service_recovering(
+            _TENANT_RECOVERABLE_QUERIES,
+            recovering_profile=profiles[0],
+            calls=calls,
+            constructed=constructed,
+        )
         rows = [
             _profile_span_row(
                 "find clip",
@@ -4333,31 +4417,194 @@ class TestProfileSelectionOptimization:
         provider = FakeTelemetryProvider(
             _make_spans_df("cogniverse.profile_selection", rows)
         )
-        state, result = await self._run(
-            provider,
-            current_blob=self._served_state(),
-            floor=(1, 1),
-            config_manager=config_manager,
-            search_service_factory=FakeSearchService,
-        )
 
-        assert result["label_exclusions"] == {
-            "count": len(unqueried_keys),
-            "queries": unqueried_keys,
-        }
-        assert result["served_examples"] == len(queried_rows)
+        opened: list[str] = []
+        real_open = io.open
+
+        def spy_open(file, *args, **kwargs):
+            opened.append(str(file))
+            return real_open(file, *args, **kwargs)
+
+        with patch("io.open", spy_open), patch("builtins.open", spy_open):
+            state, result = await self._run(
+                provider,
+                current_blob=self._served_state(),
+                floor=(1, 1),
+                config_manager=config_manager,
+                ground_truth_blob=_tenant_ground_truth_blob(),
+                search_service_factory=search_service,
+            )
+
+        assert sorted({query for query, _profile, _tenant, _top_k in calls}) == sorted(
+            row["query"] for row in _TENANT_GROUND_TRUTH_ROWS
+        )
+        assert [
+            path for path in opened if path == str(PROFILE_SELECTION_LABEL_SOURCE_PATH)
+        ] == []
         assert collections.Counter(calls) == collections.Counter(
             (row["query"], profile, "test:unit", 10)
-            for row in queried_rows
+            for row in _TENANT_GROUND_TRUTH_ROWS
             for profile in profiles
         )
-        assert [entry["schema_loader"] for entry in constructed] == [
-            "FilesystemSchemaLoader"
-        ]
-        assert constructed[0]["config_manager"] is config_manager
-        assert {example["selected_profile"] for example in state["trainset"]} == {
-            "video_colpali_smol500_mv_frame"
+        assert result == {
+            "status": "success",
+            "spans_found": 1,
+            "served_examples": 3,
+            "approved_examples": 0,
+            "served_scoreable_examples": 3,
+            "training_examples": 2,
+            "holdout_examples": 1,
+            "holdout_source": "derived_labels",
+            "label_exclusions": {
+                "count": 1,
+                "queries": ["tenant clip nobody can recover"],
+            },
+            "selection": {
+                "pool": 2,
+                "deduped": 2,
+                "cap": 300,
+                "mmr_applied": False,
+                "decayed_count": 0,
+                "decayed_example_ids": [],
+            },
+            "baseline_score": 1.0,
+            "current_score": 1.0,
+            "candidate_score": 1.0,
+            "decision": "keep",
+            "version": 1,
+            "consumed_example_ids": [
+                "span:profile-label:0",
+                "span:profile-label:1",
+                "span:profile-label:2",
+            ],
         }
+        available = ", ".join(profiles)
+        assert state["trainset"] == [
+            {
+                "query": "tenant clip of a robot welding a seam",
+                "available_profiles": available,
+                "selected_profile": profiles[0],
+                "confidence": "1.0",
+                "reasoning": f"{profiles[0]} recovered tenant_v_weld_01",
+            },
+            {
+                "query": "tenant clip of a kite surfer jumping",
+                "available_profiles": available,
+                "selected_profile": profiles[0],
+                "confidence": "1.0",
+                "reasoning": (
+                    f"{profiles[0]} recovered tenant_v_kite_02, tenant_v_kite_03"
+                ),
+            },
+        ]
+        assert state["score_calls"] == [
+            {"module": "ProfileSelectionModule", "holdout": 1},
+            {"module": "ProfileSelectionModule", "holdout": 1},
+            {"module": "Compiled", "holdout": 1},
+        ]
+        assert state["versioned_saves"] == [
+            {
+                "kind": "model",
+                "key": "profile_selection",
+                "content": json.dumps({"compiled": "profile"}, default=str),
+                "consumed_example_ids": [
+                    "span:profile-label:0",
+                    "span:profile-label:1",
+                    "span:profile-label:2",
+                ],
+                "decision": "keep",
+                "scored": True,
+                "score": 1.0,
+                "base_score": 1.0,
+                "candidate_score": 1.0,
+            }
+        ]
+        assert state["activate_calls"] == []
+        assert state["load_blob_calls"] == [
+            ("config", "profile_selection_ground_truth"),
+            ("model", "profile_selection"),
+        ]
+        assert constructed == [
+            {
+                "config_manager": config_manager,
+                "schema_loader": "FilesystemSchemaLoader",
+            }
+        ]
+
+    @pytest.mark.asyncio
+    async def test_profile_selection_label_source_receives_the_loaded_rows(self):
+        """One seam, both ends real: the list the ground-truth loader returns
+        is the list derive_profile_labels is handed."""
+        import cogniverse_agents.optimizer.profile_selection_ground_truth as gt
+        import cogniverse_runtime.optimization_cli as optimization_cli
+        from cogniverse_agents.optimizer.profile_selection_ground_truth import (
+            canonicalize_profile_selection_ground_truth_rows,
+        )
+
+        profiles = [
+            "video_colpali_smol500_mv_frame",
+            "video_colqwen_omni_mv_chunk_30s",
+        ]
+        config_manager = _video_profile_config_manager(profiles)
+        search_service = _search_service_recovering(
+            _TENANT_RECOVERABLE_QUERIES,
+            recovering_profile=profiles[0],
+            calls=[],
+            constructed=[],
+        )
+        rows = [
+            _profile_span_row(
+                "find clip",
+                span_id="profile-0",
+                available_profiles=profiles,
+                selected_profile=profiles[0],
+            )
+        ]
+        provider = FakeTelemetryProvider(
+            _make_spans_df("cogniverse.profile_selection", rows)
+        )
+
+        seen: dict[str, Any] = {}
+        real_loader = gt.load_profile_selection_ground_truth_rows
+        real_derive = optimization_cli.derive_profile_labels
+
+        async def spy_loader(artifact_manager):
+            loaded = await real_loader(artifact_manager)
+            seen["loader_rows"] = loaded
+            return loaded
+
+        def spy_derive(queries, candidate_profiles, retrieve, *, title_fields):
+            seen["derive_queries"] = queries
+            seen["derive_candidate_profiles"] = list(candidate_profiles)
+            seen["derive_title_fields"] = dict(title_fields)
+            return real_derive(
+                queries, candidate_profiles, retrieve, title_fields=title_fields
+            )
+
+        with (
+            patch.object(gt, "load_profile_selection_ground_truth_rows", spy_loader),
+            patch.object(optimization_cli, "derive_profile_labels", spy_derive),
+        ):
+            _state, result = await self._run(
+                provider,
+                current_blob=self._served_state(),
+                floor=(1, 1),
+                config_manager=config_manager,
+                ground_truth_blob=_tenant_ground_truth_blob(),
+                search_service_factory=search_service,
+            )
+
+        assert seen["derive_queries"] is seen["loader_rows"]
+        assert seen["loader_rows"] == canonicalize_profile_selection_ground_truth_rows(
+            _TENANT_GROUND_TRUTH_ROWS
+        )
+        assert seen["derive_candidate_profiles"] == profiles
+        assert seen["derive_title_fields"] == {
+            profiles[0]: "video_title",
+            profiles[1]: "video_title",
+        }
+        assert result["status"] == "success"
+        assert result["served_examples"] == 3
 
     def test_profile_selection_derivation_does_not_import_evaluation_package(
         self, monkeypatch

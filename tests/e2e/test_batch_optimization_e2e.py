@@ -278,21 +278,61 @@ def _training_selection_cap_from_shipped_config(optimizer_type: str) -> int:
     return int(shipped_selection["trainset_cap"])
 
 
-def _profile_label_source_queries() -> list[str]:
-    """Queries of the shipped profile label source, in file order; a row with
-    no query is keyed ``row:<position>``, the form its exclusion reports."""
-    from cogniverse_runtime.optimization_cli import PROFILE_SELECTION_LABEL_SOURCE_PATH
+PROFILE_SELECTION_GROUND_TRUTH_KEY = ("config", "profile_selection_ground_truth")
 
-    rows = json.loads(PROFILE_SELECTION_LABEL_SOURCE_PATH.read_text())
-    return [
-        str(row.get("query", "")).strip() or f"row:{position}"
-        for position, row in enumerate(rows)
+
+@functools.lru_cache(maxsize=1)
+def _profile_ground_truth_rows() -> tuple[dict[str, object], ...]:
+    """The profile-selection ground truth this module seeds for the tenant:
+    every evaluation query row naming a query and at least one expected video,
+    in asset order, canonicalized the way the upload route persists it."""
+    from cogniverse_agents.optimizer.profile_selection_ground_truth import (
+        canonicalize_profile_selection_ground_truth_rows,
+    )
+
+    rows = [
+        dict(row)
+        for row in _evaluation_query_rows()
+        if str(row.get("query", "")).strip() and row.get("expected_videos")
     ]
+    return tuple(canonicalize_profile_selection_ground_truth_rows(rows))
 
 
-def _assert_profile_labels_partition_label_source(result: dict) -> None:
-    """Every label-source row is either a derived label or a reported exclusion."""
-    source_queries = _profile_label_source_queries()
+def _active_profile_ground_truth_in_pod(tenant_id: str = TENANT_ID):
+    kind, key = PROFILE_SELECTION_GROUND_TRUTH_KEY
+    blob = _load_blob_in_pod(kind, key, tenant_id)
+    return json.loads(blob) if blob else None
+
+
+def _seed_profile_selection_ground_truth(tenant_id: str = TENANT_ID) -> None:
+    """Make the tenant's active ground-truth blob exactly
+    ``_profile_ground_truth_rows``: upload only when the active blob differs,
+    and read the active blob back either way."""
+    rows = list(_profile_ground_truth_rows())
+    if _active_profile_ground_truth_in_pod(tenant_id) != rows:
+        resp = httpx.put(
+            f"{RUNTIME}/admin/tenants/{tenant_id}/profile_selection_ground_truth",
+            json=rows,
+            timeout=60.0,
+        )
+        assert resp.status_code == 200, (
+            "profile_selection_ground_truth upload rejected: "
+            f"HTTP {resp.status_code} {resp.text[:500]}"
+        )
+        assert resp.json()["row_count"] == len(rows), resp.json()
+    assert _active_profile_ground_truth_in_pod(tenant_id) == rows
+
+
+def _profile_ground_truth_queries() -> list[str]:
+    """Queries of the seeded ground truth in row order, the position that
+    ``span:profile-label:<position>`` example ids index into."""
+    return [str(row["query"]) for row in _profile_ground_truth_rows()]
+
+
+def _assert_profile_labels_partition_ground_truth(result: dict) -> None:
+    """Every seeded ground-truth row is either a derived label or a reported
+    exclusion."""
+    source_queries = _profile_ground_truth_queries()
     exclusions = result["label_exclusions"]
     assert set(exclusions) == {"count", "queries"}, result
     assert exclusions["count"] == len(exclusions["queries"]), result
@@ -1332,6 +1372,7 @@ def generate_spans_for_batch_jobs(_kubectl_cluster_ready):
     assert response.status_code == 200, (
         f"runtime health returned HTTP {response.status_code}: {response.text[:500]}"
     )
+    _seed_profile_selection_ground_truth()
     # The tenant's SIMBA artifact is this module's own state: seed the
     # query-enhancement spans from the base module, not from whatever an
     # earlier optimization run left persisted (and loaded into the pod).
@@ -3315,7 +3356,7 @@ class TestProfileOptimization:
         assert result["spans_found"] >= expected_min_samples, result
         assert result["holdout_source"] == "derived_labels", result
         assert result["decision"] in BLOB_VERSION_DECISIONS, result
-        _assert_profile_labels_partition_label_source(result)
+        _assert_profile_labels_partition_ground_truth(result)
         assert result["approved_examples"] == len(approved), result
         assert result["holdout_examples"] == max(
             1, result["served_scoreable_examples"] // 4
@@ -3413,7 +3454,7 @@ class TestProfileOptimization:
         assert result["spans_found"] >= expected_min_samples, result
         assert result["holdout_source"] == "derived_labels", result
         assert result["decision"] in BLOB_VERSION_DECISIONS, result
-        _assert_profile_labels_partition_label_source(result)
+        _assert_profile_labels_partition_ground_truth(result)
         assert result["approved_examples"] == len(approved), result
         assert result["holdout_examples"] == max(
             1, result["served_scoreable_examples"] // 4
@@ -3548,7 +3589,7 @@ class TestProfileSelectionArtifactReload:
         assert result["spans_found"] >= expected_min_samples, result
         assert result["holdout_source"] == "derived_labels", result
         assert result["decision"] in BLOB_VERSION_DECISIONS, result
-        _assert_profile_labels_partition_label_source(result)
+        _assert_profile_labels_partition_ground_truth(result)
         assert result["approved_examples"] == len(approved), result
         assert result["holdout_examples"] == max(
             1, result["served_scoreable_examples"] // 4
@@ -4422,7 +4463,7 @@ class TestArtifactLoadingRoundTrip:
         assert result["spans_found"] >= expected_min_samples, result
         assert result["holdout_source"] == "derived_labels", result
         assert result["decision"] in BLOB_VERSION_DECISIONS, result
-        _assert_profile_labels_partition_label_source(result)
+        _assert_profile_labels_partition_ground_truth(result)
         assert result["approved_examples"] == len(approved), result
         assert result["holdout_examples"] == max(
             1, result["served_scoreable_examples"] // 4
