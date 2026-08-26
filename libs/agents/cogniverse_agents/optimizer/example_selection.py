@@ -11,7 +11,8 @@ from cogniverse_core.common.models.semantic_embedder import get_semantic_embedde
 ExampleStats = namedtuple("ExampleStats", "confirmations first_seen")
 SelectionReport = namedtuple(
     "SelectionReport",
-    "pool deduped cap mmr_applied decayed_count selected_ids",
+    "pool deduped cap mmr_applied decayed_count selected_ids decayed_example_ids",
+    defaults=([],),
 )
 TrainingSelectionKnobs = namedtuple(
     "TrainingSelectionKnobs",
@@ -177,9 +178,12 @@ def select_training_records(
     pool = len(records)
     deduped_records = _dedupe_records(records)
     deduped = len(deduped_records)
-    decayed_count = sum(
-        1 for record in deduped_records if weights[record["example_id"]] < 1.0
+    decayed_example_ids = sorted(
+        record["example_id"]
+        for record in deduped_records
+        if weights[record["example_id"]] < 1.0
     )
+    decayed_count = len(decayed_example_ids)
 
     if deduped <= knobs.trainset_cap:
         selected_ids = [record["example_id"] for record in deduped_records]
@@ -192,6 +196,7 @@ def select_training_records(
                 False,
                 decayed_count,
                 selected_ids,
+                decayed_example_ids,
             ),
         )
 
@@ -246,5 +251,6 @@ def select_training_records(
             True,
             decayed_count,
             selected_ids,
+            decayed_example_ids,
         ),
     )

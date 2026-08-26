@@ -4502,3 +4502,899 @@ class TestSyntheticGeneration:
         ), result.stderr
         # A configuration error is a one-line message, not a traceback.
         assert "Traceback" not in result.stderr, result.stderr
+
+
+def _seed_backdated_training_selection_rows_in_pod(
+    tenant_id: str,
+    artifact_key: str,
+    rows: list[dict[str, object]],
+) -> None:
+    rows_json = json.dumps(rows)
+    script = IN_POD_TELEMETRY_PRELUDE + textwrap.dedent(
+        f"""\
+        import asyncio
+        import json
+        import pandas as pd
+        from cogniverse_agents.optimizer.artifact_manager import ArtifactManager
+        from cogniverse_foundation.telemetry.manager import get_telemetry_manager
+
+        async def _go():
+            tp = get_telemetry_manager().get_provider(tenant_id={tenant_id!r})
+            am = ArtifactManager(tp, {tenant_id!r})
+            rows = json.loads({rows_json!r})
+            for version, row in enumerate(rows, start=1):
+                ledger = {{
+                    "version": version,
+                    "kind": "model",
+                    "key": {artifact_key!r},
+                    "consumed_example_ids": [row["example_id"]],
+                    "decision": row["decision"],
+                    "scored": row["scored"],
+                    "score": row["score"],
+                    "base_score": row["base_score"],
+                    "candidate_score": row["candidate_score"],
+                    "created_at": row["created_at"],
+                }}
+                await am._provider.datasets.create_dataset(
+                    name=am._versioned_dataset_name("model", {artifact_key!r}, version),
+                    data=pd.DataFrame(
+                        [{"content": row["content"], "ledger": json.dumps(ledger)}]
+                    ),
+                    metadata={{
+                        "artifact_type": "blob_model",
+                        "key": {artifact_key!r},
+                        "tenant_id": {tenant_id!r},
+                        "version": version,
+                        "created_at": row["created_at"],
+                        "input_keys": ["content", "ledger"],
+                        "output_keys": [],
+                    }},
+                )
+
+        asyncio.run(_go())
+        """
+    )
+    result = subprocess.run(
+        [
+            "kubectl",
+            "--context",
+            KUBECTL_CONTEXT,
+            "exec",
+            "-n",
+            NAMESPACE,
+            DEPLOYMENT,
+            "-c",
+            CONTAINER,
+            "--",
+            "python3",
+            "-c",
+            script,
+        ],
+        capture_output=True,
+        text=True,
+        timeout=120,
+    )
+    if result.returncode != 0:
+        raise RuntimeError(
+            _subprocess_failure_message(
+                "seed_backdated_training_selection_rows",
+                result,
+                operation=(
+                    "seed backdated training-selection ledger rows "
+                    f"tenant_id={tenant_id!r}, artifact_key={artifact_key!r}"
+                ),
+            )
+        )
+
+
+def _set_entity_extraction_floor_in_pod(tenant_id: str) -> None:
+    script = IN_POD_TELEMETRY_PRELUDE + textwrap.dedent(
+        f"""\
+        from cogniverse_foundation.config.unified_config import RoutingConfigUnified
+        from cogniverse_foundation.config.utils import create_default_config_manager
+
+        manager = create_default_config_manager()
+        manager.set_routing_config(
+            RoutingConfigUnified(
+                tenant_id={tenant_id!r},
+                optimizer_floors={{
+                    "entity_extraction": {{
+                        "min_samples_for_optimization": 4,
+                        "min_unique_queries": 4,
+                    }},
+                }},
+            )
+        )
+        print("__CONFIG__ok")
+        """
+    )
+    result = subprocess.run(
+        [
+            "kubectl",
+            "--context",
+            KUBECTL_CONTEXT,
+            "exec",
+            "-n",
+            NAMESPACE,
+            DEPLOYMENT,
+            "-c",
+            CONTAINER,
+            "--",
+            "python3",
+            "-c",
+            script,
+        ],
+        capture_output=True,
+        text=True,
+        timeout=120,
+    )
+    if result.returncode != 0:
+        raise RuntimeError(
+            _subprocess_failure_message(
+                "set_entity_extraction_floor",
+                result,
+                operation=f"set entity-extraction floor for tenant_id={tenant_id!r}",
+            )
+        )
+    line = result.stdout.strip().splitlines()[-1]
+    assert line == "__CONFIG__ok", result.stdout
+
+
+def _seed_approved_training_examples_in_pod(
+    tenant_id: str,
+    optimizer_type: str,
+    rows: list[dict[str, object]],
+) -> None:
+    rows_json = json.dumps(rows)
+    script = IN_POD_TELEMETRY_PRELUDE + textwrap.dedent(
+        f"""\
+        import asyncio
+        import json
+        from datetime import datetime
+
+        from cogniverse_agents.approval.approval_storage import ApprovalStorageImpl
+        from cogniverse_core.approval.interfaces import (
+            ApprovalStatus,
+            ReviewItem,
+            approved_synthetic_dataset_name,
+        )
+        from cogniverse_foundation.config.utils import create_default_config_manager
+        from cogniverse_foundation.telemetry.manager import get_telemetry_manager
+
+        async def _go():
+            config_manager = create_default_config_manager()
+            system_config = config_manager.get_system_config()
+            grpc_endpoint = system_config.telemetry_collector_endpoint
+            if not grpc_endpoint.startswith("http"):
+                grpc_endpoint = "http://" + grpc_endpoint
+            telemetry_manager = get_telemetry_manager()
+            storage = ApprovalStorageImpl(
+                grpc_endpoint=grpc_endpoint,
+                http_endpoint=system_config.telemetry_url,
+                tenant_id={tenant_id!r},
+                telemetry_manager=telemetry_manager,
+                redis_url=system_config.redis_url,
+            )
+            items = []
+            for row in json.loads({rows_json!r}):
+                items.append(
+                    ReviewItem(
+                        item_id=row["item_id"],
+                        data=row["data"],
+                        confidence=row["confidence"],
+                        metadata=row["metadata"],
+                        status=ApprovalStatus.APPROVED,
+                        created_at=datetime.fromisoformat(row["created_at"]),
+                        reviewed_at=datetime.fromisoformat(row["reviewed_at"]),
+                    )
+                )
+            await storage.append_to_training_dataset(
+                approved_synthetic_dataset_name({tenant_id!r}),
+                items,
+                project_context={{"optimizer": {optimizer_type!r}}},
+            )
+            print("__APPROVED__ok")
+
+        asyncio.run(_go())
+        """
+    )
+    result = subprocess.run(
+        [
+            "kubectl",
+            "--context",
+            KUBECTL_CONTEXT,
+            "exec",
+            "-n",
+            NAMESPACE,
+            DEPLOYMENT,
+            "-c",
+            CONTAINER,
+            "--",
+            "python3",
+            "-c",
+            script,
+        ],
+        capture_output=True,
+        text=True,
+        timeout=120,
+    )
+    if result.returncode != 0:
+        raise RuntimeError(
+            _subprocess_failure_message(
+                "seed_approved_training_examples",
+                result,
+                operation=(
+                    "seed approved synthetic examples "
+                    f"tenant_id={tenant_id!r}, optimizer_type={optimizer_type!r}"
+                ),
+            )
+        )
+    line = result.stdout.strip().splitlines()[-1]
+    assert line == "__APPROVED__ok", result.stdout
+
+
+@pytest.fixture(scope="function")
+def decay_selection_tenant(_kubectl_cluster_ready) -> str:
+    suffix = uuid.uuid4().hex[:8]
+    org_id = f"opt_decay_{suffix}"
+    tenant_id = f"{org_id}:t1"
+
+    with httpx.Client(timeout=60.0) as client:
+        resp = client.post(
+            f"{RUNTIME}/admin/organizations",
+            json={
+                "org_id": org_id,
+                "org_name": f"opt-decay-{suffix}",
+                "created_by": "e2e",
+            },
+        )
+        assert resp.status_code in (200, 201, 409), resp.text
+
+    register_tenant_and_wait(tenant_id, created_by="e2e", timeout_s=600.0)
+    _set_entity_extraction_floor_in_pod(tenant_id)
+
+    try:
+        yield tenant_id
+    finally:
+        with httpx.Client(timeout=60.0) as client:
+            try:
+                client.delete(f"{RUNTIME}/admin/tenants/{tenant_id}")
+            except httpx.HTTPError:
+                pass
+            try:
+                client.delete(f"{RUNTIME}/admin/organizations/{org_id}")
+            except httpx.HTTPError:
+                pass
+
+
+@pytest.mark.e2e
+class TestTrainingSelectionDecay:
+    def test_backdated_ledger_rows_round_trip_lineage_and_selection_math(
+        self, decay_selection_tenant
+    ):
+        from datetime import datetime, timezone
+
+        from cogniverse_agents.optimizer.example_selection import (
+            TRAINING_SELECTION_DEFAULTS,
+            ExampleStats,
+            SelectionReport,
+            confirmation_stats,
+            decay_weight,
+            select_training_records,
+        )
+
+        tenant_id = decay_selection_tenant
+        artifact_key = "training_selection_decay"
+        rows = [
+            {
+                "example_id": "span:old-unconfirmed",
+                "content": "old-unconfirmed",
+                "created_at": "2026-08-01T00:00:00+00:00",
+                "decision": "keep",
+                "scored": False,
+                "score": None,
+                "base_score": None,
+                "candidate_score": None,
+            },
+            {
+                "example_id": "span:old-confirmed",
+                "content": "old-confirmed-1",
+                "created_at": "2026-08-01T00:00:00+00:00",
+                "decision": "promote",
+                "scored": True,
+                "score": 0.8,
+                "base_score": 0.6,
+                "candidate_score": 0.8,
+            },
+            {
+                "example_id": "span:old-confirmed",
+                "content": "old-confirmed-2",
+                "created_at": "2026-08-05T00:00:00+00:00",
+                "decision": "promote",
+                "scored": True,
+                "score": 0.8,
+                "base_score": 0.6,
+                "candidate_score": 0.8,
+            },
+            {
+                "example_id": "span:old-confirmed",
+                "content": "old-confirmed-3",
+                "created_at": "2026-08-09T00:00:00+00:00",
+                "decision": "promote",
+                "scored": True,
+                "score": 0.8,
+                "base_score": 0.6,
+                "candidate_score": 0.8,
+            },
+            {
+                "example_id": "span:fresh-unconfirmed",
+                "content": "fresh-unconfirmed",
+                "created_at": "2026-08-29T00:00:00+00:00",
+                "decision": "keep",
+                "scored": False,
+                "score": None,
+                "base_score": None,
+                "candidate_score": None,
+            },
+            {
+                "example_id": "span:fresh-confirmed",
+                "content": "fresh-confirmed-1",
+                "created_at": "2026-08-28T00:00:00+00:00",
+                "decision": "promote",
+                "scored": True,
+                "score": 0.8,
+                "base_score": 0.6,
+                "candidate_score": 0.8,
+            },
+            {
+                "example_id": "span:fresh-confirmed",
+                "content": "fresh-confirmed-2",
+                "created_at": "2026-08-29T00:00:00+00:00",
+                "decision": "promote",
+                "scored": True,
+                "score": 0.8,
+                "base_score": 0.6,
+                "candidate_score": 0.8,
+            },
+            {
+                "example_id": "span:fresh-confirmed",
+                "content": "fresh-confirmed-3",
+                "created_at": "2026-08-30T00:00:00+00:00",
+                "decision": "promote",
+                "scored": True,
+                "score": 0.8,
+                "base_score": 0.6,
+                "candidate_score": 0.8,
+            },
+        ]
+        _seed_backdated_training_selection_rows_in_pod(
+            tenant_id,
+            artifact_key,
+            rows,
+        )
+
+        lineage = _blob_version_lineage_in_pod(
+            "model", artifact_key, tenant_id=tenant_id
+        )
+        assert lineage == [
+            {
+                "version": 1,
+                "name": f"dspy-model-{tenant_id}-{artifact_key}-v1",
+                "row_count": 1,
+                "consumed_example_ids": ["span:old-unconfirmed"],
+                "decision": "keep",
+                "scored": False,
+                "base_score": None,
+                "candidate_score": None,
+                "created_at": "2026-08-01T00:00:00+00:00",
+                "score": None,
+            },
+            {
+                "version": 2,
+                "name": f"dspy-model-{tenant_id}-{artifact_key}-v2",
+                "row_count": 1,
+                "consumed_example_ids": ["span:old-confirmed"],
+                "decision": "promote",
+                "scored": True,
+                "base_score": 0.6,
+                "candidate_score": 0.8,
+                "created_at": "2026-08-01T00:00:00+00:00",
+                "score": 0.8,
+            },
+            {
+                "version": 3,
+                "name": f"dspy-model-{tenant_id}-{artifact_key}-v3",
+                "row_count": 1,
+                "consumed_example_ids": ["span:old-confirmed"],
+                "decision": "promote",
+                "scored": True,
+                "base_score": 0.6,
+                "candidate_score": 0.8,
+                "created_at": "2026-08-05T00:00:00+00:00",
+                "score": 0.8,
+            },
+            {
+                "version": 4,
+                "name": f"dspy-model-{tenant_id}-{artifact_key}-v4",
+                "row_count": 1,
+                "consumed_example_ids": ["span:old-confirmed"],
+                "decision": "promote",
+                "scored": True,
+                "base_score": 0.6,
+                "candidate_score": 0.8,
+                "created_at": "2026-08-09T00:00:00+00:00",
+                "score": 0.8,
+            },
+            {
+                "version": 5,
+                "name": f"dspy-model-{tenant_id}-{artifact_key}-v5",
+                "row_count": 1,
+                "consumed_example_ids": ["span:fresh-unconfirmed"],
+                "decision": "keep",
+                "scored": False,
+                "base_score": None,
+                "candidate_score": None,
+                "created_at": "2026-08-29T00:00:00+00:00",
+                "score": None,
+            },
+            {
+                "version": 6,
+                "name": f"dspy-model-{tenant_id}-{artifact_key}-v6",
+                "row_count": 1,
+                "consumed_example_ids": ["span:fresh-confirmed"],
+                "decision": "promote",
+                "scored": True,
+                "base_score": 0.6,
+                "candidate_score": 0.8,
+                "created_at": "2026-08-28T00:00:00+00:00",
+                "score": 0.8,
+            },
+            {
+                "version": 7,
+                "name": f"dspy-model-{tenant_id}-{artifact_key}-v7",
+                "row_count": 1,
+                "consumed_example_ids": ["span:fresh-confirmed"],
+                "decision": "promote",
+                "scored": True,
+                "base_score": 0.6,
+                "candidate_score": 0.8,
+                "created_at": "2026-08-29T00:00:00+00:00",
+                "score": 0.8,
+            },
+            {
+                "version": 8,
+                "name": f"dspy-model-{tenant_id}-{artifact_key}-v8",
+                "row_count": 1,
+                "consumed_example_ids": ["span:fresh-confirmed"],
+                "decision": "promote",
+                "scored": True,
+                "base_score": 0.6,
+                "candidate_score": 0.8,
+                "created_at": "2026-08-30T00:00:00+00:00",
+                "score": 0.8,
+            },
+        ]
+
+        config = json.loads(CONFIG_PATH.read_text())
+        score_threshold = config["routing"]["optimization_config"][
+            "training_selection"
+        ]["entity_extraction"]["confirmation_score_threshold"]
+        stats = confirmation_stats(lineage, score_threshold=score_threshold)
+        now = datetime(2026, 8, 30, tzinfo=timezone.utc)
+        assert stats == {
+            "span:old-unconfirmed": ExampleStats(
+                0, datetime(2026, 8, 1, tzinfo=timezone.utc)
+            ),
+            "span:old-confirmed": ExampleStats(
+                3, datetime(2026, 8, 1, tzinfo=timezone.utc)
+            ),
+            "span:fresh-unconfirmed": ExampleStats(
+                0, datetime(2026, 8, 29, tzinfo=timezone.utc)
+            ),
+            "span:fresh-confirmed": ExampleStats(
+                3, datetime(2026, 8, 28, tzinfo=timezone.utc)
+            ),
+        }
+
+        weights = {
+            example_id: decay_weight(
+                stats,
+                example_id,
+                now=now,
+                knobs=TRAINING_SELECTION_DEFAULTS,
+            )
+            for example_id in stats
+        }
+        assert weights == {
+            "span:old-unconfirmed": 0.5,
+            "span:old-confirmed": 1.0,
+            "span:fresh-unconfirmed": 1.0,
+            "span:fresh-confirmed": 1.0,
+        }
+        selected, report = select_training_records(
+            [
+                {
+                    "example_id": "span:old-unconfirmed",
+                    "query": "old unconfirmed",
+                },
+                {
+                    "example_id": "span:old-confirmed",
+                    "query": "old confirmed",
+                },
+                {
+                    "example_id": "span:fresh-unconfirmed",
+                    "query": "fresh unconfirmed",
+                },
+                {
+                    "example_id": "span:fresh-confirmed",
+                    "query": "fresh confirmed",
+                },
+            ],
+            weights=weights,
+            knobs=TRAINING_SELECTION_DEFAULTS,
+            embed_fn=lambda texts: (_ for _ in ()).throw(
+                AssertionError("embed_fn called below cap")
+            ),
+        )
+        assert selected == [
+            {
+                "example_id": "span:old-unconfirmed",
+                "query": "old unconfirmed",
+            },
+            {
+                "example_id": "span:old-confirmed",
+                "query": "old confirmed",
+            },
+            {
+                "example_id": "span:fresh-unconfirmed",
+                "query": "fresh unconfirmed",
+            },
+            {
+                "example_id": "span:fresh-confirmed",
+                "query": "fresh confirmed",
+            },
+        ]
+        assert report == SelectionReport(
+            pool=4,
+            deduped=4,
+            cap=TRAINING_SELECTION_DEFAULTS.trainset_cap,
+            mmr_applied=False,
+            decayed_count=1,
+            decayed_example_ids=["span:old-unconfirmed"],
+            selected_ids=[
+                "span:old-unconfirmed",
+                "span:old-confirmed",
+                "span:fresh-unconfirmed",
+                "span:fresh-confirmed",
+            ],
+        )
+        assert report.decayed_count == len(report.decayed_example_ids)
+        assert {
+            example_id for example_id, weight in weights.items() if weight < 1.0
+        } == {"span:old-unconfirmed"}
+
+    def test_approved_entity_extraction_rows_decay_in_real_optimizer_run(
+        self, decay_selection_tenant
+    ):
+        from datetime import datetime, timedelta, timezone
+
+        tenant_id = decay_selection_tenant
+        artifact_key = "entity_extraction"
+        now = datetime.now(timezone.utc).replace(microsecond=0)
+        approved_created_at = (now - timedelta(days=3)).isoformat()
+        approved_reviewed_at = (now - timedelta(days=2)).isoformat()
+        approved_specs = [
+            {
+                "item_id": "entity-old-unconfirmed",
+                "data": {
+                    "query": "old unconfirmed entity example",
+                    "entities": [{"text": "alpha", "type": "CONCEPT"}],
+                    "entity_types": "CONCEPT",
+                    "relationships": [],
+                },
+                "confidence": 0.91,
+                "metadata": {"agent_type": "entity_extraction", "synthetic": True},
+                "created_at": approved_created_at,
+                "reviewed_at": approved_reviewed_at,
+            },
+            {
+                "item_id": "entity-old-confirmed",
+                "data": {
+                    "query": "old confirmed entity example",
+                    "entities": [{"text": "beta", "type": "CONCEPT"}],
+                    "entity_types": "CONCEPT",
+                    "relationships": [],
+                },
+                "confidence": 0.92,
+                "metadata": {"agent_type": "entity_extraction", "synthetic": True},
+                "created_at": approved_created_at,
+                "reviewed_at": approved_reviewed_at,
+            },
+            {
+                "item_id": "entity-fresh-unconfirmed",
+                "data": {
+                    "query": "fresh unconfirmed entity example",
+                    "entities": [{"text": "gamma", "type": "CONCEPT"}],
+                    "entity_types": "CONCEPT",
+                    "relationships": [],
+                },
+                "confidence": 0.93,
+                "metadata": {"agent_type": "entity_extraction", "synthetic": True},
+                "created_at": approved_created_at,
+                "reviewed_at": approved_reviewed_at,
+            },
+            {
+                "item_id": "entity-fresh-confirmed",
+                "data": {
+                    "query": "fresh confirmed entity example",
+                    "entities": [{"text": "delta", "type": "CONCEPT"}],
+                    "entity_types": "CONCEPT",
+                    "relationships": [],
+                },
+                "confidence": 0.94,
+                "metadata": {"agent_type": "entity_extraction", "synthetic": True},
+                "created_at": approved_created_at,
+                "reviewed_at": approved_reviewed_at,
+            },
+        ]
+        expected_approved_item_ids = [spec["item_id"] for spec in approved_specs]
+        _seed_approved_training_examples_in_pod(tenant_id, artifact_key, approved_specs)
+
+        approved_examples = _approved_query_enhancement_examples_in_pod(
+            tenant_id, artifact_key
+        )
+        assert [row["example_id"] for row in approved_examples] == [
+            f"approved:{item_id}" for item_id in expected_approved_item_ids
+        ]
+
+        lineage_rows = [
+            {
+                "example_id": "approved:entity-old-unconfirmed",
+                "content": "old-unconfirmed-1",
+                "created_at": (now - timedelta(days=16)).isoformat(),
+                "decision": "keep",
+                "scored": False,
+                "score": None,
+                "base_score": None,
+                "candidate_score": None,
+            },
+            {
+                "example_id": "approved:entity-old-confirmed",
+                "content": "old-confirmed-1",
+                "created_at": (now - timedelta(days=18)).isoformat(),
+                "decision": "promote",
+                "scored": True,
+                "score": 0.8,
+                "base_score": 0.6,
+                "candidate_score": 0.8,
+            },
+            {
+                "example_id": "approved:entity-old-confirmed",
+                "content": "old-confirmed-2",
+                "created_at": (now - timedelta(days=17)).isoformat(),
+                "decision": "promote",
+                "scored": True,
+                "score": 0.8,
+                "base_score": 0.6,
+                "candidate_score": 0.8,
+            },
+            {
+                "example_id": "approved:entity-old-confirmed",
+                "content": "old-confirmed-3",
+                "created_at": (now - timedelta(days=16)).isoformat(),
+                "decision": "promote",
+                "scored": True,
+                "score": 0.8,
+                "base_score": 0.6,
+                "candidate_score": 0.8,
+            },
+            {
+                "example_id": "approved:entity-fresh-unconfirmed",
+                "content": "fresh-unconfirmed",
+                "created_at": (now - timedelta(days=2)).isoformat(),
+                "decision": "keep",
+                "scored": False,
+                "score": None,
+                "base_score": None,
+                "candidate_score": None,
+            },
+            {
+                "example_id": "approved:entity-fresh-confirmed",
+                "content": "fresh-confirmed-1",
+                "created_at": (now - timedelta(days=2)).isoformat(),
+                "decision": "promote",
+                "scored": True,
+                "score": 0.8,
+                "base_score": 0.6,
+                "candidate_score": 0.8,
+            },
+            {
+                "example_id": "approved:entity-fresh-confirmed",
+                "content": "fresh-confirmed-2",
+                "created_at": (now - timedelta(days=1)).isoformat(),
+                "decision": "promote",
+                "scored": True,
+                "score": 0.8,
+                "base_score": 0.6,
+                "candidate_score": 0.8,
+            },
+            {
+                "example_id": "approved:entity-fresh-confirmed",
+                "content": "fresh-confirmed-3",
+                "created_at": now.isoformat(),
+                "decision": "promote",
+                "scored": True,
+                "score": 0.8,
+                "base_score": 0.6,
+                "candidate_score": 0.8,
+            },
+        ]
+        _seed_backdated_training_selection_rows_in_pod(
+            tenant_id,
+            artifact_key,
+            lineage_rows,
+        )
+
+        lineage = _blob_version_lineage_in_pod(
+            "model", artifact_key, tenant_id=tenant_id
+        )
+        assert lineage == [
+            {
+                "version": 1,
+                "name": f"dspy-model-{tenant_id}-{artifact_key}-v1",
+                "row_count": 1,
+                "consumed_example_ids": ["approved:entity-old-unconfirmed"],
+                "decision": "keep",
+                "scored": False,
+                "base_score": None,
+                "candidate_score": None,
+                "created_at": (now - timedelta(days=16)).isoformat(),
+                "score": None,
+            },
+            {
+                "version": 2,
+                "name": f"dspy-model-{tenant_id}-{artifact_key}-v2",
+                "row_count": 1,
+                "consumed_example_ids": ["approved:entity-old-confirmed"],
+                "decision": "promote",
+                "scored": True,
+                "base_score": 0.6,
+                "candidate_score": 0.8,
+                "created_at": (now - timedelta(days=18)).isoformat(),
+                "score": 0.8,
+            },
+            {
+                "version": 3,
+                "name": f"dspy-model-{tenant_id}-{artifact_key}-v3",
+                "row_count": 1,
+                "consumed_example_ids": ["approved:entity-old-confirmed"],
+                "decision": "promote",
+                "scored": True,
+                "base_score": 0.6,
+                "candidate_score": 0.8,
+                "created_at": (now - timedelta(days=17)).isoformat(),
+                "score": 0.8,
+            },
+            {
+                "version": 4,
+                "name": f"dspy-model-{tenant_id}-{artifact_key}-v4",
+                "row_count": 1,
+                "consumed_example_ids": ["approved:entity-old-confirmed"],
+                "decision": "promote",
+                "scored": True,
+                "base_score": 0.6,
+                "candidate_score": 0.8,
+                "created_at": (now - timedelta(days=16)).isoformat(),
+                "score": 0.8,
+            },
+            {
+                "version": 5,
+                "name": f"dspy-model-{tenant_id}-{artifact_key}-v5",
+                "row_count": 1,
+                "consumed_example_ids": ["approved:entity-fresh-unconfirmed"],
+                "decision": "keep",
+                "scored": False,
+                "base_score": None,
+                "candidate_score": None,
+                "created_at": (now - timedelta(days=2)).isoformat(),
+                "score": None,
+            },
+            {
+                "version": 6,
+                "name": f"dspy-model-{tenant_id}-{artifact_key}-v6",
+                "row_count": 1,
+                "consumed_example_ids": ["approved:entity-fresh-confirmed"],
+                "decision": "promote",
+                "scored": True,
+                "base_score": 0.6,
+                "candidate_score": 0.8,
+                "created_at": (now - timedelta(days=2)).isoformat(),
+                "score": 0.8,
+            },
+            {
+                "version": 7,
+                "name": f"dspy-model-{tenant_id}-{artifact_key}-v7",
+                "row_count": 1,
+                "consumed_example_ids": ["approved:entity-fresh-confirmed"],
+                "decision": "promote",
+                "scored": True,
+                "base_score": 0.6,
+                "candidate_score": 0.8,
+                "created_at": (now - timedelta(days=1)).isoformat(),
+                "score": 0.8,
+            },
+            {
+                "version": 8,
+                "name": f"dspy-model-{tenant_id}-{artifact_key}-v8",
+                "row_count": 1,
+                "consumed_example_ids": ["approved:entity-fresh-confirmed"],
+                "decision": "promote",
+                "scored": True,
+                "base_score": 0.6,
+                "candidate_score": 0.8,
+                "created_at": now.isoformat(),
+                "score": 0.8,
+            },
+        ]
+
+        served_query = "PyTorch was released by Meta AI"
+        _call_agent("entity_extraction_agent", served_query, tenant_id=tenant_id)
+        _wait_for_seeded_span_lower_bound_in_pod(
+            tenant_id,
+            "SPAN_NAME_ENTITY_EXTRACTION",
+            1,
+            _module_lookback_hours(),
+        )
+
+        expected_decayed_example_ids = {"approved:entity-old-unconfirmed"}
+        result = _run_batch_job("entity-extraction", tenant_id=tenant_id)
+        assert result["status"] == "success", result
+        assert result["spans_found"] == 1, result
+        assert result["served_examples"] == 1, result
+        assert result["approved_examples"] == 4, result
+        assert result["served_scoreable_examples"] == 1, result
+        assert result["holdout_source"] == "served", result
+        assert result["holdout_examples"] == 1, result
+        assert result["training_examples"] == 4, result
+        assert result["selection"]["pool"] == 4, result
+        assert result["selection"]["deduped"] == 4, result
+        assert result["selection"]["mmr_applied"] is False, result
+        assert result["selection"]["decayed_count"] == len(
+            expected_decayed_example_ids
+        ), result
+        assert set(result["selection"]["decayed_example_ids"]) == (
+            expected_decayed_example_ids
+        ), result
+        assert result["consumed_example_ids"][0].startswith("span:"), result
+        assert result["consumed_example_ids"][1:] == [
+            "approved:entity-old-unconfirmed",
+            "approved:entity-old-confirmed",
+            "approved:entity-fresh-unconfirmed",
+            "approved:entity-fresh-confirmed",
+        ], result
+
+        version_blob, ledger = _load_blob_version_in_pod(
+            "model", artifact_key, result["version"], tenant_id=tenant_id
+        )
+        assert set(ledger) == {
+            "version",
+            "kind",
+            "key",
+            "consumed_example_ids",
+            "decision",
+            "scored",
+            "score",
+            "base_score",
+            "candidate_score",
+            "created_at",
+        }, ledger
+        assert ledger["version"] == result["version"], ledger
+        assert ledger["kind"] == "model", ledger
+        assert ledger["key"] == artifact_key, ledger
+        assert ledger["consumed_example_ids"] == result["consumed_example_ids"], ledger
+        assert ledger["decision"] == result["decision"], ledger
+        assert ledger["scored"] is True, ledger
+        assert ledger["base_score"] == result["baseline_score"], ledger
+        assert ledger["candidate_score"] == result["candidate_score"], ledger
+        assert ledger["score"] == result["candidate_score"], ledger
+        assert version_blob != "", ledger

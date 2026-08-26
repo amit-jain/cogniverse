@@ -35,7 +35,8 @@ def _selection_block(
     cap: int = 300,
     mmr_applied: bool = False,
     decayed_count: int = 0,
-) -> dict[str, dict[str, int | bool]]:
+    decayed_example_ids: list[str] | None = None,
+) -> dict[str, dict[str, int | bool | list[str]]]:
     return {
         "selection": {
             "pool": pool,
@@ -43,6 +44,7 @@ def _selection_block(
             "cap": cap,
             "mmr_applied": mmr_applied,
             "decayed_count": decayed_count,
+            "decayed_example_ids": decayed_example_ids or [],
         }
     }
 
