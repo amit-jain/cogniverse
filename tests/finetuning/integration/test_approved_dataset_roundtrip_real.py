@@ -857,7 +857,7 @@ async def test_approved_synthetic_dataset_roundtrip(
                     ),
                     "selected_profile": "video_colpali_smol500_mv_frame",
                     "reasoning": "Exact slide text requires frame retrieval.",
-                    "query_intent": "exact_text_retrieval",
+                    "query_intent": "document_search",
                     "modality": "video",
                     "complexity": "medium",
                 },
@@ -976,7 +976,7 @@ async def test_approved_synthetic_dataset_roundtrip(
             "available_profiles": "video_colpali_smol500_mv_frame,video_search",
             "selected_profile": "video_colpali_smol500_mv_frame",
             "reasoning": "Exact slide text requires frame retrieval.",
-            "query_intent": "exact_text_retrieval",
+            "query_intent": "document_search",
             "modality": "video",
             "complexity": "medium",
         }
@@ -1076,7 +1076,7 @@ async def test_approved_synthetic_dataset_roundtrip(
             "available_profiles": "video_colpali_smol500_mv_frame,video_search",
             "selected_profile": "video_colpali_smol500_mv_frame",
             "reasoning": "Exact slide text requires frame retrieval.",
-            "query_intent": "exact_text_retrieval",
+            "query_intent": "document_search",
             "modality": "video",
             "complexity": "medium",
             "metadata.agent_type": "profile_selection",
@@ -1098,14 +1098,14 @@ async def test_approved_synthetic_dataset_roundtrip(
                 '"2026-08-05T00:00:00+00:00","metadata.synthetic":true,'
                 '"modality":"video",'
                 '"query":"find exact text in presentation slides",'
-                '"query_intent":"exact_text_retrieval",'
+                '"query_intent":"document_search",'
                 '"reasoning":"Exact slide text requires frame retrieval.",'
                 '"reviewed_at":"2026-08-05T00:00:00+00:00",'
                 '"selected_profile":"video_colpali_smol500_mv_frame",'
                 '"status":"approved"}'
             ),
             "metadata.approval_record_sha256": (
-                "52724689c6ccd6fee1085555378f133da0305aab65645f415759ff365ce30d72"
+                "01bac8270d158211e37b3861a2dc9bc22af72938e3617268dfcecf737d19f5fa"
             ),
         },
     ]

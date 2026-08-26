@@ -11,11 +11,9 @@ import pytest
 from dspy.utils.dummies import DummyLM
 
 from cogniverse_agents.entity_extraction_agent import (
-    Entity,
     EntityExtractionAgent,
     EntityExtractionDeps,
     EntityExtractionInput,
-    Relationship,
 )
 from cogniverse_foundation.telemetry.span_contract import read_span_io
 
@@ -23,7 +21,9 @@ pytestmark = pytest.mark.integration
 
 
 def _entity_output(*rows: tuple[str, str, float]) -> str:
-    return "\n".join(f"{text}|{entity_type}|{confidence}" for text, entity_type, confidence in rows)
+    return "\n".join(
+        f"{text}|{entity_type}|{confidence}" for text, entity_type, confidence in rows
+    )
 
 
 def _telemetry_capture():

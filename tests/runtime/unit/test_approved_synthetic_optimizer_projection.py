@@ -84,9 +84,7 @@ def test_entity_projection_matches_production_signature_and_omits_relationships(
 
     assert projected == {
         "query": "PyTorch was created by Meta AI in Menlo Park",
-        "entities": (
-            "PyTorch|PRODUCT|1.0\nMeta AI|ORG|1.0\nMenlo Park|PLACE|1.0"
-        ),
+        "entities": ("PyTorch|PRODUCT|1.0\nMeta AI|ORG|1.0\nMenlo Park|PLACE|1.0"),
     }
 
 
