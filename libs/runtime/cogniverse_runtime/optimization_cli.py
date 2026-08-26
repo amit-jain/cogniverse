@@ -3888,7 +3888,7 @@ async def run_profile_optimization(
             "served_scoreable_examples": served_scoreable_examples,
             "training_examples": len(trainset),
             "holdout_examples": 0,
-            "holdout_source": "served",
+            "holdout_source": "derived_labels",
             "label_exclusions": label_exclusions,
             **selection_summary,
         }
@@ -3981,7 +3981,7 @@ async def run_profile_optimization(
         "served_scoreable_examples": served_scoreable_examples,
         "training_examples": len(trainset),
         "holdout_examples": len(holdout),
-        "holdout_source": "served",
+        "holdout_source": "derived_labels",
         "label_exclusions": label_exclusions,
         **selection_summary,
         "baseline_score": baseline_score,

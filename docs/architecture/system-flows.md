@@ -670,25 +670,25 @@ sequenceDiagram
 
 ```mermaid
 flowchart LR
-    subgraph DataCollection[<span style='color:#000'>Data Collection<br/>cogniverse_telemetry_phoenix</span>]
-        Q[<span style='color:#000'>Queries</span>] --> Spans[<span style='color:#000'>cogniverse.profile_selection spans<br/>per tenant</span>]
+    subgraph Labels[<span style='color:#000'>Label Derivation<br/>cogniverse_runtime</span>]
+        Q[<span style='color:#000'>Shipped label source<br/>query + expected_videos per row</span>] --> Derive[<span style='color:#000'>derive_profile_labels<br/>SearchService per query × usable profile</span>]
     end
 
     subgraph Synthesis[<span style='color:#000'>Synthetic Data<br/>cogniverse_synthetic</span>]
-        Spans --> ProfileGen[<span style='color:#000'>ProfileGenerator<br/>generates ProfileSelectionExampleSchema</span>]
+        ProfileGen[<span style='color:#000'>ProfileGenerator<br/>ProfileSelectionExampleSchema from sampled content<br/>approved demos only</span>]
     end
 
     subgraph Optimization[<span style='color:#000'>Optimization<br/>cogniverse_runtime</span>]
-        ProfileGen --> OptCLI[<span style='color:#000'>run_profile_optimization<br/>BootstrapFewShot (scaled by trainset size)</span>]
+        Derive --> OptCLI[<span style='color:#000'>run_profile_optimization<br/>BootstrapFewShot (scaled by trainset size)</span>]
+        ProfileGen --> OptCLI
         OptCLI --> Artifact[<span style='color:#000'>Artifact saved<br/>("model", "profile_selection")</span>]
     end
 
     Artifact --> Agent[<span style='color:#000'>ProfileSelectionAgent<br/>loads at startup</span>]
-    Agent --> Q
 
-    style DataCollection fill:#90caf9,stroke:#1565c0,color:#000
+    style Labels fill:#90caf9,stroke:#1565c0,color:#000
     style Q fill:#64b5f6,stroke:#1565c0,color:#000
-    style Spans fill:#64b5f6,stroke:#1565c0,color:#000
+    style Derive fill:#64b5f6,stroke:#1565c0,color:#000
     style Synthesis fill:#a5d6a7,stroke:#388e3c,color:#000
     style ProfileGen fill:#81c784,stroke:#388e3c,color:#000
     style Optimization fill:#ffcc80,stroke:#ef6c00,color:#000

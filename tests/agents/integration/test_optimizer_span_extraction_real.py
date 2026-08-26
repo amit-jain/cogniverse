@@ -22,6 +22,7 @@ from unittest.mock import MagicMock, patch
 import pytest
 
 from cogniverse_core.common.tenant_utils import canonical_tenant_id
+from cogniverse_foundation.config.utils import create_default_config_manager
 from cogniverse_foundation.telemetry.span_contract import read_span_io
 from cogniverse_runtime.optimization_cli import (
     _entity_extraction_pairs,
@@ -167,7 +168,9 @@ async def test_profile_selection_span_yields_training_pair(real_telemetry):
     )
     assert spans is not None, "cogniverse.profile_selection span not indexed"
 
-    pairs = _profile_selection_pairs(spans)
+    pairs = _profile_selection_pairs(
+        spans, config_manager=create_default_config_manager(), tenant_id=tenant_id
+    )
     assert len(pairs) == 1
     assert pairs[0]["query"] == "show me cooking videos"
     assert pairs[0]["selected_profile"] == "video_colpali_smol500_mv_frame"

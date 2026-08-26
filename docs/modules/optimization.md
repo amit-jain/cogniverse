@@ -199,9 +199,11 @@ flowchart TB
 
 ```mermaid
 flowchart TB
-    Spans["<span style='color:#000'>cogniverse.profile_selection Phoenix spans<br/>• Emitted by ProfileSelectionAgent on every dispatch<br/>• Attributes: query, available_profiles, selected_profile,<br/>  modality, complexity, intent, confidence</span>"]
+    Source["<span style='color:#000'>Shipped label source<br/>data/testset/evaluation/sample_videos_retrieval_queries.json<br/>• One query + expected_videos per row</span>"]
 
-    Spans --> RunOpt["<span style='color:#000'>run_profile_optimization tenant_id, lookback_hours<br/>• Build dspy.Example trainset<br/>• Filter on confidence ≥ 0.5</span>"]
+    Source --> Derive["<span style='color:#000'>derive_profile_labels<br/>• SearchService.search per query × usable profile, top_k 10<br/>• Label = the one profile that recovers every expected video<br/>• Unrecovered and tied queries reported under label_exclusions</span>"]
+
+    Derive --> RunOpt["<span style='color:#000'>run_profile_optimization tenant_id, lookback_hours<br/>• Build dspy.Example trainset from derived labels<br/>• Holdout = tail of the derived labels</span>"]
 
     Synthetic["<span style='color:#000'>Approved synthetic demos<br/>• _load_approved_synthetic_data 'profile'<br/>• Merged into trainset</span>"] --> RunOpt
 
@@ -209,7 +211,8 @@ flowchart TB
 
     Compile --> Reload["<span style='color:#000'>Next agent dispatch<br/>• ProfileSelectionAgent loads via am.load_blob 'model','profile_selection'<br/>• dspy_module.load_state applied to live module</span>"]
 
-    style Spans fill:#90caf9,stroke:#1565c0,color:#000
+    style Source fill:#90caf9,stroke:#1565c0,color:#000
+    style Derive fill:#90caf9,stroke:#1565c0,color:#000
     style Synthetic fill:#90caf9,stroke:#1565c0,color:#000
     style RunOpt fill:#ffcc80,stroke:#ef6c00,color:#000
     style Compile fill:#ce93d8,stroke:#7b1fa2,color:#000
@@ -279,11 +282,15 @@ async def run_profile_optimization(
     """
     Optimize ProfileSelectionAgent's DSPy module:
 
-    1. Collect (query, available_profiles) -> selected_profile examples from
-       cogniverse.profile_selection Phoenix spans; use the span's recorded
-       available_profiles pool when present and derive the live tenant pool via
-       tenant_usable_profile_names(ConfigManager, tenant_id) for legacy spans;
-       keep only confidence >= 0.5.
+    1. Derive (query, available_profiles) -> selected_profile examples from the
+       shipped label source (PROFILE_SELECTION_LABEL_SOURCE_PATH) with
+       derive_profile_labels: the tenant's SearchService runs every query
+       against each profile from tenant_usable_profile_names(ConfigManager,
+       tenant_id) at top_k=10; the label is the single profile whose results
+       contain all of the row's expected_videos. Queries no profile recovers,
+       or that two profiles tie on, are excluded and reported under
+       label_exclusions. cogniverse.profile_selection spans are counted as
+       spans_found and not read.
     2. Merge in approved synthetic demos for optimizer type "profile". The
        consumer projection supplies the signature-required string confidence
        sentinel and preserves the two exact input fields.
@@ -293,9 +300,12 @@ async def run_profile_optimization(
 
     The agent reloads the artifact on each dispatch via am.load_blob("model", "profile_selection").
 
-    Returns:
-      - {"status": "success", "spans_found": int, "served_scoreable_examples": int,
-         "training_examples": int, "holdout_examples": int, "holdout_source": "served",
+    Returns (every shape carries
+    "label_exclusions": {"count": int, "queries": list[str]}):
+      - {"status": "success", "spans_found": int, "served_examples": int,
+         "approved_examples": int, "served_scoreable_examples": int,
+         "training_examples": int, "holdout_examples": int,
+         "holdout_source": "derived_labels", "selection": {...},
          "baseline_score": float, "current_score": float | None,
          "candidate_score": float | None,
          "decision": "promote" | "keep" | "rollback" | "reject",
@@ -303,11 +313,12 @@ async def run_profile_optimization(
       - {"status": "no_data", "spans_found": int, "examples": 0}
       - {"status": "no_eval_material", "spans_found": int,
          "served_scoreable_examples": int, "training_examples": int,
-         "holdout_examples": 0, "holdout_source": "served"}
+         "holdout_examples": 0, "holdout_source": "derived_labels",
+         "selection": {...}}
       - {"status": "insufficient_population", "spans_found": int, "examples": int,
          "distinct_queries": int, "min_samples": int, "min_unique_queries": int,
          "version": int}
-      - {"status": "failed", "error": str}
+      - {"status": "failed", "error": str, "selection": {...}}
     """
 ```
 
@@ -972,10 +983,11 @@ print(f"Status URL: {result['status_url']}")
 
 ### 2. **Data Quality and Safety**
 
-**Confidence Thresholds:**
+**Label Derivation:**
 ```python
-# Profile optimization only trains on spans with confidence >= 0.5
-# (run_profile_optimization filters `if confidence < 0.5: continue`)
+# Profile optimization trains only on queries that exactly one usable profile
+# recovers in full (derive_profile_labels); unrecovered and tied queries are
+# reported under label_exclusions and never trained on.
 ```
 
 **Synthetic Data Control (`TrainingStrategyModel`, `routing/xgboost_meta_models.py`):**
