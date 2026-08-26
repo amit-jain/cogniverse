@@ -445,12 +445,10 @@ class TestDSPyAgentArtifactRoundTrip:
             {
                 "query": "find ML transformer papers",
                 "entities": "ML|CONCEPT|0.9\ntransformer|CONCEPT|0.85",
-                "entity_types": "CONCEPT",
             },
             {
                 "query": "latest NVIDIA GPU benchmarks",
-                "entities": "NVIDIA|ORG|0.95\nGPU|TECHNOLOGY|0.8",
-                "entity_types": "ORG,TECHNOLOGY",
+                "entities": "NVIDIA|ORGANIZATION|0.95\nGPU|TECHNOLOGY|0.8",
             },
         ]
 
@@ -502,8 +500,10 @@ class TestDSPyAgentArtifactRoundTrip:
         assert demos_after[0]["query"] == "find ML transformer papers"
         assert demos_after[0]["entities"] == "ML|CONCEPT|0.9\ntransformer|CONCEPT|0.85"
         assert demos_after[1]["query"] == "latest NVIDIA GPU benchmarks"
-        assert "NVIDIA|ORG|0.95" in demos_after[1]["entities"]
-        assert demos_after[1]["entity_types"] == "ORG,TECHNOLOGY"
+        assert (
+            demos_after[1]["entities"] == "NVIDIA|ORGANIZATION|0.95\nGPU|TECHNOLOGY|0.8"
+        )
+        assert set(demos_after[1]) == {"query", "entities"}
 
     @pytest.mark.asyncio
     async def test_query_enhancement_loads_real_dspy_state(self, real_provider):
@@ -1269,7 +1269,6 @@ class TestDispatcherArtifactWiring:
             {
                 "query": "dispatcher wiring test query",
                 "entities": "WIRING_TEST|CONCEPT|1.0",
-                "entity_types": "CONCEPT",
             },
         ]
         state["extractor.predict"]["demos"] = demos
@@ -1535,13 +1534,15 @@ class TestArtifactAffectsBehavior:
         state["extractor.predict"]["demos"] = [
             {
                 "query": "Netflix producing AI documentaries",
-                "entities": "Netflix|ORG|0.95\nAI|CONCEPT|0.8",
-                "entity_types": "ORG,CONCEPT",
+                "entities": "Netflix|ORGANIZATION|0.95\nAI|CONCEPT|0.8",
             },
             {
                 "query": "Google acquiring DeepMind in London",
-                "entities": "Google|ORG|0.95\nDeepMind|ORG|0.9\nLondon|PLACE|0.85",
-                "entity_types": "ORG,PLACE",
+                "entities": (
+                    "Google|ORGANIZATION|0.95\n"
+                    "DeepMind|ORGANIZATION|0.9\n"
+                    "London|PLACE|0.85"
+                ),
             },
         ]
         await mgr.save_blob(
@@ -1574,7 +1575,8 @@ class TestArtifactAffectsBehavior:
                 )
             )
 
-        # The demos teach: "Netflix producing AI documentaries" → Netflix=ORG, AI=CONCEPT
+        # The demos teach: "Netflix producing AI documentaries" →
+        # Netflix=ORGANIZATION, AI=CONCEPT
         # The DSPy fallback with these demos should extract those entities.
         assert result.path_used == "dspy", (
             f"Expected dspy path (GLiNER disabled), got '{result.path_used}'"
@@ -1585,7 +1587,7 @@ class TestArtifactAffectsBehavior:
         assert result.entities, "Expected non-empty entities list from DSPy fallback"
         # Check that known entities from the query were extracted
         entity_texts = [e.text.lower() for e in result.entities]
-        entity_types = [e.type.upper() for e in result.entities]
+        observed_types = [e.type.upper() for e in result.entities]
         assert any("netflix" in t for t in entity_texts), (
             f"Should extract 'Netflix' from 'Netflix producing AI documentaries', "
             f"got entities: {[(e.text, e.type) for e in result.entities]}"
@@ -1602,9 +1604,9 @@ class TestArtifactAffectsBehavior:
             "EVENT",
             "PRODUCT",
         }
-        assert any(t in valid_types for t in entity_types), (
+        assert any(t in valid_types for t in observed_types), (
             f"Entity types should include known types like ORG/CONCEPT, "
-            f"got: {entity_types}"
+            f"got: {observed_types}"
         )
         assert result.has_entities is True, "has_entities should be True"
         assert result.dominant_types, (

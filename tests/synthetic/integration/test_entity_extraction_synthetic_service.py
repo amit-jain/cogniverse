@@ -186,7 +186,6 @@ async def test_service_generates_entity_extraction_examples(ee_service):
                 {"text": "Meta AI", "type": "ORGANIZATION"},
                 {"text": "Menlo Park", "type": "PLACE"},
             ],
-            "entity_types": "TECHNOLOGY,ORGANIZATION,PLACE",
             "relationships": [
                 {
                     "source": "Meta AI",
@@ -237,7 +236,6 @@ async def test_generator_extracts_entities_from_content():
                 {"text": "PyTorch", "type": "TECHNOLOGY"},
                 {"text": "Meta AI", "type": "ORGANIZATION"},
             ],
-            "entity_types": "TECHNOLOGY,ORGANIZATION",
             "relationships": [],
         },
         {
@@ -246,7 +244,6 @@ async def test_generator_extracts_entities_from_content():
                 {"text": "TensorFlow", "type": "TECHNOLOGY"},
                 {"text": "Google", "type": "ORGANIZATION"},
             ],
-            "entity_types": "TECHNOLOGY,ORGANIZATION",
             "relationships": [],
         },
     ]
@@ -333,13 +330,11 @@ async def test_generator_scans_later_fields_and_stops_at_grounded_target():
         {
             "query": "Marie Curie discovered radium",
             "entities": [{"text": "Marie Curie", "type": "PERSON"}],
-            "entity_types": "PERSON",
             "relationships": [],
         },
         {
             "query": "Ada Lovelace wrote the first algorithm",
             "entities": [{"text": "Ada Lovelace", "type": "PERSON"}],
-            "entity_types": "PERSON",
             "relationships": [],
         },
     ]
@@ -374,7 +369,6 @@ async def test_generator_scans_beyond_one_hundred_entity_free_records():
     assert examples[0].model_dump() == {
         "query": "Marie Curie discovered radium",
         "entities": [{"text": "Marie Curie", "type": "PERSON"}],
-        "entity_types": "PERSON",
         "relationships": [],
     }
 
@@ -412,11 +406,13 @@ def test_generator_drops_identical_duplicate_entity_text():
     )
 
     assert example is not None
+    assert set(example.model_dump()) == {"query", "entities", "relationships"}
+    assert example.query == source
     assert example.entities == [
         {"text": "Meta AI", "type": "ORGANIZATION"},
         {"text": "PyTorch", "type": "TECHNOLOGY"},
     ]
-    assert example.entity_types == "ORGANIZATION,TECHNOLOGY"
+    assert example.relationships == []
 
 
 def test_generator_rejects_conflicting_types_for_duplicate_entity_text():
@@ -596,7 +592,6 @@ async def test_generator_rejects_partial_entity_bearing_source_set():
         {
             "query": "PyTorch works",
             "entities": [{"text": "PyTorch", "type": "TECHNOLOGY"}],
-            "entity_types": "TECHNOLOGY",
             "relationships": [],
         }
     ]
