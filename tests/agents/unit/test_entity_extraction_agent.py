@@ -495,9 +495,7 @@ class TestEntityExtractionAgent:
             (rel.subject, rel.relation, rel.object, rel.confidence)
             for rel in fast_result.relationships
         ]
-        assert [
-            (entity.text, entity.type) for entity in dspy_result.entities
-        ] == [
+        assert [(entity.text, entity.type) for entity in dspy_result.entities] == [
             (entity.text, entity.type) for entity in fast_result.entities
         ]
         assert dspy_result.path_used == "dspy"

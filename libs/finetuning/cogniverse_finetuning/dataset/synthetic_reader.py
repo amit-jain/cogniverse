@@ -72,9 +72,7 @@ def derive_entity_types(entities: List[Dict[str, Any]]) -> List[str]:
     seen_types: set[str] = set()
     for position, entity in enumerate(entities):
         if not isinstance(entity, dict):
-            raise ValueError(
-                f"entities at position {position} must be dictionaries"
-            )
+            raise ValueError(f"entities at position {position} must be dictionaries")
         entity_type = entity.get("type")
         if not isinstance(entity_type, str) or not entity_type.strip():
             raise ValueError(

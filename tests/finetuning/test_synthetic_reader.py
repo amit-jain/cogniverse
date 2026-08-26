@@ -15,8 +15,8 @@ from cogniverse_core.approval.training_schema import (
     validate_approved_training_values,
 )
 from cogniverse_finetuning.dataset.synthetic_reader import (
-    format_synthetic_sft,
     derive_entity_types,
+    format_synthetic_sft,
     load_approved_synthetic_examples,
     synthetic_examples_to_instruction,
 )
