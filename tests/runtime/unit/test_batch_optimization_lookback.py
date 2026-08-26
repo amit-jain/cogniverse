@@ -292,3 +292,27 @@ def test_batch_job_durations_record_measured_cost():
         ("simba", 1200.0, True),
     ]
     _MOD.BATCH_JOB_DURATIONS.clear()
+
+
+def test_batch_job_duration_survives_pytest_stdout_capture(tmp_path, monkeypatch):
+    """Durations must reach a FILE, not just stdout.
+
+    pytest captures stdout and shows it only for FAILING tests, so a printed
+    measurement is invisible for exactly the runs that prove a budget is
+    adequate. A budget set from data needs the data to survive the run.
+    """
+    record = tmp_path / "durations.jsonl"
+    monkeypatch.setattr(_MOD, "BATCH_JOB_DURATIONS_PATH", record)
+    _MOD.BATCH_JOB_DURATIONS.clear()
+
+    _MOD._record_batch_job_duration("entity-extraction", 913.5, timed_out=False)
+    _MOD._record_batch_job_duration("simba", 1200.0, timed_out=True)
+
+    import json
+
+    lines = record.read_text().splitlines()
+    assert [json.loads(line) for line in lines] == [
+        {"mode": "entity-extraction", "seconds": 913.5, "timed_out": False},
+        {"mode": "simba", "seconds": 1200.0, "timed_out": True},
+    ]
+    _MOD.BATCH_JOB_DURATIONS.clear()
