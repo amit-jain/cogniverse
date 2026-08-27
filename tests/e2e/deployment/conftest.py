@@ -615,9 +615,10 @@ def deploy_stack(
     # later as ErrImageNeverPull on a pod, far from its cause.
     from cogniverse_cli.images import enabled_sidecars
 
+    sidecars = enabled_sidecars(project_root, helm_values)
     unpinned = [
         svc
-        for svc in enabled_sidecars(project_root, helm_values)
+        for svc in sidecars
         if f"inference.{svc}.image.tag" not in helm_set_overrides
     ]
     assert not unpinned, (
@@ -639,19 +640,39 @@ def deploy_stack(
         dump_pod_state(namespace)
         raise
 
-    wait_for_stack_ready(namespace)
+    wait_for_stack_ready(
+        namespace, inference_components=inference_component_labels(sidecars)
+    )
 
 
-def ready_pod_wait_args(namespace: str) -> list[str]:
+def inference_component_labels(sidecars: list[str]) -> list[str]:
+    """The chart labels each inference pod ``app.kubernetes.io/component:
+    inference-<service>``."""
+    return [f"inference-{svc}" for svc in sidecars]
+
+
+def ready_pod_wait_args(
+    namespace: str, *, inference_components: list[str]
+) -> list[str]:
     """Completed hook-job pods never become ready, so they are excluded from
-    the selection or the wait burns its whole budget on every deploy."""
+    the selection or the wait burns its whole budget on every deploy.
+    Inference pods load GPU weights sequentially over 20-40 minutes and are
+    gated by the session fixture's 2400s deployment-available wait; this
+    wait covers the rest of the stack within its 300s budget."""
+    selector = "app.kubernetes.io/instance=cogniverse"
+    if inference_components:
+        selector += (
+            ",app.kubernetes.io/component notin ("
+            + ",".join(inference_components)
+            + ")"
+        )
     return [
         "kubectl",
         "wait",
         "--for=condition=ready",
         "pod",
         "-l",
-        "app.kubernetes.io/instance=cogniverse",
+        selector,
         "--field-selector=status.phase!=Succeeded",
         "-n",
         namespace,
@@ -659,9 +680,12 @@ def ready_pod_wait_args(namespace: str) -> list[str]:
     ]
 
 
-def wait_for_stack_ready(namespace: str) -> None:
+def wait_for_stack_ready(namespace: str, *, inference_components: list[str]) -> None:
     try:
-        _cmd(ready_pod_wait_args(namespace), timeout=310)
+        _cmd(
+            ready_pod_wait_args(namespace, inference_components=inference_components),
+            timeout=310,
+        )
     except subprocess.CalledProcessError:
         dump_pod_state(namespace)
         raise
