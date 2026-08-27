@@ -855,7 +855,7 @@ def derive_profile_labels(
         record = {
             "query": query,
             "expected_videos": expected_videos,
-            "available_profiles": list(row_profiles),
+            "available_profiles": list(profiles),
             "selected_profile": selected_profile,
             "confidence": best_score,
             "reasoning": f"{selected_profile} recovered {', '.join(expected_videos)}",
