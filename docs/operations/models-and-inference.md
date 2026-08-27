@@ -119,7 +119,8 @@ through it. The router forwards to the same in-cluster LLM the runtime would
 otherwise call directly — the chart's `srUpstream*` helpers derive the upstream
 host/port from `primaryLLMEndpoint`, so it tracks the `llm.engine` in use
 (ollama → the `-llm` service, vllm → the `-vllm-llm-student` service, external →
-the configured URL). The division of labor:
+the configured URL). Claim extraction during ingestion keeps the direct primary
+LLM endpoint. The division of labor:
 
 - **cogniverse** sends only *who* the tenant is — the tenant identity
   (`x-authz-user-id` = `tenant_id`) and its tier (`x-authz-user-groups`,

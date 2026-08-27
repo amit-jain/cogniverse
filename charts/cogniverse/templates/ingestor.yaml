@@ -85,7 +85,7 @@ spec:
         - name: LLM_ENGINE
           value: {{ .Values.llm.engine | quote }}
         - name: LLM_MODEL
-          value: {{ .Values.llm.model | quote }}
+          value: {{ include "cogniverse.primaryLLMModel" . | quote }}
         - name: MINIO_ENDPOINT
           value: "http://{{ $fullName }}-minio:{{ .Values.minio.service.apiPort }}"
         - name: MINIO_DEFAULT_BUCKET

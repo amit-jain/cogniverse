@@ -320,7 +320,7 @@ spec:
         - name: LLM_ENGINE
           value: {{ .Values.llm.engine | quote }}
         - name: LLM_MODEL
-          value: {{ .Values.llm.model | quote }}
+          value: {{ include "cogniverse.primaryLLMModel" . | quote }}
         {{- if .Values.semanticRouter.enabled }}
         # Route every agent's LLM call through the in-cluster semantic router.
         - name: SEMANTIC_ROUTER_ENABLED

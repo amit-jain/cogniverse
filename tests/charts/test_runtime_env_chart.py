@@ -8,6 +8,7 @@ with ``helm template`` and pin both env vars on the runtime container so
 the wiring can only be removed deliberately.
 """
 
+import json
 import shutil
 import subprocess
 from pathlib import Path
@@ -79,6 +80,19 @@ def _ingestor_container_env(manifests: list) -> dict:
     return {e["name"]: e.get("value") for e in ingestor[0].get("env", [])}
 
 
+def _config_json(manifests: list) -> dict:
+    configmaps = [
+        m
+        for m in manifests
+        if m.get("kind") == "ConfigMap"
+        and m.get("metadata", {}).get("name") == "cogniverse-config"
+    ]
+    assert len(configmaps) == 1, (
+        f"Expected exactly one cogniverse-config ConfigMap, got {len(configmaps)}"
+    )
+    return json.loads(configmaps[0]["data"]["config.json"])
+
+
 def _runtime_pod_spec(manifests: list) -> dict:
     deployments = [
         m
@@ -112,6 +126,24 @@ class TestIngestorMinioEnv:
         runtime = _runtime_container_env(manifests)
         assert ingestor.get("MINIO_DEFAULT_BUCKET")
         assert ingestor["MINIO_DEFAULT_BUCKET"] == runtime.get("MINIO_DEFAULT_BUCKET")
+
+    def test_ingestor_llm_env_and_config_track_primary_endpoint(self):
+        manifests = _render_chart("llm.engine=vllm")
+        ingestor = _ingestor_container_env(manifests)
+        runtime = _runtime_container_env(manifests)
+        config_json = _config_json(manifests)
+
+        assert ingestor["LLM_ENDPOINT"] == "http://cogniverse-vllm-llm-student:8000/v1"
+        assert ingestor["LLM_MODEL"] == "openai/google/gemma-4-e4b-it"
+        assert config_json["llm_config"]["primary"]["api_base"] == (
+            "http://cogniverse-vllm-llm-student:8000/v1"
+        )
+        assert config_json["llm_config"]["primary"]["model"] == (
+            "openai/google/gemma-4-e4b-it"
+        )
+        assert runtime["SEMANTIC_ROUTER_URL"] == (
+            "http://cogniverse-semantic-router-envoy:8801/v1"
+        )
 
 
 @pytest.mark.unit
