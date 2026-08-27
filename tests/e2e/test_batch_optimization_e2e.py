@@ -1459,10 +1459,12 @@ def generate_spans_for_batch_jobs(_kubectl_cluster_ready):
         f"runtime health returned HTTP {response.status_code}: {response.text[:500]}"
     )
     _seed_profile_selection_ground_truth()
-    # The tenant's SIMBA artifact is this module's own state: seed the
-    # query-enhancement spans from the base module, not from whatever an
-    # earlier optimization run left persisted (and loaded into the pod).
-    if _reset_query_enhancement_artifact_in_pod():
+    # The tenant's optimizer artifacts are this module's own state: seed from
+    # the base modules, not from whatever an earlier optimization run left
+    # persisted (and loaded into the pod). Both resets run; bounce once.
+    reset_qe = _reset_query_enhancement_artifact_in_pod()
+    reset_entity = _reset_entity_extraction_artifact_in_pod()
+    if reset_qe or reset_entity:
         _bounce_runtime_pod()
 
     # Per-agent span count used by the live re-record path. BootstrapFewShot
@@ -2129,24 +2131,56 @@ def _active_blob_version_in_pod(kind: str, key: str, tenant_id: str = TENANT_ID)
 
 
 def _reset_query_enhancement_artifact_in_pod(tenant_id: str = TENANT_ID) -> bool:
-    """Persist the base QueryEnhancementModule state as the tenant's SIMBA artifact.
+    return _reset_module_artifact_in_pod(
+        module_import="from cogniverse_agents.query_enhancement_agent import QueryEnhancementModule",
+        module_class="QueryEnhancementModule",
+        key_import="from cogniverse_runtime.optimization_cli import SIMBA_ARTIFACT_KEY",
+        key_expr="SIMBA_ARTIFACT_KEY",
+        label="query_enhancement",
+        tenant_id=tenant_id,
+    )
 
-    Returns True when the persisted artifact differed from the base state
-    (so the running pod, which loaded it at start, must be bounced before
-    it serves the seeding traffic).
+
+def _reset_entity_extraction_artifact_in_pod(tenant_id: str = TENANT_ID) -> bool:
+    return _reset_module_artifact_in_pod(
+        module_import="from cogniverse_agents.entity_extraction_agent import EntityExtractionModule",
+        module_class="EntityExtractionModule",
+        key_import="",
+        key_expr="'entity_extraction'",
+        label="entity_extraction",
+        tenant_id=tenant_id,
+    )
+
+
+def _reset_module_artifact_in_pod(
+    *,
+    module_import: str,
+    module_class: str,
+    key_import: str,
+    key_expr: str,
+    label: str,
+    tenant_id: str,
+) -> bool:
+    """Persist the base state of ``module_class`` as the tenant's active artifact.
+
+    An artifact left by an earlier run carries the signature it was compiled
+    under (DSPy ``load_state`` restores instructions and field descs), so the
+    pod would serve that prompt instead of the code's. Returns True when the
+    persisted artifact differed from the base state (the running pod, which
+    loaded it at start, must be bounced before it serves traffic).
     """
     script = IN_POD_TELEMETRY_PRELUDE + (
         "import asyncio, json; "
         "from cogniverse_foundation.telemetry.manager import get_telemetry_manager; "
         "from cogniverse_agents.optimizer.artifact_manager import ArtifactManager; "
-        "from cogniverse_agents.query_enhancement_agent import QueryEnhancementModule; "
-        "from cogniverse_runtime.optimization_cli import SIMBA_ARTIFACT_KEY; "
-        f"tp = get_telemetry_manager().get_provider(tenant_id={tenant_id!r}); "
+        f"{module_import}; "
+        + (f"{key_import}; " if key_import else "")
+        + f"tp = get_telemetry_manager().get_provider(tenant_id={tenant_id!r}); "
         f"am = ArtifactManager(tp, {tenant_id!r}); "
-        "base = json.dumps(QueryEnhancementModule().dump_state(), default=str); "
-        "blob = asyncio.run(am.load_blob('model', SIMBA_ARTIFACT_KEY)); "
+        f"base = json.dumps({module_class}().dump_state(), default=str); "
+        f"blob = asyncio.run(am.load_blob('model', {key_expr})); "
         "differs = (json.loads(blob) != json.loads(base)) if blob else False; "
-        "asyncio.run(am.save_blob(kind='model', key=SIMBA_ARTIFACT_KEY, content=base)); "
+        f"asyncio.run(am.save_blob(kind='model', key={key_expr}, content=base)); "
         "print('__RESET__' + ('1' if differs else '0'))"
     )
     result = subprocess.run(
@@ -2172,9 +2206,9 @@ def _reset_query_enhancement_artifact_in_pod(tenant_id: str = TENANT_ID) -> bool
     if result.returncode != 0:
         raise RuntimeError(
             _subprocess_failure_message(
-                "reset_query_enhancement_artifact",
+                f"reset_{label}_artifact",
                 result,
-                operation=f"reset query-enhancement artifact for tenant_id={tenant_id!r}",
+                operation=f"reset {label} artifact for tenant_id={tenant_id!r}",
             )
         )
     line = result.stdout.strip().splitlines()[-1]
