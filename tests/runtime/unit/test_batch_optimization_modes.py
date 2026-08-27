@@ -4066,6 +4066,73 @@ class TestProfileSelectionOptimization:
             },
         )
 
+    def test_profile_selection_recovery_score_is_rank_aware(self):
+        from cogniverse_runtime.optimization_cli import (
+            _profile_selection_recovery_score,
+            derive_profile_labels,
+        )
+
+        queries = [
+            _profile_selection_query_record(
+                "ranked query",
+                expected_videos=["v1", "v2"],
+                ground_truth="one two",
+            )
+        ]
+        candidate_profiles = [
+            "video_colpali_smol500_mv_frame",
+            "video_colqwen_omni_mv_chunk_30s",
+        ]
+        corpus = {
+            ("ranked query", "video_colpali_smol500_mv_frame"): [
+                _profile_hit("v2.mp4", segment=0),
+                _profile_hit("noise.mp4", segment=1),
+                _profile_hit("v1.mp4", segment=2),
+            ],
+            ("ranked query", "video_colqwen_omni_mv_chunk_30s"): [
+                _profile_hit("noise.mp4", segment=0),
+                _profile_hit("v1.mp4", segment=1),
+                _profile_hit("v2.mp4", segment=2),
+            ],
+        }
+
+        assert (
+            _profile_selection_recovery_score(["v1", "v2"], ["v2", "noise", "v1"])
+            == 0.6666666666666666
+        )
+        assert (
+            _profile_selection_recovery_score(["v1", "v2"], ["noise", "v1", "v2"])
+            == 0.41666666666666663
+        )
+
+        def retrieve(query: str, profile: str) -> list[dict[str, Any]]:
+            return corpus[(query, profile)]
+
+        labels = derive_profile_labels(
+            queries, candidate_profiles, retrieve, title_fields=_VIDEO_TITLE_FIELDS
+        )
+        assert labels == {"ranked query": "video_colpali_smol500_mv_frame"}
+        assert labels.records == (
+            {
+                "query": "ranked query",
+                "ground_truth": "one two",
+                "query_type": "question",
+                "source": "synthetic.json",
+                "expected_videos": ["v1", "v2"],
+                "available_profiles": [
+                    "video_colpali_smol500_mv_frame",
+                    "video_colqwen_omni_mv_chunk_30s",
+                ],
+                "selected_profile": "video_colpali_smol500_mv_frame",
+                "confidence": 0.6666666666666666,
+                "reasoning": "video_colpali_smol500_mv_frame recovered v1, v2",
+                "example_id": "span:profile-label:0",
+            },
+        )
+        assert labels.excluded_count == 0
+        assert labels.excluded_queries == ()
+        assert labels.labels_by_profile == {"video_colpali_smol500_mv_frame": 1}
+
     def test_profile_selection_label_matches_preserved_upload_basename(self):
         from cogniverse_runtime.optimization_cli import derive_profile_labels
 
