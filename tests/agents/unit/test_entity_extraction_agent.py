@@ -1324,7 +1324,7 @@ class TestEntityExtractionArtifactLoading:
         ) as MockAM:
             mock_am = MockAM.return_value
             mock_am.load_blob = AsyncMock(return_value=json.dumps(artifact_state))
-            mock_am._active_blob_version = AsyncMock(return_value=7)
+            mock_am.active_blob_version = AsyncMock(return_value=7)
 
             entity_agent.telemetry_manager = mock_tm
             entity_agent._artifact_tenant_id = "test:unit"
@@ -1370,7 +1370,7 @@ class TestEntityExtractionArtifactLoading:
         ) as MockAM:
             mock_am = MockAM.return_value
             mock_am.load_blob = AsyncMock(return_value=json.dumps(artifact_state))
-            mock_am._active_blob_version = AsyncMock(return_value=8)
+            mock_am.active_blob_version = AsyncMock(return_value=8)
 
             entity_agent.telemetry_manager = mock_tm
             entity_agent._artifact_tenant_id = "test:unit"
