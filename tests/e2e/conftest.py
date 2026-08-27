@@ -1008,6 +1008,41 @@ def _profile_selection_video_profiles(config: dict) -> list[str]:
     return profiles
 
 
+def _expected_chunk_count(
+    duration_s: float, chunk_duration: float, chunk_overlap: float
+) -> int:
+    """Mirror ChunkProcessor.extract_chunks: one chunk per loop iteration from 0
+    while start < duration, stepping by chunk_duration - chunk_overlap."""
+    if duration_s <= 0:
+        raise AssertionError(f"video duration must be positive, got {duration_s!r}")
+    step = chunk_duration - chunk_overlap
+    if step <= 0:
+        raise AssertionError(
+            f"chunk_duration {chunk_duration!r} must exceed chunk_overlap {chunk_overlap!r}"
+        )
+    count = 0
+    start = 0.0
+    while start < duration_s:
+        count += 1
+        start += step
+    return count
+
+
+def _video_duration_seconds(path: Path) -> float:
+    import cv2
+
+    cap = cv2.VideoCapture(str(path))
+    video_fps = cap.get(cv2.CAP_PROP_FPS)
+    total_frames = int(cap.get(cv2.CAP_PROP_FRAME_COUNT))
+    cap.release()
+    if video_fps <= 0 or total_frames <= 0:
+        raise AssertionError(
+            f"Could not determine duration for tracked video {path!r}: "
+            f"fps={video_fps!r}, frames={total_frames!r}"
+        )
+    return total_frames / video_fps
+
+
 def _expected_sample_documents_fed(path: Path, profile: str, media_type: str) -> int:
     if not media_type.startswith("video/"):
         return 1
@@ -1015,6 +1050,16 @@ def _expected_sample_documents_fed(path: Path, profile: str, media_type: str) ->
     config_path = DATA_ROOT.parent / "configs" / "config.json"
     config = json.loads(config_path.read_text()) if config_path.exists() else {}
     profile_def = config.get("backend", {}).get("profiles", {}).get(profile, {})
+    segmentation = profile_def.get("strategies", {}).get("segmentation", {})
+    if segmentation.get("class") == "ChunkSegmentationStrategy":
+        # Multi-vector chunk profiles feed one document per chunk
+        # (strategy.py: num_patches > 1 -> multi_doc).
+        params = segmentation.get("params", {})
+        return _expected_chunk_count(
+            _video_duration_seconds(path),
+            float(params.get("chunk_duration", 30.0)),
+            float(params.get("chunk_overlap", 0.0)),
+        )
     pipeline_config = profile_def.get("pipeline_config", {}) if profile_def else {}
     target_fps = pipeline_config.get("keyframe_fps")
     if not isinstance(target_fps, (int, float)) or target_fps <= 0:
