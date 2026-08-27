@@ -36,11 +36,13 @@ from cogniverse_agents.entity_extraction_agent import EntityExtractionModule
 from cogniverse_agents.optimizer.artifact_manager import BLOB_VERSION_DECISIONS
 from cogniverse_agents.query_enhancement_agent import QueryEnhancementModule
 from tests.e2e.conftest import (
+    EVALUATION_QUERY_ASSET,
     GATEWAY_VIDEO_QUERIES,
     IN_POD_TELEMETRY_PRELUDE,
     KUBECTL_CONTEXT,
     PHOENIX_URL,
     TENANT_ID,
+    _evaluation_query_rows,
     expected_gateway_calibration,
     expected_gateway_routing,
     register_tenant_and_wait,
@@ -171,17 +173,6 @@ def _synthetic_top_up_counts(
 
 RUNTIME = "http://localhost:33000"
 CONFIG_PATH = Path(__file__).resolve().parents[2] / "configs" / "config.json"
-EVALUATION_QUERY_ASSET = (
-    DATA_ROOT / "testset" / "evaluation" / "sample_videos_retrieval_queries.json"
-)
-
-
-@functools.lru_cache(maxsize=1)
-def _evaluation_query_rows() -> tuple[dict[str, object], ...]:
-    rows = json.loads(EVALUATION_QUERY_ASSET.read_text())
-    if not isinstance(rows, list):
-        raise AssertionError(f"{EVALUATION_QUERY_ASSET} did not load a JSON list")
-    return tuple(row for row in rows if isinstance(row, dict))
 
 
 def _evaluation_query_values(field: str) -> tuple[str, ...]:
