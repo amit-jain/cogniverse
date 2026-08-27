@@ -1014,7 +1014,7 @@ async def _load_current_artifact_for_scoring(
     if mismatch:
         predictor_name, reason = mismatch
         try:
-            artifact_version = await artifact_manager._active_blob_version(
+            artifact_version = await artifact_manager.active_blob_version(
                 "model", blob_key
             )
         except Exception:

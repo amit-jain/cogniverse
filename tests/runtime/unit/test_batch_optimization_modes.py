@@ -3228,7 +3228,7 @@ class TestSimbaQueryEnhancement:
                 side_effect=tracked_query_module,
             ),
             patch(
-                "cogniverse_agents.optimizer.artifact_manager.ArtifactManager._active_blob_version",
+                "cogniverse_agents.optimizer.artifact_manager.ArtifactManager.active_blob_version",
                 new=AsyncMock(return_value=7),
             ),
             caplog.at_level(
@@ -3653,7 +3653,7 @@ class TestProfileSelectionOptimization:
                 state["active_blob"] = state["versioned_saves"][version - 1]["content"]
                 return {"active": {"version": version, "activated_at": "now"}}
 
-            async def _active_blob_version(self, kind, key):
+            async def active_blob_version(self, kind, key):
                 assert (kind, key) == ("model", "profile_selection")
                 return state["artifact_version"]
 
@@ -5423,7 +5423,7 @@ class TestProfileSelectionOptimization:
                 side_effect=tracked_profile_module,
             ),
             patch(
-                "cogniverse_agents.optimizer.artifact_manager.ArtifactManager._active_blob_version",
+                "cogniverse_agents.optimizer.artifact_manager.ArtifactManager.active_blob_version",
                 new=AsyncMock(return_value=7),
             ),
             caplog.at_level(
@@ -6371,7 +6371,7 @@ class TestEntityExtractionOptimization:
                 state["active_blob"] = state["versioned_saves"][version - 1]["content"]
                 return {"active": {"version": version, "activated_at": "now"}}
 
-            async def _active_blob_version(self, kind, key):
+            async def active_blob_version(self, kind, key):
                 assert (kind, key) == ("model", "entity_extraction")
                 return state["artifact_version"]
 
@@ -7119,7 +7119,7 @@ class TestEntityExtractionOptimization:
                 side_effect=tracked_entity_module,
             ),
             patch(
-                "cogniverse_agents.optimizer.artifact_manager.ArtifactManager._active_blob_version",
+                "cogniverse_agents.optimizer.artifact_manager.ArtifactManager.active_blob_version",
                 new=AsyncMock(return_value=7),
             ),
             caplog.at_level(

@@ -741,7 +741,7 @@ class ArtifactManager:
         state = json.loads(raw)
         return {"active": state.get("active")}
 
-    async def _active_blob_version(self, kind: str, key: str) -> int | None:
+    async def active_blob_version(self, kind: str, key: str) -> int | None:
         state = await self.get_blob_state(kind, key)
         active = state.get("active")
         if not isinstance(active, dict):
@@ -800,7 +800,7 @@ class ArtifactManager:
         desired_content, _ = await self.load_blob_version(kind, key, desired_version)
 
         while True:
-            current_version = await self._active_blob_version(kind, key)
+            current_version = await self.active_blob_version(kind, key)
 
             if current_version is not None and current_version > desired_version:
                 desired_version = current_version
@@ -815,7 +815,7 @@ class ArtifactManager:
                 json.dumps(self._active_blob_state(desired_version)),
             )
 
-            confirmed_version = await self._active_blob_version(kind, key)
+            confirmed_version = await self.active_blob_version(kind, key)
             if confirmed_version is not None and confirmed_version > desired_version:
                 desired_version = confirmed_version
                 desired_content, _ = await self.load_blob_version(
@@ -1910,7 +1910,7 @@ def load_optimized_module(agent: Any, blob_key: str) -> None:
             predictor_name, reason = mismatch
             try:
                 artifact_version = run_coro_blocking(
-                    am._active_blob_version("model", blob_key)
+                    am.active_blob_version("model", blob_key)
                 )
             except Exception:
                 artifact_version = None
