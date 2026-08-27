@@ -96,7 +96,7 @@ gateway agent refreshes on a `GATEWAY_ARTIFACT_TTL_S` interval).
   each approved record onto the exact production DSPy signature, compiles the agent's DSPy module, and saves it
   as a `("model", <key>)` blob via `ArtifactManager`. Bootstrap candidates are accepted only when every output
   field exactly matches the reviewed label; otherwise the compiled module retains the labeled example instead
-  of replacing it with teacher-generated content. The versioned ledger keeps the legacy `scored` flag and the
+  of replacing it with teacher-generated content. Current artifacts are contract-checked against the live module before rehydration, and a signature mismatch is treated as missing for scoring rather than overwriting the prompt. The versioned ledger keeps the legacy `scored` flag and the
   numeric `score` used for confirmation when present; `training_selection.<optimizer>.confirmation_score_threshold`
   makes confirmation score-aware, and omitted thresholds keep the old presence-based behavior. Unscored promotions
   stay separate so decay only applies when the known confirmations plus the unscored history still fall below
