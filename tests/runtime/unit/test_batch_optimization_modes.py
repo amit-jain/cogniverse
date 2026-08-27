@@ -5602,6 +5602,8 @@ class TestProfileSelectionOptimization:
                     },
                     "dominant_label_share": 0.5,
                     "exclusions_by_reason": {},
+                    "distinct_queries": 4,
+                    "holdout_queries": 1,
                 },
             }
         ]

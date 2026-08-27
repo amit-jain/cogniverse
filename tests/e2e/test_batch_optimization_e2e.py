@@ -402,18 +402,34 @@ def _entity_ground_truth_queries() -> list[str]:
     return [str(row["query"]) for row in _entity_ground_truth_rows()]
 
 
-def _entity_extraction_expected_holdout_examples(
+def _entity_extraction_label_rows(
+    truth_rows: list[dict[str, object]],
+    approved_rows: list[dict[str, object]],
+) -> list[dict[str, object]]:
+    return [row for row in [*truth_rows, *approved_rows] if row.get("entities")]
+
+
+def _entity_extraction_expected_distinct_queries(
     truth_rows: list[dict[str, object]],
     approved_rows: list[dict[str, object]],
 ) -> int:
-    # production: libs/runtime/cogniverse_runtime/optimization_cli.py:4749-4753 and _split_served_holdout() at :2502
+    # production: _split_served_holdout counts distinct casefolded scoreable queries
+    label_rows = _entity_extraction_label_rows(truth_rows, approved_rows)
+    return len({str(row["query"]).strip().casefold() for row in label_rows})
+
+
+def _entity_extraction_expected_holdout_queries(
+    truth_rows: list[dict[str, object]],
+    approved_rows: list[dict[str, object]],
+) -> int:
+    # production: run_entity_extraction_optimization min_holdout + _split_served_holdout
     min_samples, _ = _population_floor_from_shipped_config("entity_extraction")
     min_holdout = max(1, min_samples // 10)
-    label_rows = [row for row in [*truth_rows, *approved_rows] if row.get("entities")]
+    label_rows = _entity_extraction_label_rows(truth_rows, approved_rows)
     if len(label_rows) < min_holdout:
         return 0
-    distinct_queries = {str(row["query"]).strip().casefold() for row in label_rows}
-    return max(1, len(distinct_queries) // 4)
+    distinct = _entity_extraction_expected_distinct_queries(truth_rows, approved_rows)
+    return max(1, distinct // 4)
 
 
 def _entity_extraction_consumed_example_ids(
@@ -3441,6 +3457,9 @@ class TestSimbaSelectionCap:
         assert selection["mmr_applied"] is True, selection
         assert selection["decayed_count"] == 0, selection
         _assert_holdout_query_contract(result, "simba_query_enhancement")
+        assert result["distinct_queries"] == len(
+            {query.strip().casefold() for query in CAP8_QUERY_ENHANCEMENT_QUERIES}
+        ), result
         assert result["training_examples"] == selection["cap"], result
         assert (
             len(result["consumed_example_ids"]) == simba_selection_tenant.seeded_count
@@ -3581,8 +3600,12 @@ class TestProfileOptimization:
             "labels_by_profile",
             "dominant_label_share",
             "exclusions_by_reason",
+            "distinct_queries",
+            "holdout_queries",
         }, ledger
         assert ledger["dominant_label_share"] == result["dominant_label_share"], ledger
+        assert ledger["distinct_queries"] == result["distinct_queries"], ledger
+        assert ledger["holdout_queries"] == result["holdout_queries"], ledger
         assert ledger["version"] == result["version"], ledger
         assert ledger["kind"] == "model", ledger
         assert ledger["key"] == "profile_selection", ledger
@@ -3700,8 +3723,12 @@ class TestProfileOptimization:
             "labels_by_profile",
             "dominant_label_share",
             "exclusions_by_reason",
+            "distinct_queries",
+            "holdout_queries",
         }, ledger
         assert ledger["dominant_label_share"] == result["dominant_label_share"], ledger
+        assert ledger["distinct_queries"] == result["distinct_queries"], ledger
+        assert ledger["holdout_queries"] == result["holdout_queries"], ledger
         assert ledger["version"] == result["version"], ledger
         assert ledger["kind"] == "model", ledger
         assert ledger["key"] == "profile_selection", ledger
@@ -3856,8 +3883,12 @@ class TestProfileSelectionArtifactReload:
             "labels_by_profile",
             "dominant_label_share",
             "exclusions_by_reason",
+            "distinct_queries",
+            "holdout_queries",
         }, ledger
         assert ledger["dominant_label_share"] == result["dominant_label_share"], ledger
+        assert ledger["distinct_queries"] == result["distinct_queries"], ledger
+        assert ledger["holdout_queries"] == result["holdout_queries"], ledger
         assert ledger["version"] == result["version"], ledger
         assert ledger["kind"] == "model", ledger
         assert ledger["key"] == "profile_selection", ledger
@@ -4136,12 +4167,16 @@ class TestEntityExtractionOptimization:
         assert result["label_rows"] == result["truth_rows"] + result["approved_rows"], (
             result
         )
-        expected_holdout_queries = _entity_extraction_expected_holdout_examples(
+        expected_holdout_queries = _entity_extraction_expected_holdout_queries(
             list(batch["ground_truth_rows"]),
             approved_examples,
         )
-        # production: libs/runtime/cogniverse_runtime/optimization_cli.py:4749-4753 and _split_served_holdout() at :2502
         assert result["holdout_queries"] == expected_holdout_queries, result
+        assert result["distinct_queries"] == (
+            _entity_extraction_expected_distinct_queries(
+                list(batch["ground_truth_rows"]), approved_examples
+            )
+        ), result
         assert result["selection"]["pool"] == (
             result["label_rows"] - result["holdout_examples"]
         ), result
@@ -4715,8 +4750,12 @@ class TestArtifactLoadingRoundTrip:
             "labels_by_profile",
             "dominant_label_share",
             "exclusions_by_reason",
+            "distinct_queries",
+            "holdout_queries",
         }, ledger
         assert ledger["dominant_label_share"] == result["dominant_label_share"], ledger
+        assert ledger["distinct_queries"] == result["distinct_queries"], ledger
+        assert ledger["holdout_queries"] == result["holdout_queries"], ledger
         assert ledger["version"] == result["version"], ledger
         assert ledger["kind"] == "model", ledger
         assert ledger["key"] == "profile_selection", ledger
@@ -5692,12 +5731,14 @@ class TestTrainingSelectionDecay:
         )
         assert result["served_scoreable_examples"] == 1, result
         assert result["holdout_source"] == "ground_truth", result
-        expected_holdout_queries = _entity_extraction_expected_holdout_examples(
+        expected_holdout_queries = _entity_extraction_expected_holdout_queries(
             truth_rows,
             approved_examples,
         )
-        # production: libs/runtime/cogniverse_runtime/optimization_cli.py:4749-4753 and _split_served_holdout() at :2502
         assert result["holdout_queries"] == expected_holdout_queries, result
+        assert result["distinct_queries"] == (
+            _entity_extraction_expected_distinct_queries(truth_rows, approved_examples)
+        ), result
         assert result["selection"]["pool"] == (
             result["label_rows"] - result["holdout_examples"]
         ), result
