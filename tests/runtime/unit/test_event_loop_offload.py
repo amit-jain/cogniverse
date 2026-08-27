@@ -94,11 +94,15 @@ async def test_kg_extraction_and_face_pipeline_offloaded(monkeypatch):
     SIGTERM until k8s SIGKILLed the pod mid-extraction."""
     from types import SimpleNamespace
 
+    from cogniverse_agents.graph.graph_schema import DOCUMENT_MODALITY
     from cogniverse_runtime.routers import ingestion
 
     records = [
         SimpleNamespace(
-            text="seg text", segment_anchor=SimpleNamespace(segment_id=f"s{i}")
+            text="seg text",
+            segment_anchor=SimpleNamespace(
+                segment_id=f"s{i}", modality=DOCUMENT_MODALITY
+            ),
         )
         for i in range(2)
     ]

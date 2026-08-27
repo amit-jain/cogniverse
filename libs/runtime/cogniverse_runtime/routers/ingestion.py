@@ -18,7 +18,14 @@ from fastapi import (
 )
 from pydantic import BaseModel
 
-from cogniverse_agents.graph.graph_schema import Mention
+from cogniverse_agents.graph.graph_schema import (
+    CLAIM_SEGMENT_MODALITIES,
+    DOCUMENT_MODALITY,
+    OCR_MODALITY,
+    TRANSCRIPT_MODALITY,
+    VLM_MODALITY,
+    Mention,
+)
 from cogniverse_core.common.tenant_utils import assert_tenant_exists, require_tenant_id
 from cogniverse_core.registries.backend_registry import BackendRegistry
 from cogniverse_foundation.config.manager import ConfigManager
@@ -102,6 +109,11 @@ def _evict_finished_jobs() -> None:
         if job.status in ("completed", "failed")
     ][:excess]:
         del ingestion_jobs[job_id]
+
+
+def _should_extract_claims_for_modality(modality: str) -> bool:
+    """Return True when a segment modality should reach claim extraction."""
+    return modality in CLAIM_SEGMENT_MODALITIES
 
 
 # FastAPI dependencies - will be overridden in main.py via app.dependency_overrides
@@ -493,7 +505,7 @@ def _iter_segments_for_graph(
                             segment_id=str(idx),
                             ts_start=float(span_start),
                             ts_end=float(span_end),
-                            modality="transcript",
+                            modality=TRANSCRIPT_MODALITY,
                             evidence_span=combined[:_MAX_EVIDENCE_CHARS],
                         ),
                     )
@@ -512,7 +524,7 @@ def _iter_segments_for_graph(
                             segment_id=f"seg_{idx}",
                             ts_start=float(seg.get("start", 0.0) or 0.0),
                             ts_end=float(seg.get("end", 0.0) or 0.0),
-                            modality="transcript",
+                            modality=TRANSCRIPT_MODALITY,
                             evidence_span=text[:_MAX_EVIDENCE_CHARS],
                         ),
                     )
@@ -539,7 +551,7 @@ def _iter_segments_for_graph(
                         segment_id=f"frame_{frame_id}",
                         ts_start=ts,
                         ts_end=ts,
-                        modality="vlm",
+                        modality=VLM_MODALITY,
                         evidence_span=text[:_MAX_EVIDENCE_CHARS],
                     ),
                 )
@@ -566,7 +578,7 @@ def _iter_segments_for_graph(
                 segment_id=f"frame_{fid}",
                 ts_start=ts,
                 ts_end=ts,
-                modality="ocr",
+                modality=OCR_MODALITY,
                 evidence_span=text[:_MAX_EVIDENCE_CHARS],
             ),
         )
@@ -587,7 +599,7 @@ def _iter_segments_for_graph(
                     segment_id=f"file_{idx}",
                     ts_start=0.0,
                     ts_end=0.0,
-                    modality="document",
+                    modality=DOCUMENT_MODALITY,
                     evidence_span=text[:_MAX_EVIDENCE_CHARS],
                 ),
             )
@@ -648,6 +660,7 @@ async def _extract_graph_per_segment(
         "edges_upserted": 0,
         "graph_failed": 0,
         "backrefs_by_segment": {},
+        "claim_segments_skipped_by_modality": 0,
     }
 
     if graph_router._graph_manager_factory is None:
@@ -715,6 +728,7 @@ async def _extract_graph_per_segment_inner(
         "edges_upserted": 0,
         "graph_failed": 0,
         "backrefs_by_segment": {},
+        "claim_segments_skipped_by_modality": 0,
     }
 
     if graph_router._graph_manager_factory is None:
@@ -741,10 +755,19 @@ async def _extract_graph_per_segment_inner(
     entity_pool_seen: set[str] = set()
 
     segments_list = list(_iter_segments_for_graph(processing_results, source_doc_id))
+    claim_segments_skipped_by_modality = sum(
+        1
+        for record in segments_list
+        if not _should_extract_claims_for_modality(record.segment_anchor.modality)
+    )
+    claim_segments = len(segments_list) - claim_segments_skipped_by_modality
     logger.info(
-        "KG extraction: %d segments yielded for source_doc_id=%s "
+        "KG extraction: %d segments yielded (%d claim segments, %d skipped by modality) "
+        "for source_doc_id=%s "
         "(transcript_keys=%s, descriptions_keys=%s, keyframes_keys=%s)",
         len(segments_list),
+        claim_segments,
+        claim_segments_skipped_by_modality,
         source_doc_id,
         list((processing_results.get("transcript") or {}).keys())
         if isinstance(processing_results.get("transcript"), dict)
@@ -800,6 +823,8 @@ async def _extract_graph_per_segment_inner(
                 entity_pool_seen.add(n.name.lower())
 
     async def _claims(record, ents, prior):
+        if not _should_extract_claims_for_modality(record.segment_anchor.modality):
+            return []
         # The DSPy claim LLM call is blocking — same off-loop treatment.
         async with sem:
             return await asyncio.to_thread(
@@ -929,6 +954,7 @@ async def _extract_graph_per_segment_inner(
         "edges_upserted": counts.get("edges_upserted", 0),
         "graph_failed": len(failed_doc_ids),
         "backrefs_by_segment": backrefs_by_segment,
+        "claim_segments_skipped_by_modality": claim_segments_skipped_by_modality,
     }
 
 
