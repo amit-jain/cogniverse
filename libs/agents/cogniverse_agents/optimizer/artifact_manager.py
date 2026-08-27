@@ -1908,15 +1908,12 @@ def load_optimized_module(agent: Any, blob_key: str) -> None:
         )
         if mismatch is not None:
             predictor_name, reason = mismatch
-            artifact_version = None
-            active_blob_version = getattr(am, "_active_blob_version", None)
-            if active_blob_version is not None:
-                try:
-                    artifact_version = run_coro_blocking(
-                        active_blob_version("model", blob_key)
-                    )
-                except Exception:
-                    artifact_version = None
+            try:
+                artifact_version = run_coro_blocking(
+                    am._active_blob_version("model", blob_key)
+                )
+            except Exception:
+                artifact_version = None
             version_text = (
                 f" v{artifact_version}" if artifact_version is not None else ""
             )
