@@ -633,11 +633,32 @@ def _profile_selection_expected_media_type(record: dict[str, Any]) -> str:
 def _profile_selection_recovery_score(
     expected_videos: Sequence[str], retrieved_ids: Sequence[str]
 ) -> float:
-    expected = {str(item).strip() for item in expected_videos if str(item).strip()}
+    """Mean reciprocal rank of the expected videos in the retrieved order.
+
+    For each unique expected video id, find its first 1-based rank in the
+    ordered retrieval output returned by ``retrieve(query, profile)`` and
+    average ``1 / rank`` across the expected ids. Missing ids contribute 0.0.
+    The helper uses the production order already returned by retrieval; it
+    does not re-sort or re-rank the rows.
+    """
+    expected = list(
+        dict.fromkeys(
+            str(item).strip() for item in expected_videos if str(item).strip()
+        )
+    )
     if not expected:
         return 0.0
-    retrieved = {str(item).strip() for item in retrieved_ids if str(item).strip()}
-    return len(expected & retrieved) / len(expected)
+    rank_by_id: dict[str, int] = {}
+    for rank, item in enumerate(retrieved_ids, start=1):
+        key = str(item).strip()
+        if key and key not in rank_by_id:
+            rank_by_id[key] = rank
+    if not rank_by_id:
+        return 0.0
+    reciprocal_ranks = [
+        1.0 / rank_by_id[item] for item in expected if item in rank_by_id
+    ]
+    return sum(reciprocal_ranks) / len(expected)
 
 
 def derive_profile_labels(
@@ -795,7 +816,7 @@ def derive_profile_labels(
             if profile_result["score"] == best_score
         ]
 
-        if best_score < 1.0:
+        if best_score <= 0.0:
             exclusion: dict[str, Any] = {
                 "query": query,
                 "reason": "no_profile_recovered_expected_videos",
