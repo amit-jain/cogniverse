@@ -4907,13 +4907,13 @@ class TestSyntheticGeneration:
         assert "Traceback" not in result.stderr, result.stderr
 
 
-def _seed_backdated_training_selection_rows_in_pod(
+def _backdated_training_selection_script(
     tenant_id: str,
     artifact_key: str,
     rows: list[dict[str, object]],
-) -> None:
+) -> str:
     rows_json = json.dumps(rows)
-    script = IN_POD_TELEMETRY_PRELUDE + textwrap.dedent(
+    return IN_POD_TELEMETRY_PRELUDE + textwrap.dedent(
         f"""\
         import asyncio
         import json
@@ -4941,7 +4941,7 @@ def _seed_backdated_training_selection_rows_in_pod(
                 await am._provider.datasets.create_dataset(
                     name=am._versioned_dataset_name("model", {artifact_key!r}, version),
                     data=pd.DataFrame(
-                        [{"content": row["content"], "ledger": json.dumps(ledger)}]
+                        [{{"content": row["content"], "ledger": json.dumps(ledger)}}]
                     ),
                     metadata={{
                         "artifact_type": "blob_model",
@@ -4957,6 +4957,14 @@ def _seed_backdated_training_selection_rows_in_pod(
         asyncio.run(_go())
         """
     )
+
+
+def _seed_backdated_training_selection_rows_in_pod(
+    tenant_id: str,
+    artifact_key: str,
+    rows: list[dict[str, object]],
+) -> None:
+    script = _backdated_training_selection_script(tenant_id, artifact_key, rows)
     result = subprocess.run(
         [
             "kubectl",
