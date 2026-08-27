@@ -861,14 +861,31 @@ def _batch_span_count() -> int:
     return count
 
 
+def _capture_mode() -> str:
+    return os.environ.get(OPTIMIZER_SPAN_CAPTURE_MODE_ENV, "replay").strip().lower()
+
+
 def _seeded_enhancement_queries() -> set[str]:
     """Exactly the query-enhancement queries the module fixture seeds.
 
-    The seeding loop cycles ENHANCEMENT_QUERIES ``_batch_span_count()`` times,
-    so it sends a prefix of that list rather than all of it. Waits and
-    assertions derive from this one rule; expecting the whole list is
-    unsatisfiable whenever the count is below ``len(ENHANCEMENT_QUERIES)``.
+    Under replay the module seeds the sampled recording, so the seeded set is
+    the distinct input of every replayed query-enhancement record. Under
+    record/re-record the live loop cycles ENHANCEMENT_QUERIES
+    ``_batch_span_count()`` times (a prefix of the list) plus the grounded
+    queries. Waits and assertions derive from this one rule.
     """
+    if _capture_mode() == "replay":
+        from cogniverse_foundation.telemetry.config import SPAN_NAME_QUERY_ENHANCEMENT
+
+        sampled = sample_capture_by_name(
+            load_capture_json(OPTIMIZER_SPAN_CAPTURE_PATH),
+            _optimizer_capture_sample_caps(),
+        )
+        return {
+            str(record["attributes"].get("input.value") or "").strip()
+            for record in sampled
+            if record["name"] == SPAN_NAME_QUERY_ENHANCEMENT
+        }
     span_count = _batch_span_count()
     cycled = {
         ENHANCEMENT_QUERIES[i % len(ENHANCEMENT_QUERIES)] for i in range(span_count)
