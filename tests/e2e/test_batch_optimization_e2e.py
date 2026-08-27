@@ -266,6 +266,19 @@ def _population_floor_from_shipped_config(optimizer_type: str) -> tuple[int, int
     )
 
 
+def _assert_holdout_query_contract(result: dict, optimizer_type: str) -> None:
+    """Pin the distinct-query holdout contract for a success payload."""
+    floor_min_samples, _ = _population_floor_from_shipped_config(optimizer_type)
+    min_holdout = max(1, floor_min_samples // 10)
+    expected_holdout_queries = (
+        0
+        if result["served_scoreable_examples"] < min_holdout
+        else max(1, result["distinct_queries"] // 4)
+    )
+    assert result["holdout_queries"] == expected_holdout_queries, result
+    assert (result["holdout_examples"] == 0) == (result["holdout_queries"] == 0), result
+
+
 @functools.lru_cache(maxsize=None)
 def _training_selection_cap_from_shipped_config(optimizer_type: str) -> int:
     """Read the shipped training-selection cap for ``optimizer_type``."""
@@ -3060,6 +3073,8 @@ def _assert_simba_served_the_best_module(result: dict, blob_before: str) -> dict
         "served_examples",
         "approved_examples",
         "served_scoreable_examples",
+        "distinct_queries",
+        "holdout_queries",
         "non_trainable_examples",
         "unscoreable_examples",
         "training_examples",
@@ -3079,9 +3094,7 @@ def _assert_simba_served_the_best_module(result: dict, blob_before: str) -> dict
     assert (
         result["examples"] == result["served_examples"] + result["approved_examples"]
     ), result
-    assert result["holdout_examples"] == max(
-        1, result["served_scoreable_examples"] // 4
-    ), result
+    _assert_holdout_query_contract(result, "simba_query_enhancement")
     # Simba filters non-trainable records BEFORE selection, so the pool
     # selection sees is the trainable remainder of the train split. Profile
     # and entity extraction have no such filter and keep the plain identity.
@@ -3356,6 +3369,8 @@ class TestSimbaSelectionCap:
             "served_examples",
             "approved_examples",
             "served_scoreable_examples",
+            "distinct_queries",
+            "holdout_queries",
             "non_trainable_examples",
             "unscoreable_examples",
             "unscoreable_examples",
@@ -3425,14 +3440,7 @@ class TestSimbaSelectionCap:
         assert selection["pool"] > selection["cap"], selection
         assert selection["mmr_applied"] is True, selection
         assert selection["decayed_count"] == 0, selection
-        # Derived, not restated: the served holdout is
-        # max(1, served_scoreable // 4) at optimization_cli.py:1700, so the
-        # count moves with the seeded pool. Seven sibling assertions in this
-        # file already pin it this way; a literal here drifts the moment the
-        # fixture seeds a different number of queries.
-        assert result["holdout_examples"] == max(
-            1, result["served_scoreable_examples"] // 4
-        ), result
+        _assert_holdout_query_contract(result, "simba_query_enhancement")
         assert result["training_examples"] == selection["cap"], result
         assert (
             len(result["consumed_example_ids"]) == simba_selection_tenant.seeded_count
@@ -3493,6 +3501,8 @@ class TestProfileOptimization:
             "served_examples",
             "approved_examples",
             "served_scoreable_examples",
+            "distinct_queries",
+            "holdout_queries",
             "training_examples",
             "holdout_examples",
             "holdout_source",
@@ -3521,9 +3531,7 @@ class TestProfileOptimization:
             / sum(result["labels_by_profile"].values())
         ), result
         assert result["approved_examples"] == len(approved), result
-        assert result["holdout_examples"] == max(
-            1, result["served_scoreable_examples"] // 4
-        ), result
+        _assert_holdout_query_contract(result, "profile_selection")
         assert result["selection"]["pool"] == (
             result["served_examples"]
             - result["holdout_examples"]
@@ -3612,6 +3620,8 @@ class TestProfileOptimization:
             "served_examples",
             "approved_examples",
             "served_scoreable_examples",
+            "distinct_queries",
+            "holdout_queries",
             "training_examples",
             "holdout_examples",
             "holdout_source",
@@ -3640,9 +3650,7 @@ class TestProfileOptimization:
             / sum(result["labels_by_profile"].values())
         ), result
         assert result["approved_examples"] == len(approved), result
-        assert result["holdout_examples"] == max(
-            1, result["served_scoreable_examples"] // 4
-        ), result
+        _assert_holdout_query_contract(result, "profile_selection")
         assert result["selection"]["pool"] == (
             result["served_examples"]
             - result["holdout_examples"]
@@ -3768,6 +3776,8 @@ class TestProfileSelectionArtifactReload:
             "served_examples",
             "approved_examples",
             "served_scoreable_examples",
+            "distinct_queries",
+            "holdout_queries",
             "training_examples",
             "holdout_examples",
             "holdout_source",
@@ -3796,9 +3806,7 @@ class TestProfileSelectionArtifactReload:
             / sum(result["labels_by_profile"].values())
         ), result
         assert result["approved_examples"] == len(approved), result
-        assert result["holdout_examples"] == max(
-            1, result["served_scoreable_examples"] // 4
-        ), result
+        _assert_holdout_query_contract(result, "profile_selection")
         assert result["selection"]["pool"] == (
             result["served_examples"]
             - result["holdout_examples"]
@@ -4098,6 +4106,8 @@ class TestEntityExtractionOptimization:
             "spans_found",
             "served_examples",
             "served_scoreable_examples",
+            "distinct_queries",
+            "holdout_queries",
             "label_rows",
             "truth_rows",
             "approved_rows",
@@ -4126,12 +4136,12 @@ class TestEntityExtractionOptimization:
         assert result["label_rows"] == result["truth_rows"] + result["approved_rows"], (
             result
         )
-        expected_holdout_examples = _entity_extraction_expected_holdout_examples(
+        expected_holdout_queries = _entity_extraction_expected_holdout_examples(
             list(batch["ground_truth_rows"]),
             approved_examples,
         )
         # production: libs/runtime/cogniverse_runtime/optimization_cli.py:4749-4753 and _split_served_holdout() at :2502
-        assert result["holdout_examples"] == expected_holdout_examples, result
+        assert result["holdout_queries"] == expected_holdout_queries, result
         assert result["selection"]["pool"] == (
             result["label_rows"] - result["holdout_examples"]
         ), result
@@ -4625,6 +4635,8 @@ class TestArtifactLoadingRoundTrip:
             "served_examples",
             "approved_examples",
             "served_scoreable_examples",
+            "distinct_queries",
+            "holdout_queries",
             "training_examples",
             "holdout_examples",
             "holdout_source",
@@ -4653,9 +4665,7 @@ class TestArtifactLoadingRoundTrip:
             / sum(result["labels_by_profile"].values())
         ), result
         assert result["approved_examples"] == len(approved), result
-        assert result["holdout_examples"] == max(
-            1, result["served_scoreable_examples"] // 4
-        ), result
+        _assert_holdout_query_contract(result, "profile_selection")
         assert result["selection"]["pool"] == (
             result["served_examples"]
             - result["holdout_examples"]
@@ -5682,12 +5692,12 @@ class TestTrainingSelectionDecay:
         )
         assert result["served_scoreable_examples"] == 1, result
         assert result["holdout_source"] == "ground_truth", result
-        expected_holdout_examples = _entity_extraction_expected_holdout_examples(
+        expected_holdout_queries = _entity_extraction_expected_holdout_examples(
             truth_rows,
             approved_examples,
         )
         # production: libs/runtime/cogniverse_runtime/optimization_cli.py:4749-4753 and _split_served_holdout() at :2502
-        assert result["holdout_examples"] == expected_holdout_examples, result
+        assert result["holdout_queries"] == expected_holdout_queries, result
         assert result["selection"]["pool"] == (
             result["label_rows"] - result["holdout_examples"]
         ), result
