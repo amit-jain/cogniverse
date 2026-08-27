@@ -1276,6 +1276,8 @@ curl -X POST http://localhost:8000/admin/tenant/acme:production/optimize/runs/<w
 
 Optimization artifacts are persisted to the telemetry store via `ArtifactManager` using Phoenix `DatasetStore`. The `profile`, `entity-extraction`, and `simba` compile modes (and `DSPyAgentPromptOptimizer`) save compiled modules that agents reload on each dispatch via `am.load_blob(...)`; `triggered` mode instead publishes versioned prompts served by the per-request overlay (`_serve_compiled_prompts`).
 
+Loaded DSPy module blobs must match the live module's signature contract exactly: each predictor's saved `signature.instructions` and ordered `signature.fields` `prefix`/`description` pairs must match before `load_state()` runs. When the contract differs, the agent keeps its in-memory defaults, records `artifact_load_status = "signature_mismatch"`, and skips the reload.
+
 ---
 
 ## Testing

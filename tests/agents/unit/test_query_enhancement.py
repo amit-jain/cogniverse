@@ -1,6 +1,7 @@
 """Unit tests for DSPy integration across all agents."""
 
 import asyncio
+import json
 import logging
 from unittest.mock import AsyncMock, MagicMock, Mock, patch
 
@@ -1814,24 +1815,36 @@ class TestQueryEnhancementArtifactLoading:
     @pytest.mark.asyncio
     async def test_loads_dspy_artifact(self, qe_agent):
         """QueryEnhancementAgent should load optimized DSPy module state."""
-        import json
+        from cogniverse_agents.query_enhancement_agent import (
+            QueryEnhancementModule,
+        )
 
         mock_tm = MagicMock()
         mock_tm.get_provider.return_value = MagicMock()
-        fake_state = {"enhancer.predict": {"signature": {"fields": []}, "demos": []}}
+        artifact_state = json.loads(json.dumps(QueryEnhancementModule().dump_state()))
+        artifact_state["enhancer.predict"]["demos"] = [
+            {
+                "query": "ML tutorials",
+                "enhanced_query": "machine learning tutorials",
+            }
+        ]
 
         with patch(
             "cogniverse_agents.optimizer.artifact_manager.ArtifactManager"
         ) as MockAM:
             mock_am = MockAM.return_value
-            mock_am.load_blob = AsyncMock(return_value=json.dumps(fake_state))
+            mock_am.load_blob = AsyncMock(return_value=json.dumps(artifact_state))
 
             qe_agent.telemetry_manager = mock_tm
             qe_agent._artifact_tenant_id = "test:unit"
-            qe_agent.dspy_module = MagicMock()
+            qe_agent.dspy_module = QueryEnhancementModule()
             qe_agent._load_artifact()
 
-        qe_agent.dspy_module.load_state.assert_called_once_with(fake_state)
+        loaded_state = qe_agent.dspy_module.dump_state()["enhancer.predict"]
+        assert (
+            loaded_state["signature"] == artifact_state["enhancer.predict"]["signature"]
+        )
+        assert loaded_state["demos"] == artifact_state["enhancer.predict"]["demos"]
 
     def test_defaults_without_artifact(self, qe_agent):
         """Agent uses default module when no artifact exists."""
