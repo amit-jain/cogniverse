@@ -4375,20 +4375,25 @@ class TestEntityExtractionOptimization:
         assert [
             all("|" in line for line in demo["entities"].splitlines()) for demo in demos
         ] == [True] * len(demos), demos
-        demo_queries = " ".join(d["query"].lower() for d in demos)
-        entity_terms = (
-            "ml",
-            "ai",
-            "learning",
-            "neural",
-            "vision",
-            "transformer",
-            "deep",
-        )
-        assert any(t in demo_queries for t in entity_terms), (
-            f"Demos should contain entity-rich queries from test data, "
-            f"got: {[d['query'] for d in demos[:5]]}"
-        )
+        # Every demo is drawn from the population the job trained on: the
+        # seeded ground truth plus approved rows. Labeled demos carry that
+        # row's entities exactly as production serializes them; bootstrapped
+        # demos carry the teacher's output for a population query.
+        from cogniverse_runtime.optimization_cli import _entity_extraction_example
+
+        population = {
+            str(row["query"]): row["entities"]
+            for row in [*batch["ground_truth_rows"], *batch["approved_examples"]]
+        }
+        assert [demo["query"] in population for demo in demos] == [True] * len(demos), [
+            demo["query"] for demo in demos
+        ]
+        assert [demo["entities"] for demo in labeled] == [
+            _entity_extraction_example(
+                {"query": demo["query"], "entities": population[demo["query"]]}
+            ).entities
+            for demo in labeled
+        ], labeled
 
 
 # ---------------------------------------------------------------------------
