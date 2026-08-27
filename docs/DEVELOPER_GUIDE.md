@@ -299,9 +299,9 @@ match HEAD again. It rebuilds the images (layer-cached), imports them into
 k3d, and helm-upgrades.
 
 Versioning is a **single train**: one git-derived version
-(`0.1.devN+g<sha>`, computed by hatch-vcs at build time) stamps every image,
-the packaged chart, and the wheels together — regardless of which files a
-commit touched. Committing moves nothing by itself; only a build re-stamps.
+(`0.1.devN+g<sha>`, computed from the latest deploy-input commit) stamps every
+image, the packaged chart, and the wheels together. A tests-only commit keeps
+the same version; only a deploy-input change re-stamps.
 A consequence worth knowing: because of the dev mounts, the image tag on a
 dev cluster records the *base image's* provenance, not the running code's —
 the running code is always your tree as of the last pod restart. (In dev

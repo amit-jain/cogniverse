@@ -425,7 +425,9 @@ the whole ingest.
 
 Custom images are built locally by `cogniverse up` (which calls
 `build_images()` in `libs/cli/cogniverse_cli/images.py`) and imported
-into the k3d cluster. They are NOT published to a public registry —
+into the k3d cluster. `build_images()` tags them from the latest deploy-input
+commit, so tests-only commits reuse the same image set. They are NOT published
+to a public registry —
 they're loaded from the host docker daemon into the cluster's
 containerd via `k3d image import`.
 

@@ -34,6 +34,7 @@ from cogniverse_cli.argo import (
     ARGO_NAMESPACE,
     ARGO_WORKFLOW_CONTROLLER_LABEL_SELECTOR,
 )
+from cogniverse_cli.images import DEPLOY_INPUT_PATHS
 from cogniverse_cli.secrets import read_secret
 
 from cogniverse_agents.gateway_agent import SIMPLE_ROUTE_MAP, GatewayAgent
@@ -1873,16 +1874,7 @@ def _stop_dev_cluster_and_free_ports() -> None:
 
 
 _E2E_DEPLOY_STATE_CM = "e2e-deploy-state"
-_E2E_DEPLOY_DIFF_PATHS = (
-    "libs",
-    "configs",
-    "charts",
-    "deploy",
-    "scripts",
-    "pyproject.toml",
-    "uv.lock",
-    ".dockerignore",
-)
+_E2E_DEPLOY_DIFF_PATHS = DEPLOY_INPUT_PATHS
 
 
 def _e2e_repo_root() -> Path:
@@ -1925,15 +1917,7 @@ def _current_e2e_deploy_sha(repo_root: Path | None = None) -> str:
 def _normalize_e2e_deployment_identity(
     identity: dict[str, object],
 ) -> dict[str, object]:
-    normalized = dict(identity)
-    set_overrides = normalized.get("set_overrides")
-    if isinstance(set_overrides, dict):
-        normalized["set_overrides"] = {
-            key: value
-            for key, value in set_overrides.items()
-            if key.rsplit(".", 1)[-1] != "tag"
-        }
-    return normalized
+    return dict(identity)
 
 
 def _effective_e2e_deployment_identity(repo_root: Path) -> dict:
@@ -1943,24 +1927,19 @@ def _effective_e2e_deployment_identity(repo_root: Path) -> dict:
         repo_root,
         extra_set=_e2e_deployment_overrides(),
     )
-    return _normalize_e2e_deployment_identity(
-        {
-            "backend": inputs["backend"],
-            "values_files": [
-                os.path.relpath(path, repo_root) for path in inputs["helm_values"]
-            ],
-            "set_overrides": inputs["helm_set_overrides"],
-            "image_repository": inputs["image_repository"],
-        }
-    )
+    return {
+        "backend": inputs["backend"],
+        "values_files": [
+            os.path.relpath(path, repo_root) for path in inputs["helm_values"]
+        ],
+        "set_overrides": inputs["helm_set_overrides"],
+        "image_repository": inputs["image_repository"],
+    }
 
 
 def _current_e2e_deploy_state(repo_root: Path | None = None) -> dict:
     repo_root = repo_root or _e2e_repo_root()
-    return {
-        "sha": _current_e2e_deploy_sha(repo_root),
-        **_effective_e2e_deployment_identity(repo_root),
-    }
+    return _effective_e2e_deployment_identity(repo_root)
 
 
 def _require_clean_e2e_worktree(repo_root: Path | None = None) -> None:
@@ -2045,52 +2024,18 @@ def _e2e_deploy_reuse_state(
 ) -> tuple[str, str]:
     if not isinstance(deployed_state, dict):
         return "stale", "deploy stamp is missing or malformed"
-    deployed_sha = deployed_state.get("sha")
-    if not isinstance(deployed_sha, str) or not re.fullmatch(
-        r"[0-9a-f]{40}", deployed_sha
-    ):
-        return "stale", "deployed SHA is missing or malformed"
-
-    resolved = _git_e2e(
-        repo_root,
-        "rev-parse",
-        "--verify",
-        "--quiet",
-        f"{deployed_sha}^{{commit}}",
-    )
-    if resolved.returncode != 0:
-        return "stale", "deployed SHA is not a reachable commit"
-
-    deployed_identity = {
-        "backend": deployed_state.get("backend"),
-        "values_files": deployed_state.get("values_files"),
-        "set_overrides": deployed_state.get("set_overrides"),
-        "image_repository": deployed_state.get("image_repository"),
-    }
-    deployed_identity = _normalize_e2e_deployment_identity(deployed_identity)
+    if set(deployed_state) != {
+        "backend",
+        "values_files",
+        "set_overrides",
+        "image_repository",
+    }:
+        return "stale", "deploy stamp is missing or malformed"
     if current_identity is None:
         current_identity = _effective_e2e_deployment_identity(repo_root)
-    current_identity = _normalize_e2e_deployment_identity(current_identity)
-    if deployed_identity != current_identity:
-        return "stale", "deployment identity changed"
-
-    diff = _git_e2e(
-        repo_root,
-        "diff",
-        "--quiet",
-        deployed_sha,
-        "HEAD",
-        "--",
-        *_E2E_DEPLOY_DIFF_PATHS,
-    )
-    if diff.returncode == 0:
+    if deployed_state == current_identity:
         return "reusable", ""
-    if diff.returncode == 1:
-        return "stale", "tracked deploy inputs changed"
-    return (
-        "stale",
-        f"git diff --quiet failed: {(diff.stderr or '').strip() or (diff.stdout or '').strip() or 'unknown error'}",
-    )
+    return "stale", "deployment identity changed"
 
 
 def _kubectl_e2e_command(*args: str) -> list[str]:
@@ -2256,8 +2201,8 @@ def e2e_stack(request, resolved_inference_endpoints):
 
     Lifecycle:
       * REUSE — if a running ``cogniverse-e2e`` whose stamped deploy
-        SHA and deploy identity match the current repo state, reuse it
-        (~seconds). Editing only ``tests/`` keeps the SHA diff clean, so
+        identity matches the current repo state, reuse it (~seconds).
+        Editing only ``tests/`` keeps the deploy identity unchanged, so
         assertion iteration is fast.
       * CREATE — only when no ``cogniverse-e2e`` cluster exists, stop any dev
         cluster (RAM + ports), build, deploy, wait, and stamp the deploy state.
@@ -2329,8 +2274,7 @@ def e2e_stack(request, resolved_inference_endpoints):
 
     if _e2e_action_for_cluster_state(cluster_state) == "reuse":
         print(
-            f"Reusing warm e2e cluster {E2E_CLUSTER_NAME} "
-            f"(deploy SHA {deploy_sha} unchanged)"
+            f"Reusing warm e2e cluster {E2E_CLUSTER_NAME} (deploy identity unchanged)"
         )
         _sync_sandbox_into_cluster(KUBECTL_CONTEXT, roll_runtime=True)
     else:
@@ -2410,8 +2354,8 @@ def e2e_stack(request, resolved_inference_endpoints):
                 f"being built: started with {deploy_sha!r}, finished with "
                 f"{finished_sha!r}; rerun against a stable tree"
             )
-        # Stamp the deployed git SHA and normalized deploy identity.
-        _stamp_e2e_deploy_state({"sha": deploy_sha, **deploy_identity})
+        # Stamp the deployed identity.
+        _stamp_e2e_deploy_state(deploy_identity)
 
     try:
         cron_restore = _suspend_cronworkflows_for_session()

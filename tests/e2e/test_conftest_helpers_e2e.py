@@ -23,6 +23,7 @@ import warnings
 from pathlib import Path
 from types import SimpleNamespace
 
+import cogniverse_cli.images as images_mod
 import pytest
 from PIL import Image
 
@@ -742,12 +743,18 @@ class TestSharedClusterOwnership:
     def _seed_git_repo(tmp_path: Path) -> tuple[Path, str]:
         repo_root = tmp_path / "repo"
         for relative_path, content in {
+            "charts/cogniverse/Chart.yaml": ('version: 0.1.0\nappVersion: "0.1.0"\n'),
+            "charts/cogniverse/values.k3s.yaml": "inference: {}\n",
+            "charts/cogniverse/values.rocm.yaml": "inference: {}\n",
             "libs/runtime/module.py": "value = 'base'\n",
             "configs/app.yaml": "backend: rocm\n",
             "charts/cogniverse/values.yaml": "replicaCount: 1\n",
             "deploy/app/Dockerfile": "FROM python:3.12-slim\n",
             "scripts/deploy.sh": "#!/bin/sh\necho base\n",
-            "pyproject.toml": "[project]\nname = 'demo'\nversion = '0.1.0'\n",
+            "pyproject.toml": (
+                '[tool.uv.workspace]\nmembers = ["libs/*"]\n\n'
+                "[project]\nname = 'demo'\nversion = '0.1.0'\n"
+            ),
             "uv.lock": "lock-version = 1\n",
             ".dockerignore": "__pycache__\n",
             "docs/guide.md": "# docs\n",
@@ -781,6 +788,22 @@ class TestSharedClusterOwnership:
         return TestSharedClusterOwnership._git(repo_root, "rev-parse", "HEAD")
 
     @staticmethod
+    def _deploy_input_change(path_name: str) -> tuple[str, str]:
+        return {
+            "libs": ("libs/runtime/module.py", "value = 'libs-change'\n"),
+            "configs": ("configs/app.yaml", "backend: cuda\n"),
+            "charts": ("charts/cogniverse/values.yaml", "replicaCount: 2\n"),
+            "deploy": ("deploy/app/Dockerfile", "FROM python:3.13-slim\n"),
+            "scripts": ("scripts/deploy.sh", "#!/bin/sh\necho changed\n"),
+            "pyproject.toml": (
+                "pyproject.toml",
+                "[project]\nname = 'demo'\nversion = '0.2.0'\n",
+            ),
+            "uv.lock": ("uv.lock", "lock-version = 2\n"),
+            ".dockerignore": (".dockerignore", "__pycache__\n*.tmp\n"),
+        }[path_name]
+
+    @staticmethod
     def _current_identity(
         *,
         backend: str = "rocm",
@@ -807,9 +830,9 @@ class TestSharedClusterOwnership:
     def test_tests_only_commit_between_deployed_sha_and_head_is_not_stale(
         self, tmp_path
     ):
-        repo_root, deployed_sha = self._seed_git_repo(tmp_path)
+        repo_root, _ = self._seed_git_repo(tmp_path)
         current_identity = self._current_identity()
-        deployed_stamp = {"sha": deployed_sha, **current_identity}
+        deployed_stamp = dict(current_identity)
 
         self._commit_change(
             repo_root,
@@ -825,9 +848,9 @@ class TestSharedClusterOwnership:
     def test_docs_only_commit_between_deployed_sha_and_head_is_not_stale(
         self, tmp_path
     ):
-        repo_root, deployed_sha = self._seed_git_repo(tmp_path)
+        repo_root, _ = self._seed_git_repo(tmp_path)
         current_identity = self._current_identity()
-        deployed_stamp = {"sha": deployed_sha, **current_identity}
+        deployed_stamp = dict(current_identity)
 
         self._commit_change(
             repo_root,
@@ -841,9 +864,9 @@ class TestSharedClusterOwnership:
         ) == ("reusable", "")
 
     def test_change_under_libs_is_stale(self, tmp_path):
-        repo_root, deployed_sha = self._seed_git_repo(tmp_path)
+        repo_root, _ = self._seed_git_repo(tmp_path)
         current_identity = self._current_identity()
-        deployed_stamp = {"sha": deployed_sha, **current_identity}
+        deployed_stamp = dict(current_identity)
 
         self._commit_change(
             repo_root,
@@ -854,12 +877,12 @@ class TestSharedClusterOwnership:
 
         assert e2e_conftest._e2e_deploy_reuse_state(
             repo_root, deployed_stamp, current_identity=current_identity
-        ) == ("stale", "tracked deploy inputs changed")
+        ) == ("reusable", "")
 
     def test_change_under_configs_is_stale(self, tmp_path):
-        repo_root, deployed_sha = self._seed_git_repo(tmp_path)
+        repo_root, _ = self._seed_git_repo(tmp_path)
         current_identity = self._current_identity()
-        deployed_stamp = {"sha": deployed_sha, **current_identity}
+        deployed_stamp = dict(current_identity)
 
         self._commit_change(
             repo_root,
@@ -870,12 +893,12 @@ class TestSharedClusterOwnership:
 
         assert e2e_conftest._e2e_deploy_reuse_state(
             repo_root, deployed_stamp, current_identity=current_identity
-        ) == ("stale", "tracked deploy inputs changed")
+        ) == ("reusable", "")
 
     def test_change_under_charts_is_stale(self, tmp_path):
-        repo_root, deployed_sha = self._seed_git_repo(tmp_path)
+        repo_root, _ = self._seed_git_repo(tmp_path)
         current_identity = self._current_identity()
-        deployed_stamp = {"sha": deployed_sha, **current_identity}
+        deployed_stamp = dict(current_identity)
 
         self._commit_change(
             repo_root,
@@ -886,12 +909,12 @@ class TestSharedClusterOwnership:
 
         assert e2e_conftest._e2e_deploy_reuse_state(
             repo_root, deployed_stamp, current_identity=current_identity
-        ) == ("stale", "tracked deploy inputs changed")
+        ) == ("reusable", "")
 
     def test_change_under_deploy_is_stale(self, tmp_path):
-        repo_root, deployed_sha = self._seed_git_repo(tmp_path)
+        repo_root, _ = self._seed_git_repo(tmp_path)
         current_identity = self._current_identity()
-        deployed_stamp = {"sha": deployed_sha, **current_identity}
+        deployed_stamp = dict(current_identity)
 
         self._commit_change(
             repo_root,
@@ -902,12 +925,12 @@ class TestSharedClusterOwnership:
 
         assert e2e_conftest._e2e_deploy_reuse_state(
             repo_root, deployed_stamp, current_identity=current_identity
-        ) == ("stale", "tracked deploy inputs changed")
+        ) == ("reusable", "")
 
     def test_change_under_scripts_is_stale(self, tmp_path):
-        repo_root, deployed_sha = self._seed_git_repo(tmp_path)
+        repo_root, _ = self._seed_git_repo(tmp_path)
         current_identity = self._current_identity()
-        deployed_stamp = {"sha": deployed_sha, **current_identity}
+        deployed_stamp = dict(current_identity)
 
         self._commit_change(
             repo_root,
@@ -918,12 +941,12 @@ class TestSharedClusterOwnership:
 
         assert e2e_conftest._e2e_deploy_reuse_state(
             repo_root, deployed_stamp, current_identity=current_identity
-        ) == ("stale", "tracked deploy inputs changed")
+        ) == ("reusable", "")
 
     def test_change_under_pyproject_is_stale(self, tmp_path):
-        repo_root, deployed_sha = self._seed_git_repo(tmp_path)
+        repo_root, _ = self._seed_git_repo(tmp_path)
         current_identity = self._current_identity()
-        deployed_stamp = {"sha": deployed_sha, **current_identity}
+        deployed_stamp = dict(current_identity)
 
         self._commit_change(
             repo_root,
@@ -934,12 +957,12 @@ class TestSharedClusterOwnership:
 
         assert e2e_conftest._e2e_deploy_reuse_state(
             repo_root, deployed_stamp, current_identity=current_identity
-        ) == ("stale", "tracked deploy inputs changed")
+        ) == ("reusable", "")
 
     def test_change_under_uv_lock_is_stale(self, tmp_path):
-        repo_root, deployed_sha = self._seed_git_repo(tmp_path)
+        repo_root, _ = self._seed_git_repo(tmp_path)
         current_identity = self._current_identity()
-        deployed_stamp = {"sha": deployed_sha, **current_identity}
+        deployed_stamp = dict(current_identity)
 
         self._commit_change(
             repo_root,
@@ -950,12 +973,12 @@ class TestSharedClusterOwnership:
 
         assert e2e_conftest._e2e_deploy_reuse_state(
             repo_root, deployed_stamp, current_identity=current_identity
-        ) == ("stale", "tracked deploy inputs changed")
+        ) == ("reusable", "")
 
     def test_change_under_dockerignore_is_stale(self, tmp_path):
-        repo_root, deployed_sha = self._seed_git_repo(tmp_path)
+        repo_root, _ = self._seed_git_repo(tmp_path)
         current_identity = self._current_identity()
-        deployed_stamp = {"sha": deployed_sha, **current_identity}
+        deployed_stamp = dict(current_identity)
 
         self._commit_change(
             repo_root,
@@ -966,22 +989,22 @@ class TestSharedClusterOwnership:
 
         assert e2e_conftest._e2e_deploy_reuse_state(
             repo_root, deployed_stamp, current_identity=current_identity
-        ) == ("stale", "tracked deploy inputs changed")
+        ) == ("reusable", "")
 
     def test_backend_differs_is_stale(self, tmp_path):
-        repo_root, deployed_sha = self._seed_git_repo(tmp_path)
+        repo_root, _ = self._seed_git_repo(tmp_path)
         deployed_identity = self._current_identity(backend="rocm")
         current_identity = self._current_identity(
             backend="cuda", image_repository="cogniverse/runtime-cuda"
         )
-        deployed_stamp = {"sha": deployed_sha, **deployed_identity}
+        deployed_stamp = dict(deployed_identity)
 
         assert e2e_conftest._e2e_deploy_reuse_state(
             repo_root, deployed_stamp, current_identity=current_identity
         ) == ("stale", "deployment identity changed")
 
     def test_values_files_list_differs_is_stale(self, tmp_path):
-        repo_root, deployed_sha = self._seed_git_repo(tmp_path)
+        repo_root, _ = self._seed_git_repo(tmp_path)
         deployed_identity = self._current_identity()
         current_identity = self._current_identity(
             values_files=[
@@ -990,14 +1013,14 @@ class TestSharedClusterOwnership:
             ],
             image_repository="cogniverse/runtime-cuda",
         )
-        deployed_stamp = {"sha": deployed_sha, **deployed_identity}
+        deployed_stamp = dict(deployed_identity)
 
         assert e2e_conftest._e2e_deploy_reuse_state(
             repo_root, deployed_stamp, current_identity=current_identity
         ) == ("stale", "deployment identity changed")
 
     def test_set_overrides_differ_is_stale(self, tmp_path):
-        repo_root, deployed_sha = self._seed_git_repo(tmp_path)
+        repo_root, _ = self._seed_git_repo(tmp_path)
         deployed_identity = self._current_identity()
         current_identity = self._current_identity(
             set_overrides={
@@ -1007,26 +1030,26 @@ class TestSharedClusterOwnership:
                 "inference.vllm_asr.livenessProbe.failureThreshold": "60",
             }
         )
-        deployed_stamp = {"sha": deployed_sha, **deployed_identity}
+        deployed_stamp = dict(deployed_identity)
 
         assert e2e_conftest._e2e_deploy_reuse_state(
             repo_root, deployed_stamp, current_identity=current_identity
         ) == ("stale", "deployment identity changed")
 
     def test_image_repository_differs_is_stale(self, tmp_path):
-        repo_root, deployed_sha = self._seed_git_repo(tmp_path)
+        repo_root, _ = self._seed_git_repo(tmp_path)
         deployed_identity = self._current_identity()
         current_identity = self._current_identity(
             image_repository="cogniverse/runtime-cuda"
         )
-        deployed_stamp = {"sha": deployed_sha, **deployed_identity}
+        deployed_stamp = dict(deployed_identity)
 
         assert e2e_conftest._e2e_deploy_reuse_state(
             repo_root, deployed_stamp, current_identity=current_identity
         ) == ("stale", "deployment identity changed")
 
-    def test_hypothetical_new_tag_key_is_normalized(self, monkeypatch, tmp_path):
-        repo_root, deployed_sha = self._seed_git_repo(tmp_path)
+    def test_hypothetical_new_tag_key_is_preserved(self, monkeypatch, tmp_path):
+        repo_root, _ = self._seed_git_repo(tmp_path)
         deployment_inputs = {
             "backend": "rocm",
             "image_version": "build-abc",
@@ -1053,7 +1076,7 @@ class TestSharedClusterOwnership:
             e2e_conftest, "_e2e_deployment_overrides", _expected_e2e_sandbox_overrides
         )
         current_identity = e2e_conftest._effective_e2e_deployment_identity(repo_root)
-        deployed_stamp = {"sha": deployed_sha, **current_identity}
+        deployed_stamp = dict(current_identity)
 
         assert current_identity == {
             "backend": "rocm",
@@ -1065,6 +1088,7 @@ class TestSharedClusterOwnership:
                 "devMode.enabled": "false",
                 "runtime.backend": "rocm",
                 "dashboard.backend": "rocm",
+                "somefuture.imagesByBackend.rocm.tag": "0.1.dev9999-gdeadbeef00",
             },
             "image_repository": "cogniverse/runtime-rocm",
         }
@@ -1072,8 +1096,8 @@ class TestSharedClusterOwnership:
             repo_root, deployed_stamp, current_identity=current_identity
         ) == ("reusable", "")
 
-    def test_tag_only_identity_difference_is_reusable(self, tmp_path):
-        repo_root, deployed_sha = self._seed_git_repo(tmp_path)
+    def test_tag_only_identity_difference_is_stale(self, tmp_path):
+        repo_root, _ = self._seed_git_repo(tmp_path)
         deployed_identity = self._current_identity(
             set_overrides={
                 "devMode.enabled": "false",
@@ -1090,7 +1114,7 @@ class TestSharedClusterOwnership:
                 "runtime.imagesByBackend.rocm.tag": "0.1.dev3020-gabcdef1234",
             }
         )
-        deployed_stamp = {"sha": deployed_sha, **deployed_identity}
+        deployed_stamp = dict(deployed_identity)
 
         self._commit_change(
             repo_root,
@@ -1101,10 +1125,10 @@ class TestSharedClusterOwnership:
 
         assert e2e_conftest._e2e_deploy_reuse_state(
             repo_root, deployed_stamp, current_identity=current_identity
-        ) == ("reusable", "")
+        ) == ("stale", "deployment identity changed")
 
     def test_tag_only_identity_difference_reaches_tracked_input_diff(self, tmp_path):
-        repo_root, deployed_sha = self._seed_git_repo(tmp_path)
+        repo_root, _ = self._seed_git_repo(tmp_path)
         deployed_identity = self._current_identity(
             set_overrides={
                 "devMode.enabled": "false",
@@ -1121,7 +1145,7 @@ class TestSharedClusterOwnership:
                 "runtime.imagesByBackend.rocm.tag": "0.1.dev3020-gabcdef1234",
             }
         )
-        deployed_stamp = {"sha": deployed_sha, **deployed_identity}
+        deployed_stamp = dict(deployed_identity)
 
         self._commit_change(
             repo_root,
@@ -1132,10 +1156,10 @@ class TestSharedClusterOwnership:
 
         assert e2e_conftest._e2e_deploy_reuse_state(
             repo_root, deployed_stamp, current_identity=current_identity
-        ) == ("stale", "tracked deploy inputs changed")
+        ) == ("stale", "deployment identity changed")
 
-    def test_unknown_future_tag_key_is_normalized(self, tmp_path):
-        repo_root, deployed_sha = self._seed_git_repo(tmp_path)
+    def test_unknown_future_tag_key_is_stale(self, tmp_path):
+        repo_root, _ = self._seed_git_repo(tmp_path)
         deployed_identity = self._current_identity(
             set_overrides={
                 "runtime.backend": "rocm",
@@ -1148,52 +1172,217 @@ class TestSharedClusterOwnership:
                 "somefuture.imagesByBackend.rocm.tag": "0.1.dev2-gbbbbbbb",
             }
         )
-        deployed_stamp = {"sha": deployed_sha, **deployed_identity}
+        deployed_stamp = dict(deployed_identity)
 
         assert e2e_conftest._e2e_deploy_reuse_state(
             repo_root, deployed_stamp, current_identity=current_identity
-        ) == ("reusable", "")
+        ) == ("stale", "deployment identity changed")
 
     def test_key_merely_ending_in_tag_substring_still_invalidates(self, tmp_path):
-        repo_root, deployed_sha = self._seed_git_repo(tmp_path)
+        repo_root, _ = self._seed_git_repo(tmp_path)
         deployed_identity = self._current_identity(
             set_overrides={"runtime.image.tagline": "alpha"}
         )
         current_identity = self._current_identity(
             set_overrides={"runtime.image.tagline": "beta"}
         )
-        deployed_stamp = {"sha": deployed_sha, **deployed_identity}
+        deployed_stamp = dict(deployed_identity)
 
         assert e2e_conftest._e2e_deploy_reuse_state(
             repo_root, deployed_stamp, current_identity=current_identity
         ) == ("stale", "deployment identity changed")
 
-    def test_missing_stamped_sha_is_stale(self, tmp_path):
+    def test_missing_stamped_identity_is_stale(self, tmp_path):
         repo_root, _ = self._seed_git_repo(tmp_path)
         current_identity = self._current_identity()
-        deployed_stamp = {**current_identity}
+        deployed_stamp = {}
 
         assert e2e_conftest._e2e_deploy_reuse_state(
             repo_root, deployed_stamp, current_identity=current_identity
-        ) == ("stale", "deployed SHA is missing or malformed")
+        ) == ("stale", "deploy stamp is missing or malformed")
 
-    def test_garbage_stamped_sha_is_stale(self, tmp_path):
+    def test_garbage_stamped_identity_is_stale(self, tmp_path):
         repo_root, _ = self._seed_git_repo(tmp_path)
         current_identity = self._current_identity()
-        deployed_stamp = {"sha": "not-a-sha", **current_identity}
+        deployed_stamp = {**current_identity, "extra": "not-a-stamp"}
 
         assert e2e_conftest._e2e_deploy_reuse_state(
             repo_root, deployed_stamp, current_identity=current_identity
-        ) == ("stale", "deployed SHA is missing or malformed")
+        ) == ("stale", "deploy stamp is missing or malformed")
 
-    def test_unknown_stamped_sha_is_stale(self, tmp_path):
+    def test_unknown_stamped_identity_is_stale(self, tmp_path):
         repo_root, _ = self._seed_git_repo(tmp_path)
         current_identity = self._current_identity()
-        deployed_stamp = {"sha": "f" * 40, **current_identity}
+        deployed_stamp = {
+            **current_identity,
+            "image_repository": "cogniverse/runtime-cuda",
+        }
 
         assert e2e_conftest._e2e_deploy_reuse_state(
             repo_root, deployed_stamp, current_identity=current_identity
-        ) == ("stale", "deployed SHA is not a reachable commit")
+        ) == ("stale", "deployment identity changed")
+
+    def test_tests_only_commit_keeps_build_tags_and_identity(
+        self, tmp_path, monkeypatch
+    ):
+        repo_root, _ = self._seed_git_repo(tmp_path)
+        build_calls: list[list[str]] = []
+        real_run = subprocess.run
+
+        def dispatch(cmd, **kwargs):
+            if cmd and cmd[0] == "git":
+                return real_run(cmd, **kwargs)
+            build_calls.append(cmd)
+            return subprocess.CompletedProcess(cmd, 0, stdout="", stderr="")
+
+        monkeypatch.setattr(images_mod.subprocess, "run", dispatch)
+        monkeypatch.setattr(images_mod, "detect_torch_backend", lambda: "rocm")
+        monkeypatch.setattr(
+            e2e_conftest,
+            "_e2e_deployment_overrides",
+            _expected_e2e_sandbox_overrides,
+        )
+
+        baseline_version = images_mod.dev_version(repo_root)
+        baseline_tag = baseline_version.replace("+", "-")
+        baseline_tags = images_mod.build_images(repo_root, torch_backend="cpu")
+        baseline_identity = e2e_conftest._effective_e2e_deployment_identity(repo_root)
+
+        self._commit_change(
+            repo_root,
+            "tests/e2e/new_check.py",
+            "VALUE = 'tests-only'\n",
+            "tests-only",
+        )
+
+        assert images_mod.dev_version(repo_root) == baseline_version
+        assert images_mod.build_images(repo_root, torch_backend="cpu") == baseline_tags
+        assert baseline_tags == [
+            f"cogniverse/runtime-cpu:{baseline_tag}",
+            f"cogniverse/dashboard-cpu:{baseline_tag}",
+            f"cogniverse/gliner:{baseline_tag}",
+        ]
+        assert e2e_conftest._effective_e2e_deployment_identity(repo_root) == (
+            baseline_identity
+        )
+        assert len(build_calls) == 6
+
+    @pytest.mark.parametrize("deploy_input_path", e2e_conftest._E2E_DEPLOY_DIFF_PATHS)
+    def test_each_deploy_input_path_changes_build_tag_and_identity(
+        self, tmp_path, monkeypatch, deploy_input_path
+    ):
+        repo_root, _ = self._seed_git_repo(tmp_path)
+        real_run = subprocess.run
+
+        def dispatch(cmd, **kwargs):
+            if cmd and cmd[0] == "git":
+                return real_run(cmd, **kwargs)
+            return subprocess.CompletedProcess(cmd, 0, stdout="", stderr="")
+
+        monkeypatch.setattr(images_mod.subprocess, "run", dispatch)
+        monkeypatch.setattr(images_mod, "detect_torch_backend", lambda: "rocm")
+        monkeypatch.setattr(
+            e2e_conftest,
+            "_e2e_deployment_overrides",
+            _expected_e2e_sandbox_overrides,
+        )
+
+        baseline_version = images_mod.dev_version(repo_root)
+        baseline_tag = baseline_version.replace("+", "-")
+        baseline_tags = images_mod.build_images(repo_root, torch_backend="cpu")
+        baseline_identity = e2e_conftest._effective_e2e_deployment_identity(repo_root)
+
+        relative_path, content = self._deploy_input_change(deploy_input_path)
+        self._commit_change(
+            repo_root, relative_path, content, f"{deploy_input_path}-change"
+        )
+
+        changed_version = images_mod.dev_version(repo_root)
+        changed_tag = changed_version.replace("+", "-")
+        changed_tags = images_mod.build_images(repo_root, torch_backend="cpu")
+        changed_identity = e2e_conftest._effective_e2e_deployment_identity(repo_root)
+
+        assert baseline_tags == [
+            f"cogniverse/runtime-cpu:{baseline_tag}",
+            f"cogniverse/dashboard-cpu:{baseline_tag}",
+            f"cogniverse/gliner:{baseline_tag}",
+        ]
+        assert changed_tags == [
+            f"cogniverse/runtime-cpu:{changed_tag}",
+            f"cogniverse/dashboard-cpu:{changed_tag}",
+            f"cogniverse/gliner:{changed_tag}",
+        ]
+        assert changed_version != baseline_version
+        assert changed_identity != baseline_identity
+
+    def test_deploy_stamp_round_trips_identity(self, monkeypatch, tmp_path):
+        repo_root, _ = self._seed_git_repo(tmp_path)
+        monkeypatch.setattr(images_mod, "detect_torch_backend", lambda: "rocm")
+        monkeypatch.setattr(
+            e2e_conftest,
+            "_e2e_deployment_overrides",
+            _expected_e2e_sandbox_overrides,
+        )
+        identity = e2e_conftest._effective_e2e_deployment_identity(repo_root)
+        rendered: dict[str, str] = {}
+
+        def render(*command, **kwargs):
+            stamp_arg = next(
+                arg for arg in command if arg.startswith("--from-literal=stamp=")
+            )
+            rendered["stamp"] = stamp_arg.removeprefix("--from-literal=stamp=")
+            return subprocess.CompletedProcess(
+                command, 0, stdout="apiVersion: v1\nkind: ConfigMap\n", stderr=""
+            )
+
+        monkeypatch.setattr(e2e_conftest, "_kubectl_e2e", render)
+        monkeypatch.setattr(
+            e2e_conftest.subprocess,
+            "run",
+            lambda *args, **kwargs: subprocess.CompletedProcess(
+                args[0], 0, stdout="configured\n", stderr=""
+            ),
+        )
+
+        e2e_conftest._stamp_e2e_deploy_state(identity)
+
+        assert rendered["stamp"] == json.dumps(
+            identity, sort_keys=True, separators=(",", ":")
+        )
+
+        monkeypatch.setattr(
+            e2e_conftest,
+            "_kubectl_e2e",
+            lambda *args, **kwargs: subprocess.CompletedProcess(
+                args, 0, stdout=rendered["stamp"], stderr=""
+            ),
+        )
+
+        assert e2e_conftest._read_e2e_deploy_state() == identity
+
+    def test_deploy_state_machine_uses_exact_identity(self, tmp_path, monkeypatch):
+        repo_root, _ = self._seed_git_repo(tmp_path)
+        monkeypatch.setattr(images_mod, "detect_torch_backend", lambda: "rocm")
+        monkeypatch.setattr(
+            e2e_conftest,
+            "_e2e_deployment_overrides",
+            _expected_e2e_sandbox_overrides,
+        )
+        deployed_identity = e2e_conftest._effective_e2e_deployment_identity(repo_root)
+        assert e2e_conftest._e2e_deploy_reuse_state(
+            repo_root, deployed_identity, current_identity=deployed_identity
+        ) == ("reusable", "")
+
+        changed_identity = {
+            **deployed_identity,
+            "set_overrides": {
+                **deployed_identity["set_overrides"],
+                "runtime.imagesByBackend.rocm.tag": "0.1.dev9999-gdeadbeef0",
+            },
+        }
+        assert e2e_conftest._e2e_deploy_reuse_state(
+            repo_root, deployed_identity, current_identity=changed_identity
+        ) == ("stale", "deployment identity changed")
 
     def test_dirty_worktree_at_deploy_time_raises_and_skips_deploy(
         self, monkeypatch, tmp_path
@@ -1346,7 +1535,7 @@ class TestSharedClusterOwnership:
             lambda *args, **kwargs: subprocess.CompletedProcess(args, 0),
         )
         monkeypatch.setattr(
-            e2e_conftest, "_read_e2e_deploy_state", lambda: {"sha": "c" * 40}
+            e2e_conftest, "_read_e2e_deploy_state", lambda: self._current_identity()
         )
         monkeypatch.setattr(
             e2e_conftest,
@@ -1446,6 +1635,8 @@ class TestSharedClusterOwnership:
         assert sleeps == [2, 2]
 
     def test_deploy_stamp_render_failure_reports_command_and_stderr(self, monkeypatch):
+        stamp = self._current_identity()
+        stamp_json = json.dumps(stamp, sort_keys=True, separators=(",", ":"))
         monkeypatch.setattr(
             e2e_conftest,
             "_kubectl_e2e",
@@ -1462,16 +1653,17 @@ class TestSharedClusterOwnership:
         )
 
         with pytest.raises(RuntimeError) as raised:
-            e2e_conftest._stamp_e2e_deploy_state({"sha": "b" * 40})
+            e2e_conftest._stamp_e2e_deploy_state(stamp)
 
         assert str(raised.value) == (
             "kubectl command failed with exit 17: kubectl --context "
             "k3d-cogniverse-e2e -n cogniverse create configmap "
-            'e2e-deploy-state \'--from-literal=stamp={"sha":"bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"}\' '
+            f"e2e-deploy-state '--from-literal=stamp={stamp_json}' "
             "--dry-run=client -o yaml\nstderr: render denied"
         )
 
     def test_deploy_stamp_apply_failure_reports_command_and_stderr(self, monkeypatch):
+        stamp = self._current_identity()
         manifest = "apiVersion: v1\nkind: ConfigMap\n"
         monkeypatch.setattr(
             e2e_conftest,
@@ -1490,7 +1682,7 @@ class TestSharedClusterOwnership:
         monkeypatch.setattr(e2e_conftest.subprocess, "run", fail_apply)
 
         with pytest.raises(RuntimeError) as raised:
-            e2e_conftest._stamp_e2e_deploy_state({"sha": "b" * 40})
+            e2e_conftest._stamp_e2e_deploy_state(stamp)
 
         assert str(raised.value) == (
             "kubectl command failed with exit 23: kubectl --context "
@@ -1498,6 +1690,7 @@ class TestSharedClusterOwnership:
         )
 
     def test_deploy_stamp_applies_rendered_manifest_once(self, monkeypatch):
+        stamp = self._current_identity()
         manifest = "apiVersion: v1\nkind: ConfigMap\n"
         applied: list[tuple[list[str], dict]] = []
         monkeypatch.setattr(
@@ -1516,7 +1709,7 @@ class TestSharedClusterOwnership:
 
         monkeypatch.setattr(e2e_conftest.subprocess, "run", apply)
 
-        e2e_conftest._stamp_e2e_deploy_state({"sha": "b" * 40})
+        e2e_conftest._stamp_e2e_deploy_state(stamp)
 
         assert len(applied) == 1
         assert applied[0][0] == [
@@ -1717,7 +1910,6 @@ class TestSharedClusterOwnership:
         ]
         assert calls["stamp"] == [
             {
-                "sha": "current-build",
                 "backend": "rocm",
                 "values_files": [
                     "charts/cogniverse/values.k3s.yaml",

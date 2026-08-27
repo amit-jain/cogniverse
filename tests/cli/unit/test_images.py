@@ -23,7 +23,7 @@ from cogniverse_cli.images import (
     read_app_version,
 )
 
-# A setuptools-scm-style git version and its docker-tag sanitization (+ -> -).
+# A deploy-input-derived git version and its docker-tag sanitization (+ -> -).
 # Passed explicitly so the tests don't need a real git checkout.
 DEV_VERSION = "0.1.dev5+gabc1234"
 DEV_TAG = "0.1.dev5-gabc1234"
@@ -96,8 +96,9 @@ class TestBuildImages:
     ) -> None:
         """The default build (no sidecars enabled) is exactly three images:
         backend-specific runtime + dashboard plus the backend-agnostic GLiNER
-        sidecar, all tagged with the commit-unique git version (``+`` sanitized
-        to ``-``). ColPali/Whisper/LateOn/DenseOn are served by vLLM."""
+        sidecar, all tagged with the deploy-input-derived git version (``+``
+        sanitized to ``-``). ColPali/Whisper/LateOn/DenseOn are served by
+        vLLM."""
         _completed(mock_run)
         root = _make_project_root(tmp_path)
 
@@ -119,10 +120,10 @@ class TestBuildImages:
         self, mock_run: object, tmp_path: Path
     ) -> None:
         """Runtime + dashboard builds get the matching --build-arg
-        TORCH_BACKEND=<name>, a tag carrying the git version, and the FULL git
-        version fed to hatch-vcs inside the git-less docker context via
-        SETUPTOOLS_SCM_PRETEND_VERSION (the tag sanitizes ``+``, the build-arg
-        keeps it)."""
+        TORCH_BACKEND=<name>, a tag carrying the deploy-input-derived git
+        version, and the FULL git version fed into the git-less docker context
+        via SETUPTOOLS_SCM_PRETEND_VERSION (the tag sanitizes ``+``, the
+        build-arg keeps it)."""
         _completed(mock_run)
         root = _make_project_root(tmp_path)
 
@@ -183,7 +184,8 @@ class TestBuildImages:
         """Both LateOn services share the cogniverse/pylate image, so enabling
         both builds it exactly once, from the repository root (the canonical
         CLI PyLate server is COPY'd in) with the host-matching TORCH_BACKEND.
-        Both chart entries still get the dev-tag override."""
+        Both chart entries still get the deploy-input-derived dev-tag
+        override."""
         _completed(mock_run)
         root = _make_project_root(
             tmp_path, colbert_pylate=True, code_colbert_pylate=True
