@@ -429,6 +429,50 @@ def deployment_helm_inputs(
     }
 
 
+def dump_pod_state(namespace: str) -> None:
+    """Snapshot cluster state to pytest's captured stdout — runs on
+    any helm-install failure so the next teardown doesn't take the
+    evidence with it."""
+    import sys
+
+    print("\n========== POD STATE ON HELM FAILURE ==========", file=sys.stdout)
+    for diag in [
+        ["kubectl", "get", "pods", "-n", namespace, "-o", "wide"],
+        ["kubectl", "get", "events", "-n", namespace, "--sort-by=.lastTimestamp"],
+        ["kubectl", "describe", "pods", "-n", namespace],
+    ]:
+        print(f"\n--- {' '.join(diag)} ---", file=sys.stdout)
+        sys.stdout.flush()
+        subprocess.run(diag, check=False, timeout=60)
+    result = subprocess.run(
+        [
+            "kubectl",
+            "get",
+            "pods",
+            "-n",
+            namespace,
+            "-o",
+            "jsonpath={range .items[?(@.status.phase!='Running')]}"
+            "{.metadata.name}{'\\n'}{end}",
+        ],
+        capture_output=True,
+        text=True,
+        check=False,
+        timeout=30,
+    )
+    for pod in (result.stdout or "").split():
+        if not pod:
+            continue
+        print(f"\n--- kubectl logs {pod} (last 100 lines) ---", file=sys.stdout)
+        sys.stdout.flush()
+        subprocess.run(
+            ["kubectl", "logs", "-n", namespace, pod, "--tail=100"],
+            check=False,
+            timeout=30,
+        )
+    print("================================================\n", file=sys.stdout)
+
+
 def deploy_stack(
     cluster_name: str,
     namespace: str,
@@ -583,49 +627,6 @@ def deploy_stack(
         f"{sorted(k for k in helm_set_overrides if k.endswith('.image.tag'))}"
     )
 
-    def _dump_pod_state() -> None:
-        """Snapshot cluster state to pytest's captured stdout — runs on
-        any helm-install failure so the next teardown doesn't take the
-        evidence with it."""
-        import sys
-
-        print("\n========== POD STATE ON HELM FAILURE ==========", file=sys.stdout)
-        for diag in [
-            ["kubectl", "get", "pods", "-n", namespace, "-o", "wide"],
-            ["kubectl", "get", "events", "-n", namespace, "--sort-by=.lastTimestamp"],
-            ["kubectl", "describe", "pods", "-n", namespace],
-        ]:
-            print(f"\n--- {' '.join(diag)} ---", file=sys.stdout)
-            sys.stdout.flush()
-            subprocess.run(diag, check=False, timeout=60)
-        result = subprocess.run(
-            [
-                "kubectl",
-                "get",
-                "pods",
-                "-n",
-                namespace,
-                "-o",
-                "jsonpath={range .items[?(@.status.phase!='Running')]}"
-                "{.metadata.name}{'\\n'}{end}",
-            ],
-            capture_output=True,
-            text=True,
-            check=False,
-            timeout=30,
-        )
-        for pod in (result.stdout or "").split():
-            if not pod:
-                continue
-            print(f"\n--- kubectl logs {pod} (last 100 lines) ---", file=sys.stdout)
-            sys.stdout.flush()
-            subprocess.run(
-                ["kubectl", "logs", "-n", namespace, pod, "--tail=100"],
-                check=False,
-                timeout=30,
-            )
-        print("================================================\n", file=sys.stdout)
-
     try:
         helm_install(
             chart_path,
@@ -635,25 +636,35 @@ def deploy_stack(
             timeout="20m",
         )
     except RuntimeError:
-        _dump_pod_state()
+        dump_pod_state(namespace)
         raise
 
-    # Wait for pods
-    _cmd(
-        [
-            "kubectl",
-            "wait",
-            "--for=condition=ready",
-            "pod",
-            "-l",
-            "app.kubernetes.io/instance=cogniverse",
-            "-n",
-            namespace,
-            "--timeout=300s",
-        ],
-        check=False,
-        timeout=310,
-    )
+    wait_for_stack_ready(namespace)
+
+
+def ready_pod_wait_args(namespace: str) -> list[str]:
+    """Completed hook-job pods never become ready, so they are excluded from
+    the selection or the wait burns its whole budget on every deploy."""
+    return [
+        "kubectl",
+        "wait",
+        "--for=condition=ready",
+        "pod",
+        "-l",
+        "app.kubernetes.io/instance=cogniverse",
+        "--field-selector=status.phase!=Succeeded",
+        "-n",
+        namespace,
+        "--timeout=300s",
+    ]
+
+
+def wait_for_stack_ready(namespace: str) -> None:
+    try:
+        _cmd(ready_pod_wait_args(namespace), timeout=310)
+    except subprocess.CalledProcessError:
+        dump_pod_state(namespace)
+        raise
 
 
 @pytest.fixture(scope="session")
