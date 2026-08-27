@@ -15,7 +15,7 @@ from contextlib import contextmanager
 from datetime import datetime, timedelta, timezone
 from types import SimpleNamespace
 from typing import Any, Dict, List, Optional
-from unittest.mock import patch
+from unittest.mock import AsyncMock, patch
 
 import pandas as pd
 import pytest
@@ -122,6 +122,24 @@ def _signed_approved_record(record: dict[str, Any]) -> dict[str, Any]:
         canonical_json.encode("utf-8")
     ).hexdigest()
     return signed
+
+
+def _mutated_signature_blob(module: Any, predictor_name: str, instructions: str) -> str:
+    state = json.loads(json.dumps(module.dump_state(), default=str))
+    state[predictor_name]["signature"]["instructions"] = instructions
+    return json.dumps(state, default=str)
+
+
+def _signature_instructions(module: Any, predictor_name: str) -> str:
+    return module.dump_state()[predictor_name]["signature"]["instructions"]
+
+
+async def _save_active_model_blob(
+    provider, tenant_id: str, blob_key: str, content: str
+) -> None:
+    from cogniverse_agents.optimizer.artifact_manager import ArtifactManager
+
+    await ArtifactManager(provider, tenant_id).save_blob("model", blob_key, content)
 
 
 class _ProbeClock:
@@ -3160,6 +3178,109 @@ class TestSimbaQueryEnhancement:
         assert lineage[0]["score"] == 1.0
         assert self._active_version(provider, "simba_query_enhancement") == 1
 
+    def test_mutated_current_blob_keeps_query_module_untouched(self, caplog):
+        from cogniverse_agents.query_enhancement_agent import QueryEnhancementModule
+
+        rows = [
+            _qe_span_row(
+                f"query {i}",
+                f"query {i} expanded",
+                expansion_terms=["expanded"],
+                source_text="src",
+                span_id=f"qe-{i}",
+            )
+            for i in range(4)
+        ]
+        provider = FakeTelemetryProvider(
+            _make_spans_df("cogniverse.query_enhancement", rows)
+        )
+        real_module = QueryEnhancementModule()
+        expected_instructions = _signature_instructions(real_module, "enhancer.predict")
+        current_blob = _mutated_signature_blob(
+            real_module,
+            "enhancer.predict",
+            f"{expected_instructions} [stale]",
+        )
+        asyncio.run(
+            _save_active_model_blob(
+                provider,
+                "test:unit",
+                "simba_query_enhancement",
+                current_blob,
+            )
+        )
+        created_modules: list[Any] = []
+
+        def tracked_query_module():
+            module = QueryEnhancementModule()
+            created_modules.append(module)
+            return module
+
+        warning_message = (
+            "simba optimizer simba_query_enhancement current artifact v7 "
+            "signature mismatch for predictor enhancer.predict (instructions); "
+            "treating it as missing for scoring"
+        )
+
+        with (
+            patch(
+                "cogniverse_agents.query_enhancement_agent.QueryEnhancementModule",
+                side_effect=tracked_query_module,
+            ),
+            patch(
+                "cogniverse_agents.optimizer.artifact_manager.ArtifactManager._active_blob_version",
+                new=AsyncMock(return_value=7),
+            ),
+            caplog.at_level(
+                logging.WARNING, logger="cogniverse_runtime.optimization_cli"
+            ),
+        ):
+            result = self._run(
+                provider,
+                config_manager=_training_selection_config_manager(
+                    "test:unit",
+                    {"simba_query_enhancement": {}},
+                ),
+                min_improvement=0.0,
+                floor=(4, 4),
+            )
+
+        assert result == {
+            "status": "success",
+            "spans_found": 4,
+            "examples": 4,
+            "served_examples": 4,
+            "approved_examples": 0,
+            "served_scoreable_examples": 4,
+            "non_trainable_examples": 0,
+            "unscoreable_examples": 0,
+            "training_examples": 3,
+            "holdout_examples": 1,
+            "holdout_source": "served",
+            **_selection_block(3, 3),
+            "baseline_score": 0.5,
+            "current_score": None,
+            "candidate_score": 1.0,
+            "decision": "promote",
+            "version": 1,
+            "consumed_example_ids": [
+                "span:qe-0",
+                "span:qe-1",
+                "span:qe-2",
+                "span:qe-3",
+            ],
+        }
+        assert [
+            _signature_instructions(module, "enhancer.predict")
+            for module in created_modules
+        ] == [expected_instructions] * len(created_modules)
+        assert [
+            rec.getMessage()
+            for rec in caplog.records
+            if rec.name == "cogniverse_runtime.optimization_cli"
+            and rec.levelno == logging.WARNING
+        ] == [warning_message]
+
     def test_single_record_is_scoreable_and_rejects_without_activation(self):
         provider = FakeTelemetryProvider(
             _make_spans_df(
@@ -3355,6 +3476,7 @@ class TestProfileSelectionOptimization:
         provider,
         *,
         current_blob: str,
+        artifact_version: int | None = None,
         floor: tuple[int, int],
         min_improvement: float = 0.05,
         score: float = 1.0,
@@ -3390,6 +3512,7 @@ class TestProfileSelectionOptimization:
 
         state = {
             "active_blob": current_blob,
+            "artifact_version": artifact_version,
             "versioned_saves": [],
             "activate_calls": [],
             "load_blob_calls": [],
@@ -3529,6 +3652,10 @@ class TestProfileSelectionOptimization:
                 state["activate_calls"].append((kind, key, version))
                 state["active_blob"] = state["versioned_saves"][version - 1]["content"]
                 return {"active": {"version": version, "activated_at": "now"}}
+
+            async def _active_blob_version(self, kind, key):
+                assert (kind, key) == ("model", "profile_selection")
+                return state["artifact_version"]
 
             async def get_version_lineage(self, kind, key):
                 assert (kind, key) == ("model", "profile_selection")
@@ -5248,6 +5375,143 @@ class TestProfileSelectionOptimization:
         assert state["active_blob"] == served_state
 
     @pytest.mark.asyncio
+    async def test_mutated_current_blob_keeps_profile_module_untouched(self, caplog):
+        from cogniverse_agents.profile_selection_agent import ProfileSelectionModule
+
+        rows = [
+            _profile_span_row(
+                f"find clip {i}",
+                span_id=f"profile-{i}",
+                available_profiles=[
+                    "video_colpali_smol500_mv_frame",
+                    "video_colqwen_omni_mv_chunk_30s",
+                ],
+                selected_profile=(
+                    "video_colpali_smol500_mv_frame"
+                    if i % 2 == 0
+                    else "video_colqwen_omni_mv_chunk_30s"
+                ),
+            )
+            for i in range(4)
+        ]
+        provider = FakeTelemetryProvider(
+            _make_spans_df("cogniverse.profile_selection", rows)
+        )
+        real_module = ProfileSelectionModule()
+        expected_instructions = _signature_instructions(real_module, "selector.predict")
+        current_state = json.loads(self._served_state())
+        current_state["selector.predict"]["signature"]["instructions"] = (
+            f"{expected_instructions} [stale]"
+        )
+        current_blob = json.dumps(current_state, default=str)
+        created_modules: list[Any] = []
+
+        def tracked_profile_module():
+            module = ProfileSelectionModule()
+            created_modules.append(module)
+            return module
+
+        warning_message = (
+            "profile optimizer profile_selection current artifact v7 "
+            "signature mismatch for predictor selector.predict (instructions); "
+            "treating it as missing for scoring"
+        )
+
+        with (
+            patch(
+                "cogniverse_agents.profile_selection_agent.ProfileSelectionModule",
+                side_effect=tracked_profile_module,
+            ),
+            patch(
+                "cogniverse_agents.optimizer.artifact_manager.ArtifactManager._active_blob_version",
+                new=AsyncMock(return_value=7),
+            ),
+            caplog.at_level(
+                logging.WARNING, logger="cogniverse_runtime.optimization_cli"
+            ),
+        ):
+            state, result = await self._run(
+                provider,
+                current_blob=current_blob,
+                artifact_version=7,
+                config_manager=_training_selection_config_manager(
+                    "test:unit",
+                    {"profile_selection": {}},
+                ),
+                floor=(1, 1),
+                min_improvement=0.05,
+                score=1.0,
+            )
+
+        assert result == {
+            "status": "success",
+            "spans_found": 4,
+            "served_examples": 4,
+            "approved_examples": 0,
+            "served_scoreable_examples": 4,
+            "training_examples": 3,
+            "holdout_examples": 1,
+            "holdout_source": "derived_labels",
+            "label_exclusions": {"count": 0, "queries": []},
+            "labels_by_profile": {
+                "video_colpali_smol500_mv_frame": 2,
+                "video_colqwen_omni_mv_chunk_30s": 2,
+            },
+            "dominant_label_share": 0.5,
+            "exclusions_by_reason": {},
+            **_selection_block(3, 3),
+            "baseline_score": 1.0,
+            "current_score": None,
+            "candidate_score": 1.0,
+            "decision": "reject",
+            "version": 1,
+            "consumed_example_ids": [
+                "span:profile-label:0",
+                "span:profile-label:1",
+                "span:profile-label:2",
+                "span:profile-label:3",
+            ],
+        }
+        assert state["versioned_saves"] == [
+            {
+                "kind": "model",
+                "key": "profile_selection",
+                "content": '{"compiled": "profile"}',
+                "consumed_example_ids": [
+                    "span:profile-label:0",
+                    "span:profile-label:1",
+                    "span:profile-label:2",
+                    "span:profile-label:3",
+                ],
+                "decision": "reject",
+                "scored": True,
+                "score": 1.0,
+                "base_score": 1.0,
+                "candidate_score": 1.0,
+                "extra_ledger_fields": {
+                    "labels_by_profile": {
+                        "video_colpali_smol500_mv_frame": 2,
+                        "video_colqwen_omni_mv_chunk_30s": 2,
+                    },
+                    "dominant_label_share": 0.5,
+                    "exclusions_by_reason": {},
+                },
+            }
+        ]
+        assert state["activate_calls"] == []
+        assert state["active_blob"] == current_blob
+        assert [
+            _signature_instructions(module, "selector.predict")
+            for module in created_modules
+        ] == [expected_instructions] * len(created_modules)
+        assert [
+            rec.getMessage()
+            for rec in caplog.records
+            if rec.name == "cogniverse_runtime.optimization_cli"
+            and rec.levelno == logging.WARNING
+        ] == [warning_message]
+
+    @pytest.mark.asyncio
     async def test_profile_rollback_persists_and_activates_base_state(self):
         from cogniverse_agents.profile_selection_agent import ProfileSelectionModule
 
@@ -6009,6 +6273,7 @@ class TestEntityExtractionOptimization:
         provider,
         *,
         current_blob: str | None,
+        artifact_version: int | None = None,
         floor: tuple[int, int],
         min_improvement: float = 0.05,
         score: float = 1.0,
@@ -6025,6 +6290,7 @@ class TestEntityExtractionOptimization:
 
         state = {
             "active_blob": current_blob,
+            "artifact_version": artifact_version,
             "versioned_saves": [],
             "activate_calls": [],
             "load_blob_calls": [],
@@ -6104,6 +6370,10 @@ class TestEntityExtractionOptimization:
                 state["activate_calls"].append((kind, key, version))
                 state["active_blob"] = state["versioned_saves"][version - 1]["content"]
                 return {"active": {"version": version, "activated_at": "now"}}
+
+            async def _active_blob_version(self, kind, key):
+                assert (kind, key) == ("model", "entity_extraction")
+                return state["artifact_version"]
 
             async def get_version_lineage(self, kind, key):
                 assert (kind, key) == ("model", "entity_extraction")
@@ -6803,6 +7073,113 @@ class TestEntityExtractionOptimization:
         ]
         assert state["activate_calls"] == [("model", "entity_extraction", 1)]
         assert state["active_blob"] == '{"compiled": "entity_extraction"}'
+
+    @pytest.mark.asyncio
+    async def test_mutated_current_blob_keeps_entity_module_untouched(self, caplog):
+        from cogniverse_agents.entity_extraction_agent import EntityExtractionModule
+
+        rows = [
+            {
+                "context.span_id": f"ee-{i}",
+                "attributes.input.value": f"find entity {i}",
+                "attributes.output.value": json.dumps(
+                    {"entities": [{"text": f"Entity {i}", "type": "CONCEPT"}]}
+                ),
+            }
+            for i in range(2)
+        ]
+        provider = FakeTelemetryProvider(
+            _make_spans_df("cogniverse.entity_extraction", rows)
+        )
+        real_module = EntityExtractionModule()
+        expected_instructions = _signature_instructions(
+            real_module, "extractor.predict"
+        )
+        current_state = json.loads(self._served_state())
+        current_state["extractor.predict"]["signature"]["instructions"] = (
+            f"{expected_instructions} [stale]"
+        )
+        current_blob = json.dumps(current_state, default=str)
+        created_modules: list[Any] = []
+
+        def tracked_entity_module():
+            module = EntityExtractionModule()
+            created_modules.append(module)
+            return module
+
+        warning_message = (
+            "entity_extraction optimizer entity_extraction current artifact v7 "
+            "signature mismatch for predictor extractor.predict (instructions); "
+            "treating it as missing for scoring"
+        )
+
+        with (
+            patch(
+                "cogniverse_agents.entity_extraction_agent.EntityExtractionModule",
+                side_effect=tracked_entity_module,
+            ),
+            patch(
+                "cogniverse_agents.optimizer.artifact_manager.ArtifactManager._active_blob_version",
+                new=AsyncMock(return_value=7),
+            ),
+            caplog.at_level(
+                logging.WARNING, logger="cogniverse_runtime.optimization_cli"
+            ),
+        ):
+            state, result = await self._run(
+                provider,
+                current_blob=current_blob,
+                artifact_version=7,
+                floor=(1, 1),
+                score_by_module=self._entity_score_by_module,
+            )
+
+        assert result == {
+            "status": "success",
+            "spans_found": 2,
+            "served_examples": 2,
+            "served_scoreable_examples": 2,
+            "label_rows": 2,
+            "truth_rows": 2,
+            "approved_rows": 0,
+            "training_examples": 1,
+            "holdout_examples": 1,
+            "holdout_source": "ground_truth",
+            **_selection_block(1, 1),
+            "bootstrap": _fake_bootstrap_block(1),
+            "baseline_score": 1.0,
+            "current_score": None,
+            "candidate_score": 1.0,
+            "decision": "reject",
+            "version": 1,
+            "consumed_example_ids": ["truth:0", "truth:1"],
+        }
+        assert state["versioned_saves"] == [
+            {
+                "kind": "model",
+                "key": "entity_extraction",
+                "content": '{"compiled": "entity_extraction"}',
+                "consumed_example_ids": ["truth:0", "truth:1"],
+                "decision": "reject",
+                "scored": True,
+                "score": 1.0,
+                "base_score": 1.0,
+                "candidate_score": 1.0,
+                "extra_ledger_fields": {},
+            }
+        ]
+        assert state["activate_calls"] == []
+        assert state["active_blob"] == current_blob
+        assert [
+            _signature_instructions(module, "extractor.predict")
+            for module in created_modules
+        ] == [expected_instructions] * len(created_modules)
+        assert [
+            rec.getMessage()
+            for rec in caplog.records
+            if rec.name == "cogniverse_runtime.optimization_cli"
+            and rec.levelno == logging.WARNING
+        ] == [warning_message]
 
     @pytest.mark.asyncio
     async def test_entity_extraction_keeps_persisted_state_without_activating(self):
