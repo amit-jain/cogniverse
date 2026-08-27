@@ -4,6 +4,7 @@ Basic unit tests for ChunkProcessor to improve coverage.
 Tests basic initialization and configuration without external dependencies.
 """
 
+import subprocess
 from pathlib import Path
 from unittest.mock import Mock, patch
 
@@ -73,13 +74,19 @@ class TestChunkProcessorBasic:
     @patch("subprocess.run")
     def test_get_video_duration_error(self, mock_run, mock_logger):
         """Test video duration retrieval error handling."""
-        mock_run.side_effect = Exception("ffprobe error")
+        mock_run.side_effect = subprocess.CalledProcessError(
+            17, "ffprobe", stderr="probe rejected stream"
+        )
         processor = ChunkProcessor(mock_logger)
 
-        duration = processor._get_video_duration(Path("/test/video.mp4"))
+        with pytest.raises(RuntimeError) as exc_info:
+            processor._get_video_duration(Path("/test/video.mp4"))
 
-        assert duration == 0.0
-        mock_logger.error.assert_called()
+        assert str(exc_info.value) == (
+            "ffprobe failed for /test/video.mp4 with exit 17: probe rejected stream"
+        )
+        assert isinstance(exc_info.value.__cause__, subprocess.CalledProcessError)
+        assert exc_info.value.__cause__.returncode == 17
 
     def test_cleanup_method(self, mock_logger):
         """Test cleanup method."""
