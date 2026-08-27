@@ -985,6 +985,29 @@ def _synthetic_fixture_profiles(config: dict) -> list[str]:
     return profiles
 
 
+def _profile_selection_video_profiles(config: dict) -> list[str]:
+    profiles = [
+        _active_video_profile_name(config),
+        _configured_profile_name(
+            config,
+            profile_type="video",
+            schema_name="video_colqwen_omni_mv_chunk_30s",
+        ),
+    ]
+    configured_profiles = config.get("backend", {}).get("profiles", {})
+    missing = [name for name in profiles if name not in configured_profiles]
+    if missing:
+        raise AssertionError(
+            f"Profile-selection video profiles are not configured: {missing}"
+        )
+    modalities = [configured_profiles[name].get("type") for name in profiles]
+    if modalities != ["video", "video"]:
+        raise AssertionError(
+            f"Profile-selection fixtures require two video profiles, got {modalities}"
+        )
+    return profiles
+
+
 def _expected_sample_documents_fed(path: Path, profile: str, media_type: str) -> int:
     if not media_type.startswith("video/"):
         return 1
@@ -1041,6 +1064,7 @@ def _bootstrap_tenant_and_schemas() -> None:
         dict.fromkeys(
             (
                 *_synthetic_fixture_profiles(config),
+                *_profile_selection_video_profiles(config),
                 _configured_document_profile_name(config),
                 _configured_document_profile_name(
                     config, schema_name="document_visual"
@@ -1428,7 +1452,7 @@ def _ensure_sample_content_ingested(
 
 
 def _ingest_sample_video() -> None:
-    """Ensure the exact tracked ActivityNet video is persisted for E2E tests."""
+    """Ensure the tracked sample videos are persisted for E2E tests."""
     actual_content_id = _content_sha256(SAMPLE_VIDEO_PATH)
     if actual_content_id != SAMPLE_VIDEO_CONTENT_ID:
         pytest.fail(
@@ -1438,13 +1462,14 @@ def _ingest_sample_video() -> None:
 
     config_path = DATA_ROOT.parent / "configs" / "config.json"
     config = json.loads(config_path.read_text()) if config_path.exists() else {}
-    active_profile = _active_video_profile_name(config)
-    persisted_content_id = _ensure_sample_content_ingested(
-        SAMPLE_VIDEO_PATH,
-        profile=active_profile,
-        media_type="video/mp4",
-    )
-    assert persisted_content_id == SAMPLE_VIDEO_CONTENT_ID
+    for profile in _profile_selection_video_profiles(config):
+        for path in (SAMPLE_VIDEO_PATH, _TRACKED_E2E_VIDEO):
+            persisted_content_id = _ensure_sample_content_ingested(
+                path,
+                profile=profile,
+                media_type="video/mp4",
+            )
+            assert persisted_content_id == _content_sha256(path)
 
 
 def _sample_audio_path() -> Path:
