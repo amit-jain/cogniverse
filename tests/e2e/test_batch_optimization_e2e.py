@@ -32,6 +32,7 @@ from pathlib import Path
 import httpx
 import pytest
 
+from cogniverse_agents.entity_extraction_agent import EntityExtractionModule
 from cogniverse_agents.optimizer.artifact_manager import BLOB_VERSION_DECISIONS
 from cogniverse_agents.query_enhancement_agent import QueryEnhancementModule
 from tests.e2e.conftest import (
@@ -4165,7 +4166,9 @@ class TestEntityExtractionOptimization:
         field_names = [f.get("prefix", "").rstrip(":").strip() for f in sig["fields"]]
         for expected in ("Query", "Entities"):
             assert expected in field_names, f"Missing '{expected}', got: {field_names}"
-        assert sig["instructions"] == "Extract named entities from text query"
+        assert sig["instructions"] == (
+            EntityExtractionModule().extractor.predict.signature.instructions
+        )
         bootstrap = result["bootstrap"]
         assert set(bootstrap) == {
             "trainset",
