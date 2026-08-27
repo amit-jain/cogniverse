@@ -569,8 +569,7 @@
       "optimizer_floors": {
         "profile_selection": {
           "min_samples_for_optimization": 20,
-          "min_unique_queries": 6,
-          "max_label_share": 0.8
+          "min_unique_queries": 6
         },
         "entity_extraction": {
           "min_samples_for_optimization": 30,

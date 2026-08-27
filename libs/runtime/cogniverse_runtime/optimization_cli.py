@@ -490,6 +490,14 @@ class ProfileLabelDerivationResult(dict):
         return dict(Counter(self.values()))
 
     @property
+    def dominant_label_share(self) -> float:
+        labels_by_profile = self.labels_by_profile
+        total_labels = sum(labels_by_profile.values())
+        if not total_labels:
+            return 0.0
+        return max(labels_by_profile.values()) / total_labels
+
+    @property
     def exclusions_by_reason(self) -> dict[str, int]:
         return dict(
             Counter(exclusion.get("reason", "") for exclusion in self.exclusions)
@@ -1905,98 +1913,6 @@ def _shipped_population_floor_from_config(
         ),
         optimization_config.get("min_unique_queries", 3),
     )
-
-
-def _profile_selection_max_label_share_from_config(
-    tenant_id: str,
-    config_manager=None,
-) -> float:
-    """The tenant's max share for one profile's derived labels."""
-    from cogniverse_foundation.config.utils import create_default_config_manager
-
-    manager = config_manager or create_default_config_manager()
-    routing = manager.get_routing_config(tenant_id=tenant_id)
-    optimizer_floor = routing.optimizer_floors.get("profile_selection")
-    if optimizer_floor is not None:
-        if isinstance(optimizer_floor, dict):
-            tenant_share = _profile_selection_max_label_share_from_floor_config(
-                optimizer_floor,
-                _shipped_profile_selection_max_label_share_from_config() or 0.8,
-            )
-            if tenant_share is not None:
-                return tenant_share
-        logger.warning(
-            "Ignoring malformed optimizer floor for tenant %r optimizer %r: %r",
-            tenant_id,
-            "profile_selection",
-            optimizer_floor,
-        )
-
-    shipped_share = _shipped_profile_selection_max_label_share_from_config()
-    if shipped_share is not None:
-        return shipped_share
-
-    return 0.8
-
-
-def _profile_selection_max_label_share_from_floor_config(
-    floor_config: dict,
-    fallback: float,
-) -> float | None:
-    """Normalize a label-share mapping into a numeric knob."""
-    try:
-        return float(floor_config.get("max_label_share", fallback))
-    except (TypeError, ValueError):
-        return None
-
-
-def _shipped_profile_selection_max_label_share_from_config() -> float | None:
-    """Load the shipped label-share knob for profile selection."""
-    try:
-        raw_config = json.loads(SHIPPED_CONFIG_PATH.read_text(encoding="utf-8"))
-    except (OSError, json.JSONDecodeError) as exc:
-        logger.warning(
-            "Unable to read shipped profile label share from %s: %s",
-            SHIPPED_CONFIG_PATH,
-            exc,
-        )
-        return None
-
-    routing_config = raw_config.get("routing")
-    if not isinstance(routing_config, dict):
-        logger.warning(
-            "Shipped profile label share at %s are missing routing.optimization_config",
-            SHIPPED_CONFIG_PATH,
-        )
-        return None
-
-    optimization_config = routing_config.get("optimization_config")
-    if not isinstance(optimization_config, dict):
-        logger.warning(
-            "Shipped profile label share at %s are missing routing.optimization_config",
-            SHIPPED_CONFIG_PATH,
-        )
-        return None
-
-    optimizer_floors = optimization_config.get("optimizer_floors")
-    if not isinstance(optimizer_floors, dict):
-        logger.warning(
-            "Shipped profile label share at %s are missing routing.optimization_config.optimizer_floors",
-            SHIPPED_CONFIG_PATH,
-        )
-        return None
-
-    shipped_floor = optimizer_floors.get("profile_selection")
-    if shipped_floor is None:
-        return None
-    if not isinstance(shipped_floor, dict):
-        logger.warning(
-            "Shipped profile label share for profile_selection at %s is malformed",
-            SHIPPED_CONFIG_PATH,
-        )
-        return None
-
-    return _profile_selection_max_label_share_from_floor_config(shipped_floor, 0.8)
 
 
 def _training_selection_from_config(
@@ -4397,8 +4313,10 @@ async def run_profile_optimization(
         )
     labels_by_profile = label_source.labels_by_profile
     exclusions_by_reason = label_source.exclusions_by_reason
+    dominant_label_share = label_source.dominant_label_share
     result_distribution = {
         "labels_by_profile": labels_by_profile,
+        "dominant_label_share": dominant_label_share,
         "exclusions_by_reason": exclusions_by_reason,
     }
     if not records:
@@ -4421,19 +4339,12 @@ async def run_profile_optimization(
     )
     served_examples = len(profile_pairs)
     approved_examples = len(synthetic_demos)
-    max_label_share = _profile_selection_max_label_share_from_config(
-        tenant_id, config_manager
-    )
-    total_labels = sum(labels_by_profile.values())
-    dominant_label_share = (
-        max(labels_by_profile.values()) / total_labels if total_labels else 0.0
-    )
-    if len(labels_by_profile) < 2 or dominant_label_share > max_label_share:
+    if len(labels_by_profile) < 2:
         logger.warning(
-            "Profile labels degenerate for %s: distribution=%s max_label_share=%.3f",
+            "Profile labels degenerate for %s: distribution=%s dominant_label_share=%.3f",
             tenant_id,
             labels_by_profile,
-            max_label_share,
+            dominant_label_share,
         )
         return {
             "status": "profile_labels_degenerate",

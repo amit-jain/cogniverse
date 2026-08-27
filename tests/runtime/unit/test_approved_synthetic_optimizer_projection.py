@@ -361,6 +361,7 @@ async def test_synthetic_only_data_compiles_the_actual_production_module(
             "served_scoreable_examples": 0,
             "label_exclusions": {"count": 0, "queries": []},
             "labels_by_profile": {},
+            "dominant_label_share": 0.0,
             "exclusions_by_reason": {},
         }
         assert captured == {}
