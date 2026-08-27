@@ -1,6 +1,7 @@
 """Unit tests for ProfileSelectionAgent"""
 
 import asyncio
+import json
 import logging
 import time
 from types import SimpleNamespace
@@ -775,25 +776,34 @@ class TestProfileSelectionArtifactLoading:
     @pytest.mark.asyncio
     async def test_loads_dspy_artifact(self, profile_agent):
         """ProfileSelectionAgent should load optimized DSPy module state."""
-        import json
         from unittest.mock import AsyncMock, MagicMock
 
         mock_tm = MagicMock()
         mock_tm.get_provider.return_value = MagicMock()
-        fake_state = {"selector.predict": {"signature": {"fields": []}, "demos": []}}
+        artifact_state = json.loads(json.dumps(ProfileSelectionModule().dump_state()))
+        artifact_state["selector.predict"]["demos"] = [
+            {
+                "query": "Show me machine learning videos",
+                "selected_profile": "video_colpali_base",
+            }
+        ]
 
         with patch(
             "cogniverse_agents.optimizer.artifact_manager.ArtifactManager"
         ) as MockAM:
             mock_am = MockAM.return_value
-            mock_am.load_blob = AsyncMock(return_value=json.dumps(fake_state))
+            mock_am.load_blob = AsyncMock(return_value=json.dumps(artifact_state))
 
             profile_agent.telemetry_manager = mock_tm
             profile_agent._artifact_tenant_id = "test:unit"
-            profile_agent.dspy_module = MagicMock()
+            profile_agent.dspy_module = ProfileSelectionModule()
             profile_agent._load_artifact()
 
-        profile_agent.dspy_module.load_state.assert_called_once_with(fake_state)
+        loaded_state = profile_agent.dspy_module.dump_state()["selector.predict"]
+        assert (
+            loaded_state["signature"] == artifact_state["selector.predict"]["signature"]
+        )
+        assert loaded_state["demos"] == artifact_state["selector.predict"]["demos"]
         assert profile_agent.artifact_load_status == "loaded"
 
     def test_defaults_without_artifact(self, profile_agent):

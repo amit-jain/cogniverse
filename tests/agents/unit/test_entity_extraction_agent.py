@@ -1,6 +1,7 @@
 """Unit tests for EntityExtractionAgent"""
 
 import asyncio
+import json
 import logging
 from unittest.mock import MagicMock, Mock, patch
 
@@ -1268,28 +1269,134 @@ class TestRelationshipModel:
 
 class TestEntityExtractionArtifactLoading:
     @pytest.mark.asyncio
-    async def test_loads_dspy_artifact(self, entity_agent):
+    async def test_loads_matching_dspy_artifact(self, entity_agent):
         """EntityExtractionAgent should load optimized DSPy module state."""
-        import json
         from unittest.mock import AsyncMock
 
         mock_tm = MagicMock()
         mock_tm.get_provider.return_value = MagicMock()
-        fake_state = {"extractor.predict": {"signature": {"fields": []}, "demos": []}}
+        artifact_state = json.loads(json.dumps(EntityExtractionModule().dump_state()))
+        artifact_state["extractor.predict"]["demos"] = [
+            {
+                "query": "Barack Obama in Chicago",
+                "entities": "Barack Obama|PERSON|0.95\nChicago|PLACE|0.9",
+            }
+        ]
 
         with patch(
             "cogniverse_agents.optimizer.artifact_manager.ArtifactManager"
         ) as MockAM:
             mock_am = MockAM.return_value
-            mock_am.load_blob = AsyncMock(return_value=json.dumps(fake_state))
+            mock_am.load_blob = AsyncMock(return_value=json.dumps(artifact_state))
 
             entity_agent.telemetry_manager = mock_tm
             entity_agent._artifact_tenant_id = "test:unit"
-            entity_agent.dspy_module = MagicMock()
+            entity_agent.dspy_module = EntityExtractionModule()
             entity_agent._load_artifact()
 
-        entity_agent.dspy_module.load_state.assert_called_once_with(fake_state)
+        loaded_state = entity_agent.dspy_module.dump_state()["extractor.predict"]
+        assert (
+            loaded_state["signature"]
+            == artifact_state["extractor.predict"]["signature"]
+        )
+        assert loaded_state["demos"] == artifact_state["extractor.predict"]["demos"]
         assert entity_agent.artifact_load_status == "loaded"
+
+    @pytest.mark.asyncio
+    async def test_signature_instructions_mismatch_skips_loading(
+        self, entity_agent, caplog
+    ):
+        """A signature instruction drift must leave the live prompt untouched."""
+        from unittest.mock import AsyncMock
+
+        mock_tm = MagicMock()
+        mock_tm.get_provider.return_value = MagicMock()
+        artifact_state = json.loads(json.dumps(EntityExtractionModule().dump_state()))
+        artifact_state["extractor.predict"]["signature"]["instructions"] = (
+            "Extract named entities only from the saved artifact."
+        )
+        artifact_state["extractor.predict"]["demos"] = [
+            {"query": "sentinel", "entities": "sentinel|CONCEPT|1.0"}
+        ]
+
+        with patch(
+            "cogniverse_agents.optimizer.artifact_manager.ArtifactManager"
+        ) as MockAM:
+            mock_am = MockAM.return_value
+            mock_am.load_blob = AsyncMock(return_value=json.dumps(artifact_state))
+            mock_am._active_blob_version = AsyncMock(return_value=7)
+
+            entity_agent.telemetry_manager = mock_tm
+            entity_agent._artifact_tenant_id = "test:unit"
+            entity_agent.dspy_module = EntityExtractionModule()
+            with caplog.at_level(
+                logging.WARNING,
+                logger="cogniverse_agents.optimizer.artifact_manager",
+            ):
+                entity_agent._load_artifact()
+
+        assert entity_agent.artifact_load_status == "signature_mismatch"
+        assert (
+            entity_agent.dspy_module.dump_state()["extractor.predict"]["signature"][
+                "instructions"
+            ]
+            == EntityExtractionModule().extractor.predict.signature.instructions
+        )
+        assert entity_agent.dspy_module.dump_state()["extractor.predict"]["demos"] == []
+        assert any(
+            "entity_extraction" in rec.getMessage()
+            and "v7" in rec.getMessage()
+            and "extractor.predict" in rec.getMessage()
+            for rec in caplog.records
+        )
+
+    @pytest.mark.asyncio
+    async def test_field_description_mismatch_skips_loading(self, entity_agent, caplog):
+        """A field description drift must leave the live prompt untouched."""
+        from unittest.mock import AsyncMock
+
+        mock_tm = MagicMock()
+        mock_tm.get_provider.return_value = MagicMock()
+        artifact_state = json.loads(json.dumps(EntityExtractionModule().dump_state()))
+        artifact_state["extractor.predict"]["signature"]["fields"][0]["description"] = (
+            "User query for artifact compatibility testing"
+        )
+        artifact_state["extractor.predict"]["demos"] = [
+            {"query": "sentinel", "entities": "sentinel|CONCEPT|1.0"}
+        ]
+
+        with patch(
+            "cogniverse_agents.optimizer.artifact_manager.ArtifactManager"
+        ) as MockAM:
+            mock_am = MockAM.return_value
+            mock_am.load_blob = AsyncMock(return_value=json.dumps(artifact_state))
+            mock_am._active_blob_version = AsyncMock(return_value=8)
+
+            entity_agent.telemetry_manager = mock_tm
+            entity_agent._artifact_tenant_id = "test:unit"
+            entity_agent.dspy_module = EntityExtractionModule()
+            with caplog.at_level(
+                logging.WARNING,
+                logger="cogniverse_agents.optimizer.artifact_manager",
+            ):
+                entity_agent._load_artifact()
+
+        assert entity_agent.artifact_load_status == "signature_mismatch"
+        assert (
+            entity_agent.dspy_module.dump_state()["extractor.predict"]["signature"][
+                "fields"
+            ]
+            == EntityExtractionModule().dump_state()["extractor.predict"]["signature"][
+                "fields"
+            ]
+        )
+        assert entity_agent.dspy_module.dump_state()["extractor.predict"]["demos"] == []
+        assert any(
+            "entity_extraction" in rec.getMessage()
+            and "v8" in rec.getMessage()
+            and "extractor.predict" in rec.getMessage()
+            for rec in caplog.records
+        )
 
     def test_defaults_without_artifact(self, entity_agent):
         """Agent uses default module when no artifact exists."""
