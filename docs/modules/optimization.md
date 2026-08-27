@@ -314,6 +314,8 @@ async def run_profile_optimization(
 
     The agent reloads the artifact on each dispatch via am.load_blob("model", "profile_selection").
 
+    Success and compile payloads also include `distinct_queries` and `holdout_queries`, so row counts and held-out query-key counts stay separate.
+
     Returns (every shape carries
     "label_exclusions": {"count": int, "queries": list[str]}):
       - {"status": "success", "spans_found": int, "served_examples": int,
