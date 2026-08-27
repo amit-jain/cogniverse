@@ -29,6 +29,7 @@ import time
 import uuid
 from collections import Counter
 from collections.abc import Mapping
+from dataclasses import dataclass
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import Any, Callable, Dict, Iterable, List, Optional, Sequence
@@ -2484,25 +2485,35 @@ def _scoreable_first(records: list[dict]) -> tuple[list[dict], int]:
     return scoreable + unscoreable, len(unscoreable)
 
 
+@dataclass(frozen=True)
+class HoldoutSplit:
+    train: list[dict]
+    holdout: list[dict]
+    distinct_queries: int
+    holdout_queries: int
+
+    def __iter__(self):
+        yield self.train
+        yield self.holdout
+
+
 def _split_served_holdout(
     records: list[dict], min_holdout: int, scoreable_predicate=is_scoreable
-) -> tuple[list[dict], list[dict]]:
+) -> HoldoutSplit:
     """Serve the tail of distinct scoreable query keys and keep the rest in train."""
     served_scoreable_indices = _served_scoreable_indices(records, scoreable_predicate)
     if len(served_scoreable_indices) < min_holdout:
-        return list(records), []
+        return HoldoutSplit(list(records), [], 0, 0)
 
     query_positions: dict[str, list[int]] = {}
     for index in served_scoreable_indices:
         query = str(records[index].get("query", "") or "").strip().casefold()
         query_positions.setdefault(query, []).append(index)
 
-    distinct_query_indices = [positions[0] for positions in query_positions.values()]
-    holdout_count = max(1, len(distinct_query_indices) // 4)
-    holdout_query_keys = {
-        str(records[index].get("query", "") or "").strip().casefold()
-        for index in distinct_query_indices[-holdout_count:]
-    }
+    distinct_query_keys = list(query_positions)
+    distinct_queries = len(distinct_query_keys)
+    holdout_queries = max(1, distinct_queries // 4) if distinct_queries else 0
+    holdout_query_keys = {key for key in distinct_query_keys[-holdout_queries:]}
     train = [
         record
         for record in records
@@ -2514,7 +2525,7 @@ def _split_served_holdout(
         for record in records
         if str(record.get("query", "") or "").strip().casefold() in holdout_query_keys
     ]
-    return train, holdout
+    return HoldoutSplit(train, holdout, distinct_queries, holdout_queries)
 
 
 def _negative_probes(agent_name: str, low_scoring_df, limit: int = 20) -> list:
@@ -3521,7 +3532,11 @@ async def run_simba_optimization(
     served_scoreable_examples = len(_served_scoreable_indices(records))
     served_examples = production_count
     approved_examples = len(synthetic_demos)
-    train_records, holdout_records = _split_served_holdout(records, min_holdout)
+    split = _split_served_holdout(records, min_holdout)
+    train_records = split.train
+    holdout_records = split.holdout
+    distinct_queries = split.distinct_queries
+    holdout_queries = split.holdout_queries
     trainable_records = [r for r in train_records if r["trainable"]]
     non_trainable_examples = len(train_records) - len(trainable_records)
     train_records, selection_report = await _apply_training_selection(
@@ -3556,6 +3571,8 @@ async def run_simba_optimization(
             "spans_found": len(spans_df),
             "examples": len(records),
             "served_scoreable_examples": served_scoreable_examples,
+            "distinct_queries": distinct_queries,
+            "holdout_queries": holdout_queries,
             "non_trainable_examples": non_trainable_examples,
             "unscoreable_examples": unscoreable_examples,
             "training_examples": len(trainset),
@@ -3589,6 +3606,8 @@ async def run_simba_optimization(
                 "spans_found": len(spans_df),
                 "examples": len(records),
                 "served_scoreable_examples": served_scoreable_examples,
+                "distinct_queries": distinct_queries,
+                "holdout_queries": holdout_queries,
                 "non_trainable_examples": non_trainable_examples,
                 "unscoreable_examples": unscoreable_examples,
                 "training_examples": len(trainset),
@@ -3674,6 +3693,8 @@ async def run_simba_optimization(
         "served_examples": served_examples,
         "approved_examples": approved_examples,
         "served_scoreable_examples": served_scoreable_examples,
+        "distinct_queries": distinct_queries,
+        "holdout_queries": holdout_queries,
         "non_trainable_examples": non_trainable_examples,
         "unscoreable_examples": unscoreable_examples,
         "training_examples": len(trainset),
@@ -4448,11 +4469,18 @@ async def run_profile_optimization(
         }
 
     min_holdout = max(1, min_samples // 10)
-    train_records, holdout_records = _split_served_holdout(
+    split = _split_served_holdout(
         served_records,
         min_holdout,
         scoreable_predicate=_profile_selection_is_scoreable,
     )
+    result_distribution = {
+        **result_distribution,
+        "distinct_queries": split.distinct_queries,
+        "holdout_queries": split.holdout_queries,
+    }
+    train_records = split.train
+    holdout_records = split.holdout
     train_records, selection_report = await _apply_training_selection(
         artifact_manager=artifact_manager,
         config_manager=config_manager,
@@ -4481,6 +4509,8 @@ async def run_profile_optimization(
             "status": "no_eval_material",
             "spans_found": len(spans_df),
             "served_scoreable_examples": served_scoreable_examples,
+            "distinct_queries": split.distinct_queries,
+            "holdout_queries": split.holdout_queries,
             "training_examples": len(trainset),
             "holdout_examples": 0,
             "holdout_source": "derived_labels",
@@ -4580,6 +4610,8 @@ async def run_profile_optimization(
         "served_examples": served_examples,
         "approved_examples": approved_examples,
         "served_scoreable_examples": served_scoreable_examples,
+        "distinct_queries": split.distinct_queries,
+        "holdout_queries": split.holdout_queries,
         "training_examples": len(trainset),
         "holdout_examples": len(holdout),
         "holdout_source": "derived_labels",
@@ -4736,11 +4768,13 @@ async def run_entity_extraction_optimization(
     split_records = [
         {**record, "example_id": f"span:{record['example_id']}"} for record in records
     ]
-    split_train_records, split_holdout_records = _split_served_holdout(
+    split = _split_served_holdout(
         split_records,
         min_holdout,
         scoreable_predicate=_entity_extraction_is_scoreable,
     )
+    split_train_records = split.train
+    split_holdout_records = split.holdout
     train_record_ids = {
         record["example_id"].removeprefix("span:") for record in split_train_records
     }
@@ -4785,6 +4819,8 @@ async def run_entity_extraction_optimization(
             "spans_found": len(spans_df),
             "served_examples": served_examples,
             "served_scoreable_examples": served_scoreable_examples,
+            "distinct_queries": split.distinct_queries,
+            "holdout_queries": split.holdout_queries,
             "label_rows": label_rows,
             "truth_rows": truth_rows,
             "approved_rows": approved_rows,
@@ -4887,6 +4923,8 @@ async def run_entity_extraction_optimization(
         "spans_found": len(spans_df),
         "served_examples": served_examples,
         "served_scoreable_examples": served_scoreable_examples,
+        "distinct_queries": split.distinct_queries,
+        "holdout_queries": split.holdout_queries,
         "label_rows": label_rows,
         "truth_rows": truth_rows,
         "approved_rows": approved_rows,
