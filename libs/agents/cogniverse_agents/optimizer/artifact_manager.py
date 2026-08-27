@@ -1825,7 +1825,7 @@ def _signature_mismatch_reason(
     return None
 
 
-def _signature_contract_mismatch(
+def signature_contract_mismatch(
     live_state: Mapping[str, Any], artifact_state: Mapping[str, Any]
 ) -> Optional[tuple[str, str]]:
     """Return the mismatched predictor name and reason, if any."""
@@ -1903,7 +1903,7 @@ def load_optimized_module(agent: Any, blob_key: str) -> None:
             )
             return
         artifact_state = json.loads(blob)
-        mismatch = _signature_contract_mismatch(
+        mismatch = signature_contract_mismatch(
             agent.dspy_module.dump_state(), artifact_state
         )
         if mismatch is not None:
