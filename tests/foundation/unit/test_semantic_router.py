@@ -29,6 +29,7 @@ from cogniverse_foundation.config.semantic_router import (
     routed_lm_context_for,
 )
 from cogniverse_foundation.config.unified_config import (
+    LLMConfig,
     LLMEndpointConfig,
     SemanticRouterConfig,
     SystemConfig,
@@ -274,6 +275,17 @@ class TestRoutedLMContextFor:
             "cogniverse_foundation.config.utils.get_config", lambda **kw: cfg
         )
 
+    class _Accessor:
+        def __init__(self, system_config, llm_config):
+            self._system_config = system_config
+            self._llm_config = llm_config
+
+        def get_semantic_router(self):
+            return self._system_config.semantic_router
+
+        def get_llm_config(self):
+            return self._llm_config
+
     def test_no_endpoint_disabled_is_nullcontext(self, monkeypatch):
         # No endpoint supplied (orchestrator case) + disabled => ambient LM.
         cfg = MagicMock()
@@ -296,6 +308,39 @@ class TestRoutedLMContextFor:
             "x-authz-user-id": "acme:prod",
             "x-authz-user-groups": "pro",
         }
+
+    def test_claim_extractor_stays_direct_while_agents_route(self, monkeypatch):
+        cfg = self._Accessor(
+            SystemConfig(semantic_router=_enabled_config()),
+            LLMConfig(
+                primary=LLMEndpointConfig(
+                    model="openai/google/gemma-4-e4b-it",
+                    api_base=DIRECT,
+                    request_timeout=120.0,
+                    num_retries=1,
+                )
+            ),
+        )
+        self._patch_get_config(monkeypatch, cfg)
+        endpoint = cfg.get_llm_config().primary
+
+        with routed_lm_context_for(
+            object(), "acme:prod", "claim_extractor", endpoint=endpoint
+        ):
+            ingest_lm = dspy.settings.lm
+        assert ingest_lm.model == "openai/google/gemma-4-e4b-it"
+        assert ingest_lm.kwargs["api_base"] == DIRECT
+        assert ingest_lm.kwargs["timeout"] == 120.0
+        assert ingest_lm.num_retries == 1
+
+        with routed_lm_context_for(
+            object(), "acme:prod", "summarizer_agent", endpoint=endpoint
+        ):
+            routed_lm = dspy.settings.lm
+        assert routed_lm.model == "openai/auto"
+        assert routed_lm.kwargs["api_base"] == SR_URL
+        assert routed_lm.kwargs["timeout"] == 120.0
+        assert routed_lm.num_retries == 1
 
     def test_config_error_propagates(self, monkeypatch):
         # No silent fallback: a broken config store surfaces, even with an

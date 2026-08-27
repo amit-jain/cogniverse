@@ -476,14 +476,15 @@ router_config = SemanticRouterConfig(
 )
 ```
 
-When `enabled`, `cogniverse_foundation.config.semantic_router` rewrites an `LLMEndpointConfig` to target `semantic_router_url` instead of the model backend, sets `model` to `routed_model` (the router resolves models by its own catalog, not raw provider ids), and attaches two authz headers per request: tenant identity (`user_id_header`, default `x-authz-user-id`) and tenant tier (`tier_header`, default `x-authz-user-groups`, resolved from `tenant_tiers` with `default_tier` as fallback). When disabled, the endpoint passes through unchanged.
+When `enabled`, `cogniverse_foundation.config.semantic_router` rewrites an `LLMEndpointConfig` to target `semantic_router_url` instead of the model backend, sets `model` to `routed_model` (the router resolves models by its own catalog, not raw provider ids), and attaches two authz headers per request: tenant identity (`user_id_header`, default `x-authz-user-id`) and tenant tier (`tier_header`, default `x-authz-user-groups`, resolved from `tenant_tiers` with `default_tier` as fallback). When disabled, the endpoint passes through unchanged. Claim extraction during ingestion keeps the direct primary endpoint.
 
 | Function | Description |
 |----------|-------------|
 | `resolve_semantic_router_headers(config, tenant_id)` | Resolve the two authz headers, or `None` when disabled |
 | `apply_semantic_routing(endpoint, config, tenant_id)` | Return a routed copy of `endpoint`, or the original when disabled |
 | `create_routed_lm(endpoint, config, tenant_id)` | `apply_semantic_routing` + `create_dspy_lm` in one call |
-| `routed_lm_context_for(config_manager, tenant_id, agent_name, endpoint=None)` | Return a `dspy.context` binding the routed (or direct) LM for a request — the entry point agents use |
+| `ingest_lm_context_for(endpoint)` | Return a direct `dspy.context` for ingestion-time LM calls |
+| `routed_lm_context_for(config_manager, tenant_id, agent_name, endpoint=None)` | Return a `dspy.context` binding the routed LM for query-time agents and the direct primary endpoint for claim extraction |
 | `resolve_semantic_router_config(config_accessor)` | Read `SemanticRouterConfig` off an object exposing `get_semantic_router()` |
 
 ### Configuration Scopes

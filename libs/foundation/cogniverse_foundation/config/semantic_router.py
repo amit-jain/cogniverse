@@ -132,6 +132,16 @@ def create_routed_lm(
     return create_dspy_lm(routed)
 
 
+def ingest_lm_context_for(endpoint: LLMEndpointConfig):
+    """Return a direct ``dspy.context`` for ingestion-time LM calls."""
+    import dspy
+
+    return dspy.context(lm=create_dspy_lm(endpoint))
+
+
+_INGEST_DIRECT_AGENT_NAMES = frozenset({"claim_extractor"})
+
+
 def routed_lm_context_for(
     config_manager: object,
     tenant_id: str,
@@ -150,6 +160,8 @@ def routed_lm_context_for(
       auto alias and the router picks the concrete model itself.
     - Disabled: the LM is built directly from the same endpoint — the plain
       direct-to-backend path, not a fallback.
+    - Ingestion claim extraction: uses the direct primary endpoint even when
+      routing is enabled. Query-time agents keep the router path.
 
     When ``endpoint`` is omitted the endpoint is resolved from config for
     ``agent_name`` on the enabled path (``agent_name`` selects which endpoint,
@@ -179,6 +191,11 @@ def routed_lm_context_for(
         return _direct()
 
     cfg = get_config(tenant_id=tenant_id, config_manager=config_manager)
+    if agent_name in _INGEST_DIRECT_AGENT_NAMES:
+        direct_endpoint = (
+            endpoint if endpoint is not None else cfg.get_llm_config().primary
+        )
+        return ingest_lm_context_for(direct_endpoint)
     router = resolve_semantic_router_config(cfg)
     if not router.enabled:
         return _direct()
