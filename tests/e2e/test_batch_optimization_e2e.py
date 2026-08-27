@@ -328,6 +328,89 @@ def _profile_ground_truth_queries() -> list[str]:
     return [str(row["query"]) for row in _profile_ground_truth_rows()]
 
 
+ENTITY_EXTRACTION_GROUND_TRUTH_KEY = ("config", "entity_extraction_ground_truth")
+ENTITY_EXTRACTION_GROUND_TRUTH_PATH = (
+    Path(__file__).resolve().parent / "data" / "entity_extraction_ground_truth.json"
+)
+
+
+@functools.lru_cache(maxsize=1)
+def _entity_ground_truth_rows() -> tuple[dict[str, object], ...]:
+    """The entity-extraction ground truth this module seeds for the tenant:
+    every committed row with a non-empty query and entities payload, in asset
+    order, canonicalized the way the upload route persists it."""
+    from cogniverse_agents.optimizer.entity_extraction_ground_truth import (
+        canonicalize_entity_extraction_ground_truth_rows,
+    )
+
+    rows = json.loads(ENTITY_EXTRACTION_GROUND_TRUTH_PATH.read_text())
+    if not isinstance(rows, list):
+        raise AssertionError(
+            f"{ENTITY_EXTRACTION_GROUND_TRUTH_PATH} did not load a JSON list"
+        )
+    canonical_rows = [
+        dict(row)
+        for row in rows
+        if isinstance(row, dict)
+        and str(row.get("query", "")).strip()
+        and row.get("entities")
+    ]
+    return tuple(canonicalize_entity_extraction_ground_truth_rows(canonical_rows))
+
+
+def _active_entity_ground_truth_in_pod(tenant_id: str = TENANT_ID):
+    kind, key = ENTITY_EXTRACTION_GROUND_TRUTH_KEY
+    blob = _load_blob_in_pod(kind, key, tenant_id)
+    return json.loads(blob) if blob else None
+
+
+def _seed_entity_extraction_ground_truth(tenant_id: str = TENANT_ID) -> None:
+    """Make the tenant's active entity ground-truth blob exactly
+    ``_entity_ground_truth_rows``: upload only when the active blob differs,
+    and read the active blob back either way."""
+    rows = list(_entity_ground_truth_rows())
+    if _active_entity_ground_truth_in_pod(tenant_id) != rows:
+        resp = httpx.put(
+            f"{RUNTIME}/admin/tenants/{tenant_id}/entity_extraction_ground_truth",
+            json=rows,
+            timeout=60.0,
+        )
+        assert resp.status_code == 200, (
+            "entity_extraction_ground_truth upload rejected: "
+            f"HTTP {resp.status_code} {resp.text[:500]}"
+        )
+        assert resp.json()["row_count"] == len(rows), resp.json()
+    assert _active_entity_ground_truth_in_pod(tenant_id) == rows
+
+
+def _entity_ground_truth_queries() -> list[str]:
+    """Queries of the seeded ground truth in row order."""
+    return [str(row["query"]) for row in _entity_ground_truth_rows()]
+
+
+def _entity_extraction_expected_holdout_examples(
+    truth_rows: list[dict[str, object]],
+    approved_rows: list[dict[str, object]],
+) -> int:
+    # production: libs/runtime/cogniverse_runtime/optimization_cli.py:4749-4753 and _split_served_holdout() at :2502
+    min_samples, _ = _population_floor_from_shipped_config("entity_extraction")
+    min_holdout = max(1, min_samples // 10)
+    label_rows = [row for row in [*truth_rows, *approved_rows] if row.get("entities")]
+    if len(label_rows) < min_holdout:
+        return 0
+    distinct_queries = {str(row["query"]).strip().casefold() for row in label_rows}
+    return max(1, len(distinct_queries) // 4)
+
+
+def _entity_extraction_consumed_example_ids(
+    truth_rows: list[dict[str, object]],
+    approved_rows: list[dict[str, object]],
+) -> set[str]:
+    return {f"truth:{index}" for index in range(len(truth_rows))} | {
+        str(row["example_id"]) for row in approved_rows
+    }
+
+
 def _assert_profile_labels_partition_ground_truth(result: dict) -> None:
     """Every seeded ground-truth row is either a derived label or a reported
     exclusion."""
@@ -608,7 +691,6 @@ def _selection_summary_in_pod(
                     {{
                         "query": pair["query"],
                         "entities": pair["entities"],
-                        "entity_types": "",
                         "example_id": pair["example_id"],
                     }}
                     for pair in entity_pairs
@@ -624,7 +706,6 @@ def _selection_summary_in_pod(
                         {{
                             "query": projected["query"],
                             "entities": projected["entities"],
-                            "entity_types": projected["entity_types"],
                             "example_id": demo["example_id"],
                         }}
                     )
@@ -835,7 +916,7 @@ def _call_agent(
     query: str,
     tenant_id: str = TENANT_ID,
     context_extra: dict | None = None,
-) -> None:
+) -> dict[str, object]:
     resp = httpx.post(
         f"{RUNTIME}/agents/{agent_name}/process",
         json={
@@ -850,6 +931,11 @@ def _call_agent(
         f"{agent_name} rejected span-seeding query {query!r}: "
         f"HTTP {resp.status_code} {resp.text[:500]}"
     )
+    body = resp.json()
+    assert body["status"] == "success", body
+    assert body["agent"] == agent_name, body
+    assert body["query"] == query, body
+    return body
 
 
 @pytest.fixture(scope="module")
@@ -3906,29 +3992,59 @@ class TestBatchJobsReadCorrectSpanTypes:
         )
 
 
+@pytest.fixture(scope="module")
+def entity_extraction_batch_result(generate_spans_for_batch_jobs):
+    _seed_entity_extraction_ground_truth()
+    ground_truth_rows = list(_entity_ground_truth_rows())
+    assert len(ground_truth_rows) >= 5, ground_truth_rows
+    assert _active_entity_ground_truth_in_pod(TENANT_ID) == ground_truth_rows
+
+    blob_before = _load_blob_in_pod("model", "entity_extraction")
+    assert blob_before != "", "the module fixture persists the base artifact"
+
+    approved_examples = _approved_query_enhancement_examples_in_pod(
+        TENANT_ID, "entity_extraction"
+    )
+    result = _run_batch_job("entity-extraction")
+    version_blob, ledger = _load_blob_version_in_pod(
+        "model", "entity_extraction", result["version"]
+    )
+    blob_after_run = _load_blob_in_pod("model", "entity_extraction")
+
+    return {
+        "blob_before": blob_before,
+        "blob_after_run": blob_after_run,
+        "ground_truth_rows": ground_truth_rows,
+        "approved_examples": approved_examples,
+        "result": result,
+        "version_blob": version_blob,
+        "ledger": ledger,
+    }
+
+
 class TestEntityExtractionOptimization:
     """Verify entity extraction batch job compiles the entity extraction module."""
 
-    def test_entity_extraction_produces_model_artifact(self):
-        """Run --mode entity-extraction, assert it produces a compiled DSPy model."""
-        blob_before = _load_blob_in_pod("model", "entity_extraction")
-        assert blob_before != "", "the module fixture persists the base artifact"
-
-        result = _run_batch_job("entity-extraction")
-        approved = _approved_query_enhancement_examples_in_pod(
-            TENANT_ID, "entity_extraction"
-        )
-        version_blob, ledger = _load_blob_version_in_pod(
-            "model", "entity_extraction", result["version"]
-        )
-        active_blob = _load_blob_in_pod("model", "entity_extraction")
+    def test_entity_extraction_produces_model_artifact(
+        self, entity_extraction_batch_result
+    ):
+        """Run --mode entity-extraction once and pin the bookkeeping contract."""
+        batch = entity_extraction_batch_result
+        result = batch["result"]
+        approved_examples = batch["approved_examples"]
+        blob_before = batch["blob_before"]
+        version_blob = batch["version_blob"]
+        ledger = batch["ledger"]
+        active_blob = batch["blob_after_run"]
 
         assert set(result) == {
             "status",
             "spans_found",
             "served_examples",
-            "approved_examples",
             "served_scoreable_examples",
+            "label_rows",
+            "truth_rows",
+            "approved_rows",
             "training_examples",
             "holdout_examples",
             "holdout_source",
@@ -3946,18 +4062,32 @@ class TestEntityExtractionOptimization:
             "entity_extraction"
         )
         assert result["spans_found"] >= expected_min_samples, result
-        assert result["holdout_source"] == "served", result
-        assert result["decision"] in BLOB_VERSION_DECISIONS, result
+        assert result["holdout_source"] == "ground_truth", result
         assert result["served_examples"] <= result["spans_found"], result
-        assert result["approved_examples"] == len(approved), result
-        assert result["holdout_examples"] == max(
-            1, result["served_scoreable_examples"] // 4
-        ), result
+        assert result["served_scoreable_examples"] <= result["served_examples"], result
+        assert result["truth_rows"] == len(batch["ground_truth_rows"]), result
+        assert result["approved_rows"] == len(approved_examples), result
+        assert result["label_rows"] == result["truth_rows"] + result["approved_rows"], (
+            result
+        )
+        expected_holdout_examples = _entity_extraction_expected_holdout_examples(
+            list(batch["ground_truth_rows"]),
+            approved_examples,
+        )
+        # production: libs/runtime/cogniverse_runtime/optimization_cli.py:4749-4753 and _split_served_holdout() at :2502
+        assert result["holdout_examples"] == expected_holdout_examples, result
         assert result["selection"]["pool"] == (
-            result["served_examples"]
-            - result["holdout_examples"]
-            + result["approved_examples"]
+            result["label_rows"] - result["holdout_examples"]
         ), result
+        assert result["training_examples"] == result["selection"]["pool"], result
+        assert result["selection"]["deduped"] == result["selection"]["pool"], result
+        assert result["training_examples"] == (
+            result["label_rows"] - result["holdout_examples"]
+        ), result
+        assert result["selection"]["deduped"] == (
+            result["label_rows"] - result["holdout_examples"]
+        ), result
+        assert result["training_examples"] == result["selection"]["deduped"], result
         assert result["training_examples"] == min(
             result["selection"]["deduped"], result["selection"]["cap"]
         ), result
@@ -3969,12 +4099,19 @@ class TestEntityExtractionOptimization:
         assert result["selection"]["mmr_applied"] == (
             result["selection"]["deduped"] > result["selection"]["cap"]
         ), result
-        assert len(result["consumed_example_ids"]) == (
-            result["served_examples"] + result["approved_examples"]
+        assert result["selection"]["decayed_count"] == len(
+            result["selection"]["decayed_example_ids"]
         ), result
-        assert all(
-            example_id.startswith(("span:", "approved:"))
-            for example_id in result["consumed_example_ids"]
+        assert result["selection"]["decayed_count"] == 0, result
+        assert result["selection"]["decayed_example_ids"] == [], result
+        expected_consumed_example_ids = [
+            f"truth:{index}" for index in range(result["truth_rows"])
+        ] + [row["example_id"] for row in approved_examples]
+        assert result["consumed_example_ids"] == expected_consumed_example_ids, result
+        assert set(result["consumed_example_ids"]) == (
+            _entity_extraction_consumed_example_ids(
+                list(batch["ground_truth_rows"]), approved_examples
+            )
         ), result
 
         assert set(ledger) == {
@@ -4012,92 +4149,15 @@ class TestEntityExtractionOptimization:
                 != result["version"]
             ), ledger
 
-    def test_entity_extraction_artifact_has_learned_demos(self):
+    def test_entity_extraction_artifact_has_learned_demos(
+        self, entity_extraction_batch_result
+    ):
         """Entity extraction artifact must have demos with real entity data."""
-        approved = _approved_query_enhancement_examples_in_pod(
-            TENANT_ID, "entity_extraction"
-        )
-        result = _run_batch_job("entity-extraction")
-        version_blob, ledger = _load_blob_version_in_pod(
-            "model", "entity_extraction", result["version"]
-        )
+        batch = entity_extraction_batch_result
+        result = batch["result"]
+        version_blob = batch["version_blob"]
 
-        assert set(result) == {
-            "status",
-            "spans_found",
-            "served_examples",
-            "approved_examples",
-            "served_scoreable_examples",
-            "training_examples",
-            "holdout_examples",
-            "holdout_source",
-            "baseline_score",
-            "current_score",
-            "candidate_score",
-            "decision",
-            "version",
-            "selection",
-            "bootstrap",
-            "consumed_example_ids",
-        }, result
         assert result["status"] == "success", result
-        expected_min_samples, _ = _population_floor_from_shipped_config(
-            "entity_extraction"
-        )
-        assert result["spans_found"] >= expected_min_samples, result
-        assert result["holdout_source"] == "served", result
-        assert result["decision"] in BLOB_VERSION_DECISIONS, result
-        assert result["served_examples"] <= result["spans_found"], result
-        assert result["approved_examples"] == len(approved), result
-        assert result["holdout_examples"] == max(
-            1, result["served_scoreable_examples"] // 4
-        ), result
-        assert result["selection"]["pool"] == (
-            result["served_examples"]
-            - result["holdout_examples"]
-            + result["approved_examples"]
-        ), result
-        assert result["training_examples"] == min(
-            result["selection"]["deduped"], result["selection"]["cap"]
-        ), result
-        expected_selection = _selection_summary_in_pod(TENANT_ID, "entity_extraction")
-        assert result["selection"] == expected_selection, result
-        assert result["selection"][
-            "cap"
-        ] == _training_selection_cap_from_shipped_config("entity_extraction"), result
-        assert result["selection"]["mmr_applied"] == (
-            result["selection"]["deduped"] > result["selection"]["cap"]
-        ), result
-        assert len(result["consumed_example_ids"]) == (
-            result["served_examples"] + result["approved_examples"]
-        ), result
-        assert all(
-            example_id.startswith(("span:", "approved:"))
-            for example_id in result["consumed_example_ids"]
-        ), result
-
-        assert set(ledger) == {
-            "version",
-            "kind",
-            "key",
-            "consumed_example_ids",
-            "decision",
-            "scored",
-            "score",
-            "base_score",
-            "candidate_score",
-            "created_at",
-        }, ledger
-        assert ledger["version"] == result["version"], ledger
-        assert ledger["kind"] == "model", ledger
-        assert ledger["key"] == "entity_extraction", ledger
-        assert ledger["consumed_example_ids"] == result["consumed_example_ids"], ledger
-        assert ledger["decision"] == result["decision"], ledger
-        assert ledger["scored"] is True, ledger
-        assert ledger["base_score"] == result["baseline_score"], ledger
-        assert ledger["candidate_score"] == result["candidate_score"], ledger
-        assert ledger["score"] == result["candidate_score"], ledger
-
         artifact = json.loads(version_blob)
         assert list(artifact) == ["extractor.predict"], artifact
         module = artifact["extractor.predict"]
@@ -4128,9 +4188,41 @@ class TestEntityExtractionOptimization:
             for value in bootstrap["metric_values"]
             if value >= bootstrap["metric_threshold"]
         ), bootstrap
+        assert bootstrap["accepted"] <= bootstrap["attempts"], bootstrap
         assert bootstrap["bootstrapped_demos"] == min(
             bootstrap["accepted"], bootstrap["max_bootstrapped_demos"]
         ), bootstrap
+        from cogniverse_runtime.optimization_cli import (
+            _create_teleprompter,
+            _entity_bootstrap_threshold,
+        )
+
+        assert bootstrap["metric_threshold"] == _entity_bootstrap_threshold(
+            result["baseline_score"], result["current_score"]
+        ), bootstrap
+        assert bootstrap["examples_walked"] <= bootstrap["trainset"], bootstrap
+        # _create_teleprompter scales demos/rounds by trainset size (:2975).
+        expected_teleprompter = _create_teleprompter(bootstrap["trainset"])
+        assert (
+            bootstrap["max_bootstrapped_demos"]
+            == expected_teleprompter.max_bootstrapped_demos
+        ), bootstrap
+        assert (
+            bootstrap["max_labeled_demos"] == expected_teleprompter.max_labeled_demos
+        ), bootstrap
+        assert bootstrap["max_rounds"] == expected_teleprompter.max_rounds, bootstrap
+        if bootstrap["max_rounds"] == 1:
+            assert bootstrap["examples_walked"] == bootstrap["attempts"], bootstrap
+        else:
+            assert (
+                bootstrap["examples_walked"]
+                <= bootstrap["attempts"]
+                <= bootstrap["examples_walked"] * bootstrap["max_rounds"]
+            ), bootstrap
+        assert bootstrap["errors"] == 0, bootstrap
+        assert bootstrap["metric_values"] == sorted(bootstrap["metric_values"]), (
+            bootstrap
+        )
         # The teacher samples at temperature 0.7, so how many traces clear
         # the bar varies run to run. A run that collects none learned nothing.
         assert (
@@ -4143,6 +4235,9 @@ class TestEntityExtractionOptimization:
         assert len(augmented) == bootstrap["bootstrapped_demos"], demos
         assert len(labeled) == bootstrap["labeled_demos"], demos
         assert len(demos) == len(augmented) + len(labeled), demos
+        assert (
+            bootstrap["labeled_demos"] == len(demos) - bootstrap["bootstrapped_demos"]
+        ), demos
         assert len(demos) == min(
             bootstrap["max_labeled_demos"], result["training_examples"]
         ), demos
@@ -4348,131 +4443,85 @@ class TestArtifactLoadingRoundTrip:
             after
         )
 
-    def test_entity_extraction_artifact_survives_restart(self):
-        """Verify entity_extraction artifact is loadable after restart."""
-        blob_before = _load_blob_in_pod("model", "entity_extraction")
-        assert blob_before != "", (
-            "Entity extraction artifact blob is empty before restart"
-        )
+    def test_entity_extraction_artifact_survives_restart(
+        self, entity_extraction_batch_result
+    ):
+        """Verify entity_extraction artifact reloads and the served path stays exact."""
+        batch = entity_extraction_batch_result
+        result = batch["result"]
+        blob_before = batch["blob_before"]
+        version_blob = batch["version_blob"]
+        blob_after_run = batch["blob_after_run"]
 
-        result = _run_batch_job("entity-extraction")
-        approved = _approved_query_enhancement_examples_in_pod(
-            TENANT_ID, "entity_extraction"
-        )
-        version_blob, ledger = _load_blob_version_in_pod(
-            "model", "entity_extraction", result["version"]
-        )
-        blob_after_run = _load_blob_in_pod("model", "entity_extraction")
+        # Deterministic selection: the first five committed truth rows, in file order.
+        selected_rows = list(batch["ground_truth_rows"][:5])
+        assert len(selected_rows) == 5, selected_rows
 
-        assert set(result) == {
-            "status",
-            "spans_found",
-            "served_examples",
-            "approved_examples",
-            "served_scoreable_examples",
-            "training_examples",
-            "holdout_examples",
-            "holdout_source",
-            "baseline_score",
-            "current_score",
-            "candidate_score",
-            "decision",
-            "version",
-            "selection",
-            "bootstrap",
-            "consumed_example_ids",
-        }, result
-        assert result["status"] == "success", result
-        expected_min_samples, _ = _population_floor_from_shipped_config(
-            "entity_extraction"
-        )
-        assert result["spans_found"] >= expected_min_samples, result
-        assert result["holdout_source"] == "served", result
-        assert result["decision"] in BLOB_VERSION_DECISIONS, result
-        assert result["served_examples"] <= result["spans_found"], result
-        assert result["approved_examples"] == len(approved), result
-        assert result["holdout_examples"] == max(
-            1, result["served_scoreable_examples"] // 4
-        ), result
-        assert result["selection"]["pool"] == (
-            result["served_examples"]
-            - result["holdout_examples"]
-            + result["approved_examples"]
-        ), result
-        assert result["training_examples"] == min(
-            result["selection"]["deduped"], result["selection"]["cap"]
-        ), result
-        expected_selection = _selection_summary_in_pod(TENANT_ID, "entity_extraction")
-        assert result["selection"] == expected_selection, result
-        assert result["selection"][
-            "cap"
-        ] == _training_selection_cap_from_shipped_config("entity_extraction"), result
-        assert result["selection"]["mmr_applied"] == (
-            result["selection"]["deduped"] > result["selection"]["cap"]
-        ), result
-        assert len(result["consumed_example_ids"]) == (
-            result["served_examples"] + result["approved_examples"]
-        ), result
-        assert all(
-            example_id.startswith(("span:", "approved:"))
-            for example_id in result["consumed_example_ids"]
-        ), result
+        def assert_served_rows() -> None:
+            for row in selected_rows:
+                body = _call_agent(
+                    "entity_extraction_agent", str(row["query"]), tenant_id=TENANT_ID
+                )
+                expected_entity_order = [
+                    (entity["text"], entity["type"]) for entity in row["entities"]
+                ]
+                actual_entity_order = [
+                    (entity["text"], entity["type"]) for entity in body["entities"]
+                ]
+                expected_pairs = {
+                    (entity["text"], entity["type"]) for entity in row["entities"]
+                }
+                actual_pairs = {
+                    (entity["text"], entity["type"]) for entity in body["entities"]
+                }
+                assert body["status"] == "success", body
+                assert body["agent"] == "entity_extraction_agent", body
+                assert body["query"] == str(row["query"]), body
+                assert body["path_used"] == "dspy", body
+                assert body["entity_count"] == len(body["entities"]), body
+                assert body["has_entities"] == bool(body["entities"]), body
+                assert actual_entity_order == expected_entity_order, (
+                    row["query"],
+                    body,
+                )
+                assert len(actual_entity_order) == len(expected_entity_order), body
+                assert body["entity_count"] == len(expected_pairs), body
+                assert len(actual_pairs) == len(expected_pairs), (row["query"], body)
+                assert (
+                    body["dominant_types"]
+                    == [
+                        entity_type
+                        for entity_type, _ in sorted(
+                            collections.Counter(
+                                entity["type"] for entity in body["entities"]
+                            ).items(),
+                            key=lambda item: item[1],
+                            reverse=True,
+                        )
+                    ][:3]
+                ), body
+                assert actual_pairs == expected_pairs, (row["query"], body)
+                assert len(actual_pairs) == len(expected_pairs), (row["query"], body)
 
-        assert set(ledger) == {
-            "version",
-            "kind",
-            "key",
-            "consumed_example_ids",
-            "decision",
-            "scored",
-            "score",
-            "base_score",
-            "candidate_score",
-            "created_at",
-        }, ledger
-        assert ledger["version"] == result["version"], ledger
-        assert ledger["kind"] == "model", ledger
-        assert ledger["key"] == "entity_extraction", ledger
-        assert ledger["consumed_example_ids"] == result["consumed_example_ids"], ledger
-        assert ledger["decision"] == result["decision"], ledger
-        assert ledger["scored"] is True, ledger
-        assert ledger["base_score"] == result["baseline_score"], ledger
-        assert ledger["candidate_score"] == result["candidate_score"], ledger
-        assert ledger["score"] == result["candidate_score"], ledger
+        assert_served_rows()
 
         if result["decision"] in {"promote", "rollback"}:
             expected_blob = version_blob
-            assert blob_after_run == version_blob, ledger
+            assert blob_after_run == version_blob, batch["ledger"]
             assert (
                 _active_blob_version_in_pod("model", "entity_extraction")
                 == result["version"]
-            ), ledger
+            ), batch["ledger"]
         else:
             expected_blob = blob_before
-            assert blob_after_run == blob_before, ledger
+            assert blob_after_run == blob_before, batch["ledger"]
             assert (
                 _active_blob_version_in_pod("model", "entity_extraction")
                 != result["version"]
-            ), ledger
+            ), batch["ledger"]
 
         new_pod = _bounce_runtime_pod()
-        resp = httpx.post(
-            f"{RUNTIME}/agents/entity_extraction_agent/process",
-            json={
-                "agent_name": "entity_extraction_agent",
-                "query": "find PyTorch tutorials",
-                "context": {"tenant_id": TENANT_ID},
-            },
-            timeout=600.0,
-        )
-        assert resp.status_code == 200, (
-            f"entity_extraction_agent failed after restart: "
-            f"{resp.status_code} {resp.text[:300]}"
-        )
-        body = resp.json()
-        assert body["status"] == "success", (
-            f"Agent dispatch did not succeed: {json.dumps(body, default=str)[:300]}"
-        )
+        assert_served_rows()
 
         logs = _read_pod_logs(new_pod, since="10m")
         assert (
@@ -4486,17 +4535,17 @@ class TestArtifactLoadingRoundTrip:
 
         blob_after = _load_blob_in_pod("model", "entity_extraction")
         assert blob_after != "", "Entity extraction artifact missing after restart"
-        assert blob_after == expected_blob, ledger
+        assert blob_after == expected_blob, batch["ledger"]
         if result["decision"] in {"promote", "rollback"}:
             assert (
                 _active_blob_version_in_pod("model", "entity_extraction")
                 == result["version"]
-            ), ledger
+            ), batch["ledger"]
         else:
             assert (
                 _active_blob_version_in_pod("model", "entity_extraction")
                 != result["version"]
-            ), ledger
+            ), batch["ledger"]
 
     def test_profile_artifact_survives_restart(self):
         """Verify profile selection artifact is loadable after restart."""
@@ -5300,7 +5349,6 @@ class TestTrainingSelectionDecay:
                 "data": {
                     "query": "old unconfirmed entity example",
                     "entities": [{"text": "alpha", "type": "CONCEPT"}],
-                    "entity_types": "CONCEPT",
                     "relationships": [],
                 },
                 "confidence": 0.91,
@@ -5313,7 +5361,6 @@ class TestTrainingSelectionDecay:
                 "data": {
                     "query": "old confirmed entity example",
                     "entities": [{"text": "beta", "type": "CONCEPT"}],
-                    "entity_types": "CONCEPT",
                     "relationships": [],
                 },
                 "confidence": 0.92,
@@ -5326,7 +5373,6 @@ class TestTrainingSelectionDecay:
                 "data": {
                     "query": "fresh unconfirmed entity example",
                     "entities": [{"text": "gamma", "type": "CONCEPT"}],
-                    "entity_types": "CONCEPT",
                     "relationships": [],
                 },
                 "confidence": 0.93,
@@ -5339,7 +5385,6 @@ class TestTrainingSelectionDecay:
                 "data": {
                     "query": "fresh confirmed entity example",
                     "entities": [{"text": "delta", "type": "CONCEPT"}],
-                    "entity_types": "CONCEPT",
                     "relationships": [],
                 },
                 "confidence": 0.94,
@@ -5357,6 +5402,9 @@ class TestTrainingSelectionDecay:
         assert [row["example_id"] for row in approved_examples] == [
             f"approved:{item_id}" for item_id in expected_approved_item_ids
         ]
+        _seed_entity_extraction_ground_truth(tenant_id=tenant_id)
+        truth_rows = _active_entity_ground_truth_in_pod(tenant_id)
+        assert truth_rows == list(_entity_ground_truth_rows()), truth_rows
 
         lineage_rows = [
             {
@@ -5562,27 +5610,55 @@ class TestTrainingSelectionDecay:
         assert result["status"] == "success", result
         assert result["spans_found"] == 1, result
         assert result["served_examples"] == 1, result
-        assert result["approved_examples"] == 4, result
+        assert result["truth_rows"] == len(truth_rows), result
+        assert result["approved_rows"] == len(approved_examples), result
+        assert result["label_rows"] == result["truth_rows"] + result["approved_rows"], (
+            result
+        )
         assert result["served_scoreable_examples"] == 1, result
-        assert result["holdout_source"] == "served", result
-        assert result["holdout_examples"] == 1, result
-        assert result["training_examples"] == 4, result
-        assert result["selection"]["pool"] == 4, result
-        assert result["selection"]["deduped"] == 4, result
+        assert result["holdout_source"] == "ground_truth", result
+        expected_holdout_examples = _entity_extraction_expected_holdout_examples(
+            truth_rows,
+            approved_examples,
+        )
+        # production: libs/runtime/cogniverse_runtime/optimization_cli.py:4749-4753 and _split_served_holdout() at :2502
+        assert result["holdout_examples"] == expected_holdout_examples, result
+        assert result["selection"]["pool"] == (
+            result["label_rows"] - result["holdout_examples"]
+        ), result
+        assert result["training_examples"] == result["selection"]["pool"], result
+        assert result["selection"]["deduped"] == result["selection"]["pool"], result
+        assert result["training_examples"] == (
+            result["label_rows"] - result["holdout_examples"]
+        ), result
+        assert result["selection"]["deduped"] == (
+            result["label_rows"] - result["holdout_examples"]
+        ), result
+        assert result["training_examples"] == result["selection"]["deduped"], result
         assert result["selection"]["mmr_applied"] is False, result
         assert result["selection"]["decayed_count"] == len(
             expected_decayed_example_ids
         ), result
+        assert result["selection"]["decayed_count"] == 1, result
+        assert result["selection"]["decayed_example_ids"] == [
+            "approved:entity-old-unconfirmed"
+        ], result
         assert set(result["selection"]["decayed_example_ids"]) == (
             expected_decayed_example_ids
         ), result
-        assert result["consumed_example_ids"][0].startswith("span:"), result
-        assert result["consumed_example_ids"][1:] == [
-            "approved:entity-old-unconfirmed",
-            "approved:entity-old-confirmed",
-            "approved:entity-fresh-unconfirmed",
-            "approved:entity-fresh-confirmed",
+        expected_consumed_example_ids = [
+            f"truth:{index}" for index in range(len(truth_rows))
+        ] + [row["example_id"] for row in approved_examples]
+        assert result["consumed_example_ids"] == expected_consumed_example_ids, result
+        assert result["consumed_example_ids"][: len(truth_rows)] == [
+            f"truth:{index}" for index in range(len(truth_rows))
         ], result
+        assert result["consumed_example_ids"][len(truth_rows) :] == [
+            row["example_id"] for row in approved_examples
+        ], result
+        assert set(result["consumed_example_ids"]) == (
+            _entity_extraction_consumed_example_ids(truth_rows, approved_examples)
+        ), result
 
         version_blob, ledger = _load_blob_version_in_pod(
             "model", artifact_key, result["version"], tenant_id=tenant_id

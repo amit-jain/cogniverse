@@ -3441,14 +3441,6 @@ class E2EReportCollector:
         # Nested structures — summarize counts rather than full data
         if "entities" in body and isinstance(body["entities"], list):
             fields["entities_count"] = len(body["entities"])
-            if body["entities"]:
-                fields["entity_types"] = list(
-                    {
-                        e.get("type", "unknown")
-                        for e in body["entities"]
-                        if isinstance(e, dict)
-                    }
-                )
         if "results" in body and isinstance(body["results"], list):
             fields["results_returned"] = len(body["results"])
         if "strategies" in body and isinstance(body["strategies"], list):
