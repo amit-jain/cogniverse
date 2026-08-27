@@ -43,6 +43,22 @@ def normalize_name(name: str) -> str:
     return slugged.strip("_").lower()
 
 
+# Canonical KG segment modalities.
+TRANSCRIPT_MODALITY = "transcript"
+VLM_MODALITY = "vlm"
+OCR_MODALITY = "ocr"
+DOCUMENT_MODALITY = "document"
+CODE_MODALITY = "code"
+
+CLAIM_SEGMENT_MODALITIES = frozenset(
+    {
+        TRANSCRIPT_MODALITY,
+        DOCUMENT_MODALITY,
+        CODE_MODALITY,
+    }
+)
+
+
 @dataclass
 class Mention:
     """A single grounded occurrence of a node within a source segment.

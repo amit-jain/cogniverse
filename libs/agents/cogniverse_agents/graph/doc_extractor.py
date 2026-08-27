@@ -18,6 +18,7 @@ from pathlib import Path
 from typing import List, Optional, Set, Tuple
 
 from cogniverse_agents.graph.graph_schema import (
+    DOCUMENT_MODALITY,
     Edge,
     ExtractionResult,
     Mention,
@@ -293,7 +294,7 @@ class DocExtractor:
             segment_id="file",
             ts_start=0.0,
             ts_end=0.0,
-            modality="document",
+            modality=DOCUMENT_MODALITY,
             evidence_span=_truncate(text, _MAX_EVIDENCE_CHARS),
         )
         return self.extract_from_text(text, tenant_id, source_doc_id, file_anchor)

@@ -17,7 +17,12 @@ from typing import List
 import pytest
 
 from cogniverse_agents.graph.doc_extractor import DocExtractor
-from cogniverse_agents.graph.graph_schema import Edge, Mention
+from cogniverse_agents.graph.graph_schema import (
+    CODE_MODALITY,
+    DOCUMENT_MODALITY,
+    Edge,
+    Mention,
+)
 
 pytestmark = [pytest.mark.unit, pytest.mark.ci_fast]
 
@@ -52,7 +57,9 @@ class _RecordingClaims:
         tenant_id: str,
         source_doc_id: str,
     ) -> List[Edge]:
-        self.calls.append({"text": text, "hints": list(entity_hints)})
+        self.calls.append(
+            {"text": text, "hints": list(entity_hints), "modality": modality_hint}
+        )
         return [
             Edge(
                 tenant_id=tenant_id,
@@ -69,13 +76,13 @@ class _RecordingClaims:
         ]
 
 
-def _anchor() -> Mention:
+def _anchor(modality: str = DOCUMENT_MODALITY) -> Mention:
     return Mention(
         source_doc_id="doc1",
         segment_id="seg1",
         ts_start=0.0,
         ts_end=1.0,
-        modality="document",
+        modality=modality,
         evidence_span="stub",
     )
 
@@ -152,6 +159,27 @@ def test_two_pass_is_identical_to_monolithic_extract_from_text():
     assert [c["hints"] for c in mono_claims.calls] == [
         c["hints"] for c in tp_claims.calls
     ]
+
+
+@pytest.mark.parametrize("modality", [DOCUMENT_MODALITY, CODE_MODALITY])
+def test_text_like_modalities_still_extract_claims(modality):
+    claims = _RecordingClaims()
+    ext = _extractor(claims)
+    text = "Alpha explains the claim."
+    anchor = _anchor(modality)
+
+    ents = ext.extract_entities_from_text(text, "t:t", "doc1", anchor)
+    edges = ext.extract_claims_from_text(
+        text,
+        ents,
+        None,
+        "t:t",
+        "doc1",
+        anchor,
+    )
+
+    assert claims.calls == [{"text": text, "hints": ["Alpha"], "modality": modality}]
+    assert [e.modality for e in edges] == [modality]
 
 
 def test_no_claim_extractor_yields_no_edges_but_still_entities():

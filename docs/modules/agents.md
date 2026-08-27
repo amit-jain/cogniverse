@@ -2788,8 +2788,10 @@ requires an environment that installs the local gliner stack. No extractor
 parses environment JSON or recognizes a separate `GLINER_INFERENCE_URL` value.
 Entity extraction is all-or-error for each source: if GLiNER fails on any
 chunk, the call raises with the one-based chunk number and source document ID,
-chained from the inference error. It never reports a partial knowledge graph as
-a successful extraction.
+chained from the inference error. The claim pass runs only for transcript,
+document, and code modalities; VLM and OCR segments still get entity
+extraction and back-refs, but they do not trigger claim extraction. It never
+reports a partial knowledge graph as a successful extraction.
 
 ### GraphBindableMixin
 

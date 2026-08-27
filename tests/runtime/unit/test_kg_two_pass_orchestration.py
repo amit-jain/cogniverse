@@ -14,11 +14,75 @@ import threading
 import time
 from types import SimpleNamespace
 
+import dspy
 import pytest
 
+from cogniverse_agents.graph.claim_extractor import ClaimExtractor
+from cogniverse_agents.graph.doc_extractor import DocExtractor
+from cogniverse_agents.graph.graph_schema import (
+    CLAIM_SEGMENT_MODALITIES,
+    OCR_MODALITY,
+    TRANSCRIPT_MODALITY,
+    VLM_MODALITY,
+    Edge,
+    ExtractionResult,
+    normalize_name,
+)
 from cogniverse_runtime.routers import ingestion
 
 pytestmark = [pytest.mark.unit, pytest.mark.ci_fast]
+
+
+@pytest.fixture
+def processing_results():
+    return {
+        "transcript": {
+            "segments": [
+                {
+                    "start": 0.1,
+                    "end": 0.9,
+                    "text": "T0X transcript claim 0",
+                },
+                {
+                    "start": 10.1,
+                    "end": 10.9,
+                    "text": "T1X transcript claim 1",
+                },
+                {
+                    "start": 20.1,
+                    "end": 20.9,
+                    "text": "T2X transcript claim 2",
+                },
+            ]
+        },
+        "descriptions": {
+            "descriptions": {
+                "10": "V10X frame description 10",
+                "11": "V11X frame description 11",
+                "12": "V12X frame description 12",
+                "13": "V13X frame description 13",
+                "14": "V14X frame description 14",
+            }
+        },
+        "keyframes": {
+            "keyframes": [
+                {
+                    "frame_id": 0,
+                    "timestamp": 0.0,
+                    "ocr_text": "O0X OCR caption 0",
+                },
+                {
+                    "frame_id": 1,
+                    "timestamp": 10.0,
+                    "caption": "O1X OCR caption 1",
+                },
+                {
+                    "frame_id": 2,
+                    "timestamp": 20.0,
+                },
+            ]
+        },
+    }
 
 
 def _record(i: int):
@@ -32,6 +96,192 @@ def _record(i: int):
             source_doc_id="doc1",
         ),
     )
+
+
+@pytest.mark.asyncio
+async def test_claims_skip_non_transcript_segments_and_keep_entities(
+    processing_results, monkeypatch
+):
+    records = list(ingestion._iter_segments_for_graph(processing_results, "doc1"))
+    assert [r.segment_anchor.modality for r in records] == [
+        TRANSCRIPT_MODALITY,
+        TRANSCRIPT_MODALITY,
+        TRANSCRIPT_MODALITY,
+        VLM_MODALITY,
+        VLM_MODALITY,
+        VLM_MODALITY,
+        VLM_MODALITY,
+        VLM_MODALITY,
+        OCR_MODALITY,
+        OCR_MODALITY,
+    ]
+
+    entity_calls: list[tuple[str, str, str]] = []
+    claim_calls: list[tuple[str, str, str]] = []
+
+    class _RecordingGliner:
+        def predict_entities(self, chunk, labels, threshold):
+            return [
+                {
+                    "text": chunk.split()[0],
+                    "label": "Concept",
+                    "score": 0.99,
+                }
+            ]
+
+    class _ClaimsModule:
+        def __call__(self, **kwargs):
+            subject = kwargs["entity_hints"][0]
+            return dspy.Prediction(
+                claims=[
+                    {
+                        "subject": subject,
+                        "predicate": "won",
+                        "object": f"{subject}_claim",
+                        "evidence_span": kwargs["text_segment"],
+                        "confidence": 0.9,
+                    }
+                ]
+            )
+
+    class RecordingClaimExtractor(ClaimExtractor):
+        def __init__(self, **kwargs):
+            super().__init__(**kwargs)
+            self._cot_module = _ClaimsModule()
+
+    class RecordingDocExtractor(DocExtractor):
+        def __init__(self, **kwargs):
+            super().__init__(**kwargs)
+            self._gliner = _RecordingGliner()
+
+        def extract_entities_from_text(
+            self, *, text, tenant_id, source_doc_id, segment_anchor
+        ):
+            entity_calls.append(
+                (segment_anchor.segment_id, segment_anchor.modality, text)
+            )
+            return super().extract_entities_from_text(
+                text=text,
+                tenant_id=tenant_id,
+                source_doc_id=source_doc_id,
+                segment_anchor=segment_anchor,
+            )
+
+        def extract_claims_from_text(
+            self,
+            *,
+            text,
+            segment_entities,
+            prior_entities,
+            tenant_id,
+            source_doc_id,
+            segment_anchor,
+        ):
+            claim_calls.append(
+                (segment_anchor.segment_id, segment_anchor.modality, text)
+            )
+            return super().extract_claims_from_text(
+                text=text,
+                segment_entities=segment_entities,
+                prior_entities=prior_entities,
+                tenant_id=tenant_id,
+                source_doc_id=source_doc_id,
+                segment_anchor=segment_anchor,
+            )
+
+    class StubLinker:
+        def link(self, combined):
+            return combined
+
+    entity_order = {
+        record.segment_anchor.segment_id: idx for idx, record in enumerate(records)
+    }
+    expected_entity_calls = [
+        (record.segment_anchor.segment_id, record.segment_anchor.modality, record.text)
+        for record in records
+    ]
+    expected_claim_calls = [
+        (record.segment_anchor.segment_id, record.segment_anchor.modality, record.text)
+        for record in records
+        if record.segment_anchor.modality in CLAIM_SEGMENT_MODALITIES
+    ]
+    expected_backrefs = {}
+    for record in records:
+        source_token = record.text.split()[0]
+        expected_backrefs[record.segment_anchor.segment_id] = {
+            "entity_ids": [normalize_name(source_token)],
+            "relation_ids": [],
+            "claim_ids": [],
+        }
+        if record.segment_anchor.modality not in CLAIM_SEGMENT_MODALITIES:
+            continue
+        edge = Edge(
+            tenant_id="acme:acme",
+            source=source_token,
+            target=f"{source_token}_claim",
+            relation="won",
+            evidence_span=record.text,
+            segment_id=record.segment_anchor.segment_id,
+            ts_start=record.segment_anchor.ts_start,
+            ts_end=record.segment_anchor.ts_end,
+            modality=record.segment_anchor.modality,
+            source_doc_id="doc1",
+            confidence=0.9,
+        )
+        expected_backrefs[record.segment_anchor.segment_id]["relation_ids"] = [
+            edge.edge_id
+        ]
+        expected_backrefs[record.segment_anchor.segment_id]["claim_ids"] = [
+            edge.edge_id
+        ]
+
+    async def _no_backrefs(**kwargs):
+        return None
+
+    monkeypatch.setattr(ingestion, "_lookup_artifact_manager", lambda t, cm: None)
+    monkeypatch.setattr(ingestion, "_resolve_tenant_llm_config", lambda t, cm: None)
+    monkeypatch.setattr(ingestion, "_lookup_face_embed_endpoint", lambda cm: None)
+    monkeypatch.setattr(ingestion, "_write_backrefs_to_content", _no_backrefs)
+
+    mgr = SimpleNamespace(
+        upsert=lambda linked: {
+            "nodes_upserted": len(linked.nodes),
+            "edges_upserted": len(linked.edges),
+            "failed_ids": [],
+        },
+        _backend=SimpleNamespace(),
+    )
+    graph_router = SimpleNamespace(_graph_manager_factory=lambda t: mgr)
+
+    result = await ingestion._extract_graph_per_segment_inner(
+        processing_results=processing_results,
+        source_doc_id="doc1",
+        tenant_id="acme:acme",
+        config_manager=SimpleNamespace(),
+        DocExtractor=RecordingDocExtractor,
+        ClaimExtractor=RecordingClaimExtractor,
+        CrossModalLinker=StubLinker,
+        ExtractionResult=ExtractionResult,
+        graph_router=graph_router,
+    )
+
+    assert set(result) == {
+        "nodes_upserted",
+        "edges_upserted",
+        "graph_failed",
+        "backrefs_by_segment",
+        "claim_segments_skipped_by_modality",
+    }
+    assert result["nodes_upserted"] == 10
+    assert result["edges_upserted"] == 3
+    assert result["graph_failed"] == 0
+    assert result["claim_segments_skipped_by_modality"] == 7
+    assert (
+        sorted(entity_calls, key=lambda call: entity_order[call[0]])
+        == expected_entity_calls
+    )
+    assert sorted(claim_calls) == expected_claim_calls
+    assert result["backrefs_by_segment"] == expected_backrefs
 
 
 @pytest.mark.asyncio
