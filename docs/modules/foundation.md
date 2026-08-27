@@ -483,8 +483,8 @@ When `enabled`, `cogniverse_foundation.config.semantic_router` rewrites an `LLME
 | `resolve_semantic_router_headers(config, tenant_id)` | Resolve the two authz headers, or `None` when disabled |
 | `apply_semantic_routing(endpoint, config, tenant_id)` | Return a routed copy of `endpoint`, or the original when disabled |
 | `create_routed_lm(endpoint, config, tenant_id)` | `apply_semantic_routing` + `create_dspy_lm` in one call |
-| `ingest_lm_context_for(endpoint)` | Return a direct `dspy.context` for ingestion-time LM calls |
-| `routed_lm_context_for(config_manager, tenant_id, agent_name, endpoint=None)` | Return a `dspy.context` binding the routed LM for query-time agents and the direct primary endpoint for claim extraction |
+| `ingest_lm_context_for(endpoint)` | Return a direct `dspy.context` for ingestion-time LM calls (claim extraction); never routed |
+| `routed_lm_context_for(config_manager, tenant_id, agent_name, endpoint=None)` | Return a `dspy.context` binding the routed (or direct) LM for query-time agents — the entry point agents use |
 | `resolve_semantic_router_config(config_accessor)` | Read `SemanticRouterConfig` off an object exposing `get_semantic_router()` |
 
 ### Configuration Scopes

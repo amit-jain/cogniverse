@@ -24,6 +24,7 @@ from cogniverse_foundation.config.llm_factory import create_dspy_lm
 from cogniverse_foundation.config.semantic_router import (
     apply_semantic_routing,
     create_routed_lm,
+    ingest_lm_context_for,
     resolve_semantic_router_config,
     resolve_semantic_router_headers,
     routed_lm_context_for,
@@ -309,7 +310,7 @@ class TestRoutedLMContextFor:
             "x-authz-user-groups": "pro",
         }
 
-    def test_claim_extractor_stays_direct_while_agents_route(self, monkeypatch):
+    def test_ingest_context_is_direct_while_agents_route(self, monkeypatch):
         cfg = self._Accessor(
             SystemConfig(semantic_router=_enabled_config()),
             LLMConfig(
@@ -324,9 +325,7 @@ class TestRoutedLMContextFor:
         self._patch_get_config(monkeypatch, cfg)
         endpoint = cfg.get_llm_config().primary
 
-        with routed_lm_context_for(
-            object(), "acme:prod", "claim_extractor", endpoint=endpoint
-        ):
+        with ingest_lm_context_for(endpoint):
             ingest_lm = dspy.settings.lm
         assert ingest_lm.model == "openai/google/gemma-4-e4b-it"
         assert ingest_lm.kwargs["api_base"] == DIRECT

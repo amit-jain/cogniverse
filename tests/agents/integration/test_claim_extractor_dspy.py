@@ -32,7 +32,10 @@ from typing import Any, Dict, List
 
 import pytest
 
-from cogniverse_agents.graph.claim_extractor import ClaimExtractor
+from cogniverse_agents.graph.claim_extractor import (
+    CLAIM_EXTRACTION_MAX_CLAIMS,
+    ClaimExtractor,
+)
 from cogniverse_agents.graph.dspy_signatures import ClaimExtractionSignature
 from cogniverse_agents.graph.graph_schema import Mention
 from tests.fixtures.llm import (
@@ -300,7 +303,8 @@ class TestClaimExtractorMarieCurie:
     def test_chain_of_thought_exposes_reasoning_and_claims_only(
         self, configured_dspy_lm
     ):
-        """The CoT module returns reasoning plus claims, with no rationale."""
+        """The CoT module returns reasoning plus at most the capped number of
+        grounded claims, terminating inside the derived token budget."""
         import dspy
 
         module = dspy.ChainOfThought(ClaimExtractionSignature)
@@ -309,9 +313,21 @@ class TestClaimExtractorMarieCurie:
             entity_hints=SEG_3_ENTITY_HINTS,
             modality_hint="transcript",
         )
-        assert hasattr(prediction, "reasoning")
-        assert hasattr(prediction, "claims")
-        assert not hasattr(prediction, "rationale")
+        assert set(prediction.keys()) == {"reasoning", "claims"}
+        assert 1 <= len(prediction.claims) <= CLAIM_EXTRACTION_MAX_CLAIMS, prediction
+        assert [sorted(claim) for claim in prediction.claims] == [
+            ["confidence", "evidence_span", "object", "predicate", "subject"]
+        ] * len(prediction.claims), prediction.claims
+        assert [
+            claim["evidence_span"] in SEG_3_TEXT for claim in prediction.claims
+        ] == [True] * len(prediction.claims), prediction.claims
+        # The bounded contract is the point: the completion ended on its own,
+        # not at max_tokens.
+        choice = dspy.settings.lm.history[-1]["response"].choices[0]
+        finish_reason = getattr(choice, "finish_reason", None)
+        if finish_reason is None and isinstance(choice, dict):
+            finish_reason = choice["finish_reason"]
+        assert finish_reason == "stop", dspy.settings.lm.history[-1]
 
     def test_negative_yellow_flowers_no_edges(self, configured_dspy_lm):
         """'Yellow flowers in a glass vase.' yields zero SPO edges
