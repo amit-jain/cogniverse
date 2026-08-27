@@ -2774,6 +2774,8 @@ class TestSimbaQueryEnhancement:
             "served_examples": 4,
             "approved_examples": 0,
             "served_scoreable_examples": 4,
+            "distinct_queries": 4,
+            "holdout_queries": 1,
             "non_trainable_examples": 0,
             "unscoreable_examples": 0,
             "training_examples": 3,
@@ -2842,6 +2844,8 @@ class TestSimbaQueryEnhancement:
             "served_examples": 5,
             "approved_examples": 0,
             "served_scoreable_examples": 5,
+            "distinct_queries": 5,
+            "holdout_queries": 1,
             "non_trainable_examples": 1,
             "unscoreable_examples": 0,
             "training_examples": 3,
@@ -2908,6 +2912,8 @@ class TestSimbaQueryEnhancement:
             "served_examples": 4,
             "approved_examples": 0,
             "served_scoreable_examples": 4,
+            "distinct_queries": 4,
+            "holdout_queries": 1,
             "non_trainable_examples": 3,
             "unscoreable_examples": 0,
             "training_examples": 0,
@@ -2976,6 +2982,8 @@ class TestSimbaQueryEnhancement:
             "served_examples": 4,
             "approved_examples": 0,
             "served_scoreable_examples": 4,
+            "distinct_queries": 4,
+            "holdout_queries": 1,
             "non_trainable_examples": 0,
             "unscoreable_examples": 0,
             "training_examples": 3,
@@ -3054,6 +3062,8 @@ class TestSimbaQueryEnhancement:
             "spans_found": 4,
             "examples": 4,
             "served_scoreable_examples": 4,
+            "distinct_queries": 4,
+            "holdout_queries": 1,
             "non_trainable_examples": 0,
             "unscoreable_examples": 0,
             "training_examples": 3,
@@ -3155,6 +3165,8 @@ class TestSimbaQueryEnhancement:
             "served_examples": 4,
             "approved_examples": 0,
             "served_scoreable_examples": 4,
+            "distinct_queries": 4,
+            "holdout_queries": 1,
             "non_trainable_examples": 0,
             "unscoreable_examples": 0,
             "training_examples": 3,
@@ -3256,6 +3268,8 @@ class TestSimbaQueryEnhancement:
             "unscoreable_examples": 0,
             "training_examples": 3,
             "holdout_examples": 1,
+            "distinct_queries": 4,
+            "holdout_queries": 1,
             "holdout_source": "served",
             **_selection_block(3, 3),
             "baseline_score": 0.5,
@@ -3305,6 +3319,8 @@ class TestSimbaQueryEnhancement:
             "served_examples": 1,
             "approved_examples": 0,
             "served_scoreable_examples": 1,
+            "distinct_queries": 1,
+            "holdout_queries": 1,
             "non_trainable_examples": 0,
             "unscoreable_examples": 0,
             "training_examples": 0,
@@ -3404,6 +3420,8 @@ class TestSimbaQueryEnhancement:
             "served_examples": 5,
             "approved_examples": 0,
             "served_scoreable_examples": 3,
+            "distinct_queries": 3,
+            "holdout_queries": 1,
             "non_trainable_examples": 0,
             "unscoreable_examples": 2,
             "training_examples": 4,
@@ -5071,11 +5089,12 @@ class TestProfileSelectionOptimization:
         def wrapped_split(
             records, min_holdout, scoreable_predicate=optimization_cli.is_scoreable
         ):
-            train_records, holdout_records = real_split(
+            split = real_split(
                 records,
                 min_holdout,
                 scoreable_predicate=scoreable_predicate,
             )
+            train_records, holdout_records = split
             captured["train_ids"] = tuple(
                 record["example_id"] for record in train_records
             )
@@ -5084,7 +5103,7 @@ class TestProfileSelectionOptimization:
             )
             captured["train_size"] = len(train_records)
             captured["holdout_size"] = len(holdout_records)
-            return train_records, holdout_records
+            return split
 
         with patch(
             "cogniverse_runtime.optimization_cli._split_served_holdout",
@@ -5181,11 +5200,12 @@ class TestProfileSelectionOptimization:
         def wrapped_split(
             records, min_holdout, scoreable_predicate=optimization_cli.is_scoreable
         ):
-            train_records, holdout_records = real_split(
+            split = real_split(
                 records,
                 min_holdout,
                 scoreable_predicate=scoreable_predicate,
             )
+            train_records, holdout_records = split
             captured["train_ids"] = tuple(
                 record["example_id"] for record in train_records
             )
@@ -5195,7 +5215,7 @@ class TestProfileSelectionOptimization:
             captured["holdout_records"] = [dict(record) for record in holdout_records]
             captured["train_size"] = len(train_records)
             captured["holdout_size"] = len(holdout_records)
-            return train_records, holdout_records
+            return split
 
         with patch(
             "cogniverse_runtime.optimization_cli._split_served_holdout",
@@ -5259,7 +5279,7 @@ class TestProfileSelectionOptimization:
 
         records = [
             {
-                "query": f"qe-{index}",
+                "query": "qe-alpha" if index < 2 else "qe-beta",
                 "source_text": f"source-{index}",
                 "grounding_context": f"context-{index}",
                 "example_id": f"span:query-enhancement:{index}",
@@ -5267,23 +5287,104 @@ class TestProfileSelectionOptimization:
             for index in range(4)
         ]
 
-        train_records, holdout_records = _split_served_holdout(records, 1)
+        split = _split_served_holdout(records, 1)
 
+        assert split.distinct_queries == 2
+        assert split.holdout_queries == 1
         assert {
-            "train_ids": tuple(record["example_id"] for record in train_records),
-            "holdout_ids": tuple(record["example_id"] for record in holdout_records),
-            "train_size": len(train_records),
-            "holdout_size": len(holdout_records),
+            "train_ids": tuple(record["example_id"] for record in split.train),
+            "holdout_ids": tuple(record["example_id"] for record in split.holdout),
+            "train_size": len(split.train),
+            "holdout_size": len(split.holdout),
         } == {
             "train_ids": (
                 "span:query-enhancement:0",
                 "span:query-enhancement:1",
-                "span:query-enhancement:2",
             ),
-            "holdout_ids": ("span:query-enhancement:3",),
-            "train_size": 3,
-            "holdout_size": 1,
+            "holdout_ids": (
+                "span:query-enhancement:2",
+                "span:query-enhancement:3",
+            ),
+            "train_size": 2,
+            "holdout_size": 2,
         }
+
+        below_floor = _split_served_holdout(
+            [
+                {
+                    "query": "qe-floor",
+                    "source_text": "",
+                    "grounding_context": "",
+                    "example_id": "span:query-enhancement:floor",
+                }
+            ],
+            2,
+        )
+        assert below_floor.distinct_queries == 0
+        assert below_floor.holdout_queries == 0
+        assert tuple(record["example_id"] for record in below_floor.train) == (
+            "span:query-enhancement:floor",
+        )
+        assert below_floor.holdout == []
+
+    def test_profile_selection_holdout_counts_distinct_queries(self):
+        from cogniverse_runtime.optimization_cli import _split_served_holdout
+
+        records = [
+            {
+                "query": "find clip alpha",
+                "available_profiles": "video_colpali_smol500_mv_frame, "
+                "video_colqwen_omni_mv_chunk_30s",
+                "selected_profile": "video_colpali_smol500_mv_frame",
+                "source_text": "video_colpali_smol500_mv_frame, "
+                "video_colqwen_omni_mv_chunk_30s",
+                "grounding_context": "video_colpali_smol500_mv_frame",
+                "example_id": "span:profile-selection:0",
+            },
+            {
+                "query": "find clip beta",
+                "available_profiles": "video_colpali_smol500_mv_frame, "
+                "video_colqwen_omni_mv_chunk_30s",
+                "selected_profile": "video_colpali_smol500_mv_frame",
+                "source_text": "video_colpali_smol500_mv_frame, "
+                "video_colqwen_omni_mv_chunk_30s",
+                "grounding_context": "video_colpali_smol500_mv_frame",
+                "example_id": "span:profile-selection:1",
+            },
+            {
+                "query": "find clip gamma",
+                "available_profiles": "video_colpali_smol500_mv_frame, "
+                "video_colqwen_omni_mv_chunk_30s",
+                "selected_profile": "video_colqwen_omni_mv_chunk_30s",
+                "source_text": "video_colpali_smol500_mv_frame, "
+                "video_colqwen_omni_mv_chunk_30s",
+                "grounding_context": "video_colqwen_omni_mv_chunk_30s",
+                "example_id": "span:profile-selection:2",
+            },
+            {
+                "query": "find clip gamma",
+                "available_profiles": "video_colpali_smol500_mv_frame, "
+                "video_colqwen_omni_mv_chunk_30s",
+                "selected_profile": "video_colqwen_omni_mv_chunk_30s",
+                "source_text": "video_colpali_smol500_mv_frame, "
+                "video_colqwen_omni_mv_chunk_30s",
+                "grounding_context": "video_colqwen_omni_mv_chunk_30s",
+                "example_id": "span:profile-selection:3",
+            },
+        ]
+
+        split = _split_served_holdout(records, 1)
+
+        assert split.distinct_queries == 3
+        assert split.holdout_queries == 1
+        assert tuple(record["example_id"] for record in split.train) == (
+            "span:profile-selection:0",
+            "span:profile-selection:1",
+        )
+        assert tuple(record["example_id"] for record in split.holdout) == (
+            "span:profile-selection:2",
+            "span:profile-selection:3",
+        )
 
     @pytest.mark.asyncio
     async def test_profile_gate_persists_but_never_activates_a_losing_candidate(self):
@@ -5322,6 +5423,8 @@ class TestProfileSelectionOptimization:
             "served_examples": 4,
             "approved_examples": 0,
             "served_scoreable_examples": 4,
+            "distinct_queries": 4,
+            "holdout_queries": 1,
             "training_examples": 3,
             "holdout_examples": 1,
             "holdout_source": "derived_labels",
@@ -5362,6 +5465,8 @@ class TestProfileSelectionOptimization:
                 "base_score": 1.0,
                 "candidate_score": 1.0,
                 "extra_ledger_fields": {
+                    "distinct_queries": 4,
+                    "holdout_queries": 1,
                     "labels_by_profile": {
                         "video_colpali_smol500_mv_frame": 2,
                         "video_colqwen_omni_mv_chunk_30s": 2,
@@ -5451,6 +5556,8 @@ class TestProfileSelectionOptimization:
             "served_scoreable_examples": 4,
             "training_examples": 3,
             "holdout_examples": 1,
+            "distinct_queries": 4,
+            "holdout_queries": 1,
             "holdout_source": "derived_labels",
             "label_exclusions": {"count": 0, "queries": []},
             "labels_by_profile": {
@@ -5551,6 +5658,8 @@ class TestProfileSelectionOptimization:
             "served_examples": 4,
             "approved_examples": 0,
             "served_scoreable_examples": 4,
+            "distinct_queries": 4,
+            "holdout_queries": 1,
             "training_examples": 3,
             "holdout_examples": 1,
             "holdout_source": "derived_labels",
@@ -5591,6 +5700,8 @@ class TestProfileSelectionOptimization:
                 "base_score": 1.0,
                 "candidate_score": 0.0,
                 "extra_ledger_fields": {
+                    "distinct_queries": 4,
+                    "holdout_queries": 1,
                     "labels_by_profile": {
                         "video_colpali_smol500_mv_frame": 2,
                         "video_colqwen_omni_mv_chunk_30s": 2,
@@ -5649,6 +5760,8 @@ class TestProfileSelectionOptimization:
             },
             "dominant_label_share": 0.5,
             "exclusions_by_reason": {},
+            "distinct_queries": 4,
+            "holdout_queries": 1,
             **_selection_block(3, 3),
         }
 
@@ -6708,6 +6821,8 @@ class TestEntityExtractionOptimization:
             "spans_found": 6,
             "served_examples": 6,
             "served_scoreable_examples": 6,
+            "distinct_queries": 10,
+            "holdout_queries": 2,
             "label_rows": 10,
             "truth_rows": 8,
             "approved_rows": 2,
@@ -6948,6 +7063,50 @@ class TestEntityExtractionOptimization:
             },
         ]
 
+    def test_entity_extraction_holdout_counts_distinct_queries(self):
+        from cogniverse_runtime.optimization_cli import (
+            _entity_extraction_is_scoreable,
+            _split_served_holdout,
+        )
+
+        records = [
+            {
+                "query": "find entity alpha",
+                "entities": [{"text": "Alpha", "type": "CONCEPT"}],
+                "example_id": "span:entity-selection:0",
+            },
+            {
+                "query": "find entity beta",
+                "entities": [{"text": "Beta", "type": "CONCEPT"}],
+                "example_id": "span:entity-selection:1",
+            },
+            {
+                "query": "find entity gamma",
+                "entities": [{"text": "Gamma", "type": "CONCEPT"}],
+                "example_id": "span:entity-selection:2",
+            },
+            {
+                "query": "find entity gamma",
+                "entities": [{"text": "Gamma", "type": "CONCEPT"}],
+                "example_id": "span:entity-selection:3",
+            },
+        ]
+
+        split = _split_served_holdout(
+            records, 1, scoreable_predicate=_entity_extraction_is_scoreable
+        )
+
+        assert split.distinct_queries == 3
+        assert split.holdout_queries == 1
+        assert tuple(record["example_id"] for record in split.train) == (
+            "span:entity-selection:0",
+            "span:entity-selection:1",
+        )
+        assert tuple(record["example_id"] for record in split.holdout) == (
+            "span:entity-selection:2",
+            "span:entity-selection:3",
+        )
+
     @pytest.mark.asyncio
     async def test_entity_extraction_ground_truth_store_outage_raises(self):
         from cogniverse_agents.optimizer.entity_extraction_ground_truth import (
@@ -7042,6 +7201,8 @@ class TestEntityExtractionOptimization:
             "spans_found": 2,
             "served_examples": 2,
             "served_scoreable_examples": 2,
+            "distinct_queries": 2,
+            "holdout_queries": 1,
             "label_rows": 2,
             "truth_rows": 2,
             "approved_rows": 0,
@@ -7144,6 +7305,8 @@ class TestEntityExtractionOptimization:
             "approved_rows": 0,
             "training_examples": 1,
             "holdout_examples": 1,
+            "distinct_queries": 2,
+            "holdout_queries": 1,
             "holdout_source": "ground_truth",
             **_selection_block(1, 1),
             "bootstrap": _fake_bootstrap_block(1),
@@ -7210,6 +7373,8 @@ class TestEntityExtractionOptimization:
             "spans_found": 2,
             "served_examples": 2,
             "served_scoreable_examples": 2,
+            "distinct_queries": 2,
+            "holdout_queries": 1,
             "label_rows": 2,
             "truth_rows": 2,
             "approved_rows": 0,
@@ -7272,6 +7437,8 @@ class TestEntityExtractionOptimization:
             "spans_found": 2,
             "served_examples": 2,
             "served_scoreable_examples": 2,
+            "distinct_queries": 2,
+            "holdout_queries": 1,
             "label_rows": 2,
             "truth_rows": 2,
             "approved_rows": 0,
@@ -7444,6 +7611,8 @@ class TestEntityExtractionOptimization:
             "spans_found": 30,
             "served_examples": 30,
             "served_scoreable_examples": 30,
+            "distinct_queries": 30,
+            "holdout_queries": 7,
             "label_rows": 30,
             "truth_rows": 30,
             "approved_rows": 0,
