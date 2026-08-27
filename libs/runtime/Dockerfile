@@ -52,6 +52,7 @@ FROM python:3.12-slim
 
 # Install runtime dependencies only
 RUN apt-get update && apt-get install -y \
+    ffmpeg \
     libgomp1 \
     libgl1 \
     libglib2.0-0 \
