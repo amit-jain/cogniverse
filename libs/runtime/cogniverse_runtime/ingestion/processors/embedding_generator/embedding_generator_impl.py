@@ -15,6 +15,7 @@ from typing import Any
 import numpy as np
 from PIL import Image
 
+from cogniverse_runtime.ingestion.exceptions import EmbeddingGenerationError
 from cogniverse_sdk.document import ContentType, Document, ProcessingStatus
 
 from .embedding_generator import BaseEmbeddingGenerator, EmbeddingResult
@@ -253,6 +254,35 @@ class EmbeddingGeneratorImpl(BaseEmbeddingGenerator):
             if cleaned:
                 return Path(cleaned).name
         return ""
+
+    @staticmethod
+    def _remote_endpoint_label(processor: Any, fallback: str | None = None) -> str:
+        """Best-effort label for the remote embedding endpoint."""
+        endpoint = getattr(processor, "endpoint_url", None) or getattr(
+            processor, "_url", None
+        )
+        if endpoint:
+            return str(endpoint)
+        if fallback:
+            return fallback
+        return "unknown endpoint"
+
+    def _raise_embedding_error(
+        self,
+        source: str,
+        source_path: Path,
+        detail: str,
+        *,
+        endpoint: str | None = None,
+        cause: Exception | None = None,
+    ) -> None:
+        prefix = f"{source} embedding failed for {source_path}"
+        if endpoint:
+            prefix += f" via {endpoint}"
+        error = EmbeddingGenerationError(f"{prefix}: {detail}")
+        if cause is not None:
+            raise error from cause
+        raise error
 
     def _process_multi_documents(
         self, video_data: dict[str, Any], segments: list[dict[str, Any]]
@@ -869,18 +899,40 @@ class EmbeddingGeneratorImpl(BaseEmbeddingGenerator):
 
     def _generate_frame_embeddings_batch(
         self, frame_paths: list[Path]
-    ) -> list[np.ndarray | None]:
+    ) -> list[np.ndarray]:
         """Encode several frames through the remote client in one call.
 
-        Returns one pooled [T, D] float32 array (or None for an empty
-        response) per input frame, in input order.
+        Returns one pooled [T, D] float32 array per input frame, in input order.
         """
         images = []
         for path in frame_paths:
-            with Image.open(path) as image:
-                images.append(image.convert("RGB"))
-        result = self.processor.process_images(images, model_name=self.model_name)
+            try:
+                with Image.open(path) as image:
+                    images.append(image.convert("RGB"))
+            except Exception as e:
+                self.logger.error(f"Error loading frame {path}: {e}")
+                self._raise_embedding_error("Frame", path, str(e), cause=e)
+
+        endpoint = self._remote_endpoint_label(self.processor)
+        try:
+            result = self.processor.process_images(images, model_name=self.model_name)
+        except Exception as e:
+            self._raise_embedding_error(
+                "Frame",
+                frame_paths[0],
+                f"{type(e).__name__}: {e}",
+                endpoint=endpoint,
+                cause=e,
+            )
         images.clear()
+
+        if not isinstance(result, dict):
+            self._raise_embedding_error(
+                "Frame",
+                frame_paths[0],
+                f"unexpected response type {type(result).__name__}",
+                endpoint=endpoint,
+            )
 
         raw = result.get("embeddings", [])
         # One image returns a single [T, D] array; several return an object
@@ -889,24 +941,33 @@ class EmbeddingGeneratorImpl(BaseEmbeddingGenerator):
             [np.asarray(raw)] if len(frame_paths) == 1 else [np.asarray(r) for r in raw]
         )
         if len(rows) != len(frame_paths):
-            self.logger.error(
-                f"Remote inference returned {len(rows)} embeddings for "
-                f"{len(frame_paths)} frames"
+            self._raise_embedding_error(
+                "Frame",
+                frame_paths[0],
+                f"unexpected shape {np.asarray(raw).shape}",
+                endpoint=endpoint,
             )
-            return [None] * len(frame_paths)
 
-        out: list[np.ndarray | None] = []
+        out: list[np.ndarray] = []
         for path, arr in zip(frame_paths, rows):
             if arr.ndim == 0 or arr.size == 0:
-                self.logger.error(
-                    f"Remote inference returned empty embeddings for {path.name}"
+                self._raise_embedding_error(
+                    "Frame",
+                    path,
+                    f"unexpected shape {arr.shape}",
+                    endpoint=endpoint,
                 )
-                out.append(None)
-                continue
             # Server may return one multi-vector per image as [1, T, D];
             # unwrap to [T, D] to match the local path.
             if arr.ndim == 3 and arr.shape[0] == 1:
                 arr = arr[0]
+            if arr.ndim != 2:
+                self._raise_embedding_error(
+                    "Frame",
+                    path,
+                    f"unexpected shape {arr.shape}",
+                    endpoint=endpoint,
+                )
             arr = pool_document_tokens(arr, self._token_pool_factor)
             out.append(arr.astype(np.float32, copy=False))
         self.logger.info(
@@ -977,11 +1038,13 @@ class EmbeddingGeneratorImpl(BaseEmbeddingGenerator):
                 if not self.model:
                     self._load_model()
 
-        try:
-            if not self.model or not self.processor:
-                self.logger.error("Model or processor not loaded")
-                return None
+        if not self.model or not self.processor:
+            self.logger.error("Model or processor not loaded")
+            self._raise_embedding_error(
+                "Frame", frame_path, "model or processor not loaded"
+            )
 
+        try:
             # Remote ColPali path: RemoteColPaliLoader returns the same
             # RemoteInferenceClient as both ``model`` and ``processor``.
             # ``process_images`` ships base64 PNGs to the remote pod and
@@ -1025,12 +1088,18 @@ class EmbeddingGeneratorImpl(BaseEmbeddingGenerator):
             )
             return embeddings_np
 
+        except EmbeddingGenerationError:
+            raise
         except Exception as e:
             self.logger.error(f"Error generating frame embeddings: {e}")
-            return None
+            self._raise_embedding_error("Frame", frame_path, str(e), cause=e)
 
     def _generate_chunk_embeddings(self, chunk_path: Path) -> np.ndarray | None:
         """Generate embeddings for a video chunk."""
+        import cv2
+
+        cap = cv2.VideoCapture(str(chunk_path))
+        frames = []
         try:
             model_loader = self.profile_config.get("model_loader")
             if model_loader in ("colpali", "colqwen"):
@@ -1040,22 +1109,20 @@ class EmbeddingGeneratorImpl(BaseEmbeddingGenerator):
                     with self._model_load_lock:
                         if not self.model:
                             self._load_model()
+                if not self.model or not self.processor:
+                    self.logger.error("Model or processor not loaded")
+                    self._raise_embedding_error(
+                        "Chunk", chunk_path, "model or processor not loaded"
+                    )
+
                 # ColQwen/video-chunk model processes video chunks
-                import cv2
-
-                cap = cv2.VideoCapture(str(chunk_path))
-                frames = []
-
-                # Extract frames at regular intervals
                 fps = cap.get(cv2.CAP_PROP_FPS)
                 total_frames = int(cap.get(cv2.CAP_PROP_FRAME_COUNT))
                 target_fps = self.profile_config.get("fps", 0.5)
 
                 # Calculate frame indices to extract
                 interval = int(fps / target_fps) if fps > target_fps else 1
-                frame_indices = list(range(0, total_frames, interval))[
-                    :10
-                ]  # Limit to 10 frames
+                frame_indices = list(range(0, total_frames, interval))[:10]
 
                 for idx in frame_indices:
                     cap.set(cv2.CAP_PROP_POS_FRAMES, idx)
@@ -1065,11 +1132,16 @@ class EmbeddingGeneratorImpl(BaseEmbeddingGenerator):
                         pil_image = Image.fromarray(frame_rgb)
                         frames.append(pil_image)
 
-                cap.release()
-
                 if not frames:
-                    self.logger.error("No frames extracted from chunk")
-                    return None
+                    self.logger.error(
+                        f"No frames extracted from chunk {chunk_path} "
+                        f"(frame_count={len(frames)})"
+                    )
+                    self._raise_embedding_error(
+                        "Chunk",
+                        chunk_path,
+                        f"no readable frames extracted (frame_count={len(frames)})",
+                    )
 
                 # Remote ColPali/ColQwen path — see _generate_frame_embeddings
                 # for the rationale (RemoteInferenceClient.process_images
@@ -1080,25 +1152,55 @@ class EmbeddingGeneratorImpl(BaseEmbeddingGenerator):
 
                 if isinstance(self.processor, RemoteInferenceClient):
                     n_frames = len(frames)
-                    result = self.processor.process_images(
-                        frames, model_name=self.model_name
-                    )
-                    frames.clear()
-                    embeddings_arr = np.asarray(result.get("embeddings", []))
-                    if embeddings_arr.size == 0:
-                        self.logger.error(
-                            "Remote inference returned empty chunk embeddings"
+                    endpoint = self._remote_endpoint_label(self.processor)
+                    try:
+                        result = self.processor.process_images(
+                            frames, model_name=self.model_name
                         )
-                        return None
+                    except Exception as e:
+                        self._raise_embedding_error(
+                            "Chunk",
+                            chunk_path,
+                            f"{type(e).__name__}: {e}",
+                            endpoint=endpoint,
+                            cause=e,
+                        )
+                    finally:
+                        frames.clear()
+
+                    if not isinstance(result, dict):
+                        self._raise_embedding_error(
+                            "Chunk",
+                            chunk_path,
+                            f"unexpected response type {type(result).__name__}",
+                            endpoint=endpoint,
+                        )
+
+                    embeddings_arr = np.asarray(result.get("embeddings", []))
+                    if (
+                        n_frames == 1
+                        and embeddings_arr.ndim == 3
+                        and embeddings_arr.shape[0] == 1
+                    ):
+                        embeddings_arr = embeddings_arr[0]
+                    if (
+                        embeddings_arr.size == 0
+                        or embeddings_arr.ndim < 2
+                        or embeddings_arr.ndim > 3
+                    ):
+                        self._raise_embedding_error(
+                            "Chunk",
+                            chunk_path,
+                            f"unexpected shape {embeddings_arr.shape}",
+                            endpoint=endpoint,
+                        )
                     # Remote returns shape [N_frames, T, D]; mean-pool over the
                     # frame dim ONLY when there is more than one frame. For a
                     # single frame the array is already (T, D) — mean-pooling it
                     # would collapse the token dim to (D,), which the multi-vector
                     # chunk schema rejects.
                     chunk_arr = (
-                        embeddings_arr.mean(axis=0)
-                        if n_frames > 1 and embeddings_arr.ndim >= 2
-                        else embeddings_arr
+                        embeddings_arr.mean(axis=0) if n_frames > 1 else embeddings_arr
                     )
                     if chunk_arr.ndim == 2 and chunk_arr.shape[0] > 1:
                         chunk_arr = pool_document_tokens(
@@ -1152,8 +1254,17 @@ class EmbeddingGeneratorImpl(BaseEmbeddingGenerator):
                 )
 
                 if result:
-                    return result.get("embeddings_np", result.get("embeddings"))
-                return None
+                    embeddings = result.get("embeddings_np", result.get("embeddings"))
+                    if embeddings is None:
+                        self._raise_embedding_error(
+                            "Chunk",
+                            chunk_path,
+                            "VideoPrism returned no embeddings",
+                        )
+                    return embeddings
+                self._raise_embedding_error(
+                    "Chunk", chunk_path, "VideoPrism returned no embeddings"
+                )
 
             else:
                 import torch
@@ -1172,9 +1283,16 @@ class EmbeddingGeneratorImpl(BaseEmbeddingGenerator):
 
                 return embeddings.cpu().numpy()
 
+        except EmbeddingGenerationError:
+            raise
         except Exception as e:
             self.logger.error(f"Error generating chunk embeddings: {e}")
-            return None
+            self._raise_embedding_error("Chunk", chunk_path, str(e), cause=e)
+        finally:
+            try:
+                cap.release()
+            except Exception:
+                pass
 
     def _get_video_capture(self, video_path: Path):
         """Reuse one cv2.VideoCapture across the segments of a video —

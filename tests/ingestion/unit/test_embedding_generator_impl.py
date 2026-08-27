@@ -4,18 +4,98 @@ Comprehensive unit tests for EmbeddingGeneratorImpl to improve coverage.
 Tests the unified embedding generation logic with proper mocking.
 """
 
+import json
+import subprocess
+import threading
+from contextlib import contextmanager
+from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 from unittest.mock import Mock, patch
 
+import cv2
 import numpy as np
 import pytest
+import requests
 
+from cogniverse_runtime.ingestion.exceptions import EmbeddingGenerationError
 from cogniverse_runtime.ingestion.processors.embedding_generator.embedding_generator import (
     EmbeddingResult,
 )
 from cogniverse_runtime.ingestion.processors.embedding_generator.embedding_generator_impl import (
     EmbeddingGeneratorImpl,
 )
+
+_SAMPLE_VIDEO = (
+    Path(__file__).resolve().parents[2] / "system/resources/videos/v_-6dz6tBH77I.mp4"
+)
+_EMPTY_EMBEDDING_CONTEXT = (
+    " (Context: model_name=None, segment_count=None, embedding_type=None)"
+)
+
+
+@contextmanager
+def _chunk_embedding_server(response_handler):
+    requests_seen: list[dict[str, object]] = []
+
+    class _Handler(BaseHTTPRequestHandler):
+        def do_POST(self):
+            content_length = int(self.headers.get("Content-Length", "0"))
+            raw_body = self.rfile.read(content_length)
+            body = json.loads(raw_body.decode("utf-8")) if raw_body else {}
+            requests_seen.append(body)
+            status_code, payload = response_handler(body)
+            self.send_response(status_code)
+            self.send_header("Content-Type", "application/json")
+            self.end_headers()
+            self.wfile.write(json.dumps(payload).encode("utf-8"))
+
+        def log_message(self, format, *args):  # pragma: no cover - quiet test server
+            return
+
+    server = ThreadingHTTPServer(("127.0.0.1", 0), _Handler)
+    thread = threading.Thread(target=server.serve_forever, daemon=True)
+    thread.start()
+    try:
+        yield f"http://127.0.0.1:{server.server_address[1]}", requests_seen
+    finally:
+        server.shutdown()
+        server.server_close()
+        thread.join(timeout=5)
+
+
+def _make_two_second_chunk(tmp_path: Path) -> Path:
+    chunk_path = tmp_path / "chunk.mp4"
+    subprocess.run(
+        [
+            "ffmpeg",
+            "-y",
+            "-i",
+            str(_SAMPLE_VIDEO),
+            "-t",
+            "2",
+            "-c",
+            "copy",
+            str(chunk_path),
+        ],
+        check=True,
+        capture_output=True,
+        text=True,
+    )
+    return chunk_path
+
+
+def _sampled_frame_count(
+    chunk_path: Path, target_fps: float = 0.5
+) -> tuple[int, int, int]:
+    cap = cv2.VideoCapture(str(chunk_path))
+    try:
+        fps = cap.get(cv2.CAP_PROP_FPS)
+        frame_count = int(cap.get(cv2.CAP_PROP_FRAME_COUNT))
+        interval = int(fps / target_fps) if fps > target_fps else 1
+        sampled_indices = list(range(0, frame_count, interval))[:10]
+        return frame_count, interval, len(sampled_indices)
+    finally:
+        cap.release()
 
 
 @pytest.mark.unit
@@ -764,12 +844,15 @@ class TestEmbeddingGeneratorImpl:
         )
 
         with patch.object(generator, "_load_model") as mock_load:
-            # Model still None after load attempt
-            result = generator._generate_frame_embeddings(Path("/path/to/frame.jpg"))
+            with pytest.raises(EmbeddingGenerationError) as excinfo:
+                generator._generate_frame_embeddings(Path("/path/to/frame.jpg"))
 
-            assert result is None
             mock_load.assert_called_once()
-            mock_logger.error.assert_called_with("Model or processor not loaded")
+            assert type(excinfo.value) is EmbeddingGenerationError
+            assert (
+                str(excinfo.value) == "Frame embedding failed for /path/to/frame.jpg: "
+                f"model or processor not loaded{_EMPTY_EMBEDDING_CONTEXT}"
+            )
 
     @patch("PIL.Image.open")
     def test_generate_frame_embeddings_error(
@@ -784,21 +867,31 @@ class TestEmbeddingGeneratorImpl:
 
         mock_image_open.side_effect = Exception("Image load error")
 
-        result = generator._generate_frame_embeddings(Path("/path/to/frame.jpg"))
+        with pytest.raises(EmbeddingGenerationError) as excinfo:
+            generator._generate_frame_embeddings(Path("/path/to/frame.jpg"))
 
-        assert result is None
-        mock_logger.error.assert_called_with(
-            "Error generating frame embeddings: Image load error"
+        assert type(excinfo.value) is EmbeddingGenerationError
+        assert (
+            str(excinfo.value)
+            == "Frame embedding failed for /path/to/frame.jpg: Image load error"
+            f"{_EMPTY_EMBEDDING_CONTEXT}"
         )
+        assert type(excinfo.value.__cause__) is Exception
 
-    def _make_remote_generator(self, config, mock_logger, mock_backend_client):
+    def _make_remote_generator(
+        self,
+        config,
+        mock_logger,
+        mock_backend_client,
+        endpoint_url="http://remote.invalid",
+    ):
         """Build a generator whose model/processor is a real
         RemoteInferenceClient so ``_generate_frame_embeddings`` takes the remote
         branch (the only branch that applies document-side token pooling)."""
         from cogniverse_core.common.models.model_loaders import RemoteInferenceClient
 
         generator = EmbeddingGeneratorImpl(config, mock_logger, mock_backend_client)
-        client = RemoteInferenceClient("http://remote.invalid", logger=mock_logger)
+        client = RemoteInferenceClient(endpoint_url, logger=mock_logger)
         generator.model = client
         generator.processor = client
         return generator, client
@@ -1206,60 +1299,146 @@ class TestEmbeddingGeneratorImpl:
             Path("/path/to/chunk.mp4"), 0, 30.5
         )
 
-    @patch("cogniverse_core.common.models.get_or_load_model")
-    @patch("cv2.VideoCapture")
-    def test_generate_chunk_embeddings_no_frames(
-        self,
-        mock_video_capture,
-        mock_get_model,
-        frame_based_config,
-        mock_logger,
-        mock_backend_client,
+    def test_generate_chunk_embeddings_empty_chunk_raises(
+        self, frame_based_config, mock_logger, mock_backend_client, tmp_path
     ):
-        """Test _generate_chunk_embeddings when no frames extracted."""
-        mock_get_model.return_value = (Mock(), Mock())
+        """Empty or unreadable chunks fail with the chunk path and frame count."""
         config = {
             **frame_based_config,
             "embedding_type": "multi_vector",
             "model_loader": "colqwen",
         }
         generator = EmbeddingGeneratorImpl(config, mock_logger, mock_backend_client)
-        generator.model_name = "colqwen_test"
         generator.model = Mock()
         generator.processor = Mock()
 
-        # Mock video capture with no frames
-        mock_cap = Mock()
-        mock_cap.get.side_effect = [25.0, 100]
-        mock_cap.read.return_value = (False, None)  # No frames
-        mock_video_capture.return_value = mock_cap
+        corrupt_chunk = tmp_path / "corrupt.mp4"
+        corrupt_chunk.write_bytes(b"")
 
-        result = generator._generate_chunk_embeddings(Path("/path/to/chunk.mp4"))
+        with pytest.raises(EmbeddingGenerationError) as excinfo:
+            generator._generate_chunk_embeddings(corrupt_chunk)
 
-        assert result is None
-        mock_logger.error.assert_called_with("No frames extracted from chunk")
+        assert type(excinfo.value) is EmbeddingGenerationError
+        assert (
+            str(excinfo.value) == f"Chunk embedding failed for {corrupt_chunk}: "
+            f"no readable frames extracted (frame_count=0){_EMPTY_EMBEDDING_CONTEXT}"
+        )
 
-    @patch("cogniverse_core.common.models.get_or_load_model")
-    def test_generate_chunk_embeddings_error(
-        self, mock_get_model, frame_based_config, mock_logger, mock_backend_client
+    @pytest.mark.requires_ffmpeg
+    def test_generate_chunk_embeddings_real_chunk_samples_expected_frames(
+        self, frame_based_config, mock_logger, mock_backend_client, tmp_path
     ):
-        """Test _generate_chunk_embeddings error handling."""
-        mock_get_model.return_value = (Mock(), Mock())
+        """Real ffmpeg chunking yields the exact sampled frame count."""
+        chunk_path = _make_two_second_chunk(tmp_path)
+        frame_count, interval, sampled_count = _sampled_frame_count(chunk_path)
+        assert frame_count == 61
+        assert interval == 59
+        assert sampled_count == 2
+
         config = {
             **frame_based_config,
             "embedding_type": "multi_vector",
             "model_loader": "colqwen",
         }
-        generator = EmbeddingGeneratorImpl(config, mock_logger, mock_backend_client)
+        generator, client = self._make_remote_generator(
+            config,
+            mock_logger,
+            mock_backend_client,
+            endpoint_url="http://127.0.0.1:0",
+        )
         generator.model_name = "colqwen_test"
 
-        with patch("cv2.VideoCapture", side_effect=Exception("Video error")):
-            result = generator._generate_chunk_embeddings(Path("/path/to/chunk.mp4"))
-
-            assert result is None
-            mock_logger.error.assert_called_with(
-                "Error generating chunk embeddings: Video error"
+        with _chunk_embedding_server(
+            lambda body: (
+                200,
+                {
+                    "embeddings": [
+                        [[float(i)] * 3 for _ in range(2)]
+                        for i in range(len(body["images"]))
+                    ]
+                },
             )
+        ) as (base_url, requests_seen):
+            client.endpoint_url = base_url
+            result = generator._generate_chunk_embeddings(chunk_path)
+
+        assert len(requests_seen) == 1
+        assert len(requests_seen[0]["images"]) == 2
+        np.testing.assert_array_equal(
+            result,
+            np.full((2, 3), 0.5, dtype=np.float32),
+        )
+
+    @pytest.mark.requires_ffmpeg
+    def test_generate_chunk_embeddings_remote_500_raises(
+        self, frame_based_config, mock_logger, mock_backend_client, tmp_path
+    ):
+        """Remote 500s surface the chunk path, endpoint, and HTTP status."""
+        chunk_path = _make_two_second_chunk(tmp_path)
+        config = {
+            **frame_based_config,
+            "embedding_type": "multi_vector",
+            "model_loader": "colqwen",
+        }
+        generator, client = self._make_remote_generator(
+            config,
+            mock_logger,
+            mock_backend_client,
+            endpoint_url="http://127.0.0.1:0",
+        )
+        generator.model_name = "colqwen_test"
+
+        with _chunk_embedding_server(lambda body: (500, {"error": "boom"})) as (
+            base_url,
+            requests_seen,
+        ):
+            client.endpoint_url = base_url
+            with pytest.raises(EmbeddingGenerationError) as excinfo:
+                generator._generate_chunk_embeddings(chunk_path)
+
+        assert len(requests_seen[0]["images"]) == 2
+        assert type(excinfo.value) is EmbeddingGenerationError
+        assert (
+            str(excinfo.value)
+            == f"Chunk embedding failed for {chunk_path} via {base_url}: "
+            f"HTTPError: 500 Server Error: Internal Server Error for url: "
+            f"{base_url}/v1/embeddings{_EMPTY_EMBEDDING_CONTEXT}"
+        )
+        assert type(excinfo.value.__cause__) is requests.HTTPError
+
+    @pytest.mark.requires_ffmpeg
+    def test_generate_chunk_embeddings_remote_wrong_shape_raises(
+        self, frame_based_config, mock_logger, mock_backend_client, tmp_path
+    ):
+        """Remote payloads with the wrong shape fail explicitly."""
+        chunk_path = _make_two_second_chunk(tmp_path)
+        config = {
+            **frame_based_config,
+            "embedding_type": "multi_vector",
+            "model_loader": "colqwen",
+        }
+        generator, client = self._make_remote_generator(
+            config,
+            mock_logger,
+            mock_backend_client,
+            endpoint_url="http://127.0.0.1:0",
+        )
+        generator.model_name = "colqwen_test"
+
+        with _chunk_embedding_server(
+            lambda body: (200, {"embeddings": [1.0, 2.0, 3.0]})
+        ) as (base_url, requests_seen):
+            client.endpoint_url = base_url
+            with pytest.raises(EmbeddingGenerationError) as excinfo:
+                generator._generate_chunk_embeddings(chunk_path)
+
+        assert len(requests_seen) == 1
+        assert type(excinfo.value) is EmbeddingGenerationError
+        assert (
+            str(excinfo.value)
+            == f"Chunk embedding failed for {chunk_path} via {base_url}: "
+            f"unexpected shape (3,){_EMPTY_EMBEDDING_CONTEXT}"
+        )
 
     def test_generate_time_segment_embeddings_videoprism(
         self, frame_based_config, mock_logger, mock_backend_client
