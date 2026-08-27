@@ -5385,16 +5385,16 @@ class TestTrainingSelectionDecay:
         now = datetime(2026, 8, 30, tzinfo=timezone.utc)
         assert stats == {
             "span:old-unconfirmed": ExampleStats(
-                0, datetime(2026, 8, 1, tzinfo=timezone.utc)
+                0, 0, 0, datetime(2026, 8, 1, tzinfo=timezone.utc)
             ),
             "span:old-confirmed": ExampleStats(
-                3, datetime(2026, 8, 1, tzinfo=timezone.utc)
+                3, 0, 3, datetime(2026, 8, 1, tzinfo=timezone.utc)
             ),
             "span:fresh-unconfirmed": ExampleStats(
-                0, datetime(2026, 8, 29, tzinfo=timezone.utc)
+                0, 0, 0, datetime(2026, 8, 29, tzinfo=timezone.utc)
             ),
             "span:fresh-confirmed": ExampleStats(
-                3, datetime(2026, 8, 28, tzinfo=timezone.utc)
+                3, 0, 3, datetime(2026, 8, 28, tzinfo=timezone.utc)
             ),
         }
 
