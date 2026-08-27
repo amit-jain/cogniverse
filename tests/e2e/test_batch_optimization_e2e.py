@@ -981,7 +981,10 @@ def _call_agent(
     body = resp.json()
     assert body["status"] == "success", body
     assert body["agent"] == agent_name, body
-    assert body["query"] == query, body
+    echo_field = (
+        "original_query" if agent_name == "query_enhancement_agent" else "query"
+    )
+    assert body[echo_field] == query, body
     return body
 
 
@@ -3475,7 +3478,7 @@ class TestSimbaSelectionCap:
         assert selection["decayed_count"] == 0, selection
         _assert_holdout_query_contract(result, "simba_query_enhancement")
         assert result["distinct_queries"] == len(
-            {query.strip().casefold() for query in CAP8_QUERY_ENHANCEMENT_QUERIES}
+            {query.strip().casefold() for query, _, _ in CAP8_QUERY_ENHANCEMENT_QUERIES}
         ), result
         assert result["training_examples"] == selection["cap"], result
         assert (
