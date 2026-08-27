@@ -20,11 +20,12 @@ class _FakeDocker:
         self,
         *,
         exact_rows=(),
-        running_names=(),
+        running_rows=(),
         listing_error: str | None = None,
     ):
         self.exact_rows = list(exact_rows)
-        self.running_names = list(running_names)
+        # (container_id, name, devices_json) for `docker ps` + `docker inspect`
+        self.running_rows = list(running_rows)
         self.listing_error = listing_error
         self.commands: list[list[str]] = []
 
@@ -52,7 +53,18 @@ class _FakeDocker:
                 command, 0, stdout=f"{command[3]}\n", stderr=""
             )
         if command[:2] == ["docker", "ps"]:
-            stdout = "".join(f"{name}\n" for name in self.running_names)
+            stdout = "".join(
+                f"{container_id}\t{name}\n"
+                for container_id, name, _ in self.running_rows
+            )
+            return subprocess.CompletedProcess(command, 0, stdout=stdout, stderr="")
+        if command[:2] == ["docker", "inspect"]:
+            wanted = command[4:]
+            stdout = "".join(
+                f"{name}\t{devices}\n"
+                for container_id, name, devices in self.running_rows
+                if container_id in wanted
+            )
             return subprocess.CompletedProcess(command, 0, stdout=stdout, stderr="")
         raise AssertionError(f"unexpected command: {command}")
 
@@ -98,7 +110,6 @@ def test_ensure_e2e_gpu_residency_reclaims_unleased_exact_model_sidecars(
     monkeypatch.setattr(
         run_lock, "reap_dead_owner_containers", lambda: reap_calls.append("reaped")
     )
-    gtt_calls: list[str] = []
 
     with pytest.raises(
         pytest.fail.Exception,
@@ -107,9 +118,7 @@ def test_ensure_e2e_gpu_residency_reclaims_unleased_exact_model_sidecars(
             f"{os.getpid()}; refusing to start the e2e stack"
         ),
     ):
-        run_lock.ensure_e2e_gpu_residency(
-            gtt_reader=lambda: gtt_calls.append("called") or 0
-        )
+        run_lock.ensure_e2e_gpu_residency()
 
     assert reap_calls == ["reaped"]
     assert docker.removed == ["cogniverse-test-llm-stale"]
@@ -125,18 +134,17 @@ def test_ensure_e2e_gpu_residency_reclaims_unleased_exact_model_sidecars(
         ],
         ["docker", "rm", "-f", "cogniverse-test-llm-stale"],
     ]
-    assert gtt_calls == []
 
 
-def test_ensure_e2e_gpu_residency_fails_when_gtt_remains_high_after_reclaim(
-    monkeypatch, tmp_path
-):
+def test_ensure_e2e_gpu_residency_passes_with_the_cluster_warmed(monkeypatch, tmp_path):
+    """The cluster's own model pods hold GPU memory inside the k3d node; only a
+    non-k3d container with the GPU device mounted is a stray holder."""
     _patch_lease_dir(monkeypatch, tmp_path)
     docker = _FakeDocker(
-        exact_rows=(("aaaaaaaaaaaa", "cogniverse-test-llm-stale"),),
-        running_names=(
-            "cogniverse-test-dashboard",
-            "cogniverse-test-ingest",
+        running_rows=(
+            ("111111111111", "k3d-cogniverse-e2e-server-0", "null"),
+            ("222222222222", "k3d-cogniverse-e2e-serverlb", "null"),
+            ("333333333333", "openshell-cluster-openshell", "null"),
         ),
     )
     monkeypatch.setattr(run_lock.subprocess, "run", docker.run)
@@ -144,21 +152,11 @@ def test_ensure_e2e_gpu_residency_fails_when_gtt_remains_high_after_reclaim(
     monkeypatch.setattr(
         run_lock, "reap_dead_owner_containers", lambda: reap_calls.append("reaped")
     )
-    gtt_calls: list[str] = []
 
-    with pytest.raises(
-        pytest.fail.Exception,
-        match=(
-            "GTT remains at 3.00 GiB after reclaim; running cogniverse-test-\\* "
-            "containers: cogniverse-test-dashboard, cogniverse-test-ingest"
-        ),
-    ):
-        run_lock.ensure_e2e_gpu_residency(
-            gtt_reader=lambda: gtt_calls.append("called") or (3 * 1024**3)
-        )
+    run_lock.ensure_e2e_gpu_residency()
 
     assert reap_calls == ["reaped"]
-    assert docker.removed == ["cogniverse-test-llm-stale"]
+    assert docker.removed == []
     assert docker.commands == [
         [
             "docker",
@@ -169,10 +167,54 @@ def test_ensure_e2e_gpu_residency_fails_when_gtt_remains_high_after_reclaim(
             "--format",
             "{{.ID}}\t{{.Names}}",
         ],
-        ["docker", "rm", "-f", "cogniverse-test-llm-stale"],
-        ["docker", "ps", "--format", "{{.Names}}"],
+        ["docker", "ps", "--format", "{{.ID}}\t{{.Names}}"],
+        [
+            "docker",
+            "inspect",
+            "--format",
+            "{{.Name}}\t{{json .HostConfig.Devices}}",
+            "333333333333",
+        ],
     ]
-    assert gtt_calls == ["called"]
+
+
+def test_ensure_e2e_gpu_residency_fails_on_a_stray_gpu_container(monkeypatch, tmp_path):
+    _patch_lease_dir(monkeypatch, tmp_path)
+    devices = (
+        '[{"PathOnHost":"/dev/kfd","PathInContainer":"/dev/kfd","CgroupPermissions":"rwm"},'
+        '{"PathOnHost":"/dev/dri","PathInContainer":"/dev/dri","CgroupPermissions":"rwm"}]'
+    )
+    docker = _FakeDocker(
+        exact_rows=(("aaaaaaaaaaaa", "cogniverse-test-llm-stale"),),
+        running_rows=(
+            ("111111111111", "k3d-cogniverse-e2e-server-0", "null"),
+            ("444444444444", "some-vllm-experiment", devices),
+        ),
+    )
+    monkeypatch.setattr(run_lock.subprocess, "run", docker.run)
+    reap_calls: list[str] = []
+    monkeypatch.setattr(
+        run_lock, "reap_dead_owner_containers", lambda: reap_calls.append("reaped")
+    )
+
+    with pytest.raises(
+        pytest.fail.Exception,
+        match=(
+            "GPU device holders outside the e2e cluster after reclaim: "
+            "some-vllm-experiment \\(/dev/dri, /dev/kfd\\); refusing to start the e2e stack"
+        ),
+    ):
+        run_lock.ensure_e2e_gpu_residency()
+
+    assert reap_calls == ["reaped"]
+    assert docker.removed == ["cogniverse-test-llm-stale"]
+    assert docker.commands[-1] == [
+        "docker",
+        "inspect",
+        "--format",
+        "{{.Name}}\t{{json .HostConfig.Devices}}",
+        "444444444444",
+    ]
 
 
 def test_ensure_e2e_gpu_residency_raises_when_docker_cannot_list_exact_models(
@@ -196,7 +238,7 @@ def test_ensure_e2e_gpu_residency_raises_when_docker_cannot_list_exact_models(
             "the Docker daemon at unix:///docker.sock"
         ),
     ):
-        run_lock.ensure_e2e_gpu_residency(gtt_reader=lambda: 0)
+        run_lock.ensure_e2e_gpu_residency()
 
     assert reap_calls == ["reaped"]
     assert docker.removed == []

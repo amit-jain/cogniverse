@@ -13,9 +13,10 @@ runner (plain bash, no flock) is honoured, and how a conflict names its owner.
 from __future__ import annotations
 
 import fcntl
+import json
 import os
 import subprocess
-from collections.abc import Callable, Iterable
+from collections.abc import Iterable
 from pathlib import Path
 
 import pytest
@@ -27,7 +28,6 @@ from tests.utils.vllm_sidecar import (
 )
 
 DEFAULT_LOCK_PATH = "/tmp/cogniverse_e2e_run.lock"
-_GTT_USED_LIMIT_BYTES = 2 * 1024**3
 _TEST_CONTAINER_PREFIX = "cogniverse-test-"
 
 _HELD: dict[str, int] = {}
@@ -189,36 +189,90 @@ def _remove_exact_model_container(container: str) -> None:
     )
 
 
-def _running_test_container_names() -> list[str]:
-    result = _run_docker(["docker", "ps", "--format", "{{.Names}}"])
+_GPU_DEVICE_PATHS = ("/dev/kfd", "/dev/dri")
+_CLUSTER_CONTAINER_PREFIX = "k3d-"
+
+
+def _running_containers() -> list[tuple[str, str]]:
+    result = _run_docker(["docker", "ps", "--format", "{{.ID}}\t{{.Names}}"])
     if result.returncode != 0:
         detail = _docker_detail(result)
         raise RuntimeError(
-            f"docker could not list running test containers: "
+            f"docker could not list running containers: "
             f"{detail or f'exit {result.returncode}'}"
         )
-    return sorted(
-        name
-        for name in result.stdout.splitlines()
-        if name.startswith(_TEST_CONTAINER_PREFIX)
+    rows: list[tuple[str, str]] = []
+    for line in result.stdout.splitlines():
+        parts = line.split("\t")
+        if len(parts) == 2:
+            rows.append((parts[0], parts[1]))
+    return rows
+
+
+def stray_gpu_device_holders() -> dict[str, list[str]]:
+    """Running containers outside the k3d cluster with a GPU device mounted.
+
+    The cluster node and the OpenShell gateway are privileged with no explicit
+    devices; every test sidecar passes ``--device /dev/kfd --device /dev/dri``.
+    A privileged non-k3d container without explicit devices is not attributed.
+    """
+    candidates = [
+        (container_id, name)
+        for container_id, name in _running_containers()
+        if not name.startswith(_CLUSTER_CONTAINER_PREFIX)
+    ]
+    if not candidates:
+        return {}
+    result = _run_docker(
+        [
+            "docker",
+            "inspect",
+            "--format",
+            "{{.Name}}\t{{json .HostConfig.Devices}}",
+            *[container_id for container_id, _ in candidates],
+        ]
     )
-
-
-def _read_gtt_used_bytes() -> int:
-    try:
-        return int(Path("/sys/class/drm/card1/device/mem_info_gtt_used").read_text())
-    except (OSError, ValueError) as exc:
+    if result.returncode != 0:
+        detail = _docker_detail(result)
         raise RuntimeError(
-            "cannot read /sys/class/drm/card1/device/mem_info_gtt_used: "
-            f"{type(exc).__name__}: {exc}"
-        ) from exc
+            f"docker could not inspect running containers: "
+            f"{detail or f'exit {result.returncode}'}"
+        )
+    holders: dict[str, list[str]] = {}
+    for line in result.stdout.splitlines():
+        parts = line.split("\t", 1)
+        if len(parts) != 2:
+            continue
+        name = parts[0].lstrip("/")
+        try:
+            devices = json.loads(parts[1]) or []
+        except json.JSONDecodeError as exc:
+            raise RuntimeError(
+                f"docker inspect returned unparseable devices for {name!r}: {parts[1]!r}"
+            ) from exc
+        mounted = sorted(
+            {
+                str(device.get("PathOnHost", ""))
+                for device in devices
+                if any(
+                    str(device.get("PathOnHost", "")).startswith(path)
+                    for path in _GPU_DEVICE_PATHS
+                )
+            }
+        )
+        if mounted:
+            holders[name] = mounted
+    return holders
 
 
-def ensure_e2e_gpu_residency(
-    *,
-    gtt_reader: Callable[[], int] = _read_gtt_used_bytes,
-) -> None:
-    """Drop stale test-owned GPU residents before the cluster starts."""
+def ensure_e2e_gpu_residency() -> None:
+    """Drop stale test-owned GPU residents before the cluster starts.
+
+    Reaps dead-owner containers, removes unleased exact-model sidecars, refuses
+    on a live lease, then refuses if any non-k3d container still holds a GPU
+    device — the cluster's own model pods live inside the k3d node and are
+    expected to hold GPU memory when the launcher warms them first.
+    """
     reap_dead_owner_containers()
 
     exact_rows = _exact_model_rows()
@@ -236,13 +290,15 @@ def ensure_e2e_gpu_residency(
             pytrace=False,
         )
 
-    gtt_used_bytes = gtt_reader()
-    if gtt_used_bytes > _GTT_USED_LIMIT_BYTES:
-        gtt_gib = gtt_used_bytes / 1024**3
-        running = _running_test_container_names()
+    holders = stray_gpu_device_holders()
+    if holders:
+        described = "; ".join(
+            f"{name} ({', '.join(devices)})"
+            for name, devices in sorted(holders.items())
+        )
         pytest.fail(
-            f"GTT remains at {gtt_gib:.2f} GiB after reclaim; running "
-            f"cogniverse-test-* containers: {', '.join(running) if running else '<none>'}",
+            f"GPU device holders outside the e2e cluster after reclaim: {described}; "
+            "refusing to start the e2e stack",
             pytrace=False,
         )
 
