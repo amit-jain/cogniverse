@@ -32,9 +32,11 @@ logger = logging.getLogger(__name__)
 class Entity(BaseModel):
     """Extracted entity with type and metadata"""
 
-    text: str = Field(description="Entity text as it appears in query")
+    text: str = Field(description="Entity text as a verbatim span of the query")
     type: str = Field(
-        description="Entity type: PERSON, PLACE, ORG, CONCEPT, DATE, etc."
+        description=(
+            "Entity type: PERSON, ORGANIZATION, CONCEPT, PLACE, EVENT, or TECHNOLOGY"
+        )
     )
     confidence: float = Field(description="Confidence score 0-1")
     context: str = Field(default="", description="Surrounding context")
@@ -105,6 +107,25 @@ ENTITY_TYPES = frozenset(
 """The entity types the agent emits; every GLiNER label maps into this set."""
 
 
+def _build_entity_extraction_signature_instructions() -> str:
+    allowed_types = ", ".join(sorted(ENTITY_TYPES))
+    return (
+        "Extract named entities from the query.\n\n"
+        f"Allowed types: {allowed_types}. Only emit these labels.\n\n"
+        "Rules:\n"
+        "- text must be a verbatim span copied from the query.\n"
+        "- Use PERSON for role nouns and people such as man, woman, people, biker.\n"
+        "- Use ORGANIZATION for named organizations or teams.\n"
+        "- Use CONCEPT for physical things such as barbell, car, disk, pipes, and knife.\n"
+        "- Use PLACE for settings such as dirt field, kitchen, and pool area.\n"
+        "- Use TECHNOLOGY for camera and screen.\n"
+        "- Use EVENT for crash.\n"
+        "- Actions are never entities.\n"
+        '- "the video" is never an entity.\n'
+        "- Keep each entity on its own line in text|type|confidence format."
+    )
+
+
 def entity_is_valid_for_query(text: str, entity_type: str, query: str) -> bool:
     """Return True when the entity text is a query substring and the type is valid."""
     text = str(text or "").strip()
@@ -119,12 +140,20 @@ def entity_is_valid_for_query(text: str, entity_type: str, query: str) -> bool:
 
 
 class EntityExtractionSignature(dspy.Signature):
-    """Extract named entities from text query"""
+    """DSPy signature for entity extraction."""
 
     query: str = dspy.InputField(desc="User query to analyze")
     entities: str = dspy.OutputField(
-        desc="Extracted entities in format: text|type|confidence, one per line"
+        desc=(
+            "Extracted entities in format: text|type|confidence, one per line; "
+            "text must be a verbatim span of the query"
+        )
     )
+
+
+EntityExtractionSignature = EntityExtractionSignature.with_instructions(
+    _build_entity_extraction_signature_instructions()
+)
 
 
 class EntityExtractionModule(dspy.Module):
@@ -147,8 +176,8 @@ class EntityExtractionAgent(
     Type-safe A2A agent for entity extraction.
 
     Capabilities:
-    - Extract named entities from queries
-    - Classify entity types (PERSON, PLACE, ORG, CONCEPT, DATE, etc.)
+    - Extract named entities as verbatim query spans
+    - Classify entity types (PERSON, ORGANIZATION, CONCEPT, PLACE, EVENT, TECHNOLOGY)
     - Provide confidence scores
     - Support multi-entity queries
     """
