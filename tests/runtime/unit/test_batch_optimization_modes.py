@@ -6818,12 +6818,13 @@ class TestEntityExtractionOptimization:
                 tenant_id="test:unit", lookback_hours=1
             )
 
+        # Truth rows own the holdout; approved rows stay train-only.
         assert result == {
             "status": "success",
             "spans_found": 6,
             "served_examples": 6,
             "served_scoreable_examples": 6,
-            "distinct_queries": 10,
+            "distinct_queries": 8,
             "holdout_queries": 2,
             "label_rows": 10,
             "truth_rows": 8,
@@ -6878,10 +6879,10 @@ class TestEntityExtractionOptimization:
             "truth3 query",
             "truth4 query",
             "truth5 query",
-            "truth6 query",
-            "truth7 query",
+            "approved0 query",
+            "approved1 query",
         ]
-        assert state["holdout_queries"] == ["approved0 query", "approved1 query"]
+        assert state["holdout_queries"] == ["truth6 query", "truth7 query"]
         assert set(state["trainset_queries"]).isdisjoint(
             {
                 "served0 query",
