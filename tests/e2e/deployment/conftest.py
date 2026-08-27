@@ -640,15 +640,39 @@ def deploy_stack(
         dump_pod_state(namespace)
         raise
 
-    wait_for_stack_ready(
-        namespace, inference_components=inference_component_labels(sidecars)
+    wait_for_stack_ready(namespace)
+
+
+INFERENCE_COMPONENT_PREFIX = "inference-"
+
+
+def deployed_inference_components(namespace: str) -> list[str]:
+    """Component labels of the inference deployments helm actually created.
+
+    Read from the cluster rather than derived from the values files: the
+    e2e deploy disables services through ``--set`` overrides the values
+    files still enable, and vLLM services are not sidecar builds."""
+    listing = _cmd(
+        [
+            "kubectl",
+            "get",
+            "deploy",
+            "-n",
+            namespace,
+            "-l",
+            "app.kubernetes.io/instance=cogniverse",
+            "-o",
+            "jsonpath={range .items[*]}"
+            '{.metadata.labels.app\\.kubernetes\\.io/component}{"\\n"}{end}',
+        ]
     )
-
-
-def inference_component_labels(sidecars: list[str]) -> list[str]:
-    """The chart labels each inference pod ``app.kubernetes.io/component:
-    inference-<service>``."""
-    return [f"inference-{svc}" for svc in sidecars]
+    return sorted(
+        {
+            line.strip()
+            for line in listing.stdout.splitlines()
+            if line.strip().startswith(INFERENCE_COMPONENT_PREFIX)
+        }
+    )
 
 
 def ready_pod_wait_args(
@@ -680,7 +704,8 @@ def ready_pod_wait_args(
     ]
 
 
-def wait_for_stack_ready(namespace: str, *, inference_components: list[str]) -> None:
+def wait_for_stack_ready(namespace: str) -> None:
+    inference_components = deployed_inference_components(namespace)
     try:
         _cmd(
             ready_pod_wait_args(namespace, inference_components=inference_components),
