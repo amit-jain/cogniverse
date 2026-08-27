@@ -1776,15 +1776,98 @@ def _generate_run_id() -> str:
     return uuid.uuid4().hex
 
 
+def _signature_contract(signature_state: Mapping[str, Any]) -> Dict[str, Any]:
+    """Return the DSPy signature contract persisted in module state."""
+    if not isinstance(signature_state, Mapping):
+        raise TypeError("DSPy signature state must be a mapping")
+
+    fields = signature_state["fields"]
+    if not isinstance(fields, list):
+        raise TypeError("DSPy signature fields must be a list")
+
+    return {
+        "instructions": signature_state["instructions"],
+        "fields": [
+            {
+                "prefix": field["prefix"],
+                "description": field["description"],
+            }
+            for field in fields
+        ],
+    }
+
+
+def _signature_mismatch_reason(
+    live_signature: Mapping[str, Any], artifact_signature: Mapping[str, Any]
+) -> Optional[str]:
+    """Describe the first signature contract difference between two states."""
+    if live_signature["instructions"] != artifact_signature["instructions"]:
+        return "instructions"
+
+    live_fields = live_signature["fields"]
+    artifact_fields = artifact_signature["fields"]
+    if len(live_fields) != len(artifact_fields):
+        return f"field count {len(artifact_fields)} != {len(live_fields)}"
+
+    for index, (live_field, artifact_field) in enumerate(
+        zip(live_fields, artifact_fields, strict=False)
+    ):
+        if (
+            live_field["prefix"] != artifact_field["prefix"]
+            or live_field["description"] != artifact_field["description"]
+        ):
+            differences = []
+            if live_field["prefix"] != artifact_field["prefix"]:
+                differences.append("prefix")
+            if live_field["description"] != artifact_field["description"]:
+                differences.append("description")
+            return f"field[{index}] {','.join(differences)}"
+    return None
+
+
+def _signature_contract_mismatch(
+    live_state: Mapping[str, Any], artifact_state: Mapping[str, Any]
+) -> Optional[tuple[str, str]]:
+    """Return the mismatched predictor name and reason, if any."""
+    if not isinstance(live_state, Mapping) or not isinstance(artifact_state, Mapping):
+        raise TypeError("DSPy module state must be a mapping")
+
+    live_keys = list(live_state.keys())
+    artifact_keys = list(artifact_state.keys())
+    live_key_set = set(live_keys)
+    artifact_key_set = set(artifact_keys)
+    if live_key_set != artifact_key_set:
+        missing = [key for key in live_keys if key not in artifact_state]
+        extra = [key for key in artifact_keys if key not in live_state]
+        predictor_name = missing[0] if missing else extra[0]
+        details = []
+        if missing:
+            details.append(f"missing {missing}")
+        if extra:
+            details.append(f"extra {extra}")
+        return predictor_name, "; ".join(details)
+
+    for predictor_name in live_keys:
+        live_contract = _signature_contract(live_state[predictor_name]["signature"])
+        artifact_contract = _signature_contract(
+            artifact_state[predictor_name]["signature"]
+        )
+        reason = _signature_mismatch_reason(live_contract, artifact_contract)
+        if reason is not None:
+            return predictor_name, reason
+    return None
+
+
 def load_optimized_module(agent: Any, blob_key: str) -> None:
     """Load a compiled DSPy module blob into ``agent.dspy_module``.
 
     Shared ``_load_artifact`` body for the dispatcher-served DSPy agents.
     Records ``agent.artifact_load_status`` ∈ {``no_telemetry``,
-    ``no_artifact``, ``loaded``, ``error``} so a telemetry outage (silent
-    reversion to the base module) is distinguishable from "tenant never
-    optimized". Failures log at WARNING and never raise — the agent keeps
-    serving on defaults.
+    ``no_artifact``, ``signature_mismatch``, ``loaded``, ``error``} so a
+    telemetry outage (silent reversion to the base module) is distinguishable
+    from "tenant never optimized" and from a saved DSPy signature contract that
+    no longer matches the live module. Failures log at WARNING and never raise
+    — the agent keeps serving on defaults.
     """
     agent.artifact_load_status = "no_telemetry"
     if not getattr(agent, "telemetry_manager", None):
@@ -1819,7 +1902,36 @@ def load_optimized_module(agent: Any, blob_key: str) -> None:
                 tenant_id,
             )
             return
-        agent.dspy_module.load_state(json.loads(blob))
+        artifact_state = json.loads(blob)
+        mismatch = _signature_contract_mismatch(
+            agent.dspy_module.dump_state(), artifact_state
+        )
+        if mismatch is not None:
+            predictor_name, reason = mismatch
+            artifact_version = None
+            active_blob_version = getattr(am, "_active_blob_version", None)
+            if active_blob_version is not None:
+                try:
+                    artifact_version = run_coro_blocking(
+                        active_blob_version("model", blob_key)
+                    )
+                except Exception:
+                    artifact_version = None
+            version_text = (
+                f" v{artifact_version}" if artifact_version is not None else ""
+            )
+            logger.warning(
+                "%s artifact %s%s signature mismatch for predictor %s (%s); "
+                "using defaults",
+                type(agent).__name__,
+                blob_key,
+                version_text,
+                predictor_name,
+                reason,
+            )
+            agent.artifact_load_status = "signature_mismatch"
+            return
+        agent.dspy_module.load_state(artifact_state)
         agent.artifact_load_status = "loaded"
         logger.info(
             "%s loaded optimized DSPy module from artifact", type(agent).__name__
