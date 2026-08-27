@@ -98,12 +98,19 @@ class TestChunkProcessor:
         self, mock_subprocess, processor, sample_video_path
     ):
         """Test video duration extraction error handling."""
-        mock_subprocess.side_effect = Exception("ffprobe error")
+        mock_subprocess.side_effect = subprocess.CalledProcessError(
+            17, "ffprobe", stderr="probe rejected stream"
+        )
 
-        duration = processor._get_video_duration(sample_video_path)
+        with pytest.raises(RuntimeError) as exc_info:
+            processor._get_video_duration(sample_video_path)
 
-        assert duration == 0.0
-        processor.logger.error.assert_called()
+        assert str(exc_info.value) == (
+            f"ffprobe failed for {sample_video_path} with exit 17: "
+            "probe rejected stream"
+        )
+        assert isinstance(exc_info.value.__cause__, subprocess.CalledProcessError)
+        assert exc_info.value.__cause__.returncode == 17
 
     @patch("cogniverse_runtime.ingestion.processors.chunk_processor.subprocess.run")
     def test_extract_chunk_success(
@@ -178,16 +185,18 @@ class TestChunkProcessor:
 
     @patch.object(ChunkProcessor, "_get_video_duration")
     def test_extract_chunks_invalid_duration(
-        self, mock_duration, processor, sample_video_path
+        self, mock_duration, processor, sample_video_path, tmp_path
     ):
         """Test chunk extraction with invalid video duration."""
         mock_duration.return_value = 0.0
 
-        result = processor.extract_chunks(sample_video_path)
+        with pytest.raises(RuntimeError) as exc_info:
+            processor.extract_chunks(sample_video_path, output_dir=tmp_path)
 
-        assert result["chunks"] == []
-        assert result["metadata"] == {}
-        processor.logger.error.assert_called()
+        assert str(exc_info.value) == (
+            f"ffprobe returned invalid duration 0.0 for {sample_video_path}"
+        )
+        processor.logger.error.assert_called_once()
 
     def test_process_method(self, processor, sample_video_path):
         """Test process method delegates to extract_chunks."""
@@ -260,12 +269,19 @@ class TestChunkProcessorIntegration:
             mock_get_om.return_value = mock_om
             mock_om.get_processing_dir.return_value = tmp_path / "output"
 
-            with patch.object(processor, "_get_video_duration", return_value=0.0):
+            with (
+                patch.object(processor, "_get_video_duration", return_value=0.0),
+                pytest.raises(RuntimeError) as exc_info,
+            ):
                 processor.extract_chunks(sample_video_path)
 
             # Verify OutputManager was used
             mock_get_om.assert_called_once()
             assert mock_om.get_processing_dir.call_count == 2  # chunks and metadata
+            assert str(exc_info.value) == (
+                f"ffprobe returned invalid duration 0.0 for {sample_video_path}"
+            )
+            processor.logger.error.assert_called_once()
 
 
 class TestChunkCaching:

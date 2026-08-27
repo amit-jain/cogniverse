@@ -979,6 +979,7 @@ The concrete implementation is `EmbeddingGeneratorImpl` (below), constructed via
 **Purpose**: Concrete embedding generator supporting frame, chunk, video, document and audio content types via `model_loader` dispatch.
 
 Frame and chunk embedding failures now raise `EmbeddingGenerationError` with the source path and failure detail, so unreadable media and remote inference errors fail the stage instead of disappearing as `None`.
+ffprobe failures in chunk extraction raise `RuntimeError` with the video path and probe output instead of returning an empty chunk list.
 
 **Extends**: `BaseEmbeddingGenerator`
 

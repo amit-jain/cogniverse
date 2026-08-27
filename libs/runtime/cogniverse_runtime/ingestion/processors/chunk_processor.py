@@ -7,6 +7,7 @@ Extracts video chunks for processing with models like ColQwen.
 
 import json
 import logging
+import math
 import subprocess
 from pathlib import Path
 from typing import Any
@@ -90,9 +91,13 @@ class ChunkProcessor(BaseProcessor):
 
         # Get video duration
         duration = self._get_video_duration(video_path)
-        if duration <= 0:
-            self.logger.error("   ❌ Could not determine video duration")
-            return {"chunks": [], "metadata": {}, "video_id": video_id}
+        if not math.isfinite(duration) or duration <= 0:
+            self.logger.error(
+                "   ❌ Invalid video duration %r for %s", duration, video_path
+            )
+            raise RuntimeError(
+                f"ffprobe returned invalid duration {duration!r} for {video_path}"
+            )
 
         # Calculate chunk positions
         chunks = []
@@ -184,24 +189,53 @@ class ChunkProcessor(BaseProcessor):
 
     def _get_video_duration(self, video_path: Path) -> float:
         """Get video duration using ffprobe."""
+        cmd = [
+            "ffprobe",
+            "-v",
+            "error",
+            "-show_entries",
+            "format=duration",
+            "-of",
+            "default=noprint_wrappers=1:nokey=1",
+            str(video_path),
+        ]
+
         try:
-            cmd = [
-                "ffprobe",
-                "-v",
-                "error",
-                "-show_entries",
-                "format=duration",
-                "-of",
-                "default=noprint_wrappers=1:nokey=1",
-                str(video_path),
-            ]
-
             result = subprocess.run(cmd, capture_output=True, text=True, check=True)
-            return float(result.stdout.strip())
+        except FileNotFoundError as exc:
+            raise RuntimeError(f"ffprobe is not available for {video_path}") from exc
+        except subprocess.CalledProcessError as exc:
+            stderr = (exc.stderr or "").strip()
+            raise RuntimeError(
+                f"ffprobe failed for {video_path} with exit {exc.returncode}: {stderr}"
+            ) from exc
 
-        except Exception as e:
-            self.logger.error(f"Error getting video duration: {e}")
-            return 0.0
+        raw_stdout = result.stdout
+        stdout = raw_stdout.strip()
+        if not stdout:
+            raise RuntimeError(
+                f"ffprobe returned empty stdout for {video_path}: stdout={raw_stdout!r}"
+            )
+
+        try:
+            duration = float(stdout)
+        except ValueError as exc:
+            raise RuntimeError(
+                f"ffprobe returned unparsable stdout for {video_path}: "
+                f"stdout={raw_stdout!r}"
+            ) from exc
+
+        if not math.isfinite(duration):
+            raise RuntimeError(
+                f"ffprobe returned non-finite duration for {video_path}: "
+                f"stdout={raw_stdout!r}"
+            )
+        if duration <= 0:
+            raise RuntimeError(
+                f"ffprobe returned non-positive duration {duration!r} for "
+                f"{video_path}: stdout={raw_stdout!r}"
+            )
+        return duration
 
     def _extract_chunk(
         self, video_path: Path, chunk_path: Path, start_time: float, duration: float

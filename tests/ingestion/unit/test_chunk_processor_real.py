@@ -12,6 +12,40 @@ import pytest
 
 from cogniverse_runtime.ingestion.processors.chunk_processor import ChunkProcessor
 
+REAL_SAMPLE_VIDEO = (
+    Path(__file__).resolve().parents[2]
+    / "system"
+    / "resources"
+    / "videos"
+    / "v_-6dz6tBH77I.mp4"
+)
+
+
+def _ffprobe_duration(video_path: Path) -> float:
+    result = subprocess.run(
+        [
+            "ffprobe",
+            "-v",
+            "error",
+            "-show_entries",
+            "format=duration",
+            "-of",
+            "default=noprint_wrappers=1:nokey=1",
+            str(video_path),
+        ],
+        capture_output=True,
+        check=True,
+        text=True,
+    )
+    return float(result.stdout.strip())
+
+
+def _write_fake_ffprobe(bin_dir: Path) -> Path:
+    script = bin_dir / "ffprobe"
+    script.write_text("#!/bin/sh\nprintf '%s' \"${FFPROBE_STDOUT:-}\"")
+    script.chmod(0o755)
+    return script
+
 
 @pytest.mark.unit
 @pytest.mark.ci_safe
@@ -96,12 +130,83 @@ class TestChunkProcessor:
     @patch("subprocess.run")
     def test_get_video_duration_error(self, mock_subprocess, processor):
         """Test video duration extraction error handling."""
-        mock_subprocess.side_effect = subprocess.CalledProcessError(1, "ffprobe")
+        mock_subprocess.side_effect = subprocess.CalledProcessError(
+            17, "ffprobe", stderr="probe rejected stream"
+        )
 
-        duration = processor._get_video_duration(Path("/test/invalid.mp4"))
+        with pytest.raises(RuntimeError) as exc_info:
+            processor._get_video_duration(Path("/test/invalid.mp4"))
 
-        assert duration == 0.0
-        processor.logger.error.assert_called()
+        assert str(exc_info.value) == (
+            "ffprobe failed for /test/invalid.mp4 with exit 17: probe rejected stream"
+        )
+        assert isinstance(exc_info.value.__cause__, subprocess.CalledProcessError)
+        assert exc_info.value.__cause__.returncode == 17
+
+    def test_get_video_duration_missing_binary_raises_runtime_error(
+        self, processor, monkeypatch, tmp_path
+    ):
+        """A missing ffprobe binary fails loud and keeps the path in scope."""
+        fake_bin_dir = tmp_path / "bin"
+        fake_bin_dir.mkdir()
+        monkeypatch.setenv("PATH", str(fake_bin_dir))
+
+        with pytest.raises(RuntimeError) as exc_info:
+            processor._get_video_duration(REAL_SAMPLE_VIDEO)
+
+        message = str(exc_info.value)
+        assert "ffprobe" in message
+        assert str(REAL_SAMPLE_VIDEO) in message
+        assert isinstance(exc_info.value.__cause__, FileNotFoundError)
+
+    def test_extract_chunks_real_video_matches_ffprobe_duration(
+        self, mock_logger, tmp_path
+    ):
+        """A real video shorter than the chunk size yields one exact chunk."""
+        processor = ChunkProcessor(
+            logger=mock_logger,
+            chunk_duration=30.0,
+            chunk_overlap=0.0,
+            cache_chunks=False,
+        )
+
+        video_duration = _ffprobe_duration(REAL_SAMPLE_VIDEO)
+        result = processor.extract_chunks(REAL_SAMPLE_VIDEO, output_dir=tmp_path)
+
+        chunks = result["chunks"]
+        assert len(chunks) == 1
+        assert result["video_id"] == REAL_SAMPLE_VIDEO.stem
+        assert result["metadata"]["video_duration"] == video_duration
+
+        chunk = chunks[0]
+        assert chunk["start_time"] == 0.0
+        assert chunk["end_time"] == video_duration
+        assert chunk["duration"] == video_duration
+
+        chunk_path = Path(chunk["path"])
+        assert _ffprobe_duration(chunk_path) == 8.080544
+
+    @pytest.mark.parametrize("fake_stdout", ["nan", ""], ids=["nan", "empty"])
+    def test_get_video_duration_rejects_garbage_stdout(
+        self, processor, monkeypatch, tmp_path, fake_stdout
+    ):
+        """ffprobe stdout that is empty or non-finite is a hard failure."""
+        fake_bin_dir = tmp_path / "bin"
+        fake_bin_dir.mkdir()
+        _write_fake_ffprobe(fake_bin_dir)
+        monkeypatch.setenv("PATH", str(fake_bin_dir))
+        if fake_stdout:
+            monkeypatch.setenv("FFPROBE_STDOUT", fake_stdout)
+        else:
+            monkeypatch.delenv("FFPROBE_STDOUT", raising=False)
+
+        with pytest.raises(RuntimeError) as exc_info:
+            processor._get_video_duration(REAL_SAMPLE_VIDEO)
+
+        message = str(exc_info.value)
+        assert str(REAL_SAMPLE_VIDEO) in message
+        assert f"stdout={fake_stdout!r}" in message
+        assert "ffprobe" in message
 
     @patch("subprocess.run")
     def test_extract_chunk_success(self, mock_subprocess, processor, temp_dir):
@@ -250,17 +355,18 @@ class TestChunkProcessor:
         assert chunk3["start_time"] == 30.0
         assert chunk3["end_time"] == 45.0
 
-    def test_extract_chunks_invalid_duration(self, processor, sample_video_path):
+    def test_extract_chunks_invalid_duration(
+        self, processor, sample_video_path, tmp_path
+    ):
         """Test handling of invalid video duration."""
         with patch.object(processor, "_get_video_duration", return_value=0.0):
-            result = processor.extract_chunks(sample_video_path)
+            with pytest.raises(RuntimeError) as exc_info:
+                processor.extract_chunks(sample_video_path, output_dir=tmp_path)
 
-        # Should return empty result
-        assert result["chunks"] == []
-        assert result["metadata"] == {}
-
-        # Should log error
-        processor.logger.error.assert_called()
+        assert str(exc_info.value) == (
+            f"ffprobe returned invalid duration 0.0 for {sample_video_path}"
+        )
+        processor.logger.error.assert_called_once()
 
     @patch("cogniverse_core.common.utils.output_manager.get_output_manager")
     def test_extract_chunks_with_failed_extraction(
