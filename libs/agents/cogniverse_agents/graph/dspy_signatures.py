@@ -16,8 +16,8 @@ class ClaimExtractionSignature(dspy.Signature):
 
     The model receives the segment text plus entity hints from the fast
     GLiNER pass. It returns a list of structured claims, each with a
-    verbatim evidence span from the input. The rationale is preserved
-    so downstream retrieval can encode it jointly with the query.
+    verbatim evidence span from the input. Return at most four claims,
+    and make ``claims`` the final output field.
     """
 
     text_segment: str = dspy.InputField(
@@ -38,10 +38,7 @@ class ClaimExtractionSignature(dspy.Signature):
         '"evidence_span": str, "confidence": float} dicts. Predicate '
         'must be a single snake_case verb phrase (e.g. "discovered", '
         '"worked_at", "discovered_in", "born_in", "contradicts"). '
+        "Return at most four claims. claims is the final output field. "
         "evidence_span must be a verbatim substring of text_segment, "
         "<= 200 chars, anchoring the claim."
-    )
-    rationale: str = dspy.OutputField(
-        desc="Chain-of-thought trace explaining how each claim was derived "
-        "from the text. Used by downstream retrieval (joint trace embedding)."
     )

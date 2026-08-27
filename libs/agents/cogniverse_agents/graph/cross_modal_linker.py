@@ -275,6 +275,7 @@ class CrossModalLinker:
             nodes=nodes,
             edges=edges + new_edges,
             file_sha256=extraction_result.file_sha256,
+            claim_segments_failed=extraction_result.claim_segments_failed,
         )
 
     # ------------------------------------------------------------------ #

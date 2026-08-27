@@ -13,6 +13,7 @@ from __future__ import annotations
 import threading
 import time
 from types import SimpleNamespace
+from unittest.mock import MagicMock
 
 import dspy
 import pytest
@@ -379,6 +380,108 @@ async def test_claim_pass_prior_pool_is_earlier_segments_entities(monkeypatch):
 
 
 @pytest.mark.asyncio
+async def test_claim_failure_count_surfaces_on_pipeline_result(monkeypatch):
+    records = [_record(i) for i in range(2)]
+    monkeypatch.setattr(
+        ingestion, "_iter_segments_for_graph", lambda pr, sd: iter(records)
+    )
+    monkeypatch.setattr(ingestion, "_lookup_artifact_manager", lambda t, cm: None)
+    monkeypatch.setattr(ingestion, "_resolve_tenant_llm_config", lambda t, cm: None)
+    monkeypatch.setattr(ingestion, "_lookup_face_embed_endpoint", lambda cm: None)
+
+    async def _no_backrefs(**kwargs):
+        return None
+
+    monkeypatch.setattr(ingestion, "_write_backrefs_to_content", _no_backrefs)
+
+    claim_calls: list[str] = []
+
+    class StubDoc:
+        def __init__(self, **kwargs):
+            pass
+
+        def extract_entities_from_text(
+            self, *, text, tenant_id, source_doc_id, segment_anchor
+        ):
+            name = f"Ent_{segment_anchor.segment_id}"
+            node = SimpleNamespace(name=name, node_id=name.lower())
+            return SimpleNamespace(nodes=[node], per_chunk_entity_names=[[name]])
+
+        def extract_claims_from_text(
+            self,
+            *,
+            text,
+            segment_entities,
+            prior_entities,
+            tenant_id,
+            source_doc_id,
+            segment_anchor,
+        ):
+            del text, segment_entities, prior_entities, tenant_id, source_doc_id
+            claim_calls.append(segment_anchor.segment_id)
+            if segment_anchor.segment_id == "s0":
+                return SimpleNamespace(edges=[], claim_segments_failed=1)
+            return SimpleNamespace(
+                edges=[
+                    Edge(
+                        tenant_id="acme:acme",
+                        source="Ent_s1",
+                        target="Target",
+                        relation="rel",
+                        evidence_span="e",
+                        segment_id=segment_anchor.segment_id,
+                        ts_start=segment_anchor.ts_start,
+                        ts_end=segment_anchor.ts_end,
+                        modality=segment_anchor.modality,
+                        source_doc_id=segment_anchor.source_doc_id,
+                    )
+                ],
+                claim_segments_failed=0,
+            )
+
+    class StubClaim:
+        def __init__(self, **kwargs):
+            pass
+
+    class StubLinker:
+        def link(self, combined):
+            return combined
+
+    class StubResult:
+        def __init__(self, source_doc_id="", nodes=(), edges=(), file_sha256=None):
+            self.source_doc_id = source_doc_id
+            self.nodes = list(nodes)
+            self.edges = list(edges)
+            self.file_sha256 = file_sha256
+
+    mgr = MagicMock()
+    mgr.upsert.side_effect = lambda linked: {
+        "nodes_upserted": len(linked.nodes),
+        "edges_upserted": len(linked.edges),
+        "failed_ids": [],
+    }
+    mgr._backend = SimpleNamespace()
+    graph_router = SimpleNamespace(_graph_manager_factory=lambda t: mgr)
+
+    result = await ingestion._extract_graph_per_segment_inner(
+        processing_results={},
+        source_doc_id="doc1",
+        tenant_id="acme:acme",
+        config_manager=SimpleNamespace(),
+        DocExtractor=StubDoc,
+        ClaimExtractor=StubClaim,
+        CrossModalLinker=StubLinker,
+        ExtractionResult=StubResult,
+        graph_router=graph_router,
+    )
+
+    assert claim_calls == ["s0", "s1"]
+    assert result["claim_segments_failed"] == 1
+    assert result["nodes_upserted"] == 2
+    assert result["edges_upserted"] == 1
+
+
+@pytest.mark.asyncio
 async def test_entity_pass_failure_settles_siblings(monkeypatch):
     """A segment's entity-extraction failure (e.g. a total GLiNER outage) must
     settle the sibling segments before propagating — a bare gather raises the
@@ -461,3 +564,79 @@ async def test_entity_pass_failure_settles_siblings(monkeypatch):
     # running here (s0 failed at ~0.02s). The event being set proves the
     # orchestration settled every segment before it raised.
     assert sibling_finished.is_set()
+
+
+@pytest.mark.asyncio
+async def test_all_claim_segments_failed_raise(monkeypatch):
+    records = [_record(i) for i in range(2)]
+    monkeypatch.setattr(
+        ingestion, "_iter_segments_for_graph", lambda pr, sd: iter(records)
+    )
+    monkeypatch.setattr(ingestion, "_lookup_artifact_manager", lambda t, cm: None)
+    monkeypatch.setattr(ingestion, "_resolve_tenant_llm_config", lambda t, cm: None)
+    monkeypatch.setattr(ingestion, "_lookup_face_embed_endpoint", lambda cm: None)
+
+    async def _no_backrefs(**kwargs):
+        return None
+
+    monkeypatch.setattr(ingestion, "_write_backrefs_to_content", _no_backrefs)
+
+    claim_calls: list[str] = []
+
+    class StubDoc:
+        def __init__(self, **kwargs):
+            pass
+
+        def extract_entities_from_text(
+            self, *, text, tenant_id, source_doc_id, segment_anchor
+        ):
+            name = f"Ent_{segment_anchor.segment_id}"
+            node = SimpleNamespace(name=name, node_id=name.lower())
+            return SimpleNamespace(nodes=[node], per_chunk_entity_names=[[name]])
+
+        def extract_claims_from_text(self, **kwargs):
+            claim_calls.append(kwargs["segment_anchor"].segment_id)
+            return SimpleNamespace(edges=[], claim_segments_failed=1)
+
+    class StubClaim:
+        def __init__(self, **kwargs):
+            pass
+
+    class StubLinker:
+        def link(self, combined):
+            return combined
+
+    class StubResult:
+        def __init__(self, source_doc_id="", nodes=(), edges=(), file_sha256=None):
+            self.source_doc_id = source_doc_id
+            self.nodes = list(nodes)
+            self.edges = list(edges)
+            self.file_sha256 = file_sha256
+
+    mgr = MagicMock()
+    mgr.upsert.return_value = {
+        "nodes_upserted": 0,
+        "edges_upserted": 0,
+        "failed_ids": [],
+    }
+    mgr._backend = SimpleNamespace()
+    graph_router = SimpleNamespace(_graph_manager_factory=lambda t: mgr)
+
+    with pytest.raises(
+        RuntimeError,
+        match=r"^claim extraction failed for source 'doc1' across 2 segments$",
+    ):
+        await ingestion._extract_graph_per_segment_inner(
+            processing_results={},
+            source_doc_id="doc1",
+            tenant_id="acme:acme",
+            config_manager=SimpleNamespace(),
+            DocExtractor=StubDoc,
+            ClaimExtractor=StubClaim,
+            CrossModalLinker=StubLinker,
+            ExtractionResult=StubResult,
+            graph_router=graph_router,
+        )
+
+    assert claim_calls == ["s0", "s1"]
+    mgr.upsert.assert_not_called()

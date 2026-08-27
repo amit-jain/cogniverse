@@ -30,11 +30,16 @@ logger = logging.getLogger(__name__)
 # transcript-segment sizes; long PDF / code chunks trip this.
 RLM_PROMOTION_TOKENS = 3000
 
-# Minimum LM output budget for the ClaimExtraction call: the signature's
-# three output fields (reasoning, claims JSON, rationale) overflow the
-# endpoint-default 1000-token cap on verbose models, truncating away
-# ``rationale`` and failing the parse for every segment.
-CLAIM_EXTRACTION_MIN_OUTPUT_TOKENS = 3000
+# Claim output budget: 4 claims * 80 tokens/claim + 192 reasoning = 512
+# tokens. 512 / 11 tok/s ≈ 46.5s, which leaves margin inside the 120s
+# request timeout while still failing fast on runaway completions.
+CLAIM_EXTRACTION_MAX_CLAIMS = 4
+CLAIM_EXTRACTION_TOKENS_PER_CLAIM = 80
+CLAIM_EXTRACTION_REASONING_TOKENS = 192
+CLAIM_EXTRACTION_MAX_OUTPUT_TOKENS = (
+    CLAIM_EXTRACTION_MAX_CLAIMS * CLAIM_EXTRACTION_TOKENS_PER_CLAIM
+    + CLAIM_EXTRACTION_REASONING_TOKENS
+)
 
 # Hard cap on the verbatim evidence_span length stored on each Edge.
 _MAX_EVIDENCE_CHARS = 200
@@ -183,19 +188,12 @@ class ClaimExtractor:
         # When set, every module invocation runs inside ``dspy.context(lm=...)``
         # bound from this config. None means the call falls through to the
         # ambient ``dspy.settings.lm`` (the worker-startup default).
-        # The signature emits three output fields (reasoning + claims JSON +
-        # rationale); a verbose model hits the endpoint-default 1000-token cap
-        # before ``rationale``, the parse fails, and every segment silently
-        # yields zero claims — the whole KG ends up empty. Guarantee an
-        # adequate output budget for this call path.
-        current_cap = getattr(llm_config, "max_tokens", None)
-        if (
-            llm_config is not None
-            and isinstance(current_cap, int)
-            and current_cap < CLAIM_EXTRACTION_MIN_OUTPUT_TOKENS
-        ):
+        # The signature emits reasoning + claims JSON, with claims as the final
+        # output field. The derived 512-token cap keeps the response short
+        # enough to fit inside the 120s timeout at the measured ~11 tok/s.
+        if llm_config is not None and dataclasses.is_dataclass(llm_config):
             llm_config = dataclasses.replace(
-                llm_config, max_tokens=CLAIM_EXTRACTION_MIN_OUTPUT_TOKENS
+                llm_config, max_tokens=CLAIM_EXTRACTION_MAX_OUTPUT_TOKENS
             )
         # Claim extraction is a structured task: sampling temperatures let the
         # model mis-attribute claim subjects (a 4B model at 0.1 swaps the SPO
@@ -228,13 +226,21 @@ class ClaimExtractor:
         if not text.strip():
             return []
 
-        prediction = self._invoke(
-            text=text,
-            entity_hints=entity_hints,
-            modality_hint=modality_hint,
-            tenant_id=tenant_id,
-        )
-        claims = self._coerce_claims(prediction)
+        try:
+            prediction = self._invoke(
+                text=text,
+                entity_hints=entity_hints,
+                modality_hint=modality_hint,
+                tenant_id=tenant_id,
+                source_doc_id=source_doc_id,
+                segment_anchor=segment_anchor,
+            )
+            claims = self._coerce_claims(prediction)
+        except Exception as exc:
+            raise RuntimeError(
+                f"Claim extraction failed for source {source_doc_id!r} "
+                f"segment {segment_anchor.segment_id!r}: {exc}"
+            ) from exc
         return self._claims_to_edges(
             claims=claims,
             segment_anchor=segment_anchor,
@@ -250,6 +256,8 @@ class ClaimExtractor:
         entity_hints: List[str],
         modality_hint: str,
         tenant_id: str,
+        source_doc_id: str,
+        segment_anchor: Mention,
     ) -> dspy.Prediction:
         module = self._select_module(text=text, tenant_id=tenant_id)
         # Substitute leading subject pronouns with the most plausible
@@ -270,16 +278,28 @@ class ClaimExtractor:
                 "claim_extractor",
                 endpoint=self._llm_config,
             ):
-                return module(
+                prediction = module(
                     text_segment=text_for_lm,
                     entity_hints=entity_hints,
                     modality_hint=modality_hint,
                 )
-        return module(
+                self._raise_if_length_truncated(
+                    dspy.settings.lm,
+                    source_doc_id=source_doc_id,
+                    segment_anchor=segment_anchor,
+                )
+                return prediction
+        prediction = module(
             text_segment=text_for_lm,
             entity_hints=entity_hints,
             modality_hint=modality_hint,
         )
+        self._raise_if_length_truncated(
+            dspy.settings.lm,
+            source_doc_id=source_doc_id,
+            segment_anchor=segment_anchor,
+        )
+        return prediction
 
     def _select_module(self, *, text: str, tenant_id: str):
         """Pick ChainOfThought for short text, RLM for long text.
@@ -341,13 +361,61 @@ class ClaimExtractor:
 
     @staticmethod
     def _coerce_claims(prediction: dspy.Prediction) -> List[dict]:
-        """Normalize the LM output to a list of claim dicts."""
+        """Normalize the LM output to a list of claim dicts.
+
+        The model either returns an empty list or a list of dicts. Any
+        missing or non-list claims payload is a failed completion.
+        """
         claims = getattr(prediction, "claims", None)
         if claims is None:
-            return []
+            raise RuntimeError("LM response omitted claims")
         if isinstance(claims, list):
-            return [c for c in claims if isinstance(c, dict)]
-        return []
+            if any(not isinstance(c, dict) for c in claims):
+                raise RuntimeError("LM claims output must be a list of dicts")
+            return claims
+        raise RuntimeError(
+            f"LM claims output must be a list, got {type(claims).__name__}"
+        )
+
+    @staticmethod
+    def _response_finish_reason(lm: object) -> Optional[str]:
+        """Return the finish reason for the latest LM response, when available."""
+        history = getattr(lm, "history", None)
+        if not history:
+            return None
+        entry = history[-1]
+        if not isinstance(entry, dict):
+            return None
+        response = entry.get("response")
+        if response is None:
+            return None
+        choices = getattr(response, "choices", None)
+        if choices is None and isinstance(response, dict):
+            choices = response.get("choices")
+        if not choices:
+            return None
+        for choice in choices:
+            finish_reason = getattr(choice, "finish_reason", None)
+            if finish_reason is None and isinstance(choice, dict):
+                finish_reason = choice.get("finish_reason")
+            if finish_reason == "length":
+                return finish_reason
+        return None
+
+    @classmethod
+    def _raise_if_length_truncated(
+        cls,
+        lm: object,
+        *,
+        source_doc_id: str,
+        segment_anchor: Mention,
+    ) -> None:
+        finish_reason = cls._response_finish_reason(lm)
+        if finish_reason == "length":
+            raise RuntimeError(
+                f"LM response hit max_tokens for source {source_doc_id!r} "
+                f"segment {segment_anchor.segment_id!r}"
+            )
 
     @staticmethod
     def _claim_field_text(value: object) -> str:

@@ -568,6 +568,9 @@ async def _ingest_and_extract_graph(
     processing_results["graph_nodes"] = graph_counts.get("nodes_upserted", 0)
     processing_results["graph_edges"] = graph_counts.get("edges_upserted", 0)
     processing_results["graph_failed"] = graph_counts.get("graph_failed", 0)
+    processing_results["claim_segments_failed"] = graph_counts.get(
+        "claim_segments_failed", 0
+    )
     if processing_results["graph_failed"]:
         raise GraphStageIncomplete(
             f"graph extraction left {processing_results['graph_failed']} failed "
@@ -580,6 +583,9 @@ async def _ingest_and_extract_graph(
         pipeline_envelope["graph_nodes"] = processing_results.get("graph_nodes", 0)
         pipeline_envelope["graph_edges"] = processing_results.get("graph_edges", 0)
         pipeline_envelope["graph_failed"] = processing_results.get("graph_failed", 0)
+        pipeline_envelope["claim_segments_failed"] = processing_results.get(
+            "claim_segments_failed", 0
+        )
         return pipeline_envelope
     return processing_results
 
@@ -825,6 +831,8 @@ def _summarise(pipeline_result: dict) -> dict:
     for k in ("graph_nodes", "graph_edges"):
         if k in pipeline_result:
             out[k] = pipeline_result.get(k, 0)
+    if "claim_segments_failed" in pipeline_result:
+        out["claim_segments_failed"] = pipeline_result.get("claim_segments_failed", 0)
     return out
 
 
