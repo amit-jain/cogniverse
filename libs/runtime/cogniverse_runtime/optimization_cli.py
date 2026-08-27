@@ -2500,35 +2500,18 @@ class HoldoutSplit:
 def _split_served_holdout(
     records: list[dict], min_holdout: int, scoreable_predicate=is_scoreable
 ) -> HoldoutSplit:
-    """Serve the tail of distinct scoreable query keys and keep the rest in train."""
-    served_scoreable_indices = _served_scoreable_indices(records, scoreable_predicate)
-    if len(served_scoreable_indices) < min_holdout:
-        return HoldoutSplit(list(records), [], 0, 0)
-
-    query_positions: dict[str, list[int]] = {}
-    for index in served_scoreable_indices:
-        query = str(records[index].get("query", "") or "").strip().casefold()
-        query_positions.setdefault(query, []).append(index)
-
-    distinct_query_keys = list(query_positions)
-    distinct_queries = len(distinct_query_keys)
-    holdout_queries = max(1, distinct_queries // 4) if distinct_queries else 0
-    holdout_query_keys = {key for key in distinct_query_keys[-holdout_queries:]}
-    train = [
-        record
-        for record in records
-        if str(record.get("query", "") or "").strip().casefold()
-        not in holdout_query_keys
-    ]
-    holdout = [
-        record
-        for record in records
-        if str(record.get("query", "") or "").strip().casefold() in holdout_query_keys
-    ]
-    return HoldoutSplit(train, holdout, distinct_queries, holdout_queries)
+    """Serve the tail of distinct scoreable served-span query keys; approved
+    rows never carry a ``span:`` id, so they always stay in train."""
+    return _split_holdout(
+        records,
+        min_holdout,
+        lambda record: (
+            record["example_id"].startswith("span:") and scoreable_predicate(record)
+        ),
+    )
 
 
-def _split_labeled_holdout(
+def _split_holdout(
     records: list[dict], min_holdout: int, scoreable_predicate=is_scoreable
 ) -> HoldoutSplit:
     """Serve the tail of distinct scoreable query keys and keep the rest in train."""
@@ -4799,7 +4782,7 @@ async def run_entity_extraction_optimization(
         }
 
     min_holdout = max(1, min_samples // 10)
-    split = _split_labeled_holdout(
+    split = _split_holdout(
         truth_records,
         min_holdout,
         scoreable_predicate=_entity_extraction_is_scoreable,

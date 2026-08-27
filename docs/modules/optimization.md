@@ -405,7 +405,7 @@ holdout the run returns `no_eval_material` and persists nothing. The artifact ke
 `("config", "entity_extraction_ground_truth")` blob, loads approved synthetic rows for
 `"entity_extraction"`, and queries `cogniverse.entity_extraction` spans only to report
 `spans_found`, `served_examples`, and `served_scoreable_examples`. The truth rows define the
-holdout: `_split_labeled_holdout(truth_records, scoreable_predicate=_entity_extraction_is_scoreable)`
+holdout: `_split_holdout(truth_records, scoreable_predicate=_entity_extraction_is_scoreable)`
 splits the tenant's ground-truth rows by distinct casefold query, approved synthetic rows stay in
 train only, and `distinct_queries` / `holdout_queries` report the truth rows only. The metric is F1
 over `(casefold text, type)` pairs parsed from `text|type|confidence` lines;
