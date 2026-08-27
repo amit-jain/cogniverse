@@ -25,10 +25,25 @@ _GROUND_TRUTH_URL = (
     "http://localhost:33000/admin/tenants/flywheel_org:production"
     "/profile_selection_ground_truth"
 )
+_ENTITY_RESPONSE_URL = "http://localhost:33000/agents/entity_extraction_agent/process"
 _GROUND_TRUTH_ROWS = [
     {"query": "what direction", "expected_videos": ["v_-HpCLXdtcas"]},
     {"query": "who lifts", "expected_videos": ["v_-6dz6tBH77I"]},
 ]
+_ENTITY_RESPONSE_BODY = {
+    "status": "success",
+    "agent": "entity_extraction_agent",
+    "query": "Show me Barack Obama in Chicago",
+    "entities": [
+        {"text": "Barack Obama", "type": "PERSON", "confidence": 0.95},
+        {"text": "Chicago", "type": "PLACE", "confidence": 0.9},
+    ],
+    "relationships": [],
+    "entity_count": 2,
+    "has_entities": True,
+    "dominant_types": ["PERSON", "PLACE"],
+    "path_used": "dspy",
+}
 
 
 class TestRequestFieldExtractionHandlesEveryBodyShape:
@@ -63,6 +78,23 @@ class TestRequestFieldExtractionHandlesEveryBodyShape:
         """Both wrap the same call; one raising is what fails a whole module."""
         _COLLECTOR._extract_request_fields(body, _GROUND_TRUTH_URL)
         _COLLECTOR._extract_response_fields(body, _GROUND_TRUTH_URL, 200)
+
+
+class TestEntityResponseFieldExtraction:
+    def test_entity_response_records_summary_fields_only(self):
+        assert _COLLECTOR._extract_response_fields(
+            _ENTITY_RESPONSE_BODY, _ENTITY_RESPONSE_URL, 200
+        ) == {
+            "status_code": 200,
+            "status": "success",
+            "agent": "entity_extraction_agent",
+            "query": "Show me Barack Obama in Chicago",
+            "entity_count": 2,
+            "has_entities": True,
+            "dominant_types": ["PERSON", "PLACE"],
+            "entities_count": 2,
+            "relationships_count": 0,
+        }
 
 
 class TestBothExtractorsSurviveEveryJsonType:
