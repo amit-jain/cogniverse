@@ -2296,15 +2296,13 @@ def test_requires_lm_provisioning_precedes_local_lm_fixture(monkeypatch, tmp_pat
     assert item._cogniverse_lm_roles == frozenset({"primary"})
 
 
-def test_direct_lm_fixture_requests_distinct_primary_and_teacher_roles(
+def test_direct_lm_fixture_requests_primary_role_only(
     monkeypatch,
     tmp_path,
 ):
-    """A test naming ``ensure_host_ollama`` in its own signature gets both
-    roles: the direct request carries no declaration of which endpoint it
-    reads, so the provisioner cannot narrow it. Only a closure that reaches
-    the fixture transitively is narrowed to the primary endpoint — see
-    ``test_transitive_lm_fixture_requests_only_primary``."""
+    """A direct request to ``ensure_host_ollama`` pins the primary role only;
+    teacher stays parked on the dead sentinel unless another consumer asks for
+    it."""
     import tests.conftest as root_conftest
 
     class FixtureInfo:
@@ -2328,7 +2326,7 @@ def test_direct_lm_fixture_requests_distinct_primary_and_teacher_roles(
     root_conftest.pytest_collection_modifyitems([item])
 
     assert item.fixturenames == ["ensure_host_ollama"]
-    assert item._cogniverse_lm_roles == frozenset({"primary", "teacher"})
+    assert item._cogniverse_lm_roles == frozenset({"primary"})
 
 
 def test_transitive_lm_fixture_requests_only_primary(monkeypatch, tmp_path):
@@ -2602,6 +2600,18 @@ def test_agent_backend_fixture_routes_bright_module_to_test_vespa(monkeypatch):
     module.BRIGHT_FULL_SCHEMA = "video_colpali_smol500_mv_frame_bright_probe_test"
     request = Request()
     request.module = module
+    request.node = type(
+        "Node",
+        (),
+        {"get_closest_marker": staticmethod(lambda name: None)},
+    )()
+
+    def getfixturevalue(name):
+        if name == "shared_memory_vespa":
+            return shared_vespa
+        raise AssertionError(f"unexpected fixture request: {name}")
+
+    request.getfixturevalue = getfixturevalue
 
     monkeypatch.delenv("BACKEND_URL", raising=False)
     monkeypatch.delenv("BACKEND_PORT", raising=False)
@@ -2616,10 +2626,7 @@ def test_agent_backend_fixture_routes_bright_module_to_test_vespa(monkeypatch):
         "config_port": 34181,
     }
 
-    fixture = agents_conftest._set_test_backend_env.__wrapped__(
-        shared_vespa,
-        request,
-    )
+    fixture = agents_conftest._set_test_backend_env.__wrapped__(request)
     next(fixture)
     try:
         assert module._live_vespa_endpoint() == (
