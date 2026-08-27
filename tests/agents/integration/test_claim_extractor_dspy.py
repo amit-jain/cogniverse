@@ -3,7 +3,8 @@
 Exercises the compiled DSPy module against a live LM:
 
 - ``extract()`` on the Marie Curie seed text yields the locked SPO edge list.
-- The chain-of-thought rationale string is locked to a golden file.
+- The chain-of-thought output is claims-only; reasoning stays internal to the
+  DSPy module and there is no separate rationale field.
 - Negative example ("yellow flowers in a glass vase") yields zero edges.
 - Long input (5000 chars) triggers RLM promotion; the Phoenix span tree
   shows the ``rlm_iterations`` attribute.
@@ -296,18 +297,10 @@ class TestClaimExtractorMarieCurie:
             d.pop("created_at", None)
         assert_golden_edges(sorted_edges, "claim_extractor_marie_curie.json")
 
-    def test_rationale_names_every_extracted_claim(self, configured_dspy_lm):
-        """The CoT rationale must ground each extracted claim: it quotes
-        the evidence sentence and names the subject and each predicate in
-        the model's stable `"X" (subject)` / `"y" (predicate)` citation
-        format. The prose around those citations can re-word across
-        servings, so the citations — not the exact byte stream — are the
-        contract.
-
-        The current ClaimExtractor._invoke() returns Edges (not the raw
-        Prediction); the rationale is accessible via the same dspy module
-        call. We re-invoke the underlying ChainOfThought to capture it.
-        """
+    def test_chain_of_thought_exposes_reasoning_and_claims_only(
+        self, configured_dspy_lm
+    ):
+        """The CoT module returns reasoning plus claims, with no rationale."""
         import dspy
 
         module = dspy.ChainOfThought(ClaimExtractionSignature)
@@ -316,22 +309,9 @@ class TestClaimExtractorMarieCurie:
             entity_hints=SEG_3_ENTITY_HINTS,
             modality_hint="transcript",
         )
-        rationale = getattr(prediction, "rationale", "") or ""
-
-        assert 100 <= len(rationale) <= 4000, (
-            f"rationale length {len(rationale)} outside sane bounds: "
-            f"{rationale[:200]!r}"
-        )
-        # The prose re-words across runs (vLLM batching is not
-        # byte-deterministic even at temperature 0); the citation format is
-        # the contract, so assert the grounded citations — subject, both
-        # predicates, and the object — never an exact prose phrase.
-        assert '"Marie Curie" (subject)' in rationale, rationale
-        for predicate in ("discovered", "discovered_in"):
-            assert f'"{predicate}" (predicate)' in rationale, (
-                f"rationale never cites predicate {predicate!r}:\n{rationale}"
-            )
-        assert '"radium" (object)' in rationale, rationale
+        assert hasattr(prediction, "reasoning")
+        assert hasattr(prediction, "claims")
+        assert not hasattr(prediction, "rationale")
 
     def test_negative_yellow_flowers_no_edges(self, configured_dspy_lm):
         """'Yellow flowers in a glass vase.' yields zero SPO edges
@@ -564,7 +544,7 @@ class TestClaimExtractorArtifact:
                     f'[{{"subject":"Person {i}","predicate":"discovered",'
                     f'"object":"element {i}"}}]'
                 ),
-                "rationale": f"Subject-verb-object claim number {i}.",
+                "reasoning": f"Subject-verb-object claim number {i}.",
             }
             for i in range(8)
         ]
@@ -625,7 +605,7 @@ def test_signature_field_shape() -> None:
     assert input_fields == ["entity_hints", "modality_hint", "text_segment"], (
         f"ClaimExtractionSignature input fields drifted: {input_fields}"
     )
-    assert output_fields == ["claims", "rationale"], (
+    assert output_fields == ["claims"], (
         f"ClaimExtractionSignature output fields drifted: {output_fields}"
     )
 

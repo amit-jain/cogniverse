@@ -659,6 +659,7 @@ async def _extract_graph_per_segment(
         "nodes_upserted": 0,
         "edges_upserted": 0,
         "graph_failed": 0,
+        "claim_segments_failed": 0,
         "backrefs_by_segment": {},
         "claim_segments_skipped_by_modality": 0,
     }
@@ -701,6 +702,10 @@ async def _extract_graph_per_segment(
             kg_span.set_attribute("kg.edges_count", result.get("edges_upserted", 0))
             kg_span.set_attribute("kg.failed_count", result.get("graph_failed", 0))
             kg_span.set_attribute(
+                "kg.claim_segments_failed",
+                result.get("claim_segments_failed", 0),
+            )
+            kg_span.set_attribute(
                 "kg.segments_count", len(result.get("backrefs_by_segment", {}))
             )
             kg_span.set_attribute(
@@ -727,6 +732,7 @@ async def _extract_graph_per_segment_inner(
         "nodes_upserted": 0,
         "edges_upserted": 0,
         "graph_failed": 0,
+        "claim_segments_failed": 0,
         "backrefs_by_segment": {},
         "claim_segments_skipped_by_modality": 0,
     }
@@ -849,10 +855,23 @@ async def _extract_graph_per_segment_inner(
         if isinstance(edges, BaseException):
             raise edges
 
+    def _claim_edges_and_failures(result) -> tuple[list, int]:
+        if result is None:
+            return [], 0
+        if hasattr(result, "edges"):
+            claim_edges = list(getattr(result, "edges"))
+        else:
+            claim_edges = list(result)
+        claim_failures = int(getattr(result, "claim_segments_failed", 0) or 0)
+        return claim_edges, claim_failures
+
     # Accumulate in segment order — identical ordering to the serial path.
+    claim_segments_failed = 0
     for record, ents, edges in zip(segments_list, segment_entities, segment_edges):
+        claim_edges, failed = _claim_edges_and_failures(edges)
+        claim_segments_failed += failed
         accumulated_nodes.extend(ents.nodes)
-        accumulated_edges.extend(edges)
+        accumulated_edges.extend(claim_edges)
 
         bucket = backrefs_by_segment.setdefault(
             record.segment_anchor.segment_id,
@@ -861,16 +880,23 @@ async def _extract_graph_per_segment_inner(
         for node in ents.nodes:
             if node.node_id not in bucket["entity_ids"]:
                 bucket["entity_ids"].append(node.node_id)
-        for edge in edges:
+        for edge in claim_edges:
             if edge.edge_id not in bucket["relation_ids"]:
                 bucket["relation_ids"].append(edge.edge_id)
             if edge.edge_id not in bucket["claim_ids"]:
                 bucket["claim_ids"].append(edge.edge_id)
 
+    if segments_list and claim_segments_failed == len(segments_list):
+        raise RuntimeError(
+            f"claim extraction failed for source {source_doc_id!r} across "
+            f"{claim_segments_failed} segments"
+        )
+
     combined = ExtractionResult(
         source_doc_id=source_doc_id,
         nodes=accumulated_nodes,
         edges=accumulated_edges,
+        claim_segments_failed=claim_segments_failed,
     )
 
     # CrossModalLinker works purely off the existing Node.label tags and
@@ -913,6 +939,7 @@ async def _extract_graph_per_segment_inner(
             nodes=list(linked.nodes) + list(face_nodes),
             edges=list(linked.edges) + list(face_edges),
             file_sha256=linked.file_sha256,
+            claim_segments_failed=linked.claim_segments_failed,
         )
 
     # Account for the same_as edges the linker (and the face pipeline)
@@ -953,6 +980,7 @@ async def _extract_graph_per_segment_inner(
         "nodes_upserted": counts.get("nodes_upserted", 0),
         "edges_upserted": counts.get("edges_upserted", 0),
         "graph_failed": len(failed_doc_ids),
+        "claim_segments_failed": claim_segments_failed,
         "backrefs_by_segment": backrefs_by_segment,
         "claim_segments_skipped_by_modality": claim_segments_skipped_by_modality,
     }

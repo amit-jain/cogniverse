@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+from dataclasses import asdict
+from types import SimpleNamespace
 from unittest.mock import MagicMock, patch
 
 import dspy
@@ -46,6 +48,8 @@ def test_per_tenant_lm_wraps_module_call() -> None:
                 entity_hints=["Alice"],
                 modality_hint="text",
                 tenant_id="acme",
+                source_doc_id="doc1",
+                segment_anchor=_anchor(),
             )
 
     assert extractor._cot_module.call_count == 1
@@ -65,6 +69,8 @@ def test_no_llm_config_falls_through_to_ambient() -> None:
             entity_hints=[],
             modality_hint="text",
             tenant_id="acme",
+            source_doc_id="doc1",
+            segment_anchor=_anchor(),
         )
 
     assert extractor._cot_module.captured_lm is ambient
@@ -92,7 +98,7 @@ def _anchor() -> Mention:
 
 
 def test_non_numeric_confidence_maps_to_band_instead_of_crashing() -> None:
-    """Non-numeric LM confidence maps to a band: "high"->0.9, "85%"->0.85."""
+    """Non-numeric LM confidence maps to a band: "0.9"->0.9, "85%"->0.85."""
     text = "Marie Curie was born in Warsaw, Poland."
     extractor = ClaimExtractor(llm_config=None)
     extractor._cot_module = _ClaimsModule(
@@ -101,7 +107,7 @@ def test_non_numeric_confidence_maps_to_band_instead_of_crashing() -> None:
                 "subject": "Marie Curie",
                 "predicate": "born_in",
                 "object": "Warsaw",
-                "confidence": "high",
+                "confidence": "0.9",
                 "evidence_span": "Marie Curie was born in Warsaw",
             },
             {
@@ -207,26 +213,94 @@ def test_out_of_range_and_missing_confidence_are_clamped() -> None:
     assert [e.confidence for e in edges] == [1.0, 1.0]
 
 
-def test_output_budget_raised_above_endpoint_default() -> None:
-    """The signature's three output fields overflow the endpoint-default
-    1000-token cap: the LM truncates before ``rationale``, the parse fails,
-    and every segment silently yields zero claims (an empty KG that reads as
-    success). The extractor must guarantee itself an adequate budget."""
+class _StaticResponse:
+    def __init__(self, content: str, finish_reason: str) -> None:
+        self.choices = [
+            SimpleNamespace(
+                finish_reason=finish_reason,
+                message=SimpleNamespace(
+                    content=content,
+                    reasoning_content=None,
+                    tool_calls=None,
+                    provider_specific_fields={},
+                ),
+            )
+        ]
+        self.usage = {"prompt_tokens": 1, "completion_tokens": 1, "total_tokens": 2}
+        self.model = "dummy/static"
+        self._hidden_params = {}
+
+    def __getitem__(self, key: str):
+        return getattr(self, key)
+
+
+class _StaticCompletionLM(dspy.LM):
+    def __init__(self, content: str, finish_reason: str = "stop") -> None:
+        super().__init__(
+            "openai/static",
+            temperature=0.0,
+            max_tokens=1000,
+            cache=False,
+            num_retries=0,
+        )
+        self._response = _StaticResponse(content, finish_reason)
+
+    def forward(self, prompt=None, messages=None, **kwargs):
+        del prompt, messages, kwargs
+        return self._response
+
+
+def test_signature_contract_is_reasoning_plus_claims_only() -> None:
     from cogniverse_agents.graph.claim_extractor import (
-        CLAIM_EXTRACTION_MIN_OUTPUT_TOKENS,
+        CLAIM_EXTRACTION_MAX_CLAIMS,
+        CLAIM_EXTRACTION_MAX_OUTPUT_TOKENS,
+        CLAIM_EXTRACTION_REASONING_TOKENS,
+        CLAIM_EXTRACTION_TOKENS_PER_CLAIM,
+    )
+    from cogniverse_agents.graph.dspy_signatures import ClaimExtractionSignature
+
+    assert list(ClaimExtractionSignature.output_fields.keys()) == ["claims"]
+    assert list(
+        dspy.ChainOfThought(ClaimExtractionSignature).predict.signature.output_fields
+    ) == [
+        "reasoning",
+        "claims",
+    ]
+    assert CLAIM_EXTRACTION_MAX_CLAIMS == 4
+    assert CLAIM_EXTRACTION_TOKENS_PER_CLAIM == 80
+    assert CLAIM_EXTRACTION_REASONING_TOKENS == 192
+    assert CLAIM_EXTRACTION_MAX_OUTPUT_TOKENS == 512
+    assert (
+        "Return at most four claims."
+        in ClaimExtractionSignature.output_fields["claims"].json_schema_extra["desc"]
+    )
+    assert (
+        "claims is the final output field."
+        in ClaimExtractionSignature.output_fields["claims"].json_schema_extra["desc"]
+    )
+    assert (
+        "evidence_span must be a verbatim substring"
+        in ClaimExtractionSignature.output_fields["claims"].json_schema_extra["desc"]
+    )
+
+
+def test_output_budget_is_clamped_to_contract_cap() -> None:
+    """The LM budget is derived from the four-claim contract."""
+    from cogniverse_agents.graph.claim_extractor import (
+        CLAIM_EXTRACTION_MAX_OUTPUT_TOKENS,
         ClaimExtractor,
     )
     from cogniverse_foundation.config.unified_config import LLMEndpointConfig
 
     capped = LLMEndpointConfig(model="openai/auto", max_tokens=1000)
     extractor = ClaimExtractor(llm_config=capped)
-    assert extractor._llm_config.max_tokens == CLAIM_EXTRACTION_MIN_OUTPUT_TOKENS
-    # Everything else carries over unchanged.
+    assert extractor._llm_config.max_tokens == CLAIM_EXTRACTION_MAX_OUTPUT_TOKENS
     assert extractor._llm_config.model == "openai/auto"
 
     roomy = LLMEndpointConfig(model="openai/auto", max_tokens=8000)
-    assert ClaimExtractor(llm_config=roomy)._llm_config.max_tokens == 8000
-
+    assert ClaimExtractor(llm_config=roomy)._llm_config.max_tokens == (
+        CLAIM_EXTRACTION_MAX_OUTPUT_TOKENS
+    )
     assert ClaimExtractor(llm_config=None)._llm_config is None
 
 
@@ -248,7 +322,120 @@ def test_extraction_decodes_greedily_regardless_of_tenant_temperature() -> None:
     assert extractor._llm_config.temperature == 0.0
     assert extractor._llm_config.model == "openai/auto"
     assert extractor._llm_config.api_base == "http://llm.test:8000/v1"
-    assert extractor._llm_config.max_tokens == 8000
+    assert extractor._llm_config.max_tokens == 512
 
     greedy = LLMEndpointConfig(model="openai/auto", temperature=0.0, max_tokens=8000)
-    assert ClaimExtractor(llm_config=greedy)._llm_config.temperature == 0.0
+    greedy_extractor = ClaimExtractor(llm_config=greedy)
+    assert greedy_extractor._llm_config.temperature == 0.0
+    assert greedy_extractor._llm_config.max_tokens == 512
+
+
+def test_length_capped_completion_raises_with_source_and_segment() -> None:
+    from cogniverse_agents.graph.claim_extractor import ClaimExtractor
+    from cogniverse_foundation.config.unified_config import LLMEndpointConfig
+
+    content = (
+        "[[ ## reasoning ## ]]\n"
+        "The segment has one claim.\n\n"
+        "[[ ## claims ## ]]\n"
+        '[{"subject":"Marie Curie","predicate":"discovered",'
+        '"object":"radium","evidence_span":"Marie Curie discovered radium",'
+        '"confidence":0.97}]\n\n'
+        "[[ ## completed ## ]]\n"
+    )
+    lm = _StaticCompletionLM(content, finish_reason="length")
+    extractor = ClaimExtractor(
+        llm_config=LLMEndpointConfig(model="openai/auto", max_tokens=512)
+    )
+
+    with patch(
+        "cogniverse_foundation.config.semantic_router.create_dspy_lm",
+        return_value=lm,
+    ):
+        with pytest.raises(
+            RuntimeError,
+            match=(
+                r"^Claim extraction failed for source 'doc1' segment 'seg1': "
+                r"LM response hit max_tokens for source 'doc1' segment 'seg1'$"
+            ),
+        ):
+            extractor.extract(
+                text="Marie Curie discovered radium.",
+                entity_hints=["Marie Curie", "radium"],
+                modality_hint="text",
+                segment_anchor=_anchor(),
+                tenant_id="acme:acme",
+                source_doc_id="doc1",
+            )
+
+
+def test_well_formed_completion_parses_to_exact_edges() -> None:
+    from cogniverse_agents.graph.claim_extractor import ClaimExtractor
+
+    content = (
+        "[[ ## reasoning ## ]]\n"
+        "The text contains two claims.\n\n"
+        "[[ ## claims ## ]]\n"
+        "["
+        '{"subject":"Marie Curie","predicate":"discovered","object":"radium",'
+        '"evidence_span":"Marie Curie discovered radium","confidence":0.97},'
+        '{"subject":"Marie Curie","predicate":"won","object":"Nobel Prize",'
+        '"evidence_span":"won the Nobel Prize.","confidence":0.93}'
+        "]\n\n"
+        "[[ ## completed ## ]]\n"
+    )
+    lm = _StaticCompletionLM(content, finish_reason="stop")
+    extractor = ClaimExtractor(llm_config=None)
+    text = "Marie Curie discovered radium and won the Nobel Prize."
+    anchor = Mention(
+        source_doc_id="doc1",
+        segment_id="seg1",
+        ts_start=12.0,
+        ts_end=18.5,
+        modality="text",
+        evidence_span=text,
+    )
+
+    with dspy.context(lm=lm):
+        edges = extractor.extract(
+            text=text,
+            entity_hints=["Marie Curie", "radium", "Nobel Prize"],
+            modality_hint="text",
+            segment_anchor=anchor,
+            tenant_id="acme:acme",
+            source_doc_id="doc1",
+        )
+
+    actual = [asdict(edge) for edge in edges]
+    for edge in actual:
+        edge.pop("created_at", None)
+    assert actual == [
+        {
+            "tenant_id": "acme:acme",
+            "source": "Marie Curie",
+            "target": "radium",
+            "relation": "discovered",
+            "evidence_span": "Marie Curie discovered radium",
+            "segment_id": "seg1",
+            "ts_start": 12.0,
+            "ts_end": 18.5,
+            "modality": "text",
+            "provenance": "EXTRACTED",
+            "source_doc_id": "doc1",
+            "confidence": 0.97,
+        },
+        {
+            "tenant_id": "acme:acme",
+            "source": "Marie Curie",
+            "target": "Nobel Prize",
+            "relation": "won",
+            "evidence_span": "won the Nobel Prize.",
+            "segment_id": "seg1",
+            "ts_start": 12.0,
+            "ts_end": 18.5,
+            "modality": "text",
+            "provenance": "EXTRACTED",
+            "source_doc_id": "doc1",
+            "confidence": 0.93,
+        },
+    ]

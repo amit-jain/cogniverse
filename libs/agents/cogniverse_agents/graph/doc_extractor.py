@@ -45,6 +45,22 @@ class SegmentEntities:
     per_chunk_entity_names: List[List[str]] = field(default_factory=list)
 
 
+class ClaimExtractionResult(list):
+    """Claim edges for one segment plus the number of failed claim segments."""
+
+    def __init__(
+        self,
+        edges: Optional[List[Edge]] = None,
+        claim_segments_failed: int = 0,
+    ) -> None:
+        super().__init__(edges or [])
+        self.claim_segments_failed = claim_segments_failed
+
+    @property
+    def edges(self) -> List[Edge]:
+        return list(self)
+
+
 _TEXT_EXTENSIONS = {".md", ".txt", ".rst", ".html", ".htm"}
 _PDF_EXTENSIONS = {".pdf"}
 
@@ -361,7 +377,7 @@ class DocExtractor:
         tenant_id: str,
         source_doc_id: str,
         segment_anchor: Mention,
-    ) -> List[Edge]:
+    ) -> ClaimExtractionResult:
         """Pass 2 of the two-pass extraction: claim edges for one segment.
 
         Given ``segment_entities`` (this segment's Pass-1 output) and
@@ -402,7 +418,8 @@ class DocExtractor:
         return ExtractionResult(
             source_doc_id=source_doc_id,
             nodes=ents.nodes,
-            edges=edges,
+            edges=edges.edges,
+            claim_segments_failed=edges.claim_segments_failed,
         )
 
     def _extract_entities(
@@ -513,12 +530,13 @@ class DocExtractor:
         tenant_id: str,
         source_doc_id: str,
         segment_anchor: Mention,
-    ) -> List[Edge]:
+    ) -> ClaimExtractionResult:
         if self._claim_extractor is None:
-            return []
+            return ClaimExtractionResult()
 
         edges: List[Edge] = []
         prior = prior_entities or []
+        segment_failed = False
 
         for chunk_i, chunk in enumerate(self._chunk_text(text)):
             chunk_hints = (
@@ -533,17 +551,32 @@ class DocExtractor:
                     merged_hints.append(n)
                     seen_hints.add(n.lower())
             if merged_hints:
-                claim_edges = self._claim_extractor.extract(
-                    text=chunk,
-                    entity_hints=merged_hints,
-                    modality_hint=segment_anchor.modality,
-                    segment_anchor=segment_anchor,
-                    tenant_id=tenant_id,
-                    source_doc_id=source_doc_id,
-                )
+                try:
+                    claim_edges = self._claim_extractor.extract(
+                        text=chunk,
+                        entity_hints=merged_hints,
+                        modality_hint=segment_anchor.modality,
+                        segment_anchor=segment_anchor,
+                        tenant_id=tenant_id,
+                        source_doc_id=source_doc_id,
+                    )
+                except Exception as exc:
+                    segment_failed = True
+                    logger.warning(
+                        "Claim extraction failed for chunk %d of source %r segment %r: %s",
+                        chunk_i + 1,
+                        source_doc_id,
+                        segment_anchor.segment_id,
+                        exc,
+                        exc_info=True,
+                    )
+                    continue
                 edges.extend(claim_edges)
 
-        return edges
+        return ClaimExtractionResult(
+            edges=edges,
+            claim_segments_failed=1 if segment_failed else 0,
+        )
 
     def _chunk_text(self, text: str) -> List[str]:
         """Split text into paragraph-aware chunks of at most _MAX_CHARS_PER_CHUNK."""

@@ -338,7 +338,7 @@ class TestGatewayAgentArtifactRoundTrip:
         tenant_id = "gateway-routing-test"
         mgr = ArtifactManager(real_provider, tenant_id)
 
-        # Save a HIGH threshold that pushes borderline queries to orchestrator
+        # Save an upper threshold that pushes borderline queries to orchestrator
         high_threshold_config = {
             "fast_path_confidence_threshold": 0.95,
             "gliner_threshold": 0.3,
@@ -671,14 +671,14 @@ class TestDSPyAgentArtifactRoundTrip:
                 "entity_hints": "Marie Curie|radium|1898",
                 "modality_hint": "transcript",
                 "claims": '[{"subject":"Marie Curie","predicate":"discovered","object":"radium"}]',
-                "rationale": "Subject-verb-object over a named discovery.",
+                "reasoning": "Subject-verb-object over a named discovery.",
             },
             {
                 "text_segment": "She later won the Nobel Prize in Physics.",
                 "entity_hints": "Marie Curie|Nobel Prize|Physics",
                 "modality_hint": "transcript",
                 "claims": '[{"subject":"Marie Curie","predicate":"won","object":"Nobel Prize"}]',
-                "rationale": "Pronoun resolved to the prior subject.",
+                "reasoning": "Pronoun resolved to the prior subject.",
             },
         ]
         optimized_state = json.loads(json.dumps(default_state, default=str))

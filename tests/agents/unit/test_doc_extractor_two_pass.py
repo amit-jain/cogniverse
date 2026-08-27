@@ -193,6 +193,45 @@ def test_no_claim_extractor_yields_no_edges_but_still_entities():
     assert edges == []
 
 
+def test_claim_segment_failure_is_counted_on_the_document_result():
+    class _FlakyClaims:
+        def extract(
+            self,
+            *,
+            text: str,
+            entity_hints: List[str],
+            modality_hint: str,
+            segment_anchor: Mention,
+            tenant_id: str,
+            source_doc_id: str,
+        ) -> List[Edge]:
+            del modality_hint, segment_anchor, tenant_id, source_doc_id
+            if "Beta" in text:
+                raise RuntimeError("length capped")
+            return [
+                Edge(
+                    tenant_id="t:t",
+                    source=entity_hints[0],
+                    target="Target",
+                    relation="rel",
+                    evidence_span="e",
+                    segment_id="seg1",
+                    ts_start=0.0,
+                    ts_end=1.0,
+                    modality="document",
+                    source_doc_id="doc1",
+                )
+            ]
+
+    ext = _extractor(_FlakyClaims())
+    result = ext.extract_from_text(_two_chunk_text(), "t:t", "doc1", _anchor())
+
+    assert result.claim_segments_failed == 1
+    assert [(e.source, e.relation, e.target) for e in result.edges] == [
+        ("Alpha", "rel", "Target"),
+    ]
+
+
 class _OutageGliner:
     """Every predict_entities call raises — a sidecar outage."""
 

@@ -231,9 +231,13 @@ class Edge:
 
 @dataclass
 class ExtractionResult:
-    """Nodes and edges extracted from a single source (file or segment batch)."""
+    """Nodes and edges extracted from a single source (file or segment batch).
+
+    ``claim_segments_failed`` counts source segments whose claim pass failed.
+    """
 
     source_doc_id: str
     nodes: List[Node] = field(default_factory=list)
     edges: List[Edge] = field(default_factory=list)
     file_sha256: Optional[str] = None
+    claim_segments_failed: int = 0
