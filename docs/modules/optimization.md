@@ -205,7 +205,7 @@ flowchart TB
 
     Source --> Derive["<span style='color:#000'>derive_profile_labels<br/>• SearchService.search per query × usable profile, top_k 10<br/>• Result matches an expected video when its title basename (schema document_mapping.title, extension stripped) equals the expected id<br/>• Label = the one profile whose results match every expected video<br/>• Unrecovered, untitled-result and tied queries reported under label_exclusions</span>"]
 
-    Derive --> RunOpt["<span style='color:#000'>run_profile_optimization tenant_id, lookback_hours<br/>• Build dspy.Example trainset from derived labels<br/>• Holdout = tail of the derived labels<br/>• Guard on label collapse with max_label_share</span>"]
+    Derive --> RunOpt["<span style='color:#000'>run_profile_optimization tenant_id, lookback_hours<br/>• Build dspy.Example trainset from derived labels<br/>• Holdout = tail of the derived labels<br/>• Guard on single-label collapse</span>"]
 
     Synthetic["<span style='color:#000'>Approved synthetic demos<br/>• _load_approved_synthetic_data 'profile'<br/>• Merged into trainset</span>"] --> RunOpt
 
@@ -347,7 +347,7 @@ async def run_profile_optimization(
     """
 ```
 
-Profile-selection ground truth is tenant-owned state in the artifact store, not a bundled runtime asset. The optimizer reads `("config", "profile_selection_ground_truth")` first and only then builds scored examples from spans. Upload validation rejects blank queries and empty normalized `expected_videos` so tenants never persist a silent placeholder label set. All post-derivation profile results also carry `labels_by_profile` and `exclusions_by_reason`. The shipped `optimizer_floors.profile_selection.max_label_share` knob defaults to `0.8` and stops compiles when one profile owns too much of the derived label distribution.
+Profile-selection ground truth is tenant-owned state in the artifact store, and the profile-selection optimizer returns `profile_labels_degenerate` only when the derived labels collapse to a single label value while recording `labels_by_profile`, `dominant_label_share`, and `exclusions_by_reason`.
 
 **Training:** Always **BootstrapFewShot**; the 50-example threshold only changes its
 `max_bootstrapped_demos`/`max_labeled_demos`/`max_rounds` settings, it does not switch optimizers.
