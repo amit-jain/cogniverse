@@ -257,10 +257,8 @@ class EmbeddingGeneratorImpl(BaseEmbeddingGenerator):
 
     @staticmethod
     def _remote_endpoint_label(processor: Any, fallback: str | None = None) -> str:
-        """Best-effort label for the remote embedding endpoint."""
-        endpoint = getattr(processor, "endpoint_url", None) or getattr(
-            processor, "_url", None
-        )
+        """Label for the remote embedding endpoint; in-process processors have none."""
+        endpoint = getattr(processor, "endpoint_url", None)
         if endpoint:
             return str(endpoint)
         if fallback:
