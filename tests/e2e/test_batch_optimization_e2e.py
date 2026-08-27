@@ -688,17 +688,17 @@ def _selection_summary_in_pod(
             import os
             from cogniverse_agents.optimizer.artifact_manager import ArtifactManager
             from cogniverse_foundation.config.utils import create_default_config_manager
-            from cogniverse_foundation.telemetry.config import SPAN_NAME_ENTITY_EXTRACTION
             from cogniverse_foundation.telemetry.manager import get_telemetry_manager
             from cogniverse_runtime.inference_services import parse_inference_service_urls
+            from cogniverse_agents.optimizer.entity_extraction_ground_truth import (
+                load_entity_extraction_ground_truth_rows,
+            )
             from cogniverse_runtime.optimization_cli import (
                 _apply_training_selection,
                 _entity_extraction_is_scoreable,
-                _entity_extraction_pairs,
                 _load_approved_synthetic_data,
                 _population_floor_from_config,
                 _project_approved_optimizer_example,
-                _query_spans_by_name,
                 _selection_summary,
                 _split_served_holdout,
             )
@@ -709,21 +709,17 @@ def _selection_summary_in_pod(
                 telemetry_provider = telemetry_manager.get_provider(
                     tenant_id={tenant_id!r}
                 )
-                spans_df = await _query_spans_by_name(
-                    telemetry_manager,
-                    telemetry_provider,
-                    {tenant_id!r},
-                    SPAN_NAME_ENTITY_EXTRACTION,
-                    {lookback_hours!r},
+                artifact_manager = ArtifactManager(telemetry_provider, {tenant_id!r})
+                ground_truth_rows = await load_entity_extraction_ground_truth_rows(
+                    artifact_manager
                 )
-                entity_pairs = _entity_extraction_pairs(spans_df)
                 records = [
                     {{
-                        "query": pair["query"],
-                        "entities": pair["entities"],
-                        "example_id": pair["example_id"],
+                        "query": row["query"],
+                        "entities": row["entities"],
+                        "example_id": f"truth:{{index}}",
                     }}
-                    for pair in entity_pairs
+                    for index, row in enumerate(ground_truth_rows)
                 ]
                 synthetic_demos = await _load_approved_synthetic_data(
                     telemetry_provider, {tenant_id!r}, "entity_extraction"
@@ -743,11 +739,21 @@ def _selection_summary_in_pod(
                     {tenant_id!r}, config_manager, "entity_extraction"
                 )
                 min_holdout = max(1, min_samples // 10)
-                train_records, _ = _split_served_holdout(
-                    records,
+                split = _split_served_holdout(
+                    [
+                        {{**record, "example_id": f"span:{{record['example_id']}}"}}
+                        for record in records
+                    ],
                     min_holdout,
                     scoreable_predicate=_entity_extraction_is_scoreable,
                 )
+                train_record_ids = {{
+                    record["example_id"].removeprefix("span:")
+                    for record in split.train
+                }}
+                train_records = [
+                    record for record in records if record["example_id"] in train_record_ids
+                ]
                 inference_service_urls = parse_inference_service_urls(
                     os.environ.get("INFERENCE_SERVICE_URLS")
                 )
@@ -757,9 +763,7 @@ def _selection_summary_in_pod(
                     else None
                 )
                 _, selection_report = await _apply_training_selection(
-                    artifact_manager=ArtifactManager(
-                        telemetry_provider, {tenant_id!r}
-                    ),
+                    artifact_manager=artifact_manager,
                     config_manager=config_manager,
                     tenant_id={tenant_id!r},
                     optimizer_type="entity_extraction",
