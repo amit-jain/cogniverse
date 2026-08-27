@@ -2055,13 +2055,6 @@ class TestPopulationFloorConfig:
             "acme:acme", manager, "query_enhancement"
         ) == (100, 3)
 
-    def test_profile_selection_max_label_share_reads_shipped_floor(self):
-        from cogniverse_runtime.optimization_cli import (
-            _shipped_profile_selection_max_label_share_from_config,
-        )
-
-        assert _shipped_profile_selection_max_label_share_from_config() == 0.8
-
     def test_population_floor_store_override_wins_over_shipped_floor(
         self, tmp_path, monkeypatch
     ):
@@ -3656,6 +3649,68 @@ class TestProfileSelectionOptimization:
             return 0.0
         return 1.0
 
+    @pytest.mark.asyncio
+    async def test_profile_selection_imbalanced_labels_still_compile(self):
+        profiles = [
+            "video_colpali_smol500_mv_frame",
+            "video_colqwen_omni_mv_chunk_30s",
+        ]
+        rows = [
+            _profile_span_row(
+                f"find clip {index}",
+                span_id=f"profile-{index}",
+                available_profiles=profiles,
+                selected_profile=profiles[0],
+            )
+            for index in range(25)
+        ] + [
+            _profile_span_row(
+                "find clip rare",
+                span_id="profile-25",
+                available_profiles=profiles,
+                selected_profile=profiles[1],
+            )
+        ]
+        provider = FakeTelemetryProvider(
+            _make_spans_df("cogniverse.profile_selection", rows)
+        )
+
+        _state, result = await self._run(
+            provider,
+            current_blob=self._served_state(),
+            floor=(1, 1),
+            score=1.0,
+        )
+
+        assert result["status"] == "success"
+        assert result["labels_by_profile"] == {
+            profiles[0]: 25,
+            profiles[1]: 1,
+        }
+        assert result["dominant_label_share"] == 25 / 26
+
+    @pytest.mark.asyncio
+    async def test_profile_selection_no_labels_reports_zero_dominant_share(self):
+        provider = FakeTelemetryProvider(
+            _make_spans_df("cogniverse.profile_selection", [])
+        )
+
+        _state, result = await self._run(
+            provider,
+            current_blob=self._served_state(),
+            floor=(1, 1),
+        )
+
+        assert result == {
+            "status": "no_data",
+            "spans_found": 0,
+            "examples": 0,
+            "label_exclusions": {"count": 0, "queries": []},
+            "labels_by_profile": {},
+            "dominant_label_share": 0.0,
+            "exclusions_by_reason": {},
+        }
+
     def test_profile_selection_quality_exact_table(self):
         from cogniverse_runtime.optimization_cli import _profile_selection_quality
 
@@ -4676,6 +4731,7 @@ class TestProfileSelectionOptimization:
                 "queries": ["tenant clip nobody can recover"],
             },
             "labels_by_profile": {profiles[0]: 3},
+            "dominant_label_share": 1.0,
             "exclusions_by_reason": {"no_profile_recovered_expected_videos": 1},
         }
         assert state["load_blob_calls"] == [
@@ -4787,6 +4843,7 @@ class TestProfileSelectionOptimization:
                 "queries": ["tenant clip nobody can recover"],
             },
             "labels_by_profile": {profiles[0]: 3},
+            "dominant_label_share": 1.0,
             "exclusions_by_reason": {"no_profile_recovered_expected_videos": 1},
         }
         assert _state["load_blob_calls"] == [
@@ -5146,6 +5203,7 @@ class TestProfileSelectionOptimization:
                 "video_colpali_smol500_mv_frame": 2,
                 "video_colqwen_omni_mv_chunk_30s": 2,
             },
+            "dominant_label_share": 0.5,
             "exclusions_by_reason": {},
             **_selection_block(3, 3),
             "baseline_score": 1.0,
@@ -5181,6 +5239,7 @@ class TestProfileSelectionOptimization:
                         "video_colpali_smol500_mv_frame": 2,
                         "video_colqwen_omni_mv_chunk_30s": 2,
                     },
+                    "dominant_label_share": 0.5,
                     "exclusions_by_reason": {},
                 },
             }
@@ -5236,6 +5295,7 @@ class TestProfileSelectionOptimization:
                 "video_colpali_smol500_mv_frame": 2,
                 "video_colqwen_omni_mv_chunk_30s": 2,
             },
+            "dominant_label_share": 0.5,
             "exclusions_by_reason": {},
             **_selection_block(3, 3),
             "baseline_score": 1.0,
@@ -5271,6 +5331,7 @@ class TestProfileSelectionOptimization:
                         "video_colpali_smol500_mv_frame": 2,
                         "video_colqwen_omni_mv_chunk_30s": 2,
                     },
+                    "dominant_label_share": 0.5,
                     "exclusions_by_reason": {},
                 },
             }
@@ -5322,6 +5383,7 @@ class TestProfileSelectionOptimization:
                 "video_colpali_smol500_mv_frame": 2,
                 "video_colqwen_omni_mv_chunk_30s": 2,
             },
+            "dominant_label_share": 0.5,
             "exclusions_by_reason": {},
             **_selection_block(3, 3),
         }
@@ -5485,6 +5547,7 @@ class TestProfileSelectionOptimization:
                 "video_colpali_smol500_mv_frame": 2,
                 "video_colqwen_omni_mv_chunk_30s": 2,
             },
+            "dominant_label_share": 0.5,
             "exclusions_by_reason": {},
         }
         assert "selection" not in result
@@ -5509,6 +5572,7 @@ class TestProfileSelectionOptimization:
                         "video_colpali_smol500_mv_frame": 2,
                         "video_colqwen_omni_mv_chunk_30s": 2,
                     },
+                    "dominant_label_share": 0.5,
                     "exclusions_by_reason": {},
                 },
             }
