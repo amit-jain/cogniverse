@@ -404,10 +404,11 @@ holdout the run returns `no_eval_material` and persists nothing. The artifact ke
 `run_entity_extraction_optimization(tenant_id, lookback_hours=24.0)` loads the tenant-owned
 `("config", "entity_extraction_ground_truth")` blob, loads approved synthetic rows for
 `"entity_extraction"`, and queries `cogniverse.entity_extraction` spans only to report
-`spans_found`, `served_examples`, and `served_scoreable_examples`. The labeled population is
-`truth_rows + approved_rows`, and `_split_served_holdout(..., scoreable_predicate=_entity_extraction_is_scoreable)`
-splits that population by distinct casefold query with the holdout excluded from train.
-The metric is F1 over `(casefold text, type)` pairs parsed from `text|type|confidence` lines;
+`spans_found`, `served_examples`, and `served_scoreable_examples`. The truth rows define the
+holdout: `_split_labeled_holdout(truth_records, scoreable_predicate=_entity_extraction_is_scoreable)`
+splits the tenant's ground-truth rows by distinct casefold query, approved synthetic rows stay in
+train only, and `distinct_queries` / `holdout_queries` report the truth rows only. The metric is F1
+over `(casefold text, type)` pairs parsed from `text|type|confidence` lines;
 an empty recorded label set raises. Bootstrap uses `BootstrapMetricRecorder` with
 `_entity_bootstrap_threshold(...)`, which keeps the bar at `ENTITY_BOOTSTRAP_METRIC_THRESHOLD`
 (1.0) and never below the served module's holdout score. The recorder appends each attempt as a
@@ -420,7 +421,8 @@ JSONL row under `~/.cache/cogniverse/bootstrap_attempts.jsonl`. The entity floor
 
 Returns:
   - {"status": "success", "spans_found": int, "served_examples": int,
-     "served_scoreable_examples": int, "label_rows": int, "truth_rows": int,
+     "served_scoreable_examples": int, "distinct_queries": int,
+     "holdout_queries": int, "label_rows": int, "truth_rows": int,
      "approved_rows": int, "training_examples": int, "holdout_examples": int,
      "holdout_source": "ground_truth",
      "bootstrap": {"trainset": int, "max_bootstrapped_demos": int,

@@ -2528,6 +2528,39 @@ def _split_served_holdout(
     return HoldoutSplit(train, holdout, distinct_queries, holdout_queries)
 
 
+def _split_labeled_holdout(
+    records: list[dict], min_holdout: int, scoreable_predicate=is_scoreable
+) -> HoldoutSplit:
+    """Serve the tail of distinct scoreable query keys and keep the rest in train."""
+    scoreable_indices = [
+        index for index, record in enumerate(records) if scoreable_predicate(record)
+    ]
+    if len(scoreable_indices) < min_holdout:
+        return HoldoutSplit(list(records), [], 0, 0)
+
+    query_positions: dict[str, list[int]] = {}
+    for index in scoreable_indices:
+        query = str(records[index].get("query", "") or "").strip().casefold()
+        query_positions.setdefault(query, []).append(index)
+
+    distinct_query_keys = list(query_positions)
+    distinct_queries = len(distinct_query_keys)
+    holdout_queries = max(1, distinct_queries // 4) if distinct_queries else 0
+    holdout_query_keys = {key for key in distinct_query_keys[-holdout_queries:]}
+    train = [
+        record
+        for record in records
+        if str(record.get("query", "") or "").strip().casefold()
+        not in holdout_query_keys
+    ]
+    holdout = [
+        record
+        for record in records
+        if str(record.get("query", "") or "").strip().casefold() in holdout_query_keys
+    ]
+    return HoldoutSplit(train, holdout, distinct_queries, holdout_queries)
+
+
 def _negative_probes(agent_name: str, low_scoring_df, limit: int = 20) -> list:
     """Known-bad probes from the human-flagged failures that triggered the
     recompile: ``(inputs, failing_output)`` pairs. For summary/report a
@@ -4695,17 +4728,18 @@ async def run_entity_extraction_optimization(
         for index, row in enumerate(ground_truth_rows)
     ]
     consumed_example_ids = [record["example_id"] for record in truth_records]
-    records = list(truth_records)
+    approved_records = []
     for demo in synthetic_demos:
         projected = _project_approved_optimizer_example("entity_extraction", demo)
         consumed_example_ids.append(demo["example_id"])
-        records.append(
+        approved_records.append(
             {
                 "query": projected["query"],
                 "entities": projected["entities"],
                 "example_id": demo["example_id"],
             }
         )
+    records = [*truth_records, *approved_records]
     truth_rows = len(truth_records)
     approved_rows = len(synthetic_demos)
     label_rows = len(records)
@@ -4765,28 +4799,13 @@ async def run_entity_extraction_optimization(
         }
 
     min_holdout = max(1, min_samples // 10)
-    split_records = [
-        {**record, "example_id": f"span:{record['example_id']}"} for record in records
-    ]
-    split = _split_served_holdout(
-        split_records,
+    split = _split_labeled_holdout(
+        truth_records,
         min_holdout,
         scoreable_predicate=_entity_extraction_is_scoreable,
     )
-    split_train_records = split.train
-    split_holdout_records = split.holdout
-    train_record_ids = {
-        record["example_id"].removeprefix("span:") for record in split_train_records
-    }
-    holdout_record_ids = {
-        record["example_id"].removeprefix("span:") for record in split_holdout_records
-    }
-    train_records = [
-        record for record in records if record["example_id"] in train_record_ids
-    ]
-    holdout_records = [
-        record for record in records if record["example_id"] in holdout_record_ids
-    ]
+    train_records = [*split.train, *approved_records]
+    holdout_records = split.holdout
     train_records, selection_report = await _apply_training_selection(
         artifact_manager=artifact_manager,
         config_manager=config_manager,

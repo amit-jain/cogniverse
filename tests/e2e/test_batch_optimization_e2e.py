@@ -404,20 +404,18 @@ def _entity_extraction_expected_distinct_queries(
     truth_rows: list[dict[str, object]],
     approved_rows: list[dict[str, object]],
 ) -> int:
-    # production: _split_served_holdout counts distinct casefolded scoreable queries
-    label_rows = _entity_extraction_label_rows(truth_rows, approved_rows)
-    return len({str(row["query"]).strip().casefold() for row in label_rows})
+    # production: run_entity_extraction_optimization counts truth rows only
+    return len({str(row["query"]).strip().casefold() for row in truth_rows})
 
 
 def _entity_extraction_expected_holdout_queries(
     truth_rows: list[dict[str, object]],
     approved_rows: list[dict[str, object]],
 ) -> int:
-    # production: run_entity_extraction_optimization min_holdout + _split_served_holdout
+    # production: run_entity_extraction_optimization min_holdout + truth-only split
     min_samples, _ = _population_floor_from_shipped_config("entity_extraction")
     min_holdout = max(1, min_samples // 10)
-    label_rows = _entity_extraction_label_rows(truth_rows, approved_rows)
-    if len(label_rows) < min_holdout:
+    if len(truth_rows) < min_holdout:
         return 0
     distinct = _entity_extraction_expected_distinct_queries(truth_rows, approved_rows)
     return max(1, distinct // 4)
