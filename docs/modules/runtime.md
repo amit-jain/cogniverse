@@ -220,6 +220,14 @@ probes `/health` for readiness. Teardown returns warmed Modal services to
 scale-to-zero and stops test-owned sidecars. Discovered k3d workloads are
 borrowed and their replicas are never mutated by the fixture.
 
+Before the shared E2E stack starts, the session fixture reaps dead owner-pid
+containers, removes every unleased `cogniverse-test-*` exact-model sidecar, and
+fails fast if any exact-model sidecar is still leased by a live pytest pid.
+After that reclaim, it reads `/sys/class/drm/card1/device/mem_info_gtt_used`
+and aborts when more than 2 GiB remains pinned, naming the live test-owned
+containers if any are still visible. That keeps the final E2E run from
+starting while test-owned GPU residency is still present.
+
 The API runtime and ingestion worker share the same strict
 `INFERENCE_SERVICE_URLS` startup parser. The value must be a duplicate-free JSON
 object whose keys are non-empty service names and whose values are root HTTP(S)

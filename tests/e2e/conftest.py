@@ -2119,6 +2119,7 @@ def e2e_stack(request, resolved_inference_endpoints):
 
     if run_lock.acquire(run_lock.default_lock_path()):
         request.addfinalizer(lambda: run_lock.release(run_lock.default_lock_path()))
+    run_lock.ensure_e2e_gpu_residency()
 
     from cogniverse_cli.cluster import start_cluster
 
