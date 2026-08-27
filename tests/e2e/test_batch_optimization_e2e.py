@@ -3498,6 +3498,7 @@ class TestProfileOptimization:
             "holdout_source",
             "label_exclusions",
             "labels_by_profile",
+            "dominant_label_share",
             "exclusions_by_reason",
             "baseline_score",
             "current_score",
@@ -3515,6 +3516,10 @@ class TestProfileOptimization:
         assert result["holdout_source"] == "derived_labels", result
         assert result["decision"] in BLOB_VERSION_DECISIONS, result
         _assert_profile_labels_partition_ground_truth(result)
+        assert result["dominant_label_share"] == (
+            max(result["labels_by_profile"].values())
+            / sum(result["labels_by_profile"].values())
+        ), result
         assert result["approved_examples"] == len(approved), result
         assert result["holdout_examples"] == max(
             1, result["served_scoreable_examples"] // 4
@@ -3566,8 +3571,10 @@ class TestProfileOptimization:
             "candidate_score",
             "created_at",
             "labels_by_profile",
+            "dominant_label_share",
             "exclusions_by_reason",
         }, ledger
+        assert ledger["dominant_label_share"] == result["dominant_label_share"], ledger
         assert ledger["version"] == result["version"], ledger
         assert ledger["kind"] == "model", ledger
         assert ledger["key"] == "profile_selection", ledger
@@ -3610,6 +3617,7 @@ class TestProfileOptimization:
             "holdout_source",
             "label_exclusions",
             "labels_by_profile",
+            "dominant_label_share",
             "exclusions_by_reason",
             "baseline_score",
             "current_score",
@@ -3627,6 +3635,10 @@ class TestProfileOptimization:
         assert result["holdout_source"] == "derived_labels", result
         assert result["decision"] in BLOB_VERSION_DECISIONS, result
         _assert_profile_labels_partition_ground_truth(result)
+        assert result["dominant_label_share"] == (
+            max(result["labels_by_profile"].values())
+            / sum(result["labels_by_profile"].values())
+        ), result
         assert result["approved_examples"] == len(approved), result
         assert result["holdout_examples"] == max(
             1, result["served_scoreable_examples"] // 4
@@ -3678,8 +3690,10 @@ class TestProfileOptimization:
             "candidate_score",
             "created_at",
             "labels_by_profile",
+            "dominant_label_share",
             "exclusions_by_reason",
         }, ledger
+        assert ledger["dominant_label_share"] == result["dominant_label_share"], ledger
         assert ledger["version"] == result["version"], ledger
         assert ledger["kind"] == "model", ledger
         assert ledger["key"] == "profile_selection", ledger
@@ -3759,6 +3773,7 @@ class TestProfileSelectionArtifactReload:
             "holdout_source",
             "label_exclusions",
             "labels_by_profile",
+            "dominant_label_share",
             "exclusions_by_reason",
             "baseline_score",
             "current_score",
@@ -3776,6 +3791,10 @@ class TestProfileSelectionArtifactReload:
         assert result["holdout_source"] == "derived_labels", result
         assert result["decision"] in BLOB_VERSION_DECISIONS, result
         _assert_profile_labels_partition_ground_truth(result)
+        assert result["dominant_label_share"] == (
+            max(result["labels_by_profile"].values())
+            / sum(result["labels_by_profile"].values())
+        ), result
         assert result["approved_examples"] == len(approved), result
         assert result["holdout_examples"] == max(
             1, result["served_scoreable_examples"] // 4
@@ -3827,8 +3846,10 @@ class TestProfileSelectionArtifactReload:
             "candidate_score",
             "created_at",
             "labels_by_profile",
+            "dominant_label_share",
             "exclusions_by_reason",
         }, ledger
+        assert ledger["dominant_label_share"] == result["dominant_label_share"], ledger
         assert ledger["version"] == result["version"], ledger
         assert ledger["kind"] == "model", ledger
         assert ledger["key"] == "profile_selection", ledger
@@ -4609,6 +4630,7 @@ class TestArtifactLoadingRoundTrip:
             "holdout_source",
             "label_exclusions",
             "labels_by_profile",
+            "dominant_label_share",
             "exclusions_by_reason",
             "baseline_score",
             "current_score",
@@ -4626,6 +4648,10 @@ class TestArtifactLoadingRoundTrip:
         assert result["holdout_source"] == "derived_labels", result
         assert result["decision"] in BLOB_VERSION_DECISIONS, result
         _assert_profile_labels_partition_ground_truth(result)
+        assert result["dominant_label_share"] == (
+            max(result["labels_by_profile"].values())
+            / sum(result["labels_by_profile"].values())
+        ), result
         assert result["approved_examples"] == len(approved), result
         assert result["holdout_examples"] == max(
             1, result["served_scoreable_examples"] // 4
@@ -4677,8 +4703,10 @@ class TestArtifactLoadingRoundTrip:
             "candidate_score",
             "created_at",
             "labels_by_profile",
+            "dominant_label_share",
             "exclusions_by_reason",
         }, ledger
+        assert ledger["dominant_label_share"] == result["dominant_label_share"], ledger
         assert ledger["version"] == result["version"], ledger
         assert ledger["kind"] == "model", ledger
         assert ledger["key"] == "profile_selection", ledger
