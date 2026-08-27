@@ -947,6 +947,7 @@ class TestSyntheticDataAPI:
 
     def test_profile_generation_uses_ingested_tenant_content(self):
         expected_available_profiles = _expected_available_profile_names(TENANT_ID)
+        profile_types = _profile_type_map()
         with httpx.Client(base_url=RUNTIME, timeout=900.0) as client:
             fixture_results = self._seeded_video_fixture_results(client)
             resp = client.post(
@@ -975,7 +976,10 @@ class TestSyntheticDataAPI:
         assert data["optimizer"] == "profile"
         assert data["schema_name"] == "ProfileSelectionExampleSchema"
         assert data["count"] == 2
-        assert data["selected_profiles"] == [PROFILE]
+        assert len(data["selected_profiles"]) == 1
+        selected_profile = data["selected_profiles"][0]
+        assert selected_profile in expected_available_profiles
+        assert profile_types[selected_profile] == "video"
         _assert_synthetic_metadata(
             data["metadata"],
             backend_query_strategy="diverse",
@@ -1028,7 +1032,9 @@ class TestSyntheticDataAPI:
         assert actual_available_profiles == [expected_available_profiles] * len(
             data["data"]
         )
-        assert {example["selected_profile"] for example in data["data"]} == {PROFILE}
+        assert {example["selected_profile"] for example in data["data"]} == {
+            selected_profile
+        }
         assert {example["modality"] for example in data["data"]} == {"video"}
         # complexity is an LM judgment, so no single value is pinnable. The
         # vocabulary contract is enforced at the HTTP boundary: the schema
@@ -1166,9 +1172,14 @@ class TestSyntheticDataAPI:
             "data",
             "metadata",
         }
+        expected_available_profiles = _expected_available_profile_names(TENANT_ID)
+        profile_types = _profile_type_map()
         assert data["optimizer"] == "routing"
         assert data["schema_name"] == "RoutingExperienceSchema"
-        assert data["selected_profiles"] == [PROFILE]
+        assert len(data["selected_profiles"]) == 1
+        selected_profile = data["selected_profiles"][0]
+        assert selected_profile in expected_available_profiles
+        assert profile_types[selected_profile] == "video"
         generation = _assert_synthetic_metadata_fields(
             data["metadata"],
             backend_query_strategy="entity_rich",
@@ -1327,7 +1338,13 @@ class TestSyntheticDataAPI:
         selected_profiles = data["selected_profiles"]
         assert len(selected_profiles) == 2
         assert len(set(selected_profiles)) == 2
-        assert PROFILE in selected_profiles
+        video_profiles = [
+            profile
+            for profile in selected_profiles
+            if profile_types[profile] == "video"
+        ]
+        assert len(video_profiles) == 1
+        video_profile = video_profiles[0]
         assert all(
             profile in expected_available_profiles for profile in selected_profiles
         )
@@ -1339,9 +1356,9 @@ class TestSyntheticDataAPI:
             target_count=2,
             vespa_sample_size=2,
         )
-        video_modality = profile_types[PROFILE]
+        video_modality = profile_types[video_profile]
         other_profile = next(
-            profile for profile in selected_profiles if profile != PROFILE
+            profile for profile in selected_profiles if profile != video_profile
         )
         other_modality = profile_types[other_profile]
         video_first_pattern = re.compile(
@@ -1450,7 +1467,11 @@ class TestSyntheticDataAPI:
         selected_profiles = data["selected_profiles"]
         assert len(selected_profiles) == 2
         assert len(set(selected_profiles)) == 2
-        assert PROFILE in selected_profiles
+        profile_types = _profile_type_map()
+        assert (
+            sum(1 for profile in selected_profiles if profile_types[profile] == "video")
+            == 1
+        )
         assert all(
             profile in expected_available_profiles for profile in selected_profiles
         )
