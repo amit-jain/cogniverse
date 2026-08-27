@@ -9,6 +9,7 @@ import pytest
 from dspy.utils.dummies import DummyLM
 
 from cogniverse_agents.entity_extraction_agent import (
+    ENTITY_TYPES,
     Entity,
     EntityExtractionAgent,
     EntityExtractionDeps,
@@ -24,6 +25,23 @@ from tests.agents.unit._recording_telemetry import (
 )
 
 pytestmark = [pytest.mark.unit, pytest.mark.ci_fast]
+
+
+EXPECTED_ENTITY_EXTRACTION_SIGNATURE_INSTRUCTIONS = """Extract named entities from the query.
+
+Allowed types: CONCEPT, EVENT, ORGANIZATION, PERSON, PLACE, TECHNOLOGY. Only emit these labels.
+
+Rules:
+- text must be a verbatim span copied from the query.
+- Use PERSON for role nouns and people such as man, woman, people, biker.
+- Use ORGANIZATION for named organizations or teams.
+- Use CONCEPT for physical things such as barbell, car, disk, pipes, and knife.
+- Use PLACE for settings such as dirt field, kitchen, and pool area.
+- Use TECHNOLOGY for camera and screen.
+- Use EVENT for crash.
+- Actions are never entities.
+- "the video" is never an entity.
+- Keep each entity on its own line in text|type|confidence format."""
 
 
 def _make_extraction_agent():
@@ -221,6 +239,23 @@ def entity_agent():
 
 class TestEntityExtractionModule:
     """Test DSPy module for entity extraction"""
+
+    def test_signature_instructions_are_grounded_in_entity_types(self):
+        module = EntityExtractionModule()
+        instructions = module.extractor.predict.signature.instructions
+
+        for entity_type in ENTITY_TYPES:
+            assert entity_type in instructions
+        assert "verbatim" in instructions
+        assert "PERSON" in instructions
+
+    def test_signature_instructions_match_the_current_contract(self):
+        module = EntityExtractionModule()
+
+        assert (
+            module.extractor.predict.signature.instructions
+            == EXPECTED_ENTITY_EXTRACTION_SIGNATURE_INSTRUCTIONS
+        )
 
     def test_module_initialization(self):
         """Test EntityExtractionModule initializes correctly"""

@@ -64,7 +64,7 @@ The Agents package (`cogniverse-agents`) provides concrete agent implementations
 2. **OrchestratorAgent** - Autonomous A2A orchestrator: DSPy planning, parallel execution, cross-modal fusion
 3. **SearchAgent** - Multi-modal video search (ColPali, VideoPrism)
 4. **ProfileSelectionAgent** - LLM-based intelligent backend profile selection and ensemble composition
-5. **EntityExtractionAgent** - Named entity extraction with DSPy ChainOfThought (PERSON, PLACE, ORG, CONCEPT, DATE)
+5. **EntityExtractionAgent** - Named entity extraction with DSPy ChainOfThought (PERSON, ORGANIZATION, CONCEPT, PLACE, EVENT, TECHNOLOGY; verbatim query spans)
 6. **SearchAgent** - Enhanced with ensemble mode and RRF fusion for multi-profile queries
 7. **DetailedReportAgent** - Comprehensive report generation with VLM visual analysis
 8. **DocumentAgent** - Dual-strategy document search (visual ColPali + text semantic)
@@ -958,13 +958,13 @@ deps = ProfileSelectionDeps()
 
 #### Overview
 
-EntityExtractionAgent extracts named entities and relationships from user queries with DSPy as the primary path. When the LM call fails, it falls back to GLiNER NER + SpaCy dependency analysis. If the fallback is unavailable or also fails, the request raises.
+EntityExtractionAgent extracts named entities and relationships from user queries with DSPy as the primary path. Its current signature asks for `text|type|confidence` lines, requires `text` to be a verbatim span of the query, and limits `type` to `PERSON`, `ORGANIZATION`, `CONCEPT`, `PLACE`, `EVENT`, or `TECHNOLOGY`; role nouns like man, woman, people, and biker map to PERSON, physical things map to CONCEPT, settings map to PLACE, camera and screen map to TECHNOLOGY, and crash maps to EVENT. When the LM call fails, it falls back to GLiNER NER + SpaCy dependency analysis. If the fallback is unavailable or also fails, the request raises.
 
 **Key Capabilities**:
 
 - Primary path: DSPy ChainOfThought entity extraction
 - Fallback path: GLiNER entity extraction + SpaCy relationship extraction
-- Entity type classification (PERSON, PLACE, ORG, CONCEPT, DATE, etc.)
+- Entity type classification using PERSON, ORGANIZATION, CONCEPT, PLACE, EVENT, and TECHNOLOGY
 - Relationship extraction between entities (subject-relation-object triples)
 - Confidence scoring per entity and relationship
 - Dominant entity type detection
@@ -1015,8 +1015,10 @@ from cogniverse_core.agents.base import AgentDeps, AgentInput, AgentOutput
 
 class Entity(BaseModel):
     """Extracted entity with type and metadata."""
-    text: str = Field(description="Entity text as it appears in query")
-    type: str = Field(description="Entity type: PERSON, PLACE, ORG, CONCEPT, DATE, etc.")
+    text: str = Field(description="Entity text as a verbatim span of the query")
+    type: str = Field(
+        description="Entity type: PERSON, ORGANIZATION, CONCEPT, PLACE, EVENT, or TECHNOLOGY"
+    )
     confidence: float = Field(description="Confidence score 0-1")
     context: str = Field(default="", description="Surrounding context")
 
