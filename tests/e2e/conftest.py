@@ -13,6 +13,7 @@ Test artifact paths (real data used for ingestion tests):
 - Document: data/testset/dataset_summary.md (real markdown about the evaluation set)
 """
 
+import functools
 import hashlib
 import json
 import os
@@ -1190,6 +1191,80 @@ def _content_sha256(path: Path) -> str:
         return hashlib.file_digest(source, "sha256").hexdigest()
 
 
+EVALUATION_QUERY_ASSET = (
+    DATA_ROOT / "testset" / "evaluation" / "sample_videos_retrieval_queries.json"
+)
+
+
+@functools.lru_cache(maxsize=1)
+def _evaluation_query_rows() -> tuple[dict[str, object], ...]:
+    rows = json.loads(EVALUATION_QUERY_ASSET.read_text())
+    if not isinstance(rows, list):
+        raise AssertionError(f"{EVALUATION_QUERY_ASSET} did not load a JSON list")
+    return tuple(row for row in rows if isinstance(row, dict))
+
+
+def profile_selection_corpus_videos() -> tuple[Path, ...]:
+    """Every video the profile-selection truth asset references, sorted by id.
+
+    Ids normalize through the same production helper the label rule uses, so
+    the corpus and the labels cannot disagree about what counts as a video id.
+    """
+    from cogniverse_runtime.optimization_cli import _profile_selection_expected_videos
+
+    sample_videos_dir = _EVALUATION_CORPUS_DIR / "evaluation" / "sample_videos"
+    expected_ids = sorted(
+        {
+            video_id
+            for row in _evaluation_query_rows()
+            for video_id in _profile_selection_expected_videos(row)
+        }
+    )
+    if not expected_ids:
+        pytest.fail(
+            f"Profile-selection truth asset {EVALUATION_QUERY_ASSET} yielded no "
+            "expected videos"
+        )
+
+    missing_ids: list[str] = []
+    duplicate_ids: list[str] = []
+    corpus_paths: list[Path] = []
+    for video_id in expected_ids:
+        matches = sorted(
+            path for path in sample_videos_dir.glob(f"{video_id}.*") if path.is_file()
+        )
+        if len(matches) == 1:
+            corpus_paths.append(matches[0])
+        elif not matches:
+            missing_ids.append(video_id)
+        else:
+            duplicate_ids.append(video_id)
+    if missing_ids or duplicate_ids:
+        details = []
+        if missing_ids:
+            details.append(f"missing ids: {missing_ids!r}")
+        if duplicate_ids:
+            details.append(f"duplicate ids: {duplicate_ids!r}")
+        pytest.fail(
+            f"Profile-selection sample video corpus mismatch in {sample_videos_dir}: "
+            + "; ".join(details)
+        )
+    return tuple(corpus_paths)
+
+
+_SAMPLE_VIDEO_MEDIA_TYPES = {".mp4": "video/mp4", ".mkv": "video/x-matroska"}
+
+
+def _sample_video_media_type(path: Path) -> str:
+    """Upload MIME for a sampled video, by suffix (no system mime database)."""
+    try:
+        return _SAMPLE_VIDEO_MEDIA_TYPES[path.suffix.lower()]
+    except KeyError:
+        raise ValueError(
+            f"Unsupported sample video suffix {path.suffix!r} for {path.name!r}"
+        ) from None
+
+
 def _sample_frame_path() -> Path:
     """Materialize the first real video frame as the image-modality fixture."""
     destination = E2E_ARTIFACT_DIR / f"{SAMPLE_VIDEO_CONTENT_ID}_frame_0000.jpg"
@@ -1427,10 +1502,18 @@ def _ensure_sample_content_ingested(
     ):
         pytest.fail(f"Sample content upload returned invalid ingest_id: {submission}")
 
-    deadline = _time.monotonic() + 2400
+    duration_s = (
+        _video_duration_seconds(path) if media_type.startswith("video/") else 0.0
+    )
     latest: dict = {}
     documents_fed = 0
     expected_documents_fed = _expected_sample_documents_fed(path, profile, media_type)
+    deadline_s = max(
+        300.0,
+        duration_s * (120.0 / 5.0),
+        expected_documents_fed * 120.0,
+    )
+    deadline = _time.monotonic() + deadline_s
     while _time.monotonic() < deadline:
         try:
             status_response = httpx.get(
@@ -1464,10 +1547,10 @@ def _ensure_sample_content_ingested(
     else:
         pytest.fail(
             f"Sample content ingestion {ingest_id} did not complete within "
-            f"2400s: {latest}"
+            f"{deadline_s:.0f}s: {latest}"
         )
 
-    search_deadline = _time.monotonic() + 120
+    search_deadline = _time.monotonic() + max(120.0, duration_s * 5.0)
     matches: list[dict] = []
     search_error: str | None = None
     while _time.monotonic() < search_deadline:
@@ -1507,12 +1590,26 @@ def _ingest_sample_video() -> None:
 
     config_path = DATA_ROOT.parent / "configs" / "config.json"
     config = json.loads(config_path.read_text()) if config_path.exists() else {}
+    candidate_paths = (
+        SAMPLE_VIDEO_PATH,
+        _TRACKED_E2E_VIDEO,
+        *profile_selection_corpus_videos(),
+    )
+    ingest_paths: list[Path] = []
+    seen_content_ids: set[str] = set()
+    for path in candidate_paths:
+        content_id = _content_sha256(path)
+        if content_id in seen_content_ids:
+            continue
+        seen_content_ids.add(content_id)
+        ingest_paths.append(path)
+
     for profile in _profile_selection_video_profiles(config):
-        for path in (SAMPLE_VIDEO_PATH, _TRACKED_E2E_VIDEO):
+        for path in ingest_paths:
             persisted_content_id = _ensure_sample_content_ingested(
                 path,
                 profile=profile,
-                media_type="video/mp4",
+                media_type=_sample_video_media_type(path),
             )
             assert persisted_content_id == _content_sha256(path)
 
