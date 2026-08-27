@@ -18,6 +18,7 @@ from fastapi import (
 )
 from pydantic import BaseModel
 
+from cogniverse_agents.graph.doc_extractor import ClaimExtractionResult
 from cogniverse_agents.graph.graph_schema import (
     CLAIM_SEGMENT_MODALITIES,
     DOCUMENT_MODALITY,
@@ -703,7 +704,7 @@ async def _extract_graph_per_segment(
             kg_span.set_attribute("kg.failed_count", result.get("graph_failed", 0))
             kg_span.set_attribute(
                 "kg.claim_segments_failed",
-                result.get("claim_segments_failed", 0),
+                result["claim_segments_failed"],
             )
             kg_span.set_attribute(
                 "kg.segments_count", len(result.get("backrefs_by_segment", {}))
@@ -830,7 +831,7 @@ async def _extract_graph_per_segment_inner(
 
     async def _claims(record, ents, prior):
         if not _should_extract_claims_for_modality(record.segment_anchor.modality):
-            return []
+            return ClaimExtractionResult()
         # The DSPy claim LLM call is blocking — same off-loop treatment.
         async with sem:
             return await asyncio.to_thread(
@@ -855,15 +856,8 @@ async def _extract_graph_per_segment_inner(
         if isinstance(edges, BaseException):
             raise edges
 
-    def _claim_edges_and_failures(result) -> tuple[list, int]:
-        if result is None:
-            return [], 0
-        if hasattr(result, "edges"):
-            claim_edges = list(getattr(result, "edges"))
-        else:
-            claim_edges = list(result)
-        claim_failures = int(getattr(result, "claim_segments_failed", 0) or 0)
-        return claim_edges, claim_failures
+    def _claim_edges_and_failures(result: ClaimExtractionResult) -> tuple[list, int]:
+        return list(result.edges), result.claim_segments_failed
 
     # Accumulate in segment order — identical ordering to the serial path.
     claim_segments_failed = 0

@@ -269,15 +269,10 @@ class ClaimExtractor:
         text_for_lm = _resolve_leading_pronoun(text, entity_hints)
         if self._llm_config is not None:
             from cogniverse_foundation.config.semantic_router import (
-                routed_lm_context_for,
+                ingest_lm_context_for,
             )
 
-            with routed_lm_context_for(
-                self._config_manager,
-                tenant_id,
-                "claim_extractor",
-                endpoint=self._llm_config,
-            ):
+            with ingest_lm_context_for(self._llm_config):
                 prediction = module(
                     text_segment=text_for_lm,
                     entity_hints=entity_hints,

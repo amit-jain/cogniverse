@@ -15,6 +15,9 @@ from unittest.mock import MagicMock
 
 import pytest
 
+from cogniverse_agents.graph.doc_extractor import ClaimExtractionResult
+from cogniverse_agents.graph.graph_schema import ExtractionResult
+
 pytestmark = [pytest.mark.unit, pytest.mark.ci_fast]
 
 
@@ -148,14 +151,9 @@ async def test_kg_extraction_and_face_pipeline_offloaded(monkeypatch):
         def extract_claims_from_text(self, **kwargs):
             claim_calls.append(kwargs["segment_anchor"].segment_id)
             time.sleep(0.25)
-            return []
+            return ClaimExtractionResult()
 
-    class StubResult:
-        def __init__(self, source_doc_id="", nodes=(), edges=(), file_sha256=None):
-            self.source_doc_id = source_doc_id
-            self.nodes = list(nodes)
-            self.edges = list(edges)
-            self.file_sha256 = file_sha256
+    StubResult = ExtractionResult
 
     class StubLinker:
         def link(self, combined):

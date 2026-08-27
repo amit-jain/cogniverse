@@ -19,7 +19,7 @@ import dspy
 import pytest
 
 from cogniverse_agents.graph.claim_extractor import ClaimExtractor
-from cogniverse_agents.graph.doc_extractor import DocExtractor
+from cogniverse_agents.graph.doc_extractor import ClaimExtractionResult, DocExtractor
 from cogniverse_agents.graph.graph_schema import (
     CLAIM_SEGMENT_MODALITIES,
     OCR_MODALITY,
@@ -272,7 +272,9 @@ async def test_claims_skip_non_transcript_segments_and_keep_entities(
         "graph_failed",
         "backrefs_by_segment",
         "claim_segments_skipped_by_modality",
+        "claim_segments_failed",
     }
+    assert result["claim_segments_failed"] == 0
     assert result["nodes_upserted"] == 10
     assert result["edges_upserted"] == 3
     assert result["graph_failed"] == 0
@@ -328,18 +330,13 @@ async def test_claim_pass_prior_pool_is_earlier_segments_entities(monkeypatch):
             segment_anchor,
         ):
             recorded_priors[segment_anchor.segment_id] = list(prior_entities)
-            return []
+            return ClaimExtractionResult()
 
     class StubLinker:
         def link(self, combined):
             return combined
 
-    class StubResult:
-        def __init__(self, source_doc_id="", nodes=(), edges=(), file_sha256=None):
-            self.source_doc_id = source_doc_id
-            self.nodes = list(nodes)
-            self.edges = list(edges)
-            self.file_sha256 = file_sha256
+    StubResult = ExtractionResult
 
     mgr = SimpleNamespace(
         upsert=lambda linked: {
@@ -420,9 +417,9 @@ async def test_claim_failure_count_surfaces_on_pipeline_result(monkeypatch):
             del text, segment_entities, prior_entities, tenant_id, source_doc_id
             claim_calls.append(segment_anchor.segment_id)
             if segment_anchor.segment_id == "s0":
-                return SimpleNamespace(edges=[], claim_segments_failed=1)
-            return SimpleNamespace(
-                edges=[
+                return ClaimExtractionResult([], claim_segments_failed=1)
+            return ClaimExtractionResult(
+                [
                     Edge(
                         tenant_id="acme:acme",
                         source="Ent_s1",
@@ -447,12 +444,7 @@ async def test_claim_failure_count_surfaces_on_pipeline_result(monkeypatch):
         def link(self, combined):
             return combined
 
-    class StubResult:
-        def __init__(self, source_doc_id="", nodes=(), edges=(), file_sha256=None):
-            self.source_doc_id = source_doc_id
-            self.nodes = list(nodes)
-            self.edges = list(edges)
-            self.file_sha256 = file_sha256
+    StubResult = ExtractionResult
 
     mgr = MagicMock()
     mgr.upsert.side_effect = lambda linked: {
@@ -520,7 +512,7 @@ async def test_entity_pass_failure_settles_siblings(monkeypatch):
             return SimpleNamespace(nodes=[node], per_chunk_entity_names=[[name]])
 
         def extract_claims_from_text(self, **kwargs):
-            return []
+            return ClaimExtractionResult()
 
     class StubClaim:
         def __init__(self, **kwargs):
@@ -530,12 +522,7 @@ async def test_entity_pass_failure_settles_siblings(monkeypatch):
         def link(self, combined):
             return combined
 
-    class StubResult:
-        def __init__(self, source_doc_id="", nodes=(), edges=(), file_sha256=None):
-            self.source_doc_id = source_doc_id
-            self.nodes = list(nodes)
-            self.edges = list(edges)
-            self.file_sha256 = file_sha256
+    StubResult = ExtractionResult
 
     mgr = SimpleNamespace(
         upsert=lambda linked: {
@@ -596,7 +583,7 @@ async def test_all_claim_segments_failed_raise(monkeypatch):
 
         def extract_claims_from_text(self, **kwargs):
             claim_calls.append(kwargs["segment_anchor"].segment_id)
-            return SimpleNamespace(edges=[], claim_segments_failed=1)
+            return ClaimExtractionResult([], claim_segments_failed=1)
 
     class StubClaim:
         def __init__(self, **kwargs):
@@ -606,12 +593,7 @@ async def test_all_claim_segments_failed_raise(monkeypatch):
         def link(self, combined):
             return combined
 
-    class StubResult:
-        def __init__(self, source_doc_id="", nodes=(), edges=(), file_sha256=None):
-            self.source_doc_id = source_doc_id
-            self.nodes = list(nodes)
-            self.edges = list(edges)
-            self.file_sha256 = file_sha256
+    StubResult = ExtractionResult
 
     mgr = MagicMock()
     mgr.upsert.return_value = {
