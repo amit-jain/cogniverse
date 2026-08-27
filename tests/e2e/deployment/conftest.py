@@ -497,10 +497,11 @@ def deploy_stack(
     )
 
     backend = deployment_inputs["backend"]
-    # One git-derived version for the built tags AND the helm overrides —
-    # without the override the chart falls back to its static ``0.1.0-dev``
-    # placeholder and every first-party pod dies with ErrImageNeverPull
-    # (pullPolicy=Never can only see the imported, git-tagged images).
+    # One deploy-input-derived version for the built tags AND the helm
+    # overrides — without the override the chart falls back to its static
+    # ``0.1.0-dev`` placeholder and every first-party pod dies with
+    # ErrImageNeverPull (pullPolicy=Never can only see the imported, tagged
+    # images).
     image_version = deployment_inputs["image_version"]
 
     # Build from the same overlays helm receives: the enabled set is derived

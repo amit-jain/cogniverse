@@ -346,12 +346,12 @@ minio/vllm/envoy/…) — enumerated from a chart render — into a registry you
 - **Release** (`release-images.yml` on a `v*` tag) → `docker.io/cogniverse/<name>:<version>`
   plus an immutable `:<git-sha>`, `pullPolicy: IfNotPresent` (a clean cluster pulls).
 - **Local dev** (`cogniverse up` → `build_images`) → `cogniverse/<name>:<git-version>`,
-  where `<git-version>` is the setuptools-scm version with `+`→`-` (e.g.
-  `0.1.dev2137-g9ba33d3f`) — **commit-unique**, so two local builds are never
-  confused with each other or with a release. `pullPolicy: Never` (built + imported
-  into k3d). `values.k3s.yaml` carries a static `<line>-dev` placeholder that
-  `cogniverse up` overrides at deploy via `--set` (`dev_image_set_values`) with the
-  exact tag it just built.
+  where `<git-version>` is the deploy-input-derived version with `+`→`-` (e.g.
+  `0.1.dev2137-g9ba33d3f`) — stable across tests-only commits, so two local
+  builds reuse the same tag until a deploy input changes. `pullPolicy: Never`
+  (built + imported into k3d). `values.k3s.yaml` carries a static `<line>-dev`
+  placeholder that `cogniverse up` overrides at deploy via `--set`
+  (`dev_image_set_values`) with the exact tag it just built.
 
 `.dockerignore` excludes `.git`, so the runtime/dashboard images (which install the
 workspace and thus trigger hatch-vcs) receive the version through the

@@ -7,6 +7,7 @@ import os
 import re
 import shutil
 import subprocess
+import tomllib
 from pathlib import Path
 
 import yaml
@@ -14,7 +15,8 @@ import yaml
 # First-party image repositories keyed by torch backend. Runtime + dashboard
 # ship one image per backend; each bakes in the matching torch wheel —
 # runtime-cpu carries torch+cpu, -cuda torch+cu128, -rocm torch+rocm6.4. Tags
-# derive from the chart appVersion: dev builds are ``<appVersion>-dev``.
+# derive from the latest deploy-input commit: dev builds are
+# ``<release>.dev<N>+g<sha>`` (``+`` later sanitizes to ``-`` for Docker).
 RUNTIME_REPOS_BY_BACKEND = {
     "cpu": "cogniverse/runtime-cpu",
     "cuda": "cogniverse/runtime-cuda",
@@ -64,6 +66,17 @@ LOCAL_IMAGE_BUILDS = {
 # openai/whisper-large-v3-turbo via inference.vllm_asr (vllm/vllm-openai-cpu)
 # lightonai/DenseOn via inference.denseon (vllm_embed engine)
 # Operators pull vllm/vllm-openai-cpu (or per-device variants) directly.
+
+DEPLOY_INPUT_PATHS = (
+    "libs",
+    "configs",
+    "charts",
+    "deploy",
+    "scripts",
+    "pyproject.toml",
+    "uv.lock",
+    ".dockerignore",
+)
 
 
 def detect_torch_backend() -> str:
@@ -130,14 +143,72 @@ def read_app_version(project_root: Path) -> str:
     return str(data["appVersion"])
 
 
-def dev_version(project_root: Path) -> str:
-    """Git-derived version (setuptools-scm) — the identical value hatch-vcs
-    stamps on the Python wheels, so a local dev image and a local ``uv build``
-    carry the same commit-unique version. Requires a real git checkout, which
-    ``cogniverse up`` always has."""
-    from setuptools_scm import get_version
+def _read_project_release_line(project_root: Path) -> str:
+    pyproject = project_root / "pyproject.toml"
+    with pyproject.open("rb") as handle:
+        data = tomllib.load(handle)
+    version = str(data["project"]["version"])
+    parts = version.split(".")
+    if len(parts) >= 3 and parts[-1] == "0":
+        parts = parts[:-1]
+    return ".".join(parts)
 
-    return get_version(root=str(project_root))
+
+def _latest_deploy_input_commit(project_root: Path) -> str:
+    result = subprocess.run(
+        [
+            "git",
+            "-C",
+            str(project_root),
+            "log",
+            "-1",
+            "--format=%H",
+            "--",
+            *DEPLOY_INPUT_PATHS,
+        ],
+        capture_output=True,
+        text=True,
+        check=True,
+    )
+    return result.stdout.strip()
+
+
+def dev_version(project_root: Path) -> str:
+    """Git-derived version for the latest deploy-input commit.
+
+    The shape still matches hatch-vcs' ``0.1.devN+g<sha>`` output, but the
+    commit behind it is the most recent commit that touched the deploy-input
+    set. A tests-only commit therefore keeps the same image tag.
+    """
+    release = _read_project_release_line(project_root)
+    commit = _latest_deploy_input_commit(project_root)
+    count = subprocess.run(
+        [
+            "git",
+            "-C",
+            str(project_root),
+            "rev-list",
+            "--count",
+            commit,
+        ],
+        capture_output=True,
+        text=True,
+        check=True,
+    ).stdout.strip()
+    short_sha = subprocess.run(
+        [
+            "git",
+            "-C",
+            str(project_root),
+            "rev-parse",
+            "--short=9",
+            commit,
+        ],
+        capture_output=True,
+        text=True,
+        check=True,
+    ).stdout.strip()
+    return f"{release}.dev{count}+g{short_sha}"
 
 
 def _docker_tag(version: str) -> str:
@@ -259,9 +330,10 @@ def build_images(
     values_files: list[Path] | None = None,
     version: str | None = None,
 ) -> list[str]:
-    """Build all cogniverse-owned Docker images, tagged with the git-derived
-    version (``dev_version``), so every local build is commit-unique. Pass
-    ``version`` to override (tests, no git checkout).
+    """Build all cogniverse-owned Docker images, tagged with the
+    deploy-input-derived version (``dev_version``), so unchanged deploy inputs
+    reuse the same image tag. Pass ``version`` to override (tests, no git
+    checkout).
 
     Builds the runtime + dashboard variants matching ``torch_backend``
     (auto-detected when None) plus the backend-agnostic GLiNER sidecar. Each
@@ -287,8 +359,8 @@ def build_images(
     version = version or dev_version(project_root)
     backend = torch_backend or detect_torch_backend()
 
-    # Runtime + dashboard install the workspace, which triggers hatch-vcs; the
-    # docker context excludes .git, so pass the derived version in explicitly.
+    # Runtime + dashboard install the workspace, and the docker context
+    # excludes .git, so pass the deploy-input-derived version in explicitly.
     workspace_arg = [
         "--build-arg",
         f"TORCH_BACKEND={backend}",
@@ -357,9 +429,9 @@ def dev_image_set_values(
     version: str | None = None,
 ) -> dict[str, str]:
     """Chart ``--set`` overrides pointing every first-party image at the
-    git-derived dev tag ``build_images`` produces, so ``cogniverse up`` deploys
-    exactly what it built. ``values.k3s.yaml`` carries a static ``<line>-dev``
-    placeholder that these override with the commit-unique tag."""
+    deploy-input-derived dev tag ``build_images`` produces, so ``cogniverse up``
+    deploys exactly what it built. ``values.k3s.yaml`` carries a static
+    ``<line>-dev`` placeholder that these override with the built tag."""
     backend = torch_backend or detect_torch_backend()
     tag = _docker_tag(version or dev_version(project_root))
     overrides = {
