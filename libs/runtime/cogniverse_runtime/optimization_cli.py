@@ -989,6 +989,54 @@ def _select_simba_artifact(
     return "keep"
 
 
+async def _load_current_artifact_for_scoring(
+    *,
+    optimizer: str,
+    blob_key: str,
+    artifact_manager,
+    current_blob: Optional[str],
+    module_factory: Callable[[], Any],
+) -> Optional[Any]:
+    """Return the current module only when its saved signature still matches."""
+    if not current_blob:
+        return None
+
+    current_module = module_factory()
+    artifact_state = json.loads(current_blob)
+    from cogniverse_agents.optimizer.artifact_manager import (
+        signature_contract_mismatch,
+    )
+
+    mismatch = signature_contract_mismatch(
+        current_module.dump_state(),
+        artifact_state,
+    )
+    if mismatch:
+        predictor_name, reason = mismatch
+        try:
+            artifact_version = await artifact_manager._active_blob_version(
+                "model", blob_key
+            )
+        except Exception:
+            artifact_version = None
+        if artifact_version is None:
+            version_text = "vunknown"
+        else:
+            version_text = f"v{artifact_version}"
+        logger.warning(
+            "%s optimizer %s current artifact %s signature mismatch for predictor %s (%s); treating it as missing for scoring",
+            optimizer,
+            blob_key,
+            version_text,
+            predictor_name,
+            reason,
+        )
+        return None
+
+    current_module.load_state(artifact_state)
+    return current_module
+
+
 def _entity_extraction_pairs(spans_df) -> List[Dict[str, Any]]:
     """(query -> entities) training pairs from entity_extraction spans.
 
@@ -3549,10 +3597,13 @@ async def run_simba_optimization(
                 **selection_summary,
             }
 
-        current_module = None
-        if current_blob:
-            current_module = QueryEnhancementModule()
-            current_module.load_state(json.loads(current_blob))
+        current_module = await _load_current_artifact_for_scoring(
+            optimizer="simba",
+            blob_key=SIMBA_ARTIFACT_KEY,
+            artifact_manager=artifact_manager,
+            current_blob=current_blob,
+            module_factory=QueryEnhancementModule,
+        )
 
         compiled = None
         if trainset:
@@ -4451,10 +4502,13 @@ async def run_profile_optimization(
     try:
         baseline_score = _profile_selection_scores(ProfileSelectionModule(), holdout)
 
-        current_module = None
-        if current_blob:
-            current_module = ProfileSelectionModule()
-            current_module.load_state(json.loads(current_blob))
+        current_module = await _load_current_artifact_for_scoring(
+            optimizer="profile",
+            blob_key="profile_selection",
+            artifact_manager=artifact_manager,
+            current_blob=current_blob,
+            module_factory=ProfileSelectionModule,
+        )
 
         compiled = None
         if trainset:
@@ -4752,10 +4806,13 @@ async def run_entity_extraction_optimization(
     try:
         baseline_score = _entity_extraction_scores(EntityExtractionModule(), holdout)
 
-        current_module = None
-        if current_blob:
-            current_module = EntityExtractionModule()
-            current_module.load_state(_json.loads(current_blob))
+        current_module = await _load_current_artifact_for_scoring(
+            optimizer="entity_extraction",
+            blob_key="entity_extraction",
+            artifact_manager=artifact_manager,
+            current_blob=current_blob,
+            module_factory=EntityExtractionModule,
+        )
         current_score = (
             _entity_extraction_scores(current_module, holdout)
             if current_module is not None
