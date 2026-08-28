@@ -32,6 +32,7 @@ from cogniverse_core.common.utils.retry import RetryConfig, retry_with_backoff
 from cogniverse_sdk.document import (
     ContentType,
     Document,
+    DocumentFieldMapping,
     ProcessingStatus,
     SearchResult,
 )
@@ -63,6 +64,199 @@ _SEARCH_CONTENT_TYPES = {
     "video": ContentType.VIDEO,
     "wiki": ContentType.DOCUMENT,
 }
+
+_ALLOWED_RESULT_GRANULARITIES = ("source", "segment")
+
+
+def _resolve_result_granularity(
+    profile_config: Mapping[str, Any], requested: Optional[str] = None
+) -> str:
+    """Resolve the effective search result granularity for one profile."""
+    candidate = requested
+    if candidate is None:
+        candidate = profile_config.get("result_granularity")
+    if candidate is None:
+        candidate = (
+            "source"
+            if str(profile_config.get("type") or "").lower() == "video"
+            else "segment"
+        )
+    if not isinstance(candidate, str):
+        raise ValueError(
+            "result_granularity must be one of "
+            f"{_ALLOWED_RESULT_GRANULARITIES}, got {candidate!r}"
+        )
+    if candidate not in _ALLOWED_RESULT_GRANULARITIES:
+        raise ValueError(
+            "result_granularity must be one of "
+            f"{_ALLOWED_RESULT_GRANULARITIES}, got {candidate!r}"
+        )
+    return candidate
+
+
+def _schema_source_identity_field(
+    schema_json: Optional[Mapping[str, Any]],
+    *,
+    schema_name: str,
+    required: bool = False,
+) -> Optional[str]:
+    """Return the schema's source identity field from document_mapping.id."""
+    mapping = DocumentFieldMapping.from_schema_json(
+        dict(schema_json or {}), schema_name=schema_name, required=False
+    )
+    if mapping is None or not mapping.id:
+        if required:
+            raise ValueError(
+                f"Schema {schema_name!r} declares no document_mapping.id — "
+                "source granularity requires a source identity field"
+            )
+        return None
+    return mapping.id
+
+
+def _schema_temporal_field_names(
+    schema_json: Optional[Mapping[str, Any]],
+) -> tuple[str, ...]:
+    """Return the schema-declared per-segment temporal field names.
+
+    The search path uses this to avoid hardcoding a fixed key list. Any schema
+    that declares ``*_time`` document fields can surface them in
+    ``matched_segments``; schemas without such fields get none.
+    """
+    if not isinstance(schema_json, Mapping):
+        return ()
+    document = schema_json.get("document")
+    if not isinstance(document, Mapping):
+        return ()
+    fields = document.get("fields")
+    if not isinstance(fields, list):
+        return ()
+
+    temporal_fields: List[str] = []
+    for schema_field in fields:
+        if not isinstance(schema_field, Mapping):
+            continue
+        name = schema_field.get("name")
+        if isinstance(name, str) and name.endswith("_time"):
+            temporal_fields.append(name)
+    return tuple(temporal_fields)
+
+
+def _iter_result_hits(node: Any):
+    """Yield leaf hit dictionaries from a Vespa response body tree."""
+    if isinstance(node, Mapping):
+        children = node.get("children")
+        if isinstance(children, list):
+            for child in children:
+                yield from _iter_result_hits(child)
+            return
+        if "fields" in node and "relevance" in node and "id" in node:
+            yield node
+            return
+        for value in node.values():
+            yield from _iter_result_hits(value)
+    elif isinstance(node, list):
+        for item in node:
+            yield from _iter_result_hits(item)
+
+
+def _source_collapse_fetch_limit(top_k: int, profile_config: Mapping[str, Any]) -> int:
+    """Derive the fetch window for source-level collapse."""
+    oversample = profile_config.get("source_collapse_oversample")
+    if oversample is None:
+        oversample = top_k
+    if not isinstance(oversample, int):
+        try:
+            oversample = int(oversample)
+        except (TypeError, ValueError) as exc:
+            raise ValueError("source_collapse_oversample must be an integer") from exc
+    if oversample < 1:
+        raise ValueError("source_collapse_oversample must be >= 1")
+    return top_k * oversample
+
+
+def _result_source_key(result: SearchResult) -> str:
+    """Return the source identity key for one search hit."""
+    source_id = result.document.metadata.get("source_id") or result.document.id
+    return str(source_id)
+
+
+def _source_segment_row(
+    result: SearchResult, temporal_field_names: tuple[str, ...] = ()
+) -> Dict[str, Any]:
+    """Return one source-window segment row for API output."""
+    row = {"document_id": result.document.id, "score": result.score}
+    for field_name in temporal_field_names:
+        value = result.document.metadata.get(field_name)
+        if value is not None:
+            row[field_name] = value
+    return row
+
+
+def _collapse_results_by_source(
+    results: List[SearchResult],
+    *,
+    top_k: int,
+    fetch_limit: int,
+    total_count: Optional[int],
+    temporal_field_names: tuple[str, ...] = (),
+) -> "SearchResultBatch":
+    """Keep the best hit per source identity in relevance order."""
+    grouped_results: Dict[str, List[SearchResult]] = {}
+    ordered_source_keys: List[str] = []
+
+    for result in results:
+        source_key = _result_source_key(result)
+        if source_key not in grouped_results:
+            grouped_results[source_key] = []
+            ordered_source_keys.append(source_key)
+        grouped_results[source_key].append(result)
+
+    collapsed: List[SearchResult] = []
+    for source_key in ordered_source_keys[:top_k]:
+        source_results = grouped_results[source_key]
+        best_result = source_results[0]
+        collapsed.append(
+            SearchResult(
+                document=best_result.document,
+                score=best_result.score,
+                highlights=dict(best_result.highlights),
+                matched_segments=[
+                    _source_segment_row(result, temporal_field_names)
+                    for result in source_results
+                ],
+                segments_in_window=len(source_results),
+            )
+        )
+
+    if total_count is not None:
+        num_collapsed_documents = max(total_count - len(collapsed), 0)
+    else:
+        num_collapsed_documents = max(len(results) - len(collapsed), 0)
+
+    return SearchResultBatch(
+        collapsed,
+        result_granularity="source",
+        num_collapsed_documents=num_collapsed_documents,
+        total_count=total_count,
+    )
+
+
+class SearchResultBatch(list):
+    """List-like search result set with backend metadata."""
+
+    def __init__(
+        self,
+        results=None,
+        *,
+        result_granularity: str = "segment",
+        num_collapsed_documents: int = 0,
+        total_count: Optional[int] = None,
+    ):
+        super().__init__(results or [])
+        self.result_granularity = result_granularity
+        self.num_collapsed_documents = num_collapsed_documents
+        self.total_count = total_count
 
 
 def _query_health_error(response: Any) -> Optional[str]:
@@ -982,9 +1176,45 @@ class VespaSearchBackend(SearchBackend):
                 f"Profile '{profile_name}' declares no 'type'; cannot type its hits"
             )
         content_type = declared_type
+        requested_result_granularity = query_dict.get("result_granularity")
+        result_granularity = _resolve_result_granularity(
+            profile_config, requested_result_granularity
+        )
+        fetch_limit = top_k
+        if result_granularity == "source":
+            fetch_limit = _source_collapse_fetch_limit(top_k, profile_config)
+        if result_granularity == "source" and self._schema_loader is None:
+            if requested_result_granularity is None:
+                logger.warning(
+                    "Falling back to segment granularity for profile '%s' "
+                    "because no schema_loader is available to resolve source "
+                    "identity fields",
+                    profile_name,
+                )
+                result_granularity = "segment"
+            else:
+                raise ValueError(
+                    f"Schema {profile_config.get('schema_name', profile_name)!r} "
+                    "source granularity requires schema_loader"
+                )
 
         # Determine schema_name from profile (base name)
         base_schema_name = profile_config.get("schema_name", profile_name)
+        source_identity_field = None
+        source_temporal_field_names: tuple[str, ...] = ()
+        if self._schema_loader is not None:
+            schema_json = self._schema_loader.load_schema(base_schema_name)
+            source_identity_field = _schema_source_identity_field(
+                schema_json,
+                schema_name=base_schema_name,
+                required=False,
+            )
+            source_temporal_field_names = _schema_temporal_field_names(schema_json)
+        if result_granularity == "source" and not source_identity_field:
+            raise ValueError(
+                f"Schema {base_schema_name!r} declares no document_mapping.id — "
+                "source granularity requires a source identity field"
+            )
 
         # Apply tenant scoping - tenant_id is REQUIRED in query_dict
         tenant_id = query_dict.get("tenant_id")
@@ -1081,7 +1311,8 @@ class VespaSearchBackend(SearchBackend):
         try:
             logger.info(
                 f"[{correlation_id}] Search request: query='{query_text}', "
-                f"limit={top_k}, profile={profile_name}, strategy={strategy_name}"
+                f"limit={top_k}, fetch_limit={fetch_limit}, profile={profile_name}, "
+                f"strategy={strategy_name}"
             )
 
             # Get ranking strategy config from available_strategies
@@ -1146,31 +1377,96 @@ class VespaSearchBackend(SearchBackend):
                 rank_config,
                 strategy_name,
                 schema_name,
-                top_k,
+                fetch_limit,
                 filters,
                 correlation_id,
+                result_granularity=result_granularity,
+                source_identity_field=source_identity_field,
                 nearest_neighbor_approximate=query_dict.get(
                     "nearest_neighbor_approximate", True
                 ),
             )
 
-            # Execute search
-            logger.info(
-                f"[{correlation_id}] Executing query: yql='{query_params.get('yql')}', "
-                f"ranking={query_params.get('ranking')}"
-            )
-            logger.debug(
-                f"[{correlation_id}] Query has embeddings: {'input.query(q)' in query_params or 'input.query(qt)' in query_params}"
-            )
+            def _execute_query(body: Dict[str, Any]):
+                logger.info(
+                    f"[{correlation_id}] Executing query: yql='{body.get('yql')}', "
+                    f"ranking={body.get('ranking')}"
+                )
+                logger.debug(
+                    f"[{correlation_id}] Query has embeddings: {'input.query(q)' in body or 'input.query(qt)' in body}"
+                )
 
-            if self.pool:
-                with self.pool.get_connection() as conn:
-                    response = conn.query(body=query_params)
+                if self.pool:
+                    with self.pool.get_connection() as conn:
+                        return conn.query(body=body)
+                return self.vespa.query(body=body)
+
+            if result_granularity == "source":
+                page_count = 0
+                page_offset = 0
+                max_pages = max(1, min(top_k, 10))
+                seen_sources: set[str] = set()
+                window_results: List[SearchResult] = []
+                total_count = None
+
+                while True:
+                    page_query_params = dict(query_params)
+                    if page_offset:
+                        page_query_params["offset"] = page_offset
+                        page_query_params["maxOffset"] = page_offset + fetch_limit
+
+                    response = _execute_query(page_query_params)
+                    page_results = self._process_results(
+                        response,
+                        correlation_id,
+                        content_type,
+                        top_k=fetch_limit,
+                        fetch_limit=fetch_limit,
+                        result_granularity="segment",
+                        source_identity_field=source_identity_field,
+                        collapse_source_results=False,
+                    )
+
+                    if total_count is None:
+                        total_count = page_results.total_count
+                    window_results.extend(page_results)
+                    seen_sources.update(
+                        _result_source_key(result) for result in page_results
+                    )
+                    page_count += 1
+
+                    if len(seen_sources) >= top_k:
+                        break
+                    if len(page_results) < fetch_limit:
+                        break
+                    if total_count is not None and (
+                        page_offset + fetch_limit >= total_count
+                    ):
+                        break
+                    if page_count >= max_pages:
+                        break
+                    page_offset += fetch_limit
+
+                results = _collapse_results_by_source(
+                    window_results,
+                    top_k=top_k,
+                    fetch_limit=fetch_limit,
+                    total_count=total_count,
+                    temporal_field_names=source_temporal_field_names,
+                )
             else:
-                response = self.vespa.query(body=query_params)
+                response = _execute_query(query_params)
 
-            # Process results
-            results = self._process_results(response, correlation_id, content_type)
+                # Process results
+                results = self._process_results(
+                    response,
+                    correlation_id,
+                    content_type,
+                    top_k=top_k,
+                    fetch_limit=fetch_limit,
+                    result_granularity=result_granularity,
+                    source_identity_field=source_identity_field,
+                )
 
             # Record metrics
             if self.metrics:
@@ -1260,11 +1556,23 @@ class VespaSearchBackend(SearchBackend):
         limit: int,
         filters: Dict[str, Any],
         correlation_id: str,
+        result_granularity: str = "segment",
+        source_identity_field: Optional[str] = None,
         nearest_neighbor_approximate: bool = True,
     ) -> Dict[str, Any]:
         """Build Vespa query based on ranking strategy - NO HARDCODING!"""
         if not isinstance(nearest_neighbor_approximate, bool):
             raise ValueError("nearest_neighbor_approximate must be a bool")
+        if result_granularity not in _ALLOWED_RESULT_GRANULARITIES:
+            raise ValueError(
+                "result_granularity must be one of "
+                f"{_ALLOWED_RESULT_GRANULARITIES}, got {result_granularity!r}"
+            )
+        if result_granularity == "source" and not source_identity_field:
+            raise ValueError(
+                f"Schema {schema_name!r} declares no document_mapping.id — "
+                "source granularity requires a source identity field"
+            )
 
         # Log schema name being used
         logger.info(
@@ -1441,7 +1749,10 @@ class VespaSearchBackend(SearchBackend):
         return query_params
 
     def _result_to_document(
-        self, result: Dict[str, Any], content_type: str
+        self,
+        result: Dict[str, Any],
+        content_type: str,
+        source_identity_field: Optional[str] = None,
     ) -> Document:
         """Convert Vespa result to Document object."""
         if not isinstance(result, Mapping):
@@ -1477,13 +1788,26 @@ class VespaSearchBackend(SearchBackend):
             if value is not None:
                 document.add_metadata(key, value)
 
-        document.add_metadata("source_id", fields.get("video_id", doc_id.split("_")[0]))
+        source_id = None
+        if source_identity_field:
+            source_id = fields.get(source_identity_field)
+        if source_id is None:
+            source_id = doc_id
+        document.add_metadata("source_id", source_id)
 
         return document
 
     def _process_results(
-        self, response: Any, correlation_id: str, content_type: str
-    ) -> List[SearchResult]:
+        self,
+        response: Any,
+        correlation_id: str,
+        content_type: str,
+        top_k: Optional[int] = None,
+        fetch_limit: Optional[int] = None,
+        result_granularity: str = "segment",
+        source_identity_field: Optional[str] = None,
+        collapse_source_results: bool = True,
+    ) -> SearchResultBatch:
         """Process Vespa response into SearchResult objects.
 
         Raises:
@@ -1500,7 +1824,7 @@ class VespaSearchBackend(SearchBackend):
             )
 
         try:
-            hits = response.hits
+            _ = response.hits
         except AttributeError as exc:
             raise VespaError(
                 f"[{correlation_id}] Vespa response is missing a hits collection"
@@ -1529,10 +1853,15 @@ class VespaSearchBackend(SearchBackend):
                 f"[{correlation_id}] Vespa query coverage degraded: {coverage!r}"
             )
 
+        leaf_hits = list(_iter_result_hits(root))
         results = []
-        logger.debug(f"[{correlation_id}] Processing {len(hits)} hits from Vespa")
-        for hit in hits:
-            doc = self._result_to_document(hit, content_type)
+        logger.debug(f"[{correlation_id}] Processing {len(leaf_hits)} hits from Vespa")
+        for hit in leaf_hits:
+            doc = self._result_to_document(
+                hit,
+                content_type,
+                source_identity_field=source_identity_field,
+            )
             try:
                 score = hit["relevance"]
             except KeyError as exc:
@@ -1540,13 +1869,55 @@ class VespaSearchBackend(SearchBackend):
             highlights = hit.get("summaryfeatures", {})
             results.append(SearchResult(doc, score, highlights))
 
-        return results
+        total_count = None
+        root_fields = root.get("fields", {})
+        if isinstance(root_fields, Mapping):
+            raw_total_count = root_fields.get("totalCount")
+            if isinstance(raw_total_count, (int, float)) and not isinstance(
+                raw_total_count, bool
+            ):
+                total_count = int(raw_total_count)
 
-    def _extract_metadata(self, fields: Dict[str, Any]) -> Dict[str, Any]:
+        collapsed_documents = 0
+        effective_result_granularity = result_granularity
+        if result_granularity == "source" and collapse_source_results:
+            if top_k is None:
+                top_k = len(results)
+            if fetch_limit is None:
+                fetch_limit = len(results)
+            results = _collapse_results_by_source(
+                results,
+                top_k=top_k,
+                fetch_limit=fetch_limit,
+                total_count=total_count,
+            )
+            collapsed_documents = results.num_collapsed_documents
+        elif result_granularity == "source":
+            effective_result_granularity = "segment"
+        elif total_count is not None:
+            collapsed_documents = max(total_count - len(results), 0)
+
+        return SearchResultBatch(
+            results,
+            result_granularity=effective_result_granularity,
+            num_collapsed_documents=collapsed_documents,
+            total_count=total_count,
+        )
+
+    def _extract_metadata(
+        self, fields: Dict[str, Any], source_identity_field: Optional[str] = None
+    ) -> Dict[str, Any]:
         """Extract metadata from document fields"""
         metadata = {}
 
         # Standard metadata fields
+        source_identity = None
+        if source_identity_field:
+            source_identity = fields.get(source_identity_field)
+        if source_identity is None:
+            source_identity = fields.get("source_id")
+        if source_identity is not None:
+            metadata["source_id"] = source_identity
         for key in [
             "video_id",
             "start_time",
@@ -1661,7 +2032,7 @@ class VespaSearchBackend(SearchBackend):
         Args:
             schema: Schema to export from (overrides default)
             max_documents: Maximum number of documents to export
-            filters: Optional filters (e.g., {'video_id': 'xyz'})
+            filters: Optional filters (e.g., {'source_id': 'xyz'})
             include_embeddings: Whether to include embedding vectors
 
         Returns:

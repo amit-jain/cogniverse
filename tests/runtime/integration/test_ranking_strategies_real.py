@@ -29,8 +29,10 @@ import requests
 from PIL import Image
 
 from cogniverse_core.common.models.model_loaders import RemoteColPaliLoader
+from cogniverse_foundation.config.unified_config import BackendProfileConfig
 from cogniverse_foundation.config.utils import get_config
 from cogniverse_vespa.search_backend import VespaSearchBackend
+from tests.utils.vespa_test_helpers import deploy_tenant_schema, schema_tensor_dim
 
 logger = logging.getLogger(__name__)
 
@@ -38,6 +40,9 @@ COLPALI_MODEL_NAME = "TomoroAI/tomoro-colqwen3-embed-4b"
 TENANT_ID = "test:unit"
 TENANT_SCHEMA_NAME = "video_colpali_smol500_mv_frame_test_unit"
 PROFILE_NAME = "test_colpali"
+SOURCE_COLLAPSE_TENANT_ID = "source_collapse:unit"
+SOURCE_COLLAPSE_PROFILE_NAME = "test_colpali_source_collapse"
+SOURCE_COLLAPSE_SCHEMA_NAME = "video_colpali_smol500_mv_frame"
 
 TEXT_ONLY_STRATEGIES = [
     "bm25_only",
@@ -77,6 +82,14 @@ def _single_patch_rank_tensors(float_score: float, first_binary_byte: int):
     binary_vec = np.full((1, 40), -1, dtype=np.int8)
     binary_vec[0, 0] = np.int8(first_binary_byte)
     return {"0": float_vec[0].tolist()}, {"0": binary_vec[0].tolist()}
+
+
+def _manual_embedding(scale_x: float, scale_y: float, dim: int) -> np.ndarray:
+    """Build a one-patch embedding with a deterministic 2D signal."""
+    embedding = np.zeros((1, dim), dtype=np.float32)
+    embedding[0, 0] = scale_x
+    embedding[0, 1] = scale_y
+    return embedding
 
 
 @pytest.fixture(scope="module")
@@ -244,6 +257,112 @@ def phased_default_ranking_corpus(vespa_instance):
 
 
 @pytest.fixture(scope="module")
+def source_collapse_schema(vespa_instance, config_manager):
+    """Deploy a dedicated video schema for the collapse-by-source corpus."""
+    config_manager.add_backend_profile(
+        BackendProfileConfig(
+            profile_name=SOURCE_COLLAPSE_PROFILE_NAME,
+            type="video",
+            schema_name=SOURCE_COLLAPSE_SCHEMA_NAME,
+            embedding_model=COLPALI_MODEL_NAME,
+            model_loader="colpali",
+        ),
+        tenant_id=SOURCE_COLLAPSE_TENANT_ID,
+    )
+    return deploy_tenant_schema(
+        vespa_instance,
+        tenant_id=SOURCE_COLLAPSE_TENANT_ID,
+        base_schema_name=SOURCE_COLLAPSE_SCHEMA_NAME,
+        config_manager=config_manager,
+    )
+
+
+@pytest.fixture(scope="module")
+def seeded_source_collapse_corpus(vespa_instance, source_collapse_schema):
+    """Feed a source-skewed corpus for collapse-by-source integration tests."""
+    http_port = vespa_instance["http_port"]
+    embedding_dim = schema_tensor_dim(SOURCE_COLLAPSE_SCHEMA_NAME, "embedding")
+    schema_name = source_collapse_schema
+
+    source_a_vectors = [(1.0, 1.0 - i * 0.01) for i in range(50)]
+    source_b_vectors = [
+        (0.90, 0.00),
+        (0.80, 0.10),
+        (0.70, 0.20),
+        (0.60, 0.30),
+        (0.50, 0.40),
+        (0.40, 0.50),
+        (0.30, 0.60),
+        (0.20, 0.70),
+        (0.10, 0.80),
+    ]
+
+    fed_docs = []
+
+    for i, (x, y) in enumerate(source_a_vectors):
+        doc_id = f"collapse_big_source_doc_{i:02d}"
+        image = _manual_embedding(x, y, embedding_dim)
+        float_dict, binary_dict = _embeddings_to_vespa_tensors(image)
+        fed_docs.append(
+            (
+                doc_id,
+                "collapse_big_source",
+                f"big source frame {i}",
+                float_dict,
+                binary_dict,
+            )
+        )
+
+    for i, (x, y) in enumerate(source_b_vectors):
+        doc_id = f"collapse_other_source_doc_{i:02d}"
+        source_id = f"collapse_other_source_{i:02d}"
+        image = _manual_embedding(x, y, embedding_dim)
+        float_dict, binary_dict = _embeddings_to_vespa_tensors(image)
+        fed_docs.append(
+            (doc_id, source_id, f"other source frame {i}", float_dict, binary_dict)
+        )
+
+    for doc_id, video_id, title, float_dict, binary_dict in fed_docs:
+        vespa_doc = {
+            "fields": {
+                "video_id": video_id,
+                "video_title": title,
+                "segment_id": 0,
+                "start_time": 0.0,
+                "end_time": 5.0,
+                "segment_description": title,
+                "audio_transcript": title,
+                "embedding": float_dict,
+                "embedding_binary": binary_dict,
+            }
+        }
+        resp = requests.post(
+            f"http://localhost:{http_port}/document/v1/video/{schema_name}/docid/{doc_id}",
+            json=vespa_doc,
+            timeout=10,
+        )
+        assert resp.status_code in (200, 201), (
+            f"Failed to feed doc {doc_id}: {resp.status_code}: {resp.text[:200]}"
+        )
+
+    time.sleep(5)
+    yield {
+        "source_a_doc_ids": [f"collapse_big_source_doc_{i:02d}" for i in range(50)],
+        "source_b_doc_ids": [f"collapse_other_source_doc_{i:02d}" for i in range(9)],
+        "source_a_id": "collapse_big_source",
+    }
+
+    for doc_id, *_ in fed_docs:
+        try:
+            requests.delete(
+                f"http://localhost:{http_port}/document/v1/video/{schema_name}/docid/{doc_id}",
+                timeout=5,
+            )
+        except Exception:
+            pass
+
+
+@pytest.fixture(scope="module")
 def search_backend(vespa_instance, config_manager, schema_loader):
     """Production VespaSearchBackend wired to the real test Vespa + config.
 
@@ -253,6 +372,26 @@ def search_backend(vespa_instance, config_manager, schema_loader):
     ``strategy`` is validated against that schema's rank profiles.
     """
     cfg = get_config(tenant_id=TENANT_ID, config_manager=config_manager)
+    backend_section = cfg.get("backend", {})
+    config = {
+        "url": "http://localhost",
+        "port": vespa_instance["http_port"],
+        "profiles": backend_section.get("profiles", {}),
+        "default_profiles": backend_section.get("default_profiles", {}),
+    }
+    return VespaSearchBackend(
+        config=config,
+        config_manager=config_manager,
+        schema_loader=schema_loader,
+    )
+
+
+@pytest.fixture(scope="module")
+def source_collapse_search_backend(
+    vespa_instance, config_manager, schema_loader, source_collapse_schema
+):
+    """Backend wired to the isolated collapse-by-source tenant/profile."""
+    cfg = get_config(tenant_id=SOURCE_COLLAPSE_TENANT_ID, config_manager=config_manager)
     backend_section = cfg.get("backend", {})
     config = {
         "url": "http://localhost",
@@ -425,3 +564,137 @@ class TestDefaultPhasedRanking:
         assert [
             r.document.metadata["source_id"] for r in results
         ] == phased_default_ranking_corpus
+
+
+@pytest.mark.integration
+@pytest.mark.requires_vespa
+class TestSourceGranularityCollapse:
+    """Source granularity keeps only the best document per source."""
+
+    def test_source_granularity_returns_distinct_sources(
+        self, source_collapse_search_backend, seeded_source_collapse_corpus
+    ):
+        query_embeddings = _manual_embedding(
+            1.0,
+            1.0,
+            schema_tensor_dim(SOURCE_COLLAPSE_SCHEMA_NAME, "embedding"),
+        )
+
+        results = source_collapse_search_backend.search(
+            {
+                "query": "",
+                "type": "video",
+                "profile": SOURCE_COLLAPSE_PROFILE_NAME,
+                "strategy": "float_float",
+                "top_k": 10,
+                "tenant_id": SOURCE_COLLAPSE_TENANT_ID,
+                "query_embeddings": query_embeddings,
+                "result_granularity": "source",
+            }
+        )
+
+        assert len(results) == 10, [r.document.id for r in results]
+        assert len({r.document.metadata["source_id"] for r in results}) == 10, [
+            r.document.metadata["source_id"] for r in results
+        ]
+        assert [r.score for r in results] == sorted(
+            (r.score for r in results), reverse=True
+        )
+        assert [r.document.metadata["source_id"] for r in results] == [
+            "collapse_big_source",
+            "collapse_other_source_00",
+            "collapse_other_source_02",
+            "collapse_other_source_04",
+            "collapse_other_source_05",
+            "collapse_other_source_07",
+            "collapse_other_source_01",
+            "collapse_other_source_03",
+            "collapse_other_source_06",
+            "collapse_other_source_08",
+        ]
+        assert [r.document.id for r in results] == [
+            "collapse_big_source_doc_00",
+            "collapse_other_source_doc_00",
+            "collapse_other_source_doc_02",
+            "collapse_other_source_doc_04",
+            "collapse_other_source_doc_05",
+            "collapse_other_source_doc_07",
+            "collapse_other_source_doc_01",
+            "collapse_other_source_doc_03",
+            "collapse_other_source_doc_06",
+            "collapse_other_source_doc_08",
+        ]
+        assert results[0].segments_in_window == 50
+        assert [segment["document_id"] for segment in results[0].matched_segments] == [
+            f"collapse_big_source_doc_{i:02d}" for i in range(50)
+        ]
+        assert all(
+            set(segment) == {"document_id", "score", "start_time", "end_time"}
+            for segment in results[0].matched_segments
+        )
+        for result, expected_source_id, expected_doc_id in zip(
+            results[1:],
+            [
+                "collapse_other_source_00",
+                "collapse_other_source_02",
+                "collapse_other_source_04",
+                "collapse_other_source_05",
+                "collapse_other_source_07",
+                "collapse_other_source_01",
+                "collapse_other_source_03",
+                "collapse_other_source_06",
+                "collapse_other_source_08",
+            ],
+            [
+                "collapse_other_source_doc_00",
+                "collapse_other_source_doc_02",
+                "collapse_other_source_doc_04",
+                "collapse_other_source_doc_05",
+                "collapse_other_source_doc_07",
+                "collapse_other_source_doc_01",
+                "collapse_other_source_doc_03",
+                "collapse_other_source_doc_06",
+                "collapse_other_source_doc_08",
+            ],
+        ):
+            assert result.document.metadata["source_id"] == expected_source_id
+            assert result.document.id == expected_doc_id
+            assert result.segments_in_window == 1
+            assert result.matched_segments == [
+                {
+                    "document_id": result.document.id,
+                    "score": result.score,
+                    "start_time": 0.0,
+                    "end_time": 5.0,
+                }
+            ]
+
+    def test_segment_granularity_keeps_every_document(
+        self, source_collapse_search_backend, seeded_source_collapse_corpus
+    ):
+        query_embeddings = _manual_embedding(
+            1.0,
+            1.0,
+            schema_tensor_dim(SOURCE_COLLAPSE_SCHEMA_NAME, "embedding"),
+        )
+
+        results = source_collapse_search_backend.search(
+            {
+                "query": "",
+                "type": "video",
+                "profile": SOURCE_COLLAPSE_PROFILE_NAME,
+                "strategy": "float_float",
+                "top_k": 10,
+                "tenant_id": SOURCE_COLLAPSE_TENANT_ID,
+                "query_embeddings": query_embeddings,
+                "result_granularity": "segment",
+            }
+        )
+
+        assert len(results) == 10
+        assert [r.document.id for r in results] == [
+            f"collapse_big_source_doc_{i:02d}" for i in range(10)
+        ]
+        assert {r.document.metadata["source_id"] for r in results} == {
+            "collapse_big_source"
+        }

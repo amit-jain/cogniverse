@@ -1505,6 +1505,11 @@ for result in results:
     print(f"Source video: {result.document.metadata['source_id']}")
 ```
 
+`SearchResult.to_dict()` carries `matched_segments` and `segments_in_window`
+on source-granularity results. Each matched segment row includes
+`document_id`, `score`, and any temporal keys present in the schema; segment
+granularity omits both fields.
+
 `export_embeddings()` walks Vespa's Document v1 continuation pages. Every page
 must return HTTP 200; an initial or continuation failure raises with the visit
 route instead of returning an empty or partial export.

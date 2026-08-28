@@ -275,6 +275,55 @@ class TestSearchResultToDict:
         r = SearchResult(Document(metadata={"source_id": "vid_1"}), score=0.5)
         assert r.to_dict()["source_id"] == "vid_1"
 
+    def test_source_window_metadata_surfaces(self):
+        r = SearchResult(
+            Document(
+                metadata={
+                    "source_id": "vid_1",
+                    "start_time": 10,
+                    "end_time": 25,
+                }
+            ),
+            score=0.5,
+            matched_segments=[
+                {
+                    "document_id": "doc-1",
+                    "score": 0.5,
+                    "start_time": 10,
+                    "end_time": 15,
+                },
+                {
+                    "document_id": "doc-2",
+                    "score": 0.4,
+                    "start_time": 15,
+                    "end_time": 20,
+                },
+            ],
+            segments_in_window=2,
+        )
+        out = r.to_dict()
+        assert out["matched_segments"] == [
+            {
+                "document_id": "doc-1",
+                "score": 0.5,
+                "start_time": 10,
+                "end_time": 15,
+            },
+            {
+                "document_id": "doc-2",
+                "score": 0.4,
+                "start_time": 15,
+                "end_time": 20,
+            },
+        ]
+        assert out["segments_in_window"] == 2
+
+    def test_segment_results_omit_source_window_metadata(self):
+        out = SearchResult(Document(), score=0.5).to_dict()
+
+        assert "matched_segments" not in out
+        assert "segments_in_window" not in out
+
     def test_boolean_bounds_do_not_create_numeric_duration(self):
         result = SearchResult(
             Document(metadata={"start_time": True, "end_time": False}),

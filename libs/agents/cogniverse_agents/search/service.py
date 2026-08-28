@@ -6,11 +6,11 @@ with tenant_id passed in query_dict at search time for schema name derivation.
 """
 
 import logging
-from typing import Any, Dict, List, Optional
+from typing import Any, Dict, Optional
 
 from cogniverse_core.query.encoders import QueryEncoderFactory
 from cogniverse_core.registries.backend_registry import get_backend_registry
-from cogniverse_sdk.document import SearchResult
+from cogniverse_vespa.search_backend import SearchResultBatch
 
 logger = logging.getLogger(__name__)
 
@@ -197,7 +197,8 @@ class SearchService:
         top_k: int = 10,
         filters: Optional[Dict[str, Any]] = None,
         ranking_strategy: Optional[str] = None,
-    ) -> List[SearchResult]:
+        result_granularity: Optional[str] = None,
+    ) -> SearchResultBatch:
         """
         Search for videos matching the query.
 
@@ -208,9 +209,12 @@ class SearchService:
             top_k: Number of results to return
             filters: Optional filters (date range, etc.)
             ranking_strategy: Optional ranking strategy override
+            result_granularity: Optional collapse mode. ``source`` returns one
+                result per source content item; ``segment`` preserves today's
+                document-level behavior.
 
         Returns:
-            List of SearchResult objects
+            SearchResultBatch with list-like SearchResult objects
         """
         from cogniverse_foundation.telemetry.context import (
             add_search_results_to_span,
@@ -218,12 +222,16 @@ class SearchService:
             search_span,
             serialize_search_results,
         )
+        from cogniverse_vespa.search_backend import _resolve_result_granularity
 
         # Resolve profile config and encoder
         profile_config = self._get_profile_config(profile, tenant_id)
         content_type = profile_config.get("type")
         if not content_type:
             raise ValueError(f"Profile '{profile}' missing 'type' configuration")
+        result_granularity = _resolve_result_granularity(
+            profile_config, result_granularity
+        )
         query_encoder = self._get_encoder(profile, profile_config)
         search_backend = self._get_backend(profile, profile_config, query_encoder)
 
@@ -237,6 +245,7 @@ class SearchService:
             profile=profile,
             backend=self.config.get("search_backend", "vespa"),
         ) as search_span_ctx:
+            search_span_ctx.set_attribute("result_granularity", result_granularity)
             if ranking_strategy:
                 logger.info(f"Using ranking strategy: {ranking_strategy}")
 
@@ -260,6 +269,7 @@ class SearchService:
                 has_embeddings=False,
                 query_text=query,
             ) as backend_span_ctx:
+                backend_span_ctx.set_attribute("result_granularity", result_granularity)
                 query_dict = {
                     "query": query,
                     "type": content_type,
@@ -269,12 +279,21 @@ class SearchService:
                     "top_k": top_k,
                     "filters": filters,
                     "query_encoder": query_encoder,
+                    "result_granularity": result_granularity,
                 }
                 results = search_backend.search(query_dict)
 
                 # Serialize the result rows once and record the same payload on
                 # both the RETRIEVER (backend) and CHAIN (search) spans.
                 results_output_value = serialize_search_results(results)
+                if result_granularity == "source":
+                    collapsed_documents = results.num_collapsed_documents
+                    backend_span_ctx.set_attribute(
+                        "num_collapsed_documents", collapsed_documents
+                    )
+                    search_span_ctx.set_attribute(
+                        "num_collapsed_documents", collapsed_documents
+                    )
                 add_search_results_to_span(
                     backend_span_ctx, results, output_value=results_output_value
                 )

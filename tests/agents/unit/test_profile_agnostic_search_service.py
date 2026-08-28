@@ -13,6 +13,7 @@ from unittest.mock import MagicMock, Mock, patch
 import pytest
 
 from cogniverse_agents.search.service import SearchService
+from cogniverse_vespa.search_backend import SearchResultBatch
 
 
 @pytest.fixture
@@ -26,6 +27,7 @@ def mock_config():
             "profiles": {
                 "frame_based_colpali": {
                     "type": "video",
+                    "result_granularity": "source",
                     "embedding_model": "vidore/colSmol-256M",
                     "embedding_dim": 128,
                     "embedding_format": "binary",
@@ -33,6 +35,7 @@ def mock_config():
                 },
                 "video_colqwen_omni": {
                     "type": "video",
+                    "result_granularity": "source",
                     "embedding_model": "TomoroAI/tomoro-colqwen3-embed-4b",
                     "embedding_dim": 320,
                     "embedding_format": "binary",
@@ -40,6 +43,7 @@ def mock_config():
                 },
                 "video_videoprism_base": {
                     "type": "video",
+                    "result_granularity": "source",
                     "embedding_model": "google/videoprism-base",
                     "embedding_dim": 768,
                     "embedding_format": "float",
@@ -284,7 +288,7 @@ class TestBackendCaching:
         mock_encoder.encode.return_value = None
 
         mock_backend = MagicMock()
-        mock_backend.search.return_value = []
+        mock_backend.search.return_value = SearchResultBatch()
 
         with (
             patch("cogniverse_agents.search.service.get_backend_registry") as mock_reg,
@@ -324,7 +328,7 @@ class TestEncodingDelegatedToBackend:
     def test_search_never_encodes_and_sends_no_embeddings(self, search_service):
         mock_encoder = MagicMock()
         mock_backend = MagicMock()
-        mock_backend.search.return_value = []
+        mock_backend.search.return_value = SearchResultBatch()
 
         with (
             patch("cogniverse_agents.search.service.get_backend_registry") as mock_reg,
@@ -361,7 +365,7 @@ class TestQueryDictCarriesProfileContract:
     def _search(self, search_service, profile, **kwargs):
         mock_encoder = MagicMock()
         mock_backend = MagicMock()
-        mock_backend.search.return_value = []
+        mock_backend.search.return_value = SearchResultBatch()
         with (
             patch("cogniverse_agents.search.service.get_backend_registry") as mock_reg,
             patch.object(search_service, "_get_encoder", return_value=mock_encoder),
@@ -388,9 +392,31 @@ class TestQueryDictCarriesProfileContract:
             "top_k": 10,
             "filters": None,
             "query_encoder": encoder,
+            "result_granularity": "segment",
         }
 
     def test_video_profile_query_dict_is_typed_video(self, search_service):
+        query_dict, encoder = self._search(
+            search_service,
+            "frame_based_colpali",
+            ranking_strategy="default",
+            result_granularity="segment",
+        )
+        assert query_dict == {
+            "query": "podcasts about deep learning",
+            "type": "video",
+            "profile": "frame_based_colpali",
+            "tenant_id": "acme:acme",
+            "strategy": "default",
+            "top_k": 10,
+            "filters": None,
+            "query_encoder": encoder,
+            "result_granularity": "segment",
+        }
+
+    def test_video_profile_default_query_dict_uses_source_granularity(
+        self, search_service
+    ):
         query_dict, encoder = self._search(search_service, "frame_based_colpali")
         assert query_dict == {
             "query": "podcasts about deep learning",
@@ -401,6 +427,7 @@ class TestQueryDictCarriesProfileContract:
             "top_k": 10,
             "filters": None,
             "query_encoder": encoder,
+            "result_granularity": "source",
         }
 
     def test_profile_without_declared_type_is_rejected(
@@ -566,7 +593,10 @@ class TestSearchResultsSerializedOncePerQuery:
 
         mock_encoder = MagicMock()
         mock_backend = MagicMock()
-        mock_backend.search.return_value = results
+        mock_backend.search.return_value = SearchResultBatch(
+            results,
+            result_granularity="source",
+        )
 
         with (
             patch("cogniverse_agents.search.service.get_backend_registry") as mock_reg,
@@ -591,7 +621,7 @@ class TestSearchResultsSerializedOncePerQuery:
                 tenant_id="acme",
             )
 
-        assert out is results
+        assert list(out) == results
         # The O(N) row-build ran exactly once for the whole query, over 5 rows.
         assert serialize_calls == [5], serialize_calls
         # Both spans carry the identical, real serialization of all 5 rows.
