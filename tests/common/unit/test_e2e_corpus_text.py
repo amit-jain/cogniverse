@@ -111,12 +111,24 @@ class TestCorpusIngestBudget:
     """
 
     def _materialized(self):
+        """The members the session fixture actually ingests.
+
+        Derived from _evaluation_text_corpus_paths rather than a glob over
+        data/testset: a glob also picks up assets the fixture deliberately does
+        not ingest, so the budget it measured was not the ingest budget.
+        """
+        import importlib
+
+        conftest = importlib.import_module("tests.e2e.conftest")
         members = []
-        for path in sorted((REPO_ROOT / "data" / "testset").rglob("*.json")):
-            try:
-                prose = corpus_prose(path)
-            except ValueError:
-                continue
+        for path in conftest._evaluation_text_corpus_paths():
+            if path.suffix.lower() == ".json":
+                try:
+                    prose = corpus_prose(path)
+                except ValueError:
+                    continue
+            else:
+                prose = path.read_text(errors="replace")
             if prose and has_substantive_prose(prose):
                 members.append((path, prose))
         return members
@@ -128,8 +140,8 @@ class TestCorpusIngestBudget:
         members = self._materialized()
         total = sum(len(prose) for _, prose in members)
         largest = max(len(prose) for _, prose in members)
-        assert total == 169808
-        assert largest == 18628
+        assert total == 154958
+        assert largest == 13408
 
 
 class TestRetrievalQueryGoldens:
@@ -231,3 +243,61 @@ class TestMaterialize:
         second = materialize_corpus_text(source, "a/b.json", tmp_path)
         assert second == first
         assert second.stat().st_mtime_ns == stamp
+
+
+class TestGroundTruthIsNotIngested:
+    """The answer key must never enter the corpus it grades.
+
+    sample_videos_retrieval_queries.json holds every evaluation query verbatim.
+    Ingested as a document it matches any of those queries by construction and
+    outranks the content that should answer them; it displaced a seeded caption
+    from the top two in sweep25.
+    """
+
+    @staticmethod
+    def _conftest():
+        import importlib
+
+        return importlib.import_module("tests.e2e.conftest")
+
+    def test_evaluation_query_asset_is_not_an_ingested_corpus_path(self):
+        conftest = self._conftest()
+        ingested = conftest._evaluation_text_corpus_paths()
+        asset = conftest.EVALUATION_QUERY_ASSET.resolve()
+        assert asset not in {path.resolve() for path in ingested}, (
+            f"{asset.name} is the ground truth for profile labels and the quality "
+            f"monitor golden set; ingesting it pollutes the corpus it grades"
+        )
+
+    def test_no_ingested_corpus_file_contains_the_evaluation_queries(self):
+        conftest = self._conftest()
+        asset = conftest.EVALUATION_QUERY_ASSET
+        rows = json.loads(asset.read_text())
+        # Only the question-type rows are full sentences. The answer_phrase rows
+        # are fragments like "standing" or "lifting" that occur naturally in any
+        # video description, so a substring test over those proves nothing.
+        queries = {
+            str(row["query"]).strip()
+            for row in rows
+            if isinstance(row, dict)
+            and row.get("query_type") == "question"
+            and str(row.get("query", "")).strip()
+        }
+        # 125 rows, 95 distinct queries overall, of which 50 are full questions.
+        assert len(rows) == 125, len(rows)
+        assert len({str(row["query"]).strip() for row in rows}) == 95
+        assert len(queries) == 50, len(queries)
+        # Every row carries a query. A blank one silently drops that row from the
+        # quality monitor's golden set, which is how sweep25's sidecar crash-loop
+        # started (charts copy, fixed in dc018b18).
+        assert [i for i, row in enumerate(rows) if not str(row["query"]).strip()] == []
+
+        offenders = {}
+        for path in conftest._evaluation_text_corpus_paths():
+            text = path.read_text(errors="replace")
+            hits = sorted(query for query in queries if query in text)
+            if hits:
+                offenders[path.name] = hits[:3]
+        assert offenders == {}, (
+            f"ingested corpus files reproduce evaluation queries verbatim: {offenders}"
+        )

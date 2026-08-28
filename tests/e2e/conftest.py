@@ -1651,8 +1651,13 @@ _EVALUATION_TEXT_CORPUS_DIR = _EVALUATION_CORPUS_DIR / "evaluation" / "processed
 
 
 def _evaluation_text_corpus_paths() -> tuple[Path, ...]:
+    # sample_videos_retrieval_queries.json is deliberately NOT ingested. It is the
+    # ground truth this tenant is evaluated against -- profile labels derive from its
+    # expected_videos and the quality monitor uses it as its golden set. Ingesting it
+    # puts a document holding every evaluation query verbatim into the corpus being
+    # searched, so it matches any of those queries by construction and outranks the
+    # content that should answer them.
     return (
-        _EVALUATION_CORPUS_DIR / "evaluation" / "sample_videos_retrieval_queries.json",
         _EVALUATION_CORPUS_DIR / "dataset_summary.md",
         *_sorted_evaluation_corpus_paths("descriptions"),
         *_sorted_evaluation_corpus_paths("transcripts"),
