@@ -831,6 +831,7 @@
         "type": "video",
         "description": "Frame-based ColPali for patch-level visual search with multi-vector embeddings. Extracts keyframes and generates 320-dim patch embeddings for fine-grained matching.",
         "schema_name": "video_colpali_smol500_mv_frame",
+        "result_granularity": "source",
         "embedding_model": "TomoroAI/tomoro-colqwen3-embed-4b",
         "model_config": {
           "token_pool_factor": 3
@@ -1109,6 +1110,7 @@
         "type": "video",
         "description": "ColQwen3 visual document retrieval served by the Cogniverse ColPali service. 320-dim per-patch multi-vector embeddings.",
         "schema_name": "video_colqwen_omni_mv_chunk_30s",
+        "result_granularity": "source",
         "embedding_model": "TomoroAI/tomoro-colqwen3-embed-4b",
         "process_type": "video_chunks",
         "model_config": {
@@ -1175,6 +1177,7 @@
         "type": "video",
         "description": "VideoPrism base model for 30-second chunk embeddings with 768-dim global representations. Native video understanding without keyframes.",
         "schema_name": "video_videoprism_base_mv_chunk_30s",
+        "result_granularity": "source",
         "embedding_model": "videoprism_public_v1_base_hf",
         "pipeline_config": {
           "extract_keyframes": false,
@@ -1237,6 +1240,7 @@
         "type": "video",
         "description": "VideoPrism large model for 30-second chunk embeddings with 1024-dim global representations. Enhanced capacity for complex video understanding.",
         "schema_name": "video_videoprism_large_mv_chunk_30s",
+        "result_granularity": "source",
         "embedding_model": "videoprism_public_v1_large_hf",
         "pipeline_config": {
           "extract_keyframes": false,
@@ -1298,6 +1302,7 @@
         "type": "video",
         "description": "VideoPrism LVT base for 6-second chunk single-vector embeddings with 768-dim. Optimized for shorter segments with temporal context.",
         "schema_name": "video_videoprism_lvt_base_sv_chunk_6s",
+        "result_granularity": "source",
         "embedding_model": "videoprism_lvt_public_v1_base",
         "pipeline_config": {
           "extract_keyframes": false,
@@ -1361,6 +1366,7 @@
         "type": "video",
         "description": "VideoPrism LVT large for 6-second chunk single-vector embeddings with 1024-dim. High-capacity model for fine-grained temporal understanding.",
         "schema_name": "video_videoprism_lvt_large_sv_chunk_6s",
+        "result_granularity": "source",
         "embedding_model": "videoprism_lvt_public_v1_large",
         "pipeline_config": {
           "extract_keyframes": false,

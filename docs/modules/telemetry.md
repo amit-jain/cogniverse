@@ -1416,6 +1416,8 @@ Create search service span.
 
 - `backend`, `query`, `strategy`, `top_k`, `profile`
 
+- `result_granularity`: `source` or `segment`
+
 - `input.value`: JSON-encoded query parameters
 
 - `latency_ms`: Search latency (automatic)
@@ -1477,6 +1479,8 @@ Create backend search span.
 
 - `backend`, `query`, `strategy`, `top_k`, `schema`, `has_embeddings`
 
+- `result_granularity`: `source` or `segment`
+
 - `input.value`: JSON-encoded search parameters
 
 - `latency_ms`: Search latency (automatic)
@@ -1508,6 +1512,9 @@ Add search results details to span.
 - `output.value`: Canonical JSON list of result rows (the shape every search consumer reads)
 
 - `top_score`: Score of top result
+
+- `num_collapsed_documents`: Number of documents collapsed into the returned
+  source-level results when `result_granularity="source"`
 
 **Events Added:**
 

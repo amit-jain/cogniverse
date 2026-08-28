@@ -607,6 +607,9 @@ class SearchResult:
         document: Document,
         score: float,
         highlights: Optional[Dict[str, Any]] = None,
+        *,
+        matched_segments: Optional[List[Dict[str, Any]]] = None,
+        segments_in_window: Optional[int] = None,
     ):
         if not isinstance(document, Document):
             raise TypeError(
@@ -618,9 +621,34 @@ class SearchResult:
             raise TypeError(
                 f"highlights must be a dict or None, got {type(highlights).__name__}"
             )
+        if matched_segments is not None:
+            if not isinstance(matched_segments, list):
+                raise TypeError(
+                    "matched_segments must be a list or None, got "
+                    f"{type(matched_segments).__name__}"
+                )
+            for segment in matched_segments:
+                if not isinstance(segment, dict):
+                    raise TypeError(
+                        "matched_segments must contain dict rows, got "
+                        f"{type(segment).__name__}"
+                    )
+        if segments_in_window is not None and (
+            type(segments_in_window) is not int or segments_in_window < 0
+        ):
+            raise TypeError(
+                "segments_in_window must be a non-negative int or None, got "
+                f"{segments_in_window!r}"
+            )
         self.document = document
         self.score = score
         self.highlights = {} if highlights is None else highlights
+        self.matched_segments = (
+            None
+            if matched_segments is None
+            else [dict(segment) for segment in matched_segments]
+        )
+        self.segments_in_window = segments_in_window
 
     def to_dict(self) -> Dict[str, Any]:
         """Convert to dictionary for API responses."""
@@ -634,6 +662,11 @@ class SearchResult:
         # Add source_id if present in metadata
         if "source_id" in self.document.metadata:
             result["source_id"] = self.document.metadata["source_id"]
+
+        if self.matched_segments is not None:
+            result["matched_segments"] = self.matched_segments
+        if self.segments_in_window is not None:
+            result["segments_in_window"] = self.segments_in_window
 
         # Add temporal info if present in metadata; duration only when both
         # bounds are numeric — string timecodes previously crashed the

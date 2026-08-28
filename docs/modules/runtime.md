@@ -644,12 +644,22 @@ results = search_service.search(
     tenant_id="acme",
     top_k=10,
     ranking_strategy="hybrid",
+    result_granularity="source",
     filters={"modality": "video"}
 )
 
 # Note: The API endpoint uses "strategy" field in SearchRequest,
 # but SearchService.search() method uses "ranking_strategy" parameter
 ```
+
+`result_granularity` controls how hits are returned per profile. `source`
+returns one `SearchResult` per source content item, using the best-ranked
+document for that source. Each source result includes `matched_segments` with
+the retrieved documents for that source in relevance order and
+`segments_in_window` with the number of retrieved hits for that source.
+`segment` returns every matching document and omits those fields. Video
+profiles default to `source`; non-video profiles default to `segment` unless
+their profile config says otherwise.
 
 **Search Strategies:**
 
@@ -675,11 +685,18 @@ curl -X POST http://localhost:8000/search/ \
     "query": "machine learning tutorial",
     "profile": "video_colpali_mv_frame",
     "strategy": "hybrid",
+    "result_granularity": "source",
     "top_k": 10,
     "tenant_id": "acme",
     "session_id": "user-session-123"
   }'
 ```
+
+The same `result_granularity` rules apply here: `source` collapses each source
+to its best-ranked document and returns `matched_segments` plus
+`segments_in_window` on each source-level result, while `segment` keeps every
+hit and omits those fields. Video profiles default to `source`; other profiles
+keep `segment` unless their config opts into a different default.
 
 **GET /search/strategies** - List the ranking strategies a profile accepts
 ```bash

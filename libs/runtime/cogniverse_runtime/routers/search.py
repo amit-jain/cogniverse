@@ -3,7 +3,7 @@
 import asyncio
 import json
 import logging
-from typing import Any, Dict, Optional, Union
+from typing import Any, Dict, Literal, Optional, Union
 
 from fastapi import APIRouter, Depends, HTTPException, Query
 from fastapi.responses import StreamingResponse
@@ -57,11 +57,12 @@ class SearchRequest(BaseModel):
     query: str = Field(..., min_length=1)
     profile: Optional[str] = None
     strategy: Optional[str] = "default"
+    result_granularity: Optional[Literal["source", "segment"]] = None
     # Bounded like the graph search route: a negative value reached Vespa as
     # hits=<0 (backend 400 -> customer 500) and an unbounded one is a
     # heap-sized allocation request.
     top_k: int = Field(10, ge=1, le=1000)
-    filters: Dict[str, Any] = {}
+    filters: Dict[str, Any] = Field(default_factory=dict)
     tenant_id: Optional[str] = None
     org_id: Optional[str] = None
     session_id: Optional[str] = None
@@ -156,6 +157,7 @@ async def search(
                 "query": request.query,
                 "profile": request.profile,
                 "strategy": request.strategy,
+                "result_granularity": request.result_granularity,
                 "top_k": request.top_k,
                 "stream": request.stream,
             },
@@ -168,6 +170,7 @@ async def search(
                 "query": request.query,
                 "profile": request.profile,
                 "strategy": request.strategy,
+                "result_granularity": request.result_granularity,
                 "top_k": request.top_k,
                 "stream": request.stream,
             },
@@ -202,6 +205,7 @@ async def search(
                             tenant_id=tenant_id,
                             top_k=request.top_k,
                             ranking_strategy=request.strategy,
+                            result_granularity=request.result_granularity,
                             filters=request.filters,
                         )
 
@@ -241,6 +245,7 @@ async def search(
                     tenant_id=tenant_id,
                     top_k=request.top_k,
                     ranking_strategy=request.strategy,
+                    result_granularity=request.result_granularity,
                     filters=request.filters,
                 )
 

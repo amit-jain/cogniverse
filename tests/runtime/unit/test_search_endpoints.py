@@ -9,6 +9,7 @@ import json
 from contextlib import contextmanager
 from unittest.mock import MagicMock, patch
 
+import httpx
 import pytest
 from fastapi import FastAPI
 from fastapi.testclient import TestClient
@@ -18,6 +19,7 @@ from cogniverse_runtime.routers import search
 from cogniverse_runtime.routers.search import SearchRequest
 from cogniverse_sdk.document import ContentType, Document, SearchResult
 from cogniverse_sdk.interfaces.schema_loader import SchemaLoader
+from cogniverse_vespa.search_backend import SearchResultBatch
 from tests.utils.memory_store import InMemoryConfigStore
 
 
@@ -51,24 +53,8 @@ def _make_noop_telemetry_manager():
     return manager
 
 
-def _make_search_result(doc_id: str = "doc-1", score: float = 0.95) -> SearchResult:
-    """Create a SearchResult for test assertions."""
-    doc = Document(
-        id=doc_id,
-        content_type=ContentType.VIDEO,
-        metadata={"source_id": "video-1", "start_time": 0.0, "end_time": 5.0},
-    )
-    return SearchResult(document=doc, score=score)
-
-
-@pytest.fixture
-def search_client():
-    """
-    TestClient with search router mounted and dependencies overridden.
-
-    Patches SearchService to avoid backend/model initialization and
-    patches get_telemetry_manager to avoid Phoenix/OTLP dependencies.
-    """
+@contextmanager
+def _search_app_context():
     test_app = FastAPI()
     test_app.include_router(search.router, prefix="/search")
 
@@ -95,6 +81,39 @@ def search_client():
             new=_noop_tenant_check,
         ),
     ):
+        yield test_app
+
+
+def _make_search_result(
+    doc_id: str = "doc-1",
+    score: float = 0.95,
+    *,
+    matched_segments=None,
+    segments_in_window=None,
+) -> SearchResult:
+    """Create a SearchResult for test assertions."""
+    doc = Document(
+        id=doc_id,
+        content_type=ContentType.VIDEO,
+        metadata={"source_id": "video-1", "start_time": 0.0, "end_time": 5.0},
+    )
+    return SearchResult(
+        document=doc,
+        score=score,
+        matched_segments=matched_segments,
+        segments_in_window=segments_in_window,
+    )
+
+
+@pytest.fixture
+def search_client():
+    """
+    TestClient with search router mounted and dependencies overridden.
+
+    Patches SearchService to avoid backend/model initialization and
+    patches get_telemetry_manager to avoid Phoenix/OTLP dependencies.
+    """
+    with _search_app_context() as test_app:
         with TestClient(test_app) as client:
             yield client
 
@@ -317,11 +336,128 @@ class TestSearchEndpoint:
         """SearchRequest model has correct defaults."""
         req = SearchRequest(query="test query")
         assert req.strategy == "default"
+        assert req.result_granularity is None
         assert req.top_k == 10
         assert req.stream is False
         assert req.filters == {}
         assert req.tenant_id is None
         assert req.session_id is None
+
+    @pytest.mark.asyncio
+    async def test_search_accepts_explicit_result_granularity(self):
+        with _search_app_context() as test_app:
+            mock_backend = MagicMock()
+            mock_backend.search.return_value = []
+
+            with (
+                patch(
+                    "cogniverse_runtime.routers.search.get_config",
+                    return_value={
+                        "active_video_profile": "video_colpali_smol500_mv_frame",
+                        "backend": {
+                            "profiles": {
+                                "video_colpali_smol500_mv_frame": {
+                                    "type": "video",
+                                    "schema_name": "video_colpali_smol500_mv_frame",
+                                    "embedding_model": "TomoroAI/tomoro-colqwen3-embed-4b",
+                                    "result_granularity": "source",
+                                }
+                            }
+                        },
+                    },
+                ),
+                patch(
+                    "cogniverse_runtime.routers.search.SearchService._get_backend",
+                    return_value=mock_backend,
+                ),
+                patch(
+                    "cogniverse_runtime.routers.search.SearchService._get_encoder",
+                    return_value=MagicMock(),
+                ),
+            ):
+                async with httpx.AsyncClient(
+                    transport=httpx.ASGITransport(app=test_app),
+                    base_url="http://test",
+                ) as client:
+                    resp = await client.post(
+                        "/search/",
+                        json={
+                            "query": "find sunset scenes",
+                            "profile": "video_colpali_smol500_mv_frame",
+                            "tenant_id": "test:unit",
+                            "result_granularity": "segment",
+                        },
+                    )
+
+        assert resp.status_code == 200
+        assert mock_backend.search.call_args.args[0]["result_granularity"] == "segment"
+
+    @pytest.mark.asyncio
+    async def test_search_defaults_video_profiles_to_source(self):
+        with _search_app_context() as test_app:
+            mock_backend = MagicMock()
+            mock_backend.search.return_value = SearchResultBatch()
+
+            with (
+                patch(
+                    "cogniverse_runtime.routers.search.get_config",
+                    return_value={
+                        "active_video_profile": "video_colpali_smol500_mv_frame",
+                        "backend": {
+                            "profiles": {
+                                "video_colpali_smol500_mv_frame": {
+                                    "type": "video",
+                                    "schema_name": "video_colpali_smol500_mv_frame",
+                                    "embedding_model": "TomoroAI/tomoro-colqwen3-embed-4b",
+                                    "result_granularity": "source",
+                                }
+                            }
+                        },
+                    },
+                ),
+                patch(
+                    "cogniverse_runtime.routers.search.SearchService._get_backend",
+                    return_value=mock_backend,
+                ),
+                patch(
+                    "cogniverse_runtime.routers.search.SearchService._get_encoder",
+                    return_value=MagicMock(),
+                ),
+            ):
+                async with httpx.AsyncClient(
+                    transport=httpx.ASGITransport(app=test_app),
+                    base_url="http://test",
+                ) as client:
+                    resp = await client.post(
+                        "/search/",
+                        json={
+                            "query": "find sunset scenes",
+                            "tenant_id": "test:unit",
+                        },
+                    )
+
+        assert resp.status_code == 200
+        assert mock_backend.search.call_args.args[0]["result_granularity"] == "source"
+
+    @pytest.mark.asyncio
+    async def test_search_rejects_unknown_result_granularity(self):
+        with _search_app_context() as test_app:
+            async with httpx.AsyncClient(
+                transport=httpx.ASGITransport(app=test_app),
+                base_url="http://test",
+            ) as client:
+                resp = await client.post(
+                    "/search/",
+                    json={
+                        "query": "find sunset scenes",
+                        "tenant_id": "test:unit",
+                        "result_granularity": "frame",
+                    },
+                )
+
+        assert resp.status_code == 422
+        assert "source" in resp.text
+        assert "segment" in resp.text
 
     @patch("cogniverse_runtime.routers.search.SearchService")
     def test_search_success(self, mock_service_cls, search_client):
@@ -340,6 +476,83 @@ class TestSearchEndpoint:
         assert data["query"] == "find sunset scenes"
         assert data["results_count"] == 1
         assert len(data["results"]) == 1
+
+    @patch("cogniverse_runtime.routers.search.SearchService")
+    def test_search_source_results_include_segment_window(
+        self, mock_service_cls, search_client
+    ):
+        mock_instance = MagicMock()
+        mock_instance.search.return_value = [
+            _make_search_result(
+                matched_segments=[
+                    {
+                        "document_id": "doc-1",
+                        "score": 0.95,
+                        "start_time": 0.0,
+                        "end_time": 5.0,
+                    },
+                    {
+                        "document_id": "doc-2",
+                        "score": 0.90,
+                        "start_time": 5.0,
+                        "end_time": 10.0,
+                    },
+                ],
+                segments_in_window=2,
+            )
+        ]
+        mock_service_cls.return_value = mock_instance
+
+        resp = search_client.post(
+            "/search",
+            json={
+                "query": "find sunset scenes",
+                "top_k": 5,
+                "tenant_id": "test:unit",
+                "result_granularity": "source",
+            },
+        )
+
+        assert resp.status_code == 200
+        row = resp.json()["results"][0]
+        assert row["matched_segments"] == [
+            {
+                "document_id": "doc-1",
+                "score": 0.95,
+                "start_time": 0.0,
+                "end_time": 5.0,
+            },
+            {
+                "document_id": "doc-2",
+                "score": 0.90,
+                "start_time": 5.0,
+                "end_time": 10.0,
+            },
+        ]
+        assert row["segments_in_window"] == 2
+
+    @patch("cogniverse_runtime.routers.search.SearchService")
+    def test_search_segment_results_omit_segment_window(
+        self, mock_service_cls, search_client
+    ):
+        mock_instance = MagicMock()
+        mock_instance.search.return_value = [_make_search_result()]
+        mock_service_cls.return_value = mock_instance
+
+        resp = search_client.post(
+            "/search",
+            json={
+                "query": "find sunset scenes",
+                "top_k": 5,
+                "tenant_id": "test:unit",
+                "result_granularity": "segment",
+            },
+        )
+
+        assert resp.status_code == 200
+        row = resp.json()["results"][0]
+        assert "matched_segments" not in row
+        assert "segments_in_window" not in row
 
     @patch("cogniverse_runtime.routers.search.SearchService")
     def test_search_empty_results(self, mock_service_cls, search_client):

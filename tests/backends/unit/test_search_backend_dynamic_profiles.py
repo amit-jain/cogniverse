@@ -328,6 +328,28 @@ def test_search_raises_when_embeddings_needed_but_no_encoder():
         )
 
 
+def test_search_raises_when_default_source_granularity_has_no_schema_loader():
+    backend = _make_backend(
+        {
+            "vcolpali": {
+                "type": "video",
+                "schema_name": "video_colpali_smol500_mv_frame",
+            }
+        }
+    )
+    backend._schema_loader = None
+
+    with pytest.raises(ValueError, match="source granularity requires schema_loader"):
+        backend.search(
+            query_dict={
+                "query": "ocean waves",
+                "type": "video",
+                "profile": "vcolpali",
+                "tenant_id": "acme",
+            }
+        )
+
+
 def test_search_does_not_retry_value_errors():
     """``ValueError`` signals a permanent config problem (profile missing,
     type unknown, bad inputs). The retry wrapper used to re-fire these 3×
