@@ -15,7 +15,12 @@ from cogniverse_evaluation.quality_monitor import (
     QualityMonitor,
     Verdict,
 )
-from tests.evaluation.fakes import FailingDatasetStore, InMemoryDatasetStore
+from tests.evaluation.fakes import (
+    FailingDatasetStore,
+    InMemoryDatasetStore,
+    StubArtifactManager,
+    StubTelemetryProvider,
+)
 
 pytestmark = pytest.mark.unit
 
@@ -23,28 +28,33 @@ pytestmark = pytest.mark.unit
 CANON = "test_tenant:test_tenant"
 
 
+GOLDEN_ROWS = [
+    {
+        "query": "man lifting barbell",
+        "expected_videos": ["v_-HpCLXdtcas"],
+        "ground_truth": "Man lifting a barbell",
+        "query_type": "answer_phrase",
+        "source": "test",
+    },
+    {
+        "query": "dog playing in park",
+        "expected_videos": ["v_dog123"],
+        "ground_truth": "Dog playing fetch in a park",
+        "query_type": "question",
+        "source": "test",
+    },
+]
+
+
 @pytest.fixture
-def golden_dataset(tmp_path):
-    """Create a minimal golden dataset for testing."""
-    queries = [
-        {
-            "query": "man lifting barbell",
-            "expected_videos": ["v_-HpCLXdtcas"],
-            "ground_truth": "Man lifting a barbell",
-            "query_type": "answer_phrase",
-            "source": "test",
-        },
-        {
-            "query": "dog playing in park",
-            "expected_videos": ["v_dog123"],
-            "ground_truth": "Dog playing fetch in a park",
-            "query_type": "question",
-            "source": "test",
-        },
-    ]
-    path = tmp_path / "golden.json"
-    path.write_text(json.dumps(queries))
-    return str(path)
+def golden_dataset(monkeypatch):
+    """The tenant's golden set, as the artifact blob the monitor loads."""
+    stub_manager = StubArtifactManager(raw=json.dumps(GOLDEN_ROWS))
+    monkeypatch.setattr(
+        "cogniverse_agents.optimizer.artifact_manager.ArtifactManager",
+        lambda *args, **kwargs: stub_manager,
+    )
+    return stub_manager
 
 
 @pytest.fixture
@@ -60,7 +70,7 @@ def monitor(golden_dataset):
         phoenix_http_endpoint="http://localhost:6006",
         llm_base_url="http://localhost:11434",
         llm_model="qwen3:4b",
-        golden_dataset_path=golden_dataset,
+        golden_dataset_path="unused-by-the-monitor",
         argo_api_url="http://localhost:2746",
         argo_namespace="test-ns",
     )
@@ -101,30 +111,39 @@ class TestSpanEvaluatorEndpoint:
 
 class TestGoldenDatasetLoading:
     def test_load_golden_queries(self, monitor):
-        queries = monitor._load_golden_queries()
-        assert len(queries) == 2
-        assert queries[0]["query"] == "man lifting barbell"
-        assert queries[0]["expected_videos"] == ["v_-HpCLXdtcas"]
+        assert monitor._load_golden_queries() == GOLDEN_ROWS
 
     def test_load_golden_queries_cached(self, monitor):
         first = monitor._load_golden_queries()
         second = monitor._load_golden_queries()
         assert first is second
 
-    def test_load_golden_queries_file_not_found(self):
-        m = QualityMonitor(
-            tenant_id="t",
-            runtime_url="http://x",
-            phoenix_http_endpoint="http://x",
-            llm_base_url="http://x",
-            llm_model="m",
-            golden_dataset_path="/nonexistent/path.json",
+    def test_load_golden_queries_missing_blob(self, monkeypatch):
+        from cogniverse_agents.optimizer.golden_set_ground_truth import (
+            GoldenSetGroundTruthMissingError,
         )
-        with pytest.raises(FileNotFoundError):
+
+        monkeypatch.setattr(
+            "cogniverse_agents.optimizer.artifact_manager.ArtifactManager",
+            lambda *args, **kwargs: StubArtifactManager(raw=None),
+        )
+        m = QualityMonitor(
+            tenant_id="test_tenant",
+            runtime_url="http://localhost:28000",
+            phoenix_http_endpoint="http://localhost:6006",
+            llm_base_url="http://localhost:11434",
+            llm_model="qwen3:4b",
+            golden_dataset_path="unused-by-the-monitor",
+            argo_api_url="http://localhost:2746",
+            argo_namespace="test-ns",
+            telemetry_provider=StubTelemetryProvider(InMemoryDatasetStore()),
+        )
+        with pytest.raises(GoldenSetGroundTruthMissingError) as caught:
             m._load_golden_queries()
+        assert str(caught.value) == (
+            "golden_set_ground_truth is not configured for tenant test_tenant:test_tenant"
+        )
 
-
-class TestThresholdChecking:
     def test_golden_mrr_drop_triggers_optimize(self, monitor):
         # Prior baseline 0.6 carried on the result — drop is 33% > 10%.
         golden = GoldenEvalResult(
@@ -255,26 +274,45 @@ class TestTriggerBuilding:
 class TestGoldenSetGrowth:
     @pytest.mark.asyncio
     async def test_grow_golden_set_adds_new_queries(self, monitor, golden_dataset):
-        original = monitor._load_golden_queries()
-        assert len(original) == 2
+        from cogniverse_agents.optimizer.golden_set_ground_truth import (
+            GOLDEN_SET_GROUND_TRUTH_BLOB_KEY,
+            GOLDEN_SET_GROUND_TRUTH_BLOB_KIND,
+        )
 
-        new_queries = [
+        original = await monitor._load_golden_queries_async()
+        assert original == GOLDEN_ROWS
+
+        new_row = {
+            "query": "cat sitting on couch",
+            "expected_videos": ["v_cat456"],
+            "ground_truth": "Cat on couch",
+            "query_type": "live_traffic",
+            "source": "quality_monitor",
+        }
+        await monitor.grow_golden_set([new_row])
+
+        expected_rows = GOLDEN_ROWS + [new_row]
+        assert [
+            {**call, "content": json.loads(call["content"])}
+            for call in golden_dataset.save_calls
+        ] == [
             {
-                "query": "cat sitting on couch",
-                "expected_videos": ["v_cat456"],
-                "ground_truth": "Cat on couch",
-                "query_type": "live_traffic",
-                "source": "quality_monitor",
-            },
+                "kind": GOLDEN_SET_GROUND_TRUTH_BLOB_KIND,
+                "key": GOLDEN_SET_GROUND_TRUTH_BLOB_KEY,
+                "content": expected_rows,
+                "consumed_example_ids": ["quality_monitor:golden_set_ground_truth"],
+                "decision": "promote",
+                "scored": False,
+                "score": None,
+                "base_score": None,
+                "candidate_score": None,
+            }
         ]
-
-        await monitor.grow_golden_set(new_queries)
-
-        # Re-read from disk
-        with open(golden_dataset) as f:
-            updated = json.load(f)
-        assert len(updated) == 3
-        assert updated[2]["query"] == "cat sitting on couch"
+        assert golden_dataset.activate_calls == [
+            (GOLDEN_SET_GROUND_TRUTH_BLOB_KIND, GOLDEN_SET_GROUND_TRUTH_BLOB_KEY, 1)
+        ]
+        assert monitor._golden_queries == expected_rows
+        assert await monitor._load_golden_queries_async() == expected_rows
 
     @pytest.mark.asyncio
     async def test_grow_golden_set_skips_queries_without_ground_truth(
@@ -291,37 +329,32 @@ class TestGoldenSetGrowth:
             ]
         )
 
-        with open(golden_dataset) as f:
-            updated = json.load(f)
-        queries = {q["query"] for q in updated}
-        assert "good one" in queries
-        assert "unanswerable live query" not in queries
-        assert "also empty" not in queries
+        assert [json.loads(call["content"]) for call in golden_dataset.save_calls] == [
+            GOLDEN_ROWS + [{"query": "good one", "expected_videos": ["v9"]}]
+        ]
 
     @pytest.mark.asyncio
-    async def test_grow_golden_set_write_is_atomic(self, monitor, golden_dataset):
-        """A crash mid-write must not truncate the golden file — the next load
-        would raise JSONDecodeError and kill golden eval. Simulate os.replace
-        failing after the tmp write and assert the original file is intact."""
-        import os
+    async def test_grow_golden_set_failed_save_leaves_the_loaded_set_unchanged(
+        self, monitor
+    ):
+        """A store failure mid-save must propagate, activate nothing, and leave
+        the loaded golden set exactly as it was — never a half-grown set."""
+        manager = StubArtifactManager(
+            raw=json.dumps(GOLDEN_ROWS), save_exc=RuntimeError("store down")
+        )
+        monitor._artifact_manager = manager
+        original = await monitor._load_golden_queries_async()
+        assert original == GOLDEN_ROWS
 
-        original = monitor._load_golden_queries()
-        with patch(
-            "cogniverse_evaluation.quality_monitor.os.replace",
-            side_effect=OSError("disk full"),
-        ):
-            with pytest.raises(OSError):
-                await monitor.grow_golden_set(
-                    [{"query": "new q", "expected_videos": ["v1"]}]
-                )
+        with pytest.raises(RuntimeError, match="store down"):
+            await monitor.grow_golden_set(
+                [{"query": "new q", "expected_videos": ["v1"]}]
+            )
 
-        # The original file is still valid JSON with the original content.
-        with open(golden_dataset) as f:
-            after = json.load(f)
-        assert after == original
-        # No orphan tmp file left behind.
-        d = os.path.dirname(golden_dataset)
-        assert not [f for f in os.listdir(d) if f.endswith(".tmp")]
+        assert manager.save_calls == []
+        assert manager.activate_calls == []
+        assert monitor._golden_queries == GOLDEN_ROWS
+        assert await monitor._load_golden_queries_async() == GOLDEN_ROWS
 
     @pytest.mark.asyncio
     async def test_grow_golden_set_deduplicates(self, monitor, golden_dataset):
@@ -335,9 +368,9 @@ class TestGoldenSetGrowth:
 
         await monitor.grow_golden_set(new_queries)
 
-        with open(golden_dataset) as f:
-            updated = json.load(f)
-        assert len(updated) == 2  # No duplicates added
+        assert golden_dataset.save_calls == []
+        assert golden_dataset.activate_calls == []
+        assert await monitor._load_golden_queries_async() == GOLDEN_ROWS
 
 
 class TestLLMJudgePrompts:
@@ -656,8 +689,8 @@ class TestGoldenEvaluation:
         """The per-query /search posts run concurrently, not one at a time."""
         import asyncio
 
-        n = len(monitor._load_golden_queries())
-        assert n >= 2
+        n = len(await monitor._load_golden_queries_async())
+        assert n == len(GOLDEN_ROWS)
         barrier = asyncio.Barrier(n)
 
         class _FakeResp:
@@ -1149,9 +1182,9 @@ class TestForceOptimizationCycle:
         assert result["submitted_to_argo"] is False
 
     @pytest.mark.asyncio
-    async def test_force_cycle_returns_no_data_when_both_evals_fail(self, monitor):
-        """If both golden and live evals raise, the cycle must return a
-        ``no_data`` status without crashing — Argo will retry on next run."""
+    async def test_force_cycle_propagates_a_golden_eval_outage(self, monitor):
+        """A store or Phoenix outage during golden eval is not "no data": it
+        propagates so the caller can retry, and nothing is stored or submitted."""
         with (
             patch.object(
                 monitor, "evaluate_golden_set", new_callable=AsyncMock
@@ -1169,11 +1202,53 @@ class TestForceOptimizationCycle:
             mock_golden.side_effect = Exception("phoenix down")
             mock_live.side_effect = Exception("phoenix down")
 
+            with pytest.raises(Exception, match="phoenix down"):
+                await monitor.force_optimization_cycle()
+
+        mock_live.assert_not_awaited()
+        mock_store.assert_not_awaited()
+        mock_submit.assert_not_awaited()
+
+    @pytest.mark.asyncio
+    async def test_force_cycle_reports_a_missing_golden_set(self, monitor):
+        """No golden set for the tenant is a named, non-retryable status, not
+        an outage and not "no data"."""
+        from cogniverse_agents.optimizer.golden_set_ground_truth import (
+            GoldenSetGroundTruthMissingError,
+        )
+
+        with (
+            patch.object(
+                monitor, "evaluate_golden_set", new_callable=AsyncMock
+            ) as mock_golden,
+            patch.object(
+                monitor, "evaluate_live_traffic", new_callable=AsyncMock
+            ) as mock_live,
+            patch.object(
+                monitor, "_store_trigger_dataset", new_callable=AsyncMock
+            ) as mock_store,
+            patch.object(
+                monitor, "submit_optimization", new_callable=AsyncMock
+            ) as mock_submit,
+        ):
+            mock_golden.side_effect = GoldenSetGroundTruthMissingError(
+                "golden_set_ground_truth is not configured for tenant "
+                "test_tenant:test_tenant"
+            )
+
             result = await monitor.force_optimization_cycle()
 
-        assert result["status"] == "no_data"
-        assert result["submitted_to_argo"] is False
+        assert result == {
+            "status": "golden_set_missing",
+            "retryable": False,
+            "error": (
+                "golden_set_ground_truth is not configured for tenant "
+                "test_tenant:test_tenant"
+            ),
+        }
+        mock_live.assert_not_awaited()
         mock_store.assert_not_awaited()
+        mock_submit.assert_not_awaited()
         mock_submit.assert_not_awaited()
 
     @pytest.mark.asyncio

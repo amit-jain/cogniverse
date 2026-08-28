@@ -1744,6 +1744,7 @@ After optimization, artifacts are persisted to the telemetry store via `Artifact
 - `dspy-experiments-{tenant_id}-{agent_type}` — Optimization run metrics as typed `ExperimentMetrics` rows (one per run via `save_experiment`; read the latest with `load_latest_experiment`)
 - `("model", <key>)` blobs — compiled DSPy module state for `profile_selection`, `entity_extraction`, `simba_query_enhancement` (triggered mode publishes compiled instructions as versioned prompts instead of a module-state blob); each version ledger stores `consumed_example_ids`, `decision`, `scored`, `score`, `base_score`, `candidate_score`, and `created_at`, and older rows simply omit `score`.
 - `("config", "gateway_thresholds")` blob — calibrated gateway thresholds
+- `("config", "golden_set_ground_truth")` blob — tenant-uploaded retrieval golden set, validated as rows with `query` plus normalized `expected_videos`; the quality-monitor sidecar seeds it once from its mounted JSON file, then reads it through `ArtifactManager` for golden evals
 - `("config", "profile_selection_ground_truth")` blob — tenant-uploaded profile-selection labels, validated as rows with `query` plus normalized `expected_videos`
 - `("config", "entity_extraction_ground_truth")` blob — tenant-uploaded entity-extraction labels, validated as rows with `query` plus normalized `entities[{text, type}]`
 

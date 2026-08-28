@@ -16,6 +16,12 @@ from cogniverse_agents.optimizer.entity_extraction_ground_truth import (
     canonicalize_entity_extraction_ground_truth_rows,
     serialize_entity_extraction_ground_truth_rows,
 )
+from cogniverse_agents.optimizer.golden_set_ground_truth import (
+    GOLDEN_SET_GROUND_TRUTH_BLOB_KEY,
+    GOLDEN_SET_GROUND_TRUTH_BLOB_KIND,
+    canonicalize_golden_set_ground_truth_rows,
+    serialize_golden_set_ground_truth_rows,
+)
 from cogniverse_agents.optimizer.profile_selection_ground_truth import (
     PROFILE_SELECTION_GROUND_TRUTH_BLOB_KEY,
     PROFILE_SELECTION_GROUND_TRUTH_BLOB_KIND,
@@ -1299,6 +1305,13 @@ class ProfileSelectionGroundTruthResponse(BaseModel):
     active: Dict[str, Any]
 
 
+class GoldenSetGroundTruthResponse(BaseModel):
+    tenant_id: str
+    row_count: int
+    version: int
+    active: Dict[str, Any]
+
+
 class EntityExtractionGroundTruthResponse(BaseModel):
     tenant_id: str
     row_count: int
@@ -1548,6 +1561,61 @@ async def set_profile_selection_ground_truth(
         len(canonical_rows),
     )
     return ProfileSelectionGroundTruthResponse(
+        tenant_id=key,
+        row_count=len(canonical_rows),
+        version=version,
+        active=state["active"],
+    )
+
+
+@router.put(
+    "/tenants/{tenant_id}/golden_set_ground_truth",
+    response_model=GoldenSetGroundTruthResponse,
+)
+async def set_golden_set_ground_truth(
+    tenant_id: str, rows: List[Dict[str, Any]]
+) -> GoldenSetGroundTruthResponse:
+    """Persist tenant-owned golden-set ground truth as the active blob."""
+
+    try:
+        canonical_rows = canonicalize_golden_set_ground_truth_rows(rows)
+    except ValueError as exc:
+        message = str(exc).replace(
+            "profile_selection_ground_truth", "golden_set_ground_truth"
+        )
+        raise HTTPException(400, message) from exc
+
+    key = canonical_tenant_id(tenant_id)
+    content = serialize_golden_set_ground_truth_rows(canonical_rows)
+    try:
+        am = _build_artifact_manager(key)
+        _, version = await am.save_blob_versioned(
+            GOLDEN_SET_GROUND_TRUTH_BLOB_KIND,
+            GOLDEN_SET_GROUND_TRUTH_BLOB_KEY,
+            content,
+            consumed_example_ids=["admin_upload:golden_set_ground_truth"],
+            decision="promote",
+            scored=False,
+            score=None,
+            base_score=None,
+            candidate_score=None,
+        )
+        state = await am.activate_version_guarded(
+            GOLDEN_SET_GROUND_TRUTH_BLOB_KIND,
+            GOLDEN_SET_GROUND_TRUTH_BLOB_KEY,
+            version,
+        )
+    except HTTPException:
+        raise
+    except Exception as exc:
+        raise HTTPException(503, f"golden_set_ground_truth store unavailable: {exc}") from exc
+
+    logger.info(
+        "Updated + persisted golden_set_ground_truth for tenant=%s with %d rows",
+        key,
+        len(canonical_rows),
+    )
+    return GoldenSetGroundTruthResponse(
         tenant_id=key,
         row_count=len(canonical_rows),
         version=version,

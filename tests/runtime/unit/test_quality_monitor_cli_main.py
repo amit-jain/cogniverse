@@ -9,10 +9,12 @@ process alive when the monitor loop raises or returns unexpectedly.
 
 from __future__ import annotations
 
+import json
 import sys
 import threading
 from concurrent.futures import ThreadPoolExecutor
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
+from unittest.mock import AsyncMock
 
 import httpr
 import pytest
@@ -61,10 +63,25 @@ class _BreakLoop(BaseException):
     """Sentinel that forces the monitor runner to stop after a retry."""
 
 
+# The tenant's golden rows the readiness probe uses when main() is not given a
+# seed file; the fixture's readiness stub returns them.
+READINESS_ROWS = ({"query": "ready probe", "expected_videos": ["v1"]},)
+
+
 @pytest.fixture
 def patched(monkeypatch):
     monkeypatch.setattr(qm, "_build_phoenix_provider", lambda **k: None)
     monkeypatch.setattr(qm, "_workflow_pod_spec_from_env", lambda: None)
+    monkeypatch.setattr(
+        qm,
+        "_seed_golden_set_blob",
+        AsyncMock(return_value=True),
+    )
+    monkeypatch.setattr(
+        qm,
+        "_golden_rows_for_readiness",
+        AsyncMock(return_value=list(READINESS_ROWS)),
+    )
     monkeypatch.setattr(
         "cogniverse_foundation.telemetry.manager.get_telemetry_manager",
         lambda *a, **k: _StubTelemetry(),
@@ -133,6 +150,7 @@ def test_once_status_ok_exits_0_and_closes(patched):
 
 def test_main_waits_for_runtime_search_before_constructing_monitor(patched):
     calls = []
+    expected_queries = list(READINESS_ROWS)
 
     def wait_for_search(**kwargs):
         calls.append(kwargs)
@@ -144,9 +162,7 @@ def test_main_waits_for_runtime_search_before_constructing_monitor(patched):
         {
             "runtime_url": "http://localhost:28000",
             "tenant_id": "acme:acme",
-            "golden_dataset_path": (
-                "data/testset/evaluation/sample_videos_retrieval_queries.json"
-            ),
+            "golden_queries": expected_queries,
             "timeout_seconds": 300.0,
             "poll_interval_seconds": 2.0,
         }
@@ -514,3 +530,160 @@ def test_one_shot_startup_dependency_fails_instead_of_retrying_forever():
         "within 0.0s: ConnectError: Vespa config query refused"
     )
     assert isinstance(excinfo.value.__cause__, httpr.ConnectError)
+
+
+@pytest.mark.asyncio
+async def test_seed_golden_set_blob_promotes_the_cli_dataset_once(monkeypatch):
+    rows = [
+        {
+            "query": "find basketball highlights",
+            "expected_videos": ["v-1", "v-2"],
+            "ground_truth": "basketball",
+            "query_type": "question",
+            "source": "tenant_upload",
+        }
+    ]
+
+    class _StubArtifactManager:
+        def __init__(self):
+            self._tenant_id = "acme:acme"
+            self.load_calls = []
+            self.save_calls = []
+            self.activate_calls = []
+
+        async def load_blob(self, kind, key):
+            self.load_calls.append((kind, key))
+            return None
+
+        async def save_blob_versioned(
+            self,
+            kind,
+            key,
+            content,
+            *,
+            consumed_example_ids,
+            decision,
+            scored,
+            score,
+            base_score,
+            candidate_score,
+        ):
+            self.save_calls.append(
+                {
+                    "kind": kind,
+                    "key": key,
+                    "content": content,
+                    "consumed_example_ids": list(consumed_example_ids),
+                    "decision": decision,
+                    "scored": scored,
+                    "score": score,
+                    "base_score": base_score,
+                    "candidate_score": candidate_score,
+                }
+            )
+            return "dataset-1", 1
+
+        async def activate_version(self, kind, key, version):
+            self.activate_calls.append((kind, key, version))
+            return {"active": {"version": version}}
+
+    class _StubProvider:
+        datasets = object()
+
+    class _StubTelemetryManager:
+        def get_provider(self, tenant_id):
+            self.tenant_id = tenant_id
+            return _StubProvider()
+
+    stub_artifact_manager = _StubArtifactManager()
+    monkeypatch.setattr(
+        "cogniverse_agents.optimizer.artifact_manager.ArtifactManager",
+        lambda *args, **kwargs: stub_artifact_manager,
+    )
+
+    seeded = await qm._seed_golden_set_blob(
+        telemetry_manager=_StubTelemetryManager(),
+        tenant_id="acme",
+        golden_queries=rows,
+    )
+
+    assert seeded is True
+    assert stub_artifact_manager.load_calls == [("config", "golden_set_ground_truth")]
+    assert stub_artifact_manager.save_calls == [
+        {
+            "kind": "config",
+            "key": "golden_set_ground_truth",
+            "content": json.dumps(rows, separators=(",", ":")),
+            "consumed_example_ids": ["quality_monitor_cli:golden_dataset_path"],
+            "decision": "promote",
+            "scored": False,
+            "score": None,
+            "base_score": None,
+            "candidate_score": None,
+        }
+    ]
+    assert stub_artifact_manager.activate_calls == [
+        ("config", "golden_set_ground_truth", 1)
+    ]
+
+
+def test_golden_dataset_path_seeds_the_blob_and_probes_with_the_file_rows(
+    patched, tmp_path
+):
+    rows = [{"query": "man lifting barbell", "expected_videos": ["v_-HpCLXdtcas"]}]
+    golden = tmp_path / "golden.json"
+    golden.write_text(json.dumps(rows))
+    seed = AsyncMock(return_value=True)
+    patched.setattr(qm, "_seed_golden_set_blob", seed)
+    probes: list[dict] = []
+    patched.setattr(
+        qm, "_wait_for_runtime_search", lambda **kwargs: probes.append(kwargs)
+    )
+
+    assert (
+        _main_exit(patched, [*_BASE, "--golden-dataset-path", str(golden), "--once"])
+        == 0
+    )
+
+    assert seed.await_count == 1
+    assert seed.await_args.kwargs["tenant_id"] == "acme:acme"
+    assert seed.await_args.kwargs["golden_queries"] == rows
+    assert [p["golden_queries"] for p in probes] == [rows]
+
+
+def test_without_a_seed_path_readiness_uses_the_tenant_blob_rows(patched):
+    seed = AsyncMock(return_value=True)
+    patched.setattr(qm, "_seed_golden_set_blob", seed)
+    blob_rows = [{"query": "blob query", "expected_videos": ["v9"]}]
+    patched.setattr(qm, "_golden_rows_for_readiness", AsyncMock(return_value=blob_rows))
+    probes: list[dict] = []
+    patched.setattr(
+        qm, "_wait_for_runtime_search", lambda **kwargs: probes.append(kwargs)
+    )
+
+    assert _main_exit(patched, [*_BASE, "--once"]) == 0
+
+    assert seed.await_count == 0
+    assert [p["golden_queries"] for p in probes] == [blob_rows]
+
+
+def test_without_a_seed_path_or_a_golden_set_the_probe_is_skipped_with_a_warning(
+    patched, caplog
+):
+    seed = AsyncMock(return_value=True)
+    patched.setattr(qm, "_seed_golden_set_blob", seed)
+    patched.setattr(qm, "_golden_rows_for_readiness", AsyncMock(return_value=None))
+    probes: list[dict] = []
+    patched.setattr(
+        qm, "_wait_for_runtime_search", lambda **kwargs: probes.append(kwargs)
+    )
+
+    with caplog.at_level("WARNING", logger=qm.logger.name):
+        assert _main_exit(patched, [*_BASE, "--once"]) == 0
+
+    assert seed.await_count == 0
+    assert probes == []
+    assert [r.getMessage() for r in caplog.records if r.levelname == "WARNING"] == [
+        "No golden set for tenant acme:acme; skipping the search readiness probe. "
+        "Upload one via PUT /admin/tenants/{tenant_id}/golden_set_ground_truth."
+    ]

@@ -556,8 +556,10 @@ spec:
         - {{ .Values.runtime.qualityMonitor.liveIntervalSeconds | quote }}
         - "--live-sample-count"
         - {{ .Values.runtime.qualityMonitor.liveSampleCount | quote }}
+        {{- if .Values.runtime.qualityMonitor.goldenDatasetPath }}
         - "--golden-dataset-path"
         - {{ .Values.runtime.qualityMonitor.goldenDatasetPath | quote }}
+        {{- end }}
         {{- if .Values.argo.enabled }}
         - "--argo-url"
         - "https://argo-server.argo.svc.cluster.local:2746"
@@ -597,13 +599,13 @@ spec:
           mountPath: /app/configs/config.json
           subPath: config.json
           readOnly: true
-        # Mount the bundled golden dataset so the sidecar can find the path
-        # passed via --golden-dataset-path. Without this mount the sidecar
-        # crash-loops on startup with FileNotFoundError.
+        {{- if .Values.runtime.qualityMonitor.goldenDatasetPath }}
+        # The golden-set seed file, mounted only when a seed path is configured.
         - name: quality-monitor-data
           mountPath: /app/data/quality-monitor/golden_dataset.json
           subPath: golden_dataset.json
           readOnly: true
+        {{- end }}
         {{- if .Values.devMode.enabled }}
         - name: src-libs
           mountPath: /app/libs
@@ -646,11 +648,13 @@ spec:
       {{- end }}
       {{- if .Values.runtime.qualityMonitor.enabled }}
       # Golden dataset for the QualityMonitor sidecar.
+      {{- if .Values.runtime.qualityMonitor.goldenDatasetPath }}
       # ConfigMap is built by templates/configmap.yaml from
       # files/quality-monitor/golden_dataset.json.
       - name: quality-monitor-data
         configMap:
           name: {{ $fullName }}-quality-monitor-data
+      {{- end }}
       {{- end }}
       {{- if .Values.runtime.sandbox.enabled }}
       {{- if or .Values.runtime.sandbox.inCluster.enabled (.Values.runtime.sandbox.external).enabled }}

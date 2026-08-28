@@ -65,3 +65,62 @@ class FailingDatasetStore(InMemoryDatasetStore):
 
     async def append_to_dataset(self, name, data, metadata=None):
         raise ConnectionError("connection refused: telemetry backend down")
+
+
+class StubTelemetryProvider:
+    def __init__(self, datasets):
+        self.datasets = datasets
+
+
+class StubArtifactManager:
+    def __init__(self, *, raw=None, load_exc=None, save_exc=None):
+        self._raw = raw
+        self._load_exc = load_exc
+        self._save_exc = save_exc
+        self._tenant_id = "test_tenant:test_tenant"
+        self.load_calls: list[tuple[str, str]] = []
+        self.save_calls: list[dict] = []
+        self.activate_calls: list[tuple[str, str, int]] = []
+
+    async def load_blob(self, kind, key):
+        self.load_calls.append((kind, key))
+        if self._load_exc is not None:
+            raise self._load_exc
+        return self._raw
+
+    async def save_blob_versioned(
+        self,
+        kind,
+        key,
+        content,
+        *,
+        consumed_example_ids,
+        decision,
+        scored,
+        score,
+        base_score,
+        candidate_score,
+    ):
+        if self._save_exc is not None:
+            raise self._save_exc
+        self.save_calls.append(
+            {
+                "kind": kind,
+                "key": key,
+                "content": content,
+                "consumed_example_ids": list(consumed_example_ids),
+                "decision": decision,
+                "scored": scored,
+                "score": score,
+                "base_score": base_score,
+                "candidate_score": candidate_score,
+            }
+        )
+        return "dataset-1", 1
+
+    async def activate_version(self, kind, key, version):
+        self.activate_calls.append((kind, key, version))
+        return {"active": {"version": version, "activated_at": "2026-08-26T00:00:00Z"}}
+
+    async def activate_version_guarded(self, kind, key, version):
+        return await self.activate_version(kind, key, version)

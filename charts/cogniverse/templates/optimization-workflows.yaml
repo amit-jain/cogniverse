@@ -429,8 +429,10 @@ spec:
           # provider-routed form ``openai/google/gemma-4-e4b-it``
           # that the prefixed helper returns.
           - {{ include "cogniverse.primaryLLMModelBare" . | quote }}
+          {{- if .Values.runtime.qualityMonitor.goldenDatasetPath }}
           - "--golden-dataset-path"
           - {{ .Values.runtime.qualityMonitor.goldenDatasetPath | quote }}
+          {{- end }}
           - "--argo-url"
           - "https://argo-server.argo.svc.cluster.local:2746"
           - "--argo-namespace"
@@ -464,10 +466,12 @@ spec:
           mountPath: /app/configs/config.json
           subPath: config.json
           readOnly: true
+        {{- if .Values.runtime.qualityMonitor.goldenDatasetPath }}
         - name: quality-monitor-data
           mountPath: /app/data/quality-monitor/golden_dataset.json
           subPath: golden_dataset.json
           readOnly: true
+        {{- end }}
         {{- if .Values.devMode.enabled }}
         - name: src-libs
           mountPath: /app/libs
@@ -478,9 +482,11 @@ spec:
       - name: config
         configMap:
           name: {{ $fullName }}-config
+      {{- if .Values.runtime.qualityMonitor.goldenDatasetPath }}
       - name: quality-monitor-data
         configMap:
           name: {{ $fullName }}-quality-monitor-data
+      {{- end }}
       {{- if .Values.devMode.enabled }}
       - name: src-libs
         hostPath:

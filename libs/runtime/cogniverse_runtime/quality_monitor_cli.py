@@ -203,6 +203,90 @@ def _wait_for_runtime_search(
         time.sleep(max(sleep_for, 0))
 
 
+GOLDEN_SET_UPLOAD_ROUTE = "PUT /admin/tenants/{tenant_id}/golden_set_ground_truth"
+
+
+async def _golden_rows_for_readiness(
+    *,
+    telemetry_manager,
+    tenant_id: str,
+) -> list[dict] | None:
+    """The tenant's golden rows for the search readiness probe, or ``None``
+    when the tenant has no golden set. A store outage propagates."""
+    from cogniverse_agents.optimizer.artifact_manager import ArtifactManager
+    from cogniverse_agents.optimizer.golden_set_ground_truth import (
+        GoldenSetGroundTruthMissingError,
+        load_golden_set_ground_truth_rows,
+    )
+
+    telemetry_provider = telemetry_manager.get_provider(tenant_id=tenant_id)
+    artifact_manager = ArtifactManager(
+        telemetry_provider=telemetry_provider,
+        tenant_id=tenant_id,
+    )
+    try:
+        return await load_golden_set_ground_truth_rows(artifact_manager)
+    except GoldenSetGroundTruthMissingError:
+        return None
+
+
+async def _seed_golden_set_blob(
+    *,
+    telemetry_manager,
+    tenant_id: str,
+    golden_queries: list[dict],
+) -> bool:
+    """Promote the one-shot golden dataset file into the tenant blob."""
+    from cogniverse_agents.optimizer.artifact_manager import ArtifactManager
+    from cogniverse_agents.optimizer.golden_set_ground_truth import (
+        GOLDEN_SET_GROUND_TRUTH_BLOB_KEY,
+        GOLDEN_SET_GROUND_TRUTH_BLOB_KIND,
+        canonicalize_golden_set_ground_truth_rows,
+        serialize_golden_set_ground_truth_rows,
+    )
+
+    telemetry_provider = telemetry_manager.get_provider(tenant_id=tenant_id)
+    artifact_manager = ArtifactManager(
+        telemetry_provider=telemetry_provider,
+        tenant_id=tenant_id,
+    )
+    existing = await artifact_manager.load_blob(
+        GOLDEN_SET_GROUND_TRUTH_BLOB_KIND,
+        GOLDEN_SET_GROUND_TRUTH_BLOB_KEY,
+    )
+    if existing is not None:
+        logger.info(
+            "Golden set blob already present for tenant=%s; leaving it unchanged",
+            tenant_id,
+        )
+        return False
+
+    canonical_rows = canonicalize_golden_set_ground_truth_rows(golden_queries)
+    content = serialize_golden_set_ground_truth_rows(canonical_rows)
+    _, version = await artifact_manager.save_blob_versioned(
+        GOLDEN_SET_GROUND_TRUTH_BLOB_KIND,
+        GOLDEN_SET_GROUND_TRUTH_BLOB_KEY,
+        content,
+        consumed_example_ids=["quality_monitor_cli:golden_dataset_path"],
+        decision="promote",
+        scored=False,
+        score=None,
+        base_score=None,
+        candidate_score=None,
+    )
+    await artifact_manager.activate_version(
+        GOLDEN_SET_GROUND_TRUTH_BLOB_KIND,
+        GOLDEN_SET_GROUND_TRUTH_BLOB_KEY,
+        version,
+    )
+    logger.info(
+        "Seeded golden set blob v%d for tenant=%s from CLI dataset path",
+        version,
+        tenant_id,
+    )
+    return True
+
+
 def _load_automation_rules(tenant_id: str, config_manager=None):
     """automation_rules from the tenant config, defaults on any failure.
 
@@ -780,8 +864,13 @@ def main():
     )
     parser.add_argument(
         "--golden-dataset-path",
-        default="data/testset/evaluation/sample_videos_retrieval_queries.json",
-        help="Path to golden evaluation dataset JSON",
+        default=None,
+        help=(
+            "One-shot seed for the tenant's golden set: read once at startup "
+            "and uploaded as the golden_set_ground_truth blob when the tenant "
+            "has none. Omit to seed nothing; the monitor then reports "
+            "golden_set_missing until a golden set is uploaded."
+        ),
     )
     parser.add_argument(
         "--argo-url",
@@ -879,14 +968,10 @@ def main():
         retry_forever=not one_shot,
     )
     telemetry_manager.config.provider_config["http_endpoint"] = telemetry_http_endpoint
-    if not one_shot:
-        _wait_for_runtime_search(
-            runtime_url=args.runtime_url,
-            tenant_id=args.tenant_id,
-            golden_dataset_path=args.golden_dataset_path,
-            timeout_seconds=args.startup_timeout,
-            poll_interval_seconds=args.startup_poll_interval,
-        )
+    golden_queries = None
+    if not one_shot and args.golden_dataset_path:
+        with open(args.golden_dataset_path, encoding="utf-8") as golden_file:
+            golden_queries = json.load(golden_file)
 
     from cogniverse_evaluation.quality_monitor import QualityMonitor
 
@@ -898,6 +983,37 @@ def main():
         tenant_id=args.tenant_id,
         http_endpoint=telemetry_http_endpoint,
     )
+    if not one_shot:
+        if golden_queries is not None:
+            asyncio.run(
+                _seed_golden_set_blob(
+                    telemetry_manager=telemetry_manager,
+                    tenant_id=args.tenant_id,
+                    golden_queries=golden_queries,
+                )
+            )
+        else:
+            golden_queries = asyncio.run(
+                _golden_rows_for_readiness(
+                    telemetry_manager=telemetry_manager,
+                    tenant_id=args.tenant_id,
+                )
+            )
+        if golden_queries:
+            _wait_for_runtime_search(
+                runtime_url=args.runtime_url,
+                tenant_id=args.tenant_id,
+                golden_queries=golden_queries,
+                timeout_seconds=args.startup_timeout,
+                poll_interval_seconds=args.startup_poll_interval,
+            )
+        else:
+            logger.warning(
+                "No golden set for tenant %s; skipping the search readiness probe. "
+                "Upload one via %s.",
+                args.tenant_id,
+                GOLDEN_SET_UPLOAD_ROUTE,
+            )
 
     workflow_pod_spec = _workflow_pod_spec_from_env()
     monitor_kwargs = dict(
