@@ -1587,6 +1587,10 @@ class TestEnhancedQueryEnhancementAgent:
         """Span records the canonical input/output/operation slots."""
         import json
 
+        from cogniverse_foundation.telemetry.span_contract import (
+            QUERY_ENHANCEMENT_PATH_LM,
+        )
+
         telemetry = RecordingTelemetryManager()
         qe_agent.telemetry_manager = telemetry
 
@@ -1602,6 +1606,7 @@ class TestEnhancedQueryEnhancementAgent:
                 context_additions=["industrial"],
                 variant_count=2,
                 confidence=0.85,
+                path_used=QUERY_ENHANCEMENT_PATH_LM,
             )
         )
 
@@ -1614,6 +1619,7 @@ class TestEnhancedQueryEnhancementAgent:
         assert recorded["input.source_text"] == "industrial robots weld car frames"
         assert recorded["input.grounding_context"] == "Entities: robots (CONCEPT)"
         assert recorded["operation"] == "query_enhancement"
+        assert recorded["enhancement.path"] == QUERY_ENHANCEMENT_PATH_LM
         assert json.loads(recorded["output.value"]) == {
             "enhanced_query": "robots enhanced",
             "expansion_terms": ["weld", "car frames"],
@@ -1626,6 +1632,10 @@ class TestEnhancedQueryEnhancementAgent:
     @pytest.mark.expects_telemetry_loss_warning
     def test_emit_span_warns_without_telemetry_manager(self, qe_agent, caplog):
         """No manager: the request continues; the loss is a WARNING, never silent."""
+        from cogniverse_foundation.telemetry.span_contract import (
+            QUERY_ENHANCEMENT_PATH_LM,
+        )
+
         qe_agent.telemetry_manager = None
         with caplog.at_level(
             logging.WARNING, logger="cogniverse_agents.query_enhancement_agent"
@@ -1642,6 +1652,7 @@ class TestEnhancedQueryEnhancementAgent:
                     context_additions=[],
                     variant_count=0,
                     confidence=0.5,
+                    path_used=QUERY_ENHANCEMENT_PATH_LM,
                 )
             )
         assert _messages(caplog, "cogniverse_agents.query_enhancement_agent") == [
@@ -1652,6 +1663,10 @@ class TestEnhancedQueryEnhancementAgent:
     @pytest.mark.expects_telemetry_loss_warning
     def test_emit_span_enqueue_failure_warns_and_does_not_raise(self, qe_agent, caplog):
         """A telemetry enqueue failure never fails the request; it is a WARNING."""
+        from cogniverse_foundation.telemetry.span_contract import (
+            QUERY_ENHANCEMENT_PATH_HEURISTIC_FALLBACK,
+        )
+
         telemetry = FailingTelemetryManager(RuntimeError("telemetry boom"))
         qe_agent.telemetry_manager = telemetry
 
@@ -1670,6 +1685,7 @@ class TestEnhancedQueryEnhancementAgent:
                     context_additions=[],
                     variant_count=0,
                     confidence=0.5,
+                    path_used=QUERY_ENHANCEMENT_PATH_HEURISTIC_FALLBACK,
                 )
             )
 
@@ -1872,6 +1888,241 @@ class TestQueryEnhancementArtifactLoading:
             qe_agent.telemetry_manager = mock_tm
             qe_agent._artifact_tenant_id = "test:unit"
             qe_agent._load_artifact()  # Should not raise
+
+
+class TestQueryEnhancementSpanContract:
+    """Real agent spans keep the query-enhancement marker explicit."""
+
+    @staticmethod
+    def _telemetry_capture():
+        from contextlib import contextmanager
+        from types import SimpleNamespace
+
+        from opentelemetry.sdk.trace import TracerProvider
+        from opentelemetry.sdk.trace.export import SimpleSpanProcessor
+        from opentelemetry.sdk.trace.export.in_memory_span_exporter import (
+            InMemorySpanExporter,
+        )
+
+        exporter = InMemorySpanExporter()
+        provider = TracerProvider()
+        provider.add_span_processor(SimpleSpanProcessor(exporter))
+        tracer = provider.get_tracer("query-enhancement-span-contract")
+
+        class _TelemetryManager:
+            def span(
+                self,
+                name,
+                *,
+                tenant_id,
+                project_name=None,
+                attributes=None,
+                require_export=False,
+            ):
+                del require_export
+
+                @contextmanager
+                def _ctx():
+                    with tracer.start_as_current_span(name) as span:
+                        span.set_attribute("tenant.id", tenant_id)
+                        if project_name is not None:
+                            span.set_attribute("project.name", project_name)
+                        for key, value in (attributes or {}).items():
+                            if value is not None:
+                                span.set_attribute(key, value)
+                        yield span
+
+                return _ctx()
+
+        return SimpleNamespace(exporter=exporter, manager=_TelemetryManager())
+
+    @staticmethod
+    def _agent():
+        from cogniverse_agents.query_enhancement_agent import (
+            QueryEnhancementAgent,
+            QueryEnhancementDeps,
+        )
+
+        return QueryEnhancementAgent(deps=QueryEnhancementDeps(), port=19112)
+
+    @pytest.mark.asyncio
+    @pytest.mark.parametrize(
+        ("lm_output", "expected_warning"),
+        [
+            (
+                {
+                    "enhanced_query": "show videos",
+                    "expansion_terms": "ignored",
+                    "synonyms": "",
+                    "context": "",
+                    "confidence": "0.9",
+                    "reasoning": "echo",
+                },
+                "Query enhancement fell back for query=show videos reason=echoed input",
+            ),
+            (
+                {
+                    "enhanced_query": "show videos about machine learning",
+                    "expansion_terms": "",
+                    "synonyms": "",
+                    "context": "",
+                    "confidence": "0.9",
+                    "reasoning": "empty",
+                },
+                "Query enhancement fell back for query=show videos reason=empty fields",
+            ),
+        ],
+    )
+    async def test_fallback_exports_heuristic_marker_and_warning(
+        self, lm_output, expected_warning, caplog
+    ):
+        from dspy.utils.dummies import DummyLM
+
+        from cogniverse_agents.query_enhancement_agent import QueryEnhancementInput
+        from cogniverse_foundation.telemetry.span_contract import read_span_io
+
+        capture = self._telemetry_capture()
+        agent = self._agent()
+        agent.set_telemetry_manager(capture.manager)
+
+        with (
+            caplog.at_level(
+                logging.WARNING,
+                logger="cogniverse_agents.query_enhancement_agent",
+            ),
+            dspy.context(lm=DummyLM([lm_output])),
+        ):
+            result = await agent._process_impl(
+                QueryEnhancementInput(
+                    query="show videos",
+                    source_text="show videos source text",
+                    tenant_id=TEST_TENANT_ID,
+                )
+            )
+
+        assert result.model_dump() == {
+            "original_query": "show videos",
+            "enhanced_query": "show videos tutorial",
+            "expansion_terms": ["tutorial", "guide", "demonstration"],
+            "synonyms": ["display", "present"],
+            "context_additions": [],
+            "query_variants": [
+                "show videos tutorial",
+                "show videos tutorial guide demonstration",
+            ],
+            "confidence": 0.5,
+            "reasoning": "Fallback enhancement with heuristic expansion",
+        }
+        assert _messages(caplog, "cogniverse_agents.query_enhancement_agent") == [
+            expected_warning
+        ]
+
+        spans = capture.exporter.get_finished_spans()
+        assert [span.name for span in spans] == ["cogniverse.query_enhancement"]
+
+        span_attrs = dict(spans[0].attributes)
+        assert span_attrs["input.value"] == "show videos"
+        assert span_attrs["input.source_text"] == "show videos source text"
+        assert span_attrs["input.grounding_context"] == ""
+        assert span_attrs["operation"] == "query_enhancement"
+        assert span_attrs["enhancement.path"] == "heuristic_fallback"
+        assert read_span_io(span_attrs) == {
+            "input": "show videos",
+            "output": {
+                "enhanced_query": "show videos tutorial",
+                "expansion_terms": ["tutorial", "guide", "demonstration"],
+                "synonyms": ["display", "present"],
+                "context_additions": [],
+                "variant_count": 2,
+                "confidence": 0.5,
+            },
+            "operation": "query_enhancement",
+            "modality": None,
+        }
+
+    def test_declared_span_attribute_keys_include_marker(self):
+        from cogniverse_foundation.telemetry.span_contract import (
+            QUERY_ENHANCEMENT_PATH_VALUES,
+            QUERY_ENHANCEMENT_SPAN_ATTRIBUTE_KEYS,
+        )
+
+        assert QUERY_ENHANCEMENT_SPAN_ATTRIBUTE_KEYS == frozenset(
+            {
+                "input.value",
+                "input.source_text",
+                "input.grounding_context",
+                "operation",
+                "output.value",
+                "enhancement.path",
+            }
+        )
+        assert QUERY_ENHANCEMENT_PATH_VALUES == frozenset({"lm", "heuristic_fallback"})
+
+    @pytest.mark.asyncio
+    async def test_genuine_enhancement_exports_lm_marker_and_fields(self):
+        from dspy.utils.dummies import DummyLM
+
+        from cogniverse_agents.query_enhancement_agent import QueryEnhancementInput
+        from cogniverse_foundation.telemetry.span_contract import read_span_io
+
+        capture = self._telemetry_capture()
+        agent = self._agent()
+        agent.set_telemetry_manager(capture.manager)
+
+        lm_output = {
+            "enhanced_query": "show videos about machine learning",
+            "expansion_terms": "machine learning, lesson",
+            "synonyms": "clips, tutorials",
+            "context": "education",
+            "confidence": "0.9",
+            "reasoning": "Added machine learning context",
+        }
+
+        with dspy.context(lm=DummyLM([lm_output])):
+            result = await agent._process_impl(
+                QueryEnhancementInput(
+                    query="show videos",
+                    source_text="show videos source text",
+                    tenant_id=TEST_TENANT_ID,
+                )
+            )
+
+        assert result.model_dump() == {
+            "original_query": "show videos",
+            "enhanced_query": "show videos about machine learning",
+            "expansion_terms": ["machine learning", "lesson"],
+            "synonyms": ["clips", "tutorials"],
+            "context_additions": ["education"],
+            "query_variants": [
+                "show videos about machine learning",
+                "show videos machine learning lesson",
+            ],
+            "confidence": 0.9,
+            "reasoning": "Added machine learning context",
+        }
+
+        spans = capture.exporter.get_finished_spans()
+        assert [span.name for span in spans] == ["cogniverse.query_enhancement"]
+
+        span_attrs = dict(spans[0].attributes)
+        assert span_attrs["input.value"] == "show videos"
+        assert span_attrs["input.source_text"] == "show videos source text"
+        assert span_attrs["input.grounding_context"] == ""
+        assert span_attrs["operation"] == "query_enhancement"
+        assert span_attrs["enhancement.path"] == "lm"
+        assert read_span_io(span_attrs) == {
+            "input": "show videos",
+            "output": {
+                "enhanced_query": "show videos about machine learning",
+                "expansion_terms": ["machine learning", "lesson"],
+                "synonyms": ["clips", "tutorials"],
+                "context_additions": ["education"],
+                "variant_count": 2,
+                "confidence": 0.9,
+            },
+            "operation": "query_enhancement",
+            "modality": None,
+        }
 
 
 class TestAdvancedRoutingLMPredictor:

@@ -64,6 +64,9 @@ async def _emit_all(manager) -> None:
     from cogniverse_agents.gateway_agent import GatewayAgent
     from cogniverse_agents.profile_selection_agent import ProfileSelectionAgent
     from cogniverse_agents.query_enhancement_agent import QueryEnhancementAgent
+    from cogniverse_foundation.telemetry.span_contract import (
+        QUERY_ENHANCEMENT_PATH_LM,
+    )
 
     qe = object.__new__(QueryEnhancementAgent)
     qe.telemetry_manager = manager
@@ -78,6 +81,7 @@ async def _emit_all(manager) -> None:
         context_additions=[],
         variant_count=0,
         confidence=0.5,
+        path_used=QUERY_ENHANCEMENT_PATH_LM,
     )
 
     gw = object.__new__(GatewayAgent)

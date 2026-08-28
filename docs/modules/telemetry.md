@@ -54,6 +54,10 @@ libs/foundation/cogniverse_foundation/telemetry/
   from a Phoenix span row. Search (list output) and domain spans like
   `query_enhancement` (dict output) share the same writer and reader, so eval,
   dataset-building, experiments, and optimization read every operation uniformly.
+  Query-enhancement spans also carry `enhancement.path` with `lm` for a genuine
+  enhancement and `heuristic_fallback` for the heuristic expansion, so served
+  rows stay machine-readable when the LM echoes the query or returns empty
+  fields.
   Also holds the annotation constants (`RESULT_RELEVANCE`, `RESULT_CLICK`,
   `RESULT_ID_META_KEY`, `RELEVANCE_POSITIVE_THRESHOLD`,
   `PREFERENCE_CHOSEN_THRESHOLD`) that `TripletExtractor`,
