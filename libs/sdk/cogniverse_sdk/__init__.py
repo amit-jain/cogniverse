@@ -7,6 +7,16 @@ It has zero dependencies and serves as the foundation for the entire system.
 
 __version__ = "0.1.0"
 
-from cogniverse_sdk.document import Document, SearchResult
+from cogniverse_sdk.document import (
+    Document,
+    SearchResult,
+    SearchResultBatch,
+    resolve_result_granularity,
+)
 
-__all__ = ["Document", "SearchResult"]
+__all__ = [
+    "Document",
+    "SearchResult",
+    "SearchResultBatch",
+    "resolve_result_granularity",
+]

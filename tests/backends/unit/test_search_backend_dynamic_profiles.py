@@ -15,7 +15,10 @@ from unittest.mock import MagicMock, patch
 import pytest
 
 from cogniverse_core.common.utils.retry import RetryConfig
-from cogniverse_vespa.search_backend import VespaSearchBackend
+from cogniverse_vespa.search_backend import (
+    VespaSearchBackend,
+    _source_collapse_fetch_limit,
+)
 
 
 def _make_backend(profiles: dict | None = None) -> VespaSearchBackend:
@@ -328,7 +331,62 @@ def test_search_raises_when_embeddings_needed_but_no_encoder():
         )
 
 
-def test_search_raises_when_default_source_granularity_has_no_schema_loader():
+@pytest.mark.parametrize(
+    ("top_k", "profile_config", "expected"),
+    [
+        (10, {}, 40),
+        (1000, {}, 256),
+        (10, {"source_collapse_oversample": 12}, 120),
+    ],
+)
+def test_source_collapse_fetch_limit_uses_bounded_multiplier(
+    top_k, profile_config, expected
+):
+    assert _source_collapse_fetch_limit(top_k, profile_config) == expected
+
+
+@pytest.mark.parametrize(
+    ("profile_config", "message"),
+    [
+        (
+            {"source_collapse_oversample": 0},
+            "source_collapse_oversample must be >= 1",
+        ),
+        (
+            {"source_collapse_oversample": 1.5},
+            "source_collapse_oversample must be an integer",
+        ),
+    ],
+)
+def test_source_collapse_fetch_limit_rejects_invalid_oversample(
+    profile_config, message
+):
+    with pytest.raises(ValueError) as exc_info:
+        _source_collapse_fetch_limit(10, profile_config)
+
+    assert str(exc_info.value) == message
+
+
+@pytest.mark.parametrize(
+    "query_dict",
+    [
+        {
+            "query": "ocean waves",
+            "type": "video",
+            "profile": "vcolpali",
+            "tenant_id": "acme",
+        },
+        {
+            "query": "ocean waves",
+            "type": "video",
+            "profile": "vcolpali",
+            "tenant_id": "acme",
+            "result_granularity": "source",
+        },
+    ],
+    ids=["default_source", "requested_source"],
+)
+def test_search_raises_when_source_granularity_has_no_schema_loader(query_dict):
     backend = _make_backend(
         {
             "vcolpali": {
@@ -337,17 +395,24 @@ def test_search_raises_when_default_source_granularity_has_no_schema_loader():
             }
         }
     )
-    backend._schema_loader = None
-
-    with pytest.raises(ValueError, match="source granularity requires schema_loader"):
-        backend.search(
-            query_dict={
-                "query": "ocean waves",
-                "type": "video",
-                "profile": "vcolpali",
-                "tenant_id": "acme",
+    with patch(
+        "cogniverse_vespa.search_backend._RANKING_STRATEGIES_CACHE",
+        {
+            "video_colpali_smol500_mv_frame": {
+                "bm25_only": {
+                    "needs_float_embeddings": False,
+                    "needs_binary_embeddings": False,
+                }
             }
-        )
+        },
+    ):
+        with pytest.raises(ValueError) as exc_info:
+            backend.search(query_dict=query_dict)
+
+    assert str(exc_info.value) == (
+        "Profile 'vcolpali' (schema 'video_colpali_smol500_mv_frame') "
+        "source granularity requires schema_loader"
+    )
 
 
 def test_search_does_not_retry_value_errors():

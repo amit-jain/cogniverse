@@ -17,9 +17,13 @@ from fastapi.testclient import TestClient
 from cogniverse_foundation.config.manager import ConfigManager
 from cogniverse_runtime.routers import search
 from cogniverse_runtime.routers.search import SearchRequest
-from cogniverse_sdk.document import ContentType, Document, SearchResult
+from cogniverse_sdk.document import (
+    ContentType,
+    Document,
+    SearchResult,
+    SearchResultBatch,
+)
 from cogniverse_sdk.interfaces.schema_loader import SchemaLoader
-from cogniverse_vespa.search_backend import SearchResultBatch
 from tests.utils.memory_store import InMemoryConfigStore
 
 

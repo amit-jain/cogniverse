@@ -13,7 +13,7 @@ from unittest.mock import MagicMock, Mock, patch
 import pytest
 
 from cogniverse_agents.search.service import SearchService
-from cogniverse_vespa.search_backend import SearchResultBatch
+from cogniverse_sdk.document import SearchResultBatch
 
 
 @pytest.fixture

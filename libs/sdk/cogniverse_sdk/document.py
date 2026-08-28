@@ -12,6 +12,7 @@ serializer stays pure.
 import math
 import time
 import uuid
+from collections.abc import Mapping
 from dataclasses import dataclass, field, fields
 from datetime import datetime, timezone
 from enum import Enum
@@ -685,3 +686,49 @@ class SearchResult:
             result["temporal_info"] = temporal
 
         return result
+
+
+ALLOWED_RESULT_GRANULARITIES = ("source", "segment")
+
+
+def resolve_result_granularity(
+    profile_config: Mapping[str, Any], requested: Optional[str] = None
+) -> str:
+    """Resolve the effective search result granularity for one profile.
+
+    An explicit request wins; otherwise the profile's own
+    ``result_granularity`` applies; otherwise video profiles collapse to one
+    result per source and every other type stays at segment level.
+    """
+    candidate = requested
+    if candidate is None:
+        candidate = profile_config.get("result_granularity")
+    if candidate is None:
+        candidate = (
+            "source"
+            if str(profile_config.get("type") or "").lower() == "video"
+            else "segment"
+        )
+    if not isinstance(candidate, str) or candidate not in ALLOWED_RESULT_GRANULARITIES:
+        raise ValueError(
+            "result_granularity must be one of "
+            f"{ALLOWED_RESULT_GRANULARITIES}, got {candidate!r}"
+        )
+    return candidate
+
+
+class SearchResultBatch(list):
+    """List-like search result set carrying backend result metadata."""
+
+    def __init__(
+        self,
+        results=None,
+        *,
+        result_granularity: str = "segment",
+        num_collapsed_documents: int = 0,
+        total_count: Optional[int] = None,
+    ):
+        super().__init__(results or [])
+        self.result_granularity = result_granularity
+        self.num_collapsed_documents = num_collapsed_documents
+        self.total_count = total_count
