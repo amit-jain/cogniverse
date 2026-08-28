@@ -84,19 +84,63 @@ _E2E_SANDBOX_HOST_GATEWAY_IP = "172.18.0.1"
 
 
 def _expected_e2e_sandbox_overrides() -> dict[str, str]:
-    return {
-        "inference.vllm_llm_teacher.enabled": "false",
-        "inference.vllm_colpali.livenessProbe.initialDelaySeconds": "1200",
-        "inference.vllm_colpali.livenessProbe.failureThreshold": "60",
-        "inference.vllm_asr.livenessProbe.initialDelaySeconds": "1200",
-        "inference.vllm_asr.livenessProbe.failureThreshold": "60",
-        "inference.vllm_llm_student.livenessProbe.initialDelaySeconds": "1200",
-        "inference.vllm_llm_student.livenessProbe.failureThreshold": "60",
-        "runtime.sandbox.enabled": "true",
-        "runtime.sandbox.inCluster.enabled": "false",
-        "runtime.sandbox.gatewayEndpoint": _E2E_SANDBOX_GATEWAY_ENDPOINT,
-        "runtime.sandbox.hostGatewayIP": _E2E_SANDBOX_HOST_GATEWAY_IP,
+    overrides = {
+        f"inference.{service}.enabled": "false"
+        for service in sorted(e2e_conftest._E2E_DISABLED_INFERENCE_SERVICES)
     }
+    overrides.update(
+        {
+            "runtime.sandbox.enabled": "true",
+            "runtime.sandbox.inCluster.enabled": "false",
+            "runtime.sandbox.gatewayEndpoint": _E2E_SANDBOX_GATEWAY_ENDPOINT,
+            "runtime.sandbox.hostGatewayIP": _E2E_SANDBOX_HOST_GATEWAY_IP,
+        }
+    )
+    for service in ("vllm_llm_teacher", "vllm_colpali", "vllm_llm_student", "vllm_asr"):
+        overrides[f"inference.{service}.livenessProbe.initialDelaySeconds"] = "1200"
+        overrides[f"inference.{service}.livenessProbe.failureThreshold"] = "60"
+    return overrides
+
+
+def _stack_request() -> SimpleNamespace:
+    """The ``request`` surface ``e2e_stack`` uses: an empty session item list and
+    ``addfinalizer``, which the fixture calls to release the run lock."""
+    request = SimpleNamespace(session=SimpleNamespace(items=[]), finalizers=[])
+    request.addfinalizer = request.finalizers.append
+    return request
+
+
+def _stub_stack_boundaries(monkeypatch) -> dict[str, list]:
+    """Record the boundaries ``e2e_stack`` crosses after the cluster decision:
+    the run lock, the GPU-residency reclaim, and the two corpus ingests. The
+    cluster-decision helpers are stubbed per scenario by the caller."""
+    from tests.e2e import run_lock
+
+    calls: dict[str, list] = {
+        "acquire": [],
+        "release": [],
+        "residency": [],
+        "ingest_documents": [],
+        "ingest_evaluation_corpus": [],
+    }
+    monkeypatch.setattr(
+        run_lock, "acquire", lambda path: calls["acquire"].append(path) or True
+    )
+    monkeypatch.setattr(run_lock, "release", lambda path: calls["release"].append(path))
+    monkeypatch.setattr(
+        run_lock, "ensure_e2e_gpu_residency", lambda: calls["residency"].append(True)
+    )
+    monkeypatch.setattr(
+        e2e_conftest,
+        "_ingest_sample_documents",
+        lambda: calls["ingest_documents"].append(True),
+    )
+    monkeypatch.setattr(
+        e2e_conftest,
+        "_ingest_evaluation_text_corpus",
+        lambda: calls["ingest_evaluation_corpus"].append(True),
+    )
+    return calls
 
 
 class TestE2EDeploymentOverrides:
@@ -1452,11 +1496,22 @@ class TestSharedClusterOwnership:
             e2e_conftest, "_restore_cronworkflows", lambda cron_restore: None
         )
 
+        boundaries = _stub_stack_boundaries(monkeypatch)
+        request = _stack_request()
         with pytest.raises(RuntimeError, match="commit first"):
-            stack = e2e_conftest.e2e_stack.__wrapped__(
-                SimpleNamespace(session=SimpleNamespace(items=[])), {}
-            )
+            stack = e2e_conftest.e2e_stack.__wrapped__(request, {})
             next(stack)
+
+        from tests.e2e import run_lock
+
+        assert boundaries == {
+            "acquire": [run_lock.default_lock_path()],
+            "release": [],
+            "residency": [True],
+            "ingest_documents": [],
+            "ingest_evaluation_corpus": [],
+        }
+        assert len(request.finalizers) == 1
 
         assert calls == {"create": [], "deploy": []}
 
@@ -1867,9 +1922,9 @@ class TestSharedClusterOwnership:
             e2e_conftest, "_restore_cronworkflows", lambda cron_restore: None
         )
 
-        stack = e2e_conftest.e2e_stack.__wrapped__(
-            SimpleNamespace(session=SimpleNamespace(items=[])), {}
-        )
+        calls["boundaries"] = _stub_stack_boundaries(monkeypatch)
+        calls["request"] = _stack_request()
+        stack = e2e_conftest.e2e_stack.__wrapped__(calls["request"], {})
         next(stack)
         return stack, calls
 
@@ -1877,6 +1932,16 @@ class TestSharedClusterOwnership:
         stack, calls = self._start_stack(
             monkeypatch, cluster_states=[], force_fresh=False
         )
+        from tests.e2e import run_lock
+
+        assert calls["boundaries"] == {
+            "acquire": [run_lock.default_lock_path()],
+            "release": [],
+            "residency": [True],
+            "ingest_documents": [True],
+            "ingest_evaluation_corpus": [True],
+        }
+        assert len(calls["request"].finalizers) == 1
 
         assert calls["create"] == [
             (
@@ -2082,13 +2147,23 @@ class TestSharedClusterOwnership:
             ),
         )
 
-        stack = e2e_conftest.e2e_stack.__wrapped__(
-            SimpleNamespace(session=SimpleNamespace(items=[])), {}
-        )
+        boundaries = _stub_stack_boundaries(monkeypatch)
+        request = _stack_request()
+        stack = e2e_conftest.e2e_stack.__wrapped__(request, {})
         with pytest.raises(BaseException) as raised:
             next(stack)
 
         assert deleted == []
+        from tests.e2e import run_lock
+
+        assert boundaries == {
+            "acquire": [run_lock.default_lock_path()],
+            "release": [],
+            "residency": [True],
+            "ingest_documents": [],
+            "ingest_evaluation_corpus": [],
+        }
+        assert len(request.finalizers) == 1
         assert reason in str(raised.value)
         assert "k3d cluster delete cogniverse-e2e" in str(raised.value)
 
@@ -2201,16 +2276,40 @@ class TestSharedClusterOwnership:
             e2e_conftest, "_restore_cronworkflows", lambda cron_restore: None
         )
 
-        stack = e2e_conftest.e2e_stack.__wrapped__(
-            SimpleNamespace(session=SimpleNamespace(items=[])), {}
-        )
+        boundaries = _stub_stack_boundaries(monkeypatch)
+        request = _stack_request()
+        stack = e2e_conftest.e2e_stack.__wrapped__(request, {})
         next(stack)
         stack.close()
+
+        from tests.e2e import run_lock
+
+        assert boundaries == {
+            "acquire": [run_lock.default_lock_path()],
+            "release": [],
+            "residency": [True],
+            "ingest_documents": [True],
+            "ingest_evaluation_corpus": [True],
+        }
+        assert len(request.finalizers) == 1
 
         assert inspections == [None, None]
         assert started == ["cogniverse-e2e"]
         assert created == []
         assert deleted == []
+
+        from tests.e2e import run_lock
+
+        assert boundaries == {
+            "acquire": [run_lock.default_lock_path()],
+            "release": [],
+            "residency": [True],
+            "ingest_documents": [True],
+            "ingest_evaluation_corpus": [True],
+        }
+        assert len(request.finalizers) == 1
+        request.finalizers[0]()
+        assert boundaries["release"] == [run_lock.default_lock_path()]
 
     def test_deployment_helper_refuses_to_replace_existing_cluster(self, monkeypatch):
         """The disposable helper may only delete a cluster it just created."""
