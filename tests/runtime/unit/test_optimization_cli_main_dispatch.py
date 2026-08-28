@@ -533,3 +533,74 @@ class TestConfigErrorExitsCleanly:
         assert result.returncode == 1
         assert "Error:" in result.stderr
         assert "Traceback" not in result.stderr
+
+
+_DENSEON_URL = "http://cogniverse-denseon:8000"
+
+
+@pytest.mark.parametrize("mode,worker_attr", _LOOKBACK_MODES)
+def test_lookback_mode_derives_embedder_url_from_inference_service_urls(
+    monkeypatch, mode, worker_attr
+):
+    """The scheduled (Argo) path passes no --embedder-url; main() must hand the
+    denseon entry of INFERENCE_SERVICE_URLS to the worker, or any pool above
+    trainset_cap fails with 'training selection requires --embedder-url'."""
+    monkeypatch.setenv(
+        "INFERENCE_SERVICE_URLS",
+        json.dumps(
+            {"denseon": _DENSEON_URL, "gliner": "http://cogniverse-gliner:8080"}
+        ),
+    )
+    rec = _Recorder(_OK)
+    monkeypatch.setattr(oc, worker_attr, rec)
+    code = _run_main(
+        monkeypatch, ["--mode", mode, "--tenant-id", "acme", "--lookback-hours", "2.5"]
+    )
+    assert code == 0
+    assert rec.calls == 1
+    assert rec.kwargs == _expected_lookback_kwargs(worker_attr, _DENSEON_URL)
+
+
+@pytest.mark.parametrize("mode,worker_attr", _LOOKBACK_MODES)
+def test_explicit_embedder_url_overrides_inference_service_urls(
+    monkeypatch, mode, worker_attr
+):
+    monkeypatch.setenv("INFERENCE_SERVICE_URLS", json.dumps({"denseon": _DENSEON_URL}))
+    rec = _Recorder(_OK)
+    monkeypatch.setattr(oc, worker_attr, rec)
+    code = _run_main(
+        monkeypatch,
+        [
+            "--mode",
+            mode,
+            "--tenant-id",
+            "acme",
+            "--lookback-hours",
+            "2.5",
+            "--embedder-url",
+            "http://denseon.test:8000",
+        ],
+    )
+    assert code == 0
+    assert rec.calls == 1
+    assert rec.kwargs == _expected_lookback_kwargs(
+        worker_attr, "http://denseon.test:8000"
+    )
+
+
+@pytest.mark.parametrize("mode,worker_attr", _LOOKBACK_MODES)
+def test_inference_service_urls_without_denseon_leaves_embedder_url_unset(
+    monkeypatch, mode, worker_attr
+):
+    monkeypatch.setenv(
+        "INFERENCE_SERVICE_URLS",
+        json.dumps({"gliner": "http://cogniverse-gliner:8080"}),
+    )
+    rec = _Recorder(_OK)
+    monkeypatch.setattr(oc, worker_attr, rec)
+    code = _run_main(
+        monkeypatch, ["--mode", mode, "--tenant-id", "acme", "--lookback-hours", "2.5"]
+    )
+    assert code == 0
+    assert rec.calls == 1
+    assert rec.kwargs == _expected_lookback_kwargs(worker_attr, None)
