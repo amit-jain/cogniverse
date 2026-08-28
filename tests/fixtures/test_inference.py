@@ -355,7 +355,7 @@ def test_discovered_provider_closes_only_its_owned_validator():
     ) as (base_url, requests):
         provider = DiscoveredEndpointProvider(
             "e2e",
-            lambda spec: (base_url,),
+            lambda spec: (_discovered(base_url, None),),
         )
         owned_client = provider._validator._client
         endpoint = provider.resolve(COLPALI)
@@ -546,7 +546,7 @@ def test_provider_does_not_close_injected_validator():
             validator = EndpointValidator(injected_client)
             provider = DiscoveredEndpointProvider(
                 "e2e",
-                lambda spec: (base_url,),
+                lambda spec: (_discovered(base_url, None),),
                 validator=validator,
             )
 
@@ -753,7 +753,7 @@ def test_api_key_does_not_warm_modal_for_generic_cluster_resolution(monkeypatch)
         monkeypatch.setattr(
             vllm_sidecar,
             "_discover_e2e_model_urls",
-            lambda model: events.append("e2e") or (base_url,),
+            lambda model: events.append("e2e") or (_discovered(base_url, None),),
         )
         monkeypatch.setattr(
             vllm_sidecar,
@@ -926,7 +926,7 @@ def test_concurrent_resolution_selects_and_validates_once(monkeypatch):
 
         def discover(spec):
             discovery_calls.append(spec.name)
-            return (base_url,)
+            return (_discovered(base_url, None),)
 
         endpoint_provider = DiscoveredEndpointProvider(
             "e2e",
@@ -1599,7 +1599,7 @@ def test_borrowed_cluster_endpoint_is_not_mutated_during_teardown(monkeypatch):
         monkeypatch.setattr(
             vllm_sidecar,
             "_discover_e2e_model_urls",
-            lambda model: (base_url,),
+            lambda model: (_discovered(base_url, None),),
         )
         monkeypatch.setattr(
             vllm_sidecar,

@@ -453,13 +453,17 @@ def test_default_resolution_prefers_dynamic_e2e_mapping_over_dynamic_dev(
         monkeypatch.setattr(
             sidecar_module,
             "_discover_e2e_model_urls",
-            lambda model: (e2e_url,),
+            lambda model: (
+                sidecar_module._DiscoveredClusterEndpoint(base_url=e2e_url),
+            ),
             raising=False,
         )
         monkeypatch.setattr(
             sidecar_module,
             "_discover_dev_model_urls",
-            lambda model: (dev_url,),
+            lambda model: (
+                sidecar_module._DiscoveredClusterEndpoint(base_url=dev_url),
+            ),
             raising=False,
         )
 
@@ -485,13 +489,17 @@ def test_explicit_test_override_precedes_both_clusters(monkeypatch):
         monkeypatch.setattr(
             sidecar_module,
             "_discover_e2e_model_urls",
-            lambda model: (e2e_url,),
+            lambda model: (
+                sidecar_module._DiscoveredClusterEndpoint(base_url=e2e_url),
+            ),
             raising=False,
         )
         monkeypatch.setattr(
             sidecar_module,
             "_discover_dev_model_urls",
-            lambda model: (dev_url,),
+            lambda model: (
+                sidecar_module._DiscoveredClusterEndpoint(base_url=dev_url),
+            ),
             raising=False,
         )
 
@@ -515,13 +523,17 @@ def test_default_resolution_uses_dynamic_dev_when_e2e_model_is_wrong(monkeypatch
         monkeypatch.setattr(
             sidecar_module,
             "_discover_e2e_model_urls",
-            lambda model: (wrong_e2e_url,),
+            lambda model: (
+                sidecar_module._DiscoveredClusterEndpoint(base_url=wrong_e2e_url),
+            ),
             raising=False,
         )
         monkeypatch.setattr(
             sidecar_module,
             "_discover_dev_model_urls",
-            lambda model: (dev_url,),
+            lambda model: (
+                sidecar_module._DiscoveredClusterEndpoint(base_url=dev_url),
+            ),
             raising=False,
         )
 
@@ -542,13 +554,17 @@ def test_default_resolution_spawns_local_when_neither_cluster_is_exact(monkeypat
         monkeypatch.setattr(
             sidecar_module,
             "_discover_e2e_model_urls",
-            lambda model: (wrong_url,),
+            lambda model: (
+                sidecar_module._DiscoveredClusterEndpoint(base_url=wrong_url),
+            ),
             raising=False,
         )
         monkeypatch.setattr(
             sidecar_module,
             "_discover_dev_model_urls",
-            lambda model: (wrong_url,),
+            lambda model: (
+                sidecar_module._DiscoveredClusterEndpoint(base_url=wrong_url),
+            ),
             raising=False,
         )
 

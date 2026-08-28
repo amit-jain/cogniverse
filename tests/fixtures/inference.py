@@ -88,11 +88,12 @@ def _immutable_headers(candidate: CandidateEndpoint, spec: InferenceServiceSpec)
 
 
 def _discovered_endpoint(candidate: object) -> tuple[str, str | None]:
-    if isinstance(candidate, _DiscoveredClusterEndpoint):
-        return candidate.base_url, candidate.model_revision
-    if isinstance(candidate, str):
-        return candidate, None
-    raise TypeError(f"unexpected discovered endpoint {candidate!r}")
+    if not isinstance(candidate, _DiscoveredClusterEndpoint):
+        raise TypeError(
+            "cluster discovery must yield _DiscoveredClusterEndpoint, "
+            f"got {type(candidate).__name__}: {candidate!r}"
+        )
+    return candidate.base_url, candidate.model_revision
 
 
 class EndpointValidator:
@@ -314,7 +315,9 @@ class DiscoveredEndpointProvider:
     def __init__(
         self,
         name: str,
-        discover: Callable[[InferenceServiceSpec], Sequence[object]],
+        discover: Callable[
+            [InferenceServiceSpec], Sequence[_DiscoveredClusterEndpoint]
+        ],
         validator: EndpointValidator | None = None,
         credentials: EndpointCredentials | None = None,
     ) -> None:
