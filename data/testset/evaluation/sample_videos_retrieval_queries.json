@@ -1035,7 +1035,7 @@
     "source": "temporal_qa.json"
   },
   {
-    "query": "",
+    "query": "Can you describe the game being played in the grassy field?",
     "expected_videos": [
       "v_-uJnucdW6DY"
     ],
@@ -1044,7 +1044,7 @@
     "source": "consistency_qa.json"
   },
   {
-    "query": "",
+    "query": "Can you describe what the man is doing with the shovel?",
     "expected_videos": [
       "v_-pkfcMUIEMo"
     ],
@@ -1053,7 +1053,7 @@
     "source": "consistency_qa.json"
   },
   {
-    "query": "",
+    "query": "Can you describe the diving maneuvers performed in the video?",
     "expected_videos": [
       "v_-vnSFKJNB94"
     ],
@@ -1062,7 +1062,7 @@
     "source": "consistency_qa.json"
   },
   {
-    "query": "",
+    "query": "Can you describe the activity of the man in the video?",
     "expected_videos": [
       "v_-nl4G-00PtA"
     ],
@@ -1071,7 +1071,7 @@
     "source": "consistency_qa.json"
   },
   {
-    "query": "",
+    "query": "Can you describe the appearance of the man in the video?",
     "expected_videos": [
       "v_-MbZ-W0AbN0"
     ],
@@ -1080,7 +1080,7 @@
     "source": "consistency_qa.json"
   },
   {
-    "query": "",
+    "query": "Can you describe the appearance of the weights on the barbell?",
     "expected_videos": [
       "v_-HpCLXdtcas"
     ],
@@ -1089,7 +1089,7 @@
     "source": "consistency_qa.json"
   },
   {
-    "query": "",
+    "query": "Can you describe what the people in the beginning of the video are wearing and what they are doing?",
     "expected_videos": [
       "v_-IMXSEIabMM"
     ],
@@ -1098,7 +1098,7 @@
     "source": "consistency_qa.json"
   },
   {
-    "query": "",
+    "query": "Can you describe what the man is holding in his right hand in the video?",
     "expected_videos": [
       "v_-6dz6tBH77I"
     ],
@@ -1107,7 +1107,7 @@
     "source": "consistency_qa.json"
   },
   {
-    "query": "",
+    "query": "Can you describe the initial scene of the video?",
     "expected_videos": [
       "v_-cAcA8dO7kA"
     ],
@@ -1116,7 +1116,7 @@
     "source": "consistency_qa.json"
   },
   {
-    "query": "",
+    "query": "How does the man light the stack of firewood on fire?",
     "expected_videos": [
       "v_-D1gdv_gQyw"
     ],
