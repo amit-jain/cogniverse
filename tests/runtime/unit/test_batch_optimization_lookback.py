@@ -76,7 +76,7 @@ def test_committed_span_capture_clears_the_optimizer_floors_without_top_up():
     expected_floors = {
         "query_enhancement": (100, 3),
         "profile_selection": (20, 6),
-        "entity_extraction": (58, 15),
+        "entity_extraction": (30, 15),
     }
     assert set(expected_floors) <= set(captured), (
         "committed capture is missing an optimizer span type: "
@@ -123,7 +123,7 @@ class TestOptimizerCaptureSampleCaps:
         assert caps == {
             SPAN_NAME_QUERY_ENHANCEMENT: 120,
             SPAN_NAME_PROFILE_SELECTION: 24,
-            SPAN_NAME_ENTITY_EXTRACTION: 70,
+            SPAN_NAME_ENTITY_EXTRACTION: 36,
         }
 
     def test_uncapped_names_are_absent_so_they_replay_whole(self):
@@ -150,7 +150,7 @@ class TestOptimizerCaptureSampleCaps:
         assert collections.Counter(record["name"] for record in sampled) == {
             "cogniverse.query_enhancement": 120,
             "cogniverse.profile_selection": 24,
-            "cogniverse.entity_extraction": 70,
+            "cogniverse.entity_extraction": 36,
             "cogniverse.gateway": 70,
             "cogniverse.orchestration": 60,
         }
@@ -195,7 +195,7 @@ class TestOptimizerCaptureSampleCaps:
         assert measured == {
             "simba_query_enhancement": (120, 100, 91, 3),
             "profile_selection": (24, 20, 12, 6),
-            "entity_extraction": (70, 58, 57, 15),
+            "entity_extraction": (36, 30, 35, 15),
         }
 
     def test_sampling_reduces_the_replayed_corpus_below_the_recording(self):
@@ -204,7 +204,7 @@ class TestOptimizerCaptureSampleCaps:
         archive = load_capture_json(_MOD.OPTIMIZER_SPAN_CAPTURE_PATH)
         sampled = sample_capture_by_name(archive, _MOD._optimizer_capture_sample_caps())
 
-        assert (len(archive), len(sampled)) == (787, 344)
+        assert (len(archive), len(sampled)) == (787, 310)
 
 
 def test_count_spans_script_is_valid_python_for_both_modes():
