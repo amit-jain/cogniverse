@@ -652,12 +652,12 @@ QueryEncoderFactory.get_supported_profiles(config=system_config)
 order: `profile_config["model_loader"]` (authoritative) → model-name substring
 → profile-name substring, raising `ValueError` if none match. When a profile
 carries a second, acoustic embedding (`audio_clap_semantic`), `semantic_model`
-names its ColBERT transcript model and is what the ColBERT branch loads;
-`embedding_model` names the acoustic model.
-declares `inference_services.embedding` but the merged config's
-`inference_service_urls` has no URL for that service, the factory raises
-`ValueError` naming the service (all families, not just ColBERT) rather than
-silently falling back to a local load — so a misconfigured sidecar fails loud.
+names its ColBERT transcript model, `embedding_model` names the CLAP model,
+and `inference_services` carries `embedding: colbert_pylate`,
+`transcription: vllm_asr`, and `acoustic_embedding: clap_embed`. Missing URLs
+for the declared services raise `ValueError` naming the profile and service
+rather than silently falling back to a local load, so a misconfigured sidecar
+fails loud.
 Search agents (document/image) resolve their encoders through this factory,
 passing the merged config, so they route through the deployed sidecar exactly
 as the `/search` path does.
@@ -924,7 +924,7 @@ Storage: the org trunk lives under a dedicated tenant_id
 `{org}:_org_trunk` (Mem0+Vespa already isolate per-tenant_id, so no new
 backend wiring required). Promotion stamps `promoted_from_tenant`,
 `promoted_by`, and `promoted_by_role` into the new record's metadata for
-audit.
+history.
 
 | Schema sensitivity | Promotion outcome |
 |---|---|
@@ -1123,7 +1123,7 @@ write hits Vespa.
 > **Note on the `actor_id` kwarg.** The public API takes `actor_id`, but the
 > persisted metadata key is `pin_actor_id`. Mem0 treats `actor_id` as a
 > promoted-payload key (it's lifted out of `metadata` and into the top-level
-> payload on insert), which would erase the pin's audit trail on round-trip.
+> payload on insert), which would erase the pin's persisted history on round-trip.
 > Other writers storing per-actor identifiers in memory metadata should
 > avoid the bare key `actor_id` for the same reason — pick a namespaced key
 > (`pin_actor_id`, `endorsement_actor_id`, etc.).

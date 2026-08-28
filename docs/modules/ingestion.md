@@ -826,6 +826,7 @@ strategy_type at the profile level:
 inference_services:
   embedding: vllm_colpali
   transcription: vllm_asr
+  acoustic_embedding: clap_embed
 strategies:
   transcription:
     class: AudioTranscriptionStrategy
@@ -837,11 +838,13 @@ strategies:
 
 The factory looks up `inference_services[<strategy_type>]` and, if the
 strategy's `__init__` explicitly declares an `inference_service`
-parameter, passes it as `inference_service=<name>`. Strategies whose
-constructor does NOT declare the parameter are **not** injected — this
-is an opt-in contract, and `**kwargs` deliberately does not count as
-opting in (a `**kwargs` constructor absorbs the kwarg and silently
-drops it, so the factory would believe it was delivered).
+parameter, passes it as `inference_service=<name>`. Audio profiles also
+use `inference_services.acoustic_embedding` to resolve the CLAP sidecar
+URL into `clap_endpoint_url`. Strategies whose constructor does NOT
+declare the parameter are **not** injected — this is an opt-in
+contract, and `**kwargs` deliberately does not count as opting in (a
+`**kwargs` constructor absorbs the kwarg and silently drops it, so the
+factory would believe it was delivered).
 
 ```python
 # Strategy opts in by declaring the parameter:
@@ -2330,7 +2333,7 @@ See [Events Module](./events.md) for complete EventQueue documentation.
 - ✅ Monitor disk space and memory usage
 - ✅ Set appropriate `max_concurrent` based on resources
 - ✅ Implement error handling and retry logic
-- ✅ Save summaries for audit trails
+- ✅ Save summaries for history
 - ✅ Enable EventQueue for live progress monitoring
 
 ---
