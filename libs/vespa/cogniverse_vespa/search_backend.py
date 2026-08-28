@@ -30,11 +30,14 @@ from vespa.exceptions import VespaError
 from cogniverse_core.common.utils.output_manager import OutputManager
 from cogniverse_core.common.utils.retry import RetryConfig, retry_with_backoff
 from cogniverse_sdk.document import (
+    ALLOWED_RESULT_GRANULARITIES,
     ContentType,
     Document,
     DocumentFieldMapping,
     ProcessingStatus,
     SearchResult,
+    SearchResultBatch,
+    resolve_result_granularity,
 )
 from cogniverse_sdk.interfaces.backend import SearchBackend
 from cogniverse_vespa._vespa_factory import apply_failfast_timeouts, make_vespa_app
@@ -65,33 +68,9 @@ _SEARCH_CONTENT_TYPES = {
     "wiki": ContentType.DOCUMENT,
 }
 
-_ALLOWED_RESULT_GRANULARITIES = ("source", "segment")
-
-
-def _resolve_result_granularity(
-    profile_config: Mapping[str, Any], requested: Optional[str] = None
-) -> str:
-    """Resolve the effective search result granularity for one profile."""
-    candidate = requested
-    if candidate is None:
-        candidate = profile_config.get("result_granularity")
-    if candidate is None:
-        candidate = (
-            "source"
-            if str(profile_config.get("type") or "").lower() == "video"
-            else "segment"
-        )
-    if not isinstance(candidate, str):
-        raise ValueError(
-            "result_granularity must be one of "
-            f"{_ALLOWED_RESULT_GRANULARITIES}, got {candidate!r}"
-        )
-    if candidate not in _ALLOWED_RESULT_GRANULARITIES:
-        raise ValueError(
-            "result_granularity must be one of "
-            f"{_ALLOWED_RESULT_GRANULARITIES}, got {candidate!r}"
-        )
-    return candidate
+_SOURCE_COLLAPSE_OVERSAMPLE_KEY = "source_collapse_oversample"
+_SOURCE_COLLAPSE_OVERSAMPLE_DEFAULT = 4
+_SOURCE_COLLAPSE_FETCH_LIMIT_CEILING = 256
 
 
 def _schema_source_identity_field(
@@ -142,37 +121,19 @@ def _schema_temporal_field_names(
     return tuple(temporal_fields)
 
 
-def _iter_result_hits(node: Any):
-    """Yield leaf hit dictionaries from a Vespa response body tree."""
-    if isinstance(node, Mapping):
-        children = node.get("children")
-        if isinstance(children, list):
-            for child in children:
-                yield from _iter_result_hits(child)
-            return
-        if "fields" in node and "relevance" in node and "id" in node:
-            yield node
-            return
-        for value in node.values():
-            yield from _iter_result_hits(value)
-    elif isinstance(node, list):
-        for item in node:
-            yield from _iter_result_hits(item)
-
-
 def _source_collapse_fetch_limit(top_k: int, profile_config: Mapping[str, Any]) -> int:
     """Derive the fetch window for source-level collapse."""
-    oversample = profile_config.get("source_collapse_oversample")
-    if oversample is None:
-        oversample = top_k
-    if not isinstance(oversample, int):
-        try:
-            oversample = int(oversample)
-        except (TypeError, ValueError) as exc:
-            raise ValueError("source_collapse_oversample must be an integer") from exc
+    oversample = profile_config.get(
+        _SOURCE_COLLAPSE_OVERSAMPLE_KEY, _SOURCE_COLLAPSE_OVERSAMPLE_DEFAULT
+    )
+    if type(oversample) is not int:
+        raise ValueError(f"{_SOURCE_COLLAPSE_OVERSAMPLE_KEY} must be an integer")
     if oversample < 1:
-        raise ValueError("source_collapse_oversample must be >= 1")
-    return top_k * oversample
+        raise ValueError(f"{_SOURCE_COLLAPSE_OVERSAMPLE_KEY} must be >= 1")
+    return min(
+        top_k * oversample,
+        _SOURCE_COLLAPSE_FETCH_LIMIT_CEILING,
+    )
 
 
 def _result_source_key(result: SearchResult) -> str:
@@ -200,7 +161,7 @@ def _collapse_results_by_source(
     fetch_limit: int,
     total_count: Optional[int],
     temporal_field_names: tuple[str, ...] = (),
-) -> "SearchResultBatch":
+) -> SearchResultBatch:
     """Keep the best hit per source identity in relevance order."""
     grouped_results: Dict[str, List[SearchResult]] = {}
     ordered_source_keys: List[str] = []
@@ -240,23 +201,6 @@ def _collapse_results_by_source(
         num_collapsed_documents=num_collapsed_documents,
         total_count=total_count,
     )
-
-
-class SearchResultBatch(list):
-    """List-like search result set with backend metadata."""
-
-    def __init__(
-        self,
-        results=None,
-        *,
-        result_granularity: str = "segment",
-        num_collapsed_documents: int = 0,
-        total_count: Optional[int] = None,
-    ):
-        super().__init__(results or [])
-        self.result_granularity = result_granularity
-        self.num_collapsed_documents = num_collapsed_documents
-        self.total_count = total_count
 
 
 def _query_health_error(response: Any) -> Optional[str]:
@@ -1177,26 +1121,18 @@ class VespaSearchBackend(SearchBackend):
             )
         content_type = declared_type
         requested_result_granularity = query_dict.get("result_granularity")
-        result_granularity = _resolve_result_granularity(
+        result_granularity = resolve_result_granularity(
             profile_config, requested_result_granularity
         )
         fetch_limit = top_k
         if result_granularity == "source":
             fetch_limit = _source_collapse_fetch_limit(top_k, profile_config)
         if result_granularity == "source" and self._schema_loader is None:
-            if requested_result_granularity is None:
-                logger.warning(
-                    "Falling back to segment granularity for profile '%s' "
-                    "because no schema_loader is available to resolve source "
-                    "identity fields",
-                    profile_name,
-                )
-                result_granularity = "segment"
-            else:
-                raise ValueError(
-                    f"Schema {profile_config.get('schema_name', profile_name)!r} "
-                    "source granularity requires schema_loader"
-                )
+            raise ValueError(
+                f"Profile '{profile_name}' (schema "
+                f"{profile_config.get('schema_name', profile_name)!r}) "
+                "source granularity requires schema_loader"
+            )
 
         # Determine schema_name from profile (base name)
         base_schema_name = profile_config.get("schema_name", profile_name)
@@ -1563,10 +1499,10 @@ class VespaSearchBackend(SearchBackend):
         """Build Vespa query based on ranking strategy - NO HARDCODING!"""
         if not isinstance(nearest_neighbor_approximate, bool):
             raise ValueError("nearest_neighbor_approximate must be a bool")
-        if result_granularity not in _ALLOWED_RESULT_GRANULARITIES:
+        if result_granularity not in ALLOWED_RESULT_GRANULARITIES:
             raise ValueError(
                 "result_granularity must be one of "
-                f"{_ALLOWED_RESULT_GRANULARITIES}, got {result_granularity!r}"
+                f"{ALLOWED_RESULT_GRANULARITIES}, got {result_granularity!r}"
             )
         if result_granularity == "source" and not source_identity_field:
             raise ValueError(
@@ -1824,7 +1760,7 @@ class VespaSearchBackend(SearchBackend):
             )
 
         try:
-            _ = response.hits
+            leaf_hits = response.hits
         except AttributeError as exc:
             raise VespaError(
                 f"[{correlation_id}] Vespa response is missing a hits collection"
@@ -1853,7 +1789,6 @@ class VespaSearchBackend(SearchBackend):
                 f"[{correlation_id}] Vespa query coverage degraded: {coverage!r}"
             )
 
-        leaf_hits = list(_iter_result_hits(root))
         results = []
         logger.debug(f"[{correlation_id}] Processing {len(leaf_hits)} hits from Vespa")
         for hit in leaf_hits:

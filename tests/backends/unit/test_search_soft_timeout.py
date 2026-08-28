@@ -12,6 +12,8 @@ slow query hits this path.
 
 from __future__ import annotations
 
+import json
+from pathlib import Path
 from unittest.mock import MagicMock
 
 import pytest
@@ -20,8 +22,24 @@ from vespa.io import VespaQueryResponse
 
 from cogniverse_core.common.utils.circuit_breaker import CircuitBreaker
 from cogniverse_core.common.utils.retry import RetryConfig
+from cogniverse_core.schemas.filesystem_loader import FilesystemSchemaLoader
 from cogniverse_vespa import search_backend as sb_module
 from cogniverse_vespa.search_backend import VespaConnection, VespaSearchBackend
+
+
+def _shipped_video_schema_name() -> str:
+    """The schema name of a shipped video profile, read from configs."""
+    config = json.loads(Path("configs/config.json").read_text())
+    for profile_name, profile in config["backend"]["profiles"].items():
+        if str(profile.get("type") or "").lower() != "video":
+            continue
+        schema_name = profile.get("schema_name", profile_name)
+        if (Path("configs/schemas") / f"{schema_name}_schema.json").is_file():
+            return schema_name
+    raise AssertionError("no shipped video profile with an on-disk schema")
+
+
+_RETRY_SCHEMA_NAME = _shipped_video_schema_name()
 
 
 @pytest.fixture(autouse=True)
@@ -272,9 +290,10 @@ def test_search_retries_soft_timeout_and_records_failures(monkeypatch):
         config={
             "url": "http://localhost",
             "port": 8080,
-            "profiles": {"p1": {"type": "video", "schema_name": "video_test"}},
+            "profiles": {"p1": {"type": "video", "schema_name": _RETRY_SCHEMA_NAME}},
         },
         enable_connection_pool=False,
+        schema_loader=FilesystemSchemaLoader(Path("configs/schemas")),
     )
     backend.vespa = MagicMock()
     backend.vespa.query.return_value = _response(_soft_timeout_body())
@@ -282,7 +301,7 @@ def test_search_retries_soft_timeout_and_records_failures(monkeypatch):
     monkeypatch.setattr(
         sb_module,
         "_RANKING_STRATEGIES_CACHE",
-        {"video_test": {"bm25": {"needs_text_query": True}}},
+        {_RETRY_SCHEMA_NAME: {"bm25": {"needs_text_query": True}}},
     )
     import cogniverse_core.common.utils.retry as retry_module
 
@@ -310,8 +329,9 @@ def test_search_honors_constructor_retry_configuration(monkeypatch):
         config={
             "url": "http://localhost",
             "port": 8080,
-            "profiles": {"p1": {"type": "video", "schema_name": "video_test"}},
+            "profiles": {"p1": {"type": "video", "schema_name": _RETRY_SCHEMA_NAME}},
         },
+        schema_loader=FilesystemSchemaLoader(Path("configs/schemas")),
         retry_config=RetryConfig(
             max_attempts=2,
             initial_delay=0,
@@ -325,7 +345,7 @@ def test_search_honors_constructor_retry_configuration(monkeypatch):
     monkeypatch.setattr(
         sb_module,
         "_RANKING_STRATEGIES_CACHE",
-        {"video_test": {"bm25": {"needs_text_query": True}}},
+        {_RETRY_SCHEMA_NAME: {"bm25": {"needs_text_query": True}}},
     )
 
     with pytest.raises(VespaError):

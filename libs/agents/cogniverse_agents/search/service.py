@@ -10,7 +10,7 @@ from typing import Any, Dict, Optional
 
 from cogniverse_core.query.encoders import QueryEncoderFactory
 from cogniverse_core.registries.backend_registry import get_backend_registry
-from cogniverse_vespa.search_backend import SearchResultBatch
+from cogniverse_sdk.document import SearchResultBatch, resolve_result_granularity
 
 logger = logging.getLogger(__name__)
 
@@ -222,14 +222,13 @@ class SearchService:
             search_span,
             serialize_search_results,
         )
-        from cogniverse_vespa.search_backend import _resolve_result_granularity
 
         # Resolve profile config and encoder
         profile_config = self._get_profile_config(profile, tenant_id)
         content_type = profile_config.get("type")
         if not content_type:
             raise ValueError(f"Profile '{profile}' missing 'type' configuration")
-        result_granularity = _resolve_result_granularity(
+        result_granularity = resolve_result_granularity(
             profile_config, result_granularity
         )
         query_encoder = self._get_encoder(profile, profile_config)

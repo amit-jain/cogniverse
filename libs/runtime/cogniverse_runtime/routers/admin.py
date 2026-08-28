@@ -1608,7 +1608,9 @@ async def set_golden_set_ground_truth(
     except HTTPException:
         raise
     except Exception as exc:
-        raise HTTPException(503, f"golden_set_ground_truth store unavailable: {exc}") from exc
+        raise HTTPException(
+            503, f"golden_set_ground_truth store unavailable: {exc}"
+        ) from exc
 
     logger.info(
         "Updated + persisted golden_set_ground_truth for tenant=%s with %d rows",
