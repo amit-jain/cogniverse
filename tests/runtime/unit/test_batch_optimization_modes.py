@@ -5087,12 +5087,16 @@ class TestProfileSelectionOptimization:
         real_split = optimization_cli._split_served_holdout
 
         def wrapped_split(
-            records, min_holdout, scoreable_predicate=optimization_cli.is_scoreable
+            records,
+            min_holdout,
+            scoreable_predicate=optimization_cli.is_scoreable,
+            holdout_eligible_predicate=optimization_cli._served_span_is_holdout_eligible,
         ):
             split = real_split(
                 records,
                 min_holdout,
                 scoreable_predicate=scoreable_predicate,
+                holdout_eligible_predicate=holdout_eligible_predicate,
             )
             train_records, holdout_records = split
             captured["train_ids"] = tuple(
@@ -5198,12 +5202,16 @@ class TestProfileSelectionOptimization:
         real_split = optimization_cli._split_served_holdout
 
         def wrapped_split(
-            records, min_holdout, scoreable_predicate=optimization_cli.is_scoreable
+            records,
+            min_holdout,
+            scoreable_predicate=optimization_cli.is_scoreable,
+            holdout_eligible_predicate=optimization_cli._served_span_is_holdout_eligible,
         ):
             split = real_split(
                 records,
                 min_holdout,
                 scoreable_predicate=scoreable_predicate,
+                holdout_eligible_predicate=holdout_eligible_predicate,
             )
             train_records, holdout_records = split
             captured["train_ids"] = tuple(

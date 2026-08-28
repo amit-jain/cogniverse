@@ -378,7 +378,9 @@ not the SIMBA algorithm.
 `cogniverse.query_enhancement` spans into served-call records (`input.value`, `input.source_text`,
 `input.grounding_context` → `enhanced_query`, `expansion_terms`, `synonyms`, `context_additions`,
 `confidence`), appends approved synthetic demos for `"query_enhancement"`, and splits the records with
-`_split_served_holdout` (deterministic ~25% tail holdout over served-scoreable spans). Trainable records
+`_split_served_holdout(..., holdout_eligible_predicate=_served_span_is_holdout_eligible)` (deterministic
+~25% tail holdout over served-scoreable spans; approved synthetic rows stay train-only, and unknown
+`example_id` families raise). Trainable records
 — a non-identity enhancement with at least one expansion term — compile the module via
 `_create_teleprompter(len(trainset), metric=_query_enhancement_metric)`; records the metric cannot score
 (no source text and no grounding context) are ordered after every scoreable record so the bootstrap walk
@@ -405,11 +407,12 @@ holdout the run returns `no_eval_material` and persists nothing. The artifact ke
 `("config", "entity_extraction_ground_truth")` blob, loads approved synthetic rows for
 `"entity_extraction"`, and queries `cogniverse.entity_extraction` spans only to report
 `spans_found`, `served_examples`, and `served_scoreable_examples`. The truth rows define the
-holdout: `_split_holdout(truth_records, scoreable_predicate=_entity_extraction_is_scoreable)`
-splits the tenant's ground-truth rows by distinct casefold query, approved synthetic rows stay in
-train only, and `distinct_queries` / `holdout_queries` report the truth rows only. The metric is F1
-over `(casefold text, type)` pairs parsed from `text|type|confidence` lines;
-an empty recorded label set raises. Bootstrap uses `BootstrapMetricRecorder` with
+holdout: `_split_holdout(truth_records, scoreable_predicate=_entity_extraction_is_scoreable,
+holdout_eligible_predicate=_ground_truth_is_holdout_eligible)` splits the tenant's ground-truth rows by
+distinct casefold query, approved synthetic rows stay in train only, unknown `example_id` families
+raise, and `distinct_queries` / `holdout_queries` report the truth rows only. The metric is F1 over
+`(casefold text, type)` pairs parsed from `text|type|confidence` lines; an empty recorded label set
+raises. Bootstrap uses `BootstrapMetricRecorder` with
 `_entity_bootstrap_threshold(...)`, which keeps the bar at `ENTITY_BOOTSTRAP_METRIC_THRESHOLD`
 (1.0) and never below the served module's holdout score. The recorder appends each attempt as a
 JSONL row under `~/.cache/cogniverse/bootstrap_attempts.jsonl`. The entity floor is

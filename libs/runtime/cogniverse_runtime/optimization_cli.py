@@ -2460,6 +2460,52 @@ def _profile_selection_is_scoreable(record: dict) -> bool:
     return bool(str(record.get("selected_profile") or "").strip())
 
 
+def _holdout_example_id_family(record: dict) -> str:
+    """Return the known holdout family encoded by ``example_id``."""
+    example_id = str(record.get("example_id") or "").strip()
+    if example_id.startswith("span:"):
+        return "span"
+    if example_id.startswith("approved:"):
+        return "approved"
+    if example_id.startswith("truth:"):
+        return "truth"
+    raise ValueError(f"Unknown example_id family for holdout split: {example_id!r}")
+
+
+def _served_span_is_holdout_eligible(record: dict) -> bool:
+    """True for served ``span:`` rows, false for approved rows."""
+    family = _holdout_example_id_family(record)
+    if family == "span":
+        return True
+    if family == "approved":
+        return False
+    example_id = str(record.get("example_id") or "").strip()
+    raise ValueError(
+        "served-span holdout accepts only span: or approved: example_id; "
+        f"got {example_id!r}"
+    )
+
+
+def _ground_truth_is_holdout_eligible(record: dict) -> bool:
+    """True for tenant truth rows, false for approved rows."""
+    family = _holdout_example_id_family(record)
+    if family == "truth":
+        return True
+    if family == "approved":
+        return False
+    example_id = str(record.get("example_id") or "").strip()
+    raise ValueError(
+        "ground-truth holdout accepts only truth: or approved: example_id; "
+        f"got {example_id!r}"
+    )
+
+
+def _default_holdout_is_eligible(record: dict) -> bool:
+    """Fallback holdout family gate used by direct splitter tests."""
+    family = _holdout_example_id_family(record)
+    return family in {"span", "truth"}
+
+
 def _served_scoreable_indices(
     records: list[dict], scoreable_predicate=is_scoreable
 ) -> list[int]:
@@ -2467,7 +2513,7 @@ def _served_scoreable_indices(
     return [
         index
         for index, record in enumerate(records)
-        if record["example_id"].startswith("span:") and scoreable_predicate(record)
+        if _served_span_is_holdout_eligible(record) and scoreable_predicate(record)
     ]
 
 
@@ -2498,26 +2544,36 @@ class HoldoutSplit:
 
 
 def _split_served_holdout(
-    records: list[dict], min_holdout: int, scoreable_predicate=is_scoreable
+    records: list[dict],
+    min_holdout: int,
+    *,
+    scoreable_predicate=is_scoreable,
+    holdout_eligible_predicate=_served_span_is_holdout_eligible,
 ) -> HoldoutSplit:
-    """Serve the tail of distinct scoreable served-span query keys; approved
-    rows never carry a ``span:`` id, so they always stay in train."""
+    """Serve the tail of distinct scoreable served-span query keys."""
     return _split_holdout(
         records,
         min_holdout,
-        lambda record: (
-            record["example_id"].startswith("span:") and scoreable_predicate(record)
-        ),
+        scoreable_predicate=scoreable_predicate,
+        holdout_eligible_predicate=holdout_eligible_predicate,
     )
 
 
 def _split_holdout(
-    records: list[dict], min_holdout: int, scoreable_predicate=is_scoreable
+    records: list[dict],
+    min_holdout: int,
+    *,
+    scoreable_predicate=is_scoreable,
+    holdout_eligible_predicate=_default_holdout_is_eligible,
 ) -> HoldoutSplit:
-    """Serve the tail of distinct scoreable query keys and keep the rest in train."""
-    scoreable_indices = [
-        index for index, record in enumerate(records) if scoreable_predicate(record)
-    ]
+    """Serve the tail of distinct scoreable query keys for eligible rows."""
+    eligible_flags = []
+    scoreable_indices = []
+    for index, record in enumerate(records):
+        eligible = holdout_eligible_predicate(record)
+        eligible_flags.append(eligible)
+        if eligible and scoreable_predicate(record):
+            scoreable_indices.append(index)
     if len(scoreable_indices) < min_holdout:
         return HoldoutSplit(list(records), [], 0, 0)
 
@@ -2530,16 +2586,18 @@ def _split_holdout(
     distinct_queries = len(distinct_query_keys)
     holdout_queries = max(1, distinct_queries // 4) if distinct_queries else 0
     holdout_query_keys = {key for key in distinct_query_keys[-holdout_queries:]}
+    query_keys = [
+        str(record.get("query", "") or "").strip().casefold() for record in records
+    ]
     train = [
         record
-        for record in records
-        if str(record.get("query", "") or "").strip().casefold()
-        not in holdout_query_keys
+        for index, record in enumerate(records)
+        if not (eligible_flags[index] and query_keys[index] in holdout_query_keys)
     ]
     holdout = [
         record
-        for record in records
-        if str(record.get("query", "") or "").strip().casefold() in holdout_query_keys
+        for index, record in enumerate(records)
+        if eligible_flags[index] and query_keys[index] in holdout_query_keys
     ]
     return HoldoutSplit(train, holdout, distinct_queries, holdout_queries)
 
@@ -3548,7 +3606,11 @@ async def run_simba_optimization(
     served_scoreable_examples = len(_served_scoreable_indices(records))
     served_examples = production_count
     approved_examples = len(synthetic_demos)
-    split = _split_served_holdout(records, min_holdout)
+    split = _split_served_holdout(
+        records,
+        min_holdout,
+        holdout_eligible_predicate=_served_span_is_holdout_eligible,
+    )
     train_records = split.train
     holdout_records = split.holdout
     distinct_queries = split.distinct_queries
@@ -4489,6 +4551,7 @@ async def run_profile_optimization(
         served_records,
         min_holdout,
         scoreable_predicate=_profile_selection_is_scoreable,
+        holdout_eligible_predicate=_served_span_is_holdout_eligible,
     )
     result_distribution = {
         **result_distribution,
@@ -4786,6 +4849,7 @@ async def run_entity_extraction_optimization(
         truth_records,
         min_holdout,
         scoreable_predicate=_entity_extraction_is_scoreable,
+        holdout_eligible_predicate=_ground_truth_is_holdout_eligible,
     )
     train_records = [*split.train, *approved_records]
     holdout_records = split.holdout
