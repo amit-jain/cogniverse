@@ -12,9 +12,22 @@ from typing import Any
 
 from cogniverse_agents.optimizer.profile_selection_ground_truth import (
     canonicalize_profile_selection_ground_truth_rows as canonicalize_golden_set_ground_truth_rows,
+)
+from cogniverse_agents.optimizer.profile_selection_ground_truth import (
     serialize_profile_selection_ground_truth_rows as serialize_golden_set_ground_truth_rows,
 )
 from cogniverse_foundation.telemetry.providers.base import DatasetNotFoundError
+
+__all__ = [
+    "GOLDEN_SET_GROUND_TRUTH_BLOB_KEY",
+    "GOLDEN_SET_GROUND_TRUTH_BLOB_KIND",
+    "GoldenSetGroundTruthError",
+    "GoldenSetGroundTruthMissingError",
+    "GoldenSetGroundTruthStoreUnavailableError",
+    "canonicalize_golden_set_ground_truth_rows",
+    "load_golden_set_ground_truth_rows",
+    "serialize_golden_set_ground_truth_rows",
+]
 
 GOLDEN_SET_GROUND_TRUTH_BLOB_KIND = "config"
 GOLDEN_SET_GROUND_TRUTH_BLOB_KEY = "golden_set_ground_truth"
