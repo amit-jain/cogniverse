@@ -1617,3 +1617,40 @@ def test_ingestion_config_registers_inference_when_it_is_the_test_root():
     ingestion_conftest._register_inference_plugin(plugin_manager)
 
     assert plugin_manager.registrations == [(inference, "tests.fixtures.inference")]
+
+
+def _validator_with_transport(handler) -> EndpointValidator:
+    return EndpointValidator(
+        client=httpx.Client(transport=httpx.MockTransport(handler))
+    )
+
+
+def test_validate_maps_a_closed_connection_to_provider_unavailable():
+    """A k3d NodePort whose Service has no endpoints accepts the TCP connection
+    and closes it: httpx raises RemoteProtocolError, not ConnectError. The
+    validator must report it as the provider being unavailable, naming the
+    service, exactly as it does for a refused connection."""
+
+    def handler(request):
+        raise httpx.RemoteProtocolError(
+            "Server disconnected without sending a response.", request=request
+        )
+
+    validator = _validator_with_transport(handler)
+    with pytest.raises(ProviderUnavailable) as caught:
+        validator.validate(COLPALI, _candidate("http://127.0.0.1:33905"))
+    assert str(caught.value) == "vllm_colpali: e2e closed the connection"
+    assert isinstance(caught.value.__cause__, httpx.RemoteProtocolError)
+    validator.close()
+
+
+def test_validate_maps_a_refused_connection_to_provider_unavailable():
+    def handler(request):
+        raise httpx.ConnectError("connection refused", request=request)
+
+    validator = _validator_with_transport(handler)
+    with pytest.raises(ProviderUnavailable) as caught:
+        validator.validate(COLPALI, _candidate("http://127.0.0.1:1"))
+    assert str(caught.value) == "vllm_colpali: e2e refused a connection"
+    assert isinstance(caught.value.__cause__, httpx.ConnectError)
+    validator.close()
