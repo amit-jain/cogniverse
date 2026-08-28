@@ -29,6 +29,25 @@ _FLOAT_PROFILE = {
     "inputs": [{"name": "query(qt)", "type": "tensor<float>(x[128])"}],
 }
 
+_VIDEO_PHASED_DEFAULTS = {
+    "configs/schemas/video_colpali_smol500_mv_frame_schema.json": {
+        "qtb": "tensor<int8>(querytoken{}, v[40])",
+        "qt": "tensor<float>(querytoken{}, v[320])",
+    },
+    "configs/schemas/video_colqwen_omni_mv_chunk_30s_schema.json": {
+        "qtb": "tensor<int8>(querytoken{}, v[40])",
+        "qt": "tensor<float>(querytoken{}, v[320])",
+    },
+    "configs/schemas/video_videoprism_base_mv_chunk_30s_schema.json": {
+        "qtb": "tensor<int8>(querytoken{}, v[96])",
+        "qt": "tensor<float>(querytoken{}, v[768])",
+    },
+    "configs/schemas/video_videoprism_large_mv_chunk_30s_schema.json": {
+        "qtb": "tensor<int8>(querytoken{}, v[128])",
+        "qt": "tensor<float>(querytoken{}, v[1024])",
+    },
+}
+
 
 def _write_schema(tmp_path, schema_dict):
     path = tmp_path / "s_schema.json"
@@ -174,6 +193,12 @@ def _rank_profiles(path: Path) -> dict:
     return {r["name"]: r for r in (find(data) or []) if "name" in r}
 
 
+def _normalized_profile(profile: dict) -> dict:
+    return {
+        key: value for key, value in profile.items() if key not in {"name", "inherits"}
+    }
+
+
 @pytest.mark.unit
 @pytest.mark.parametrize("schema", _HYBRID_SCHEMAS)
 def test_hybrid_rank_profiles_honor_phase_order_naming(schema):
@@ -194,6 +219,32 @@ def test_hybrid_rank_profiles_honor_phase_order_naming(schema):
         assert binary_first["first_phase"] != text_first["first_phase"], (
             f"opposite-named hybrid profiles must differ (suffix={suffix!r})"
         )
+
+
+@pytest.mark.unit
+@pytest.mark.parametrize("schema_path", sorted(_VIDEO_PHASED_DEFAULTS))
+def test_video_default_profile_matches_phased_schema(schema_path):
+    profiles = _rank_profiles(_REPO_ROOT / schema_path)
+    assert profiles["default"]["inherits"] == "phased"
+    assert _normalized_profile(profiles["default"]) == _normalized_profile(
+        profiles["phased"]
+    )
+
+
+@pytest.mark.unit
+@pytest.mark.parametrize(
+    ("schema_path", "expected_inputs"),
+    sorted(_VIDEO_PHASED_DEFAULTS.items()),
+)
+def test_video_default_profile_needs_both_query_tensors(schema_path, expected_inputs):
+    strategy = RankingStrategyExtractor().extract_from_schema(_REPO_ROOT / schema_path)[
+        "default"
+    ]
+
+    assert strategy.inputs == expected_inputs
+    assert strategy.needs_float_embeddings is True
+    assert strategy.needs_binary_embeddings is True
+    assert strategy.query_tensors_needed == ["qtb", "qt"]
 
 
 def test_vanished_schema_file_is_skipped_not_fatal(tmp_path, monkeypatch):

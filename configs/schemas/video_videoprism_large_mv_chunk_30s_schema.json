@@ -139,20 +139,33 @@
   "rank_profiles": [
     {
       "name": "default",
+      "inherits": "phased",
       "inputs": [
         {
           "name": "query(qtb)",
           "type": "tensor<int8>(querytoken{}, v[128])"
+        },
+        {
+          "name": "query(qt)",
+          "type": "tensor<float>(querytoken{}, v[1024])"
         }
       ],
       "functions": [
         {
           "name": "max_sim_hamming",
           "expression": "sum(reduce(1/(1+ sum(hamming(query(qtb), attribute(embedding_binary)), v)), max, patch), querytoken)"
+        },
+        {
+          "name": "max_sim",
+          "expression": "sum(reduce(sum(query(qt) * cell_cast(attribute(embedding), float), v), max, patch), querytoken)"
         }
       ],
       "first_phase": "max_sim_hamming",
-      "timeout": 2.0
+      "second_phase": {
+        "expression": "max_sim",
+        "rerank_count": 100
+      },
+      "timeout": 5.0
     },
     {
       "name": "bm25_only",
