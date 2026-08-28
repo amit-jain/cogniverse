@@ -1576,6 +1576,13 @@ the schema's available rank profiles (there is no enum). Valid names:
 | `hybrid_float_bm25`, `hybrid_binary_bm25`, `hybrid_bm25_binary`, `hybrid_bm25_float` | Hybrid | Visual + text; embeddings required |
 | `hybrid_*_no_description` variants | Hybrid | Same as above, ignoring the description field |
 
+For the video `video_colpali_smol500_mv_frame`, `video_colqwen_omni_mv_chunk_30s`,
+`video_videoprism_base_mv_chunk_30s`, and `video_videoprism_large_mv_chunk_30s`
+schemas, `default` resolves to `phased` (`max_sim_hamming` first phase with
+`max_sim` rerank). Measured on an 85-query / 10-video corpus, that shift moved
+chunk video-MRR from 0.445 to 0.612 and frame video-MRR from 0.308 to 0.345,
+with p50 latency rising 75→96 ms (frame) and 69→85 ms (chunk), and p95 +30 ms.
+
 > **Where a strategy's phase order lives.** The two-phase ranking
 > (`first_phase` / `second_phase`) that defines a strategy's actual behavior is
 > authoritative in the schema's `rank_profiles` (the schema JSON). By naming

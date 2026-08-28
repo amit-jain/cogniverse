@@ -71,6 +71,14 @@ def _embeddings_to_vespa_tensors(embeddings: np.ndarray):
     return float_dict, binary_dict
 
 
+def _single_patch_rank_tensors(float_score: float, first_binary_byte: int):
+    float_vec = np.zeros((1, 320), dtype=np.float32)
+    float_vec[0, 0] = float_score
+    binary_vec = np.full((1, 40), -1, dtype=np.int8)
+    binary_vec[0, 0] = np.int8(first_binary_byte)
+    return {"0": float_vec[0].tolist()}, {"0": binary_vec[0].tolist()}
+
+
 @pytest.fixture(scope="module")
 def vllm_colpali_url(vllm_sidecar):
     return vllm_sidecar.spawn(
@@ -160,6 +168,75 @@ def seeded_ranking_corpus(vespa_instance, colpali_client):
         try:
             requests.delete(
                 f"http://localhost:{http_port}/document/v1/video/{TENANT_SCHEMA_NAME}/docid/{doc_id}",
+                timeout=5,
+            )
+        except Exception:
+            pass
+
+
+@pytest.fixture(scope="module")
+def phased_default_ranking_corpus(vespa_instance):
+    """Three docs whose binary order differs from their float rerank order."""
+    docs = [
+        {
+            "doc_id": "phased_default_doc_0",
+            "source_id": "default_rank_low",
+            "float_score": 1.0,
+            "binary_first_byte": -1,
+        },
+        {
+            "doc_id": "phased_default_doc_1",
+            "source_id": "default_rank_mid",
+            "float_score": 2.0,
+            "binary_first_byte": -2,
+        },
+        {
+            "doc_id": "phased_default_doc_2",
+            "source_id": "default_rank_high",
+            "float_score": 3.0,
+            "binary_first_byte": -4,
+        },
+    ]
+
+    http_port = vespa_instance["http_port"]
+
+    for doc_info in docs:
+        float_dict, binary_dict = _single_patch_rank_tensors(
+            doc_info["float_score"], doc_info["binary_first_byte"]
+        )
+
+        vespa_doc = {
+            "fields": {
+                "video_id": doc_info["source_id"],
+                "video_title": doc_info["source_id"],
+                "segment_id": 0,
+                "start_time": 0.0,
+                "end_time": 5.0,
+                "segment_description": doc_info["source_id"],
+                "audio_transcript": "",
+                "embedding": float_dict,
+                "embedding_binary": binary_dict,
+            }
+        }
+        resp = requests.post(
+            f"http://localhost:{http_port}/document/v1/video/{TENANT_SCHEMA_NAME}/docid/{doc_info['doc_id']}",
+            json=vespa_doc,
+            timeout=10,
+        )
+        assert resp.status_code in (200, 201), (
+            f"Failed to feed doc {doc_info['doc_id']}: {resp.status_code}: {resp.text[:200]}"
+        )
+
+    time.sleep(5)
+    yield [
+        doc["source_id"]
+        for doc in sorted(docs, key=lambda d: d["float_score"], reverse=True)
+    ]
+
+    for doc_info in docs:
+        try:
+            requests.delete(
+                f"http://localhost:{http_port}/document/v1/video/{TENANT_SCHEMA_NAME}/docid/{doc_info['doc_id']}",
                 timeout=5,
             )
         except Exception:
@@ -321,3 +398,30 @@ class TestAutoSelectDefaultRanking:
         assert len(results) > 0, "auto-select returned no results"
         for r in results:
             assert r.document.metadata.get("source_id", "").startswith("ranking_")
+
+
+@pytest.mark.integration
+@pytest.mark.requires_vespa
+class TestDefaultPhasedRanking:
+    """The default rank profile must rerank on the float phase."""
+
+    def test_default_returns_float_rerank_order(
+        self,
+        search_backend,
+        phased_default_ranking_corpus,
+    ):
+        results = search_backend.search(
+            {
+                "query": "",
+                "type": "video",
+                "profile": PROFILE_NAME,
+                "strategy": "default",
+                "top_k": 3,
+                "tenant_id": TENANT_ID,
+                "query_embeddings": np.ones((1, 320), dtype=np.float32),
+            }
+        )
+
+        assert [
+            r.document.metadata["source_id"] for r in results
+        ] == phased_default_ranking_corpus
