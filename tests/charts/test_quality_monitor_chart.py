@@ -238,7 +238,7 @@ class TestGoldenSetSeedIsOptIn:
     def test_default_render_has_no_seed_wiring(self):
         manifests = _render_chart()
         sidecar, volumes = _sidecar_and_volumes(manifests)
-        assert sidecar is not None
+        assert sidecar["name"] == "quality-monitor"
         assert "--golden-dataset-path" not in sidecar.get("args", [])
         assert [
             m
@@ -256,7 +256,7 @@ class TestGoldenSetSeedIsOptIn:
     def test_seeded_render_passes_the_mounted_path_once(self):
         manifests = _render_chart(*SEED_SET)
         sidecar, volumes = _sidecar_and_volumes(manifests)
-        assert sidecar is not None
+        assert sidecar["name"] == "quality-monitor"
         args = sidecar.get("args", [])
         assert args.count("--golden-dataset-path") == 1
         assert args[args.index("--golden-dataset-path") + 1] == EXPECTED_MOUNT_PATH
