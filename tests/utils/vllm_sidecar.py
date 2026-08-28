@@ -406,18 +406,15 @@ def _command_json(command: list[str]) -> object | None:
         return None
 
 
-def _container_declares_model(container: object, model: str) -> bool:
+@dataclass(frozen=True, slots=True)
+class _DiscoveredClusterEndpoint:
+    base_url: str
+    model_revision: str | None = None
+
+
+def _container_tokens(container: object) -> list[str]:
     if not isinstance(container, dict):
-        return False
-    env = container.get("env")
-    if isinstance(env, list):
-        for entry in env:
-            if (
-                isinstance(entry, dict)
-                and entry.get("name") == "MODEL_NAME"
-                and entry.get("value") == model
-            ):
-                return True
+        return []
     tokens: list[str] = []
     for command_field in ("command", "args"):
         values = container.get(command_field)
@@ -430,10 +427,34 @@ def _container_declares_model(container: object, model: str) -> bool:
                 tokens.extend(shlex.split(value))
             except ValueError:
                 tokens.append(value)
+    return tokens
+
+
+def _container_declares_model(container: object, model: str) -> bool:
+    if not isinstance(container, dict):
+        return False
+    env = container.get("env")
+    if isinstance(env, list):
+        for entry in env:
+            if (
+                isinstance(entry, dict)
+                and entry.get("name") == "MODEL_NAME"
+                and entry.get("value") == model
+            ):
+                return True
+    tokens = _container_tokens(container)
     return any(
         token == model and index > 0 and tokens[index - 1] in {"serve", "--model"}
         for index, token in enumerate(tokens)
     )
+
+
+def _container_model_revision(container: object) -> str | None:
+    tokens = _container_tokens(container)
+    for index, token in enumerate(tokens):
+        if token == "--revision" and index + 1 < len(tokens):
+            return tokens[index + 1]
+    return None
 
 
 def _discover_cluster_model_urls(
@@ -441,7 +462,7 @@ def _discover_cluster_model_urls(
     *,
     context: str,
     cluster: str,
-) -> tuple[str, ...]:
+) -> tuple[_DiscoveredClusterEndpoint, ...]:
     """Map an exact cluster workload to its dynamically published host port."""
     resources = _command_json(
         [
@@ -458,7 +479,7 @@ def _discover_cluster_model_urls(
     if not isinstance(resources, dict) or not isinstance(resources.get("items"), list):
         return ()
 
-    workload_labels: list[tuple[str, dict[str, str]]] = []
+    workload_labels: list[tuple[str, dict[str, str], str | None]] = []
     for item in resources["items"]:
         if not isinstance(item, dict) or item.get("kind") not in {
             "Deployment",
@@ -479,27 +500,36 @@ def _discover_cluster_model_urls(
             else None
         )
         namespace = metadata.get("namespace") if isinstance(metadata, dict) else None
-        if (
+        if not (
             isinstance(namespace, str)
             and isinstance(labels, dict)
             and labels
             and isinstance(containers, list)
-            and any(
-                _container_declares_model(container, model) for container in containers
-            )
         ):
-            workload_labels.append(
-                (
-                    namespace,
-                    {
-                        key: value
-                        for key, value in labels.items()
-                        if isinstance(key, str) and isinstance(value, str)
-                    },
-                )
+            continue
+        matching_container = next(
+            (
+                container
+                for container in containers
+                if _container_declares_model(container, model)
+            ),
+            None,
+        )
+        if matching_container is None:
+            continue
+        workload_labels.append(
+            (
+                namespace,
+                {
+                    key: value
+                    for key, value in labels.items()
+                    if isinstance(key, str) and isinstance(value, str)
+                },
+                _container_model_revision(matching_container),
             )
+        )
 
-    node_ports: list[int] = []
+    node_ports: list[tuple[int, str | None]] = []
     for item in resources["items"]:
         if not isinstance(item, dict) or item.get("kind") != "Service":
             continue
@@ -515,14 +545,25 @@ def _discover_cluster_model_urls(
             or not isinstance(ports, list)
         ):
             continue
-        if not any(
-            workload_namespace == namespace
-            and all(labels.get(key) == value for key, value in selector.items())
-            for workload_namespace, labels in workload_labels
-        ):
+        matched_revision: str | None = None
+        matched = False
+        for workload_namespace, labels, revision in workload_labels:
+            if workload_namespace != namespace:
+                continue
+            if not all(labels.get(key) == value for key, value in selector.items()):
+                continue
+            matched = True
+            if revision is not None:
+                matched_revision = revision
+                break
+            matched_revision = revision
+        if not matched:
             continue
         node_ports.extend(
-            port["nodePort"]
+            (
+                port["nodePort"],
+                matched_revision,
+            )
             for port in ports
             if isinstance(port, dict) and isinstance(port.get("nodePort"), int)
         )
@@ -551,7 +592,7 @@ def _discover_cluster_model_urls(
     if load_balancers.returncode != 0:
         return ()
 
-    candidates: list[str] = []
+    candidates: dict[str, _DiscoveredClusterEndpoint] = {}
     for container in load_balancers.stdout.splitlines():
         published = _command_json(
             [
@@ -564,7 +605,7 @@ def _discover_cluster_model_urls(
         )
         if not isinstance(published, dict):
             continue
-        for node_port in node_ports:
+        for node_port, revision in node_ports:
             bindings = published.get(f"{node_port}/tcp")
             if not isinstance(bindings, list):
                 continue
@@ -573,11 +614,17 @@ def _discover_cluster_model_urls(
                     binding.get("HostPort") if isinstance(binding, dict) else None
                 )
                 if isinstance(host_port, str) and host_port.isdigit():
-                    candidates.append(f"http://127.0.0.1:{host_port}")
-    return tuple(dict.fromkeys(candidates))
+                    endpoint = _DiscoveredClusterEndpoint(
+                        base_url=f"http://127.0.0.1:{host_port}",
+                        model_revision=revision,
+                    )
+                    candidates.setdefault(endpoint.base_url, endpoint)
+    return tuple(candidates.values())
 
 
-def _discover_e2e_model_urls(model: str) -> tuple[str, ...]:
+def _discover_e2e_model_urls(
+    model: str,
+) -> tuple[_DiscoveredClusterEndpoint, ...]:
     return _discover_cluster_model_urls(
         model,
         context=E2E_CONTEXT,
@@ -585,12 +632,24 @@ def _discover_e2e_model_urls(model: str) -> tuple[str, ...]:
     )
 
 
-def _discover_dev_model_urls(model: str) -> tuple[str, ...]:
+def _discover_dev_model_urls(
+    model: str,
+) -> tuple[_DiscoveredClusterEndpoint, ...]:
     return _discover_cluster_model_urls(
         model,
         context=DEV_CONTEXT,
         cluster=DEV_CLUSTER,
     )
+
+
+def _configured_candidate_base_url(
+    candidate: str | _DiscoveredClusterEndpoint,
+) -> str | None:
+    if isinstance(candidate, _DiscoveredClusterEndpoint):
+        return candidate.base_url
+    if isinstance(candidate, str):
+        return candidate
+    return None
 
 
 def _configured_model_urls(model: str) -> tuple[str, ...]:
@@ -606,8 +665,14 @@ def _configured_model_urls(model: str) -> tuple[str, ...]:
     if env_urls is not None:
         candidates.extend(env_urls.values())
 
-    candidates.extend(_discover_e2e_model_urls(model))
-    candidates.extend(_discover_dev_model_urls(model))
+    for candidate in _discover_e2e_model_urls(model):
+        base_url = _configured_candidate_base_url(candidate)
+        if base_url:
+            candidates.append(base_url)
+    for candidate in _discover_dev_model_urls(model):
+        base_url = _configured_candidate_base_url(candidate)
+        if base_url:
+            candidates.append(base_url)
 
     return tuple(dict.fromkeys(_server_base(url) for url in candidates if url))
 

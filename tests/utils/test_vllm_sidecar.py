@@ -39,6 +39,8 @@ DENSEON = "lightonai/DenseOn"
 GEMMA = "google/gemma-4-e4b-it"
 TEACHER_GEMMA = "google/gemma-4-26b-a4b-it"
 QWEN_TEACHER = "cyankiwi/Qwen3.6-27B-AWQ-INT4"
+ASR = get_inference_service_spec("vllm_asr")
+COLPALI = get_inference_service_spec("vllm_colpali")
 
 
 def _resolved_endpoint(service: str, base_url: str) -> ResolvedInferenceEndpoint:
@@ -154,6 +156,44 @@ def _e2e_resources(model: str, node_port: int) -> dict:
     }
 
 
+def _rendered_cluster_resources(
+    node_port: int,
+    *,
+    command: list[str],
+    args: list[str],
+) -> dict:
+    labels = {"app": "exact-inference"}
+    return {
+        "items": [
+            {
+                "kind": "Deployment",
+                "metadata": {"namespace": "cogniverse-e2e"},
+                "spec": {
+                    "template": {
+                        "metadata": {"labels": labels},
+                        "spec": {
+                            "containers": [
+                                {
+                                    "command": command,
+                                    "args": args,
+                                }
+                            ]
+                        },
+                    }
+                },
+            },
+            {
+                "kind": "Service",
+                "metadata": {"namespace": "cogniverse-e2e"},
+                "spec": {
+                    "selector": labels,
+                    "ports": [{"nodePort": node_port}],
+                },
+            },
+        ]
+    }
+
+
 def test_default_candidates_ignore_dev_config_and_chart(monkeypatch, tmp_path):
     import tests.utils.vllm_sidecar as sidecar_module
 
@@ -226,7 +266,10 @@ def test_e2e_discovery_maps_exact_workload_to_published_port(monkeypatch):
     monkeypatch.setattr(sidecar_module.subprocess, "run", discover)
 
     assert sidecar_module._discover_e2e_model_urls(DENSEON) == (
-        "http://127.0.0.1:34123",
+        sidecar_module._DiscoveredClusterEndpoint(
+            base_url="http://127.0.0.1:34123",
+            model_revision=None,
+        ),
     )
     assert commands[0][:3] == [
         "kubectl",
@@ -234,6 +277,129 @@ def test_e2e_discovery_maps_exact_workload_to_published_port(monkeypatch):
         "k3d-cogniverse-e2e",
     ]
     assert all("k3d-cogniverse-serverlb" not in command for command in commands)
+
+
+@pytest.mark.parametrize(
+    ("model", "resources", "expected_revision"),
+    [
+        (
+            ASR.model_id,
+            _rendered_cluster_resources(
+                31006,
+                command=["sh", "-c"],
+                args=[
+                    (
+                        "pip install --no-cache-dir --quiet soundfile librosa || exit 1\n"
+                        f"exec vllm serve {ASR.model_id!r} \\\n"
+                        "  --host 0.0.0.0 --port 8000 \\\n"
+                        f"  --revision {ASR.model_revision!r} \\\n"
+                        f"  --runner {'generate'!r} \\\n"
+                        f"  --max-model-len {'448'!r} \\\n"
+                    )
+                ],
+            ),
+            ASR.model_revision,
+        ),
+        (
+            COLPALI.model_id,
+            _rendered_cluster_resources(
+                31007,
+                command=["vllm"],
+                args=[
+                    "serve",
+                    COLPALI.model_id,
+                    "--revision",
+                    COLPALI.model_revision,
+                    "--host",
+                    "0.0.0.0",
+                    "--port",
+                    "8000",
+                    "--runner",
+                    "pooling",
+                    "--convert",
+                    "embed",
+                    "--limit-mm-per-prompt",
+                    '{"video":0,"image":1}',
+                ],
+            ),
+            COLPALI.model_revision,
+        ),
+        (
+            COLPALI.model_id,
+            _rendered_cluster_resources(
+                31008,
+                command=["vllm"],
+                args=[
+                    "serve",
+                    COLPALI.model_id,
+                    "--host",
+                    "0.0.0.0",
+                    "--port",
+                    "8000",
+                    "--runner",
+                    "pooling",
+                    "--convert",
+                    "embed",
+                    "--limit-mm-per-prompt",
+                    '{"video":0,"image":1}',
+                ],
+            ),
+            None,
+        ),
+    ],
+)
+def test_cluster_discovery_extracts_rendered_revision(
+    monkeypatch, model, resources, expected_revision
+):
+    import tests.utils.vllm_sidecar as sidecar_module
+
+    host_port = "34123"
+    commands: list[list[str]] = []
+
+    def discover(command, **kwargs):
+        commands.append(list(command))
+        if command[0] == "kubectl":
+            return subprocess.CompletedProcess(
+                command,
+                0,
+                stdout=json.dumps(resources),
+                stderr="",
+            )
+        if command[:2] == ["docker", "ps"]:
+            return subprocess.CompletedProcess(
+                command,
+                0,
+                stdout="k3d-cogniverse-e2e-serverlb\n",
+                stderr="",
+            )
+        if command[:2] == ["docker", "inspect"]:
+            return subprocess.CompletedProcess(
+                command,
+                0,
+                stdout=json.dumps(
+                    {
+                        f"{resources['items'][1]['spec']['ports'][0]['nodePort']}/tcp": [
+                            {"HostIp": "0.0.0.0", "HostPort": host_port},
+                        ]
+                    }
+                ),
+                stderr="",
+            )
+        raise AssertionError(f"unexpected command: {command}")
+
+    monkeypatch.setattr(sidecar_module.subprocess, "run", discover)
+
+    assert sidecar_module._discover_e2e_model_urls(model) == (
+        sidecar_module._DiscoveredClusterEndpoint(
+            base_url=f"http://127.0.0.1:{host_port}",
+            model_revision=expected_revision,
+        ),
+    )
+    assert commands[0][:3] == [
+        "kubectl",
+        "--context",
+        "k3d-cogniverse-e2e",
+    ]
 
 
 def test_cluster_discovery_ignores_model_consumers(monkeypatch):
