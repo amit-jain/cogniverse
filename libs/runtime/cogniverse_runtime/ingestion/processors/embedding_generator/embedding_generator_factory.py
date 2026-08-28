@@ -61,6 +61,31 @@ class EmbeddingGeneratorFactory:
         )
 
 
+def _resolve_profile_service_url(
+    *,
+    profile_name: str,
+    profile_config: dict[str, Any],
+    service_urls: dict[str, str],
+    profile_service_key: str,
+    target_field: str,
+) -> None:
+    service_name = (profile_config.get("inference_services") or {}).get(
+        profile_service_key
+    )
+    if not service_name:
+        return
+
+    url = service_urls.get(service_name)
+    if not url:
+        available = sorted(service_urls)
+        raise ValueError(
+            f"Profile {profile_name!r} specifies "
+            f"inference_services.{profile_service_key}={service_name!r} but no URL "
+            f"is configured. Deployed services: {available}."
+        )
+    profile_config[target_field] = url
+
+
 def create_embedding_generator(
     config: dict[str, Any],
     schema_name: str,
@@ -108,17 +133,16 @@ def create_embedding_generator(
     # embedding service configured.
     if "remote_inference_url" not in profile_config and config_manager is not None:
         system_config = config_manager.get_system_config()
-        # Audio profiles: route CLAP acoustic embeddings to the clap_embed
-        # sidecar when it is deployed (in-process CLAP needs torch, which
-        # the runtime image doesn't ship).
-        clap_url = (getattr(system_config, "inference_service_urls", {}) or {}).get(
-            "clap_embed"
+        service_urls = getattr(system_config, "inference_service_urls", {}) or {}
+        _resolve_profile_service_url(
+            profile_name=schema_name,
+            profile_config=profile_config,
+            service_urls=service_urls,
+            profile_service_key="acoustic_embedding",
+            target_field="clap_endpoint_url",
         )
-        if clap_url and "clap_endpoint_url" not in profile_config:
-            profile_config["clap_endpoint_url"] = clap_url
         loader = profile_config.get("model_loader", "")
         service_name = (profile_config.get("inference_services") or {}).get("embedding")
-        service_urls = getattr(system_config, "inference_service_urls", {}) or {}
 
         if service_name:
             url = service_urls.get(service_name)

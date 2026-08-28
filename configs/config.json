@@ -969,7 +969,8 @@
         "model_loader": "colbert",
         "inference_services": {
           "embedding": "colbert_pylate",
-          "transcription": "vllm_asr"
+          "transcription": "vllm_asr",
+          "acoustic_embedding": "clap_embed"
         },
         "semantic_model": "lightonai/LateOn",
         "schema_config": {"schema_name": "audio_content", "embedding_dim": 128, "binary_dim": 16}
