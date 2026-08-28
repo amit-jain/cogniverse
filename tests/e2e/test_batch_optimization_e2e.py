@@ -35,6 +35,7 @@ import pytest
 from cogniverse_agents.entity_extraction_agent import EntityExtractionModule
 from cogniverse_agents.optimizer.artifact_manager import BLOB_VERSION_DECISIONS
 from cogniverse_agents.query_enhancement_agent import QueryEnhancementModule
+from cogniverse_foundation.telemetry.config import SPAN_NAME_ORCHESTRATION
 from tests.e2e.conftest import (
     EVALUATION_QUERY_ASSET,
     GATEWAY_VIDEO_QUERIES,
@@ -235,6 +236,20 @@ def _optimizer_capture_sample_caps() -> dict[str, int]:
             math.ceil(floor * OPTIMIZER_CAPTURE_FLOOR_MARGIN), min_unique
         )
     return caps
+
+
+def _replayed_optimizer_capture_counts(
+    capture_records: list[dict[str, object]] | None = None,
+):
+    """Counts in the replayed subset of the committed optimizer capture."""
+    if capture_records is None:
+        capture_records = load_capture_json(OPTIMIZER_SPAN_CAPTURE_PATH)
+    return collections.Counter(
+        record["name"]
+        for record in sample_capture_by_name(
+            capture_records, _optimizer_capture_sample_caps()
+        )
+    )
 
 
 @functools.lru_cache(maxsize=None)
@@ -1632,9 +1647,7 @@ def generate_spans_for_batch_jobs(_kubectl_cluster_ready):
         # archive: expecting spans the replay never sent is unsatisfiable by
         # construction and no timeout can rescue it.
         replayed_records = sample_capture_by_name(capture_records, sample_caps)
-        replayed_counts = collections.Counter(
-            record["name"] for record in replayed_records
-        )
+        replayed_counts = _replayed_optimizer_capture_counts(capture_records)
         for capped_name, cap in sample_caps.items():
             assert replayed_counts[capped_name] == cap, replayed_counts
         assert replayed_counts[span_names[0]] == captured_counts[span_names[0]], (
@@ -1680,12 +1693,7 @@ def generate_spans_for_batch_jobs(_kubectl_cluster_ready):
 
     # The replayed subset is what Phoenix holds; the archive is a superset the
     # replay deliberately samples down, so expectations read the subset.
-    capture_counts = collections.Counter(
-        record["name"]
-        for record in sample_capture_by_name(
-            capture_records, _optimizer_capture_sample_caps()
-        )
-    )
+    capture_counts = replayed_counts
     served_scoreable_counts = _wait_for_served_scoreable_span_floor_in_pod(TENANT_ID)
     expected_served_scoreable_counts = {
         "query_enhancement": capture_counts[span_names[2]],
@@ -2468,8 +2476,9 @@ def seeded_gateway_traffic():
                     seeded += 1
             except httpx.HTTPError:
                 continue
-    assert seeded >= 1, (
-        f"No gateway seeding query succeeded within {GATEWAY_PROCESS_TIMEOUT_S:.0f}s each"
+    assert seeded == len(queries), (
+        f"Expected all {len(queries)} gateway seeding queries to succeed within "
+        f"{GATEWAY_PROCESS_TIMEOUT_S:.0f}s each; got {seeded}"
     )
     # OTLP export is batched; give the exporter time to flush to Phoenix.
     time.sleep(15)
@@ -2537,11 +2546,36 @@ class TestWorkflowOptimization:
     def test_workflow_produces_demonstrations(self):
         """Run --mode workflow, assert demos contain real workflow data."""
         result = _run_batch_job("workflow")
+        expected_orchestration = _replayed_optimizer_capture_counts()[
+            SPAN_NAME_ORCHESTRATION
+        ]
 
-        assert result["status"] == "success"
-        assert result["spans_found"] > 0
-        assert result["workflows_extracted"] >= 1
-        assert result["execution_demos_saved"] >= 1
+        # The replay capture seeds the orchestration corpus; the job should
+        # process and persist that exact corpus.
+        assert set(result) == {
+            "status",
+            "spans_found",
+            "workflows_extracted",
+            "execution_demos_saved",
+            "agent_profiles_saved",
+            "workflow_templates_saved",
+        }, result
+        assert result == {
+            "status": "success",
+            "spans_found": expected_orchestration,
+            "workflows_extracted": expected_orchestration,
+            "execution_demos_saved": expected_orchestration,
+            # Goldens over the committed replay capture: 10 agent profiles and
+            # 30 workflow templates.
+            "agent_profiles_saved": 10,
+            "workflow_templates_saved": 30,
+        }, result
+        assert result["status"] == "success", result
+        assert result["spans_found"] == expected_orchestration, result
+        assert result["workflows_extracted"] == expected_orchestration, result
+        assert result["execution_demos_saved"] == expected_orchestration, result
+        assert result["agent_profiles_saved"] == 10, result
+        assert result["workflow_templates_saved"] == 30, result
 
     def test_workflow_artifact_contains_real_data(self):
         """Workflow demos must contain agent_sequence, execution_time, success."""
@@ -2579,7 +2613,6 @@ class TestWorkflowOptimization:
             timeout=60,
         )
         demos = json.loads(out.stdout.strip() or "[]")
-        assert demos != [], "Expected workflow demos, got 0"
 
         # Find demos with non-empty agent_sequence (latest runs have the fix)
         valid_demos = []
@@ -2591,11 +2624,11 @@ class TestWorkflowOptimization:
             if agents:
                 valid_demos.append(data)
 
-        assert valid_demos != [], (
-            f"Expected at least 1 demo with non-empty agent_sequence, "
-            f"got 0 out of {len(demos)} total demos"
-        )
+        # The workflow store replaces the dataset, so the loaded rows should
+        # round-trip exactly.
+        assert len(demos) == result["execution_demos_saved"], result
         assert len(valid_demos) == result["execution_demos_saved"], result
+        assert len(demos) == len(valid_demos), result
 
         # Every orchestrated query the fixture seeded must appear as a demo.
         # Derived from the seeding constant so the expectation cannot name a
