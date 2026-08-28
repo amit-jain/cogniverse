@@ -17,6 +17,9 @@ from typing import Any
 
 import pytest
 
+from cogniverse_agents.optimizer.golden_set_ground_truth import (
+    canonicalize_golden_set_ground_truth_rows,
+)
 from cogniverse_core.common.tenant_utils import SYSTEM_TENANT_ID
 from cogniverse_runtime.synthetic_config import parse_synthetic_runtime_config
 
@@ -139,3 +142,45 @@ def test_chart_agents_are_a_subset_of_the_reference_config():
     chart_agents = set(_rendered(CHART)["agents"])
 
     assert chart_agents - shipped_agents == set()
+
+
+GOLDEN_DATASET = (
+    REPO_ROOT
+    / "charts"
+    / "cogniverse"
+    / "files"
+    / "quality-monitor"
+    / "golden_dataset.json"
+)
+
+
+def test_shipped_golden_dataset_passes_the_production_canonicalizer():
+    """The quality-monitor sidecar seeds its tenant blob from this shipped file
+    at startup, through ``canonicalize_golden_set_ground_truth_rows``. A row the
+    canonicalizer rejects exits the sidecar, which leaves the runtime pod at 1/2
+    and drops it from the Service endpoints, so the whole search API stops
+    answering.
+    """
+    rows = json.loads(GOLDEN_DATASET.read_text(encoding="utf-8"))
+    canonical = canonicalize_golden_set_ground_truth_rows(rows)
+
+    assert len(rows) == 125
+    assert len(canonical) == 125
+    assert [row["query"] for row in canonical[:2]] == [
+        rows[0]["query"],
+        rows[1]["query"],
+    ]
+
+
+def test_shipped_golden_dataset_carries_no_unusable_rows():
+    """Every shipped golden row must be usable as a golden *query*: a
+    non-empty query and at least one expected video to score it against."""
+    rows = json.loads(GOLDEN_DATASET.read_text(encoding="utf-8"))
+
+    blank_queries = [
+        i for i, row in enumerate(rows, 1) if not str(row.get("query", "")).strip()
+    ]
+    no_expected = [i for i, row in enumerate(rows, 1) if not row.get("expected_videos")]
+
+    assert blank_queries == []
+    assert no_expected == []
