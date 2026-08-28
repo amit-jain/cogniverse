@@ -339,6 +339,8 @@ async def test_synthetic_only_data_compiles_the_actual_production_module(
             "unscoreable_examples": 1,
             "training_examples": 1,
             "holdout_examples": 0,
+            "distinct_queries": 0,
+            "holdout_queries": 0,
             "holdout_source": "served",
             "selection": {
                 "pool": 2,
