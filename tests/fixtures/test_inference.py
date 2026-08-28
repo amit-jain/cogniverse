@@ -91,6 +91,53 @@ def _model_server(*, model: str, revision: str | None, token: str | None = None)
 
 
 @contextmanager
+def _vllm_model_server(*, model: str, revision: str | None, token: str | None = None):
+    requests: list[tuple[str, str | None]] = []
+
+    class Handler(BaseHTTPRequestHandler):
+        def do_GET(self) -> None:
+            requests.append((self.path, self.headers.get("Authorization")))
+            if token is not None and self.headers.get("Authorization") != (
+                f"Bearer {token}"
+            ):
+                payload = json.dumps({"detail": "unauthorized"}).encode()
+                self.send_response(401)
+                self.send_header("Content-Type", "application/json")
+                self.send_header("Content-Length", str(len(payload)))
+                self.end_headers()
+                self.wfile.write(payload)
+                return
+            record = {
+                "id": model,
+                "root": model,
+                "parent": None,
+                "max_model_len": 4096,
+            }
+            if revision is not None:
+                record["revision"] = revision
+            payload = json.dumps({"object": "list", "data": [record]}).encode()
+            self.send_response(200)
+            self.send_header("Content-Type", "application/json")
+            self.send_header("Content-Length", str(len(payload)))
+            self.end_headers()
+            self.wfile.write(payload)
+
+        def log_message(self, format: str, *args: object) -> None:
+            return
+
+    server = ThreadingHTTPServer(("127.0.0.1", 0), Handler)
+    thread = Thread(target=server.serve_forever, daemon=True)
+    thread.start()
+    try:
+        host, port = server.server_address
+        yield f"http://{host}:{port}", requests
+    finally:
+        server.shutdown()
+        server.server_close()
+        thread.join(timeout=5)
+
+
+@contextmanager
 def _health_server(*, status: str, include_model: bool = True):
     requests: list[tuple[str, str | None]] = []
 
@@ -170,6 +217,15 @@ def _candidate(
         base_url=base_url,
         credentials=EndpointCredentials(bearer_token=TEST_INFERENCE_API_KEY),
         identity_evidence=identity_evidence,
+        model_revision=model_revision,
+    )
+
+
+def _discovered(base_url: str, model_revision: str | None):
+    from tests.utils.vllm_sidecar import _DiscoveredClusterEndpoint
+
+    return _DiscoveredClusterEndpoint(
+        base_url=base_url,
         model_revision=model_revision,
     )
 
@@ -309,6 +365,108 @@ def test_discovered_provider_closes_only_its_owned_validator():
 
     assert endpoint.base_url == base_url
     assert owned_client.is_closed
+    assert requests == [("/v1/models", f"Bearer {TEST_INFERENCE_API_KEY}")]
+
+
+@pytest.mark.unit
+def test_discovered_provider_uses_pinned_revision_as_deployment_evidence():
+    class RecordingValidator:
+        def __init__(self) -> None:
+            self.calls: list[tuple[object, object]] = []
+
+        def validate(self, spec, candidate):
+            self.calls.append((spec, candidate))
+            return _resolved(
+                spec.name,
+                candidate.provider,
+                candidate.base_url,
+                token=TEST_INFERENCE_API_KEY,
+            )
+
+    validator = RecordingValidator()
+    provider = DiscoveredEndpointProvider(
+        "e2e",
+        lambda spec: (_discovered("http://127.0.0.1:34124", COLPALI.model_revision),),
+        validator=validator,
+    )
+
+    endpoint = provider.resolve(COLPALI)
+
+    assert endpoint == _resolved(
+        "vllm_colpali", "e2e", "http://127.0.0.1:34124", TEST_INFERENCE_API_KEY
+    )
+    assert validator.calls == [
+        (
+            COLPALI,
+            CandidateEndpoint(
+                provider="e2e",
+                base_url="http://127.0.0.1:34124",
+                credentials=EndpointCredentials(bearer_token=TEST_INFERENCE_API_KEY),
+                identity_evidence=EndpointIdentityEvidence.DEPLOYMENT,
+                model_revision=COLPALI.model_revision,
+            ),
+        )
+    ]
+
+
+@pytest.mark.unit
+def test_discovered_provider_rejects_pinned_revision_mismatch():
+    wrong_revision = "1" * 40
+    provider = DiscoveredEndpointProvider(
+        "e2e",
+        lambda spec: (_discovered("http://127.0.0.1:34125", wrong_revision),),
+    )
+
+    with pytest.raises(ModelIdentityError) as caught:
+        provider.resolve(COLPALI)
+
+    assert str(caught.value) == (
+        f"vllm_colpali: deployment revision {wrong_revision!r} does not match expected "
+        f"{COLPALI.model_revision!r}"
+    )
+
+
+@pytest.mark.unit
+def test_discovered_provider_requires_reported_revision_when_discovery_finds_none():
+    with _vllm_model_server(
+        model=COLPALI.model_id,
+        revision=None,
+        token=TEST_INFERENCE_API_KEY,
+    ) as (base_url, requests):
+        provider = DiscoveredEndpointProvider(
+            "e2e",
+            lambda spec: (_discovered(base_url, None),),
+        )
+
+        with pytest.raises(ModelIdentityError) as caught:
+            provider.resolve(COLPALI)
+
+    assert str(caught.value) == (
+        f"vllm_colpali: expected revision {COLPALI.model_revision!r}, got None"
+    )
+    assert requests == [("/v1/models", f"Bearer {TEST_INFERENCE_API_KEY}")]
+
+
+@pytest.mark.unit
+def test_discovered_provider_accepts_pinned_revision_against_vllm_models_server():
+    with _vllm_model_server(
+        model=COLPALI.model_id,
+        revision=None,
+        token=TEST_INFERENCE_API_KEY,
+    ) as (base_url, requests):
+        provider = DiscoveredEndpointProvider(
+            "e2e",
+            lambda spec: (_discovered(base_url, COLPALI.model_revision),),
+        )
+
+        endpoint = provider.resolve(COLPALI)
+
+    assert endpoint == _resolved(
+        "vllm_colpali",
+        "e2e",
+        base_url,
+        TEST_INFERENCE_API_KEY,
+    )
     assert requests == [("/v1/models", f"Bearer {TEST_INFERENCE_API_KEY}")]
 
 

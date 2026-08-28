@@ -272,7 +272,10 @@ rejects any unregistered marker) plus a per-package override in
   infrastructure/model dependencies
 - `requires_inference("vllm_colpali")` — exact ColPali/ColQwen HTTP embedding
   service; `requires_inference("videoprism_jax")` — exact VideoPrism service.
-  Both also request their `vllm_asr` dependency during collection.
+  Both also request their `vllm_asr` dependency during collection. Cluster
+  discovery reads `--revision` from rendered workload args: a pinned workload
+  is tagged `identity_evidence=DEPLOYMENT`, and an unpinned one stays
+  `ENDPOINT` and must report the exact revision from `/v1/models`.
 - `requires_modal_inference("vllm_llm_student")` — explicitly opt an exact
   service into paid Modal provisioning; ordinary `requires_inference` tests
   prefer reusable cluster endpoints and local fixture-owned services.

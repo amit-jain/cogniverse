@@ -1704,6 +1704,11 @@ and does not fall through to either k3d cluster or a local process. E2E tests
 carrying that marker are selected only by `RUN_MODAL_INFERENCE_E2E=1` or an
 explicit `-m requires_modal_inference` test run.
 
+The cluster discovery path reads `--revision` from rendered workload args. A
+discovered workload with a pinned revision is tagged
+`identity_evidence=DEPLOYMENT`; a workload without a pinned revision stays
+`ENDPOINT` and must report the exact revision from `/v1/models`.
+
 `INFERENCE_SERVICE_URLS` is an explicit override. It must be a JSON object of
 canonical service names to root HTTP(S) URLs. A malformed object, unknown
 service, unreachable explicit URL, authentication error, or model mismatch

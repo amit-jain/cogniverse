@@ -35,6 +35,8 @@ from cogniverse_cli.modal_inference_config import (
     get_inference_service_spec,
 )
 
+from tests.utils.vllm_sidecar import _DiscoveredClusterEndpoint
+
 _PROVIDER_ORDER = ("e2e", "dev", "modal", "local")
 _REQUIRED_SERVICES_ATTR = "_cogniverse_required_inference_services"
 _MODAL_SERVICES_ATTR = "_cogniverse_modal_inference_services"
@@ -83,6 +85,14 @@ class ProviderUnavailable(RuntimeError):
 
 def _immutable_headers(candidate: CandidateEndpoint, spec: InferenceServiceSpec):
     return candidate.credentials.headers(spec.auth)
+
+
+def _discovered_endpoint(candidate: object) -> tuple[str, str | None]:
+    if isinstance(candidate, _DiscoveredClusterEndpoint):
+        return candidate.base_url, candidate.model_revision
+    if isinstance(candidate, str):
+        return candidate, None
+    raise TypeError(f"unexpected discovered endpoint {candidate!r}")
 
 
 class EndpointValidator:
@@ -304,7 +314,7 @@ class DiscoveredEndpointProvider:
     def __init__(
         self,
         name: str,
-        discover: Callable[[InferenceServiceSpec], Sequence[str]],
+        discover: Callable[[InferenceServiceSpec], Sequence[object]],
         validator: EndpointValidator | None = None,
         credentials: EndpointCredentials | None = None,
     ) -> None:
@@ -320,12 +330,18 @@ class DiscoveredEndpointProvider:
 
     def resolve(self, spec: InferenceServiceSpec):
         failures: list[str] = []
-        for url in self._discover(spec):
+        for discovered in self._discover(spec):
+            url, model_revision = _discovered_endpoint(discovered)
             candidate = CandidateEndpoint(
                 provider=self.name,
                 base_url=url,
                 credentials=self._credentials,
-                identity_evidence=EndpointIdentityEvidence.ENDPOINT,
+                identity_evidence=(
+                    EndpointIdentityEvidence.DEPLOYMENT
+                    if model_revision is not None
+                    else EndpointIdentityEvidence.ENDPOINT
+                ),
+                model_revision=model_revision,
             )
             try:
                 endpoint = self._validator.validate(spec, candidate)
