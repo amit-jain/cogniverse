@@ -251,9 +251,10 @@ class TestEntityExtractionRealGLiNERSpaCy:
             f"Entity types should include recognizable categories, got: {observed_types}"
         )
 
-        # Fast path should be used (GLiNER available)
-        assert result.path_used == "fast", (
-            f"Expected GLiNER fast path, got: {result.path_used}"
+        # DSPy is the primary extraction path; GLiNER + SpaCy is the fallback
+        # taken only when the LM call fails (entity_extraction_agent.py:270,302).
+        assert result.path_used == "dspy", (
+            f"Expected the DSPy primary path, got: {result.path_used}"
         )
 
         # All entities should have positive confidence
@@ -315,11 +316,16 @@ class TestEntityExtractionRealGLiNERSpaCy:
             f"Expected at least one of {key_entities} in entities, got: {entity_texts_lower}"
         )
 
-        # If fast path and 2+ entities, relationships should be a list
-        if result.path_used == "fast" and result.entity_count >= 2:
-            assert isinstance(result.relationships, list), (
-                "relationships should be a list when multiple entities detected"
-            )
+        # Relationships are carried on whichever path ran; gating this on a
+        # single path would make the assertion unreachable under DSPy-primary.
+        assert isinstance(result.relationships, list), (
+            f"relationships must be a list, got {type(result.relationships)}"
+        )
+        if result.entity_count >= 2:
+            assert all(
+                relationship.subject and relationship.relation and relationship.object
+                for relationship in result.relationships
+            ), f"relationship endpoints must be non-empty: {result.relationships}"
 
     @pytest.mark.asyncio
     async def test_empty_query_returns_no_entities(self, entity_agent):

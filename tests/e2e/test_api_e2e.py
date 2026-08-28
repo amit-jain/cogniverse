@@ -1108,7 +1108,7 @@ class TestSyntheticDataAPI:
                 assert extraction_response.status_code == 200, extraction_response.text
                 extraction = extraction_response.json()
                 assert extraction["query"] == topic
-                assert extraction["path_used"] == "fast"
+                assert extraction["path_used"] == "dspy"
                 assert all(entity["text"] in topic for entity in extraction["entities"])
                 seen_exact: dict[str, str] = {}
                 seen_casefold: set[str] = set()

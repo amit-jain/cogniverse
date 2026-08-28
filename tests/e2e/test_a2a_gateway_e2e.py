@@ -950,9 +950,10 @@ class TestEntityExtractionAgent:
                 "TECHNOLOGY",
             ), f"Entity '{e['text']}' has unexpected type '{e['type']}'"
 
-        # Fast path should be used (GLiNER available in k3d pod)
-        assert data.get("path_used") == "fast", (
-            f"Expected GLiNER fast path, got: {data.get('path_used')}"
+        # DSPy is the primary extraction path; GLiNER + SpaCy is the fallback
+        # taken only when the LM call fails (entity_extraction_agent.py:270,302).
+        assert data.get("path_used") == "dspy", (
+            f"Expected the DSPy primary path, got: {data.get('path_used')}"
         )
 
         # Relationships should be populated when 2+ entities exist
