@@ -594,6 +594,10 @@ exists = registry.schema_exists("acme", "video_content")
 schemas = registry.get_tenant_schemas("acme")
 ```
 
+SchemaRegistry reads persisted schemas on construction, retries transient
+storage failures with backoff, and loads an empty registry when storage is
+empty or returns HTTP 404.
+
 ### AdapterStoreRegistry / WorkflowStoreRegistry
 
 Thin subclasses of `cogniverse_foundation.registry.EntryPointRegistry` that

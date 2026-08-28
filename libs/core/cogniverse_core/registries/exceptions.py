@@ -48,10 +48,9 @@ class SchemaRegistryInitializationError(Exception):
     SchemaRegistry failed to initialize.
 
     Raised during SchemaRegistry construction when critical initialization
-    steps fail (loading schemas from storage, validating state, etc.).
+    steps fail after bounded storage retries.
 
-    In strict_mode=True, this exception is raised to fail fast.
-    In strict_mode=False, initialization continues with empty registry.
+    Empty storage is valid and loads as an empty registry.
     """
 
     pass
