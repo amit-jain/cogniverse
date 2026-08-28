@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import asyncio
+import os
 import sys
 from pathlib import Path
 from types import SimpleNamespace
@@ -10,12 +11,25 @@ from types import SimpleNamespace
 import pytest
 
 from cogniverse_agents.optimizer import dspy_agent_optimizer as dspy_optimizer
+from cogniverse_core.common.cache.backends import s3 as s3_backend
+from cogniverse_runtime import main as runtime_main
 from cogniverse_runtime import optimization_cli, quality_monitor_cli
 from cogniverse_runtime.ingestion_worker import worker
 
 TELEMETRY_OTLP_ENDPOINT = "phoenix-test:4317"
 
 pytestmark = [pytest.mark.unit, pytest.mark.ci_fast]
+
+
+@pytest.fixture(autouse=True)
+def _reset_s3_backend_defaults():
+    s3_backend.configure_s3_backend_defaults(
+        endpoint=None, access_key=None, secret_key=None
+    )
+    yield
+    s3_backend.configure_s3_backend_defaults(
+        endpoint=None, access_key=None, secret_key=None
+    )
 
 
 def _resolver_spy(events: list[str]):
@@ -231,6 +245,7 @@ async def test_ingestion_worker_resolves_before_telemetry(monkeypatch):
         "cogniverse_foundation.telemetry.manager.get_telemetry_manager",
         _telemetry_manager_spy(events),
     )
+    monkeypatch.setattr(worker, "_validate_pipeline_cache_defaults", lambda: None)
     monkeypatch.setattr(worker, "WorkerConfig", lambda: _StubConfig())
     monkeypatch.setattr(worker, "get_redis", _fake_get_redis)
     monkeypatch.setattr(worker, "close_redis", _fake_close_redis)
@@ -320,3 +335,143 @@ def test_text_analysis_agent_main_uses_public_resolver_import():
     assert (
         "from cogniverse_runtime.main import _resolve_library_env_defaults" not in text
     )
+
+
+@pytest.mark.asyncio
+async def test_worker_bootstrap_sets_exact_s3_defaults(monkeypatch):
+    monkeypatch.setattr(
+        "cogniverse_runtime.entrypoint_env.resolve_library_env_defaults",
+        lambda: {
+            "minio_endpoint": "http://minio.internal:9000",
+            "minio_access_key": "minio-access",
+            "minio_secret_key": "minio-secret",
+            "telemetry_otlp_endpoint": TELEMETRY_OTLP_ENDPOINT,
+            "telemetry_http_endpoint": None,
+            "semantic_embed_url": "http://embed.internal:8000",
+            "semantic_embed_model": "embed-model",
+            "tenant_cache_capacity": 23,
+        },
+    )
+    monkeypatch.setattr(worker, "_validate_pipeline_cache_defaults", lambda: None)
+    monkeypatch.setattr(
+        worker,
+        "WorkerConfig",
+        lambda: SimpleNamespace(redis_url="redis://stub"),
+    )
+
+    async def _fake_get_redis(url):
+        assert url == "redis://stub"
+        assert (
+            s3_backend.configured_s3_backend_defaults()
+            == s3_backend.S3BackendDefaults(
+                endpoint="http://minio.internal:9000",
+                access_key="minio-access",
+                secret_key="minio-secret",
+            )
+        )
+        assert os.environ["AWS_ACCESS_KEY_ID"] == "minio-access"
+        assert os.environ["AWS_SECRET_ACCESS_KEY"] == "minio-secret"
+        raise RuntimeError("stop after bootstrap")
+
+    monkeypatch.delenv("AWS_ACCESS_KEY_ID", raising=False)
+    monkeypatch.delenv("AWS_SECRET_ACCESS_KEY", raising=False)
+    monkeypatch.setattr(worker, "get_redis", _fake_get_redis)
+
+    with pytest.raises(RuntimeError, match="stop after bootstrap"):
+        await worker.run(stop=asyncio.Event())
+
+    assert s3_backend.configured_s3_backend_defaults() == s3_backend.S3BackendDefaults(
+        endpoint="http://minio.internal:9000",
+        access_key="minio-access",
+        secret_key="minio-secret",
+    )
+
+
+def test_main_bootstrap_sets_exact_s3_defaults(monkeypatch):
+    monkeypatch.delenv("AWS_ACCESS_KEY_ID", raising=False)
+    monkeypatch.delenv("AWS_SECRET_ACCESS_KEY", raising=False)
+    monkeypatch.setattr(runtime_main, "get_telemetry_manager", lambda *a, **k: None)
+    monkeypatch.setattr(
+        runtime_main, "configure_semantic_embedder_defaults", lambda **k: None
+    )
+    monkeypatch.setattr(
+        "cogniverse_agents.text_analysis_agent.configure_tenant_cache_capacity",
+        lambda *_: None,
+    )
+    monkeypatch.setattr(
+        "cogniverse_core.memory.manager.configure_tenant_cache_capacity",
+        lambda *_: None,
+    )
+    monkeypatch.setattr(
+        "cogniverse_core.registries.backend_registry.configure_tenant_cache_capacity",
+        lambda *_: None,
+    )
+    monkeypatch.setattr(
+        "cogniverse_foundation.registry.entry_point_registry.configure_tenant_cache_capacity",
+        lambda *_: None,
+    )
+
+    runtime_main._configure_library_module_defaults(
+        config_manager=object(),
+        minio_endpoint="http://minio.internal:9000",
+        minio_access_key="minio-access",
+        minio_secret_key="minio-secret",
+        telemetry_otlp_endpoint=TELEMETRY_OTLP_ENDPOINT,
+        telemetry_http_endpoint=None,
+        semantic_embed_url="http://embed.internal:8000",
+        semantic_embed_model="embed-model",
+        tenant_cache_capacity=23,
+    )
+
+    assert s3_backend.configured_s3_backend_defaults() == s3_backend.S3BackendDefaults(
+        endpoint="http://minio.internal:9000",
+        access_key="minio-access",
+        secret_key="minio-secret",
+    )
+    assert os.environ["AWS_ACCESS_KEY_ID"] == "minio-access"
+    assert os.environ["AWS_SECRET_ACCESS_KEY"] == "minio-secret"
+
+
+@pytest.mark.asyncio
+async def test_worker_bootstrap_fails_without_minio_when_s3_cache_enabled(monkeypatch):
+    monkeypatch.setattr(
+        "cogniverse_runtime.entrypoint_env.resolve_library_env_defaults",
+        lambda: {
+            "minio_endpoint": None,
+            "minio_access_key": None,
+            "minio_secret_key": None,
+            "telemetry_otlp_endpoint": TELEMETRY_OTLP_ENDPOINT,
+            "telemetry_http_endpoint": None,
+            "semantic_embed_url": None,
+            "semantic_embed_model": None,
+            "tenant_cache_capacity": 23,
+        },
+    )
+    monkeypatch.setenv("REDIS_URL", "redis://stub")
+    monkeypatch.setattr(
+        "cogniverse_foundation.config.utils.create_default_config_manager",
+        lambda: object(),
+    )
+    monkeypatch.setattr(
+        "cogniverse_foundation.config.utils.get_config",
+        lambda **kwargs: {
+            "pipeline_cache": {
+                "enabled": True,
+                "backends": [
+                    {
+                        "backend_type": "s3",
+                        "enabled": True,
+                    }
+                ],
+            }
+        },
+    )
+
+    with pytest.raises(
+        RuntimeError,
+        match=(
+            "S3 cache backend needs MinIO settings at startup: "
+            "MINIO_ACCESS_KEY, MINIO_ENDPOINT, MINIO_SECRET_KEY"
+        ),
+    ):
+        await worker.run(stop=asyncio.Event())

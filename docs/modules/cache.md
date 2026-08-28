@@ -55,7 +55,10 @@ The Cache Module provides a **comprehensive caching infrastructure** for the Cog
    - JSON/Pickle/Msgpack for metadata
    - Compression support
 
-5. **Production-Ready Features**
+5. **Runtime Contract**
+   - `S3CacheBackend` reads process MinIO defaults, and `require_s3_cache_backend_defaults(backends)` raises at startup when an enabled `s3` backend is missing `MINIO_ENDPOINT`, `MINIO_ACCESS_KEY`, or `MINIO_SECRET_KEY`.
+
+6. **Production-Ready Features**
    - TTL-based expiration
    - Automatic cleanup of expired entries
    - Cache statistics

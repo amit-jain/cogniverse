@@ -155,17 +155,24 @@ def _media_config_from_defaults(
     if not minio_endpoint:
         return MediaConfig()
 
-    # fsspec's s3 client picks up AWS_ACCESS_KEY_ID / AWS_SECRET_ACCESS_KEY
-    # from the process env. Mirror our MINIO_* secrets onto those names
-    # for the duration of the job so the localize() call authenticates.
-    access = runtime_defaults["minio_access_key"]
-    secret = runtime_defaults["minio_secret_key"]
-    if access:
-        os.environ.setdefault("AWS_ACCESS_KEY_ID", access)
-    if secret:
-        os.environ.setdefault("AWS_SECRET_ACCESS_KEY", secret)
-
     return MediaConfig.for_object_store(minio_endpoint)
+
+
+def _validate_pipeline_cache_defaults() -> None:
+    """Fail fast when the configured pipeline cache lacks MinIO settings."""
+    from cogniverse_core.common.cache import require_s3_cache_backend_defaults
+    from cogniverse_core.common.tenant_utils import SYSTEM_TENANT_ID
+    from cogniverse_foundation.config.utils import (
+        create_default_config_manager,
+        get_config,
+    )
+
+    config_manager = create_default_config_manager()
+    config = get_config(tenant_id=SYSTEM_TENANT_ID, config_manager=config_manager)
+    cache_config_dict = config.get("pipeline_cache", {})
+    if not cache_config_dict.get("enabled", False):
+        return
+    require_s3_cache_backend_defaults(cache_config_dict.get("backends", []))
 
 
 _GRAPH_FACTORY_INSTALLED = False
@@ -892,12 +899,17 @@ async def run(
         level=os.environ.get("LOG_LEVEL", "INFO"),
         format="%(asctime)s %(levelname)s %(name)s: %(message)s",
     )
-    from cogniverse_runtime.entrypoint_env import resolve_library_env_defaults
+    from cogniverse_runtime.entrypoint_env import (
+        configure_runtime_library_defaults,
+        resolve_library_env_defaults,
+    )
 
     runtime_defaults = resolve_library_env_defaults()
+    configure_runtime_library_defaults(runtime_defaults)
     telemetry_otlp_endpoint = runtime_defaults["telemetry_otlp_endpoint"]
     media_config = _media_config_from_defaults(runtime_defaults)
     config = WorkerConfig()
+    await asyncio.to_thread(_validate_pipeline_cache_defaults)
     if stop is None:
         stop = asyncio.Event()
         _install_signal_handlers(stop)

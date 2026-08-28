@@ -364,6 +364,10 @@ class VideoIngestionPipeline:
             self.logger.info("Pipeline cache is disabled")
             return
 
+        from cogniverse_core.common.cache import require_s3_cache_backend_defaults
+
+        require_s3_cache_backend_defaults(cache_config_dict.get("backends", []))
+
         from cogniverse_core.common.cache import CacheConfig, CacheManager
 
         serialization_format = cache_config_dict.get("serialization_format", "pickle")

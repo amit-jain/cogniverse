@@ -39,7 +39,6 @@ from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
 
-from cogniverse_core.common.cache.backends.s3 import configure_s3_backend_defaults
 from cogniverse_core.common.models.semantic_embedder import (
     configure_semantic_embedder_defaults,
 )
@@ -52,6 +51,9 @@ from cogniverse_foundation.telemetry.manager import get_telemetry_manager
 # Import routers
 from cogniverse_runtime.admin import tenant_manager
 from cogniverse_runtime.config_loader import get_config_loader
+from cogniverse_runtime.entrypoint_env import (
+    configure_runtime_library_defaults as _configure_runtime_library_defaults_from_entrypoint,
+)
 from cogniverse_runtime.entrypoint_env import (
     resolve_library_env_defaults as _resolve_library_env_defaults_from_entrypoint,
 )
@@ -515,16 +517,6 @@ def _resolve_library_env_defaults() -> dict[str, str | int | None]:
     return _resolve_library_env_defaults_from_entrypoint()
 
 
-def _mirror_minio_credentials_to_aws(
-    access_key: str | None, secret_key: str | None
-) -> None:
-    """Mirror the MinIO secret onto the AWS names fsspec's S3 client reads."""
-    if access_key:
-        os.environ.setdefault("AWS_ACCESS_KEY_ID", access_key)
-    if secret_key:
-        os.environ.setdefault("AWS_SECRET_ACCESS_KEY", secret_key)
-
-
 def _configure_library_module_defaults(
     config_manager,
     *,
@@ -551,11 +543,12 @@ def _configure_library_module_defaults(
         configure_tenant_cache_capacity as configure_entry_point_registry_tenant_cache_capacity,
     )
 
-    _mirror_minio_credentials_to_aws(minio_access_key, minio_secret_key)
-    configure_s3_backend_defaults(
-        endpoint=minio_endpoint,
-        access_key=minio_access_key,
-        secret_key=minio_secret_key,
+    _configure_runtime_library_defaults_from_entrypoint(
+        {
+            "minio_endpoint": minio_endpoint,
+            "minio_access_key": minio_access_key,
+            "minio_secret_key": minio_secret_key,
+        }
     )
     configure_semantic_embedder_defaults(
         remote_url=semantic_embed_url,
