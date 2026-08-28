@@ -5,8 +5,8 @@ Extracts named entities (people, places, organizations, concepts) from user quer
 to enhance search and provide structured query understanding.
 
 Tiered extraction:
-- Fast path: GLiNER NER + SpaCy dependency analysis (no LLM needed)
-- Fallback: DSPy ChainOfThought (requires LLM)
+- Primary: DSPy ChainOfThought (requires LLM)
+- Fallback: GLiNER NER + SpaCy dependency analysis, used when the LM call fails
 """
 
 import asyncio
