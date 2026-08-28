@@ -483,11 +483,14 @@ runtime:
     goldenIntervalSeconds: 7200   # 2 hours
     liveIntervalSeconds: 14400    # 4 hours
     liveSampleCount: 20
-    # Absolute path inside the sidecar container. The dataset
-    # is mounted from a ConfigMap built from
-    # charts/cogniverse/files/quality-monitor/golden_dataset.json (a copy
-    # of data/testset/evaluation/sample_videos_retrieval_queries.json).
-    goldenDatasetPath: "/app/data/quality-monitor/golden_dataset.json"
+    # One-shot seed source for the tenant's golden set: when set, the sidecar
+    # reads this file once at startup and uploads it as the tenant's
+    # golden_set_ground_truth blob only if the tenant has none. Empty (the
+    # shipped default) means no seed: the monitor reports
+    # golden_set_missing until the tenant uploads a golden set through
+    # PUT /admin/tenants/{tenant_id}/golden_set_ground_truth. The dev and e2e
+    # overlays point this at the bundled sample corpus (files/quality-monitor).
+    goldenDatasetPath: ""
     # Bare model id passed to ``quality_monitor_cli --llm-model`` (the LLM
     # judge target). Must match evaluators.llm_judge.model in config.json so
     # the judge and the rest of the stack agree on the same Ollama/vLLM

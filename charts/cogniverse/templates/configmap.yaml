@@ -8,9 +8,10 @@ metadata:
 data:
   config.json: |-
     {{ tpl (.Files.Get "files/config.json") . | nindent 4 }}
-{{- if .Values.runtime.qualityMonitor.enabled }}
+{{- if and .Values.runtime.qualityMonitor.enabled .Values.runtime.qualityMonitor.goldenDatasetPath }}
 ---
-# Golden evaluation dataset for the QualityMonitor sidecar. Without this
+# Golden-set seed file for the QualityMonitor sidecar, rendered only when a
+# seed path is configured. Without this
 # the sidecar crash-loops: data/testset/ is never mounted in the pod.
 # Bundling the dataset as a ConfigMap (sourced from
 # files/quality-monitor/golden_dataset.json, which is a copy of

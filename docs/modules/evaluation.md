@@ -1691,7 +1691,7 @@ success (`well_calibrated` / `moderately_calibrated` / `poorly_calibrated`).
 
 **File:** `libs/evaluation/cogniverse_evaluation/quality_monitor.py`
 
-**Purpose:** Continuous, scheduled quality monitor across all agents. Runs two evaluation strategies and decides whether to trigger an Argo optimization workflow — it composes `SpanEvaluator`, `GoldenDatasetEvaluator`, `LLMJudgeCore`, and `PhoenixDatasetStore` rather than reimplementing them.
+**Purpose:** Continuous, scheduled quality monitor across all agents. Runs two evaluation strategies and decides whether to trigger an Argo optimization workflow — it composes `SpanEvaluator`, `LLMJudgeCore`, and the telemetry provider's `datasets` store rather than reimplementing them. Golden queries come from the tenant's versioned `config/golden_set_ground_truth` blob via `ArtifactManager`.
 
 **`AgentType` enum:** `SEARCH`, `SUMMARY`, `REPORT`, `GATEWAY`, `ROUTING`, `QUERY_ENHANCEMENT`, `ENTITY_EXTRACTION`, `PROFILE_SELECTION` — mapped to span names via `SPAN_NAME_BY_AGENT` (e.g. `"SearchAgent.process"`), matching the `f"{ClassName}.process"` convention emitted by `AgentBase._process_span()`.
 
@@ -1725,6 +1725,8 @@ derived name (the Phoenix project live eval reads, `quality-baseline-*` /
 canonical form, matching what production span writers emit. Live-traffic
 evaluation reads the tenant-only user-ops project
 (`cogniverse-{org:tenant}`) — the project agents actually write spans to.
+`golden_dataset_path` is the one-shot seed source consumed by
+`quality_monitor_cli`; the monitor itself reads the tenant blob, not the file.
 
 **`QualityThresholds` dataclass (defaults):**
 
@@ -1748,12 +1750,14 @@ baseline), `LiveEvalResult` (per-`AgentType` `AgentEvalResult` map),
 **Fault contracts:** baseline reads (`_read_baseline_metric`,
 `_get_agent_baseline`) return `None` only for a genuinely absent baseline
 (first run / only partial runs) and raise on a telemetry outage; the golden
-baseline write raises on failure (a silently lost write would freeze the
-baseline); `_store_trigger_dataset` returns the stored dataset name (or `None`
-when there were no example records) and `submit_optimization(trigger,
-trigger_dataset)` references exactly that name, so a workflow is never
-submitted pointing at a dataset that was not created; a span-read outage
-during `evaluate_live_traffic` propagates instead of reading as "no traffic".
+blob loader returns `golden_set_missing` only when the tenant blob is absent,
+raises on store outages, and raises on corrupt payloads; the golden baseline
+write raises on failure (a silently lost write would freeze the baseline);
+`_store_trigger_dataset` returns the stored dataset name (or `None` when there
+were no example records) and `submit_optimization(trigger, trigger_dataset)`
+references exactly that name, so a workflow is never submitted pointing at a
+dataset that was not created; a span-read outage during `evaluate_live_traffic`
+propagates instead of reading as "no traffic".
 
 **`OptimizationWorkflowPodSpec` dataclass (defaults):** `image: str =
 "cogniverse-runtime:latest"`, `env: Dict[str, str] = {}`, `config_map:

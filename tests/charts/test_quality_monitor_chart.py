@@ -35,8 +35,14 @@ pytestmark = pytest.mark.skipif(
 )
 
 
-def _render_chart() -> list:
-    """Run ``helm template`` against the chart and return all parsed manifests."""
+SEED_SET = ("--set", f"runtime.qualityMonitor.goldenDatasetPath={EXPECTED_MOUNT_PATH}")
+
+
+def _render_chart(*extra_args: str) -> list:
+    """Run ``helm template`` against the chart and return all parsed manifests.
+
+    The shipped default configures no golden-set seed; pass ``*SEED_SET`` to
+    render the seeded variant the dev and e2e overlays use."""
     result = subprocess.run(
         [
             "helm",
@@ -47,6 +53,7 @@ def _render_chart() -> list:
             # placeholder so the wiring under test is the only variable.
             "--set",
             "runtime.qualityMonitor.tenantId=test-tenant",
+            *extra_args,
         ],
         capture_output=True,
         text=True,
@@ -76,7 +83,7 @@ class TestQualityMonitorDatasetMount:
     def test_chart_renders_configmap_with_dataset(self):
         """The chart must render a ConfigMap named ``cogniverse-quality-monitor-data``
         whose ``golden_dataset.json`` key holds parseable JSON."""
-        manifests = _render_chart()
+        manifests = _render_chart(*SEED_SET)
 
         configmaps = [
             m
@@ -104,7 +111,7 @@ class TestQualityMonitorDatasetMount:
         """The QualityMonitor sidecar inside the runtime Deployment must
         declare a volumeMount that points the ConfigMap volume at the
         expected absolute path."""
-        manifests = _render_chart()
+        manifests = _render_chart(*SEED_SET)
 
         deployments = [
             m
@@ -153,7 +160,7 @@ class TestQualityMonitorDatasetMount:
     def test_sidecar_volume_references_configmap(self):
         """The volume named ``quality-monitor-data`` must be a configMap
         volume referencing the dataset ConfigMap."""
-        manifests = _render_chart()
+        manifests = _render_chart(*SEED_SET)
 
         for deployment in manifests:
             if deployment.get("kind") != "Deployment":
@@ -180,7 +187,7 @@ class TestQualityMonitorDatasetMount:
         """The ``--golden-dataset-path`` argument passed to the CLI MUST equal
         the mountPath. If they drift apart, the sidecar opens a file that
         doesn't exist and crash-loops — exactly the original bug."""
-        manifests = _render_chart()
+        manifests = _render_chart(*SEED_SET)
 
         for deployment in manifests:
             if deployment.get("kind") != "Deployment":
@@ -207,3 +214,93 @@ class TestQualityMonitorDatasetMount:
                 )
                 return
         pytest.fail("quality-monitor sidecar not found in rendered chart")
+
+
+def _sidecar_and_volumes(manifests: list) -> tuple[dict | None, list]:
+    for deployment in manifests:
+        if deployment.get("kind") != "Deployment":
+            continue
+        if "runtime" not in deployment.get("metadata", {}).get("name", ""):
+            continue
+        spec = deployment.get("spec", {}).get("template", {}).get("spec", {})
+        for container in spec.get("containers", []):
+            if container.get("name") == "quality-monitor":
+                return container, spec.get("volumes", [])
+    return None, []
+
+
+class TestGoldenSetSeedIsOptIn:
+    """The shipped default seeds nothing: no seed file is mounted, no ConfigMap
+    is rendered and the CLI receives no ``--golden-dataset-path``, so the monitor
+    reports ``golden_set_missing`` until the tenant uploads a golden set. The dev
+    and e2e overlays opt in by setting the seed path."""
+
+    def test_default_render_has_no_seed_wiring(self):
+        manifests = _render_chart()
+        sidecar, volumes = _sidecar_and_volumes(manifests)
+        assert sidecar is not None
+        assert "--golden-dataset-path" not in sidecar.get("args", [])
+        assert [
+            m
+            for m in sidecar.get("volumeMounts", [])
+            if m.get("mountPath") == EXPECTED_MOUNT_PATH
+        ] == []
+        assert [v for v in volumes if v.get("name") == EXPECTED_VOLUME_NAME] == []
+        assert [
+            m
+            for m in manifests
+            if m.get("kind") == "ConfigMap"
+            and m.get("metadata", {}).get("name") == EXPECTED_CONFIGMAP_NAME
+        ] == []
+
+    def test_seeded_render_passes_the_mounted_path_once(self):
+        manifests = _render_chart(*SEED_SET)
+        sidecar, volumes = _sidecar_and_volumes(manifests)
+        assert sidecar is not None
+        args = sidecar.get("args", [])
+        assert args.count("--golden-dataset-path") == 1
+        assert args[args.index("--golden-dataset-path") + 1] == EXPECTED_MOUNT_PATH
+        assert [
+            v.get("name") for v in volumes if v.get("name") == EXPECTED_VOLUME_NAME
+        ] == [EXPECTED_VOLUME_NAME]
+
+    def test_k3s_overlay_seeds_the_bundled_corpus(self):
+        overlay = yaml.safe_load((CHART_PATH / "values.k3s.yaml").read_text())
+        assert (
+            overlay["runtime"]["qualityMonitor"]["goldenDatasetPath"]
+            == EXPECTED_MOUNT_PATH
+        )
+        shipped = yaml.safe_load((CHART_PATH / "values.yaml").read_text())
+        assert shipped["runtime"]["qualityMonitor"]["goldenDatasetPath"] == ""
+
+    def test_scheduled_distillation_seed_wiring_follows_the_same_switch(self):
+        def distillation(manifests):
+            for m in manifests:
+                if m.get("kind") == "CronWorkflow" and m["metadata"]["name"].endswith(
+                    "-scheduled-distillation"
+                ):
+                    return m
+            raise AssertionError("scheduled-distillation CronWorkflow not rendered")
+
+        def seed_wiring(cron):
+            spec = cron["spec"]["workflowSpec"]
+            args = 0
+            mounts = 0
+            for template in spec.get("templates", []):
+                container = template.get("container") or {}
+                args += container.get("args", []).count("--golden-dataset-path")
+                mounts += sum(
+                    1
+                    for m in container.get("volumeMounts", [])
+                    if m.get("mountPath") == EXPECTED_MOUNT_PATH
+                )
+            declared = list(spec.get("volumes", [])) + [
+                v
+                for template in spec.get("templates", [])
+                for v in template.get("volumes", [])
+            ]
+            volumes = sum(1 for v in declared if v.get("name") == EXPECTED_VOLUME_NAME)
+            return args, mounts, volumes
+
+        assert seed_wiring(distillation(_render_chart())) == (0, 0, 0)
+        assert seed_wiring(distillation(_render_chart(*SEED_SET))) == (1, 1, 1)

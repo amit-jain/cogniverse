@@ -214,6 +214,7 @@ runtime:
     COGNIVERSE_DEBUG_MEM: "1"
   qualityMonitor:
     tenantId: "flywheel_org:production"
+    goldenDatasetPath: "/app/data/quality-monitor/golden_dataset.json"
   # Host-mode OpenShell sandbox: requires a running host gateway
   # (`openshell gateway start --port <port>`) + `cogniverse sandbox sync`
   # to copy mTLS certs; gatewayEndpoint's port must match the gateway's, and

@@ -12,11 +12,9 @@ packages a trigger dataset and submits an Argo optimization workflow.
 import asyncio
 import json
 import logging
-import os
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
 from enum import Enum
-from pathlib import Path
 from typing import Any, Dict, List, Optional
 
 import httpx
@@ -287,7 +285,7 @@ class QualityMonitor:
     - SpanEvaluator for pulling/evaluating search spans
     - GoldenDatasetEvaluator for scoring against golden set
     - LLMJudgeCore for live traffic relevance scoring
-    - PhoenixDatasetStore for baseline storage
+    - the telemetry provider's datasets store for baseline and trigger storage
 
     Derives operational health (error rate, p95 latency) directly from the
     sampled span frame via ``_operational_health``.
@@ -331,6 +329,7 @@ class QualityMonitor:
         self.workflow_pod_spec = workflow_pod_spec
         self._telemetry_provider = telemetry_provider
         self._training_decision_model = None
+        self._artifact_manager = None
 
         self._golden_queries: List[Dict[str, Any]] = []
         self._dataset_store = None
@@ -338,14 +337,31 @@ class QualityMonitor:
         self._http_client = None
         self._argo_client = None
 
-    def _get_dataset_store(self):
-        """Lazy-load PhoenixDatasetStore."""
-        if self._dataset_store is None:
-            from cogniverse_telemetry_phoenix.provider import PhoenixDatasetStore
+    def _get_telemetry_provider(self):
+        """Return the telemetry provider used for datasets and span access."""
+        if self._telemetry_provider is None:
+            from cogniverse_foundation.telemetry.manager import get_telemetry_manager
 
-            self._dataset_store = PhoenixDatasetStore(
-                http_endpoint=self.phoenix_http_endpoint,
+            self._telemetry_provider = get_telemetry_manager().get_provider(
+                tenant_id=self.tenant_id
             )
+        return self._telemetry_provider
+
+    def _get_artifact_manager(self):
+        """Lazy-load the tenant-scoped artifact manager."""
+        if self._artifact_manager is None:
+            from cogniverse_agents.optimizer.artifact_manager import ArtifactManager
+
+            self._artifact_manager = ArtifactManager(
+                telemetry_provider=self._get_telemetry_provider(),
+                tenant_id=self.tenant_id,
+            )
+        return self._artifact_manager
+
+    def _get_dataset_store(self):
+        """Return the telemetry provider's dataset store."""
+        if self._dataset_store is None:
+            self._dataset_store = self._get_telemetry_provider().datasets
         return self._dataset_store
 
     def _get_llm_judge(self):
@@ -365,22 +381,31 @@ class QualityMonitor:
             self._http_client = httpx.AsyncClient(timeout=30.0)
         return self._http_client
 
-    def _load_golden_queries(self) -> List[Dict[str, Any]]:
-        """Load golden evaluation queries from JSON."""
+    async def _load_golden_queries_async(self) -> List[Dict[str, Any]]:
+        """Load golden evaluation queries from the tenant's artifact blob."""
         if self._golden_queries:
             return self._golden_queries
 
-        path = Path(self.golden_dataset_path)
-        if not path.exists():
-            raise FileNotFoundError(
-                f"Golden dataset not found: {self.golden_dataset_path}"
-            )
+        from cogniverse_agents.optimizer.golden_set_ground_truth import (
+            load_golden_set_ground_truth_rows,
+        )
 
-        with open(path) as f:
-            self._golden_queries = json.load(f)
-
+        self._golden_queries = await load_golden_set_ground_truth_rows(
+            self._get_artifact_manager()
+        )
         logger.info(f"Loaded {len(self._golden_queries)} golden queries")
         return self._golden_queries
+
+    def _load_golden_queries(self) -> List[Dict[str, Any]]:
+        """Sync wrapper for callers outside the event loop."""
+        try:
+            asyncio.get_running_loop()
+        except RuntimeError:
+            return asyncio.run(self._load_golden_queries_async())
+        raise RuntimeError(
+            "_load_golden_queries() is async on a running event loop; "
+            "await _load_golden_queries_async() instead"
+        )
 
     async def force_optimization_cycle(self) -> Dict[str, Any]:
         """Run one full eval + trigger + submit cycle, regardless of thresholds.
@@ -396,14 +421,19 @@ class QualityMonitor:
         golden_result: Optional[GoldenEvalResult] = None
         live_result: Optional[LiveEvalResult] = None
 
+        from cogniverse_agents.optimizer.golden_set_ground_truth import (
+            GoldenSetGroundTruthMissingError,
+        )
+
         try:
             golden_result = await self.evaluate_golden_set()
             logger.info(
                 f"Forced golden eval: MRR={golden_result.mean_mrr:.3f}, "
                 f"nDCG={golden_result.mean_ndcg:.3f}"
             )
-        except Exception as e:
-            logger.warning(f"Forced golden eval failed: {e}")
+        except GoldenSetGroundTruthMissingError as exc:
+            logger.warning(f"Forced golden eval missing: {exc}")
+            return exc.to_result()
 
         try:
             live_result = await self.evaluate_live_traffic()
@@ -463,16 +493,13 @@ class QualityMonitor:
             live_result = None
 
             if now - last_golden >= self.golden_eval_interval:
-                try:
-                    golden_result = await self.evaluate_golden_set()
-                    last_golden = now
-                    logger.info(
-                        f"Golden eval: MRR={golden_result.mean_mrr:.3f}, "
-                        f"nDCG={golden_result.mean_ndcg:.3f}, "
-                        f"P@5={golden_result.mean_precision_at_5:.3f}"
-                    )
-                except Exception as e:
-                    logger.error(f"Golden eval failed: {e}")
+                golden_result = await self.evaluate_golden_set()
+                last_golden = now
+                logger.info(
+                    f"Golden eval: MRR={golden_result.mean_mrr:.3f}, "
+                    f"nDCG={golden_result.mean_ndcg:.3f}, "
+                    f"P@5={golden_result.mean_precision_at_5:.3f}"
+                )
 
             if now - last_live >= self.live_eval_interval:
                 try:
@@ -529,7 +556,7 @@ class QualityMonitor:
 
     async def evaluate_golden_set(self) -> GoldenEvalResult:
         """Run golden queries against /search, score with IR metrics."""
-        queries = self._load_golden_queries()
+        queries = await self._load_golden_queries_async()
         client = self._get_http_client()
 
         async def _score_query(query_data: Dict[str, Any]) -> Dict[str, Any]:
@@ -1392,9 +1419,13 @@ class QualityMonitor:
         if not new_queries:
             return
 
-        path = Path(self.golden_dataset_path)
+        from cogniverse_agents.optimizer.golden_set_ground_truth import (
+            canonicalize_golden_set_ground_truth_rows,
+            serialize_golden_set_ground_truth_rows,
+        )
+
         # Work on a copy — a failed write must not mutate the in-memory cache.
-        existing = list(self._load_golden_queries())
+        existing = list(await self._load_golden_queries_async())
 
         existing_query_set = {q["query"] for q in existing}
         added = 0
@@ -1412,19 +1443,30 @@ class QualityMonitor:
             added += 1
 
         if added > 0:
-            # Atomic write: a crash mid-write must not truncate the golden
-            # file (the next load would raise JSONDecodeError and kill golden
-            # eval). Write a sibling tmp then os.replace.
-            tmp = path.with_suffix(path.suffix + ".tmp")
-            try:
-                with open(tmp, "w") as f:
-                    json.dump(existing, f, indent=2)
-                os.replace(tmp, path)
-            except BaseException:
-                tmp.unlink(missing_ok=True)
-                raise
-            self._golden_queries = existing
-            logger.info(f"Added {added} queries to golden set (total: {len(existing)})")
+            canonical_rows = canonicalize_golden_set_ground_truth_rows(existing)
+            content = serialize_golden_set_ground_truth_rows(canonical_rows)
+            artifact_manager = self._get_artifact_manager()
+            _, version = await artifact_manager.save_blob_versioned(
+                "config",
+                "golden_set_ground_truth",
+                content,
+                consumed_example_ids=["quality_monitor:golden_set_ground_truth"],
+                decision="promote",
+                scored=False,
+                score=None,
+                base_score=None,
+                candidate_score=None,
+            )
+            await artifact_manager.activate_version(
+                "config", "golden_set_ground_truth", version
+            )
+            self._golden_queries = canonical_rows
+            logger.info(
+                "Added %d queries to golden set blob v%d (total: %d)",
+                added,
+                version,
+                len(canonical_rows),
+            )
 
     async def close(self):
         """Clean up resources."""
