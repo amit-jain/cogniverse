@@ -642,16 +642,6 @@ def _discover_dev_model_urls(
     )
 
 
-def _configured_candidate_base_url(
-    candidate: str | _DiscoveredClusterEndpoint,
-) -> str | None:
-    if isinstance(candidate, _DiscoveredClusterEndpoint):
-        return candidate.base_url
-    if isinstance(candidate, str):
-        return candidate
-    return None
-
-
 def _configured_model_urls(model: str) -> tuple[str, ...]:
     """Collect explicit, e2e-cluster, then dev-cluster candidates."""
     candidates: list[str] = []
@@ -666,13 +656,9 @@ def _configured_model_urls(model: str) -> tuple[str, ...]:
         candidates.extend(env_urls.values())
 
     for candidate in _discover_e2e_model_urls(model):
-        base_url = _configured_candidate_base_url(candidate)
-        if base_url:
-            candidates.append(base_url)
+        candidates.append(candidate.base_url)
     for candidate in _discover_dev_model_urls(model):
-        base_url = _configured_candidate_base_url(candidate)
-        if base_url:
-            candidates.append(base_url)
+        candidates.append(candidate.base_url)
 
     return tuple(dict.fromkeys(_server_base(url) for url in candidates if url))
 
