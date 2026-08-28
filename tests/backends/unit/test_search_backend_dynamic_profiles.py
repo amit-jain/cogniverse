@@ -335,7 +335,12 @@ def test_search_raises_when_embeddings_needed_but_no_encoder():
     ("top_k", "profile_config", "expected"),
     [
         (10, {}, 40),
-        (1000, {}, 256),
+        # The ceiling clamps the oversampling, not the request: a top_k above
+        # the ceiling still fetches top_k, because collapsing to top_k distinct
+        # sources cannot be done from fewer than top_k documents.
+        (1000, {}, 1000),
+        (300, {}, 300),
+        (64, {}, 256),
         (10, {"source_collapse_oversample": 12}, 120),
     ],
 )

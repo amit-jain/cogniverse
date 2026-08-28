@@ -130,9 +130,12 @@ def _source_collapse_fetch_limit(top_k: int, profile_config: Mapping[str, Any]) 
         raise ValueError(f"{_SOURCE_COLLAPSE_OVERSAMPLE_KEY} must be an integer")
     if oversample < 1:
         raise ValueError(f"{_SOURCE_COLLAPSE_OVERSAMPLE_KEY} must be >= 1")
-    return min(
-        top_k * oversample,
-        _SOURCE_COLLAPSE_FETCH_LIMIT_CEILING,
+    # The ceiling bounds the OVERSAMPLING, never the request itself: collapsing
+    # to top_k distinct sources is impossible from fewer than top_k documents,
+    # so a ceiling below top_k would silently truncate a legal request.
+    return max(
+        top_k,
+        min(top_k * oversample, _SOURCE_COLLAPSE_FETCH_LIMIT_CEILING),
     )
 
 
