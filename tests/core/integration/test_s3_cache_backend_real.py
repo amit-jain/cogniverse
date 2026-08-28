@@ -11,13 +11,16 @@ Requires Docker and boto3; missing test infrastructure is a test failure.
 
 from __future__ import annotations
 
+import os
 import uuid
 
 import numpy as np
 import pytest
 
+from cogniverse_core.common.cache.backends import s3 as s3_backend
 from cogniverse_core.common.cache.base import CacheConfig, CacheManager
 from cogniverse_core.common.cache.pipeline_cache import PipelineArtifactCache
+from cogniverse_runtime.entrypoint_env import configure_runtime_library_defaults
 from tests.system.minio_test_manager import MinIOTestManager
 
 pytestmark = pytest.mark.integration
@@ -33,6 +36,17 @@ def minio():
         yield instance
     finally:
         manager.stop()
+
+
+@pytest.fixture(autouse=True)
+def _reset_s3_backend_defaults():
+    s3_backend.configure_s3_backend_defaults(
+        endpoint=None, access_key=None, secret_key=None
+    )
+    yield
+    s3_backend.configure_s3_backend_defaults(
+        endpoint=None, access_key=None, secret_key=None
+    )
 
 
 def _s3_backend_dict(instance, bucket):
@@ -78,6 +92,48 @@ class TestS3CacheBackendReal:
 
         assert await cache.set_transcript(VIDEO, transcript, model_size="base") is True
         assert await cache.get_transcript(VIDEO, model_size="base") == transcript
+
+    async def test_runtime_defaults_round_trip_through_real_minio(
+        self, minio, monkeypatch
+    ):
+        bucket = f"cache-{uuid.uuid4().hex[:8]}"
+        monkeypatch.delenv("AWS_ACCESS_KEY_ID", raising=False)
+        monkeypatch.delenv("AWS_SECRET_ACCESS_KEY", raising=False)
+
+        configure_runtime_library_defaults(
+            {
+                "minio_endpoint": minio.endpoint,
+                "minio_access_key": minio.access_key,
+                "minio_secret_key": minio.secret_key,
+                "telemetry_otlp_endpoint": None,
+                "telemetry_http_endpoint": None,
+                "semantic_embed_url": None,
+                "semantic_embed_model": None,
+                "tenant_cache_capacity": 1,
+            }
+        )
+
+        backend = s3_backend.S3CacheBackend(
+            s3_backend.S3CacheBackendConfig(
+                bucket=bucket,
+                key_prefix="pipeline/",
+                serialization_format="pickle",
+            )
+        )
+        payload = {"segments": [{"text": "hello world", "start": 0.0}]}
+
+        assert await backend.set("p:video:abc:transcript", payload) is True
+        assert await backend.get("p:video:abc:transcript") == payload
+        assert (
+            s3_backend.configured_s3_backend_defaults()
+            == s3_backend.S3BackendDefaults(
+                endpoint=minio.endpoint,
+                access_key=minio.access_key,
+                secret_key=minio.secret_key,
+            )
+        )
+        assert os.environ["AWS_ACCESS_KEY_ID"] == minio.access_key
+        assert os.environ["AWS_SECRET_ACCESS_KEY"] == minio.secret_key
 
     async def test_keyframes_with_image_round_trip(self, minio):
         bucket = f"cache-{uuid.uuid4().hex[:8]}"
@@ -198,7 +254,7 @@ URL_BEARING_KEY = (
     ":batch_size=500:model=http://cogniverse-vllm-llm-student:8000/v1"
 )
 
-_OBJECT_NAME_ALLOWED = set(
+_OBJECT_NAME_CHARS = set(
     "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789._-"
 )
 
@@ -207,9 +263,7 @@ def _expected_object_name(key_prefix: str, logical_key: str) -> str:
     """Independent statement of the object-name contract the backend owes."""
     import hashlib
 
-    readable = "".join(c if c in _OBJECT_NAME_ALLOWED else "-" for c in logical_key)[
-        :160
-    ]
+    readable = "".join(c if c in _OBJECT_NAME_CHARS else "-" for c in logical_key)[:160]
     digest = hashlib.sha256(logical_key.encode("utf-8")).hexdigest()
     return f"{key_prefix}{readable}.{digest}"
 

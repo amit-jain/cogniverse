@@ -10,11 +10,12 @@ malformed tier map raises rather than silently emptying).
 
 import pytest
 
+from cogniverse_core.common.cache.backends import s3 as s3_backend
 from cogniverse_foundation.config.unified_config import SemanticRouterConfig
-from cogniverse_runtime.main import (
-    _mirror_minio_credentials_to_aws,
-    _semantic_router_config_from_env,
+from cogniverse_runtime.entrypoint_env import (
+    configure_runtime_library_defaults as _configure_runtime_library_defaults,
 )
+from cogniverse_runtime.main import _semantic_router_config_from_env
 
 _SR_ENV = (
     "SEMANTIC_ROUTER_ENABLED",
@@ -27,6 +28,17 @@ _SR_ENV = (
 def _clear_sr_env(monkeypatch):
     for name in _SR_ENV:
         monkeypatch.delenv(name, raising=False)
+
+
+@pytest.fixture(autouse=True)
+def _clear_s3_defaults():
+    s3_backend.configure_s3_backend_defaults(
+        endpoint=None, access_key=None, secret_key=None
+    )
+    yield
+    s3_backend.configure_s3_backend_defaults(
+        endpoint=None, access_key=None, secret_key=None
+    )
 
 
 @pytest.mark.unit
@@ -107,10 +119,25 @@ class TestMirrorMinioCredentialsToAws:
         for name in self._NAMES:
             monkeypatch.delenv(name, raising=False)
 
+    @staticmethod
+    def _runtime_defaults(access_key, secret_key):
+        return {
+            "minio_endpoint": None,
+            "minio_access_key": access_key,
+            "minio_secret_key": secret_key,
+            "telemetry_otlp_endpoint": None,
+            "telemetry_http_endpoint": None,
+            "semantic_embed_url": None,
+            "semantic_embed_model": None,
+            "tenant_cache_capacity": 1,
+        }
+
     def test_mirrors_minio_secret_onto_aws_names(self, monkeypatch):
         monkeypatch.setenv("MINIO_ACCESS_KEY", "minio-access")
         monkeypatch.setenv("MINIO_SECRET_KEY", "minio-secret")
-        _mirror_minio_credentials_to_aws("minio-access", "minio-secret")
+        _configure_runtime_library_defaults(
+            self._runtime_defaults("minio-access", "minio-secret")
+        )
         import os
 
         assert os.environ["AWS_ACCESS_KEY_ID"] == "minio-access"
@@ -119,13 +146,15 @@ class TestMirrorMinioCredentialsToAws:
     def test_does_not_overwrite_explicit_aws_creds(self, monkeypatch):
         monkeypatch.setenv("MINIO_ACCESS_KEY", "minio-access")
         monkeypatch.setenv("AWS_ACCESS_KEY_ID", "explicit-aws")
-        _mirror_minio_credentials_to_aws("minio-access", None)
+        _configure_runtime_library_defaults(
+            self._runtime_defaults("minio-access", None)
+        )
         import os
 
         assert os.environ["AWS_ACCESS_KEY_ID"] == "explicit-aws"
 
     def test_no_minio_creds_leaves_aws_unset(self, monkeypatch):
-        _mirror_minio_credentials_to_aws(None, None)
+        _configure_runtime_library_defaults(self._runtime_defaults(None, None))
         import os
 
         assert "AWS_ACCESS_KEY_ID" not in os.environ

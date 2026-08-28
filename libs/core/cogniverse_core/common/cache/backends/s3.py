@@ -57,6 +57,22 @@ def configure_s3_backend_defaults(
     _CONFIGURED_SECRET_KEY = secret_key
 
 
+@dataclass(frozen=True)
+class S3BackendDefaults:
+    endpoint: Optional[str]
+    access_key: Optional[str]
+    secret_key: Optional[str]
+
+
+def configured_s3_backend_defaults() -> S3BackendDefaults:
+    """Return the runtime defaults set by ``configure_s3_backend_defaults``."""
+    return S3BackendDefaults(
+        endpoint=_CONFIGURED_ENDPOINT,
+        access_key=_CONFIGURED_ACCESS_KEY,
+        secret_key=_CONFIGURED_SECRET_KEY,
+    )
+
+
 @dataclass
 class S3CacheBackendConfig:
     """Configuration for the S3 cache backend.

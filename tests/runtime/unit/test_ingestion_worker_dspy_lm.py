@@ -225,6 +225,9 @@ class TestRunEntrypointWiring:
             "INFERENCE_SERVICE_URLS",
             '{"denseon":"http://denseon:8000"}',
         )
+        from cogniverse_runtime.ingestion_worker import worker
+
+        monkeypatch.setattr(worker, "_validate_pipeline_cache_defaults", lambda: None)
 
     def _wire(self, monkeypatch, claim_loop):
         from cogniverse_runtime.ingestion_worker import worker
