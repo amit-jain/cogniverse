@@ -2527,6 +2527,8 @@ for result in results:
 
 Enhances user queries by adding synonyms, context, and related terms to improve search recall. It takes the sampled source text alongside the query, and the DSPy prompt requires `expansion_terms` to be token-grounded in that text while synonyms remain free-form. Every non-stopword alphanumeric token in an expansion term must appear in the sampled source text; multi-word phrases are allowed when each substantive token is grounded. Runs a DSPy `QueryEnhancementModule` and returns the enhanced query alongside the expansion terms it generated.
 
+The `cogniverse.query_enhancement` span always includes `enhancement.path` in the declared span contract. `lm` marks a genuine enhancement; `heuristic_fallback` marks the heuristic expansion used when the LM echoes the query or returns empty fields.
+
 **Constructor:** `QueryEnhancementAgent(deps: QueryEnhancementDeps, port: int = 8012)` (standalone A2A server default; runs in-process on port 8000 in `cogniverse_runtime`)
 
 **Usage:**

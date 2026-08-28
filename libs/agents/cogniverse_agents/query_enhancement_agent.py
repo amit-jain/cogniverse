@@ -18,6 +18,10 @@ from cogniverse_core.agents.base import AgentDeps, AgentInput, AgentOutput
 from cogniverse_core.common.tenant_utils import require_tenant_id
 from cogniverse_foundation.telemetry.span_contract import (
     OP_QUERY_ENHANCEMENT,
+    QUERY_ENHANCEMENT_PATH_ATTRIBUTE,
+    QUERY_ENHANCEMENT_PATH_HEURISTIC_FALLBACK,
+    QUERY_ENHANCEMENT_PATH_LM,
+    QUERY_ENHANCEMENT_PATH_VALUES,
     record_span_io,
 )
 
@@ -127,6 +131,9 @@ class QueryEnhancementModule(dspy.Module):
              indistinguishable from a no-op, and recording it as
              ``enhanced_query == query`` poisons downstream optimizers
              (SIMBA trains on identity pairs and learns nothing).
+
+        The returned prediction carries ``path_used`` so telemetry can write
+        a machine-readable span marker for every served query-enhancement row.
         """
         try:
             result = self.enhancer(
@@ -134,18 +141,33 @@ class QueryEnhancementModule(dspy.Module):
                 source_text=source_text,
                 grounding_context=grounding_context,
             )
-        except Exception as e:
-            logger.warning(f"Query enhancement failed: {e}, using fallback")
+        except Exception:
+            logger.warning(
+                "Query enhancement fell back for query=%s reason=DSPy failure",
+                query,
+            )
             return self._fallback_enhancement(query)
         if not result.enhanced_query or not result.expansion_terms:
-            logger.warning("Query enhancement produced empty fields, using fallback")
+            logger.warning(
+                "Query enhancement fell back for query=%s reason=empty fields",
+                query,
+            )
             return self._fallback_enhancement(query)
         if result.enhanced_query.strip() == query.strip():
             logger.warning(
-                "Query enhancement echoed input (no enhancement), using fallback"
+                "Query enhancement fell back for query=%s reason=echoed input",
+                query,
             )
             return self._fallback_enhancement(query)
-        return result
+        return dspy.Prediction(
+            enhanced_query=result.enhanced_query,
+            expansion_terms=result.expansion_terms,
+            synonyms=result.synonyms,
+            context=result.context,
+            confidence=result.confidence,
+            reasoning=result.reasoning,
+            path_used=QUERY_ENHANCEMENT_PATH_LM,
+        )
 
     def _fallback_enhancement(self, query: str) -> dspy.Prediction:
         """Heuristic fallback when the LLM fails or echoes.
@@ -208,6 +230,7 @@ class QueryEnhancementModule(dspy.Module):
             context="",
             confidence="0.5",
             reasoning="Fallback enhancement with heuristic expansion",
+            path_used=QUERY_ENHANCEMENT_PATH_HEURISTIC_FALLBACK,
         )
 
 
@@ -338,8 +361,11 @@ class QueryEnhancementAgent(
                 source_text=input.source_text,
                 grounding_context=grounding_context,
             )
-        except Exception as e:
-            logger.warning("DSPy enhancement failed, using fallback: %s", e)
+        except Exception:
+            logger.warning(
+                "Query enhancement fell back for query=%s reason=DSPy failure",
+                query,
+            )
             result = self.dspy_module._fallback_enhancement(query)
 
         # Parse lists from comma-separated strings
@@ -354,6 +380,9 @@ class QueryEnhancementAgent(
 
         # Parse confidence
         confidence = parse_confidence(getattr(result, "confidence", None), default=0.7)
+        path_used = str(getattr(result, "path_used", QUERY_ENHANCEMENT_PATH_LM))
+        if path_used not in QUERY_ENHANCEMENT_PATH_VALUES:
+            path_used = QUERY_ENHANCEMENT_PATH_LM
 
         # DSPy may return None for any output field when the LM response is
         # unparseable — substitute safe fallbacks so the response schema holds.
@@ -377,6 +406,7 @@ class QueryEnhancementAgent(
             context_additions=context_additions,
             variant_count=len(variants),
             confidence=confidence,
+            path_used=path_used,
         )
 
         return QueryEnhancementOutput(
@@ -455,13 +485,15 @@ class QueryEnhancementAgent(
         context_additions: List[str],
         variant_count: int,
         confidence: float,
+        path_used: str,
     ) -> None:
         """Emit a cogniverse.query_enhancement telemetry span.
 
         The span carries the complete call: ``input.value`` is the query,
         ``input.source_text`` / ``input.grounding_context`` the other two
-        prompt inputs, and ``output.value`` every produced field, so the
-        SIMBA optimizer can rebuild the exact example the agent served.
+        prompt inputs, ``enhancement.path`` the served path, and
+        ``output.value`` every produced field, so the SIMBA optimizer can
+        rebuild the exact example the agent served.
         """
         if not self.telemetry_manager:
             logger.warning(
@@ -491,6 +523,7 @@ class QueryEnhancementAgent(
                 )
                 span.set_attribute("input.source_text", source_text)
                 span.set_attribute("input.grounding_context", grounding_context)
+                span.set_attribute(QUERY_ENHANCEMENT_PATH_ATTRIBUTE, path_used)
         except Exception as exc:
             logger.warning(
                 "Failed to emit query_enhancement telemetry: tenant=%s error=%s",

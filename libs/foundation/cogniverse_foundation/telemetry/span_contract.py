@@ -27,6 +27,28 @@ OP_ORCHESTRATION = "orchestration"
 OP_PROFILE_SELECTION = "profile_selection"
 OP_GATEWAY = "gateway"
 
+# Query enhancement path marker — every query_enhancement span sets this so
+# served rows stay machine-readable even when the LM falls back.
+QUERY_ENHANCEMENT_PATH_ATTRIBUTE = "enhancement.path"
+QUERY_ENHANCEMENT_PATH_LM = "lm"
+QUERY_ENHANCEMENT_PATH_HEURISTIC_FALLBACK = "heuristic_fallback"
+QUERY_ENHANCEMENT_PATH_VALUES = frozenset(
+    {
+        QUERY_ENHANCEMENT_PATH_LM,
+        QUERY_ENHANCEMENT_PATH_HEURISTIC_FALLBACK,
+    }
+)
+QUERY_ENHANCEMENT_SPAN_ATTRIBUTE_KEYS = frozenset(
+    {
+        "input.value",
+        "input.source_text",
+        "input.grounding_context",
+        "operation",
+        "output.value",
+        QUERY_ENHANCEMENT_PATH_ATTRIBUTE,
+    }
+)
+
 # Annotation contract — one home for the names, metadata key, and thresholds
 # every consumer of result_click / result_relevance / preference pairs shares.
 RESULT_RELEVANCE = "result_relevance"
