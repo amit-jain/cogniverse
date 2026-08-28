@@ -4,18 +4,77 @@ Unit tests for SchemaRegistry.
 Tests validation, orchestration logic, and schema tracking without requiring Vespa.
 """
 
+import threading
+from types import SimpleNamespace
 from unittest.mock import MagicMock
 
 import pytest
+import requests
 
+import cogniverse_core.registries.schema_registry as schema_registry_module
 from cogniverse_core.registries.exceptions import SchemaRegistryInitializationError
-from cogniverse_core.registries.schema_registry import SchemaRegistry
+from cogniverse_core.registries.schema_registry import SchemaInfo, SchemaRegistry
 from cogniverse_sdk.interfaces.config_store import ConfigScope
 
 
 class _StoredEntry:
     def __init__(self, config_value):
         self.config_value = config_value
+
+
+class _FakeClock:
+    def __init__(self, start: float = 1000.0):
+        self._current = start
+        self._lock = threading.Lock()
+
+    def monotonic(self) -> float:
+        with self._lock:
+            return self._current
+
+    def sleep(self, seconds: float) -> None:
+        with self._lock:
+            self._current += seconds
+
+
+def _raise_for_status_error(
+    *, status_code: int, reason: str, url: str
+) -> requests.HTTPError:
+    response = requests.Response()
+    response.status_code = status_code
+    response.reason = reason
+    response.url = url
+    try:
+        response.raise_for_status()
+    except requests.HTTPError as exc:
+        return exc
+    raise AssertionError("response.raise_for_status() must fail")
+
+
+class _SchemaStorageScript:
+    def __init__(self, outcomes):
+        self._outcomes = list(outcomes)
+        self._lock = threading.Lock()
+        self.calls = 0
+
+    def list_all_configs(self, *, scope, service):
+        with self._lock:
+            index = self.calls
+            self.calls += 1
+        outcome = (
+            self._outcomes[index] if index < len(self._outcomes) else self._outcomes[-1]
+        )
+        if isinstance(outcome, BaseException):
+            raise outcome
+        return outcome
+
+
+def _expected_initialization_error_message(
+    attempts: int, elapsed: float, error: Exception
+) -> str:
+    return (
+        "Cannot initialize SchemaRegistry: failed to read schema storage after "
+        f"{attempts} attempts over {elapsed:.3f}s: {type(error).__name__}: {error}"
+    )
 
 
 @pytest.fixture
@@ -466,6 +525,252 @@ class TestSchemaRegistryInitialization:
                 backend=mock_backend,
                 schema_loader=None,
             )
+
+    def test_load_schemas_retries_transient_failure_then_succeeds(self, monkeypatch):
+        clock = _FakeClock()
+        monkeypatch.setattr(
+            schema_registry_module,
+            "time",
+            SimpleNamespace(monotonic=clock.monotonic, sleep=clock.sleep),
+            raising=False,
+        )
+
+        url = (
+            "http://cogniverse-vespa:8080/document/v1/"
+            "config_metadata/config_metadata/docid/"
+        )
+        first_error = requests.ConnectionError("config store connection reset")
+        second_error = _raise_for_status_error(
+            status_code=503,
+            reason="Server Error",
+            url=url,
+        )
+        store = _SchemaStorageScript(
+            [
+                first_error,
+                second_error,
+                [
+                    _StoredEntry(
+                        {
+                            "tenant_id": "acme:acme",
+                            "base_schema_name": "schema1",
+                            "full_schema_name": "schema1_acme_acme",
+                            "schema_definition": '{"name": "schema1_acme_acme"}',
+                            "deployment_time": "2024-01-01T00:00:00+00:00",
+                            "config": {},
+                        }
+                    )
+                ],
+            ]
+        )
+
+        registry = SchemaRegistry(
+            config_manager=SimpleNamespace(store=store),
+            backend=object(),
+            schema_loader=object(),
+        )
+
+        expected_info = SchemaInfo(
+            tenant_id="acme:acme",
+            base_schema_name="schema1",
+            full_schema_name="schema1_acme_acme",
+            schema_definition='{"name": "schema1_acme_acme"}',
+            config={},
+            deployment_time="2024-01-01T00:00:00+00:00",
+        )
+
+        assert store.calls == 3
+        assert registry._schemas == {("acme:acme", "schema1"): expected_info}
+
+    def test_load_schemas_raises_after_retry_budget_exhausted(self, monkeypatch):
+        clock = _FakeClock()
+        monkeypatch.setattr(
+            schema_registry_module,
+            "time",
+            SimpleNamespace(monotonic=clock.monotonic, sleep=clock.sleep),
+            raising=False,
+        )
+
+        attempts = schema_registry_module._SCHEMA_STORAGE_READ_MAX_ATTEMPTS
+        failures = [
+            requests.ConnectionError("config store connection reset")
+            for _ in range(attempts)
+        ]
+        store = _SchemaStorageScript(failures)
+
+        with pytest.raises(SchemaRegistryInitializationError) as exc_info:
+            SchemaRegistry(
+                config_manager=SimpleNamespace(store=store),
+                backend=object(),
+                schema_loader=object(),
+            )
+
+        assert store.calls == attempts
+        assert exc_info.value.__cause__ is failures[-1]
+        expected_elapsed = sum(
+            schema_registry_module._schema_storage_backoff_seconds(a)
+            for a in range(1, attempts)
+        )
+        assert str(exc_info.value) == _expected_initialization_error_message(
+            attempts,
+            expected_elapsed,
+            failures[-1],
+        )
+
+    def test_load_schemas_does_not_retry_non_transient_failure(self, monkeypatch):
+        clock = _FakeClock()
+        monkeypatch.setattr(
+            schema_registry_module,
+            "time",
+            SimpleNamespace(monotonic=clock.monotonic, sleep=clock.sleep),
+            raising=False,
+        )
+
+        url = (
+            "http://cogniverse-vespa:8080/document/v1/"
+            "config_metadata/config_metadata/docid/"
+        )
+        failure = _raise_for_status_error(
+            status_code=400,
+            reason="Bad Request",
+            url=url,
+        )
+        store = _SchemaStorageScript([failure])
+
+        with pytest.raises(SchemaRegistryInitializationError) as exc_info:
+            SchemaRegistry(
+                config_manager=SimpleNamespace(store=store),
+                backend=object(),
+                schema_loader=object(),
+            )
+
+        assert store.calls == 1
+        assert exc_info.value.__cause__ is failure
+        assert str(exc_info.value) == _expected_initialization_error_message(
+            1,
+            0.000,
+            failure,
+        )
+
+    def test_load_schemas_returns_empty_registry_without_retry(self, monkeypatch):
+        clock = _FakeClock()
+        monkeypatch.setattr(
+            schema_registry_module,
+            "time",
+            SimpleNamespace(monotonic=clock.monotonic, sleep=clock.sleep),
+            raising=False,
+        )
+
+        store = _SchemaStorageScript([[]])
+        registry = SchemaRegistry(
+            config_manager=SimpleNamespace(store=store),
+            backend=object(),
+            schema_loader=object(),
+        )
+
+        assert store.calls == 1
+        assert registry._schemas == {}
+
+    def test_load_schemas_treats_missing_registry_404_as_empty(self, monkeypatch):
+        clock = _FakeClock()
+        monkeypatch.setattr(
+            schema_registry_module,
+            "time",
+            SimpleNamespace(monotonic=clock.monotonic, sleep=clock.sleep),
+            raising=False,
+        )
+
+        url = (
+            "http://cogniverse-vespa:8080/document/v1/"
+            "config_metadata/config_metadata/docid/"
+        )
+        failure = _raise_for_status_error(
+            status_code=404,
+            reason="Not Found",
+            url=url,
+        )
+        store = _SchemaStorageScript([failure])
+        registry = SchemaRegistry(
+            config_manager=SimpleNamespace(store=store),
+            backend=object(),
+            schema_loader=object(),
+        )
+
+        assert store.calls == 1
+        assert registry._schemas == {}
+
+    def test_concurrent_initializations_do_not_stampede_retries(self, monkeypatch):
+        monkeypatch.setattr(
+            schema_registry_module,
+            "time",
+            SimpleNamespace(
+                monotonic=lambda: 1000.0,
+                sleep=lambda _seconds: None,
+            ),
+            raising=False,
+        )
+
+        store = _SchemaStorageScript(
+            [
+                requests.ConnectionError("config store connection reset"),
+                requests.ConnectionError("config store connection reset"),
+                [
+                    _StoredEntry(
+                        {
+                            "tenant_id": "acme:acme",
+                            "base_schema_name": "schema1",
+                            "full_schema_name": "schema1_acme_acme",
+                            "schema_definition": '{"name": "schema1_acme_acme"}',
+                            "deployment_time": "2024-01-01T00:00:00+00:00",
+                            "config": {},
+                        }
+                    )
+                ],
+            ]
+        )
+        config_manager = SimpleNamespace(store=store)
+        backend = object()
+        schema_loader = object()
+        start = threading.Barrier(4)
+        results = []
+        errors = []
+        results_lock = threading.Lock()
+
+        def _build() -> None:
+            start.wait(timeout=5)
+            try:
+                registry = SchemaRegistry(
+                    config_manager=config_manager,
+                    backend=backend,
+                    schema_loader=schema_loader,
+                )
+            except Exception as exc:  # noqa: BLE001 - collected for exact assertion
+                with results_lock:
+                    errors.append(exc)
+            else:
+                with results_lock:
+                    results.append(registry)
+
+        threads = [threading.Thread(target=_build) for _ in range(4)]
+        for thread in threads:
+            thread.start()
+        for thread in threads:
+            thread.join(timeout=10)
+
+        expected_info = SchemaInfo(
+            tenant_id="acme:acme",
+            base_schema_name="schema1",
+            full_schema_name="schema1_acme_acme",
+            schema_definition='{"name": "schema1_acme_acme"}',
+            config={},
+            deployment_time="2024-01-01T00:00:00+00:00",
+        )
+
+        assert errors == []
+        assert len(results) == 4
+        assert store.calls == 6
+        for registry in results:
+            assert registry._schemas == {("acme:acme", "schema1"): expected_info}
 
     def test_loads_schemas_from_storage_on_init(
         self, mock_config_manager, mock_backend, mock_schema_loader

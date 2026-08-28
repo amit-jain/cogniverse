@@ -7,8 +7,11 @@ Ensures all schemas are tracked and can be redeployed together.
 
 import logging
 import threading
+import time
 from dataclasses import dataclass
 from typing import Any, Dict, List, Optional
+
+import requests
 
 from cogniverse_core.registries.exceptions import (
     BackendDeploymentError,
@@ -17,6 +20,41 @@ from cogniverse_core.registries.exceptions import (
 )
 
 logger = logging.getLogger(__name__)
+
+_SCHEMA_STORAGE_READ_MAX_ATTEMPTS = 5
+_SCHEMA_STORAGE_READ_INITIAL_BACKOFF_SECONDS = 0.25
+_SCHEMA_STORAGE_READ_BACKOFF_MULTIPLIER = 2.0
+_SCHEMA_STORAGE_READ_MAX_BACKOFF_SECONDS = 2.0
+_SCHEMA_STORAGE_RETRYABLE_HTTP_STATUS_MIN = 500
+_SCHEMA_STORAGE_MISSING_HTTP_STATUS = 404
+
+
+def _schema_storage_http_status(error: Exception) -> Optional[int]:
+    current: Optional[BaseException] = error
+    while current is not None:
+        response = getattr(current, "response", None)
+        status_code = getattr(response, "status_code", None)
+        if isinstance(status_code, int):
+            return status_code
+        current = current.__cause__
+    return None
+
+
+def _schema_storage_is_retryable(error: Exception) -> bool:
+    if isinstance(error, (requests.ConnectionError, requests.Timeout)):
+        return True
+    status_code = _schema_storage_http_status(error)
+    return (
+        status_code is not None
+        and _SCHEMA_STORAGE_RETRYABLE_HTTP_STATUS_MIN <= status_code < 600
+    )
+
+
+def _schema_storage_backoff_seconds(attempt: int) -> float:
+    delay = _SCHEMA_STORAGE_READ_INITIAL_BACKOFF_SECONDS * (
+        _SCHEMA_STORAGE_READ_BACKOFF_MULTIPLIER ** (attempt - 1)
+    )
+    return min(delay, _SCHEMA_STORAGE_READ_MAX_BACKOFF_SECONDS)
 
 
 @dataclass
@@ -68,6 +106,9 @@ class SchemaRegistry:
     # deploy that observed the live-but-unregistered schema in that gap would
     # treat it as an orphan. Holding this lock across both steps closes the gap.
     _deploy_lock = threading.RLock()
+    # Serializes startup reads so one transient outage does not fan out into
+    # an N-way retry storm during concurrent backend initialization.
+    _storage_read_lock = threading.RLock()
 
     def __init__(
         self, config_manager, backend, schema_loader, strict_mode: bool = True
@@ -82,12 +123,11 @@ class SchemaRegistry:
             config_manager: ConfigManager instance (REQUIRED)
             backend: Backend instance for schema deployment (REQUIRED)
             schema_loader: SchemaLoader instance for loading schema definitions (REQUIRED)
-            strict_mode: If True, fail fast on initialization errors (default: True for production)
-                        If False, continue with empty registry on errors (for testing only)
+            strict_mode: Retained for constructor compatibility.
 
         Raises:
             ValueError: If any required parameter is None
-            SchemaRegistryInitializationError: If strict_mode=True and schema loading fails
+            SchemaRegistryInitializationError: If schema loading fails after bounded retries
         """
         if config_manager is None:
             raise ValueError("config_manager is required")
@@ -112,68 +152,86 @@ class SchemaRegistry:
         """
         Load all schemas from ConfigManager into in-memory registry on startup.
 
-        Behavior depends on strict_mode:
-        - strict_mode=True: Raise exception if loading fails (production mode)
-        - strict_mode=False: Log warning and continue with empty registry (test mode)
+        Behavior:
+        - Empty storage is valid and loads as an empty registry.
+        - A genuine HTTP 404 from the storage read is treated the same way.
+        - Retryable read failures are retried with bounded exponential backoff.
 
         Raises:
-            SchemaRegistryInitializationError: If strict_mode=True and loading fails
+            SchemaRegistryInitializationError: If storage remains unavailable after retries
         """
-        try:
-            # Load all schemas across all tenants using generic ConfigManager methods
-            from cogniverse_sdk.interfaces.config_store import ConfigScope
+        with SchemaRegistry._storage_read_lock:
+            start = time.monotonic()
+            for attempt in range(1, _SCHEMA_STORAGE_READ_MAX_ATTEMPTS + 1):
+                try:
+                    # Load all schemas across all tenants using generic ConfigManager methods
+                    from cogniverse_sdk.interfaces.config_store import ConfigScope
 
-            all_schema_data = self._config_manager.store.list_all_configs(
-                scope=ConfigScope.SCHEMA,
-                service="schema_registry",
-            )
+                    all_schema_data = self._config_manager.store.list_all_configs(
+                        scope=ConfigScope.SCHEMA,
+                        service="schema_registry",
+                    )
+                except Exception as exc:
+                    status_code = _schema_storage_http_status(exc)
+                    if status_code == _SCHEMA_STORAGE_MISSING_HTTP_STATUS:
+                        self._schemas = {}
+                        logger.info(
+                            "Schema storage returned HTTP 404; starting with an empty registry"
+                        )
+                        return
 
-            # Rebuild into a fresh dict so a peer's deletions are reflected on
-            # reload; swap in only after a successful load so a failure falls
-            # back to the existing cache rather than wiping it.
-            loaded: Dict[tuple, SchemaInfo] = {}
-            for entry in all_schema_data:
-                schema_data = entry.config_value
-                # Skip deleted schemas
-                if schema_data.get("deleted", False):
+                    if (
+                        not _schema_storage_is_retryable(exc)
+                        or attempt == _SCHEMA_STORAGE_READ_MAX_ATTEMPTS
+                    ):
+                        elapsed = time.monotonic() - start
+                        message = (
+                            "Cannot initialize SchemaRegistry: failed to read schema storage "
+                            f"after {attempt} attempts over {elapsed:.3f}s: "
+                            f"{type(exc).__name__}: {exc}"
+                        )
+                        logger.error(message)
+                        raise SchemaRegistryInitializationError(message) from exc
+
+                    delay = _schema_storage_backoff_seconds(attempt)
+                    logger.warning(
+                        "Schema storage read failed on attempt %s/%s with %s: %s; "
+                        "retrying in %.3fs",
+                        attempt,
+                        _SCHEMA_STORAGE_READ_MAX_ATTEMPTS,
+                        type(exc).__name__,
+                        exc,
+                        delay,
+                    )
+                    time.sleep(delay)
                     continue
 
-                tenant_id = schema_data["tenant_id"]
-                base_schema_name = schema_data["base_schema_name"]
-                key = (tenant_id, base_schema_name)
+                # Rebuild into a fresh dict so a peer's deletions are reflected on
+                # reload; swap in only after a successful load so a failure falls
+                # back to the existing cache rather than wiping it.
+                loaded: Dict[tuple, SchemaInfo] = {}
+                for entry in all_schema_data:
+                    schema_data = entry.config_value
+                    # Skip deleted schemas
+                    if schema_data.get("deleted", False):
+                        continue
 
-                loaded[key] = SchemaInfo(
-                    tenant_id=tenant_id,
-                    base_schema_name=base_schema_name,
-                    full_schema_name=schema_data["full_schema_name"],
-                    schema_definition=schema_data["schema_definition"],
-                    config=schema_data.get("config", {}),
-                    deployment_time=schema_data["deployment_time"],
-                )
+                    tenant_id = schema_data["tenant_id"]
+                    base_schema_name = schema_data["base_schema_name"]
+                    key = (tenant_id, base_schema_name)
 
-            self._schemas = loaded
-            logger.info(f"Loaded {len(loaded)} schemas from storage")
+                    loaded[key] = SchemaInfo(
+                        tenant_id=tenant_id,
+                        base_schema_name=base_schema_name,
+                        full_schema_name=schema_data["full_schema_name"],
+                        schema_definition=schema_data["schema_definition"],
+                        config=schema_data.get("config", {}),
+                        deployment_time=schema_data["deployment_time"],
+                    )
 
-        except Exception as e:
-            if self.strict_mode:
-                # Production mode - fail fast
-                logger.error(
-                    f"CRITICAL: Failed to load schemas from storage: {e}. "
-                    f"This indicates database corruption or connectivity issues. "
-                    f"Cannot initialize SchemaRegistry in strict mode."
-                )
-                raise SchemaRegistryInitializationError(
-                    f"Cannot initialize SchemaRegistry: schema storage is unavailable. "
-                    f"Error: {e}. "
-                    f"This indicates database corruption or connectivity issues. "
-                    f"Set strict_mode=False to start with empty registry (NOT recommended for production)."
-                )
-            else:
-                # Test mode - continue with warning
-                logger.warning(
-                    f"Failed to load schemas from storage: {e}. "
-                    f"Starting with empty registry (strict_mode=False)."
-                )
+                self._schemas = loaded
+                logger.info(f"Loaded {len(loaded)} schemas from storage")
+                return
 
     def register_schema(
         self,
