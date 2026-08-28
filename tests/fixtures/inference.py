@@ -146,6 +146,10 @@ class EndpointValidator:
             raise ProviderUnavailable(
                 f"{spec.name}: {candidate.provider} refused a connection"
             ) from exc
+        except (httpx.RemoteProtocolError, httpx.ReadError) as exc:
+            raise ProviderUnavailable(
+                f"{spec.name}: {candidate.provider} closed the connection"
+            ) from exc
         except httpx.TimeoutException as exc:
             raise EndpointTimeoutError(
                 f"{spec.name}: {candidate.provider} validation timed out"
