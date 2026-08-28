@@ -1436,6 +1436,7 @@ class TestSharedClusterOwnership:
         )
         monkeypatch.setattr(e2e_conftest, "_ensure_stack_running", lambda: True)
         monkeypatch.setattr(e2e_conftest, "_stamp_e2e_deploy_state", lambda value: None)
+        monkeypatch.setattr(e2e_conftest, "_restore_stale_cronworkflows", lambda: None)
         monkeypatch.setattr(e2e_conftest, "_suspend_cronworkflows_for_session", list)
         monkeypatch.setattr(e2e_conftest, "_bootstrap_tenant_and_schemas", lambda: None)
         monkeypatch.setattr(e2e_conftest, "_ingest_sample_video", lambda: None)
@@ -1844,6 +1845,7 @@ class TestSharedClusterOwnership:
                 "Result", (), {"returncode": 0, "stdout": "", "stderr": ""}
             )(),
         )
+        monkeypatch.setattr(e2e_conftest, "_restore_stale_cronworkflows", lambda: None)
         monkeypatch.setattr(e2e_conftest, "_suspend_cronworkflows_for_session", list)
         monkeypatch.setattr(e2e_conftest, "_bootstrap_tenant_and_schemas", lambda: None)
         monkeypatch.setattr(e2e_conftest, "_ingest_sample_video", lambda: None)
@@ -2183,6 +2185,7 @@ class TestSharedClusterOwnership:
         )
         monkeypatch.setattr(e2e_conftest, "_ensure_stack_running", lambda: True)
         monkeypatch.setattr(e2e_conftest, "_stamp_e2e_deploy_state", lambda value: None)
+        monkeypatch.setattr(e2e_conftest, "_restore_stale_cronworkflows", lambda: None)
         monkeypatch.setattr(e2e_conftest, "_suspend_cronworkflows_for_session", list)
         monkeypatch.setattr(e2e_conftest, "_bootstrap_tenant_and_schemas", lambda: None)
         monkeypatch.setattr(e2e_conftest, "_ingest_sample_video", lambda: None)

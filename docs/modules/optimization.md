@@ -1237,6 +1237,11 @@ argo cron suspend cogniverse-daily-gateway -n cogniverse
 argo cron resume cogniverse-daily-gateway -n cogniverse
 ```
 
+The e2e stack guard annotates suspended CronWorkflows with
+`cogniverse.io/e2e-suspended=<uuid>`. If a session stops before teardown, run
+`uv run python -m tests.e2e.cron_guard restore-stale` to clear those stale
+annotations and re-enable the affected CronWorkflows.
+
 **Quality-triggered optimization**: `QualityMonitor` submits its own ad-hoc `Workflow` (not the shared
 `WorkflowTemplate`) running `--mode triggered` whenever golden/live evaluation detects a quality drop for
 one or more agents — see [Triggered Optimization](#8-triggered-optimization-quality-monitor-driven) above.
