@@ -82,15 +82,18 @@ class SandboxSessionPool:
             checkout for an agent type, then reuses the live session.
         config: Pool sizing/idle-eviction config. Defaults from env when
             omitted.
-        wait_ready_timeout_s: Timeout passed to ``client.wait_ready``
-            on first checkout.
+        wait_ready_timeout_s: Timeout passed to ``client.wait_ready`` on
+            first checkout. Matches the openshell SDK's own wait_ready
+            default. A cold sandbox start measures ~168s here, dominated by
+            pulling the sandbox base image on first use, so a smaller budget
+            turns a normal cold start into a timeout.
     """
 
     def __init__(
         self,
         client: Any,
         config: Optional[SandboxPoolConfig] = None,
-        wait_ready_timeout_s: int = 120,
+        wait_ready_timeout_s: int = 300,
         gateway_breaker: Any = None,
     ) -> None:
         self._client = client
