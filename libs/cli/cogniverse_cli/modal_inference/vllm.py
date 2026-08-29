@@ -337,12 +337,21 @@ def _build_process_proxy_app(
     return app
 
 
+# The vllm/vllm-openai base ships python3 but no `python` on PATH. Modal's registry
+# preamble and every pip_install layer invoke `python`, so the link has to exist before
+# either runs; setup_dockerfile_commands is the only hook that early.
+_PYTHON_SHIM_COMMAND = 'RUN ln -sf "$(command -v python3)" /usr/local/bin/python'
+
+
 def _vllm_image(spec: InferenceServiceSpec) -> modal.Image:
     packages = ["fastapi==0.135.3", "httpx==0.28.1"]
     if spec.name == "vllm_asr":
         packages.extend(["librosa==0.11.0", "soundfile==0.13.1"])
     return (
-        modal.Image.from_registry(f"vllm/vllm-openai:v{_VLLM_VERSION}")
+        modal.Image.from_registry(
+            f"vllm/vllm-openai:v{_VLLM_VERSION}",
+            setup_dockerfile_commands=[_PYTHON_SHIM_COMMAND],
+        )
         .entrypoint([])
         .pip_install(*packages)
         .add_local_python_source(

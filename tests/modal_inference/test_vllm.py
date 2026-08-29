@@ -8,14 +8,17 @@ import time
 from collections.abc import Sequence
 
 import httpx
+import modal
 import pytest
 from cogniverse_cli.modal_inference.serving import build_authenticated_asgi_app
 from cogniverse_cli.modal_inference.vllm import (
+    _VLLM_VERSION,
     _build_process_proxy_app,
     _launch_process,
     _ServingProcess,
     _vllm_command,
     _vllm_environment,
+    _vllm_image,
     build_vllm_app,
 )
 from cogniverse_cli.modal_inference_config import get_inference_service_spec
@@ -605,3 +608,52 @@ def test_serving_process_crash_is_contextual_then_recovers_once_for_concurrent_c
     assert tuple(result.json() for result in recovered) == tuple(
         {"input": f"recovered-{index}", "vector": [0.125, -0.75]} for index in range(8)
     )
+
+
+class TestVllmImagePythonShim:
+    """The vllm/vllm-openai base ships python3 but no `python` on PATH.
+
+    Modal requires `python` for its own registry preamble and for every
+    ``pip_install`` layer, so the shim has to run before either of them.
+    ``setup_dockerfile_commands`` is the only hook that runs that early.
+    """
+
+    def _record_from_registry(self, monkeypatch) -> dict:
+        recorded: dict = {}
+        original = modal.Image.from_registry
+
+        def _record(tag, **kwargs):
+            recorded["tag"] = tag
+            recorded["setup_dockerfile_commands"] = tuple(
+                kwargs.get("setup_dockerfile_commands") or ()
+            )
+            recorded["add_python"] = kwargs.get("add_python")
+            return original(tag, **kwargs)
+
+        monkeypatch.setattr(modal.Image, "from_registry", staticmethod(_record))
+        return recorded
+
+    def test_base_image_gets_a_python_shim_before_any_python_command(self, monkeypatch):
+        recorded = self._record_from_registry(monkeypatch)
+
+        _vllm_image(get_inference_service_spec("vllm_llm_student"))
+
+        assert recorded["setup_dockerfile_commands"] == (
+            'RUN ln -sf "$(command -v python3)" /usr/local/bin/python',
+        )
+
+    def test_shim_is_used_instead_of_a_second_python_installation(self, monkeypatch):
+        recorded = self._record_from_registry(monkeypatch)
+
+        _vllm_image(get_inference_service_spec("vllm_llm_student"))
+
+        assert recorded["add_python"] is None
+        assert recorded["tag"] == f"vllm/vllm-openai:v{_VLLM_VERSION}"
+
+    def test_every_vllm_service_gets_the_same_shim(self, monkeypatch):
+        for service in ("vllm_llm_student", "vllm_llm_teacher", "vllm_asr"):
+            recorded = self._record_from_registry(monkeypatch)
+            _vllm_image(get_inference_service_spec(service))
+            assert recorded["setup_dockerfile_commands"] == (
+                'RUN ln -sf "$(command -v python3)" /usr/local/bin/python',
+            ), service
