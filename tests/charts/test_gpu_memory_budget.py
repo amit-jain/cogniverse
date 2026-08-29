@@ -175,8 +175,9 @@ def test_pool_pods_declare_a_fraction_or_limit():
 
     assert pods == {
         "vllm_colpali": {"fraction": 0.18, "limit_gib": 20.0},
-        "vllm_llm_student": {"fraction": 0.22, "limit_gib": 32.0},
-        "vllm_asr": {"fraction": 0.04, "limit_gib": 8.0},
+        "vllm_llm_student": {"fraction": 0.22, "limit_gib": 24.0},
+        "vllm_llm_teacher": {"fraction": 0.2, "limit_gib": 20.0},
+        "vllm_asr": {"fraction": 0.04, "limit_gib": 6.0},
         "denseon": {"fraction": 0.05, "limit_gib": 4.0},
         # PyTorch services: the caching allocator has no fraction knob, so
         # their declared bound is the memory limit, reserved above.
