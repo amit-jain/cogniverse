@@ -10,11 +10,15 @@ import base64
 import json
 import logging
 import time
+from collections.abc import Mapping
 from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 from typing import Any
+from urllib.parse import urlsplit, urlunsplit
 
 import requests
+
+from cogniverse_foundation.config.inference_auth import inference_headers
 
 _VLM_DESCRIBE_PROMPT = (
     "Describe this video frame in detail: the objects, people, actions, "
@@ -129,11 +133,23 @@ class VLMDescriptor:
         ``.../v1`` or a full ``.../v1/chat/completions`` URL)."""
         return self.vlm_endpoint.split("/v1")[0] + "/v1"
 
+    def auth_headers(self) -> Mapping[str, str]:
+        """Authorization for the configured endpoint, empty when in-cluster.
+
+        The VLM endpoint follows the student model off-cluster, and a Modal
+        endpoint rejects unauthenticated calls with 401.
+        """
+        parsed = urlsplit(self._openai_base())
+        root = urlunsplit((parsed.scheme, parsed.netloc, "", "", ""))
+        return inference_headers(root)
+
     def _resolve_openai_model(self) -> str:
         """Discover the served model id from the vLLM ``/v1/models`` list."""
         if self._openai_model:
             return self._openai_model
-        resp = requests.get(f"{self._openai_base()}/models", timeout=10)
+        resp = requests.get(
+            f"{self._openai_base()}/models", timeout=10, headers=self.auth_headers()
+        )
         resp.raise_for_status()
         data = resp.json().get("data") or []
         if not data:
@@ -175,7 +191,9 @@ class VLMDescriptor:
             "max_tokens": 256,
             "temperature": 0.2,
         }
-        resp = requests.post(chat_url, json=payload, timeout=self.timeout)
+        resp = requests.post(
+            chat_url, json=payload, timeout=self.timeout, headers=self.auth_headers()
+        )
         resp.raise_for_status()
         content = resp.json()["choices"][0]["message"]["content"]
         return str(frame_ref), (content or "").strip()

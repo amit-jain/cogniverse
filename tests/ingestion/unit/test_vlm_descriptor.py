@@ -758,3 +758,85 @@ class TestNonV1EndpointRejected:
     def test_empty_endpoint_is_rejected_loudly(self):
         with pytest.raises(ValueError, match="/v1"):
             VLMDescriptor(vlm_endpoint="")
+
+
+@pytest.mark.unit
+class TestVLMDescriptorInferenceAuth:
+    """The VLM endpoint moves off-cluster with the student model.
+
+    A Modal endpoint rejects unauthenticated calls, and both outbound calls -
+    the /v1/models discovery and the chat completion - went out with no
+    Authorization header, producing 401 on every ingest.
+    """
+
+    MODAL = "https://amit-jain--cogniverse-vllm-llm-student-inference.modal.run/v1"
+    IN_CLUSTER = "http://cogniverse-vllm-llm-student:8000/v1"
+
+    def _descriptor(self, endpoint: str) -> VLMDescriptor:
+        return VLMDescriptor(vlm_endpoint=endpoint, batch_size=1, timeout=30)
+
+    def test_modal_endpoint_carries_the_bearer(self, monkeypatch):
+        monkeypatch.setenv("COGNIVERSE_INFERENCE_API_KEY", "test-bearer-value")
+
+        headers = self._descriptor(self.MODAL).auth_headers()
+
+        assert dict(headers) == {"Authorization": "Bearer test-bearer-value"}
+
+    def test_in_cluster_endpoint_sends_no_authorization(self, monkeypatch):
+        monkeypatch.setenv("COGNIVERSE_INFERENCE_API_KEY", "test-bearer-value")
+
+        headers = self._descriptor(self.IN_CLUSTER).auth_headers()
+
+        assert dict(headers) == {}
+
+    def test_both_outbound_calls_send_the_resolved_headers(self, monkeypatch, tmp_path):
+        """Pins the wiring: a header the resolver returns must reach the wire."""
+        seen: list[str | None] = []
+
+        class _Handler(BaseHTTPRequestHandler):
+            def do_GET(self):  # /v1/models
+                seen.append(self.headers.get("Authorization"))
+                body = json.dumps({"data": [{"id": "test-model"}]}).encode()
+                self.send_response(200)
+                self.send_header("Content-Type", "application/json")
+                self.send_header("Content-Length", str(len(body)))
+                self.end_headers()
+                self.wfile.write(body)
+
+            def do_POST(self):  # /v1/chat/completions
+                seen.append(self.headers.get("Authorization"))
+                length = int(self.headers.get("Content-Length", 0))
+                self.rfile.read(length)
+                body = json.dumps(
+                    {"choices": [{"message": {"content": "a description"}}]}
+                ).encode()
+                self.send_response(200)
+                self.send_header("Content-Type", "application/json")
+                self.send_header("Content-Length", str(len(body)))
+                self.end_headers()
+                self.wfile.write(body)
+
+            def log_message(self, *a):
+                pass
+
+        server = ThreadingHTTPServer(("127.0.0.1", 0), _Handler)
+        threading.Thread(target=server.serve_forever, daemon=True).start()
+        try:
+            port = server.server_address[1]
+            descriptor = self._descriptor(f"http://127.0.0.1:{port}/v1")
+            monkeypatch.setattr(
+                descriptor, "auth_headers", lambda: {"Authorization": "Bearer wired"}
+            )
+            frame = tmp_path / "frame.jpg"
+            frame.write_bytes(b"\xff\xd8\xff\xd9")
+
+            model = descriptor._resolve_openai_model()
+            descriptor._describe_one_openai(
+                {"path": str(frame), "frame_id": "f0"},
+                model,
+                f"http://127.0.0.1:{port}/v1/chat/completions",
+            )
+        finally:
+            server.shutdown()
+
+        assert seen == ["Bearer wired", "Bearer wired"]
