@@ -10,11 +10,6 @@ import pytest
 import tests.e2e.run_lock as run_lock
 
 
-@pytest.fixture(scope="session", autouse=True)
-def e2e_stack():
-    yield
-
-
 class _FakeDocker:
     def __init__(
         self,

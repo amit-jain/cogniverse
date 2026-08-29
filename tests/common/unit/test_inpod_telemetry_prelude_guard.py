@@ -6,6 +6,7 @@ import ast
 from pathlib import Path
 
 EXPECTED_TELEMETRY_SCRIPT_COUNT = 20
+E2E_DIR = Path(__file__).resolve().parents[2] / "e2e"
 PRELUDE_MARKERS = (
     "IN_POD_TELEMETRY_PRELUDE",
     "resolve_library_env_defaults",
@@ -53,11 +54,7 @@ def _resolves_endpoint_first(script_source: str) -> bool:
 
 def test_in_pod_telemetry_scripts_resolve_endpoint_first():
     scripts: list[tuple[Path, int, str]] = []
-    guard_path = Path(__file__).resolve()
-    e2e_dir = guard_path.parent
-    for path in sorted(e2e_dir.glob("*.py")):
-        if path.resolve() == guard_path:
-            continue
+    for path in sorted(E2E_DIR.glob("*.py")):
         for line, script_source in _telemetry_script_sources(path):
             scripts.append((path, line, script_source))
 

@@ -470,22 +470,18 @@ _E2E_BATCH_MANIFEST_ENTRY = re.compile(
 EXPECTED_E2E_BATCH_UNCOVERED = {
     "tests/e2e/test_annotation_feedback_e2e.py",
     "tests/e2e/test_asr_sidecar_e2e.py",
-    "tests/e2e/test_cron_guard.py",
     "tests/e2e/test_cronworkflow_execution_e2e.py",
     "tests/e2e/test_inbound_dspy_span_e2e.py",
     "tests/e2e/test_inbound_lm_output_approximations.py",
     "tests/e2e/test_inbound_redis_replay_e2e.py",
     "tests/e2e/test_ingestion_pipeline_telemetry.py",
     "tests/e2e/test_ingestion_upload_e2e.py",
-    "tests/e2e/test_inpod_telemetry_prelude_guard.py",
-    "tests/e2e/test_kubectl_context_contract_e2e.py",
     "tests/e2e/test_manual_optimization_e2e.py",
     "tests/e2e/test_messaging_gateway_e2e.py",
     "tests/e2e/test_multimodal_report_e2e.py",
     "tests/e2e/test_optimizer_persistence_e2e.py",
     "tests/e2e/test_orchestrator_inbound_e2e.py",
     "tests/e2e/test_quality_monitor_e2e.py",
-    "tests/e2e/test_run_lock.py",
 }
 
 
