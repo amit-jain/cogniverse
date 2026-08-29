@@ -460,10 +460,33 @@ def test_run_lock_default_scan_pattern_matches_a_real_e2e_pytest_command_line():
 
 _E2E_BATCH_EXCLUSIONS_START = "# >>> e2e-batch-exclusions"
 _E2E_BATCH_EXCLUSIONS_END = "# <<< e2e-batch-exclusions"
-_E2E_BATCH_EXCLUSION_ENTRY = re.compile(
+_E2E_BATCH_UNCOVERED_START = "# >>> e2e-batch-uncovered"
+_E2E_BATCH_UNCOVERED_END = "# <<< e2e-batch-uncovered"
+_E2E_BATCH_MANIFEST_ENTRY = re.compile(
     r'^\s*"(?P<path>tests/e2e/[a-z0-9_/]+\.py)\|(?P<reason>[^"]+)"\s*$',
     re.M,
 )
+
+EXPECTED_E2E_BATCH_UNCOVERED = {
+    "tests/e2e/test_annotation_feedback_e2e.py",
+    "tests/e2e/test_asr_sidecar_e2e.py",
+    "tests/e2e/test_cron_guard.py",
+    "tests/e2e/test_cronworkflow_execution_e2e.py",
+    "tests/e2e/test_inbound_dspy_span_e2e.py",
+    "tests/e2e/test_inbound_lm_output_approximations.py",
+    "tests/e2e/test_inbound_redis_replay_e2e.py",
+    "tests/e2e/test_ingestion_pipeline_telemetry.py",
+    "tests/e2e/test_ingestion_upload_e2e.py",
+    "tests/e2e/test_inpod_telemetry_prelude_guard.py",
+    "tests/e2e/test_kubectl_context_contract_e2e.py",
+    "tests/e2e/test_manual_optimization_e2e.py",
+    "tests/e2e/test_messaging_gateway_e2e.py",
+    "tests/e2e/test_multimodal_report_e2e.py",
+    "tests/e2e/test_optimizer_persistence_e2e.py",
+    "tests/e2e/test_orchestrator_inbound_e2e.py",
+    "tests/e2e/test_quality_monitor_e2e.py",
+    "tests/e2e/test_run_lock.py",
+}
 
 
 def _run_e2e_batched_script() -> str:
@@ -478,18 +501,20 @@ def _script_array_entries(script_text: str, array_name: str) -> set[str]:
     return set(re.findall(r"tests/e2e/[a-z0-9_/]+\.py", block.group(1)))
 
 
-def _script_exclusions(script_text: str) -> dict[str, str]:
-    start = script_text.index(_E2E_BATCH_EXCLUSIONS_START)
-    end = script_text.index(_E2E_BATCH_EXCLUSIONS_END)
-    entries = _E2E_BATCH_EXCLUSION_ENTRY.findall(script_text[start:end])
-    assert entries, "missing e2e batch exclusions"
-    exclusions: dict[str, str] = {}
+def _script_manifest_entries(
+    script_text: str, start_marker: str, end_marker: str, *, kind: str
+) -> dict[str, str]:
+    start = script_text.index(start_marker)
+    end = script_text.index(end_marker)
+    entries = _E2E_BATCH_MANIFEST_ENTRY.findall(script_text[start:end])
+    assert entries, f"missing {kind} entries"
+    manifest: dict[str, str] = {}
     for path, reason in entries:
-        assert path not in exclusions, f"duplicate exclusion entry for {path}"
+        assert path not in manifest, f"duplicate {kind} entry for {path}"
         reason = reason.strip()
-        assert reason and "\n" not in reason, f"bad exclusion reason for {path}"
-        exclusions[path] = reason
-    return exclusions
+        assert reason and "\n" not in reason, f"bad {kind} reason for {path}"
+        manifest[path] = reason
+    return manifest
 
 
 def test_run_e2e_batched_script_covers_every_e2e_test_file():
@@ -497,22 +522,62 @@ def test_run_e2e_batched_script_covers_every_e2e_test_file():
     batched_files = _script_array_entries(
         script_text, "BATCH1"
     ) | _script_array_entries(script_text, "BATCH2")
-    exclusion_reasons = _script_exclusions(script_text)
+    exclusion_reasons = _script_manifest_entries(
+        script_text,
+        _E2E_BATCH_EXCLUSIONS_START,
+        _E2E_BATCH_EXCLUSIONS_END,
+        kind="exclusion",
+    )
+    uncovered_reasons = _script_manifest_entries(
+        script_text,
+        _E2E_BATCH_UNCOVERED_START,
+        _E2E_BATCH_UNCOVERED_END,
+        kind="uncovered",
+    )
     exclusion_files = set(exclusion_reasons)
+    uncovered_files = set(uncovered_reasons)
     e2e_dir = Path(__file__).resolve().parents[3] / "tests" / "e2e"
     filesystem_files = {f"tests/e2e/{path.name}" for path in e2e_dir.glob("test_*.py")}
+
+    assert exclusion_files == {
+        "tests/e2e/test_dashboard_e2e.py",
+        "tests/e2e/test_modal_inference_e2e.py",
+        "tests/e2e/test_cronworkflow_execution_heavy_e2e.py",
+    }, sorted(exclusion_files)
+    assert exclusion_reasons["tests/e2e/test_dashboard_e2e.py"] == (
+        "browser lane via pytest.mark.browser"
+    )
+    assert exclusion_reasons["tests/e2e/test_modal_inference_e2e.py"] == (
+        "requires_modal_inference collection gate"
+    )
+    assert exclusion_reasons["tests/e2e/test_cronworkflow_execution_heavy_e2e.py"] == (
+        "e2e_heavy marker"
+    )
 
     assert batched_files.isdisjoint(exclusion_files), (
         "files may not appear in both batches and exclusions: "
         f"{sorted(batched_files & exclusion_files)}"
     )
+    assert batched_files.isdisjoint(uncovered_files), (
+        "files may not appear in both batches and uncovered: "
+        f"{sorted(batched_files & uncovered_files)}"
+    )
+    assert exclusion_files.isdisjoint(uncovered_files), (
+        "files may not appear in both exclusions and uncovered: "
+        f"{sorted(exclusion_files & uncovered_files)}"
+    )
 
-    covered_files = batched_files | exclusion_files
+    covered_files = batched_files | exclusion_files | uncovered_files
     missing = filesystem_files - covered_files
     extra = covered_files - filesystem_files
     assert missing == set() and extra == set(), (
-        "every tests/e2e/test_*.py file must be in a batch or an explicit "
-        f"script exclusion; missing={sorted(missing)} extra={sorted(extra)}"
+        "every tests/e2e/test_*.py file must be in a batch, an explicit "
+        f"script exclusion, or the uncovered ratchet; missing={sorted(missing)} "
+        f"extra={sorted(extra)}"
+    )
+    assert uncovered_files <= EXPECTED_E2E_BATCH_UNCOVERED, (
+        "E2E_BATCH_UNCOVERED may only shrink; added="
+        f"{sorted(uncovered_files - EXPECTED_E2E_BATCH_UNCOVERED)}"
     )
 
 
