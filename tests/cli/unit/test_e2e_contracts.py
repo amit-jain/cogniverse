@@ -458,6 +458,64 @@ def test_run_lock_default_scan_pattern_matches_a_real_e2e_pytest_command_line():
     assert not matches("/usr/bin/vim tests/e2e/test_api_e2e.py")
 
 
+_E2E_BATCH_EXCLUSIONS_START = "# >>> e2e-batch-exclusions"
+_E2E_BATCH_EXCLUSIONS_END = "# <<< e2e-batch-exclusions"
+_E2E_BATCH_EXCLUSION_ENTRY = re.compile(
+    r'^\s*"(?P<path>tests/e2e/[a-z0-9_/]+\.py)\|(?P<reason>[^"]+)"\s*$',
+    re.M,
+)
+
+
+def _run_e2e_batched_script() -> str:
+    return (
+        Path(__file__).resolve().parents[3] / "scripts" / "run_e2e_batched.sh"
+    ).read_text()
+
+
+def _script_array_entries(script_text: str, array_name: str) -> set[str]:
+    block = re.search(rf"^{re.escape(array_name)}=\((.*?)^\)", script_text, re.S | re.M)
+    assert block, f"missing {array_name} array"
+    return set(re.findall(r"tests/e2e/[a-z0-9_/]+\.py", block.group(1)))
+
+
+def _script_exclusions(script_text: str) -> dict[str, str]:
+    start = script_text.index(_E2E_BATCH_EXCLUSIONS_START)
+    end = script_text.index(_E2E_BATCH_EXCLUSIONS_END)
+    entries = _E2E_BATCH_EXCLUSION_ENTRY.findall(script_text[start:end])
+    assert entries, "missing e2e batch exclusions"
+    exclusions: dict[str, str] = {}
+    for path, reason in entries:
+        assert path not in exclusions, f"duplicate exclusion entry for {path}"
+        reason = reason.strip()
+        assert reason and "\n" not in reason, f"bad exclusion reason for {path}"
+        exclusions[path] = reason
+    return exclusions
+
+
+def test_run_e2e_batched_script_covers_every_e2e_test_file():
+    script_text = _run_e2e_batched_script()
+    batched_files = _script_array_entries(
+        script_text, "BATCH1"
+    ) | _script_array_entries(script_text, "BATCH2")
+    exclusion_reasons = _script_exclusions(script_text)
+    exclusion_files = set(exclusion_reasons)
+    e2e_dir = Path(__file__).resolve().parents[3] / "tests" / "e2e"
+    filesystem_files = {f"tests/e2e/{path.name}" for path in e2e_dir.glob("test_*.py")}
+
+    assert batched_files.isdisjoint(exclusion_files), (
+        "files may not appear in both batches and exclusions: "
+        f"{sorted(batched_files & exclusion_files)}"
+    )
+
+    covered_files = batched_files | exclusion_files
+    missing = filesystem_files - covered_files
+    extra = covered_files - filesystem_files
+    assert missing == set() and extra == set(), (
+        "every tests/e2e/test_*.py file must be in a batch or an explicit "
+        f"script exclusion; missing={sorted(missing)} extra={sorted(extra)}"
+    )
+
+
 _REPO = Path(__file__).resolve().parents[3]
 
 
