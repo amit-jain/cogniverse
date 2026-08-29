@@ -29,7 +29,7 @@ providers:
       backend_refs:
         - name: llm-basic
           endpoint: {{ include "cogniverse.srUpstreamHost" . }}:{{ int (include "cogniverse.srUpstreamPort" .) }}
-          protocol: http
+          protocol: {{ include "cogniverse.srUpstreamProtocol" . }}
           weight: 100
           type: chat
     - name: pro-reasoning
@@ -39,7 +39,7 @@ providers:
       backend_refs:
         - name: llm-pro
           endpoint: {{ include "cogniverse.srUpstreamHost" . }}:{{ int (include "cogniverse.srUpstreamPort" .) }}
-          protocol: http
+          protocol: {{ include "cogniverse.srUpstreamProtocol" . }}
           weight: 100
           type: chat
 

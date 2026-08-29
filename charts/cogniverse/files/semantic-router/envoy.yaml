@@ -64,6 +64,16 @@ static_resources:
               - endpoint:
                   address:
                     socket_address: { address: {{ include "cogniverse.srUpstreamHost" . }}, port_value: {{ int (include "cogniverse.srUpstreamPort" .) }} }
+{{- if eq (include "cogniverse.srUpstreamProtocol" .) "https" }}
+      # Envoy re-dials the upstream itself. Without this it connects to the TLS
+      # listener in plaintext and reports "no healthy upstream", which the
+      # runtime surfaces as litellm.ServiceUnavailableError on every LLM call.
+      transport_socket:
+        name: envoy.transport_sockets.tls
+        typed_config:
+          "@type": type.googleapis.com/envoy.extensions.transport_sockets.tls.v3.UpstreamTlsContext
+          sni: {{ include "cogniverse.srUpstreamHost" . }}
+{{- end }}
 
     - name: semantic_router
       type: STRICT_DNS
