@@ -12,6 +12,7 @@ from cogniverse_agents.optimizer.example_selection import (
 
 pytestmark = [pytest.mark.unit, pytest.mark.ci_fast]
 
+METRIC_ID = "entity_extraction.pair_set_f1.v1"
 NOW = datetime(2026, 8, 26, tzinfo=timezone.utc)
 OLD = datetime(2026, 8, 1, tzinfo=timezone.utc)
 FRESH = datetime(2026, 8, 25, tzinfo=timezone.utc)
@@ -37,6 +38,7 @@ def _row(
         "scored": scored,
         "score": score,
         "candidate_score": score,
+        "metric_id": METRIC_ID,
         "created_at": f"2026-08-{day:02d}T00:00:00+00:00",
     }
 
@@ -280,7 +282,9 @@ def test_decay_state_matrix(
     now = NOW
     knobs = TrainingSelectionKnobs(300, 0.7, 3, 14, 0.5, score_threshold)
 
-    stats = confirmation_stats(lineage, score_threshold=score_threshold)
+    stats = confirmation_stats(
+        lineage, score_threshold=score_threshold, metric_id=METRIC_ID
+    )
     assert set(stats) == {example_id}
     _assert_example_stats(stats[example_id], **expected_stats)
     if _label == "old + 3 scored-above-threshold promotions -> no decay":

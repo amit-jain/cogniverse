@@ -306,6 +306,7 @@ class TestGoldenSetGrowth:
                 "score": None,
                 "base_score": None,
                 "candidate_score": None,
+                "metric_id": None,
             }
         ]
         assert golden_dataset.activate_calls == [

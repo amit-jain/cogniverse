@@ -20,6 +20,7 @@ from cogniverse_agents.optimizer.example_selection import (
 pytestmark = [pytest.mark.unit, pytest.mark.ci_fast]
 
 CONFIG_PATH = Path(__file__).resolve().parents[3] / "configs" / "config.json"
+METRIC_ID = "entity_extraction.pair_set_f1.v1"
 
 
 def _selection_block(
@@ -105,6 +106,7 @@ LEDGER = [
         "scored": True,
         "score": 0.8,
         "candidate_score": 0.8,
+        "metric_id": METRIC_ID,
         "created_at": "2026-08-01T00:00:00+00:00",
     },
     {
@@ -132,6 +134,7 @@ LEDGER_CONFIRMED_OLD = [
         "scored": True,
         "score": 0.8,
         "candidate_score": 0.8,
+        "metric_id": METRIC_ID,
         "created_at": "2026-08-01T00:00:00+00:00",
     },
     {
@@ -140,6 +143,7 @@ LEDGER_CONFIRMED_OLD = [
         "scored": True,
         "score": 0.8,
         "candidate_score": 0.8,
+        "metric_id": METRIC_ID,
         "created_at": "2026-08-10T00:00:00+00:00",
     },
     {
@@ -148,6 +152,7 @@ LEDGER_CONFIRMED_OLD = [
         "scored": True,
         "score": 0.8,
         "candidate_score": 0.8,
+        "metric_id": METRIC_ID,
         "created_at": "2026-08-15T00:00:00+00:00",
     },
 ]
@@ -221,7 +226,9 @@ def test_confirmation_stats_complete_golden():
 def test_decay_weight_old_unscored_remains_full_weight():
     now = datetime(2026, 8, 30, tzinfo=timezone.utc)
     knobs = TrainingSelectionKnobs(300, 0.7, 3, 14, 0.5, 0.7)
-    stats = confirmation_stats(LEDGER_UNSCORED_OLD, score_threshold=0.7)
+    stats = confirmation_stats(
+        LEDGER_UNSCORED_OLD, score_threshold=0.7, metric_id=METRIC_ID
+    )
 
     _assert_example_stats(
         stats["span:f"],
@@ -244,7 +251,9 @@ def test_decay_weight_unknown_id_is_fresh():
 def test_decay_weight_confirmed_old_remains_full_weight():
     now = datetime(2026, 8, 30, tzinfo=timezone.utc)
     knobs = TrainingSelectionKnobs(300, 0.7, 3, 14, 0.5)
-    stats = confirmation_stats(LEDGER_CONFIRMED_OLD, score_threshold=0.7)
+    stats = confirmation_stats(
+        LEDGER_CONFIRMED_OLD, score_threshold=0.7, metric_id=METRIC_ID
+    )
 
     _assert_example_stats(
         stats["span:d"],
@@ -365,6 +374,7 @@ def test_decay_weight_uses_shipped_entity_threshold_and_real_ledger_shape():
         }
         if scored:
             row["candidate_score"] = score
+            row["metric_id"] = METRIC_ID
         return row
 
     manager = ConfigManager(store=InMemoryConfigStore())
@@ -393,7 +403,9 @@ def test_decay_weight_uses_shipped_entity_threshold_and_real_ledger_shape():
     )
 
     stats = confirmation_stats(
-        lineage, score_threshold=knobs.confirmation_score_threshold
+        lineage,
+        score_threshold=knobs.confirmation_score_threshold,
+        metric_id=METRIC_ID,
     )
     unthresholded = confirmation_stats(lineage)
 

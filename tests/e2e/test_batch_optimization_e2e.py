@@ -5139,6 +5139,7 @@ def _backdated_training_selection_script(
                     "score": row["score"],
                     "base_score": row["base_score"],
                     "candidate_score": row["candidate_score"],
+                    "metric_id": row["metric_id"],
                     "created_at": row["created_at"],
                 }}
                 await am._provider.datasets.create_dataset(
@@ -5396,6 +5397,9 @@ class TestTrainingSelectionDecay:
             decay_weight,
             select_training_records,
         )
+        from cogniverse_runtime.optimization_cli import (
+            ENTITY_EXTRACTION_METRIC_ID,
+        )
 
         tenant_id = decay_selection_tenant
         artifact_key = "training_selection_decay"
@@ -5409,6 +5413,7 @@ class TestTrainingSelectionDecay:
                 "score": None,
                 "base_score": None,
                 "candidate_score": None,
+                "metric_id": None,
             },
             {
                 "example_id": "span:old-confirmed",
@@ -5419,6 +5424,7 @@ class TestTrainingSelectionDecay:
                 "score": 0.8,
                 "base_score": 0.6,
                 "candidate_score": 0.8,
+                "metric_id": ENTITY_EXTRACTION_METRIC_ID,
             },
             {
                 "example_id": "span:old-confirmed",
@@ -5429,6 +5435,7 @@ class TestTrainingSelectionDecay:
                 "score": 0.8,
                 "base_score": 0.6,
                 "candidate_score": 0.8,
+                "metric_id": ENTITY_EXTRACTION_METRIC_ID,
             },
             {
                 "example_id": "span:old-confirmed",
@@ -5439,6 +5446,7 @@ class TestTrainingSelectionDecay:
                 "score": 0.8,
                 "base_score": 0.6,
                 "candidate_score": 0.8,
+                "metric_id": ENTITY_EXTRACTION_METRIC_ID,
             },
             {
                 "example_id": "span:fresh-unconfirmed",
@@ -5449,6 +5457,7 @@ class TestTrainingSelectionDecay:
                 "score": None,
                 "base_score": None,
                 "candidate_score": None,
+                "metric_id": None,
             },
             {
                 "example_id": "span:fresh-confirmed",
@@ -5459,6 +5468,7 @@ class TestTrainingSelectionDecay:
                 "score": 0.8,
                 "base_score": 0.6,
                 "candidate_score": 0.8,
+                "metric_id": ENTITY_EXTRACTION_METRIC_ID,
             },
             {
                 "example_id": "span:fresh-confirmed",
@@ -5469,6 +5479,7 @@ class TestTrainingSelectionDecay:
                 "score": 0.8,
                 "base_score": 0.6,
                 "candidate_score": 0.8,
+                "metric_id": ENTITY_EXTRACTION_METRIC_ID,
             },
             {
                 "example_id": "span:fresh-confirmed",
@@ -5479,6 +5490,7 @@ class TestTrainingSelectionDecay:
                 "score": 0.8,
                 "base_score": 0.6,
                 "candidate_score": 0.8,
+                "metric_id": ENTITY_EXTRACTION_METRIC_ID,
             },
         ]
         _seed_backdated_training_selection_rows_in_pod(
@@ -5502,6 +5514,7 @@ class TestTrainingSelectionDecay:
                 "candidate_score": None,
                 "created_at": "2026-08-01T00:00:00+00:00",
                 "score": None,
+                "metric_id": None,
             },
             {
                 "version": 2,
@@ -5514,6 +5527,7 @@ class TestTrainingSelectionDecay:
                 "candidate_score": 0.8,
                 "created_at": "2026-08-01T00:00:00+00:00",
                 "score": 0.8,
+                "metric_id": ENTITY_EXTRACTION_METRIC_ID,
             },
             {
                 "version": 3,
@@ -5526,6 +5540,7 @@ class TestTrainingSelectionDecay:
                 "candidate_score": 0.8,
                 "created_at": "2026-08-05T00:00:00+00:00",
                 "score": 0.8,
+                "metric_id": ENTITY_EXTRACTION_METRIC_ID,
             },
             {
                 "version": 4,
@@ -5538,6 +5553,7 @@ class TestTrainingSelectionDecay:
                 "candidate_score": 0.8,
                 "created_at": "2026-08-09T00:00:00+00:00",
                 "score": 0.8,
+                "metric_id": ENTITY_EXTRACTION_METRIC_ID,
             },
             {
                 "version": 5,
@@ -5550,6 +5566,7 @@ class TestTrainingSelectionDecay:
                 "candidate_score": None,
                 "created_at": "2026-08-29T00:00:00+00:00",
                 "score": None,
+                "metric_id": None,
             },
             {
                 "version": 6,
@@ -5562,6 +5579,7 @@ class TestTrainingSelectionDecay:
                 "candidate_score": 0.8,
                 "created_at": "2026-08-28T00:00:00+00:00",
                 "score": 0.8,
+                "metric_id": ENTITY_EXTRACTION_METRIC_ID,
             },
             {
                 "version": 7,
@@ -5574,6 +5592,7 @@ class TestTrainingSelectionDecay:
                 "candidate_score": 0.8,
                 "created_at": "2026-08-29T00:00:00+00:00",
                 "score": 0.8,
+                "metric_id": ENTITY_EXTRACTION_METRIC_ID,
             },
             {
                 "version": 8,
@@ -5586,6 +5605,7 @@ class TestTrainingSelectionDecay:
                 "candidate_score": 0.8,
                 "created_at": "2026-08-30T00:00:00+00:00",
                 "score": 0.8,
+                "metric_id": ENTITY_EXTRACTION_METRIC_ID,
             },
         ]
 
@@ -5593,7 +5613,11 @@ class TestTrainingSelectionDecay:
         score_threshold = config["routing"]["optimization_config"][
             "training_selection"
         ]["entity_extraction"]["confirmation_score_threshold"]
-        stats = confirmation_stats(lineage, score_threshold=score_threshold)
+        stats = confirmation_stats(
+            lineage,
+            score_threshold=score_threshold,
+            metric_id=ENTITY_EXTRACTION_METRIC_ID,
+        )
         now = datetime(2026, 8, 30, tzinfo=timezone.utc)
         assert stats == {
             "span:old-unconfirmed": ExampleStats(
@@ -5692,6 +5716,10 @@ class TestTrainingSelectionDecay:
     ):
         from datetime import datetime, timedelta, timezone
 
+        from cogniverse_runtime.optimization_cli import (
+            ENTITY_EXTRACTION_METRIC_ID,
+        )
+
         tenant_id = decay_selection_tenant
         artifact_key = "entity_extraction"
         now = datetime.now(timezone.utc).replace(microsecond=0)
@@ -5770,6 +5798,7 @@ class TestTrainingSelectionDecay:
                 "score": None,
                 "base_score": None,
                 "candidate_score": None,
+                "metric_id": None,
             },
             {
                 "example_id": "approved:entity-old-confirmed",
@@ -5780,6 +5809,7 @@ class TestTrainingSelectionDecay:
                 "score": 0.8,
                 "base_score": 0.6,
                 "candidate_score": 0.8,
+                "metric_id": ENTITY_EXTRACTION_METRIC_ID,
             },
             {
                 "example_id": "approved:entity-old-confirmed",
@@ -5790,6 +5820,7 @@ class TestTrainingSelectionDecay:
                 "score": 0.8,
                 "base_score": 0.6,
                 "candidate_score": 0.8,
+                "metric_id": ENTITY_EXTRACTION_METRIC_ID,
             },
             {
                 "example_id": "approved:entity-old-confirmed",
@@ -5800,6 +5831,7 @@ class TestTrainingSelectionDecay:
                 "score": 0.8,
                 "base_score": 0.6,
                 "candidate_score": 0.8,
+                "metric_id": ENTITY_EXTRACTION_METRIC_ID,
             },
             {
                 "example_id": "approved:entity-fresh-unconfirmed",
@@ -5810,6 +5842,7 @@ class TestTrainingSelectionDecay:
                 "score": None,
                 "base_score": None,
                 "candidate_score": None,
+                "metric_id": None,
             },
             {
                 "example_id": "approved:entity-fresh-confirmed",
@@ -5820,6 +5853,7 @@ class TestTrainingSelectionDecay:
                 "score": 0.8,
                 "base_score": 0.6,
                 "candidate_score": 0.8,
+                "metric_id": ENTITY_EXTRACTION_METRIC_ID,
             },
             {
                 "example_id": "approved:entity-fresh-confirmed",
@@ -5830,6 +5864,7 @@ class TestTrainingSelectionDecay:
                 "score": 0.8,
                 "base_score": 0.6,
                 "candidate_score": 0.8,
+                "metric_id": ENTITY_EXTRACTION_METRIC_ID,
             },
             {
                 "example_id": "approved:entity-fresh-confirmed",
@@ -5840,6 +5875,7 @@ class TestTrainingSelectionDecay:
                 "score": 0.8,
                 "base_score": 0.6,
                 "candidate_score": 0.8,
+                "metric_id": ENTITY_EXTRACTION_METRIC_ID,
             },
         ]
         _seed_backdated_training_selection_rows_in_pod(
@@ -5863,6 +5899,7 @@ class TestTrainingSelectionDecay:
                 "candidate_score": None,
                 "created_at": (now - timedelta(days=16)).isoformat(),
                 "score": None,
+                "metric_id": None,
             },
             {
                 "version": 2,
@@ -5875,6 +5912,7 @@ class TestTrainingSelectionDecay:
                 "candidate_score": 0.8,
                 "created_at": (now - timedelta(days=18)).isoformat(),
                 "score": 0.8,
+                "metric_id": ENTITY_EXTRACTION_METRIC_ID,
             },
             {
                 "version": 3,
@@ -5887,6 +5925,7 @@ class TestTrainingSelectionDecay:
                 "candidate_score": 0.8,
                 "created_at": (now - timedelta(days=17)).isoformat(),
                 "score": 0.8,
+                "metric_id": ENTITY_EXTRACTION_METRIC_ID,
             },
             {
                 "version": 4,
@@ -5899,6 +5938,7 @@ class TestTrainingSelectionDecay:
                 "candidate_score": 0.8,
                 "created_at": (now - timedelta(days=16)).isoformat(),
                 "score": 0.8,
+                "metric_id": ENTITY_EXTRACTION_METRIC_ID,
             },
             {
                 "version": 5,
@@ -5911,6 +5951,7 @@ class TestTrainingSelectionDecay:
                 "candidate_score": None,
                 "created_at": (now - timedelta(days=2)).isoformat(),
                 "score": None,
+                "metric_id": None,
             },
             {
                 "version": 6,
@@ -5923,6 +5964,7 @@ class TestTrainingSelectionDecay:
                 "candidate_score": 0.8,
                 "created_at": (now - timedelta(days=2)).isoformat(),
                 "score": 0.8,
+                "metric_id": ENTITY_EXTRACTION_METRIC_ID,
             },
             {
                 "version": 7,
@@ -5935,6 +5977,7 @@ class TestTrainingSelectionDecay:
                 "candidate_score": 0.8,
                 "created_at": (now - timedelta(days=1)).isoformat(),
                 "score": 0.8,
+                "metric_id": ENTITY_EXTRACTION_METRIC_ID,
             },
             {
                 "version": 8,
@@ -5947,6 +5990,7 @@ class TestTrainingSelectionDecay:
                 "candidate_score": 0.8,
                 "created_at": now.isoformat(),
                 "score": 0.8,
+                "metric_id": ENTITY_EXTRACTION_METRIC_ID,
             },
         ]
 

@@ -100,6 +100,7 @@ class StubArtifactManager:
         score,
         base_score,
         candidate_score,
+        metric_id=None,
     ):
         if self._save_exc is not None:
             raise self._save_exc
@@ -114,6 +115,7 @@ class StubArtifactManager:
                 "score": score,
                 "base_score": base_score,
                 "candidate_score": candidate_score,
+                "metric_id": metric_id,
             }
         )
         return "dataset-1", 1

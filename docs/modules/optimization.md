@@ -96,10 +96,14 @@ gateway agent refreshes on a `GATEWAY_ARTIFACT_TTL_S` interval).
   each approved record onto the exact production DSPy signature, compiles the agent's DSPy module, and saves it
   as a `("model", <key>)` blob via `ArtifactManager`. Bootstrap candidates are accepted only when every output
   field exactly matches the reviewed label; otherwise the compiled module retains the labeled example instead
-  of replacing it with teacher-generated content. Current artifacts are contract-checked against the live module before rehydration, and a signature mismatch is treated as missing for scoring rather than overwriting the prompt. The versioned ledger keeps the legacy `scored` flag and the
-  numeric `score` used for confirmation when present; `training_selection.<optimizer>.confirmation_score_threshold`
-  makes confirmation score-aware, and omitted thresholds keep the old presence-based behavior. Unscored promotions
-  stay separate so decay only applies when the known confirmations plus the unscored history still fall below
+  of replacing it with teacher-generated content. Current artifacts are contract-checked against the live module before rehydration, and a signature mismatch is treated as missing for scoring rather than overwriting the prompt. The versioned ledger keeps the `scored` flag, the
+  numeric `score` used for confirmation when present, and `metric_id` naming the metric that produced it;
+  `training_selection.<optimizer>.confirmation_score_threshold` makes confirmation score-aware, and an omitted
+  threshold keeps confirmation presence-based and ignores `metric_id`. Under a threshold, a score counts only
+  when its `metric_id` is the optimizer's current one — the ids live beside the metric functions in
+  `optimization_cli` and are registered in `OPTIMIZER_METRIC_IDS`. Promotions with no score, and promotions
+  scored under any other metric, are unknown rather than negative evidence: they stay in the unscored bucket, so
+  decay only applies when the known confirmations plus the unscored history still fall below
   `low_confirmation_threshold`.
   SIMBA also enforces the tenant floor from routing config: below `min_samples_for_optimization` or `min_unique_queries`, it saves a version with decision `insufficient_population` and leaves the active artifact unchanged.
 - **Monthly Performance Reports**: each tenant's complete bounded-time Phoenix window is read through the same
@@ -1745,7 +1749,7 @@ After optimization, artifacts are persisted to the telemetry store via `Artifact
 
 > **Concurrency contract:** `replace_dataset` serializes same-name writers only within one shared `DatasetStore` instance on one event loop. If a torn delete/create cannot restore the old frame, it raises `DatasetReplaceRestoreFailedError`. The protection does not extend across threads, processes, or replicas, and a hard kill between delete and create can still lose the dataset because Phoenix has no atomic swap primitive.
 - `dspy-experiments-{tenant_id}-{agent_type}` — Optimization run metrics as typed `ExperimentMetrics` rows (one per run via `save_experiment`; read the latest with `load_latest_experiment`)
-- `("model", <key>)` blobs — compiled DSPy module state for `profile_selection`, `entity_extraction`, `simba_query_enhancement` (triggered mode publishes compiled instructions as versioned prompts instead of a module-state blob); each version ledger stores `consumed_example_ids`, `decision`, `scored`, `score`, `base_score`, `candidate_score`, and `created_at`, and older rows simply omit `score`.
+- `("model", <key>)` blobs — compiled DSPy module state for `profile_selection`, `entity_extraction`, `simba_query_enhancement` (triggered mode publishes compiled instructions as versioned prompts instead of a module-state blob); each version ledger stores `consumed_example_ids`, `decision`, `scored`, `score`, `metric_id`, `base_score`, `candidate_score`, and `created_at`; rows written before a field existed omit it and read back as `None`. A version that records a score must name its metric.
 - `("config", "gateway_thresholds")` blob — calibrated gateway thresholds
 - `("config", "golden_set_ground_truth")` blob — tenant-uploaded retrieval golden set, validated as rows with `query` plus normalized `expected_videos`; the quality-monitor sidecar seeds it once from its mounted JSON file, then reads it through `ArtifactManager` for golden evals
 - `("config", "profile_selection_ground_truth")` blob — tenant-uploaded profile-selection labels, validated as rows with `query` plus normalized `expected_videos`

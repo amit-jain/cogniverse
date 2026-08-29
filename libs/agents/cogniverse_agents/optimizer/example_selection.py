@@ -46,15 +46,24 @@ def _parse_created_at(created_at: Any) -> datetime:
 
 
 def confirmation_stats(
-    lineage: List[dict], *, score_threshold: float | None = None
+    lineage: List[dict],
+    *,
+    score_threshold: float | None = None,
+    metric_id: str | None = None,
 ) -> Dict[str, ExampleStats]:
     """Aggregate confirmations and first-seen timestamps per example id.
 
     When ``score_threshold`` is set, confirmations only count promoted versions
-    with a recorded score at or above the threshold. Legacy rows with no
-    recorded score stay separate in ``unscored_promotions`` so decay can treat
-    missing evidence as unknown, not negative.
+    whose recorded score reaches the threshold and was produced by
+    ``metric_id``. Versions with no recorded score, and versions scored under a
+    different metric, stay separate in ``unscored_promotions`` so decay treats
+    unknown evidence as unknown, not negative. Without a threshold the score is
+    never compared, so the recorded metric is irrelevant and ignored.
     """
+    if score_threshold is not None and metric_id is None:
+        raise ValueError(
+            "confirmation_stats requires metric_id when score_threshold is set"
+        )
     buckets: Dict[str, list[Any]] = {}
     for version in lineage:
         created_at = _parse_created_at(version["created_at"])
@@ -62,6 +71,9 @@ def confirmation_stats(
         promote = version.get("decision") == "promote"
         scored = bool(version.get("scored"))
         score = version.get("score")
+        if score_threshold is not None and version.get("metric_id") != metric_id:
+            scored = False
+            score = None
         for example_id in consumed_example_ids:
             entry = buckets.get(example_id)
             if entry is None:

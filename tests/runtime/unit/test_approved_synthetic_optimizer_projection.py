@@ -235,6 +235,7 @@ async def test_synthetic_only_data_compiles_the_actual_production_module(
             score,
             base_score,
             candidate_score,
+            metric_id=None,
             extra_ledger_fields=None,
         ):
             captured["versioned"] = {
@@ -244,6 +245,7 @@ async def test_synthetic_only_data_compiles_the_actual_production_module(
                 "consumed_example_ids": consumed_example_ids,
                 "decision": decision,
                 "score": score,
+                "metric_id": metric_id,
                 "extra_ledger_fields": dict(extra_ledger_fields or {}),
             }
             return f"artifact-{optimizer_type}", 1

@@ -633,15 +633,18 @@ class ArtifactManager:
         score: Optional[float] = None,
         base_score: Optional[float],
         candidate_score: Optional[float],
+        metric_id: Optional[str] = None,
         extra_ledger_fields: Optional[Mapping[str, Any]] = None,
     ) -> tuple[str, int]:
         """Persist ``content`` as the next version of blob ``kind/key`` with its ledger.
 
         The ledger row records exactly which examples produced this version
         (``consumed_example_ids``, ``span:<id>`` or ``approved:<id>``), the
-        run's decision, the version score used for confirmation, and how base
-        and candidate scored. Saving never moves the active pointer;
-        ``activate_version`` does.
+        run's decision, the version score used for confirmation, ``metric_id``
+        naming the metric that produced it, and how base and candidate scored.
+        A version that records a score must name its metric, so scores from
+        different metrics are never compared. Saving never moves the active
+        pointer; ``activate_version`` does.
 
         Returns:
             ``(dataset_id, version)``.
@@ -651,6 +654,11 @@ class ArtifactManager:
             raise ValueError(
                 f"decision must be one of {sorted(BLOB_VERSION_DECISIONS)}, "
                 f"got {decision!r}"
+            )
+        if (scored or score is not None) and not metric_id:
+            raise ValueError(
+                "metric_id is required when a version records a score "
+                f"(kind={kind!r}, key={key!r})"
             )
         version = await self._get_next_version(kind, key)
         ledger = {
@@ -663,6 +671,7 @@ class ArtifactManager:
             "score": score,
             "base_score": base_score,
             "candidate_score": candidate_score,
+            "metric_id": metric_id,
             "created_at": datetime.now(timezone.utc).isoformat(),
         }
         if extra_ledger_fields:
@@ -993,6 +1002,7 @@ class ArtifactManager:
                         }
                     )
                     entry["score"] = ledger.get("score")
+                    entry["metric_id"] = ledger.get("metric_id")
             lineage.append(entry)
         return lineage
 
