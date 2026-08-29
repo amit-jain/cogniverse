@@ -579,6 +579,15 @@ class TestGatewayRunningRequiresAReachablePort:
         assert sandbox_mod.ensure_host_gateway() is True
         assert started == [True]
 
+    def test_live_gateway_is_reused_without_start(self, monkeypatch):
+        monkeypatch.setattr(sandbox_mod, "openshell_installed", lambda: True)
+        monkeypatch.setattr(sandbox_mod, "gateway_running", lambda: True)
+        start = MagicMock(side_effect=AssertionError("start_gateway must not run"))
+        monkeypatch.setattr(sandbox_mod, "start_gateway", start)
+
+        assert sandbox_mod.ensure_host_gateway() is True
+        start.assert_not_called()
+
 
 class TestStartGatewayRecoversStaleRegistration:
     """A registered-but-dead gateway must be recreated, not reused.
