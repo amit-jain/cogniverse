@@ -256,11 +256,7 @@ def _replayed_optimizer_capture_counts(
 
 def _classify_orchestration_query_type(query: str, pattern: str) -> str:
     """Use the production query-type classifier for replayed workflows."""
-    return OrchestrationEvaluator._classify_query_type(
-        object.__new__(OrchestrationEvaluator),
-        query,
-        pattern,
-    )
+    return OrchestrationEvaluator._classify_query_type(query, pattern)
 
 
 def _replayed_optimizer_template_count(
