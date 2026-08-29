@@ -316,9 +316,22 @@ this from SEMANTIC_ROUTER_URL and rewrites each agent's api_base to it.
 {{- index (include "cogniverse.srUpstreamHostPort" . | splitList ":") 0 -}}
 {{- end -}}
 
+{{/* https when the runtime's own LLM endpoint is TLS, otherwise http. The
+router dials the upstream itself, so this decides both the default port and the
+protocol it speaks. */}}
+{{- define "cogniverse.srUpstreamProtocol" -}}
+{{- if hasPrefix "https://" (include "cogniverse.primaryLLMEndpoint" .) }}https{{ else }}http{{ end -}}
+{{- end -}}
+
 {{- define "cogniverse.srUpstreamPort" -}}
 {{- $hp := include "cogniverse.srUpstreamHostPort" . | splitList ":" -}}
-{{- if gt (len $hp) 1 }}{{ index $hp 1 }}{{ else }}80{{ end -}}
+{{- if gt (len $hp) 1 -}}
+{{- index $hp 1 -}}
+{{- else if eq (include "cogniverse.srUpstreamProtocol" .) "https" -}}
+443
+{{- else -}}
+80
+{{- end -}}
 {{- end -}}
 
 {{/*

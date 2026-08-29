@@ -311,3 +311,84 @@ def test_router_model_directory_is_backed_by_the_persistent_claim():
         if "persistentVolumeClaim" in volume
     }
     assert claims == {"models-cache": "cogniverse-semantic-router-models"}
+
+
+def _backend_protocols(cfg: dict) -> set[str]:
+    return {
+        ref["protocol"]
+        for model in cfg["providers"]["models"]
+        for ref in model["backend_refs"]
+    }
+
+
+class TestUpstreamScheme:
+    """The router dials the upstream itself, so the scheme decides both the
+    default port and the protocol it speaks.
+
+    An https endpoint with no explicit port defaulted to :80 and protocol http.
+    Envoy answers that with 'no healthy upstream' and the runtime surfaces
+    litellm.ServiceUnavailableError on every LLM call.
+    """
+
+    HTTPS = "https://amit-jain--cogniverse-vllm-llm-student-inference.modal.run/v1"
+    HTTP = "http://cogniverse-vllm-llm-student:8000/v1"
+
+    def test_https_upstream_without_a_port_uses_443_and_https(self):
+        cfg = _sr_config(_render(f"runtime.primaryLLM.apiBase={self.HTTPS}"))
+
+        assert _backend_endpoints(cfg) == {
+            "amit-jain--cogniverse-vllm-llm-student-inference.modal.run:443"
+        }
+        assert _backend_protocols(cfg) == {"https"}
+
+    def test_http_upstream_keeps_its_explicit_port_and_http(self):
+        cfg = _sr_config(_render(f"runtime.primaryLLM.apiBase={self.HTTP}"))
+
+        assert _backend_endpoints(cfg) == {"cogniverse-vllm-llm-student:8000"}
+        assert _backend_protocols(cfg) == {"http"}
+
+
+def _llm_upstream_cluster(docs: list[dict]) -> dict:
+    for d in docs:
+        if (
+            d.get("kind") == "ConfigMap"
+            and d.get("metadata", {}).get("name") == "cogniverse-semantic-router-envoy"
+        ):
+            envoy = yaml.safe_load(d["data"]["envoy.yaml"])
+            for cluster in envoy["static_resources"]["clusters"]:
+                if cluster["name"] == "llm_upstream":
+                    return cluster
+    raise AssertionError("llm_upstream cluster not rendered")
+
+
+class TestEnvoyUpstreamTls:
+    """Envoy terminates the runtime's LLM traffic and re-dials the upstream.
+
+    Pointing it at :443 without a TLS transport socket connects in plaintext to
+    a TLS listener, which Envoy reports as 'no healthy upstream'.
+    """
+
+    HTTPS = "https://amit-jain--cogniverse-vllm-llm-student-inference.modal.run/v1"
+    HTTP = "http://cogniverse-vllm-llm-student:8000/v1"
+
+    def test_https_upstream_gets_a_tls_socket_with_sni(self):
+        cluster = _llm_upstream_cluster(
+            _render(f"runtime.primaryLLM.apiBase={self.HTTPS}")
+        )
+
+        socket = cluster["transport_socket"]
+        assert socket["name"] == "envoy.transport_sockets.tls"
+        assert socket["typed_config"]["@type"] == (
+            "type.googleapis.com/envoy.extensions.transport_sockets.tls.v3"
+            ".UpstreamTlsContext"
+        )
+        assert socket["typed_config"]["sni"] == (
+            "amit-jain--cogniverse-vllm-llm-student-inference.modal.run"
+        )
+
+    def test_http_upstream_has_no_tls_socket(self):
+        cluster = _llm_upstream_cluster(
+            _render(f"runtime.primaryLLM.apiBase={self.HTTP}")
+        )
+
+        assert "transport_socket" not in cluster
