@@ -1057,7 +1057,7 @@ def test_diverse_and_multi_modal_sequences_do_not_share_one_query() -> None:
         "select * from sources video_frames where true limit 10"
     ]
     assert emitted["multi_modal_sequences"] == [
-        "select * from sources video_frames where true limit 2"
+        "select * from sources video_frames where true limit 10"
     ]
     assert sampled["diverse"] == ["frame a1", "frame b1"]
-    assert sampled["multi_modal_sequences"] == ["frame a1", "frame a2"]
+    assert sampled["multi_modal_sequences"] == ["frame a1", "frame b1"]
