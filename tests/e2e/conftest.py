@@ -39,7 +39,7 @@ from cogniverse_cli.secrets import read_secret
 
 from cogniverse_agents.gateway_agent import SIMPLE_ROUTE_MAP, GatewayAgent
 from cogniverse_core.memory.provenance import DerivationKind
-from tests.e2e import cron_guard
+from tests.e2e import backend_env, cron_guard
 
 # Deployment-lifecycle tests bring up their own port-forward-based cluster
 # and are exercised via a dedicated ``pytest tests/e2e/deployment/`` run —
@@ -47,6 +47,13 @@ from tests.e2e import cron_guard
 # ``e2e_stack`` (two cluster creates in one session would double a
 # 20-minute boot and the subsuite's own stack-conflict guard would fire).
 collect_ignore_glob: list[str] = ["deployment/*"]
+
+# tests/conftest.py::backend_config_env defaults BACKEND_PORT to a dead sentinel
+# so a unit test resolving config without a real store fails loudly. E2E runs
+# against a live cluster, so publish its Vespa endpoint before that session
+# fixture reads the default; otherwise every in-process config read here fails
+# with ConnectionRefused on the sentinel port.
+backend_env.export_backend_env()
 
 
 def _modal_inference_deselections(config, items):
@@ -2526,7 +2533,7 @@ def _cleanup_test_tenants() -> None:
     # 1. Tenant sweep — query Vespa for every schema_registry row and
     # delete via runtime so the registry tombstone + Vespa schema both
     # land atomically.
-    vespa_url = os.environ.get("VESPA_URL", "http://localhost:33080")
+    vespa_url = backend_env.vespa_url()
     yql = (
         "select tenant_id from config_metadata "
         'where scope contains "schema" '
