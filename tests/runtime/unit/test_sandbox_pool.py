@@ -761,3 +761,37 @@ class TestResolveTlsConfig:
 
         mgr = SandboxManager(policy="disabled")
         assert mgr._resolve_tls_config() is None
+
+
+def test_wait_ready_budget_is_not_below_the_sdk_default() -> None:
+    """The pool must not undercut the SDK's own readiness budget.
+
+    A sandbox provisions cold in ~168s on this host (the gateway controller
+    logs pod-created 16:52:41 -> Pod is Ready 16:55:29), dominated by pulling
+    the sandbox base image on first use. A budget below the SDK default
+    turns that normal cold start into a timeout, which is what made
+    test_coding_agent_full_execution_with_sandbox error in every sweep.
+
+    The SDK default is read from its signature rather than restated here, so
+    this pin follows the SDK instead of drifting from it.
+    """
+    import inspect
+
+    from openshell.sandbox import SandboxClient
+
+    sdk_default = (
+        inspect.signature(SandboxClient.wait_ready)
+        .parameters["timeout_seconds"]
+        .default
+    )
+    assert isinstance(sdk_default, (int, float)), sdk_default
+
+    pool_default = (
+        inspect.signature(SandboxSessionPool.__init__)
+        .parameters["wait_ready_timeout_s"]
+        .default
+    )
+    assert pool_default >= sdk_default, (
+        f"pool wait_ready budget {pool_default}s undercuts the openshell SDK "
+        f"default {sdk_default}s; a cold sandbox start measured 168s"
+    )
