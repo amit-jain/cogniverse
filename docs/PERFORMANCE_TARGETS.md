@@ -34,7 +34,7 @@ Performance benchmarks and targets for the Cogniverse multi-agent video search s
 | **detailed_report_agent** (`DetailedReportAgent`) | 8005 | enabled | Complex Multi-Modal / With Visual Reranking (Query Performance) |
 | **profile_selection_agent** (`ProfileSelectionAgent`) | 8000 | enabled | Routing Decision tier above |
 | **query_enhancement_agent** (`QueryEnhancementAgent`) | 8000 | enabled | See [Query Enhancement Performance](#query-enhancement-performance) |
-| **entity_extraction_agent** (`EntityExtractionAgent`) | 8000 | enabled | GatewayAgent tier above (GLiNER/SpaCy fast path) |
+| **entity_extraction_agent** (`EntityExtractionAgent`) | 8000 | enabled | GatewayAgent tier above (DSPy primary; GLiNER + SpaCy fallback) |
 | **deep_research_agent** (`DeepResearchAgent`) | 8009 | enabled | Multi-step iterative — seconds, not covered by the ms tiers above |
 | **coding_agent** (`CodingAgent`) | 8010 | enabled | Multi-step iterative — seconds, not covered by the ms tiers above |
 | **citation_tracing_agent** (`CitationTracingAgent`) | 8019 | disabled | With Memory Lookup (Query Performance) |
@@ -320,4 +320,3 @@ JAX_PLATFORM_NAME=cpu uv run pytest tests/agents/integration/ -v -k "search" --d
 # Real-time dashboard (available)
 uv run streamlit run libs/dashboard/cogniverse_dashboard/app.py
 ```
-

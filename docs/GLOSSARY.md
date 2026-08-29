@@ -119,7 +119,7 @@ Vector representation of content for similarity search. Different models produce
 Embedding subsystem that generates embeddings and feeds them to backends, handling multi-vector and single-vector strategies. The concrete implementation is `EmbeddingGeneratorImpl`, constructed via `EmbeddingGeneratorFactory` / `create_embedding_generator`.
 
 ### EntityExtractionAgent
-Tiered A2A NER agent (`cogniverse_agents/entity_extraction_agent.py`) with a fast GLiNER + SpaCy path (no LLM) and a DSPy `ChainOfThought` fallback. Registered under `agents.entity_extraction_agent`, enabled by default.
+Tiered A2A NER agent (`cogniverse_agents/entity_extraction_agent.py`) with DSPy primary path and GLiNER + SpaCy fallback. Registered under `agents.entity_extraction_agent`, enabled by default.
 
 ### EventQueue
 A2A-compatible real-time notification system for streaming task progress to multiple subscribers. Supports pub/sub pattern, reconnection with replay, and graceful cancellation. Used by orchestrator and ingestion pipeline.
