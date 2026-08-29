@@ -1042,3 +1042,75 @@ def test_disabled_external_service_still_consumes_the_bearer_secret():
         "key": "COGNIVERSE_INFERENCE_API_KEY",
         "optional": False,
     }
+
+
+class TestLlmServingOverlay:
+    """Where the chat LLMs are served is orthogonal to the local GPU vendor.
+
+    values.rocm.yaml means 'this host has AMD GPUs'. Folding Modal endpoints
+    into it would hand Modal to every ROCm deployment, including ones with no
+    Modal account. The redirection is a separate, opt-in, backend-agnostic
+    overlay composed on top.
+    """
+
+    ROCM = "values.rocm.yaml"
+    MODAL = "values.modal-llm.yaml"
+
+    def _runtime_env(self, docs: list[dict]) -> dict:
+        runtime = next(
+            d
+            for d in docs
+            if d.get("kind") == "Deployment"
+            and d["metadata"]["name"] == "cogniverse-runtime"
+        )
+        container = next(
+            c
+            for c in runtime["spec"]["template"]["spec"]["containers"]
+            if c["name"] == "runtime"
+        )
+        return {e["name"]: e for e in container["env"]}
+
+    def test_device_overlay_alone_keeps_the_chat_models_local(self):
+        docs = _render(values=self.ROCM)
+        env = self._runtime_env(docs)
+
+        deployments = _inference_deployments(docs)
+        assert "vllm_llm_student" in deployments
+        assert "vllm_llm_teacher" in deployments
+        assert (
+            env["LLM_ENDPOINT"]["value"] == "http://cogniverse-vllm-llm-student:8000/v1"
+        )
+        assert (
+            env["COGNIVERSE_INFERENCE_API_KEY"]["value"] == "placeholder-no-auth-needed"
+        )
+
+    def test_serving_overlay_moves_both_chat_models_off_cluster(self):
+        docs = _render(values=(self.ROCM, self.MODAL))
+        env = self._runtime_env(docs)
+
+        deployments = _inference_deployments(docs)
+        assert "vllm_llm_student" not in deployments
+        assert "vllm_llm_teacher" not in deployments
+        assert env["LLM_ENDPOINT"]["value"] == (
+            "https://amit-jain--cogniverse-vllm-llm-student-inference.modal.run/v1"
+        )
+        assert _teacher_api_base(docs) == (
+            "https://amit-jain--cogniverse-vllm-llm-teacher-inference.modal.run/v1"
+        )
+        assert env["COGNIVERSE_INFERENCE_API_KEY"]["valueFrom"]["secretKeyRef"] == {
+            "name": "cogniverse-inference-api-key",
+            "key": "COGNIVERSE_INFERENCE_API_KEY",
+            "optional": False,
+        }
+
+    def test_serving_overlay_leaves_the_embedders_on_the_local_gpu(self):
+        """It redirects the chat models only; the embedders stay where the
+        device overlay put them."""
+        local = _inference_deployments(_render(values=self.ROCM))
+        composed = _inference_deployments(_render(values=(self.ROCM, self.MODAL)))
+
+        assert sorted(set(local) - set(composed)) == [
+            "vllm_llm_student",
+            "vllm_llm_teacher",
+        ]
+        assert sorted(set(composed) - set(local)) == []

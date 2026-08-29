@@ -108,6 +108,43 @@ def get_values_file(
     return values_file
 
 
+# Where the chat LLMs are served. Independent of the local GPU vendor, so it is
+# a separate overlay rather than a device values file: a rocm host must be able
+# to serve them locally or from Modal without changing its device overlay.
+LLM_SERVING_LOCAL = "local"
+LLM_SERVING_MODAL = "modal"
+
+_LLM_SERVING_OVERLAYS = {
+    LLM_SERVING_LOCAL: None,
+    LLM_SERVING_MODAL: "values.modal-llm.yaml",
+}
+
+
+def get_llm_serving_values_file(
+    serving: str,
+    project_root: Path | None = None,
+) -> Path | None:
+    """Path to the overlay that redirects the chat LLMs, or None for local.
+
+    Opt-in: Modal serving bills per GPU-second and needs credentials plus the
+    synced inference-api-key Secret, so a deployment with neither keeps serving
+    locally.
+    """
+    try:
+        filename = _LLM_SERVING_OVERLAYS[serving]
+    except KeyError:
+        raise ValueError(
+            f"unknown llm serving mode {serving!r}; "
+            f"expected one of {sorted(_LLM_SERVING_OVERLAYS)}"
+        ) from None
+    if filename is None:
+        return None
+    candidate = get_chart_path(project_root) / filename
+    if not candidate.is_file():
+        raise FileNotFoundError(f"LLM serving overlay not found: {candidate}")
+    return candidate
+
+
 def get_device_values_file(
     backend: str,
     project_root: Path | None = None,
