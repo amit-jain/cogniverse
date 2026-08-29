@@ -35,8 +35,10 @@ from cogniverse_cli.cluster import (
     stop_port_forwards,
 )
 from cogniverse_cli.config import (
+    LLM_SERVING_LOCAL,
     get_chart_path,
     get_device_values_file,
+    get_llm_serving_values_file,
     get_values_file,
     get_workflows_path,
     resolve_project_root,
@@ -351,6 +353,14 @@ def up(
             values_files.append(device_values)
             console.print(
                 f"[cyan]Composing device overrides:[/cyan] {device_values.name}"
+            )
+        serving_values = get_llm_serving_values_file(
+            os.environ.get("COGNIVERSE_LLM_SERVING", LLM_SERVING_LOCAL)
+        )
+        if serving_values is not None:
+            values_files.append(serving_values)
+            console.print(
+                f"[cyan]Composing LLM serving overrides:[/cyan] {serving_values.name}"
             )
 
     dev_image_overrides: dict[str, str] = {}

@@ -1,0 +1,30 @@
+# Serve the two chat models from Modal instead of running them locally.
+#
+# Backend-agnostic and opt-in: where the chat LLMs are served is independent of
+# the local GPU vendor, so this composes on top of any device overlay
+# (values.rocm.yaml, values.cuda.yaml, values.cpu.yaml) rather than living
+# inside one of them.
+#
+#   helm upgrade ... -f values.k3s.yaml -f values.rocm.yaml -f values.modal-llm.yaml
+#
+# Opt-in because it bills per GPU-second and needs Modal credentials plus the
+# synced cogniverse-inference-api-key Secret. A deployment that has neither must
+# keep serving locally, which is the default.
+#
+# Measured on gemma-4-e4b-it, 200-token completions: the local gfx1151 APU
+# serves ~18 tok/s; Modal on an H100 serves ~97 tok/s sequentially and ~687
+# tok/s aggregate across 8 concurrent requests. Disabling both pods also returns
+# 44Gi of node memory requests and roughly 40 GiB of GTT.
+inference:
+  vllm_llm_student:
+    # No externalUrl: the chart fails the render if this service has one,
+    # because the student endpoint is derived from runtime.primaryLLM.apiBase.
+    enabled: false
+
+  vllm_llm_teacher:
+    enabled: false
+    externalUrl: "https://amit-jain--cogniverse-vllm-llm-teacher-inference.modal.run"
+
+runtime:
+  primaryLLM:
+    apiBase: "https://amit-jain--cogniverse-vllm-llm-student-inference.modal.run/v1"

@@ -384,7 +384,11 @@ def deployment_helm_inputs(
     extra_set: dict[str, str] | None = None,
 ) -> dict:
     """Resolve the exact backend, overlays, image tags, and Helm overrides."""
-    from cogniverse_cli.config import get_device_values_file
+    from cogniverse_cli.config import (
+        LLM_SERVING_LOCAL,
+        get_device_values_file,
+        get_llm_serving_values_file,
+    )
     from cogniverse_cli.images import (
         RUNTIME_REPOS_BY_BACKEND,
         detect_torch_backend,
@@ -403,6 +407,12 @@ def deployment_helm_inputs(
     helm_values = [values_file]
     if device_values_file:
         helm_values.append(device_values_file)
+    serving_values_file = get_llm_serving_values_file(
+        os.environ.get("COGNIVERSE_LLM_SERVING", LLM_SERVING_LOCAL),
+        project_root=project_root,
+    )
+    if serving_values_file:
+        helm_values.append(serving_values_file)
     helm_set_overrides = {
         "argo-workflows.crds.install": "false",
         "runtime.backend": backend,
