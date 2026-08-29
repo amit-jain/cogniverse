@@ -6,6 +6,7 @@ import asyncio
 
 import pytest
 
+from cogniverse_agents.routing.orchestration_evaluator import OrchestrationEvaluator
 from cogniverse_agents.workflow.intelligence import (
     OptimizationStrategy,
     WorkflowIntelligence,
@@ -78,16 +79,6 @@ def _observed_span():
 
 @pytest.mark.unit
 class TestOrchestrationOutcomeExtraction:
-    @staticmethod
-    def _evaluator():
-        from cogniverse_agents.routing.orchestration_evaluator import (
-            OrchestrationEvaluator,
-        )
-
-        evaluator = object.__new__(OrchestrationEvaluator)
-        evaluator.tenant_id = "acme:acme"
-        return evaluator
-
     @pytest.mark.parametrize(
         ("location", "field"),
         [
@@ -108,7 +99,10 @@ class TestOrchestrationOutcomeExtraction:
             ValueError,
             match=rf"^orchestration span requires observed field {field}$",
         ):
-            self._evaluator()._extract_workflow_execution(span)
+            OrchestrationEvaluator._extract_workflow_execution(
+                span,
+                tenant_id="acme:acme",
+            )
 
     @pytest.mark.parametrize("success", [1, "true", None])
     def test_success_must_be_an_explicit_boolean_outcome(self, success):
@@ -119,7 +113,10 @@ class TestOrchestrationOutcomeExtraction:
             ValueError,
             match=r"^orchestration span success must be a bool$",
         ):
-            self._evaluator()._extract_workflow_execution(span)
+            OrchestrationEvaluator._extract_workflow_execution(
+                span,
+                tenant_id="acme:acme",
+            )
 
     def test_parallel_efficiency_is_normalized_to_unit_interval(self):
         span = _observed_span()
@@ -133,9 +130,12 @@ class TestOrchestrationOutcomeExtraction:
             }
         )
 
-        execution = self._evaluator()._extract_workflow_execution(span)
+        execution = OrchestrationEvaluator._extract_workflow_execution(
+            span,
+            tenant_id="acme:acme",
+        )
 
-        assert execution is not None
+        assert execution.workflow_id == "workflow-observed"
         assert execution.parallel_efficiency == 1.0
         assert execution.metadata == {
             "orchestration_pattern": "parallel",
@@ -158,9 +158,12 @@ class TestOrchestrationOutcomeExtraction:
         span = _observed_span()
         span["attributes.output.value"]["pattern"] = "parallel"
 
-        execution = self._evaluator()._extract_workflow_execution(span)
+        execution = OrchestrationEvaluator._extract_workflow_execution(
+            span,
+            tenant_id="acme:acme",
+        )
 
-        assert execution is not None
+        assert execution.workflow_id == "workflow-observed"
         assert execution.parallel_efficiency == 0.0
         assert execution.metadata["_outcome_metadata"] == {
             "observed": True,
@@ -176,9 +179,12 @@ class TestOrchestrationOutcomeExtraction:
         span = _observed_span()
         del span["attributes.output.value"]["confidence"]
 
-        execution = self._evaluator()._extract_workflow_execution(span)
+        execution = OrchestrationEvaluator._extract_workflow_execution(
+            span,
+            tenant_id="acme:acme",
+        )
 
-        assert execution is not None
+        assert execution.workflow_id == "workflow-observed"
         assert execution.confidence_score == 0.0
         assert execution.metadata["_outcome_metadata"] == {
             "observed": True,

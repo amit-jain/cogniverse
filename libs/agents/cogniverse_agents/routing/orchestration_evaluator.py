@@ -188,7 +188,12 @@ class OrchestrationEvaluator:
 
         prepared = []
         for cursor, span_row in batch:
-            prepared.append((cursor, self._extract_workflow_execution(span_row)))
+            prepared.append(
+                (
+                    cursor,
+                    self._extract_workflow_execution(span_row, self.tenant_id),
+                )
+            )
 
         workflows_extracted = 0
         for cursor, workflow_execution in prepared:
@@ -229,7 +234,11 @@ class OrchestrationEvaluator:
             raise ValueError("orchestration span_id must be a non-empty str")
         return start_time.astimezone(timezone.utc), span_id
 
-    def _extract_workflow_execution(self, span_row) -> WorkflowExecution:
+    @staticmethod
+    def _extract_workflow_execution(
+        span_row,
+        tenant_id: str,
+    ) -> WorkflowExecution:
         """
         Extract WorkflowExecution from Phoenix span data
 
@@ -328,13 +337,13 @@ class OrchestrationEvaluator:
 
         agent_observations = None
         if "agent_observations" in output:
-            agent_observations = self._extract_agent_observations(
+            agent_observations = OrchestrationEvaluator._extract_agent_observations(
                 output["agent_observations"],
                 agent_sequence,
             )
 
         has_agent_times = bool(output.get("agent_times"))
-        parallel_efficiency = self._compute_parallel_efficiency(
+        parallel_efficiency = OrchestrationEvaluator._compute_parallel_efficiency(
             orchestration_pattern, output, execution_time
         )
         parallel_semantics = (
@@ -358,14 +367,16 @@ class OrchestrationEvaluator:
             confidence_score = 0.0
             confidence_semantics = "unobserved_zero_sentinel"
 
-        query_type = self._classify_query_type(query, orchestration_pattern)
+        query_type = OrchestrationEvaluator._classify_query_type(
+            query, orchestration_pattern
+        )
 
         metadata = {
             "orchestration_pattern": orchestration_pattern,
             "execution_order": execution_order,
             "tasks_completed": tasks_completed,
             "span_id": span_row.get("context.span_id"),
-            "tenant_id": self.tenant_id,
+            "tenant_id": tenant_id,
             "_outcome_metadata": {
                 "observed": True,
                 "required_field_semantics": {
@@ -447,8 +458,9 @@ class OrchestrationEvaluator:
             observations.append(dict(raw))
         return observations
 
+    @staticmethod
     def _compute_parallel_efficiency(
-        self, pattern: str, attributes: Dict, total_time: float
+        pattern: str, attributes: Dict, total_time: float
     ) -> float:
         """
         Compute normalized parallel efficiency in the inclusive range 0..1.
