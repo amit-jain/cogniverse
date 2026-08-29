@@ -167,9 +167,33 @@ BATCH2=(
   tests/e2e/test_deep_synthesis_workflow_e2e.py
 )
 
-# Intentionally excluded (not part of the regular suite):
-#   test_quality_monitor_e2e.py  — needs the quality-monitor sidecar running
-#   test_dashboard_e2e.py        — needs Playwright + a browser
+# Explicit exclusions for files that stay outside the batch sweep.
+# Format: "tests/e2e/test_*.py|one-line reason"
+# >>> e2e-batch-exclusions
+E2E_BATCH_EXCLUSIONS=(
+  "tests/e2e/test_annotation_feedback_e2e.py|annotation-feedback workflow is outside the batch sweep"
+  "tests/e2e/test_asr_sidecar_e2e.py|ASR sidecar lane is outside the batch sweep"
+  "tests/e2e/test_cron_guard.py|cluster-free CronWorkflow guard contract"
+  "tests/e2e/test_cronworkflow_execution_e2e.py|CronWorkflow light tier is not in the batch sweep"
+  "tests/e2e/test_cronworkflow_execution_heavy_e2e.py|CronWorkflow heavy tier is opt-in via -m e2e_heavy"
+  "tests/e2e/test_dashboard_e2e.py|browser lane is opt-in via -m browser"
+  "tests/e2e/test_inbound_dspy_span_e2e.py|inbound DSPy-span contract is outside the batch sweep"
+  "tests/e2e/test_inbound_lm_output_approximations.py|LM-output approximation contract is outside the batch sweep"
+  "tests/e2e/test_inbound_redis_replay_e2e.py|Redis replay durability path is outside the batch sweep"
+  "tests/e2e/test_ingestion_pipeline_telemetry.py|ingestion-pipeline telemetry path is outside the batch sweep"
+  "tests/e2e/test_ingestion_upload_e2e.py|ingestion upload path is outside the batch sweep"
+  "tests/e2e/test_inpod_telemetry_prelude_guard.py|cluster-free telemetry prelude guard"
+  "tests/e2e/test_kubectl_context_contract_e2e.py|cluster-free kubectl context contract"
+  "tests/e2e/test_manual_optimization_e2e.py|manual optimization path is outside the batch sweep"
+  "tests/e2e/test_messaging_gateway_e2e.py|messaging gateway path is outside the batch sweep"
+  "tests/e2e/test_modal_inference_e2e.py|Modal inference lane is opt-in via requires_modal_inference"
+  "tests/e2e/test_multimodal_report_e2e.py|multimodal report path is outside the batch sweep"
+  "tests/e2e/test_optimizer_persistence_e2e.py|optimizer persistence path is outside the batch sweep"
+  "tests/e2e/test_orchestrator_inbound_e2e.py|orchestrator inbound path is outside the batch sweep"
+  "tests/e2e/test_quality_monitor_e2e.py|quality-monitor sidecar path is outside the batch sweep"
+  "tests/e2e/test_run_lock.py|cluster-free run-lock and GPU residency contract"
+)
+# <<< e2e-batch-exclusions
 
 wait_runtime_ready() {
   echo "waiting for runtime 2/2 Running..."
