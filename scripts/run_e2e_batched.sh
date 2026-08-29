@@ -112,6 +112,58 @@ _e2e_acquire_lock() {
 _e2e_acquire_lock
 # <<< e2e-run-lock
 
+# Only deployments that were cold when the sweep started are treated as owned
+# by this run. A reused warm cluster keeps its models up.
+# >>> e2e-inference-teardown
+E2E_INFERENCE_DEPLOYMENTS_TO_TEAR_DOWN=()
+
+_e2e_inference_teardown_gtt_bytes() {
+  cat /sys/class/drm/card*/device/mem_info_gtt_used 2>/dev/null \
+    | awk '{s+=$1} END {print s+0}' || true
+}
+
+_e2e_prepare_inference_teardown() {
+  local deployment_rows component name replicas
+  deployment_rows="$(
+    kubectl get deploy -n "$NS" -l app.kubernetes.io/instance=cogniverse \
+      -o jsonpath='{range .items[*]}{.metadata.labels.app\.kubernetes\.io/component}{"\t"}{.metadata.name}{"\t"}{.spec.replicas}{"\n"}{end}'
+  )"
+  while IFS=$'\t' read -r component name replicas; do
+    [[ "$component" == inference-* ]] || continue
+    [[ "${replicas:-0}" == 0 ]] || continue
+    E2E_INFERENCE_DEPLOYMENTS_TO_TEAR_DOWN+=("$name")
+  done <<< "$deployment_rows"
+}
+
+_e2e_teardown_inference_deployments() {
+  local deployment
+  for deployment in "${E2E_INFERENCE_DEPLOYMENTS_TO_TEAR_DOWN[@]}"; do
+    kubectl scale deployment "$deployment" -n "$NS" --replicas=0 >/dev/null 2>&1 \
+      || true
+  done
+}
+
+_e2e_cleanup() {
+  local rc=${E2E_EXIT_CODE:-$?}
+  trap - EXIT INT TERM
+  set +e
+  _e2e_teardown_inference_deployments
+  sleep 20
+  local gtt_bytes gtt_gib
+  gtt_bytes="$(_e2e_inference_teardown_gtt_bytes)"
+  gtt_gib=$(( gtt_bytes / 1073741824 ))
+  echo "=== teardown rc=$rc scaled=${#E2E_INFERENCE_DEPLOYMENTS_TO_TEAR_DOWN[@]} gtt_gib=$gtt_gib ==="
+  _e2e_release_lock
+  exit "$rc"
+}
+
+trap _e2e_cleanup EXIT
+trap 'E2E_EXIT_CODE=130; exit 130' INT
+trap 'E2E_EXIT_CODE=143; exit 143' TERM
+
+_e2e_prepare_inference_teardown
+# <<< e2e-inference-teardown
+
 # Batch 1: light/medium tests that don't exercise the heavy ingestion
 # pipeline. Gateway classification, orchestration (LLM-bound but no
 # ColPali frame-encoding), search, CRUD, registry, multi-turn, synthetic

@@ -330,6 +330,21 @@ def _e2e_run_lock_block() -> str:
     return text[text.index(_LOCK_START) : text.index(_LOCK_END)]
 
 
+_INFERENCE_TEARDOWN_START = "# >>> e2e-inference-teardown"
+_INFERENCE_TEARDOWN_END = "# <<< e2e-inference-teardown"
+
+
+def _e2e_inference_teardown_block() -> str:
+    text = _run_e2e_batched_script()
+    assert _INFERENCE_TEARDOWN_START in text and _INFERENCE_TEARDOWN_END in text, (
+        "run_e2e_batched.sh carries no inference teardown block: the EXIT trap "
+        "does not own the model scale-down path"
+    )
+    return text[
+        text.index(_INFERENCE_TEARDOWN_START) : text.index(_INFERENCE_TEARDOWN_END)
+    ]
+
+
 def _run_lock(lock_file, scan_pattern, trailer='echo "ACQUIRED $$"'):
     script = "set -euo pipefail\n" + _e2e_run_lock_block() + "\n" + trailer + "\n"
     return subprocess.run(
@@ -456,6 +471,113 @@ def test_run_lock_default_scan_pattern_matches_a_real_e2e_pytest_command_line():
     assert matches("uv run pytest tests/e2e/ -k optimization --tb=long")
     assert not matches("uv run pytest tests/cli/unit/test_e2e_contracts.py")
     assert not matches("/usr/bin/vim tests/e2e/test_api_e2e.py")
+
+
+def _write_executable(path: Path, content: str) -> None:
+    path.write_text(content)
+    path.chmod(0o755)
+
+
+_HARDCODED_INFERENCE_DEPLOYMENTS = {
+    "cogniverse-clap-embed",
+    "cogniverse-colbert-pylate",
+    "cogniverse-denseon",
+    "cogniverse-gliner",
+    "cogniverse-vllm-asr",
+    "cogniverse-vllm-colpali",
+    "cogniverse-vllm-llm-student",
+    "cogniverse-vllm-llm-teacher",
+}
+
+
+def test_run_e2e_batched_script_derives_inference_deployments_from_live_labels():
+    block = _e2e_inference_teardown_block()
+
+    assert (
+        'kubectl get deploy -n "$NS" -l app.kubernetes.io/instance=cogniverse' in block
+    )
+    assert ".metadata.labels.app\\.kubernetes\\.io/component" in block
+    assert "while IFS=$'\\t' read -r component name replicas;" in block
+    assert '[[ "$component" == inference-* ]] || continue' in block
+    assert 'E2E_INFERENCE_DEPLOYMENTS_TO_TEAR_DOWN+=("$name")' in block
+    assert _HARDCODED_INFERENCE_DEPLOYMENTS.isdisjoint(
+        set(re.findall(r"cogniverse-[a-z0-9-]+", block))
+    ), block
+
+
+def test_run_e2e_batched_script_tears_down_only_cold_inference_deployments_and_keeps_exit_code(
+    tmp_path,
+):
+    scaled = tmp_path / "scaled.log"
+    bin_dir = tmp_path / "bin"
+    bin_dir.mkdir()
+    _write_executable(
+        bin_dir / "kubectl",
+        f"""#!/usr/bin/env bash
+set -euo pipefail
+case "${{1:-}} ${{2:-}}" in
+  "get deploy")
+    printf '%b\n' \
+      'inference-alpha\\tcogniverse-alpha\\t0' \
+      'inference-beta\\tcogniverse-beta\\t1' \
+      'runtime\\tcogniverse-runtime\\t1'
+    ;;
+  "scale deployment")
+    printf '%s\n' "$3" >> "{scaled}"
+    ;;
+esac
+exit 0
+""",
+    )
+    _write_executable(
+        bin_dir / "cat",
+        """#!/usr/bin/env bash
+set -euo pipefail
+printf '1073741824\n'
+""",
+    )
+    _write_executable(
+        bin_dir / "sleep",
+        """#!/usr/bin/env bash
+set -euo pipefail
+exit 0
+""",
+    )
+
+    lock_file = tmp_path / "e2e.lock"
+    script = (
+        "set -euo pipefail\n"
+        f'export PATH="{bin_dir}:$PATH"\n'
+        "export NS=cogniverse\n"
+        f'_e2e_release_lock() {{ printf "LOCK_RELEASED\\n" > {str(lock_file)!r}; }}\n'
+        + _e2e_inference_teardown_block()
+        + "\n"
+        + "exit 17\n"
+    )
+    done = subprocess.run(
+        ["bash", "-c", script],
+        env={**os.environ, "E2E_LOCK_SCAN_PATTERN": _never_matches()},
+        capture_output=True,
+        text=True,
+    )
+
+    assert done.returncode == 17, done.stderr
+    assert scaled.read_text().splitlines() == ["cogniverse-alpha"], scaled.read_text()
+    assert lock_file.read_text() == "LOCK_RELEASED\n"
+    assert "teardown rc=17" in done.stdout, done.stdout
+    assert "scaled=1" in done.stdout, done.stdout
+
+
+def test_run_e2e_batched_script_teardown_traps_exit_and_reports_gtt_from_card_glob():
+    block = _e2e_inference_teardown_block()
+
+    assert "trap _e2e_cleanup EXIT" in block
+    assert "trap 'E2E_EXIT_CODE=130; exit 130' INT" in block
+    assert "trap 'E2E_EXIT_CODE=143; exit 143' TERM" in block
+    assert "local rc=${E2E_EXIT_CODE:-$?}" in block
+    assert 'exit "$rc"' in block
+    assert "/sys/class/drm/card*/device/mem_info_gtt_used" in block
+    assert not re.search(r"/sys/class/drm/card[0-9]+/device/mem_info_gtt_used", block)
 
 
 _E2E_BATCH_EXCLUSIONS_START = "# >>> e2e-batch-exclusions"
