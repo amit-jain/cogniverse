@@ -638,6 +638,24 @@ EXPECTED_E2E_BATCH_UNCOVERED = {
 }
 
 
+def test_derived_kubectl_context_is_refused_when_empty() -> None:
+    """An empty derived context is worse than none: kubectl treats
+    ``--context ""`` as the CURRENT context, so a failed derivation would
+    silently act on whatever cluster happens to be selected while still
+    satisfying the --context guard."""
+    script = _run_e2e_batched_script()
+    derivation = script.index('KUBECTL_CONTEXT="$(')
+    first_kubectl = script.index("kubectl --context")
+    guard_window = script[derivation:first_kubectl]
+    assert '[[ -z "$KUBECTL_CONTEXT" ]]' in guard_window, (
+        "run_e2e_batched.sh derives KUBECTL_CONTEXT but never refuses an "
+        "empty value before its first kubectl call"
+    )
+    assert "exit 2" in guard_window, (
+        "an empty derived context must abort the run, not warn"
+    )
+
+
 def _run_e2e_batched_script() -> str:
     return (
         Path(__file__).resolve().parents[3] / "scripts" / "run_e2e_batched.sh"
