@@ -28,6 +28,7 @@ from cogniverse_synthetic import api as synthetic_api
 from cogniverse_synthetic.service import SyntheticDataService
 from cogniverse_vespa._vespa_factory import make_vespa_app
 from cogniverse_vespa.backend import VespaBackend
+from tests.agents.unit._recording_telemetry import RecordingTelemetryManager
 from tests.utils.synthetic_config import video_synthetic_generator_config
 from tests.utils.vespa_test_helpers import make_config_manager
 
@@ -125,14 +126,13 @@ def real_service(shared_vespa):
     else:
         pytest.fail("API source document was not indexed by Vespa")
 
+    config_manager.set_backend_config(backend_config)
+
     profile_agent = ProfileSelectionAgent(
         deps=ProfileSelectionDeps(available_profiles=[profile_name])
     )
-    profile_agent._config_manager = SimpleNamespace(
-        get_backend_profile=lambda selected, selected_tenant: (
-            backend_config.profiles[selected] if selected_tenant == tenant_id else None
-        )
-    )
+    profile_agent._config_manager = config_manager
+    profile_agent.telemetry_manager = RecordingTelemetryManager()
     profile_agent.dspy_module.selector = lambda **_: dspy.Prediction(
         selected_profile=profile_name,
         confidence="0.98",
@@ -157,6 +157,7 @@ def real_service(shared_vespa):
         backend_config=backend_config,
         agents_config=json.loads(Path("configs/config.json").read_text())["agents"],
         profile_labeler=label_profile,
+        config_manager=config_manager,
     )
     try:
         yield SimpleNamespace(
@@ -164,8 +165,8 @@ def real_service(shared_vespa):
             tenant_id=tenant_id,
             profile_name=profile_name,
             expected_queries={
-                f"find a video frame showing {record['description']}"
-                for record in records
+                "find a video frame showing Marie Curie and Pierre Curie isolated",
+                "find a video frame showing Tesla demonstrated an alternating-current motor",
             },
         )
     finally:

@@ -388,6 +388,8 @@ def synthetic_service(shared_vespa):
     else:
         pytest.fail("Approval source documents were not indexed by Vespa")
 
+    config_manager.set_backend_config(backend_config)
+
     raw_config = json.loads(Path("configs/config.json").read_text())
     synthetic_config = dict(raw_config["synthetic"])
     synthetic_config["tenant_id"] = tenant_id
@@ -426,6 +428,7 @@ def synthetic_service(shared_vespa):
         agents_config=raw_config["agents"],
         entity_extractor=extract_entities,
         routing_decider=decide_route,
+        config_manager=config_manager,
     )
     try:
         yield SimpleNamespace(
@@ -720,7 +723,10 @@ class TestSyntheticApprovalIntegration:
             approved_second.status,
         ) == (second.item_id, second.data, ApprovalStatus.APPROVED)
 
-        expected = [replacement.data, second.data]
+        expected = [
+            {**replacement.data, "example_id": f"approved:{replacement.item_id}"},
+            {**second.data, "example_id": f"approved:{second.item_id}"},
+        ]
         first, second_load = await asyncio.gather(
             _load_approved_synthetic_data(
                 approval_storage.provider,
@@ -917,8 +923,14 @@ class TestSyntheticApprovalIntegration:
                 optimizer_type,
             ),
         )
-        assert alpha == examples["acme:alpha"]
-        assert beta == examples["acme:beta"]
+        assert alpha == [
+            {**item.data, "example_id": f"approved:{item.item_id}"}
+            for item in approved_by_tenant[0]
+        ]
+        assert beta == [
+            {**item.data, "example_id": f"approved:{item.item_id}"}
+            for item in approved_by_tenant[1]
+        ]
 
         dataset_store = storages["acme:alpha"].provider.datasets
         alpha_frame = await dataset_store.get_dataset(

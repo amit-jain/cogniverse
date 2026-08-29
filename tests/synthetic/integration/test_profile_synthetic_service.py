@@ -29,6 +29,7 @@ from cogniverse_synthetic.schemas import (
 from cogniverse_synthetic.service import SyntheticDataService
 from cogniverse_vespa._vespa_factory import make_vespa_app
 from cogniverse_vespa.backend import VespaBackend
+from tests.agents.unit._recording_telemetry import RecordingTelemetryManager
 from tests.utils.synthetic_config import video_synthetic_generator_config
 from tests.utils.vespa_test_helpers import make_config_manager
 
@@ -94,17 +95,43 @@ def profile_service(shared_vespa):
         },
     )
     assert feed.is_successful(), feed.json
+    feed = make_vespa_app(
+        url="http://localhost",
+        port=shared_vespa["http_port"],
+    ).feed_data_point(
+        schema=schema,
+        data_id="tesla-current-segment",
+        fields={
+            "video_id": "tesla-current",
+            "video_title": "Nikola Tesla developed alternating current",
+            "source_url": "http://example.test/tesla-current",
+            "segment_id": 1,
+            "segment_description": (
+                "Tesla demonstrated an alternating-current motor in 1888."
+            ),
+            "start_time": 12.0,
+            "end_time": 24.0,
+        },
+    )
+    assert feed.is_successful(), feed.json
 
     for _ in range(20):
         indexed = backend.query_metadata_documents(
             schema=schema,
-            yql=f"select * from sources {schema} where true limit 1",
-            hits=1,
+            yql=f"select * from sources {schema} where true limit 2",
+            hits=2,
         )
-        if indexed:
-            assert indexed[0]["video_id"] == "curie-radium"
-            assert indexed[0]["video_title"] == title
-            assert indexed[0]["segment_description"] == description
+        if len(indexed) == 2:
+            assert {item["video_id"] for item in indexed} == {
+                "curie-radium",
+                "tesla-current",
+            }
+            indexed_by_id = {item["video_id"]: item for item in indexed}
+            assert indexed_by_id["curie-radium"]["video_title"] == title
+            assert indexed_by_id["curie-radium"]["segment_description"] == description
+            assert indexed_by_id["tesla-current"]["video_title"] == (
+                "Nikola Tesla developed alternating current"
+            )
             break
         time.sleep(0.5)
     else:
@@ -115,6 +142,7 @@ def profile_service(shared_vespa):
     )
     profile_agent._artifact_tenant_id = tenant_id
     profile_agent._config_manager = config_manager
+    profile_agent.telemetry_manager = RecordingTelemetryManager()
     profile_agent.dspy_module.selector = lambda **_: dspy.Prediction(
         selected_profile=profile_name,
         confidence="0.96",
@@ -143,13 +171,14 @@ def profile_service(shared_vespa):
         backend_config=backend_config,
         agents_config=agents_config,
         profile_labeler=label_profile,
+        config_manager=config_manager,
     )
     try:
         yield SimpleNamespace(
             service=service,
             tenant_id=tenant_id,
             profile_name=profile_name,
-            expected_query=f"find a video frame showing {description}",
+            expected_query="find a video frame showing Marie Curie isolated radium",
             agents_config=agents_config,
         )
     finally:
@@ -162,7 +191,7 @@ async def test_service_generates_profile_examples(profile_service):
         tenant_id=profile_service.tenant_id,
         optimizer="profile",
         count=1,
-        vespa_sample_size=1,
+        vespa_sample_size=2,
         max_profiles=1,
     )
     response = await profile_service.service.generate(request)
@@ -172,7 +201,7 @@ async def test_service_generates_profile_examples(profile_service):
     assert response.count == 1
     assert len(response.data) == 1
     assert response.selected_profiles == [profile_service.profile_name]
-    assert response.metadata["sampled_content_count"] == 1
+    assert response.metadata["sampled_content_count"] == 2
     assert response.metadata["generation"] == {
         "requested_count": 1,
         "returned_count": 1,
@@ -204,13 +233,13 @@ async def test_service_rejects_profile_count_above_unique_indexed_topics(
         SyntheticDataRequest(
             tenant_id=profile_service.tenant_id,
             optimizer="profile",
-            count=2,
-            vespa_sample_size=1,
+            count=3,
+            vespa_sample_size=2,
             max_profiles=1,
         )
     )
 
-    assert response.count == 1
+    assert response.count == 2
     assert response.data == [
         {
             "query": profile_service.expected_query,
@@ -220,11 +249,20 @@ async def test_service_rejects_profile_count_above_unique_indexed_topics(
             "query_intent": "video_search",
             "modality": "video",
             "complexity": "medium",
-        }
+        },
+        {
+            "query": "find a video frame showing Tesla demonstrated an alternating-current motor",
+            "available_profiles": profile_service.profile_name,
+            "selected_profile": profile_service.profile_name,
+            "reasoning": "The deployed selector chose the indexed video profile.",
+            "query_intent": "video_search",
+            "modality": "video",
+            "complexity": "medium",
+        },
     ]
     assert response.metadata["generation"] == {
-        "requested_count": 2,
-        "returned_count": 1,
+        "requested_count": 3,
+        "returned_count": 2,
         "shortfall_count": 1,
         "floor_count": 1,
         "surplus_exhausted": True,
@@ -245,7 +283,8 @@ async def test_real_lm_profile_agent_labels_indexed_source_without_module_patch(
         deps=ProfileSelectionDeps(available_profiles=[profile_service.profile_name])
     )
     agent._artifact_tenant_id = profile_service.tenant_id
-    agent._config_manager = profile_service.service.backend._config_manager_instance
+    agent._config_manager = profile_service.service.config_manager
+    agent.telemetry_manager = RecordingTelemetryManager()
 
     async def label_profile(query, available_profiles, tenant_id):
         return await agent.process(
@@ -262,6 +301,7 @@ async def test_real_lm_profile_agent_labels_indexed_source_without_module_patch(
         backend_config=profile_service.service.backend_config,
         agents_config=profile_service.agents_config,
         profile_labeler=label_profile,
+        config_manager=profile_service.service.config_manager,
     )
     with dspy.context(lm=dspy_test_lm):
         response = await service.generate(
@@ -269,7 +309,7 @@ async def test_real_lm_profile_agent_labels_indexed_source_without_module_patch(
                 tenant_id=profile_service.tenant_id,
                 optimizer="profile",
                 count=1,
-                vespa_sample_size=1,
+                vespa_sample_size=2,
                 max_profiles=1,
             )
         )
@@ -312,7 +352,7 @@ async def test_service_response_serializes_to_optimizer_demo_shape(profile_servi
         tenant_id=profile_service.tenant_id,
         optimizer="profile",
         count=1,
-        vespa_sample_size=1,
+        vespa_sample_size=2,
         max_profiles=1,
     )
     response = await profile_service.service.generate(request)
