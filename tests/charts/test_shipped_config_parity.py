@@ -43,6 +43,10 @@ def _optimizer_floors(config: dict[str, Any]) -> dict[str, Any]:
     return config["routing"]["optimization_config"]["optimizer_floors"]
 
 
+def _optimizer_configs(config: dict[str, Any]) -> dict[str, Any]:
+    return config["synthetic"]["optimizer_configs"]
+
+
 def _training_selection(config: dict[str, Any]) -> dict[str, Any]:
     return config["routing"]["optimization_config"]["training_selection"]
 
@@ -103,6 +107,16 @@ def test_shipped_configs_declare_identical_optimizer_floors():
 def test_shipped_configs_declare_identical_training_selection():
     # Drift guard: the charted config must match the shipped runtime config.
     assert _training_selection(_rendered(SHIPPED)) == _training_selection(
+        _rendered(CHART)
+    )
+
+
+@pytest.mark.unit
+def test_shipped_configs_declare_identical_optimizer_configs():
+    """Drift guard: the chart config is what the cluster actually runs, so a
+    scoring rule added only to the repo copy changes nothing in a deployment
+    and silently makes local and served selection disagree."""
+    assert _optimizer_configs(_rendered(SHIPPED)) == _optimizer_configs(
         _rendered(CHART)
     )
 
