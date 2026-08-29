@@ -1,7 +1,8 @@
 """SandboxManager boot policy + exec span end-to-end.
 
 Pins the shipped SandboxPolicy enum + ``SandboxManager._connect`` against
-a live OpenShell gateway started by the module-scoped fixture below:
+the shared host OpenShell gateway bootstrapped by the module-scoped
+fixture below:
 
   * REQUIRED + unreachable endpoint → ``SandboxGatewayUnavailableError``
     raised at construction (the manager refuses to boot);
@@ -12,27 +13,20 @@ a live OpenShell gateway started by the module-scoped fixture below:
   * sandbox.exec emits an OpenTelemetry span with the canonical attributes
     (policy, exit_code, wall_ms) — captured via InMemorySpanExporter.
 
-The live gateway is started on a non-default port (19090) and gateway
-name ``cogniverse-test-gw`` because k3d's loadbalancer holds 8080. The
-fixture is module-scoped and tears down on exit.
+The fixture reuses the active host gateway rather than provisioning a
+second cluster, then clears any stale endpoint override so the runtime
+reads the active gateway metadata.
 """
 
 from __future__ import annotations
 
 import os
 import socket
-import subprocess
 from typing import Iterator
 
 import pytest
 
-from tests.e2e.conftest import unique_id
-
-# OpenShell CLI lives at .venv/bin/openshell (installed via the openshell
-# Python package as a console script). uv run resolves it on PATH.
-_GATEWAY_NAME = "cogniverse-test-gw"
-_GATEWAY_PORT = 19090
-_GATEWAY_ENDPOINT = f"127.0.0.1:{_GATEWAY_PORT}"
+from tests.e2e.conftest import _ensure_host_sandbox_gateway, unique_id
 
 
 def _free_local_port() -> int:
@@ -41,83 +35,10 @@ def _free_local_port() -> int:
         return s.getsockname()[1]
 
 
-def _gateway_running() -> bool:
-    """True iff the openshell gateway is reachable on the configured endpoint."""
-    res = subprocess.run(
-        ["uv", "run", "openshell", "gateway", "info", "--gateway", _GATEWAY_NAME],
-        capture_output=True,
-        text=True,
-        timeout=10,
-    )
-    if res.returncode != 0 or "Gateway endpoint" not in res.stdout:
-        return False
-    # `gateway info` reads stored metadata, which survives the gateway
-    # process dying — verify something is actually listening.
-    try:
-        with socket.create_connection(("127.0.0.1", _GATEWAY_PORT), timeout=5):
-            return True
-    except OSError:
-        return False
-
-
-def _start_gateway_with_retry(max_attempts: int = 3) -> None:
-    """Start the OpenShell gateway, retrying on transient corrupt-cluster errors.
-
-    Mirrors the retry policy in ``tests/agents/integration/test_sandbox_integration.py``
-    — k3s bootstrap inside the gateway pod is occasionally flaky on the
-    first attempt; the CLI auto-cleans corrupted state and a retry tends
-    to land cleanly.
-    """
-    last_err = ""
-    for attempt in range(max_attempts):
-        res = subprocess.run(
-            [
-                "uv",
-                "run",
-                "openshell",
-                "gateway",
-                "start",
-                "--name",
-                _GATEWAY_NAME,
-                "--port",
-                str(_GATEWAY_PORT),
-            ],
-            capture_output=True,
-            text=True,
-            timeout=300,
-        )
-        if res.returncode == 0:
-            return
-        last_err = res.stderr or res.stdout
-        if "Corrupted cluster state" not in last_err:
-            break
-    raise RuntimeError(
-        f"openshell gateway start failed after {max_attempts} attempts; "
-        f"last stderr: {last_err[:500]}"
-    )
-
-
 @pytest.fixture(scope="module", autouse=True)
 def live_gateway() -> Iterator[None]:
-    """Module-scoped: ensure the openshell gateway is up.
-
-    Reuses an already-running gateway if present; otherwise starts one.
-    Does NOT destroy the gateway on teardown — leaving it running lets
-    later e2e modules (and re-runs of this one) skip the ~60s start cost.
-    """
-    if not _gateway_running():
-        _start_gateway_with_retry()
-        if not _gateway_running():
-            pytest.fail(
-                "openshell gateway did not come up after start — sandbox "
-                "policy tests cannot run without a live gateway"
-            )
-    # The openshell SDK's SandboxClient(endpoint="host:port") path expects
-    # a specific URL format that the deployed gateway doesn't handle the
-    # same way as from_active_cluster(). Make sure no stale override env
-    # forces the manager onto that broken path; SandboxManager._connect
-    # falls back to SandboxClient.from_active_cluster() which talks to
-    # the cogniverse-test-gw the start step registered as active.
+    """Module-scoped: ensure the shared host OpenShell gateway is up."""
+    _ensure_host_sandbox_gateway()
     os.environ.pop("OPENSHELL_GATEWAY_ENDPOINT", None)
     yield
 
@@ -218,8 +139,8 @@ class TestRequiredPolicyAcceptsBootOnLiveGateway:
 
     def test_required_with_live_gateway_constructs(self) -> None:
         SandboxManager, SandboxPolicy, _ = _import_sandbox()
-        # OPENSHELL_GATEWAY_ENDPOINT was set by the autouse fixture to
-        # the live cogniverse-test-gw endpoint.
+        # The fixture leaves OPENSHELL_GATEWAY_ENDPOINT unset so the manager
+        # reads the shared host gateway's active metadata.
         mgr = SandboxManager(policy=SandboxPolicy.REQUIRED)
         assert mgr._available is True
         assert mgr._client is not None

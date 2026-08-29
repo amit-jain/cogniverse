@@ -16,82 +16,17 @@ from __future__ import annotations
 
 import asyncio
 import os
-import socket
-import subprocess
 from typing import Iterator
 
 import pytest
 
-from tests.e2e.conftest import run_async
-
-_GATEWAY_NAME = "cogniverse-test-gw"
-_GATEWAY_PORT = 19090
-_GATEWAY_ENDPOINT = f"127.0.0.1:{_GATEWAY_PORT}"
-
-
-def _gateway_running() -> bool:
-    res = subprocess.run(
-        ["uv", "run", "openshell", "gateway", "info", "--gateway", _GATEWAY_NAME],
-        capture_output=True,
-        text=True,
-        timeout=10,
-    )
-    if res.returncode != 0 or "Gateway endpoint" not in res.stdout:
-        return False
-    # `gateway info` reads stored metadata, which survives the gateway
-    # process dying — verify something is actually listening.
-    try:
-        with socket.create_connection(("127.0.0.1", _GATEWAY_PORT), timeout=5):
-            return True
-    except OSError:
-        return False
-
-
-def _start_gateway_with_retry(max_attempts: int = 3) -> None:
-    # A dead gateway leaves its registration behind and `start` then reuses
-    # it without launching a listener — clear it so start is a real start.
-    subprocess.run(
-        ["uv", "run", "openshell", "gateway", "destroy", "--name", _GATEWAY_NAME],
-        capture_output=True,
-        text=True,
-        timeout=60,
-    )
-    last_err = ""
-    for _ in range(max_attempts):
-        res = subprocess.run(
-            [
-                "uv",
-                "run",
-                "openshell",
-                "gateway",
-                "start",
-                "--name",
-                _GATEWAY_NAME,
-                "--port",
-                str(_GATEWAY_PORT),
-            ],
-            capture_output=True,
-            text=True,
-            timeout=300,
-        )
-        if res.returncode == 0:
-            return
-        last_err = res.stderr or res.stdout
-        if "Corrupted cluster state" not in last_err:
-            break
-    raise RuntimeError(f"openshell gateway start failed: {last_err[:500]}")
+from tests.e2e.conftest import _ensure_host_sandbox_gateway, run_async
 
 
 @pytest.fixture(scope="module", autouse=True)
 def live_gateway() -> Iterator[None]:
-    """Module-scoped: ensure the live openshell gateway is up + endpoint env set."""
-    if not _gateway_running():
-        _start_gateway_with_retry()
-        if not _gateway_running():
-            pytest.fail("openshell gateway did not come up")
-    # Clear any stale env override; SandboxManager._connect falls back to
-    # SandboxClient.from_active_cluster() which talks to the live gateway
-    # the start step registered as active.
+    """Module-scoped: ensure the shared host OpenShell gateway is up."""
+    _ensure_host_sandbox_gateway()
     os.environ.pop("OPENSHELL_GATEWAY_ENDPOINT", None)
     yield
 
