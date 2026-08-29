@@ -40,6 +40,11 @@ spec:
       app.kubernetes.io/component: semantic-router
   template:
     metadata:
+      annotations:
+        # Both pods read their ConfigMap at startup and run a pinned image, so a
+        # pure config change yields an identical pod spec and nothing rolls. The
+        # checksum makes the spec change with the config.
+        cogniverse.io/router-config-checksum: {{ printf "%s%s" (tpl (.Files.Get "files/semantic-router/config.yaml") .) (tpl (.Files.Get "files/semantic-router/envoy.yaml") .) | sha256sum }}
       labels:
         {{- include "cogniverse.selectorLabels" . | nindent 8 }}
         app.kubernetes.io/component: semantic-router
@@ -173,6 +178,11 @@ spec:
       app.kubernetes.io/component: semantic-router-envoy
   template:
     metadata:
+      annotations:
+        # Both pods read their ConfigMap at startup and run a pinned image, so a
+        # pure config change yields an identical pod spec and nothing rolls. The
+        # checksum makes the spec change with the config.
+        cogniverse.io/router-config-checksum: {{ printf "%s%s" (tpl (.Files.Get "files/semantic-router/config.yaml") .) (tpl (.Files.Get "files/semantic-router/envoy.yaml") .) | sha256sum }}
       labels:
         {{- include "cogniverse.selectorLabels" . | nindent 8 }}
         app.kubernetes.io/component: semantic-router-envoy

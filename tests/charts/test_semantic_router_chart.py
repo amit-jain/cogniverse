@@ -451,3 +451,56 @@ class TestStudentEndpointFollowsTheOverride:
         cfg = _runtime_config(_render())
 
         assert self._student_urls(cfg) == {"http://cogniverse-vllm-llm-student:8000/v1"}
+
+
+class TestConfigChangeRollsThePods:
+    """Envoy and the router read their ConfigMaps at startup only.
+
+    Their images are pinned, so a pure config change produced an identical pod
+    spec, kubectl saw nothing to roll, and the pods kept serving the config they
+    booted with. A TLS/port fix sat correct in the ConfigMap for two runs while
+    a 19-hour-old Envoy kept answering 'no healthy upstream'.
+    """
+
+    ROUTER = "cogniverse-semantic-router"
+    ENVOY = "cogniverse-semantic-router-envoy"
+
+    def _annotations(self, docs: list[dict], name: str) -> dict:
+        for d in docs:
+            if d.get("kind") == "Deployment" and d["metadata"]["name"] == name:
+                return d["spec"]["template"]["metadata"].get("annotations") or {}
+        raise AssertionError(f"{name} Deployment not rendered")
+
+    def test_both_router_pods_carry_a_config_checksum(self):
+        docs = _render()
+
+        for name in (self.ROUTER, self.ENVOY):
+            annotations = self._annotations(docs, name)
+            assert "cogniverse.io/router-config-checksum" in annotations, name
+            assert len(annotations["cogniverse.io/router-config-checksum"]) == 64, name
+
+    def test_a_config_change_changes_the_checksum(self):
+        before = _render()
+        after = _render(
+            "runtime.primaryLLM.apiBase=https://changed.example.modal.run/v1"
+        )
+
+        for name in (self.ROUTER, self.ENVOY):
+            assert (
+                self._annotations(before, name)["cogniverse.io/router-config-checksum"]
+                != self._annotations(after, name)[
+                    "cogniverse.io/router-config-checksum"
+                ]
+            ), name
+
+    def test_an_unrelated_change_leaves_the_checksum_alone(self):
+        before = _render()
+        after = _render("runtime.replicaCount=2")
+
+        for name in (self.ROUTER, self.ENVOY):
+            assert (
+                self._annotations(before, name)["cogniverse.io/router-config-checksum"]
+                == self._annotations(after, name)[
+                    "cogniverse.io/router-config-checksum"
+                ]
+            ), name
