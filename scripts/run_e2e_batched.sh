@@ -59,6 +59,14 @@ print(KUBECTL_CONTEXT)
 PY
 )"
 
+# kubectl treats an empty --context as the CURRENT context, so a failed
+# derivation would silently target whatever cluster is selected while still
+# carrying the flag. Refuse rather than guess.
+if [[ -z "$KUBECTL_CONTEXT" ]]; then
+  echo "FATAL: could not derive KUBECTL_CONTEXT from tests.e2e.conftest" >&2
+  exit 2
+fi
+
 # Only one e2e run may touch the cluster at a time. Concurrent runs multiply
 # concurrent LM/ingestion load on a serving stack whose memory scales with it;
 # on this unified-memory host the GPU pool is pinned and unswappable, so the
