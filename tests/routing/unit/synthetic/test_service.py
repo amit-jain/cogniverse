@@ -1525,7 +1525,6 @@ class TestServiceWithBackendConfig:
                     "source_id": "doc-1",
                     "segment_id": 0,
                     "description": ("Curie lecture explores radium and Marie Curie."),
-                    "source_text": ("Curie lecture explores radium and Marie Curie."),
                 },
                 {
                     "profile_name": "document_text_semantic",
@@ -1533,10 +1532,6 @@ class TestServiceWithBackendConfig:
                     "source_id": "doc-2",
                     "segment_id": 0,
                     "description": (
-                        "A separate lecture examines x-ray imaging and "
-                        "laboratory notes."
-                    ),
-                    "source_text": (
                         "A separate lecture examines x-ray imaging and "
                         "laboratory notes."
                     ),
