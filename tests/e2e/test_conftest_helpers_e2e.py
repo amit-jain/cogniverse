@@ -14,6 +14,7 @@ work.
 
 from __future__ import annotations
 
+import ast
 import asyncio
 import json
 import subprocess
@@ -25,6 +26,7 @@ from types import SimpleNamespace
 
 import cogniverse_cli.images as images_mod
 import pytest
+from _pytest.stash import Stash
 from PIL import Image
 
 import tests.e2e.conftest as e2e_conftest
@@ -141,6 +143,125 @@ def _stub_stack_boundaries(monkeypatch) -> dict[str, list]:
         lambda: calls["ingest_evaluation_corpus"].append(True),
     )
     return calls
+
+
+def _collection_item(path: Path, test_name: str, fixturenames: tuple[str, ...]):
+    return SimpleNamespace(
+        fspath=path,
+        fixturenames=fixturenames,
+        nodeid=f"{path.as_posix()}::{test_name}",
+    )
+
+
+def _collection_config():
+    return SimpleNamespace(
+        option=SimpleNamespace(markexpr=""),
+        pluginmanager=SimpleNamespace(get_plugin=lambda name: None),
+        hook=SimpleNamespace(pytest_deselected=lambda items: None),
+    )
+
+
+def _run_collection_ordering(monkeypatch, items: list) -> None:
+    monkeypatch.setattr(e2e_conftest, "_modal_inference_deselections", lambda *_: [])
+    monkeypatch.setattr(
+        e2e_conftest, "_telegram_real_flow_deselections", lambda *_: ([], None)
+    )
+    e2e_conftest.pytest_collection_modifyitems(_collection_config(), items)
+
+
+def _playwright_fixturedef(name: str):
+    return SimpleNamespace(
+        argname=name,
+        func=SimpleNamespace(__module__="pytest_playwright.pytest_playwright"),
+        _finalizers=["session-finalizer"],
+    )
+
+
+def _playwright_request():
+    return SimpleNamespace(config=SimpleNamespace(stash=Stash()))
+
+
+def _browser_using_e2e_tests() -> list[tuple[Path, str, tuple[str, ...]]]:
+    browser_tests: list[tuple[Path, str, tuple[str, ...]]] = []
+    for path in sorted(Path(__file__).resolve().parent.glob("test_*.py")):
+        tree = ast.parse(path.read_text())
+        for node in ast.walk(tree):
+            if not isinstance(node, (ast.AsyncFunctionDef, ast.FunctionDef)):
+                continue
+            if not node.name.startswith("test_"):
+                continue
+            fixture_names = [
+                arg.arg
+                for arg in (
+                    *node.args.posonlyargs,
+                    *node.args.args,
+                    *node.args.kwonlyargs,
+                )
+            ]
+            for decorator in node.decorator_list:
+                if not isinstance(decorator, ast.Call):
+                    continue
+                func = decorator.func
+                if not (isinstance(func, ast.Attribute) and func.attr == "usefixtures"):
+                    continue
+                for arg in decorator.args:
+                    if isinstance(arg, ast.Constant) and isinstance(arg.value, str):
+                        fixture_names.append(arg.value)
+            browser_fixtures = tuple(
+                name for name in fixture_names if name in e2e_conftest._BROWSER_FIXTURES
+            )
+            if browser_fixtures:
+                browser_tests.append((path, node.name, browser_fixtures))
+    return browser_tests
+
+
+class TestCollectionOrdering:
+    """Collection order keeps browser tests after non-browser tests."""
+
+    def test_browser_item_from_non_dashboard_module_sorts_last(self, monkeypatch):
+        items = [
+            _collection_item(
+                Path("tests/e2e/test_multiprofile_and_isolation_e2e.py"),
+                "test_ingestion_tab_shows_profile_options",
+                ("page",),
+            ),
+            _collection_item(
+                Path("tests/e2e/test_deep_synthesis_workflow_e2e.py"),
+                "test_run_after_quota_exhausted_returns_flag",
+                (),
+            ),
+            _collection_item(
+                Path("tests/e2e/test_api_e2e.py"),
+                "test_list_profiles_shows_deployed",
+                (),
+            ),
+        ]
+
+        _run_collection_ordering(monkeypatch, items)
+
+        assert [item.nodeid for item in items] == [
+            "tests/e2e/test_deep_synthesis_workflow_e2e.py::"
+            "test_run_after_quota_exhausted_returns_flag",
+            "tests/e2e/test_api_e2e.py::test_list_profiles_shows_deployed",
+            "tests/e2e/test_multiprofile_and_isolation_e2e.py::"
+            "test_ingestion_tab_shows_profile_options",
+        ]
+
+    def test_every_browser_e2e_test_is_sorted_last(self, monkeypatch):
+        browser_tests = _browser_using_e2e_tests()
+        assert browser_tests, "expected at least one browser-using e2e test"
+
+        for path, test_name, fixturenames in browser_tests:
+            browser_item = _collection_item(path, test_name, fixturenames)
+            non_browser_item = _collection_item(
+                Path("tests/e2e/test_deep_synthesis_workflow_e2e.py"),
+                "test_run_after_quota_exhausted_returns_flag",
+                (),
+            )
+            items = [browser_item, non_browser_item]
+            _run_collection_ordering(monkeypatch, items)
+
+            assert items[-1].nodeid == browser_item.nodeid, browser_item.nodeid
 
 
 class TestE2EDeploymentOverrides:
@@ -499,9 +620,9 @@ class TestEventLoopStateReset:
         previous._thread_id = threading.get_ident()
         previous._loop_kind = "previous"
         e2e_conftest._PARKED_RUNNING_LOOP = browser_loop
-        e2e_conftest._SESSION_BROWSER = None
-        e2e_conftest._SESSION_PLAYWRIGHT = None
         asyncio.events._set_running_loop(previous)
+
+        request = _playwright_request()
 
         calls: list[tuple[str, str | None]] = []
 
@@ -515,10 +636,19 @@ class TestEventLoopStateReset:
                 loop = asyncio.events._get_running_loop()
                 calls.append(("stop", getattr(loop, "_loop_kind", None)))
 
-        e2e_conftest._SESSION_BROWSER = _Browser()
-        e2e_conftest._SESSION_PLAYWRIGHT = _Playwright()
+        browser_fixturedef = _playwright_fixturedef("browser")
+        playwright_fixturedef = _playwright_fixturedef("playwright")
+        e2e_conftest._cache_playwright_session_fixture(
+            browser_fixturedef, request, _Browser()
+        )
+        e2e_conftest._cache_playwright_session_fixture(
+            playwright_fixturedef, request, _Playwright()
+        )
+        assert browser_fixturedef._finalizers == []
+        assert playwright_fixturedef._finalizers == []
+        session = SimpleNamespace(config=request.config)
         try:
-            e2e_conftest._close_playwright_session()
+            e2e_conftest.pytest_sessionfinish(session, 0)
 
             assert calls == [
                 ("close", "browser"),
@@ -530,8 +660,14 @@ class TestEventLoopStateReset:
                 "session cleanup must restore the pre-existing running loop "
                 "after browser.close() and playwright.stop() complete"
             )
-            assert e2e_conftest._SESSION_BROWSER is None
-            assert e2e_conftest._SESSION_PLAYWRIGHT is None
+            assert (
+                request.config.stash.get(e2e_conftest._PLAYWRIGHT_BROWSER_KEY, None)
+                is None
+            )
+            assert (
+                request.config.stash.get(e2e_conftest._PLAYWRIGHT_PLAYWRIGHT_KEY, None)
+                is None
+            )
         finally:
             asyncio.events._set_running_loop(None)
             e2e_conftest._PARKED_RUNNING_LOOP = None
@@ -551,10 +687,9 @@ class TestEventLoopStateReset:
         previous._thread_id = threading.get_ident()
         previous._loop_kind = "previous"
         e2e_conftest._PARKED_RUNNING_LOOP = browser_loop
-        e2e_conftest._SESSION_BROWSER = None
-        e2e_conftest._SESSION_PLAYWRIGHT = None
         asyncio.events._set_running_loop(previous)
 
+        request = _playwright_request()
         calls: list[tuple[str, str | None]] = []
 
         class _Browser:
@@ -568,20 +703,33 @@ class TestEventLoopStateReset:
                 loop = asyncio.events._get_running_loop()
                 calls.append(("stop", getattr(loop, "_loop_kind", None)))
 
-        e2e_conftest._SESSION_BROWSER = _Browser()
-        e2e_conftest._SESSION_PLAYWRIGHT = _Playwright()
+        browser_fixturedef = _playwright_fixturedef("browser")
+        playwright_fixturedef = _playwright_fixturedef("playwright")
+        e2e_conftest._cache_playwright_session_fixture(
+            browser_fixturedef, request, _Browser()
+        )
+        e2e_conftest._cache_playwright_session_fixture(
+            playwright_fixturedef, request, _Playwright()
+        )
+        session = SimpleNamespace(config=request.config)
         try:
             with pytest.raises(
                 RuntimeError, match="Playwright session teardown failed"
             ):
-                e2e_conftest._close_playwright_session()
+                e2e_conftest.pytest_sessionfinish(session, 0)
 
             assert calls == [("close", "browser"), ("stop", "browser")], calls
             assert getattr(asyncio.events._get_running_loop(), "_loop_kind", None) == (
                 "previous"
             )
-            assert e2e_conftest._SESSION_BROWSER is None
-            assert e2e_conftest._SESSION_PLAYWRIGHT is None
+            assert (
+                request.config.stash.get(e2e_conftest._PLAYWRIGHT_BROWSER_KEY, None)
+                is None
+            )
+            assert (
+                request.config.stash.get(e2e_conftest._PLAYWRIGHT_PLAYWRIGHT_KEY, None)
+                is None
+            )
         finally:
             asyncio.events._set_running_loop(None)
             e2e_conftest._PARKED_RUNNING_LOOP = None
