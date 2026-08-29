@@ -5,17 +5,9 @@ from __future__ import annotations
 import ast
 from pathlib import Path
 
-import pytest
-
 import tests.e2e.conftest as e2e_conftest
 
-E2E_ROOT = Path(__file__).resolve().parent
-
-
-@pytest.fixture(scope="session", autouse=True)
-def e2e_stack():
-    """Suppress the shared e2e cluster fixture for this unit-level contract."""
-    yield
+E2E_ROOT = Path(__file__).resolve().parents[2] / "e2e"
 
 
 def _constant_string(node: ast.AST) -> str | None:
