@@ -894,6 +894,8 @@ def restart_runtime(timeout_s: int = 60) -> bool:
         subprocess.run(
             [
                 "kubectl",
+                "--context",
+                KUBECTL_CONTEXT,
                 "rollout",
                 "restart",
                 "deployment/cogniverse-runtime",

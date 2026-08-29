@@ -32,7 +32,7 @@ import httpx
 import pytest
 
 from cogniverse_foundation.config.unified_config import LLMEndpointConfig
-from tests.e2e.conftest import unique_id
+from tests.e2e.conftest import KUBECTL_CONTEXT, unique_id
 
 
 def _free_port() -> int:
@@ -58,6 +58,8 @@ def vllm_student_url() -> Iterator[str]:
     proc = subprocess.Popen(
         [
             "kubectl",
+            "--context",
+            KUBECTL_CONTEXT,
             "port-forward",
             "-n",
             "cogniverse",

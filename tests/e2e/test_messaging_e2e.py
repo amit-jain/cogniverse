@@ -14,7 +14,7 @@ import subprocess
 import httpx
 import pytest
 
-from tests.e2e.conftest import RUNTIME, TENANT_ID
+from tests.e2e.conftest import KUBECTL_CONTEXT, RUNTIME, TENANT_ID
 
 pytestmark = [pytest.mark.e2e, pytest.mark.requires_telegram_bot]
 
@@ -57,7 +57,7 @@ def _kubectl(*args, timeout=10) -> str:
         env = {**os.environ, "KUBECONFIG": _KUBECONFIG}
     try:
         result = subprocess.run(
-            ["kubectl", "-n", "cogniverse", *args],
+            ["kubectl", "--context", KUBECTL_CONTEXT, "-n", "cogniverse", *args],
             capture_output=True,
             text=True,
             timeout=timeout,

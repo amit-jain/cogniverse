@@ -42,7 +42,9 @@ def new_session_token() -> str:
 
 
 def _run_kubectl(args: Sequence[str]) -> subprocess.CompletedProcess[str]:
-    command = ["kubectl", *args]
+    from tests.e2e.conftest import KUBECTL_CONTEXT
+
+    command = ["kubectl", "--context", KUBECTL_CONTEXT, *args]
     try:
         return subprocess.run(
             command,

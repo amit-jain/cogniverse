@@ -39,7 +39,7 @@ from cogniverse_agents.deep_synthesis_workflow import (
     DeepSynthesisWorkflow,
 )
 from cogniverse_foundation.config.unified_config import LLMEndpointConfig
-from tests.e2e.conftest import run_async, unique_id
+from tests.e2e.conftest import KUBECTL_CONTEXT, run_async, unique_id
 
 # ---------------------------------------------------------------------------
 # vLLM port-forward fixture (mirrors test_rlm_telemetry_e2e.py:38-94 pattern)
@@ -66,6 +66,8 @@ def vllm_student_url() -> Iterator[str]:
     proc = subprocess.Popen(
         [
             "kubectl",
+            "--context",
+            KUBECTL_CONTEXT,
             "port-forward",
             "-n",
             "cogniverse",

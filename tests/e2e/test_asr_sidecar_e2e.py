@@ -30,6 +30,7 @@ import numpy as np
 import pytest
 
 from cogniverse_runtime.ingestion.processors.audio_processor import AudioProcessor
+from tests.e2e.conftest import KUBECTL_CONTEXT
 
 pytestmark = [pytest.mark.e2e]
 
@@ -50,6 +51,8 @@ def asr_sidecar_url():
     probe = subprocess.run(
         [
             "kubectl",
+            "--context",
+            KUBECTL_CONTEXT,
             "-n",
             "cogniverse",
             "get",
@@ -72,6 +75,8 @@ def asr_sidecar_url():
     proc = subprocess.Popen(
         [
             "kubectl",
+            "--context",
+            KUBECTL_CONTEXT,
             "-n",
             "cogniverse",
             "port-forward",
