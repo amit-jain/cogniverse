@@ -506,16 +506,6 @@ def _requests_browser(request) -> bool:
     return bool(_BROWSER_FIXTURES.intersection(getattr(request, "fixturenames", ())))
 
 
-def _reattach_parked_running_loop(*, force: bool = False) -> None:
-    import asyncio
-
-    parked = _PARKED_RUNNING_LOOP
-    if parked is None or parked.is_closed():
-        return
-    if force or asyncio.events._get_running_loop() is None:
-        asyncio.events._set_running_loop(parked)
-
-
 @pytest.fixture(autouse=True)
 def _reset_event_loop_state_before_each_test(request):
     """Clear thread-attached event-loop state before every test.
