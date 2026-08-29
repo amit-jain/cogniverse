@@ -238,8 +238,13 @@ class TestGatewayRunning:
             )
         )
         monkeypatch.setattr(sandbox_mod.subprocess, "run", run)
+        # gateway_running is registration AND liveness: a record outlives the
+        # process it describes, so the advertised port is dialled too.
+        dial = MagicMock(return_value=True)
+        monkeypatch.setattr(sandbox_mod, "gateway_port_accepting_connections", dial)
         assert sandbox_mod.gateway_running() is True
         assert run.call_args[0][0] == ["openshell", "gateway", "info"]
+        dial.assert_called_once_with()
 
     def test_exit_zero_without_endpoint_marker(
         self, monkeypatch: pytest.MonkeyPatch
