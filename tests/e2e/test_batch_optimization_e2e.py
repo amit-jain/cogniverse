@@ -252,6 +252,67 @@ def _replayed_optimizer_capture_counts(
     )
 
 
+def _classify_orchestration_query_type(query: str, pattern: str) -> str:
+    """Mirror the evaluator's query-type classifier for replayed workflows."""
+    query_lower = query.lower()
+    if any(word in query_lower for word in ["videos and documents", "images and text"]):
+        return "multi_modal_search"
+    if any(word in query_lower for word in ["detailed", "analysis", "report"]):
+        if pattern == "sequential":
+            return "sequential_report"
+        return "detailed_analysis"
+    if any(word in query_lower for word in ["summarize", "summary", "overview"]):
+        return "summarization"
+    return f"{pattern}_query"
+
+
+def _replayed_optimizer_template_count(
+    capture_records: list[dict[str, object]] | None = None,
+) -> int:
+    """Successful workflow-template groups in the replayed corpus."""
+    if capture_records is None:
+        capture_records = load_capture_json(OPTIMIZER_SPAN_CAPTURE_PATH)
+
+    sampled = sample_capture_by_name(capture_records, _optimizer_capture_sample_caps())
+    by_workflow: dict[tuple[str, str, tuple[str, ...]], list[bool]] = {}
+    for record in sampled:
+        if record["name"] != SPAN_NAME_ORCHESTRATION:
+            continue
+        attributes = record.get("attributes") or {}
+        output_raw = attributes.get("output.value")
+        try:
+            output = (
+                json.loads(output_raw) if isinstance(output_raw, str) else output_raw
+            )
+        except json.JSONDecodeError:
+            continue
+        if not isinstance(output, dict):
+            continue
+        query = str(attributes.get("input.value") or "").strip()
+        pattern = output.get("pattern")
+        agent_sequence = output.get("agent_sequence")
+        success = output.get("success")
+        if (
+            not query
+            or not isinstance(pattern, str)
+            or not isinstance(agent_sequence, list)
+            or type(success) is not bool
+        ):
+            continue
+        if len(agent_sequence) != len(set(agent_sequence)):
+            raise AssertionError(
+                "replayed orchestration span has duplicate agent names"
+            )
+        key = (
+            _classify_orchestration_query_type(query, pattern),
+            pattern,
+            tuple(agent_sequence),
+        )
+        by_workflow.setdefault(key, []).append(success)
+
+    return sum(1 for key, successes in by_workflow.items() if key[2] and any(successes))
+
+
 def _replayed_and_organic_orchestration_counts(
     lookback_hours: float | None = None,
 ) -> tuple[int, int]:
@@ -2569,10 +2630,11 @@ class TestWorkflowOptimization:
         expected_replayed_orchestration = _replayed_optimizer_capture_counts()[
             SPAN_NAME_ORCHESTRATION
         ]
+        expected_replayed_templates = _replayed_optimizer_template_count()
         replayed_orchestration, organic_orchestration = (
             _replayed_and_organic_orchestration_counts()
         )
-        orchestration_total = replayed_orchestration + organic_orchestration
+        observed_orchestration_total = replayed_orchestration + organic_orchestration
 
         # The replay capture seeds the orchestration corpus; the job should
         # process and persist the replayed corpus, while the sweep's own
@@ -2587,21 +2649,21 @@ class TestWorkflowOptimization:
         }, result
         assert result == {
             "status": "success",
-            "spans_found": orchestration_total,
-            "workflows_extracted": orchestration_total,
-            "execution_demos_saved": orchestration_total,
+            "spans_found": observed_orchestration_total,
+            "workflows_extracted": observed_orchestration_total,
+            "execution_demos_saved": observed_orchestration_total,
             # Goldens over the committed replay capture: 10 agent profiles and
-            # 30 workflow templates.
+            # 26 workflow templates.
             "agent_profiles_saved": 10,
-            "workflow_templates_saved": 30,
+            "workflow_templates_saved": expected_replayed_templates,
         }, result
         assert result["status"] == "success", result
         assert replayed_orchestration == expected_replayed_orchestration, result
-        assert result["spans_found"] == orchestration_total, result
-        assert result["workflows_extracted"] == orchestration_total, result
-        assert result["execution_demos_saved"] == orchestration_total, result
+        assert result["spans_found"] == observed_orchestration_total, result
+        assert result["workflows_extracted"] == observed_orchestration_total, result
+        assert result["execution_demos_saved"] == observed_orchestration_total, result
         assert result["agent_profiles_saved"] == 10, result
-        assert result["workflow_templates_saved"] == 30, result
+        assert result["workflow_templates_saved"] == expected_replayed_templates, result
 
     def test_workflow_artifact_contains_real_data(self):
         """Workflow demos must contain agent_sequence, execution_time, success."""

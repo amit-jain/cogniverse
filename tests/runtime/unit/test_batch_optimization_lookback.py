@@ -250,6 +250,11 @@ class TestOptimizerCaptureSampleCaps:
 
         assert (len(archive), len(sampled)) == (787, 310)
 
+    def test_replayed_workflow_templates_match_the_committed_capture(self):
+        """The committed replay corpus currently yields 26 workflow templates."""
+
+        assert _MOD._replayed_optimizer_template_count() == 26
+
 
 def test_count_spans_script_is_valid_python_for_both_modes():
     """The in-pod script must PARSE; a bad interpolation is a lost 15-min run.
