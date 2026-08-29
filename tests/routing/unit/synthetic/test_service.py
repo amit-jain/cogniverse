@@ -1518,6 +1518,30 @@ class TestServiceWithBackendConfig:
             "sampled_content_count": 2,
             "target_count": 1,
             "vespa_sample_size": 2,
+            "sampled_content": [
+                {
+                    "profile_name": "document_text_semantic",
+                    "schema_name": "document_text",
+                    "source_id": "doc-1",
+                    "segment_id": 0,
+                    "description": ("Curie lecture explores radium and Marie Curie."),
+                    "source_text": ("Curie lecture explores radium and Marie Curie."),
+                },
+                {
+                    "profile_name": "document_text_semantic",
+                    "schema_name": "document_text",
+                    "source_id": "doc-2",
+                    "segment_id": 0,
+                    "description": (
+                        "A separate lecture examines x-ray imaging and "
+                        "laboratory notes."
+                    ),
+                    "source_text": (
+                        "A separate lecture examines x-ray imaging and "
+                        "laboratory notes."
+                    ),
+                },
+            ],
             "generation": {
                 "requested_count": 1,
                 "returned_count": 1,

@@ -949,7 +949,7 @@ class TestSyntheticDataAPI:
         expected_available_profiles = _expected_available_profile_names(TENANT_ID)
         profile_types = _profile_type_map()
         with httpx.Client(base_url=RUNTIME, timeout=900.0) as client:
-            fixture_results = self._seeded_video_fixture_results(client)
+            self._seeded_video_fixture_results(client)
             resp = client.post(
                 "/synthetic/generate",
                 json={
@@ -998,32 +998,17 @@ class TestSyntheticDataAPI:
             "complexity",
         }
         assert all(set(example) == profile_fields for example in data["data"])
-        source_texts = []
-        missing_source_texts = []
-        for result in fixture_results:
-            metadata = result["metadata"]
-            assert isinstance(metadata, dict), result
-            source_text = topic_source_text(metadata)
-            if source_text is None:
-                missing_source_texts.append(metadata)
-                continue
-            source_texts.append(source_text)
-        assert missing_source_texts == [], missing_source_texts
-        assert len(set(source_texts)) == len(fixture_results)
-        records = [
-            {"description": text, "source_text": text, "topic": f"video_{i}"}
-            for i, text in enumerate(source_texts)
+        sampled_content = data["metadata"]["sampled_content"]
+        saliency = TopicSaliency.from_records(sampled_content)
+        topics = [
+            extract_topic(record, saliency=saliency) for record in sampled_content
         ]
-        saliency = TopicSaliency.from_records(records)
-        topics = [extract_topic(record, saliency=saliency) for record in records]
-        assert [
-            record["topic"] for record, topic in zip(records, topics) if topic is None
-        ] == []
+        assert all(topic is not None for topic in topics), sampled_content
         assert [example["query"] for example in data["data"]] == [
             f"find a video frame showing {topic}" for topic in topics
         ], [
             (example["query"], record["source_text"])
-            for example, record in zip(data["data"], records, strict=True)
+            for example, record in zip(data["data"], sampled_content, strict=True)
         ]
 
         actual_available_profiles = [
@@ -2110,6 +2095,16 @@ _GENERATION_METADATA_FIELDS = frozenset(
         "dropped_examples",
     }
 )
+_SAMPLED_CONTENT_METADATA_FIELDS = frozenset(
+    {
+        "profile_name",
+        "schema_name",
+        "source_id",
+        "segment_id",
+        "description",
+        "source_text",
+    }
+)
 
 
 def _assert_synthetic_metadata(
@@ -2147,13 +2142,30 @@ def _assert_synthetic_metadata_fields(
 ) -> dict:
     """Pin every metadata field except the quota outcome; return the block."""
     generation = metadata.get("generation")
+    sampled_content = metadata.get("sampled_content")
     assert isinstance(generation, dict), f"metadata has no generation block: {metadata}"
-    assert {key: value for key, value in metadata.items() if key != "generation"} == {
+    assert isinstance(sampled_content, list), (
+        f"metadata has no sampled_content block: {metadata}"
+    )
+    assert {
+        key: value
+        for key, value in metadata.items()
+        if key not in {"generation", "sampled_content"}
+    } == {
         "backend_query_strategy": backend_query_strategy,
         "sampled_content_count": sampled_content_count,
         "target_count": target_count,
         "vespa_sample_size": vespa_sample_size,
     }
+    assert len(sampled_content) == sampled_content_count
+    for record in sampled_content:
+        assert isinstance(record, dict), record
+        assert set(record) == _SAMPLED_CONTENT_METADATA_FIELDS, record
+        assert record["description"] == record["source_text"]
+        assert record["profile_name"].strip() != ""
+        assert record["schema_name"].strip() != ""
+        assert record["source_id"].strip() != ""
+        assert isinstance(record["segment_id"], int), record
     assert set(generation) == set(_GENERATION_METADATA_FIELDS)
     assert generation["requested_count"] == target_count
     assert generation["floor_count"] == 1

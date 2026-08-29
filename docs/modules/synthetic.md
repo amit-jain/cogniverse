@@ -151,6 +151,12 @@ the configured floor count when the candidate pool is exhausted.
 with source context. `get_generator_info()` reports the concrete generator name
 and whether pattern extraction or agent inference helpers were supplied.
 
+`SyntheticDataService.generate()` also surfaces `metadata.sampled_content`, a
+trace of the sampled backend rows. Each trace item carries `profile_name`,
+`schema_name`, `source_id`, `segment_id`, `description`, and `source_text`, so
+callers can recompute the same saliency pass against the exact text the
+generator used.
+
 Direct construction of routing, profile-selection, and query-enhancement
 generators exposes a positive, finite `production_label_timeout_seconds`
 setting. Direct entity-extraction construction uses the equivalent

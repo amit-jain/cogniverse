@@ -155,6 +155,8 @@ async def test_query_profile_returns_real_vespa_content(
 
     assert len(samples) == 1
     assert samples[0]["video_id"] == "vidA"
+    assert samples[0]["source_id"] == "vidA"
+    assert samples[0]["segment_id"] == 0
     assert samples[0]["topic"] == "Robots playing soccer"
     assert samples[0]["description"] == "two robots play soccer on a field"
     assert samples[0]["schema_name"] == base_schema
