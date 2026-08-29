@@ -38,6 +38,7 @@ from cogniverse_synthetic.schemas import (
 from cogniverse_synthetic.service import SyntheticDataService
 from cogniverse_vespa._vespa_factory import make_vespa_app
 from cogniverse_vespa.backend import VespaBackend
+from tests.agents.unit._recording_telemetry import RecordingTelemetryManager
 from tests.utils.synthetic_config import video_synthetic_generator_config
 from tests.utils.vespa_test_helpers import make_config_manager
 
@@ -100,22 +101,53 @@ def qe_service(shared_vespa):
         },
     )
     assert feed.is_successful(), feed.json
+    feed = make_vespa_app(
+        url="http://localhost",
+        port=shared_vespa["http_port"],
+    ).feed_data_point(
+        schema=schema,
+        data_id="radium-discovery-segment",
+        fields={
+            "video_id": "radium-discovery",
+            "video_title": "radium discovery",
+            "source_url": "http://example.test/radium-discovery",
+            "segment_id": 1,
+            "segment_description": "chemistry isolation laboratory",
+            "start_time": 8.0,
+            "end_time": 16.0,
+        },
+    )
+    assert feed.is_successful(), feed.json
 
     for _ in range(20):
         indexed = backend.query_metadata_documents(
             schema=schema,
-            yql=f"select * from sources {schema} where true limit 1",
-            hits=1,
+            yql=f"select * from sources {schema} where true limit 2",
+            hits=2,
         )
-        if indexed:
-            assert indexed[0]["video_title"] == title
-            assert indexed[0]["segment_description"] == description
+        if len(indexed) == 2:
+            assert {item["video_id"] for item in indexed} == {
+                "transformer-attention",
+                "radium-discovery",
+            }
+            indexed_by_id = {item["video_id"]: item for item in indexed}
+            assert indexed_by_id["transformer-attention"]["video_title"] == title
+            assert (
+                indexed_by_id["transformer-attention"]["segment_description"]
+                == description
+            )
+            assert indexed_by_id["radium-discovery"]["video_title"] == (
+                "radium discovery"
+            )
             break
         time.sleep(0.5)
     else:
         pytest.fail("Transformer source document was not indexed by Vespa")
 
+    config_manager.set_backend_config(backend_config)
+
     enhancement_agent = QueryEnhancementAgent(deps=QueryEnhancementDeps())
+    enhancement_agent.telemetry_manager = RecordingTelemetryManager()
     enhancement_agent.dspy_module.enhancer = (
         lambda query, source_text, grounding_context="": dspy.Prediction(
             enhanced_query=f"{query} encoder decoder architecture",
@@ -144,6 +176,7 @@ def qe_service(shared_vespa):
         backend_config=backend_config,
         agents_config=agents_config,
         query_enhancer=enhance_query,
+        config_manager=config_manager,
     )
     try:
         yield SimpleNamespace(
@@ -152,7 +185,7 @@ def qe_service(shared_vespa):
             profile_name=profile_name,
             title=title,
             description=description,
-            expected_query="encoder decoder architecture improves",
+            expected_query="encoder decoder architecture improves context windows",
             source_text=f"{title}\n{description}",
             expansion_terms=["encoder", "decoder", "architecture"],
             agents_config=agents_config,
@@ -167,7 +200,7 @@ async def test_service_generates_query_enhancement_examples(qe_service):
         tenant_id=qe_service.tenant_id,
         optimizer="query_enhancement",
         count=5,
-        vespa_sample_size=1,
+        vespa_sample_size=2,
         max_profiles=1,
     )
     response = await qe_service.service.generate(request)
@@ -177,7 +210,7 @@ async def test_service_generates_query_enhancement_examples(qe_service):
     assert response.count == 5
     assert len(response.data) == 5
     assert response.selected_profiles == [qe_service.profile_name]
-    assert response.metadata["sampled_content_count"] == 1
+    assert response.metadata["sampled_content_count"] == 2
     assert response.metadata["generation"] == {
         "requested_count": 5,
         "returned_count": 5,
@@ -242,12 +275,13 @@ async def test_service_reports_dropped_candidate_reason_in_metadata_and_logs(
         backend_config=qe_service.service.backend_config,
         agents_config=qe_service.agents_config,
         query_enhancer=flaky_enhancement,
+        config_manager=qe_service.service.config_manager,
     )
     request = SyntheticDataRequest(
         tenant_id=qe_service.tenant_id,
         optimizer="query_enhancement",
         count=6,
-        vespa_sample_size=1,
+        vespa_sample_size=2,
         max_profiles=1,
     )
 
@@ -285,6 +319,7 @@ async def test_real_lm_query_agent_labels_grounded_terms(
 ):
     _ = ensure_host_ollama
     agent = QueryEnhancementAgent(deps=QueryEnhancementDeps())
+    agent.telemetry_manager = RecordingTelemetryManager()
 
     async def enhance_query(query, tenant_id, source_text):
         return await agent.process(
@@ -301,6 +336,7 @@ async def test_real_lm_query_agent_labels_grounded_terms(
         backend_config=qe_service.service.backend_config,
         agents_config=qe_service.agents_config,
         query_enhancer=enhance_query,
+        config_manager=qe_service.service.config_manager,
     )
     with dspy.context(lm=dspy_test_lm):
         response = await service.generate(
@@ -308,7 +344,7 @@ async def test_real_lm_query_agent_labels_grounded_terms(
                 tenant_id=qe_service.tenant_id,
                 optimizer="query_enhancement",
                 count=1,
-                vespa_sample_size=1,
+                vespa_sample_size=2,
                 max_profiles=1,
             )
         )
@@ -318,7 +354,7 @@ async def test_real_lm_query_agent_labels_grounded_terms(
     assert response.count == 1
     assert len(response.data) == 1
     assert response.selected_profiles == [qe_service.profile_name]
-    assert response.metadata["sampled_content_count"] == 1
+    assert response.metadata["sampled_content_count"] == 2
     assert response.metadata["generation"] == {
         "requested_count": 1,
         "returned_count": 1,
@@ -435,7 +471,12 @@ async def test_generator_passes_exact_source_text_to_labeler():
             "title": "transformer attention mechanism",
             "description": "encoder decoder architecture improves context windows",
             "content_type": "video",
-        }
+        },
+        {
+            "title": "radium discovery",
+            "description": "chemistry isolation laboratory",
+            "content_type": "document",
+        },
     ]
     examples = await generator.generate(
         sampled_content=sampled,
@@ -473,7 +514,12 @@ async def test_generator_rejects_count_above_unique_grounded_query_capacity():
                     "title": "transformer attention",
                     "description": "encoder decoder architecture",
                     "content_type": "video",
-                }
+                },
+                {
+                    "title": "radium discovery",
+                    "description": "chemistry isolation laboratory",
+                    "content_type": "document",
+                },
             ],
             target_count=6,
             tenant_id="acme:synthetic",
@@ -510,7 +556,12 @@ async def test_generator_rejects_topic_without_source_expansion_terms():
     ):
         await generator.generate(
             sampled_content=[
-                {"title": "transformer attention", "content_type": "video"}
+                {"title": "transformer attention", "content_type": "video"},
+                {
+                    "title": "radium discovery",
+                    "description": "chemistry isolation laboratory",
+                    "content_type": "document",
+                },
             ],
             target_count=1,
             tenant_id="acme:synthetic",
@@ -526,7 +577,7 @@ async def test_service_response_serializes_to_simba_demo_shape(qe_service):
         tenant_id=qe_service.tenant_id,
         optimizer="query_enhancement",
         count=4,
-        vespa_sample_size=1,
+        vespa_sample_size=2,
         max_profiles=1,
     )
     response = await qe_service.service.generate(request)
