@@ -176,6 +176,7 @@ def test_backend_samples_propagate_exact_keyword_free_profile_modality() -> None
             "start_time": 0.0,
             "end_time": 0.0,
             "video_id": "",
+            "source_id": "",
             "segment_id": 0,
             "creation_timestamp": None,
             "schema_name": "alpha",
