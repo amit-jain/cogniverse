@@ -93,7 +93,7 @@ def test_teacher_definition_pins_the_production_chat_contract():
         model_id="Qwen/Qwen3-14B-AWQ",
         model_revision="31c69efc29464b6bb0aee1398b5a7b50a99340c3",
         output_dimension=None,
-        gpu_candidates=("L4", "A10", "L40S"),
+        gpu_candidates=("H100", "A100-80GB", "L40S"),
         requires_hf_token=True,
     )
     assert spec.boot_deadline_seconds == 600.0
@@ -136,3 +136,22 @@ def test_mutable_or_missing_model_revisions_are_rejected():
 def test_unknown_service_is_an_error():
     with pytest.raises(KeyError, match="unknown inference service 'missing'"):
         get_inference_service_spec("missing")
+
+
+# Decode is memory-bandwidth bound, so the chat models' throughput tracks GPU
+# bandwidth almost linearly. Measured on a deployed student: L4 (300 GB/s) served
+# 21-24 tok/s, which is no better than the local APU. H100 (3350 GB/s) and
+# A100-80GB (2039 GB/s) are the tiers that make offloading the compiles worthwhile.
+_HIGH_BANDWIDTH_GPUS = ("H100", "A100-80GB")
+
+
+def test_chat_models_prefer_a_high_bandwidth_gpu():
+    chat_services = sorted(
+        name for name, spec in INFERENCE_SERVICE_SPECS.items() if spec.requires_hf_token
+    )
+
+    assert chat_services == ["vllm_llm_student", "vllm_llm_teacher"]
+    for name in chat_services:
+        candidates = get_inference_service_spec(name).gpu_candidates
+        assert candidates[0] in _HIGH_BANDWIDTH_GPUS, name
+        assert candidates == ("H100", "A100-80GB", "L40S"), name

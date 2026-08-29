@@ -47,9 +47,6 @@ def test_gemma_service_pins_the_production_chat_contract():
         "8001",
         "--max-model-len",
         "8192",
-        "--enforce-eager",
-        "--max-num-seqs",
-        "1",
         "--limit-mm-per-prompt",
         '{"video":0,"image":4}',
     )
@@ -63,7 +60,7 @@ def test_gemma_service_pins_the_production_chat_contract():
     function = app.registered_functions["Inference"]
     assert app.name == "cogniverse-vllm-llm-student"
     assert app.registered_web_endpoints == ["Inference"]
-    assert function.spec.gpus == ["L4", "A10", "L40S"]
+    assert function.spec.gpus == list(spec.gpu_candidates)
     assert spec.min_containers == 0
     assert [repr(secret) for secret in function.spec.secrets] == [
         "modal.Secret.from_name('cogniverse-inference-api-key')",
