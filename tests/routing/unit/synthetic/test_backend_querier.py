@@ -197,6 +197,37 @@ def test_backend_samples_propagate_exact_keyword_free_profile_modality() -> None
     ]
 
 
+def test_source_identity_ignores_fields_the_schema_does_not_declare() -> None:
+    """The sampled source id comes from the schema's declared
+    document_mapping.id and nothing else. A guessed fallback list would pick
+    a plausible-looking field from another schema's vocabulary and emit a
+    confident, wrong identity - and it would silently mask a schema that
+    declares no id at all."""
+    document = {
+        "code_id": "the_declared_one",
+        "video_id": "a_different_schemas_field",
+        "document_id": "another_one",
+        "source_id": "and_another",
+        "id": "and_another_still",
+    }
+    assert (
+        backend_querier_module.BackendQuerier._source_identity_value(
+            document, "code_id"
+        )
+        == "the_declared_one"
+    )
+    assert (
+        backend_querier_module.BackendQuerier._source_identity_value(document, None)
+        == ""
+    )
+    assert (
+        backend_querier_module.BackendQuerier._source_identity_value(
+            {"video_id": "present"}, "code_id"
+        )
+        == ""
+    )
+
+
 def test_schema_source_identity_field_matches_document_mapping_id() -> None:
     for schema_path in sorted(_SCHEMAS_DIR.glob("*_schema.json")):
         schema_name = schema_path.stem.removesuffix("_schema")
@@ -1057,7 +1088,7 @@ def test_diverse_and_multi_modal_sequences_do_not_share_one_query() -> None:
         "select * from sources video_frames where true limit 10"
     ]
     assert emitted["multi_modal_sequences"] == [
-        "select * from sources video_frames where true limit 10"
+        "select * from sources video_frames where true limit 2"
     ]
     assert sampled["diverse"] == ["frame a1", "frame b1"]
-    assert sampled["multi_modal_sequences"] == ["frame a1", "frame b1"]
+    assert sampled["multi_modal_sequences"] == ["frame a1", "frame a2"]

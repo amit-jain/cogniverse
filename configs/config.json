@@ -814,6 +814,11 @@
             "reason": "temporal chunking"
           },
           {
+            "condition": {"field": "type", "equals": "document"},
+            "score_adjustment": 1.25,
+            "reason": "text-bearing document corpus"
+          },
+          {
             "condition": {"profile_name_contains": "frame"},
             "score_adjustment": 1.0,
             "reason": "frame-level detail"
