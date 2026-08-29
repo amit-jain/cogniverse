@@ -348,7 +348,7 @@ sequenceDiagram
 | `detailed_report_agent` | 8005 | yes | Generates comprehensive reports (executive summary, findings, technical + visual analysis, recommendations) with optional RLM synthesis |
 | `profile_selection_agent` | 8000 | yes | DSPy-driven selection of the optimal backend search profile from the available candidates, with a heuristic fallback |
 | `query_enhancement_agent` | 8000 | yes | Expands/rewrites queries with synonyms, context, and RRF variants via its own `QueryEnhancementModule` (`dspy.ChainOfThought`); folds in upstream entity/relationship context |
-| `entity_extraction_agent` | 8000 | yes | Tiered NER: fast GLiNER+SpaCy path (no LLM), DSPy `ChainOfThought` fallback |
+| `entity_extraction_agent` | 8000 | yes | Tiered NER: DSPy primary path; GLiNER + SpaCy fallback |
 
 `orchestrator_agent`'s DSPy planner can include `entity_extraction_agent`, `query_enhancement_agent`, and `profile_selection_agent` as preprocessing steps ahead of an execution agent within a complex-path workflow.
 

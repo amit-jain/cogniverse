@@ -64,7 +64,7 @@ The Agents package (`cogniverse-agents`) provides concrete agent implementations
 2. **OrchestratorAgent** - Autonomous A2A orchestrator: DSPy planning, parallel execution, cross-modal fusion
 3. **SearchAgent** - Multi-modal video search (ColPali, VideoPrism)
 4. **ProfileSelectionAgent** - LLM-based intelligent backend profile selection and ensemble composition
-5. **EntityExtractionAgent** - Named entity extraction with DSPy ChainOfThought (PERSON, ORGANIZATION, CONCEPT, PLACE, EVENT, TECHNOLOGY; verbatim query spans)
+5. **EntityExtractionAgent** - Named entity extraction with DSPy primary path; GLiNER + SpaCy fallback (PERSON, ORGANIZATION, CONCEPT, PLACE, EVENT, TECHNOLOGY; verbatim query spans)
 6. **SearchAgent** - Enhanced with ensemble mode and RRF fusion for multi-profile queries
 7. **DetailedReportAgent** - Comprehensive report generation with VLM visual analysis
 8. **DocumentAgent** - Dual-strategy document search (visual ColPali + text semantic)
