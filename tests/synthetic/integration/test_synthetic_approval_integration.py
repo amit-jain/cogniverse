@@ -2999,12 +2999,18 @@ class TestSyntheticServiceIntegration:
                 "source_id",
                 "segment_id",
                 "description",
-                "source_text",
             }
         ] * 2
-        assert all(
-            record["description"] == record["source_text"]
-            for record in response.metadata["sampled_content"]
+        # The trace exists to say WHICH content was grounded on, so two
+        # sampled records must not be the same document.
+        assert (
+            len(
+                {
+                    record["description"]
+                    for record in response.metadata["sampled_content"]
+                }
+            )
+            == 2
         )
         assert response.metadata["generation"] == {
             "requested_count": 1,
