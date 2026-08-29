@@ -5,6 +5,7 @@ Stores configurations directly in Vespa backend for unified storage.
 
 import json
 import logging
+import time
 from datetime import datetime, timezone
 from typing import Any, Dict, List, Optional
 
@@ -27,6 +28,12 @@ from cogniverse_vespa._yql import yql_quote
 logger = logging.getLogger(__name__)
 
 _MAX_VERSION_ALLOCATION_ATTEMPTS = 64
+_CONFIG_STORE_READ_MAX_ATTEMPTS = 5
+_CONFIG_STORE_READ_INITIAL_BACKOFF_SECONDS = 0.25
+_CONFIG_STORE_READ_BACKOFF_MULTIPLIER = 2.0
+_CONFIG_STORE_READ_MAX_BACKOFF_SECONDS = 2.0
+_CONFIG_STORE_READ_RETRYABLE_HTTP_STATUS_MIN = 500
+_CONFIG_STORE_READ_MISSING_HTTP_STATUS = 404
 
 
 def _raise_if_degraded(response: Any, config_id: str) -> None:
@@ -44,6 +51,80 @@ def _is_condition_miss(error: Exception) -> bool:
             return True
         current = current.__cause__
     return False
+
+
+def _config_store_http_status(error: Exception) -> Optional[int]:
+    current: Optional[BaseException] = error
+    while current is not None:
+        response = getattr(current, "response", None)
+        status_code = getattr(response, "status_code", None)
+        if isinstance(status_code, int):
+            return status_code
+        current = current.__cause__
+    return None
+
+
+def _config_store_is_retryable(error: Exception) -> bool:
+    current: Optional[BaseException] = error
+    while current is not None:
+        if isinstance(current, (requests.ConnectionError, requests.Timeout)):
+            return True
+        status_code = _config_store_http_status(current)
+        if (
+            status_code is not None
+            and _CONFIG_STORE_READ_RETRYABLE_HTTP_STATUS_MIN <= status_code < 600
+        ):
+            return True
+        current = current.__cause__
+    return False
+
+
+def _config_store_visit_backoff_seconds(attempt: int) -> float:
+    delay = _CONFIG_STORE_READ_INITIAL_BACKOFF_SECONDS * (
+        _CONFIG_STORE_READ_BACKOFF_MULTIPLIER ** (attempt - 1)
+    )
+    return min(delay, _CONFIG_STORE_READ_MAX_BACKOFF_SECONDS)
+
+
+def _config_store_visit_payload(
+    path: str, *, params: Dict[str, Any], timeout: int
+) -> Optional[Dict[str, Any]]:
+    start = time.monotonic()
+    for attempt in range(1, _CONFIG_STORE_READ_MAX_ATTEMPTS + 1):
+        try:
+            response = requests.get(path, params=params, timeout=timeout)
+            response.raise_for_status()
+        except Exception as exc:
+            status_code = _config_store_http_status(exc)
+            if status_code == _CONFIG_STORE_READ_MISSING_HTTP_STATUS:
+                return None
+            if not _config_store_is_retryable(exc):
+                raise
+            if attempt == _CONFIG_STORE_READ_MAX_ATTEMPTS:
+                elapsed = time.monotonic() - start
+                message = (
+                    "Failed to read Vespa config visit after "
+                    f"{attempt} attempts over {elapsed:.3f}s: "
+                    f"{type(exc).__name__}: {exc}"
+                )
+                logger.error(message)
+                raise RuntimeError(message) from exc
+
+            delay = _config_store_visit_backoff_seconds(attempt)
+            logger.warning(
+                "Vespa config visit failed on attempt %s/%s with %s: %s; "
+                "retrying in %.3fs",
+                attempt,
+                _CONFIG_STORE_READ_MAX_ATTEMPTS,
+                type(exc).__name__,
+                exc,
+                delay,
+            )
+            time.sleep(delay)
+            continue
+
+        return response.json()
+    return None
 
 
 class VespaConfigStore(ConfigStore):
@@ -191,9 +272,9 @@ class VespaConfigStore(ConfigStore):
         while True:
             if continuation:
                 params["continuation"] = continuation
-            response = requests.get(path, params=params, timeout=30)
-            response.raise_for_status()
-            payload = response.json()
+            payload = _config_store_visit_payload(path, params=params, timeout=30)
+            if payload is None:
+                return entries
             documents = payload["documents"]
             if not isinstance(documents, list):
                 raise ValueError("Vespa config visit documents must be a list")
@@ -372,8 +453,6 @@ class VespaConfigStore(ConfigStore):
         ``list_all_configs`` returns only latest versions; the prune dry-run
         needs the full per-id row counts to report what pruning would drop.
         """
-        import requests
-
         url = f"{self.vespa_app.url}/document/v1/"
         path = f"{url}{self.schema_name}/{self.schema_name}/docid/"
         params: Dict[str, Any] = {"wantedDocumentCount": 1000}
@@ -382,9 +461,9 @@ class VespaConfigStore(ConfigStore):
         while True:
             if continuation:
                 params["continuation"] = continuation
-            resp = requests.get(path, params=params, timeout=60)
-            resp.raise_for_status()
-            payload = resp.json()
+            payload = _config_store_visit_payload(path, params=params, timeout=60)
+            if payload is None:
+                return counts
             for doc in payload.get("documents") or []:
                 cid = (doc.get("fields") or {}).get("config_id")
                 if cid:
@@ -404,33 +483,27 @@ class VespaConfigStore(ConfigStore):
         per-write pruning was added to ``set_config``. Returns the total
         number of stale version rows deleted.
         """
-        import requests
-
         keep = self.keep_versions if keep is None else max(1, keep)
         url = f"{self.vespa_app.url}/document/v1/"
         path = f"{url}{self.schema_name}/{self.schema_name}/docid/"
         params: Dict[str, Any] = {"wantedDocumentCount": 1000}
 
         seen: set[str] = set()
-        try:
-            continuation: Optional[str] = None
-            while True:
-                if continuation:
-                    params["continuation"] = continuation
-                resp = requests.get(path, params=params, timeout=60)
-                resp.raise_for_status()
-                payload = resp.json()
-                for doc in payload.get("documents") or []:
-                    fields = doc.get("fields") or {}
-                    config_id = fields.get("config_id")
-                    if config_id:
-                        seen.add(config_id)
-                continuation = payload.get("continuation")
-                if not continuation:
-                    break
-        except requests.RequestException as exc:
-            logger.error(f"prune_all_configs: visit failed: {exc}")
-            return 0
+        continuation: Optional[str] = None
+        while True:
+            if continuation:
+                params["continuation"] = continuation
+            payload = _config_store_visit_payload(path, params=params, timeout=60)
+            if payload is None:
+                break
+            for doc in payload.get("documents") or []:
+                fields = doc.get("fields") or {}
+                config_id = fields.get("config_id")
+                if config_id:
+                    seen.add(config_id)
+            continuation = payload.get("continuation")
+            if not continuation:
+                break
 
         total_dropped = 0
         for config_id in sorted(seen):

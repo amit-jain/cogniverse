@@ -6,10 +6,12 @@ root errors or degraded coverage instead of reporting empty state.
 """
 
 from datetime import datetime, timezone
+from types import SimpleNamespace
 
 import pytest
 import requests
 
+import cogniverse_vespa.config.config_store as config_store_module
 from cogniverse_sdk.interfaces.config_store import ConfigEntry, ConfigScope
 from cogniverse_vespa.config.config_store import VespaConfigStore
 
@@ -117,15 +119,60 @@ def _healthy_fields():
     return _healthy_hit_response().hits[0]["fields"]
 
 
-def test_get_config_raises_on_visit_timeout(monkeypatch):
-    store = _store_with(_clean_absent_response())
+class _FakeClock:
+    def __init__(self, start: float = 1000.0):
+        self.current = start
 
-    def timeout(*args, **kwargs):
-        raise requests.Timeout("visit timed out")
+    def monotonic(self) -> float:
+        return self.current
+
+    def sleep(self, seconds: float) -> None:
+        self.current += seconds
+
+
+def _expected_visit_failure_message(
+    attempts: int, elapsed: float, error: Exception
+) -> str:
+    return (
+        "Failed to read Vespa config visit after "
+        f"{attempts} attempts over {elapsed:.3f}s: {type(error).__name__}: {error}"
+    )
+
+
+def test_get_config_raises_on_visit_timeout(monkeypatch):
+    clock = _FakeClock()
+    monkeypatch.setattr(
+        config_store_module,
+        "time",
+        SimpleNamespace(monotonic=clock.monotonic, sleep=clock.sleep),
+        raising=False,
+    )
+
+    attempts = config_store_module._CONFIG_STORE_READ_MAX_ATTEMPTS
+    failures = [requests.Timeout("visit timed out") for _ in range(attempts)]
+    calls = {"count": 0}
+
+    def timeout(*_args, **_kwargs):
+        index = calls["count"]
+        calls["count"] += 1
+        raise failures[index] if index < len(failures) else failures[-1]
 
     monkeypatch.setattr(requests, "get", timeout)
-    with pytest.raises(requests.Timeout, match="visit timed out"):
+    store = _store_with(_clean_absent_response())
+
+    with pytest.raises(RuntimeError) as exc_info:
         store.get_config("acme", ConfigScope.SYSTEM, "system", "poll_state")
+
+    assert calls["count"] == attempts
+    assert exc_info.value.__cause__ is failures[-1]
+    assert str(exc_info.value) == _expected_visit_failure_message(
+        attempts,
+        sum(
+            config_store_module._config_store_visit_backoff_seconds(attempt)
+            for attempt in range(1, attempts)
+        ),
+        failures[-1],
+    )
 
 
 def test_get_config_returns_none_on_clean_absence(monkeypatch):
@@ -170,25 +217,75 @@ def test_get_config_rejects_obsolete_naive_timestamp(monkeypatch):
 
 
 def test_get_config_history_raises_on_visit_timeout(monkeypatch):
-    store = _store_with(_clean_absent_response())
+    clock = _FakeClock()
+    monkeypatch.setattr(
+        config_store_module,
+        "time",
+        SimpleNamespace(monotonic=clock.monotonic, sleep=clock.sleep),
+        raising=False,
+    )
 
-    def timeout(*args, **kwargs):
-        raise requests.Timeout("visit timed out")
+    attempts = config_store_module._CONFIG_STORE_READ_MAX_ATTEMPTS
+    failures = [requests.Timeout("visit timed out") for _ in range(attempts)]
+    calls = {"count": 0}
+
+    def timeout(*_args, **_kwargs):
+        index = calls["count"]
+        calls["count"] += 1
+        raise failures[index] if index < len(failures) else failures[-1]
 
     monkeypatch.setattr(requests, "get", timeout)
-    with pytest.raises(requests.Timeout, match="visit timed out"):
+    store = _store_with(_clean_absent_response())
+
+    with pytest.raises(RuntimeError) as exc_info:
         store.get_config_history("acme", ConfigScope.SYSTEM, "system", "poll_state")
+
+    assert calls["count"] == attempts
+    assert exc_info.value.__cause__ is failures[-1]
+    assert str(exc_info.value) == _expected_visit_failure_message(
+        attempts,
+        sum(
+            config_store_module._config_store_visit_backoff_seconds(attempt)
+            for attempt in range(1, attempts)
+        ),
+        failures[-1],
+    )
 
 
 def test_list_configs_raises_on_visit_timeout(monkeypatch):
-    store = _store_with(_clean_absent_response())
+    clock = _FakeClock()
+    monkeypatch.setattr(
+        config_store_module,
+        "time",
+        SimpleNamespace(monotonic=clock.monotonic, sleep=clock.sleep),
+        raising=False,
+    )
 
-    def timeout(*args, **kwargs):
-        raise requests.Timeout("visit timed out")
+    attempts = config_store_module._CONFIG_STORE_READ_MAX_ATTEMPTS
+    failures = [requests.Timeout("visit timed out") for _ in range(attempts)]
+    calls = {"count": 0}
+
+    def timeout(*_args, **_kwargs):
+        index = calls["count"]
+        calls["count"] += 1
+        raise failures[index] if index < len(failures) else failures[-1]
 
     monkeypatch.setattr(requests, "get", timeout)
-    with pytest.raises(requests.Timeout, match="visit timed out"):
+    store = _store_with(_clean_absent_response())
+
+    with pytest.raises(RuntimeError) as exc_info:
         store.list_configs("acme")
+
+    assert calls["count"] == attempts
+    assert exc_info.value.__cause__ is failures[-1]
+    assert str(exc_info.value) == _expected_visit_failure_message(
+        attempts,
+        sum(
+            config_store_module._config_store_visit_backoff_seconds(attempt)
+            for attempt in range(1, attempts)
+        ),
+        failures[-1],
+    )
 
 
 def test_latest_version_read_raises_on_soft_timeout():

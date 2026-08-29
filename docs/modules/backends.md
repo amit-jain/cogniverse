@@ -2627,12 +2627,13 @@ types the field as `string`, not a nested object:
 }
 ```
 
-The primary config lookup and list methods — `get_config`,
-`get_config_history`, `list_configs`, and `list_all_configs` — use the Document
-v1 visit API. A completed `set_config` is therefore immediately visible to
-those methods without sleeps or search-index convergence retries. Visit
-timeouts, malformed responses, and non-success statuses raise; only a
-successful visit with no matching document returns `None` or an empty list.
+The visit-based readers — `get_config`, `get_config_history`,
+`list_configs`, `list_all_configs`, `count_version_rows`, and
+`prune_all_configs` — share one bounded retry/backoff helper around the
+Document v1 visit API. Connection errors, timeouts, and 5xx responses retry;
+`404` or a genuinely empty visit returns `None` or an empty collection; other
+failures raise. A completed `set_config` is therefore immediately visible to
+those readers without sleeps or search-index convergence retries.
 
 ### Key Methods
 
