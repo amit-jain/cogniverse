@@ -48,21 +48,18 @@ _SERVICE_ARGUMENTS: dict[str, tuple[str, ...]] = {
         "--dtype",
         "float32",
     ),
+    # Modal serves these on NVIDIA. --enforce-eager and --max-num-seqs 1 are
+    # gfx1151 APU constraints (no CUDA graphs, no room to batch in the unified
+    # pool) and cost 2-4x at batch-1 decode while stranding the KV cache here.
     "vllm_llm_student": (
         "--max-model-len",
         "8192",
-        "--enforce-eager",
-        "--max-num-seqs",
-        "1",
         "--limit-mm-per-prompt",
         '{"video":0,"image":4}',
     ),
     "vllm_llm_teacher": (
         "--max-model-len",
         "4096",
-        "--enforce-eager",
-        "--max-num-seqs",
-        "1",
     ),
     "vllm_asr": ("--runner", "generate", "--max-model-len", "448"),
 }

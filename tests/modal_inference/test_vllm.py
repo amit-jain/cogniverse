@@ -12,6 +12,7 @@ import modal
 import pytest
 from cogniverse_cli.modal_inference.serving import build_authenticated_asgi_app
 from cogniverse_cli.modal_inference.vllm import (
+    _VLLM_PORT,
     _VLLM_VERSION,
     _build_process_proxy_app,
     _launch_process,
@@ -657,3 +658,62 @@ class TestVllmImagePythonShim:
             assert recorded["setup_dockerfile_commands"] == (
                 'RUN ln -sf "$(command -v python3)" /usr/local/bin/python',
             ), service
+
+
+class TestModalChatEngineArguments:
+    """Modal serves the chat models on NVIDIA, not the local gfx1151 APU.
+
+    ``--enforce-eager`` and ``--max-num-seqs 1`` exist for the APU, where CUDA
+    graphs are unavailable and the unified pool leaves no room to batch. Carrying
+    them onto an H100 disables CUDA graphs and caps the engine at one sequence
+    while 56 GiB of KV cache sits idle: measured 24-31 tok/s where the same GPU
+    serves the local APU's 18 tok/s.
+    """
+
+    CHAT_SERVICES = ("vllm_llm_student", "vllm_llm_teacher")
+
+    def test_chat_commands_do_not_carry_apu_only_engine_flags(self):
+        for service in self.CHAT_SERVICES:
+            command = _vllm_command(get_inference_service_spec(service))
+            assert "--enforce-eager" not in command, service
+            assert "--max-num-seqs" not in command, service
+
+    def test_student_command_keeps_its_serving_contract(self):
+        command = _vllm_command(get_inference_service_spec("vllm_llm_student"))
+
+        assert command == (
+            "vllm",
+            "serve",
+            "google/gemma-4-e4b-it",
+            "--revision",
+            "ee0ef6023621cff504d758262d4e04895a5af4a2",
+            "--served-model-name",
+            "google/gemma-4-e4b-it",
+            "--host",
+            "127.0.0.1",
+            "--port",
+            str(_VLLM_PORT),
+            "--max-model-len",
+            "8192",
+            "--limit-mm-per-prompt",
+            '{"video":0,"image":4}',
+        )
+
+    def test_teacher_command_keeps_its_serving_contract(self):
+        command = _vllm_command(get_inference_service_spec("vllm_llm_teacher"))
+
+        assert command == (
+            "vllm",
+            "serve",
+            "Qwen/Qwen3-14B-AWQ",
+            "--revision",
+            "31c69efc29464b6bb0aee1398b5a7b50a99340c3",
+            "--served-model-name",
+            "Qwen/Qwen3-14B-AWQ",
+            "--host",
+            "127.0.0.1",
+            "--port",
+            str(_VLLM_PORT),
+            "--max-model-len",
+            "4096",
+        )
