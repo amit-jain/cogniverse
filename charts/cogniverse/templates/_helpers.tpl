@@ -130,12 +130,19 @@ ollama / vllm; false for engine external).
 {{- end -}}
 
 {{/*
-vLLM student LLM endpoint — runtime hot path. Resolves to the
-in-cluster vllm-llm-student service with the ``/v1`` suffix so the
-generic OpenAI-compatible client can hit /v1/chat/completions.
+vLLM student LLM endpoint — runtime hot path. Where the student is actually
+served, with the ``/v1`` suffix so the generic OpenAI-compatible client can hit
+/v1/chat/completions. ``runtime.primaryLLM.apiBase`` wins when set: it is how
+the student moves off-cluster, and building the Service URL unconditionally
+pointed every consumer at a Service that no longer exists. Reads the value
+directly rather than delegating to primaryLLMEndpoint, which falls back here.
 */}}
 {{- define "cogniverse.llmStudentEndpoint" -}}
+{{- if and .Values.runtime.primaryLLM .Values.runtime.primaryLLM.apiBase -}}
+{{- .Values.runtime.primaryLLM.apiBase -}}
+{{- else -}}
 {{- printf "http://%s-vllm-llm-student:%d/v1" (include "cogniverse.fullname" .) (int .Values.inference.vllm_llm_student.service.port) -}}
+{{- end -}}
 {{- end -}}
 
 {{/*

@@ -9,6 +9,7 @@ engine — not a separate engine switch that can drift from it. A prior bug in
 These render-time assertions pin the endpoint per engine so that can't regress.
 """
 
+import json
 import shutil
 import subprocess
 from pathlib import Path
@@ -392,3 +393,61 @@ class TestEnvoyUpstreamTls:
         )
 
         assert "transport_socket" not in cluster
+
+
+def _runtime_config(docs: list[dict]) -> dict:
+    for d in docs:
+        if (
+            d.get("kind") == "ConfigMap"
+            and d.get("metadata", {}).get("name") == "cogniverse-config"
+        ):
+            return json.loads(d["data"]["config.json"])
+    raise AssertionError("cogniverse-config ConfigMap not rendered")
+
+
+class TestStudentEndpointFollowsTheOverride:
+    """Every consumer of the student model must reach it where it is served.
+
+    ``llmStudentEndpoint`` built the in-cluster Service URL unconditionally, so
+    with the student on Modal the ingestion pipeline's VLM description strategy
+    dialled a Service that no longer exists and failed with
+    NameResolutionError on cogniverse-vllm-llm-student.
+    """
+
+    MODAL = "https://amit-jain--cogniverse-vllm-llm-student-inference.modal.run/v1"
+
+    STUDENT_KEYS = ("vlm_endpoint", "base_url")
+
+    def _student_urls(self, cfg: dict) -> set[str]:
+        """Every endpoint any consumer would use to reach the student model.
+
+        Walked recursively rather than by a fixed path, so a new consumer added
+        anywhere in the config is covered instead of silently missed.
+        """
+        found: set[str] = set()
+
+        def walk(node, model_hint=None):
+            if isinstance(node, dict):
+                hint = node.get("model", model_hint)
+                for key, value in node.items():
+                    if key in self.STUDENT_KEYS and isinstance(value, str):
+                        if "student" in value or value == self.MODAL:
+                            found.add(value)
+                    else:
+                        walk(value, hint)
+            elif isinstance(node, list):
+                for item in node:
+                    walk(item, model_hint)
+
+        walk(cfg)
+        return found
+
+    def test_override_reaches_every_student_consumer(self):
+        cfg = _runtime_config(_render(f"runtime.primaryLLM.apiBase={self.MODAL}"))
+
+        assert self._student_urls(cfg) == {self.MODAL}
+
+    def test_without_an_override_they_stay_in_cluster(self):
+        cfg = _runtime_config(_render())
+
+        assert self._student_urls(cfg) == {"http://cogniverse-vllm-llm-student:8000/v1"}
