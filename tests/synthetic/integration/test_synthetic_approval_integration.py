@@ -2975,20 +2975,33 @@ class TestSyntheticServiceIntegration:
             "video_colpali_smol500_mv_frame (score: 4.50): rich descriptions, "
             "text content, ColPali model"
         )
-        assert response.metadata == {
-            "backend_query_strategy": "entity_rich",
-            "sampled_content_count": 2,
-            "target_count": 1,
-            "vespa_sample_size": 2,
-            "generation": {
-                "requested_count": 1,
-                "returned_count": 1,
-                "shortfall_count": 0,
-                "floor_count": 1,
-                "surplus_exhausted": False,
-                "dropped_count": 0,
-                "dropped_examples": [],
-            },
+        assert response.metadata["backend_query_strategy"] == "entity_rich"
+        assert response.metadata["sampled_content_count"] == 2
+        assert response.metadata["target_count"] == 1
+        assert response.metadata["vespa_sample_size"] == 2
+        assert len(response.metadata["sampled_content"]) == 2
+        assert [set(record) for record in response.metadata["sampled_content"]] == [
+            {
+                "profile_name",
+                "schema_name",
+                "source_id",
+                "segment_id",
+                "description",
+                "source_text",
+            }
+        ] * 2
+        assert all(
+            record["description"] == record["source_text"]
+            for record in response.metadata["sampled_content"]
+        )
+        assert response.metadata["generation"] == {
+            "requested_count": 1,
+            "returned_count": 1,
+            "shortfall_count": 0,
+            "floor_count": 1,
+            "surplus_exhausted": False,
+            "dropped_count": 0,
+            "dropped_examples": [],
         }
         assert len(response.data) == 1
         expected_entities = [

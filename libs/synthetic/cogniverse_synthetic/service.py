@@ -39,6 +39,7 @@ from cogniverse_synthetic.registry import (
     validate_optimizer_exists,
 )
 from cogniverse_synthetic.schemas import SyntheticDataRequest, SyntheticDataResponse
+from cogniverse_synthetic.topics import topic_source_text
 from cogniverse_synthetic.utils import (
     AgentInferrer,
     partition_profiles_by_groundability,
@@ -338,6 +339,7 @@ class SyntheticDataService:
             strategy=resolved_strategy,
         )
         logger.info(f"Sampled {len(sampled_content)} content items")
+        sampled_content_trace = self._trace_sampled_content(sampled_content)
 
         generation_tracker = GenerationTracker(
             optimizer=request.optimizer,
@@ -374,6 +376,7 @@ class SyntheticDataService:
             metadata={
                 "backend_query_strategy": resolved_strategy,
                 "sampled_content_count": len(sampled_content),
+                "sampled_content": sampled_content_trace,
                 "target_count": request.count,
                 "vespa_sample_size": request.vespa_sample_size,
                 "generation": generation_tracker.to_metadata(),
@@ -502,6 +505,28 @@ class SyntheticDataService:
             ) from exc
 
         return sampled_content
+
+    @staticmethod
+    def _trace_sampled_content(
+        sampled_content: List[Dict[str, Any]],
+    ) -> List[Dict[str, Any]]:
+        traced_content: List[Dict[str, Any]] = []
+        for item in sampled_content:
+            source_text = topic_source_text(item) or ""
+            source_id = item.get("source_id", "")
+            if not isinstance(source_id, str) or not source_id.strip():
+                source_id = ""
+            traced_content.append(
+                {
+                    "profile_name": item.get("profile_name", ""),
+                    "schema_name": item.get("schema_name", ""),
+                    "source_id": source_id,
+                    "segment_id": item.get("segment_id", 0),
+                    "description": source_text,
+                    "source_text": source_text,
+                }
+            )
+        return traced_content
 
     async def _generate_examples(
         self,

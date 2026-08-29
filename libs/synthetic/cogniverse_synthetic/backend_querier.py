@@ -332,7 +332,27 @@ class BackendQuerier:
             value = document.get(field_name)
             if isinstance(value, str) and value.strip():
                 return value
-        for field_name in ("video_id", "source_id"):
+        for field_name in (
+            "video_id",
+            "source_id",
+            "document_id",
+            "image_id",
+            "audio_id",
+        ):
+            value = document.get(field_name)
+            if isinstance(value, str) and value.strip():
+                return value
+        return ""
+
+    @staticmethod
+    def _source_id(document: Dict[str, Any]) -> str:
+        for field_name in (
+            "source_id",
+            "video_id",
+            "document_id",
+            "image_id",
+            "audio_id",
+        ):
             value = document.get(field_name)
             if isinstance(value, str) and value.strip():
                 return value
@@ -442,6 +462,7 @@ class BackendQuerier:
                     sample[semantic_name] = doc[field_name]
 
             sample["video_id"] = doc.get("video_id", doc.get("source_id", ""))
+            sample["source_id"] = self._source_id(doc)
             sample["segment_id"] = doc.get("segment_id", 0)
             sample["creation_timestamp"] = doc.get("creation_timestamp")
 
