@@ -594,9 +594,10 @@ exists = registry.schema_exists("acme", "video_content")
 schemas = registry.get_tenant_schemas("acme")
 ```
 
-SchemaRegistry reads persisted schemas on construction, retries transient
-storage failures with backoff, and loads an empty registry when storage is
-empty or returns HTTP 404.
+SchemaRegistry reads persisted schemas on construction, delegates retry and
+backoff to `VespaConfigStore`, and wraps any storage failure once with
+registry context. Empty storage and store-normalized HTTP 404 results both
+load an empty registry.
 
 ### AdapterStoreRegistry / WorkflowStoreRegistry
 

@@ -8,12 +8,16 @@ default config or "no adapter". The two cases must be distinguishable: absent
 
 from __future__ import annotations
 
+from datetime import datetime, timezone
 from types import SimpleNamespace
 from unittest.mock import MagicMock, patch
 
 import pytest
+import requests
 
-from cogniverse_vespa.config.config_store import ConfigScope, VespaConfigStore
+import cogniverse_vespa.config.config_store as config_store_module
+from cogniverse_sdk.interfaces.config_store import ConfigEntry, ConfigScope
+from cogniverse_vespa.config.config_store import VespaConfigStore
 from cogniverse_vespa.registry.adapter_store import VespaAdapterStore
 
 
@@ -48,6 +52,55 @@ def _empty_visit_response():
     return response
 
 
+def _visit_response(documents, continuation=None):
+    response = MagicMock()
+    response.raise_for_status.return_value = None
+    response.json.return_value = {
+        "documents": documents,
+        "continuation": continuation,
+    }
+    return response
+
+
+def _raise_for_status_error(
+    *, status_code: int, reason: str, url: str
+) -> requests.HTTPError:
+    response = requests.Response()
+    response.status_code = status_code
+    response.reason = reason
+    response.url = url
+    try:
+        response.raise_for_status()
+    except requests.HTTPError as exc:
+        return exc
+    raise AssertionError("response.raise_for_status() must fail")
+
+
+class _ScriptedGet:
+    def __init__(self, outcomes):
+        self._outcomes = list(outcomes)
+        self.calls = 0
+
+    def __call__(self, *_args, **_kwargs):
+        index = self.calls
+        self.calls += 1
+        outcome = (
+            self._outcomes[index] if index < len(self._outcomes) else self._outcomes[-1]
+        )
+        if isinstance(outcome, BaseException):
+            raise outcome
+        return outcome
+
+
+def _expected_visit_failure_message(
+    attempts: int, elapsed: float, error: Exception
+) -> str:
+    return (
+        "Failed to read Vespa config visit after "
+        f"{attempts} attempts over {elapsed:.3f}s: {type(error).__name__}: {error}"
+    )
+
+
 def test_config_absent_returns_none():
     store = _config_store(_empty_response)
     with patch("requests.get", return_value=_empty_visit_response()):
@@ -60,17 +113,60 @@ def test_config_absent_returns_none():
     assert result is None
 
 
-def test_config_backend_error_raises():
+def test_visit_reads_retry_connection_errors_until_budget_exhausted(monkeypatch):
+    clock = SimpleNamespace(
+        current=1000.0,
+        monotonic=lambda: clock.current,
+        sleep=lambda seconds: setattr(clock, "current", clock.current + seconds),
+    )
+    monkeypatch.setattr(
+        config_store_module,
+        "time",
+        SimpleNamespace(monotonic=clock.monotonic, sleep=clock.sleep),
+        raising=False,
+    )
+
+    attempts = config_store_module._CONFIG_STORE_READ_MAX_ATTEMPTS
+    failures = [requests.ConnectionError("vespa unreachable") for _ in range(attempts)]
+    scripted_get = _ScriptedGet(failures)
+    monkeypatch.setattr(requests, "get", scripted_get)
+
     store = _config_store(_boom)
-    with (
-        patch("requests.get", side_effect=ConnectionError("vespa unreachable")),
-        pytest.raises(ConnectionError, match="vespa unreachable"),
+    for method_name, kwargs in (
+        (
+            "get_config",
+            {
+                "tenant_id": "acme:acme",
+                "scope": ConfigScope.BACKEND,
+                "service": "backend",
+                "config_key": "k",
+            },
+        ),
+        (
+            "get_config_history",
+            {
+                "tenant_id": "acme:acme",
+                "scope": ConfigScope.BACKEND,
+                "service": "backend",
+                "config_key": "k",
+            },
+        ),
+        ("list_configs", {"tenant_id": "acme:acme"}),
     ):
-        store.get_config(
-            tenant_id="acme:acme",
-            scope=ConfigScope.BACKEND,
-            service="backend",
-            config_key="k",
+        scripted_get.calls = 0
+        clock.current = 1000.0
+        with pytest.raises(RuntimeError) as exc_info:
+            getattr(store, method_name)(**kwargs)
+
+        assert scripted_get.calls == attempts
+        assert exc_info.value.__cause__ is failures[-1]
+        assert str(exc_info.value) == _expected_visit_failure_message(
+            attempts,
+            sum(
+                config_store_module._config_store_visit_backoff_seconds(attempt)
+                for attempt in range(1, attempts)
+            ),
+            failures[-1],
         )
 
 
@@ -99,24 +195,165 @@ def test_config_history_empty_returns_empty_list():
         )
 
 
-def test_config_history_backend_error_raises():
-    store = _config_store(_boom)
-    with (
-        patch("requests.get", side_effect=ConnectionError("vespa unreachable")),
-        pytest.raises(ConnectionError, match="vespa unreachable"),
-    ):
-        store.get_config_history(
-            tenant_id="acme:acme",
-            scope=ConfigScope.BACKEND,
-            service="backend",
-            config_key="k",
-        )
-
-
 def test_list_configs_empty_returns_empty_list():
     store = _config_store(_empty_response)
     with patch("requests.get", return_value=_empty_visit_response()):
         assert store.list_configs(tenant_id="acme:acme") == []
+
+
+def test_list_all_configs_retries_500_twice_then_succeeds(monkeypatch):
+    clock = SimpleNamespace(
+        current=1000.0,
+        monotonic=lambda: clock.current,
+        sleep=lambda seconds: setattr(clock, "current", clock.current + seconds),
+    )
+    monkeypatch.setattr(
+        config_store_module,
+        "time",
+        SimpleNamespace(monotonic=clock.monotonic, sleep=clock.sleep),
+        raising=False,
+    )
+
+    url = "http://localhost:8080/document/v1/config_metadata/config_metadata/docid/"
+    failures = [
+        _raise_for_status_error(status_code=500, reason="Server Error", url=url)
+        for _ in range(2)
+    ]
+    now = datetime(2026, 7, 20, 12, 0, 0, tzinfo=timezone.utc)
+    payload = _visit_response(
+        [
+            {
+                "id": "id:config_metadata:config_metadata::entry-1",
+                "fields": {
+                    "config_id": "acme:backend:backend:alpha",
+                    "tenant_id": "acme",
+                    "scope": "backend",
+                    "service": "backend",
+                    "config_key": "alpha",
+                    "config_value": '{"value": 1}',
+                    "version": 1,
+                    "created_at": now.isoformat(),
+                    "updated_at": now.isoformat(),
+                },
+            },
+            {
+                "id": "id:config_metadata:config_metadata::entry-2",
+                "fields": {
+                    "config_id": "acme:backend:backend:beta",
+                    "tenant_id": "acme",
+                    "scope": "backend",
+                    "service": "backend",
+                    "config_key": "beta",
+                    "config_value": '{"value": 2}',
+                    "version": 3,
+                    "created_at": now.isoformat(),
+                    "updated_at": now.isoformat(),
+                },
+            },
+        ]
+    )
+    scripted_get = _ScriptedGet([*failures, payload])
+    monkeypatch.setattr(requests, "get", scripted_get)
+
+    store = _config_store(_boom)
+    results = store.list_all_configs()
+
+    expected = [
+        ConfigEntry(
+            tenant_id="acme",
+            scope=ConfigScope.BACKEND,
+            service="backend",
+            config_key="alpha",
+            config_value={"value": 1},
+            version=1,
+            created_at=now,
+            updated_at=now,
+        ),
+        ConfigEntry(
+            tenant_id="acme",
+            scope=ConfigScope.BACKEND,
+            service="backend",
+            config_key="beta",
+            config_value={"value": 2},
+            version=3,
+            created_at=now,
+            updated_at=now,
+        ),
+    ]
+
+    assert scripted_get.calls == len(failures) + 1
+    assert results == expected
+
+
+def test_list_all_configs_raises_after_retry_budget_exhausted(monkeypatch):
+    clock = SimpleNamespace(
+        current=1000.0,
+        monotonic=lambda: clock.current,
+        sleep=lambda seconds: setattr(clock, "current", clock.current + seconds),
+    )
+    monkeypatch.setattr(
+        config_store_module,
+        "time",
+        SimpleNamespace(monotonic=clock.monotonic, sleep=clock.sleep),
+        raising=False,
+    )
+
+    attempts = config_store_module._CONFIG_STORE_READ_MAX_ATTEMPTS
+    url = "http://localhost:8080/document/v1/config_metadata/config_metadata/docid/"
+    failures = [
+        _raise_for_status_error(status_code=500, reason="Server Error", url=url)
+        for _ in range(attempts)
+    ]
+    scripted_get = _ScriptedGet(failures)
+    monkeypatch.setattr(requests, "get", scripted_get)
+
+    store = _config_store(_boom)
+    with pytest.raises(RuntimeError) as exc_info:
+        store.list_all_configs()
+
+    assert scripted_get.calls == attempts
+    assert exc_info.value.__cause__ is failures[-1]
+    assert str(exc_info.value) == _expected_visit_failure_message(
+        attempts,
+        sum(
+            config_store_module._config_store_visit_backoff_seconds(attempt)
+            for attempt in range(1, attempts)
+        ),
+        failures[-1],
+    )
+
+
+def test_list_all_configs_returns_empty_for_404_without_retry(monkeypatch):
+    url = "http://localhost:8080/document/v1/config_metadata/config_metadata/docid/"
+    failure = _raise_for_status_error(
+        status_code=404,
+        reason="Not Found",
+        url=url,
+    )
+    scripted_get = _ScriptedGet([failure])
+    monkeypatch.setattr(requests, "get", scripted_get)
+
+    store = _config_store(_boom)
+    assert store.list_all_configs() == []
+    assert scripted_get.calls == len((failure,))
+
+
+def test_list_all_configs_does_not_retry_non_transient_400(monkeypatch):
+    url = "http://localhost:8080/document/v1/config_metadata/config_metadata/docid/"
+    failure = _raise_for_status_error(
+        status_code=400,
+        reason="Bad Request",
+        url=url,
+    )
+    scripted_get = _ScriptedGet([failure])
+    monkeypatch.setattr(requests, "get", scripted_get)
+
+    store = _config_store(_boom)
+    with pytest.raises(requests.HTTPError) as exc_info:
+        store.list_all_configs()
+
+    assert scripted_get.calls == len((failure,))
+    assert exc_info.value.response.status_code == 400
 
 
 def test_list_configs_backend_error_raises():
@@ -137,18 +374,38 @@ def test_list_all_configs_empty_returns_empty_list():
         assert store.list_all_configs() == []
 
 
-def test_list_all_configs_backend_error_raises():
-    """The schema registry reads all schemas through this — an outage that
-    returns [] loads zero schemas and wipes the in-memory cache, while a
-    raise activates the registry's designed keep-existing-cache fallback."""
-    import requests
+def test_list_all_configs_backend_error_raises(monkeypatch):
+    clock = SimpleNamespace(
+        current=1000.0,
+        monotonic=lambda: clock.current,
+        sleep=lambda seconds: setattr(clock, "current", clock.current + seconds),
+    )
+    monkeypatch.setattr(
+        config_store_module,
+        "time",
+        SimpleNamespace(monotonic=clock.monotonic, sleep=clock.sleep),
+        raising=False,
+    )
+
+    attempts = config_store_module._CONFIG_STORE_READ_MAX_ATTEMPTS
+    failures = [requests.ConnectionError("vespa unreachable") for _ in range(attempts)]
+    scripted_get = _ScriptedGet(failures)
+    monkeypatch.setattr(requests, "get", scripted_get)
 
     store = _config_store(_boom)
-    # Document v1 visit path: a real connection-refused against a dead port.
-    store.vespa_app = SimpleNamespace(url="http://127.0.0.1:9")
-
-    with pytest.raises(requests.exceptions.ConnectionError):
+    with pytest.raises(RuntimeError) as exc_info:
         store.list_all_configs()
+
+    assert scripted_get.calls == attempts
+    assert exc_info.value.__cause__ is failures[-1]
+    assert str(exc_info.value) == _expected_visit_failure_message(
+        attempts,
+        sum(
+            config_store_module._config_store_visit_backoff_seconds(attempt)
+            for attempt in range(1, attempts)
+        ),
+        failures[-1],
+    )
 
 
 def test_list_adapters_empty_returns_empty_list():
