@@ -5,7 +5,7 @@ from __future__ import annotations
 import ast
 from pathlib import Path
 
-EXPECTED_TELEMETRY_SCRIPT_COUNT = 19
+EXPECTED_TELEMETRY_SCRIPT_COUNT = 20
 PRELUDE_MARKERS = (
     "IN_POD_TELEMETRY_PRELUDE",
     "resolve_library_env_defaults",
