@@ -23,6 +23,8 @@ import time
 import httpx
 import pytest
 
+from tests.e2e.conftest import KUBECTL_CONTEXT
+
 NAMESPACE = "cogniverse"
 RUNTIME = (
     "http://localhost:33000"  # runtime.service.nodePort — matches tests/e2e/conftest.py
@@ -53,6 +55,8 @@ def _workflow_main_output(workflow_name: str) -> str:
     out = subprocess.run(
         [
             "kubectl",
+            "--context",
+            KUBECTL_CONTEXT,
             "logs",
             "-n",
             NAMESPACE,
@@ -185,6 +189,8 @@ def _runtime_deployment_generation() -> int:
     out = subprocess.run(
         [
             "kubectl",
+            "--context",
+            KUBECTL_CONTEXT,
             "get",
             "deployment",
             "-n",

@@ -32,6 +32,7 @@ from uuid import uuid4
 import pytest
 
 from cogniverse_core.common.tenant_utils import canonical_tenant_id
+from tests.e2e.conftest import KUBECTL_CONTEXT
 from tests.e2e.test_api_e2e import PROFILE
 
 NAMESPACE = "cogniverse"
@@ -92,7 +93,7 @@ def _require_cluster_cli_tools() -> None:
 
 def _kubectl(*args: str, input_text: str | None = None) -> subprocess.CompletedProcess:
     return subprocess.run(
-        ["kubectl", *args],
+        ["kubectl", "--context", KUBECTL_CONTEXT, *args],
         capture_output=True,
         text=True,
         timeout=60,

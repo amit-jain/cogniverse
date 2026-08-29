@@ -8,6 +8,16 @@ from pathlib import Path
 import tests.e2e.conftest as e2e_conftest
 
 E2E_ROOT = Path(__file__).resolve().parents[2] / "e2e"
+KUBECTL_CONTEXT_EXEMPTIONS: dict[tuple[str, int], str] = {
+    (
+        "e2e/test_annotation_feedback_e2e.py",
+        62,
+    ): "kubectl version --client only checks the client binary",
+    (
+        "e2e/test_coding_cli_e2e.py",
+        65,
+    ): "kubectl config current-context inspects the active local selection",
+}
 
 
 def _constant_string(node: ast.AST) -> str | None:
@@ -47,7 +57,7 @@ def _has_ancestor(node: ast.AST, ancestor_type: type[ast.AST]) -> bool:
     return False
 
 
-def _kubectl_context_literals() -> list[tuple[Path, int, str]]:
+def _kubectl_context_violations() -> list[tuple[Path, int, str]]:
     violations: list[tuple[Path, int, str]] = []
     for path in sorted(E2E_ROOT.rglob("*.py")):
         tree = ast.parse(path.read_text(), filename=str(path))
@@ -88,30 +98,33 @@ def _kubectl_context_literals() -> list[tuple[Path, int, str]]:
                     violations.append(
                         (path, node.lineno, "hardcodes a kubectl context literal")
                     )
-            elif isinstance(node, (ast.List, ast.Tuple)) and _has_ancestor(
-                node, ast.Call
-            ):
+            elif isinstance(node, (ast.List, ast.Tuple)):
                 literal_strings = [
                     literal
                     for literal in (_constant_string(element) for element in node.elts)
                     if literal is not None
                 ]
-                if not any(literal.startswith("k3d-") for literal in literal_strings):
+                if "kubectl" not in literal_strings:
                     continue
-                if not any(
-                    literal == "kubectl" or literal.startswith("--context")
-                    for literal in literal_strings
-                ):
+                rel_path = str(path.relative_to(E2E_ROOT.parent))
+                exemption = KUBECTL_CONTEXT_EXEMPTIONS.get((rel_path, node.lineno))
+                if exemption is not None:
                     continue
-                violations.append(
-                    (path, node.lineno, "inlines a kubectl context literal")
-                )
+                if any(literal.startswith("k3d-") for literal in literal_strings):
+                    violations.append(
+                        (path, node.lineno, "hardcodes a kubectl context literal")
+                    )
+                    continue
+                if "--context" not in literal_strings:
+                    violations.append(
+                        (path, node.lineno, "omits --context on a kubectl invocation")
+                    )
 
     return violations
 
 
-def test_e2e_files_do_not_hardcode_kubectl_context_literals():
-    violations = _kubectl_context_literals()
+def test_e2e_kubectl_invocations_use_shared_context():
+    violations = _kubectl_context_violations()
     assert not violations, "\n".join(
         f"{path.relative_to(E2E_ROOT.parent)}:{line}: {message}"
         for path, line, message in violations

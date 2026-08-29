@@ -324,6 +324,8 @@ def create_test_cluster(
         _cmd(
             [
                 "kubectl",
+                "--context",
+                KUBECTL_CONTEXT,
                 "label",
                 "node",
                 "--all",
@@ -336,6 +338,8 @@ def create_test_cluster(
         _cmd(
             [
                 "kubectl",
+                "--context",
+                KUBECTL_CONTEXT,
                 "label",
                 "node",
                 "--all",
@@ -437,9 +441,36 @@ def dump_pod_state(namespace: str) -> None:
 
     print("\n========== POD STATE ON HELM FAILURE ==========", file=sys.stdout)
     for diag in [
-        ["kubectl", "get", "pods", "-n", namespace, "-o", "wide"],
-        ["kubectl", "get", "events", "-n", namespace, "--sort-by=.lastTimestamp"],
-        ["kubectl", "describe", "pods", "-n", namespace],
+        [
+            "kubectl",
+            "--context",
+            KUBECTL_CONTEXT,
+            "get",
+            "pods",
+            "-n",
+            namespace,
+            "-o",
+            "wide",
+        ],
+        [
+            "kubectl",
+            "--context",
+            KUBECTL_CONTEXT,
+            "get",
+            "events",
+            "-n",
+            namespace,
+            "--sort-by=.lastTimestamp",
+        ],
+        [
+            "kubectl",
+            "--context",
+            KUBECTL_CONTEXT,
+            "describe",
+            "pods",
+            "-n",
+            namespace,
+        ],
     ]:
         print(f"\n--- {' '.join(diag)} ---", file=sys.stdout)
         sys.stdout.flush()
@@ -447,6 +478,8 @@ def dump_pod_state(namespace: str) -> None:
     result = subprocess.run(
         [
             "kubectl",
+            "--context",
+            KUBECTL_CONTEXT,
             "get",
             "pods",
             "-n",
@@ -466,7 +499,16 @@ def dump_pod_state(namespace: str) -> None:
         print(f"\n--- kubectl logs {pod} (last 100 lines) ---", file=sys.stdout)
         sys.stdout.flush()
         subprocess.run(
-            ["kubectl", "logs", "-n", namespace, pod, "--tail=100"],
+            [
+                "kubectl",
+                "--context",
+                KUBECTL_CONTEXT,
+                "logs",
+                "-n",
+                namespace,
+                pod,
+                "--tail=100",
+            ],
             check=False,
             timeout=30,
         )
@@ -569,7 +611,14 @@ def deploy_stack(
     _hf_token = _read_hf_token()
     if _hf_token:
         subprocess.run(
-            ["kubectl", "create", "namespace", namespace],
+            [
+                "kubectl",
+                "--context",
+                KUBECTL_CONTEXT,
+                "create",
+                "namespace",
+                namespace,
+            ],
             capture_output=True,
             timeout=30,
             check=False,
@@ -577,6 +626,8 @@ def deploy_stack(
         _rendered = subprocess.run(
             [
                 "kubectl",
+                "--context",
+                KUBECTL_CONTEXT,
                 "create",
                 "secret",
                 "generic",
@@ -593,7 +644,7 @@ def deploy_stack(
             timeout=30,
         )
         subprocess.run(
-            ["kubectl", "apply", "-f", "-"],
+            ["kubectl", "--context", KUBECTL_CONTEXT, "apply", "-f", "-"],
             input=_rendered.stdout,
             capture_output=True,
             text=True,
@@ -656,6 +707,8 @@ def deployed_inference_components(namespace: str) -> list[str]:
     listing = _cmd(
         [
             "kubectl",
+            "--context",
+            KUBECTL_CONTEXT,
             "get",
             "deploy",
             "-n",
@@ -693,6 +746,8 @@ def ready_pod_wait_args(
         )
     return [
         "kubectl",
+        "--context",
+        KUBECTL_CONTEXT,
         "wait",
         "--for=condition=ready",
         "pod",
@@ -738,7 +793,16 @@ def deployed_stack(k3d_cluster):
     for svc, ports in pf_specs:
         pf_log = open(f"/tmp/pf_{svc.replace('/', '_')}_{ports}.log", "w")
         proc = subprocess.Popen(
-            ["kubectl", "port-forward", svc, ports, "-n", NAMESPACE],
+            [
+                "kubectl",
+                "--context",
+                KUBECTL_CONTEXT,
+                "port-forward",
+                svc,
+                ports,
+                "-n",
+                NAMESPACE,
+            ],
             stdout=pf_log,
             stderr=subprocess.STDOUT,
         )

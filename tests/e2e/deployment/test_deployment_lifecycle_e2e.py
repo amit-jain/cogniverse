@@ -13,6 +13,8 @@ import subprocess
 import httpx
 import pytest
 
+from tests.e2e.conftest import KUBECTL_CONTEXT
+
 
 @pytest.mark.integration
 @pytest.mark.slow
@@ -102,6 +104,8 @@ class TestDeployedServices:
         pod_lookup = subprocess.run(
             [
                 "kubectl",
+                "--context",
+                KUBECTL_CONTEXT,
                 "get",
                 "pods",
                 "-n",
@@ -122,6 +126,8 @@ class TestDeployedServices:
         env_dump = subprocess.run(
             [
                 "kubectl",
+                "--context",
+                KUBECTL_CONTEXT,
                 "exec",
                 "-n",
                 NAMESPACE,
@@ -150,6 +156,8 @@ class TestDeployedServices:
         result = subprocess.run(
             [
                 "kubectl",
+                "--context",
+                KUBECTL_CONTEXT,
                 "get",
                 "pods",
                 "-n",

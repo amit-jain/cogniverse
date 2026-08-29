@@ -43,6 +43,7 @@ from cogniverse_synthetic.topics import (
 from cogniverse_synthetic.utils import profile_can_ground_topic
 from cogniverse_synthetic.utils.agent_inference import AgentInferrer
 from tests.e2e.conftest import (
+    KUBECTL_CONTEXT,
     RUNTIME,
     SAMPLE_VIDEO_PATH,
     TENANT_ID,
@@ -2714,7 +2715,9 @@ class TestBatchVideoIngestion:
             "-o",
             "jsonpath={.items[*].metadata.name}",
         )
-        _require_kubectl_success(pods, ["kubectl", "get", "pods", "runtime"])
+        _require_kubectl_success(
+            pods, ["kubectl", "--context", KUBECTL_CONTEXT, "get", "pods", "runtime"]
+        )
         runtime_pods = pods.stdout.split()
         assert len(runtime_pods) == 1, (
             f"expected exactly one running runtime pod, got {runtime_pods!r}"
@@ -2732,7 +2735,10 @@ class TestBatchVideoIngestion:
             "-p",
             pod_dir,
         )
-        _require_kubectl_success(mkdir, ["kubectl", "exec", "mkdir", pod_dir])
+        _require_kubectl_success(
+            mkdir,
+            ["kubectl", "--context", KUBECTL_CONTEXT, "exec", "mkdir", pod_dir],
+        )
         copy = _kubectl_e2e(
             "-n",
             "cogniverse",
@@ -2743,7 +2749,10 @@ class TestBatchVideoIngestion:
             f"{runtime_pod}:{pod_dir}/{self.BATCH_VIDEO}",
             timeout=120,
         )
-        _require_kubectl_success(copy, ["kubectl", "cp", self.BATCH_VIDEO, pod_dir])
+        _require_kubectl_success(
+            copy,
+            ["kubectl", "--context", KUBECTL_CONTEXT, "cp", self.BATCH_VIDEO, pod_dir],
+        )
         listing = _kubectl_e2e(
             "-n",
             "cogniverse",
@@ -2755,7 +2764,10 @@ class TestBatchVideoIngestion:
             "ls",
             pod_dir,
         )
-        _require_kubectl_success(listing, ["kubectl", "exec", "ls", pod_dir])
+        _require_kubectl_success(
+            listing,
+            ["kubectl", "--context", KUBECTL_CONTEXT, "exec", "ls", pod_dir],
+        )
         assert listing.stdout.split() == [self.BATCH_VIDEO], listing.stdout
         return pod_dir
 

@@ -36,7 +36,7 @@ from cogniverse_foundation.config.unified_config import (
     SemanticRouterConfig,
 )
 
-from .conftest import NAMESPACE
+from .conftest import KUBECTL_CONTEXT, NAMESPACE
 
 _ENVOY_SVC = "cogniverse-semantic-router-envoy"
 _ROUTER_SVC = "cogniverse-semantic-router"
@@ -44,7 +44,7 @@ _ROUTER_SVC = "cogniverse-semantic-router"
 
 def _kc(*args: str, timeout: int = 60) -> subprocess.CompletedProcess:
     return subprocess.run(
-        ["kubectl", "-n", NAMESPACE, *args],
+        ["kubectl", "--context", KUBECTL_CONTEXT, "-n", NAMESPACE, *args],
         capture_output=True,
         text=True,
         timeout=timeout,
@@ -78,6 +78,8 @@ def _port_forward(svc: str, remote_port: int, ready_path: str | None):
     proc = subprocess.Popen(
         [
             "kubectl",
+            "--context",
+            KUBECTL_CONTEXT,
             "-n",
             NAMESPACE,
             "port-forward",

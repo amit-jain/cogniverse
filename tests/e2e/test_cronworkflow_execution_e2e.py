@@ -30,6 +30,7 @@ import pytest
 from tests.e2e.conftest import (
     GATEWAY_VIDEO_QUERIES,
     IN_POD_TELEMETRY_PRELUDE,
+    KUBECTL_CONTEXT,
     expected_gateway_calibration,
 )
 from tests.e2e.test_api_e2e import PROFILE, _deploy_profile_for_tenant
@@ -48,7 +49,16 @@ POLL_INTERVAL_S = 5.0
 
 
 def _require_cronworkflow(name: str) -> None:
-    command = ["kubectl", "get", "cronworkflow", name, "-n", NAMESPACE]
+    command = [
+        "kubectl",
+        "--context",
+        KUBECTL_CONTEXT,
+        "get",
+        "cronworkflow",
+        name,
+        "-n",
+        NAMESPACE,
+    ]
     try:
         result = subprocess.run(
             command,
@@ -80,7 +90,18 @@ def _submit_workflow_from_cron(
     (e.g. ``tenant-id``); an unknown name is a test bug and raises.
     """
     out = subprocess.run(
-        ["kubectl", "get", "cronworkflow", cron_name, "-n", NAMESPACE, "-o", "json"],
+        [
+            "kubectl",
+            "--context",
+            KUBECTL_CONTEXT,
+            "get",
+            "cronworkflow",
+            cron_name,
+            "-n",
+            NAMESPACE,
+            "-o",
+            "json",
+        ],
         capture_output=True,
         text=True,
         timeout=30,
@@ -114,7 +135,18 @@ def _submit_workflow_from_cron(
         "spec": spec,
     }
     created = subprocess.run(
-        ["kubectl", "create", "-n", NAMESPACE, "-f", "-", "-o", "json"],
+        [
+            "kubectl",
+            "--context",
+            KUBECTL_CONTEXT,
+            "create",
+            "-n",
+            NAMESPACE,
+            "-f",
+            "-",
+            "-o",
+            "json",
+        ],
         input=json.dumps(workflow),
         capture_output=True,
         text=True,
@@ -129,7 +161,18 @@ def _submit_workflow_from_cron(
 
 def _workflow_status(name: str) -> dict:
     out = subprocess.run(
-        ["kubectl", "get", "workflow", name, "-n", NAMESPACE, "-o", "json"],
+        [
+            "kubectl",
+            "--context",
+            KUBECTL_CONTEXT,
+            "get",
+            "workflow",
+            name,
+            "-n",
+            NAMESPACE,
+            "-o",
+            "json",
+        ],
         capture_output=True,
         text=True,
         timeout=30,
@@ -143,6 +186,8 @@ def _workflow_pod_logs(workflow_name: str) -> str:
     out = subprocess.run(
         [
             "kubectl",
+            "--context",
+            KUBECTL_CONTEXT,
             "logs",
             "-n",
             NAMESPACE,
@@ -160,7 +205,17 @@ def _workflow_pod_logs(workflow_name: str) -> str:
 
 def _delete_workflow(name: str) -> None:
     subprocess.run(
-        ["kubectl", "delete", "workflow", name, "-n", NAMESPACE, "--wait=false"],
+        [
+            "kubectl",
+            "--context",
+            KUBECTL_CONTEXT,
+            "delete",
+            "workflow",
+            name,
+            "-n",
+            NAMESPACE,
+            "--wait=false",
+        ],
         capture_output=True,
         text=True,
         timeout=30,
@@ -321,6 +376,8 @@ def _mc_ls_names(prefix: str) -> list:
     """
     command = [
         "kubectl",
+        "--context",
+        KUBECTL_CONTEXT,
         "run",
         f"mc-probe-{uuid.uuid4().hex[:8]}",
         "-n",
@@ -494,6 +551,8 @@ def _runtime_pod_python(script: str, *, timeout: int = 180) -> str:
     result = subprocess.run(
         [
             "kubectl",
+            "--context",
+            KUBECTL_CONTEXT,
             "-n",
             NAMESPACE,
             "exec",

@@ -1879,7 +1879,7 @@ class TestSharedClusterOwnership:
         assert applied[0][0] == [
             "kubectl",
             "--context",
-            "k3d-cogniverse-e2e",
+            e2e_conftest.KUBECTL_CONTEXT,
             "apply",
             "-f",
             "-",

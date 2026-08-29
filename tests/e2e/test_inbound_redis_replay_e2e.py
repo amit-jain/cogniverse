@@ -32,6 +32,8 @@ import httpx
 import pytest
 import redis.asyncio as aioredis
 
+from tests.e2e.conftest import KUBECTL_CONTEXT
+
 RUNTIME_BASE = os.environ.get("COGNIVERSE_RUNTIME_BASE", "http://localhost:33000")
 REDIS_URL = os.environ.get("COGNIVERSE_TEST_REDIS_URL", "redis://localhost:26379/0")
 _CONSTRAINT_TEXT = "focus on safety equipment"
@@ -99,6 +101,8 @@ def _redis_port_forward():
     proc = subprocess.Popen(
         [
             "kubectl",
+            "--context",
+            KUBECTL_CONTEXT,
             "-n",
             "cogniverse",
             "port-forward",
@@ -370,6 +374,8 @@ async def test_constraint_buffered_in_redis_survives_pod_restart():
     subprocess.run(
         [
             "kubectl",
+            "--context",
+            KUBECTL_CONTEXT,
             "-n",
             "cogniverse",
             "delete",
@@ -386,6 +392,8 @@ async def test_constraint_buffered_in_redis_survives_pod_restart():
     subprocess.run(
         [
             "kubectl",
+            "--context",
+            KUBECTL_CONTEXT,
             "-n",
             "cogniverse",
             "wait",
