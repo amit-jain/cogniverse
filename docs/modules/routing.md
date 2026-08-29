@@ -27,6 +27,7 @@ The Routing Module provides intelligent query routing via A2A agents: `GatewayAg
 - **Gateway Classification**: `GatewayAgent` uses GLiNER zero-shot NER (with a deterministic keyword fallback) to classify modality, generation type, and simple-vs-complex — **no LLM call**, targeting <100ms
 - **Orchestrated Routing**: Complex queries hand off to `OrchestratorAgent` (DSPy planner + A2A HTTP fan-out)
 - **Query Enhancement**: `QueryEnhancementAgent` enriches queries via a DSPy `ChainOfThought` module with a heuristic fallback
+- **Entity Extraction**: `EntityExtractionAgent` uses DSPy first, with GLiNER + SpaCy fallback
 - **Composable Query Analysis**: `OrchestratorAgent`'s iterative retrieval loop uses `ComposableQueryAnalysisModule` (GLiNER fast path / LLM unified path) from `routing/dspy_relationship_router.py` for query reformulation
 - **Profile Selection**: `ProfileSelectionAgent` uses DSPy reasoning (with a keyword fallback) to pick the best backend search profile; `ProfilePerformanceOptimizer` learns profile choice from Phoenix evaluation data via XGBoost
 - **Offline Optimization**: An annotation-driven feedback loop (`AnnotationAgent`, `LLMAutoAnnotator`, `OrchestrationEvaluator`) plus XGBoost meta-models feed a batch optimization CLI that recompiles DSPy modules (`BootstrapFewShot`) and gateway thresholds as tenant artifacts
