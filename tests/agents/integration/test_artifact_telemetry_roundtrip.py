@@ -1006,9 +1006,7 @@ class TestWorkflowStoreRoundTrip:
         from cogniverse_core.registries import WorkflowStoreRegistry
 
         tenant_id = f"wf-live-rt-{uuid.uuid4().hex[:8]}"
-        evaluator = object.__new__(OrchestrationEvaluator)
-        evaluator.tenant_id = tenant_id
-        execution = evaluator._extract_workflow_execution(
+        execution = OrchestrationEvaluator._extract_workflow_execution(
             {
                 "attributes.input.value": "find videos and documents about Curie",
                 "attributes.output.value": {
@@ -1021,10 +1019,11 @@ class TestWorkflowStoreRoundTrip:
                     "tasks_completed": 2,
                 },
                 "context.span_id": "span-live-parallel",
-            }
+            },
+            tenant_id=tenant_id,
         )
 
-        assert execution is not None
+        assert execution.workflow_id == "wf-live-parallel"
         assert execution.parallel_efficiency == 0.0
         assert execution.confidence_score == 0.0
         assert execution.success is True

@@ -1817,9 +1817,7 @@ class TestWorkflowGeneratorIntegration:
             OrchestrationEvaluator,
         )
 
-        evaluator = object.__new__(OrchestrationEvaluator)
-        evaluator.tenant_id = "acme:acme"
-        execution = evaluator._extract_workflow_execution(
+        execution = OrchestrationEvaluator._extract_workflow_execution(
             {
                 "attributes.input.value": "find the Curie laboratory footage",
                 "attributes.output.value": {
@@ -1834,10 +1832,11 @@ class TestWorkflowGeneratorIntegration:
                 },
                 "status_code": "OK",
                 "context.span_id": "span-observed",
-            }
+            },
+            tenant_id="acme:acme",
         )
 
-        assert execution is not None
+        assert execution.workflow_id == "workflow-observed"
         assert execution.metadata["_outcome_metadata"] == {
             "observed": True,
             "required_field_semantics": dict(OBSERVED_WORKFLOW_SEMANTICS),

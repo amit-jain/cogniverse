@@ -4,12 +4,12 @@ from __future__ import annotations
 
 import asyncio
 from datetime import datetime, timedelta, timezone
-from unittest.mock import MagicMock, patch
 
 import pandas as pd
 import pytest
 
 from cogniverse_agents.routing.orchestration_evaluator import OrchestrationEvaluator
+from cogniverse_agents.workflow.intelligence import WorkflowIntelligence
 
 pytestmark = [pytest.mark.unit, pytest.mark.ci_fast]
 
@@ -41,25 +41,30 @@ def _span(span_id: str, workflow_id: str, start_time: datetime) -> dict:
     }
 
 
-def _evaluator(get_all_spans, recorder: _Recorder | None = None):
-    evaluator = object.__new__(OrchestrationEvaluator)
-    evaluator.project_name = "proj"
-    evaluator.tenant_id = "acme:unit"
-    evaluator.workflow_intelligence = recorder or _Recorder()
-    evaluator._evaluation_cursor = None
-    evaluator._evaluation_lock = asyncio.Lock()
+@pytest.fixture
+def orchestration_evaluator_factory(telemetry_manager_without_phoenix):
+    def build(get_all_spans, recorder: _Recorder | None = None):
+        evaluator = OrchestrationEvaluator(
+            WorkflowIntelligence(tenant_id="acme:unit"),
+            tenant_id="acme:unit",
+        )
 
-    class _Traces:
-        pass
+        class _Traces:
+            pass
 
-    traces = _Traces()
-    traces.get_all_spans = get_all_spans
-    evaluator.provider = type("P", (), {"traces": traces})()
-    return evaluator
+        traces = _Traces()
+        traces.get_all_spans = get_all_spans
+        evaluator.provider = type("P", (), {"traces": traces})()
+        evaluator.workflow_intelligence = recorder or _Recorder()
+        return evaluator
+
+    return build
 
 
 @pytest.mark.asyncio
-async def test_repeated_batches_process_exact_ids_once_in_timestamp_and_id_order():
+async def test_repeated_batches_process_exact_ids_once_in_timestamp_and_id_order(
+    orchestration_evaluator_factory,
+):
     first_time = datetime.now(timezone.utc) - timedelta(minutes=2)
     second_time = first_time + timedelta(seconds=1)
     spans = pd.DataFrame(
@@ -74,13 +79,13 @@ async def test_repeated_batches_process_exact_ids_once_in_timestamp_and_id_order
     query_windows = []
 
     async def get_all_spans(project, start_time, end_time, filters):
-        assert project == "proj"
+        assert project == "cogniverse-acme:unit"
         assert filters == {"name": "cogniverse.orchestration"}
         query_windows.append((start_time, end_time))
         return spans.copy(deep=True)
 
     recorder = _Recorder()
-    evaluator = _evaluator(get_all_spans, recorder)
+    evaluator = orchestration_evaluator_factory(get_all_spans, recorder)
 
     evaluation_end = second_time + timedelta(minutes=1)
     results = [
@@ -104,7 +109,9 @@ async def test_repeated_batches_process_exact_ids_once_in_timestamp_and_id_order
 
 
 @pytest.mark.asyncio
-async def test_record_failure_retries_failed_span_without_replaying_prior_success():
+async def test_record_failure_retries_failed_span_without_replaying_prior_success(
+    orchestration_evaluator_factory,
+):
     first_time = datetime.now(timezone.utc) - timedelta(minutes=2)
     spans = pd.DataFrame(
         [
@@ -129,7 +136,7 @@ async def test_record_failure_retries_failed_span_without_replaying_prior_succes
             await super().record_execution(execution)
 
     recorder = _FailOnceRecorder()
-    evaluator = _evaluator(get_spans, recorder)
+    evaluator = orchestration_evaluator_factory(get_spans, recorder)
 
     with pytest.raises(
         RuntimeError,
@@ -149,7 +156,9 @@ async def test_record_failure_retries_failed_span_without_replaying_prior_succes
 
 
 @pytest.mark.asyncio
-async def test_failed_query_does_not_advance_cursor():
+async def test_failed_query_does_not_advance_cursor(
+    orchestration_evaluator_factory,
+):
     calls = 0
 
     async def get_spans(**kwargs):
@@ -157,7 +166,7 @@ async def test_failed_query_does_not_advance_cursor():
         calls += 1
         raise RuntimeError("telemetry down")
 
-    evaluator = _evaluator(get_spans)
+    evaluator = orchestration_evaluator_factory(get_spans)
 
     with pytest.raises(
         RuntimeError,
@@ -172,7 +181,10 @@ async def test_failed_query_does_not_advance_cursor():
 
 
 @pytest.mark.asyncio
-async def test_query_timeout_retries_with_one_fixed_window(monkeypatch):
+async def test_query_timeout_retries_with_one_fixed_window(
+    monkeypatch,
+    orchestration_evaluator_factory,
+):
     import cogniverse_agents.routing.orchestration_evaluator as evaluator_module
 
     calls = []
@@ -186,7 +198,7 @@ async def test_query_timeout_retries_with_one_fixed_window(monkeypatch):
     monkeypatch.setattr(evaluator_module, "_SPAN_QUERY_TIMEOUT_S", 0.01)
     monkeypatch.setattr(evaluator_module, "_SPAN_QUERY_RETRY_DELAY_S", 0.0)
     evaluation_end = datetime(2026, 8, 5, 12, 30, tzinfo=timezone.utc)
-    evaluator = _evaluator(get_spans)
+    evaluator = orchestration_evaluator_factory(get_spans)
 
     result = await evaluator.evaluate_orchestration_spans(
         lookback_hours=2,
@@ -208,7 +220,9 @@ async def test_query_timeout_retries_with_one_fixed_window(monkeypatch):
 
 
 @pytest.mark.asyncio
-async def test_malformed_batch_rejects_without_recording_valid_prefix():
+async def test_malformed_batch_rejects_without_recording_valid_prefix(
+    orchestration_evaluator_factory,
+):
     first_time = datetime.now(timezone.utc) - timedelta(minutes=2)
     valid = _span("span-a", "wf-a", first_time)
     malformed = _span("span-b", "wf-b", first_time + timedelta(seconds=1))
@@ -219,7 +233,7 @@ async def test_malformed_batch_rejects_without_recording_valid_prefix():
         return spans.copy(deep=True)
 
     recorder = _Recorder()
-    evaluator = _evaluator(get_spans, recorder)
+    evaluator = orchestration_evaluator_factory(get_spans, recorder)
 
     with pytest.raises(
         ValueError,
@@ -231,7 +245,9 @@ async def test_malformed_batch_rejects_without_recording_valid_prefix():
     assert evaluator._evaluation_cursor is None
 
 
-def test_task_count_is_planned_sequence_and_completed_count_remains_observed():
+def test_task_count_is_planned_sequence_and_completed_count_remains_observed(
+    orchestration_evaluator_factory,
+):
     now = datetime.now(timezone.utc)
     span = _span("span-failed", "wf-failed", now)
     span["attributes.output.value"].update(
@@ -245,9 +261,12 @@ def test_task_count_is_planned_sequence_and_completed_count_remains_observed():
     )
     span["status_code"] = "ERROR"
     span["status_message"] = "TimeoutError: summarizer timed out after 30s"
-    evaluator = _evaluator(lambda **kwargs: None)
+    evaluator = orchestration_evaluator_factory(lambda **kwargs: None)
 
-    execution = evaluator._extract_workflow_execution(pd.Series(span))
+    execution = evaluator._extract_workflow_execution(
+        pd.Series(span),
+        tenant_id=evaluator.tenant_id,
+    )
 
     assert execution.task_count == 3
     assert execution.success is False
@@ -255,7 +274,9 @@ def test_task_count_is_planned_sequence_and_completed_count_remains_observed():
     assert execution.error_details == "TimeoutError: summarizer timed out after 30s"
 
 
-def test_per_agent_observations_round_trip_without_workflow_metric_substitution():
+def test_per_agent_observations_round_trip_without_workflow_metric_substitution(
+    orchestration_evaluator_factory,
+):
     span = _span("span-agents", "wf-agents", datetime.now(timezone.utc))
     span["attributes.output.value"].update(
         {
@@ -279,9 +300,12 @@ def test_per_agent_observations_round_trip_without_workflow_metric_substitution(
             ],
         }
     )
-    evaluator = _evaluator(lambda **kwargs: None)
+    evaluator = orchestration_evaluator_factory(lambda **kwargs: None)
 
-    execution = evaluator._extract_workflow_execution(pd.Series(span))
+    execution = evaluator._extract_workflow_execution(
+        pd.Series(span),
+        tenant_id=evaluator.tenant_id,
+    )
 
     assert execution.execution_time == 4.5
     assert execution.metadata["agent_observations"] == [
@@ -330,13 +354,20 @@ def test_per_agent_observations_round_trip_without_workflow_metric_substitution(
         ),
     ],
 )
-def test_malformed_agent_observation_is_rejected(observation, message):
+def test_malformed_agent_observation_is_rejected(
+    observation,
+    message,
+    orchestration_evaluator_factory,
+):
     span = _span("span-agent-invalid", "wf-agent-invalid", datetime.now(timezone.utc))
     span["attributes.output.value"]["agent_observations"] = [observation]
-    evaluator = _evaluator(lambda **kwargs: None)
+    evaluator = orchestration_evaluator_factory(lambda **kwargs: None)
 
     with pytest.raises(ValueError, match=message):
-        evaluator._extract_workflow_execution(pd.Series(span))
+        evaluator._extract_workflow_execution(
+            pd.Series(span),
+            tenant_id=evaluator.tenant_id,
+        )
 
 
 @pytest.mark.parametrize(
@@ -351,6 +382,7 @@ def test_failed_span_requires_error_status_and_bounded_summary(
     status_code,
     error_summary,
     message,
+    orchestration_evaluator_factory,
 ):
     span = _span("span-failed", "wf-failed", datetime.now(timezone.utc))
     span["attributes.output.value"].update(
@@ -361,16 +393,19 @@ def test_failed_span_requires_error_status_and_bounded_summary(
         }
     )
     span["status_code"] = status_code
-    evaluator = _evaluator(lambda **kwargs: None)
+    evaluator = orchestration_evaluator_factory(lambda **kwargs: None)
 
     with pytest.raises(ValueError, match=message):
-        evaluator._extract_workflow_execution(pd.Series(span))
+        evaluator._extract_workflow_execution(
+            pd.Series(span),
+            tenant_id=evaluator.tenant_id,
+        )
 
 
 @pytest.mark.asyncio
-async def test_real_workflow_intelligence_accepts_evaluator_outcome_metadata():
-    from cogniverse_agents.workflow.intelligence import WorkflowIntelligence
-
+async def test_real_workflow_intelligence_accepts_evaluator_outcome_metadata(
+    orchestration_evaluator_factory,
+):
     span = _span(
         "span-real-intelligence", "wf-real-intelligence", datetime.now(timezone.utc)
     )
@@ -380,7 +415,7 @@ async def test_real_workflow_intelligence_accepts_evaluator_outcome_metadata():
         return spans.copy(deep=True)
 
     intelligence = WorkflowIntelligence(tenant_id="acme:unit")
-    evaluator = _evaluator(get_spans)
+    evaluator = orchestration_evaluator_factory(get_spans)
     evaluator.workflow_intelligence = intelligence
 
     result = await evaluator.evaluate_orchestration_spans()
@@ -391,25 +426,38 @@ async def test_real_workflow_intelligence_accepts_evaluator_outcome_metadata():
     ]
 
 
-def test_ctor_canonicalizes_tenant_and_initializes_empty_cursor():
-    manager = MagicMock()
-    manager.get_provider.return_value = MagicMock()
-    manager.config.get_project_name.side_effect = lambda tenant: f"cogniverse-{tenant}"
+def test_ctor_canonicalizes_tenant_and_initializes_empty_cursor(
+    telemetry_manager_without_phoenix,
+    monkeypatch,
+):
+    calls: list[tuple[str, str | None]] = []
+    original_get_provider = telemetry_manager_without_phoenix.get_provider
 
-    with patch(
-        "cogniverse_agents.routing.orchestration_evaluator.get_telemetry_manager",
-        return_value=manager,
-    ):
-        evaluator = OrchestrationEvaluator(MagicMock(), tenant_id="acme")
+    def recording_get_provider(*, tenant_id, project_name=None):
+        calls.append((tenant_id, project_name))
+        return original_get_provider(tenant_id=tenant_id, project_name=project_name)
+
+    monkeypatch.setattr(
+        telemetry_manager_without_phoenix,
+        "get_provider",
+        recording_get_provider,
+    )
+
+    evaluator = OrchestrationEvaluator(
+        WorkflowIntelligence(tenant_id="acme:acme"),
+        tenant_id="acme",
+    )
 
     assert evaluator.tenant_id == "acme:acme"
-    manager.get_provider.assert_called_once_with(tenant_id="acme:acme")
+    assert calls == [("acme:acme", None)]
     assert evaluator.project_name == "cogniverse-acme:acme"
     assert evaluator._evaluation_cursor is None
 
 
 @pytest.mark.asyncio
-async def test_concurrent_runs_serialize_the_evaluation():
+async def test_concurrent_runs_serialize_the_evaluation(
+    orchestration_evaluator_factory,
+):
     first_entered = asyncio.Event()
     release_first = asyncio.Event()
     second_entered = asyncio.Event()
@@ -424,7 +472,7 @@ async def test_concurrent_runs_serialize_the_evaluation():
             second_entered.set()
         return pd.DataFrame()
 
-    ev = _evaluator(get_all_spans)
+    ev = orchestration_evaluator_factory(get_all_spans)
     first = asyncio.create_task(ev.evaluate_orchestration_spans(lookback_hours=1))
     await first_entered.wait()
     second = asyncio.create_task(ev.evaluate_orchestration_spans(lookback_hours=1))
