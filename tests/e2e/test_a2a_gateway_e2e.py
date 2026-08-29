@@ -24,14 +24,18 @@ from tests.e2e.conftest import (
     PHOENIX_URL,
     RUNTIME,
     TENANT_ID,
+    _ensure_sample_content_ingested,
     _ingest_sample_documents,
     assert_orchestrated,
     expected_gateway_routing,
+    register_tenant_and_wait,
     sample_audio_content_id,
+    unique_id,
 )
 from tests.e2e.test_api_e2e import (
     DOCUMENT_PROFILE,
     PROFILE,
+    _deploy_profile_for_tenant,
     _expected_available_profile_names,
 )
 
@@ -61,6 +65,48 @@ def skip_without_sample_video() -> None:
             stacklevel=2,
         )
         pytest.skip(f"sample video not available: {SAMPLE_VIDEO}")
+
+
+@pytest.fixture
+def seeded_search_tenant():
+    skip_without_sample_video()
+
+    org_id = unique_id("a2a_seeded")
+    tenant_id = f"{org_id}:t1"
+
+    with httpx.Client(base_url=RUNTIME, timeout=900.0) as client:
+        try:
+            resp = client.post(
+                "/admin/organizations",
+                json={
+                    "org_id": org_id,
+                    "org_name": org_id.replace("_", "-"),
+                    "created_by": "e2e",
+                },
+            )
+            assert resp.status_code in (200, 201, 409), resp.text
+
+            register_tenant_and_wait(tenant_id, created_by="e2e", timeout_s=600.0)
+            _deploy_profile_for_tenant(client, PROFILE, tenant_id)
+            _deploy_profile_for_tenant(client, DOCUMENT_PROFILE, tenant_id)
+
+            _ensure_sample_content_ingested(
+                SAMPLE_VIDEO,
+                profile=PROFILE,
+                media_type="video/mp4",
+                tenant_id=tenant_id,
+            )
+            seeded_documents = _ingest_sample_documents(tenant_id=tenant_id)
+            yield tenant_id, seeded_documents
+        finally:
+            try:
+                client.delete(f"/admin/tenants/{tenant_id}")
+            except httpx.HTTPError:
+                pass
+            try:
+                client.delete(f"/admin/organizations/{org_id}")
+            except httpx.HTTPError:
+                pass
 
 
 # ---------------------------------------------------------------------------
@@ -257,9 +303,10 @@ class TestGatewaySimpleRouting:
 
 @pytest.mark.e2e
 class TestGatewaySeededSearchContract:
-    def test_seeded_video_identity_order_and_competing_route(self):
-        skip_without_sample_video()
-        seeded_documents = _ingest_sample_documents()
+    def test_seeded_video_identity_order_and_competing_route(
+        self, seeded_search_tenant
+    ):
+        tenant_id, seeded_documents = seeded_search_tenant
         video_query = "find videos of a man washing dishes in a kitchen sink"
         document_query = "find PDF documents about washing dishes"
         with httpx.Client(base_url=RUNTIME, timeout=900.0) as client:
@@ -268,7 +315,7 @@ class TestGatewaySeededSearchContract:
                 json={
                     "agent_name": "gateway_agent",
                     "query": video_query,
-                    "context": {"tenant_id": TENANT_ID},
+                    "context": {"tenant_id": tenant_id},
                     "top_k": 5,
                 },
             )
@@ -277,7 +324,7 @@ class TestGatewaySeededSearchContract:
                 json={
                     "agent_name": "gateway_agent",
                     "query": document_query,
-                    "context": {"tenant_id": TENANT_ID},
+                    "context": {"tenant_id": tenant_id},
                     "top_k": 5,
                 },
             )
@@ -315,25 +362,26 @@ class TestGatewaySeededSearchContract:
             document_gw["routed_to"],
         ) == expected_gateway_routing(document_query, document_gw)
         if document_gw["complexity"] == "simple":
-            # The competing route searches the tenant's document corpus: the
-            # two captions that describe washing dishes are the top two hits,
-            # identified by content id, and top_k is honoured against the
-            # corpus size.
+            # This tenant owns only the seeded video and the two seeded
+            # captions, so the document route must return those captions in
+            # rank order.
             document_downstream = document_data["downstream_result"]
             document_results = document_downstream["results"]
             assert document_downstream["results_count"] == len(document_results)
-            assert len(document_results) == min(5, _tenant_document_count(TENANT_ID))
-            assert {result["document_id"] for result in document_results[:2]} == set(
-                seeded_documents.values()
+            expected_titles = ("v_0BtHd6dvm78.txt", "v_-nl4G-00PtA.txt")
+            assert len(document_results) == len(expected_titles)
+            assert [result["title"] for result in document_results] == list(
+                expected_titles
             )
-            assert {result["title"] for result in document_results[:2]} == set(
-                seeded_documents
-            )
-            # document_type is the file suffix of each row's title; the
-            # corpus may hold captions, PDFs and other uploads at once.
-            assert [result["document_type"] for result in document_results] == [
-                result["title"].rsplit(".", 1)[-1] for result in document_results
+            assert [result["document_id"] for result in document_results] == [
+                seeded_documents[title] for title in expected_titles
             ]
+            assert [result["document_type"] for result in document_results] == [
+                "txt",
+                "txt",
+            ]
+            scores = [result["score"] for result in document_results]
+            assert scores == sorted(scores, reverse=True)
         else:
             assert document_data["agent"] == "orchestrator_agent"
             assert "orchestration_result" in document_data

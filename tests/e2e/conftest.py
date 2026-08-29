@@ -1411,7 +1411,12 @@ def _validate_sample_ingestion_result(
 
 
 def _search_sample_content(
-    *, content_id: str, tenant_id: str, profile: str, suffix: str, media_type: str
+    *,
+    content_id: str,
+    tenant_id: str = TENANT_ID,
+    profile: str,
+    suffix: str,
+    media_type: str,
 ) -> tuple[list[dict] | None, str | None]:
     """Return (matches, error). A search-API failure is reported as an
     error string, never flattened into 'no matches'."""
@@ -1447,6 +1452,7 @@ def _ensure_sample_content_ingested(
     *,
     profile: str,
     media_type: str,
+    tenant_id: str = TENANT_ID,
 ) -> str:
     if not path.exists():
         pytest.fail(f"Tracked sample content not found: {path}")
@@ -1454,7 +1460,7 @@ def _ensure_sample_content_ingested(
     content_id = _content_sha256(path)
     existing_matches, _ = _search_sample_content(
         content_id=content_id,
-        tenant_id=TENANT_ID,
+        tenant_id=tenant_id,
         profile=profile,
         suffix=path.suffix,
         media_type=media_type,
@@ -1462,7 +1468,7 @@ def _ensure_sample_content_ingested(
     if existing_matches:
         print(
             f"Exact {content_id} fixture already has {len(existing_matches)} "
-            f"documents in {profile} for {TENANT_ID}; skipping ingest"
+            f"documents in {profile} for {tenant_id}; skipping ingest"
         )
         return content_id
 
@@ -1474,7 +1480,7 @@ def _ensure_sample_content_ingested(
                 data={
                     "profile": profile,
                     "backend": "vespa",
-                    "tenant_id": TENANT_ID,
+                    "tenant_id": tenant_id,
                 },
                 # The search above proved these documents are absent, so this
                 # call needs real work done. A done marker outliving the
@@ -1497,7 +1503,7 @@ def _ensure_sample_content_ingested(
     assert _source_url_matches(
         submission.get("source_url"),
         content_id=content_id,
-        tenant_id=TENANT_ID,
+        tenant_id=tenant_id,
         suffix=path.suffix,
     ), submission
     ingest_id = submission.get("ingest_id")
@@ -1540,7 +1546,7 @@ def _ensure_sample_content_ingested(
             documents_fed = _validate_sample_ingestion_result(
                 latest.get("result", {}),
                 content_id=content_id,
-                tenant_id=TENANT_ID,
+                tenant_id=tenant_id,
                 suffix=path.suffix,
                 expected_documents_fed=expected_documents_fed,
             )
@@ -1560,7 +1566,7 @@ def _ensure_sample_content_ingested(
     while _time.monotonic() < search_deadline:
         found, search_error = _search_sample_content(
             content_id=content_id,
-            tenant_id=TENANT_ID,
+            tenant_id=tenant_id,
             profile=profile,
             suffix=path.suffix,
             media_type=media_type,
@@ -1569,14 +1575,14 @@ def _ensure_sample_content_ingested(
         if len(matches) == documents_fed:
             print(
                 f"Sample {content_id} persisted {documents_fed} exact documents "
-                f"in {profile} for {TENANT_ID}"
+                f"in {profile} for {tenant_id}"
             )
             return content_id
         _time.sleep(2)
 
     failure = (
         f"Sample {content_id} reported {documents_fed} documents_fed but search "
-        f"found {len(matches)} exact persisted documents in {profile} for {TENANT_ID}"
+        f"found {len(matches)} exact persisted documents in {profile} for {tenant_id}"
     )
     if search_error:
         failure += f"; last search error: {search_error}"
@@ -1670,7 +1676,7 @@ def _sorted_evaluation_corpus_paths(subdir: str) -> tuple[Path, ...]:
     return tuple(sorted((_EVALUATION_TEXT_CORPUS_DIR / subdir).glob("*.json")))
 
 
-def _ingest_sample_documents() -> dict[str, str]:
+def _ingest_sample_documents(tenant_id: str = TENANT_ID) -> dict[str, str]:
     """Ensure the two human-annotated captions that describe washing dishes
     are persisted as document content; returns ``{title: content_id}``."""
     config_path = DATA_ROOT.parent / "configs" / "config.json"
@@ -1680,6 +1686,7 @@ def _ingest_sample_documents() -> dict[str, str]:
             _CAPTION_CORPUS_DIR / title,
             profile=_configured_document_profile_name(config),
             media_type="text/plain",
+            tenant_id=tenant_id,
         )
         for title in SAMPLE_DOCUMENT_TITLES
     }
