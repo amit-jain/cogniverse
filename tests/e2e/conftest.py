@@ -30,6 +30,7 @@ from pathlib import Path
 
 import httpx
 import pytest
+from _pytest.stash import StashKey
 from cogniverse_cli.argo import (
     ARGO_NAMESPACE,
     ARGO_WORKFLOW_CONTROLLER_LABEL_SELECTOR,
@@ -293,9 +294,9 @@ def pytest_collection_modifyitems(config, items):
         items[:] = [item for item in items if item not in telegram_deselections]
 
     def _priority(item):
-        path = str(item.fspath)
-        if "test_dashboard_e2e" in path:  # playwright lives here
+        if _requests_browser(item):
             return 2
+        path = str(item.fspath)
         # Pure async tests that would trip over the playwright loop:
         if any(
             mark in path
@@ -499,13 +500,25 @@ def _clear_stale_running_loop():
 
 _LAST_FINISHED_TEST: str | None = None
 _PARKED_RUNNING_LOOP = None
-_SESSION_PLAYWRIGHT = None
-_SESSION_BROWSER = None
+_PLAYWRIGHT_BROWSER_KEY: StashKey[object] = StashKey()
+_PLAYWRIGHT_PLAYWRIGHT_KEY: StashKey[object] = StashKey()
+_PLAYWRIGHT_SESSION_FIXTURE_KEYS = {
+    "browser": _PLAYWRIGHT_BROWSER_KEY,
+    "playwright": _PLAYWRIGHT_PLAYWRIGHT_KEY,
+}
 _BROWSER_FIXTURES = frozenset({"browser", "context", "page", "new_context"})
 
 
 def _requests_browser(request) -> bool:
     return bool(_BROWSER_FIXTURES.intersection(getattr(request, "fixturenames", ())))
+
+
+def _cache_playwright_session_fixture(fixturedef, request, value) -> None:
+    stash_key = _PLAYWRIGHT_SESSION_FIXTURE_KEYS.get(fixturedef.argname)
+    if stash_key is None:
+        return
+    request.config.stash[stash_key] = value
+    fixturedef._finalizers.clear()
 
 
 def _reattach_parked_running_loop(*, force: bool = False) -> None:
@@ -516,46 +529,6 @@ def _reattach_parked_running_loop(*, force: bool = False) -> None:
         return
     if force or asyncio.events._get_running_loop() is None:
         asyncio.events._set_running_loop(parked)
-
-
-def _close_playwright_session() -> None:
-    """Close the session-scoped Playwright browser after reattaching its loop.
-
-    The browser close needs the parked sync-API loop back in the running slot.
-    Closing the browser in a session hook instead of pytest-playwright's
-    fixture finalizer makes the teardown report itself, not the last test.
-    """
-    import asyncio
-
-    global _SESSION_BROWSER, _SESSION_PLAYWRIGHT
-
-    browser = _SESSION_BROWSER
-    playwright = _SESSION_PLAYWRIGHT
-    _SESSION_BROWSER = None
-    _SESSION_PLAYWRIGHT = None
-    previous = asyncio.events._get_running_loop()
-    errors: list[tuple[str, BaseException]] = []
-    try:
-        if browser is not None:
-            _reattach_parked_running_loop(force=True)
-            browser.close()
-    except BaseException as exc:  # noqa: BLE001 - propagate verbatim below
-        errors.append(("browser.close", exc))
-    try:
-        if playwright is not None:
-            playwright.stop()
-    except BaseException as exc:  # noqa: BLE001 - propagate verbatim below
-        errors.append(("playwright.stop", exc))
-    finally:
-        if previous is None:
-            asyncio.events._set_running_loop(None)
-        else:
-            asyncio.events._set_running_loop(previous)
-    if errors:
-        message = "; ".join(f"{name}: {exc}" for name, exc in errors)
-        raise RuntimeError(
-            f"Playwright session teardown failed: {message}"
-        ) from errors[0][1]
 
 
 @pytest.fixture(autouse=True)
@@ -2817,31 +2790,6 @@ def _sync_sandbox_into_cluster(kube_context: str, *, roll_runtime: bool) -> None
 
 
 @pytest.fixture(scope="session")
-def playwright():
-    """Start the Playwright driver once for the session.
-
-    The browser close happens in ``pytest_sessionfinish`` so it can still
-    use the parked loop and report itself as session teardown instead of as
-    the last test.
-    """
-    global _SESSION_PLAYWRIGHT
-    if _SESSION_PLAYWRIGHT is None:
-        from playwright.sync_api import sync_playwright
-
-        _SESSION_PLAYWRIGHT = sync_playwright().start()
-    return _SESSION_PLAYWRIGHT
-
-
-@pytest.fixture(scope="session")
-def browser(launch_browser):
-    """Launch one browser for the session and close it in sessionfinish."""
-    global _SESSION_BROWSER
-    if _SESSION_BROWSER is None:
-        _SESSION_BROWSER = launch_browser()
-    return _SESSION_BROWSER
-
-
-@pytest.fixture(scope="session")
 def browser_type_launch_args():
     return {"headless": True}
 
@@ -3920,10 +3868,58 @@ def pytest_configure(config):
     _ensure_playwright_browsers()
 
 
+@pytest.hookimpl(hookwrapper=True)
+def pytest_fixture_setup(fixturedef, request):
+    outcome = yield
+    result = outcome.get_result()
+    _cache_playwright_session_fixture(fixturedef, request, result)
+
+
+def _close_playwright_session(session) -> None:
+    """Close the session-owned Playwright browser after reattaching its loop.
+
+    The browser close needs the parked sync-API loop back in the running slot.
+    Closing the browser in a session hook instead of the Playwright fixture's
+    finalizer makes the teardown report itself, not the last test.
+    """
+    import asyncio
+
+    stash = session.config.stash
+    browser = stash.get(_PLAYWRIGHT_BROWSER_KEY, None)
+    playwright = stash.get(_PLAYWRIGHT_PLAYWRIGHT_KEY, None)
+    for key in (_PLAYWRIGHT_BROWSER_KEY, _PLAYWRIGHT_PLAYWRIGHT_KEY):
+        if key in stash:
+            del stash[key]
+
+    previous = asyncio.events._get_running_loop()
+    errors: list[tuple[str, BaseException]] = []
+    try:
+        if browser is not None:
+            _reattach_parked_running_loop(force=True)
+            browser.close()
+    except BaseException as exc:  # noqa: BLE001 - propagate verbatim below
+        errors.append(("browser.close", exc))
+    try:
+        if playwright is not None:
+            playwright.stop()
+    except BaseException as exc:  # noqa: BLE001 - propagate verbatim below
+        errors.append(("playwright.stop", exc))
+    finally:
+        if previous is None:
+            asyncio.events._set_running_loop(None)
+        else:
+            asyncio.events._set_running_loop(previous)
+    if errors:
+        message = "; ".join(f"{name}: {exc}" for name, exc in errors)
+        raise RuntimeError(
+            f"Playwright session teardown failed: {message}"
+        ) from errors[0][1]
+
+
 @pytest.hookimpl(trylast=True)
 def pytest_sessionfinish(session, exitstatus):
     """Close the session-owned Playwright browser after every test has finished."""
-    _close_playwright_session()
+    _close_playwright_session(session)
 
 
 def pytest_unconfigure(config):
