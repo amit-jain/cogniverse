@@ -189,7 +189,7 @@ class BackendQuerier:
 
         if entity_fields is not None:
             query_size = max(sample_size, 10)
-        elif strategy == "diverse":
+        elif strategy in {"diverse", "multi_modal_sequences"}:
             query_size = sample_size * DIVERSE_CANDIDATE_MULTIPLIER
         else:
             query_size = sample_size
@@ -246,7 +246,7 @@ class BackendQuerier:
                     break
                 offset += query_size
 
-            if strategy == "diverse":
+            if strategy in {"diverse", "multi_modal_sequences"}:
                 results = self._spread_across_sources(
                     results,
                     sample_size,
@@ -359,26 +359,35 @@ class BackendQuerier:
             return profile_name
         return f"profile[{index}]"
 
-    def _source_key(
-        self, document: Dict[str, Any], source_id_field: str | None = None
+    @staticmethod
+    def _source_identity_value(
+        document: Dict[str, Any], source_id_field: str | None = None
     ) -> str:
-        for field_name in self.field_mappings.topic_fields:
+        if source_id_field:
+            value = document.get(source_id_field)
+            if isinstance(value, str) and value.strip():
+                return value
+        for field_name in ("source_id", "video_id", "document_id", "item_id", "id"):
             value = document.get(field_name)
             if isinstance(value, str) and value.strip():
                 return value
-        if source_id_field:
-            value = document.get(source_id_field)
+        return ""
+
+    def _source_key(
+        self, document: Dict[str, Any], source_id_field: str | None = None
+    ) -> str:
+        source_identity = self._source_identity_value(document, source_id_field)
+        if source_identity:
+            return source_identity
+        for field_name in self.field_mappings.topic_fields:
+            value = document.get(field_name)
             if isinstance(value, str) and value.strip():
                 return value
         return ""
 
     @staticmethod
     def _source_id(document: Dict[str, Any], source_id_field: str | None = None) -> str:
-        if source_id_field:
-            value = document.get(source_id_field)
-            if isinstance(value, str) and value.strip():
-                return value
-        return ""
+        return BackendQuerier._source_identity_value(document, source_id_field)
 
     def _spread_across_sources(
         self,

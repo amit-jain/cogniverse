@@ -89,9 +89,7 @@ async def test_upload_persists_canonical_blob_and_activates_version(monkeypatch)
     ]
 
     try:
-        response = await _put(
-            app, "/admin/tenants/acme/golden_set_ground_truth", rows
-        )
+        response = await _put(app, "/admin/tenants/acme/golden_set_ground_truth", rows)
     finally:
         admin_router._reset_admin_overrides_for_tests()
 

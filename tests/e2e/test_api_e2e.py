@@ -30,17 +30,17 @@ from pathlib import Path
 import httpx
 import pytest
 
+from cogniverse_agents.profile_selection_agent import tenant_usable_profile_names
 from cogniverse_foundation.config.unified_config import (
-    BackendProfileConfig,
     SyntheticGeneratorConfig,
 )
+from cogniverse_foundation.config.utils import create_default_config_manager
 from cogniverse_synthetic.schemas import ProfileSelectionExampleSchema
 from cogniverse_synthetic.topics import (
     TopicSaliency,
     extract_topic,
     topic_source_text,
 )
-from cogniverse_synthetic.utils import profile_can_ground_topic
 from cogniverse_synthetic.utils.agent_inference import AgentInferrer
 from tests.e2e.conftest import (
     KUBECTL_CONTEXT,
@@ -50,7 +50,6 @@ from tests.e2e.conftest import (
     _content_sha256,
     _ensure_sample_content_ingested,
     _matching_sample_results,
-    _vespa_deployed_schema_names,
     assert_orchestrated,
     expected_gateway_routing,
     unique_id,
@@ -1041,39 +1040,49 @@ class TestSyntheticDataAPI:
     def test_generate_synthetic_data(self):
         """POST /synthetic/generate creates real synthetic training examples."""
         with httpx.Client(base_url=RUNTIME, timeout=900.0) as client:
-            fixture_results = self._seeded_video_fixture_results(client)
+            self._seeded_video_fixture_results(client)
+            resp = client.post(
+                "/synthetic/generate",
+                json={
+                    "optimizer": "routing",
+                    "count": 5,
+                    "vespa_sample_size": 5,
+                    "strategy": "entity_rich",
+                    "max_profiles": 1,
+                    "tenant_id": TENANT_ID,
+                },
+            )
+            assert resp.status_code == 200, f"Synthetic generation failed: {resp.text}"
+            data = resp.json()
+            sampled_content = data["metadata"]["sampled_content"]
             source_texts = []
             missing_source_texts = []
-            for result in fixture_results:
-                metadata = result["metadata"]
-                assert isinstance(metadata, dict), result
-                source_text = topic_source_text(metadata)
+            for result in sampled_content:
+                assert isinstance(result, dict), result
+                source_text = topic_source_text(result)
                 if source_text is None:
-                    missing_source_texts.append(metadata)
+                    missing_source_texts.append(result)
                     continue
                 source_texts.append(source_text)
             assert missing_source_texts == [], missing_source_texts
-            assert len(set(source_texts)) == len(fixture_results)
-            # Build saliency from all source texts and extract distinctive topics.
-            records = [
-                {"description": text, "source_text": text, "topic": f"video_{i}"}
-                for i, text in enumerate(source_texts)
+            assert len(set(source_texts)) == len(sampled_content)
+            saliency = TopicSaliency.from_records(sampled_content)
+            topics = [
+                extract_topic(record, saliency=saliency) for record in sampled_content
             ]
-            saliency = TopicSaliency.from_records(records)
-
-            topics = [extract_topic(record, saliency=saliency) for record in records]
             # Every sampled record yields a topic; name any that did not.
             assert [
-                record["topic"]
-                for record, topic in zip(records, topics)
+                record
+                for record, topic in zip(sampled_content, topics)
                 if topic is None
             ] == []
             # Distinct sources never collapse onto one topic.
             assert sorted(set(topics)) == sorted(topics)
 
             expected_extractions = []
-            for record, topic in zip(records, topics):
-                source_text = record["source_text"]
+            for record, topic in zip(sampled_content, topics):
+                source_text = topic_source_text(record)
+                assert source_text is not None, record
                 # The topic is a contiguous span of its own source text ...
                 assert topic in source_text, (
                     f"topic {topic!r} must be a span of source text {source_text!r}"
@@ -1135,18 +1144,6 @@ class TestSyntheticDataAPI:
                 if item["entities"]
             ]
 
-            resp = client.post(
-                "/synthetic/generate",
-                json={
-                    "optimizer": "routing",
-                    "count": 5,
-                    "vespa_sample_size": 5,
-                    "strategy": "entity_rich",
-                    "max_profiles": 1,
-                    "tenant_id": TENANT_ID,
-                },
-            )
-
         assert resp.status_code == 200, f"Synthetic generation failed: {resp.text}"
         data = resp.json()
         assert set(data) == {
@@ -1199,13 +1196,10 @@ class TestSyntheticDataAPI:
             }
             for example in data["data"]
         ]
-        assert actual_grounded_examples == expected_grounded_examples, (
-            "Dropped entity-free topics: "
-            f"{[(item['query'], item['source_text']) for item in expected_extractions if not item['entities']]}"
-        )
-        fixture_corpus = " ".join(
+        assert actual_grounded_examples == expected_grounded_examples
+        sampled_corpus = " ".join(
             " ".join(str(value).split())
-            for result in fixture_results
+            for result in sampled_content
             for value in result["metadata"].values()
             if isinstance(value, str)
         ).casefold()
@@ -1253,7 +1247,7 @@ class TestSyntheticDataAPI:
                     }
                 )
                 assert all(
-                    entity["text"].casefold() in fixture_corpus
+                    entity["text"].casefold() in sampled_corpus
                     for entity in example["entities"]
                 )
                 entity_words = [
@@ -2193,39 +2187,8 @@ def _expected_artifact_source_url(path: Path, tenant_id: str = TENANT_ID) -> str
 
 
 def _expected_available_profile_names(tenant_id: str) -> list[str]:
-    """Return the deployed groundable backend profiles for a tenant."""
-    config = json.loads(CONFIG_PATH.read_text())
-    deployed_schemas = _vespa_deployed_schema_names()
-    if not deployed_schemas:
-        pytest.fail(
-            "Vespa deployed-schema probe returned nothing; the expected "
-            "profile list would be empty and the comparison would pass "
-            "vacuously against an equally empty response"
-        )
-    tenant_suffix = "_" + tenant_id.replace(":", "_")
-    profiles = config.get("backend", {}).get("profiles", {})
-
-    expected = []
-    for profile_name, profile_config in profiles.items():
-        schema_name = profile_config.get("schema_name")
-        if (
-            isinstance(schema_name, str)
-            and f"{schema_name}{tenant_suffix}" in deployed_schemas
-            and profile_can_ground_topic(
-                BackendProfileConfig.from_dict(profile_name, profile_config)
-            )
-        ):
-            expected.append(profile_name)
-    profile_types = _profile_type_map()
-    expected.sort(
-        key=lambda profile_name: (
-            _PROFILE_TYPE_ORDER.get(
-                profile_types.get(profile_name, ""), len(_PROFILE_TYPE_ORDER)
-            ),
-            profile_name,
-        )
-    )
-    return expected
+    """Return the tenant-usable backend profiles offered at serving time."""
+    return tenant_usable_profile_names(create_default_config_manager(), tenant_id)
 
 
 def _profile_type_map() -> dict[str, str]:
