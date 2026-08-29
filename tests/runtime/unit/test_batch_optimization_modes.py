@@ -3646,6 +3646,7 @@ class TestProfileSelectionOptimization:
                 score,
                 base_score,
                 candidate_score,
+                metric_id=None,
                 extra_ledger_fields=None,
             ):
                 state["versioned_saves"].append(
@@ -3659,6 +3660,7 @@ class TestProfileSelectionOptimization:
                         "score": score,
                         "base_score": base_score,
                         "candidate_score": candidate_score,
+                        "metric_id": metric_id,
                         "extra_ledger_fields": dict(extra_ledger_fields or {}),
                     }
                 )
@@ -5472,6 +5474,7 @@ class TestProfileSelectionOptimization:
                 "score": 1.0,
                 "base_score": 1.0,
                 "candidate_score": 1.0,
+                "metric_id": "profile_selection.recorded_label_exact_match.v1",
                 "extra_ledger_fields": {
                     "distinct_queries": 4,
                     "holdout_queries": 1,
@@ -5603,6 +5606,7 @@ class TestProfileSelectionOptimization:
                 "score": 1.0,
                 "base_score": 1.0,
                 "candidate_score": 1.0,
+                "metric_id": "profile_selection.recorded_label_exact_match.v1",
                 "extra_ledger_fields": {
                     "labels_by_profile": {
                         "video_colpali_smol500_mv_frame": 2,
@@ -5709,6 +5713,7 @@ class TestProfileSelectionOptimization:
                 "score": 0.0,
                 "base_score": 1.0,
                 "candidate_score": 0.0,
+                "metric_id": "profile_selection.recorded_label_exact_match.v1",
                 "extra_ledger_fields": {
                     "distinct_queries": 4,
                     "holdout_queries": 1,
@@ -5954,6 +5959,7 @@ class TestProfileSelectionOptimization:
                 "score": None,
                 "base_score": None,
                 "candidate_score": None,
+                "metric_id": "profile_selection.recorded_label_exact_match.v1",
                 "extra_ledger_fields": {
                     "labels_by_profile": {
                         "video_colpali_smol500_mv_frame": 2,
@@ -6469,6 +6475,7 @@ class TestEntityExtractionOptimization:
                 score,
                 base_score,
                 candidate_score,
+                metric_id=None,
                 extra_ledger_fields=None,
             ):
                 state["versioned_saves"].append(
@@ -6482,6 +6489,7 @@ class TestEntityExtractionOptimization:
                         "score": score,
                         "base_score": base_score,
                         "candidate_score": candidate_score,
+                        "metric_id": metric_id,
                         "extra_ledger_fields": dict(extra_ledger_fields or {}),
                     }
                 )
@@ -7240,6 +7248,7 @@ class TestEntityExtractionOptimization:
                 "score": 1.0,
                 "base_score": 0.0,
                 "candidate_score": 1.0,
+                "metric_id": "entity_extraction.pair_set_f1.v1",
                 "extra_ledger_fields": {},
             }
         ]
@@ -7339,6 +7348,7 @@ class TestEntityExtractionOptimization:
                 "score": 1.0,
                 "base_score": 1.0,
                 "candidate_score": 1.0,
+                "metric_id": "entity_extraction.pair_set_f1.v1",
                 "extra_ledger_fields": {},
             }
         ]
@@ -7412,6 +7422,7 @@ class TestEntityExtractionOptimization:
                 "score": 1.0,
                 "base_score": 1.0,
                 "candidate_score": 1.0,
+                "metric_id": "entity_extraction.pair_set_f1.v1",
                 "extra_ledger_fields": {},
             }
         ]
@@ -7476,6 +7487,7 @@ class TestEntityExtractionOptimization:
                 "score": 1.0,
                 "base_score": 1.0,
                 "candidate_score": 1.0,
+                "metric_id": "entity_extraction.pair_set_f1.v1",
                 "extra_ledger_fields": {},
             }
         ]
@@ -7569,6 +7581,7 @@ class TestEntityExtractionOptimization:
                 "score": None,
                 "base_score": None,
                 "candidate_score": None,
+                "metric_id": "entity_extraction.pair_set_f1.v1",
                 "extra_ledger_fields": {},
             }
         ]
@@ -7650,6 +7663,7 @@ class TestEntityExtractionOptimization:
                 "score": 1.0,
                 "base_score": 1.0,
                 "candidate_score": 1.0,
+                "metric_id": "entity_extraction.pair_set_f1.v1",
                 "extra_ledger_fields": {},
             }
         ]

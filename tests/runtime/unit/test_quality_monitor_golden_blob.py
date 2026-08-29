@@ -256,6 +256,7 @@ async def test_golden_set_update_uses_versioned_blob(monkeypatch):
             "score": None,
             "base_score": None,
             "candidate_score": None,
+            "metric_id": None,
         }
     ]
     assert stub_manager.activate_calls == [("config", "golden_set_ground_truth", 1)]

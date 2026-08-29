@@ -388,6 +388,9 @@ def _query_enhancement_pairs(spans_df) -> List[Dict[str, Any]]:
     return pairs
 
 
+QUERY_ENHANCEMENT_METRIC_ID = "query_enhancement.grounded_usable.v1"
+
+
 def _query_enhancement_quality(prediction, example) -> float | None:
     """1.0 for a usable enhancement of ``example``'s inputs, else 0.0 or None.
 
@@ -932,6 +935,9 @@ def _profile_selection_pool(available_profiles) -> list[str]:
     return [raw] if raw else []
 
 
+PROFILE_SELECTION_METRIC_ID = "profile_selection.recorded_label_exact_match.v1"
+
+
 def _profile_selection_quality(prediction, example) -> float:
     """1.0 only for the exact recorded profile inside the recorded pool."""
     selected = str(
@@ -1157,6 +1163,9 @@ def _entity_extraction_pair_set(raw: Any) -> set[tuple[str, str]]:
     return set(lines)
 
 
+ENTITY_EXTRACTION_METRIC_ID = "entity_extraction.pair_set_f1.v1"
+
+
 def _entity_extraction_quality(prediction, example) -> float:
     """Pair-set F1 over ``(casefold text, type)`` entity labels."""
     predicted_pairs = _entity_extraction_pair_set(getattr(prediction, "entities", ""))
@@ -1178,6 +1187,12 @@ def _entity_extraction_quality(prediction, example) -> float:
     recall = len(overlap) / len(recorded_pairs)
     return 2.0 * precision * recall / (precision + recall)
 
+
+OPTIMIZER_METRIC_IDS = {
+    "simba_query_enhancement": QUERY_ENHANCEMENT_METRIC_ID,
+    "profile_selection": PROFILE_SELECTION_METRIC_ID,
+    "entity_extraction": ENTITY_EXTRACTION_METRIC_ID,
+}
 
 # The current bootstrap bar is fixed at 1.0.
 ENTITY_BOOTSTRAP_METRIC_THRESHOLD = 1.0
@@ -2118,7 +2133,9 @@ async def _apply_training_selection(
     lineage = await artifact_manager.get_version_lineage("model", artifact_key)
     knobs = _training_selection_from_config(config_manager, tenant_id, optimizer_type)
     stats = confirmation_stats(
-        lineage, score_threshold=knobs.confirmation_score_threshold
+        lineage,
+        score_threshold=knobs.confirmation_score_threshold,
+        metric_id=OPTIMIZER_METRIC_IDS[optimizer_type],
     )
     pool = len(train_records)
     if embedder_url is None and pool > knobs.trainset_cap:
@@ -3592,6 +3609,7 @@ async def run_simba_optimization(
             score=None,
             base_score=None,
             candidate_score=None,
+            metric_id=QUERY_ENHANCEMENT_METRIC_ID,
         )
         return {
             "status": "insufficient_population",
@@ -3751,6 +3769,7 @@ async def run_simba_optimization(
         score=candidate_score,
         base_score=baseline_score,
         candidate_score=candidate_score,
+        metric_id=QUERY_ENHANCEMENT_METRIC_ID,
     )
     if decision in ("promote", "rollback"):
         await artifact_manager.activate_version("model", SIMBA_ARTIFACT_KEY, version)
@@ -4532,6 +4551,7 @@ async def run_profile_optimization(
             score=None,
             base_score=None,
             candidate_score=None,
+            metric_id=PROFILE_SELECTION_METRIC_ID,
             extra_ledger_fields=result_distribution,
         )
         return {
@@ -4668,6 +4688,7 @@ async def run_profile_optimization(
         score=candidate_score,
         base_score=baseline_score,
         candidate_score=candidate_score,
+        metric_id=PROFILE_SELECTION_METRIC_ID,
         extra_ledger_fields=result_distribution,
     )
     if decision in ("promote", "rollback"):
@@ -4828,6 +4849,7 @@ async def run_entity_extraction_optimization(
             score=None,
             base_score=None,
             candidate_score=None,
+            metric_id=ENTITY_EXTRACTION_METRIC_ID,
         )
         return {
             "status": "insufficient_population",
@@ -4970,6 +4992,7 @@ async def run_entity_extraction_optimization(
         score=candidate_score,
         base_score=baseline_score,
         candidate_score=candidate_score,
+        metric_id=ENTITY_EXTRACTION_METRIC_ID,
     )
     if decision in ("promote", "rollback"):
         await artifact_manager.activate_version("model", "entity_extraction", version)

@@ -18,6 +18,9 @@ from cogniverse_telemetry_phoenix.provider import PhoenixProvider
 
 pytestmark = pytest.mark.integration
 
+# Any stable id: the ledger only has to say which metric produced a score.
+METRIC_ID = "query_enhancement.grounded_usable.v1"
+
 
 @pytest.fixture
 def manager(phoenix_container) -> ArtifactManager:
@@ -46,6 +49,7 @@ async def test_save_blob_versioned_records_consumed_ids(manager, phoenix_contain
         score=0.55,
         base_score=0.6,
         candidate_score=0.55,
+        metric_id=METRIC_ID,
     )
 
     assert version == 1
@@ -75,6 +79,7 @@ async def test_save_blob_versioned_records_consumed_ids(manager, phoenix_contain
     assert lineage[0]["score"] == 0.55
     assert lineage[0]["base_score"] == 0.6
     assert lineage[0]["candidate_score"] == 0.55
+    assert lineage[0]["metric_id"] == METRIC_ID
     assert lineage[0]["created_at"].endswith("+00:00")
 
     content, ledger = await manager.load_blob_version(
@@ -165,6 +170,7 @@ async def test_save_blob_versioned_round_trips_score_for_other_optimizers(
         score=score,
         base_score=base_score,
         candidate_score=score,
+        metric_id=METRIC_ID,
     )
 
     assert version == 1
@@ -186,6 +192,7 @@ async def test_save_blob_versioned_round_trips_score_for_other_optimizers(
     assert lineage[0]["score"] == score
     assert lineage[0]["base_score"] == base_score
     assert lineage[0]["candidate_score"] == score
+    assert lineage[0]["metric_id"] == METRIC_ID
     assert lineage[0]["created_at"].endswith("+00:00")
 
     content_value, ledger = await manager.load_blob_version("model", key, 1)
@@ -208,6 +215,7 @@ async def test_activate_version_switches_active_blob(manager):
         scored=True,
         base_score=0.5,
         candidate_score=0.7,
+        metric_id=METRIC_ID,
     )
     _, v2 = await manager.save_blob_versioned(
         "model",
@@ -218,6 +226,7 @@ async def test_activate_version_switches_active_blob(manager):
         scored=True,
         base_score=0.5,
         candidate_score=0.8,
+        metric_id=METRIC_ID,
     )
     assert (v1, v2) == (1, 2)
 
@@ -240,6 +249,7 @@ async def test_activate_version_switches_active_blob(manager):
         scored=True,
         base_score=0.5,
         candidate_score=0.4,
+        metric_id=METRIC_ID,
     )
     assert v3 == 3
     assert [e["version"] for e in await manager.get_version_lineage("model", key)] == [
@@ -269,6 +279,7 @@ async def test_activate_missing_version_raises_and_leaves_active_untouched(manag
         scored=True,
         base_score=0.5,
         candidate_score=0.7,
+        metric_id=METRIC_ID,
     )
     await manager.activate_version("model", key, 1)
 
@@ -299,6 +310,7 @@ async def test_save_blob_versioned_rejects_unattributable_input(manager):
                 scored=True,
                 base_score=0.5,
                 candidate_score=0.7,
+                metric_id=METRIC_ID,
             )
         assert str(err.value) == message
 
@@ -312,6 +324,7 @@ async def test_save_blob_versioned_rejects_unattributable_input(manager):
             scored=True,
             base_score=0.5,
             candidate_score=0.7,
+            metric_id=METRIC_ID,
         )
     assert str(err.value) == (
         "decision must be one of ['insufficient_population', 'keep', 'promote', "
