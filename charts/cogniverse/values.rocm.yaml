@@ -92,7 +92,9 @@ inference:
         memory: "6Gi"
 
   vllm_llm_student:
-    enabled: true
+    # Served on Modal (H100). Local gfx1151 cannot hold both chat models
+    # beside the embedders, and NVIDIA serves them 5x faster sequentially.
+    enabled: false
     device: rocm
     gpuCount: 1
     imagesByDevice: *vllmRocmImage
@@ -141,7 +143,10 @@ inference:
   # the pool with it. Required by the DSPy compile path, which builds
   # teacher_settings for every optimization job.
   vllm_llm_teacher:
-    enabled: true
+    # Served on Modal (H100). Local gfx1151 cannot hold both chat models
+    # beside the embedders, and NVIDIA serves them 5x faster sequentially.
+    enabled: false
+    externalUrl: "https://amit-jain--cogniverse-vllm-llm-teacher-inference.modal.run"
     replicaCount: 1
     device: rocm
     gpuCount: 1
@@ -210,6 +215,10 @@ inference:
         memory: "4Gi"
 
 runtime:
+  primaryLLM:
+    # Served on Modal (H100); the local gfx1151 cannot hold both chat models
+    # beside the embedders, and NVIDIA serves them ~5x faster sequentially.
+    apiBase: "https://amit-jain--cogniverse-vllm-llm-student-inference.modal.run/v1"
   backend: rocm
   tunableOp: true
 

@@ -984,3 +984,61 @@ def test_external_url_on_the_student_llm_fails_the_render():
     # start lying the moment the service is enabled.
     with pytest.raises(AssertionError, match="runtime.primaryLLM"):
         _render("inference.vllm_llm_student.externalUrl=https://amit--llm.modal.run")
+
+
+def test_every_inference_service_can_be_pointed_off_cluster():
+    """A service with no off-cluster hook cannot be moved to Modal at all.
+
+    Every service uses ``externalUrl`` except the student, whose endpoint is
+    derived from ``runtime.primaryLLM.apiBase`` — the chart fails the render if
+    ``inference.vllm_llm_student.externalUrl`` is set, so it must not have one.
+    """
+    values = yaml.safe_load((CHART_PATH / "values.yaml").read_text())["inference"]
+    services = {
+        name: block
+        for name, block in values.items()
+        if isinstance(block, dict) and "enabled" in block
+    }
+
+    without_hook = sorted(n for n, b in services.items() if "externalUrl" not in b)
+
+    assert without_hook == ["vllm_llm_student"], without_hook
+
+
+def test_external_url_survives_disabling_the_local_pod():
+    """Moving a service to Modal means: point the client there AND stop running
+    the pod. ``enabled`` governs the pod, ``externalUrl`` governs the client, so
+    disabling one must not silently discard the other.
+    """
+    docs = _render(
+        "inference.vllm_llm_teacher.enabled=false",
+        "inference.vllm_llm_teacher.externalUrl=https://teacher.example.modal.run",
+    )
+
+    assert "cogniverse-vllm-llm-teacher" not in _inference_deployments(docs)
+    assert _teacher_api_base(docs) == "https://teacher.example.modal.run/v1"
+
+
+def test_disabled_external_service_still_consumes_the_bearer_secret():
+    docs = _render(
+        "inference.vllm_llm_teacher.enabled=false",
+        "inference.vllm_llm_teacher.externalUrl=https://teacher.example.modal.run",
+    )
+    runtime = next(
+        d
+        for d in docs
+        if d.get("kind") == "Deployment"
+        and d["metadata"]["name"] == "cogniverse-runtime"
+    )
+    container = next(
+        c
+        for c in runtime["spec"]["template"]["spec"]["containers"]
+        if c["name"] == "runtime"
+    )
+    env = {e["name"]: e for e in container["env"]}
+
+    assert env["COGNIVERSE_INFERENCE_API_KEY"]["valueFrom"]["secretKeyRef"] == {
+        "name": "cogniverse-inference-api-key",
+        "key": "COGNIVERSE_INFERENCE_API_KEY",
+        "optional": False,
+    }

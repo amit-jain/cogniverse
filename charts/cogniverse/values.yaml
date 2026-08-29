@@ -1439,6 +1439,7 @@ inference:
 
   vllm_llm_teacher:
     enabled: false
+    externalUrl: ""
     engine: vllm_chat
     type: chat
     # AWQ-INT4 Qwen3 14B (9.3 GiB of weights). Dense, so its activation
