@@ -14,6 +14,15 @@ INTERVAL="${INTERVAL:-60}"
 VESPA_CFG="${VESPA_CFG:-http://localhost:19071}"
 RUNTIME="${RUNTIME:-http://localhost:28000}"
 BATCH_LOG="${BATCH_LOG:-/tmp/cogniverse_e2e_runs/batch2.log}"
+REPO_ROOT="${REPO_ROOT:-$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)}"
+KUBECTL_CONTEXT="$(
+  cd "$REPO_ROOT" || exit 1
+  uv run python - <<'PY'
+from tests.e2e.conftest import KUBECTL_CONTEXT
+
+print(KUBECTL_CONTEXT)
+PY
+)"
 
 mkdir -p "$(dirname "$OUT")"
 echo "snapshot → $OUT (interval=${INTERVAL}s)" >&2
@@ -31,7 +40,7 @@ except Exception:
     print(-1)" 2>/dev/null || echo -1)"
 
   # Runtime pod name + age + restart count
-  pod_json="$(kubectl -n cogniverse get pods -o json 2>/dev/null \
+  pod_json="$(kubectl --context "$KUBECTL_CONTEXT" -n cogniverse get pods -o json 2>/dev/null \
     | python3 -c "import json,sys
 try:
     d=json.load(sys.stdin)

@@ -3,11 +3,14 @@
 from __future__ import annotations
 
 import ast
+import re
 from pathlib import Path
 
 import tests.e2e.conftest as e2e_conftest
 
-E2E_ROOT = Path(__file__).resolve().parents[2] / "e2e"
+REPO_ROOT = Path(__file__).resolve().parents[3]
+E2E_ROOT = REPO_ROOT / "tests" / "e2e"
+SCRIPTS_ROOT = REPO_ROOT / "scripts"
 
 
 # A kubectl invocation is exempt only when the command itself targets the
@@ -124,10 +127,61 @@ def _kubectl_context_violations() -> list[tuple[Path, int, str]]:
     return violations
 
 
+def _shell_logical_statements(path: Path) -> list[tuple[int, str]]:
+    statements: list[tuple[int, str]] = []
+    start_lineno: int | None = None
+    pending: list[str] = []
+
+    for lineno, raw in enumerate(path.read_text().splitlines(), start=1):
+        line = raw.rstrip()
+        if start_lineno is None:
+            start_lineno = lineno
+        if line.endswith("\\"):
+            pending.append(line[:-1])
+            continue
+        pending.append(line)
+        statement = " ".join(part.strip() for part in pending).strip()
+        if statement and not statement.lstrip().startswith("#"):
+            statements.append((start_lineno, statement))
+        start_lineno = None
+        pending = []
+
+    if pending:
+        statement = " ".join(part.strip() for part in pending).strip()
+        if statement and not statement.lstrip().startswith("#"):
+            statements.append((start_lineno or 1, statement))
+
+    return statements
+
+
+def _shell_kubectl_context_violations() -> list[tuple[Path, int, str]]:
+    violations: list[tuple[Path, int, str]] = []
+    for path in sorted(SCRIPTS_ROOT.rglob("*.sh")):
+        for lineno, statement in _shell_logical_statements(path):
+            if "kubectl" not in statement:
+                continue
+            if re.search(r"\bkubectl\s+config\b", statement):
+                continue
+            if (
+                re.search(r"\bkubectl\s+version\b", statement)
+                and "--client" in statement
+            ):
+                continue
+            if re.search(r"\bk3d-[A-Za-z0-9_.-]+\b", statement):
+                violations.append((path, lineno, "hardcodes a kubectl context literal"))
+                continue
+            if "--context" not in statement:
+                violations.append(
+                    (path, lineno, "omits --context on a kubectl invocation")
+                )
+
+    return violations
+
+
 def test_e2e_kubectl_invocations_use_shared_context():
-    violations = _kubectl_context_violations()
+    violations = _kubectl_context_violations() + _shell_kubectl_context_violations()
     assert not violations, "\n".join(
-        f"{path.relative_to(E2E_ROOT.parent)}:{line}: {message}"
+        f"{path.relative_to(REPO_ROOT)}:{line}: {message}"
         for path, line, message in violations
     )
 

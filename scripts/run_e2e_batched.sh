@@ -50,6 +50,15 @@ elif [[ -d "$REPO_ROOT/.env" ]]; then
 fi
 # <<< e2e-env-loader
 
+KUBECTL_CONTEXT="$(
+  cd "$REPO_ROOT" || exit 1
+  uv run python - <<'PY'
+from tests.e2e.conftest import KUBECTL_CONTEXT
+
+print(KUBECTL_CONTEXT)
+PY
+)"
+
 # Only one e2e run may touch the cluster at a time. Concurrent runs multiply
 # concurrent LM/ingestion load on a serving stack whose memory scales with it;
 # on this unified-memory host the GPU pool is pinned and unswappable, so the
@@ -125,7 +134,8 @@ _e2e_inference_teardown_gtt_bytes() {
 _e2e_prepare_inference_teardown() {
   local deployment_rows component name replicas
   deployment_rows="$(
-    kubectl get deploy -n "$NS" -l app.kubernetes.io/instance=cogniverse \
+    kubectl --context "$KUBECTL_CONTEXT" get deploy -n "$NS" \
+      -l app.kubernetes.io/instance=cogniverse \
       -o jsonpath='{range .items[*]}{.metadata.labels.app\.kubernetes\.io/component}{"\t"}{.metadata.name}{"\t"}{.spec.replicas}{"\n"}{end}'
   )"
   while IFS=$'\t' read -r component name replicas; do
@@ -138,7 +148,8 @@ _e2e_prepare_inference_teardown() {
 _e2e_teardown_inference_deployments() {
   local deployment
   for deployment in "${E2E_INFERENCE_DEPLOYMENTS_TO_TEAR_DOWN[@]}"; do
-    kubectl scale deployment "$deployment" -n "$NS" --replicas=0 >/dev/null 2>&1 \
+    kubectl --context "$KUBECTL_CONTEXT" scale deployment "$deployment" \
+      -n "$NS" --replicas=0 >/dev/null 2>&1 \
       || true
   done
 }
@@ -253,7 +264,8 @@ E2E_BATCH_UNCOVERED=(
 
 wait_runtime_ready() {
   echo "waiting for runtime 2/2 Running..."
-  until kubectl get pods -n "$NS" -l app.kubernetes.io/component=runtime --no-headers 2>/dev/null \
+  until kubectl --context "$KUBECTL_CONTEXT" get pods -n "$NS" \
+      -l app.kubernetes.io/component=runtime --no-headers 2>/dev/null \
       | awk '$2=="2/2" && $3=="Running"' | grep -q .; do
     sleep 5
   done
@@ -268,7 +280,8 @@ wait_runtime_ready() {
 
 restart_runtime() {
   echo "restarting runtime pod to reset memory baseline..."
-  kubectl delete pod -n "$NS" -l app.kubernetes.io/component=runtime --wait=false >/dev/null
+  kubectl --context "$KUBECTL_CONTEXT" delete pod -n "$NS" \
+    -l app.kubernetes.io/component=runtime --wait=false >/dev/null
   wait_runtime_ready
 }
 

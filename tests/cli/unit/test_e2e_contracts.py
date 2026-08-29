@@ -16,7 +16,7 @@ import pytest
 import tests.e2e.test_manual_optimization_e2e as manual_optimization
 import tests.e2e.test_messaging_e2e as messaging
 import tests.e2e.test_quality_monitor_e2e as quality_monitor
-from tests.e2e.conftest import _telegram_real_flow_deselections
+from tests.e2e.conftest import KUBECTL_CONTEXT, _telegram_real_flow_deselections
 
 
 class _FakeItem:
@@ -345,6 +345,17 @@ def _e2e_inference_teardown_block() -> str:
     ]
 
 
+def _e2e_cleanup_body() -> str:
+    block = _e2e_inference_teardown_block()
+    match = re.search(
+        r"_e2e_cleanup\(\) \{\n(?P<body>.*?)\n\}\n\ntrap _e2e_cleanup EXIT",
+        block,
+        re.S,
+    )
+    assert match, "run_e2e_batched.sh carries no cleanup function body"
+    return match.group("body")
+
+
 def _run_lock(lock_file, scan_pattern, trailer='echo "ACQUIRED $$"'):
     script = "set -euo pipefail\n" + _e2e_run_lock_block() + "\n" + trailer + "\n"
     return subprocess.run(
@@ -493,13 +504,12 @@ _HARDCODED_INFERENCE_DEPLOYMENTS = {
 def test_run_e2e_batched_script_derives_inference_deployments_from_live_labels():
     block = _e2e_inference_teardown_block()
 
-    assert (
-        'kubectl get deploy -n "$NS" -l app.kubernetes.io/instance=cogniverse' in block
-    )
+    assert 'kubectl --context "$KUBECTL_CONTEXT" get deploy -n "$NS"' in block
     assert ".metadata.labels.app\\.kubernetes\\.io/component" in block
     assert "while IFS=$'\\t' read -r component name replicas;" in block
     assert '[[ "$component" == inference-* ]] || continue' in block
     assert 'E2E_INFERENCE_DEPLOYMENTS_TO_TEAR_DOWN+=("$name")' in block
+    assert block.count('--context "$KUBECTL_CONTEXT"') == 2
     assert _HARDCODED_INFERENCE_DEPLOYMENTS.isdisjoint(
         set(re.findall(r"cogniverse-[a-z0-9-]+", block))
     ), block
@@ -515,6 +525,9 @@ def test_run_e2e_batched_script_tears_down_only_cold_inference_deployments_and_k
         bin_dir / "kubectl",
         f"""#!/usr/bin/env bash
 set -euo pipefail
+if [[ "${{1:-}}" == "--context" ]]; then
+  shift 2
+fi
 case "${{1:-}} ${{2:-}}" in
   "get deploy")
     printf '%b\n' \
@@ -549,6 +562,7 @@ exit 0
         "set -euo pipefail\n"
         f'export PATH="{bin_dir}:$PATH"\n'
         "export NS=cogniverse\n"
+        f"export KUBECTL_CONTEXT={KUBECTL_CONTEXT!r}\n"
         f'_e2e_release_lock() {{ printf "LOCK_RELEASED\\n" > {str(lock_file)!r}; }}\n'
         + _e2e_inference_teardown_block()
         + "\n"
@@ -556,7 +570,11 @@ exit 0
     )
     done = subprocess.run(
         ["bash", "-c", script],
-        env={**os.environ, "E2E_LOCK_SCAN_PATTERN": _never_matches()},
+        env={
+            **os.environ,
+            "E2E_LOCK_SCAN_PATTERN": _never_matches(),
+            "KUBECTL_CONTEXT": KUBECTL_CONTEXT,
+        },
         capture_output=True,
         text=True,
     )
@@ -578,6 +596,19 @@ def test_run_e2e_batched_script_teardown_traps_exit_and_reports_gtt_from_card_gl
     assert 'exit "$rc"' in block
     assert "/sys/class/drm/card*/device/mem_info_gtt_used" in block
     assert not re.search(r"/sys/class/drm/card[0-9]+/device/mem_info_gtt_used", block)
+
+
+def test_run_e2e_batched_script_exit_cleanup_releases_the_lock():
+    cleanup = _e2e_cleanup_body()
+
+    assert "trap - EXIT INT TERM" in cleanup
+    assert "_e2e_teardown_inference_deployments" in cleanup
+    assert "_e2e_release_lock" in cleanup
+    assert (
+        cleanup.index("_e2e_teardown_inference_deployments")
+        < cleanup.index("_e2e_release_lock")
+        < cleanup.index('exit "$rc"')
+    )
 
 
 _E2E_BATCH_EXCLUSIONS_START = "# >>> e2e-batch-exclusions"
