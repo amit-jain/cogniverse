@@ -8,16 +8,18 @@ from pathlib import Path
 import tests.e2e.conftest as e2e_conftest
 
 E2E_ROOT = Path(__file__).resolve().parents[2] / "e2e"
-KUBECTL_CONTEXT_EXEMPTIONS: dict[tuple[str, int], str] = {
-    (
-        "e2e/test_annotation_feedback_e2e.py",
-        62,
-    ): "kubectl version --client only checks the client binary",
-    (
-        "e2e/test_coding_cli_e2e.py",
-        65,
-    ): "kubectl config current-context inspects the active local selection",
-}
+
+
+# A kubectl invocation is exempt only when the command itself targets the
+# local machine rather than a cluster, so the exemption travels with the
+# command instead of a line number that any edit above it would shift onto
+# an unrelated call.
+def _is_host_local_kubectl(literals: set[str]) -> str | None:
+    if "config" in literals:
+        return "kubectl config inspects the local kubeconfig, not a cluster"
+    if "version" in literals and "--client" in literals:
+        return "kubectl version --client only checks the client binary"
+    return None
 
 
 def _constant_string(node: ast.AST) -> str | None:
@@ -106,8 +108,7 @@ def _kubectl_context_violations() -> list[tuple[Path, int, str]]:
                 ]
                 if "kubectl" not in literal_strings:
                     continue
-                rel_path = str(path.relative_to(E2E_ROOT.parent))
-                exemption = KUBECTL_CONTEXT_EXEMPTIONS.get((rel_path, node.lineno))
+                exemption = _is_host_local_kubectl(literal_strings)
                 if exemption is not None:
                     continue
                 if any(literal.startswith("k3d-") for literal in literal_strings):
