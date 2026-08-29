@@ -10,16 +10,19 @@ from pathlib import Path
 
 import pytest
 
+import cogniverse_synthetic.backend_querier as backend_querier_module
 from cogniverse_foundation.config.unified_config import (
     BackendConfig,
     BackendProfileConfig,
     FieldMappingConfig,
 )
+from cogniverse_sdk.document import DocumentFieldMapping
 from cogniverse_synthetic.backend_querier import BackendQuerier
 
 pytestmark = [pytest.mark.unit]
 
 _REPO_ROOT = Path(__file__).resolve().parents[4]
+_SCHEMAS_DIR = _REPO_ROOT / "configs" / "schemas"
 _SHIPPED_BACKEND_PROFILES = json.loads(
     (_REPO_ROOT / "configs" / "config.json").read_text(encoding="utf-8")
 )["backend"]["profiles"]
@@ -176,6 +179,7 @@ def test_backend_samples_propagate_exact_keyword_free_profile_modality() -> None
             "start_time": 0.0,
             "end_time": 0.0,
             "video_id": "",
+            "source_id": "",
             "segment_id": 0,
             "creation_timestamp": None,
             "schema_name": "alpha",
@@ -191,6 +195,66 @@ def test_backend_samples_propagate_exact_keyword_free_profile_modality() -> None
             },
         }
     ]
+
+
+def test_schema_source_identity_field_matches_document_mapping_id() -> None:
+    for schema_path in sorted(_SCHEMAS_DIR.glob("*_schema.json")):
+        schema_name = schema_path.stem.removesuffix("_schema")
+        schema_json = json.loads(schema_path.read_text(encoding="utf-8"))
+        mapping = DocumentFieldMapping.from_schema_json(
+            schema_json, schema_name=schema_name, required=False
+        )
+        expected_source_id = None if mapping is None else mapping.id
+
+        assert (
+            backend_querier_module._schema_source_identity_field(schema_name)
+            == expected_source_id
+        )
+
+
+@pytest.mark.asyncio
+async def test_diverse_sampling_round_robins_blank_topics_by_schema_identity() -> None:
+    backend = _RecordingBackend(
+        [
+            {
+                "code_id": "source-a",
+                "segment_id": 1,
+                "chunk_name": "",
+                "source_code": "",
+            },
+            {
+                "code_id": "source-a",
+                "segment_id": 2,
+                "chunk_name": "",
+                "source_code": "",
+            },
+            {
+                "code_id": "source-b",
+                "segment_id": 3,
+                "chunk_name": "",
+                "source_code": "",
+            },
+        ]
+    )
+    querier = _querier(backend)
+
+    samples = await querier._query_profile(
+        {
+            "profile_name": "code_lateon_mv",
+            "schema_name": "code_lateon_mv",
+            "type": "code",
+        },
+        sample_size=3,
+        strategy="diverse",
+        tenant_id="acme:media",
+    )
+
+    assert [sample["source_id"] for sample in samples] == [
+        "source-a",
+        "source-b",
+        "source-a",
+    ]
+    assert [sample["segment_id"] for sample in samples] == [1, 3, 2]
 
 
 async def test_query_profile_grounds_samples_without_duplicate_kwarg() -> None:

@@ -2102,7 +2102,6 @@ _SAMPLED_CONTENT_METADATA_FIELDS = frozenset(
         "source_id",
         "segment_id",
         "description",
-        "source_text",
     }
 )
 
@@ -2161,7 +2160,7 @@ def _assert_synthetic_metadata_fields(
     for record in sampled_content:
         assert isinstance(record, dict), record
         assert set(record) == _SAMPLED_CONTENT_METADATA_FIELDS, record
-        assert record["description"] == record["source_text"]
+        assert len(record) == len(_SAMPLED_CONTENT_METADATA_FIELDS), record
         assert record["profile_name"].strip() != ""
         assert record["schema_name"].strip() != ""
         assert record["source_id"].strip() != ""

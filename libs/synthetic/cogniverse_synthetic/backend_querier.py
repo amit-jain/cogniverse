@@ -7,6 +7,7 @@ Uses Backend interface for backend-agnostic querying.
 """
 
 import asyncio
+import json
 import logging
 import time
 from typing import Any, Dict, List
@@ -19,11 +20,27 @@ from cogniverse_foundation.config.unified_config import (
     BackendConfig,
     FieldMappingConfig,
 )
+from cogniverse_sdk.document import DocumentFieldMapping
 from cogniverse_sdk.interfaces.backend import Backend
+from cogniverse_vespa.metadata_schemas import get_schemas_dir
 
 logger = logging.getLogger(__name__)
 
 DIVERSE_CANDIDATE_MULTIPLIER = 5
+
+
+def _schema_source_identity_field(schema_name: str) -> str | None:
+    """Return the schema's declared source identity field, or None."""
+    schema_path = get_schemas_dir() / f"{schema_name}_schema.json"
+    if not schema_path.exists():
+        return None
+    schema_json = json.loads(schema_path.read_text(encoding="utf-8"))
+    mapping = DocumentFieldMapping.from_schema_json(
+        schema_json, schema_name=schema_name, required=False
+    )
+    if mapping is None or not mapping.id:
+        return None
+    return mapping.id
 
 
 class BackendQuerier:
@@ -153,6 +170,13 @@ class BackendQuerier:
         base_schema_name = profile_config.get("schema_name")
         if not isinstance(base_schema_name, str) or not base_schema_name.strip():
             raise ValueError("profile_config requires a non-empty schema_name")
+        source_id_field = _schema_source_identity_field(base_schema_name)
+        if source_id_field is None:
+            logger.warning(
+                "Schema %r declares no document_mapping.id; sampled source_id "
+                "and source collapse key fall back to blank strings",
+                base_schema_name,
+            )
         entity_fields = (
             self._entity_rich_fields(profile_config)
             if strategy == "entity_rich"
@@ -223,9 +247,17 @@ class BackendQuerier:
                 offset += query_size
 
             if strategy == "diverse":
-                results = self._spread_across_sources(results, sample_size)
+                results = self._spread_across_sources(
+                    results,
+                    sample_size,
+                    source_id_field=source_id_field,
+                )
             results = results[:sample_size]
-            samples = self._extract_fields_from_results(results, profile_config)
+            samples = self._extract_fields_from_results(
+                results,
+                profile_config,
+                source_id_field=source_id_field,
+            )
             logger.info(f"Retrieved {len(samples)} samples from {schema_name}")
             return samples
 
@@ -327,39 +359,33 @@ class BackendQuerier:
             return profile_name
         return f"profile[{index}]"
 
-    def _source_key(self, document: Dict[str, Any]) -> str:
+    def _source_key(
+        self, document: Dict[str, Any], source_id_field: str | None = None
+    ) -> str:
         for field_name in self.field_mappings.topic_fields:
             value = document.get(field_name)
             if isinstance(value, str) and value.strip():
                 return value
-        for field_name in (
-            "video_id",
-            "source_id",
-            "document_id",
-            "image_id",
-            "audio_id",
-        ):
-            value = document.get(field_name)
+        if source_id_field:
+            value = document.get(source_id_field)
             if isinstance(value, str) and value.strip():
                 return value
         return ""
 
     @staticmethod
-    def _source_id(document: Dict[str, Any]) -> str:
-        for field_name in (
-            "source_id",
-            "video_id",
-            "document_id",
-            "image_id",
-            "audio_id",
-        ):
-            value = document.get(field_name)
+    def _source_id(document: Dict[str, Any], source_id_field: str | None = None) -> str:
+        if source_id_field:
+            value = document.get(source_id_field)
             if isinstance(value, str) and value.strip():
                 return value
         return ""
 
     def _spread_across_sources(
-        self, documents: List[Dict[str, Any]], sample_size: int
+        self,
+        documents: List[Dict[str, Any]],
+        sample_size: int,
+        *,
+        source_id_field: str | None = None,
     ) -> List[Dict[str, Any]]:
         """Round-robin across distinct sources so one source cannot fill the sample.
 
@@ -368,7 +394,9 @@ class BackendQuerier:
         """
         grouped: Dict[str, List[Dict[str, Any]]] = {}
         for document in documents:
-            grouped.setdefault(self._source_key(document), []).append(document)
+            grouped.setdefault(self._source_key(document, source_id_field), []).append(
+                document
+            )
 
         spread: List[Dict[str, Any]] = []
         while len(spread) < sample_size and any(grouped.values()):
@@ -405,7 +433,11 @@ class BackendQuerier:
         return fields
 
     def _extract_fields_from_results(
-        self, results: List[Dict[str, Any]], profile_config: Dict[str, Any]
+        self,
+        results: List[Dict[str, Any]],
+        profile_config: Dict[str, Any],
+        *,
+        source_id_field: str | None = None,
     ) -> List[Dict[str, Any]]:
         """
         Extract relevant fields from backend query results using field mappings
@@ -462,7 +494,7 @@ class BackendQuerier:
                     sample[semantic_name] = doc[field_name]
 
             sample["video_id"] = doc.get("video_id", doc.get("source_id", ""))
-            sample["source_id"] = self._source_id(doc)
+            sample["source_id"] = self._source_id(doc, source_id_field)
             sample["segment_id"] = doc.get("segment_id", 0)
             sample["creation_timestamp"] = doc.get("creation_timestamp")
 

@@ -512,7 +512,7 @@ class SyntheticDataService:
     ) -> List[Dict[str, Any]]:
         traced_content: List[Dict[str, Any]] = []
         for item in sampled_content:
-            source_text = topic_source_text(item) or ""
+            description = topic_source_text(item) or ""
             source_id = item.get("source_id", "")
             if not isinstance(source_id, str) or not source_id.strip():
                 source_id = ""
@@ -522,8 +522,7 @@ class SyntheticDataService:
                     "schema_name": item.get("schema_name", ""),
                     "source_id": source_id,
                     "segment_id": item.get("segment_id", 0),
-                    "description": source_text,
-                    "source_text": source_text,
+                    "description": description,
                 }
             )
         return traced_content
