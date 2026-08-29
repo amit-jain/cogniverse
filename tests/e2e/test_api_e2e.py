@@ -1008,7 +1008,7 @@ class TestSyntheticDataAPI:
         assert [example["query"] for example in data["data"]] == [
             f"find a video frame showing {topic}" for topic in topics
         ], [
-            (example["query"], record["source_text"])
+            (example["query"], record["description"])
             for example, record in zip(data["data"], sampled_content, strict=True)
         ]
 

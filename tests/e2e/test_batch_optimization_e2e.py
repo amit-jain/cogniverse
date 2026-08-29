@@ -37,6 +37,7 @@ from cogniverse_agents.optimizer.artifact_manager import BLOB_VERSION_DECISIONS
 from cogniverse_agents.query_enhancement_agent import QueryEnhancementModule
 from cogniverse_agents.routing.orchestration_evaluator import OrchestrationEvaluator
 from cogniverse_foundation.telemetry.config import SPAN_NAME_ORCHESTRATION
+from cogniverse_runtime.optimization_cli import OPTIMIZER_METRIC_IDS
 from tests.e2e.conftest import (
     EVALUATION_QUERY_ASSET,
     GATEWAY_VIDEO_QUERIES,
@@ -3413,8 +3414,10 @@ def _assert_simba_served_the_best_module(result: dict, blob_before: str) -> dict
         "score",
         "base_score",
         "candidate_score",
+        "metric_id",
         "created_at",
     }, ledger
+    assert ledger["metric_id"] == OPTIMIZER_METRIC_IDS[ledger["key"]], ledger
     assert ledger["version"] == version, ledger
     assert ledger["kind"] == "model", ledger
     assert ledger["key"] == "simba_query_enhancement", ledger
@@ -3703,8 +3706,10 @@ class TestSimbaSelectionCap:
             "score",
             "base_score",
             "candidate_score",
+            "metric_id",
             "created_at",
         }, ledger
+        assert ledger["metric_id"] == OPTIMIZER_METRIC_IDS[ledger["key"]], ledger
         assert ledger["version"] == result["version"], ledger
         assert ledger["kind"] == "model", ledger
         assert ledger["key"] == "simba_query_enhancement", ledger
@@ -3823,6 +3828,7 @@ class TestProfileOptimization:
             "score",
             "base_score",
             "candidate_score",
+            "metric_id",
             "created_at",
             "labels_by_profile",
             "dominant_label_share",
@@ -3830,6 +3836,7 @@ class TestProfileOptimization:
             "distinct_queries",
             "holdout_queries",
         }, ledger
+        assert ledger["metric_id"] == OPTIMIZER_METRIC_IDS[ledger["key"]], ledger
         assert ledger["dominant_label_share"] == result["dominant_label_share"], ledger
         assert ledger["distinct_queries"] == result["distinct_queries"], ledger
         assert ledger["holdout_queries"] == result["holdout_queries"], ledger
@@ -3946,6 +3953,7 @@ class TestProfileOptimization:
             "score",
             "base_score",
             "candidate_score",
+            "metric_id",
             "created_at",
             "labels_by_profile",
             "dominant_label_share",
@@ -3953,6 +3961,7 @@ class TestProfileOptimization:
             "distinct_queries",
             "holdout_queries",
         }, ledger
+        assert ledger["metric_id"] == OPTIMIZER_METRIC_IDS[ledger["key"]], ledger
         assert ledger["dominant_label_share"] == result["dominant_label_share"], ledger
         assert ledger["distinct_queries"] == result["distinct_queries"], ledger
         assert ledger["holdout_queries"] == result["holdout_queries"], ledger
@@ -4106,6 +4115,7 @@ class TestProfileSelectionArtifactReload:
             "score",
             "base_score",
             "candidate_score",
+            "metric_id",
             "created_at",
             "labels_by_profile",
             "dominant_label_share",
@@ -4113,6 +4123,7 @@ class TestProfileSelectionArtifactReload:
             "distinct_queries",
             "holdout_queries",
         }, ledger
+        assert ledger["metric_id"] == OPTIMIZER_METRIC_IDS[ledger["key"]], ledger
         assert ledger["dominant_label_share"] == result["dominant_label_share"], ledger
         assert ledger["distinct_queries"] == result["distinct_queries"], ledger
         assert ledger["holdout_queries"] == result["holdout_queries"], ledger
@@ -4452,8 +4463,10 @@ class TestEntityExtractionOptimization:
             "score",
             "base_score",
             "candidate_score",
+            "metric_id",
             "created_at",
         }, ledger
+        assert ledger["metric_id"] == OPTIMIZER_METRIC_IDS[ledger["key"]], ledger
         assert ledger["version"] == result["version"], ledger
         assert ledger["kind"] == "model", ledger
         assert ledger["key"] == "entity_extraction", ledger
@@ -4978,6 +4991,7 @@ class TestArtifactLoadingRoundTrip:
             "score",
             "base_score",
             "candidate_score",
+            "metric_id",
             "created_at",
             "labels_by_profile",
             "dominant_label_share",
@@ -4985,6 +4999,7 @@ class TestArtifactLoadingRoundTrip:
             "distinct_queries",
             "holdout_queries",
         }, ledger
+        assert ledger["metric_id"] == OPTIMIZER_METRIC_IDS[ledger["key"]], ledger
         assert ledger["dominant_label_share"] == result["dominant_label_share"], ledger
         assert ledger["distinct_queries"] == result["distinct_queries"], ledger
         assert ledger["holdout_queries"] == result["holdout_queries"], ledger
@@ -6073,8 +6088,10 @@ class TestTrainingSelectionDecay:
             "score",
             "base_score",
             "candidate_score",
+            "metric_id",
             "created_at",
         }, ledger
+        assert ledger["metric_id"] == OPTIMIZER_METRIC_IDS[ledger["key"]], ledger
         assert ledger["version"] == result["version"], ledger
         assert ledger["kind"] == "model", ledger
         assert ledger["key"] == artifact_key, ledger
