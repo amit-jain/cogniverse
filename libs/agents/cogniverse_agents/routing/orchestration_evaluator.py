@@ -487,7 +487,8 @@ class OrchestrationEvaluator:
             )
         return efficiency
 
-    def _classify_query_type(self, query: str, pattern: str) -> str:
+    @staticmethod
+    def _classify_query_type(query: str, pattern: str) -> str:
         """
         Classify query type for pattern learning
 
