@@ -185,7 +185,7 @@ Secret at all.
 {{- define "cogniverse.inferenceApiKeyEnv" -}}
 {{- $needsExternalKey := false -}}
 {{- range $name, $cfg := .Values.inference -}}
-{{- if and $cfg.enabled $cfg.externalUrl -}}
+{{- if $cfg.externalUrl -}}
 {{- $needsExternalKey = true -}}
 {{- end -}}
 {{- end -}}
@@ -399,7 +399,7 @@ point at Modal.
 {{- if and $cfg.externalUrl (eq $name "vllm_llm_student") -}}
 {{- fail (printf "inference.%s.externalUrl is unsupported: the LLM endpoint is derived by runtime.primaryLLM instead" $name) -}}
 {{- end -}}
-{{- if and $cfg.enabled $cfg.externalUrl -}}
+{{- if $cfg.externalUrl -}}
 {{- if or (hasSuffix "/v1" $cfg.externalUrl) (hasSuffix "/" $cfg.externalUrl) -}}
 {{- fail (printf "inference.%s.externalUrl must be the service root URL (no trailing / or /v1)" $name) -}}
 {{- end -}}
@@ -408,7 +408,7 @@ point at Modal.
 {
 {{- $first := true -}}
 {{- range $name, $cfg := .Values.inference -}}
-{{- if $cfg.enabled }}
+{{- if or $cfg.enabled $cfg.externalUrl }}
 {{- if not $first }},{{ end -}}
 {{- $first = false }}
   "{{ $name }}": "{{ if $cfg.externalUrl }}{{ $cfg.externalUrl }}{{ else }}http://{{ $fullName }}-{{ $name | kebabcase }}:{{ $cfg.service.port }}{{ end }}"
