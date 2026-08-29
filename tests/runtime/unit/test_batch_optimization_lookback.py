@@ -198,49 +198,14 @@ class TestOptimizerCaptureSampleCaps:
             "entity_extraction": (36, 30, 35, 15),
         }
 
-    def test_orchestration_counts_split_replayed_and_organic_spans(self, monkeypatch):
-        calls: list[tuple[str, str, float | None, bool]] = []
-
-        def fake_count_spans_by_name_in_pod(
-            tenant_id: str,
-            span_name_symbol: str,
-            lookback_hours: float | None = None,
-            *,
-            distinct_replay_identities: bool = False,
-        ) -> int:
-            calls.append(
-                (
-                    tenant_id,
-                    span_name_symbol,
-                    lookback_hours,
-                    distinct_replay_identities,
-                )
-            )
-            return 60 if distinct_replay_identities else 66
-
-        monkeypatch.setattr(
-            _MOD,
-            "_count_spans_by_name_in_pod",
-            fake_count_spans_by_name_in_pod,
-        )
-
-        replayed, organic = _MOD._replayed_and_organic_orchestration_counts(0.5)
-
-        assert (replayed, organic) == (60, 6)
-        assert calls == [
-            (
-                _MOD.TENANT_ID,
-                "SPAN_NAME_ORCHESTRATION",
-                0.5,
-                True,
-            ),
-            (
-                _MOD.TENANT_ID,
-                "SPAN_NAME_ORCHESTRATION",
-                0.5,
-                False,
-            ),
-        ]
+    def test_replayed_orchestration_counts_match_the_committed_capture(self):
+        assert _MOD._replayed_optimizer_capture_counts() == {
+            "cogniverse.query_enhancement": 120,
+            "cogniverse.profile_selection": 24,
+            "cogniverse.entity_extraction": 36,
+            "cogniverse.gateway": 70,
+            "cogniverse.orchestration": 60,
+        }
 
     def test_sampling_reduces_the_replayed_corpus_below_the_recording(self):
         from tests.e2e.span_capture import load_capture_json, sample_capture_by_name
@@ -254,6 +219,21 @@ class TestOptimizerCaptureSampleCaps:
         """The committed replay corpus currently yields 26 workflow templates."""
 
         assert _MOD._replayed_optimizer_template_count() == 26
+
+    def test_replayed_workflow_result_matches_the_committed_capture(self):
+        """The replay-only workflow golden is derived from the shipped capture."""
+
+        orchestration_count = _MOD._replayed_optimizer_capture_counts()[
+            _MOD.SPAN_NAME_ORCHESTRATION
+        ]
+        assert _MOD._replayed_optimizer_profile_count() == 10
+        assert _MOD._replayed_optimizer_workflow_result() == {
+            "spans_found": orchestration_count,
+            "workflows_extracted": orchestration_count,
+            "execution_demos_saved": orchestration_count,
+            "agent_profiles_saved": 10,
+            "workflow_templates_saved": 26,
+        }
 
 
 def test_count_spans_script_is_valid_python_for_both_modes():

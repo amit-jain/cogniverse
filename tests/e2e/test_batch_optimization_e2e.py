@@ -35,6 +35,7 @@ import pytest
 from cogniverse_agents.entity_extraction_agent import EntityExtractionModule
 from cogniverse_agents.optimizer.artifact_manager import BLOB_VERSION_DECISIONS
 from cogniverse_agents.query_enhancement_agent import QueryEnhancementModule
+from cogniverse_agents.routing.orchestration_evaluator import OrchestrationEvaluator
 from cogniverse_foundation.telemetry.config import SPAN_NAME_ORCHESTRATION
 from tests.e2e.conftest import (
     EVALUATION_QUERY_ASSET,
@@ -47,6 +48,7 @@ from tests.e2e.conftest import (
     expected_gateway_calibration,
     expected_gateway_routing,
     register_tenant_and_wait,
+    unique_id,
 )
 from tests.e2e.span_capture import (
     REPLAY_IDENTITY_ATTRIBUTE,
@@ -253,17 +255,12 @@ def _replayed_optimizer_capture_counts(
 
 
 def _classify_orchestration_query_type(query: str, pattern: str) -> str:
-    """Mirror the evaluator's query-type classifier for replayed workflows."""
-    query_lower = query.lower()
-    if any(word in query_lower for word in ["videos and documents", "images and text"]):
-        return "multi_modal_search"
-    if any(word in query_lower for word in ["detailed", "analysis", "report"]):
-        if pattern == "sequential":
-            return "sequential_report"
-        return "detailed_analysis"
-    if any(word in query_lower for word in ["summarize", "summary", "overview"]):
-        return "summarization"
-    return f"{pattern}_query"
+    """Use the production query-type classifier for replayed workflows."""
+    return OrchestrationEvaluator._classify_query_type(
+        object.__new__(OrchestrationEvaluator),
+        query,
+        pattern,
+    )
 
 
 def _replayed_optimizer_template_count(
@@ -313,24 +310,53 @@ def _replayed_optimizer_template_count(
     return sum(1 for key, successes in by_workflow.items() if key[2] and any(successes))
 
 
-def _replayed_and_organic_orchestration_counts(
-    lookback_hours: float | None = None,
-) -> tuple[int, int]:
-    """Split orchestration spans into replayed capture rows and organic traffic."""
-    if lookback_hours is None:
-        lookback_hours = _module_lookback_hours()
-    replayed = _count_spans_by_name_in_pod(
-        TENANT_ID,
-        "SPAN_NAME_ORCHESTRATION",
-        lookback_hours,
-        distinct_replay_identities=True,
-    )
-    total = _count_spans_by_name_in_pod(
-        TENANT_ID,
-        "SPAN_NAME_ORCHESTRATION",
-        lookback_hours,
-    )
-    return replayed, total - replayed
+def _replayed_optimizer_profile_count(
+    capture_records: list[dict[str, object]] | None = None,
+) -> int:
+    """Distinct agent names observed in the sampled replayed orchestration corpus."""
+    if capture_records is None:
+        capture_records = load_capture_json(OPTIMIZER_SPAN_CAPTURE_PATH)
+
+    sampled = sample_capture_by_name(capture_records, _optimizer_capture_sample_caps())
+    agent_names: set[str] = set()
+    for record in sampled:
+        if record["name"] != SPAN_NAME_ORCHESTRATION:
+            continue
+        attributes = record.get("attributes") or {}
+        output_raw = attributes.get("output.value")
+        try:
+            output = (
+                json.loads(output_raw) if isinstance(output_raw, str) else output_raw
+            )
+        except json.JSONDecodeError:
+            continue
+        if not isinstance(output, dict):
+            continue
+        observations = output.get("agent_observations")
+        if not isinstance(observations, list):
+            continue
+        for observation in observations:
+            if not isinstance(observation, dict):
+                continue
+            agent_name = observation.get("agent_name")
+            if isinstance(agent_name, str) and agent_name.strip():
+                agent_names.add(agent_name)
+    return len(agent_names)
+
+
+def _replayed_optimizer_workflow_result(
+    capture_records: list[dict[str, object]] | None = None,
+) -> dict[str, int]:
+    """Exact workflow-job golden derived from the replayed capture."""
+    capture_counts = _replayed_optimizer_capture_counts(capture_records)
+    orchestration_count = capture_counts[SPAN_NAME_ORCHESTRATION]
+    return {
+        "spans_found": orchestration_count,
+        "workflows_extracted": orchestration_count,
+        "execution_demos_saved": orchestration_count,
+        "agent_profiles_saved": _replayed_optimizer_profile_count(capture_records),
+        "workflow_templates_saved": _replayed_optimizer_template_count(capture_records),
+    }
 
 
 @functools.lru_cache(maxsize=None)
@@ -2620,62 +2646,97 @@ class TestGatewayThresholds:
 # ---------------------------------------------------------------------------
 
 
+class WorkflowReplayTenant:
+    """A dedicated tenant plus the replay-derived workflow-job contract."""
+
+    def __init__(self, tenant_id: str, expected_result: dict[str, int]):
+        self.tenant_id = tenant_id
+        self.expected_result = expected_result
+
+
+@pytest.fixture(scope="function")
+def workflow_replay_tenant(_kubectl_cluster_ready) -> WorkflowReplayTenant:
+    """Create a replay-only tenant for workflow optimization runs."""
+    org_id = unique_id("opt_workflow")
+    tenant_id = f"{org_id}:t1"
+
+    try:
+        with httpx.Client(timeout=60.0) as client:
+            resp = client.post(
+                f"{RUNTIME}/admin/organizations",
+                json={
+                    "org_id": org_id,
+                    "org_name": org_id.replace("_", "-"),
+                    "created_by": "e2e",
+                },
+            )
+            assert resp.status_code in (200, 201, 409), resp.text
+
+        register_tenant_and_wait(tenant_id, created_by="e2e", timeout_s=600.0)
+
+        capture_records = load_capture_json(OPTIMIZER_SPAN_CAPTURE_PATH)
+        replayed_counts = _replayed_optimizer_capture_counts(capture_records)
+        replay_spans(
+            capture_path=OPTIMIZER_SPAN_CAPTURE_PATH,
+            phoenix_http_endpoint=PHOENIX_URL,
+            tenant_id=tenant_id,
+            sample_caps=_optimizer_capture_sample_caps(),
+        )
+        _wait_for_seeded_span_lower_bound_in_pod(
+            tenant_id,
+            "SPAN_NAME_ORCHESTRATION",
+            replayed_counts[SPAN_NAME_ORCHESTRATION],
+            _module_lookback_hours(),
+        )
+        yield WorkflowReplayTenant(
+            tenant_id,
+            _replayed_optimizer_workflow_result(capture_records),
+        )
+    finally:
+        with httpx.Client(timeout=60.0) as client:
+            try:
+                client.delete(f"{RUNTIME}/admin/tenants/{tenant_id}")
+            except httpx.HTTPError:
+                pass
+            try:
+                client.delete(f"{RUNTIME}/admin/organizations/{org_id}")
+            except httpx.HTTPError:
+                pass
+
+
 @pytest.mark.e2e
 class TestWorkflowOptimization:
     """Verify workflow batch job extracts orchestration patterns."""
 
-    def test_workflow_produces_demonstrations(self):
+    def test_workflow_produces_demonstrations(self, workflow_replay_tenant):
         """Run --mode workflow, assert demos contain real workflow data."""
-        result = _run_batch_job("workflow")
-        expected_replayed_orchestration = _replayed_optimizer_capture_counts()[
-            SPAN_NAME_ORCHESTRATION
-        ]
-        expected_replayed_templates = _replayed_optimizer_template_count()
-        replayed_orchestration, organic_orchestration = (
-            _replayed_and_organic_orchestration_counts()
-        )
-        observed_orchestration_total = replayed_orchestration + organic_orchestration
-
-        # The replay capture seeds the orchestration corpus; the job should
-        # process and persist the replayed corpus, while the sweep's own
-        # orchestration traffic stays visible as a separate organic count.
-        assert set(result) == {
-            "status",
-            "spans_found",
-            "workflows_extracted",
-            "execution_demos_saved",
-            "agent_profiles_saved",
-            "workflow_templates_saved",
-        }, result
-        assert result == {
+        result = _run_batch_job("workflow", tenant_id=workflow_replay_tenant.tenant_id)
+        expected = {
             "status": "success",
-            "spans_found": observed_orchestration_total,
-            "workflows_extracted": observed_orchestration_total,
-            "execution_demos_saved": observed_orchestration_total,
-            # Goldens over the committed replay capture: 10 agent profiles and
-            # 26 workflow templates.
-            "agent_profiles_saved": 10,
-            "workflow_templates_saved": expected_replayed_templates,
-        }, result
-        assert result["status"] == "success", result
-        assert replayed_orchestration == expected_replayed_orchestration, result
-        assert result["spans_found"] == observed_orchestration_total, result
-        assert result["workflows_extracted"] == observed_orchestration_total, result
-        assert result["execution_demos_saved"] == observed_orchestration_total, result
-        assert result["agent_profiles_saved"] == 10, result
-        assert result["workflow_templates_saved"] == expected_replayed_templates, result
+            **workflow_replay_tenant.expected_result,
+        }
 
-    def test_workflow_artifact_contains_real_data(self):
+        assert result == expected, result
+
+    def test_workflow_artifact_contains_real_data(self, workflow_replay_tenant):
         """Workflow demos must contain agent_sequence, execution_time, success."""
-        result = _run_batch_job("workflow")  # ensure artifact exists
+        tenant_id = workflow_replay_tenant.tenant_id
+        result = _run_batch_job(
+            "workflow", tenant_id=tenant_id
+        )  # ensure artifact exists
+        expected = {
+            "status": "success",
+            **workflow_replay_tenant.expected_result,
+        }
+        assert result == expected, result
 
         script = IN_POD_TELEMETRY_PRELUDE + (
             "import asyncio, json; "
             "from cogniverse_foundation.telemetry.manager import get_telemetry_manager; "
             "from cogniverse_agents.optimizer.artifact_manager import ArtifactManager; "
             f"tm = get_telemetry_manager(); "
-            f"tp = tm.get_provider(tenant_id='{TENANT_ID}'); "
-            f"am = ArtifactManager(tp, '{TENANT_ID}'); "
+            f"tp = tm.get_provider(tenant_id='{tenant_id}'); "
+            f"am = ArtifactManager(tp, '{tenant_id}'); "
             "demos = asyncio.get_event_loop().run_until_complete("
             "  am.load_demonstrations('workflow')); "
             "print(json.dumps(demos) if demos else '[]')"
