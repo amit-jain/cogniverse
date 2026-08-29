@@ -2188,7 +2188,14 @@ def _expected_artifact_source_url(path: Path, tenant_id: str = TENANT_ID) -> str
 
 def _expected_available_profile_names(tenant_id: str) -> list[str]:
     """Return the tenant-usable backend profiles offered at serving time."""
-    return tenant_usable_profile_names(create_default_config_manager(), tenant_id)
+    names = tenant_usable_profile_names(create_default_config_manager(), tenant_id)
+    if not names:
+        pytest.fail(
+            "tenant_usable_profile_names returned nothing; the expected profile "
+            "list would be empty and every comparison against it would pass "
+            f"vacuously. tenant_id={tenant_id!r}"
+        )
+    return names
 
 
 def _profile_type_map() -> dict[str, str]:

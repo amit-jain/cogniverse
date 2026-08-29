@@ -189,7 +189,7 @@ class BackendQuerier:
 
         if entity_fields is not None:
             query_size = max(sample_size, 10)
-        elif strategy in {"diverse", "multi_modal_sequences"}:
+        elif strategy == "diverse":
             query_size = sample_size * DIVERSE_CANDIDATE_MULTIPLIER
         else:
             query_size = sample_size
@@ -246,7 +246,7 @@ class BackendQuerier:
                     break
                 offset += query_size
 
-            if strategy in {"diverse", "multi_modal_sequences"}:
+            if strategy == "diverse":
                 results = self._spread_across_sources(
                     results,
                     sample_size,
@@ -365,10 +365,6 @@ class BackendQuerier:
     ) -> str:
         if source_id_field:
             value = document.get(source_id_field)
-            if isinstance(value, str) and value.strip():
-                return value
-        for field_name in ("source_id", "video_id", "document_id", "item_id", "id"):
-            value = document.get(field_name)
             if isinstance(value, str) and value.strip():
                 return value
         return ""
