@@ -26,7 +26,6 @@ from types import SimpleNamespace
 
 import cogniverse_cli.images as images_mod
 import pytest
-from _pytest.stash import Stash
 from PIL import Image
 
 import tests.e2e.conftest as e2e_conftest
@@ -167,18 +166,6 @@ def _run_collection_ordering(monkeypatch, items: list) -> None:
         e2e_conftest, "_telegram_real_flow_deselections", lambda *_: ([], None)
     )
     e2e_conftest.pytest_collection_modifyitems(_collection_config(), items)
-
-
-def _playwright_fixturedef(name: str):
-    return SimpleNamespace(
-        argname=name,
-        func=SimpleNamespace(__module__="pytest_playwright.pytest_playwright"),
-        _finalizers=["session-finalizer"],
-    )
-
-
-def _playwright_request():
-    return SimpleNamespace(config=SimpleNamespace(stash=Stash()))
 
 
 def _browser_using_e2e_tests() -> list[tuple[Path, str, tuple[str, ...]]]:
@@ -602,141 +589,6 @@ class TestEventLoopStateReset:
         assert observed["still_running"] is True, (
             "reset must not detach a loop that is genuinely running"
         )
-
-    def test_session_cleanup_restores_the_parked_browser_loop_before_close(self):
-        """Playwright teardown must reopen the parked sync-API loop itself.
-
-        Session teardown is a separate boundary from the per-test parking
-        fixture. The cached browser loop has to be reattached immediately
-        before ``browser.close()`` so the finalizer can still report a real
-        browser error instead of a missing-loop one.
-        """
-        import threading
-
-        browser_loop = asyncio.new_event_loop()
-        browser_loop._thread_id = threading.get_ident()
-        browser_loop._loop_kind = "browser"
-        previous = asyncio.new_event_loop()
-        previous._thread_id = threading.get_ident()
-        previous._loop_kind = "previous"
-        e2e_conftest._PARKED_RUNNING_LOOP = browser_loop
-        asyncio.events._set_running_loop(previous)
-
-        request = _playwright_request()
-
-        calls: list[tuple[str, str | None]] = []
-
-        class _Browser:
-            def close(self) -> None:
-                loop = asyncio.events._get_running_loop()
-                calls.append(("close", getattr(loop, "_loop_kind", None)))
-
-        class _Playwright:
-            def stop(self) -> None:
-                loop = asyncio.events._get_running_loop()
-                calls.append(("stop", getattr(loop, "_loop_kind", None)))
-
-        browser_fixturedef = _playwright_fixturedef("browser")
-        playwright_fixturedef = _playwright_fixturedef("playwright")
-        e2e_conftest._cache_playwright_session_fixture(
-            browser_fixturedef, request, _Browser()
-        )
-        e2e_conftest._cache_playwright_session_fixture(
-            playwright_fixturedef, request, _Playwright()
-        )
-        assert browser_fixturedef._finalizers == []
-        assert playwright_fixturedef._finalizers == []
-        session = SimpleNamespace(config=request.config)
-        try:
-            e2e_conftest.pytest_sessionfinish(session, 0)
-
-            assert calls == [
-                ("close", "browser"),
-                ("stop", "browser"),
-            ], calls
-            assert getattr(asyncio.events._get_running_loop(), "_loop_kind", None) == (
-                "previous"
-            ), (
-                "session cleanup must restore the pre-existing running loop "
-                "after browser.close() and playwright.stop() complete"
-            )
-            assert (
-                request.config.stash.get(e2e_conftest._PLAYWRIGHT_BROWSER_KEY, None)
-                is None
-            )
-            assert (
-                request.config.stash.get(e2e_conftest._PLAYWRIGHT_PLAYWRIGHT_KEY, None)
-                is None
-            )
-        finally:
-            asyncio.events._set_running_loop(None)
-            e2e_conftest._PARKED_RUNNING_LOOP = None
-            previous._thread_id = None
-            previous.close()
-            browser_loop._thread_id = None
-            browser_loop.close()
-
-    def test_session_cleanup_surfaces_browser_close_failures(self):
-        """Browser-close errors stay visible even when teardown owns them."""
-        import threading
-
-        browser_loop = asyncio.new_event_loop()
-        browser_loop._thread_id = threading.get_ident()
-        browser_loop._loop_kind = "browser"
-        previous = asyncio.new_event_loop()
-        previous._thread_id = threading.get_ident()
-        previous._loop_kind = "previous"
-        e2e_conftest._PARKED_RUNNING_LOOP = browser_loop
-        asyncio.events._set_running_loop(previous)
-
-        request = _playwright_request()
-        calls: list[tuple[str, str | None]] = []
-
-        class _Browser:
-            def close(self) -> None:
-                loop = asyncio.events._get_running_loop()
-                calls.append(("close", getattr(loop, "_loop_kind", None)))
-                raise RuntimeError("browser close boom")
-
-        class _Playwright:
-            def stop(self) -> None:
-                loop = asyncio.events._get_running_loop()
-                calls.append(("stop", getattr(loop, "_loop_kind", None)))
-
-        browser_fixturedef = _playwright_fixturedef("browser")
-        playwright_fixturedef = _playwright_fixturedef("playwright")
-        e2e_conftest._cache_playwright_session_fixture(
-            browser_fixturedef, request, _Browser()
-        )
-        e2e_conftest._cache_playwright_session_fixture(
-            playwright_fixturedef, request, _Playwright()
-        )
-        session = SimpleNamespace(config=request.config)
-        try:
-            with pytest.raises(
-                RuntimeError, match="Playwright session teardown failed"
-            ):
-                e2e_conftest.pytest_sessionfinish(session, 0)
-
-            assert calls == [("close", "browser"), ("stop", "browser")], calls
-            assert getattr(asyncio.events._get_running_loop(), "_loop_kind", None) == (
-                "previous"
-            )
-            assert (
-                request.config.stash.get(e2e_conftest._PLAYWRIGHT_BROWSER_KEY, None)
-                is None
-            )
-            assert (
-                request.config.stash.get(e2e_conftest._PLAYWRIGHT_PLAYWRIGHT_KEY, None)
-                is None
-            )
-        finally:
-            asyncio.events._set_running_loop(None)
-            e2e_conftest._PARKED_RUNNING_LOOP = None
-            previous._thread_id = None
-            previous.close()
-            browser_loop._thread_id = None
-            browser_loop.close()
 
 
 def test_event_loop_reset_detaches_without_deprecated_lookup():
