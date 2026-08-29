@@ -322,10 +322,17 @@ class WorkflowIntelligence:
                 time_factor = 1.0 / (
                     1.0 + perf.average_execution_time
                 )  # Inverse of time
+                score_components = [
+                    (success_rate, 0.4),
+                    (time_factor, 0.3),
+                ]
                 confidence_factor = perf.average_confidence
-
+                if confidence_factor is not None:
+                    score_components.append((confidence_factor, 0.3))
+                total_weight = sum(weight for _, weight in score_components)
                 composite_score = (
-                    success_rate * 0.4 + time_factor * 0.3 + confidence_factor * 0.3
+                    sum(value * weight for value, weight in score_components)
+                    / total_weight
                 )
 
                 task.metadata["performance_score"] = composite_score
@@ -652,8 +659,6 @@ class WorkflowIntelligence:
                 for _, observation in samples
                 if "confidence" in observation
             ]
-            if not confidence_samples:
-                continue
             successful = [
                 (execution, observation)
                 for execution, observation in samples
@@ -676,7 +681,11 @@ class WorkflowIntelligence:
                             observation["execution_time"] for _, observation in samples
                         )
                     ),
-                    average_confidence=float(statistics.fmean(confidence_samples)),
+                    average_confidence=(
+                        None
+                        if not confidence_samples
+                        else float(statistics.fmean(confidence_samples))
+                    ),
                     error_rate=float((len(samples) - len(successful)) / len(samples)),
                     preferred_query_types=preferred_query_types,
                     performance_trend="stable",

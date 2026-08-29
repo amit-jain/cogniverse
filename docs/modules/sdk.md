@@ -589,7 +589,7 @@ class AgentPerformance:
     total_executions: int = 0
     successful_executions: int = 0
     average_execution_time: float = 0.0
-    average_confidence: float = 0.0
+    average_confidence: Optional[float] = None
     error_rate: float = 0.0
     preferred_query_types: List[str] = field(default_factory=list)
     performance_trend: str = "stable"
@@ -847,7 +847,7 @@ cogniverse_sdk/
 
 - `WorkflowStore`: Abstract workflow storage (typed to the workflow domain)
 - `WorkflowExecution`: Dataclass for a historical workflow execution
-- `AgentPerformance`: Dataclass for an agent performance profile
+- `AgentPerformance`: Dataclass for an agent performance profile; `average_confidence` is `None` until sampled
 - `WorkflowTemplate`: Dataclass for a reusable workflow template
 - `WorkflowLearningState`: Dataclass containing one complete four-channel generation
 

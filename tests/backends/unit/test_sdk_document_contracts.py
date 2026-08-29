@@ -657,6 +657,8 @@ class TestWorkflowRecordDatetimeContract:
 
         assert execution.timestamp.utcoffset() == timedelta(0)
         assert profile.last_updated.utcoffset() == timedelta(0)
+        assert profile.average_confidence is None
+        assert profile.to_dict()["average_confidence"] is None
         assert template.created_at.utcoffset() == timedelta(0)
 
     @pytest.mark.parametrize(

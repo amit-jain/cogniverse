@@ -3176,9 +3176,12 @@ confidence averages, and preferred query types.
 Those profile values come only from the `agent_observations` recorded around
 each real A2A dispatch. An observation identifies the dispatched agent and its
 own duration and success; confidence is included only when that response
-reported a valid confidence value. Workflow-level duration, success, and
-confidence are never copied onto every participating agent. Deep-synthesis
-observations likewise record only their measured duration and success.
+reported a valid confidence value. Agents with no confidence samples still get
+a profile, with `average_confidence=None`. Workflow-level duration, success,
+and confidence are never copied onto every participating agent, and the
+performance score leaves missing confidence out instead of treating it as
+zero. Deep-synthesis observations likewise record only their measured duration
+and success.
 Successful execution shapes become deterministic templates whose dependency
 lists can be replayed by `_apply_template`. Executions, profiles, query patterns,
 and templates are persisted through the configured workflow store; a fresh

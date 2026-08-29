@@ -374,7 +374,20 @@ class TestUnobservedOutcomeSentinels:
         assert dict(intelligence.query_type_patterns) == {}
 
 
-def test_agent_profiles_use_only_per_agent_observed_metrics():
+def test_agent_profiles_use_only_per_agent_observed_metrics(monkeypatch):
+    from datetime import datetime, timezone
+
+    import cogniverse_agents.workflow.intelligence as intelligence_module
+
+    fixed_now = datetime(2026, 1, 1, 12, 0, tzinfo=timezone.utc)
+
+    class _FixedDatetime(datetime):
+        @classmethod
+        def now(cls, tz=None):
+            return fixed_now
+
+    monkeypatch.setattr(intelligence_module, "datetime", _FixedDatetime)
+
     intelligence = _make_intelligence()
     first = WorkflowExecution(
         workflow_id="wf-agent-observations-1",
@@ -447,27 +460,141 @@ def test_agent_profiles_use_only_per_agent_observed_metrics():
 
     profiles, _templates = intelligence.derive_learning_artifacts([first, second])
 
-    assert [profile.agent_name for profile in profiles] == [
-        "entity_agent",
-        "search_agent",
+    assert [
+        (
+            profile.agent_name,
+            profile.total_executions,
+            profile.successful_executions,
+            profile.average_execution_time,
+            profile.average_confidence,
+            profile.error_rate,
+            profile.preferred_query_types,
+            profile.performance_trend,
+            profile.last_updated,
+        )
+        for profile in profiles
+    ] == [
+        (
+            "entity_agent",
+            2,
+            2,
+            pytest.approx(0.15),
+            pytest.approx(0.8),
+            0.0,
+            ["VIDEO"],
+            "stable",
+            fixed_now,
+        ),
+        (
+            "search_agent",
+            2,
+            1,
+            1.0,
+            0.8,
+            0.5,
+            ["VIDEO"],
+            "stable",
+            fixed_now,
+        ),
+        (
+            "summary_agent",
+            2,
+            2,
+            pytest.approx(0.15),
+            None,
+            0.0,
+            ["VIDEO"],
+            "stable",
+            fixed_now,
+        ),
     ]
-    by_name = {profile.agent_name: profile for profile in profiles}
-    assert (
-        by_name["entity_agent"].total_executions,
-        by_name["entity_agent"].successful_executions,
-        by_name["entity_agent"].average_execution_time,
-        by_name["entity_agent"].average_confidence,
-        by_name["entity_agent"].error_rate,
-        by_name["entity_agent"].preferred_query_types,
-    ) == (2, 2, pytest.approx(0.15), pytest.approx(0.8), 0.0, ["VIDEO"])
-    assert (
-        by_name["search_agent"].total_executions,
-        by_name["search_agent"].successful_executions,
-        by_name["search_agent"].average_execution_time,
-        by_name["search_agent"].average_confidence,
-        by_name["search_agent"].error_rate,
-        by_name["search_agent"].preferred_query_types,
-    ) == (2, 1, 1.0, 0.8, 0.5, ["VIDEO"])
+
+
+def test_agent_profiles_include_agents_without_confidence_samples(monkeypatch):
+    from datetime import datetime, timezone
+
+    import cogniverse_agents.workflow.intelligence as intelligence_module
+
+    fixed_now = datetime(2026, 1, 1, 12, 0, tzinfo=timezone.utc)
+
+    class _FixedDatetime(datetime):
+        @classmethod
+        def now(cls, tz=None):
+            return fixed_now
+
+    monkeypatch.setattr(intelligence_module, "datetime", _FixedDatetime)
+
+    intelligence = _make_intelligence()
+    execution = WorkflowExecution(
+        workflow_id="wf-confidence-1",
+        query="find the exact Curie laboratory footage",
+        query_type="VIDEO",
+        execution_time=3.0,
+        success=False,
+        agent_sequence=["confident_agent", "quiet_agent"],
+        task_count=2,
+        parallel_efficiency=0.0,
+        confidence_score=0.9,
+        timestamp=fixed_now,
+        metadata={
+            **_observed_outcome_metadata(),
+            "orchestration_pattern": "sequential",
+            "agent_observations": [
+                {
+                    "agent_name": "confident_agent",
+                    "execution_time": 1.0,
+                    "success": False,
+                    "confidence": 0.9,
+                },
+                {
+                    "agent_name": "quiet_agent",
+                    "execution_time": 2.0,
+                    "success": False,
+                },
+            ],
+        },
+    )
+
+    profiles, templates = intelligence.derive_learning_artifacts([execution])
+
+    assert templates == []
+    assert [
+        (
+            profile.agent_name,
+            profile.total_executions,
+            profile.successful_executions,
+            profile.average_execution_time,
+            profile.average_confidence,
+            profile.error_rate,
+            profile.preferred_query_types,
+            profile.performance_trend,
+            profile.last_updated,
+        )
+        for profile in profiles
+    ] == [
+        (
+            "confident_agent",
+            1,
+            0,
+            pytest.approx(1.0),
+            pytest.approx(0.9),
+            1.0,
+            [],
+            "stable",
+            fixed_now,
+        ),
+        (
+            "quiet_agent",
+            1,
+            0,
+            pytest.approx(2.0),
+            None,
+            1.0,
+            [],
+            "stable",
+            fixed_now,
+        ),
+    ]
 
 
 @pytest.mark.unit
@@ -857,6 +984,35 @@ class TestPerformanceOptimization:
 
         # success_rate 0.8*0.4 + time_factor 0.5*0.3 + confidence 0.6*0.3
         assert result.tasks[0].metadata["performance_score"] == pytest.approx(0.65)
+        assert result.metadata["performance_optimized"] is True
+
+    @pytest.mark.asyncio
+    async def test_performance_score_ignores_missing_confidence(self):
+        intelligence = _make_intelligence(
+            optimization_strategy=OptimizationStrategy.PERFORMANCE_BASED
+        )
+        profile = AgentPerformance(
+            agent_name="agent1",
+            total_executions=10,
+            successful_executions=8,
+            average_execution_time=1.0,
+            average_confidence=0.6,
+        )
+        profile.average_confidence = None
+        intelligence.agent_performance["agent1"] = profile
+        plan = WorkflowPlan(
+            workflow_id="wf",
+            original_query="unmatched query",
+            tasks=[
+                WorkflowTask(task_id="t1", agent_name="agent1", query="unmatched query")
+            ],
+        )
+
+        result = await intelligence.optimize_workflow_plan("unmatched query", plan)
+
+        assert result.tasks[0].metadata["performance_score"] == pytest.approx(
+            0.6714285714285715
+        )
         assert result.metadata["performance_optimized"] is True
 
 
