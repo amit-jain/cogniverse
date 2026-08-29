@@ -2684,6 +2684,18 @@ def workflow_replay_tenant(_kubectl_cluster_ready) -> WorkflowReplayTenant:
             replayed_counts[SPAN_NAME_ORCHESTRATION],
             _module_lookback_hours(),
         )
+        # The point of a dedicated tenant: it sees the replayed capture and
+        # nothing else. A lower-bound wait cannot prove that, so pin the count.
+        observed_orchestration = _count_spans_by_name_in_pod(
+            tenant_id,
+            "SPAN_NAME_ORCHESTRATION",
+            _module_lookback_hours(),
+        )
+        assert observed_orchestration == replayed_counts[SPAN_NAME_ORCHESTRATION], (
+            f"replay-only tenant {tenant_id} holds {observed_orchestration} "
+            f"orchestration spans; expected exactly the replayed "
+            f"{replayed_counts[SPAN_NAME_ORCHESTRATION]}"
+        )
         yield WorkflowReplayTenant(
             tenant_id,
             _replayed_optimizer_workflow_result(capture_records),
@@ -2712,7 +2724,19 @@ class TestWorkflowOptimization:
             **workflow_replay_tenant.expected_result,
         }
 
-        assert result == expected, result
+        assert set(result) == set(expected), result
+        assert result["status"] == "success", result
+        assert result["spans_found"] == expected["spans_found"], result
+        assert result["workflows_extracted"] == expected["workflows_extracted"], result
+        assert result["execution_demos_saved"] == expected["execution_demos_saved"], (
+            result
+        )
+        assert result["agent_profiles_saved"] == expected["agent_profiles_saved"], (
+            result
+        )
+        assert (
+            result["workflow_templates_saved"] == expected["workflow_templates_saved"]
+        ), result
 
     def test_workflow_artifact_contains_real_data(self, workflow_replay_tenant):
         """Workflow demos must contain agent_sequence, execution_time, success."""
@@ -2724,7 +2748,19 @@ class TestWorkflowOptimization:
             "status": "success",
             **workflow_replay_tenant.expected_result,
         }
-        assert result == expected, result
+        assert set(result) == set(expected), result
+        assert result["status"] == "success", result
+        assert result["spans_found"] == expected["spans_found"], result
+        assert result["workflows_extracted"] == expected["workflows_extracted"], result
+        assert result["execution_demos_saved"] == expected["execution_demos_saved"], (
+            result
+        )
+        assert result["agent_profiles_saved"] == expected["agent_profiles_saved"], (
+            result
+        )
+        assert (
+            result["workflow_templates_saved"] == expected["workflow_templates_saved"]
+        ), result
 
         script = IN_POD_TELEMETRY_PRELUDE + (
             "import asyncio, json; "
