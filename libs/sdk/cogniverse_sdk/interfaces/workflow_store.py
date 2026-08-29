@@ -171,7 +171,7 @@ class AgentPerformance:
     total_executions: int = 0
     successful_executions: int = 0
     average_execution_time: float = 0.0
-    average_confidence: float = 0.0
+    average_confidence: Optional[float] = None
     error_rate: float = 0.0
     preferred_query_types: List[str] = field(default_factory=list)
     performance_trend: str = "stable"  # improving, degrading, stable
@@ -190,12 +190,13 @@ class AgentPerformance:
             "average_execution_time",
             minimum=0.0,
         )
-        _require_finite_float(
-            self.average_confidence,
-            "average_confidence",
-            minimum=0.0,
-            maximum=1.0,
-        )
+        if self.average_confidence is not None:
+            _require_finite_float(
+                self.average_confidence,
+                "average_confidence",
+                minimum=0.0,
+                maximum=1.0,
+            )
         _require_finite_float(
             self.error_rate,
             "error_rate",

@@ -198,6 +198,50 @@ class TestOptimizerCaptureSampleCaps:
             "entity_extraction": (36, 30, 35, 15),
         }
 
+    def test_orchestration_counts_split_replayed_and_organic_spans(self, monkeypatch):
+        calls: list[tuple[str, str, float | None, bool]] = []
+
+        def fake_count_spans_by_name_in_pod(
+            tenant_id: str,
+            span_name_symbol: str,
+            lookback_hours: float | None = None,
+            *,
+            distinct_replay_identities: bool = False,
+        ) -> int:
+            calls.append(
+                (
+                    tenant_id,
+                    span_name_symbol,
+                    lookback_hours,
+                    distinct_replay_identities,
+                )
+            )
+            return 60 if distinct_replay_identities else 66
+
+        monkeypatch.setattr(
+            _MOD,
+            "_count_spans_by_name_in_pod",
+            fake_count_spans_by_name_in_pod,
+        )
+
+        replayed, organic = _MOD._replayed_and_organic_orchestration_counts(0.5)
+
+        assert (replayed, organic) == (60, 6)
+        assert calls == [
+            (
+                _MOD.TENANT_ID,
+                "SPAN_NAME_ORCHESTRATION",
+                0.5,
+                True,
+            ),
+            (
+                _MOD.TENANT_ID,
+                "SPAN_NAME_ORCHESTRATION",
+                0.5,
+                False,
+            ),
+        ]
+
     def test_sampling_reduces_the_replayed_corpus_below_the_recording(self):
         from tests.e2e.span_capture import load_capture_json, sample_capture_by_name
 

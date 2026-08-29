@@ -125,6 +125,14 @@ class TestAgentProfiles:
         assert loaded[0].preferred_query_types == ["visual", "temporal"]
         assert loaded[0].performance_trend == "improving"
 
+    async def test_round_trip_preserves_missing_confidence(self, store):
+        profile = AgentPerformance(agent_name="video_search")
+        await store.save_agent_profiles("t:t", [profile])
+
+        loaded = await store.load_agent_profiles("t:t")
+        assert loaded == [profile]
+        assert loaded[0].average_confidence is None
+
     async def test_load_missing_returns_empty(self, store):
         assert await store.load_agent_profiles("t:t") == []
 

@@ -252,6 +252,26 @@ def _replayed_optimizer_capture_counts(
     )
 
 
+def _replayed_and_organic_orchestration_counts(
+    lookback_hours: float | None = None,
+) -> tuple[int, int]:
+    """Split orchestration spans into replayed capture rows and organic traffic."""
+    if lookback_hours is None:
+        lookback_hours = _module_lookback_hours()
+    replayed = _count_spans_by_name_in_pod(
+        TENANT_ID,
+        "SPAN_NAME_ORCHESTRATION",
+        lookback_hours,
+        distinct_replay_identities=True,
+    )
+    total = _count_spans_by_name_in_pod(
+        TENANT_ID,
+        "SPAN_NAME_ORCHESTRATION",
+        lookback_hours,
+    )
+    return replayed, total - replayed
+
+
 @functools.lru_cache(maxsize=None)
 def _population_floor_from_shipped_config(optimizer_type: str) -> tuple[int, int]:
     """Read the shipped floor for ``optimizer_type`` from configs/config.json."""
@@ -2546,12 +2566,17 @@ class TestWorkflowOptimization:
     def test_workflow_produces_demonstrations(self):
         """Run --mode workflow, assert demos contain real workflow data."""
         result = _run_batch_job("workflow")
-        expected_orchestration = _replayed_optimizer_capture_counts()[
+        expected_replayed_orchestration = _replayed_optimizer_capture_counts()[
             SPAN_NAME_ORCHESTRATION
         ]
+        replayed_orchestration, organic_orchestration = (
+            _replayed_and_organic_orchestration_counts()
+        )
+        orchestration_total = replayed_orchestration + organic_orchestration
 
         # The replay capture seeds the orchestration corpus; the job should
-        # process and persist that exact corpus.
+        # process and persist the replayed corpus, while the sweep's own
+        # orchestration traffic stays visible as a separate organic count.
         assert set(result) == {
             "status",
             "spans_found",
@@ -2562,18 +2587,19 @@ class TestWorkflowOptimization:
         }, result
         assert result == {
             "status": "success",
-            "spans_found": expected_orchestration,
-            "workflows_extracted": expected_orchestration,
-            "execution_demos_saved": expected_orchestration,
+            "spans_found": orchestration_total,
+            "workflows_extracted": orchestration_total,
+            "execution_demos_saved": orchestration_total,
             # Goldens over the committed replay capture: 10 agent profiles and
             # 30 workflow templates.
             "agent_profiles_saved": 10,
             "workflow_templates_saved": 30,
         }, result
         assert result["status"] == "success", result
-        assert result["spans_found"] == expected_orchestration, result
-        assert result["workflows_extracted"] == expected_orchestration, result
-        assert result["execution_demos_saved"] == expected_orchestration, result
+        assert replayed_orchestration == expected_replayed_orchestration, result
+        assert result["spans_found"] == orchestration_total, result
+        assert result["workflows_extracted"] == orchestration_total, result
+        assert result["execution_demos_saved"] == orchestration_total, result
         assert result["agent_profiles_saved"] == 10, result
         assert result["workflow_templates_saved"] == 30, result
 
