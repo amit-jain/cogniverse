@@ -1426,7 +1426,12 @@ def _search_sample_content(
     media_type: str,
 ) -> tuple[list[dict] | None, str | None]:
     """Return (matches, error). A search-API failure is reported as an
-    error string, never flattened into 'no matches'."""
+    error string, never flattened into 'no matches'.
+
+    Asks for segment granularity explicitly: the caller counts persisted
+    DOCUMENTS against documents_fed, and video profiles default to source
+    granularity, which collapses every frame of a video into one result.
+    """
     try:
         response = httpx.post(
             f"{RUNTIME}/search/",
@@ -1436,6 +1441,7 @@ def _search_sample_content(
                 "strategy": "default",
                 "top_k": 1000,
                 "tenant_id": tenant_id,
+                "result_granularity": "segment",
             },
             timeout=60,
         )
