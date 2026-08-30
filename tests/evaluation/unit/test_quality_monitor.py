@@ -966,16 +966,20 @@ class TestGetAgentBaseline:
             await monitor._get_agent_baseline(AgentType.SEARCH)
 
     @pytest.mark.asyncio
-    async def test_reads_score_from_nested_output(self, monitor):
-        """update_baseline writes agent/score with input/output key metadata;
-        the read side must parse the nested example shape Phoenix returns."""
+    async def test_reads_score_from_payload_row(self, monitor):
+        """update_baseline writes agent/score in the canonical payload row;
+        the read side must decode it back exactly."""
         import pandas as pd
 
         monitor._dataset_store._frames[f"quality-baseline-{monitor.tenant_id}"] = (
             pd.DataFrame(
                 [
-                    {"input": {"agent": "search"}, "output": {"score": 0.83}},
-                    {"input": {"agent": "summary"}, "output": {"score": 0.65}},
+                    {
+                        "payload": json.dumps({"agent": "search", "score": 0.83}),
+                    },
+                    {
+                        "payload": json.dumps({"agent": "summary", "score": 0.65}),
+                    },
                 ]
             )
         )
@@ -1490,7 +1494,7 @@ class TestOperationalHealth:
 
 class TestBaselineReads:
     """Baseline reads distinguish first-run (None) from backend outage (raise),
-    and never treat a partial golden run as a baseline."""
+    and only accept the canonical payload row written by QualityMonitor."""
 
     @pytest.mark.asyncio
     async def test_missing_dataset_reads_none(self, monitor):
@@ -1513,12 +1517,22 @@ class TestBaselineReads:
             pd.DataFrame(
                 [
                     {
-                        "input": {"timestamp": "t1"},
-                        "output": {"mean_mrr": 0.9, "failed_query_count": 0},
+                        "payload": json.dumps(
+                            {
+                                "timestamp": "t1",
+                                "mean_mrr": 0.9,
+                                "failed_query_count": 0,
+                            }
+                        ),
                     },
                     {
-                        "input": {"timestamp": "t2"},
-                        "output": {"mean_mrr": 1.0, "failed_query_count": 2},
+                        "payload": json.dumps(
+                            {
+                                "timestamp": "t2",
+                                "mean_mrr": 1.0,
+                                "failed_query_count": 2,
+                            }
+                        ),
                     },
                 ]
             )
@@ -1526,18 +1540,94 @@ class TestBaselineReads:
         assert await monitor._read_baseline_metric("mean_mrr") == 0.9
 
     @pytest.mark.asyncio
-    async def test_reads_latest_complete_row_flat_shape(self, monitor):
+    async def test_reads_latest_complete_payload_row(self, monitor):
         import pandas as pd
 
         monitor._dataset_store._frames[f"quality-baseline-{monitor.tenant_id}"] = (
             pd.DataFrame(
                 [
-                    {"timestamp": "t1", "mean_mrr": 0.7, "failed_query_count": 0},
-                    {"timestamp": "t2", "mean_mrr": 0.9, "failed_query_count": 0},
+                    {
+                        "payload": json.dumps(
+                            {
+                                "timestamp": "t1",
+                                "mean_mrr": 0.7,
+                                "failed_query_count": 0,
+                            }
+                        ),
+                    },
+                    {
+                        "payload": json.dumps(
+                            {
+                                "timestamp": "t2",
+                                "mean_mrr": 0.9,
+                                "failed_query_count": 0,
+                            }
+                        ),
+                    },
                 ]
             )
         )
         assert await monitor._read_baseline_metric("mean_mrr") == 0.9
+
+    @pytest.mark.asyncio
+    async def test_round_tripped_payload_row_drives_degradation_math(self, monitor):
+        """A payload row read back from Phoenix must feed the live baseline
+        arithmetic exactly — not collapse to a string before the comparison."""
+        import pandas as pd
+
+        monitor._dataset_store._frames[f"quality-baseline-{monitor.tenant_id}"] = (
+            pd.DataFrame(
+                [
+                    {
+                        "payload": json.dumps(
+                            {
+                                "agent": AgentType.SEARCH.value,
+                                "score": 0.5,
+                            }
+                        ),
+                    }
+                ]
+            )
+        )
+
+        baseline = await monitor._get_agent_baseline(AgentType.SEARCH)
+        assert baseline == 0.5
+
+        spans = pd.DataFrame(
+            [
+                {
+                    "span_id": "s1",
+                    "attributes": {"query": "q"},
+                    "outputs": {"value": "answer"},
+                }
+            ]
+        )
+
+        class _StubEvaluator:
+            def extract_judge_payload(self, attributes, outputs):
+                return outputs
+
+            def judge_prompt(self, query, payload):
+                return f"judge:{query}"
+
+        class _StubJudge:
+            async def _call_llm(self, prompt, system_prompt=None, images=None):
+                return "Score: 2.5/10"
+
+            def _extract_score_from_response(self, response):
+                return 0.25, "ok"
+
+        monitor._llm_judge = _StubJudge()
+        with patch(
+            "cogniverse_evaluation.quality_monitor.get_agent_evaluator",
+            return_value=_StubEvaluator(),
+        ):
+            result = await monitor._evaluate_agent_spans(
+                AgentType.SEARCH, spans, baseline
+            )
+
+        assert result.baseline_score == 0.5
+        assert result.degradation_pct == 0.5
 
     @pytest.mark.asyncio
     async def test_store_golden_raises_on_store_failure(self, monitor):
@@ -1602,10 +1692,17 @@ class TestGoldenPartialBatch:
             transport=httpx.MockTransport(handler), base_url="http://testserver"
         )
 
-        await monitor.evaluate_golden_set()
+        result = await monitor.evaluate_golden_set()
 
         stored = monitor._dataset_store._frames[f"quality-baseline-{monitor.tenant_id}"]
-        assert int(stored["failed_query_count"].iloc[-1]) == 1
+        assert json.loads(stored["payload"].iloc[-1]) == {
+            "timestamp": result.timestamp.isoformat(),
+            "mean_mrr": 1.0,
+            "mean_ndcg": 1.0,
+            "mean_precision_at_5": 1.0,
+            "query_count": 1,
+            "failed_query_count": 1,
+        }
         # And a subsequent baseline read refuses the partial row
         assert await monitor._read_baseline_metric("mean_mrr") is None
 

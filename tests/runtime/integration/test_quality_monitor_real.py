@@ -763,11 +763,14 @@ class TestStoreOperationsRealPhoenix:
         store = m._get_dataset_store()
         df = await store.get_dataset(f"quality-baseline-{m.tenant_id}")
         assert not df.empty
-        assert float(_roundtrip_value(df, "mean_mrr")) == pytest.approx(0.75, abs=1e-6)
-        assert float(_roundtrip_value(df, "mean_ndcg")) == pytest.approx(0.70, abs=1e-6)
-        assert float(_roundtrip_value(df, "mean_precision_at_5")) == pytest.approx(
-            0.50, abs=1e-6
-        )
+        assert json.loads(_roundtrip_value(df, "payload")) == {
+            "timestamp": result.timestamp.isoformat(),
+            "mean_mrr": 0.75,
+            "mean_ndcg": 0.7,
+            "mean_precision_at_5": 0.5,
+            "query_count": 10,
+            "failed_query_count": 0,
+        }
 
     @pytest.mark.asyncio
     async def test_store_live_persists_agent_rows(self, phoenix_monitor):
