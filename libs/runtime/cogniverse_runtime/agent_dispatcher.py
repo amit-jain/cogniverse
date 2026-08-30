@@ -1142,6 +1142,7 @@ class AgentDispatcher:
             result = await self._execute_deep_research_task(
                 await self._resolve_history_query(query, conversation_history),
                 tenant_id,
+                context=context,
             )
         elif "coding" in capabilities:
             result = await self._execute_coding_task(query, tenant_id, context)
@@ -2637,7 +2638,10 @@ class AgentDispatcher:
         }
 
     async def _execute_deep_research_task(
-        self, query: str, tenant_id: str
+        self,
+        query: str,
+        tenant_id: str,
+        context: Optional[Dict[str, Any]] = None,
     ) -> Dict[str, Any]:
         from cogniverse_agents.deep_research_agent import (
             DeepResearchAgent,
@@ -2658,7 +2662,11 @@ class AgentDispatcher:
             self._init_agent_memory, agent, "deep_research_agent", tenant_id
         )
 
-        input_data = DeepResearchInput(query=query, tenant_id=tenant_id)
+        ctx = context or {}
+        input_kwargs: Dict[str, Any] = {"query": query, "tenant_id": tenant_id}
+        if "max_iterations" in ctx:
+            input_kwargs["max_iterations"] = ctx["max_iterations"]
+        input_data = DeepResearchInput(**input_kwargs)
         result = await agent.process(input_data)
 
         return {

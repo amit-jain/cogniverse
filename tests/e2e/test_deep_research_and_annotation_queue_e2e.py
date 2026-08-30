@@ -34,7 +34,7 @@ class TestDeepResearchE2E:
                 json={
                     "agent_name": "deep_research_agent",
                     "query": query,
-                    "context": {"tenant_id": TENANT_ID},
+                    "context": {"tenant_id": TENANT_ID, "max_iterations": 1},
                 },
             )
 
@@ -70,9 +70,14 @@ class TestDeepResearchE2E:
             f"Expected >=2 sub-questions, got {result['sub_questions']}"
         )
         assert len(result["sub_questions"]) <= 5, result["sub_questions"]
-        assert result["iterations_used"] >= 1
-        assert result["iterations_used"] <= 3, result["iterations_used"]
-        assert len(result["evidence"]) >= 1, "Should collect evidence"
+        # max_iterations=1: exactly one search per sub-question, in order.
+        assert result["iterations_used"] == 1, result["iterations_used"]
+        assert len(result["evidence"]) == len(result["sub_questions"]), result[
+            "evidence"
+        ]
+        assert [row["question"] for row in result["evidence"]] == result[
+            "sub_questions"
+        ], result["evidence"]
         sub_question_count = len(result["sub_questions"])
         assert [
             row["question"] for row in result["evidence"][:sub_question_count]

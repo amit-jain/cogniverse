@@ -2613,6 +2613,10 @@ output = await agent.process(
 print(output.summary, output.citations)
 ```
 
+Through the runtime, `POST /agents/deep_research_agent/process` forwards
+`context.max_iterations` into `DeepResearchInput.max_iterations`; a request
+without it runs on the field default (3).
+
 **Multimodal generation (keyframe injection):**
 
 `_synthesize` flattens the nested evidence hits (`evidence[i]["results"]`) and,
