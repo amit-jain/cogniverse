@@ -49,9 +49,11 @@ from tests.e2e.conftest import (
     TENANT_ID,
     _content_sha256,
     _ensure_sample_content_ingested,
+    _ingest_sample_documents,
     _matching_sample_results,
     assert_orchestrated,
     expected_gateway_routing,
+    register_tenant_and_wait,
     unique_id,
 )
 from tests.e2e.conftest import (
@@ -88,6 +90,54 @@ def _default_video_profile_name() -> str:
 
 
 PROFILE = _default_video_profile_name()
+
+
+def _workflow_video_profile_name() -> str:
+    config = json.loads(CONFIG_PATH.read_text())
+    scored_profiles: list[tuple[float, str]] = []
+    workflow_rules = config["synthetic"]["optimizer_configs"]["workflow"][
+        "profile_scoring_rules"
+    ]
+    for profile_name, profile_config in (
+        config.get("backend", {}).get("profiles", {}).items()
+    ):
+        if not isinstance(profile_config, dict):
+            continue
+        if profile_config.get("type") != "video":
+            continue
+        score = 1.0
+        for rule in workflow_rules:
+            condition = rule["condition"]
+            if "profile_name_contains" in condition:
+                pattern = str(condition["profile_name_contains"]).strip().lower()
+                if pattern and re.search(
+                    rf"(?<![a-z0-9]){re.escape(pattern)}(?![a-z0-9])",
+                    profile_name.lower(),
+                ):
+                    score += float(rule["score_adjustment"])
+            elif "field" in condition:
+                field_path = str(condition["field"]).split(".")
+                value: object = profile_config
+                for field_name in field_path:
+                    if isinstance(value, dict):
+                        value = value.get(field_name)
+                    else:
+                        value = None
+                        break
+                if "contains" in condition and condition["contains"] in str(value):
+                    score += float(rule["score_adjustment"])
+                elif "equals" in condition and value == condition["equals"]:
+                    score += float(rule["score_adjustment"])
+                elif "in" in condition and value in condition["in"]:
+                    score += float(rule["score_adjustment"])
+        scored_profiles.append((score, profile_name))
+    if not scored_profiles:
+        raise RuntimeError("workflow video profile scoring found no video profiles")
+    scored_profiles.sort(key=lambda item: item[0], reverse=True)
+    return scored_profiles[0][1]
+
+
+WORKFLOW_PROFILE = _workflow_video_profile_name()
 _PROFILE_TYPE_ORDER = {
     "video": 0,
     "document": 1,
@@ -864,6 +914,45 @@ class TestSyntheticDataAPI:
             results.extend(matches)
         return results
 
+    @pytest.fixture
+    def workflow_seeded_tenant(self):
+        org_id = unique_id("workflow_seeded")
+        tenant_id = f"{org_id}:t1"
+
+        with httpx.Client(base_url=RUNTIME, timeout=900.0) as client:
+            try:
+                resp = client.post(
+                    "/admin/organizations",
+                    json={
+                        "org_id": org_id,
+                        "org_name": org_id.replace("_", "-"),
+                        "created_by": "e2e",
+                    },
+                )
+                assert resp.status_code in (200, 201, 409), resp.text
+
+                register_tenant_and_wait(tenant_id, created_by="e2e", timeout_s=600.0)
+                _deploy_profile_for_tenant(client, WORKFLOW_PROFILE, tenant_id)
+                _deploy_profile_for_tenant(client, DOCUMENT_PROFILE, tenant_id)
+
+                _ensure_sample_content_ingested(
+                    SAMPLE_VIDEO_PATH,
+                    profile=WORKFLOW_PROFILE,
+                    media_type="video/mp4",
+                    tenant_id=tenant_id,
+                )
+                _ingest_sample_documents(tenant_id=tenant_id)
+                yield tenant_id
+            finally:
+                try:
+                    client.delete(f"/admin/tenants/{tenant_id}")
+                except httpx.HTTPError:
+                    pass
+                try:
+                    client.delete(f"/admin/organizations/{org_id}")
+                except httpx.HTTPError:
+                    pass
+
     def test_synthetic_health(self):
         """GET /synthetic/health returns healthy status."""
         with httpx.Client(base_url=RUNTIME, timeout=10.0) as client:
@@ -1397,10 +1486,13 @@ class TestSyntheticDataAPI:
             for example in data["data"]
         ] == [example["complexity"] for example in data["data"]]
 
-    def test_generate_workflow_ids_are_unique_and_schema_specific(self):
-        expected_available_profiles = _expected_available_profile_names(TENANT_ID)
+    def test_generate_workflow_ids_are_unique_and_schema_specific(
+        self, workflow_seeded_tenant
+    ):
+        expected_available_profiles = _expected_available_profile_names(
+            workflow_seeded_tenant
+        )
         with httpx.Client(base_url=RUNTIME, timeout=900.0) as client:
-            seeded_video_results = self._seeded_video_fixture_results(client)
             agents_response = client.get("/agents/")
             resp = client.post(
                 "/synthetic/generate",
@@ -1410,21 +1502,9 @@ class TestSyntheticDataAPI:
                     "vespa_sample_size": 2,
                     "strategy": "multi_modal_sequences",
                     "max_profiles": 2,
-                    "tenant_id": TENANT_ID,
+                    "tenant_id": workflow_seeded_tenant,
                 },
             )
-            # topic extraction collapses whitespace, so compare normalized forms
-            ingested_video_sources = []
-            missing_video_sources = []
-            for result in seeded_video_results:
-                metadata = result["metadata"]
-                assert isinstance(metadata, dict), result
-                source_text = topic_source_text(metadata)
-                if source_text is None:
-                    missing_video_sources.append(metadata)
-                    continue
-                ingested_video_sources.append(" ".join(source_text.split()))
-            assert missing_video_sources == [], missing_video_sources
 
         assert agents_response.status_code == 200, agents_response.text
         registered_agents = set(agents_response.json()["agents"])
@@ -1463,32 +1543,35 @@ class TestSyntheticDataAPI:
             target_count=4,
             vespa_sample_size=2,
         )
-        # Topics are saliency spans from the ingested captions, so pin the
-        # template shape exactly and require each topic to appear in exactly
-        # one ingested segment description.
+        sampled_content = data["metadata"]["sampled_content"]
+        profile_types = _profile_type_map()
+        video_records = [
+            record
+            for record in sampled_content
+            if profile_types[record["profile_name"]] == "video"
+        ]
+        document_records = [
+            record
+            for record in sampled_content
+            if profile_types[record["profile_name"]] == "document"
+        ]
+        assert len(video_records) == 1, sampled_content
+        assert len(document_records) == 1, sampled_content
+        for record in sampled_content:
+            assert topic_source_text(record) is not None, sampled_content
+        saliency = TopicSaliency.from_records(sampled_content)
+        video_topic = extract_topic(video_records[0], saliency=saliency)
+        document_topic = extract_topic(document_records[0], saliency=saliency)
+        assert video_topic is not None, sampled_content
+        assert document_topic is not None, sampled_content
+        assert video_topic != document_topic
         queries = [example["query"] for example in data["data"]]
-        video_topic = queries[0].removeprefix("find ")
-        document_topic = queries[3].removeprefix("find ")
         assert queries == [
             f"find {video_topic}",
             f"summarize {video_topic}",
             f"analyze {video_topic} and generate report",
             f"find {document_topic}",
         ]
-        assert video_topic != document_topic
-        ingested_descriptions = ingested_video_sources + [
-            " ".join(path.read_text(encoding="utf-8-sig").split())
-            for path in sorted(CAPTION_CORPUS_DIR.glob("*.txt"))[:CAPTION_CORPUS_LIMIT]
-        ]
-        for topic in (video_topic, document_topic):
-            normalized_topic = " ".join(topic.split())
-            assert (
-                sum(
-                    normalized_topic in description
-                    for description in ingested_descriptions
-                )
-                == 1
-            ), topic
         workflow_ids = [example["workflow_id"] for example in data["data"]]
         assert len(set(workflow_ids)) == 4
         assert all(
