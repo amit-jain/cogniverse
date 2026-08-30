@@ -148,9 +148,7 @@ def test_search_nodes_returns_empty_when_schema_is_missing():
 def test_search_nodes_raises_when_schema_lookup_fails():
     sess = _Session(resp=_Resp({"root": {"children": []}}))
     mgr = _bare_manager(sess)
-    mgr._backend.schema_exists.side_effect = RuntimeError(
-        "schema registry unavailable"
-    )
+    mgr._backend.schema_exists.side_effect = RuntimeError("schema registry unavailable")
     mgr._encode_query_blocks = MagicMock(
         side_effect=AssertionError("encoder should not run on lookup failure")
     )

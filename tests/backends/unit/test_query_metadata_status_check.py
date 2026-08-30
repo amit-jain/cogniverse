@@ -340,9 +340,7 @@ def test_metadata_query_returns_empty_when_tenant_schema_is_missing() -> None:
     )
 
     assert rows == []
-    backend.schema_exists.assert_called_once_with(
-        "wiki_pages", tenant_id="acme:acme"
-    )
+    backend.schema_exists.assert_called_once_with("wiki_pages", tenant_id="acme:acme")
     backend._metadata_vespa_app.assert_not_called()
 
 
@@ -364,7 +362,5 @@ def test_metadata_query_raises_when_tenant_schema_lookup_fails() -> None:
             hits=2,
         )
 
-    backend.schema_exists.assert_called_once_with(
-        "wiki_pages", tenant_id="acme:acme"
-    )
+    backend.schema_exists.assert_called_once_with("wiki_pages", tenant_id="acme:acme")
     backend._metadata_vespa_app.assert_not_called()
