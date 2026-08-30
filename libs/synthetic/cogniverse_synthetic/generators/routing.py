@@ -87,6 +87,20 @@ def _enhance_entity_query(query: str, entities: List[Dict]) -> str:
     )
 
 
+def _missing_topic_content_words(query: str, topic: str) -> list[str]:
+    """Return topic words longer than 3 chars that do not appear in the query."""
+    topic_words = [word for word in re.findall(r"\w+", topic) if len(word) > 3]
+    return [
+        word
+        for word in topic_words
+        if not re.search(
+            rf"(?<!\w){re.escape(word)}(?!\w)",
+            query,
+            flags=re.IGNORECASE,
+        )
+    ]
+
+
 # Type alias for canonical labels: (query, sorted entity tuples, chosen_agent)
 CanonicalLabel = tuple[str, tuple[tuple[str, str], ...], str]
 
@@ -283,6 +297,14 @@ class RoutingGenerator(BaseGenerator):
                 query, generation_metadata = await self._generate_entity_query(
                     entities, topic
                 )
+                missing_topic_words = _missing_topic_content_words(query, topic)
+                if missing_topic_words:
+                    raise ValueError(
+                        "routing query must contain every topic content word "
+                        "longer than 3 chars; "
+                        f"missing={missing_topic_words!r}; topic={topic!r}; "
+                        f"query={query!r}"
+                    )
             except (ValueError, ValidationError) as exc:
                 last_validation_error = exc
                 if isinstance(generation_tracker, GenerationTracker):
@@ -488,6 +510,7 @@ class RoutingGenerator(BaseGenerator):
                     "retry_count": retry_count,
                     "max_retries": max_retries,
                     "reasoning": reasoning.strip(),
+                    "source_topic": topic,
                 }
             }
 

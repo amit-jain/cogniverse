@@ -1207,15 +1207,14 @@ class TestSyntheticDataAPI:
                         ],
                     }
                 )
-            expected_grounded_examples = [
-                {
-                    "query": item["query"],
+            expected_by_topic = {
+                item["query"]: {
                     "entities": item["entities"],
                     "relationships": item["relationships"],
                 }
                 for item in expected_extractions
                 if item["entities"]
-            ]
+            }
 
         assert resp.status_code == 200, f"Synthetic generation failed: {resp.text}"
         data = resp.json()
@@ -1261,15 +1260,12 @@ class TestSyntheticDataAPI:
         assert generation["returned_count"] == len(
             {(example["query"], example["chosen_agent"]) for example in data["data"]}
         )
-        actual_grounded_examples = [
-            {
-                "query": example["query"],
-                "entities": example["entities"],
-                "relationships": example["relationships"],
-            }
+        actual_by_topic = {
+            example["metadata"]["_generation_metadata"]["source_topic"]: example
             for example in data["data"]
-        ]
-        assert actual_grounded_examples == expected_grounded_examples
+        }
+        assert len(actual_by_topic) == len(data["data"])
+        assert set(actual_by_topic) == set(expected_by_topic)
         sampled_corpus = " ".join(
             " ".join(str(value).split())
             for result in sampled_content
@@ -1292,8 +1288,11 @@ class TestSyntheticDataAPI:
             "metadata",
         }
         with httpx.Client(base_url=RUNTIME, timeout=900.0) as client:
-            for example in data["data"]:
+            for source_topic, example in actual_by_topic.items():
                 assert set(example) == routing_fields
+                expected = expected_by_topic[source_topic]
+                assert example["entities"] == expected["entities"]
+                assert example["relationships"] == expected["relationships"]
                 gateway_response = client.post(
                     "/agents/gateway_agent/process",
                     json={
@@ -1306,10 +1305,6 @@ class TestSyntheticDataAPI:
                 gateway = gateway_response.json()["gateway"]
                 assert example["chosen_agent"] == gateway["routed_to"]
                 assert example["routing_confidence"] == gateway["confidence"]
-                assert {
-                    "entities": example["entities"],
-                    "relationships": example["relationships"],
-                } in expected_extractions
                 assert all(
                     set(entity) == {"text", "type"} for entity in example["entities"]
                 )
@@ -1322,6 +1317,17 @@ class TestSyntheticDataAPI:
                 assert all(
                     entity["text"].casefold() in sampled_corpus
                     for entity in example["entities"]
+                )
+                topic_words = [
+                    word for word in re.findall(r"\w+", source_topic) if len(word) > 3
+                ]
+                assert all(
+                    re.search(
+                        rf"(?<!\w){re.escape(word)}(?!\w)",
+                        example["query"],
+                        flags=re.IGNORECASE,
+                    )
+                    for word in topic_words
                 )
                 entity_words = [
                     word
@@ -1347,7 +1353,10 @@ class TestSyntheticDataAPI:
                     "retry_count",
                     "max_retries",
                     "reasoning",
+                    "source_topic",
                 }
+                assert generation_metadata["source_topic"] == source_topic
+                assert generation_metadata["source_topic"] in expected_by_topic
                 assert type(generation_metadata["retry_count"]) is int
                 assert generation_metadata["retry_count"] in {0, 1, 2}
                 assert type(generation_metadata["max_retries"]) is int
