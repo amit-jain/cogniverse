@@ -27,6 +27,7 @@ import os
 import time
 import uuid
 
+import dspy
 import httpx
 import pytest
 
@@ -121,10 +122,12 @@ def _run_process(session_id: str, query: str, constraint: str | None) -> dict:
 
 
 def _query_dspy_lm_spans_with_text(text: str, timeout_s: float = 30.0) -> list:
-    """Query Phoenix DSPy LM spans whose input.value contains ``text``.
+    """Query the reformulator's DSPy LM spans whose input.value contains ``text``.
 
-    Polls up to ``timeout_s`` for OTLP ingest. Returns a list of
-    spans (each a dict with name + attributes).
+    The reformulator is the ``ChainOfThought.forward`` family emitted by
+    OpenInference DSPy instrumentation. We first locate that family, then
+    keep only the LM child spans from the same trace so we do not match the
+    sufficiency gate's unrelated LM traffic.
     """
     from datetime import datetime, timedelta, timezone
 
@@ -132,15 +135,17 @@ def _query_dspy_lm_spans_with_text(text: str, timeout_s: float = 30.0) -> list:
     from phoenix.client.types.spans import SpanQuery
 
     px = Client(base_url=PHOENIX_BASE)
-    query = SpanQuery().where("name == 'LM.__call__'")
+    chain_span_name = f"{dspy.ChainOfThought.__name__}.forward"
+    lm_span_name = f"{dspy.LM.__name__}.__call__"
+    query = SpanQuery().where(f"name == '{chain_span_name}'")
     # The tenant project accumulates spans across every run on the
-    # cluster; keep the time window so the exact LM.__call__ lookup
-    # stays on this run's traffic.
+    # cluster; keep the time window so the reformulator lookup stays on
+    # this run's traffic.
     window_start = datetime.now(timezone.utc) - timedelta(minutes=30)
     deadline = time.time() + timeout_s
     while time.time() < deadline:
         try:
-            spans = px.spans.get_spans_dataframe(
+            chain_spans = px.spans.get_spans_dataframe(
                 project_identifier=f"cogniverse-{_TENANT}",
                 start_time=window_start,
                 query=query,
@@ -149,12 +154,41 @@ def _query_dspy_lm_spans_with_text(text: str, timeout_s: float = 30.0) -> list:
         except Exception:
             time.sleep(0.5)
             continue
-        if len(spans) == 0:
+        if len(chain_spans) == 0:
             time.sleep(0.5)
             continue
-        # LM.__call__ spans have the full prompt in input.value
-        matching = spans[
-            spans["attributes.input.value"]
+        # ChainOfThought.forward spans carry the reformulator inputs.
+        matching_chains = chain_spans[
+            chain_spans["attributes.input.value"]
+            .fillna("")
+            .str.contains(text, na=False, regex=False)
+        ]
+        if len(matching_chains) == 0:
+            time.sleep(0.5)
+            continue
+
+        trace_ids = set(matching_chains["context.trace_id"].dropna())
+        if not trace_ids:
+            time.sleep(0.5)
+            continue
+
+        try:
+            lm_spans = px.spans.get_spans_dataframe(
+                project_identifier=f"cogniverse-{_TENANT}",
+                start_time=window_start,
+                query=SpanQuery().where(f"name == '{lm_span_name}'"),
+                timeout=90,
+            )
+        except Exception:
+            time.sleep(0.5)
+            continue
+        if len(lm_spans) == 0:
+            time.sleep(0.5)
+            continue
+
+        matching = lm_spans[
+            lm_spans["context.trace_id"].isin(trace_ids)
+            & lm_spans["attributes.input.value"]
             .fillna("")
             .str.contains(text, na=False, regex=False)
         ]
@@ -165,6 +199,7 @@ def _query_dspy_lm_spans_with_text(text: str, timeout_s: float = 30.0) -> list:
                     "output": row["attributes.output.value"],
                     "name": row["name"],
                     "span_id": row["context.span_id"],
+                    "trace_id": row["context.trace_id"],
                 }
                 for _, row in matching.iterrows()
             ]
@@ -211,12 +246,13 @@ def test_with_constraint_run_appears_in_dspy_lm_span_input_byte_equal():
         f"got {il['inbound_constraints_applied']!r}"
     )
 
-    # Query Phoenix DSPy spans that mention the unique query anchor.
+    # Query Phoenix for the reformulator trace that mentions the unique
+    # query anchor, then keep the LM child spans from that trace.
     spans = _query_dspy_lm_spans_with_text(unique_id, timeout_s=30.0)
     assert spans, (
-        f"no DSPy LM spans found containing unique anchor {unique_id!r}; "
-        f"runtime may not have OPENINFERENCE_DSPY=1 enabled or DSPy "
-        f"re-instrumentation against Phoenix tracer failed"
+        f"no reformulator LM spans found containing unique anchor "
+        f"{unique_id!r}; runtime may not have OPENINFERENCE_DSPY=1 enabled "
+        f"or DSPy re-instrumentation against Phoenix tracer failed"
     )
 
     # At least one DSPy LM span's input.value MUST contain the

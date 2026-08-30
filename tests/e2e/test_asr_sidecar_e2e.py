@@ -129,6 +129,7 @@ def test_audio_processor_remote_against_cluster_sidecar(asr_sidecar_url, tmp_pat
     """End-to-end: AudioProcessor(endpoint=...) → cluster vLLM ASR pod."""
     audio_path = tmp_path / "silence.wav"
     _silent_wav(audio_path, seconds=1.0)
+    started = time.perf_counter()
 
     processor = AudioProcessor(
         logging.getLogger("test"),
@@ -137,6 +138,7 @@ def test_audio_processor_remote_against_cluster_sidecar(asr_sidecar_url, tmp_pat
         endpoint=asr_sidecar_url,
     )
     transcript = processor.transcribe_audio(audio_path, output_dir=tmp_path)
+    elapsed = time.perf_counter() - started
 
     assert "error" not in transcript, (
         f"remote transcription must succeed; got error: {transcript.get('error')!r}"
@@ -151,6 +153,7 @@ def test_audio_processor_remote_against_cluster_sidecar(asr_sidecar_url, tmp_pat
         "duration",
         "full_text",
         "segments",
+        "transcription_time",
     }, transcript
     assert transcript["video_id"] == "silence"
     assert transcript["video_path"] == str(audio_path)
@@ -159,6 +162,7 @@ def test_audio_processor_remote_against_cluster_sidecar(asr_sidecar_url, tmp_pat
     assert isinstance(transcript["duration"], (int, float)), transcript
     assert transcript.get("language"), "language field must be populated"
     assert transcript["model"] == "openai/whisper-large-v3-turbo", transcript
+    assert 0.0 <= transcript["transcription_time"] <= elapsed, transcript
 
     written = tmp_path / "transcripts" / "silence_transcript.json"
     assert written.exists(), "AudioProcessor must persist the transcript JSON to disk"
