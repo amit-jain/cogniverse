@@ -369,10 +369,12 @@ class _PagingBackend:
         )
         self.ignore_offset = ignore_offset
         self.query_count = 0
+        self.calls: List[Dict[str, Any]] = []
         self.yqls: List[str] = []
 
     def query_metadata_documents(self, schema, yql=None, **kwargs):
         self.query_count += 1
+        self.calls.append({"schema": schema, "yql": yql, **kwargs})
         self.yqls.append(yql)
         # Page size and offset ride as hits/offset, not in the YQL.
         limit = int(kwargs["hits"])
@@ -388,6 +390,7 @@ def _paging_store(backend: _PagingBackend) -> BackendVectorStore:
     store.backend = backend
     store.collection_name = "agent_memories_acme"
     store.profile = "agent_memories"
+    store.tenant_id = "acme:acme"
     store.is_telemetry = False
     return store
 
@@ -432,6 +435,7 @@ class TestListPagination:
 
         assert [r.id for r in results] == [f"m{249 - i:04d}" for i in range(10)]
         assert next_offset == 10
+        assert backend.calls[0]["tenant_id"] == "acme:acme"
 
     def test_walk_orders_by_unique_id_bounded_by_recency(self):
         """The full walk must page by the unique id (a total order offset

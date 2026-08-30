@@ -349,27 +349,25 @@ async def list_profiles(
             tenant_id=tenant_id, service="backend"
         )
 
-        profile_summaries = []
         backend_registry = BackendRegistry.get_instance()
+        backend = backend_registry.get_ingestion_backend(
+            "vespa",
+            tenant_id=tenant_id,
+            config_manager=config_manager,
+            schema_loader=schema_loader,
+        )
+        if backend is None:
+            raise HTTPException(
+                status_code=500,
+                detail="Backend not available for schema status lookup",
+            )
+
+        profile_summaries = []
 
         for profile_name, profile in profiles.items():
-            schema_deployed = False
-            try:
-                backend = backend_registry.get_ingestion_backend(
-                    "vespa",
-                    tenant_id=tenant_id,
-                    config_manager=config_manager,
-                    schema_loader=schema_loader,
-                )
-                if backend:
-                    schema_deployed = backend.schema_exists(
-                        schema_name=profile.schema_name, tenant_id=tenant_id
-                    )
-            except Exception as e:
-                logger.warning(
-                    f"Failed to check schema deployment status for '{profile_name}': {e}"
-                )
-
+            schema_deployed = backend.schema_exists(
+                schema_name=profile.schema_name, tenant_id=tenant_id
+            )
             profile_summaries.append(
                 ProfileSummary(
                     profile_name=profile_name,
@@ -427,27 +425,27 @@ async def get_profile(
                 detail=f"Profile '{profile_name}' not found for tenant '{tenant_id}'",
             )
 
-        schema_deployed = False
-        tenant_schema_name = None
-
-        try:
-            backend_registry = BackendRegistry.get_instance()
-            backend = backend_registry.get_ingestion_backend(
-                "vespa",
-                tenant_id=tenant_id,
-                config_manager=config_manager,
-                schema_loader=schema_loader,
+        backend_registry = BackendRegistry.get_instance()
+        backend = backend_registry.get_ingestion_backend(
+            "vespa",
+            tenant_id=tenant_id,
+            config_manager=config_manager,
+            schema_loader=schema_loader,
+        )
+        if backend is None:
+            raise HTTPException(
+                status_code=500,
+                detail="Backend not available for schema status lookup",
             )
-            if backend:
-                schema_deployed = backend.schema_exists(
-                    schema_name=profile.schema_name, tenant_id=tenant_id
-                )
-                if schema_deployed:
-                    tenant_schema_name = backend.get_tenant_schema_name(
-                        tenant_id, profile.schema_name
-                    )
-        except Exception as e:
-            logger.warning(f"Failed to check schema status: {e}")
+
+        schema_deployed = backend.schema_exists(
+            schema_name=profile.schema_name, tenant_id=tenant_id
+        )
+        tenant_schema_name = (
+            backend.get_tenant_schema_name(tenant_id, profile.schema_name)
+            if schema_deployed
+            else None
+        )
 
         from cogniverse_sdk.interfaces.config_store import ConfigScope
 

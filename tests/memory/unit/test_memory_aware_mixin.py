@@ -165,6 +165,66 @@ class TestMemoryAwareMixin:
         mock_manager.search_memory.assert_called_once()
 
     @patch("cogniverse_agents.memory_aware_mixin.Mem0MemoryManager")
+    def test_get_relevant_context_raises_on_search_failure(
+        self, mock_manager_class, agent
+    ):
+        """Tenant-side memory outages must surface instead of returning None."""
+        mock_manager = MagicMock()
+        mock_manager.memory = MagicMock()
+        mock_manager.search_memory.side_effect = RuntimeError("memory backend down")
+        mock_manager_class.return_value = mock_manager
+
+        agent.initialize_memory("test_agent", "test_tenant", **MEMORY_INIT_DEFAULTS)
+
+        with pytest.raises(RuntimeError, match="memory backend down"):
+            agent.get_relevant_context("test query")
+
+        mock_manager.search_memory.assert_called_once()
+
+    @patch("cogniverse_agents.memory_aware_mixin.Mem0MemoryManager")
+    def test_get_relevant_context_raises_on_federated_trunk_failure(
+        self, mock_manager_class, agent
+    ):
+        """Org-trunk failures must surface when federation is enabled."""
+        class _TenantManager:
+            def __init__(self):
+                self.memory = object()
+                self._knowledge_registry = object()
+                self.search_calls = 0
+
+            def search_memory(self, **kwargs):
+                self.search_calls += 1
+                return [{"memory": "tenant context"}]
+
+        class _TrunkManager:
+            def __init__(self):
+                self.memory = object()
+                self.search_calls = 0
+
+            def search_memory(self, **kwargs):
+                self.search_calls += 1
+                raise RuntimeError("org trunk down")
+
+        tenant_manager = _TenantManager()
+        trunk_manager = _TrunkManager()
+
+        agent._memory_tenant_id = "test_tenant"
+        agent._memory_agent_name = "test_agent"
+        agent.memory_manager = tenant_manager
+
+        with patch(
+            "cogniverse_core.memory.manager.Mem0MemoryManager",
+            return_value=trunk_manager,
+        ):
+            with pytest.raises(RuntimeError, match="org trunk down"):
+                agent._federate_with_org_trunk(
+                    "test query", [{"memory": "tenant context"}], 5
+                )
+
+        assert tenant_manager.search_calls == 0
+        assert trunk_manager.search_calls == 1
+
+    @patch("cogniverse_agents.memory_aware_mixin.Mem0MemoryManager")
     def test_update_memory(self, mock_manager_class, agent):
         """Test updating memory"""
         # Setup mock

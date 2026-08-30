@@ -1718,6 +1718,15 @@ class VespaBackend(Backend):
                     )
 
         try:
+            if tenant_id and not self.schema_exists(schema, tenant_id=tenant_id):
+                logger.info(
+                    "Tenant-scoped metadata query skipped because schema %r is "
+                    "not deployed for tenant %r",
+                    schema,
+                    tenant_id,
+                )
+                return []
+
             vespa_client = self._metadata_vespa_app()
 
             # Build query parameters

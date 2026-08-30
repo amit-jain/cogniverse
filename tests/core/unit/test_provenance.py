@@ -469,3 +469,6 @@ class TestProvenanceStoreFaultContract:
         # One query from the explicit fetch above, one from the walk's
         # level-0 batch fetch.
         assert len(backend.queries) == 2
+        assert backend.queries[0]["tenant_id"] == "t1"
+        assert backend.queries[1]["tenant_id"] == "t1"
+        assert backend.queries[0]["schema"] == "provenance_t1"

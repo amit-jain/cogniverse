@@ -37,7 +37,7 @@ from __future__ import annotations
 
 import logging
 from types import SimpleNamespace
-from unittest.mock import patch
+from unittest.mock import MagicMock, patch
 
 import pytest
 
@@ -322,3 +322,49 @@ def test_200_with_degraded_coverage_raises(backend: VespaBackend) -> None:
                 schema="tenant_metadata",
                 yql="select * from tenant_metadata where true",
             )
+
+
+def test_metadata_query_returns_empty_when_tenant_schema_is_missing() -> None:
+    backend = object.__new__(VespaBackend)
+    backend._url = "http://vespa"
+    backend._port = 8080
+    backend.get_tenant_schema_name = MagicMock(return_value="wiki_pages_acme_acme")
+    backend.schema_exists = MagicMock(return_value=False)
+    backend._metadata_vespa_app = MagicMock()
+
+    rows = backend.query_metadata_documents(
+        schema="wiki_pages",
+        yql="select * from sources wiki_pages where true limit 2",
+        tenant_id="acme:acme",
+        hits=2,
+    )
+
+    assert rows == []
+    backend.schema_exists.assert_called_once_with(
+        "wiki_pages", tenant_id="acme:acme"
+    )
+    backend._metadata_vespa_app.assert_not_called()
+
+
+def test_metadata_query_raises_when_tenant_schema_lookup_fails() -> None:
+    backend = object.__new__(VespaBackend)
+    backend._url = "http://vespa"
+    backend._port = 8080
+    backend.get_tenant_schema_name = MagicMock(return_value="wiki_pages_acme_acme")
+    backend.schema_exists = MagicMock(
+        side_effect=RuntimeError("schema registry unavailable")
+    )
+    backend._metadata_vespa_app = MagicMock()
+
+    with pytest.raises(RuntimeError, match="schema registry unavailable"):
+        backend.query_metadata_documents(
+            schema="wiki_pages",
+            yql="select * from sources wiki_pages where true limit 2",
+            tenant_id="acme:acme",
+            hits=2,
+        )
+
+    backend.schema_exists.assert_called_once_with(
+        "wiki_pages", tenant_id="acme:acme"
+    )
+    backend._metadata_vespa_app.assert_not_called()

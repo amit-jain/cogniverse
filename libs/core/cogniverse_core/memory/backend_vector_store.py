@@ -688,6 +688,7 @@ class BackendVectorStore(VectorStoreBase):
             yql=yql,
             hits=limit,
             offset=offset,
+            tenant_id=self.tenant_id,
         )
 
         mem0_results: List[BackendSearchResult] = []

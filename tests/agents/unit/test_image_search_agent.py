@@ -9,7 +9,7 @@ import json
 import threading
 from pathlib import Path
 from types import SimpleNamespace
-from unittest.mock import MagicMock, PropertyMock, patch
+from unittest.mock import MagicMock, PropertyMock, call, patch
 
 import numpy as np
 import pytest
@@ -44,6 +44,13 @@ class TestImageSearchAgent:
     def setup_method(self):
         """Set up test fixtures"""
         QueryEncoderFactory._encoder_cache.clear()
+        self._schema_backend = MagicMock()
+        self._schema_backend.schema_exists = MagicMock(return_value=True)
+        self._schema_backend_patch = patch(
+            "cogniverse_runtime.admin.tenant_manager.get_backend",
+            return_value=self._schema_backend,
+        )
+        self._schema_backend_patch.start()
         self.agent = ImageSearchAgent(
             deps=ImageSearchDeps(
                 tenant_id="test_tenant",
@@ -55,6 +62,7 @@ class TestImageSearchAgent:
 
     def teardown_method(self):
         QueryEncoderFactory._encoder_cache.clear()
+        self._schema_backend_patch.stop()
 
     def test_initialization(self):
         """Test agent initialization"""
@@ -157,6 +165,10 @@ class TestImageSearchAgent:
         assert isinstance(qt, dict)
         assert len(qt) == 1024  # one entry per ColPali patch token
         assert len(qt["0"]) == 320
+        assert self._schema_backend.schema_exists.call_args_list == [
+            call("image_colpali_mv", tenant_id="test_tenant"),
+            call("image_colpali_mv", tenant_id="test_tenant"),
+        ]
 
     @pytest.mark.asyncio
     @patch.object(ImageSearchAgent, "query_encoder", new_callable=PropertyMock)
@@ -186,6 +198,42 @@ class TestImageSearchAgent:
         assert params["ranking.profile"] == "hybrid_float_bm25"
         assert "input.query(qt)" in params
         assert params["query"] == "sports car"
+
+    @pytest.mark.asyncio
+    async def test_search_images_returns_empty_when_schema_missing(self):
+        self._schema_backend.schema_exists.return_value = False
+        self.agent._query_encoder = MagicMock(
+            encode=MagicMock(side_effect=AssertionError("query encoder should not run"))
+        )
+
+        results = await self.agent.search_images(
+            query="red car", search_mode="semantic", limit=20
+        )
+
+        assert results == []
+        assert self._schema_backend.schema_exists.call_args_list == [
+            call("image_colpali_mv", tenant_id="test_tenant")
+        ]
+        self.agent._query_encoder.encode.assert_not_called()
+
+    @pytest.mark.asyncio
+    async def test_search_images_raises_when_schema_lookup_fails(self):
+        self._schema_backend.schema_exists.side_effect = RuntimeError(
+            "schema registry unavailable"
+        )
+        self.agent._query_encoder = MagicMock(
+            encode=MagicMock(side_effect=AssertionError("query encoder should not run"))
+        )
+
+        with pytest.raises(RuntimeError, match="schema registry unavailable"):
+            await self.agent.search_images(
+                query="red car", search_mode="semantic", limit=20
+            )
+
+        assert self._schema_backend.schema_exists.call_args_list == [
+            call("image_colpali_mv", tenant_id="test_tenant")
+        ]
+        self.agent._query_encoder.encode.assert_not_called()
 
     def test_encode_image_delegates_to_query_encoder(self):
         """_encode_image runs the query image through the deployed encoder
@@ -229,6 +277,10 @@ class TestImageSearchAgent:
 
         assert seen["image"] is reference_image
         mock_post.assert_called_once()
+        assert self._schema_backend.schema_exists.call_args_list == [
+            call("image_colpali_mv", tenant_id="test_tenant"),
+            call("image_colpali_mv", tenant_id="test_tenant"),
+        ]
 
     @pytest.mark.asyncio
     @patch("requests.post")
@@ -319,6 +371,12 @@ class TestImageSearchFilterEscaping:
         agent = object.__new__(ImageSearchAgent)
         agent._tenant_id = "acme:acme"
         agent._vespa_endpoint = "http://vespa:8080"
+        agent._deployed_image_schema = None
+        backend = MagicMock()
+        backend.schema_exists = MagicMock(return_value=True)
+        monkeypatch.setattr(
+            "cogniverse_runtime.admin.tenant_manager.get_backend", lambda: backend
+        )
 
         captured = {}
 
@@ -348,6 +406,9 @@ class TestImageSearchFilterEscaping:
         expected = "contains(detected_objects, " + yql_quote(val) + ")"
         assert expected in captured["yql"]
         assert "'cat's toy'" not in captured["yql"]
+        assert backend.schema_exists.call_args_list == [
+            call("image_colpali_mv", tenant_id="acme:acme")
+        ]
 
 
 class TestImageSearchEventLoop:
@@ -376,6 +437,12 @@ class TestImageSearchEventLoop:
         agent = object.__new__(ImageSearchAgent)
         agent._tenant_id = "acme:acme"
         agent._vespa_endpoint = "http://vespa:8080"
+        agent._deployed_image_schema = None
+        backend = MagicMock()
+        backend.schema_exists = MagicMock(return_value=True)
+        monkeypatch.setattr(
+            "cogniverse_runtime.admin.tenant_manager.get_backend", lambda: backend
+        )
 
         async def releaser():
             await asyncio.sleep(0.05)
@@ -391,10 +458,13 @@ class TestImageSearchEventLoop:
             timeout=5,
         )
         assert results == []
+        assert backend.schema_exists.call_args_list == [
+            call("image_colpali_mv", tenant_id="acme:acme")
+        ]
 
 
 @pytest.mark.asyncio
-async def test_search_images_offloads_blocking_encode():
+async def test_search_images_offloads_blocking_encode(monkeypatch):
     """The ColPali text-query encode is a blocking HTTP/model call and must run
     in a worker thread like the Vespa search below it — inline on the loop it
     stalls every other coroutine for the whole encode round-trip."""
@@ -406,6 +476,12 @@ async def test_search_images_offloads_blocking_encode():
 
     agent = object.__new__(ImageSearchAgent)
     agent._query_encoder = SimpleNamespace(encode=blocking_encode)
+    agent._deployed_image_schema = None
+    backend = MagicMock()
+    backend.schema_exists = MagicMock(return_value=True)
+    monkeypatch.setattr(
+        "cogniverse_runtime.admin.tenant_manager.get_backend", lambda: backend
+    )
 
     async def fake_search_vespa(**kwargs):
         return []
@@ -420,10 +496,13 @@ async def test_search_images_offloads_blocking_encode():
         asyncio.gather(agent.search_images("q"), releaser()), timeout=5
     )
     assert results == []
+    assert backend.schema_exists.call_args_list == [
+        call("image_colpali_mv", tenant_id="acme:acme")
+    ]
 
 
 @pytest.mark.asyncio
-async def test_find_similar_images_offloads_blocking_image_encode():
+async def test_find_similar_images_offloads_blocking_image_encode(monkeypatch):
     """find_similar_images runs the reference image through the ColPali model —
     equally blocking, equally required to leave the event loop responsive."""
     release = threading.Event()
@@ -434,6 +513,12 @@ async def test_find_similar_images_offloads_blocking_image_encode():
 
     agent = object.__new__(ImageSearchAgent)
     agent._encode_image = blocking_encode_image
+    agent._deployed_image_schema = None
+    backend = MagicMock()
+    backend.schema_exists = MagicMock(return_value=True)
+    monkeypatch.setattr(
+        "cogniverse_runtime.admin.tenant_manager.get_backend", lambda: backend
+    )
 
     async def fake_search_vespa(**kwargs):
         return []
@@ -449,3 +534,6 @@ async def test_find_similar_images_offloads_blocking_image_encode():
         timeout=5,
     )
     assert results == []
+    assert backend.schema_exists.call_args_list == [
+        call("image_colpali_mv", tenant_id="acme:acme")
+    ]

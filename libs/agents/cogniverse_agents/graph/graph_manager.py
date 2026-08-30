@@ -46,6 +46,7 @@ logger = logging.getLogger(__name__)
 
 # Vespa document namespace the knowledge-graph schema feeds under.
 _GRAPH_NAMESPACE = "graph_content"
+_GRAPH_BASE_SCHEMA = "knowledge_graph"
 
 
 class GraphManager:
@@ -179,6 +180,11 @@ class GraphManager:
         Chen+Ma (AgentIR, arXiv 2410.09713) that exposes signal humans never
         give the retriever. ``trace=""`` falls back to the single-query path.
         """
+        if not self._backend.schema_exists(
+            _GRAPH_BASE_SCHEMA, tenant_id=self._tenant_id
+        ):
+            return []
+
         effective_query = f"{query} {trace}".strip() if trace else query
         try:
             qt_blocks, qtb_blocks = self._encode_query_blocks(effective_query)
@@ -455,6 +461,11 @@ class GraphManager:
         dictionary lookup — the Document-v1 visit-with-selection this
         replaces scanned the tenant's whole graph corpus per call.
         """
+        if not self._backend.schema_exists(
+            _GRAPH_BASE_SCHEMA, tenant_id=self._tenant_id
+        ):
+            return []
+
         url = f"{self._backend._url}:{self._backend._port}"
         body = {
             "yql": (

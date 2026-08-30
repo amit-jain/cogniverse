@@ -183,6 +183,7 @@ async def test_audio_transcript_search_raises_on_degraded_body(monkeypatch):
         "get_connection",
         lambda: _ConnCtx(_DegradedHTTPResponse()),
     )
+    search_backend._tenant_schema_exists = lambda *a, **k: True
     backend._vespa_search_backend = search_backend
     with pytest.raises(VespaError, match="errors"):
         await agent.search_audio(

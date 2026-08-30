@@ -34,6 +34,7 @@ def _make_backend(profiles: dict | None = None) -> VespaSearchBackend:
                 "profiles": profiles or {},
             }
         )
+    backend._tenant_schema_exists = MagicMock(return_value=True)
     return backend
 
 
@@ -318,6 +319,7 @@ def test_search_raises_when_embeddings_needed_but_no_encoder():
             },
             schema_loader=FilesystemSchemaLoader(Path("configs/schemas")),
         )
+        backend._tenant_schema_exists = MagicMock(return_value=True)
 
     with pytest.raises(ValueError, match="needs query embeddings"):
         backend.search(
@@ -637,6 +639,7 @@ def test_search_types_hits_by_resolved_profile_not_by_query_type():
             },
             schema_loader=FilesystemSchemaLoader(Path("configs/schemas")),
         )
+    backend._tenant_schema_exists = MagicMock(return_value=True)
     backend.pool = None
     backend.vespa = MagicMock()
     backend.vespa.query.return_value = VespaQueryResponse(

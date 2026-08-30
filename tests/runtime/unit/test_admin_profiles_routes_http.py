@@ -17,6 +17,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 from datetime import datetime
 from types import SimpleNamespace
+from unittest.mock import MagicMock, call
 
 import pytest
 from fastapi import FastAPI
@@ -327,6 +328,40 @@ async def test_get_profile_missing_returns_404(env):
 
 
 @pytest.mark.asyncio
+async def test_list_profiles_schema_lookup_failure_raises_500(env):
+    env.cm.profiles["prof_a"] = _profile("prof_a", "video_colpali_sv", "colpali-v1.2")
+    env.backend.schema_exists = MagicMock(
+        side_effect=RuntimeError("schema registry unavailable")
+    )
+
+    resp = await _get(env.app, "/admin/profiles", tenant_id="acme")
+
+    assert resp.status_code == 500
+    assert resp.json() == {"detail": "schema registry unavailable"}
+    assert env.backend.schema_exists.call_args_list == [
+        call(schema_name="video_colpali_sv", tenant_id="acme"),
+    ]
+
+
+@pytest.mark.asyncio
+async def test_get_profile_schema_lookup_failure_raises_500(env):
+    env.cm.profiles["video_colpali"] = _profile(
+        "video_colpali", "video_colpali_sv", "colpali-v1.2"
+    )
+    env.backend.schema_exists = MagicMock(
+        side_effect=RuntimeError("schema registry unavailable")
+    )
+
+    resp = await _get(env.app, "/admin/profiles/video_colpali", tenant_id="acme")
+
+    assert resp.status_code == 500
+    assert resp.json() == {"detail": "schema registry unavailable"}
+    assert env.backend.schema_exists.call_args_list == [
+        call(schema_name="video_colpali_sv", tenant_id="acme"),
+    ]
+
+
+@pytest.mark.asyncio
 async def test_update_profile_persists_overrides_and_echoes_updated_fields(env):
     env.cm.profiles["video_colpali"] = _profile(
         "video_colpali", "video_colpali_sv", "colpali-v1.2"
@@ -471,6 +506,29 @@ async def test_deploy_schema_success_invokes_deploy_primitive(env):
     assert env.backend.deploy_calls == [
         {"tenant_id": "acme", "base_schema_name": "video_prism_mv", "force": False}
     ]
+
+
+@pytest.mark.asyncio
+async def test_deploy_schema_lookup_failure_raises_500(env):
+    env.cm.profiles["video_prism"] = _profile(
+        "video_prism", "video_prism_mv", "videoprism-lvt"
+    )
+    env.backend.schema_exists = MagicMock(
+        side_effect=RuntimeError("registry lookup failed")
+    )
+
+    resp = await _post(
+        env.app,
+        "/admin/profiles/video_prism/deploy",
+        json={"tenant_id": "acme", "force": False},
+    )
+
+    assert resp.status_code == 500
+    assert resp.json() == {"detail": "registry lookup failed"}
+    env.backend.schema_exists.assert_called_once_with(
+        schema_name="video_prism_mv", tenant_id="acme"
+    )
+    assert env.backend.deploy_calls == []
 
 
 @pytest.mark.asyncio

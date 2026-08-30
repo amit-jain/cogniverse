@@ -13,7 +13,7 @@ from concurrent.futures import ThreadPoolExecutor
 from contextlib import contextmanager
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from types import SimpleNamespace
-from unittest.mock import AsyncMock, MagicMock, PropertyMock, patch
+from unittest.mock import AsyncMock, MagicMock, PropertyMock, call, patch
 
 import numpy as np
 import pytest
@@ -128,6 +128,13 @@ class TestAudioAnalysisAgent:
 
     def setup_method(self):
         """Set up test fixtures"""
+        self._schema_backend = MagicMock()
+        self._schema_backend.schema_exists = MagicMock(return_value=True)
+        self._schema_backend_patch = patch(
+            "cogniverse_runtime.admin.tenant_manager.get_backend",
+            return_value=self._schema_backend,
+        )
+        self._schema_backend_patch.start()
         self.agent = AudioAnalysisAgent(
             deps=AudioAnalysisDeps(
                 tenant_id="test_tenant",
@@ -136,6 +143,9 @@ class TestAudioAnalysisAgent:
             ),
             port=8006,
         )
+
+    def teardown_method(self):
+        self._schema_backend_patch.stop()
 
     def test_initialization(self):
         """Test agent initialization"""
@@ -531,6 +541,53 @@ class TestAudioAnalysisAgent:
         assert call_args[0].shape == (512,)
         assert call_args[1] == 3
         self.agent._get_backend.assert_not_called()
+        assert self._schema_backend.schema_exists.call_args_list == [
+            call("audio_content", tenant_id="test_tenant")
+        ]
+
+    @pytest.mark.asyncio
+    async def test_search_audio_acoustic_mode_returns_empty_when_schema_missing(self):
+        self._schema_backend.schema_exists.return_value = False
+        self.agent._embedding_generator = MagicMock(
+            generate_acoustic_text_embedding=MagicMock(
+                side_effect=AssertionError("acoustic embedding should not be used")
+            )
+        )
+        self.agent._search_by_acoustic_embedding = AsyncMock(
+            side_effect=AssertionError("acoustic search must not run")
+        )
+
+        results = await self.agent.search_audio(
+            query="sounds like thunder", search_mode="acoustic", limit=3
+        )
+
+        assert results == []
+        assert self._schema_backend.schema_exists.call_args_list == [
+            call("audio_content", tenant_id="test_tenant")
+        ]
+        self.agent._embedding_generator.generate_acoustic_text_embedding.assert_not_called()
+        self.agent._search_by_acoustic_embedding.assert_not_awaited()
+
+    @pytest.mark.asyncio
+    async def test_search_audio_acoustic_mode_raises_when_schema_lookup_fails(self):
+        self._schema_backend.schema_exists.side_effect = RuntimeError(
+            "schema registry unavailable"
+        )
+        self.agent._embedding_generator = MagicMock(
+            generate_acoustic_text_embedding=MagicMock(
+                side_effect=AssertionError("acoustic embedding should not be used")
+            )
+        )
+
+        with pytest.raises(RuntimeError, match="schema registry unavailable"):
+            await self.agent.search_audio(
+                query="sounds like thunder", search_mode="acoustic", limit=3
+            )
+
+        assert self._schema_backend.schema_exists.call_args_list == [
+            call("audio_content", tenant_id="test_tenant")
+        ]
+        self.agent._embedding_generator.generate_acoustic_text_embedding.assert_not_called()
 
     @pytest.mark.asyncio
     async def test_search_audio_rejects_unknown_mode(self):
@@ -1140,6 +1197,7 @@ class TestAudioSearchEventLoop:
         agent = object.__new__(AudioAnalysisAgent)
         agent._tenant_id = "acme:acme"
         agent._vespa_endpoint = "http://vespa:8080"
+        agent._deployed_audio_schema = None
         agent._shared_backend = None
         agent._shared_backend_lock = threading.Lock()
         agent._backend_type = "vespa"
@@ -1244,6 +1302,7 @@ def _bare_acoustic_agent(blocking_embed):
     agent = object.__new__(AudioAnalysisAgent)
     agent._tenant_id = "test:test"
     agent._vespa_endpoint = "http://fake-vespa:8080"
+    agent._deployed_audio_schema = None
     agent._embedding_generator = SimpleNamespace(
         generate_acoustic_text_embedding=blocking_embed
     )
@@ -1294,6 +1353,12 @@ async def test_search_acoustic_offloads_blocking_clap_encode(monkeypatch):
         return _Vec()
 
     agent = _bare_acoustic_agent(blocking_embed)
+    schema_backend = MagicMock()
+    schema_backend.schema_exists = MagicMock(return_value=True)
+    monkeypatch.setattr(
+        "cogniverse_runtime.admin.tenant_manager.get_backend",
+        lambda: schema_backend,
+    )
     monkeypatch.setattr(
         "cogniverse_agents.search.vespa_query.vespa_search_post",
         lambda endpoint, params, timeout: _EmptyVespaResp(),
@@ -1307,6 +1372,10 @@ async def test_search_acoustic_offloads_blocking_clap_encode(monkeypatch):
         asyncio.gather(agent._search_acoustic("q", 5), releaser()), timeout=5
     )
     assert results == []
+    assert schema_backend.schema_exists.call_args_list == [
+        call("audio_content", tenant_id="test:test"),
+        call("audio_content", tenant_id="test:test"),
+    ]
 
 
 @pytest.mark.asyncio
@@ -1327,6 +1396,7 @@ async def test_local_whisper_transcription_offloads_blocking_model():
 
     agent = object.__new__(AudioAnalysisAgent)
     agent._whisper_endpoint = None
+    agent._deployed_audio_schema = None
     agent._audio_transcriber = _BlockingTranscriber()
     agent._get_audio_path = lambda url: "/tmp/x.wav"
 

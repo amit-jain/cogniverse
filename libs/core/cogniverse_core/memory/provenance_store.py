@@ -197,6 +197,7 @@ class ProvenanceStore:
                 schema=self.schema_name,
                 yql=yql,
                 hits=max(len(memory_ids), 100),
+                tenant_id=self._tenant_id,
             )
         except Exception as exc:
             raise RuntimeError(

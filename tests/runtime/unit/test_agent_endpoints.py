@@ -591,13 +591,24 @@ class TestModalitySearchDispatchSerialization:
         from cogniverse_agents.image_search_agent import ImageResult
 
         monkeypatch.setattr(dispatcher, "_get_vespa_endpoint", lambda t: "http://vespa")
+        backend = MagicMock()
+        backend.schema_exists = MagicMock(return_value=True)
+        monkeypatch.setattr(
+            "cogniverse_runtime.admin.tenant_manager.get_backend", lambda: backend
+        )
         stub = MagicMock()
         stub.search_images = AsyncMock(
             return_value=[ImageResult(image_id="img1", image_url="http://x/1.jpg")]
         )
+        captured = {}
+
+        def build_agent(*, deps, **kwargs):
+            captured["deps"] = deps
+            return stub
+
         monkeypatch.setattr(
             "cogniverse_agents.image_search_agent.ImageSearchAgent",
-            lambda *a, **k: stub,
+            build_agent,
         )
 
         result = await dispatcher._execute_image_search_task("cats", "acme:prod", 5)
@@ -606,6 +617,68 @@ class TestModalitySearchDispatchSerialization:
         assert result["results_count"] == 1
         assert result["results"][0]["image_id"] == "img1"
         assert result["results"][0]["image_url"] == "http://x/1.jpg"
+        assert captured["deps"].deployed_image_schema is True
+        assert backend.schema_exists.call_args_list == [
+            call("image_colpali_mv", "acme:prod")
+        ]
+
+    @pytest.mark.asyncio
+    @pytest.mark.ci_fast
+    async def test_image_search_dispatch_is_empty_when_tenant_has_no_image_schema(
+        self, dispatcher, monkeypatch
+    ):
+        monkeypatch.setattr(dispatcher, "_get_vespa_endpoint", lambda t: "http://vespa")
+        backend = MagicMock()
+        backend.schema_exists = MagicMock(return_value=False)
+        monkeypatch.setattr(
+            "cogniverse_runtime.admin.tenant_manager.get_backend", lambda: backend
+        )
+
+        def _must_not_build(*a, **k):
+            raise AssertionError("image agent must not be built without a schema")
+
+        monkeypatch.setattr(
+            "cogniverse_agents.image_search_agent.ImageSearchAgent",
+            _must_not_build,
+        )
+
+        result = await dispatcher._execute_image_search_task("cats", "acme:prod", 5)
+
+        assert backend.schema_exists.call_args_list == [
+            call("image_colpali_mv", "acme:prod")
+        ]
+        assert result == {
+            "status": "success",
+            "agent": "image_search_agent",
+            "message": "No image content indexed for tenant 'acme:prod'",
+            "results_count": 0,
+            "results": [],
+        }
+
+    @pytest.mark.asyncio
+    @pytest.mark.ci_fast
+    async def test_image_search_dispatch_raises_when_schema_lookup_fails(
+        self, dispatcher, monkeypatch
+    ):
+        monkeypatch.setattr(dispatcher, "_get_vespa_endpoint", lambda t: "http://vespa")
+        backend = MagicMock()
+        backend.schema_exists = MagicMock(
+            side_effect=RuntimeError("schema registry unavailable")
+        )
+        monkeypatch.setattr(
+            "cogniverse_runtime.admin.tenant_manager.get_backend", lambda: backend
+        )
+
+        def _must_not_build(*a, **k):
+            raise AssertionError("image agent must not be built when lookup fails")
+
+        monkeypatch.setattr(
+            "cogniverse_agents.image_search_agent.ImageSearchAgent",
+            _must_not_build,
+        )
+
+        with pytest.raises(RuntimeError, match="^schema registry unavailable$"):
+            await dispatcher._execute_image_search_task("cats", "acme:prod", 5)
 
     @pytest.mark.asyncio
     @pytest.mark.ci_fast
@@ -653,6 +726,7 @@ class TestModalitySearchDispatchSerialization:
         assert deps.backend_config["schema_name"] == "audio_content"
         assert "profile" not in deps.backend_config
         assert deps.backend_config["backend"]["type"] == "vespa"
+        assert deps.deployed_audio_schema is True
         assert result["status"] == "success"
         assert result["results_count"] == 1
         assert result["results"][0]["audio_id"] == "aud1"
@@ -729,6 +803,11 @@ class TestModalitySearchDispatchSerialization:
 
         monkeypatch.setattr(dispatcher, "_get_vespa_endpoint", lambda t: "http://vespa")
         monkeypatch.setattr(dispatcher, "_init_agent_memory", lambda *a, **k: None)
+        backend = MagicMock()
+        backend.schema_exists = MagicMock(return_value=True)
+        monkeypatch.setattr(
+            "cogniverse_runtime.admin.tenant_manager.get_backend", lambda: backend
+        )
         stub = MagicMock()
         stub.search_documents = AsyncMock(
             return_value=[
@@ -848,7 +927,8 @@ class TestModalitySearchDispatchSerialization:
             raise AssertionError("document agent must not be built when lookup fails")
 
         monkeypatch.setattr(
-            "cogniverse_agents.document_agent.DocumentAgent", _must_not_build
+            "cogniverse_agents.document_agent.DocumentAgent",
+            _must_not_build,
         )
 
         with pytest.raises(RuntimeError, match="^schema registry unavailable$"):
@@ -867,6 +947,11 @@ class TestModalitySearchDispatchSerialization:
 
         monkeypatch.setattr(dispatcher, "_get_vespa_endpoint", lambda t: "http://vespa")
         monkeypatch.setattr(dispatcher, "_init_agent_memory", lambda *a, **k: None)
+        backend = MagicMock()
+        backend.schema_exists = MagicMock(return_value=True)
+        monkeypatch.setattr(
+            "cogniverse_runtime.admin.tenant_manager.get_backend", lambda: backend
+        )
         stub = MagicMock()
         stub.search_documents = AsyncMock(
             side_effect=VespaSearchDegraded("Vespa query returned errors: [code 12]")
@@ -882,6 +967,10 @@ class TestModalitySearchDispatchSerialization:
 
         with pytest.raises(VespaSearchDegraded, match="code 12"):
             await dispatcher._execute_document_search_task("report", "acme:prod", 5)
+        assert backend.schema_exists.call_args_list == [
+            call("document_text", "acme:prod"),
+            call("document_visual", "acme:prod"),
+        ]
 
 
 @pytest.mark.unit

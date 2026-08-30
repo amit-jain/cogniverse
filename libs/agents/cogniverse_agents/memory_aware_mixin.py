@@ -354,7 +354,7 @@ class MemoryAwareMixin:
 
         except Exception as e:
             logger.error(f"Failed to get relevant context: {e}")
-            return None
+            raise
 
     def _federate_with_org_trunk(
         self, query: str, tenant_results: List[Dict[str, Any]], top_k: int
@@ -383,26 +383,18 @@ class MemoryAwareMixin:
         from cogniverse_core.memory.manager import Mem0MemoryManager
 
         trunk_tenant = org_trunk_tenant_id(self._current_memory_tenant_id())
-        try:
-            trunk_mm = Mem0MemoryManager(trunk_tenant)
-        except Exception as exc:
-            logger.warning("Federation: could not acquire org-trunk manager: %r", exc)
-            return tenant_results
+        trunk_mm = Mem0MemoryManager(trunk_tenant)
         if not getattr(trunk_mm, "memory", None):
             # Org trunk not initialised in this deployment — silently
             # degrade to tenant-only retrieval.
             return tenant_results
 
-        try:
-            trunk_rows = trunk_mm.search_memory(
-                query=query,
-                tenant_id=trunk_tenant,
-                agent_name=self._memory_agent_name,
-                top_k=top_k,
-            )
-        except Exception as exc:
-            logger.warning("Federation: org-trunk search failed: %r", exc)
-            return tenant_results
+        trunk_rows = trunk_mm.search_memory(
+            query=query,
+            tenant_id=trunk_tenant,
+            agent_name=self._memory_agent_name,
+            top_k=top_k,
+        )
 
         # Tag origin so downstream consumers can
         # see which side a hit came from.
