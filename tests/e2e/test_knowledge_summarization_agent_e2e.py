@@ -16,6 +16,7 @@ here is the one production hits.
 
 from __future__ import annotations
 
+import uuid
 from pathlib import Path
 from typing import List
 
@@ -94,7 +95,7 @@ def _seed_facts(mm: Mem0MemoryManager, *, subject: str, count: int) -> List[str]
             metadata=meta,
             infer=False,
         )
-        assert mid is not None
+        assert mid and uuid.UUID(mid).version == 4, mid
         ids.append(mid)
     return ids
 
@@ -194,7 +195,8 @@ class TestSummarizationPromotesToOrgTrunk:
             assert sorted(c["ref_id"] for c in body["citation_refs"]) == sorted(ids)
             assert body["promoted_to_org_trunk"] is True
             promoted_id = body["promoted_memory_id"]
-            assert isinstance(promoted_id, str) and promoted_id, promoted_id
+            assert isinstance(promoted_id, str), promoted_id
+            assert uuid.UUID(promoted_id).version == 4, promoted_id
         finally:
             try:
                 mm.clear_agent_memory(tenant_id, "summary_agent")

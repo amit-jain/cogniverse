@@ -34,6 +34,7 @@ import pytest
 
 from cogniverse_agents.entity_extraction_agent import EntityExtractionModule
 from cogniverse_agents.optimizer.artifact_manager import BLOB_VERSION_DECISIONS
+from cogniverse_agents.profile_selection_agent import ProfileSelectionModule
 from cogniverse_agents.query_enhancement_agent import QueryEnhancementModule
 from cogniverse_agents.routing.orchestration_evaluator import OrchestrationEvaluator
 from cogniverse_foundation.telemetry.config import SPAN_NAME_ORCHESTRATION
@@ -258,6 +259,14 @@ def _replayed_optimizer_capture_counts(
 def _classify_orchestration_query_type(query: str, pattern: str) -> str:
     """Use the production query-type classifier for replayed workflows."""
     return OrchestrationEvaluator._classify_query_type(query, pattern)
+
+
+def _signature_field_prefixes(signature) -> list[str]:
+    """Field prefixes in declaration order, as dspy dumps them into an artifact."""
+    return [
+        (field.json_schema_extra or {}).get("prefix", "").rstrip(":").strip()
+        for field in signature.fields.values()
+    ]
 
 
 def _replayed_optimizer_template_count(
@@ -3980,8 +3989,9 @@ class TestProfileOptimization:
         module = artifact["selector.predict"]
         sig = module["signature"]
         field_names = [f.get("prefix", "").rstrip(":").strip() for f in sig["fields"]]
-        for expected in ("Query", "Available Profiles", "Selected Profile", "Modality"):
-            assert expected in field_names, f"Missing '{expected}', got: {field_names}"
+        assert field_names == _signature_field_prefixes(
+            ProfileSelectionModule().selector.predict.signature
+        ), field_names
         assert (
             sig["instructions"]
             == "Select optimal backend profile based on query analysis"
@@ -4504,8 +4514,9 @@ class TestEntityExtractionOptimization:
         module = artifact["extractor.predict"]
         sig = module["signature"]
         field_names = [f.get("prefix", "").rstrip(":").strip() for f in sig["fields"]]
-        for expected in ("Query", "Entities"):
-            assert expected in field_names, f"Missing '{expected}', got: {field_names}"
+        assert field_names == _signature_field_prefixes(
+            EntityExtractionModule().extractor.predict.signature
+        ), field_names
         assert sig["instructions"] == (
             EntityExtractionModule().extractor.predict.signature.instructions
         )

@@ -14,6 +14,7 @@ explicitly enabled), so the synthesis pass is a real LLM round-trip.
 
 from __future__ import annotations
 
+import uuid
 from pathlib import Path
 from typing import List
 
@@ -126,7 +127,7 @@ def _write_doc(mm: Mem0MemoryManager, *, label: str, content: str) -> str:
         metadata=metadata,
         infer=False,
     )
-    assert mid is not None
+    assert mid and uuid.UUID(mid).version == 4, mid
     return mid
 
 
@@ -198,7 +199,7 @@ class TestSynthesisOverInlineDocuments:
 
             # persist=True is the default → a memory gets written.
             assert isinstance(body["persisted_memory_id"], str)
-            assert body["persisted_memory_id"]
+            assert uuid.UUID(body["persisted_memory_id"]).version == 4, body
             assert body["used_rlm"] is False  # default RLMOptions=None
             assert body["metadata"]["document_count"] == 5
             assert body["metadata"]["derivation_kind"] == "synthesis"
@@ -210,7 +211,9 @@ class TestSynthesisOverInlineDocuments:
             # provenance contract the agent owes (kind, derivation_kind,
             # derived_from len matches input docs).
             persisted = mm.memory.get(body["persisted_memory_id"])
-            assert persisted is not None, "persisted memory missing"
+            assert (
+                persisted is not None and persisted["id"] == body["persisted_memory_id"]
+            ), "persisted memory missing"
             persisted_meta = persisted.get("metadata") or {}
             if isinstance(persisted_meta, str):
                 import json as _json

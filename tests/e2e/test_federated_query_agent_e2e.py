@@ -11,6 +11,7 @@ Pins:
 
 from __future__ import annotations
 
+import uuid
 from pathlib import Path
 
 import httpx
@@ -84,7 +85,7 @@ def _write_fact(mm: Mem0MemoryManager, *, content: str, subject: str) -> str:
         metadata=metadata,
         infer=False,
     )
-    assert mid is not None
+    assert mid and uuid.UUID(mid).version == 4, mid
     return mid
 
 
@@ -129,7 +130,7 @@ class TestFederatedFanOutCollectsHits:
             for h in hits:
                 assert "lithium" in h["excerpt"].lower(), h
                 assert h["origin"] == "tenant"
-                assert h["memory_id"]
+                assert uuid.UUID(h["memory_id"]).version == 4, h
         finally:
             try:
                 mm1.clear_agent_memory(t1, PROMOTED_AGENT)

@@ -9,6 +9,7 @@ Verifies:
 Requires live k3d stack via `cogniverse up`.
 """
 
+import re
 import subprocess
 
 import httpx
@@ -97,8 +98,9 @@ class TestMessagingInviteAPI:
             f"Invite creation failed: {resp.status_code}: {resp.text[:300]}"
         )
         data = resp.json()
-        assert "token" in data
+        assert set(data) == {"token", "tenant_id"}, data
         assert len(data["token"]) == 32
+        assert re.fullmatch(r"[0-9a-f]{32}", data["token"]), data["token"]
         assert data["tenant_id"] == TENANT_ID
 
 
@@ -228,9 +230,14 @@ class TestTelegramRealFlow:
                     top_k=3,
                 )
 
+                assert response["status"] == "success", response
+                assert response["agent"] == "search_agent", response
+                assert response["results_count"] == len(response["results"]), response
+
                 # Format response
                 chunks = format_agent_response(response)
                 assert len(chunks) >= 1
+                assert all(0 < len(chunk) <= 4096 for chunk in chunks), chunks
 
                 # Send formatted response to real Telegram chat
                 async with httpx.AsyncClient(trust_env=False) as http:
@@ -287,14 +294,15 @@ class TestMessagingDeployment:
                 timeout=10,
                 env=helm_env,
             )
-            if helm_output.stdout:
-                import json
+            assert helm_output.returncode == 0, helm_output.stderr[:500]
+            assert helm_output.stdout.strip(), "helm get values returned no output"
+            import json
 
-                values = json.loads(helm_output.stdout)
-                enabled = values.get("messaging", {}).get("enabled", False)
-                assert not enabled, (
-                    "messaging.enabled=true but no messaging Deployment found"
-                )
+            values = json.loads(helm_output.stdout)
+            enabled = values.get("messaging", {}).get("enabled", False)
+            assert enabled is False, (
+                "messaging.enabled=true but no messaging Deployment found"
+            )
             return  # Disabled — correctly not deployed
 
-        assert len(messaging) >= 1
+        assert messaging == ["cogniverse-messaging"], deployments

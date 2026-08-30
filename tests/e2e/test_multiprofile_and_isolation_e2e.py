@@ -21,6 +21,7 @@ from pathlib import Path
 import httpx
 import pytest
 
+from cogniverse_core.common.tenant_utils import canonical_tenant_id
 from tests.e2e.conftest import (
     DASHBOARD,
     RUNTIME,
@@ -142,6 +143,11 @@ def _upload_file(
         )
     assert resp.status_code == 200, f"Upload failed ({resp.status_code}): {resp.text}"
     return resp.json()
+
+
+def _expected_hits(top_k: int, documents_fed: int) -> int:
+    """Hits a tenant holding exactly ``documents_fed`` segments returns."""
+    return min(top_k, documents_fed)
 
 
 def _search(
@@ -368,9 +374,12 @@ class TestMultiProfileDashboardUI:
             '[data-testid="stAlert"]:has-text("No matching")'
         )
 
-        assert results_heading.count() > 0 or no_results.count() > 0, (
+        # The dashboard renders the Search Results subheader once per executed
+        # search, before it knows whether any hits came back.
+        assert results_heading.count() == 1, (
             "Dashboard search must execute and render the Search Results section "
-            "(or an explicit 'No results' alert when the query matches nothing)"
+            f"exactly once; headings={results_heading.count()}, "
+            f"no_results={no_results.count()}"
         )
 
     def test_ingestion_tab_shows_profile_options(self, page):
@@ -446,7 +455,12 @@ class TestCrossTenantIsolation:
                     PROFILE,
                     tenant_a,
                 )
-                assert results_a["results_count"] >= 1, "Tenant A must see its own data"
+                assert results_a["results_count"] == _expected_hits(
+                    10, expected_documents_fed
+                ), "Tenant A must see exactly its own segments"
+                assert {r["metadata"]["video_id"] for r in results_a["results"]} == {
+                    data["video_id"]
+                }, results_a["results"]
 
                 results_b = _search(
                     client,
@@ -486,12 +500,15 @@ class TestCrossTenantIsolation:
                 assert schema_a != schema_b, (
                     f"Tenant schemas must be different: {schema_a} vs {schema_b}"
                 )
-                assert "one" in schema_a, (
-                    f"Schema A must contain tenant suffix: {schema_a}"
-                )
-                assert "two" in schema_b, (
-                    f"Schema B must contain tenant suffix: {schema_b}"
-                )
+                # VespaSchemaManager.get_tenant_schema_name:
+                # ``{base_schema}_{canonical org_tenant}``.
+                base_schema = _get_profile_def(PROFILE)["schema_name"]
+                assert schema_a == (
+                    f"{base_schema}_{canonical_tenant_id(tenant_a).replace(':', '_')}"
+                ), schema_a
+                assert schema_b == (
+                    f"{base_schema}_{canonical_tenant_id(tenant_b).replace(':', '_')}"
+                ), schema_b
 
             finally:
                 _cleanup_tenant(client, tenant_a)
@@ -542,7 +559,12 @@ class TestCrossTenantIsolation:
                     PROFILE,
                     tenant_b,
                 )
-                assert results_b["results_count"] >= 1, "Tenant B must see its own data"
+                assert results_b["results_count"] == _expected_hits(
+                    10, expected_documents_fed
+                ), "Tenant B must see exactly its own segments"
+                assert {r["metadata"]["video_id"] for r in results_b["results"]} == {
+                    data["video_id"]
+                }, results_b["results"]
 
             finally:
                 _cleanup_tenant(client, tenant_a)
@@ -605,18 +627,24 @@ class TestCrossTenantIsolation:
                     tenant_b,
                 )
 
-                assert results_a["results_count"] >= 1, "Tenant A must see its data"
-                assert results_b["results_count"] >= 1, "Tenant B must see its data"
+                assert results_a["results_count"] == _expected_hits(
+                    10, expected_a_documents_fed
+                ), "Tenant A must see exactly its own segments"
+                assert results_b["results_count"] == _expected_hits(
+                    10, expected_b_documents_fed
+                ), "Tenant B must see exactly its own segments"
 
                 # video_id is the content sha256 and each tenant
-                # ingested a different clip, so disjoint ids prove
-                # tenant isolation
+                # ingested a different clip, so each tenant's hits carry
+                # exactly its own id
                 ids_a = {
                     r.get("metadata", {}).get("video_id") for r in results_a["results"]
                 }
                 ids_b = {
                     r.get("metadata", {}).get("video_id") for r in results_b["results"]
                 }
+                assert ids_a == {data_a["video_id"]}, results_a["results"]
+                assert ids_b == {data_b["video_id"]}, results_b["results"]
                 assert ids_a.isdisjoint(ids_b), (
                     f"Tenants must have different video_ids: A={ids_a}, B={ids_b}"
                 )
@@ -656,9 +684,12 @@ class TestCrossTenantIsolation:
                     PROFILE,
                     tenant_id,
                 )
-                assert results["results_count"] >= 1, (
-                    "Data must be searchable before deletion"
-                )
+                assert results["results_count"] == _expected_hits(
+                    10, expected_documents_fed
+                ), "Data must be searchable before deletion"
+                assert {r["metadata"]["video_id"] for r in results["results"]} == {
+                    data["video_id"]
+                }, results["results"]
 
                 # Delete the tenant
                 resp = client.delete(f"/admin/tenants/{tenant_id}")
@@ -773,14 +804,15 @@ class TestConcurrentMultiTenantSearch:
                         tenant = futures[future]
                         results[tenant] = future.result()
 
-                # Each tenant must get results
+                # Each tenant must get exactly its own segments (top_k=5)
+                assert sorted(results) == sorted(fed_tenants), results
                 for t, r in results.items():
                     assert r["status_code"] == 200, (
                         f"Tenant {t} search failed: {r['error']}"
                     )
-                    assert r["data"]["results_count"] >= 1, (
-                        f"Tenant {t} must see its own data"
-                    )
+                    assert r["data"]["results_count"] == _expected_hits(
+                        5, expected_documents_fed[tenant_videos[t]]
+                    ), f"Tenant {t} must see exactly its own segments"
 
                 # Results must reference different video_ids (isolation)
                 all_video_ids = {}
@@ -847,9 +879,12 @@ class TestConcurrentMultiTenantSearch:
                     r_empty = f_empty.result()
 
                 assert r_data["status_code"] == 200
-                assert r_data["data"]["results_count"] >= 1, (
-                    "Tenant with data must see results"
-                )
+                assert r_data["data"]["results_count"] == _expected_hits(
+                    5, expected_documents_fed
+                ), "Tenant with data must see exactly its own segments"
+                assert {
+                    r["metadata"]["video_id"] for r in r_data["data"]["results"]
+                } == {data["video_id"]}, r_data["data"]["results"]
 
                 assert r_empty["status_code"] == 200
                 assert r_empty["data"]["results_count"] == 0, (
@@ -1021,8 +1056,14 @@ class TestLoadTesting:
                     r_a = f_a.result()
                     r_b = f_b.result()
 
-                assert r_a["data"]["results_count"] >= 1
-                assert r_b["data"]["results_count"] >= 1
+                assert r_a["status_code"] == 200, r_a["error"]
+                assert r_b["status_code"] == 200, r_b["error"]
+                assert r_a["data"]["results_count"] == _expected_hits(
+                    5, expected_a_documents_fed
+                ), r_a["data"]
+                assert r_b["data"]["results_count"] == _expected_hits(
+                    5, expected_b_documents_fed
+                ), r_b["data"]
 
                 ids_a = {
                     r.get("metadata", {}).get("video_id")
@@ -1032,6 +1073,8 @@ class TestLoadTesting:
                     r.get("metadata", {}).get("video_id")
                     for r in r_b["data"]["results"]
                 }
+                assert ids_a == {data_a["video_id"]}, r_a["data"]["results"]
+                assert ids_b == {data_b["video_id"]}, r_b["data"]["results"]
                 assert ids_a.isdisjoint(ids_b), (
                     f"Data leaked between tenants: A={ids_a}, B={ids_b}"
                 )

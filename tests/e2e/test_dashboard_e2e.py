@@ -184,13 +184,17 @@ class TestInteractiveSearch:
             '[data-testid="stAlert"]:has-text("No results")'
         )
 
+        # The subheader renders exactly once per executed search, before the
+        # dashboard knows whether the query matched anything.
+        assert results_heading.count() == 1, (
+            "Search Results heading must appear exactly once after executing a "
+            f"search; headings={results_heading.count()}, "
+            f"no_results={no_results_alert.count()}"
+        )
+
         if no_results_alert.count() > 0:
             # "No results found for this query" is a valid search outcome
             return
-
-        assert results_heading.count() > 0, (
-            "Search Results heading must appear after executing a search"
-        )
 
         # Search result metrics: Results count, Latency, Profile
         metrics = page.locator('[data-testid="stMetric"]')

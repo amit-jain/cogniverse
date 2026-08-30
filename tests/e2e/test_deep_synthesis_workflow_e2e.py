@@ -26,6 +26,7 @@ import os
 import socket
 import subprocess
 import time
+import uuid
 from dataclasses import dataclass
 from typing import Dict, Iterator, List
 
@@ -257,7 +258,7 @@ class TestDeepSynthesisOverHundredDocuments:
                         metadata=metadata,
                         infer=False,
                     )
-                    assert mid is not None
+                    assert mid and uuid.UUID(mid).version == 4, mid
                     written[topic].append(mid)
 
             # Dispatcher: each sub-agent name names a topic. The

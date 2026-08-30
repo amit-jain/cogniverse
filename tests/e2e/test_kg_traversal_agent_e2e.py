@@ -11,6 +11,7 @@ Pins the shipped KG walker against the deployed cluster:
 
 from __future__ import annotations
 
+import uuid
 from pathlib import Path
 from typing import List, Tuple
 
@@ -94,7 +95,7 @@ def _write_kg_node(
         metadata=metadata,
         infer=False,
     )
-    assert mid is not None
+    assert mid and uuid.UUID(mid).version == 4, mid
     return mid
 
 
@@ -130,7 +131,7 @@ def _write_kg_edge(
         metadata=metadata,
         infer=False,
     )
-    assert mid is not None
+    assert mid and uuid.UUID(mid).version == 4, mid
     return mid
 
 

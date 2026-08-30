@@ -295,7 +295,7 @@ class TestCodingAgentDispatch:
         assert resp.status_code == 200
         data = resp.json()
         assert data["name"] == "coding_agent"
-        assert "coding" in data["capabilities"]
+        assert data["capabilities"] == ["coding", "code_generation", "code_search"]
 
     def test_coding_agent_full_execution_with_sandbox(self, runtime_sandbox_ready):
         """Full plan → code → sandbox execute → evaluate loop.
@@ -304,12 +304,13 @@ class TestCodingAgentDispatch:
         pod configured to reach it via host.docker.internal. The sandbox
         actually executes the generated code and returns stdout/stderr/exit.
         """
+        query = "write a python function that returns the string hello world"
         with httpx.Client(timeout=400.0) as client:
             resp = client.post(
                 CODING_AGENT_URL,
                 json={
                     "agent_name": "coding_agent",
-                    "query": "write a python function that returns the string hello world",
+                    "query": query,
                     "context": {
                         "tenant_id": TENANT_ID,
                         "max_iterations": 1,
@@ -322,29 +323,58 @@ class TestCodingAgentDispatch:
             f"Coding agent failed: {resp.status_code}: {resp.text[:300]}"
         )
         data = resp.json()
+        assert set(data) == {"status", "agent", "message", "result"}, data
         assert data["status"] == "success"
         assert data["agent"] == "coding_agent"
+        assert data["message"] == f"Coding task complete for '{query}'"
 
+        # CodingOutput.model_dump(): the plan and generated code are LM free
+        # text; everything else is fixed by max_iterations=1 and the sandbox
+        # exec contract, so it is pinned exactly.
         result = data["result"]
-        assert "plan" in result
+        assert set(result) == {
+            "plan",
+            "code_changes",
+            "execution_results",
+            "summary",
+            "iterations_used",
+            "files_modified",
+            "rlm_synthesis",
+            "rlm_telemetry",
+        }, result
         assert result["plan"], "Plan should not be empty"
-        assert len(result["code_changes"]) >= 1, (
-            "Should generate at least 1 code change"
-        )
-        assert result["iterations_used"] >= 1
+        assert result["iterations_used"] == 1, result
+        assert len(result["code_changes"]) == 1, result["code_changes"]
+        change = result["code_changes"][0]
+        assert set(change) == {"file_path", "content", "change_type"}, change
+        assert change["change_type"] == "create", change
+        assert change["file_path"].endswith("/solution.py"), change
+        assert change["content"], "generated code must not be empty"
+        assert result["files_modified"] == [change["file_path"]], result
+        assert result["rlm_synthesis"] is None, result
+        assert result["rlm_telemetry"] is None, result
 
-        exec_results = result.get("execution_results", [])
-        assert len(exec_results) >= 1, (
-            "Execution results should exist (sandbox executed the code)"
-        )
+        exec_results = result["execution_results"]
+        assert len(exec_results) == 1, exec_results
         first_exec = exec_results[0]
-        assert first_exec.get("exit_code") == 0, (
+        assert set(first_exec) == {
+            "stdout",
+            "stderr",
+            "exit_code",
+            "command",
+            "success",
+        }, first_exec
+        assert first_exec["exit_code"] == 0, (
             "coding agent sandbox execution failed; "
-            f"stdout={first_exec.get('stdout')!r}; "
-            f"stderr={first_exec.get('stderr')!r}; result={first_exec!r}"
+            f"stdout={first_exec['stdout']!r}; "
+            f"stderr={first_exec['stderr']!r}; result={first_exec!r}"
         )
-        assert "stdout" in first_exec, first_exec
-        assert "stderr" in first_exec, first_exec
+        assert first_exec["success"] is True, first_exec
+        assert first_exec["command"] == f"python {change['file_path']}", first_exec
+        assert result["summary"] == (
+            "Completed coding task in 1 iteration(s). Generated 1 file(s). "
+            "Final execution: exit_code=0"
+        ), result["summary"]
 
 
 @pytest.mark.e2e

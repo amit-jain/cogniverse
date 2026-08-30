@@ -9,6 +9,7 @@ LM endpoint.
 """
 
 import logging
+import re
 
 import httpx
 import pytest
@@ -16,11 +17,69 @@ from cogniverse_messaging.command_router import parse_message
 from cogniverse_messaging.runtime_client import RuntimeClient
 from cogniverse_messaging.telegram_handler import format_agent_response
 
+from tests.e2e.conftest import assert_orchestrated, expected_gateway_routing
+
 logger = logging.getLogger(__name__)
 
 pytestmark = [pytest.mark.e2e]
 
 RUNTIME_URL = "http://localhost:33000"
+
+SEARCH_RESPONSE_FIELDS = {
+    "status",
+    "agent",
+    "message",
+    "results_count",
+    "results",
+    "profile",
+    "search_mode",
+}
+
+
+def _assert_search_response(response: dict, query: str) -> None:
+    """The dispatcher's search_agent payload: fixed keys (plus the multi-turn
+    pair when a conversation history was resolved), count == len(results), and
+    the message templated on the count (the query in it is LM-enhanced)."""
+    multi_turn = {"original_query", "rewritten_query"}
+    assert set(response) - multi_turn == SEARCH_RESPONSE_FIELDS, response
+    assert set(response) & multi_turn in (set(), multi_turn), response
+    if multi_turn <= set(response):
+        assert response["original_query"] == query, response
+    assert response["status"] == "success", response
+    assert response["agent"] == "search_agent", response
+    assert response["results_count"] == len(response["results"]), response
+    if response["results_count"]:
+        assert re.fullmatch(
+            rf"Found {response['results_count']} results for '.*'",
+            response["message"],
+            flags=re.DOTALL,
+        ), response["message"]
+    else:
+        assert re.fullmatch(
+            r"No results found for '.*'", response["message"], flags=re.DOTALL
+        ), response["message"]
+
+
+def _assert_gateway_response(response: dict, query: str) -> None:
+    """The gateway triage block plus the path-specific payload shape."""
+    assert response["status"] == "success", response
+    gw = response["gateway"]
+    assert set(gw) == {
+        "complexity",
+        "modality",
+        "generation_type",
+        "routed_to",
+        "confidence",
+        "fast_path_confidence_threshold",
+        "gliner_threshold",
+    }, gw
+    assert (gw["complexity"], gw["routed_to"]) == expected_gateway_routing(query, gw)
+    if gw["complexity"] == "simple":
+        assert response["agent"] == "gateway_agent", response
+        assert response["downstream_result"]["status"] == "success", response
+        assert gw["confidence"] >= gw["fast_path_confidence_threshold"], gw
+    else:
+        assert_orchestrated(response, query, gw)
 
 
 async def _assert_runtime_ready() -> None:
@@ -55,11 +114,12 @@ class TestRuntimeClientIntegration:
     async def test_dispatch_gateway_agent(self):
         """Dispatch a query to gateway_agent via real runtime."""
         await _assert_runtime_ready()
+        query = "Show me videos about machine learning"
         client = RuntimeClient(RUNTIME_URL)
         try:
             response = await client.dispatch_agent(
                 agent_name="gateway_agent",
-                query="Show me videos about machine learning",
+                query=query,
                 tenant_id="flywheel_org:production",
                 context_id="test_chat_123",
                 top_k=3,
@@ -67,7 +127,7 @@ class TestRuntimeClientIntegration:
             assert response.get("status") != "error", (
                 f"Agent dispatch failed: {response}"
             )
-            assert "message" in response or "results" in response
+            _assert_gateway_response(response, query)
         finally:
             await client.close()
 
@@ -85,6 +145,8 @@ class TestRuntimeClientIntegration:
             assert response.get("status") != "error", (
                 f"Search dispatch failed: {response}"
             )
+            _assert_search_response(response, "people exercising")
+            assert response["results_count"] <= 3, response
         finally:
             await client.close()
 
@@ -101,7 +163,7 @@ class TestInviteTokenIntegration:
                 tenant_id="flywheel_org:production",
                 expires_in_hours=1,
             )
-            assert token is not None
+            assert re.fullmatch(r"[0-9a-f]{32}", token), token  # uuid4 hex
             assert len(token) == 32  # uuid4 hex
         finally:
             await client.close()
@@ -126,9 +188,12 @@ class TestMessageHandlingIntegration:
                 top_k=3,
             )
 
+            _assert_search_response(response, parsed.query)
+            assert response["results_count"] <= 3, response
             chunks = format_agent_response(response)
             assert len(chunks) >= 1
             assert all(len(c) <= 4096 for c in chunks)
+            assert all(c for c in chunks), chunks
         finally:
             await client.close()
 
@@ -148,7 +213,9 @@ class TestMessageHandlingIntegration:
                 top_k=3,
             )
 
+            _assert_gateway_response(response, parsed.query)
             chunks = format_agent_response(response)
             assert len(chunks) >= 1
+            assert all(0 < len(c) <= 4096 for c in chunks), chunks
         finally:
             await client.close()

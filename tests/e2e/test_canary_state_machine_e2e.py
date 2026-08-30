@@ -94,8 +94,9 @@ class TestCanaryLifecycleHappyPath:
             state3 = await am.promote_canary_to_active(agent_type)
             assert state3["canary"] is None
             assert state3["active"]["version"] == 3
+            # Only the displaced active (v1) is retired; v2 was never active.
             retired_versions = [r["version"] for r in state3["retired"]]
-            assert 1 in retired_versions, state3["retired"]
+            assert retired_versions == [1], state3["retired"]
             v1_retire = next(r for r in state3["retired"] if r["version"] == 1)
             assert v1_retire["reason"] == "superseded_by_canary_promotion"
 
