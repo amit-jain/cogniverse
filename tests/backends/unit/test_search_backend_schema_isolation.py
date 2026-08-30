@@ -137,6 +137,7 @@ def test_tenant_profiles_and_defaults_override_same_named_global_entries(
             }
         },
     )
+    backend._tenant_schema_exists = MagicMock(return_value=True)
     monkeypatch.setattr(
         backend,
         "_load_tenant_profiles",
@@ -184,6 +185,125 @@ def test_tenant_profiles_and_defaults_override_same_named_global_entries(
     assert body["ranking"] == "tenant_rank"
 
 
+def test_search_returns_empty_when_tenant_schema_is_missing(monkeypatch):
+    backend = VespaSearchBackend(
+        config={
+            "url": "http://localhost",
+            "port": 8080,
+            "profiles": {
+                "shared": {
+                    "type": "wiki",
+                    "schema_name": "global_wiki",
+                }
+            },
+            "default_profiles": {
+                "wiki": {"profile": "shared", "strategy": "global_rank"}
+            },
+        },
+        config_manager=MagicMock(),
+        enable_connection_pool=False,
+    )
+    backend.vespa = MagicMock()
+    backend._tenant_schema_exists = MagicMock(return_value=False)
+    monkeypatch.setattr(
+        backend,
+        "_load_tenant_profiles",
+        lambda _tenant: (
+            {
+                "shared": {
+                    "type": "wiki",
+                    "schema_name": "tenant_wiki",
+                }
+            },
+            {"wiki": {"profile": "shared", "strategy": "tenant_rank"}},
+        ),
+    )
+    monkeypatch.setattr(
+        search_module,
+        "_RANKING_STRATEGIES_CACHE",
+        {
+            "global_wiki": {
+                "global_rank": {"needs_text_query": True},
+            },
+            "tenant_wiki": {
+                "tenant_rank": {"needs_text_query": True},
+            },
+        },
+    )
+
+    assert (
+        backend.search(
+            {
+                "query": "tenant-local article",
+                "type": "wiki",
+                "tenant_id": "acme",
+            }
+        )
+        == []
+    )
+    backend.vespa.query.assert_not_called()
+    backend._tenant_schema_exists.assert_called_once_with("tenant_wiki", "acme")
+
+
+def test_search_raises_when_tenant_schema_lookup_fails(monkeypatch):
+    backend = VespaSearchBackend(
+        config={
+            "url": "http://localhost",
+            "port": 8080,
+            "profiles": {
+                "shared": {
+                    "type": "wiki",
+                    "schema_name": "global_wiki",
+                }
+            },
+            "default_profiles": {
+                "wiki": {"profile": "shared", "strategy": "global_rank"}
+            },
+        },
+        config_manager=MagicMock(),
+        enable_connection_pool=False,
+    )
+    backend.vespa = MagicMock()
+    backend._tenant_schema_exists = MagicMock(
+        side_effect=RuntimeError("schema registry unavailable")
+    )
+    monkeypatch.setattr(
+        backend,
+        "_load_tenant_profiles",
+        lambda _tenant: (
+            {
+                "shared": {
+                    "type": "wiki",
+                    "schema_name": "tenant_wiki",
+                }
+            },
+            {"wiki": {"profile": "shared", "strategy": "tenant_rank"}},
+        ),
+    )
+    monkeypatch.setattr(
+        search_module,
+        "_RANKING_STRATEGIES_CACHE",
+        {
+            "global_wiki": {
+                "global_rank": {"needs_text_query": True},
+            },
+            "tenant_wiki": {
+                "tenant_rank": {"needs_text_query": True},
+            },
+        },
+    )
+
+    with pytest.raises(RuntimeError, match="schema registry unavailable"):
+        backend.search(
+            {
+                "query": "tenant-local article",
+                "type": "wiki",
+                "tenant_id": "acme",
+            }
+        )
+    backend.vespa.query.assert_not_called()
+
+
 def test_metadata_query_scopes_direct_yql_and_forwards_query_options():
     backend = object.__new__(VespaBackend)
     backend._url = "http://vespa"
@@ -191,6 +311,7 @@ def test_metadata_query_scopes_direct_yql_and_forwards_query_options():
     backend._metadata_app = None
     backend._metadata_app_key = None
     backend.get_tenant_schema_name = MagicMock(return_value="wiki_pages_acme_acme")
+    backend.schema_exists = MagicMock(return_value=True)
     client = MagicMock()
     client.query.return_value = SimpleNamespace(
         status_code=200,
@@ -207,6 +328,9 @@ def test_metadata_query_scopes_direct_yql_and_forwards_query_options():
         )
 
     assert rows == [{"id": "best"}]
+    backend.schema_exists.assert_called_once_with(
+        "wiki_pages", tenant_id="acme:acme"
+    )
     assert client.query.call_args.kwargs == {
         "body": {
             "hits": 2,

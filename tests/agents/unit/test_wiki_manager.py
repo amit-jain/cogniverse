@@ -1223,6 +1223,9 @@ class TestTopicMergeConcurrency:
                     time.sleep(self.read_delay)
                 return dict(self.store.get(doc_id) or {})
 
+            def schema_exists(self, schema_name, tenant_id=None):
+                return True
+
             def put_document(
                 self, document, schema_name=None, base_schema_name=None, namespace=None
             ):
@@ -1286,6 +1289,55 @@ class TestTopicMergeConcurrency:
         # base(1) + two serialized merges
         assert final["update_count"] == 3
         assert set(json.loads(final["sources"])) == {"s0", "s_a", "s_b"}
+
+    def test_list_pages_returns_empty_when_schema_missing(self, monkeypatch):
+        from cogniverse_agents.wiki.wiki_manager import WikiManager
+
+        backend = MagicMock()
+        backend.schema_exists.return_value = False
+        mgr = WikiManager(
+            backend=backend,
+            tenant_id="acme:production",
+            schema_name="wiki_pages_acme_production",
+        )
+
+        def _must_not_query(*args, **kwargs):
+            raise AssertionError("wiki pages query must not run without a schema")
+
+        monkeypatch.setattr(
+            "cogniverse_agents.search.vespa_query.vespa_search_post",
+            _must_not_query,
+        )
+
+        assert mgr._list_pages() == []
+        backend.schema_exists.assert_called_once_with(
+            "wiki_pages", tenant_id="acme:production"
+        )
+
+    def test_list_pages_raises_when_schema_lookup_fails(self, monkeypatch):
+        from cogniverse_agents.wiki.wiki_manager import WikiManager
+
+        backend = MagicMock()
+        backend.schema_exists.side_effect = RuntimeError("schema registry offline")
+        mgr = WikiManager(
+            backend=backend,
+            tenant_id="acme:production",
+            schema_name="wiki_pages_acme_production",
+        )
+
+        def _must_not_query(*args, **kwargs):
+            raise AssertionError("wiki pages query must not run after a lookup failure")
+
+        monkeypatch.setattr(
+            "cogniverse_agents.search.vespa_query.vespa_search_post",
+            _must_not_query,
+        )
+
+        with pytest.raises(RuntimeError, match="schema registry offline"):
+            mgr._list_pages()
+        backend.schema_exists.assert_called_once_with(
+            "wiki_pages", tenant_id="acme:production"
+        )
 
     def test_index_rebuild_failure_names_the_saved_session(self):
         """When the index rebuild fails after the session page was already fed,

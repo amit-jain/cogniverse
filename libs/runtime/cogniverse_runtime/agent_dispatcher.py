@@ -2486,12 +2486,29 @@ class AgentDispatcher:
             ImageSearchAgent,
             ImageSearchDeps,
         )
+        from cogniverse_runtime.admin.tenant_manager import get_backend
+
+        # Tenant schemas deploy on first ingest, so a tenant that never
+        # ingested images has no image_colpali_mv schema. That is a no-content
+        # answer; a registry lookup failure raises and is not read as one.
+        backend = get_backend()
+        if not await asyncio.to_thread(
+            backend.schema_exists, "image_colpali_mv", tenant_id
+        ):
+            return {
+                "status": "success",
+                "agent": "image_search_agent",
+                "message": f"No image content indexed for tenant '{tenant_id}'",
+                "results_count": 0,
+                "results": [],
+            }
 
         vespa_endpoint = self._get_vespa_endpoint(tenant_id)
         deps = ImageSearchDeps(
             vespa_endpoint=vespa_endpoint,
             tenant_id=tenant_id,
             encoder_config=await self._build_encoder_config(),
+            deployed_image_schema=True,
         )
         agent = ImageSearchAgent(deps=deps)
 
@@ -2562,6 +2579,7 @@ class AgentDispatcher:
             vespa_endpoint=vespa_endpoint,
             tenant_id=tenant_id,
             clap_endpoint=(sys_cfg.inference_service_urls or {}).get("clap_embed"),
+            deployed_audio_schema=True,
         )
         agent = AudioAnalysisAgent(deps=deps)
 

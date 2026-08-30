@@ -10,6 +10,7 @@ query. These pin the raise contract and the wired fallback filter.
 """
 
 from types import SimpleNamespace
+from unittest.mock import MagicMock, call
 
 import pytest
 import requests
@@ -51,7 +52,11 @@ class _Session:
 
 def _bare_manager(session) -> GraphManager:
     mgr = object.__new__(GraphManager)
-    mgr._backend = SimpleNamespace(_url="http://vespa", _port=8080)
+    mgr._backend = SimpleNamespace(
+        _url="http://vespa",
+        _port=8080,
+        schema_exists=MagicMock(return_value=True),
+    )
     mgr._tenant_id = TENANT
     mgr._schema_name = SCHEMA
     mgr._http = session
@@ -124,6 +129,42 @@ def test_search_nodes_query_failure_raises_not_fallback():
     assert len(sess.calls) == 1
 
 
+def test_search_nodes_returns_empty_when_schema_is_missing():
+    sess = _Session(resp=_Resp({"root": {"children": []}}))
+    mgr = _bare_manager(sess)
+    mgr._backend.schema_exists.return_value = False
+    mgr._encode_query_blocks = MagicMock(
+        side_effect=AssertionError("encoder should not run without a schema")
+    )
+
+    assert mgr.search_nodes("anything", top_k=5) == []
+    assert sess.calls == []
+    assert mgr._backend.schema_exists.call_args_list == [
+        call("knowledge_graph", tenant_id=TENANT),
+    ]
+    mgr._encode_query_blocks.assert_not_called()
+
+
+def test_search_nodes_raises_when_schema_lookup_fails():
+    sess = _Session(resp=_Resp({"root": {"children": []}}))
+    mgr = _bare_manager(sess)
+    mgr._backend.schema_exists.side_effect = RuntimeError(
+        "schema registry unavailable"
+    )
+    mgr._encode_query_blocks = MagicMock(
+        side_effect=AssertionError("encoder should not run on lookup failure")
+    )
+
+    with pytest.raises(RuntimeError, match="schema registry unavailable"):
+        mgr.search_nodes("anything", top_k=5)
+
+    assert sess.calls == []
+    assert mgr._backend.schema_exists.call_args_list == [
+        call("knowledge_graph", tenant_id=TENANT),
+    ]
+    mgr._encode_query_blocks.assert_not_called()
+
+
 def test_get_edge_by_id_outage_raises_not_none():
     mgr = _bare_manager(_Session())
     mgr._backend = SimpleNamespace(
@@ -135,3 +176,34 @@ def test_get_edge_by_id_outage_raises_not_none():
     )
     with pytest.raises(ConnectionError):
         mgr.get_edge_by_id("e1")
+
+
+def test_get_stats_returns_empty_when_schema_is_missing():
+    sess = _Session(resp=_Resp({"root": {"children": []}}))
+    mgr = _bare_manager(sess)
+    mgr._backend.schema_exists.return_value = False
+
+    assert mgr.get_stats() == {
+        "node_count": 0,
+        "edge_count": 0,
+        "top_nodes": [],
+    }
+    assert sess.calls == []
+    assert mgr._backend.schema_exists.call_args_list == [
+        call("knowledge_graph", tenant_id=TENANT),
+        call("knowledge_graph", tenant_id=TENANT),
+    ]
+
+
+def test_get_stats_raises_when_schema_lookup_fails():
+    sess = _Session(resp=_Resp({"root": {"children": []}}))
+    mgr = _bare_manager(sess)
+    mgr._backend.schema_exists.side_effect = RuntimeError("schema registry unavailable")
+
+    with pytest.raises(RuntimeError, match="schema registry unavailable"):
+        mgr.get_stats()
+
+    assert sess.calls == []
+    assert mgr._backend.schema_exists.call_args_list == [
+        call("knowledge_graph", tenant_id=TENANT),
+    ]

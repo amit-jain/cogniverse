@@ -144,6 +144,10 @@ class AudioAnalysisDeps(AgentDeps):
             "Authenticated endpoints accept only an Authorization bearer value."
         ),
     )
+    deployed_audio_schema: bool | None = PydanticField(
+        None,
+        description="Dispatcher-verified audio schema state for this tenant",
+    )
     backend_type: str = PydanticField("vespa", description="Backend type")
     backend_config: Dict[str, Any] = PydanticField(
         default_factory=dict,
@@ -412,6 +416,7 @@ class AudioAnalysisAgent(
         self._whisper_headers = deps._resolved_whisper_headers
         self._whisper_model = deps.whisper_model
         self._clap_headers = deps._resolved_clap_headers
+        self._deployed_audio_schema = deps.deployed_audio_schema
         self._backend_type = deps.backend_type
         self._backend_config = dict(deps.backend_config or {})
         self.config_manager = deps.config_manager
@@ -619,6 +624,15 @@ class AudioAnalysisAgent(
                 logger.info("Shared audio search backend initialized")
             return self._shared_backend
 
+    def _audio_schema_exists(self) -> bool:
+        """Return True when the tenant has deployed the audio schema."""
+        if self._deployed_audio_schema is not None:
+            return self._deployed_audio_schema
+        from cogniverse_runtime.admin.tenant_manager import get_backend
+
+        backend = get_backend()
+        return backend.schema_exists("audio_content", tenant_id=self._tenant_id)
+
     def _build_backend_query(
         self, query: str, strategy: str, limit: int
     ) -> Dict[str, Any]:
@@ -677,6 +691,9 @@ class AudioAnalysisAgent(
         """Search by acoustic similarity from a TEXT query via CLAP."""
         # CLAP text features land in the same 512-dim space as the stored audio
         # acoustic_embedding, so a text query is directly comparable to it.
+        if not await asyncio.to_thread(self._audio_schema_exists):
+            return []
+
         logger.info("Generating query embedding for acoustic search...")
         # Blocking CLAP HTTP call — off the loop, lazy generator build included.
         query_embedding = await asyncio.to_thread(
@@ -693,6 +710,9 @@ class AudioAnalysisAgent(
         both compare a 512-dim CLAP vector against the stored
         ``acoustic_embedding`` field.
         """
+        if not await asyncio.to_thread(self._audio_schema_exists):
+            return []
+
         # acoustic_similarity ranks via closeness(field, acoustic_embedding),
         # which binds to a nearestNeighbor operator over the HNSW field; the
         # query tensor is the profile input query(acoustic_query).
@@ -781,6 +801,8 @@ class AudioAnalysisAgent(
                 transcription = await self.transcribe_audio(reference_audio_url)
                 results = await self._search_transcript(transcription.text, limit)
             else:
+                if not await asyncio.to_thread(self._audio_schema_exists):
+                    return []
                 # Acoustic similarity: encode the reference audio's CLAP
                 # embedding and search the same acoustic_embedding space.
                 from pathlib import Path as _Path

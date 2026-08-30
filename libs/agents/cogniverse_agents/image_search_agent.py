@@ -80,6 +80,10 @@ class ImageSearchDeps(AgentDeps):
         "image_colpali_mv",
         description="config.json profile for the ColPali image-search encoder",
     )
+    deployed_image_schema: bool | None = Field(
+        None,
+        description="Dispatcher-verified image schema state for this tenant",
+    )
 
 
 class ImageSearchAgent(A2AAgent[ImageSearchInput, ImageSearchOutput, ImageSearchDeps]):
@@ -138,6 +142,7 @@ class ImageSearchAgent(A2AAgent[ImageSearchInput, ImageSearchOutput, ImageSearch
         self._tenant_id = deps.tenant_id
         self._encoder_config = deps.encoder_config
         self._image_profile = deps.image_profile
+        self._deployed_image_schema = deps.deployed_image_schema
 
         # Lazy load models
         self._colpali_model = None
@@ -145,6 +150,15 @@ class ImageSearchAgent(A2AAgent[ImageSearchInput, ImageSearchOutput, ImageSearch
         self._query_encoder = None
 
         logger.info(f"Initialized ImageSearchAgent for tenant: {deps.tenant_id}")
+
+    def _image_schema_exists(self) -> bool:
+        """Return True when the tenant has deployed the image schema."""
+        if self._deployed_image_schema is not None:
+            return self._deployed_image_schema
+        from cogniverse_runtime.admin.tenant_manager import get_backend
+
+        backend = get_backend()
+        return backend.schema_exists("image_colpali_mv", tenant_id=self._tenant_id)
 
     @property
     def colpali_model(self):
@@ -207,6 +221,9 @@ class ImageSearchAgent(A2AAgent[ImageSearchInput, ImageSearchOutput, ImageSearch
         logger.info(f"🔍 Searching images: query='{query}', mode={search_mode}")
 
         try:
+            if not await asyncio.to_thread(self._image_schema_exists):
+                return []
+
             # Encode query with ColPali — blocking HTTP/model call, off the loop
             # (the lambda keeps the lazy encoder build off it too).
             query_embedding = await asyncio.to_thread(
@@ -247,6 +264,9 @@ class ImageSearchAgent(A2AAgent[ImageSearchInput, ImageSearchOutput, ImageSearch
         logger.info("🔍 Finding similar images")
 
         try:
+            if not await asyncio.to_thread(self._image_schema_exists):
+                return []
+
             # Encode image with ColPali — blocking model forward, off the loop
             image_embedding = await asyncio.to_thread(
                 self._encode_image, reference_image
@@ -324,6 +344,9 @@ class ImageSearchAgent(A2AAgent[ImageSearchInput, ImageSearchOutput, ImageSearch
         Returns:
             List of ImageResult
         """
+
+        if not await asyncio.to_thread(self._image_schema_exists):
+            return []
 
         # Build YQL query
         from cogniverse_vespa._yql import yql_quote

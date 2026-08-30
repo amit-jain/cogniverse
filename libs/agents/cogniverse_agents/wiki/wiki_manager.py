@@ -27,6 +27,7 @@ logger = logging.getLogger(__name__)
 # Vespa document namespace the wiki schema feeds under (distinct from the
 # doctype/schema name — namespaces partition the document space).
 _WIKI_NAMESPACE = "wiki_content"
+_WIKI_BASE_SCHEMA = "wiki_pages"
 
 _AUTO_FILE_AGENTS = {"detailed_report_agent", "deep_research_agent"}
 _CONTENT_SEPARATOR = "\n\n---\n\n"
@@ -549,6 +550,11 @@ class WikiManager:
             vespa_search_children,
             vespa_search_post,
         )
+
+        if not self._backend.schema_exists(
+            _WIKI_BASE_SCHEMA, tenant_id=self._tenant_id
+        ):
+            return []
 
         endpoint = f"{self._backend._url}:{self._backend._port}"
         body = {

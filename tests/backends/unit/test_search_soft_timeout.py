@@ -295,6 +295,7 @@ def test_search_retries_soft_timeout_and_records_failures(monkeypatch):
         enable_connection_pool=False,
         schema_loader=FilesystemSchemaLoader(Path("configs/schemas")),
     )
+    backend._tenant_schema_exists = MagicMock(return_value=True)
     backend.vespa = MagicMock()
     backend.vespa.query.return_value = _response(_soft_timeout_body())
 
@@ -340,6 +341,7 @@ def test_search_honors_constructor_retry_configuration(monkeypatch):
         ),
         enable_connection_pool=False,
     )
+    backend._tenant_schema_exists = MagicMock(return_value=True)
     backend.vespa = MagicMock()
     backend.vespa.query.return_value = _response(_soft_timeout_body())
     monkeypatch.setattr(

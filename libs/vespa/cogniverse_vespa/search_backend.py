@@ -28,6 +28,7 @@ import requests
 from vespa.exceptions import VespaError
 
 from cogniverse_core.common.utils.output_manager import OutputManager
+from cogniverse_core.registries.backend_registry import get_backend_registry
 from cogniverse_core.common.utils.retry import RetryConfig, retry_with_backoff
 from cogniverse_sdk.document import (
     ALLOWED_RESULT_GRANULARITIES,
@@ -749,6 +750,23 @@ class VespaSearchBackend(SearchBackend):
             f"pool={enable_connection_pool}, metrics={enable_metrics}"
         )
 
+    def _tenant_schema_exists(self, base_schema_name: str, tenant_id: str) -> bool:
+        """Return True when the tenant has deployed the requested base schema."""
+        if self._config_manager is None or self._schema_loader is None:
+            raise RuntimeError(
+                "Search backend schema lookup requires config_manager and schema_loader"
+            )
+
+        backend_registry = get_backend_registry()
+        ingestion_backend = backend_registry.get_ingestion_backend(
+            "vespa",
+            tenant_id=tenant_id,
+            config={"url": self.backend_url, "port": self.backend_port},
+            config_manager=self._config_manager,
+            schema_loader=self._schema_loader,
+        )
+        return ingestion_backend.schema_exists(base_schema_name, tenant_id=tenant_id)
+
     def initialize(self, config: Dict[str, Any]) -> None:
         """
         Initialize search backend from config.
@@ -1161,6 +1179,18 @@ class VespaSearchBackend(SearchBackend):
             raise ValueError(
                 "tenant_id is required in query_dict for search operations. "
                 f"Profile '{profile_name}' cannot be used without tenant isolation."
+            )
+
+        if not self._tenant_schema_exists(base_schema_name, tenant_id):
+            logger.info(
+                f"[{correlation_id}] No deployed schema for tenant '{tenant_id}' "
+                f"and base schema '{base_schema_name}'"
+            )
+            return SearchResultBatch(
+                [],
+                result_granularity=result_granularity,
+                num_collapsed_documents=0,
+                total_count=0,
             )
 
         # Canonicalize tenant_id (e.g. "test_tenant" → "test_tenant:test_tenant") so the
