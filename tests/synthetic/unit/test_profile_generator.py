@@ -877,3 +877,101 @@ class TestFrameLevelGrounding:
 
         # Saliency extracts the distinctive span of each description
         assert topics == [FRAME_TOPIC_A, FRAME_TOPIC_B]
+
+
+class TestCrossModalSelectedProfileBinding:
+    @pytest.mark.asyncio
+    async def test_cross_modal_labeler_choice_is_bound_to_selected_profiles(self):
+        calls = []
+
+        async def label_cross_modal(query: str, profiles: list[str], tenant_id: str):
+            calls.append(list(profiles))
+            return {
+                "query": query,
+                "selected_profile": "audio_semantic",
+                "reasoning": "Audio retrieval grounds this cross-modal query.",
+                "query_intent": "multi_modal_search",
+                "modality": "audio",
+                "complexity": "complex",
+            }
+
+        generator = ProfileGenerator(profile_labeler=label_cross_modal)
+        examples = await generator.generate(
+            sampled_content=[
+                {"topic": "Curie lecture", "schema_name": "audio_segments"},
+                {"topic": "Radium notes", "schema_name": "document_pages"},
+            ],
+            target_count=2,
+            profile_configs=PROFILE_CONFIGS,
+            tenant_id="test:unit",
+            config_manager=PROFILE_GENERATION_CONFIG_MANAGER,
+            cross_modal=True,
+            selected_profiles=["audio_semantic"],
+        )
+
+        assert calls == [["audio_semantic"], ["audio_semantic"]]
+        assert [
+            (example.selected_profile, example.available_profiles)
+            for example in examples
+        ] == [
+            ("audio_semantic", "document_semantic,audio_semantic"),
+            ("audio_semantic", "document_semantic,audio_semantic"),
+        ]
+
+    @pytest.mark.asyncio
+    async def test_cross_modal_rejects_label_outside_selected_profiles(self):
+        async def label_outside(query: str, profiles: list[str], tenant_id: str):
+            return {
+                "query": query,
+                "selected_profile": "document_semantic",
+                "reasoning": "The selector escaped its constrained vocabulary.",
+                "query_intent": "multi_modal_search",
+                "modality": "document",
+                "complexity": "complex",
+            }
+
+        generator = ProfileGenerator(profile_labeler=label_outside)
+        with pytest.raises(ValueError) as excinfo:
+            await generator.generate(
+                sampled_content=[
+                    {"topic": "Curie lecture", "schema_name": "audio_segments"},
+                    {"topic": "Radium notes", "schema_name": "document_pages"},
+                ],
+                target_count=2,
+                profile_configs=PROFILE_CONFIGS,
+                tenant_id="test:unit",
+                config_manager=PROFILE_GENERATION_CONFIG_MANAGER,
+                cross_modal=True,
+                selected_profiles=["audio_semantic"],
+            )
+
+        assert (
+            "ProfileGenerator generated 0 unique grounded examples "
+            "but target_count=2" in str(excinfo.value)
+        )
+        cause_messages = []
+        cause = excinfo.value.__cause__
+        while cause is not None:
+            cause_messages.append(str(cause))
+            cause = cause.__cause__
+        assert (
+            "profile selection selected_profile must be one of the "
+            "selected profiles offered to the labeler"
+        ) in cause_messages
+
+    @pytest.mark.asyncio
+    async def test_selected_profiles_must_be_usable_tenant_profiles(self):
+        generator = ProfileGenerator(profile_labeler=_select_document)
+        with pytest.raises(ValueError, match="usable tenant profile"):
+            await generator.generate(
+                sampled_content=[
+                    {"topic": "Curie lecture", "schema_name": "audio_segments"},
+                    {"topic": "Radium notes", "schema_name": "document_pages"},
+                ],
+                target_count=1,
+                profile_configs=PROFILE_CONFIGS,
+                tenant_id="test:unit",
+                config_manager=PROFILE_GENERATION_CONFIG_MANAGER,
+                cross_modal=True,
+                selected_profiles=["never_deployed_profile"],
+            )
