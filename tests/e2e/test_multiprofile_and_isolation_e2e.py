@@ -145,9 +145,10 @@ def _upload_file(
     return resp.json()
 
 
-def _expected_hits(top_k: int, documents_fed: int) -> int:
-    """Hits a tenant holding exactly ``documents_fed`` segments returns."""
-    return min(top_k, documents_fed)
+def _expected_hits(top_k: int, sources_fed: int) -> int:
+    """Search collapses to one hit per source video, so a tenant holding
+    ``sources_fed`` videos returns that many hits (bounded by ``top_k``)."""
+    return min(top_k, sources_fed)
 
 
 def _search(
@@ -456,7 +457,7 @@ class TestCrossTenantIsolation:
                     tenant_a,
                 )
                 assert results_a["results_count"] == _expected_hits(
-                    10, expected_documents_fed
+                    10, sources_fed=1
                 ), "Tenant A must see exactly its own segments"
                 assert {r["metadata"]["video_id"] for r in results_a["results"]} == {
                     data["video_id"]
@@ -560,7 +561,7 @@ class TestCrossTenantIsolation:
                     tenant_b,
                 )
                 assert results_b["results_count"] == _expected_hits(
-                    10, expected_documents_fed
+                    10, sources_fed=1
                 ), "Tenant B must see exactly its own segments"
                 assert {r["metadata"]["video_id"] for r in results_b["results"]} == {
                     data["video_id"]
@@ -628,10 +629,10 @@ class TestCrossTenantIsolation:
                 )
 
                 assert results_a["results_count"] == _expected_hits(
-                    10, expected_a_documents_fed
+                    10, sources_fed=1
                 ), "Tenant A must see exactly its own segments"
                 assert results_b["results_count"] == _expected_hits(
-                    10, expected_b_documents_fed
+                    10, sources_fed=1
                 ), "Tenant B must see exactly its own segments"
 
                 # video_id is the content sha256 and each tenant
@@ -684,9 +685,9 @@ class TestCrossTenantIsolation:
                     PROFILE,
                     tenant_id,
                 )
-                assert results["results_count"] == _expected_hits(
-                    10, expected_documents_fed
-                ), "Data must be searchable before deletion"
+                assert results["results_count"] == _expected_hits(10, sources_fed=1), (
+                    "Data must be searchable before deletion"
+                )
                 assert {r["metadata"]["video_id"] for r in results["results"]} == {
                     data["video_id"]
                 }, results["results"]
