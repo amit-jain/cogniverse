@@ -19,7 +19,12 @@ from __future__ import annotations
 
 import logging
 from typing import TYPE_CHECKING
+from urllib.parse import urlsplit, urlunsplit
 
+from cogniverse_foundation.config.bootstrap import (
+    inference_api_key_from_environment,
+)
+from cogniverse_foundation.config.inference_auth import is_modal_inference_url
 from cogniverse_foundation.config.unified_config import LLMEndpointConfig
 
 if TYPE_CHECKING:
@@ -32,6 +37,16 @@ logger = logging.getLogger(__name__)
 # cogniverse_foundation.config (every CLI, the worker pod), even on paths that
 # never build a dspy.LM. The annotation below is a string via the __future__
 # import, so it needs no import at definition time.
+
+
+# What the chart renders for an endpoint whose real key lives in a Secret.
+_PLACEHOLDER_API_KEY = "placeholder-no-auth-needed"
+
+
+def _endpoint_root(api_base: str) -> str:
+    """The scheme://host root of an api_base, which is what the auth helpers take."""
+    parsed = urlsplit(api_base)
+    return urlunsplit((parsed.scheme, parsed.netloc, "", "", ""))
 
 
 def create_dspy_lm(config: LLMEndpointConfig) -> dspy.LM:
@@ -63,7 +78,20 @@ def create_dspy_lm(config: LLMEndpointConfig) -> dspy.LM:
     if config.api_base is not None:
         kwargs["api_base"] = config.api_base
 
-    if config.api_key is not None:
+    if config.api_base is not None and is_modal_inference_url(
+        _endpoint_root(config.api_base)
+    ):
+        # An external endpoint enforces auth, and the chart cannot put the
+        # bearer in config.json because that renders into a ConfigMap. The
+        # placeholder it emits instead would fail server-side with
+        # AuthenticationError, so resolve the real key from the environment,
+        # which is where the synced Secret lands. An explicitly configured key
+        # still wins.
+        if config.api_key in (None, _PLACEHOLDER_API_KEY):
+            kwargs["api_key"] = inference_api_key_from_environment()
+        else:
+            kwargs["api_key"] = config.api_key
+    elif config.api_key is not None:
         kwargs["api_key"] = config.api_key
     elif config.api_base is not None:
         # The OpenAI client refuses to construct without a key even though
