@@ -398,27 +398,46 @@ class TestSchemaIntegration:
             schema.validate_provenance(prov)
 
 
-class _FailingQueryBackend:
-    """Backend stub whose metadata query raises — the rejected-query seam."""
+class _TenantScopedQueryBackend:
+    """Backend stub that resolves tenant schemas like production."""
 
     def get_tenant_schema_name(self, tenant_id: str, base_schema_name: str) -> str:
-        return f"{base_schema_name}_{tenant_id}"
+        if not tenant_id:
+            return base_schema_name
+        return f"{base_schema_name}_{tenant_id.replace(':', '_')}"
 
-    def query_metadata_documents(self, **kwargs):
-        raise RuntimeError("Could not resolve source ref 'provenance_t1'")
+    @staticmethod
+    def _resolve_schema(schema: str, tenant_id: str | None) -> str:
+        if not tenant_id:
+            return schema
+        return f"{schema}_{tenant_id.replace(':', '_')}"
 
 
-class _EmptyQueryBackend:
+class _FailingQueryBackend(_TenantScopedQueryBackend):
+    """Backend stub whose metadata query raises — the rejected-query seam."""
+
+    def __init__(self) -> None:
+        self.queries: list[dict] = []
+
+    def query_metadata_documents(self, schema, **kwargs):
+        resolved_schema = self._resolve_schema(schema, kwargs.get("tenant_id"))
+        self.queries.append(
+            {"schema": schema, "resolved_schema": resolved_schema, **kwargs}
+        )
+        raise RuntimeError(f"Could not resolve source ref '{resolved_schema}'")
+
+
+class _EmptyQueryBackend(_TenantScopedQueryBackend):
     """Backend stub whose metadata query succeeds with zero rows."""
 
     def __init__(self) -> None:
         self.queries: list[dict] = []
 
-    def get_tenant_schema_name(self, tenant_id: str, base_schema_name: str) -> str:
-        return f"{base_schema_name}_{tenant_id}"
-
-    def query_metadata_documents(self, **kwargs):
-        self.queries.append(kwargs)
+    def query_metadata_documents(self, schema, **kwargs):
+        resolved_schema = self._resolve_schema(schema, kwargs.get("tenant_id"))
+        self.queries.append(
+            {"schema": schema, "resolved_schema": resolved_schema, **kwargs}
+        )
         return []
 
 
@@ -433,18 +452,34 @@ class TestProvenanceStoreFaultContract:
     def test_fetch_raises_with_schema_context_on_query_failure(self):
         from cogniverse_core.memory.provenance_store import ProvenanceStore
 
-        store = ProvenanceStore(backend=_FailingQueryBackend(), tenant_id="t1")
+        backend = _FailingQueryBackend()
+        store = ProvenanceStore(backend=backend, tenant_id="t1")
         with pytest.raises(RuntimeError) as excinfo:
             store.fetch(["m_child"])
         assert "provenance_t1" in str(excinfo.value)
         assert "Could not resolve source ref" in str(excinfo.value.__cause__)
+        assert backend.queries == [
+            {
+                "schema": "provenance",
+                "resolved_schema": "provenance_t1",
+                "tenant_id": "t1",
+                "yql": (
+                    'select * from provenance where memory_id in ("m_child") '
+                    'and tenant_id contains "t1" limit 100'
+                ),
+                "hits": 100,
+            }
+        ]
 
     def test_get_raises_on_query_failure(self):
         from cogniverse_core.memory.provenance_store import ProvenanceStore
 
-        store = ProvenanceStore(backend=_FailingQueryBackend(), tenant_id="t1")
+        backend = _FailingQueryBackend()
+        store = ProvenanceStore(backend=backend, tenant_id="t1")
         with pytest.raises(RuntimeError):
             store.get("m_child")
+        assert backend.queries[0]["schema"] == "provenance"
+        assert backend.queries[0]["resolved_schema"] == "provenance_t1"
 
     def test_walk_propagates_query_failure_instead_of_single_node_graph(self):
         from cogniverse_core.memory.provenance_store import ProvenanceStore
@@ -471,4 +506,11 @@ class TestProvenanceStoreFaultContract:
         assert len(backend.queries) == 2
         assert backend.queries[0]["tenant_id"] == "t1"
         assert backend.queries[1]["tenant_id"] == "t1"
-        assert backend.queries[0]["schema"] == "provenance_t1"
+        assert [q["schema"] for q in backend.queries] == [
+            "provenance",
+            "provenance",
+        ]
+        assert [q["resolved_schema"] for q in backend.queries] == [
+            "provenance_t1",
+            "provenance_t1",
+        ]
