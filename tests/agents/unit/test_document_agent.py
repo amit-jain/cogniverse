@@ -27,6 +27,7 @@ class TestDocumentAgent:
             deps=DocumentAgentDeps(
                 tenant_id="test_tenant",
                 vespa_endpoint="http://localhost:8080",
+                deployed_document_schemas=("document_text", "document_visual"),
             ),
             port=8007,
         )
@@ -417,6 +418,7 @@ class TestSearchDocumentsEventLoop:
             deps=DocumentAgentDeps(
                 tenant_id="test_tenant",
                 vespa_endpoint="http://localhost:8080",
+                deployed_document_schemas=("document_text", "document_visual"),
             ),
             port=8007,
         )
@@ -478,3 +480,67 @@ class TestModuleDemo:
         assert result[0].title == "ML Paper"
         assert result[0].strategy_used == "text"
         assert result[0].relevance_score == pytest.approx(0.876)
+
+
+class TestDeployedStrategy:
+    """Strategy is narrowed to the document schemas a tenant actually has.
+
+    Tenant schemas deploy on first ingest, so a tenant that ingested only
+    text documents has no ``document_visual`` schema. Hybrid search fanned
+    out to it regardless, and Vespa rejected the whole query with "Could
+    not resolve source ref", failing a search the text half could answer.
+    """
+
+    @staticmethod
+    def _agent(deployed):
+        return DocumentAgent(
+            deps=DocumentAgentDeps(
+                tenant_id="test_tenant",
+                vespa_endpoint="http://localhost:8080",
+                deployed_document_schemas=deployed,
+            ),
+            port=8007,
+        )
+
+    def test_hybrid_stays_hybrid_when_both_schemas_are_deployed(self):
+        agent = self._agent(("document_text", "document_visual"))
+
+        assert agent._deployed_strategy("hybrid") == "hybrid"
+
+    def test_hybrid_degrades_to_text_when_only_text_is_deployed(self):
+        agent = self._agent(("document_text",))
+
+        assert agent._deployed_strategy("hybrid") == "text"
+
+    def test_hybrid_degrades_to_visual_when_only_visual_is_deployed(self):
+        agent = self._agent(("document_visual",))
+
+        assert agent._deployed_strategy("hybrid") == "visual"
+
+    def test_unknown_strategy_normalizes_then_degrades(self):
+        agent = self._agent(("document_text",))
+
+        assert agent._deployed_strategy("nonsense") == "text"
+
+    def test_explicitly_requesting_an_undeployed_modality_raises(self):
+        agent = self._agent(("document_text",))
+
+        with pytest.raises(ValueError) as excinfo:
+            agent._deployed_strategy("visual")
+
+        assert "document_visual" in str(excinfo.value)
+        assert "test_tenant" in str(excinfo.value)
+
+    def test_a_tenant_with_no_document_schema_raises(self):
+        agent = self._agent(())
+
+        with pytest.raises(ValueError) as excinfo:
+            agent._deployed_strategy("hybrid")
+
+        assert "No document schema deployed" in str(excinfo.value)
+
+    def test_a_deployed_modality_is_returned_unchanged(self):
+        agent = self._agent(("document_text", "document_visual"))
+
+        assert agent._deployed_strategy("visual") == "visual"
+        assert agent._deployed_strategy("text") == "text"
