@@ -134,7 +134,13 @@ def _vespa_get_doc(doc_id: str, retries: int = 15) -> dict | None:
     for _ in range(retries):
         resp = requests.get(url, timeout=5)
         if resp.status_code == 200:
-            return resp.json()
+            # document/v1 wraps the document as {"pathId","id","fields":{...}};
+            # callers assert on the document's own fields, so unwrap here rather
+            # than at every call site.
+            body = resp.json()
+            fields = body.get("fields")
+            assert isinstance(fields, dict), f"document/v1 GET has no fields: {body!r}"
+            return fields
         time.sleep(1)
     return None
 
