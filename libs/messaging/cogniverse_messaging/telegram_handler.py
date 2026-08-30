@@ -21,6 +21,9 @@ def format_agent_response(response: Dict[str, Any]) -> List[str]:
         logger.error("Agent response is not a dict: %r", type(response))
         return ["Error: agent returned an unexpected response."]
 
+    if response.get("status") == "warming":
+        return ["Runtime is warming up, try again shortly."]
+
     if response.get("status") == "unavailable":
         # A dead/hung runtime — a user-facing degrade, not a raw error string.
         return ["Service temporarily unavailable — please try again shortly."]

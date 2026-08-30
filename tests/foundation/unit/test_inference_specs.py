@@ -96,8 +96,10 @@ def test_teacher_definition_pins_the_production_chat_contract():
         output_dimension=None,
         gpu_candidates=("H100", "A100-80GB", "L40S"),
         requires_hf_token=True,
+        scaledown_window=900,
     )
     assert spec.boot_deadline_seconds == 600.0
+    assert spec.scaledown_window == 900
 
 
 def test_exact_hf_token_services_are_the_chat_models():
@@ -124,8 +126,21 @@ def test_each_service_has_an_independent_scale_to_zero_app():
         spec.modal_app == f"cogniverse-{spec.name.replace('_', '-')}" for spec in specs
     )
     assert all(spec.min_containers == 0 for spec in specs)
-    assert all(spec.scaledown_window == 300 for spec in specs)
+    assert {spec.name for spec in specs if spec.scaledown_window == 900} == {
+        "vllm_llm_student",
+        "vllm_llm_teacher",
+    }
+    assert all(
+        spec.scaledown_window == 300
+        for spec in specs
+        if spec.name not in {"vllm_llm_student", "vllm_llm_teacher"}
+    )
     assert all(spec.boot_deadline_seconds == 600.0 for spec in specs)
+
+
+def test_chat_models_use_the_longer_scale_down_window():
+    assert get_inference_service_spec("vllm_llm_student").scaledown_window == 900
+    assert get_inference_service_spec("vllm_llm_teacher").scaledown_window == 900
 
 
 def test_mutable_or_missing_model_revisions_are_rejected():
