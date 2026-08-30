@@ -627,10 +627,9 @@ async def test_generation_keeps_source_query_entities_and_agent_aligned() -> Non
         max_retries = 3
 
         def __call__(self, **kwargs):
-            entity_text = " ".join(kwargs["entities"])
             return SimpleNamespace(
-                query=f"find {entity_text}",
-                reasoning=f"Used only {entity_text} from this source item.",
+                query=f"find {kwargs['topics']}",
+                reasoning=f"Used the supplied topic {kwargs['topics']}.",
                 _retry_count=0,
                 _max_retries=3,
             )
@@ -680,16 +679,16 @@ async def test_generation_keeps_source_query_entities_and_agent_aligned() -> Non
         for example in examples
     ] == [
         {
-            "query": "find TensorFlow",
+            "query": "find guide to TensorFlow",
             "entities": [{"text": "TensorFlow", "type": "TECHNOLOGY"}],
-            "enhanced_query": "find TensorFlow(TECHNOLOGY)",
+            "enhanced_query": "find guide to TensorFlow(TECHNOLOGY)",
             "chosen_agent": "document_agent",
             "routing_confidence": 0.81,
         },
         {
-            "query": "find PyTorch",
+            "query": "find tutorial on PyTorch",
             "entities": [{"text": "PyTorch", "type": "TECHNOLOGY"}],
-            "enhanced_query": "find PyTorch(TECHNOLOGY)",
+            "enhanced_query": "find tutorial on PyTorch(TECHNOLOGY)",
             "chosen_agent": "video_search_agent",
             "routing_confidence": 0.67,
         },
@@ -702,7 +701,7 @@ async def test_generation_drops_repeated_canonical_routing_label() -> None:
 
         def __call__(self, **kwargs):
             return SimpleNamespace(
-                query="find TensorFlow",
+                query="find TensorFlow machine learning framework tutorial",
                 reasoning="The deterministic generator repeated one label.",
                 _retry_count=0,
                 _max_retries=3,
@@ -722,7 +721,7 @@ async def test_generation_drops_repeated_canonical_routing_label() -> None:
 
     # TensorFlow only in record 0 - saliency preserves it as distinctive.
     # Record 1 has no extractable entity, so entity extraction fails for it.
-    # Query generator always returns "find TensorFlow".
+    # Query generator always returns the same grounded query.
     # Iteration: attempt 0 → record 0 → KEPT; attempt 1 → record 1 → fails;
     # attempt 2+ → record 0 → DUPLICATE. Net: 1 example with duplicates dropped.
     examples = await generator.generate(
@@ -736,16 +735,21 @@ async def test_generation_drops_repeated_canonical_routing_label() -> None:
         generation_floor_count=1,
     )
 
-    assert [example.query for example in examples] == ["find TensorFlow"]
+    assert [example.query for example in examples] == [
+        "find TensorFlow machine learning framework tutorial"
+    ]
     assert [example.chosen_agent for example in examples] == ["video_search_agent"]
     assert tracker.returned_count == 1
     assert tracker.surplus_exhausted is True
     # Find the duplicate-related dropped example (not the no-entity ones)
     duplicate_drops = [d for d in tracker.dropped_examples if "duplicate" in d.reason]
-    assert duplicate_drops[0].candidate == "find TensorFlow"
+    assert duplicate_drops[0].candidate == (
+        "find TensorFlow machine learning framework tutorial"
+    )
     assert duplicate_drops[0].reason == (
         "RoutingGenerator generated duplicate canonical label "
-        "(query='find TensorFlow', entities=(('TensorFlow', 'TECHNOLOGY'),), "
+        "(query='find TensorFlow machine learning framework tutorial', "
+        "entities=(('TensorFlow', 'TECHNOLOGY'),), "
         "chosen_agent='video_search_agent')"
     )
 
@@ -761,12 +765,12 @@ async def test_generation_fills_quota_after_one_duplicate() -> None:
             self.calls = 0
             self.outputs = iter(
                 [
-                    "find TensorFlow",
-                    "find TensorFlow",
-                    "find TensorFlow tutorial",
-                    "compare TensorFlow benchmarks",
-                    "TensorFlow deployment guide",
-                    "explain TensorFlow pipelines",
+                    "find TensorFlow machine learning framework tutorial",
+                    "find TensorFlow machine learning framework tutorial",
+                    "find TensorFlow machine learning framework tutorial benchmarks",
+                    "find TensorFlow machine learning framework tutorial deployment guide",
+                    "find TensorFlow machine learning framework tutorial pipelines",
+                    "find TensorFlow machine learning framework tutorial summary",
                 ]
             )
 
@@ -795,7 +799,7 @@ async def test_generation_fills_quota_after_one_duplicate() -> None:
     # TensorFlow only in record 0 so saliency preserves it (high IDF).
     # Record 1 has no extractable entity, so entity extraction fails for it
     # and the generator cycles back to record 0. The sequence query generator
-    # returns "find TensorFlow" twice → duplicate canonical label → dropped.
+    # returns the same grounded query twice → duplicate canonical label → dropped.
     examples = await generator.generate(
         sampled_content=[
             {"description": "TensorFlow machine learning framework tutorial"},
@@ -808,18 +812,18 @@ async def test_generation_fills_quota_after_one_duplicate() -> None:
     )
 
     assert [example.query for example in examples] == [
-        "find TensorFlow",
-        "find TensorFlow tutorial",
-        "compare TensorFlow benchmarks",
-        "TensorFlow deployment guide",
-        "explain TensorFlow pipelines",
+        "find TensorFlow machine learning framework tutorial",
+        "find TensorFlow machine learning framework tutorial benchmarks",
+        "find TensorFlow machine learning framework tutorial deployment guide",
+        "find TensorFlow machine learning framework tutorial pipelines",
+        "find TensorFlow machine learning framework tutorial summary",
     ]
     assert [example.enhanced_query for example in examples] == [
-        "find TensorFlow(TECHNOLOGY)",
-        "find TensorFlow(TECHNOLOGY) tutorial",
-        "compare TensorFlow(TECHNOLOGY) benchmarks",
-        "TensorFlow(TECHNOLOGY) deployment guide",
-        "explain TensorFlow(TECHNOLOGY) pipelines",
+        "find TensorFlow(TECHNOLOGY) machine learning framework tutorial",
+        "find TensorFlow(TECHNOLOGY) machine learning framework tutorial benchmarks",
+        "find TensorFlow(TECHNOLOGY) machine learning framework tutorial deployment guide",
+        "find TensorFlow(TECHNOLOGY) machine learning framework tutorial pipelines",
+        "find TensorFlow(TECHNOLOGY) machine learning framework tutorial summary",
     ]
     assert [example.chosen_agent for example in examples] == ["video_search_agent"] * 5
     assert [example.routing_confidence for example in examples] == [0.73] * 5
@@ -827,10 +831,13 @@ async def test_generation_fills_quota_after_one_duplicate() -> None:
     assert tracker.returned_count == 5
     assert tracker.surplus_exhausted is False
     duplicate_drops = [d for d in tracker.dropped_examples if "duplicate" in d.reason]
-    assert [drop.candidate for drop in duplicate_drops] == ["find TensorFlow"]
+    assert [drop.candidate for drop in duplicate_drops] == [
+        "find TensorFlow machine learning framework tutorial"
+    ]
     assert duplicate_drops[0].reason == (
         "RoutingGenerator generated duplicate canonical label "
-        "(query='find TensorFlow', entities=(('TensorFlow', 'TECHNOLOGY'),), "
+        "(query='find TensorFlow machine learning framework tutorial', "
+        "entities=(('TensorFlow', 'TECHNOLOGY'),), "
         "chosen_agent='video_search_agent')"
     )
 
@@ -848,7 +855,7 @@ async def test_generation_stops_after_duplicate_streak_is_exhausted() -> None:
         def __call__(self, **kwargs):
             self.calls += 1
             return SimpleNamespace(
-                query="find TensorFlow",
+                query="find TensorFlow machine learning framework tutorial",
                 reasoning=f"Sequence attempt {self.calls}.",
                 _retry_count=0,
                 _max_retries=3,
@@ -876,7 +883,7 @@ async def test_generation_stops_after_duplicate_streak_is_exhausted() -> None:
 
     # TensorFlow only in record 0 so saliency preserves it (high IDF).
     # Record 1 has no extractable entity, so entity extraction fails for it.
-    # The sequence query generator always returns "find TensorFlow" → every
+    # The sequence query generator always returns the same grounded query → every
     # successful attempt after the first is a duplicate. After target_count
     # consecutive duplicates, the generator stops.
     examples = await generator.generate(
@@ -890,19 +897,24 @@ async def test_generation_stops_after_duplicate_streak_is_exhausted() -> None:
         generation_floor_count=1,
     )
 
-    assert [example.query for example in examples] == ["find TensorFlow"]
+    assert [example.query for example in examples] == [
+        "find TensorFlow machine learning framework tutorial"
+    ]
     assert [example.enhanced_query for example in examples] == [
-        "find TensorFlow(TECHNOLOGY)"
+        "find TensorFlow(TECHNOLOGY) machine learning framework tutorial"
     ]
     assert query_generator.calls == 6
-    assert routing_calls == ["find TensorFlow"] * 6
+    assert routing_calls == ["find TensorFlow machine learning framework tutorial"] * 6
     assert tracker.returned_count == 1
     assert tracker.surplus_exhausted is True
     duplicate_drops = [d for d in tracker.dropped_examples if "duplicate" in d.reason]
-    assert [drop.candidate for drop in duplicate_drops] == ["find TensorFlow"] * 5
+    assert [drop.candidate for drop in duplicate_drops] == [
+        "find TensorFlow machine learning framework tutorial"
+    ] * 5
     assert duplicate_drops[-1].reason == (
         "RoutingGenerator generated duplicate canonical label "
-        "(query='find TensorFlow', entities=(('TensorFlow', 'TECHNOLOGY'),), "
+        "(query='find TensorFlow machine learning framework tutorial', "
+        "entities=(('TensorFlow', 'TECHNOLOGY'),), "
         "chosen_agent='video_search_agent')"
     )
 
@@ -1114,6 +1126,93 @@ async def test_generation_rejects_noncanonical_gateway_confidence(
     )
 
 
+async def test_generation_drops_query_missing_topic_content_words() -> None:
+    class _MissingTopicContentWordGenerator:
+        max_retries = 3
+
+        def __init__(self) -> None:
+            self.calls = 0
+
+        def __call__(self, **kwargs):
+            self.calls += 1
+            return SimpleNamespace(
+                query="find TensorFlow machine",
+                reasoning="Kept the visible entity and one topic word.",
+                _retry_count=0,
+                _max_retries=3,
+            )
+
+    generator = _routing_generator()
+    query_generator = _MissingTopicContentWordGenerator()
+    generator.query_generator = query_generator
+    generator._extract_topic = lambda content, *, saliency: (
+        "TensorFlow machine learning"
+    )
+    tracker = GenerationTracker(
+        optimizer="routing",
+        target_count=1,
+        floor_count=1,
+    )
+    expected_reason = (
+        "routing query must contain every topic content word longer than 3 chars; "
+        "missing=['learning']; topic='TensorFlow machine learning'; "
+        "query='find TensorFlow machine'"
+    )
+
+    with pytest.raises(ValueError) as error:
+        await generator.generate(
+            sampled_content=[
+                {"description": "ignored"},
+                {"description": "ignored again"},
+            ],
+            target_count=1,
+            tenant_id="acme:routing",
+            generation_tracker=tracker,
+            generation_floor_count=1,
+        )
+
+    assert query_generator.calls == 5
+    assert type(error.value.__cause__) is ValueError
+    assert str(error.value.__cause__) == expected_reason
+    assert [drop.to_dict() for drop in tracker.dropped_examples] == [
+        {"candidate": "TensorFlow machine learning", "reason": expected_reason},
+        {"candidate": "TensorFlow machine learning", "reason": expected_reason},
+        {"candidate": "TensorFlow machine learning", "reason": expected_reason},
+        {"candidate": "TensorFlow machine learning", "reason": expected_reason},
+        {"candidate": "TensorFlow machine learning", "reason": expected_reason},
+    ]
+    assert tracker.to_metadata() == {
+        "requested_count": 1,
+        "returned_count": 0,
+        "shortfall_count": 1,
+        "floor_count": 1,
+        "surplus_exhausted": True,
+        "dropped_count": 5,
+        "dropped_examples": [
+            {
+                "candidate": "TensorFlow machine learning",
+                "reason": expected_reason,
+            },
+            {
+                "candidate": "TensorFlow machine learning",
+                "reason": expected_reason,
+            },
+            {
+                "candidate": "TensorFlow machine learning",
+                "reason": expected_reason,
+            },
+            {
+                "candidate": "TensorFlow machine learning",
+                "reason": expected_reason,
+            },
+            {
+                "candidate": "TensorFlow machine learning",
+                "reason": expected_reason,
+            },
+        ],
+    }
+
+
 async def test_generation_metadata_matches_canonical_contract() -> None:
     class _MarkedGenerator:
         max_retries = 3
@@ -1140,6 +1239,7 @@ async def test_generation_metadata_matches_canonical_contract() -> None:
             "retry_count": 1,
             "max_retries": 3,
             "reasoning": "Used the supplied entity.",
+            "source_topic": "machine learning",
         }
     }
 
@@ -1469,7 +1569,7 @@ async def test_generation_drops_candidate_when_query_validation_is_exhausted() -
                     "TensorFlow"
                 )
             return SimpleNamespace(
-                query="find TensorFlow",
+                query=f"find {kwargs['topics']}",
                 reasoning="Used the supplied entity.",
                 _retry_count=0,
                 _max_retries=3,
@@ -1488,7 +1588,9 @@ async def test_generation_drops_candidate_when_query_validation_is_exhausted() -
         generation_floor_count=1,
     )
 
-    assert [example.query for example in examples] == ["find TensorFlow"]
+    assert [example.query for example in examples] == [
+        f"find {examples[0].metadata['_generation_metadata']['source_topic']}"
+    ]
     assert query_generator.calls == 2
     assert tracker.returned_count == 1
     assert len(tracker.dropped_examples) == 1
