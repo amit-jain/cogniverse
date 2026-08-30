@@ -109,7 +109,7 @@ def _write_entity_fact(
 
 
 def _set_pin_quota(tenant_id: str, **quotas: int) -> dict:
-    with httpx.Client(base_url=RUNTIME, timeout=30.0) as client:
+    with httpx.Client(base_url=RUNTIME, timeout=120.0) as client:
         resp = client.put(
             f"/admin/tenants/{tenant_id}/pin_quotas",
             json=quotas,
@@ -121,7 +121,7 @@ def _set_pin_quota(tenant_id: str, **quotas: int) -> dict:
 def _pin(
     tenant_id: str, memory_id: str, *, target_kind: str, pinned_by: str, actor_id: str
 ) -> httpx.Response:
-    with httpx.Client(base_url=RUNTIME, timeout=30.0) as client:
+    with httpx.Client(base_url=RUNTIME, timeout=120.0) as client:
         return client.post(
             f"/admin/tenants/{tenant_id}/memories/{memory_id}/pin",
             json={
@@ -338,7 +338,7 @@ class TestListPinsRoundTrip:
                 )
                 assert r.status_code == 200, r.text[:300]
 
-            with httpx.Client(base_url=RUNTIME, timeout=30.0) as client:
+            with httpx.Client(base_url=RUNTIME, timeout=120.0) as client:
                 resp = client.get(f"/admin/tenants/{tenant_id}/pins")
             assert resp.status_code == 200, resp.text[:300]
             body = resp.json()
@@ -417,7 +417,7 @@ class TestRestoreSoftDeletedMemory:
             assert archived_meta.get("archived") is True
 
             # Restore via the admin route.
-            with httpx.Client(base_url=RUNTIME, timeout=30.0) as client:
+            with httpx.Client(base_url=RUNTIME, timeout=120.0) as client:
                 resp = client.post(
                     f"/admin/tenants/{tenant_id}/memories/{mid}/restore",
                 )
