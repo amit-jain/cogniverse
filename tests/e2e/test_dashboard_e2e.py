@@ -1243,11 +1243,46 @@ class TestMemoryLifecycle:
             ), "Found memories must be rendered as expanders, dataframe, or JSON blocks"
 
     def test_view_all_memories(self, page):
+        # Own the listed state: seed one memory through the runtime route
+        # (infer=False under the _user_memories namespace) and assert View
+        # All renders exactly that row, instead of accepting whatever the
+        # shared tenant holds or an empty listing.
+        memory_text = f"E2E view-all memory {unique_id()}"
+        with httpx.Client(base_url=RUNTIME, timeout=60.0) as client:
+            seed = client.post(
+                f"/admin/tenant/{TENANT_ID}/memories", json={"text": memory_text}
+            )
+            assert seed.status_code == 200, seed.text[:300]
+            memory_id = seed.json()["id"]
+            assert seed.json()["status"] == "saved", seed.json()
+
+            # Mem0 writes surface on the list path with eventual consistency;
+            # the 30s budget matches _poll_resolve in the cronworkflow e2e.
+            deadline = time.monotonic() + 30.0
+            listed_ids: list[str] = []
+            while listed_ids != [memory_id] and time.monotonic() < deadline:
+                listing = client.get(f"/admin/tenant/{TENANT_ID}/memories")
+                assert listing.status_code == 200, listing.text[:300]
+                listed_ids = [
+                    m["id"] for m in listing.json()["memories"] if m["id"] == memory_id
+                ]
+                if listed_ids != [memory_id]:
+                    time.sleep(2.0)
+            assert listed_ids == [memory_id], (
+                f"seeded memory {memory_id} never surfaced on the list route"
+            )
+
         _nav(page)
         set_tenant(page, TENANT_ID)
         click_top_tab(page, "Memory")
         page.wait_for_load_state("networkidle")
         page.wait_for_timeout(5_000)
+
+        agent_input = page.locator('input[aria-label="Agent Name"]')
+        assert agent_input.count() == 1, "Memory tab must render one Agent Name input"
+        fill_input(agent_input, "_user_memories")
+        page.wait_for_load_state("networkidle")
+
         click_sub_tab(page, "View All")
         page.wait_for_load_state("networkidle")
 
@@ -1257,20 +1292,20 @@ class TestMemoryLifecycle:
         page.wait_for_timeout(INTERACTION_TIMEOUT)
         page.wait_for_load_state("networkidle")
 
-        # Alerts persist (no st.rerun) — check for specific outcomes
+        # Alerts persist (no st.rerun): exactly one "Found N memories" alert
+        # and exactly one detailed-view expander for the seeded row.
         found_alert = page.locator('[data-testid="stAlert"]:has-text("Found")')
-        dataframes = page.locator('[data-testid="stDataFrame"]')
-        expanders = page.locator('[data-testid="stExpander"]')
         no_memories = page.locator('[data-testid="stAlert"]:has-text("No memories")')
-        assert (
-            found_alert.count() > 0
-            or dataframes.count() > 0
-            or expanders.count() > 0
-            or no_memories.count() > 0
-        ), (
-            "View All must show 'Found N memories' with data, or 'No memories' — "
-            f"found={found_alert.count()}, df={dataframes.count()}, "
-            f"expanders={expanders.count()}"
+        assert found_alert.count() == 1, (
+            "View All must report the seeded memory: "
+            f"found={found_alert.count()}, no_memories={no_memories.count()}"
+        )
+        seeded_expander = page.locator(
+            f'[data-testid="stExpander"]:has-text("{memory_id}")'
+        )
+        assert seeded_expander.count() == 1, (
+            f"View All must render one detailed-view expander for {memory_id}; "
+            f"got {seeded_expander.count()}"
         )
 
     def test_delete_memory_tab(self, page):
