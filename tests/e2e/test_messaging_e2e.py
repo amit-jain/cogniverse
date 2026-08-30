@@ -104,10 +104,10 @@ class TestMessagingInviteAPI:
         assert data["tenant_id"] == TENANT_ID
 
 
-import os
+from cogniverse_cli.secrets import read_secret
 
-BOT_TOKEN = os.environ.get("TELEGRAM_BOT_TOKEN", "")
-TEST_CHAT_ID = int(os.environ.get("TELEGRAM_TEST_CHAT_ID", "0"))
+BOT_TOKEN = read_secret("TELEGRAM_BOT_TOKEN") or ""
+TEST_CHAT_ID = int(read_secret("TELEGRAM_TEST_CHAT_ID") or "0")
 
 
 def _assert_bot_ready() -> None:
