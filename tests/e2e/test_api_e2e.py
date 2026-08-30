@@ -35,9 +35,7 @@ from cogniverse_foundation.config.unified_config import (
     SyntheticGeneratorConfig,
 )
 from cogniverse_foundation.config.utils import create_default_config_manager
-from cogniverse_synthetic.profile_selector import (
-    score_profile_with_configured_rules,
-)
+from cogniverse_synthetic.generators.workflow import WorkflowGenerator
 from cogniverse_synthetic.schemas import ProfileSelectionExampleSchema
 from cogniverse_synthetic.topics import (
     TopicSaliency,
@@ -95,33 +93,6 @@ def _default_video_profile_name() -> str:
 PROFILE = _default_video_profile_name()
 
 
-def _workflow_video_profile_name() -> str:
-    config = json.loads(CONFIG_PATH.read_text())
-    synthetic = dict(config["synthetic"])
-    synthetic["tenant_id"] = TENANT_ID
-    generator_config = SyntheticGeneratorConfig.from_dict(synthetic)
-    workflow_rules = generator_config.get_optimizer_config(
-        "workflow"
-    ).profile_scoring_rules
-    scored_profiles: list[tuple[float, str]] = []
-    for profile_name, profile_config in (
-        config.get("backend", {}).get("profiles", {}).items()
-    ):
-        if not isinstance(profile_config, dict):
-            continue
-        if profile_config.get("type") != "video":
-            continue
-        score, _ = score_profile_with_configured_rules(
-            workflow_rules, profile_name, profile_config
-        )
-        scored_profiles.append((score, profile_name))
-    if not scored_profiles:
-        raise RuntimeError("workflow video profile scoring found no video profiles")
-    scored_profiles.sort(key=lambda item: item[0], reverse=True)
-    return scored_profiles[0][1]
-
-
-WORKFLOW_PROFILE = _workflow_video_profile_name()
 _PROFILE_TYPE_ORDER = {
     "video": 0,
     "document": 1,
@@ -916,12 +887,12 @@ class TestSyntheticDataAPI:
                 assert resp.status_code in (200, 201, 409), resp.text
 
                 register_tenant_and_wait(tenant_id, created_by="e2e", timeout_s=600.0)
-                _deploy_profile_for_tenant(client, WORKFLOW_PROFILE, tenant_id)
+                _deploy_profile_for_tenant(client, PROFILE, tenant_id)
                 _deploy_profile_for_tenant(client, DOCUMENT_PROFILE, tenant_id)
 
                 seeded_video_content_id = _ensure_sample_content_ingested(
                     SAMPLE_VIDEO_PATH,
-                    profile=WORKFLOW_PROFILE,
+                    profile=PROFILE,
                     media_type="video/mp4",
                     tenant_id=tenant_id,
                 )
@@ -1577,12 +1548,19 @@ class TestSyntheticDataAPI:
         assert document_topic is not None, sampled_content
         assert video_topic != document_topic
         queries = [example["query"] for example in data["data"]]
-        assert queries == [
-            f"find {video_topic}",
-            f"summarize {video_topic}",
-            f"analyze {video_topic} and generate report",
-            f"find {document_topic}",
+        # The generator walks sampled_content in order and emits one query per
+        # WORKFLOW_PLANS entry for each record, capped at the requested count.
+        topics_in_sample_order = [
+            extract_topic(record, saliency=saliency) for record in sampled_content
         ]
+        assert set(topics_in_sample_order) == {video_topic, document_topic}
+        expected_queries = [
+            WorkflowGenerator._generate_workflow_query(topic, task_type)
+            for topic in topics_in_sample_order
+            for _complexity, task_type in WorkflowGenerator.WORKFLOW_PLANS
+        ][: data["count"]]
+        assert queries == expected_queries
+        assert len(expected_queries) == 4
         workflow_ids = [example["workflow_id"] for example in data["data"]]
         assert len(set(workflow_ids)) == 4
         assert all(
