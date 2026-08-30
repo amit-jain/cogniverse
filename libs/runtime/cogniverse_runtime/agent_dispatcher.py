@@ -2583,12 +2583,24 @@ class AgentDispatcher:
             DocumentAgent,
             DocumentAgentDeps,
         )
+        from cogniverse_runtime.admin.tenant_manager import get_backend
+
+        # Tenant schemas deploy on first ingest, so a tenant that ingested
+        # only text documents has no document_visual schema. Querying it
+        # makes Vespa reject the whole search; a registry lookup failure
+        # raises and is not read as an undeployed schema.
+        backend = get_backend()
+        deployed_document_schemas = []
+        for base_schema in ("document_text", "document_visual"):
+            if await asyncio.to_thread(backend.schema_exists, base_schema, tenant_id):
+                deployed_document_schemas.append(base_schema)
 
         vespa_endpoint = self._get_vespa_endpoint(tenant_id)
         deps = DocumentAgentDeps(
             vespa_endpoint=vespa_endpoint,
             tenant_id=tenant_id,
             encoder_config=await self._build_encoder_config(),
+            deployed_document_schemas=tuple(deployed_document_schemas),
         )
         agent = DocumentAgent(deps=deps)
         await asyncio.to_thread(

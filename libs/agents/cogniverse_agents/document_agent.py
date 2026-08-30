@@ -28,6 +28,8 @@ from cogniverse_core.query.encoders import QueryEncoderFactory
 
 logger = logging.getLogger(__name__)
 
+_STRATEGY_SCHEMAS = {"visual": "document_visual", "text": "document_text"}
+
 
 class DocumentResult(AgentOutput):
     """Result from document search"""
@@ -83,6 +85,12 @@ class DocumentAgentDeps(AgentDeps):
     visual_profile: str = Field(
         "document_visual_colpali",
         description="config.json profile for the ColPali visual-search encoder",
+    )
+    deployed_document_schemas: tuple[str, ...] = Field(
+        (),
+        description="Base document schema names deployed for this tenant "
+        "(document_text, document_visual). Strategy selection is restricted "
+        "to these, so a search never queries a schema the tenant lacks.",
     )
     enable_memory: bool = Field(False, description="Enable memory (requires Mem0)")
     memory_backend_host: Optional[str] = Field(
@@ -211,6 +219,7 @@ class DocumentAgent(
         self._encoder_config = deps.encoder_config
         self._text_profile = deps.text_profile
         self._visual_profile = deps.visual_profile
+        self._deployed_document_schemas = frozenset(deps.deployed_document_schemas)
 
         # Lazy load models
         self._colpali_model = None
@@ -308,6 +317,7 @@ class DocumentAgent(
             strategy = self._select_strategy(query)
             logger.info(f"📊 Auto-selected strategy: {strategy}")
 
+        strategy = self._deployed_strategy(strategy)
         try:
             if strategy == "visual":
                 results = await self._search_visual(query, limit)
@@ -354,6 +364,37 @@ class DocumentAgent(
             # Surface the failure (degraded Vespa, outage, encoder error) —
             # returning [] here made every backend failure read as "no results".
             raise
+
+    def _deployed_strategy(self, strategy: str) -> str:
+        """Narrow ``strategy`` to the document schemas this tenant has.
+
+        Querying a schema the tenant never deployed makes Vespa reject the
+        whole search, so a hybrid request degrades to the deployed half
+        instead of failing a search the other half could answer.
+        """
+        available = {
+            name
+            for name, base in _STRATEGY_SCHEMAS.items()
+            if base in self._deployed_document_schemas
+        }
+        if not available:
+            raise ValueError(
+                f"No document schema deployed for tenant '{self._tenant_id}': "
+                f"expected one of {sorted(_STRATEGY_SCHEMAS.values())}"
+            )
+        if strategy not in _STRATEGY_SCHEMAS and strategy != "hybrid":
+            strategy = "hybrid"
+        if strategy == "hybrid":
+            if available == set(_STRATEGY_SCHEMAS):
+                return "hybrid"
+            return sorted(available)[0]
+        if strategy not in available:
+            raise ValueError(
+                f"Document strategy '{strategy}' needs schema "
+                f"'{_STRATEGY_SCHEMAS[strategy]}', which is not deployed for "
+                f"tenant '{self._tenant_id}'"
+            )
+        return strategy
 
     def _select_strategy(self, query: str) -> str:
         """
