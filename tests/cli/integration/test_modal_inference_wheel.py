@@ -15,7 +15,7 @@ _INSTALLED_WHEEL_PROBE = textwrap.dedent(
     import httpx
 
     from cogniverse_cli.inference_endpoints import EndpointCredentials
-    from cogniverse_cli.modal_inference_config import INFERENCE_SERVICE_SPECS
+    from cogniverse_foundation.inference_specs import INFERENCE_SERVICE_SPECS
     from cogniverse_cli.modal_inference_lifecycle import (
         ModalInferenceLifecycle,
         _DEPLOYMENT_MODULES,

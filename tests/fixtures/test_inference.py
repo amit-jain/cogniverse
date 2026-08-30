@@ -22,8 +22,8 @@ from cogniverse_cli.inference_endpoints import (
     ModelIdentityError,
     ResolvedInferenceEndpoint,
 )
-from cogniverse_cli.modal_inference_config import get_inference_service_spec
 
+from cogniverse_foundation.inference_specs import get_inference_service_spec
 from tests.fixtures.inference import (
     TEST_INFERENCE_API_KEY,
     DiscoveredEndpointProvider,

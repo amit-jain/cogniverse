@@ -2,7 +2,7 @@
 
 import modal
 
-from cogniverse_cli.modal_inference_config import get_inference_service_spec
+from cogniverse_foundation.inference_specs import get_inference_service_spec
 
 _SPEC = get_inference_service_spec("gliner")
 _CACHE_PATH = "/root/.cache/huggingface"
@@ -18,7 +18,7 @@ _image = (
     .env({"DEVICE": "cuda", "HF_HOME": _CACHE_PATH, "MODEL_NAME": _SPEC.model_id})
     .add_local_python_source(
         "cogniverse_cli.modal_inference",
-        "cogniverse_cli.modal_inference_config",
+        "cogniverse_foundation.inference_specs",
         copy=True,
     )
 )

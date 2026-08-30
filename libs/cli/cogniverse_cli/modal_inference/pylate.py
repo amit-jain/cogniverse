@@ -9,7 +9,7 @@ import modal
 if TYPE_CHECKING:
     from fastapi import FastAPI
 
-    from cogniverse_cli.modal_inference_config import InferenceServiceSpec
+    from cogniverse_foundation.inference_specs import InferenceServiceSpec
 
 _API_KEY_SECRET = "cogniverse-inference-api-key"
 _HF_CACHE_NAME = "cogniverse-huggingface-cache"
@@ -38,7 +38,7 @@ def _pylate_image() -> modal.Image:
         .env({"HF_HOME": _HF_CACHE_PATH})
         .add_local_python_source(
             "cogniverse_cli.modal_inference",
-            "cogniverse_cli.modal_inference_config",
+            "cogniverse_foundation.inference_specs",
             copy=True,
         )
     )

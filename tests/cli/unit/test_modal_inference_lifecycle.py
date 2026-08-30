@@ -19,13 +19,14 @@ from cogniverse_cli.inference_endpoints import (
     ResolvedInferenceEndpoint,
 )
 from cogniverse_cli.main import cli
-from cogniverse_cli.modal_inference_config import get_inference_service_spec
 from cogniverse_cli.modal_inference_lifecycle import (
     ModalInferenceLifecycle,
     ModalLifecycleError,
     QualificationResult,
     ServiceStatus,
 )
+
+from cogniverse_foundation.inference_specs import get_inference_service_spec
 
 API_KEY = "modal-lifecycle-secret"
 COLPALI = get_inference_service_spec("vllm_colpali")

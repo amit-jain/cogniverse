@@ -24,10 +24,10 @@ from cogniverse_cli.modal_inference.clap import app as clap_modal_app
 from cogniverse_cli.modal_inference.face import app as face_modal_app
 from cogniverse_cli.modal_inference.servers import clap as clap_server
 from cogniverse_cli.modal_inference.servers import face as face_server
-from cogniverse_cli.modal_inference_config import get_inference_service_spec
 from PIL import Image
 
 from cogniverse_agents.graph.face_extractor import extract_faces_per_keyframe
+from cogniverse_foundation.inference_specs import get_inference_service_spec
 from cogniverse_runtime.ingestion.processors.audio_embedding_generator import (
     AudioEmbeddingGenerator,
 )
@@ -366,7 +366,7 @@ def test_face_image_runs_the_verified_installer_during_build(monkeypatch):
         "add_local_python_source",
         (
             "cogniverse_cli.modal_inference",
-            "cogniverse_cli.modal_inference_config",
+            "cogniverse_foundation.inference_specs",
         ),
         True,
     )

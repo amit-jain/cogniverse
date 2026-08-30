@@ -22,7 +22,8 @@ from pathlib import Path
 
 import pytest
 import yaml
-from cogniverse_cli.modal_inference_config import INFERENCE_SERVICE_SPECS
+
+from cogniverse_foundation.inference_specs import INFERENCE_SERVICE_SPECS
 
 REPO_ROOT = Path(__file__).resolve().parents[2]
 CHART_PATH = REPO_ROOT / "charts" / "cogniverse"

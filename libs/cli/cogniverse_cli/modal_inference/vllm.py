@@ -20,7 +20,7 @@ from cogniverse_cli.modal_inference.serving import (
 )
 
 if TYPE_CHECKING:
-    from cogniverse_cli.modal_inference_config import InferenceServiceSpec
+    from cogniverse_foundation.inference_specs import InferenceServiceSpec
 
 _API_KEY_SECRET = "cogniverse-inference-api-key"
 _HF_TOKEN_SECRET = "hf-token"
@@ -353,7 +353,7 @@ def _vllm_image(spec: InferenceServiceSpec) -> modal.Image:
         .pip_install(*packages)
         .add_local_python_source(
             "cogniverse_cli.modal_inference",
-            "cogniverse_cli.modal_inference_config",
+            "cogniverse_foundation.inference_specs",
             copy=True,
         )
         .env(_vllm_environment(spec))

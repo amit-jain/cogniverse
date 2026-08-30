@@ -1,5 +1,6 @@
 import pytest
-from cogniverse_cli.modal_inference_config import (
+
+from cogniverse_foundation.inference_specs import (
     INFERENCE_SERVICE_SPECS,
     EndpointAuth,
     InferenceServiceSpec,

@@ -19,12 +19,12 @@ from cogniverse_cli.modal_inference.gliner import app as gliner_app
 from cogniverse_cli.modal_inference.servers import gliner as gliner_server
 from cogniverse_cli.modal_inference.servers import videoprism as videoprism_server
 from cogniverse_cli.modal_inference.videoprism import app as videoprism_app
-from cogniverse_cli.modal_inference_config import get_inference_service_spec
 
 from cogniverse_core.common.models.model_loaders import (
     RemoteGlinerClient,
     RemoteInferenceClient,
 )
+from cogniverse_foundation.inference_specs import get_inference_service_spec
 
 API_KEY = "language-video-test-key"
 VIDEO_PATH = Path("tests/system/resources/videos/v_-6dz6tBH77I.mp4")
