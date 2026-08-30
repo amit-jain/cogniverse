@@ -15,6 +15,7 @@ import logging
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
 from enum import Enum
+from numbers import Real
 from typing import Any, Dict, List, Optional
 
 import httpx
@@ -1082,20 +1083,43 @@ class QualityMonitor:
             return None
 
     @staticmethod
-    def _row_value(row, columns, key):
-        """Read ``key`` from a baseline row: nested output/input dict first
-        (real Phoenix example shape), then flat column, then flattened name."""
-        for slot in ("output", "input"):
-            if slot in columns:
-                nested = row[slot]
-                if isinstance(nested, dict) and key in nested:
-                    return nested[key]
-        if key in columns:
-            return row[key]
-        for col in columns:
-            if key in str(col):
-                return row[col]
-        return None
+    def _baseline_payload(row, columns) -> Dict[str, Any]:
+        """Return the canonical JSON payload from a baseline dataset row."""
+        if "payload" in columns:
+            raw = row["payload"]
+        else:
+            raw = None
+            for slot in ("input", "output"):
+                if slot in columns:
+                    nested = row[slot]
+                    if isinstance(nested, dict) and "payload" in nested:
+                        raw = nested["payload"]
+                        break
+
+        if raw is None:
+            raise KeyError(
+                "QualityMonitor baseline rows must store a canonical 'payload' column"
+            )
+        if isinstance(raw, dict):
+            payload = raw
+        elif isinstance(raw, str):
+            payload = json.loads(raw)
+        else:
+            raise TypeError(
+                "QualityMonitor baseline payload must be a JSON string or dict, "
+                f"got {type(raw).__name__}"
+            )
+
+        if not isinstance(payload, dict):
+            raise TypeError(
+                "QualityMonitor baseline payload must decode to a dict, "
+                f"got {type(payload).__name__}"
+            )
+        return payload
+
+    @staticmethod
+    def _is_number(value: Any) -> bool:
+        return isinstance(value, Real) and not isinstance(value, bool)
 
     async def _read_baseline_metric(self, metric: str) -> Optional[float]:
         """Load the last COMPLETE golden baseline value for ``metric`` from
@@ -1116,19 +1140,32 @@ class QualityMonitor:
         columns = list(df.columns)
         for i in range(len(df) - 1, -1, -1):
             row = df.iloc[i]
-            failed = self._row_value(row, columns, "failed_query_count")
-            try:
-                if failed is not None and not pd.isna(failed) and int(failed) > 0:
+            payload = self._baseline_payload(row, columns)
+            failed = payload.get("failed_query_count")
+            if failed is not None:
+                if not self._is_number(failed):
+                    raise TypeError(
+                        "QualityMonitor baseline payload field "
+                        f"'failed_query_count' must be numeric, got "
+                        f"{type(failed).__name__}"
+                    )
+                if pd.isna(failed):
                     continue
-            except (TypeError, ValueError):
-                pass
-            value = self._row_value(row, columns, metric)
-            if value is None or (isinstance(value, float) and pd.isna(value)):
+                if failed > 0:
+                    continue
+            if metric not in payload:
                 continue
-            try:
-                return float(value)
-            except (TypeError, ValueError):
+            value = payload[metric]
+            if value is None:
                 continue
+            if not self._is_number(value):
+                raise TypeError(
+                    "QualityMonitor baseline payload field "
+                    f"{metric!r} must be numeric, got {type(value).__name__}"
+                )
+            if pd.isna(value):
+                continue
+            return value
         return None
 
     def _build_trigger(
@@ -1172,32 +1209,23 @@ class QualityMonitor:
         """
         store = self._get_dataset_store()
         dataset_name = f"quality-baseline-{self.tenant_id}"
-
-        df = pd.DataFrame(
-            [
-                {
-                    "timestamp": result.timestamp.isoformat(),
-                    "mean_mrr": result.mean_mrr,
-                    "mean_ndcg": result.mean_ndcg,
-                    "mean_precision_at_5": result.mean_precision_at_5,
-                    "query_count": result.query_count,
-                    "failed_query_count": result.failed_query_count,
-                }
-            ]
-        )
+        payload = {
+            "timestamp": result.timestamp.isoformat(),
+            "mean_mrr": result.mean_mrr,
+            "mean_ndcg": result.mean_ndcg,
+            "mean_precision_at_5": result.mean_precision_at_5,
+            "query_count": result.query_count,
+            "failed_query_count": result.failed_query_count,
+        }
+        df = pd.DataFrame([{"payload": json.dumps(payload, default=str)}])
 
         await store.create_dataset(
             name=dataset_name,
             data=df,
             metadata={
                 "description": f"Golden eval baseline for tenant {self.tenant_id}",
-                "input_keys": ["timestamp"],
-                "output_keys": [
-                    "mean_mrr",
-                    "mean_ndcg",
-                    "mean_precision_at_5",
-                    "failed_query_count",
-                ],
+                "input_keys": ["payload"],
+                "output_keys": [],
             },
         )
         logger.info(f"Stored golden eval baseline: {dataset_name}")
@@ -1321,16 +1349,28 @@ class QualityMonitor:
         columns = list(df.columns)
         for i in range(len(df) - 1, -1, -1):
             row = df.iloc[i]
-            agent = self._row_value(row, columns, "agent")
+            payload = self._baseline_payload(row, columns)
+            agent = payload.get("agent")
+            if agent is None:
+                continue
+            if not isinstance(agent, str):
+                raise TypeError(
+                    "QualityMonitor baseline payload field 'agent' must be a "
+                    f"string, got {type(agent).__name__}"
+                )
             if agent != agent_type.value:
                 continue
-            score = self._row_value(row, columns, "score")
-            if score is None or (isinstance(score, float) and pd.isna(score)):
+            score = payload.get("score")
+            if score is None:
                 continue
-            try:
-                return float(score)
-            except (TypeError, ValueError):
+            if not self._is_number(score):
+                raise TypeError(
+                    "QualityMonitor baseline payload field 'score' must be "
+                    f"numeric, got {type(score).__name__}"
+                )
+            if pd.isna(score):
                 continue
+            return score
         return None
 
     async def submit_optimization(
@@ -1392,7 +1432,11 @@ class QualityMonitor:
             store = self._get_dataset_store()
             dataset_name = f"quality-baseline-{self.tenant_id}"
             records = [
-                {"agent": agent.value, "score": score}
+                {
+                    "payload": json.dumps(
+                        {"agent": agent.value, "score": score}, default=str
+                    )
+                }
                 for agent, score in live_results.items()
             ]
             df = pd.DataFrame(records)
@@ -1403,8 +1447,8 @@ class QualityMonitor:
                 data=df,
                 metadata={
                     "description": "Live eval baselines per agent",
-                    "input_keys": ["agent"],
-                    "output_keys": ["score"],
+                    "input_keys": ["payload"],
+                    "output_keys": [],
                 },
             )
 

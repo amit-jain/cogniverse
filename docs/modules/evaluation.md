@@ -1727,6 +1727,9 @@ evaluation reads the tenant-only user-ops project
 (`cogniverse-{org:tenant}`) — the project agents actually write spans to.
 `golden_dataset_path` is the one-shot seed source consumed by
 `quality_monitor_cli`; the monitor itself reads the tenant blob, not the file.
+The `quality-baseline-*` dataset stores one JSON `payload` column for golden
+summaries and live per-agent baselines, and the monitor decodes that payload on
+read so Phoenix's dataframe round-trip cannot stringify metric values.
 
 **`QualityThresholds` dataclass (defaults):**
 
