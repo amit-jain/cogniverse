@@ -475,6 +475,7 @@ async def test_search_images_offloads_blocking_encode(monkeypatch):
         return np.zeros((2, 320), dtype=np.float32)
 
     agent = object.__new__(ImageSearchAgent)
+    agent._tenant_id = "acme:acme"
     agent._query_encoder = SimpleNamespace(encode=blocking_encode)
     agent._deployed_image_schema = None
     backend = MagicMock()
@@ -512,6 +513,7 @@ async def test_find_similar_images_offloads_blocking_image_encode(monkeypatch):
         return np.zeros((2, 320), dtype=np.float32)
 
     agent = object.__new__(ImageSearchAgent)
+    agent._tenant_id = "acme:acme"
     agent._encode_image = blocking_encode_image
     agent._deployed_image_schema = None
     backend = MagicMock()

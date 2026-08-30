@@ -328,9 +328,7 @@ def test_metadata_query_scopes_direct_yql_and_forwards_query_options():
         )
 
     assert rows == [{"id": "best"}]
-    backend.schema_exists.assert_called_once_with(
-        "wiki_pages", tenant_id="acme:acme"
-    )
+    backend.schema_exists.assert_called_once_with("wiki_pages", tenant_id="acme:acme")
     assert client.query.call_args.kwargs == {
         "body": {
             "hits": 2,

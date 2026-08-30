@@ -28,8 +28,8 @@ import requests
 from vespa.exceptions import VespaError
 
 from cogniverse_core.common.utils.output_manager import OutputManager
-from cogniverse_core.registries.backend_registry import get_backend_registry
 from cogniverse_core.common.utils.retry import RetryConfig, retry_with_backoff
+from cogniverse_core.registries.backend_registry import get_backend_registry
 from cogniverse_sdk.document import (
     ALLOWED_RESULT_GRANULARITIES,
     ContentType,

@@ -186,6 +186,7 @@ class TestMemoryAwareMixin:
         self, mock_manager_class, agent
     ):
         """Org-trunk failures must surface when federation is enabled."""
+
         class _TenantManager:
             def __init__(self):
                 self.memory = object()
