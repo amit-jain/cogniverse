@@ -389,6 +389,7 @@ class TestMultiProfileDashboardUI:
         wait_for_streamlit(page)
         set_tenant(page, TENANT_ID)
         click_top_tab(page, "Ingestion")
+        page.get_by_text("Ingestion Pipeline Testing").first.wait_for(timeout=30_000)
         page.wait_for_load_state("networkidle")
 
         multiselect = page.locator('[data-testid="stMultiSelect"]')
