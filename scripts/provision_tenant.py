@@ -24,8 +24,7 @@ def init_memory(tenant_id: str) -> None:
 
     config_manager = create_default_config_manager()
     mgr = Mem0MemoryManager(tenant_id)
-    if not lazy_init_memory(mgr, tenant_id, config_manager, auto_create_schema=True):
-        raise RuntimeError(f"Memory initialization failed for tenant '{tenant_id}'")
+    lazy_init_memory(mgr, tenant_id, config_manager, auto_create_schema=True)
 
 
 def init_telemetry(tenant_id: str) -> None:

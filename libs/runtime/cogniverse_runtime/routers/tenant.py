@@ -216,7 +216,15 @@ def _get_memory_manager(tenant_id: str):
 
     mgr = Mem0MemoryManager(tenant_id)
     if not mgr.memory:
-        lazy_init_memory(mgr, tenant_id, _require_config_manager())
+        try:
+            lazy_init_memory(mgr, tenant_id, _require_config_manager())
+        except Exception as exc:
+            raise HTTPException(
+                status_code=503,
+                detail=(
+                    f"Memory backend not initialised for tenant {tenant_id}: {exc}"
+                ),
+            ) from exc
     if not mgr.memory:
         raise HTTPException(
             status_code=503,

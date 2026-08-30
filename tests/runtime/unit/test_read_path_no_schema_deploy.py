@@ -58,6 +58,38 @@ def test_lazy_init_read_path_disables_auto_create(_stub_get_config):
     assert mgr.init_kwargs["auto_create_schema"] is False
 
 
+def test_lazy_init_raises_actionable_error_when_denseon_missing(monkeypatch):
+    class _MissingDenseonConfigManager:
+        def get_system_config(self):
+            return SystemConfig(
+                backend_url="http://vespa",
+                backend_port=8080,
+                inference_service_urls={},
+            )
+
+    monkeypatch.setattr(
+        memory_init,
+        "get_config",
+        lambda tenant_id, config_manager: {
+            "llm_config": {
+                "primary": {
+                    "model": "openai/m",
+                    "api_base": "http://lm/v1",
+                }
+            }
+        },
+    )
+
+    mgr = _FakeMgr()
+    with pytest.raises(
+        RuntimeError,
+        match="Mem0 lazy-init requires the 'denseon' inference service",
+    ):
+        memory_init.lazy_init_memory(
+            mgr, "acme:prod", _MissingDenseonConfigManager(), auto_create_schema=False
+        )
+
+
 def test_lazy_init_defaults_to_auto_create_for_write_paths(_stub_get_config):
     mgr = _FakeMgr()
     memory_init.lazy_init_memory(mgr, "acme:prod", _FakeConfigManager())

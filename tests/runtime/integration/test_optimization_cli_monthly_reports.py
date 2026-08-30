@@ -202,7 +202,10 @@ class TestRunMonthlyReportsWritesUsageAndPerformanceFiles:
 
         class _Traces:
             async def get_all_spans(self, **kwargs):
-                raise ConnectionError("phoenix unreachable")
+                project = kwargs["project"]
+                raise RuntimeError(
+                    f"Failed to query every span from Phoenix project {project}"
+                ) from ConnectionError("phoenix unreachable")
 
         class _Provider:
             traces = _Traces()
@@ -242,6 +245,15 @@ class TestRunMonthlyReportsWritesUsageAndPerformanceFiles:
                 f"failed must name every errored tenant of {org_id}; "
                 f"got {result.get('failed')!r}"
             )
+            for tid in tenant_ids:
+                entry = result["failed_details"][tid]
+                assert (
+                    "Failed to query every span from Phoenix project" in entry["error"]
+                )
+                assert "phoenix unreachable" in entry["error"], (
+                    "monthly-reports must surface the chained Phoenix cause in "
+                    "the workflow-visible error text"
+                )
             assert _run_failed(result) is True, (
                 "the cron exit gate must treat a Phoenix outage as a failure"
             )
