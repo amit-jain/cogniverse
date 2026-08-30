@@ -29,6 +29,8 @@ import threading
 
 import httpx
 
+from cogniverse_foundation.config.inference_auth import endpoint_root, inference_headers
+
 logger = logging.getLogger(__name__)
 
 _DELIVERY_DESCRIPTIONS = {
@@ -54,6 +56,7 @@ def _embed_text(text: str, denseon_url: str, *, is_query: bool) -> list:
     resp = httpx.post(
         f"{denseon_url.rstrip('/')}/v1/embeddings",
         json={"model": "lightonai/DenseOn", "input": f"{prompt}{text}"},
+        headers=dict(inference_headers(endpoint_root(denseon_url))),
         timeout=30,
     )
     resp.raise_for_status()

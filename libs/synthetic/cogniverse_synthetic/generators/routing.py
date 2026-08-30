@@ -15,7 +15,11 @@ from typing import Any, Dict, List, Optional
 
 from pydantic import BaseModel, ValidationError
 
-from cogniverse_foundation.config.unified_config import OptimizerGenerationConfig
+from cogniverse_foundation.config.llm_factory import create_dspy_lm
+from cogniverse_foundation.config.unified_config import (
+    LLMEndpointConfig,
+    OptimizerGenerationConfig,
+)
 from cogniverse_synthetic.dspy_modules import EntityQueryValidationError
 from cogniverse_synthetic.generators.base import (
     DEFAULT_SYNTHETIC_GENERATION_FLOOR_COUNT,
@@ -38,6 +42,17 @@ DEFAULT_PRODUCTION_LABEL_TIMEOUT_SECONDS = 300.0
 
 class _QueryGeneratorBoundaryError(Exception):
     """Distinguish a boundary-raised timeout from the caller's deadline."""
+
+
+def _lm_endpoint_config(lm_config: Dict[str, Any]) -> LLMEndpointConfig:
+    """``lm_config`` carries ``LLMEndpointConfig`` fields; reject anything else
+    rather than let ``from_dict`` drop it silently."""
+    unknown = sorted(set(lm_config) - set(LLMEndpointConfig.__dataclass_fields__))
+    if unknown:
+        raise ValueError(f"query_generator lm_config has unknown keys: {unknown}")
+    if not lm_config.get("model"):
+        raise ValueError("query_generator lm_config requires a non-empty model")
+    return LLMEndpointConfig.from_dict(lm_config)
 
 
 def _enhance_entity_query(query: str, entities: List[Dict]) -> str:
@@ -640,7 +655,11 @@ class RoutingGenerator(BaseGenerator):
             or max_retries < 1
         ):
             raise ValueError("query_generator metadata.max_retries must be at least 1")
-        lm = dspy.LM(**module_config.lm_config) if module_config.lm_config else None
+        lm = (
+            create_dspy_lm(_lm_endpoint_config(module_config.lm_config))
+            if module_config.lm_config
+            else None
+        )
         query_generator = ValidatedEntityQueryGenerator(max_retries=max_retries)
         query_generator.generate = module_class(signature)
         query_generator.lm = lm

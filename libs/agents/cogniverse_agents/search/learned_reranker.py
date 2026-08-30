@@ -20,6 +20,7 @@ if TYPE_CHECKING:
 from litellm import arerank, rerank
 
 from cogniverse_agents.search.types import RerankerSearchResult
+from cogniverse_foundation.config.llm_factory import resolve_inference_api_key
 from cogniverse_foundation.config.utils import get_config_value
 
 logger = logging.getLogger(__name__)
@@ -112,6 +113,15 @@ class LearnedReranker:
 
         logger.info(f"Initialized LearnedReranker with model: {self.model}")
 
+    def _endpoint_kwargs(self) -> Dict[str, Any]:
+        """litellm kwargs for an OpenAI-compatible reranker behind ``api_base``."""
+        if not self.api_base:
+            return {}
+        return {
+            "api_base": self.api_base,
+            "api_key": resolve_inference_api_key(self.api_base, None),
+        }
+
     async def rerank(
         self,
         query: str,
@@ -151,11 +161,8 @@ class LearnedReranker:
                 "query": query,
                 "documents": documents,
                 "top_n": effective_top_n,
+                **self._endpoint_kwargs(),
             }
-
-            # Add api_base for OpenAI-compatible endpoints
-            if self.api_base:
-                kwargs["api_base"] = self.api_base
 
             response = await arerank(**kwargs)
 
@@ -214,11 +221,8 @@ class LearnedReranker:
                 "query": query,
                 "documents": documents,
                 "top_n": effective_top_n,
+                **self._endpoint_kwargs(),
             }
-
-            # Add api_base for OpenAI-compatible endpoints
-            if self.api_base:
-                kwargs["api_base"] = self.api_base
 
             response = rerank(**kwargs)
 

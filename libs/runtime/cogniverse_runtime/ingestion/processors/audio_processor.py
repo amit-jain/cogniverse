@@ -16,8 +16,11 @@ Transcribes audio from videos using Whisper. Two modes:
 import json
 import logging
 import time
+from collections.abc import Mapping
 from pathlib import Path
 from typing import Any
+
+from cogniverse_foundation.config.inference_auth import endpoint_root, inference_headers
 
 from ..processor_base import BaseProcessor
 
@@ -65,6 +68,14 @@ class AudioProcessor(BaseProcessor):
             language=config.get("language", "auto"),
             endpoint=config.get("endpoint"),
         )
+
+    def auth_headers(self) -> Mapping[str, str]:
+        """Authorization for the remote endpoint, empty when in-cluster.
+
+        The ASR endpoint follows the chat models off-cluster, and a Modal
+        endpoint rejects unauthenticated calls with 401.
+        """
+        return inference_headers(endpoint_root(self.endpoint))
 
     def _load_whisper(self):
         """Lazy load Whisper model."""
@@ -250,11 +261,12 @@ class AudioProcessor(BaseProcessor):
         import requests
 
         url = f"{self.endpoint.rstrip('/')}/v1/audio/transcriptions"
+        headers = self.auth_headers()
         audio_bytes = self._extract_audio_wav(video_path)
         files = {"file": (f"{video_id}.wav", audio_bytes, "audio/wav")}
         try:
             models_resp = requests.get(
-                f"{self.endpoint.rstrip('/')}/v1/models", timeout=10
+                f"{self.endpoint.rstrip('/')}/v1/models", headers=headers, timeout=10
             )
             models_resp.raise_for_status()
             served = (models_resp.json().get("data") or [{}])[0].get("id", self.model)
@@ -269,7 +281,11 @@ class AudioProcessor(BaseProcessor):
 
         self.logger.info(f"🛰️  POST {url}  ({len(audio_bytes) / 1024:.1f} KiB audio)")
         resp = requests.post(
-            url, data=data, files=files, timeout=REMOTE_TRANSCRIBE_TIMEOUT_SECONDS
+            url,
+            data=data,
+            files=files,
+            headers=headers,
+            timeout=REMOTE_TRANSCRIBE_TIMEOUT_SECONDS,
         )
         resp.raise_for_status()
         body = resp.json()

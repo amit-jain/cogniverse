@@ -153,7 +153,7 @@ class MemoryAwareMixin:
         backend_port: int = 8080,
         embedding_model: str = "lightonai/DenseOn",
         llm_base_url: str = "http://localhost:11434",
-        llm_api_key: str = "not-required",
+        llm_api_key: Optional[str] = None,
         config_manager=None,
         schema_loader=None,
         backend_config_port: Optional[int] = None,
@@ -174,8 +174,8 @@ class MemoryAwareMixin:
             embedding_model: Embedding model name for memory search
             llm_base_url: OpenAI-compatible LLM endpoint. ``/v1`` suffix
                 added automatically when missing.
-            llm_api_key: API key sent to ``llm_base_url``; defaults to
-                ``"not-required"`` for OAI-compat local LM servers.
+            llm_api_key: Explicit key for ``llm_base_url``; None resolves
+                the shared inference bearer exactly as ``create_dspy_lm`` does.
             config_manager: ConfigManager instance (REQUIRED for dependency injection)
             schema_loader: SchemaLoader instance (REQUIRED for dependency injection)
             backend_config_port: Backend config endpoint port (default: 19071)

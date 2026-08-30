@@ -26,6 +26,8 @@ from urllib.parse import urlparse
 
 import requests
 
+from cogniverse_foundation.config.inference_auth import endpoint_root, inference_headers
+
 logger = logging.getLogger(__name__)
 
 DEFAULT_TIMEOUT_SECONDS = 5.0
@@ -123,13 +125,16 @@ def probe_service_model(
     Tries the pylate sidecar ``/health`` shape first, then vLLM ``/v1/models``.
     """
     sess = session or requests.Session()
+    headers = inference_headers(endpoint_root(url))
 
     for path, extract in (
         ("/health", _extract_model_from_health),
         ("/v1/models", _extract_model_from_v1_models),
     ):
         try:
-            resp = sess.get(f"{url.rstrip('/')}{path}", timeout=timeout_seconds)
+            resp = sess.get(
+                f"{url.rstrip('/')}{path}", headers=headers, timeout=timeout_seconds
+            )
         except requests.RequestException as exc:
             logger.debug("Probe %s%s failed: %s", url, path, exc)
             continue

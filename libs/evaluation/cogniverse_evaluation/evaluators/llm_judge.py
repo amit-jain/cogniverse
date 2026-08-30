@@ -13,6 +13,8 @@ from pathlib import Path
 
 import httpx
 
+from cogniverse_foundation.config.llm_factory import resolve_inference_api_key
+
 logger = logging.getLogger(__name__)
 
 
@@ -30,7 +32,7 @@ class LLMJudgeCore:
         self,
         model_name: str,
         base_url: str = "http://localhost:11434",
-        api_key: str = "not-required",
+        api_key: str | None = None,
     ):
         """
         Initialize LLM judge.
@@ -44,17 +46,15 @@ class LLMJudgeCore:
                 ``/v1/chat/completions`` path is appended automatically;
                 a trailing ``/v1`` on the base is stripped first so callers
                 can pass either form.
-            api_key: Bearer token sent as ``Authorization: Bearer ...``.
-                Local LM servers ignore the value but most OAI clients
-                refuse to construct without one — pass the cogniverse
-                convention sentinel ``"not-required"`` for local servers.
+            api_key: Explicit bearer for ``base_url``. None resolves the
+                shared inference bearer exactly as ``create_dspy_lm`` does.
         """
         self.model_name = model_name
         normalized = base_url.rstrip("/")
         if normalized.endswith("/v1"):
             normalized = normalized[: -len("/v1")]
         self.base_url = normalized
-        self.api_key = api_key
+        self.api_key = resolve_inference_api_key(self.base_url, api_key)
 
     def _build_messages(
         self,

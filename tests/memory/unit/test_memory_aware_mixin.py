@@ -119,7 +119,7 @@ class TestMemoryAwareMixin:
             "llm_model": "test-llm",
             "embedding_model": "lightonai/DenseOn",
             "llm_base_url": "http://localhost:11434/v1",
-            "llm_api_key": "not-required",
+            "llm_api_key": None,
             "embedder_base_url": "http://denseon.local:8000",
             "config_manager": mock_cm,
             "schema_loader": mock_sl,

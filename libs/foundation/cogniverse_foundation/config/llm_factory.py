@@ -3,7 +3,10 @@ Centralized factory for creating DSPy LM instances.
 
 Every dspy.LM() call in the codebase MUST go through create_dspy_lm().
 This is the single chokepoint for LLM instantiation, making it trivial
-to add instrumentation, logging, or caching in one place.
+to add instrumentation, logging, or caching in one place. Clients that
+cannot be a dspy.LM (Mem0's OpenAI provider, litellm.completion, a raw
+chat-completions POST) resolve their key through resolve_inference_api_key()
+so every OpenAI-compatible call authenticates the same way.
 
 The factory does no string manipulation on ``LLMEndpointConfig.model``.
 The contract is that ``config.model`` already carries whatever
@@ -20,13 +23,15 @@ from __future__ import annotations
 import logging
 import os
 from typing import TYPE_CHECKING
-from urllib.parse import urlsplit, urlunsplit
 
 from cogniverse_foundation.config.bootstrap import (
     INFERENCE_API_KEY_ENV,
     inference_api_key_from_environment,
 )
-from cogniverse_foundation.config.inference_auth import is_modal_inference_url
+from cogniverse_foundation.config.inference_auth import (
+    endpoint_root,
+    is_modal_inference_url,
+)
 from cogniverse_foundation.config.unified_config import LLMEndpointConfig
 
 if TYPE_CHECKING:
@@ -59,10 +64,36 @@ def _optional_environment_bearer() -> str | None:
     return inference_api_key_from_environment()
 
 
-def _endpoint_root(api_base: str) -> str:
-    """The scheme://host root of an api_base, which is what the auth helpers take."""
-    parsed = urlsplit(api_base)
-    return urlunsplit((parsed.scheme, parsed.netloc, "", "", ""))
+def resolve_inference_api_key(api_base: str | None, api_key: str | None) -> str | None:
+    """The key an OpenAI-compatible client must send to ``api_base``.
+
+    An explicitly configured key wins. With no key (or the chart's
+    placeholder, which it emits because config.json renders into a ConfigMap
+    that cannot hold a secret) the environment bearer is sent whenever one
+    exists rather than only when ``api_base`` looks external: agent traffic
+    addresses the in-cluster semantic router, which forwards to Modal, so the
+    caller cannot know the ultimate upstream, and a self-hosted vLLM ignores
+    an Authorization header it does not check. A Modal endpoint with no
+    bearer raises here, naming the variable, instead of server-side on the
+    first call. Without an ``api_base`` the configured key passes through
+    untouched so the provider SDK's own resolution applies.
+    """
+    if api_base is None:
+        return api_key
+    if api_key not in (None, _PLACEHOLDER_API_KEY):
+        return api_key
+    bearer = _optional_environment_bearer()
+    if bearer is not None:
+        return bearer
+    if is_modal_inference_url(endpoint_root(api_base)):
+        return inference_api_key_from_environment()
+    if api_key is not None:
+        return api_key
+    # The OpenAI client refuses to construct without a key even though
+    # self-hosted OAI-compat servers (vLLM, Ollama) ignore it. A real
+    # endpoint that enforces auth rejects the placeholder server-side
+    # with a clear 401 instead of a client-side construction error.
+    return "not-required"
 
 
 def create_dspy_lm(config: LLMEndpointConfig) -> dspy.LM:
@@ -94,39 +125,9 @@ def create_dspy_lm(config: LLMEndpointConfig) -> dspy.LM:
     if config.api_base is not None:
         kwargs["api_base"] = config.api_base
 
-    external = config.api_base is not None and is_modal_inference_url(
-        _endpoint_root(config.api_base)
-    )
-    if config.api_base is not None and config.api_key in (
-        None,
-        _PLACEHOLDER_API_KEY,
-    ):
-        # The chart cannot put the bearer in config.json because that renders
-        # into a ConfigMap, so it emits a placeholder that a real endpoint
-        # rejects with AuthenticationError. Send the environment bearer whenever
-        # one exists rather than gating on whether the api_base LOOKS external:
-        # agent traffic addresses the in-cluster semantic router, which forwards
-        # to Modal, so the caller cannot know what the ultimate upstream is. A
-        # self-hosted vLLM ignores an Authorization header it does not check.
-        bearer = _optional_environment_bearer()
-        if bearer is not None:
-            kwargs["api_key"] = bearer
-        elif external:
-            # No bearer for an endpoint that demands one: fail here, naming the
-            # variable, rather than server-side on the first call.
-            kwargs["api_key"] = inference_api_key_from_environment()
-        elif config.api_key is not None:
-            kwargs["api_key"] = config.api_key
-        else:
-            kwargs["api_key"] = "not-required"
-    elif config.api_key is not None:
-        kwargs["api_key"] = config.api_key
-    elif config.api_base is not None:
-        # The OpenAI client refuses to construct without a key even though
-        # self-hosted OAI-compat servers (vLLM, Ollama) ignore it. A real
-        # endpoint that enforces auth rejects the placeholder server-side
-        # with a clear 401 instead of a client-side construction error.
-        kwargs["api_key"] = "not-required"
+    api_key = resolve_inference_api_key(config.api_base, config.api_key)
+    if api_key is not None:
+        kwargs["api_key"] = api_key
 
     # Merge config.seed into extra_body when set. vLLM's OpenAI-compat
     # layer reads ``seed`` from the request body and uses it for the
