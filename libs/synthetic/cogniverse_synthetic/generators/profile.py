@@ -105,6 +105,19 @@ class ProfileGenerator(BaseGenerator):
                 DEFAULT_SYNTHETIC_GENERATION_FLOOR_COUNT,
             )
         )
+        selected_profiles = kwargs.get("selected_profiles")
+        if selected_profiles is not None:
+            selected_profiles = list(selected_profiles)
+            unusable = [
+                profile_name
+                for profile_name in selected_profiles
+                if profile_name not in available_profiles
+            ]
+            if unusable:
+                raise ValueError(
+                    "ProfileGenerator selected_profiles must each be a usable "
+                    f"tenant profile; not usable: {unusable}"
+                )
         if kwargs.get("cross_modal", False):
             return await self._generate_cross_modal(
                 sampled_content,
@@ -112,6 +125,7 @@ class ProfileGenerator(BaseGenerator):
                 profile_configs,
                 available_profiles,
                 tenant_id,
+                allowed_profiles=selected_profiles,
                 generation_tracker=generation_tracker
                 if isinstance(generation_tracker, GenerationTracker)
                 else None,
@@ -143,6 +157,7 @@ class ProfileGenerator(BaseGenerator):
                         available_profiles,
                         profile_configs,
                         tenant_id,
+                        allowed_profiles=selected_profiles,
                     )
                 )
             except (ValueError, ValidationError) as exc:
@@ -267,9 +282,14 @@ class ProfileGenerator(BaseGenerator):
         available_profiles: List[str],
         profile_configs: Dict[str, Dict[str, Any]],
         tenant_id: str,
+        *,
+        allowed_profiles: List[str] | None = None,
     ) -> ProfileSelectionExampleSchema:
         profiles = list(available_profiles)
-        selection = await self._request_profile_label(query, profiles, tenant_id)
+        choice_profiles = (
+            list(allowed_profiles) if allowed_profiles is not None else profiles
+        )
+        selection = await self._request_profile_label(query, choice_profiles, tenant_id)
         if isinstance(selection, BaseModel):
             selection = selection.model_dump()
         if not isinstance(selection, dict):
@@ -279,7 +299,12 @@ class ProfileGenerator(BaseGenerator):
                 "profile selection query must match the source-grounded query"
             )
         selected_profile = selection.get("selected_profile")
-        if selected_profile not in profiles:
+        if selected_profile not in choice_profiles:
+            if allowed_profiles is not None:
+                raise ValueError(
+                    "profile selection selected_profile must be one of the "
+                    "selected profiles offered to the labeler"
+                )
             raise ValueError(
                 "profile selection selected_profile must be one of the "
                 "available profiles"
@@ -387,6 +412,7 @@ class ProfileGenerator(BaseGenerator):
         available_profiles: List[str],
         tenant_id: str,
         *,
+        allowed_profiles: List[str] | None = None,
         generation_tracker: GenerationTracker | None = None,
         floor_count: int = DEFAULT_SYNTHETIC_GENERATION_FLOOR_COUNT,
     ) -> List[BaseModel]:
@@ -459,6 +485,7 @@ class ProfileGenerator(BaseGenerator):
                         available_profiles,
                         profile_configs,
                         tenant_id,
+                        allowed_profiles=allowed_profiles,
                     )
                 )
             except (ValueError, ValidationError) as exc:

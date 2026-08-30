@@ -599,6 +599,7 @@ class SyntheticDataService:
             generation_kwargs["profile_configs"] = (
                 available_profile_configs or selected_profile_configs
             )
+            generation_kwargs["selected_profiles"] = list(selected_profile_configs)
             generation_kwargs["cross_modal"] = request.optimizer == "cross_modal"
             generation_kwargs["config_manager"] = self.config_manager
         if generation_tracker is not None:
