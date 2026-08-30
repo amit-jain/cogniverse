@@ -812,7 +812,7 @@ class TestConcurrentMultiTenantSearch:
                         f"Tenant {t} search failed: {r['error']}"
                     )
                     assert r["data"]["results_count"] == _expected_hits(
-                        5, expected_documents_fed[tenant_videos[t]]
+                        5, sources_fed=1
                     ), f"Tenant {t} must see exactly its own segments"
 
                 # Results must reference different video_ids (isolation)
@@ -881,7 +881,7 @@ class TestConcurrentMultiTenantSearch:
 
                 assert r_data["status_code"] == 200
                 assert r_data["data"]["results_count"] == _expected_hits(
-                    5, expected_documents_fed
+                    5, sources_fed=1
                 ), "Tenant with data must see exactly its own segments"
                 assert {
                     r["metadata"]["video_id"] for r in r_data["data"]["results"]
@@ -1060,10 +1060,10 @@ class TestLoadTesting:
                 assert r_a["status_code"] == 200, r_a["error"]
                 assert r_b["status_code"] == 200, r_b["error"]
                 assert r_a["data"]["results_count"] == _expected_hits(
-                    5, expected_a_documents_fed
+                    5, sources_fed=1
                 ), r_a["data"]
                 assert r_b["data"]["results_count"] == _expected_hits(
-                    5, expected_b_documents_fed
+                    5, sources_fed=1
                 ), r_b["data"]
 
                 ids_a = {
