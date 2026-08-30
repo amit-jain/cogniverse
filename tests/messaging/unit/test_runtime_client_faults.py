@@ -9,6 +9,7 @@ client default; connects fail within seconds — never an unbounded stall.
 
 import asyncio
 import contextlib
+import time
 
 import httpx
 import pytest
@@ -80,14 +81,23 @@ async def test_dispatch_read_timeout_retries_once_and_reports_warming(
     """A timed-out dispatch retries once, then returns a warming status dict."""
     port, request_count = timeout_server
     rc = RuntimeClient(f"http://127.0.0.1:{port}", dispatch_timeout=0.1)
+    start = time.monotonic()
     try:
         result = await rc.dispatch_agent("gateway_agent", "q", "acme:alice")
     finally:
         await rc.close()
+    elapsed = time.monotonic() - start
 
     assert result["status"] == "warming"
     assert result["message"] == "runtime warming up, try again: ReadTimeout after 0.1s"
     assert request_count() == 2
+    # The telegram handler renders this dict by key; a dropped key renders
+    # None at the user. Pin the exact shape, not just the values.
+    assert set(result) == {"status", "message"}, result
+    # dispatch_timeout governs BOTH attempts: the retry doubles the wall cost
+    # and nothing else may stretch it. Without this a regression that ignored
+    # the budget, or retried more than once, would still satisfy the count.
+    assert 0.2 <= elapsed < 5.0, elapsed
 
 
 @pytest.mark.asyncio
@@ -111,13 +121,20 @@ async def test_dead_port_dispatch_degrades_fast():
     """A dead runtime port degrades dispatch to an unavailable status dict
     fast (connect fails in seconds), never raising ConnectError at the caller."""
     rc = RuntimeClient(f"http://127.0.0.1:{DEAD_PORT}", dispatch_timeout=1.0)
+    start = time.monotonic()
     try:
         result = await rc.dispatch_agent("gateway_agent", "q", "acme:alice")
     finally:
         await rc.close()
+    elapsed = time.monotonic() - start
 
     assert result["status"] == "unavailable"
     assert result["message"] == "runtime unreachable: ConnectError"
+    assert set(result) == {"status", "message"}, result
+    # A refused connection must NOT be retried and must NOT wait out the
+    # dispatch budget: fail fast is the contract that separates it from the
+    # cold-start timeout path, which does retry.
+    assert elapsed < 5.0, elapsed
 
 
 @pytest.mark.asyncio
