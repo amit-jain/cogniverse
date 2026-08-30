@@ -389,12 +389,21 @@ class TestListMemories:
         mgr = MagicMock()
         mgr.memory = None  # not initialised
 
-        with patch(
-            "cogniverse_runtime.routers.tenant.Mem0MemoryManager", return_value=mgr
+        with (
+            patch(
+                "cogniverse_runtime.routers.tenant.Mem0MemoryManager", return_value=mgr
+            ),
+            patch(
+                "cogniverse_runtime.memory_init.lazy_init_memory",
+                side_effect=RuntimeError("denseon missing"),
+            ),
         ):
             resp = client.get("/acme/memories")
 
         assert resp.status_code == 503
+        assert resp.json() == {
+            "detail": "Memory backend not initialised for tenant acme:acme: denseon missing"
+        }
 
 
 @pytest.mark.unit

@@ -14,7 +14,7 @@ from types import SimpleNamespace
 from unittest.mock import MagicMock
 
 import pytest
-from fastapi import FastAPI
+from fastapi import FastAPI, HTTPException
 from fastapi.testclient import TestClient
 
 from cogniverse_runtime.routers import admin as admin_router
@@ -359,6 +359,33 @@ class TestRestoreMemory:
             "detail": "memory mem-gone not found or not in archived state"
         }
         mm.restore_archived_memory.assert_called_once_with("mem-gone")
+
+
+def test_get_pin_service_surfaces_lazy_init_failure(monkeypatch):
+    mgr = MagicMock(name="memory_manager")
+    mgr.memory = None
+
+    monkeypatch.setattr(
+        "cogniverse_core.memory.manager.Mem0MemoryManager",
+        lambda tenant_id: mgr,
+    )
+    monkeypatch.setattr(
+        "cogniverse_runtime.routers.tenant._require_config_manager",
+        lambda: MagicMock(name="config_manager"),
+    )
+
+    def _raise(*args, **kwargs):
+        raise RuntimeError("denseon missing")
+
+    monkeypatch.setattr("cogniverse_runtime.memory_init.lazy_init_memory", _raise)
+
+    with pytest.raises(HTTPException) as captured:
+        admin_router._get_pin_service("acme:prod", None)
+
+    assert captured.value.status_code == 503
+    assert captured.value.detail == (
+        "Memory backend not initialised for tenant acme:prod: denseon missing"
+    )
 
 
 class _StubStatsBackend:

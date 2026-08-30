@@ -2931,11 +2931,7 @@ async def run_cleanup(
     def _cleanup_one(tid: str) -> str:
         try:
             mm = Mem0MemoryManager(tenant_id=tid)
-            if not lazy_init_memory(mm, tid, config_manager):
-                # An init failure means this tenant's cleanup did NOT run —
-                # a "failed:" marker so _run_failed trips the exit code rather
-                # than a "skipped:" that reads as an intentional no-op.
-                return "failed: memory backend init failed (see workflow log)"
+            lazy_init_memory(mm, tid, config_manager)
             deleted_by_kind = mm.cleanup_with_schema(registry)
             return f"completed: {dict(deleted_by_kind)}"
         except Exception as e:
@@ -3255,6 +3251,18 @@ async def _load_approved_synthetic_data(
     return approved
 
 
+def _format_exception_chain(exc: BaseException) -> str:
+    """Render ``exc`` and its causal chain as a single readable string."""
+    parts: list[str] = []
+    seen: set[int] = set()
+    current: BaseException | None = exc
+    while current is not None and id(current) not in seen:
+        seen.add(id(current))
+        parts.append(f"{type(current).__name__}: {current}")
+        current = current.__cause__ or current.__context__
+    return " -> ".join(parts)
+
+
 async def run_monthly_reports(
     output_dir: str,
     lookback_hours: float = 24.0 * 30,
@@ -3353,7 +3361,9 @@ async def run_monthly_reports(
                 end_time=end,
             )
         except Exception as exc:
-            perf_per_tenant[tid] = {"error": f"phoenix query failed: {exc}"}
+            perf_per_tenant[tid] = {
+                "error": (f"phoenix query failed: {_format_exception_chain(exc)}")
+            }
             continue
         if spans_df is None or spans_df.empty:
             perf_per_tenant[tid] = {
@@ -3427,10 +3437,11 @@ async def run_monthly_reports(
     # Surface per-tenant Phoenix outages at the TOP level so the cron's
     # _run_failed gate sees them and exits non-zero. Without this a total
     # Phoenix outage wrote an all-errors report yet the cron reported
-    # Succeeded (the per-tenant "phoenix query failed" strings live only in
-    # the file and don't match _run_failed's failed:/error: prefix), so the
+    # Succeeded (the per-tenant "phoenix query failed" strings lived only in
+    # the file and didn't match _run_failed's failed:/error: prefix), so the
     # dropped monthly reports were never regenerated. The usage/Vespa side
-    # already exits non-zero by propagating — this aligns the perf side.
+    # already exits non-zero by propagating — this aligns the perf side and
+    # makes the chained cause visible in the workflow JSON.
     perf_errors = sorted(
         tid
         for tid, v in perf_per_tenant.items()
@@ -3438,6 +3449,9 @@ async def run_monthly_reports(
     )
     if perf_errors:
         result["failed"] = perf_errors
+        result["failed_details"] = {
+            tid: perf_per_tenant[tid]["error"] for tid in perf_errors
+        }
     return result
 
 

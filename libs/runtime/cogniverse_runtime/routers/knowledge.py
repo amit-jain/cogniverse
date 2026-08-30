@@ -50,7 +50,15 @@ def _build_factory(_tid: str):
         # Read-only routes must not auto-create schemas: a deploy here
         # triggers a Vespa redeploy that can drop another process's
         # freshly-fed rows mid-read. Connect to the existing schema only.
-        lazy_init_memory(mm, _tid, _require_config_manager(), auto_create_schema=False)
+        try:
+            lazy_init_memory(
+                mm, _tid, _require_config_manager(), auto_create_schema=False
+            )
+        except Exception as exc:
+            raise HTTPException(
+                status_code=503,
+                detail=(f"Memory backend not initialised for tenant {_tid}: {exc}"),
+            ) from exc
     if not mm.memory:
         raise HTTPException(
             status_code=503,

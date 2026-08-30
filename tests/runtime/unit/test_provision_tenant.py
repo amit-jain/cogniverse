@@ -79,9 +79,9 @@ def test_init_memory_raises_when_init_fails(monkeypatch):
     )
     monkeypatch.setattr(
         "cogniverse_runtime.memory_init.lazy_init_memory",
-        lambda *a, **k: False,
+        lambda *a, **k: (_ for _ in ()).throw(RuntimeError("denseon missing")),
     )
-    with pytest.raises(RuntimeError, match="acme"):
+    with pytest.raises(RuntimeError, match="denseon missing"):
         pt.init_memory("acme")
 
 

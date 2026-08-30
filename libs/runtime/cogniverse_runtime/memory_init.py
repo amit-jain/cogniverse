@@ -13,9 +13,9 @@ path used a local helper.
 This module centralises the pattern. Callers pass a constructed
 manager plus a config_manager; the helper enriches with environment
 variables (``LLM_ENDPOINT``, ``VESPA_CONFIG_PORT``) and calls
-``mgr.initialize`` with the right argument shape. On any failure the
-helper logs and returns False so the caller can decide whether to skip
-or fail loud.
+``mgr.initialize`` with the right argument shape. On failure the
+helper logs and raises with the concrete cause so callers can surface
+it directly.
 """
 
 from __future__ import annotations
@@ -43,10 +43,10 @@ def lazy_init_memory(
     """Initialise ``mgr`` for ``tenant_id`` from the system config.
 
     Returns True if the manager ended up with ``mgr.memory`` populated
-    (already-initialised counts as True), False if initialisation
-    failed for any reason (missing system config, missing llm model id,
-    missing denseon URL, Mem0/Vespa init failure). On False the caller
-    can treat the tenant as unprocessable.
+    (already-initialised counts as True). Raises RuntimeError with the
+    underlying cause if initialisation fails for any reason (missing
+    system config, missing llm model id, missing denseon URL,
+    Mem0/Vespa init failure).
 
     ``auto_create_schema`` MUST be False on read-only paths. Schema
     creation triggers a Vespa global app-redeploy; doing that while
@@ -59,10 +59,12 @@ def lazy_init_memory(
         return True
     sc = config_manager.get_system_config()
     if not sc:
-        logger.warning(
-            "lazy_init_memory: no system config available for tenant %s", tenant_id
+        msg = (
+            f"Failed to lazy-init Mem0 for tenant {tenant_id}: "
+            "no system config available"
         )
-        return False
+        logger.warning(msg)
+        raise RuntimeError(msg)
 
     try:
         config = get_config(tenant_id=SYSTEM_TENANT_ID, config_manager=config_manager)
@@ -103,8 +105,19 @@ def lazy_init_memory(
             schema_loader=FilesystemSchemaLoader(Path("configs/schemas")),
         )
         mgr.initialize(**init_kwargs)
-        logger.info("Lazy-initialised Mem0 for tenant %s", tenant_id)
-        return bool(mgr.memory)
-    except Exception as exc:  # noqa: BLE001 — best-effort init
+    except Exception as exc:
         logger.warning("Failed to lazy-init Mem0 for tenant %s: %s", tenant_id, exc)
-        return False
+        raise RuntimeError(
+            f"Failed to lazy-init Mem0 for tenant {tenant_id}: {exc}"
+        ) from exc
+
+    if not mgr.memory:
+        msg = (
+            f"Failed to lazy-init Mem0 for tenant {tenant_id}: "
+            "initialize() returned without a memory backend"
+        )
+        logger.warning(msg)
+        raise RuntimeError(msg)
+
+    logger.info("Lazy-initialised Mem0 for tenant %s", tenant_id)
+    return True

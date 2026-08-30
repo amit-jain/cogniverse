@@ -1717,9 +1717,17 @@ def _get_pin_service(tenant_id: str, admin_overrides: Mapping[str, int] | None):
         # the schema is already deployed. Don't auto-create here: a deploy
         # triggers a Vespa redeploy that can drop rows another process
         # just fed mid-operation (the source memory then reads as 404).
-        lazy_init_memory(
-            mgr, tenant_id, _require_config_manager(), auto_create_schema=False
-        )
+        try:
+            lazy_init_memory(
+                mgr, tenant_id, _require_config_manager(), auto_create_schema=False
+            )
+        except Exception as exc:
+            raise HTTPException(
+                status_code=503,
+                detail=(
+                    f"Memory backend not initialised for tenant {tenant_id}: {exc}"
+                ),
+            ) from exc
     if not mgr.memory:
         raise HTTPException(
             status_code=503,
