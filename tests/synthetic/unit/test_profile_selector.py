@@ -14,7 +14,10 @@ from cogniverse_foundation.config.unified_config import (
     ProfileScoringRule,
     SyntheticGeneratorConfig,
 )
-from cogniverse_synthetic.profile_selector import ProfileSelector
+from cogniverse_synthetic.profile_selector import (
+    ProfileSelector,
+    score_profile_with_configured_rules,
+)
 from cogniverse_synthetic.registry import OPTIMIZER_REGISTRY
 from cogniverse_synthetic.utils import profile_can_ground_topic
 
@@ -79,6 +82,25 @@ def _live_generator_config() -> SyntheticGeneratorConfig:
     return SyntheticGeneratorConfig.from_dict(synthetic)
 
 
+def _workflow_video_profile_name() -> str:
+    config = json.loads((_REPO_ROOT / "configs" / "config.json").read_text())
+    workflow_rules = (
+        _live_generator_config().get_optimizer_config("workflow").profile_scoring_rules
+    )
+
+    scored_profiles: list[tuple[float, str]] = []
+    for profile_name, profile_config in config["backend"]["profiles"].items():
+        if profile_config.get("type") != "video":
+            continue
+        score, _ = score_profile_with_configured_rules(
+            workflow_rules, profile_name, profile_config
+        )
+        scored_profiles.append((score, profile_name))
+
+    scored_profiles.sort(key=lambda item: item[0], reverse=True)
+    return scored_profiles[0][1]
+
+
 async def test_rule_selection_uses_only_configured_optimizer_rules() -> None:
     selector = ProfileSelector(generator_config=_generator_config())
     profiles = {
@@ -136,6 +158,10 @@ def test_profile_groundability_is_derived_from_configured_schema_roles() -> None
     assert profile_can_ground_topic(profiles["document_text_semantic"]) is True
     assert profile_can_ground_topic(profiles["document_visual_colpali"]) is False
     assert profile_can_ground_topic(profiles["image_colpali_mv"]) is False
+
+
+def test_workflow_video_profile_is_the_configured_top_scorer() -> None:
+    assert _workflow_video_profile_name() == "video_colqwen_omni_mv_chunk_30s"
 
 
 def test_rule_selection_rejects_missing_generator_config() -> None:
