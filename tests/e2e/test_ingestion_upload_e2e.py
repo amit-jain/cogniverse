@@ -53,6 +53,7 @@ from cogniverse_agents.graph.graph_schema import (
 )
 from cogniverse_runtime.ingestion_worker.status_api import TERMINAL_STATES
 from tests.e2e.test_api_e2e import PROFILE
+from tests.utils.kg_lookup import resolve_persisted_kg_nodes
 
 pytestmark = pytest.mark.e2e
 
@@ -126,6 +127,21 @@ def _vespa_search(yql: str, hits: int = 50) -> list:
     return [
         h.get("fields", {}) for h in resp.json().get("root", {}).get("children", [])
     ]
+
+
+def _vespa_get_doc(doc_id: str, retries: int = 15) -> dict | None:
+    url = f"{VESPA_URL}/document/v1/graph_content/{KG_SCHEMA_NAME}/docid/{doc_id}"
+    for _ in range(retries):
+        resp = requests.get(url, timeout=5)
+        if resp.status_code == 200:
+            return resp.json()
+        time.sleep(1)
+    return None
+
+
+class _VespaNodeLookup:
+    def get_node_doc(self, doc_id: str) -> dict | None:
+        return _vespa_get_doc(doc_id)
 
 
 def _wait_terminal(ingest_id: str, deadline_s: int = 2400) -> dict:
@@ -388,33 +404,28 @@ def test_persisted_documents_have_kg_backrefs(upload_result):
     # normalization mismatch between the backref writer and the node writer,
     # not a silently-failed node upsert) without asserting entity identity,
     # which varies by LM run.
-    node_docs = _vespa_search(
-        f'select * from sources {KG_SCHEMA_NAME} where doc_type contains "node"',
-        hits=400,
+    node_by_id, dangling = resolve_persisted_kg_nodes(
+        distinct,
+        tenant_id=TENANT_FULL_ID,
+        backend=_VespaNodeLookup(),
     )
-    persisted_node_ids = {
-        node_id_from_doc_id(str(d.get("doc_id", "")), TENANT_FULL_ID) for d in node_docs
-    }
-    persisted_node_ids.discard("")
     # The graph is non-empty and every distinct backref resolves to a node.
-    assert len(persisted_node_ids) >= 3, (
+    assert len(node_by_id) == len(distinct), (
         f"KG schema {KG_SCHEMA_NAME} holds too few nodes "
-        f"({len(persisted_node_ids)}) — node upsert path may have failed"
+        f"({len(node_by_id)}) — node upsert path may have failed"
     )
-    dangling = distinct - persisted_node_ids
     assert not dangling, (
         f"{len(dangling)} entity_id backrefs resolve to no persisted KG node "
         f"(dangling references): {sorted(dangling)}"
     )
     # Each node also carries the fields the traversal/search paths read.
-    node_by_id = {
-        node_id_from_doc_id(str(d.get("doc_id", "")), TENANT_FULL_ID): d
-        for d in node_docs
-    }
     for e in sorted(distinct):
         node = node_by_id[e]
         assert node.get("doc_type") == "node", f"{e}: wrong doc_type {node!r}"
         assert node.get("tenant_id") == TENANT_FULL_ID, f"{e}: wrong tenant {node!r}"
+        assert node_id_from_doc_id(str(node.get("doc_id", "")), TENANT_FULL_ID) == e, (
+            f"{e}: wrong doc_id {node.get('doc_id')!r}"
+        )
         assert normalize_name(str(node.get("name", ""))) == e, (
             f"{e}: node name {node.get('name')!r} does not normalize to its id"
         )
