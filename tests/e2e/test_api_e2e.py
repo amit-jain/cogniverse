@@ -35,6 +35,9 @@ from cogniverse_foundation.config.unified_config import (
     SyntheticGeneratorConfig,
 )
 from cogniverse_foundation.config.utils import create_default_config_manager
+from cogniverse_synthetic.profile_selector import (
+    score_profile_with_configured_rules,
+)
 from cogniverse_synthetic.schemas import ProfileSelectionExampleSchema
 from cogniverse_synthetic.topics import (
     TopicSaliency,
@@ -94,10 +97,13 @@ PROFILE = _default_video_profile_name()
 
 def _workflow_video_profile_name() -> str:
     config = json.loads(CONFIG_PATH.read_text())
+    synthetic = dict(config["synthetic"])
+    synthetic["tenant_id"] = TENANT_ID
+    generator_config = SyntheticGeneratorConfig.from_dict(synthetic)
+    workflow_rules = generator_config.get_optimizer_config(
+        "workflow"
+    ).profile_scoring_rules
     scored_profiles: list[tuple[float, str]] = []
-    workflow_rules = config["synthetic"]["optimizer_configs"]["workflow"][
-        "profile_scoring_rules"
-    ]
     for profile_name, profile_config in (
         config.get("backend", {}).get("profiles", {}).items()
     ):
@@ -105,31 +111,9 @@ def _workflow_video_profile_name() -> str:
             continue
         if profile_config.get("type") != "video":
             continue
-        score = 1.0
-        for rule in workflow_rules:
-            condition = rule["condition"]
-            if "profile_name_contains" in condition:
-                pattern = str(condition["profile_name_contains"]).strip().lower()
-                if pattern and re.search(
-                    rf"(?<![a-z0-9]){re.escape(pattern)}(?![a-z0-9])",
-                    profile_name.lower(),
-                ):
-                    score += float(rule["score_adjustment"])
-            elif "field" in condition:
-                field_path = str(condition["field"]).split(".")
-                value: object = profile_config
-                for field_name in field_path:
-                    if isinstance(value, dict):
-                        value = value.get(field_name)
-                    else:
-                        value = None
-                        break
-                if "contains" in condition and condition["contains"] in str(value):
-                    score += float(rule["score_adjustment"])
-                elif "equals" in condition and value == condition["equals"]:
-                    score += float(rule["score_adjustment"])
-                elif "in" in condition and value in condition["in"]:
-                    score += float(rule["score_adjustment"])
+        score, _ = score_profile_with_configured_rules(
+            workflow_rules, profile_name, profile_config
+        )
         scored_profiles.append((score, profile_name))
     if not scored_profiles:
         raise RuntimeError("workflow video profile scoring found no video profiles")
@@ -935,14 +919,14 @@ class TestSyntheticDataAPI:
                 _deploy_profile_for_tenant(client, WORKFLOW_PROFILE, tenant_id)
                 _deploy_profile_for_tenant(client, DOCUMENT_PROFILE, tenant_id)
 
-                _ensure_sample_content_ingested(
+                seeded_video_content_id = _ensure_sample_content_ingested(
                     SAMPLE_VIDEO_PATH,
                     profile=WORKFLOW_PROFILE,
                     media_type="video/mp4",
                     tenant_id=tenant_id,
                 )
-                _ingest_sample_documents(tenant_id=tenant_id)
-                yield tenant_id
+                seeded_documents = _ingest_sample_documents(tenant_id=tenant_id)
+                yield tenant_id, seeded_video_content_id, seeded_documents
             finally:
                 try:
                     client.delete(f"/admin/tenants/{tenant_id}")
@@ -1489,9 +1473,8 @@ class TestSyntheticDataAPI:
     def test_generate_workflow_ids_are_unique_and_schema_specific(
         self, workflow_seeded_tenant
     ):
-        expected_available_profiles = _expected_available_profile_names(
-            workflow_seeded_tenant
-        )
+        tenant_id, seeded_video_content_id, seeded_documents = workflow_seeded_tenant
+        expected_available_profiles = _expected_available_profile_names(tenant_id)
         with httpx.Client(base_url=RUNTIME, timeout=900.0) as client:
             agents_response = client.get("/agents/")
             resp = client.post(
@@ -1502,7 +1485,7 @@ class TestSyntheticDataAPI:
                     "vespa_sample_size": 2,
                     "strategy": "multi_modal_sequences",
                     "max_profiles": 2,
-                    "tenant_id": workflow_seeded_tenant,
+                    "tenant_id": tenant_id,
                 },
             )
 
@@ -1557,11 +1540,23 @@ class TestSyntheticDataAPI:
         ]
         assert len(video_records) == 1, sampled_content
         assert len(document_records) == 1, sampled_content
+        video_record = video_records[0]
+        document_record = document_records[0]
+        seeded_document_titles = set(seeded_documents)
+        seeded_document_ids = set(seeded_documents.values())
+        assert video_record["source_id"] == seeded_video_content_id
+        assert document_record["source_id"] in seeded_document_ids
+        document_title = next(
+            title
+            for title, content_id in seeded_documents.items()
+            if content_id == document_record["source_id"]
+        )
+        assert document_title in seeded_document_titles
         for record in sampled_content:
             assert topic_source_text(record) is not None, sampled_content
         saliency = TopicSaliency.from_records(sampled_content)
-        video_topic = extract_topic(video_records[0], saliency=saliency)
-        document_topic = extract_topic(document_records[0], saliency=saliency)
+        video_topic = extract_topic(video_record, saliency=saliency)
+        document_topic = extract_topic(document_record, saliency=saliency)
         assert video_topic is not None, sampled_content
         assert document_topic is not None, sampled_content
         assert video_topic != document_topic

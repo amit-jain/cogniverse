@@ -16,6 +16,25 @@ from cogniverse_foundation.config.unified_config import SyntheticGeneratorConfig
 logger = logging.getLogger(__name__)
 
 
+def score_profile_with_configured_rules(
+    scoring_rules: List[Any],
+    profile_name: str,
+    profile_config: Dict[str, Any],
+) -> tuple[float, List[str]]:
+    """Score a profile using configured optimizer rules."""
+    score = 1.0
+    reasons: List[str] = []
+
+    for rule in scoring_rules:
+        if ProfileSelector._check_condition(
+            rule.condition, profile_name, profile_config
+        ):
+            score += rule.score_adjustment
+            reasons.append(rule.reason)
+
+    return score, reasons
+
+
 class ProfileSelector:
     """
     Agent-based profile selection using LLM reasoning or rule-based scoring
@@ -263,18 +282,12 @@ class ProfileSelector:
         Returns:
             Tuple of (score, reasons)
         """
-        score = 1.0
-        reasons = []
+        return score_profile_with_configured_rules(
+            scoring_rules, profile_name, profile_config
+        )
 
-        for rule in scoring_rules:
-            if self._check_condition(rule.condition, profile_name, profile_config):
-                score += rule.score_adjustment
-                reasons.append(rule.reason)
-
-        return score, reasons
-
+    @staticmethod
     def _check_condition(
-        self,
         condition: Dict[str, Any],
         profile_name: str,
         profile_config: Dict[str, Any],
@@ -299,7 +312,7 @@ class ProfileSelector:
             pattern = condition["profile_name_contains"]
             if not isinstance(pattern, str) or not pattern.strip():
                 return False
-            return self._contains_token(profile_name, pattern)
+            return ProfileSelector._contains_token(profile_name, pattern)
 
         if "field" in condition:
             field_path = condition["field"].split(".")
