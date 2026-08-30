@@ -9,7 +9,8 @@ The full multimodal flow against the live cluster, in one test:
     -> the agent runs a real search, resolves each hit's keyframe from object
        storage, and attaches the frames to the answer LLM
 
-and asserts the frames actually reached the model (``keyframes_attached > 0``).
+and asserts the frames actually reached the model
+(``keyframes_attached == min(len(search_results), 4)``).
 The unit tests only exercise this with a faked MediaLocator / LM; this proves the
 contract end to end across the real ingestion pipeline, MinIO, Vespa, the search
 agent, and the report agent's LLM call.
@@ -115,6 +116,32 @@ def ingested_video() -> dict:
     }
 
 
+def _search_results_for_ingested_video(ingested_video: dict) -> list[dict]:
+    """Fetch the clip's own search hits from the production search endpoint."""
+    resp = requests.post(
+        f"{RUNTIME_URL}/search",
+        json={
+            "query": "describe the outdoor scene and what the person is doing",
+            "profile": PROFILE,
+            "tenant_id": TENANT_FULL_ID,
+            "top_k": 20,
+            "result_granularity": "segment",
+            "filters": {"video_id": ingested_video["video_id"]},
+        },
+        timeout=120,
+    )
+    assert resp.status_code == 200, (
+        f"search failed: {resp.status_code} {resp.text[:300]}"
+    )
+    body = resp.json()
+    results = body["results"]
+    assert body["results_count"] == len(results), (
+        "search response must report the exact number of returned hits; "
+        f"got body={body}"
+    )
+    return results
+
+
 def test_indexed_segments_carry_s3_source_url(ingested_video):
     """Ingestion side of the contract: every indexed segment records the
     ``s3://`` source_url the answer path derives the keyframe bucket from —
@@ -133,16 +160,19 @@ def test_indexed_segments_carry_s3_source_url(ingested_video):
 
 
 def test_report_agent_attaches_retrieved_keyframes_to_llm(ingested_video):
-    """Answer side of the contract: the report agent searches, resolves the
-    hits' keyframes from MinIO, and attaches them to the LLM call. The
-    ``keyframes_attached`` count in the response is the deterministic proof the
-    frames reached the model (unit tests only fake this)."""
+    """Answer side of the contract: the report agent resolves a supplied hit
+    list, attaches the hits' keyframes from MinIO, and grounds the summary in
+    the firewood/fire clip."""
+    search_results = _search_results_for_ingested_video(ingested_video)
     resp = requests.post(
         f"{RUNTIME_URL}/agents/detailed_report_agent/process",
         json={
             "agent_name": "detailed_report_agent",
             "query": "describe the outdoor scene and what the person is doing",
-            "context": {"tenant_id": TENANT_FULL_ID},
+            "context": {
+                "tenant_id": TENANT_FULL_ID,
+                "search_results": search_results,
+            },
         },
         timeout=300,
     )
@@ -154,20 +184,15 @@ def test_report_agent_attaches_retrieved_keyframes_to_llm(ingested_video):
     result = body["result"]
     metadata = result["metadata"]
 
-    # The dispatch ran a real search — the agent was not fed an empty result
-    # set — bounded by the agent's max_results_to_analyze cap (20).
-    results_analyzed = metadata["results_analyzed"]
-    assert 1 <= results_analyzed <= 20, (
-        f"detailed-report dispatch must run a real search within the "
-        f"max_results_to_analyze cap, got metadata={metadata}"
+    # The report is now grounded in the exact hit list the test supplied, so
+    # the agent metadata must reflect that list, not a live search result set.
+    assert metadata["results_analyzed"] == len(search_results), (
+        "detailed-report dispatch must analyze the supplied hits exactly; "
+        f"got metadata={metadata}, supplied={len(search_results)}"
     )
-    # THE contract, as an exact value: keyframes attached == the analyzed
-    # results capped at max_keyframes_to_llm (4). Every top hit's keyframe
-    # resolves from MinIO for a just-ingested video, so the cap — not a
-    # missing frame — is what bounds it.
-    assert metadata["keyframes_attached"] == min(results_analyzed, 4), (
-        "keyframes attached to the LLM must equal min(results_analyzed, 4); "
-        f"got metadata={metadata}"
+    assert metadata["keyframes_attached"] == min(len(search_results), 4), (
+        "keyframes attached to the LLM must equal min(len(search_results), 4); "
+        f"got metadata={metadata}, supplied={len(search_results)}"
     )
 
     # The report must be a REAL grounded summary, not the templated fallback
