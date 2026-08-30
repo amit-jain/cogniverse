@@ -25,6 +25,14 @@ static_resources:
                         - match: { prefix: "/" }
                           route:
                             cluster: llm_upstream
+{{- if eq (include "cogniverse.srUpstreamProtocol" .) "https" }}
+                            # Modal routes by Host header, not by path. Without
+                            # this Envoy forwards the client's authority (the
+                            # in-cluster envoy Service name) and Modal answers
+                            # "modal-http: invalid function call", surfaced as
+                            # litellm NotFoundError on every agent call.
+                            auto_host_rewrite: true
+{{- end }}
                             # Match the listener's 300s budget. At 120s the
                             # proxy timed out queued LLM calls (504) under
                             # concurrent load even though clients were still
