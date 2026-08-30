@@ -187,21 +187,24 @@ class ProvenanceStore:
             return {}
         # YQL `in` clause on the indexed memory_id attribute.
         quoted = ", ".join(f'"{_escape(mid)}"' for mid in memory_ids)
+        schema_name = self._base_schema
+        resolved_schema_name = self.schema_name
         yql = (
-            f"select * from {self.schema_name} where memory_id in ({quoted}) "
+            f"select * from {schema_name} where memory_id in ({quoted}) "
             f'and tenant_id contains "{_escape(self._tenant_id)}" '
             f"limit {max(len(memory_ids), 100)}"
         )
         try:
             rows = self._backend.query_metadata_documents(
-                schema=self.schema_name,
+                schema=schema_name,
                 yql=yql,
                 hits=max(len(memory_ids), 100),
                 tenant_id=self._tenant_id,
             )
         except Exception as exc:
             raise RuntimeError(
-                f"provenance fetch failed for schema {self.schema_name!r} "
+                f"provenance fetch failed for schema {schema_name!r} "
+                f"(resolved as {resolved_schema_name!r}) "
                 f"({len(memory_ids)} memory ids): {exc}"
             ) from exc
         out: Dict[str, ProvenanceRecord] = {}

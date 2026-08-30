@@ -43,7 +43,7 @@ def _store() -> tuple[BackendVectorStore, _CapturingBackend]:
     backend = _CapturingBackend()
     store = object.__new__(BackendVectorStore)
     store.backend = backend
-    store.collection_name = "agent_memories_acme"
+    store.collection_name = "agent_memories_acme_acme"
     store.profile = "agent_memories"
     store.is_telemetry = False
     return store, backend
@@ -372,9 +372,20 @@ class _PagingBackend:
         self.calls: List[Dict[str, Any]] = []
         self.yqls: List[str] = []
 
+    def get_tenant_schema_name(self, tenant_id: str, base_schema_name: str) -> str:
+        if not tenant_id:
+            return base_schema_name
+        return f"{base_schema_name}_{tenant_id.replace(':', '_')}"
+
     def query_metadata_documents(self, schema, yql=None, **kwargs):
         self.query_count += 1
-        self.calls.append({"schema": schema, "yql": yql, **kwargs})
+        tenant_id = kwargs.get("tenant_id")
+        resolved_schema = (
+            self.get_tenant_schema_name(tenant_id, schema) if tenant_id else schema
+        )
+        self.calls.append(
+            {"schema": schema, "resolved_schema": resolved_schema, "yql": yql, **kwargs}
+        )
         self.yqls.append(yql)
         # Page size and offset ride as hits/offset, not in the YQL.
         limit = int(kwargs["hits"])
@@ -388,7 +399,7 @@ class _PagingBackend:
 def _paging_store(backend: _PagingBackend) -> BackendVectorStore:
     store = object.__new__(BackendVectorStore)
     store.backend = backend
-    store.collection_name = "agent_memories_acme"
+    store.collection_name = "agent_memories_acme_acme"
     store.profile = "agent_memories"
     store.tenant_id = "acme:acme"
     store.is_telemetry = False
@@ -426,6 +437,11 @@ class TestListPagination:
         assert ids[0] == "m0249"
         assert ids[-1] == "m0000"
         assert backend.query_count == 3  # 100 + 100 + 50
+        assert all(call["schema"] == "agent_memories" for call in backend.calls)
+        assert all(
+            call["resolved_schema"] == "agent_memories_acme_acme"
+            for call in backend.calls
+        )
 
     def test_bounded_read_is_the_newest_slice(self):
         backend = _PagingBackend(_rows(250))
@@ -436,6 +452,12 @@ class TestListPagination:
         assert [r.id for r in results] == [f"m{249 - i:04d}" for i in range(10)]
         assert next_offset == 10
         assert backend.calls[0]["tenant_id"] == "acme:acme"
+        assert backend.calls[0]["schema"] == "agent_memories"
+        assert backend.calls[0]["resolved_schema"] == "agent_memories_acme_acme"
+        assert (
+            backend.yqls[0]
+            == "select * from agent_memories where true order by created_at desc, id desc"
+        )
 
     def test_walk_orders_by_unique_id_bounded_by_recency(self):
         """The full walk must page by the unique id (a total order offset

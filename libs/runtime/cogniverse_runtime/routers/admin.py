@@ -275,12 +275,6 @@ async def create_profile(
                 schema_loader=schema_loader,
             )
 
-            if not backend:
-                raise HTTPException(
-                    status_code=500,
-                    detail="Backend not available for schema deployment",
-                )
-
             # deploy_schema blocks through Vespa prepareandactivate +
             # convergence sleeps — run it off the loop (matches the
             # tenant-manager's offload of the same call).
@@ -356,11 +350,6 @@ async def list_profiles(
             config_manager=config_manager,
             schema_loader=schema_loader,
         )
-        if backend is None:
-            raise HTTPException(
-                status_code=500,
-                detail="Backend not available for schema status lookup",
-            )
 
         profile_summaries = []
 
@@ -432,11 +421,6 @@ async def get_profile(
             config_manager=config_manager,
             schema_loader=schema_loader,
         )
-        if backend is None:
-            raise HTTPException(
-                status_code=500,
-                detail="Backend not available for schema status lookup",
-            )
 
         schema_deployed = backend.schema_exists(
             schema_name=profile.schema_name, tenant_id=tenant_id
@@ -656,11 +640,6 @@ async def delete_profile(
                 config_manager=config_manager,
                 schema_loader=schema_loader,
             )
-            if not backend:
-                raise HTTPException(
-                    status_code=500,
-                    detail="Backend not available for schema deletion",
-                )
             deleted_schemas = backend.delete_schema(
                 schema_name=profile.schema_name, tenant_id=tenant_id
             )
@@ -734,11 +713,6 @@ async def deploy_profile_schema(
             config_manager=config_manager,
             schema_loader=schema_loader,
         )
-
-        if not backend:
-            raise HTTPException(
-                status_code=500, detail="Backend not available for schema deployment"
-            )
 
         schema_exists = backend.schema_exists(
             schema_name=profile.schema_name, tenant_id=request.tenant_id

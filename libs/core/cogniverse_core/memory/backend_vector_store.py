@@ -679,12 +679,10 @@ class BackendVectorStore(VectorStoreBase):
         # hits (so the second page lands outside the window and comes back
         # empty). id is a stable, unique sort key that offset paging never
         # skips or duplicates a row across.
-        yql = (
-            f"select * from {self.collection_name} where {where_clause} "
-            f"order by {order_by}"
-        )
+        schema_name = self.profile if self.profile else self.collection_name
+        yql = f"select * from {schema_name} where {where_clause} order by {order_by}"
         results = self.backend.query_metadata_documents(
-            schema=self.collection_name,
+            schema=schema_name,
             yql=yql,
             hits=limit,
             offset=offset,
