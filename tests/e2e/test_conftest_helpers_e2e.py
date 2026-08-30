@@ -898,6 +898,7 @@ class TestSharedClusterOwnership:
             "charts/cogniverse/Chart.yaml": ('version: 0.1.0\nappVersion: "0.1.0"\n'),
             "charts/cogniverse/values.k3s.yaml": "inference: {}\n",
             "charts/cogniverse/values.rocm.yaml": "inference: {}\n",
+            "charts/cogniverse/values.modal-llm.yaml": "inference: {}\n",
             "libs/runtime/module.py": "value = 'base'\n",
             "configs/app.yaml": "backend: rocm\n",
             "charts/cogniverse/values.yaml": "replicaCount: 1\n",
