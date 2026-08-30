@@ -1266,11 +1266,18 @@ class TestSyntheticDataAPI:
         }
         assert len(actual_by_topic) == len(data["data"])
         assert set(actual_by_topic) == set(expected_by_topic)
+        sampled_record_fields = {
+            "profile_name",
+            "schema_name",
+            "source_id",
+            "segment_id",
+            "description",
+        }
+        assert [set(record) for record in sampled_content] == [
+            sampled_record_fields
+        ] * len(sampled_content)
         sampled_corpus = " ".join(
-            " ".join(str(value).split())
-            for result in sampled_content
-            for value in result["metadata"].values()
-            if isinstance(value, str)
+            " ".join(record["description"].split()) for record in sampled_content
         ).casefold()
         routing_fields = {
             "query",
