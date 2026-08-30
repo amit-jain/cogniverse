@@ -24,6 +24,14 @@ class TestResponseFormatting:
         chunks = format_agent_response(response)
         assert "Error:" in chunks[0]
 
+    def test_formats_warming(self):
+        response = {
+            "status": "warming",
+            "message": "runtime warming up, try again: ReadTimeout after 0.1s",
+        }
+        chunks = format_agent_response(response)
+        assert chunks == ["Runtime is warming up, try again shortly."]
+
     def test_formats_results(self):
         response = {
             "status": "success",

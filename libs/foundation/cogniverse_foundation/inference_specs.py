@@ -64,6 +64,7 @@ def _spec(
     *gpu_candidates: str,
     requires_hf_token: bool = False,
     source_revision: str | None = None,
+    scaledown_window: int = 300,
 ) -> InferenceServiceSpec:
     return InferenceServiceSpec(
         name=name,
@@ -73,6 +74,7 @@ def _spec(
         gpu_candidates=gpu_candidates,
         requires_hf_token=requires_hf_token,
         source_revision=source_revision,
+        scaledown_window=scaledown_window,
     )
 
 
@@ -137,6 +139,7 @@ INFERENCE_SERVICE_SPECS: Mapping[str, InferenceServiceSpec] = MappingProxyType(
             "A100-80GB",
             "L40S",
             requires_hf_token=True,
+            scaledown_window=900,
         ),
         "vllm_llm_teacher": _spec(
             "vllm_llm_teacher",
@@ -147,6 +150,7 @@ INFERENCE_SERVICE_SPECS: Mapping[str, InferenceServiceSpec] = MappingProxyType(
             "A100-80GB",
             "L40S",
             requires_hf_token=True,
+            scaledown_window=900,
         ),
         "vllm_asr": _spec(
             "vllm_asr",

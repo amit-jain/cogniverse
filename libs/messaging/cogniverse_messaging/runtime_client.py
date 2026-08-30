@@ -86,20 +86,76 @@ class RuntimeClient:
             payload["conversation_history"] = conversation_history
 
         # A dead/hung/reset runtime must degrade to a status dict the gateway
-        # renders as a graceful "service unavailable" reply — not raise into the
-        # PTB global error handler as a generic crash. Mirrors register_user /
-        # resolve_tenant, which never raise on transport faults.
-        try:
-            resp = await client.post(
+        # renders as a graceful reply — not raise into the PTB global error
+        # handler as a generic crash. Retry a timeout once because a cold
+        # start is transient; connect failures still fail fast. Mirrors
+        # register_user / resolve_tenant, which never raise on transport faults.
+        timeout = httpx.Timeout(self.dispatch_timeout, connect=5.0)
+
+        async def _post_dispatch() -> httpx.Response:
+            return await client.post(
                 f"/agents/{agent_name}/process",
                 json=payload,
-                timeout=httpx.Timeout(self.dispatch_timeout, connect=5.0),
+                timeout=timeout,
             )
-        except httpx.TransportError as exc:
-            logger.warning("Agent dispatch transport error for %s: %s", agent_name, exc)
+
+        try:
+            resp = await _post_dispatch()
+        except httpx.TimeoutException as exc:
+            logger.warning(
+                "Agent dispatch timeout for %s: %s after %.1fs; retrying once",
+                agent_name,
+                type(exc).__name__,
+                self.dispatch_timeout,
+            )
+            try:
+                resp = await _post_dispatch()
+            except httpx.TimeoutException as retry_exc:
+                logger.warning(
+                    "Agent dispatch still timing out for %s: %s after %.1fs",
+                    agent_name,
+                    type(retry_exc).__name__,
+                    self.dispatch_timeout,
+                )
+                return {
+                    "status": "warming",
+                    "message": (
+                        f"runtime warming up, try again: "
+                        f"{type(exc).__name__} after {self.dispatch_timeout:.1f}s"
+                    ),
+                }
+            except httpx.TransportError as retry_exc:
+                logger.warning(
+                    "Agent dispatch retry transport error for %s: %s",
+                    agent_name,
+                    type(retry_exc).__name__,
+                )
+                return {
+                    "status": "warming",
+                    "message": (
+                        f"runtime warming up, try again: "
+                        f"{type(exc).__name__} after {self.dispatch_timeout:.1f}s"
+                    ),
+                }
+        except httpx.ConnectError as exc:
+            logger.warning(
+                "Agent dispatch transport error for %s: %s",
+                agent_name,
+                type(exc).__name__,
+            )
             return {
                 "status": "unavailable",
-                "message": f"runtime unreachable: {exc}",
+                "message": f"runtime unreachable: {type(exc).__name__}",
+            }
+        except httpx.TransportError as exc:
+            logger.warning(
+                "Agent dispatch transport error for %s: %s",
+                agent_name,
+                type(exc).__name__,
+            )
+            return {
+                "status": "unavailable",
+                "message": f"runtime unreachable: {type(exc).__name__}",
             }
 
         if resp.status_code != 200:
