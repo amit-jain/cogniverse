@@ -49,6 +49,8 @@ from cogniverse_synthetic.utils import (
 
 logger = logging.getLogger(__name__)
 
+_TOPIC_TEXT_OVERSAMPLE = 3
+
 
 class SyntheticDataService:
     """
@@ -491,10 +493,13 @@ class SyntheticDataService:
             profile_config["profile_name"] = profile_name
             profile_configs.append(profile_config)
 
+        # Every generator grounds on a record's topic text, so a record
+        # carrying none is unusable. Oversample to absorb those drops.
+        fetch_size = min(sample_size * _TOPIC_TEXT_OVERSAMPLE, sample_size + 100)
         try:
             sampled_content = await self.backend_querier.query_profiles(
                 profile_configs=profile_configs,
-                sample_size=sample_size,
+                sample_size=fetch_size,
                 strategy=strategy,
                 tenant_id=request.tenant_id,
             )
@@ -504,7 +509,17 @@ class SyntheticDataService:
                 f"optimizer '{request.optimizer}', strategy '{strategy}': {exc}"
             ) from exc
 
-        return sampled_content
+        grounded: List[Dict[str, Any]] = []
+        seen_texts: set[str] = set()
+        for item in sampled_content:
+            text = topic_source_text(item)
+            if text is None or text in seen_texts:
+                continue
+            seen_texts.add(text)
+            grounded.append(item)
+            if len(grounded) == sample_size:
+                break
+        return grounded
 
     @staticmethod
     def _trace_sampled_content(
