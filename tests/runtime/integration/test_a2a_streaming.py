@@ -970,6 +970,7 @@ class TestDocumentAgentStreaming:
                 tenant_id=STREAM_TENANT,
                 encoder_config=get_config(STREAM_TENANT, config_manager),
                 visual_profile="test_colpali",
+                deployed_document_schemas=("document_visual",),
             )
         )
 

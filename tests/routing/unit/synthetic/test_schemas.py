@@ -135,7 +135,14 @@ class _StrategyRecorder:
         self.calls.append((tenant_id, strategy))
         if self.fail:
             raise ConnectionError("backend unavailable")
-        return [{"topic": f"source for {tenant_id}"}]
+        # The real querier stamps profile_name onto every sample
+        # (backend_querier.py:507) and refuses a profile_config without one.
+        return [
+            {
+                "topic": f"source for {tenant_id}",
+                "profile_name": profile_configs[0]["profile_name"],
+            }
+        ]
 
 
 PROBE_AGENTS_CONFIG = {

@@ -737,8 +737,25 @@ class TestModalitySearchDispatchSerialization:
                 )
             ]
         )
+        backend = MagicMock()
+        schema_calls = []
+
+        def schema_exists(base_schema, tenant_id):
+            schema_calls.append((base_schema, tenant_id))
+            return True
+
+        backend.schema_exists = schema_exists
         monkeypatch.setattr(
-            "cogniverse_agents.document_agent.DocumentAgent", lambda *a, **k: stub
+            "cogniverse_runtime.admin.tenant_manager.get_backend", lambda: backend
+        )
+        captured = {}
+
+        def build_agent(*, deps, **kwargs):
+            captured["deps"] = deps
+            return stub
+
+        monkeypatch.setattr(
+            "cogniverse_agents.document_agent.DocumentAgent", build_agent
         )
 
         result = await dispatcher._execute_document_search_task(
@@ -749,6 +766,16 @@ class TestModalitySearchDispatchSerialization:
         assert result["results_count"] == 1
         assert result["results"][0]["document_id"] == "doc1"
         assert result["results"][0]["title"] == "Doc One"
+        # The tenant's deployed document schemas are read once each and handed
+        # to the agent, which narrows its search strategy to them.
+        assert schema_calls == [
+            ("document_text", "acme:prod"),
+            ("document_visual", "acme:prod"),
+        ]
+        assert captured["deps"].deployed_document_schemas == (
+            "document_text",
+            "document_visual",
+        )
 
     @pytest.mark.asyncio
     @pytest.mark.ci_fast
@@ -762,6 +789,11 @@ class TestModalitySearchDispatchSerialization:
         stub = MagicMock()
         stub.search_documents = AsyncMock(
             side_effect=VespaSearchDegraded("Vespa query returned errors: [code 12]")
+        )
+        backend = MagicMock()
+        backend.schema_exists = MagicMock(return_value=True)
+        monkeypatch.setattr(
+            "cogniverse_runtime.admin.tenant_manager.get_backend", lambda: backend
         )
         monkeypatch.setattr(
             "cogniverse_agents.document_agent.DocumentAgent", lambda *a, **k: stub
