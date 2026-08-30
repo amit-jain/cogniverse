@@ -725,7 +725,7 @@ class TestModalitySearchDispatchSerialization:
     async def test_document_search_dispatch_serializes_results(
         self, dispatcher, monkeypatch
     ):
-        from cogniverse_agents.document_agent import DocumentResult
+        from cogniverse_agents.document_agent import DocumentAgentDeps, DocumentResult
 
         monkeypatch.setattr(dispatcher, "_get_vespa_endpoint", lambda t: "http://vespa")
         monkeypatch.setattr(dispatcher, "_init_agent_memory", lambda *a, **k: None)
@@ -772,10 +772,91 @@ class TestModalitySearchDispatchSerialization:
             ("document_text", "acme:prod"),
             ("document_visual", "acme:prod"),
         ]
-        assert captured["deps"].deployed_document_schemas == (
+        deps = captured["deps"]
+        assert isinstance(deps, DocumentAgentDeps)
+        assert deps.tenant_id == "acme:prod"
+        assert deps.vespa_endpoint == "http://vespa"
+        assert deps.deployed_document_schemas == (
             "document_text",
             "document_visual",
         )
+        assert stub.search_documents.call_args_list == [call(query="report", limit=5)]
+
+    @pytest.mark.asyncio
+    @pytest.mark.ci_fast
+    async def test_document_search_dispatch_passes_only_deployed_schemas(
+        self, dispatcher, monkeypatch
+    ):
+        """Tenant schemas deploy on first ingest; a tenant that ingested only
+        text documents has no document_visual schema, and the agent must be
+        told so it never queries it."""
+        monkeypatch.setattr(dispatcher, "_get_vespa_endpoint", lambda t: "http://vespa")
+        monkeypatch.setattr(dispatcher, "_init_agent_memory", lambda *a, **k: None)
+        backend = MagicMock()
+        backend.schema_exists = MagicMock(
+            side_effect=lambda schema, tenant_id: schema == "document_text"
+        )
+        monkeypatch.setattr(
+            "cogniverse_runtime.admin.tenant_manager.get_backend", lambda: backend
+        )
+        stub = MagicMock()
+        stub.search_documents = AsyncMock(return_value=[])
+        captured = {}
+
+        def build_agent(*, deps, **kwargs):
+            captured["deps"] = deps
+            return stub
+
+        monkeypatch.setattr(
+            "cogniverse_agents.document_agent.DocumentAgent", build_agent
+        )
+
+        result = await dispatcher._execute_document_search_task(
+            "report", "acme:prod", 5
+        )
+
+        assert backend.schema_exists.call_args_list == [
+            call("document_text", "acme:prod"),
+            call("document_visual", "acme:prod"),
+        ]
+        assert captured["deps"].deployed_document_schemas == ("document_text",)
+        assert result == {
+            "status": "success",
+            "agent": "document_agent",
+            "message": "Found 0 documents for 'report'",
+            "results_count": 0,
+            "results": [],
+        }
+
+    @pytest.mark.asyncio
+    @pytest.mark.ci_fast
+    async def test_document_search_dispatch_raises_when_schema_lookup_fails(
+        self, dispatcher, monkeypatch
+    ):
+        """A registry outage is not "no document schema": it must surface
+        before any agent is built."""
+        monkeypatch.setattr(dispatcher, "_get_vespa_endpoint", lambda t: "http://vespa")
+        backend = MagicMock()
+        backend.schema_exists = MagicMock(
+            side_effect=RuntimeError("schema registry unavailable")
+        )
+        monkeypatch.setattr(
+            "cogniverse_runtime.admin.tenant_manager.get_backend", lambda: backend
+        )
+
+        def _must_not_build(*a, **k):
+            raise AssertionError("document agent must not be built when lookup fails")
+
+        monkeypatch.setattr(
+            "cogniverse_agents.document_agent.DocumentAgent", _must_not_build
+        )
+
+        with pytest.raises(RuntimeError, match="^schema registry unavailable$"):
+            await dispatcher._execute_document_search_task("report", "acme:prod", 5)
+
+        assert backend.schema_exists.call_args_list == [
+            call("document_text", "acme:prod")
+        ]
 
     @pytest.mark.asyncio
     @pytest.mark.ci_fast

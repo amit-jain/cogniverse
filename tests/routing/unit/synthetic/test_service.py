@@ -2037,6 +2037,59 @@ async def test_profile_schema_checks_do_not_block_the_event_loop():
 
 
 @pytest.mark.asyncio
+async def test_multi_profile_sampling_keeps_every_selected_profile_represented():
+    """The querier splits the request across the selected profiles and the
+    topic-text filter keeps that split, so a two-profile request returns one
+    record from each profile rather than letting the first fill the quota."""
+    tenant_id = "acme:media"
+
+    class _PerSchemaBackend(_TenantProfileBackend):
+        def query_metadata_documents(self, schema, query=None, yql=None, **kwargs):
+            super().query_metadata_documents(schema, query=query, yql=yql, **kwargs)
+            if schema == "audio_content":
+                return [
+                    {"title": "grounded content summary"},
+                    {"title": "related content archive"},
+                ]
+            return [
+                {"title": "quarterly finance report"},
+                {"title": "annual budget review"},
+            ]
+
+    backend = _PerSchemaBackend({tenant_id: {"audio_content", "document_text"}})
+
+    response = await _tenant_profile_service(backend).generate(
+        SyntheticDataRequest(
+            tenant_id=tenant_id,
+            optimizer="profile",
+            count=1,
+            vespa_sample_size=2,
+            max_profiles=2,
+        )
+    )
+
+    assert response.selected_profiles == ["profile_a", "profile_b"]
+    assert response.metadata["sampled_content_count"] == 2
+    assert [
+        record["profile_name"] for record in response.metadata["sampled_content"]
+    ] == ["profile_a", "profile_b"]
+    # One draw per profile at its share of the sample (1 of 2), and no widened
+    # re-query: every drawn record carried topic text.
+    assert backend.query_calls == [
+        {
+            "schema": "audio_content",
+            "yql": "select * from sources audio_content where true limit 5",
+            "tenant_id": tenant_id,
+        },
+        {
+            "schema": "document_text",
+            "yql": "select * from sources document_text where true limit 5",
+            "tenant_id": tenant_id,
+        },
+    ]
+
+
+@pytest.mark.asyncio
 async def test_profile_schema_lookup_failure_propagates_without_querying():
     class _BrokenSchemaBackend(_TenantProfileBackend):
         def schema_exists(self, schema_name, tenant_id=None):
