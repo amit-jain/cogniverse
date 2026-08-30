@@ -22,15 +22,10 @@ not the LM's prompt-following ability.
 
 from __future__ import annotations
 
-import os
-import socket
-import subprocess
-import time
 import uuid
 from dataclasses import dataclass
-from typing import Dict, Iterator, List
+from typing import Dict, List
 
-import httpx
 import pytest
 
 from cogniverse_agents.deep_synthesis_workflow import (
@@ -40,75 +35,21 @@ from cogniverse_agents.deep_synthesis_workflow import (
     DeepSynthesisWorkflow,
 )
 from cogniverse_foundation.config.unified_config import LLMEndpointConfig
-from tests.e2e.conftest import KUBECTL_CONTEXT, run_async, unique_id
+from tests.e2e.conftest import StudentLLM, run_async, unique_id
 
 # ---------------------------------------------------------------------------
-# vLLM port-forward fixture (mirrors test_rlm_telemetry_e2e.py:38-94 pattern)
 # ---------------------------------------------------------------------------
 
 VESPA_HTTP_PORT = 33080
 VESPA_CONFIG_PORT = 33071
 
 
-def _free_port() -> int:
-    with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as s:
-        s.bind(("127.0.0.1", 0))
-        return s.getsockname()[1]
-
-
 @pytest.fixture(scope="module")
-def vllm_student_url() -> Iterator[str]:
-    """kubectl port-forward to cogniverse-vllm-llm-student:8000."""
-    deno_bin = os.path.expanduser("~/.deno/bin")
-    if os.path.isdir(deno_bin) and deno_bin not in os.environ.get("PATH", ""):
-        os.environ["PATH"] = f"{deno_bin}:{os.environ.get('PATH', '')}"
-
-    port = _free_port()
-    proc = subprocess.Popen(
-        [
-            "kubectl",
-            "--context",
-            KUBECTL_CONTEXT,
-            "port-forward",
-            "-n",
-            "cogniverse",
-            "svc/cogniverse-vllm-llm-student",
-            f"{port}:8000",
-        ],
-        stdout=subprocess.DEVNULL,
-        stderr=subprocess.DEVNULL,
-    )
-    base = f"http://127.0.0.1:{port}/v1"
-    try:
-        deadline = time.monotonic() + 30
-        while time.monotonic() < deadline:
-            try:
-                r = httpx.get(f"{base}/models", timeout=2)
-                if r.status_code == 200 and r.json().get("data"):
-                    break
-            except Exception:
-                pass
-            time.sleep(0.5)
-        else:
-            pytest.fail(
-                f"kubectl port-forward to vllm-llm-student never came up "
-                f"on {base} within 30s — DeepSynthesis test can't run"
-            )
-        yield base
-    finally:
-        proc.terminate()
-        try:
-            proc.wait(timeout=5)
-        except subprocess.TimeoutExpired:
-            proc.kill()
-
-
-@pytest.fixture(scope="module")
-def llm_config(vllm_student_url: str) -> LLMEndpointConfig:
+def llm_config(student_llm: StudentLLM) -> LLMEndpointConfig:
     return LLMEndpointConfig(
-        model="openai/google/gemma-4-e4b-it",
-        api_base=vllm_student_url,
-        api_key="not-required",
+        model=student_llm.model,
+        api_base=student_llm.api_base,
+        api_key=student_llm.api_key,
         temperature=0.1,
         max_tokens=512,
     )
@@ -176,11 +117,13 @@ class TestDeepSynthesisOverHundredDocuments:
     """
 
     def test_workflow_terminates_within_bounds_with_real_lm(
-        self, llm_config: LLMEndpointConfig
+        self, llm_config: LLMEndpointConfig, student_llm: StudentLLM
     ) -> None:
-        run_async(self._async_workflow_terminates(llm_config))
+        run_async(self._async_workflow_terminates(llm_config, student_llm))
 
-    async def _async_workflow_terminates(self, llm_config: LLMEndpointConfig) -> None:
+    async def _async_workflow_terminates(
+        self, llm_config: LLMEndpointConfig, student_llm: StudentLLM
+    ) -> None:
         from pathlib import Path
 
         from cogniverse_agents.inference.rlm_inference import RLMInference
@@ -220,7 +163,8 @@ class TestDeepSynthesisOverHundredDocuments:
             base_schema_name="agent_memories",
             llm_model="google/gemma-4-e4b-it",
             embedding_model="lightonai/DenseOn",
-            llm_base_url=("http://cogniverse-vllm-llm-student.cogniverse:8000/v1"),
+            llm_base_url=student_llm.api_base,
+            llm_api_key=student_llm.api_key,
             embedder_base_url="http://localhost:33906",
             auto_create_schema=True,
             config_manager=cm,
