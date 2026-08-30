@@ -9,85 +9,24 @@ Pins the shipped RLMABRunner output:
     is reflected in comparison.judge_delta;
   * ``ABResult.to_telemetry_dict`` key set is exact.
 
-Reuses the ``vllm_student_url`` / ``llm_config`` module fixtures from
-``test_rlm_telemetry_e2e.py``; both files are collected together by
-the e2e batched runner so the port-forward starts once per module.
+Builds its own ``ab_llm_config`` on the shared ``student_llm`` fixture so
+the resolved endpoint is shared once per module.
 """
 
 from __future__ import annotations
 
-import os
-import socket
-import subprocess
-import time
-from typing import Iterator
-
-import httpx
 import pytest
 
 from cogniverse_foundation.config.unified_config import LLMEndpointConfig
-from tests.e2e.conftest import KUBECTL_CONTEXT
-
-
-def _free_port() -> int:
-    with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as s:
-        s.bind(("127.0.0.1", 0))
-        return s.getsockname()[1]
+from tests.e2e.conftest import StudentLLM
 
 
 @pytest.fixture(scope="module")
-def ab_vllm_student_url() -> Iterator[str]:
-    """Module-scoped port-forward — independent from the telemetry module."""
-    deno_bin = os.path.expanduser("~/.deno/bin")
-    if os.path.isdir(deno_bin) and deno_bin not in os.environ.get("PATH", ""):
-        os.environ["PATH"] = f"{deno_bin}:{os.environ.get('PATH', '')}"
-
-    port = _free_port()
-    proc = subprocess.Popen(
-        [
-            "kubectl",
-            "--context",
-            KUBECTL_CONTEXT,
-            "port-forward",
-            "-n",
-            "cogniverse",
-            "svc/cogniverse-vllm-llm-student",
-            f"{port}:8000",
-        ],
-        stdout=subprocess.DEVNULL,
-        stderr=subprocess.DEVNULL,
-    )
-    base = f"http://127.0.0.1:{port}/v1"
-    try:
-        deadline = time.monotonic() + 30
-        while time.monotonic() < deadline:
-            try:
-                r = httpx.get(f"{base}/models", timeout=2)
-                if r.status_code == 200 and r.json().get("data"):
-                    break
-            except Exception:
-                pass
-            time.sleep(0.5)
-        else:
-            pytest.fail(
-                f"kubectl port-forward to vllm-llm-student never came up "
-                f"on {base} within 30s — RLM A/B tests can't run"
-            )
-        yield base
-    finally:
-        proc.terminate()
-        try:
-            proc.wait(timeout=5)
-        except subprocess.TimeoutExpired:
-            proc.kill()
-
-
-@pytest.fixture(scope="module")
-def ab_llm_config(ab_vllm_student_url: str) -> LLMEndpointConfig:
+def ab_llm_config(student_llm: StudentLLM) -> LLMEndpointConfig:
     return LLMEndpointConfig(
-        model="openai/google/gemma-4-e4b-it",
-        api_base=ab_vllm_student_url,
-        api_key="not-required",
+        model=student_llm.model,
+        api_base=student_llm.api_base,
+        api_key=student_llm.api_key,
         temperature=0.1,
         max_tokens=512,
     )

@@ -15,24 +15,19 @@ endpoint inside the deployed cogniverse up cluster:
 RLM requires Deno (dspy spawns a sandbox subprocess for the REPL).
 The host must have Deno installed at ``$HOME/.deno/bin/deno``; the
 fixture below adds it to PATH before instantiating RLMInference.
-The LLM endpoint is reached via a module-scoped kubectl port-forward
-to ``cogniverse-vllm-llm-student`` (ClusterIP-only, no NodePort) on a
-local random port — torn down at module end.
+The LLM endpoint is the deployed runtime's student LLM, resolved by the
+shared ``student_llm`` fixture (Modal directly, or a port-forward to the
+in-cluster vLLM service).
 """
 
 from __future__ import annotations
 
 import os
-import socket
-import subprocess
-import time
-from typing import Iterator
 
-import httpx
 import pytest
 
 from cogniverse_foundation.config.unified_config import LLMEndpointConfig
-from tests.e2e.conftest import KUBECTL_CONTEXT, unique_id
+from tests.e2e.conftest import StudentLLM, unique_id
 
 # RLMResult.metadata keys as built by RLMInference.process().
 RLM_METADATA_FIELDS = {
@@ -46,75 +41,16 @@ RLM_METADATA_FIELDS = {
 }
 
 
-def _free_port() -> int:
-    with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as s:
-        s.bind(("127.0.0.1", 0))
-        return s.getsockname()[1]
-
-
 @pytest.fixture(scope="module")
-def vllm_student_url() -> Iterator[str]:
-    """kubectl port-forward to cogniverse-vllm-llm-student:8000.
-
-    Module-scoped so all RLM tests share one port-forward (kubectl
-    port-forward has a fixed cost per startup, and the LM service is
-    healthy and reusable). Tears down on module exit.
-    """
+def llm_config(student_llm: StudentLLM) -> LLMEndpointConfig:
     # Deno must be discoverable for RLMInference's startup assertion.
     deno_bin = os.path.expanduser("~/.deno/bin")
     if os.path.isdir(deno_bin) and deno_bin not in os.environ.get("PATH", ""):
         os.environ["PATH"] = f"{deno_bin}:{os.environ.get('PATH', '')}"
-
-    port = _free_port()
-    proc = subprocess.Popen(
-        [
-            "kubectl",
-            "--context",
-            KUBECTL_CONTEXT,
-            "port-forward",
-            "-n",
-            "cogniverse",
-            "svc/cogniverse-vllm-llm-student",
-            f"{port}:8000",
-        ],
-        stdout=subprocess.DEVNULL,
-        stderr=subprocess.DEVNULL,
-    )
-    base = f"http://127.0.0.1:{port}/v1"
-    try:
-        # Wait until /v1/models 200s — the LM is already running, the
-        # port-forward just needs a moment to wire up.
-        deadline = time.monotonic() + 30
-        while time.monotonic() < deadline:
-            try:
-                r = httpx.get(f"{base}/models", timeout=2)
-                if r.status_code == 200 and r.json().get("data"):
-                    break
-            except Exception:
-                pass
-            time.sleep(0.5)
-        else:
-            pytest.fail(
-                f"kubectl port-forward to vllm-llm-student never came up "
-                f"on {base} within 30s — RLM tests can't run"
-            )
-        yield base
-    finally:
-        proc.terminate()
-        try:
-            proc.wait(timeout=5)
-        except subprocess.TimeoutExpired:
-            proc.kill()
-
-
-@pytest.fixture(scope="module")
-def llm_config(vllm_student_url: str) -> LLMEndpointConfig:
-    """LLMEndpointConfig pointed at the in-cluster vLLM via port-forward."""
-    # vLLM-OpenAI-compat: litellm provider prefix is openai/.
     return LLMEndpointConfig(
-        model="openai/google/gemma-4-e4b-it",
-        api_base=vllm_student_url,
-        api_key="not-required",
+        model=student_llm.model,
+        api_base=student_llm.api_base,
+        api_key=student_llm.api_key,
         temperature=0.1,
         max_tokens=512,
     )
