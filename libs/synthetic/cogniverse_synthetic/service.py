@@ -493,32 +493,40 @@ class SyntheticDataService:
             profile_config["profile_name"] = profile_name
             profile_configs.append(profile_config)
 
-        # Every generator grounds on a record's topic text, so a record
-        # carrying none is unusable. Oversample to absorb those drops.
-        fetch_size = min(sample_size * _TOPIC_TEXT_OVERSAMPLE, sample_size + 100)
-        try:
-            sampled_content = await self.backend_querier.query_profiles(
-                profile_configs=profile_configs,
-                sample_size=fetch_size,
-                strategy=strategy,
-                tenant_id=request.tenant_id,
-            )
-        except Exception as exc:
-            raise RuntimeError(
-                f"Backend sampling failed for tenant '{request.tenant_id}', "
-                f"optimizer '{request.optimizer}', strategy '{strategy}': {exc}"
-            ) from exc
+        async def query(size: int) -> List[Dict[str, Any]]:
+            try:
+                return await self.backend_querier.query_profiles(
+                    profile_configs=profile_configs,
+                    sample_size=size,
+                    strategy=strategy,
+                    tenant_id=request.tenant_id,
+                )
+            except Exception as exc:
+                raise RuntimeError(
+                    f"Backend sampling failed for tenant '{request.tenant_id}', "
+                    f"optimizer '{request.optimizer}', strategy '{strategy}': {exc}"
+                ) from exc
 
-        grounded: List[Dict[str, Any]] = []
-        seen_texts: set[str] = set()
-        for item in sampled_content:
-            text = topic_source_text(item)
-            if text is None or text in seen_texts:
-                continue
-            seen_texts.add(text)
-            grounded.append(item)
-            if len(grounded) == sample_size:
-                break
+        def groundable(items: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
+            grounded: List[Dict[str, Any]] = []
+            seen_texts: set[str] = set()
+            for item in items:
+                text = topic_source_text(item)
+                if text is None or text in seen_texts:
+                    continue
+                seen_texts.add(text)
+                grounded.append(item)
+                if len(grounded) == sample_size:
+                    break
+            return grounded
+
+        # Every generator grounds on a record's topic text, so a record
+        # carrying none is unusable. Widen the draw only to replace records
+        # actually dropped, leaving a clean sample exactly as it was drawn.
+        grounded = groundable(await query(sample_size))
+        if len(grounded) < sample_size:
+            widened = min(sample_size * _TOPIC_TEXT_OVERSAMPLE, sample_size + 100)
+            grounded = groundable(await query(widened))
         return grounded
 
     @staticmethod

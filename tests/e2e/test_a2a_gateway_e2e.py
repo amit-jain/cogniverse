@@ -380,8 +380,15 @@ class TestGatewaySeededSearchContract:
                 "txt",
                 "txt",
             ]
-            scores = [result["score"] for result in document_results]
+            # Search agents expose relevance_score (document_agent.py:44,
+            # audio_analysis_agent.py:50, image_search_agent.py:36); only the
+            # video route emits "score".
+            scores = [result["relevance_score"] for result in document_results]
             assert scores == sorted(scores, reverse=True)
+            assert [result["strategy_used"] for result in document_results] == [
+                "text",
+                "text",
+            ]
         else:
             assert document_data["agent"] == "orchestrator_agent"
             assert "orchestration_result" in document_data
