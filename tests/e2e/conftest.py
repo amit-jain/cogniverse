@@ -13,12 +13,14 @@ Test artifact paths (real data used for ingestion tests):
 - Document: data/testset/dataset_summary.md (real markdown about the evaluation set)
 """
 
+import dataclasses
 import functools
 import hashlib
 import json
 import os
 import re
 import shlex
+import socket
 import subprocess
 import tempfile
 import threading
@@ -27,6 +29,7 @@ import uuid
 from datetime import datetime, timezone
 from math import ceil
 from pathlib import Path
+from typing import Iterator
 
 import httpx
 import pytest
@@ -39,6 +42,11 @@ from cogniverse_cli.secrets import read_secret
 
 from cogniverse_agents.gateway_agent import SIMPLE_ROUTE_MAP, GatewayAgent
 from cogniverse_core.memory.provenance import DerivationKind
+from cogniverse_foundation.config.bootstrap import INFERENCE_API_KEY_ENV
+from cogniverse_foundation.config.inference_auth import (
+    endpoint_root,
+    is_modal_inference_url,
+)
 from tests.e2e import backend_env, cron_guard
 
 # Deployment-lifecycle tests bring up their own port-forward-based cluster
@@ -3906,3 +3914,103 @@ def pytest_runtest_makereport(item, call):
             rep.outcome,
             rep.duration,
         )
+
+
+@dataclasses.dataclass(frozen=True)
+class StudentLLM:
+    api_base: str
+    api_key: str
+    model: str
+
+
+def _runtime_deployment_env() -> dict[str, str]:
+    command = _kubectl_e2e_command(
+        "get",
+        "deploy",
+        "cogniverse-runtime",
+        "-n",
+        "cogniverse",
+        "-o",
+        'jsonpath={range .spec.template.spec.containers[0].env[*]}{.name}={.value}{"\\n"}{end}',
+    )
+    result = subprocess.run(command, capture_output=True, text=True, timeout=30)
+    _require_kubectl_success(result, command)
+    env: dict[str, str] = {}
+    for line in result.stdout.splitlines():
+        name, sep, value = line.partition("=")
+        if sep:
+            env[name] = value
+    return env
+
+
+def _free_port() -> int:
+    with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as s:
+        s.bind(("127.0.0.1", 0))
+        return s.getsockname()[1]
+
+
+def _wait_for_models(api_base: str, headers: dict[str, str], deadline_s: float) -> None:
+    deadline = _time.monotonic() + deadline_s
+    last = ""
+    while _time.monotonic() < deadline:
+        try:
+            r = httpx.get(f"{api_base}/models", headers=headers, timeout=10)
+            if r.status_code == 200 and r.json().get("data"):
+                return
+            last = f"{r.status_code} {r.text[:120]}"
+        except httpx.HTTPError as exc:
+            last = repr(exc)
+        _time.sleep(2)
+    pytest.fail(
+        f"student LLM at {api_base} listed no models within {deadline_s:g}s "
+        f"(last: {last})"
+    )
+
+
+@pytest.fixture(scope="module")
+def student_llm() -> Iterator[StudentLLM]:
+    """The student LLM the deployed runtime uses, reachable from the host.
+
+    LLM_ENDPOINT / LLM_MODEL come from the runtime Deployment. A Modal
+    endpoint is used directly with its bearer and the runtime's boot
+    deadline for a scale-from-zero start; an in-cluster vLLM service is
+    reached through a kubectl port-forward that lives for the module.
+    """
+    env = _runtime_deployment_env()
+    api_base, model = env["LLM_ENDPOINT"], env["LLM_MODEL"]
+    root = endpoint_root(api_base)
+    if is_modal_inference_url(root):
+        api_key = read_secret(INFERENCE_API_KEY_ENV)
+        if not api_key:
+            pytest.fail(
+                f"student LLM {api_base} is a Modal endpoint; "
+                f"{INFERENCE_API_KEY_ENV} must be set in the environment or ./.env"
+            )
+        _wait_for_models(
+            api_base,
+            {"Authorization": f"Bearer {api_key}"},
+            float(env["INFERENCE_HEALTH_BOOT_DEADLINE_SECONDS"]),
+        )
+        yield StudentLLM(api_base=api_base, api_key=api_key, model=model)
+        return
+    port = _free_port()
+    command = _kubectl_e2e_command(
+        "port-forward",
+        "-n",
+        "cogniverse",
+        "svc/cogniverse-vllm-llm-student",
+        f"{port}:8000",
+    )
+    proc = subprocess.Popen(
+        command, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL
+    )
+    local = f"http://127.0.0.1:{port}/v1"
+    try:
+        _wait_for_models(local, {}, 30.0)
+        yield StudentLLM(api_base=local, api_key="not-required", model=model)
+    finally:
+        proc.terminate()
+        try:
+            proc.wait(timeout=5)
+        except subprocess.TimeoutExpired:
+            proc.kill()
