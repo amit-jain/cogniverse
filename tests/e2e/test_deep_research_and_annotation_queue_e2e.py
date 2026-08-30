@@ -121,7 +121,8 @@ class TestAnnotationQueueE2E:
             assert set(initial) == {"statistics", "pending", "assigned", "expired"}
             assert set(initial["statistics"]) == {"total", "by_status", "by_priority"}
             initial_total = initial["statistics"]["total"]
-            assert span_id not in {r["span_id"] for r in initial["pending"]}
+            absent = client.get(f"/agents/annotations/queue/{span_id}")
+            assert absent.status_code == 404, absent.text[:300]
 
             enqueue = client.post(
                 "/agents/annotations/queue/enqueue", json={"requests": [request]}
@@ -137,8 +138,9 @@ class TestAnnotationQueueE2E:
             assert resp.status_code == 200
             data = resp.json()
             assert data["statistics"]["total"] == initial_total + 1
-            mine = [r for r in data["pending"] if r["span_id"] == span_id]
-            assert mine == [request], mine
+            item = client.get(f"/agents/annotations/queue/{span_id}")
+            assert item.status_code == 200, item.text[:300]
+            assert item.json() == request, item.json()
 
             assign = client.post(
                 f"/agents/annotations/queue/{span_id}/assign",
@@ -167,6 +169,9 @@ class TestAnnotationQueueE2E:
             assert completed["annotation"]["status"] == "completed"
             assert completed["annotation"]["label"] is None
             assert datetime.fromisoformat(completed["annotation"]["completed_at"])
+            item = client.get(f"/agents/annotations/queue/{span_id}")
+            assert item.status_code == 200, item.text[:300]
+            assert item.json() == completed["annotation"], item.json()
 
             resp = client.get("/agents/annotations/queue")
             assert resp.status_code == 200

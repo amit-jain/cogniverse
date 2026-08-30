@@ -1701,3 +1701,94 @@ class TestAudioTextSearchBackendContract:
         assert "sess-42" in detail
         assert "sekrit" not in resp.text
         assert "Traceback" not in resp.text
+
+
+class TestAnnotationQueueItemRoute:
+    """GET /agents/annotations/queue/{span_id} reads one request regardless of
+    where it sorts in the capped pending page."""
+
+    def _payload(self, span_id, timestamp="2026-07-17T10:00:00+00:00"):
+        return {
+            "span_id": span_id,
+            "timestamp": timestamp,
+            "query": "find robot videos",
+            "chosen_agent": "video_search",
+            "routing_confidence": 0.4,
+            "outcome": "ambiguous",
+            "priority": "medium",
+            "reason": "low confidence",
+            "context": {},
+            "agent_type": "routing",
+            "tenant_id": "acme:acme",
+        }
+
+    def _expected(self, payload, **overrides):
+        return {
+            **payload,
+            "status": "pending",
+            "assigned_to": None,
+            "assigned_at": None,
+            "sla_deadline": None,
+            "completed_at": None,
+            "label": None,
+            **overrides,
+        }
+
+    def test_get_item_returns_the_enqueued_request(self, annotation_client):
+        client, _queue = annotation_client
+        payload = self._payload("span-item")
+        resp = client.post(
+            "/agents/annotations/queue/enqueue", json={"requests": [payload]}
+        )
+        assert resp.status_code == 200, resp.text
+        resp = client.get("/agents/annotations/queue/span-item")
+        assert resp.status_code == 200, resp.text
+        assert resp.json() == self._expected(payload)
+
+    def test_get_item_beyond_the_pending_page(self, annotation_client):
+        client, _queue = annotation_client
+        fillers = [
+            self._payload(f"span-fill-{i:02d}", timestamp="2026-07-17T09:00:00+00:00")
+            for i in range(50)
+        ]
+        target = self._payload("span-last")
+        resp = client.post(
+            "/agents/annotations/queue/enqueue",
+            json={"requests": [*fillers, target]},
+        )
+        assert resp.status_code == 200, resp.text
+        assert resp.json() == {"enqueued": 51, "skipped": 0, "queue_total": 51}
+        page = client.get("/agents/annotations/queue").json()
+        assert page["statistics"]["total"] == 51
+        assert [r["span_id"] for r in page["pending"]] == [
+            f["span_id"] for f in fillers
+        ]
+        resp = client.get("/agents/annotations/queue/span-last")
+        assert resp.status_code == 200, resp.text
+        assert resp.json() == self._expected(target)
+
+    def test_get_item_reflects_assignment(self, annotation_client):
+        client, _queue = annotation_client
+        payload = self._payload("span-assigned")
+        client.post("/agents/annotations/queue/enqueue", json={"requests": [payload]})
+        assign = client.post(
+            "/agents/annotations/queue/span-assigned/assign",
+            json={"reviewer": "alice", "sla_hours": 4},
+        )
+        assert assign.status_code == 200, assign.text
+        resp = client.get("/agents/annotations/queue/span-assigned")
+        assert resp.status_code == 200, resp.text
+        assert resp.json() == assign.json()["annotation"]
+        assert resp.json() == self._expected(
+            payload,
+            status="assigned",
+            assigned_to="alice",
+            assigned_at=assign.json()["annotation"]["assigned_at"],
+            sla_deadline=assign.json()["annotation"]["sla_deadline"],
+        )
+
+    def test_get_missing_item_returns_404(self, annotation_client):
+        client, _queue = annotation_client
+        resp = client.get("/agents/annotations/queue/nope")
+        assert resp.status_code == 404
+        assert resp.json() == {"detail": "Span nope not in queue"}
