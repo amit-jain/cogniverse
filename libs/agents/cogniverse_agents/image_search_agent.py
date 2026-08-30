@@ -153,9 +153,8 @@ class ImageSearchAgent(A2AAgent[ImageSearchInput, ImageSearchOutput, ImageSearch
 
     def _image_schema_exists(self) -> bool:
         """Return True when the tenant has deployed the image schema."""
-        deployed_image_schema = getattr(self, "_deployed_image_schema", None)
-        if deployed_image_schema is not None:
-            return deployed_image_schema
+        if self._deployed_image_schema is not None:
+            return self._deployed_image_schema
         from cogniverse_runtime.admin.tenant_manager import get_backend
 
         backend = get_backend()
