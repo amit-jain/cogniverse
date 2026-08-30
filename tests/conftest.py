@@ -117,8 +117,7 @@ def pylate_server():
     because its request schema carries no attention mask. Integration tests
     provision their own inference; the cluster belongs to the e2e tier.
     """
-    from cogniverse_cli.modal_inference_config import get_inference_service_spec
-
+    from cogniverse_foundation.inference_specs import get_inference_service_spec
     from tests.fixtures.inference import LocalEndpointProvider
 
     provider = LocalEndpointProvider()

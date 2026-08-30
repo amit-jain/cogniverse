@@ -8,9 +8,9 @@ from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 
 import pytest
 import requests
-from cogniverse_cli.modal_inference_config import get_inference_service_spec
 
 from cogniverse_core.common.models.semantic_embedder import RemoteOpenAIEmbedder
+from cogniverse_foundation.inference_specs import get_inference_service_spec
 
 pytestmark = pytest.mark.integration
 

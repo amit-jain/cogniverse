@@ -21,10 +21,10 @@ from cogniverse_cli.modal_inference.vllm import (
     _vllm_command,
     _vllm_environment,
 )
-from cogniverse_cli.modal_inference_config import get_inference_service_spec
 
 from cogniverse_agents.audio_analysis_agent import AudioAnalysisAgent, AudioAnalysisDeps
 from cogniverse_foundation.config.llm_factory import create_dspy_lm
+from cogniverse_foundation.inference_specs import get_inference_service_spec
 from tests.agents.integration import conftest as agents_conftest
 
 

@@ -29,12 +29,12 @@ from cogniverse_cli.inference_endpoints import (
     ResolvedInferenceEndpoint,
     resolve_endpoint,
 )
-from cogniverse_cli.modal_inference_config import get_inference_service_spec
 
 from cogniverse_agents.inference.deno_check import is_deno_available
 from cogniverse_foundation.config.inference_auth import inference_headers
 from cogniverse_foundation.config.llm_factory import create_dspy_lm
 from cogniverse_foundation.config.unified_config import LLMEndpointConfig
+from cogniverse_foundation.inference_specs import get_inference_service_spec
 
 # Re-export the canonical shared_memory_vespa fixture so it's discoverable
 # by tests under tests/agents/integration/ (pytest only walks UP from a

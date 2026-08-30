@@ -16,8 +16,9 @@ from cogniverse_cli.inference_endpoints import (
     ResolvedInferenceEndpoint,
 )
 from cogniverse_cli.modal_inference.serving import build_authenticated_asgi_app
-from cogniverse_cli.modal_inference_config import get_inference_service_spec
 from fastapi import FastAPI, Request
+
+from cogniverse_foundation.inference_specs import get_inference_service_spec
 
 API_KEY = "serving-test-key"
 MODEL_ID = "TomoroAI/tomoro-colqwen3-embed-4b"

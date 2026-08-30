@@ -22,7 +22,7 @@ from cogniverse_cli.inference_endpoints import (
     EndpointResolver,
     ResolvedInferenceEndpoint,
 )
-from cogniverse_cli.modal_inference_config import (
+from cogniverse_foundation.inference_specs import (
     InferenceServiceSpec,
     get_inference_service_spec,
 )

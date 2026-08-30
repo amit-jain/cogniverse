@@ -75,7 +75,7 @@ _TRAINING_SELECTION_FIELDS = (
 
 
 def _teacher_boot_deadline_seconds() -> float:
-    from cogniverse_cli.modal_inference_config import get_inference_service_spec
+    from cogniverse_foundation.inference_specs import get_inference_service_spec
 
     return get_inference_service_spec("vllm_llm_teacher").boot_deadline_seconds
 
@@ -3740,7 +3740,7 @@ async def run_simba_optimization(
             else None
         )
     except Exception as e:
-        logger.error("SIMBA compilation failed: %s", e)
+        logger.exception("SIMBA compilation failed")
         return {"status": "failed", "error": str(e), **selection_summary}
 
     decision = _select_simba_artifact(
@@ -4659,7 +4659,7 @@ async def run_profile_optimization(
             else None
         )
     except Exception as e:
-        logger.error("Profile DSPy compilation failed: %s", e)
+        logger.exception("Profile DSPy compilation failed")
         return {
             "status": "failed",
             "error": str(e),
@@ -4969,7 +4969,7 @@ async def run_entity_extraction_optimization(
             else None
         )
     except Exception as e:
-        logger.error("Entity extraction DSPy compilation failed: %s", e)
+        logger.exception("Entity extraction DSPy compilation failed")
         return {"status": "failed", "error": str(e), **selection_summary}
 
     decision = _select_simba_artifact(

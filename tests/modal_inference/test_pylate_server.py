@@ -29,7 +29,8 @@ import uvicorn
 from cogniverse_cli.modal_inference.code_colbert_pylate import app as code_lateon_app
 from cogniverse_cli.modal_inference.lateon import app as lateon_app
 from cogniverse_cli.modal_inference.servers import pylate as pylate_server
-from cogniverse_cli.modal_inference_config import get_inference_service_spec
+
+from cogniverse_foundation.inference_specs import get_inference_service_spec
 
 SPEC = get_inference_service_spec("colbert_pylate")
 CODE_SPEC = get_inference_service_spec("code_colbert_pylate")

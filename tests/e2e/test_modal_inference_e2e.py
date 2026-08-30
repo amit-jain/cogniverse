@@ -3,10 +3,10 @@ from __future__ import annotations
 from concurrent.futures import ThreadPoolExecutor
 
 import pytest
-from cogniverse_cli.modal_inference_config import get_inference_service_spec
 
 from cogniverse_foundation.config.llm_factory import create_dspy_lm
 from cogniverse_foundation.config.unified_config import LLMEndpointConfig
+from cogniverse_foundation.inference_specs import get_inference_service_spec
 
 
 def _gemma_config(endpoint) -> LLMEndpointConfig:

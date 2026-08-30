@@ -22,7 +22,8 @@ from cogniverse_cli.inference_endpoints import (
     ModelIdentityError,
     resolve_endpoint,
 )
-from cogniverse_cli.modal_inference_config import get_inference_service_spec
+
+from cogniverse_foundation.inference_specs import get_inference_service_spec
 
 SPEC = get_inference_service_spec("vllm_colpali")
 REVISION = SPEC.model_revision

@@ -12,11 +12,11 @@ from typing import Literal, Mapping, Sequence
 
 import httpx
 
-from cogniverse_cli.modal_inference_config import (
+from cogniverse_foundation.config.inference_auth import is_modal_inference_url
+from cogniverse_foundation.inference_specs import (
     EndpointAuth,
     InferenceServiceSpec,
 )
-from cogniverse_foundation.config.inference_auth import is_modal_inference_url
 
 EndpointProvider = Literal["modal", "e2e", "dev", "local"]
 _PROVIDER_ORDER: tuple[EndpointProvider, ...] = ("modal", "e2e", "dev", "local")

@@ -29,12 +29,12 @@ from cogniverse_cli.inference_endpoints import (
     ModelIdentityError,
     ResolvedInferenceEndpoint,
 )
-from cogniverse_cli.modal_inference_config import (
+
+from cogniverse_foundation.inference_specs import (
     INFERENCE_SERVICE_SPECS,
     InferenceServiceSpec,
     get_inference_service_spec,
 )
-
 from tests.utils.vllm_sidecar import _DiscoveredClusterEndpoint
 
 _PROVIDER_ORDER = ("e2e", "dev", "modal", "local")

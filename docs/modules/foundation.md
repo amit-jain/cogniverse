@@ -57,6 +57,7 @@ flowchart TB
         DspyDir["<span style='color:#000'><b>dspy/</b><br/>DSPy adapters &amp; model-format helpers</span>"]
         CommonDir["<span style='color:#000'><b>common/</b><br/>Tenant identity, DSPy registry &amp; Argo client helpers</span>"]
         ConfidencePy["<span style='color:#000'>confidence.py<br/>parse_confidence()</span>"]
+        InferenceSpecs["<span style='color:#000'>inference_specs.py<br/>InferenceServiceSpec, get_inference_service_spec()</span>"]
         InitPy["<span style='color:#000'>__init__.py</span>"]
     end
 

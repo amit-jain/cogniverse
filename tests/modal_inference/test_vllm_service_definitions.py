@@ -4,7 +4,8 @@ from importlib import import_module
 
 import pytest
 from cogniverse_cli.modal_inference.vllm import _vllm_command
-from cogniverse_cli.modal_inference_config import get_inference_service_spec
+
+from cogniverse_foundation.inference_specs import get_inference_service_spec
 
 SERVICE_MODULES = {
     "vllm_colpali": "cogniverse_cli.modal_inference.vllm_colpali",

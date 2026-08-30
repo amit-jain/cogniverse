@@ -22,9 +22,10 @@ from cogniverse_cli.modal_inference.vllm import (
     _vllm_image,
     build_vllm_app,
 )
-from cogniverse_cli.modal_inference_config import get_inference_service_spec
 from fastapi.testclient import TestClient
 from starlette.requests import Request
+
+from cogniverse_foundation.inference_specs import get_inference_service_spec
 
 API_KEY = "vllm-serving-key"
 
