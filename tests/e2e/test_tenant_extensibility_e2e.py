@@ -74,6 +74,15 @@ def owned_tenant():
             )
             assert resp.status_code in (200, 201, 409), resp.text
             register_tenant_and_wait(tenant_id, created_by="e2e", timeout_s=600.0)
+            # The first memory read deploys the tenant's memory and provenance
+            # schemas; own that cost here so the tests probe a warm tenant.
+            resp = client.get(
+                f"/admin/tenant/{tenant_id}/memories",
+                params={"type": "preference"},
+                timeout=180.0,
+            )
+            assert resp.status_code == 200, resp.text
+            assert resp.json() == {"memories": [], "count": 0}, resp.json()
             yield tenant_id
         finally:
             try:
