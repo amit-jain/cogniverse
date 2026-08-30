@@ -19,6 +19,7 @@ from litellm import completion
 
 from cogniverse_agents._confidence import parse_confidence
 from cogniverse_agents.routing.annotation_agent import AnnotationRequest
+from cogniverse_foundation.config.llm_factory import resolve_inference_api_key
 from cogniverse_foundation.config.unified_config import LLMEndpointConfig
 
 logger = logging.getLogger(__name__)
@@ -81,7 +82,9 @@ class LLMAutoAnnotator:
         """
         self.model = llm_config.model
         self.api_base = llm_config.api_base
-        self.api_key = llm_config.api_key
+        self.api_key = resolve_inference_api_key(
+            llm_config.api_base, llm_config.api_key
+        )
         self.max_annotations_per_batch = max_annotations_per_batch
 
         logger.info(

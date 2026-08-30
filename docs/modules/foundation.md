@@ -204,7 +204,8 @@ config_manager.set_agent_config(
 cogniverse_foundation.config.inference_auth.inference_headers(base_url)
 returns immutable headers for a canonical HTTP(S) root URL.
 `*.modal.run` endpoints require HTTPS and `COGNIVERSE_INFERENCE_API_KEY`;
-other URLs get no headers.
+other URLs get no headers. `endpoint_root(url)` reduces any endpoint URL
+(`.../v1`, `.../v1/chat/completions`) to that root.
 
 The runtime API and ingestion worker parse `INFERENCE_SERVICE_URLS` with
 `cogniverse_runtime.inference_services.parse_inference_service_urls`.
@@ -454,7 +455,9 @@ resolved = llm_config.resolve("summarizer_agent")
 
 `is_modal_inference_url(base_url)` classifies canonical inference roots: it returns `True` only for root HTTPS `*.modal.run` URLs, and `inference_headers(base_url)` uses that predicate to return the shared Modal bearer only for those roots. Non-Modal roots remain keyless.
 
-`create_dspy_lm(config: LLMEndpointConfig) -> dspy.LM` (`cogniverse_foundation.config.llm_factory`) is the single chokepoint every `dspy.LM()` construction in the codebase goes through. It wires `api_base`/`api_key`/`temperature`/`max_tokens`/`timeout`/`num_retries` onto the LM, merges `seed` into `extra_body`, forwards `extra_headers`, and substitutes a placeholder `api_key` when `api_base` is set but no key is configured (self-hosted OAI-compat servers ignore it). Raises `ValueError` if `config.model` is empty.
+`create_dspy_lm(config: LLMEndpointConfig) -> dspy.LM` (`cogniverse_foundation.config.llm_factory`) is the single chokepoint every `dspy.LM()` construction in the codebase goes through. It wires `api_base`/`api_key`/`temperature`/`max_tokens`/`timeout`/`num_retries` onto the LM, merges `seed` into `extra_body`, forwards `extra_headers`, and resolves `api_key` through `resolve_inference_api_key(api_base, api_key)`. Raises `ValueError` if `config.model` is empty.
+
+`resolve_inference_api_key(api_base, api_key)` is the one key-resolution rule for every OpenAI-compatible client, dspy.LM or not (Mem0's LLM provider, `litellm.completion`/`rerank`, the LLM/visual judges' chat-completions POSTs): an explicit key wins; otherwise the `COGNIVERSE_INFERENCE_API_KEY` bearer is sent whenever it is set (an in-cluster router may forward to Modal, and a self-hosted server ignores it); a `*.modal.run` `api_base` with no bearer raises naming the variable; a self-hosted `api_base` with nothing configured gets `"not-required"`; with no `api_base` the configured key passes through untouched.
 
 ```python
 from cogniverse_foundation.config.llm_factory import create_dspy_lm

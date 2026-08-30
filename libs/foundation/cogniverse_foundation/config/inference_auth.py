@@ -4,13 +4,20 @@ from __future__ import annotations
 
 from types import MappingProxyType
 from typing import Mapping
-from urllib.parse import urlsplit
+from urllib.parse import urlsplit, urlunsplit
 
 from cogniverse_foundation.config.bootstrap import (
     inference_api_key_from_environment,
 )
 
 _EMPTY_HEADERS: Mapping[str, str] = MappingProxyType({})
+
+
+def endpoint_root(url: str) -> str:
+    """The ``scheme://host[:port]`` root of ``url``, the form the auth helpers take."""
+
+    parsed = urlsplit(url)
+    return urlunsplit((parsed.scheme, parsed.netloc, "", "", ""))
 
 
 def is_modal_inference_url(base_url: str) -> bool:

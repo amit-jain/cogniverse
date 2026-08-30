@@ -8,6 +8,7 @@ import requests
 
 from cogniverse_core.common.media import MediaLocator
 from cogniverse_core.common.tenant_utils import SYSTEM_TENANT_ID
+from cogniverse_foundation.config.llm_factory import resolve_inference_api_key
 from cogniverse_foundation.config.utils import get_config
 
 from ._media_helpers import extract_frames, resolve_video_from_result
@@ -64,7 +65,9 @@ class ConfigurableVisualJudge(Evaluator):
         self.provider = evaluator_config.get("provider", "openai")
         self.model = model or evaluator_config["model"]
         self.base_url = base_url or evaluator_config["base_url"]
-        self.api_key = evaluator_config.get("api_key")
+        self.api_key = resolve_inference_api_key(
+            self.base_url, evaluator_config.get("api_key")
+        )
         # Bound every vision call — an unresponsive endpoint must fail the
         # evaluation, not hang the whole experiment run.
         self.request_timeout_s = float(evaluator_config.get("request_timeout_s", 120))
@@ -268,9 +271,10 @@ class ConfigurableVisualJudge(Evaluator):
         base = self.base_url.rstrip("/")
         if not base.endswith("/v1"):
             base = f"{base}/v1"
-        headers = {"Content-Type": "application/json"}
-        if self.api_key:
-            headers["Authorization"] = f"Bearer {self.api_key}"
+        headers = {
+            "Content-Type": "application/json",
+            "Authorization": f"Bearer {self.api_key}",
+        }
 
         response = requests.post(
             f"{base}/chat/completions",

@@ -496,7 +496,7 @@ def initialize(
     embedder_base_url: str,
     config_manager,
     schema_loader,
-    llm_api_key: str = "not-required",
+    llm_api_key: Optional[str] = None,
     backend_config_port: Optional[int] = None,
     base_schema_name: str = "agent_memories",
     auto_create_schema: bool = True,

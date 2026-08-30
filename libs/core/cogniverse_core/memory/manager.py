@@ -27,6 +27,7 @@ from cogniverse_core.common.tenant_utils import (
 )
 from cogniverse_core.memory._timestamps import to_epoch_seconds
 from cogniverse_foundation.caching import TenantLRUCache
+from cogniverse_foundation.config.llm_factory import resolve_inference_api_key
 
 logger = logging.getLogger(__name__)
 
@@ -221,7 +222,7 @@ class Mem0MemoryManager:
         embedder_base_url: str,
         config_manager,
         schema_loader,
-        llm_api_key: str = "not-required",
+        llm_api_key: Optional[str] = None,
         backend_config_port: Optional[int] = None,
         base_schema_name: str = "agent_memories",
         auto_create_schema: bool = True,
@@ -245,10 +246,9 @@ class Mem0MemoryManager:
                 runs DenseOn on the dedicated denseon sidecar pod.
             config_manager: ConfigManager instance
             schema_loader: SchemaLoader instance
-            llm_api_key: API key sent to ``llm_base_url``. Defaults to
-                ``"not-required"`` for local OAI-compat backends
-                that don't authenticate; pass a real key for hosted
-                providers.
+            llm_api_key: Explicit key for ``llm_base_url``. None resolves
+                the shared inference bearer exactly as ``create_dspy_lm``
+                does (``resolve_inference_api_key``).
             backend_config_port: Backend config endpoint port (default: 19071)
             base_schema_name: Base schema name (default: agent_memories)
             auto_create_schema: Auto-deploy tenant schema if not exists
@@ -266,6 +266,9 @@ class Mem0MemoryManager:
                 f"embedding_dims must be a positive int, got {embedding_dims!r}"
             )
         storage_tenant_id = self._storage_tenant_id
+        # Resolved before any side effect so a missing Modal bearer raises
+        # here, not after the tenant schema has been deployed.
+        llm_api_key = resolve_inference_api_key(llm_base_url, llm_api_key)
 
         # Idempotency: the dispatcher runs initialize_memory per dispatched
         # request (via MemoryAwareMixin), and this manager is a per-tenant

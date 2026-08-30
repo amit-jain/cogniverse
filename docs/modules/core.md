@@ -370,7 +370,7 @@ def initialize_memory(
     backend_port: int = 8080,
     embedding_model: str = "lightonai/DenseOn",
     llm_base_url: str = "http://localhost:11434",
-    llm_api_key: str = "not-required",
+    llm_api_key: Optional[str] = None,
     config_manager=None,             # Required for schema deployment
     schema_loader=None,              # Required for schema templates
     backend_config_port: Optional[int] = None,
