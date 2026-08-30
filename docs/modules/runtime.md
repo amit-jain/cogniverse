@@ -790,6 +790,11 @@ curl http://localhost:8000/agents/stats
 curl http://localhost:8000/agents/annotations/queue
 ```
 
+**GET /agents/annotations/queue/{span_id}** - One annotation request by span id (404 when absent)
+```bash
+curl http://localhost:8000/agents/annotations/queue/span-123
+```
+
 **POST /agents/annotations/queue/{span_id}/assign** - Assign a pending annotation to a reviewer
 ```bash
 curl -X POST http://localhost:8000/agents/annotations/queue/span-123/assign \

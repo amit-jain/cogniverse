@@ -302,6 +302,15 @@ async def get_annotation_queue_status() -> Dict[str, Any]:
     }
 
 
+@router.get("/annotations/queue/{span_id}")
+async def get_annotation_request(span_id: str) -> Dict[str, Any]:
+    """Return one annotation request by span id."""
+    request = get_annotation_queue().get(span_id)
+    if request is None:
+        raise HTTPException(status_code=404, detail=f"Span {span_id} not in queue")
+    return request.to_dict()
+
+
 @router.post("/annotations/queue/{span_id}/assign")
 async def assign_annotation(span_id: str, body: AssignRequest) -> Dict[str, Any]:
     """Assign a pending annotation to a reviewer."""
