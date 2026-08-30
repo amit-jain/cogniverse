@@ -547,7 +547,9 @@ class TestJobExecution:
         assert (gw["complexity"], gw["routed_to"]) == expected_gateway_routing(
             query, gw
         )
-        assert gw["modality"] == "video", gw
+        # GLiNER tags "outdoor nature scenes" as image_content next to the
+        # explicit "videos" keyword, so the gateway reports both modalities.
+        assert gw["modality"] == "both", gw
         if gw["complexity"] == "simple":
             assert data["agent"] == "gateway_agent", data
             assert data["downstream_result"]["status"] == "success", data
