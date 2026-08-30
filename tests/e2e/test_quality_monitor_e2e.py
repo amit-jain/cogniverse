@@ -16,6 +16,7 @@ Verifies:
 """
 
 import subprocess
+import uuid
 
 import httpx
 import pytest
@@ -177,22 +178,25 @@ class TestPhoenixDatasets:
             ]
         )
 
-        dataset_name = "e2e-quality-baseline-test"
-        try:
-            client.datasets.create_dataset(
-                name=dataset_name,
-                dataframe=df,
-                input_keys=["timestamp"],
-                output_keys=["mean_mrr", "mean_ndcg", "mean_precision_at_5"],
-            )
+        # A per-run name makes the create a real first write every time
+        # instead of an "already exists" echo of an earlier run.
+        dataset_name = f"e2e-quality-baseline-{uuid.uuid4().hex[:12]}"
+        client.datasets.create_dataset(
+            name=dataset_name,
+            dataframe=df,
+            input_keys=["timestamp"],
+            output_keys=["mean_mrr", "mean_ndcg", "mean_precision_at_5"],
+        )
 
-            readback = client.datasets.get_dataset(dataset=dataset_name)
-            readback_df = readback.to_dataframe()
-            assert len(readback_df) >= 1
-        except Exception as e:
-            # Dataset may already exist from previous run
-            if "already exists" not in str(e):
-                raise
+        readback = client.datasets.get_dataset(dataset=dataset_name)
+        readback_df = readback.to_dataframe()
+        assert len(readback_df) == 1, readback_df
+        assert list(readback_df["input"]) == [{"timestamp": "2026-04-04T00:00:00"}], (
+            readback_df
+        )
+        assert list(readback_df["output"]) == [
+            {"mean_mrr": 0.75, "mean_ndcg": 0.7, "mean_precision_at_5": 0.5}
+        ], readback_df
 
 
 @pytest.mark.e2e
@@ -246,7 +250,7 @@ class TestArgoWorkflows:
         )
         workflows = output.split()
         daily = [w for w in workflows if "daily-gateway" in w]
-        assert len(daily) >= 1, (
+        assert daily == ["cogniverse-daily-gateway"], (
             f"Expected cogniverse-daily-gateway CronWorkflow, got: {workflows}"
         )
 
@@ -260,7 +264,9 @@ class TestArgoWorkflows:
         )
         workflows = output.split()
         cleanup = [w for w in workflows if "cleanup" in w]
-        assert len(cleanup) >= 1, f"Expected cleanup CronWorkflow, got: {workflows}"
+        assert cleanup == ["cogniverse-daily-cleanup"], (
+            f"Expected cogniverse-daily-cleanup CronWorkflow, got: {workflows}"
+        )
 
     def test_workflow_submitter_rbac_consistent_with_argo(self):
         """RBAC role exists if and only if Argo CronWorkflows are actively managed.

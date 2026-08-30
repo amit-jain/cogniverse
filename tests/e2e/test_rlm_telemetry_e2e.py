@@ -34,6 +34,17 @@ import pytest
 from cogniverse_foundation.config.unified_config import LLMEndpointConfig
 from tests.e2e.conftest import KUBECTL_CONTEXT, unique_id
 
+# RLMResult.metadata keys as built by RLMInference.process().
+RLM_METADATA_FIELDS = {
+    "context_size_chars",
+    "query",
+    "backend",
+    "model",
+    "timeout_seconds",
+    "trajectory_length",
+    "trajectory_summary",
+}
+
 
 def _free_port() -> int:
     with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as s:
@@ -232,8 +243,9 @@ class TestIncludeTrajectoryShape:
                     )
         # metadata.trajectory_summary is always populated (server-side
         # debug aid), independent of include_trajectory.
-        assert "trajectory_summary" in r.metadata
-        assert "trajectory_length" in r.metadata
+        assert set(r.metadata) == RLM_METADATA_FIELDS, r.metadata
+        assert r.metadata["trajectory_length"] == len(r.trajectory), r.metadata
+        assert r.metadata["trajectory_summary"] == r.trajectory[:8], r.metadata
 
     def test_include_trajectory_false_yields_empty_list(
         self, llm_config: LLMEndpointConfig
@@ -252,8 +264,14 @@ class TestIncludeTrajectoryShape:
             include_trajectory=False,
         )
         assert r.trajectory == []
+        assert set(r.metadata) == RLM_METADATA_FIELDS, r.metadata
+        assert (
+            r.metadata["trajectory_summary"]
+            == (r.metadata["trajectory_summary"][: r.metadata["trajectory_length"]])
+        ), r.metadata
+        assert len(r.metadata["trajectory_summary"]) <= 8, r.metadata
         # Summary stays even when caller opts out of the structured form.
-        assert "trajectory_summary" in r.metadata
+        assert r.metadata["trajectory_length"] >= len(r.metadata["trajectory_summary"])
 
 
 # ---------------------------------------------------------------------------

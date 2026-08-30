@@ -153,10 +153,12 @@ class TestRollbackCLIRestoresPriorActive:
         assert result["agent_type"] == agent_type
         assert result["restored"] == {"prompts_version": 1}
         # Backup of the v2 state was written before the restore (so the
-        # rollback is itself reversible).
-        assert "prompts_version" in result["backup_versions"]
+        # rollback is itself reversible). Versions are probed sequentially,
+        # so after v1 and v2 the snapshot is v3; no demos were active, so no
+        # demos_version is snapshotted.
+        assert result["backup_versions"] == {"prompts_version": 3}, result
         backup_v = int(result["backup_versions"]["prompts_version"])
-        assert backup_v >= 3, result["backup_versions"]
+        assert backup_v == 3, result["backup_versions"]
 
         # Active prompts are now v1-text.
         assert _run(am.load_prompts(agent_type)) == {"system": "v1-text"}
@@ -165,8 +167,8 @@ class TestRollbackCLIRestoresPriorActive:
         # prior v2 active — the snapshot_active call inside rollback).
         versions = _run(am.list_versions("prompts", agent_type))
         version_numbers = sorted(v["version"] for v in versions)
-        assert backup_v in version_numbers, (
-            f"backup version {backup_v} missing from {version_numbers}"
+        assert version_numbers == [1, 2, backup_v], (
+            f"expected v1, v2 and the backup {backup_v}; got {version_numbers}"
         )
 
 

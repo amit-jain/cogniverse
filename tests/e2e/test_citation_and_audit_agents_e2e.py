@@ -372,11 +372,13 @@ class TestAuditExplanationAgentSurfacesTrustAndContradictions:
             assert body["answer_memory_id"] == answer
 
             source_ids = sorted(s["memory_id"] for s in body["sources"])
-            # Both conflicting parents must appear as sources at depth 1
-            # (answer itself is depth 0).
-            assert {a, b}.issubset(set(source_ids)), (
-                f"sources missing parents: got {source_ids}"
+            # The walker's node list is the answer (depth 0) plus both
+            # conflicting parents (depth 1); nothing else is in the chain.
+            assert source_ids == sorted([answer, a, b]), (
+                f"sources must be exactly the answer and its parents: {source_ids}"
             )
+            depths = {s["memory_id"]: s["depth"] for s in body["sources"]}
+            assert depths == {answer: 0, a: 1, b: 1}, depths
             # trust scores attached on each source row.
             for s in body["sources"]:
                 if s["memory_id"] in {a, b}:

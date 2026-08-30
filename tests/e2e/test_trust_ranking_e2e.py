@@ -12,6 +12,7 @@ Pins:
 
 from __future__ import annotations
 
+import uuid
 from pathlib import Path
 from typing import Any, Dict
 
@@ -105,7 +106,9 @@ def _write_with_derivation(
         metadata=metadata,
         infer=False,
     )
-    assert mid is not None, f"add_memory returned None for {derivation_kind!r}"
+    assert mid and uuid.UUID(mid).version == 4, (
+        f"add_memory returned {mid!r} for {derivation_kind!r}"
+    )
     return mid
 
 
@@ -140,7 +143,10 @@ class TestInitialTrustFromDerivationKind:
 
             for dk, mid in ids_by_kind.items():
                 mem = _fetch_memory(mm, mid)
-                assert mem is not None, f"memory {mid} disappeared after write"
+                assert mem is not None and mem["id"] == mid, (
+                    f"memory {mid} disappeared after write"
+                )
+                assert mem["memory"] == f"fact for {dk.value}", mem
                 trust = extract_trust(mem)
                 assert trust is not None, (
                     f"no trust attached to memory written under {dk.value!r}"
@@ -191,7 +197,7 @@ class TestEndorsementBumpsTrust:
             # Read-back through Mem0 — the trust record must have been
             # persisted to metadata, not just returned by the endpoint.
             mem = _fetch_memory(mm, mid)
-            assert mem is not None
+            assert mem is not None and mem["id"] == mid, mem
             trust = extract_trust(mem)
             assert trust is not None
             assert trust.score == pytest.approx(0.55, rel=1e-3)

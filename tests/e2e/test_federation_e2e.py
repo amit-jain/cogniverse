@@ -18,6 +18,7 @@ how :func:`org_trunk_tenant_id` resolves both back to the same trunk.
 
 from __future__ import annotations
 
+import uuid
 from pathlib import Path
 
 import httpx
@@ -143,7 +144,7 @@ def _write_shared(
         metadata=metadata,
         infer=False,
     )
-    assert mid is not None
+    assert mid and uuid.UUID(mid).version == 4, mid
     return mid
 
 
@@ -162,7 +163,7 @@ def _write_tenant_instruction(
         metadata={"kind": "tenant_instruction", "subject_key": subject_key},
         infer=False,
     )
-    assert mid is not None
+    assert mid and uuid.UUID(mid).version == 4, mid
     return mid
 
 
@@ -258,7 +259,7 @@ class TestOrgTrunkVisibleToBothTenants:
             )
             promoted_id = promotion.promoted_memory_id
             assert promotion.org_trunk_tenant_id == trunk
-            assert promoted_id, promotion
+            assert uuid.UUID(promoted_id).version == 4, promotion
 
             # Federated view from sibling tenant t2 — promoted record
             # surfaces with `_federation_origin="org_trunk"` and the
@@ -316,7 +317,7 @@ class TestTenantOverlayWinsOnSubjectKeyCollision:
                 actor_role=Pinnable.TENANT_ADMIN,
                 actor_id="alice",
             )
-            assert promotion.promoted_memory_id
+            assert uuid.UUID(promotion.promoted_memory_id).version == 4, promotion
 
             # t2 writes its OWN shared doc under the same subject_key.
             t2_local_id = _write_shared(
@@ -437,7 +438,7 @@ class TestCrossOrgIsolation:
                 actor_id="alice",
             )
             promoted_id = promotion.promoted_memory_id
-            assert promoted_id, promotion
+            assert uuid.UUID(promoted_id).version == 4, promotion
 
             # Org B's federated view should NOT contain the promoted record.
             b_view = _federated_rows(t_b)

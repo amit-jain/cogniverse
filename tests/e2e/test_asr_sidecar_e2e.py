@@ -141,12 +141,24 @@ def test_audio_processor_remote_against_cluster_sidecar(asr_sidecar_url, tmp_pat
     assert "error" not in transcript, (
         f"remote transcription must succeed; got error: {transcript.get('error')!r}"
     )
+    # AudioProcessor's remote transcript shape; the text, segments and
+    # language are what Whisper makes of one second of silence.
+    assert set(transcript) == {
+        "video_id",
+        "video_path",
+        "model",
+        "language",
+        "duration",
+        "full_text",
+        "segments",
+    }, transcript
     assert transcript["video_id"] == "silence"
-    assert "full_text" in transcript and isinstance(transcript["full_text"], str)
-    assert "segments" in transcript and isinstance(transcript["segments"], list)
+    assert transcript["video_path"] == str(audio_path)
+    assert isinstance(transcript["full_text"], str)
+    assert isinstance(transcript["segments"], list)
+    assert isinstance(transcript["duration"], (int, float)), transcript
     assert transcript.get("language"), "language field must be populated"
-    # vLLM whisper-large-v3-turbo returns its served model id in the body.
-    assert transcript.get("model"), "model field must round-trip from server"
+    assert transcript["model"] == "openai/whisper-large-v3-turbo", transcript
 
     written = tmp_path / "transcripts" / "silence_transcript.json"
     assert written.exists(), "AudioProcessor must persist the transcript JSON to disk"

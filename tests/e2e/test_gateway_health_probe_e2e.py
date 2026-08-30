@@ -99,7 +99,9 @@ class TestProbeEmitsOpenshellGatewayHealthSpan:
             f"{[s.name for s in spans]}"
         )
         attrs = dict(gateway_spans[0].attributes or {})
-        assert attrs.get("openshell.gateway_available") in {0, 1}, attrs
+        # _make_manager proved the live gateway reachable, so the probe
+        # reports available.
+        assert attrs["openshell.gateway_available"] == 1, attrs
         assert isinstance(attrs.get("openshell.gateway_latency_ms"), (int, float))
         assert attrs["openshell.gateway_latency_ms"] > 0
 

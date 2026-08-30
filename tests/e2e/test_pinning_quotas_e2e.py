@@ -14,6 +14,7 @@ Pins the shipped PinService quota path + the admin restore route:
 from __future__ import annotations
 
 import json
+import uuid
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
@@ -103,7 +104,7 @@ def _write_entity_fact(
         metadata=metadata,
         infer=False,
     )
-    assert mid is not None
+    assert mid and uuid.UUID(mid).version == 4, mid
     return mid
 
 
@@ -157,7 +158,7 @@ class TestUserQuotaEnforced:
                     metadata={"kind": "conversation_turn", "subject_key": f"c{i}"},
                     infer=False,
                 )
-                assert mid is not None
+                assert mid and uuid.UUID(mid).version == 4, mid
                 cnvs.append(mid)
 
             _set_pin_quota(tenant_id, user=2)
@@ -219,7 +220,7 @@ class TestOrgAdminOverridesQuota:
                     metadata={"kind": "conversation_turn", "subject_key": f"c{i}"},
                     infer=False,
                 )
-                assert mid is not None
+                assert mid and uuid.UUID(mid).version == 4, mid
                 cnvs.append(mid)
 
             _set_pin_quota(tenant_id, user=2)
@@ -282,7 +283,7 @@ class TestSchemaPinnableFloorRejected:
                 metadata=metadata,
                 infer=False,
             )
-            assert mid is not None
+            assert mid and uuid.UUID(mid).version == 4, mid
 
             r = _pin(
                 tenant_id,
@@ -324,7 +325,7 @@ class TestListPinsRoundTrip:
                     metadata={"kind": "conversation_turn", "subject_key": f"c{i}"},
                     infer=False,
                 )
-                assert mid is not None
+                assert mid and uuid.UUID(mid).version == 4, mid
                 mids.append(mid)
 
             for mid in mids:
@@ -403,13 +404,13 @@ class TestRestoreSoftDeletedMemory:
                 },
                 infer=False,
             )
-            assert mid is not None
+            assert mid and uuid.UUID(mid).version == 4, mid
 
             # Soft-delete via cleanup tick.
             result = mm.cleanup_with_schema(registry, set())
             assert result.get("know_rest_ephemeral:archived") == 1, result
             archived_mem = mm.memory.get(mid)
-            assert archived_mem is not None
+            assert archived_mem is not None and archived_mem["id"] == mid, archived_mem
             archived_meta = archived_mem.get("metadata") or {}
             if isinstance(archived_meta, str):
                 archived_meta = json.loads(archived_meta)
@@ -428,7 +429,7 @@ class TestRestoreSoftDeletedMemory:
 
             # Re-fetch; archived flag is gone (either absent or False).
             restored_mem = mm.memory.get(mid)
-            assert restored_mem is not None
+            assert restored_mem is not None and restored_mem["id"] == mid, restored_mem
             restored_meta = restored_mem.get("metadata") or {}
             if isinstance(restored_meta, str):
                 restored_meta = json.loads(restored_meta)

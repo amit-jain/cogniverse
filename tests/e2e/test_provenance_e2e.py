@@ -19,6 +19,7 @@ shapes — no ``is not None`` / ``len(x) >= 1`` weak shapes.
 
 from __future__ import annotations
 
+import uuid
 from pathlib import Path
 
 import httpx
@@ -173,8 +174,8 @@ def _write_with_provenance(
         metadata=metadata,
         infer=False,
     )
-    assert mid is not None, (
-        f"add_memory returned None for kind={kind!r}; provenance_required "
+    assert mid and uuid.UUID(mid).version == 4, (
+        f"add_memory returned {mid!r} for kind={kind!r}; provenance_required "
         f"schemas should not get None on a valid write"
     )
     return mid
@@ -238,7 +239,9 @@ class TestProvenanceRoundTripThroughVespa:
             # Direct store fetch — rebuild the Provenance and assert
             # the parent ref lines up exactly.
             child_rec = mm.provenance_store.get(child_id)
-            assert child_rec is not None, "child provenance not indexed"
+            assert child_rec is not None and child_rec.memory_id == child_id, (
+                "child provenance not indexed"
+            )
             child_prov = child_rec.to_provenance()
             assert child_prov.derivation_kind is DerivationKind.SYNTHESIS
             assert len(child_prov.derived_from) == 1

@@ -17,6 +17,7 @@ session-end sweep at ``_cleanup_test_tenants`` cleans up.
 
 from __future__ import annotations
 
+import uuid
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
@@ -151,8 +152,8 @@ def _seed(
         metadata=meta,
         infer=False,
     )
-    assert mid is not None, (
-        f"Mem0.add returned None for kind={kind!r} content={content[:60]!r}; "
+    assert mid and uuid.UUID(mid).version == 4, (
+        f"Mem0.add returned {mid!r} for kind={kind!r} content={content[:60]!r}; "
         f"metadata kept: {sorted(meta.keys())}"
     )
     return mid
@@ -241,9 +242,10 @@ class TestPermanentByDefault:
             assert kind not in result
             assert f"{kind}:archived" not in result
             survived = _memory_by_id(mm, mid)
-            assert survived is not None, (
+            assert survived is not None and survived["id"] == mid, (
                 f"permanent kind {kind!r} memory {mid} disappeared after cleanup"
             )
+            assert survived["memory"] == f"permanent {kind}", survived
         finally:
             mm.clear_agent_memory(tenant_id, "schema_agent")
             Mem0MemoryManager._instances.clear()
@@ -292,10 +294,10 @@ class TestRetentionEphemeralDays:
             assert result1.get("know_ephemeral_3d:archived") == 1
             assert "know_ephemeral_3d" not in result1, result1
             old_mem = _memory_by_id(mm, old_id)
-            assert old_mem is not None
+            assert old_mem is not None and old_mem["id"] == old_id
             assert mm._read_metadata(old_mem).get("archived") is True
             fresh_mem = _memory_by_id(mm, fresh_id)
-            assert fresh_mem is not None
+            assert fresh_mem is not None and fresh_mem["id"] == fresh_id
             assert "archived" not in mm._read_metadata(fresh_mem)
 
             # Re-seed the SAME content with age=7d (past 2× TTL = 6d) to
@@ -357,7 +359,8 @@ class TestRetentionSchemaDriven:
             assert result.get("learned_strategy") == 1, result
             survivors_present = {b_id, c_id}
             for mid in survivors_present:
-                assert _memory_by_id(mm, mid) is not None, (
+                survivor = _memory_by_id(mm, mid)
+                assert survivor is not None and survivor["id"] == mid, (
                     f"survivor {mid} unexpectedly removed; result={result}"
                 )
             assert _memory_by_id(mm, a_id) is None, (
@@ -425,7 +428,8 @@ class TestRetentionEphemeralSession:
             cleanup_result = mm.cleanup_with_schema(registry, set())
             assert "session_scratch" not in cleanup_result, cleanup_result
             assert "session_scratch:archived" not in cleanup_result, cleanup_result
-            assert _memory_by_id(mm, mid) is not None
+            kept = _memory_by_id(mm, mid)
+            assert kept is not None and kept["id"] == mid, kept
 
             # drop_session DOES — exact dict equality on the returned summary.
             drop_result = mm.drop_session("sess_abc", registry)
@@ -530,7 +534,8 @@ class TestPinningSurvivesLifecycle:
             # cleanup_with_schema only records a kind once it deletes or
             # archives something, so "nothing touched" is the empty mapping.
             assert per_tenant == {}, per_tenant
-            assert _memory_by_id(mm, mid) is not None, (
+            pinned = _memory_by_id(mm, mid)
+            assert pinned is not None and pinned["id"] == mid, (
                 "pinned memory was deleted despite pin_lookup returning its id"
             )
         finally:

@@ -5,14 +5,25 @@ the live runtime stack with real Vespa, LM, and agents. All
 assertions verify actual behavior, not just HTTP status codes.
 """
 
+import json
 import math
+import re
 import time
+import uuid
 from datetime import datetime, timezone
 
 import httpx
 import pytest
 
-from tests.e2e.conftest import RUNTIME, TENANT_ID
+from cogniverse_agents.wiki.wiki_schema import generate_slug
+from tests.e2e.conftest import (
+    RUNTIME,
+    TENANT_ID,
+    assert_orchestrated,
+    expected_gateway_routing,
+    register_tenant_and_wait,
+    unique_id,
+)
 from tests.e2e.test_api_e2e import PROFILE
 
 # DenseOn (768-dim, ModernBERT) served by vLLM (inference.denseon, vllm_embed).
@@ -41,9 +52,43 @@ def _semantic_similarity(text_a: str, text_b: str) -> float:
     return _cosine_sim(_embed(text_a), _embed(text_b))
 
 
-def _assert_memory_backend_ready() -> None:
+@pytest.fixture(scope="module")
+def owned_tenant():
+    """A tenant this module creates, mutates and deletes.
+
+    Instructions, jobs and memories are tenant-wide state; writing them on the
+    shared tenant leaks into every other module and makes their counts depend
+    on what earlier runs left behind.
+    """
+    org_id = unique_id("tenant_ext")
+    tenant_id = f"{org_id}:t1"
+    with httpx.Client(base_url=RUNTIME, timeout=900.0) as client:
+        try:
+            resp = client.post(
+                "/admin/organizations",
+                json={
+                    "org_id": org_id,
+                    "org_name": org_id.replace("_", "-"),
+                    "created_by": "e2e",
+                },
+            )
+            assert resp.status_code in (200, 201, 409), resp.text
+            register_tenant_and_wait(tenant_id, created_by="e2e", timeout_s=600.0)
+            yield tenant_id
+        finally:
+            try:
+                client.delete(f"/admin/tenants/{tenant_id}")
+            except httpx.HTTPError:
+                pass
+            try:
+                client.delete(f"/admin/organizations/{org_id}")
+            except httpx.HTTPError:
+                pass
+
+
+def _assert_memory_backend_ready(tenant_id: str = TENANT_ID) -> None:
     response = httpx.get(
-        f"{RUNTIME}/admin/tenant/{TENANT_ID}/memories?type=preference",
+        f"{RUNTIME}/admin/tenant/{tenant_id}/memories?type=preference",
         timeout=10.0,
     )
     assert response.status_code == 200, (
@@ -73,26 +118,25 @@ def _assert_memory_backend_ready() -> None:
 
 @pytest.mark.e2e
 class TestTenantInstructions:
-    def test_set_get_delete_round_trip(self):
+    def test_set_get_delete_round_trip(self, owned_tenant):
         with httpx.Client(base_url=RUNTIME, timeout=30.0) as client:
             resp = client.put(
-                f"/admin/tenant/{TENANT_ID}/instructions",
+                f"/admin/tenant/{owned_tenant}/instructions",
                 json={"text": "Always prefer bullet-point summaries over prose"},
             )
             assert resp.status_code == 200
-            assert (
-                resp.json()["text"] == "Always prefer bullet-point summaries over prose"
-            )
-            assert resp.json()["updated_at"]
+            put_body = resp.json()
+            assert set(put_body) == {"text", "updated_at"}, put_body
+            assert put_body["text"] == "Always prefer bullet-point summaries over prose"
+            set_at = datetime.fromisoformat(put_body["updated_at"])
+            assert set_at.tzinfo is not None, put_body["updated_at"]
 
-            resp = client.get(f"/admin/tenant/{TENANT_ID}/instructions")
+            resp = client.get(f"/admin/tenant/{owned_tenant}/instructions")
             assert resp.status_code == 200
-            assert (
-                resp.json()["text"] == "Always prefer bullet-point summaries over prose"
-            )
+            assert resp.json() == put_body, resp.json()
 
             before_delete = datetime.now(timezone.utc)
-            resp = client.delete(f"/admin/tenant/{TENANT_ID}/instructions")
+            resp = client.delete(f"/admin/tenant/{owned_tenant}/instructions")
             assert resp.status_code == 200
             assert resp.json()["status"] == "cleared"
 
@@ -100,7 +144,7 @@ class TestTenantInstructions:
             # config value, so the follow-up GET is a 200 with an empty text —
             # never a 404. Reading `text` with a "" default made an error body
             # (or any body at all) satisfy this check.
-            resp = client.get(f"/admin/tenant/{TENANT_ID}/instructions")
+            resp = client.get(f"/admin/tenant/{owned_tenant}/instructions")
             assert resp.status_code == 200, resp.text
             stored = resp.json()
             assert set(stored) == {"text", "updated_at"}, stored
@@ -199,11 +243,11 @@ class TestTenantInstructions:
 
 @pytest.mark.e2e
 class TestTenantJobs:
-    def test_full_lifecycle_with_post_actions_preserved(self):
+    def test_full_lifecycle_with_post_actions_preserved(self, owned_tenant):
         """Create → list → verify all fields → delete → verify gone."""
         with httpx.Client(base_url=RUNTIME, timeout=30.0) as client:
             resp = client.post(
-                f"/admin/tenant/{TENANT_ID}/jobs",
+                f"/admin/tenant/{owned_tenant}/jobs",
                 json={
                     "name": "weekly_ai_research",
                     "schedule": "0 9 * * 1",
@@ -225,13 +269,16 @@ class TestTenantJobs:
                 "send me a summary on Telegram",
             ]
             assert data["status"] == "created"
-            assert data["created_at"]
+            assert datetime.fromisoformat(data["created_at"]).tzinfo is not None, data
 
-            resp = client.get(f"/admin/tenant/{TENANT_ID}/jobs")
+            resp = client.get(f"/admin/tenant/{owned_tenant}/jobs")
             jobs = resp.json()["jobs"]
+            # The owned tenant holds exactly the job this test created.
+            assert [j["job_id"] for j in jobs] == [job_id], jobs
             match = [j for j in jobs if j["job_id"] == job_id]
             assert len(match) == 1, f"Job {job_id} not found in list"
             assert match[0]["name"] == "weekly_ai_research"
+            assert match[0]["schedule"] == "0 9 * * 1"
             assert match[0]["query"] == "latest papers on video retrieval with ColPali"
             assert match[0]["post_actions"] == [
                 "save to wiki",
@@ -239,53 +286,66 @@ class TestTenantJobs:
             ]
             assert match[0]["status"] == "active"
 
-            resp = client.delete(f"/admin/tenant/{TENANT_ID}/jobs/{job_id}")
+            resp = client.delete(f"/admin/tenant/{owned_tenant}/jobs/{job_id}")
             assert resp.status_code == 200
-            assert resp.json()["status"] == "deleted"
+            assert resp.json() == {"status": "deleted", "job_id": job_id}, resp.json()
 
-            resp = client.get(f"/admin/tenant/{TENANT_ID}/jobs")
+            resp = client.get(f"/admin/tenant/{owned_tenant}/jobs")
             remaining_ids = [j["job_id"] for j in resp.json()["jobs"]]
             assert job_id not in remaining_ids, "Deleted job still in list"
+            assert remaining_ids == [], remaining_ids
 
-    def test_delete_nonexistent_returns_404(self):
+    def test_delete_nonexistent_returns_404(self, owned_tenant):
         with httpx.Client(base_url=RUNTIME, timeout=10.0) as client:
-            resp = client.delete(f"/admin/tenant/{TENANT_ID}/jobs/nonexistent_xyz")
+            resp = client.delete(f"/admin/tenant/{owned_tenant}/jobs/nonexistent_xyz")
         assert resp.status_code == 404
 
 
 @pytest.mark.e2e
 class TestTenantMemories:
-    def test_create_search_delete_with_semantic_verification(self):
+    def test_create_search_delete_with_semantic_verification(self, owned_tenant):
         """Full memory lifecycle: create → semantic search → verify content → delete → verify gone."""
-        _assert_memory_backend_ready()
+        _assert_memory_backend_ready(owned_tenant)
 
+        text = "I prefer using ColPali over CLIP for video retrieval"
         # Memory add makes an LLM extraction call per text (gemma4:e2b on
         # CPU takes ~60-90s) plus embedding via DenseOn, so a 60s
         # client timeout was tight.
         with httpx.Client(base_url=RUNTIME, timeout=900.0) as client:
             resp = client.post(
-                f"/admin/tenant/{TENANT_ID}/memories",
+                f"/admin/tenant/{owned_tenant}/memories",
                 json={
-                    "text": "I prefer using ColPali over CLIP for video retrieval",
+                    "text": text,
                     "category": "search_preferences",
                 },
             )
             assert resp.status_code == 200
             data = resp.json()
-            assert data["type"] == "preference"
-            assert data["category"] == "search_preferences"
             memory_id = data["id"]
-            assert memory_id
+            assert uuid.UUID(memory_id).version == 4, data
+            assert data == {
+                "status": "saved",
+                "id": memory_id,
+                "type": "preference",
+                "category": "search_preferences",
+                "kind": None,
+            }, data
 
             time.sleep(3)
 
             resp = client.get(
-                f"/admin/tenant/{TENANT_ID}/memories",
+                f"/admin/tenant/{owned_tenant}/memories",
                 params={"q": "ColPali video retrieval", "type": "preference"},
             )
             assert resp.status_code == 200
             memories = resp.json()["memories"]
             assert len(memories) >= 1, "Search should find the stored memory"
+            # The owned tenant holds exactly the memory this test wrote; the
+            # route stores the text verbatim (infer=False).
+            assert [m["id"] for m in memories] == [memory_id], memories
+            assert resp.json()["count"] == 1, resp.json()
+            assert memories[0]["memory"] == text, memories[0]
+            assert memories[0]["category"] == "search_preferences", memories[0]
 
             best_match = memories[0]["memory"]
             sim = _semantic_similarity(
@@ -301,38 +361,42 @@ class TestTenantMemories:
                 assert m["type"] == "preference"
                 assert m["owned"] is True
 
-            resp = client.delete(f"/admin/tenant/{TENANT_ID}/memories/{memory_id}")
+            resp = client.delete(f"/admin/tenant/{owned_tenant}/memories/{memory_id}")
             assert resp.status_code == 200
+            assert resp.json() == {"status": "deleted"}, resp.json()
 
             time.sleep(2)
 
             resp = client.get(
-                f"/admin/tenant/{TENANT_ID}/memories",
+                f"/admin/tenant/{owned_tenant}/memories",
                 params={"q": "ColPali video retrieval", "type": "preference"},
             )
             for m in resp.json()["memories"]:
                 assert m["id"] != memory_id, f"Deleted memory {memory_id} still visible"
+            assert resp.json() == {"memories": [], "count": 0}, resp.json()
 
-    def test_strategy_type_visible_not_owned(self):
-        """System strategies are visible through the API with owned=false.
+    def test_strategy_type_visible_not_owned(self, owned_tenant):
+        """A user memory never surfaces as a strategy.
 
-        Seeds a strategy via the admin endpoint to guarantee at least one exists.
+        Strategies are system-learned; on a tenant that has only seen a user
+        preference write, the strategy listing is exactly empty.
         """
-        _assert_memory_backend_ready()
+        _assert_memory_backend_ready(owned_tenant)
 
         # Memory add makes an LLM extraction call per text (gemma4:e2b on
         # CPU takes ~60-90s) plus embedding via DenseOn, so a 60s
         # client timeout was tight.
         with httpx.Client(base_url=RUNTIME, timeout=900.0) as client:
-            # Seed a strategy so we're not testing against empty state
-            client.post(
-                f"/admin/tenant/{TENANT_ID}/memories",
+            seeded = client.post(
+                f"/admin/tenant/{owned_tenant}/memories",
                 json={"text": "I prefer chunk-level retrieval for temporal queries"},
             )
+            assert seeded.status_code == 200, seeded.text[:300]
+            assert seeded.json()["status"] == "saved", seeded.json()
             time.sleep(2)
 
             resp = client.get(
-                f"/admin/tenant/{TENANT_ID}/memories",
+                f"/admin/tenant/{owned_tenant}/memories",
                 params={"type": "strategy"},
             )
             assert resp.status_code == 200
@@ -340,98 +404,109 @@ class TestTenantMemories:
             for mem in data["memories"]:
                 assert mem["type"] == "strategy"
                 assert mem["owned"] is False
+            assert data == {"memories": [], "count": 0}, data
 
-    def test_bulk_clear_preserves_strategies(self):
+    def test_bulk_clear_preserves_strategies(self, owned_tenant):
         """Clearing user memories must not touch system strategies."""
-        _assert_memory_backend_ready()
+        _assert_memory_backend_ready(owned_tenant)
 
         # Memory add makes an LLM extraction call per text (gemma4:e2b on
         # CPU takes ~60-90s) plus embedding via DenseOn, so a 60s
         # client timeout was tight.
         with httpx.Client(base_url=RUNTIME, timeout=900.0) as client:
-            client.post(
-                f"/admin/tenant/{TENANT_ID}/memories",
+            seeded = client.post(
+                f"/admin/tenant/{owned_tenant}/memories",
                 json={"text": "I prefer dark mode for all dashboards"},
             )
+            assert seeded.status_code == 200, seeded.text[:300]
             time.sleep(2)
 
             strategies_before = client.get(
-                f"/admin/tenant/{TENANT_ID}/memories",
+                f"/admin/tenant/{owned_tenant}/memories",
                 params={"type": "strategy"},
             ).json()["count"]
+            assert strategies_before == 0, strategies_before
 
-            resp = client.delete(f"/admin/tenant/{TENANT_ID}/memories")
+            resp = client.delete(f"/admin/tenant/{owned_tenant}/memories")
             assert resp.status_code == 200
-            assert resp.json()["status"] == "cleared"
+            assert resp.json() == {"status": "cleared"}, resp.json()
 
             time.sleep(2)
 
             prefs = client.get(
-                f"/admin/tenant/{TENANT_ID}/memories",
+                f"/admin/tenant/{owned_tenant}/memories",
                 params={"type": "preference"},
             ).json()
             assert prefs["count"] == 0, "User memories should be cleared"
+            assert prefs == {"memories": [], "count": 0}, prefs
 
             strategies_after = client.get(
-                f"/admin/tenant/{TENANT_ID}/memories",
+                f"/admin/tenant/{owned_tenant}/memories",
                 params={"type": "strategy"},
             ).json()["count"]
             assert strategies_after >= strategies_before, (
                 f"Strategies should survive user clear: {strategies_before} → {strategies_after}"
             )
+            assert strategies_after == 0, strategies_after
 
 
 @pytest.mark.e2e
 class TestAdminMemoryManagement:
     """Admin can delete any memory including system memories."""
 
-    def test_admin_delete_any_memory(self):
-        _assert_memory_backend_ready()
+    def test_admin_delete_any_memory(self, owned_tenant):
+        _assert_memory_backend_ready(owned_tenant)
 
         # Memory add makes an LLM extraction call per text (gemma4:e2b on
         # CPU takes ~60-90s) plus embedding via DenseOn, so a 60s
         # client timeout was tight.
         with httpx.Client(base_url=RUNTIME, timeout=900.0) as client:
             resp = client.post(
-                f"/admin/tenant/{TENANT_ID}/memories",
+                f"/admin/tenant/{owned_tenant}/memories",
                 json={"text": "I prefer using FAISS for nearest neighbor search"},
             )
+            assert resp.status_code == 200, resp.text[:300]
             memory_id = resp.json()["id"]
-            assert memory_id
+            assert uuid.UUID(memory_id).version == 4, resp.json()
 
             time.sleep(2)
 
-            resp = client.delete(f"/admin/memories/{TENANT_ID}/{memory_id}")
+            resp = client.delete(f"/admin/memories/{owned_tenant}/{memory_id}")
             assert resp.status_code == 200
-            assert resp.json()["status"] == "deleted"
+            assert resp.json() == {"status": "deleted", "memory_id": memory_id}, (
+                resp.json()
+            )
 
-    def test_admin_clear_by_type(self):
-        _assert_memory_backend_ready()
+    def test_admin_clear_by_type(self, owned_tenant):
+        _assert_memory_backend_ready(owned_tenant)
 
         # Memory add makes an LLM extraction call per text (gemma4:e2b on
         # CPU takes ~60-90s) plus embedding via DenseOn, so a 60s
         # client timeout was tight.
         with httpx.Client(base_url=RUNTIME, timeout=900.0) as client:
-            client.post(
-                f"/admin/tenant/{TENANT_ID}/memories",
+            seeded = client.post(
+                f"/admin/tenant/{owned_tenant}/memories",
                 json={"text": "I prefer PostgreSQL over MySQL"},
             )
+            assert seeded.status_code == 200, seeded.text[:300]
             time.sleep(2)
 
             resp = client.delete(
-                f"/admin/memories/{TENANT_ID}",
+                f"/admin/memories/{owned_tenant}",
                 params={"type": "preference"},
             )
             assert resp.status_code == 200
-            assert resp.json()["type"] == "preference"
+            assert resp.json() == {"status": "cleared", "type": "preference"}, (
+                resp.json()
+            )
 
             time.sleep(2)
 
             resp = client.get(
-                f"/admin/tenant/{TENANT_ID}/memories",
+                f"/admin/tenant/{owned_tenant}/memories",
                 params={"type": "preference"},
             )
-            assert resp.json()["count"] == 0
+            assert resp.json() == {"memories": [], "count": 0}, resp.json()
 
 
 @pytest.mark.e2e
@@ -443,12 +518,13 @@ class TestJobExecution:
         # LM-bound: the gateway's routed call can queue behind long
         # generations on the ~12 tok/s LM — same 900s budget the other
         # LM-bound tests in this file use.
+        query = "find videos about outdoor nature scenes"
         with httpx.Client(base_url=RUNTIME, timeout=900.0) as client:
             resp = client.post(
                 "/agents/gateway_agent/process",
                 json={
                     "agent_name": "gateway_agent",
-                    "query": "find videos about outdoor nature scenes",
+                    "query": query,
                     "context": {"tenant_id": TENANT_ID},
                     "top_k": 3,
                 },
@@ -456,35 +532,69 @@ class TestJobExecution:
         assert resp.status_code == 200
         data = resp.json()
         assert data["status"] == "success"
-        # Response varies by dispatch path: direct routing, gateway, or orchestrator
-        agent = (
-            data.get("recommended_agent")
-            or data.get("gateway", {}).get("routed_to")
-            or data.get("agent")
+        # The gateway stamps its triage on both dispatch paths; the route it
+        # picked is checked against the shipped classification rules.
+        gw = data["gateway"]
+        assert (gw["complexity"], gw["routed_to"]) == expected_gateway_routing(
+            query, gw
         )
-        assert agent is not None, f"No agent in response: {list(data.keys())}"
+        assert gw["modality"] == "video", gw
+        if gw["complexity"] == "simple":
+            assert data["agent"] == "gateway_agent", data
+            assert data["downstream_result"]["status"] == "success", data
+            assert gw["confidence"] >= gw["fast_path_confidence_threshold"], gw
+        else:
+            assert_orchestrated(data, query, gw)
 
     def test_wiki_save_and_retrieve(self):
-        """Save content to wiki → retrieve by slug → verify content."""
-        unique_marker = f"e2e_test_{int(time.time())}"
+        """Save content to wiki → retrieve the topic by slug → verify content."""
+        unique_marker = f"e2e_test_{uuid.uuid4().hex[:12]}"
         content = f"ColPali retrieval outperforms CLIP on temporal video queries ({unique_marker})"
+        query = f"ColPali vs CLIP benchmark results {unique_marker}"
+        # A fresh entity name gives this test its own topic page; the shared
+        # ColPali / CLIP topics accumulate (and RLM-merge) across runs.
+        entity = f"benchmark {unique_marker}"
+        safe_tenant = TENANT_ID.replace(":", "_")
 
         with httpx.Client(base_url=RUNTIME, timeout=900.0) as client:
             resp = client.post(
                 "/wiki/save",
                 json={
-                    "query": f"ColPali vs CLIP benchmark results {unique_marker}",
+                    "query": query,
                     "response": {"answer": content},
-                    "entities": ["ColPali", "CLIP", "video retrieval"],
+                    "entities": [entity],
                     "tenant_id": TENANT_ID,
                 },
             )
             assert resp.status_code == 200
             data = resp.json()
-            assert data["status"] == "saved"
-            assert data["doc_id"]
+            title = f"Session — {query[:60]}"
+            assert data == {
+                "status": "saved",
+                "doc_id": data["doc_id"],
+                "title": title,
+                "slug": generate_slug(title),
+            }, data
+            assert re.fullmatch(
+                rf"wiki_session_{safe_tenant}_\d{{20}}", data["doc_id"]
+            ), data["doc_id"]
             slug = data["slug"]
             assert slug
+
+            topic_slug = generate_slug(entity)
+            topic = client.get(
+                f"/wiki/topic/{topic_slug}", params={"tenant_id": TENANT_ID}
+            )
+            assert topic.status_code == 200, topic.text[:300]
+            assert topic.json() == {
+                "doc_id": f"wiki_topic_{safe_tenant}_{topic_slug}",
+                "title": entity,
+                "content": content,
+                "page_type": "topic",
+                "entities": json.dumps([entity]),
+                "sources": "[]",
+                "update_count": 1,
+            }, topic.json()
 
     async def test_job_execute_with_wiki_delivery(self):
         """Create job → execute → verify wiki save actually happened.
@@ -736,6 +846,8 @@ class TestSearchBehavior:
         assert resp.status_code == 200
         data = resp.json()
         assert data["results_count"] >= 1
+        assert data["results_count"] == len(data["results"]), data
+        assert data["results_count"] <= 5, data
         assert data["profile"] == PROFILE
 
         scores = [r["score"] for r in data["results"]]
@@ -767,7 +879,10 @@ class TestSearchBehavior:
                 },
             )
         assert resp.status_code == 200
-        for result in resp.json()["results"]:
+        body = resp.json()
+        assert body["results_count"] == len(body["results"]), body
+        assert body["results_count"] <= 3, body
+        for result in body["results"]:
             assert "document_id" in result
             assert "score" in result
             assert "metadata" in result

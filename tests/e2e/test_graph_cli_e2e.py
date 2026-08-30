@@ -27,6 +27,42 @@ GRAPH_SEARCH_URL = f"{RUNTIME}/graph/search"
 GRAPH_NEIGHBORS_URL = f"{RUNTIME}/graph/neighbors"
 GRAPH_PATH_URL = f"{RUNTIME}/graph/path"
 
+STATS_FIELDS = {"tenant_id", "node_count", "edge_count", "top_nodes"}
+
+# Vespa indexes upserted nodes asynchronously; under sweep load the stats
+# endpoint lags the upsert by more than a fixed sleep, so every stats read
+# polls until the tenant reports exactly the counts its upserts produced.
+STATS_DEADLINE_S = 60.0
+STATS_POLL_S = 2
+
+
+def _wait_for_stats(
+    client: httpx.Client, tenant: str, *, node_count: int, edge_count: int
+) -> dict:
+    """Poll /graph/stats until the tenant holds exactly the given counts."""
+    deadline = time.monotonic() + STATS_DEADLINE_S
+    stats: dict = {}
+    while time.monotonic() < deadline:
+        resp = client.get(GRAPH_STATS_URL, params={"tenant_id": tenant})
+        assert resp.status_code == 200, resp.text[:500]
+        stats = resp.json()
+        assert set(stats) == STATS_FIELDS, stats
+        if (stats["node_count"], stats["edge_count"]) == (node_count, edge_count):
+            return stats
+        time.sleep(STATS_POLL_S)
+    raise AssertionError(
+        f"/graph/stats for {tenant} never reached node_count={node_count} "
+        f"edge_count={edge_count} within {STATS_DEADLINE_S:.0f}s; last: {stats}"
+    )
+
+
+def _degree_table(stats: dict) -> list[tuple[str, int]]:
+    """top_nodes as (node_id, degree) sorted so tie order is irrelevant."""
+    return sorted(
+        ((node["node_id"], node["degree"]) for node in stats["top_nodes"]),
+        key=lambda pair: (-pair[1], pair[0]),
+    )
+
 
 def _unique_tenant() -> str:
     """Mint a fresh tenant id, register it, and wait for full readiness.
@@ -91,17 +127,21 @@ class TestGraphEndpoints:
             )
             assert resp.status_code == 200, resp.text
             data = resp.json()
-            assert data["status"] == "upserted"
-            assert data["nodes_upserted"] == 3
-            assert data["edges_upserted"] == 2
+            assert data == {
+                "status": "upserted",
+                "nodes_upserted": 3,
+                "edges_upserted": 2,
+                "failed_ids": [],
+            }, data
 
-            time.sleep(3)
-
-            resp = client.get(GRAPH_STATS_URL, params={"tenant_id": tenant})
-            assert resp.status_code == 200
-            stats = resp.json()
-            assert stats["node_count"] >= 3
-            assert stats["edge_count"] >= 2
+            stats = _wait_for_stats(client, tenant, node_count=3, edge_count=2)
+            assert stats["node_count"] == 3
+            assert stats["edge_count"] == 2
+            assert _degree_table(stats) == [
+                ("entityb", 2),
+                ("entitya", 1),
+                ("entityc", 1),
+            ], stats["top_nodes"]
 
     def test_neighbors_returns_outgoing_edges(self):
         tenant = _unique_tenant()
@@ -269,23 +309,30 @@ class TestGraphEndpoints:
                 },
             ],
         }
+        expected_upsert = {
+            "status": "upserted",
+            "nodes_upserted": 2,
+            "edges_upserted": 1,
+            "failed_ids": [],
+        }
         with httpx.Client(timeout=60.0) as client:
             up1 = client.post(GRAPH_UPSERT_URL, json=payload)
             assert up1.status_code == 200, up1.text[:500]
-            time.sleep(3)
-            first_resp = client.get(GRAPH_STATS_URL, params={"tenant_id": tenant})
-            assert first_resp.status_code == 200, first_resp.text[:500]
-            first = first_resp.json()
+            assert up1.json() == expected_upsert, up1.json()
+            first = _wait_for_stats(client, tenant, node_count=2, edge_count=1)
+            assert _degree_table(first) == [("bar", 1), ("foo", 1)], first["top_nodes"]
 
             up2 = client.post(GRAPH_UPSERT_URL, json=payload)
             assert up2.status_code == 200, up2.text[:500]
-            time.sleep(3)
-            second_resp = client.get(GRAPH_STATS_URL, params={"tenant_id": tenant})
-            assert second_resp.status_code == 200, second_resp.text[:500]
-            second = second_resp.json()
+            assert up2.json() == expected_upsert, up2.json()
+            # Re-upserting the same ids changes nothing: same counts, same
+            # degrees, once the second feed has been indexed.
+            time.sleep(STATS_POLL_S)
+            second = _wait_for_stats(client, tenant, node_count=2, edge_count=1)
 
             assert first["node_count"] == second["node_count"]
             assert first["edge_count"] == second["edge_count"]
+            assert _degree_table(first) == _degree_table(second)
 
 
 @pytest.mark.e2e
@@ -327,10 +374,22 @@ class TestMultimodalGraphExtraction:
         data = resp.json()
         assert data["status"] == "success", data
 
-        assert "graph_nodes" in data, (
-            "ingestion response should include graph_nodes field"
-        )
-        assert "graph_edges" in data
+        # The worker runs one merged KG upsert per ingest and stamps its
+        # nodes_upserted / edges_upserted on the terminal payload; on this fresh
+        # tenant those are exactly the documents /graph/stats can see.
+        assert type(data["graph_nodes"]) is int, data
+        assert type(data["graph_edges"]) is int, data
+        with httpx.Client(timeout=60.0) as client:
+            stats = _wait_for_stats(
+                client,
+                tenant,
+                node_count=data["graph_nodes"],
+                edge_count=data["graph_edges"],
+            )
+        assert (stats["node_count"], stats["edge_count"]) == (
+            data["graph_nodes"],
+            data["graph_edges"],
+        ), (stats, data)
 
 
 @pytest.mark.e2e
@@ -363,20 +422,26 @@ class TestCliIndexWithGraph:
             )
 
         assert summary["files_found"] == 1
-        assert summary["graph_nodes"] >= 2, (
-            f"Expected >= 2 graph nodes for utils.py, got {summary['graph_nodes']}"
-        )
-        assert summary["graph_edges"] >= 1, (
-            f"Expected >= 1 graph edge for utils.py, got {summary['graph_edges']}"
-        )
-
-        time.sleep(3)
+        # CodeExtractor is tree-sitter driven: utils.py yields the module node
+        # plus make_greeter / Greeter / __init__ / greet, four `defines` edges,
+        # `__init__ calls make_greeter` and `greet calls greeter` (the attribute
+        # call normalises onto the Greeter node id).
+        assert summary["graph_errors"] == 0, summary
+        assert summary["graph_nodes"] == 5, summary
+        assert summary["graph_edges"] == 6, summary
 
         with httpx.Client(timeout=30.0) as client:
-            stats = client.get(GRAPH_STATS_URL, params={"tenant_id": tenant}).json()
+            stats = _wait_for_stats(client, tenant, node_count=5, edge_count=6)
 
-        assert stats["node_count"] >= 2
-        assert stats["edge_count"] >= 1
+        assert stats["node_count"] == 5
+        assert stats["edge_count"] == 6
+        assert _degree_table(stats) == [
+            ("utils", 4),
+            ("greet", 2),
+            ("greeter", 2),
+            ("init", 2),
+            ("make_greeter", 2),
+        ], stats["top_nodes"]
 
     def test_index_docs_emits_graph_from_markdown(self):
         from cogniverse_cli.index import index_files
@@ -407,22 +472,22 @@ class TestCliIndexWithGraph:
             f"Expected >= 2 graph nodes from markdown, got {summary['graph_nodes']}"
         )
 
-        # Vespa indexing of the freshly-upserted nodes is async — a flat
-        # 3 s sleep was enough on an idle cluster but fails under sweep
-        # load when Vespa has many concurrent feed operations. Poll the
-        # stats endpoint until the upserted nodes are visible.
-        node_count = 0
-        deadline = time.monotonic() + 60.0
+        # GLiNER picks the entities, so the counts are not pinned; what is
+        # pinned is that the CLI's reported upsert counts are exactly what the
+        # fresh tenant's /graph/stats can see once Vespa has indexed them.
         with httpx.Client(timeout=30.0) as client:
-            while time.monotonic() < deadline:
-                stats = client.get(GRAPH_STATS_URL, params={"tenant_id": tenant}).json()
-                node_count = stats.get("node_count", 0)
-                if node_count >= 2:
-                    break
-                time.sleep(2)
+            stats = _wait_for_stats(
+                client,
+                tenant,
+                node_count=summary["graph_nodes"],
+                edge_count=summary["graph_edges"],
+            )
+        node_count = stats["node_count"]
 
         assert node_count >= 2, (
             f"After 60s, Vespa /graph/stats still shows {node_count} nodes "
             f"despite POST /graph/upsert reporting {summary['graph_nodes']} "
             f"nodes upserted for tenant={tenant}"
         )
+        assert node_count == summary["graph_nodes"], (stats, summary)
+        assert stats["edge_count"] == summary["graph_edges"], (stats, summary)

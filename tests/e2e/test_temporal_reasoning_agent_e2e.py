@@ -12,6 +12,7 @@ Pins the agent's window-bucketing contract:
 
 from __future__ import annotations
 
+import uuid
 from pathlib import Path
 
 import httpx
@@ -135,7 +136,7 @@ def _write_at(
         metadata=metadata,
         infer=False,
     )
-    assert mid is not None
+    assert mid and uuid.UUID(mid).version == 4, mid
     return mid
 
 
