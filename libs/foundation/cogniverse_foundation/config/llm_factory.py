@@ -18,10 +18,12 @@ one well-formed log line per construction.
 from __future__ import annotations
 
 import logging
+import os
 from typing import TYPE_CHECKING
 from urllib.parse import urlsplit, urlunsplit
 
 from cogniverse_foundation.config.bootstrap import (
+    INFERENCE_API_KEY_ENV,
     inference_api_key_from_environment,
 )
 from cogniverse_foundation.config.inference_auth import is_modal_inference_url
@@ -41,6 +43,20 @@ logger = logging.getLogger(__name__)
 
 # What the chart renders for an endpoint whose real key lives in a Secret.
 _PLACEHOLDER_API_KEY = "placeholder-no-auth-needed"
+
+
+def _optional_environment_bearer() -> str | None:
+    """The synced inference bearer, or None when the environment has none.
+
+    Narrow by construction rather than by catching: the reader raises on an
+    absent or untrimmed value, and only the absent case is a legitimate "no
+    bearer configured". An untrimmed one is a misconfiguration and must still
+    raise from the caller.
+    """
+    raw = os.environ.get(INFERENCE_API_KEY_ENV)
+    if raw is None or raw == "":
+        return None
+    return inference_api_key_from_environment()
 
 
 def _endpoint_root(api_base: str) -> str:
@@ -78,19 +94,31 @@ def create_dspy_lm(config: LLMEndpointConfig) -> dspy.LM:
     if config.api_base is not None:
         kwargs["api_base"] = config.api_base
 
-    if config.api_base is not None and is_modal_inference_url(
+    external = config.api_base is not None and is_modal_inference_url(
         _endpoint_root(config.api_base)
+    )
+    if config.api_base is not None and config.api_key in (
+        None,
+        _PLACEHOLDER_API_KEY,
     ):
-        # An external endpoint enforces auth, and the chart cannot put the
-        # bearer in config.json because that renders into a ConfigMap. The
-        # placeholder it emits instead would fail server-side with
-        # AuthenticationError, so resolve the real key from the environment,
-        # which is where the synced Secret lands. An explicitly configured key
-        # still wins.
-        if config.api_key in (None, _PLACEHOLDER_API_KEY):
+        # The chart cannot put the bearer in config.json because that renders
+        # into a ConfigMap, so it emits a placeholder that a real endpoint
+        # rejects with AuthenticationError. Send the environment bearer whenever
+        # one exists rather than gating on whether the api_base LOOKS external:
+        # agent traffic addresses the in-cluster semantic router, which forwards
+        # to Modal, so the caller cannot know what the ultimate upstream is. A
+        # self-hosted vLLM ignores an Authorization header it does not check.
+        bearer = _optional_environment_bearer()
+        if bearer is not None:
+            kwargs["api_key"] = bearer
+        elif external:
+            # No bearer for an endpoint that demands one: fail here, naming the
+            # variable, rather than server-side on the first call.
             kwargs["api_key"] = inference_api_key_from_environment()
-        else:
+        elif config.api_key is not None:
             kwargs["api_key"] = config.api_key
+        else:
+            kwargs["api_key"] = "not-required"
     elif config.api_key is not None:
         kwargs["api_key"] = config.api_key
     elif config.api_base is not None:

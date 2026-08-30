@@ -33,8 +33,24 @@ def test_external_endpoint_gets_the_environment_bearer(monkeypatch):
     assert lm.kwargs["api_key"] == "real-bearer"
 
 
-def test_in_cluster_endpoint_keeps_the_placeholder(monkeypatch):
+def test_in_cluster_endpoint_also_gets_the_bearer_when_one_exists(monkeypatch):
+    """A caller cannot know what is behind a proxy.
+
+    Agent traffic goes to the in-cluster semantic router, which forwards to
+    Modal. Gating on "does the api_base look external" left those calls
+    unauthenticated. A self-hosted vLLM ignores an Authorization header it does
+    not check, so sending it is safe and sending it is the only correct choice
+    when the ultimate upstream is unknown.
+    """
     monkeypatch.setenv("COGNIVERSE_INFERENCE_API_KEY", "real-bearer")
+
+    lm = create_dspy_lm(_config(IN_CLUSTER, PLACEHOLDER))
+
+    assert lm.kwargs["api_key"] == "real-bearer"
+
+
+def test_in_cluster_endpoint_keeps_the_placeholder_without_a_bearer(monkeypatch):
+    monkeypatch.delenv("COGNIVERSE_INFERENCE_API_KEY", raising=False)
 
     lm = create_dspy_lm(_config(IN_CLUSTER, PLACEHOLDER))
 
