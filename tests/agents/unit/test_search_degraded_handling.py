@@ -94,7 +94,11 @@ async def test_document_text_search_raises_on_degraded_body(monkeypatch):
         lambda *a, **k: _DegradedHTTPResponse(),
     )
     agent = DocumentAgent(
-        deps=DocumentAgentDeps(tenant_id="t1", vespa_endpoint="http://localhost:1")
+        deps=DocumentAgentDeps(
+            tenant_id="t1",
+            vespa_endpoint="http://localhost:1",
+            deployed_document_schemas=("document_text",),
+        )
     )
     # Bypass the lazy ColBERT load — the seam under test is the Vespa response.
     agent._text_query_encoder = type(

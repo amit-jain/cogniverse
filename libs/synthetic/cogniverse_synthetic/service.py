@@ -508,23 +508,41 @@ class SyntheticDataService:
                 ) from exc
 
         def groundable(items: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
+            # The querier splits the request across profiles, so keep that
+            # split: a global cap lets the first profile fill the whole quota
+            # and starve the rest, and cross_modal needs a record from every
+            # selected modality. Dedup is per profile because two profiles
+            # over one corpus carry identical text for different documents.
+            if not items:
+                return []
+            base_quota, remainder = divmod(sample_size, len(profile_configs))
             grounded: List[Dict[str, Any]] = []
-            seen_texts: set[str] = set()
-            for item in items:
-                text = topic_source_text(item)
-                if text is None or text in seen_texts:
-                    continue
-                seen_texts.add(text)
-                grounded.append(item)
-                if len(grounded) == sample_size:
-                    break
+            for index, profile_config in enumerate(profile_configs):
+                quota = base_quota + (1 if index < remainder else 0)
+                seen_texts: set[str] = set()
+                kept = 0
+                for item in items:
+                    if kept == quota:
+                        break
+                    if item.get("profile_name") != profile_config["profile_name"]:
+                        continue
+                    text = topic_source_text(item)
+                    if text is None or text in seen_texts:
+                        continue
+                    seen_texts.add(text)
+                    grounded.append(item)
+                    kept += 1
             return grounded
 
         # Every generator grounds on a record's topic text, so a record
         # carrying none is unusable. Widen the draw only to replace records
         # actually dropped, leaving a clean sample exactly as it was drawn.
-        grounded = groundable(await query(sample_size))
-        if len(grounded) < sample_size:
+        sampled_content = await query(sample_size)
+        grounded = groundable(sampled_content)
+        # Widen only when records were actually dropped as unusable. A corpus
+        # that simply holds fewer records than requested is already exhausted,
+        # and re-querying it just costs a second round trip.
+        if len(grounded) < sample_size and len(grounded) < len(sampled_content):
             widened = min(sample_size * _TOPIC_TEXT_OVERSAMPLE, sample_size + 100)
             grounded = groundable(await query(widened))
         return grounded
