@@ -504,3 +504,43 @@ class TestConfigChangeRollsThePods:
                     "cogniverse.io/router-config-checksum"
                 ]
             ), name
+
+
+def _llm_route(docs: list[dict]) -> dict:
+    for d in docs:
+        if (
+            d.get("kind") == "ConfigMap"
+            and d.get("metadata", {}).get("name") == "cogniverse-semantic-router-envoy"
+        ):
+            envoy = yaml.safe_load(d["data"]["envoy.yaml"])
+            for listener in envoy["static_resources"]["listeners"]:
+                for chain in listener["filter_chains"]:
+                    for filt in chain["filters"]:
+                        cfg = filt["typed_config"]
+                        for vhost in cfg["route_config"]["virtual_hosts"]:
+                            for route in vhost["routes"]:
+                                if route["route"].get("cluster") == "llm_upstream":
+                                    return route["route"]
+    raise AssertionError("llm_upstream route not rendered")
+
+
+class TestUpstreamHostHeader:
+    """Modal routes by Host header, not by path.
+
+    Envoy forwarded the client's authority (the in-cluster envoy Service name),
+    which Modal answered with 'modal-http: invalid function call' - surfaced as
+    litellm NotFoundError on every agent call.
+    """
+
+    HTTPS = "https://amit-jain--cogniverse-vllm-llm-student-inference.modal.run/v1"
+    HTTP = "http://cogniverse-vllm-llm-student:8000/v1"
+
+    def test_external_upstream_rewrites_the_host_header(self):
+        route = _llm_route(_render(f"runtime.primaryLLM.apiBase={self.HTTPS}"))
+
+        assert route["auto_host_rewrite"] is True
+
+    def test_in_cluster_upstream_leaves_the_host_alone(self):
+        route = _llm_route(_render(f"runtime.primaryLLM.apiBase={self.HTTP}"))
+
+        assert "auto_host_rewrite" not in route
