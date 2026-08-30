@@ -8,8 +8,10 @@ from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from threading import Barrier, Event, Thread
 from time import sleep
 from types import SimpleNamespace
+from unittest.mock import patch
 
 import httpx
+import modal
 import pytest
 from click.testing import CliRunner
 from cogniverse_cli.inference_endpoints import (
@@ -84,6 +86,15 @@ class _ModalApp:
 
     def deploy(self, *, name: str) -> None:
         self.deploy_calls.append({"name": name})
+
+
+class _FailingModalApp:
+    def __init__(self) -> None:
+        self.deploy_calls: list[dict[str, str]] = []
+
+    def deploy(self, *, name: str) -> None:
+        self.deploy_calls.append({"name": name})
+        raise RuntimeError("controlled build failure")
 
 
 class _CanonicalModalTransport(httpx.BaseTransport):
@@ -254,6 +265,50 @@ def test_deploy_uses_the_canonical_app_name_without_stopping_or_warming():
             active_containers=0,
         ),
     )
+
+
+def test_deploy_enables_modal_output_for_build_logs(monkeypatch):
+    import cogniverse_cli.modal_inference_lifecycle as lifecycle_module
+
+    function = _ModalFunction("https://colpali.modal.run")
+    app = _FailingModalApp()
+    loaded: list[str] = []
+    output_state = SimpleNamespace(entered=0, exited=0)
+
+    class _OutputContext:
+        def __enter__(self):
+            output_state.entered += 1
+            return self
+
+        def __exit__(self, exc_type, exc, tb):
+            output_state.exited += 1
+            return False
+
+    def load(spec):
+        loaded.append(spec.name)
+        return app
+
+    monkeypatch.setattr(lifecycle_module, "modal", modal, raising=False)
+    with httpx.Client(timeout=2) as client:
+        lifecycle, _, _ = _make_lifecycle(
+            {"vllm_colpali": function},
+            client=client,
+            deployment_loader=load,
+        )
+        with patch.object(
+            modal, "enable_output", return_value=_OutputContext()
+        ) as enable_output:
+            with pytest.raises(
+                ModalLifecycleError,
+                match="vllm_colpali: Modal deployment failed: controlled build failure",
+            ):
+                lifecycle.deploy(["vllm_colpali"])
+
+    assert enable_output.call_count == 1
+    assert output_state.entered == 1
+    assert output_state.exited == 1
+    assert loaded == ["vllm_colpali"]
+    assert app.deploy_calls == [{"name": "cogniverse-vllm-colpali"}]
 
 
 def test_warm_retries_cold_health_then_verifies_identity_once_and_releases():

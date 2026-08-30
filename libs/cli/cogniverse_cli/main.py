@@ -57,6 +57,7 @@ from cogniverse_cli.images import (
     pull_and_import_third_party,
     verify_local_images_cover_deploy,
 )
+from cogniverse_cli.secrets import read_secret
 
 console = Console()
 
@@ -69,7 +70,7 @@ def _build_modal_inference_lifecycle():
 
     return ModalInferenceLifecycle(
         credentials=EndpointCredentials(
-            bearer_token=os.environ.get("COGNIVERSE_INFERENCE_API_KEY")
+            bearer_token=read_secret("COGNIVERSE_INFERENCE_API_KEY")
         )
     )
 

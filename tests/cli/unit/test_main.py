@@ -1691,3 +1691,27 @@ class TestModalInferenceCommands:
         assert built is lifecycle_class.return_value
         credentials = lifecycle_class.call_args.kwargs["credentials"]
         assert credentials.bearer_token == "expected-key"
+
+    def test_factory_reads_the_bearer_key_from_local_env_file(
+        self,
+        monkeypatch: pytest.MonkeyPatch,
+        tmp_path: Path,
+    ) -> None:
+        import cogniverse_cli.main as main_module
+
+        env_dir = tmp_path / ".env"
+        env_dir.mkdir()
+        (env_dir / "COGNIVERSE_INFERENCE_API_KEY.env").write_text(
+            "COGNIVERSE_INFERENCE_API_KEY=file-key\n"
+        )
+        monkeypatch.chdir(tmp_path)
+        monkeypatch.delenv("COGNIVERSE_INFERENCE_API_KEY", raising=False)
+
+        with patch(
+            "cogniverse_cli.modal_inference_lifecycle.ModalInferenceLifecycle"
+        ) as lifecycle_class:
+            built = main_module._build_modal_inference_lifecycle()
+
+        assert built is lifecycle_class.return_value
+        credentials = lifecycle_class.call_args.kwargs["credentials"]
+        assert credentials.bearer_token == "file-key"

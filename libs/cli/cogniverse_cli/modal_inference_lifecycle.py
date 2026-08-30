@@ -11,6 +11,7 @@ from types import TracebackType
 from typing import Callable, Iterable, Sequence
 
 import httpx
+import modal
 
 from cogniverse_cli.inference_endpoints import (
     CandidateEndpoint,
@@ -180,14 +181,15 @@ class ModalInferenceLifecycle:
         """Deploy each canonical Modal app without allocating a warm replica."""
 
         specs = self._service_specs(services)
-        for spec in specs:
-            try:
-                app = self._deployment_loader(spec)
-                app.deploy(name=spec.modal_app)
-            except Exception as exc:
-                raise ModalLifecycleError(
-                    f"{spec.name}: Modal deployment failed: {self._redact(exc)}"
-                ) from None
+        try:
+            with modal.enable_output():
+                for spec in specs:
+                    app = self._deployment_loader(spec)
+                    app.deploy(name=spec.modal_app)
+        except Exception as exc:
+            raise ModalLifecycleError(
+                f"{spec.name}: Modal deployment failed: {self._redact(exc)}"
+            ) from None
         return self._statuses(specs)
 
     @_lifecycle_operation
