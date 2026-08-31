@@ -10,10 +10,13 @@ search.
 """
 
 from dataclasses import dataclass
+from types import SimpleNamespace
 from unittest.mock import MagicMock
 
 import pytest
 
+from cogniverse_agents.gateway_agent import GatewayAgent as RealGatewayAgent
+from cogniverse_agents.search_agent import SearchAgent as RealSearchAgent
 from cogniverse_runtime.agent_dispatcher import AgentDispatcher, _flatten_search_hit
 
 
@@ -72,6 +75,22 @@ class _CaptureAgent:
     async def summarize(self, request):
         _CaptureAgent.captured["request"] = request
         return _FakeReport()
+
+
+class _SearchAgentStub(RealSearchAgent):
+    def __init__(self, profile):
+        self.telemetry_manager = None
+        self._input_rails = None
+        self._output_rails = None
+        self._profile = profile
+
+    async def _process_impl(self, _inp):
+        return SimpleNamespace(
+            results=[],
+            enhanced_query=None,
+            profile=self._profile,
+            search_mode="single_profile",
+        )
 
 
 @pytest.mark.unit
@@ -172,18 +191,7 @@ class TestSearchUsesActiveVideoProfile:
 
         def _capture(profile):
             captured["profile"] = profile
-            agent = MagicMock()
-
-            async def _process(_inp):
-                out = MagicMock()
-                out.results = []
-                out.enhanced_query = None
-                out.profile = profile
-                out.search_mode = "single_profile"
-                return out
-
-            agent._process_impl = _process
-            return agent
+            return _SearchAgentStub(profile)
 
         dispatcher._get_search_agent = _capture
         dispatcher.consult_egress_policy = lambda *a, **k: None
@@ -514,7 +522,12 @@ class TestGatewayTopKForwarding:
             reasoning="keyword route",
         )
 
-        class _GW:
+        class _GW(RealGatewayAgent):
+            def __init__(self):
+                self.telemetry_manager = None
+                self._input_rails = None
+                self._output_rails = None
+
             async def _process_impl(self, _input):
                 return routed
 
