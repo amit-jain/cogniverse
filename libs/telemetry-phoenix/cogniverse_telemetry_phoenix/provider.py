@@ -518,7 +518,10 @@ class PhoenixTraceStore(TraceStore):
                     ) from exc
 
             def project_frame(spans_df: pd.DataFrame) -> pd.DataFrame:
-                return spans_df.reset_index().reindex(columns=requested_columns)
+                drop_index = spans_df.index.name in spans_df.columns
+                return spans_df.reset_index(drop=drop_index).reindex(
+                    columns=requested_columns
+                )
 
             async def emit_window(
                 window_start: datetime,

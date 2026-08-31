@@ -513,3 +513,55 @@ async def test_get_all_spans_rejects_invalid_timestamp_with_project_context():
         await _cursor_store(Spans()).get_all_spans(project="cogniverse-acme")
 
     assert isinstance(captured.value.__cause__, ValueError)
+
+
+@pytest.mark.asyncio
+async def test_projected_frames_survive_phoenix_named_index():
+    """Real get_spans_dataframe frames are INDEXED BY context.span_id while
+    also carrying a context.span_id column; reset_index() must not collide."""
+    import pandas as pd
+
+    calls = []
+
+    class _RealShapedClient:
+        def __init__(self):
+            self.spans = self
+
+        async def get_spans_dataframe(self, **kwargs):
+            calls.append(kwargs)
+            frame = pd.DataFrame(
+                {
+                    "context.span_id": ["s1", "s2"],
+                    "start_time": [
+                        "2026-08-04T00:00:00+00:00",
+                        "2026-08-04T00:01:00+00:00",
+                    ],
+                    "end_time": [
+                        "2026-08-04T00:00:01+00:00",
+                        "2026-08-04T00:01:01+00:00",
+                    ],
+                }
+            )
+            frame.index = pd.Index(frame["context.span_id"], name="context.span_id")
+            return frame
+
+    store = _store([])
+    client = _RealShapedClient()
+    store._get_client = lambda: client
+
+    frames = []
+    async for frame in store.iter_spans(
+        "proj",
+        start_time=datetime(2026, 8, 4, tzinfo=timezone.utc),
+        end_time=datetime(2026, 8, 5, tzinfo=timezone.utc),
+        columns=("start_time", "end_time", "context.span_id"),
+    ):
+        frames.append(frame)
+
+    assert len(frames) == 1
+    assert list(frames[0].columns) == [
+        "start_time",
+        "end_time",
+        "context.span_id",
+    ]
+    assert list(frames[0]["context.span_id"]) == ["s1", "s2"]
