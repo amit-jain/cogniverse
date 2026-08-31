@@ -31,7 +31,7 @@ argo:
       resources:
         requests:
           cpu: 100m
-          memory: 64Mi
+          memory: "256Mi"
         limits:
           cpu: 500m
           memory: 256Mi
@@ -268,10 +268,10 @@ vespa:
   resources:
     limits:
       cpu: "8"
-      memory: "20Gi"
+      memory: "10Gi"
     requests:
       cpu: "4"
-      memory: "8Gi"
+      memory: "10Gi"
 
   persistence:
     enabled: true
@@ -368,10 +368,10 @@ runtime:
   resources:
     limits:
       cpu: "4"
-      memory: "8Gi"
+      memory: "3Gi"
     requests:
       cpu: "2"
-      memory: "4Gi"
+      memory: "3Gi"
 
   service:
     type: ClusterIP
@@ -499,10 +499,10 @@ runtime:
     resources:
       limits:
         cpu: "1"
-        memory: "2Gi"
+        memory: "3Gi"
       requests:
         cpu: "250m"
-        memory: "512Mi"
+        memory: "3Gi"
 
   nodeSelector: {}
   tolerations: []
@@ -585,7 +585,7 @@ dashboard:
   resources:
     limits:
       cpu: "2"
-      memory: "4Gi"
+      memory: "2Gi"
     requests:
       cpu: "1"
       memory: "2Gi"
@@ -640,10 +640,10 @@ phoenix:
   resources:
     limits:
       cpu: "2"
-      memory: "4Gi"
+      memory: "3Gi"
     requests:
       cpu: "1"
-      memory: "2Gi"
+      memory: "3Gi"
 
   persistence:
     enabled: true
@@ -747,7 +747,7 @@ llm:
         memory: "16Gi"
       requests:
         cpu: "4"
-        memory: "8Gi"
+        memory: "16Gi"
     livenessProbe:
       httpGet:
         path: /api/tags
@@ -802,7 +802,7 @@ llm:
         memory: "32Gi"
       requests:
         cpu: "2"
-        memory: "8Gi"
+        memory: "32Gi"
     # Model load on a fresh PVC takes minutes for 7B-class checkpoints;
     # generous start-period prevents liveness flapping during cold start.
     livenessProbe:
@@ -1171,7 +1171,7 @@ inference:
         memory: "8Gi"
       requests:
         cpu: "1"
-        memory: "3Gi"
+        memory: "8Gi"
     livenessProbe:
       tcpSocket:
         port: 8080
@@ -1229,7 +1229,7 @@ inference:
         memory: "8Gi"
       requests:
         cpu: "1"
-        memory: "3Gi"
+        memory: "8Gi"
     livenessProbe:
       httpGet:
         path: /health
@@ -1523,7 +1523,7 @@ inference:
         memory: "6Gi"
       requests:
         cpu: "500m"
-        memory: "2Gi"
+        memory: "6Gi"
     livenessProbe:
       tcpSocket:
         port: 8000
@@ -1568,7 +1568,7 @@ inference:
         memory: "4Gi"
       requests:
         cpu: "500m"
-        memory: "1Gi"
+        memory: "4Gi"
     livenessProbe:
       tcpSocket:
         port: 8000
@@ -1599,10 +1599,10 @@ messaging:
   resources:
     limits:
       cpu: "1"
-      memory: "1Gi"
+      memory: "512Mi"
     requests:
       cpu: "250m"
-      memory: "256Mi"
+      memory: "512Mi"
   env:
     GATEWAY_MODE: "polling"
 
@@ -1685,7 +1685,7 @@ initJobs:
         memory: "256Mi"
       requests:
         cpu: "100m"
-        memory: "128Mi"
+        memory: "256Mi"
     backoffLimit: 5
     restartPolicy: OnFailure
 
@@ -1698,7 +1698,7 @@ initJobs:
         memory: "256Mi"
       requests:
         cpu: "100m"
-        memory: "128Mi"
+        memory: "256Mi"
     backoffLimit: 5
     restartPolicy: OnFailure
 
@@ -1826,7 +1826,7 @@ redis:
   resources:
     limits:
       cpu: "1"
-      memory: "1Gi"
+      memory: "256Mi"
     requests:
       cpu: "100m"
       memory: "256Mi"
@@ -1866,10 +1866,10 @@ semanticRouter:
     resources:
       requests:
         cpu: "100m"
-        memory: "128Mi"
+        memory: "256Mi"
       limits:
         cpu: "1"
-        memory: "512Mi"
+        memory: "256Mi"
   router:
     image:
       repository: ghcr.io/vllm-project/semantic-router/vllm-sr
@@ -1944,10 +1944,10 @@ minio:
   resources:
     limits:
       cpu: "2"
-      memory: "2Gi"
+      memory: "1Gi"
     requests:
       cpu: "200m"
-      memory: "512Mi"
+      memory: "1Gi"
   livenessProbe:
     httpGet:
       path: /minio/health/live
@@ -1992,7 +1992,7 @@ ingestor:
   resources:
     limits:
       cpu: "4"
-      memory: "8Gi"
+      memory: "2Gi"
     requests:
       cpu: "1"
       memory: "2Gi"

@@ -1603,7 +1603,10 @@ spec:
             memory: "256Mi"
           requests:
             cpu: "50m"
-            memory: "64Mi"
+            # Equal to the limit: an init container that requests less than it
+            # may take is memory the scheduler handed out twice while the pod
+            # it gates is still starting.
+            memory: "256Mi"
       {{- end }}
       containers:
       {{- if eq $engine "fastapi" }}

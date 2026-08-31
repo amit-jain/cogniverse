@@ -837,7 +837,9 @@ def test_k3s_rocm_clap_embed_pod_is_cpu_only():
     resources = container["resources"]
     assert resources == {
         "limits": {"cpu": "2", "memory": "6Gi"},
-        "requests": {"cpu": "500m", "memory": "2Gi"},
+        # Memory request equals the limit so the scheduler reserves what the
+        # pod may take; cpu stays burstable because exceeding it throttles.
+        "requests": {"cpu": "500m", "memory": "6Gi"},
     }
     assert {e["name"]: e["value"] for e in container["env"]} == {
         "CLAP_EMBED_MODEL": "laion/clap-htsat-unfused",

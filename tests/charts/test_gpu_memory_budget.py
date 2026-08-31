@@ -30,7 +30,13 @@ SYSTEM_RAM_GIB = 123.46
 # suite's own containers, the pylate pods that allocate from the pool without
 # declaring a fraction, and page-cache slack.
 RESERVED_GIB = {
-    "cluster services": 25.4,
+    # Summed memory LIMITS of the non-inference workloads rendered by this
+    # overlay, which since requests==limits is their whole commitment. It was
+    # previously their summed requests, which understated the reservation by
+    # every gigabyte the scheduler had handed out twice.
+    # Pinned against the render by
+    # test_memory_qos_budget.test_cluster_service_limits_stay_within_the_gpu_budget_reservation.
+    "cluster services": 30.5,
     "desktop and daemons": 10.0,
     "test containers": 12.0,
     # Pool-allocating pods that declare no fraction, reserved at their
@@ -41,7 +47,9 @@ RESERVED_GIB = {
     "gliner": 8.0,
     "page cache slack": 8.0,
 }
-MAX_UTILIZATION_SUM = 0.54
+# Bounded by what is left of system RAM after RESERVED_GIB, not by the nominal
+# pool: 123.46 - 76.5 = 46.96 GiB, and 0.48 * 96 = 46.08 GiB fits inside it.
+MAX_UTILIZATION_SUM = 0.48
 
 pytestmark = pytest.mark.skipif(
     shutil.which("helm") is None,
@@ -107,11 +115,11 @@ def _rocm_utilizations() -> dict[str, float]:
 def test_reserved_ram_leaves_the_expected_pool_share_for_models():
     reserved = sum(RESERVED_GIB.values())
 
-    assert reserved == 71.4
-    assert round(SYSTEM_RAM_GIB - reserved, 2) == 52.06
+    assert reserved == 76.5
+    assert round(SYSTEM_RAM_GIB - reserved, 2) == 46.96
     # The ceiling has to be buyable out of what is left after the reservations
     # above, not merely out of the nominal pool.
-    assert MAX_UTILIZATION_SUM * POOL_GIB == 51.84
+    assert round(MAX_UTILIZATION_SUM * POOL_GIB, 2) == 46.08
     assert MAX_UTILIZATION_SUM * POOL_GIB <= SYSTEM_RAM_GIB - reserved
 
 
