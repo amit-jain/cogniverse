@@ -378,6 +378,7 @@ class TraceStore(ABC):
         end_time: Optional[datetime] = None,
         filters: Optional[Dict[str, Any]] = None,
         limit: int = 1000,
+        columns: Optional[Sequence[str]] = None,
     ) -> pd.DataFrame:
         """
         Returns DataFrame with standardized columns:
@@ -407,7 +408,9 @@ class TraceStore(ABC):
         pass
 ```
 
-Use `get_spans` for deliberately bounded windows. Consumers whose correctness
+Use `get_spans` for deliberately bounded windows. `columns` lets a backend
+request only the standardized fields a caller needs; backends that cannot
+project columns return the full frame unchanged. Consumers whose correctness
 depends on complete history use `get_all_spans`; the Phoenix implementation
 follows its cursor until exhaustion and raises if any page fails, so callers
 never interpret a partial history as the complete project. Its `start_time` and

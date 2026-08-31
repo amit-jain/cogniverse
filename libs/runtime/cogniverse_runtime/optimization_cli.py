@@ -20,11 +20,13 @@ Usage:
 import argparse
 import asyncio
 import contextlib
+import heapq
 import io
 import json
 import logging
 import os
 import sys
+import tempfile
 import time
 import uuid
 from collections import Counter
@@ -72,6 +74,9 @@ _TRAINING_SELECTION_FIELDS = (
     ("downweight_factor", float),
     ("confirmation_score_threshold", float),
 )
+_MONTHLY_REPORT_SPAN_COLUMNS = ("start_time", "end_time", "status_code")
+_MONTHLY_REPORT_SPAN_PAGE_SIZE = 512
+_MONTHLY_REPORT_SPAN_QUERY_TIMEOUT = 120
 
 
 def _teacher_boot_deadline_seconds() -> float:
@@ -3263,6 +3268,152 @@ def _format_exception_chain(exc: BaseException) -> str:
     return " -> ".join(parts)
 
 
+def _monthly_report_percentile_index(latency_count: int, q: float) -> int:
+    if latency_count <= 0:
+        raise ValueError("latency_count must be positive")
+    return max(0, min(latency_count - 1, int(q * (latency_count - 1))))
+
+
+def _iter_monthly_report_sorted_latencies(path: Path):
+    with path.open("r", encoding="utf-8") as handle:
+        for line in handle:
+            text = line.strip()
+            if text:
+                yield float(text)
+
+
+def _monthly_report_percentiles(
+    chunk_paths: Sequence[Path],
+    latency_count: int,
+) -> tuple[float | None, float | None]:
+    if latency_count <= 0:
+        return None, None
+
+    p50_index = _monthly_report_percentile_index(latency_count, 0.50)
+    p95_index = _monthly_report_percentile_index(latency_count, 0.95)
+    p50 = None
+    p95 = None
+    merged = heapq.merge(
+        *(_iter_monthly_report_sorted_latencies(path) for path in chunk_paths)
+    )
+    for index, value in enumerate(merged):
+        if index == p50_index:
+            p50 = round(float(value), 3)
+        if index == p95_index:
+            p95 = round(float(value), 3)
+        if p50 is not None and p95 is not None:
+            break
+    return p50, p95
+
+
+def _monthly_report_span_metrics(frame) -> tuple[int, int, list[float]]:
+    span_count = 0
+    error_count = 0
+    latencies: list[float] = []
+
+    for row in frame.itertuples(index=False):
+        span_count += 1
+        status_code = getattr(row, "status_code", None)
+        if (
+            status_code is not None
+            and not (isinstance(status_code, float) and status_code != status_code)
+            and str(status_code).upper() != "OK"
+        ):
+            error_count += 1
+
+        start_time = getattr(row, "start_time", None)
+        end_time = getattr(row, "end_time", None)
+        if start_time is None or end_time is None:
+            continue
+        try:
+            latency_ms = (end_time - start_time).total_seconds() * 1000.0
+        except Exception:
+            continue
+        if latency_ms >= 0:
+            latencies.append(float(latency_ms))
+
+    return span_count, error_count, latencies
+
+
+async def _collect_monthly_report_performance(
+    trace_store,
+    *,
+    project: str,
+    start_time: datetime,
+    end_time: datetime,
+    page_size: int = _MONTHLY_REPORT_SPAN_PAGE_SIZE,
+) -> dict:
+    span_count = 0
+    error_count = 0
+    latency_count = 0
+    latency_sum = 0.0
+    chunk_paths: list[Path] = []
+
+    with tempfile.TemporaryDirectory() as chunk_dir:
+
+        async def _walk(window_start: datetime, window_end: datetime):
+            nonlocal span_count, error_count, latency_count, latency_sum
+
+            frame = await trace_store.get_spans(
+                project=project,
+                start_time=window_start,
+                end_time=window_end,
+                limit=page_size,
+                columns=_MONTHLY_REPORT_SPAN_COLUMNS,
+            )
+            frame_len = len(frame)
+            if frame_len == 0:
+                del frame
+                return
+            if frame_len >= page_size:
+                midpoint = window_start + ((window_end - window_start) / 2)
+                if midpoint <= window_start or midpoint >= window_end:
+                    raise RuntimeError(
+                        "monthly-reports span window cannot be split without a cursor; "
+                        f"project={project} window_start={window_start!r} "
+                        f"window_end={window_end!r}"
+                    )
+
+                del frame
+                await _walk(window_start, midpoint)
+                await _walk(midpoint, window_end)
+                return
+
+            frame_span_count, frame_error_count, latencies = (
+                _monthly_report_span_metrics(frame)
+            )
+            span_count += frame_span_count
+            error_count += frame_error_count
+            if latencies:
+                latencies.sort()
+                latency_count += len(latencies)
+                latency_sum += sum(latencies)
+                chunk_path = Path(chunk_dir) / (f"latencies-{len(chunk_paths):05d}.txt")
+                chunk_path.write_text(
+                    "\n".join(f"{latency:.17g}" for latency in latencies)
+                )
+                chunk_paths.append(chunk_path)
+            del latencies
+            del frame
+
+        await _walk(start_time, end_time)
+        latency_ms_mean = (
+            round(latency_sum / latency_count, 3) if latency_count else None
+        )
+        latency_ms_p50, latency_ms_p95 = _monthly_report_percentiles(
+            chunk_paths, latency_count
+        )
+
+    error_rate = round(error_count / span_count, 4) if span_count else 0.0
+    return {
+        "span_count": int(span_count),
+        "latency_ms_mean": latency_ms_mean,
+        "latency_ms_p50": latency_ms_p50,
+        "latency_ms_p95": latency_ms_p95,
+        "error_rate": error_rate,
+    }
+
+
 async def run_monthly_reports(
     output_dir: str,
     lookback_hours: float = 24.0 * 30,
@@ -3355,7 +3506,8 @@ async def run_monthly_reports(
         provider = telemetry_manager.get_provider(tenant_id=tid)
         project = telemetry_manager.config.get_project_name(tid)
         try:
-            spans_df = await provider.traces.get_all_spans(
+            perf_per_tenant[tid] = await _collect_monthly_report_performance(
+                provider.traces,
                 project=project,
                 start_time=start,
                 end_time=end,
@@ -3365,51 +3517,6 @@ async def run_monthly_reports(
                 "error": (f"phoenix query failed: {_format_exception_chain(exc)}")
             }
             continue
-        if spans_df is None or spans_df.empty:
-            perf_per_tenant[tid] = {
-                "span_count": 0,
-                "latency_ms_mean": None,
-                "latency_ms_p50": None,
-                "latency_ms_p95": None,
-                "error_rate": 0.0,
-            }
-            continue
-
-        # Pyhoenix dataframes expose `latency_ms` (start_time, end_time)
-        # and a status_code column; fall back gracefully if either is
-        # absent in older provider versions.
-        latencies = []
-        if "latency_ms" in spans_df.columns:
-            latencies = [v for v in spans_df["latency_ms"].dropna() if v >= 0]
-        elif {"start_time", "end_time"}.issubset(spans_df.columns):
-            for s, e in zip(spans_df["start_time"], spans_df["end_time"]):
-                try:
-                    latencies.append((e - s).total_seconds() * 1000.0)
-                except Exception:
-                    continue
-        errors = 0
-        if "status_code" in spans_df.columns:
-            errors = int(
-                spans_df["status_code"].fillna("OK").str.upper().ne("OK").sum()
-            )
-        n = len(spans_df)
-        latencies_sorted = sorted(latencies) if latencies else []
-
-        def _pct(lst: list, q: float):
-            if not lst:
-                return None
-            idx = max(0, min(len(lst) - 1, int(q * (len(lst) - 1))))
-            return round(float(lst[idx]), 3)
-
-        perf_per_tenant[tid] = {
-            "span_count": int(n),
-            "latency_ms_mean": (
-                round(sum(latencies) / len(latencies), 3) if latencies else None
-            ),
-            "latency_ms_p50": _pct(latencies_sorted, 0.50),
-            "latency_ms_p95": _pct(latencies_sorted, 0.95),
-            "error_rate": round(errors / n, 4) if n else 0.0,
-        }
     perf_report = {
         "period": period,
         "generated_at": generated_at,

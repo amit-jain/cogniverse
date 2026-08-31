@@ -106,9 +106,10 @@ gateway agent refreshes on a `GATEWAY_ARTIFACT_TTL_S` interval).
   decay only applies when the known confirmations plus the unscored history still fall below
   `low_confirmation_threshold`.
   SIMBA also enforces the tenant floor from routing config: below `min_samples_for_optimization` or `min_unique_queries`, it saves a version with decision `insufficient_population` and leaves the active artifact unchanged.
-- **Monthly Performance Reports**: each tenant's complete bounded-time Phoenix window is read through the same
-  lossless cursor walk before latency and error summaries are written; a tenant read failure is recorded and
-  makes the command fail instead of being reported as an empty history.
+- **Monthly Performance Reports**: each tenant's bounded-time Phoenix window is read through
+  `TraceStore.get_spans(..., columns=("start_time", "end_time", "status_code"))`, then chunked and spilled
+  to disk so latency and error summaries stay exact without retaining the full span window; a tenant read
+  failure is recorded and makes the command fail instead of being reported as an empty history.
 - **Workflow Orchestration Optimization**: extracts `WorkflowExecution` records from `cogniverse.orchestration`
   spans via `OrchestrationEvaluator`, drops demos whose `agent_sequence` references an agent no longer live in
   `configs/config.json`, and replaces templates, execution demos, agent performance profiles, and query patterns
