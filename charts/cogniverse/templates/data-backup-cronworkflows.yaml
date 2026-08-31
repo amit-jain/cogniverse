@@ -168,6 +168,9 @@ spec:
           kubectl -n {{ $.Release.Namespace }} exec "$POD" -- \
             tar -cf - -C "$(dirname {{ $svcCfg.dataPath }})" "$(basename {{ $svcCfg.dataPath }})" \
             > /stage/{{ $svc }}-$STAMP.tar
+        env:
+        - name: COGNIVERSE_INFERENCE_API_KEY
+{{ include "cogniverse.inferenceApiKeyEnv" $ | nindent 10 }}
         volumeMounts:
         - name: stage
           mountPath: /stage
@@ -204,6 +207,9 @@ spec:
           tar -cf /stage/{{ $svc }}-$STAMP.tar -C "$SNAP" .
           rm -rf "$SNAP"
           ls -la /stage
+        env:
+        - name: COGNIVERSE_INFERENCE_API_KEY
+{{ include "cogniverse.inferenceApiKeyEnv" $ | nindent 10 }}
         volumeMounts:
         - name: stage
           mountPath: /stage
@@ -237,6 +243,8 @@ spec:
             secretKeyRef:
               name: {{ $s3Secret | quote }}
               key: rootPassword
+        - name: COGNIVERSE_INFERENCE_API_KEY
+{{ include "cogniverse.inferenceApiKeyEnv" $ | nindent 10 }}
         - name: RETAIN_LAST
           value: {{ $retainLast | quote }}
         # bash for parameter expansion; minio/mc image lacks awk + sed.

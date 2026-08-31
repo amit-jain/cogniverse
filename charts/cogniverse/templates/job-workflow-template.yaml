@@ -64,6 +64,8 @@ spec:
       - name: INFERENCE_SERVICE_URLS
         value: |-
           {{- include "cogniverse.inferenceServiceUrls" $ | nindent 12 }}
+      - name: COGNIVERSE_INFERENCE_API_KEY
+{{ include "cogniverse.inferenceApiKeyEnv" . | nindent 8 }}
       - name: LLM_ENDPOINT
         value: {{ include "cogniverse.primaryLLMEndpoint" . | quote }}
       - name: LLM_ENGINE
