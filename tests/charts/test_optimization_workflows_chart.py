@@ -9,6 +9,7 @@ Friday 3 AM cron to surface them as a workflow ``Failed``.
 from __future__ import annotations
 
 import json
+import re
 import shutil
 import subprocess
 from pathlib import Path
@@ -31,20 +32,20 @@ pytestmark = pytest.mark.skipif(
 )
 
 
-def _render() -> list:
-    result = subprocess.run(
-        [
-            "helm",
-            "template",
-            "cogniverse",
-            str(CHART_PATH),
-            "--set",
-            "runtime.qualityMonitor.tenantId=test-tenant",
-        ],
-        capture_output=True,
-        text=True,
-        check=False,
-    )
+def _render(*set_args: str, values: str | tuple[str, ...] | None = None) -> list:
+    args = [
+        "helm",
+        "template",
+        "cogniverse",
+        str(CHART_PATH),
+        "--set",
+        "runtime.qualityMonitor.tenantId=test-tenant",
+    ]
+    for values_file in (values,) if isinstance(values, str) else (values or ()):
+        args += ["-f", str(CHART_PATH / values_file)]
+    for s in set_args:
+        args += ["--set", s]
+    result = subprocess.run(args, capture_output=True, text=True, check=False)
     if result.returncode != 0:
         raise AssertionError(
             f"helm template failed (exit {result.returncode}):\n"
@@ -155,6 +156,32 @@ def _container_env(workload: dict) -> dict[str, str]:
     return {entry["name"]: entry.get("value") for entry in container.get("env", [])}
 
 
+def _workflow_template_files() -> list[Path]:
+    template_dir = CHART_PATH / "templates"
+    workflow_files = []
+    for path in sorted(template_dir.glob("*.yaml")):
+        text = path.read_text()
+        if re.search(r"(?m)^\s*kind:\s*(WorkflowTemplate|CronWorkflow)\s*$", text):
+            workflow_files.append(path)
+    return workflow_files
+
+
+def _workflow_containers(workload: dict) -> list[dict]:
+    if workload.get("kind") == "WorkflowTemplate":
+        return [
+            template["container"]
+            for template in workload["spec"]["templates"]
+            if "container" in template
+        ]
+    if workload.get("kind") == "CronWorkflow":
+        return [
+            template["container"]
+            for template in workload["spec"]["workflowSpec"]["templates"]
+            if "container" in template
+        ]
+    raise AssertionError(f"unsupported workload kind: {workload.get('kind')!r}")
+
+
 class TestDailyGatewayHasNoRestartStep:
     def test_daily_gateway_relies_on_the_reload_interval(self):
         """The runtime picks up recalibrated gateway thresholds on warm pods
@@ -247,3 +274,50 @@ def test_job_workflow_template_carries_inference_service_urls():
     env = _container_env(workload)
 
     assert json.loads(env["INFERENCE_SERVICE_URLS"]) == EXPECTED_INFERENCE_SERVICE_URLS
+
+
+def test_every_workflow_pod_carries_the_modal_bearer():
+    """Every rendered workflow pod needs the same bearer secret wiring.
+
+    The source tree drives the set of chart files under test, so any new
+    WorkflowTemplate/CronWorkflow YAML added under charts/cogniverse/templates/
+    is automatically included here.
+    """
+    workflow_files = _workflow_template_files()
+    assert workflow_files, (
+        "no workflow templates found under charts/cogniverse/templates"
+    )
+
+    docs = _render(
+        "hostStorage.backup.enabled=true",
+        values=("values.rocm.yaml", "values.modal-llm.yaml"),
+    )
+    workloads = [
+        doc for doc in docs if doc.get("kind") in {"WorkflowTemplate", "CronWorkflow"}
+    ]
+    assert workloads, "no workflow or cronworkflow manifests rendered"
+
+    expected_secret_ref = {
+        "name": "cogniverse-inference-api-key",
+        "key": "COGNIVERSE_INFERENCE_API_KEY",
+        "optional": False,
+    }
+    missing: list[str] = []
+    for workload in workloads:
+        for container in _workflow_containers(workload):
+            env = {entry["name"]: entry for entry in container.get("env", [])}
+            entry = env.get("COGNIVERSE_INFERENCE_API_KEY")
+            if entry is None:
+                missing.append(
+                    f"{workload['metadata']['name']} / {container.get('name', '<unnamed>')} "
+                    "is missing COGNIVERSE_INFERENCE_API_KEY"
+                )
+                continue
+            secret_ref = entry.get("valueFrom", {}).get("secretKeyRef")
+            if secret_ref != expected_secret_ref:
+                missing.append(
+                    f"{workload['metadata']['name']} / {container.get('name', '<unnamed>')} "
+                    f"has the wrong bearer wiring: {secret_ref!r}"
+                )
+
+    assert not missing, "missing bearer secretKeyRef:\n- " + "\n- ".join(missing)
