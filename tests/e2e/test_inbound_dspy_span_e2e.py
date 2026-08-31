@@ -26,6 +26,7 @@ import json
 import os
 import time
 import uuid
+from dataclasses import dataclass
 
 import dspy
 import httpx
@@ -35,6 +36,64 @@ RUNTIME_BASE = os.environ.get("COGNIVERSE_RUNTIME_BASE", "http://localhost:33000
 PHOENIX_BASE = os.environ.get("COGNIVERSE_PHOENIX_BASE", "http://localhost:33006")
 _TENANT = "flywheel_org:production"
 _CONSTRAINT_TEXT = "focus on safety equipment and protective gear"
+# Keep the outer deadline above the 90s Phoenix fetch timeout so one slow
+# attempt can still finish before we give up.
+_PHOENIX_QUERY_TIMEOUT_S = 120.0
+_PHOENIX_QUERY_SLEEP_S = 0.5
+
+
+@dataclass
+class _SpanLookupDiagnostics:
+    phoenix_error: Exception | None = None
+    chain_span_count: int = 0
+    matching_chain_count: int = 0
+    trace_ids: tuple[str, ...] = ()
+    lm_child_count: int = 0
+    matching_lm_count: int = 0
+    stage: str = "chain_query_error"
+
+    def _describe_error(self) -> str:
+        if self.phoenix_error is None:
+            return "unknown Phoenix error"
+        return f"{type(self.phoenix_error).__name__}: {self.phoenix_error}"
+
+    def render(self, text: str) -> str:
+        if self.stage == "chain_query_error":
+            return (
+                f"Phoenix error while querying ChainOfThought.forward spans "
+                f"for anchor {text!r}: {self._describe_error()}"
+            )
+        if self.stage == "chain_anchor_missing":
+            message = (
+                f"ChainOfThought.forward spans for anchor {text!r} had "
+                f"chain_span_count={self.chain_span_count} and "
+                f"matching_chain_count={self.matching_chain_count}"
+            )
+            if self.phoenix_error is not None:
+                message += f"; last Phoenix error was {self._describe_error()}"
+            return message
+        if self.stage == "lm_query_error":
+            message = (
+                f"Phoenix error while querying LM.__call__ spans for trace_ids="
+                f"{list(self.trace_ids)!r} and anchor {text!r}: "
+                f"{self._describe_error()}"
+            )
+            if self.chain_span_count or self.matching_chain_count:
+                message += (
+                    f"; chain_span_count={self.chain_span_count}; "
+                    f"matching_chain_count={self.matching_chain_count}"
+                )
+            return message
+        if self.stage == "lm_anchor_missing":
+            message = (
+                f"LM.__call__ spans for trace_ids={list(self.trace_ids)!r} "
+                f"and anchor {text!r} had lm_child_count={self.lm_child_count} "
+                f"and matching_lm_count={self.matching_lm_count}"
+            )
+            if self.phoenix_error is not None:
+                message += f"; last Phoenix error was {self._describe_error()}"
+            return message
+        return f"timed out searching Phoenix for {text!r}"
 
 
 def _require_http_prerequisite(name: str, endpoint: str) -> None:
@@ -121,7 +180,9 @@ def _run_process(session_id: str, query: str, constraint: str | None) -> dict:
     return holder["result"]
 
 
-def _query_dspy_lm_spans_with_text(text: str, timeout_s: float = 30.0) -> list:
+def _query_dspy_lm_spans_with_text(
+    text: str, timeout_s: float = _PHOENIX_QUERY_TIMEOUT_S
+) -> list:
     """Query the reformulator's DSPy LM spans whose input.value contains ``text``.
 
     The reformulator is the ``ChainOfThought.forward`` family emitted by
@@ -143,6 +204,7 @@ def _query_dspy_lm_spans_with_text(text: str, timeout_s: float = 30.0) -> list:
     # this run's traffic.
     window_start = datetime.now(timezone.utc) - timedelta(minutes=30)
     deadline = time.time() + timeout_s
+    diagnostics = _SpanLookupDiagnostics()
     while time.time() < deadline:
         try:
             chain_spans = px.spans.get_spans_dataframe(
@@ -151,11 +213,15 @@ def _query_dspy_lm_spans_with_text(text: str, timeout_s: float = 30.0) -> list:
                 query=query,
                 timeout=90,
             )
-        except Exception:
-            time.sleep(0.5)
+        except Exception as exc:  # noqa: BLE001
+            diagnostics.phoenix_error = exc
+            diagnostics.stage = "chain_query_error"
+            time.sleep(_PHOENIX_QUERY_SLEEP_S)
             continue
+        diagnostics.chain_span_count = len(chain_spans)
         if len(chain_spans) == 0:
-            time.sleep(0.5)
+            diagnostics.stage = "chain_anchor_missing"
+            time.sleep(_PHOENIX_QUERY_SLEEP_S)
             continue
         # ChainOfThought.forward spans carry the reformulator inputs.
         matching_chains = chain_spans[
@@ -163,13 +229,17 @@ def _query_dspy_lm_spans_with_text(text: str, timeout_s: float = 30.0) -> list:
             .fillna("")
             .str.contains(text, na=False, regex=False)
         ]
+        diagnostics.matching_chain_count = len(matching_chains)
         if len(matching_chains) == 0:
-            time.sleep(0.5)
+            diagnostics.stage = "chain_anchor_missing"
+            time.sleep(_PHOENIX_QUERY_SLEEP_S)
             continue
 
-        trace_ids = set(matching_chains["context.trace_id"].dropna())
+        trace_ids = tuple(sorted(set(matching_chains["context.trace_id"].dropna())))
+        diagnostics.trace_ids = trace_ids
         if not trace_ids:
-            time.sleep(0.5)
+            diagnostics.stage = "chain_anchor_missing"
+            time.sleep(_PHOENIX_QUERY_SLEEP_S)
             continue
 
         try:
@@ -179,11 +249,15 @@ def _query_dspy_lm_spans_with_text(text: str, timeout_s: float = 30.0) -> list:
                 query=SpanQuery().where(f"name == '{lm_span_name}'"),
                 timeout=90,
             )
-        except Exception:
-            time.sleep(0.5)
+        except Exception as exc:  # noqa: BLE001
+            diagnostics.phoenix_error = exc
+            diagnostics.stage = "lm_query_error"
+            time.sleep(_PHOENIX_QUERY_SLEEP_S)
             continue
+        diagnostics.lm_child_count = len(lm_spans)
         if len(lm_spans) == 0:
-            time.sleep(0.5)
+            diagnostics.stage = "lm_anchor_missing"
+            time.sleep(_PHOENIX_QUERY_SLEEP_S)
             continue
 
         matching = lm_spans[
@@ -192,6 +266,7 @@ def _query_dspy_lm_spans_with_text(text: str, timeout_s: float = 30.0) -> list:
             .fillna("")
             .str.contains(text, na=False, regex=False)
         ]
+        diagnostics.matching_lm_count = len(matching)
         if len(matching) > 0:
             return [
                 {
@@ -203,8 +278,9 @@ def _query_dspy_lm_spans_with_text(text: str, timeout_s: float = 30.0) -> list:
                 }
                 for _, row in matching.iterrows()
             ]
-        time.sleep(0.5)
-    return []
+        diagnostics.stage = "lm_anchor_missing"
+        time.sleep(_PHOENIX_QUERY_SLEEP_S)
+    raise AssertionError(diagnostics.render(text))
 
 
 # --------------------------------------------------------------------- #
@@ -248,11 +324,8 @@ def test_with_constraint_run_appears_in_dspy_lm_span_input_byte_equal():
 
     # Query Phoenix for the reformulator trace that mentions the unique
     # query anchor, then keep the LM child spans from that trace.
-    spans = _query_dspy_lm_spans_with_text(unique_id, timeout_s=30.0)
-    assert spans, (
-        f"no reformulator LM spans found containing unique anchor "
-        f"{unique_id!r}; runtime may not have OPENINFERENCE_DSPY=1 enabled "
-        f"or DSPy re-instrumentation against Phoenix tracer failed"
+    spans = _query_dspy_lm_spans_with_text(
+        unique_id, timeout_s=_PHOENIX_QUERY_TIMEOUT_S
     )
 
     # At least one DSPy LM span's input.value MUST contain the
@@ -304,8 +377,9 @@ def test_baseline_run_dspy_lm_spans_do_not_contain_constraint_text():
     il = result["final_output"]["iterative_loop"]
     assert il["inbound_constraints_applied"] == []
 
-    spans = _query_dspy_lm_spans_with_text(unique_id, timeout_s=30.0)
-    assert spans, f"no DSPy LM spans found for baseline anchor {unique_id!r}"
+    spans = _query_dspy_lm_spans_with_text(
+        unique_id, timeout_s=_PHOENIX_QUERY_TIMEOUT_S
+    )
 
     # Baseline MUST NOT have the constraint anywhere.
     leaks = [s for s in spans if _CONSTRAINT_TEXT in str(s["input"])]
@@ -328,8 +402,9 @@ def test_dspy_lm_spans_carry_output_value_byte_equal():
     result = _run_process(session_id, query, None)
     _ = result
 
-    spans = _query_dspy_lm_spans_with_text(unique_id, timeout_s=30.0)
-    assert spans
+    spans = _query_dspy_lm_spans_with_text(
+        unique_id, timeout_s=_PHOENIX_QUERY_TIMEOUT_S
+    )
     populated = [s for s in spans if s.get("output") and str(s["output"]).strip()]
     assert len(populated) == len(spans), (
         f"some DSPy LM spans had empty output.value: "
