@@ -76,6 +76,7 @@ _TRAINING_SELECTION_FIELDS = (
 )
 _MONTHLY_REPORT_SPAN_COLUMNS = ("start_time", "end_time", "status_code")
 _MONTHLY_REPORT_SPAN_PAGE_SIZE = 512
+_MONTHLY_REPORT_MERGE_FAN_IN = 32
 _MONTHLY_REPORT_SPAN_QUERY_TIMEOUT = 120
 
 
@@ -3282,6 +3283,37 @@ def _iter_monthly_report_sorted_latencies(path: Path):
                 yield float(text)
 
 
+def _monthly_report_merge_pass(
+    chunk_paths: Sequence[Path],
+    *,
+    merge_dir: Path,
+    pass_index: int,
+    fan_in: int = _MONTHLY_REPORT_MERGE_FAN_IN,
+) -> list[Path]:
+    if fan_in <= 0:
+        raise ValueError("fan_in must be positive")
+
+    merged_paths: list[Path] = []
+    for batch_index in range(0, len(chunk_paths), fan_in):
+        batch = list(chunk_paths[batch_index : batch_index + fan_in])
+        if len(batch) == 1:
+            merged_paths.append(batch[0])
+            continue
+
+        merged_path = merge_dir / (
+            f"latencies-merge-{pass_index:02d}-{batch_index:05d}.txt"
+        )
+        with merged_path.open("w", encoding="utf-8") as output_handle:
+            merged = heapq.merge(
+                *(_iter_monthly_report_sorted_latencies(path) for path in batch)
+            )
+            for value in merged:
+                output_handle.write(f"{value:.17g}\n")
+        merged_paths.append(merged_path)
+
+    return merged_paths
+
+
 def _monthly_report_percentiles(
     chunk_paths: Sequence[Path],
     latency_count: int,
@@ -3293,16 +3325,29 @@ def _monthly_report_percentiles(
     p95_index = _monthly_report_percentile_index(latency_count, 0.95)
     p50 = None
     p95 = None
-    merged = heapq.merge(
-        *(_iter_monthly_report_sorted_latencies(path) for path in chunk_paths)
-    )
-    for index, value in enumerate(merged):
-        if index == p50_index:
-            p50 = round(float(value), 3)
-        if index == p95_index:
-            p95 = round(float(value), 3)
-        if p50 is not None and p95 is not None:
-            break
+    with tempfile.TemporaryDirectory() as merge_dir_name:
+        merge_dir = Path(merge_dir_name)
+        merged_paths = list(chunk_paths)
+        pass_index = 0
+        while len(merged_paths) > _MONTHLY_REPORT_MERGE_FAN_IN:
+            merged_paths = _monthly_report_merge_pass(
+                merged_paths,
+                merge_dir=merge_dir,
+                pass_index=pass_index,
+                fan_in=_MONTHLY_REPORT_MERGE_FAN_IN,
+            )
+            pass_index += 1
+
+        merged = heapq.merge(
+            *(_iter_monthly_report_sorted_latencies(path) for path in merged_paths)
+        )
+        for index, value in enumerate(merged):
+            if index == p50_index:
+                p50 = round(float(value), 3)
+            if index == p95_index:
+                p95 = round(float(value), 3)
+            if p50 is not None and p95 is not None:
+                break
     return p50, p95
 
 

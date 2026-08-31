@@ -921,7 +921,7 @@ Generates usage + performance JSON for the prior period (default 30 days).
 Writes two files into `--reports-output-dir` (default `./reports`):
 
 - `usage-YYYYMM.json` — per-org tenant counts (`organization_metadata` + `tenant_metadata`), each tenant's `schemas_deployed` list and `schema_count`; top-level summary `{org_count, tenant_count, schema_count}`.
-- `performance-YYYYMM.json` — per-tenant Phoenix span count, latency `mean / p50 / p95`, and `error_rate` (`status_code != OK`) over the lookback window. Empty-data tenants record `{span_count: 0, latency_*: null, error_rate: 0.0}`; Phoenix query failures record `{"error": "phoenix query failed: ..."}` and continue.
+- `performance-YYYYMM.json` — per-tenant Phoenix span count, latency `mean / p50 / p95`, and `error_rate` (`status_code != OK`) over the lookback window. Empty-data tenants record `{span_count: 0, latency_*: null, error_rate: 0.0}`; Phoenix query failures record `{"error": "phoenix query failed: ..."}` and continue. Latency chunk merges run in 32-file passes before the final exact percentile scan, so open descriptors stay bounded without changing p50/p95.
 
 ```bash
 uv run python -m cogniverse_runtime.optimization_cli \
@@ -1305,6 +1305,7 @@ Loaded DSPy module blobs must match the live module's signature contract exactly
 |---|---|
 | CLI argument parser, batch-mode branches (gateway-thresholds/workflow/entity-extraction/simba no-data paths, synthetic-data merge, `_create_teleprompter` tiering) | `tests/runtime/unit/test_batch_optimization_modes.py` |
 | `_compute_gateway_thresholds` — tight per-field assertions across all 3 calibration branches | `tests/runtime/unit/test_batch_optimization_modes.py::TestComputeGatewayThresholdsAlgorithm` |
+| `_monthly_report_percentiles` bounded merge fan-in + exact percentile preservation | `tests/runtime/unit/test_optimization_cli_monthly_reports.py` |
 | `run_rollback` / `ArtifactManager.rollback_to_version` round-trip | `tests/runtime/integration/test_optimization_cli_rollback.py` |
 | `run_cleanup` (memory/log/temp/config vacuum) | `tests/runtime/integration/test_optimization_cli_cleanup.py` |
 | `run_monthly_reports` | `tests/runtime/integration/test_optimization_cli_monthly_reports.py` |

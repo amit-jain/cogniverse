@@ -1,6 +1,9 @@
+"""Unit tests for the monthly-report contracts."""
+
 from __future__ import annotations
 
 import gc
+import heapq
 import json
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
@@ -8,7 +11,126 @@ from types import SimpleNamespace
 
 import pytest
 
-from cogniverse_runtime.optimization_cli import run_monthly_reports
+from cogniverse_runtime import optimization_cli as cli
+
+pytestmark = pytest.mark.unit
+
+
+class _OpenTracker:
+    def __init__(self) -> None:
+        self.active = 0
+        self.peak = 0
+
+    def track(self, handle):
+        self.active += 1
+        self.peak = max(self.peak, self.active)
+        return _TrackedHandle(handle, self)
+
+
+class _TrackedHandle:
+    def __init__(self, handle, tracker: _OpenTracker) -> None:
+        self._handle = handle
+        self._tracker = tracker
+        self._closed = False
+
+    def __getattr__(self, name):
+        return getattr(self._handle, name)
+
+    def __iter__(self):
+        return self
+
+    def __next__(self):
+        return next(self._handle)
+
+    def close(self):
+        if not self._closed:
+            self._closed = True
+            try:
+                return self._handle.close()
+            finally:
+                self._tracker.active -= 1
+
+    def __enter__(self):
+        return self
+
+    def __exit__(self, exc_type, exc, tb):
+        try:
+            return self._handle.__exit__(exc_type, exc, tb)
+        finally:
+            self.close()
+
+
+def _write_sorted_chunk(path: Path, values: list[float]) -> Path:
+    path.write_text("\n".join(f"{value:.17g}" for value in values))
+    return path
+
+
+def _reference_percentiles(
+    chunk_paths: list[Path],
+    latency_count: int,
+) -> tuple[float | None, float | None]:
+    if latency_count <= 0:
+        return None, None
+
+    p50_index = cli._monthly_report_percentile_index(latency_count, 0.50)
+    p95_index = cli._monthly_report_percentile_index(latency_count, 0.95)
+    p50 = None
+    p95 = None
+    merged = heapq.merge(
+        *(cli._iter_monthly_report_sorted_latencies(path) for path in chunk_paths)
+    )
+    for index, value in enumerate(merged):
+        if index == p50_index:
+            p50 = round(float(value), 3)
+        if index == p95_index:
+            p95 = round(float(value), 3)
+        if p50 is not None and p95 is not None:
+            break
+    return p50, p95
+
+
+def test_monthly_report_percentiles_bound_open_files(tmp_path, monkeypatch):
+    chunk_paths = [
+        _write_sorted_chunk(tmp_path / f"chunk-{index:02d}.txt", [float(index + 1)])
+        for index in range(7)
+    ]
+    tracker = _OpenTracker()
+    original_open = Path.open
+
+    def counting_open(self, *args, **kwargs):
+        return tracker.track(original_open(self, *args, **kwargs))
+
+    monkeypatch.setattr(Path, "open", counting_open)
+    monkeypatch.setattr(cli, "_MONTHLY_REPORT_MERGE_FAN_IN", 3, raising=False)
+
+    result = cli._monthly_report_percentiles(chunk_paths, len(chunk_paths))
+
+    assert result == (4.0, 6.0)
+    assert tracker.peak <= 4, (
+        "monthly-report merges must keep file descriptors bounded; "
+        f"observed peak={tracker.peak}"
+    )
+
+
+def test_monthly_report_percentiles_match_all_at_once_merge(tmp_path, monkeypatch):
+    chunk_paths = [
+        _write_sorted_chunk(tmp_path / f"chunk-{index:02d}.txt", values)
+        for index, values in enumerate(
+            (
+                [1.0, 10.0],
+                [2.0, 8.0],
+                [3.0, 7.0],
+                [4.0, 6.0],
+                [5.0, 9.0],
+            )
+        )
+    ]
+    monkeypatch.setattr(cli, "_MONTHLY_REPORT_MERGE_FAN_IN", 3, raising=False)
+
+    bounded = cli._monthly_report_percentiles(chunk_paths, 10)
+    reference = _reference_percentiles(chunk_paths, 10)
+
+    assert bounded == reference == (5.0, 9.0)
 
 
 class _Tracker:
@@ -281,7 +403,7 @@ async def test_monthly_reports_surfaces_phoenix_outages(monkeypatch, tmp_path):
 
     trace_store.get_spans = _raise_get_spans
 
-    result = await run_monthly_reports(
+    result = await cli.run_monthly_reports(
         output_dir=str(tmp_path / "reports"),
         lookback_hours=1.0,
     )
@@ -313,7 +435,7 @@ async def test_monthly_reports_pins_exact_span_columns(monkeypatch, tmp_path):
     )
     tracker, _trace_store = _make_monthly_reports_environment(monkeypatch, row_specs)
 
-    result = await run_monthly_reports(
+    result = await cli.run_monthly_reports(
         output_dir=str(tmp_path / "reports"),
         lookback_hours=1.0,
     )
@@ -357,7 +479,7 @@ async def test_monthly_reports_bounds_retained_span_rows(
     )
     tracker, _trace_store = _make_monthly_reports_environment(monkeypatch, row_specs)
 
-    result = await run_monthly_reports(
+    result = await cli.run_monthly_reports(
         output_dir=str(tmp_path / "reports"),
         lookback_hours=1.0,
     )
@@ -393,7 +515,7 @@ async def test_monthly_reports_preserves_exact_values_under_small_input(
     )
     tracker, _trace_store = _make_monthly_reports_environment(monkeypatch, row_specs)
 
-    result = await run_monthly_reports(
+    result = await cli.run_monthly_reports(
         output_dir=str(tmp_path / "reports"),
         lookback_hours=1.0,
     )
