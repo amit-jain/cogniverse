@@ -327,6 +327,13 @@ def test_with_constraint_run_appears_in_dspy_lm_span_input_byte_equal():
     spans = _query_dspy_lm_spans_with_text(
         unique_id, timeout_s=_PHOENIX_QUERY_TIMEOUT_S
     )
+    # The helper raises with a stage-specific message rather than returning an
+    # empty list, so these pin what a SUCCESSFUL lookup guarantees: the exact
+    # record shape, and that every returned span carried the anchor it filtered on.
+    assert [sorted(s) for s in spans] == [
+        ["input", "name", "output", "span_id", "trace_id"]
+    ] * len(spans), spans
+    assert [s for s in spans if unique_id not in str(s["input"])] == [], spans
 
     # At least one DSPy LM span's input.value MUST contain the
     # constraint text byte-equal. This is the strong "constraint
@@ -380,6 +387,13 @@ def test_baseline_run_dspy_lm_spans_do_not_contain_constraint_text():
     spans = _query_dspy_lm_spans_with_text(
         unique_id, timeout_s=_PHOENIX_QUERY_TIMEOUT_S
     )
+    # The helper raises with a stage-specific message rather than returning an
+    # empty list, so these pin what a SUCCESSFUL lookup guarantees: the exact
+    # record shape, and that every returned span carried the anchor it filtered on.
+    assert [sorted(s) for s in spans] == [
+        ["input", "name", "output", "span_id", "trace_id"]
+    ] * len(spans), spans
+    assert [s for s in spans if unique_id not in str(s["input"])] == [], spans
 
     # Baseline MUST NOT have the constraint anywhere.
     leaks = [s for s in spans if _CONSTRAINT_TEXT in str(s["input"])]
@@ -405,6 +419,13 @@ def test_dspy_lm_spans_carry_output_value_byte_equal():
     spans = _query_dspy_lm_spans_with_text(
         unique_id, timeout_s=_PHOENIX_QUERY_TIMEOUT_S
     )
+    # The helper raises with a stage-specific message rather than returning an
+    # empty list, so these pin what a SUCCESSFUL lookup guarantees: the exact
+    # record shape, and that every returned span carried the anchor it filtered on.
+    assert [sorted(s) for s in spans] == [
+        ["input", "name", "output", "span_id", "trace_id"]
+    ] * len(spans), spans
+    assert [s for s in spans if unique_id not in str(s["input"])] == [], spans
     populated = [s for s in spans if s.get("output") and str(s["output"]).strip()]
     assert len(populated) == len(spans), (
         f"some DSPy LM spans had empty output.value: "
