@@ -303,6 +303,13 @@ def _seed_org_and_tenant(unique_suffix: str) -> str:
             json={"tenant_id": tenant_id, "created_by": "e2e"},
         )
         assert r.status_code in (200, 409), r.text
+        # The first memory access on a fresh tenant deploys its memory and
+        # provenance schemas to Vespa; that first touch was measured at 37s
+        # idle and exceeded a 60s client budget under sweep load. Own the cost
+        # here, so every later helper in this module talks to a warm tenant.
+        r = client.get(f"{RUNTIME}/admin/tenant/{tenant_id}/memories", timeout=180.0)
+        assert r.status_code == 200, r.text
+        assert r.json() == {"memories": [], "count": 0}, r.json()
     return tenant_id
 
 
