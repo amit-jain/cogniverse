@@ -423,14 +423,15 @@ class TraceStore(ABC):
 
 Use `get_spans` for deliberately bounded windows. Use `iter_spans` when the
 caller needs page-sized frames and bounded memory while walking the full
-result set in one cursor pass. `columns` lets a backend request only the
-standardized fields a caller needs; backends that cannot project columns
-return the full frame unchanged. Consumers whose correctness depends on
-complete history use `get_all_spans`; the Phoenix implementation builds it
-from `iter_spans` and raises if any page fails, so callers never interpret a
-partial history as the complete project. Its `start_time` and `end_time`
-columns are normalized to timezone-aware UTC datetimes; an invalid timestamp
-raises with project and column context before the frame is returned.
+result set. `columns` projects the requested standardized fields server-side
+when supported; the Phoenix implementation pages projected spans by
+`start_time` and deduplicates boundary rows by `span_id`. Consumers whose
+correctness depends on complete history use `get_all_spans`; the Phoenix
+implementation builds it from `iter_spans` and raises if any page fails, so
+callers never interpret a partial history as the complete project. Its
+`start_time` and `end_time` columns are normalized to timezone-aware UTC
+datetimes; an invalid timestamp raises with project and column context before
+the frame is returned.
 
 ### AnnotationStore Interface
 

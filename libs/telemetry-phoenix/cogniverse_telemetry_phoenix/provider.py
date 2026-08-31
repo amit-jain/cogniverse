@@ -215,6 +215,45 @@ def _normalize_span_page(
     return frame
 
 
+def _escape_phoenix_query_literal(value: object) -> str:
+    return str(value).replace("\\", "\\\\").replace("'", "\\'")
+
+
+def _build_span_query_condition(
+    *,
+    name_filter: Optional[Any],
+    excluded_span_ids: Sequence[str] = (),
+) -> Optional[str]:
+    predicate_parts: List[str] = []
+
+    if name_filter:
+        if isinstance(name_filter, set):
+            name_values = sorted(name_filter)
+        elif isinstance(name_filter, (list, tuple)):
+            name_values = list(name_filter)
+        else:
+            name_values = None
+
+        if name_values is not None:
+            joined = ", ".join(
+                f"'{_escape_phoenix_query_literal(name)}'" for name in name_values
+            )
+            predicate_parts.append(f"name in [{joined}]")
+        else:
+            predicate_parts.append(
+                f"name == '{_escape_phoenix_query_literal(name_filter)}'"
+            )
+
+    if excluded_span_ids:
+        joined = ", ".join(
+            f"'{_escape_phoenix_query_literal(span_id)}'"
+            for span_id in sorted(set(excluded_span_ids))
+        )
+        predicate_parts.append(f"span_id not in [{joined}]")
+
+    return " and ".join(predicate_parts) if predicate_parts else None
+
+
 class PhoenixTraceStore(TraceStore):
     """Phoenix implementation of TraceStore using AsyncClient."""
 
@@ -383,7 +422,11 @@ class PhoenixTraceStore(TraceStore):
         page_size: int = 1000,
         columns: Optional[Sequence[str]] = None,
     ) -> AsyncIterator[pd.DataFrame]:
-        """Stream every matching span through Phoenix cursor pagination."""
+        """Stream every matching span through Phoenix pagination.
+
+        Projected columns use a keyset walk on ``start_time`` so each yielded
+        frame stays bounded without downloading full rows.
+        """
         unsupported_filters = set(filters or {}).difference({"name"})
         if unsupported_filters:
             raise ValueError(
@@ -403,6 +446,85 @@ class PhoenixTraceStore(TraceStore):
             name_filter = sorted(name_filter)
         elif isinstance(name_filter, tuple):
             name_filter = list(name_filter)
+
+        requested_columns = list(columns) if columns is not None else None
+        query_columns = requested_columns
+        if query_columns is not None and "start_time" not in query_columns:
+            query_columns = [*query_columns, "start_time"]
+
+        if query_columns is not None:
+            from phoenix.client.types.spans import SpanQuery
+
+            query_base = SpanQuery().select(*query_columns)
+
+            async def query_page(
+                page_start: Optional[datetime],
+                excluded_span_ids: Sequence[str],
+            ) -> Optional[pd.DataFrame]:
+                import httpx
+
+                try:
+                    client = self._get_client()
+
+                    query = query_base
+                    predicate = _build_span_query_condition(
+                        name_filter=name_filter,
+                        excluded_span_ids=excluded_span_ids,
+                    )
+                    if predicate:
+                        query = query.where(predicate)
+
+                    return await self._breaker.acall(
+                        client.spans.get_spans_dataframe,
+                        query=query,
+                        project_identifier=project,
+                        start_time=page_start,
+                        end_time=end_time,
+                        limit=page_size,
+                        # The method's own default is 5s and overrides the client's
+                        # timeout — large project windows blow through it routinely.
+                        timeout=120,
+                    )
+                except httpx.HTTPError as exc:
+                    if _is_phoenix_project_not_found(exc):
+                        return None
+                    raise RuntimeError(
+                        f"Failed to query every span from Phoenix project {project}"
+                    ) from exc
+
+            page_start = start_time
+            excluded_span_ids: Sequence[str] = ()
+            while True:
+                spans_df = await query_page(page_start, excluded_span_ids)
+                if spans_df is None:
+                    return
+                if spans_df.empty:
+                    break
+
+                page_span_ids = list(spans_df.index)
+                page_start_times = spans_df["start_time"]
+                next_page_start = page_start_times.iloc[-1]
+                spans_df = spans_df.reset_index()
+                if requested_columns is not None:
+                    spans_df = spans_df.reindex(columns=requested_columns)
+                logger.debug(
+                    "Retrieved %d spans from project %s",
+                    len(spans_df),
+                    project,
+                )
+                yield spans_df
+                del spans_df
+
+                if len(page_span_ids) < page_size:
+                    break
+
+                excluded_span_ids = [
+                    span_id
+                    for span_id, row_start_time in zip(page_span_ids, page_start_times)
+                    if row_start_time == next_page_start
+                ]
+                page_start = next_page_start
+            return
 
         async def query_page(page_cursor: Optional[str]) -> Dict[str, Any]:
             try:
