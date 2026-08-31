@@ -50,6 +50,7 @@ from cogniverse_evaluation.analysis.root_cause_analysis import (
 # TraceMetrics is the provider-agnostic dataclass and lives at the
 # canonical evaluation-provider location.
 from cogniverse_foundation.config.utils import create_default_config_manager, get_config
+from cogniverse_foundation.telemetry.context import trace_headers
 from cogniverse_telemetry_phoenix.evaluation.analytics import (
     PhoenixAnalytics as Analytics,
 )
@@ -97,6 +98,7 @@ def stream_agent_call(
                 "tenant_id": tenant_id,
                 "stream": True,
                 **(metadata or {}),
+                **trace_headers(),
             },
         },
     }
@@ -565,6 +567,7 @@ async def call_agent_async(agent_url: str, task_data: dict) -> dict:
                             "profile": task_data.get("profile"),
                         },
                     },
+                    headers=trace_headers(),
                 )
                 if response.status_code == 200:
                     return response.json()
@@ -583,6 +586,7 @@ async def call_agent_async(agent_url: str, task_data: dict) -> dict:
                         "query": "Generate optimization performance report",
                         "context": {"tenant_id": _tenant},
                     },
+                    headers=trace_headers(),
                 )
                 if response.status_code == 200:
                     return {"status": "success", "report": response.json()}
@@ -2941,6 +2945,7 @@ with main_tabs[11]:
                                 "tenant_id": st.session_state["current_tenant"],
                             },
                         },
+                        headers=trace_headers(),
                         timeout=300.0,
                     )
                     if resp.status_code == 200:

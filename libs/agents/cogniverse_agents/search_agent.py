@@ -27,7 +27,7 @@ from typing import Any, Dict, List, Literal, Optional, Union
 import dspy
 import numpy as np
 import uvicorn
-from fastapi import FastAPI, File, HTTPException, UploadFile
+from fastapi import FastAPI, File, HTTPException, Request, UploadFile
 from pydantic import BaseModel, Field
 
 from cogniverse_agents._confidence import parse_confidence
@@ -38,6 +38,7 @@ from cogniverse_core.agents.base import AgentDeps, AgentInput, AgentOutput
 from cogniverse_core.agents.rlm_options import RLMOptions
 from cogniverse_core.query.encoders import QueryEncoderFactory
 from cogniverse_core.registries.backend_registry import get_backend_registry
+from cogniverse_foundation.telemetry.context import request_trace_context
 
 logger = logging.getLogger(__name__)
 
@@ -2204,13 +2205,14 @@ async def get_agent_card():
 
 
 @app.post("/process")
-async def process_task(task: Dict[str, Any]):
+async def process_task(task: Dict[str, Any], request: Request):
     """Process search task"""
     if not search_agent:
         raise HTTPException(status_code=503, detail="Agent not initialized")
 
     try:
-        result = await asyncio.to_thread(search_agent.process_enhanced_task, task)
+        with request_trace_context(request.headers):
+            result = await asyncio.to_thread(search_agent.process_enhanced_task, task)
         return result
     except Exception as e:
         logger.error(f"Task processing failed: {e}")
@@ -2219,6 +2221,7 @@ async def process_task(task: Dict[str, Any]):
 
 @app.post("/upload/video")
 async def upload_video_search(
+    request: Request,
     file: UploadFile = File(...),
     tenant_id: str = "",
     top_k: int = 10,
@@ -2233,15 +2236,16 @@ async def upload_video_search(
         )
 
     try:
-        video_data = await file.read()
-        results = await asyncio.to_thread(
-            search_agent._search_by_video,
-            video_data=video_data,
-            filename=file.filename or "uploaded_video.mp4",
-            tenant_id=tenant_id,
-            modality=modality,
-            top_k=top_k,
-        )
+        with request_trace_context(request.headers):
+            video_data = await file.read()
+            results = await asyncio.to_thread(
+                search_agent._search_by_video,
+                video_data=video_data,
+                filename=file.filename or "uploaded_video.mp4",
+                tenant_id=tenant_id,
+                modality=modality,
+                top_k=top_k,
+            )
 
         return {
             "status": "completed",
@@ -2259,6 +2263,7 @@ async def upload_video_search(
 
 @app.post("/upload/image")
 async def upload_image_search(
+    request: Request,
     file: UploadFile = File(...),
     tenant_id: str = "",
     top_k: int = 10,
@@ -2273,15 +2278,16 @@ async def upload_image_search(
         )
 
     try:
-        image_data = await file.read()
-        results = await asyncio.to_thread(
-            search_agent._search_by_image,
-            image_data=image_data,
-            filename=file.filename or "uploaded_image.jpg",
-            tenant_id=tenant_id,
-            modality=modality,
-            top_k=top_k,
-        )
+        with request_trace_context(request.headers):
+            image_data = await file.read()
+            results = await asyncio.to_thread(
+                search_agent._search_by_image,
+                image_data=image_data,
+                filename=file.filename or "uploaded_image.jpg",
+                tenant_id=tenant_id,
+                modality=modality,
+                top_k=top_k,
+            )
 
         return {
             "status": "completed",
@@ -2298,7 +2304,7 @@ async def upload_image_search(
 
 
 @app.post("/search/enhanced")
-async def enhanced_search(params: RelationshipAwareSearchParams):
+async def enhanced_search(params: RelationshipAwareSearchParams, request: Request):
     """Enhanced search with relationship context"""
     if not search_agent:
         raise HTTPException(status_code=503, detail="Agent not initialized")
@@ -2315,18 +2321,19 @@ async def enhanced_search(params: RelationshipAwareSearchParams):
         )
 
         # Perform relationship-aware search
-        result = await asyncio.to_thread(
-            search_agent.search_with_relationship_context,
-            search_context,
-            tenant_id=params.tenant_id,
-            top_k=params.top_k,
-            modality=params.modality,
-            ranking_strategy=params.ranking_strategy,
-            start_date=params.start_date,
-            end_date=params.end_date,
-            confidence_threshold=params.confidence_threshold,
-            use_relationship_boost=params.use_relationship_boost,
-        )
+        with request_trace_context(request.headers):
+            result = await asyncio.to_thread(
+                search_agent.search_with_relationship_context,
+                search_context,
+                tenant_id=params.tenant_id,
+                top_k=params.top_k,
+                modality=params.modality,
+                ranking_strategy=params.ranking_strategy,
+                start_date=params.start_date,
+                end_date=params.end_date,
+                confidence_threshold=params.confidence_threshold,
+                use_relationship_boost=params.use_relationship_boost,
+            )
 
         return result
 

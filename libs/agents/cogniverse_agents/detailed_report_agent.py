@@ -12,7 +12,7 @@ from typing import Any, Dict, List, Optional
 
 import dspy
 import uvicorn
-from fastapi import FastAPI, HTTPException
+from fastapi import FastAPI, HTTPException, Request
 from pydantic import Field
 
 from cogniverse_agents.memory_aware_mixin import MemoryAwareMixin
@@ -27,6 +27,7 @@ from cogniverse_core.common.media import MediaConfig, MediaLocator
 from cogniverse_core.common.tenant_utils import SYSTEM_TENANT_ID
 from cogniverse_core.common.vlm_interface import VLMInterface
 from cogniverse_foundation.config.semantic_router import routed_lm_context_for
+from cogniverse_foundation.telemetry.context import request_trace_context
 
 logger = logging.getLogger(__name__)
 
@@ -1179,26 +1180,27 @@ async def get_agent_card():
 
 
 @app.post("/process")
-async def process_task(task: dict):
+async def process_task(task: dict, request: Request):
     """Process report generation task via plain dict payload."""
     if not detailed_report_agent:
         raise HTTPException(status_code=503, detail="Agent not initialized")
 
     try:
-        data = task
+        with request_trace_context(request.headers):
+            data = task
 
-        request = ReportRequest(
-            query=data.get("query", ""),
-            search_results=data.get("search_results", []),
-            context=data.get("context", {}),
-            report_type=data.get("report_type", "comprehensive"),
-            include_visual_analysis=data.get("include_visual_analysis", True),
-            include_technical_details=data.get("include_technical_details", True),
-            include_recommendations=data.get("include_recommendations", True),
-            max_results_to_analyze=data.get("max_results_to_analyze", 20),
-        )
+            request_model = ReportRequest(
+                query=data.get("query", ""),
+                search_results=data.get("search_results", []),
+                context=data.get("context", {}),
+                report_type=data.get("report_type", "comprehensive"),
+                include_visual_analysis=data.get("include_visual_analysis", True),
+                include_technical_details=data.get("include_technical_details", True),
+                include_recommendations=data.get("include_recommendations", True),
+                max_results_to_analyze=data.get("max_results_to_analyze", 20),
+            )
 
-        result = await detailed_report_agent.generate_report(request)
+            result = await detailed_report_agent.generate_report(request_model)
 
         return {
             "status": "completed",
@@ -1224,6 +1226,7 @@ async def process_task(task: dict):
 
 @app.post("/generate_report")
 async def generate_report_direct(
+    request: Request,
     query: str,
     search_results: List[Dict[str, Any]],
     report_type: str = "comprehensive",
@@ -1236,16 +1239,17 @@ async def generate_report_direct(
         raise HTTPException(status_code=503, detail="Agent not initialized")
 
     try:
-        request = ReportRequest(
-            query=query,
-            search_results=search_results,
-            report_type=report_type,
-            include_visual_analysis=include_visual_analysis,
-            include_technical_details=include_technical_details,
-            include_recommendations=include_recommendations,
-        )
+        with request_trace_context(request.headers):
+            request_model = ReportRequest(
+                query=query,
+                search_results=search_results,
+                report_type=report_type,
+                include_visual_analysis=include_visual_analysis,
+                include_technical_details=include_technical_details,
+                include_recommendations=include_recommendations,
+            )
 
-        result = await detailed_report_agent.generate_report(request)
+            result = await detailed_report_agent.generate_report(request_model)
 
         return {
             "executive_summary": result.executive_summary,

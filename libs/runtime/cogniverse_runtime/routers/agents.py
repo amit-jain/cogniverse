@@ -9,7 +9,7 @@ from typing import TYPE_CHECKING, Any, Dict, List, Optional
 if TYPE_CHECKING:
     from cogniverse_agents.routing.annotation_queue import AnnotationQueue
 
-from fastapi import APIRouter, HTTPException
+from fastapi import APIRouter, HTTPException, Request
 from pydantic import BaseModel, Field, field_validator
 
 from cogniverse_agents.search.vespa_query import VespaSearchDegraded
@@ -18,6 +18,7 @@ from cogniverse_foundation.config.inference_service import (
     InferenceServiceUnavailableError,
 )
 from cogniverse_foundation.config.manager import ConfigManager
+from cogniverse_foundation.telemetry.context import request_trace_context
 from cogniverse_runtime.agent_dispatcher import AgentDispatcher
 from cogniverse_runtime.messaging import (
     InboundMessage,
@@ -514,7 +515,9 @@ async def get_agent_card(agent_name: str) -> Dict[str, Any]:
 
 
 @router.post("/{agent_name}/process")
-async def process_agent_task(agent_name: str, task: AgentTask) -> Dict[str, Any]:
+async def process_agent_task(
+    agent_name: str, task: AgentTask, request: Request
+) -> Dict[str, Any]:
     """
     Process a task with a specific agent.
 
@@ -553,12 +556,13 @@ async def process_agent_task(agent_name: str, task: AgentTask) -> Dict[str, Any]
         )
 
     try:
-        return await dispatcher.dispatch(
-            agent_name=agent_name,
-            query=task.query,
-            context=dispatch_context,
-            top_k=task.top_k,
-        )
+        with request_trace_context(request.headers):
+            return await dispatcher.dispatch(
+                agent_name=agent_name,
+                query=task.query,
+                context=dispatch_context,
+                top_k=task.top_k,
+            )
     except VespaSearchDegraded as e:
         # Vespa soft-timeout (HTTP 200 + root.errors): the backend is up but
         # degraded — 503 tells the caller to retry, instead of an opaque 500.

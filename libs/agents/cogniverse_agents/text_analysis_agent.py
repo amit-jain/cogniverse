@@ -9,7 +9,7 @@ from typing import Any, Dict, Optional
 
 import dspy
 import uvicorn
-from fastapi import FastAPI, HTTPException
+from fastapi import FastAPI, HTTPException, Request
 from pydantic import BaseModel
 
 from cogniverse_agents._confidence import parse_confidence
@@ -26,6 +26,7 @@ from cogniverse_foundation.config.agent_config import (
 from cogniverse_foundation.config.api_mixin import ConfigAPIMixin
 from cogniverse_foundation.config.manager import ConfigManager
 from cogniverse_foundation.config.utils import create_default_config_manager, get_config
+from cogniverse_foundation.telemetry.context import request_trace_context
 
 logger = logging.getLogger(__name__)
 
@@ -416,7 +417,7 @@ class AnalyzeRequest(BaseModel):
 
 
 @app.post("/analyze")
-async def analyze_text_endpoint(request: AnalyzeRequest):
+async def analyze_text_endpoint(http_request: Request, request: AnalyzeRequest):
     """
     Analyze text using current DSPy configuration.
 
@@ -426,12 +427,13 @@ async def analyze_text_endpoint(request: AnalyzeRequest):
     import asyncio
 
     try:
-        agent = get_agent(request.tenant_id)
-        # analyze_text runs a blocking DSPy LM call; off-load to a worker so the
-        # event loop stays responsive (matches the dispatcher path).
-        result = await asyncio.to_thread(
-            agent.analyze_text, request.text, request.analysis_type
-        )
+        with request_trace_context(http_request.headers):
+            agent = get_agent(request.tenant_id)
+            # analyze_text runs a blocking DSPy LM call; off-load to a worker so the
+            # event loop stays responsive (matches the dispatcher path).
+            result = await asyncio.to_thread(
+                agent.analyze_text, request.text, request.analysis_type
+            )
         return {"status": "success", "analysis": result}
     except HTTPException:
         raise

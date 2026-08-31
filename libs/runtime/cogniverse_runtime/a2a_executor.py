@@ -27,6 +27,7 @@ from a2a.utils import get_message_text, new_agent_text_message
 from cogniverse_agents._coercion import coerce_bool, coerce_int
 from cogniverse_core.agents.base import leaf_exceptions
 from cogniverse_core.common.tenant_utils import require_tenant_id
+from cogniverse_foundation.telemetry.context import request_trace_context
 from cogniverse_runtime.agent_dispatcher import AgentDispatcher
 
 logger = logging.getLogger(__name__)
@@ -175,25 +176,32 @@ class CogniverseAgentExecutor(AgentExecutor):
         task_id = context.task_id or ""
         context_id = context.context_id or ""
 
-        # Check if agent supports streaming and client requested it
-        agent_entry = self._dispatcher._registry.get_agent(agent_name)
-        capabilities = set(agent_entry.capabilities) if agent_entry else set()
-        use_streaming = stream and bool(capabilities & _STREAMING_CAPABILITIES)
+        with request_trace_context(metadata):
+            # Check if agent supports streaming and client requested it
+            agent_entry = self._dispatcher._registry.get_agent(agent_name)
+            capabilities = set(agent_entry.capabilities) if agent_entry else set()
+            use_streaming = stream and bool(capabilities & _STREAMING_CAPABILITIES)
 
-        if use_streaming:
-            await self._execute_streaming(
-                agent_name,
-                query,
-                tenant_id,
-                task_id,
-                context_id,
-                event_queue,
-                task_context,
-            )
-        else:
-            await self._execute_non_streaming(
-                agent_name, query, task_context, top_k, task_id, context_id, event_queue
-            )
+            if use_streaming:
+                await self._execute_streaming(
+                    agent_name,
+                    query,
+                    tenant_id,
+                    task_id,
+                    context_id,
+                    event_queue,
+                    task_context,
+                )
+            else:
+                await self._execute_non_streaming(
+                    agent_name,
+                    query,
+                    task_context,
+                    top_k,
+                    task_id,
+                    context_id,
+                    event_queue,
+                )
 
     async def _execute_non_streaming(
         self,

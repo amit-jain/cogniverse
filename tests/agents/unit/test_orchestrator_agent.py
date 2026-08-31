@@ -228,7 +228,7 @@ class TestDetectedModalityCoverage:
             return_value=BackendConfig(tenant_id="test:unit")
         )
 
-        async def _fake_post(url, json, timeout):
+        async def _fake_post(url, json, timeout, **_kwargs):
             response = Mock()
             response.raise_for_status = Mock()
             response.json.return_value = {

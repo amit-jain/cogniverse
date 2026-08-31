@@ -38,6 +38,7 @@ from cogniverse_core.agents.a2a_agent import A2AAgent, A2AAgentConfig
 from cogniverse_core.agents.base import AgentDeps, AgentInput, AgentOutput
 from cogniverse_core.common.tenant_utils import SYSTEM_TENANT_ID
 from cogniverse_core.common.utils.async_bridge import run_coro_blocking
+from cogniverse_foundation.telemetry.context import trace_headers
 from cogniverse_foundation.telemetry.span_contract import (
     OP_ORCHESTRATION,
     record_span_io,
@@ -908,6 +909,7 @@ class OrchestratorAgent(
                         "query": query,
                         "context": {"tenant_id": tenant_id},
                     },
+                    headers=trace_headers(),
                     timeout=getattr(ep, "timeout", 30),
                 )
                 resp.raise_for_status()
@@ -1723,6 +1725,7 @@ class OrchestratorAgent(
                     response = await http_client.post(
                         f"{agent_endpoint.url}{agent_endpoint.process_endpoint}",
                         json=payload,
+                        headers=trace_headers(),
                         timeout=httpx.Timeout(agent_endpoint.timeout, connect=10.0),
                     )
                     response.raise_for_status()
@@ -2069,6 +2072,7 @@ class OrchestratorAgent(
             response = await client.post(
                 f"{endpoint.url}{endpoint.process_endpoint}",
                 json=payload,
+                headers=trace_headers(),
                 timeout=httpx.Timeout(endpoint.timeout, connect=10.0),
             )
             response.raise_for_status()
@@ -2401,6 +2405,7 @@ class OrchestratorAgent(
             response = await client.post(
                 f"{endpoint.url}{endpoint.process_endpoint}",
                 json=payload,
+                headers=trace_headers(),
                 timeout=httpx.Timeout(endpoint.timeout, connect=10.0),
             )
             response.raise_for_status()

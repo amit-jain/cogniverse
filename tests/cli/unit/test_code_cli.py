@@ -13,6 +13,7 @@ from cogniverse_cli.streaming import (
     _handle_event,
     _parse_coding_result,
 )
+from opentelemetry.sdk.trace import TracerProvider
 
 
 @pytest.mark.unit
@@ -50,6 +51,21 @@ class TestA2ARequestBuilder:
         meta = req["params"]["metadata"]
         assert meta["language"] == "rust"
         assert meta["max_iterations"] == 3
+
+    def test_injects_trace_context_when_span_is_active(self):
+        provider = TracerProvider()
+        tracer = provider.get_tracer("cogniverse-cli-test")
+
+        with tracer.start_as_current_span("trace-producer"):
+            req = _build_a2a_request("add tracing", tenant_id="acme")
+
+        meta = req["params"]["metadata"]
+        traceparent = meta["traceparent"]
+        parts = traceparent.split("-")
+        assert len(parts) == 4
+        assert parts[0] == "00"
+        assert len(parts[1]) == 32
+        assert len(parts[2]) == 16
 
 
 @pytest.mark.unit
