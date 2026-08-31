@@ -331,7 +331,7 @@ The telemetry system uses a **provider abstraction** that defines interfaces for
 flowchart TB
     subgraph Abstraction["<span style='color:#000'>Foundation Layer - Provider Interfaces</span>"]
         TelemetryProvider["<span style='color:#000'>TelemetryProvider<br/><br/>• initialize(config)<br/>• configure_span_export()<br/>• session_context()</span>"]
-        TraceStore["<span style='color:#000'>TraceStore<br/><br/>• get_spans()<br/>• get_all_spans()<br/>• get_span_by_id()</span>"]
+        TraceStore["<span style='color:#000'>TraceStore<br/><br/>• get_spans()<br/>• iter_spans()<br/>• get_all_spans()<br/>• get_span_by_id()</span>"]
         AnnotationStore["<span style='color:#000'>AnnotationStore<br/><br/>• add_annotation()<br/>• get_annotations()<br/>• log_evaluations()</span>"]
         DatasetStore["<span style='color:#000'>DatasetStore<br/><br/>• create_dataset()<br/>• get_dataset()<br/>• append_to_dataset()<br/>• delete_dataset()</span>"]
     end
@@ -390,6 +390,19 @@ class TraceStore(ABC):
         pass
 
     @abstractmethod
+    async def iter_spans(
+        self,
+        project: str,
+        start_time: Optional[datetime] = None,
+        end_time: Optional[datetime] = None,
+        filters: Optional[Dict[str, Any]] = None,
+        page_size: int = 1000,
+        columns: Optional[Sequence[str]] = None,
+    ) -> AsyncIterator[pd.DataFrame]:
+        """Yield page-sized DataFrames for matching spans."""
+        pass
+
+    @abstractmethod
     async def get_all_spans(
         self,
         project: str,
@@ -408,14 +421,16 @@ class TraceStore(ABC):
         pass
 ```
 
-Use `get_spans` for deliberately bounded windows. `columns` lets a backend
-request only the standardized fields a caller needs; backends that cannot
-project columns return the full frame unchanged. Consumers whose correctness
-depends on complete history use `get_all_spans`; the Phoenix implementation
-follows its cursor until exhaustion and raises if any page fails, so callers
-never interpret a partial history as the complete project. Its `start_time` and
-`end_time` columns are normalized to timezone-aware UTC datetimes; an invalid
-timestamp raises with project and column context before the frame is returned.
+Use `get_spans` for deliberately bounded windows. Use `iter_spans` when the
+caller needs page-sized frames and bounded memory while walking the full
+result set in one cursor pass. `columns` lets a backend request only the
+standardized fields a caller needs; backends that cannot project columns
+return the full frame unchanged. Consumers whose correctness depends on
+complete history use `get_all_spans`; the Phoenix implementation builds it
+from `iter_spans` and raises if any page fails, so callers never interpret a
+partial history as the complete project. Its `start_time` and `end_time`
+columns are normalized to timezone-aware UTC datetimes; an invalid timestamp
+raises with project and column context before the frame is returned.
 
 ### AnnotationStore Interface
 

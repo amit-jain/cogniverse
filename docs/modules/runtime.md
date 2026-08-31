@@ -1782,6 +1782,10 @@ python -m cogniverse_runtime.optimization_cli --mode egress-netpol \
 python -m cogniverse_runtime.optimization_cli --mode monthly-reports --reports-output-dir ./reports
 ```
 
+Monthly reports stream Phoenix spans page-by-page through `TraceStore.iter_spans`
+and spill each page to disk before fetching the next one, so the report stays
+bounded and linear instead of splitting time windows.
+
 Hot reload: the dispatcher re-reads `_load_artifact` on a TTL cadence for cached agents — the gateway agent, the generic A2A agents (`entity_extraction`, `query_enhancement`, `profile_selection`, etc.), and the `orchestrator_agent`, each cached per `(tenant[, agent_name])` and reloaded every `GATEWAY_ARTIFACT_TTL_S`/`GENERIC_AGENT_TTL_S`/`ORCHESTRATOR_ARTIFACT_TTL_S` (5 minutes). The orchestrator resolves through the same per-tenant cache for both the dispatch and the streaming path, so a warm pod reads the workflow corpus once per TTL instead of on every complex query (and streaming loads the workflow templates it previously ran without). The answer/media agents that are still rebuilt fresh per request re-read on every dispatch (their heavy deps — encoder, search backend, mem0 — are shared-cached), so a promoted or rolled-back artefact lands without a process restart — within one TTL window at worst. See [Evaluation & Optimization Loop § Hot reload note](../architecture/evaluation-optimization-loop.md) for the full cache/TTL/eviction details.
 
 See [Evaluation & Optimization Loop](../architecture/evaluation-optimization-loop.md) for the full `ArtifactManager.promote_if_better`, canary state machine, and rollback details.

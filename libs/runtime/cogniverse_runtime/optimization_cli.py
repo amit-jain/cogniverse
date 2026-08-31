@@ -3395,35 +3395,13 @@ async def _collect_monthly_report_performance(
     chunk_paths: list[Path] = []
 
     with tempfile.TemporaryDirectory() as chunk_dir:
-
-        async def _walk(window_start: datetime, window_end: datetime):
-            nonlocal span_count, error_count, latency_count, latency_sum
-
-            frame = await trace_store.get_spans(
-                project=project,
-                start_time=window_start,
-                end_time=window_end,
-                limit=page_size,
-                columns=_MONTHLY_REPORT_SPAN_COLUMNS,
-            )
-            frame_len = len(frame)
-            if frame_len == 0:
-                del frame
-                return
-            if frame_len >= page_size:
-                midpoint = window_start + ((window_end - window_start) / 2)
-                if midpoint <= window_start or midpoint >= window_end:
-                    raise RuntimeError(
-                        "monthly-reports span window cannot be split without a cursor; "
-                        f"project={project} window_start={window_start!r} "
-                        f"window_end={window_end!r}"
-                    )
-
-                del frame
-                await _walk(window_start, midpoint)
-                await _walk(midpoint, window_end)
-                return
-
+        async for frame in trace_store.iter_spans(
+            project=project,
+            start_time=start_time,
+            end_time=end_time,
+            page_size=page_size,
+            columns=_MONTHLY_REPORT_SPAN_COLUMNS,
+        ):
             frame_span_count, frame_error_count, latencies = (
                 _monthly_report_span_metrics(frame)
             )
@@ -3441,7 +3419,6 @@ async def _collect_monthly_report_performance(
             del latencies
             del frame
 
-        await _walk(start_time, end_time)
         latency_ms_mean = (
             round(latency_sum / latency_count, 3) if latency_count else None
         )
