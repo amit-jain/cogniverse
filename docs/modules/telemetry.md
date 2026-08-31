@@ -424,9 +424,10 @@ class TraceStore(ABC):
 Use `get_spans` for deliberately bounded windows. Use `iter_spans` when the
 caller needs page-sized frames and bounded memory while walking the full
 result set. `columns` projects the requested standardized fields server-side
-when supported; the Phoenix implementation pages projected spans by
-`start_time` and deduplicates boundary rows by `span_id`. Consumers whose
-correctness depends on complete history use `get_all_spans`; the Phoenix
+when supported; the Phoenix implementation walks the requested time range
+with adaptive windows, splitting any full window in half and only falling
+back to `span_id` exclusions when a window can no longer be split. Consumers
+whose correctness depends on complete history use `get_all_spans`; the Phoenix
 implementation builds it from `iter_spans` and raises if any page fails, so
 callers never interpret a partial history as the complete project. Its
 `start_time` and `end_time` columns are normalized to timezone-aware UTC
