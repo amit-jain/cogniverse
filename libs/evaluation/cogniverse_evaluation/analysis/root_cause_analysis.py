@@ -49,6 +49,25 @@ class RootCauseAnalyzer:
     def __init__(self):
         self.known_issues = self._load_known_issues()
 
+    @staticmethod
+    def _require_trace_id(trace: Any, collection_name: str) -> str:
+        trace_id = getattr(trace, "trace_id", None)
+        if not trace_id:
+            raise ValueError(f"{collection_name} contains a trace without trace_id")
+        return trace_id
+
+    @classmethod
+    def _trace_id_set(cls, traces: list[Any], collection_name: str) -> set[str]:
+        trace_ids: set[str] = set()
+        for trace in traces:
+            trace_id = cls._require_trace_id(trace, collection_name)
+            if trace_id in trace_ids:
+                raise ValueError(
+                    f"{collection_name} contains duplicate trace_id '{trace_id}'"
+                )
+            trace_ids.add(trace_id)
+        return trace_ids
+
     def _load_known_issues(self) -> dict[str, dict]:
         """Load known issue patterns and their solutions"""
         return {
@@ -104,6 +123,11 @@ class RootCauseAnalyzer:
         # Separate failed and successful traces
         failed_traces = [t for t in traces if t.status == "error" or t.error]
         successful_traces = [t for t in traces if t.status == "success"]
+        failed_trace_ids = (
+            self._trace_id_set(failed_traces, "failed_traces")
+            if failed_traces
+            else set()
+        )
 
         # Performance degraded traces (slow but successful)
         performance_degraded = []
@@ -153,7 +177,9 @@ class RootCauseAnalyzer:
         # Analyze failures
         if failed_traces:
             analysis["failure_analysis"] = self._analyze_failure_patterns(
-                failed_traces, traces
+                failed_traces,
+                traces,
+                failed_trace_ids=failed_trace_ids,
             )
             failure_hypotheses = self._generate_failure_hypotheses(
                 failed_traces, analysis["failure_analysis"]
@@ -185,13 +211,19 @@ class RootCauseAnalyzer:
 
         # Add statistical analysis
         analysis["statistical_analysis"] = self._perform_statistical_analysis(
-            failed_traces, successful_traces, traces
+            failed_traces,
+            successful_traces,
+            traces,
+            failed_trace_ids=failed_trace_ids,
         )
 
         return analysis
 
     def _analyze_failure_patterns(
-        self, failed_traces: list[Any], all_traces: list[Any]
+        self,
+        failed_traces: list[Any],
+        all_traces: list[Any],
+        failed_trace_ids: set[str] | None = None,
     ) -> dict[str, Any]:
         """Analyze patterns in failed traces"""
         patterns = {
@@ -220,12 +252,16 @@ class RootCauseAnalyzer:
 
         # Analyze temporal patterns
         patterns["temporal_patterns"] = self._analyze_temporal_patterns(
-            failed_traces, all_traces
+            failed_traces,
+            all_traces,
+            failed_trace_ids=failed_trace_ids,
         )
 
         # Find correlated attributes
         patterns["correlated_attributes"] = self._find_correlated_attributes(
-            failed_traces, all_traces
+            failed_traces,
+            all_traces,
+            failed_trace_ids=failed_trace_ids,
         )
 
         return patterns
@@ -263,9 +299,12 @@ class RootCauseAnalyzer:
 
         # Analyze latency distribution
         slow_durations = [t.duration_ms for t in slow_traces]
-        normal_durations = [
-            t.duration_ms for t in normal_traces if t not in slow_traces
-        ]
+        slow_trace_ids = self._trace_id_set(slow_traces, "slow_traces")
+        normal_durations = []
+        for trace in normal_traces:
+            trace_id = self._require_trace_id(trace, "normal_traces")
+            if trace_id not in slow_trace_ids:
+                normal_durations.append(trace.duration_ms)
 
         patterns["latency_distribution"] = {
             "slow_mean": np.mean(slow_durations),
@@ -307,19 +346,28 @@ class RootCauseAnalyzer:
             return "unknown"
 
     def _analyze_temporal_patterns(
-        self, failed_traces: list[Any], all_traces: list[Any]
+        self,
+        failed_traces: list[Any],
+        all_traces: list[Any],
+        failed_trace_ids: set[str] | None = None,
     ) -> list[dict[str, Any]]:
         """Analyze temporal patterns in failures"""
         patterns = []
+        failed_trace_ids = (
+            failed_trace_ids
+            if failed_trace_ids is not None
+            else self._trace_id_set(failed_traces, "failed_traces")
+        )
 
         # Group by hour
         hourly_failures = defaultdict(int)
         hourly_total = defaultdict(int)
 
         for trace in all_traces:
+            trace_id = self._require_trace_id(trace, "all_traces")
             hour = trace.timestamp.hour
             hourly_total[hour] += 1
-            if trace in failed_traces:
+            if trace_id in failed_trace_ids:
                 hourly_failures[hour] += 1
 
         # Find hours with high failure rates
@@ -394,26 +442,38 @@ class RootCauseAnalyzer:
         return bursts
 
     def _find_correlated_attributes(
-        self, failed_traces: list[Any], all_traces: list[Any]
+        self,
+        failed_traces: list[Any],
+        all_traces: list[Any],
+        failed_trace_ids: set[str] | None = None,
     ) -> list[FailurePattern]:
         """Find attributes that correlate with failures"""
         correlations = []
 
         # Check profile correlation
         profile_stats = self._calculate_attribute_correlation(
-            failed_traces, all_traces, "profile"
+            failed_traces,
+            all_traces,
+            "profile",
+            failed_trace_ids=failed_trace_ids,
         )
         correlations.extend(profile_stats)
 
         # Check strategy correlation
         strategy_stats = self._calculate_attribute_correlation(
-            failed_traces, all_traces, "strategy"
+            failed_traces,
+            all_traces,
+            "strategy",
+            failed_trace_ids=failed_trace_ids,
         )
         correlations.extend(strategy_stats)
 
         # Check operation correlation
         operation_stats = self._calculate_attribute_correlation(
-            failed_traces, all_traces, "operation"
+            failed_traces,
+            all_traces,
+            "operation",
+            failed_trace_ids=failed_trace_ids,
         )
         correlations.extend(operation_stats)
 
@@ -423,20 +483,30 @@ class RootCauseAnalyzer:
         return correlations
 
     def _calculate_attribute_correlation(
-        self, failed_traces: list[Any], all_traces: list[Any], attribute: str
+        self,
+        failed_traces: list[Any],
+        all_traces: list[Any],
+        attribute: str,
+        failed_trace_ids: set[str] | None = None,
     ) -> list[FailurePattern]:
         """Calculate correlation between attribute values and failures"""
         patterns = []
+        failed_trace_ids = (
+            failed_trace_ids
+            if failed_trace_ids is not None
+            else self._trace_id_set(failed_traces, "failed_traces")
+        )
 
         # Count occurrences
         failed_values = Counter()
         total_values = Counter()
 
         for trace in all_traces:
+            trace_id = self._require_trace_id(trace, "all_traces")
             value = getattr(trace, attribute, None)
             if value:
                 total_values[value] += 1
-                if trace in failed_traces:
+                if trace_id in failed_trace_ids:
                     failed_values[value] += 1
 
         # Calculate failure rates and correlation
@@ -611,9 +681,15 @@ class RootCauseAnalyzer:
         failed_traces: list[Any],
         successful_traces: list[Any],
         all_traces: list[Any],
+        failed_trace_ids: set[str] | None = None,
     ) -> dict[str, Any]:
         """Perform statistical analysis on traces"""
         analysis = {}
+        failed_trace_ids = (
+            failed_trace_ids
+            if failed_trace_ids is not None
+            else self._trace_id_set(failed_traces, "failed_traces")
+        )
 
         if not all_traces:
             return analysis
@@ -639,10 +715,16 @@ class RootCauseAnalyzer:
 
         # Profile/strategy comparison
         analysis["profile_comparison"] = self._compare_by_attribute(
-            all_traces, failed_traces, "profile"
+            all_traces,
+            failed_traces,
+            "profile",
+            failed_trace_ids=failed_trace_ids,
         )
         analysis["strategy_comparison"] = self._compare_by_attribute(
-            all_traces, failed_traces, "strategy"
+            all_traces,
+            failed_traces,
+            "strategy",
+            failed_trace_ids=failed_trace_ids,
         )
 
         return analysis
@@ -655,20 +737,30 @@ class RootCauseAnalyzer:
         return dict(hourly_counts)
 
     def _compare_by_attribute(
-        self, all_traces: list[Any], failed_traces: list[Any], attribute: str
+        self,
+        all_traces: list[Any],
+        failed_traces: list[Any],
+        attribute: str,
+        failed_trace_ids: set[str] | None = None,
     ) -> dict[str, dict[str, Any]]:
         """Compare failure rates by attribute"""
         comparison = {}
+        failed_trace_ids = (
+            failed_trace_ids
+            if failed_trace_ids is not None
+            else self._trace_id_set(failed_traces, "failed_traces")
+        )
 
         # Group traces by attribute
         grouped_all = defaultdict(list)
         grouped_failed = defaultdict(list)
 
         for trace in all_traces:
+            trace_id = self._require_trace_id(trace, "all_traces")
             value = getattr(trace, attribute, "unknown")
             if value:
                 grouped_all[value].append(trace)
-                if trace in failed_traces:
+                if trace_id in failed_trace_ids:
                     grouped_failed[value].append(trace)
 
         # Calculate statistics for each group

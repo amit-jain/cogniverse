@@ -11,6 +11,7 @@ import sys
 import time
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
+from typing import Any
 
 import pandas as pd
 import plotly.express as px
@@ -173,6 +174,61 @@ def display_streaming_result(
         text_placeholder.markdown(accumulated_text)
 
     return final_data
+
+
+def _build_rca_trace_payloads(traces: list[Any]) -> tuple[tuple[Any, ...], ...]:
+    return tuple(
+        (
+            trace.trace_id,
+            trace.status,
+            trace.error,
+            trace.operation,
+            trace.profile,
+            trace.strategy,
+            trace.duration_ms,
+            trace.timestamp,
+        )
+        for trace in traces
+    )
+
+
+@st.cache_data(show_spinner="Analyzing failures and performance issues...")
+def _run_root_cause_analysis(
+    trace_payloads: tuple[tuple[Any, ...], ...],
+    include_performance: bool,
+    performance_threshold_percentile: int,
+) -> dict[str, Any]:
+    from types import SimpleNamespace
+
+    traces = [
+        SimpleNamespace(
+            trace_id=trace_id,
+            status=status,
+            error=error,
+            operation=operation,
+            profile=profile,
+            strategy=strategy,
+            duration_ms=duration_ms,
+            timestamp=timestamp,
+        )
+        for (
+            trace_id,
+            status,
+            error,
+            operation,
+            profile,
+            strategy,
+            duration_ms,
+            timestamp,
+        ) in trace_payloads
+    ]
+
+    rca = RootCauseAnalyzer()
+    return rca.analyze_failures(
+        traces,
+        include_performance=include_performance,
+        performance_threshold_percentile=performance_threshold_percentile,
+    )
 
 
 # Import tab modules early
@@ -1318,25 +1374,24 @@ if enable_rca and len(tabs) > 6:
 
             st.caption("💡 You can combine queries with 'and' / 'or' operators")
 
-        # Initialize RCA
-        rca = RootCauseAnalyzer()
-
         # RCA configuration
-        col1, col2 = st.columns(2)
-        with col1:
-            include_performance = st.checkbox(
-                "Include performance degradations",
-                value=True,
-                help="Analyze slow requests in addition to failures",
-            )
-        with col2:
-            performance_threshold = st.slider(
-                "Performance threshold (percentile)",
-                min_value=90,
-                max_value=99,
-                value=95,
-                help="Requests slower than this percentile of all requests are considered performance degradations. For example, P95 means requests slower than 95% of all requests.",
-            )
+        with st.form("root_cause_analysis_controls"):
+            col1, col2 = st.columns(2)
+            with col1:
+                include_performance = st.checkbox(
+                    "Include performance degradations",
+                    value=True,
+                    help="Analyze slow requests in addition to failures",
+                )
+            with col2:
+                performance_threshold = st.slider(
+                    "Performance threshold (percentile)",
+                    min_value=90,
+                    max_value=99,
+                    value=95,
+                    help="Requests slower than this percentile of all requests are considered performance degradations. For example, P95 means requests slower than 95% of all requests.",
+                )
+            run_analysis = st.form_submit_button("Run analysis", type="primary")
 
         # Show current threshold value
         if include_performance and not traces_df.empty:
@@ -1356,18 +1411,37 @@ if enable_rca and len(tabs) > 6:
                         f"ℹ️ Note: P{performance_threshold} of all requests (including failures) is {all_p95:.1f}ms"
                     )
 
-        # Run analysis - use filtered traces to match the stats
-        with st.spinner("Analyzing failures and performance issues..."):
-            # Filter the original TraceMetrics objects — no DataFrame
-            # round-trip via iterrows over up to 10k rows. An empty frame
-            # has no trace_id column at all, so guard before indexing.
-            _rca_kept_ids = set(traces_df["trace_id"]) if not traces_df.empty else set()
-            filtered_traces = [t for t in traces if t.trace_id in _rca_kept_ids]
+        # Run analysis only after an explicit submit. Streamlit reruns the
+        # whole script on every widget interaction, so the expensive RCA
+        # stays idle until the user asks for it.
+        _rca_kept_ids = set(traces_df["trace_id"]) if not traces_df.empty else set()
+        filtered_traces = [t for t in traces if t.trace_id in _rca_kept_ids]
+        rca_signature = (
+            tuple(t.trace_id for t in filtered_traces),
+            include_performance,
+            performance_threshold,
+        )
+        cached_rca = st.session_state.get("_root_cause_analysis")
+        rca_results = None
 
-            rca_results = rca.analyze_failures(
-                filtered_traces,  # Use filtered traces instead of all traces
-                include_performance=include_performance,
-                performance_threshold_percentile=performance_threshold,
+        if run_analysis:
+            if not filtered_traces:
+                st.info("No traces are available for root cause analysis.")
+            else:
+                rca_results = _run_root_cause_analysis(
+                    _build_rca_trace_payloads(filtered_traces),
+                    include_performance=include_performance,
+                    performance_threshold_percentile=performance_threshold,
+                )
+                st.session_state["_root_cause_analysis"] = {
+                    "signature": rca_signature,
+                    "results": rca_results,
+                }
+        elif cached_rca and cached_rca.get("signature") == rca_signature:
+            rca_results = cached_rca["results"]
+        else:
+            st.info(
+                "Click Run analysis to compute root-cause results for the current filters."
             )
 
         if rca_results and "summary" in rca_results:

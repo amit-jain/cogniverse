@@ -226,6 +226,242 @@ class TestAttributeCorrelation:
             assert p.correlation_strength <= 0.3, p
 
 
+class _EqProbe:
+    def __init__(self):
+        self.eq_calls = 0
+
+
+class _EqProbeTrace:
+    def __init__(
+        self,
+        probe: _EqProbe,
+        trace_id: str,
+        *,
+        status: str = "success",
+        error: str = None,
+        operation: str = "search",
+        profile: str = "shared",
+        strategy: str = "default",
+        duration_ms: float = 100.0,
+        timestamp: datetime = None,
+    ):
+        self._probe = probe
+        self.trace_id = trace_id
+        self.status = status
+        self.error = error
+        self.operation = operation
+        self.profile = profile
+        self.strategy = strategy
+        self.duration_ms = duration_ms
+        self.timestamp = timestamp or datetime(2024, 1, 1, 12, 0, 0)
+
+    def __eq__(self, other):
+        self._probe.eq_calls += 1
+        return False
+
+
+@pytest.mark.unit
+class TestAttributeCorrelationPerformance:
+    def test_uses_trace_id_membership_not_trace_equality(self, analyzer):
+        probe = _EqProbe()
+        all_traces = [
+            _EqProbeTrace(probe, f"t{i}", profile="shared") for i in range(40)
+        ]
+        failed_traces = [
+            _EqProbeTrace(
+                probe,
+                f"f{i}",
+                status="error",
+                error="timeout",
+                profile="shared",
+            )
+            for i in range(10)
+        ]
+
+        patterns = analyzer._calculate_attribute_correlation(
+            failed_traces, all_traces, "profile"
+        )
+
+        assert patterns == []
+        assert probe.eq_calls == 0
+
+
+@pytest.mark.unit
+class TestTraceIdValidation:
+    def test_missing_trace_id_raises(self, analyzer):
+        failed_traces = [
+            make_trace("f1", status="error", error="timeout", profile="shared")
+        ]
+        all_traces = [
+            SimpleNamespace(
+                status="success",
+                error=None,
+                operation="search",
+                profile="shared",
+                strategy="default",
+                duration_ms=100.0,
+                timestamp=datetime(2024, 1, 1, 12, 0, 0),
+            )
+        ]
+
+        with pytest.raises(
+            ValueError, match="all_traces contains a trace without trace_id"
+        ):
+            analyzer._calculate_attribute_correlation(
+                failed_traces, all_traces, "profile"
+            )
+
+    def test_duplicate_trace_id_raises(self, analyzer):
+        failed_traces = [
+            make_trace("dup", status="error", error="timeout", profile="shared"),
+            make_trace("dup", status="error", error="timeout", profile="shared"),
+        ]
+        all_traces = [
+            make_trace("t1", status="success", profile="shared"),
+        ]
+
+        with pytest.raises(
+            ValueError, match="failed_traces contains duplicate trace_id 'dup'"
+        ):
+            analyzer._calculate_attribute_correlation(
+                failed_traces, all_traces, "profile"
+            )
+
+
+@pytest.mark.unit
+class TestCorrelatedAttributeOrdering:
+    def test_exact_correlated_attribute_output_is_stable(self, analyzer):
+        failed_traces = [
+            make_trace(
+                f"f{i}",
+                status="error",
+                error="timeout",
+                operation="o_bad",
+                profile="p_bad",
+                strategy="s_bad",
+            )
+            for i in range(8)
+        ]
+        all_traces = failed_traces + [
+            make_trace(
+                "s1",
+                status="success",
+                operation="o_good1",
+                profile="p_bad",
+                strategy="s_good1",
+            ),
+            make_trace(
+                "s2",
+                status="success",
+                operation="o_good2",
+                profile="p_bad",
+                strategy="s_good2",
+            ),
+            make_trace(
+                "s3",
+                status="success",
+                operation="o_good3",
+                profile="p_good1",
+                strategy="s_bad",
+            ),
+            make_trace(
+                "s4",
+                status="success",
+                operation="o_good4",
+                profile="p_good2",
+                strategy="s_good3",
+            ),
+            make_trace(
+                "s5",
+                status="success",
+                operation="o_good5",
+                profile="p_good3",
+                strategy="s_good4",
+            ),
+            make_trace(
+                "s6",
+                status="success",
+                operation="o_good6",
+                profile="p_good4",
+                strategy="s_good5",
+            ),
+            make_trace(
+                "s7",
+                status="success",
+                operation="o_good7",
+                profile="p_good5",
+                strategy="s_good6",
+            ),
+            make_trace(
+                "s8",
+                status="success",
+                operation="o_good8",
+                profile="p_good6",
+                strategy="s_good7",
+            ),
+            make_trace(
+                "s9",
+                status="success",
+                operation="o_good9",
+                profile="p_good7",
+                strategy="s_good8",
+            ),
+            make_trace(
+                "s10",
+                status="success",
+                operation="o_good10",
+                profile="p_good8",
+                strategy="s_good9",
+            ),
+            make_trace(
+                "s11",
+                status="success",
+                operation="o_good11",
+                profile="p_good9",
+                strategy="s_good10",
+            ),
+            make_trace(
+                "s12",
+                status="success",
+                operation="o_good12",
+                profile="p_good10",
+                strategy="s_good11",
+            ),
+        ]
+
+        patterns = analyzer._find_correlated_attributes(failed_traces, all_traces)
+
+        assert patterns == [
+            FailurePattern(
+                pattern_type="operation",
+                pattern_value="o_bad",
+                failure_rate=1.0,
+                occurrence_count=8,
+                confidence=0.576,
+                examples=[],
+                correlation_strength=0.72,
+            ),
+            FailurePattern(
+                pattern_type="strategy",
+                pattern_value="s_bad",
+                failure_rate=0.8888888888888888,
+                occurrence_count=8,
+                confidence=0.48400000000000004,
+                examples=[],
+                correlation_strength=0.5377777777777778,
+            ),
+            FailurePattern(
+                pattern_type="profile",
+                pattern_value="p_bad",
+                failure_rate=0.8,
+                occurrence_count=8,
+                confidence=0.4,
+                examples=[],
+                correlation_strength=0.4,
+            ),
+        ]
+
+
 @pytest.mark.unit
 class TestFailurePatternAnalysis:
     def test_error_types_counted(self, analyzer):

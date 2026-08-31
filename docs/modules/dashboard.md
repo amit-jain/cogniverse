@@ -177,6 +177,8 @@ The app renders 16 tabs in order. The table below shows the tab label, the tab i
 
 - Export traces via raw data table toggle
 
+- Root Cause Analysis runs only after the tab's `Run analysis` submit; the current result is cached for the active trace IDs and threshold so ordinary Streamlit reruns do not repeat the batch.
+
 ```python
 # For programmatic access to Phoenix traces, import from the telemetry-phoenix package.
 # project_name scopes the query to a tenant's project — omitting it is no
