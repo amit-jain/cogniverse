@@ -93,12 +93,9 @@ class _ProjectedClient:
             span
             for span in self._spans
             if (start_time is None or start_time <= span["start_time"])
-            and (end_time is None or span["start_time"] < end_time)
+            and (end_time is None or span["start_time"] <= end_time)
             and span["context.span_id"] not in excluded_span_ids
         ]
-        rows = sorted(
-            rows, key=lambda span: (span["start_time"], span["context.span_id"])
-        )
         page_rows = rows[: kwargs["limit"]]
 
         self.calls.append(
@@ -226,9 +223,25 @@ async def test_get_all_spans_returns_records_beyond_one_page():
 
 
 @pytest.mark.asyncio
-async def test_iter_spans_uses_projected_query_pages_without_duplicates():
+async def test_iter_spans_uses_projected_window_pages_without_duplicates():
     base_time = datetime(2026, 8, 4, 0, 0, tzinfo=timezone.utc)
     rows = [
+        {
+            "name": "approval_batch",
+            "context.span_id": "span-4",
+            "context.trace_id": "trace-4",
+            "start_time": base_time + timedelta(hours=1, minutes=5),
+            "end_time": base_time + timedelta(hours=1, minutes=5, seconds=1),
+            "status_code": "OK",
+        },
+        {
+            "name": "approval_batch",
+            "context.span_id": "span-3",
+            "context.trace_id": "trace-3",
+            "start_time": base_time + timedelta(minutes=25),
+            "end_time": base_time + timedelta(minutes=25, seconds=1),
+            "status_code": "OK",
+        },
         {
             "name": "approval_batch",
             "context.span_id": "span-0",
@@ -236,6 +249,14 @@ async def test_iter_spans_uses_projected_query_pages_without_duplicates():
             "start_time": base_time + timedelta(minutes=5),
             "end_time": base_time + timedelta(minutes=5, seconds=1),
             "status_code": "OK",
+        },
+        {
+            "name": "approval_batch",
+            "context.span_id": "span-5",
+            "context.trace_id": "trace-5",
+            "start_time": base_time + timedelta(hours=1),
+            "end_time": base_time + timedelta(hours=1, seconds=1),
+            "status_code": "WARN",
         },
         {
             "name": "approval_batch",
@@ -251,22 +272,6 @@ async def test_iter_spans_uses_projected_query_pages_without_duplicates():
             "context.trace_id": "trace-2",
             "start_time": base_time + timedelta(minutes=15),
             "end_time": base_time + timedelta(minutes=15, seconds=2),
-            "status_code": "OK",
-        },
-        {
-            "name": "approval_batch",
-            "context.span_id": "span-3",
-            "context.trace_id": "trace-3",
-            "start_time": base_time + timedelta(minutes=25),
-            "end_time": base_time + timedelta(minutes=25, seconds=1),
-            "status_code": "OK",
-        },
-        {
-            "name": "approval_batch",
-            "context.span_id": "span-4",
-            "context.trace_id": "trace-4",
-            "start_time": base_time + timedelta(hours=1, minutes=5),
-            "end_time": base_time + timedelta(hours=1, minutes=5, seconds=1),
             "status_code": "OK",
         },
     ]
@@ -286,46 +291,57 @@ async def test_iter_spans_uses_projected_query_pages_without_duplicates():
         pages.append(frame)
 
     combined = pd.concat(pages, ignore_index=True)
+    root_window_end = base_time + timedelta(hours=2)
 
     assert list(combined.columns) == ["start_time", "end_time", "status_code"]
     assert len(combined) == len(rows)
-    assert combined["start_time"].tolist() == [
-        base_time + timedelta(minutes=5),
-        base_time + timedelta(minutes=15),
-        base_time + timedelta(minutes=15),
-        base_time + timedelta(minutes=25),
-        base_time + timedelta(hours=1, minutes=5),
-    ]
-    assert combined["status_code"].tolist() == ["OK", "ERROR", "OK", "OK", "OK"]
-    assert len(client.calls) == 3
+    assert {tuple(row) for row in combined.itertuples(index=False, name=None)} == {
+        (
+            base_time + timedelta(minutes=5),
+            base_time + timedelta(minutes=5, seconds=1),
+            "OK",
+        ),
+        (
+            base_time + timedelta(minutes=15),
+            base_time + timedelta(minutes=15, seconds=1),
+            "ERROR",
+        ),
+        (
+            base_time + timedelta(minutes=15),
+            base_time + timedelta(minutes=15, seconds=2),
+            "OK",
+        ),
+        (
+            base_time + timedelta(minutes=25),
+            base_time + timedelta(minutes=25, seconds=1),
+            "OK",
+        ),
+        (
+            base_time + timedelta(hours=1),
+            base_time + timedelta(hours=1, seconds=1),
+            "WARN",
+        ),
+        (
+            base_time + timedelta(hours=1, minutes=5),
+            base_time + timedelta(hours=1, minutes=5, seconds=1),
+            "OK",
+        ),
+    }
+    assert len(client.calls) >= 4
     assert [call["project_identifier"] for call in client.calls] == [
         "cogniverse-acme-approval",
-        "cogniverse-acme-approval",
-        "cogniverse-acme-approval",
-    ]
-    assert [call["selected_columns"] for call in client.calls] == [
-        ("start_time", "end_time", "status_code"),
-        ("start_time", "end_time", "status_code"),
-        ("start_time", "end_time", "status_code"),
-    ]
-    assert [len(call["page_span_ids"]) for call in client.calls] == [2, 2, 1]
-    assert [call["start_time"] for call in client.calls] == [
-        base_time,
-        pages[0]["start_time"].iloc[-1],
-        pages[1]["start_time"].iloc[-1],
-    ]
-    assert [call["page_span_ids"] for call in client.calls] == [
-        ["span-0", "span-1"],
-        ["span-2", "span-3"],
-        ["span-4"],
-    ]
+    ] * len(client.calls)
+    assert all(
+        call["selected_columns"] == ("start_time", "end_time", "status_code")
+        for call in client.calls
+    )
+    assert any(call["end_time"] < root_window_end for call in client.calls)
+    assert client.calls[0]["start_time"] == base_time
+    assert client.calls[0]["end_time"] == root_window_end
+    assert {span_id for call in client.calls for span_id in call["page_span_ids"]} == {
+        f"span-{index}" for index in range(len(rows))
+    }
     assert client.calls[0]["condition"] == "name == 'approval_batch'"
-    assert client.calls[1]["condition"] == (
-        "name == 'approval_batch' and span_id not in ['span-1']"
-    )
-    assert client.calls[2]["condition"] == (
-        "name == 'approval_batch' and span_id not in ['span-3']"
-    )
 
 
 @pytest.mark.asyncio

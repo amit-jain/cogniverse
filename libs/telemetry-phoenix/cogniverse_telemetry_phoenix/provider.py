@@ -8,7 +8,7 @@ import asyncio
 import logging
 import weakref
 from contextlib import contextmanager
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from typing import Any, AsyncIterator, Dict, Generator, List, Optional, Sequence
 
 import pandas as pd
@@ -104,6 +104,7 @@ def _prune_closed_loops() -> None:
 # too short for a large trigger dataset or a loaded Phoenix (the same
 # under-sizing the span path fixed with 120s). Pass this to every dataset call.
 _DATASET_OP_TIMEOUT_S = 120
+_SPAN_QUERY_WINDOW_MIN_STEP = timedelta(microseconds=1)
 
 
 def _http_status(exc: BaseException) -> Optional[int]:
@@ -252,6 +253,21 @@ def _build_span_query_condition(
         predicate_parts.append(f"span_id not in [{joined}]")
 
     return " and ".join(predicate_parts) if predicate_parts else None
+
+
+def _split_span_query_window(
+    window_start: datetime, window_end: datetime
+) -> Optional[datetime]:
+    """Return the midpoint for a projected span window, if it can be split."""
+    if window_end <= window_start:
+        return None
+    if window_end - window_start <= _SPAN_QUERY_WINDOW_MIN_STEP:
+        return None
+
+    midpoint = window_start + (window_end - window_start) / 2
+    if midpoint <= window_start or midpoint >= window_end:
+        return None
+    return midpoint
 
 
 class PhoenixTraceStore(TraceStore):
@@ -424,8 +440,9 @@ class PhoenixTraceStore(TraceStore):
     ) -> AsyncIterator[pd.DataFrame]:
         """Stream every matching span through Phoenix pagination.
 
-        Projected columns use a keyset walk on ``start_time`` so each yielded
-        frame stays bounded without downloading full rows.
+        Projected columns use adaptive time windows over the requested range:
+        full windows split in half, and the leaf window only falls back to
+        ``span_id`` exclusions when the window can no longer be split.
         """
         unsupported_filters = set(filters or {}).difference({"name"})
         if unsupported_filters:
@@ -448,17 +465,25 @@ class PhoenixTraceStore(TraceStore):
             name_filter = list(name_filter)
 
         requested_columns = list(columns) if columns is not None else None
-        query_columns = requested_columns
-        if query_columns is not None and "start_time" not in query_columns:
-            query_columns = [*query_columns, "start_time"]
 
-        if query_columns is not None:
+        if requested_columns is not None:
             from phoenix.client.types.spans import SpanQuery
 
-            query_base = SpanQuery().select(*query_columns)
+            query_base = SpanQuery().select(*requested_columns)
+            projected_start_time = (
+                start_time
+                if start_time is not None
+                else datetime.min.replace(tzinfo=timezone.utc)
+            )
+            projected_end_time = (
+                end_time
+                if end_time is not None
+                else datetime.max.replace(tzinfo=timezone.utc)
+            )
 
             async def query_page(
-                page_start: Optional[datetime],
+                window_start: datetime,
+                window_end: datetime,
                 excluded_span_ids: Sequence[str],
             ) -> Optional[pd.DataFrame]:
                 import httpx
@@ -478,8 +503,8 @@ class PhoenixTraceStore(TraceStore):
                         client.spans.get_spans_dataframe,
                         query=query,
                         project_identifier=project,
-                        start_time=page_start,
-                        end_time=end_time,
+                        start_time=window_start,
+                        end_time=window_end,
                         limit=page_size,
                         # The method's own default is 5s and overrides the client's
                         # timeout — large project windows blow through it routinely.
@@ -492,38 +517,78 @@ class PhoenixTraceStore(TraceStore):
                         f"Failed to query every span from Phoenix project {project}"
                     ) from exc
 
-            page_start = start_time
-            excluded_span_ids: Sequence[str] = ()
-            while True:
-                spans_df = await query_page(page_start, excluded_span_ids)
+            def project_frame(spans_df: pd.DataFrame) -> pd.DataFrame:
+                return spans_df.reset_index().reindex(columns=requested_columns)
+
+            async def emit_window(
+                window_start: datetime,
+                window_end: datetime,
+                yielded_span_ids: set[str],
+            ) -> AsyncIterator[pd.DataFrame]:
+                spans_df = await query_page(window_start, window_end, yielded_span_ids)
                 if spans_df is None:
                     return
                 if spans_df.empty:
-                    break
+                    return
 
                 page_span_ids = list(spans_df.index)
-                page_start_times = spans_df["start_time"]
-                next_page_start = page_start_times.iloc[-1]
-                spans_df = spans_df.reset_index()
-                if requested_columns is not None:
-                    spans_df = spans_df.reindex(columns=requested_columns)
-                logger.debug(
-                    "Retrieved %d spans from project %s",
-                    len(spans_df),
-                    project,
-                )
-                yield spans_df
-                del spans_df
-
                 if len(page_span_ids) < page_size:
-                    break
+                    yielded_span_ids.update(page_span_ids)
+                    frame = project_frame(spans_df)
+                    logger.debug(
+                        "Retrieved %d spans from project %s",
+                        len(frame),
+                        project,
+                    )
+                    yield frame
+                    return
 
-                excluded_span_ids = [
-                    span_id
-                    for span_id, row_start_time in zip(page_span_ids, page_start_times)
-                    if row_start_time == next_page_start
-                ]
-                page_start = next_page_start
+                split_window = _split_span_query_window(window_start, window_end)
+                if split_window is not None:
+                    async for frame in emit_window(
+                        window_start,
+                        split_window,
+                        yielded_span_ids,
+                    ):
+                        yield frame
+                    async for frame in emit_window(
+                        split_window,
+                        window_end,
+                        yielded_span_ids,
+                    ):
+                        yield frame
+                    return
+
+                while True:
+                    spans_df = await query_page(
+                        window_start,
+                        window_end,
+                        yielded_span_ids,
+                    )
+                    if spans_df is None:
+                        return
+                    if spans_df.empty:
+                        return
+
+                    page_span_ids = list(spans_df.index)
+                    yielded_span_ids.update(page_span_ids)
+                    frame = project_frame(spans_df)
+                    logger.debug(
+                        "Retrieved %d spans from project %s",
+                        len(frame),
+                        project,
+                    )
+                    yield frame
+                    if len(page_span_ids) < page_size:
+                        return
+
+            yielded_span_ids: set[str] = set()
+            async for frame in emit_window(
+                projected_start_time,
+                projected_end_time,
+                yielded_span_ids,
+            ):
+                yield frame
             return
 
         async def query_page(page_cursor: Optional[str]) -> Dict[str, Any]:
