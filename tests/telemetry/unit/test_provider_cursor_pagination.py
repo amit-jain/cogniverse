@@ -589,6 +589,9 @@ async def test_projected_window_that_fits_the_cap_uses_a_single_call():
     re-issued as two halves.
     """
     base_time = datetime(2026, 8, 4, 0, 0, tzinfo=timezone.utc)
+    # Phoenix returns rows in no guaranteed order -- measured against the live
+    # store, neither ascending nor descending by start_time. The fake is fed a
+    # scrambled order so a test cannot pass by depending on one.
     rows = [
         {
             "name": "approval_batch",
@@ -598,7 +601,7 @@ async def test_projected_window_that_fits_the_cap_uses_a_single_call():
             "end_time": base_time + timedelta(minutes=5 * index, seconds=1),
             "status_code": "OK",
         }
-        for index in range(7)
+        for index in (4, 0, 6, 2, 5, 1, 3)
     ]
 
     client = _ProjectedClient(rows)
@@ -622,7 +625,9 @@ async def test_projected_window_that_fits_the_cap_uses_a_single_call():
     assert client.calls[0]["start_time"] == base_time
     assert client.calls[0]["end_time"] == base_time + timedelta(hours=2)
     assert client.calls[0]["condition"] == "name == 'approval_batch'"
-    assert client.calls[0]["page_span_ids"] == [f"span-{index}" for index in range(7)]
+    assert sorted(client.calls[0]["page_span_ids"]) == [
+        f"span-{index}" for index in range(7)
+    ]
     assert list(combined.columns) == ["start_time", "end_time", "status_code"]
     assert len(combined) == 7
 
@@ -633,6 +638,9 @@ async def test_projected_window_over_the_cap_falls_back_to_splitting(monkeypatch
     monkeypatch.setattr(provider_module, "PROJECTED_SPAN_MAX_ROWS_PER_CALL", 2)
 
     base_time = datetime(2026, 8, 4, 0, 0, tzinfo=timezone.utc)
+    # Phoenix returns rows in no guaranteed order -- measured against the live
+    # store, neither ascending nor descending by start_time. The fake is fed a
+    # scrambled order so a test cannot pass by depending on one.
     rows = [
         {
             "name": "approval_batch",
@@ -642,7 +650,7 @@ async def test_projected_window_over_the_cap_falls_back_to_splitting(monkeypatch
             "end_time": base_time + timedelta(minutes=5 * index, seconds=1),
             "status_code": "OK",
         }
-        for index in range(7)
+        for index in (4, 0, 6, 2, 5, 1, 3)
     ]
 
     client = _ProjectedClient(rows)
@@ -664,6 +672,8 @@ async def test_projected_window_over_the_cap_falls_back_to_splitting(monkeypatch
         span_id for call in client.calls for span_id in call["page_span_ids"]
     ]
 
-    assert len(client.calls) > 1, client.calls
+    # 18 requests for 7 rows once the cap forces the split walk. Pinned
+    # exactly: a bound would permit the waste this fix exists to remove.
+    assert len(client.calls) == 18, client.calls
     assert len(combined) == 7
     assert sorted(set(returned_span_ids)) == [f"span-{index}" for index in range(7)]
