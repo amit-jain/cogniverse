@@ -163,7 +163,16 @@ class TestPhoenixDatasets:
         """Create an eval baseline dataset in Phoenix, read it back."""
         from phoenix.client import Client
 
-        client = Client(base_url=PHOENIX)
+        # Sized for CONTENTION, not for the work: this create+read pair was
+        # measured at 0.02s against an idle Phoenix, but the client's 30s
+        # default read timeout is exceeded when a scheduled workflow is walking
+        # spans in the same single-writer store (monthly-reports runs ~22min and
+        # made this call time out immediately afterwards). The stall is a real
+        # product characteristic of that coupling, recorded separately; this
+        # test asserts the dataset round-trip contract and should not fail on it.
+        client = Client(
+            base_url=PHOENIX, http_client=httpx.Client(base_url=PHOENIX, timeout=180.0)
+        )
         import pandas as pd
 
         df = pd.DataFrame(
