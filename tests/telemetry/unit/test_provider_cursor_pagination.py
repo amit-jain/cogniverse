@@ -7,6 +7,7 @@ import httpx
 import pandas as pd
 import pytest
 
+from cogniverse_telemetry_phoenix import provider as provider_module
 from cogniverse_telemetry_phoenix.provider import PhoenixTraceStore
 
 pytestmark = pytest.mark.unit
@@ -223,7 +224,16 @@ async def test_get_all_spans_returns_records_beyond_one_page():
 
 
 @pytest.mark.asyncio
-async def test_iter_spans_uses_projected_window_pages_without_duplicates():
+async def test_iter_spans_uses_projected_window_pages_without_duplicates(
+    monkeypatch,
+):
+    """The split walk covers the window without duplicates once the cap truncates.
+
+    Splitting is the fallback path, so the cap is lowered to force it; the
+    single-call path is covered by
+    ``test_projected_window_that_fits_the_cap_uses_a_single_call``.
+    """
+    monkeypatch.setattr(provider_module, "PROJECTED_SPAN_MAX_ROWS_PER_CALL", 2)
     base_time = datetime(2026, 8, 4, 0, 0, tzinfo=timezone.utc)
     rows = [
         {
@@ -327,7 +337,10 @@ async def test_iter_spans_uses_projected_window_pages_without_duplicates():
             "OK",
         ),
     }
-    assert len(client.calls) >= 4
+    # 68 requests for 7 rows: every non-leaf split query is discarded and
+    # re-issued as two halves. Pinned exactly so a change in the split
+    # strategy's cost is visible rather than absorbed.
+    assert len(client.calls) == 68
     assert [call["project_identifier"] for call in client.calls] == [
         "cogniverse-acme-approval",
     ] * len(client.calls)
@@ -565,3 +578,92 @@ async def test_projected_frames_survive_phoenix_named_index():
         "context.span_id",
     ]
     assert list(frames[0]["context.span_id"]) == ["s1", "s2"]
+
+
+@pytest.mark.asyncio
+async def test_projected_window_that_fits_the_cap_uses_a_single_call():
+    """A projected window under the memory cap costs ONE request, not a split walk.
+
+    Measured against live Phoenix: the split walk spent 81.9s on a window the
+    single call served in 1.7s, because every non-leaf query is discarded and
+    re-issued as two halves.
+    """
+    base_time = datetime(2026, 8, 4, 0, 0, tzinfo=timezone.utc)
+    rows = [
+        {
+            "name": "approval_batch",
+            "context.span_id": f"span-{index}",
+            "context.trace_id": f"trace-{index}",
+            "start_time": base_time + timedelta(minutes=5 * index),
+            "end_time": base_time + timedelta(minutes=5 * index, seconds=1),
+            "status_code": "OK",
+        }
+        for index in range(7)
+    ]
+
+    client = _ProjectedClient(rows)
+    store = _store(client)
+
+    pages = []
+    async for frame in store.iter_spans(
+        project="cogniverse-acme-approval",
+        start_time=base_time,
+        end_time=base_time + timedelta(hours=2),
+        filters={"name": "approval_batch"},
+        page_size=2,
+        columns=("start_time", "end_time", "status_code"),
+    ):
+        pages.append(frame)
+
+    combined = pd.concat(pages, ignore_index=True)
+
+    assert len(client.calls) == 1, client.calls
+    assert client.calls[0]["limit"] == provider_module.PROJECTED_SPAN_MAX_ROWS_PER_CALL
+    assert client.calls[0]["start_time"] == base_time
+    assert client.calls[0]["end_time"] == base_time + timedelta(hours=2)
+    assert client.calls[0]["condition"] == "name == 'approval_batch'"
+    assert client.calls[0]["page_span_ids"] == [f"span-{index}" for index in range(7)]
+    assert list(combined.columns) == ["start_time", "end_time", "status_code"]
+    assert len(combined) == 7
+
+
+@pytest.mark.asyncio
+async def test_projected_window_over_the_cap_falls_back_to_splitting(monkeypatch):
+    """Exceeding the cap keeps the bounded split walk and loses no rows."""
+    monkeypatch.setattr(provider_module, "PROJECTED_SPAN_MAX_ROWS_PER_CALL", 2)
+
+    base_time = datetime(2026, 8, 4, 0, 0, tzinfo=timezone.utc)
+    rows = [
+        {
+            "name": "approval_batch",
+            "context.span_id": f"span-{index}",
+            "context.trace_id": f"trace-{index}",
+            "start_time": base_time + timedelta(minutes=5 * index),
+            "end_time": base_time + timedelta(minutes=5 * index, seconds=1),
+            "status_code": "OK",
+        }
+        for index in range(7)
+    ]
+
+    client = _ProjectedClient(rows)
+    store = _store(client)
+
+    pages = []
+    async for frame in store.iter_spans(
+        project="cogniverse-acme-approval",
+        start_time=base_time,
+        end_time=base_time + timedelta(hours=2),
+        filters={"name": "approval_batch"},
+        page_size=2,
+        columns=("start_time", "end_time", "status_code"),
+    ):
+        pages.append(frame)
+
+    combined = pd.concat(pages, ignore_index=True)
+    returned_span_ids = [
+        span_id for call in client.calls for span_id in call["page_span_ids"]
+    ]
+
+    assert len(client.calls) > 1, client.calls
+    assert len(combined) == 7
+    assert sorted(set(returned_span_ids)) == [f"span-{index}" for index in range(7)]

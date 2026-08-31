@@ -106,6 +106,16 @@ def _prune_closed_loops() -> None:
 _DATASET_OP_TIMEOUT_S = 120
 _SPAN_QUERY_WINDOW_MIN_STEP = timedelta(microseconds=1)
 
+# A projected span row carries only the requested columns. Measured against the
+# live store: 42,790 rows of ("start_time", "end_time") occupy 3.5 MB, i.e. 82
+# bytes per row. The cap is that rate against an explicit memory ceiling, so the
+# bound is arithmetic rather than a chosen row count.
+PROJECTED_SPAN_BYTES_PER_ROW = 82
+PROJECTED_SPAN_MEMORY_CEILING_BYTES = 256 * 1024 * 1024
+PROJECTED_SPAN_MAX_ROWS_PER_CALL = (
+    PROJECTED_SPAN_MEMORY_CEILING_BYTES // PROJECTED_SPAN_BYTES_PER_ROW
+)
+
 
 def _http_status(exc: BaseException) -> Optional[int]:
     """The HTTP status code from an exception or its ``__cause__``, if any.
@@ -485,6 +495,7 @@ class PhoenixTraceStore(TraceStore):
                 window_start: datetime,
                 window_end: datetime,
                 excluded_span_ids: Sequence[str],
+                limit: int,
             ) -> Optional[pd.DataFrame]:
                 import httpx
 
@@ -505,7 +516,7 @@ class PhoenixTraceStore(TraceStore):
                         project_identifier=project,
                         start_time=window_start,
                         end_time=window_end,
-                        limit=page_size,
+                        limit=limit,
                         # The method's own default is 5s and overrides the client's
                         # timeout — large project windows blow through it routinely.
                         timeout=120,
@@ -528,7 +539,9 @@ class PhoenixTraceStore(TraceStore):
                 window_end: datetime,
                 yielded_span_ids: set[str],
             ) -> AsyncIterator[pd.DataFrame]:
-                spans_df = await query_page(window_start, window_end, yielded_span_ids)
+                spans_df = await query_page(
+                    window_start, window_end, yielded_span_ids, page_size
+                )
                 if spans_df is None:
                     return
                 if spans_df.empty:
@@ -567,6 +580,7 @@ class PhoenixTraceStore(TraceStore):
                         window_start,
                         window_end,
                         yielded_span_ids,
+                        page_size,
                     )
                     if spans_df is None:
                         return
@@ -585,6 +599,35 @@ class PhoenixTraceStore(TraceStore):
                     if len(page_span_ids) < page_size:
                         return
 
+            # One call serves the whole window whenever the result fits the
+            # memory cap. Splitting is the fallback, not the default: every
+            # non-leaf split query is discarded and re-issued as two halves, so
+            # walking a window that already fit cost 81.9s against the 1.7s the
+            # single call took on the same live window.
+            single_call_limit = max(page_size, PROJECTED_SPAN_MAX_ROWS_PER_CALL)
+            whole_window = await query_page(
+                projected_start_time,
+                projected_end_time,
+                (),
+                single_call_limit,
+            )
+            if whole_window is None:
+                return
+            if len(whole_window) < single_call_limit:
+                if whole_window.empty:
+                    return
+                frame = project_frame(whole_window)
+                logger.debug(
+                    "Retrieved %d spans from project %s in a single projected call",
+                    len(frame),
+                    project,
+                )
+                yield frame
+                return
+
+            # The cap truncated the window and which rows were dropped is
+            # unknown, so the page is discarded and the bounded split walk runs.
+            del whole_window
             yielded_span_ids: set[str] = set()
             async for frame in emit_window(
                 projected_start_time,
