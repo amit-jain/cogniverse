@@ -24,6 +24,58 @@ def _store(spans):
 
 
 @pytest.mark.asyncio
+async def test_get_spans_forwards_requested_columns():
+    calls = []
+
+    class Spans:
+        async def get_spans_dataframe(self, **kwargs):
+            calls.append(
+                {
+                    "project_identifier": kwargs["project_identifier"],
+                    "start_time": kwargs["start_time"],
+                    "end_time": kwargs["end_time"],
+                    "limit": kwargs["limit"],
+                    "timeout": kwargs["timeout"],
+                    "query": kwargs["query"].to_dict(),
+                }
+            )
+            return pd.DataFrame(
+                [
+                    {
+                        "start_time": "2026-08-04T00:00:00+00:00",
+                        "end_time": "2026-08-04T00:00:01+00:00",
+                        "status_code": "OK",
+                    }
+                ]
+            )
+
+    frame = await _store(Spans()).get_spans(
+        project="cogniverse-acme-approval",
+        columns=("start_time", "end_time", "status_code"),
+        limit=7,
+    )
+
+    assert len(frame) == 1
+    assert calls == [
+        {
+            "project_identifier": "cogniverse-acme-approval",
+            "start_time": None,
+            "end_time": None,
+            "limit": 7,
+            "timeout": 120,
+            "query": {
+                "select": {
+                    "start_time": {"key": "start_time"},
+                    "end_time": {"key": "end_time"},
+                    "status_code": {"key": "status_code"},
+                },
+                "index": {"key": "context.span_id"},
+            },
+        }
+    ]
+
+
+@pytest.mark.asyncio
 async def test_get_all_spans_returns_records_beyond_one_page():
     calls = []
 

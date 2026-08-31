@@ -9,7 +9,7 @@ import logging
 import weakref
 from contextlib import contextmanager
 from datetime import datetime, timezone
-from typing import Any, Dict, Generator, List, Optional
+from typing import Any, Dict, Generator, List, Optional, Sequence
 
 import pandas as pd
 from opentelemetry.context import (
@@ -219,6 +219,7 @@ class PhoenixTraceStore(TraceStore):
         end_time: Optional[datetime] = None,
         filters: Optional[Dict[str, Any]] = None,
         limit: int = 1000,
+        columns: Optional[Sequence[str]] = None,
     ) -> pd.DataFrame:
         """
         Query spans from Phoenix.
@@ -237,6 +238,9 @@ class PhoenixTraceStore(TraceStore):
                 span type in the returned frame (e.g. approval batch + its
                 item children).
             limit: Maximum number of spans to return
+            columns: Optional projection of standardized columns to return.
+                Phoenix selects only the requested columns when supported;
+                otherwise it returns the full frame unchanged.
 
         Returns:
             DataFrame with standardized columns:
@@ -273,6 +277,10 @@ class PhoenixTraceStore(TraceStore):
                 else:
                     predicate = f"name == '{_esc(name_filter)}'"
                 query = SpanQuery().where(predicate)
+            if columns is not None:
+                from phoenix.client.types.spans import SpanQuery
+
+                query = (query or SpanQuery()).select(*columns)
 
             spans_df = await self._breaker.acall(
                 client.spans.get_spans_dataframe,

@@ -11,7 +11,7 @@ import weakref
 from abc import ABC, abstractmethod
 from contextlib import contextmanager
 from datetime import datetime
-from typing import Any, Dict, Generator, List, Optional
+from typing import Any, Dict, Generator, List, Optional, Sequence
 
 import pandas as pd
 
@@ -33,6 +33,7 @@ class TraceStore(ABC):
         end_time: Optional[datetime] = None,
         filters: Optional[Dict[str, Any]] = None,
         limit: int = 1000,
+        columns: Optional[Sequence[str]] = None,
     ) -> pd.DataFrame:
         """
         Query spans from backend.
@@ -43,6 +44,9 @@ class TraceStore(ABC):
             end_time: Optional end time filter
             filters: Optional provider-specific filters
             limit: Maximum number of spans to return
+            columns: Optional projection of standardized columns to return.
+                Backends that cannot project columns must return the full
+                frame unchanged.
 
         Returns:
             DataFrame with standardized columns:
