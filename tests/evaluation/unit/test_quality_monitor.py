@@ -733,6 +733,33 @@ class TestUpdateBaseline:
             mock.assert_called_once_with(result)
 
     @pytest.mark.asyncio
+    async def test_update_baseline_round_trips_golden_payload(self, monitor):
+        result = GoldenEvalResult(
+            timestamp=datetime(2026, 4, 4, 0, 0, 0),
+            tenant_id="test_tenant",
+            mean_mrr=0.75,
+            mean_ndcg=0.7,
+            mean_precision_at_5=0.5,
+            query_count=10,
+        )
+
+        await monitor.update_baseline(golden_result=result)
+
+        stored = monitor._dataset_store._frames[f"quality-baseline-{monitor.tenant_id}"]
+        expected_payload = {
+            "timestamp": result.timestamp.isoformat(),
+            "mean_mrr": 0.75,
+            "mean_ndcg": 0.7,
+            "mean_precision_at_5": 0.5,
+            "query_count": 10,
+            "failed_query_count": 0,
+        }
+        assert stored["payload"].iloc[-1] == json.dumps(expected_payload, default=str)
+        assert await monitor._read_baseline_metric("mean_mrr") == 0.75
+        assert await monitor._read_baseline_metric("mean_ndcg") == 0.7
+        assert await monitor._read_baseline_metric("mean_precision_at_5") == 0.5
+
+    @pytest.mark.asyncio
     async def test_grow_golden_set_empty_list(self, monitor):
         await monitor.grow_golden_set([])
         # Should not modify file
