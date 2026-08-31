@@ -3,8 +3,11 @@
 import json
 import logging
 import time
+from collections.abc import Mapping
 from contextlib import contextmanager
 
+from opentelemetry.context import attach, detach
+from opentelemetry.propagate import extract, inject
 from opentelemetry.trace import Status, StatusCode
 
 from .manager import get_telemetry_manager
@@ -214,3 +217,36 @@ def add_embedding_details_to_span(span, embeddings):
 
             # Set output.value with just shape info
             span.set_attribute("output.value", str(embeddings.shape))
+
+
+def trace_headers() -> dict[str, str]:
+    """Inject the active trace context into outbound HTTP headers."""
+    headers: dict[str, str] = {}
+    inject(headers)
+    return headers
+
+
+@contextmanager
+def request_trace_context(headers: Mapping[str, object]):
+    """Attach an inbound trace context for the duration of a request.
+
+    Missing trace headers mean this request starts a fresh root trace. A
+    malformed carrier is logged and ignored so the request still completes.
+    """
+    # No incoming trace headers is the normal case for a fresh root trace.
+    if "traceparent" not in headers and "tracestate" not in headers:
+        yield
+        return
+
+    try:
+        parent_context = extract(headers)
+    except Exception as exc:  # noqa: BLE001 - malformed carrier must not crash
+        logger.debug("Ignoring malformed trace context headers: %s", exc)
+        yield
+        return
+
+    token = attach(parent_context)
+    try:
+        yield
+    finally:
+        detach(token)

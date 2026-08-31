@@ -10,6 +10,7 @@ from rich.console import Console
 from rich.markdown import Markdown
 
 from cogniverse_cli.constants import RUNTIME_URL
+from cogniverse_foundation.telemetry.context import trace_headers
 
 console = Console()
 
@@ -47,6 +48,7 @@ def _build_a2a_request(
     }
     if context:
         metadata.update(context)
+    metadata.update(trace_headers())
 
     message = {
         "kind": "message",

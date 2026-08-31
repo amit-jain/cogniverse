@@ -10,6 +10,8 @@ from typing import Any, AsyncIterator, Dict, List, Optional
 
 import httpx
 
+from cogniverse_foundation.telemetry.context import trace_headers
+
 logger = logging.getLogger(__name__)
 
 
@@ -96,6 +98,7 @@ class RuntimeClient:
             return await client.post(
                 f"/agents/{agent_name}/process",
                 json=payload,
+                headers=trace_headers(),
                 timeout=timeout,
             )
 

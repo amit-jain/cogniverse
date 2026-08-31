@@ -21,9 +21,15 @@ from a2a.types import (
     TaskState,
     TextPart,
 )
+from opentelemetry.sdk.trace import TracerProvider
+from opentelemetry.sdk.trace.export import SimpleSpanProcessor
+from opentelemetry.sdk.trace.export.in_memory_span_exporter import (
+    InMemorySpanExporter,
+)
 from starlette.testclient import TestClient
 
 from cogniverse_agents.memory_aware_mixin import MemoryAwareMixin
+from cogniverse_foundation.telemetry.context import trace_headers
 from cogniverse_runtime.a2a_executor import CogniverseAgentExecutor
 from cogniverse_runtime.agent_dispatcher import AgentDispatcher
 
@@ -211,6 +217,68 @@ class TestA2AMessageSend:
         mock_dispatcher.dispatch.assert_called_once()
         ctx = mock_dispatcher.dispatch.call_args.kwargs["context"]
         assert ctx["request_id"] == "conv-canary-seed"
+
+    @pytest.mark.ci_fast
+    def test_message_send_propagates_trace_context_into_dispatch(
+        self, client, mock_dispatcher
+    ):
+        exporter = InMemorySpanExporter()
+        provider = TracerProvider()
+        provider.add_span_processor(SimpleSpanProcessor(exporter))
+        tracer = provider.get_tracer("a2a-trace-test")
+
+        captured = {}
+
+        async def _dispatch(*, agent_name, query, context, top_k):
+            captured["context"] = dict(context)
+            with tracer.start_as_current_span("search_agent.process") as span:
+                span.set_attribute("tenant.id", context["tenant_id"])
+                return {
+                    "status": "success",
+                    "agent": agent_name,
+                    "message": query,
+                    "results_count": top_k,
+                    "results": [],
+                }
+
+        mock_dispatcher.dispatch = AsyncMock(side_effect=_dispatch)
+        agent_ep = MagicMock()
+        agent_ep.capabilities = ["search"]
+        mock_dispatcher._registry.get_agent.return_value = agent_ep
+
+        with tracer.start_as_current_span("cogniverse.orchestration"):
+            payload = {
+                "jsonrpc": "2.0",
+                "id": 8,
+                "method": "message/send",
+                "params": {
+                    "message": {
+                        "role": "user",
+                        "messageId": "msg-trace-1",
+                        "parts": [{"kind": "text", "text": "search for otel"}],
+                    },
+                    "metadata": {
+                        "agent_name": "search_agent",
+                        "tenant_id": "test_tenant",
+                        **trace_headers(),
+                    },
+                },
+            }
+            response = client.post("/", json=payload)
+
+        assert response.status_code == 200
+        spans = exporter.get_finished_spans()
+        span_names = {span.name for span in spans}
+        assert span_names == {"cogniverse.orchestration", "search_agent.process"}
+
+        caller_span_exported = next(
+            span for span in spans if span.name == "cogniverse.orchestration"
+        )
+        agent_span = next(span for span in spans if span.name == "search_agent.process")
+        assert agent_span.context.trace_id == caller_span_exported.context.trace_id
+        assert agent_span.parent is not None
+        assert agent_span.parent.span_id == caller_span_exported.context.span_id
+        assert captured["context"]["tenant_id"] == "test_tenant:test_tenant"
 
     @pytest.mark.ci_fast
     def test_message_send_without_agent_name_defaults_to_orchestrator(

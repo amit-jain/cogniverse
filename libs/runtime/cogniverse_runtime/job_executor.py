@@ -30,6 +30,7 @@ import threading
 import httpx
 
 from cogniverse_foundation.config.inference_auth import endpoint_root, inference_headers
+from cogniverse_foundation.telemetry.context import trace_headers
 
 logger = logging.getLogger(__name__)
 
@@ -181,7 +182,9 @@ async def _call_agent(
 
     url = f"{runtime_url}/agents/orchestrator_agent/process"
     try:
-        response = await client.post(url, json=payload, timeout=120.0)
+        response = await client.post(
+            url, json=payload, headers=trace_headers(), timeout=120.0
+        )
         response.raise_for_status()
         data = response.json()
         # AgentDispatcher returns one of:
