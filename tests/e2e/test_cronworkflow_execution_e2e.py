@@ -40,6 +40,17 @@ RUNTIME = (
     "http://localhost:33000"  # runtime.service.nodePort — matches tests/e2e/conftest.py
 )
 SUBMISSION_TIMEOUT_S = 600.0
+
+# monthly-reports walks every span in a 30-day window per tenant, so it costs an
+# order of magnitude more than the other cron workflows. Measured to terminal
+# phase on an otherwise idle cluster, one submission per implementation:
+#   681s  OOMKilled       — materialised the whole window in a 2Gi container
+#   2124s OSError 24      — bounded memory, but the merge opened 962 chunks at once
+#   2797s Succeeded       — bounded fan-in, still bisecting the time window
+#   1343s Succeeded       — cursor pagination: ceil(N/page) calls, one range scan
+# 1343s is a single post-fix sample and the cost grows with span volume, so the
+# budget carries 2x margin over it while staying below the pre-cursor cost.
+MONTHLY_REPORTS_TIMEOUT_S = 2700.0
 POLL_INTERVAL_S = 5.0
 
 
@@ -491,7 +502,9 @@ class TestDailyCleanupWorkflow:
                 _poll_resolve(tenant_id, permanent_id, expect_present=True) is not None
             )
 
-            _submit_and_wait_succeeded("cogniverse-daily-cleanup", timeout_s=600)
+            _submit_and_wait_succeeded(
+                "cogniverse-daily-cleanup", timeout_s=SUBMISSION_TIMEOUT_S
+            )
 
             # Functional outcome: the 40d ephemeral memory is GONE.
             # Same eventual-consistency caveat for the delete side.
@@ -651,7 +664,7 @@ class TestDailyGatewayWorkflow:
 
             _submit_and_wait_succeeded(
                 "cogniverse-daily-gateway",
-                timeout_s=600,
+                timeout_s=SUBMISSION_TIMEOUT_S,
                 parameters={"tenant-id": tenant_id},
             )
 
@@ -674,7 +687,9 @@ class TestBackupVespaWorkflow:
     def test_workflow_uploads_new_vespa_snapshot_to_minio(self):
         _require_cronworkflow("cogniverse-backup-vespa")
         names_before = _mc_ls_names("vespa")
-        _submit_and_wait_succeeded("cogniverse-backup-vespa", timeout_s=600)
+        _submit_and_wait_succeeded(
+            "cogniverse-backup-vespa", timeout_s=SUBMISSION_TIMEOUT_S
+        )
         names_after = _mc_ls_names("vespa")
         assert names_after, "could not list cogniverse-backups/vespa/ after the run"
         newest_before = names_before[-1] if names_before else ""
@@ -699,7 +714,9 @@ class TestBackupPhoenixWorkflow:
     def test_workflow_uploads_new_phoenix_snapshot_to_minio(self):
         _require_cronworkflow("cogniverse-backup-phoenix")
         names_before = _mc_ls_names("phoenix")
-        _submit_and_wait_succeeded("cogniverse-backup-phoenix", timeout_s=600)
+        _submit_and_wait_succeeded(
+            "cogniverse-backup-phoenix", timeout_s=SUBMISSION_TIMEOUT_S
+        )
         names_after = _mc_ls_names("phoenix")
         assert names_after, "could not list cogniverse-backups/phoenix/ after the run"
         newest_before = names_before[-1] if names_before else ""
@@ -727,7 +744,9 @@ class TestMonthlyReportsWorkflow:
         _require_cronworkflow("cogniverse-monthly-reports")
         names_before = _mc_ls_names("reports")
         count_before = len(names_before) if names_before is not None else -1
-        _submit_and_wait_succeeded("cogniverse-monthly-reports", timeout_s=600)
+        _submit_and_wait_succeeded(
+            "cogniverse-monthly-reports", timeout_s=MONTHLY_REPORTS_TIMEOUT_S
+        )
         names_after = _mc_ls_names("reports")
         count_after = len(names_after) if names_after is not None else -1
         # Two files per run (usage + performance); count must advance by
