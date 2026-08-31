@@ -2078,10 +2078,13 @@ and `.duration_ms` attributes; it partitions traces into failed / successful /
 performance-degraded (successful but above the given duration percentile),
 then mines `FailurePattern`s and produces `RootCauseHypothesis` objects:
 
-The failure, temporal, and performance comparison passes key off a validated
-`trace_id` set built once per batch, so correlation stays linear on large
-trace batches. Missing or duplicate `trace_id` values raise `ValueError`
-instead of being ignored.
+The failure, temporal, and performance comparison passes key off an
+object-identity set built once per batch, so correlation stays linear on
+large trace batches. Duplicate `trace_id` values are allowed because the
+analyzer is operating on span objects, not on trace-id uniqueness; the
+same `trace_id` can appear on multiple span records without changing the
+membership check. `trace_id` is still used for reporting and links, but
+not for failure membership.
 
 ```python
 @dataclass
