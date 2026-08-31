@@ -517,7 +517,11 @@ async def test_monthly_reports_streams_each_page_once(monkeypatch, tmp_path):
     assert len(tracker.client_calls) == expected_call_count
 
     page_lengths = [len(call["span_ids"]) for call in tracker.client_calls]
-    assert page_lengths == [512, 493]
+    expected_page_lengths = [
+        min(page_size, len(row_specs) - offset)
+        for offset in range(0, len(row_specs), page_size)
+    ]
+    assert page_lengths == expected_page_lengths
 
     flattened_span_ids = [
         span_id for call in tracker.client_calls for span_id in call["span_ids"]
@@ -527,14 +531,12 @@ async def test_monthly_reports_streams_each_page_once(monkeypatch, tmp_path):
     assert len(flattened_span_ids) == len(set(flattened_span_ids))
 
 
-@pytest.mark.parametrize(
-    "span_count, expected_peak_live_rows",
-    [(100, 100), (1000, 512)],
-)
+@pytest.mark.parametrize("span_count", [100, 1000])
 @pytest.mark.asyncio
 async def test_monthly_reports_bounds_retained_span_rows(
-    monkeypatch, tmp_path, span_count, expected_peak_live_rows
+    monkeypatch, tmp_path, span_count
 ):
+    expected_peak_live_rows = min(span_count, cli._MONTHLY_REPORT_SPAN_PAGE_SIZE)
     org_id = "monthly_rep_scale_org"
     tenant_ids = [f"{org_id}:prod"]
     _install_monthly_reports_tenant_manager(
