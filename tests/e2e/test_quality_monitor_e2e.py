@@ -194,8 +194,9 @@ class TestPhoenixDatasets:
         assert list(readback_df["input"]) == [{"timestamp": "2026-04-04T00:00:00"}], (
             readback_df
         )
+        # Phoenix stringifies output-key values on the dataset round trip.
         assert list(readback_df["output"]) == [
-            {"mean_mrr": 0.75, "mean_ndcg": 0.7, "mean_precision_at_5": 0.5}
+            {"mean_mrr": "0.75", "mean_ndcg": "0.7", "mean_precision_at_5": "0.5"}
         ], readback_df
 
 
