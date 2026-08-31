@@ -1127,6 +1127,14 @@ async def query_and_annotate():
         limit=1000
     )
 
+    # Stream page-sized frames when the result set is large.
+    async for page in provider.traces.iter_spans(
+        project="cogniverse-acme",
+        page_size=512,
+        columns=("start_time", "end_time", "status_code"),
+    ):
+        process(page)
+
     # Add annotation (project is required)
     await provider.annotations.add_annotation(
         span_id="abc123",

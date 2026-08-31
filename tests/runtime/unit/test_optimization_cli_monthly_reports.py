@@ -255,22 +255,7 @@ class _FakeTraceStore:
             rows.append(spec)
         return rows
 
-    async def get_spans(self, **kwargs):
-        selected_columns = tuple(
-            kwargs.get("columns") or ("start_time", "end_time", "status_code")
-        )
-        self._tracker.client_calls.append(
-            {
-                "project": kwargs["project"],
-                "start_time": kwargs["start_time"],
-                "end_time": kwargs["end_time"],
-                "limit": kwargs["limit"],
-                "columns": selected_columns,
-            }
-        )
-
-        rows = self._filter_specs(kwargs["start_time"], kwargs["end_time"])
-        rows = rows[: kwargs["limit"]]
+    def _build_frame(self, rows: list[dict], selected_columns):
         tracking_rows = [
             _TrackingRow(
                 self._tracker,
@@ -283,6 +268,46 @@ class _FakeTraceStore:
             for row in rows
         ]
         return _TrackingDataFrame(self._tracker, tracking_rows, selected_columns)
+
+    async def get_spans(self, **kwargs):
+        selected_columns = tuple(
+            kwargs.get("columns") or ("start_time", "end_time", "status_code")
+        )
+
+        rows = self._filter_specs(kwargs["start_time"], kwargs["end_time"])
+        rows = rows[: kwargs["limit"]]
+        self._tracker.client_calls.append(
+            {
+                "project": kwargs["project"],
+                "start_time": kwargs["start_time"],
+                "end_time": kwargs["end_time"],
+                "page_size": kwargs["limit"],
+                "columns": selected_columns,
+                "span_ids": [row["span_id"] for row in rows],
+            }
+        )
+        return self._build_frame(rows, selected_columns)
+
+    async def iter_spans(self, **kwargs):
+        selected_columns = tuple(
+            kwargs.get("columns") or ("start_time", "end_time", "status_code")
+        )
+        page_size = kwargs["page_size"]
+        rows = self._filter_specs(kwargs["start_time"], kwargs["end_time"])
+
+        for offset in range(0, len(rows), page_size):
+            page_rows = rows[offset : offset + page_size]
+            self._tracker.client_calls.append(
+                {
+                    "project": kwargs["project"],
+                    "start_time": kwargs["start_time"],
+                    "end_time": kwargs["end_time"],
+                    "page_size": page_size,
+                    "columns": selected_columns,
+                    "span_ids": [row["span_id"] for row in page_rows],
+                }
+            )
+            yield self._build_frame(page_rows, selected_columns)
 
 
 class _FakeProvider:
@@ -314,6 +339,7 @@ def _make_span_specs(
         latency_ms = latencies_ms[index % len(latencies_ms)]
         specs.append(
             {
+                "span_id": f"span-{index:05d}",
                 "start_time": start_time,
                 "end_time": start_time + timedelta(milliseconds=latency_ms),
                 "status_code": statuses[index % len(statuses)],
@@ -395,13 +421,15 @@ async def test_monthly_reports_surfaces_phoenix_outages(monkeypatch, tmp_path):
     )
     assert tracker.peak_live_rows == 0
 
-    async def _raise_get_spans(**kwargs):  # noqa: ARG001
+    async def _raise_iter_spans(**kwargs):  # noqa: ARG001
         project = kwargs["project"]
         raise RuntimeError(
             f"Failed to query every span from Phoenix project {project}"
         ) from ConnectionError("phoenix unreachable")
+        if False:  # pragma: no cover
+            yield None
 
-    trace_store.get_spans = _raise_get_spans
+    trace_store.iter_spans = _raise_iter_spans
 
     result = await cli.run_monthly_reports(
         output_dir=str(tmp_path / "reports"),
@@ -445,12 +473,58 @@ async def test_monthly_reports_pins_exact_span_columns(monkeypatch, tmp_path):
     assert len(tracker.client_calls) == 1
     call = tracker.client_calls[0]
     assert call["project"] == "proj-monthly_rep_org:prod"
-    assert call["limit"] == 512
+    assert call["page_size"] == cli._MONTHLY_REPORT_SPAN_PAGE_SIZE
+    assert len(call["span_ids"]) == 4
     assert call["columns"] == (
         "start_time",
         "end_time",
         "status_code",
     )
+
+
+@pytest.mark.asyncio
+async def test_monthly_reports_streams_each_page_once(monkeypatch, tmp_path):
+    org_id = "monthly_rep_page_org"
+    tenant_ids = [f"{org_id}:prod"]
+    _install_monthly_reports_tenant_manager(
+        monkeypatch,
+        org_id=org_id,
+        tenant_ids=tenant_ids,
+    )
+
+    now = datetime.now(timezone.utc)
+    row_specs = _make_span_specs(
+        count=1_005,
+        base_time=now - timedelta(minutes=55),
+        step=timedelta(seconds=2),
+        latencies_ms=[10.0, 20.0, 30.0, 40.0, 50.0],
+        statuses=["OK", "ERROR", "OK", "OK", "ERROR"],
+    )
+    tracker, _trace_store = _make_monthly_reports_environment(monkeypatch, row_specs)
+
+    result = await cli.run_monthly_reports(
+        output_dir=str(tmp_path / "reports"),
+        lookback_hours=1.0,
+    )
+
+    perf_path = Path(result["files_written"][1])
+    perf = json.loads(perf_path.read_text())
+    entry = perf["tenants"][tenant_ids[0]]
+    assert entry["span_count"] == 1_005
+
+    page_size = cli._MONTHLY_REPORT_SPAN_PAGE_SIZE
+    expected_call_count = (len(row_specs) + page_size - 1) // page_size
+    assert len(tracker.client_calls) == expected_call_count
+
+    page_lengths = [len(call["span_ids"]) for call in tracker.client_calls]
+    assert page_lengths == [512, 493]
+
+    flattened_span_ids = [
+        span_id for call in tracker.client_calls for span_id in call["span_ids"]
+    ]
+    expected_span_ids = [spec["span_id"] for spec in row_specs]
+    assert flattened_span_ids == expected_span_ids
+    assert len(flattened_span_ids) == len(set(flattened_span_ids))
 
 
 @pytest.mark.parametrize(

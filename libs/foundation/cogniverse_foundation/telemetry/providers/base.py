@@ -11,7 +11,7 @@ import weakref
 from abc import ABC, abstractmethod
 from contextlib import contextmanager
 from datetime import datetime
-from typing import Any, Dict, Generator, List, Optional, Sequence
+from typing import Any, AsyncIterator, Dict, Generator, List, Optional, Sequence
 
 import pandas as pd
 
@@ -56,6 +56,19 @@ class TraceStore(ABC):
             - start_time: Span start timestamp
             - end_time: Span end timestamp
         """
+        pass
+
+    @abstractmethod
+    async def iter_spans(
+        self,
+        project: str,
+        start_time: Optional[datetime] = None,
+        end_time: Optional[datetime] = None,
+        filters: Optional[Dict[str, Any]] = None,
+        page_size: int = 1000,
+        columns: Optional[Sequence[str]] = None,
+    ) -> AsyncIterator[pd.DataFrame]:
+        """Stream matching spans as page-sized DataFrames."""
         pass
 
     @abstractmethod

@@ -9,7 +9,7 @@ import logging
 import weakref
 from contextlib import contextmanager
 from datetime import datetime, timezone
-from typing import Any, Dict, Generator, List, Optional, Sequence
+from typing import Any, AsyncIterator, Dict, Generator, List, Optional, Sequence
 
 import pandas as pd
 from opentelemetry.context import (
@@ -175,6 +175,46 @@ def _client_for_current_loop(http_endpoint: str) -> AsyncClient:
     return client
 
 
+def _normalize_span_page(
+    spans: Sequence[Dict[str, Any]], *, project: str
+) -> pd.DataFrame:
+    frame = pd.json_normalize(spans, sep=".")
+    if frame.empty:
+        return frame
+
+    for timestamp_column in ("start_time", "end_time"):
+        if timestamp_column not in frame.columns:
+            continue
+        try:
+            frame[timestamp_column] = pd.to_datetime(
+                frame[timestamp_column],
+                format="ISO8601",
+                utc=True,
+                errors="raise",
+            )
+        except (TypeError, ValueError) as exc:
+            raise RuntimeError(
+                f"Phoenix project {project} returned an invalid "
+                f"ISO-8601 timestamp in {timestamp_column}: {exc}"
+            ) from exc
+
+    from phoenix.trace.attributes import unflatten
+
+    nested_columns: Dict[str, List[Any]] = {}
+    for row_index, span in enumerate(spans):
+        attributes = span.get("attributes") or {}
+        nested_attributes = unflatten(attributes.items())
+        for attribute_name, value in nested_attributes.items():
+            if not isinstance(value, (dict, list)):
+                continue
+            column = f"attributes.{attribute_name}"
+            values = nested_columns.setdefault(column, [None] * len(spans))
+            values[row_index] = value
+    for column, values in nested_columns.items():
+        frame[column] = pd.Series(values, dtype=object)
+    return frame
+
+
 class PhoenixTraceStore(TraceStore):
     """Phoenix implementation of TraceStore using AsyncClient."""
 
@@ -334,20 +374,24 @@ class PhoenixTraceStore(TraceStore):
             logger.error(f"Failed to get span {span_id}: {e}")
             raise
 
-    async def get_all_spans(
+    async def iter_spans(
         self,
         project: str,
         start_time: Optional[datetime] = None,
         end_time: Optional[datetime] = None,
         filters: Optional[Dict[str, Any]] = None,
-    ) -> pd.DataFrame:
-        """Query every matching span through Phoenix cursor pagination."""
+        page_size: int = 1000,
+        columns: Optional[Sequence[str]] = None,
+    ) -> AsyncIterator[pd.DataFrame]:
+        """Stream every matching span through Phoenix cursor pagination."""
         unsupported_filters = set(filters or {}).difference({"name"})
         if unsupported_filters:
             raise ValueError(
                 "Phoenix all-span queries do not support filters "
                 f"{sorted(unsupported_filters)}"
             )
+        if page_size <= 0:
+            raise ValueError("Phoenix span page_size must be positive")
 
         if start_time is not None and start_time.tzinfo is None:
             start_time = start_time.replace(tzinfo=timezone.utc)
@@ -360,64 +404,89 @@ class PhoenixTraceStore(TraceStore):
         elif isinstance(name_filter, tuple):
             name_filter = list(name_filter)
 
-        async def query_all_spans():
+        async def query_page(page_cursor: Optional[str]) -> Dict[str, Any]:
             try:
-                return await self._get_client().spans.get_spans(
-                    project_identifier=project,
-                    start_time=start_time,
-                    end_time=end_time,
-                    name=name_filter,
-                    limit=2_147_483_647,
+                client = self._get_client()
+                raw_client = getattr(client, "_client", client)
+                params: Dict[str, Any] = {
+                    "limit": page_size,
+                }
+                if start_time is not None:
+                    params["start_time"] = start_time.isoformat()
+                if end_time is not None:
+                    params["end_time"] = end_time.isoformat()
+                if name_filter:
+                    params["name"] = (
+                        [name_filter]
+                        if isinstance(name_filter, str)
+                        else list(name_filter)
+                    )
+                if page_cursor:
+                    params["cursor"] = page_cursor
+
+                response = await raw_client.get(
+                    url=f"v1/projects/{project}/spans",
+                    params=params,
+                    headers={"accept": "application/json"},
                     timeout=120,
                 )
+                response.raise_for_status()
+                payload = response.json()
             except Exception as exc:
                 if _is_phoenix_project_not_found(exc):
-                    return []
+                    return {"data": [], "next_cursor": None}
                 raise
+            return payload
 
-        try:
-            spans = await self._breaker.acall(
-                query_all_spans,
-            )
-        except CircuitOpenError:
-            raise
-        except Exception as exc:
-            raise RuntimeError(
-                f"Failed to query every span from Phoenix project {project}"
-            ) from exc
+        cursor: Optional[str] = None
+        while True:
+            try:
+                payload = await self._breaker.acall(query_page, cursor)
+            except CircuitOpenError:
+                raise
+            except Exception as exc:
+                raise RuntimeError(
+                    f"Failed to query every span from Phoenix project {project}"
+                ) from exc
 
-        frame = pd.json_normalize(spans, sep=".")
-        if not frame.empty:
-            for timestamp_column in ("start_time", "end_time"):
-                if timestamp_column not in frame.columns:
-                    continue
-                try:
-                    frame[timestamp_column] = pd.to_datetime(
-                        frame[timestamp_column],
-                        format="ISO8601",
-                        utc=True,
-                        errors="raise",
-                    )
-                except (TypeError, ValueError) as exc:
-                    raise RuntimeError(
-                        f"Phoenix project {project} returned an invalid "
-                        f"ISO-8601 timestamp in {timestamp_column}: {exc}"
-                    ) from exc
+            spans = payload.get("data") or []
+            next_cursor = payload.get("next_cursor")
+            del payload
+            if not spans:
+                break
 
-            from phoenix.trace.attributes import unflatten
+            frame = _normalize_span_page(spans, project=project)
+            if columns is not None:
+                frame = frame.reindex(columns=list(columns))
+            del spans
+            yield frame
+            del frame
 
-            nested_columns: Dict[str, List[Any]] = {}
-            for row_index, span in enumerate(spans):
-                attributes = span.get("attributes") or {}
-                nested_attributes = unflatten(attributes.items())
-                for attribute_name, value in nested_attributes.items():
-                    if not isinstance(value, (dict, list)):
-                        continue
-                    column = f"attributes.{attribute_name}"
-                    values = nested_columns.setdefault(column, [None] * len(spans))
-                    values[row_index] = value
-            for column, values in nested_columns.items():
-                frame[column] = pd.Series(values, dtype=object)
+            cursor = next_cursor
+            if not cursor:
+                break
+
+    async def get_all_spans(
+        self,
+        project: str,
+        start_time: Optional[datetime] = None,
+        end_time: Optional[datetime] = None,
+        filters: Optional[Dict[str, Any]] = None,
+    ) -> pd.DataFrame:
+        """Query every matching span through Phoenix cursor pagination."""
+        frames: List[pd.DataFrame] = []
+        async for frame in self.iter_spans(
+            project=project,
+            start_time=start_time,
+            end_time=end_time,
+            filters=filters,
+        ):
+            frames.append(frame)
+
+        if frames:
+            frame = pd.concat(frames, ignore_index=True)
+        else:
+            frame = pd.DataFrame()
         logger.debug("Retrieved all %d spans from project %s", len(frame), project)
         return frame
 
