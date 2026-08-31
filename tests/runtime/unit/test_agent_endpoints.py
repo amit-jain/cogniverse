@@ -8,13 +8,13 @@ round-trip tests for the annotation queue endpoints.
 import time
 from contextlib import contextmanager
 from datetime import datetime
-from types import SimpleNamespace
 from unittest.mock import AsyncMock, MagicMock, Mock, call, patch
 
 import pytest
 from fastapi import FastAPI
 from fastapi.testclient import TestClient
 
+from cogniverse_agents.gateway_agent import GatewayAgent as RealGatewayAgent
 from cogniverse_agents.routing.annotation_agent import (
     AnnotationPriority,
     AnnotationRequest,
@@ -92,6 +92,26 @@ def _make_gateway_output(
     return output
 
 
+def _gateway_init(self, deps=None, **kwargs):
+    self.deps = deps
+    self.telemetry_manager = None
+    self._input_rails = None
+    self._output_rails = None
+    self._artifact_tenant_id = None
+
+
+class _CachedGatewayAgent(RealGatewayAgent):
+    def __init__(self, gateway_output):
+        self.telemetry_manager = None
+        self._input_rails = None
+        self._output_rails = None
+        self._artifact_tenant_id = None
+        self._gateway_output = gateway_output
+
+    async def _process_impl(self, _input):
+        return self._gateway_output
+
+
 @pytest.mark.unit
 class TestGatewayOrchestrationHandoff:
     """Test that AgentDispatcher routes through GatewayAgent for triage."""
@@ -139,7 +159,7 @@ class TestGatewayOrchestrationHandoff:
             ),
             patch(
                 "cogniverse_agents.gateway_agent.GatewayAgent.__init__",
-                return_value=None,
+                new=_gateway_init,
             ),
             patch.object(
                 dispatcher,
@@ -190,12 +210,10 @@ class TestGatewayOrchestrationHandoff:
             complexity="simple", routed_to="search_agent", modality="video"
         )
         # Force a simple classification without building the real GatewayAgent:
-        # seed the per-tenant gateway cache with a fake whose _process_impl
-        # returns the simple triage. The real _get_or_build_gateway_agent
-        # returns it on the cache hit.
-        fake_gateway = SimpleNamespace(
-            _process_impl=AsyncMock(return_value=gateway_output)
-        )
+        # seed the per-tenant gateway cache with a production-shaped stub whose
+        # _process_impl returns the simple triage. The real
+        # _get_or_build_gateway_agent returns it on the cache hit.
+        fake_gateway = _CachedGatewayAgent(gateway_output)
         dispatcher._gateway_agents.set(
             "acme:acme",
             _GatewayAgentEntry(agent=fake_gateway, loaded_at=time.monotonic()),
@@ -306,7 +324,7 @@ class TestGatewayOrchestrationHandoff:
             ),
             patch(
                 "cogniverse_agents.gateway_agent.GatewayAgent.__init__",
-                return_value=None,
+                new=_gateway_init,
             ),
             patch.object(
                 dispatcher,
@@ -384,7 +402,7 @@ class TestGatewayOrchestrationHandoff:
             ),
             patch(
                 "cogniverse_agents.gateway_agent.GatewayAgent.__init__",
-                return_value=None,
+                new=_gateway_init,
             ),
         ):
             dispatcher._execute_orchestration_task = _spy_orchestration

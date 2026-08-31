@@ -22,6 +22,14 @@ class _StopHere(Exception):
     pass
 
 
+def _gateway_init(self, deps=None, **kwargs):
+    self.deps = deps
+    self.telemetry_manager = None
+    self._input_rails = None
+    self._output_rails = None
+    self._artifact_tenant_id = None
+
+
 @pytest.mark.asyncio
 async def test_gateway_load_artifact_runs_off_the_event_loop(monkeypatch):
     import cogniverse_agents.gateway_agent as gw
@@ -38,7 +46,7 @@ async def test_gateway_load_artifact_runs_off_the_event_loop(monkeypatch):
     async def _stub_process(self, inp):
         raise _StopHere()
 
-    monkeypatch.setattr(gw.GatewayAgent, "__init__", lambda self, deps=None, **k: None)
+    monkeypatch.setattr(gw.GatewayAgent, "__init__", _gateway_init)
     monkeypatch.setattr(gw.GatewayAgent, "_load_artifact", _rec_load, raising=False)
     monkeypatch.setattr(gw.GatewayAgent, "_process_impl", _stub_process, raising=False)
 

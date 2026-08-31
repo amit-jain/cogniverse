@@ -982,6 +982,23 @@ class AgentDispatcher:
             ) from exc
 
     @staticmethod
+    @contextmanager
+    def _session_context(agent: Any, tenant_id: str, session_id: Optional[str]):
+        """Propagate session metadata through telemetry without a span."""
+        if not session_id:
+            yield
+            return
+
+        telemetry_manager = getattr(agent, "telemetry_manager", None)
+        if telemetry_manager is None:
+            yield
+            return
+
+        provider = telemetry_manager.get_provider(tenant_id=tenant_id)
+        with provider.session_context(session_id):
+            yield
+
+    @staticmethod
     def _resolve_signature_variant(tenant_id: str, agent_name: str) -> str:
         """Read the tenant's selected variant for an agent from admin overrides.
 
@@ -1817,8 +1834,10 @@ class AgentDispatcher:
             routed_lm_context_for,
         )
 
+        session_id = context.get("session_id") if context else None
         with routed_lm_context_for(self._config_manager, tenant_id, "search_agent"):
-            output = await search_agent._process_impl(input_data)
+            with self._session_context(search_agent, tenant_id, session_id):
+                output = await search_agent.process(input_data)
 
         result_list = output.results
         result_count = len(result_list)
@@ -2130,6 +2149,8 @@ class AgentDispatcher:
         gateway_agent = await self._get_or_build_gateway_agent(tenant_id)
 
         input_data = GatewayInput(query=query, tenant_id=tenant_id)
+        # Front-door rails already run in the dispatcher, so the direct
+        # implementation hop stays intentional here.
         result = await gateway_agent._process_impl(input_data)
 
         if result.complexity == "complex":
@@ -2263,8 +2284,10 @@ class AgentDispatcher:
             synthesis_depth=synthesis_depth,
         )
 
-        with self._scoped_session(agent, context.get("session_id")):
-            result = await agent._process_impl(input_data)
+        session_id = context.get("session_id")
+        with self._session_context(agent, tenant_id, session_id):
+            with self._scoped_session(agent, session_id):
+                result = await agent.process(input_data)
 
         return {
             "status": "success",

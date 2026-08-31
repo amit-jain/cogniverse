@@ -17,14 +17,19 @@ from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
+from cogniverse_agents.orchestrator_agent import (
+    OrchestratorAgent as RealOrchestratorAgent,
+)
 from cogniverse_runtime.agent_dispatcher import AgentDispatcher
 
 
-class _StubOrchestrator:
+class _StubOrchestrator(RealOrchestratorAgent):
     def __init__(self, **kwargs):
         self.http_client = kwargs.get("http_client")
         self.telemetry_manager = None
         self._artifact_tenant_id = None
+        self._input_rails = None
+        self._output_rails = None
 
     def _load_artifact(self):
         pass
