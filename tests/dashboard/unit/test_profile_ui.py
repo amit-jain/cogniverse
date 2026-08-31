@@ -135,8 +135,13 @@ class TestDashboardProfileIntegration:
                 k = self._key(tenant_id, scope, service, config_key)
                 return self._data.pop(k, None) is not None
 
-            def list_all_configs(self):
-                return list(self._data.values())
+            def list_all_configs(self, scope=None, service=None):
+                return [
+                    e
+                    for e in self._data.values()
+                    if (scope is None or e.scope == scope)
+                    and (service is None or e.service == service)
+                ]
 
             def get_stats(self):
                 return {"total": len(self._data)}

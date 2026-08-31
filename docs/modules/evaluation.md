@@ -2078,6 +2078,11 @@ and `.duration_ms` attributes; it partitions traces into failed / successful /
 performance-degraded (successful but above the given duration percentile),
 then mines `FailurePattern`s and produces `RootCauseHypothesis` objects:
 
+The failure, temporal, and performance comparison passes key off a validated
+`trace_id` set built once per batch, so correlation stays linear on large
+trace batches. Missing or duplicate `trace_id` values raise `ValueError`
+instead of being ignored.
+
 ```python
 @dataclass
 class FailurePattern:
