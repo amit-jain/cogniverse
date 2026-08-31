@@ -75,7 +75,11 @@ _TRAINING_SELECTION_FIELDS = (
     ("confirmation_score_threshold", float),
 )
 _MONTHLY_REPORT_SPAN_COLUMNS = ("start_time", "end_time", "status_code")
-_MONTHLY_REPORT_SPAN_PAGE_SIZE = 512
+# Projected span rows carry only start_time/end_time/span id (~80 bytes each),
+# so 500_000 rows bound one frame at ~40 MB inside the 2Gi container. Measured:
+# SpanQuery returned 866,604 projected rows in one 17.22s call; at 512 the same
+# window cost 888 REST pages and ~1341s of the 1343s workflow runtime.
+_MONTHLY_REPORT_SPAN_PAGE_SIZE = 500_000
 _MONTHLY_REPORT_MERGE_FAN_IN = 32
 _MONTHLY_REPORT_SPAN_QUERY_TIMEOUT = 120
 
