@@ -13,16 +13,31 @@ _MAX_TRANSCRIPT_CHARS = 200
 def format_gateway_answer(payload: dict) -> str:
     """Render a gateway response as chat markdown.
 
-    The gateway answers a query with a search payload -- ``message`` plus
-    ``results`` -- and carries no prose field, so the reply is assembled from
-    those.
+    The gateway carries no prose field, so the reply is assembled from the
+    payload it does return. A search answers with ``message`` plus a list of
+    ``results``; an orchestrated answer carries ``orchestration_result``,
+    whose ``execution_summary`` is the readable part -- its ``final_output``
+    is fusion-shaped, with ``results`` a dict rather than a list.
     """
     message = str(payload.get("message", "")).strip()
-    results = payload.get("results") or []
 
     blocks: list[str] = []
     if message:
         blocks.append(message)
+
+    orchestration = payload.get("orchestration_result")
+    if isinstance(orchestration, dict):
+        summary = str(orchestration.get("execution_summary", "")).strip()
+        if summary:
+            blocks.append(summary)
+
+    # Only the search shape lists hits; the fusion envelope keys them by agent.
+    raw_results = payload.get("results")
+    results = (
+        [hit for hit in raw_results if isinstance(hit, dict)]
+        if isinstance(raw_results, list)
+        else []
+    )
 
     for position, hit in enumerate(results[:_MAX_HITS], start=1):
         reference = str(hit.get("id") or hit.get("document_id") or "").split("::")[-1]
