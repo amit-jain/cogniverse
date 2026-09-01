@@ -14,7 +14,6 @@ Requires live k3d-deployed runtime at http://localhost:33000.
 """
 
 import hashlib
-import warnings
 
 import httpx
 import pytest
@@ -56,20 +55,23 @@ def sample_video_id() -> str:
     return hashlib.sha256(SAMPLE_VIDEO.read_bytes()).hexdigest()
 
 
-def skip_without_sample_video() -> None:
+def require_sample_video() -> None:
+    """Refuse to run without the corpus the identity assertions are built on.
+
+    Skipping here would silently disarm every seeded-search identity
+    assertion in this module, so a missing corpus fails the same way
+    ``_profile_selection_corpus`` handles it.
+    """
     if not SAMPLE_VIDEO.is_file():
-        warnings.warn(
-            f"sample video {SAMPLE_VIDEO} is not present; the seeded-search "
-            "identity assertions cannot run. Download the testset corpus to "
-            "exercise them.",
-            stacklevel=2,
+        pytest.fail(
+            f"sample video {SAMPLE_VIDEO} is not present, so the seeded-search "
+            "identity assertions cannot run. Download the testset corpus."
         )
-        pytest.skip(f"sample video not available: {SAMPLE_VIDEO}")
 
 
 @pytest.fixture
 def seeded_search_tenant():
-    skip_without_sample_video()
+    require_sample_video()
 
     org_id = unique_id("a2a_seeded")
     tenant_id = f"{org_id}:t1"
