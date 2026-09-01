@@ -620,22 +620,7 @@ _E2E_BATCH_MANIFEST_ENTRY = re.compile(
     re.M,
 )
 
-EXPECTED_E2E_BATCH_UNCOVERED = {
-    "tests/e2e/test_annotation_feedback_e2e.py",
-    "tests/e2e/test_asr_sidecar_e2e.py",
-    "tests/e2e/test_cronworkflow_execution_e2e.py",
-    "tests/e2e/test_inbound_dspy_span_e2e.py",
-    "tests/e2e/test_inbound_lm_output_approximations.py",
-    "tests/e2e/test_inbound_redis_replay_e2e.py",
-    "tests/e2e/test_ingestion_pipeline_telemetry.py",
-    "tests/e2e/test_ingestion_upload_e2e.py",
-    "tests/e2e/test_manual_optimization_e2e.py",
-    "tests/e2e/test_messaging_gateway_e2e.py",
-    "tests/e2e/test_multimodal_report_e2e.py",
-    "tests/e2e/test_optimizer_persistence_e2e.py",
-    "tests/e2e/test_orchestrator_inbound_e2e.py",
-    "tests/e2e/test_quality_monitor_e2e.py",
-}
+EXPECTED_E2E_BATCH_UNCOVERED: set[str] = set()
 
 
 def test_derived_kubectl_context_is_refused_when_empty() -> None:
@@ -669,12 +654,17 @@ def _script_array_entries(script_text: str, array_name: str) -> set[str]:
 
 
 def _script_manifest_entries(
-    script_text: str, start_marker: str, end_marker: str, *, kind: str
+    script_text: str,
+    start_marker: str,
+    end_marker: str,
+    *,
+    kind: str,
+    allow_empty: bool = False,
 ) -> dict[str, str]:
     start = script_text.index(start_marker)
     end = script_text.index(end_marker)
     entries = _E2E_BATCH_MANIFEST_ENTRY.findall(script_text[start:end])
-    assert entries, f"missing {kind} entries"
+    assert entries or allow_empty, f"missing {kind} entries"
     manifest: dict[str, str] = {}
     for path, reason in entries:
         assert path not in manifest, f"duplicate {kind} entry for {path}"
@@ -695,11 +685,14 @@ def test_run_e2e_batched_script_covers_every_e2e_test_file():
         _E2E_BATCH_EXCLUSIONS_END,
         kind="exclusion",
     )
+    # The uncovered list is a ratchet that may only shrink, so an empty one is
+    # the goal state rather than a parse failure.
     uncovered_reasons = _script_manifest_entries(
         script_text,
         _E2E_BATCH_UNCOVERED_START,
         _E2E_BATCH_UNCOVERED_END,
         kind="uncovered",
+        allow_empty=True,
     )
     exclusion_files = set(exclusion_reasons)
     uncovered_files = set(uncovered_reasons)

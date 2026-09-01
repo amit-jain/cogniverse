@@ -200,6 +200,23 @@ BATCH1=(
 # tenant extensibility, wiki, batch optimization. Needs a fresh pod so
 # it starts at baseline memory.
 BATCH2=(
+  # Ingestion, optimization and inbound-contract surfaces. These run
+  # ahead of the knowledge-system set so a red in newly batched
+  # coverage surfaces early rather than at the end of the sweep.
+  tests/e2e/test_annotation_feedback_e2e.py
+  tests/e2e/test_asr_sidecar_e2e.py
+  tests/e2e/test_cronworkflow_execution_e2e.py
+  tests/e2e/test_inbound_dspy_span_e2e.py
+  tests/e2e/test_inbound_lm_output_approximations.py
+  tests/e2e/test_inbound_redis_replay_e2e.py
+  tests/e2e/test_ingestion_pipeline_telemetry.py
+  tests/e2e/test_ingestion_upload_e2e.py
+  tests/e2e/test_manual_optimization_e2e.py
+  tests/e2e/test_messaging_gateway_e2e.py
+  tests/e2e/test_multimodal_report_e2e.py
+  tests/e2e/test_optimizer_persistence_e2e.py
+  tests/e2e/test_orchestrator_inbound_e2e.py
+  tests/e2e/test_quality_monitor_e2e.py
   tests/e2e/test_coding_cli_e2e.py
   tests/e2e/test_deep_research_and_annotation_queue_e2e.py
   tests/e2e/test_graph_cli_e2e.py
@@ -252,22 +269,7 @@ E2E_BATCH_EXCLUSIONS=(
 # Known uncovered files; this list is a ratchet and may only shrink.
 # Format: "tests/e2e/test_*.py|one-line surface name"
 # >>> e2e-batch-uncovered
-E2E_BATCH_UNCOVERED=(
-  "tests/e2e/test_annotation_feedback_e2e.py|annotation feedback workflow"
-  "tests/e2e/test_asr_sidecar_e2e.py|ASR sidecar"
-  "tests/e2e/test_cronworkflow_execution_e2e.py|light CronWorkflow execution"
-  "tests/e2e/test_inbound_dspy_span_e2e.py|inbound DSPy span contract"
-  "tests/e2e/test_inbound_lm_output_approximations.py|inbound LM-output approximations"
-  "tests/e2e/test_inbound_redis_replay_e2e.py|inbound Redis replay durability"
-  "tests/e2e/test_ingestion_pipeline_telemetry.py|ingestion-pipeline telemetry"
-  "tests/e2e/test_ingestion_upload_e2e.py|ingestion upload"
-  "tests/e2e/test_manual_optimization_e2e.py|manual optimization workflow"
-  "tests/e2e/test_messaging_gateway_e2e.py|messaging gateway"
-  "tests/e2e/test_multimodal_report_e2e.py|multimodal report"
-  "tests/e2e/test_optimizer_persistence_e2e.py|optimizer persistence"
-  "tests/e2e/test_orchestrator_inbound_e2e.py|orchestrator inbound"
-  "tests/e2e/test_quality_monitor_e2e.py|quality-monitor sidecar"
-)
+E2E_BATCH_UNCOVERED=()
 # <<< e2e-batch-uncovered
 
 wait_runtime_ready() {
