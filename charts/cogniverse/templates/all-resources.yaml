@@ -406,26 +406,7 @@ spec:
         # keep the placeholder so the stack starts without any Secret.
         - name: COGNIVERSE_INFERENCE_API_KEY
 {{ include "cogniverse.inferenceApiKeyEnv" . | nindent 10 }}
-        {{- if .Values.redis.enabled }}
-        {{- if .Values.redis.auth.enabled }}
-        - name: REDIS_PASSWORD
-          valueFrom:
-            secretKeyRef:
-              name: {{ $fullName }}-redis-auth
-              key: redis-password
-        - name: REDIS_URL
-          value: "redis://:$(REDIS_PASSWORD)@{{ $fullName }}-redis:{{ .Values.redis.service.port }}/0"
-        {{- else }}
-        - name: REDIS_URL
-          value: "redis://{{ $fullName }}-redis:{{ .Values.redis.service.port }}/0"
-        {{- end }}
-        - name: INGEST_QUEUE_DEPTH_LIMIT
-          value: {{ .Values.ingestor.queueDepthLimit | quote }}
-        - name: INGEST_PER_TENANT_CONCURRENCY
-          value: {{ .Values.ingestor.perTenantConcurrency | quote }}
-        - name: INGEST_IDEMPOTENCY_TTL_SECONDS
-          value: {{ .Values.ingestor.idempotencyTtlSeconds | quote }}
-        {{- end }}
+{{ include "cogniverse.redisUrlEnv" . | nindent 8 }}
         {{- if .Values.minio.enabled }}
         - name: MINIO_ENDPOINT
           value: "http://{{ $fullName }}-minio:{{ .Values.minio.service.apiPort }}"
@@ -569,6 +550,7 @@ spec:
         env:
         - name: COGNIVERSE_INFERENCE_API_KEY
 {{ include "cogniverse.inferenceApiKeyEnv" . | nindent 10 }}
+{{ include "cogniverse.redisUrlEnv" . | nindent 8 }}
         - name: BACKEND_URL
           value: "http://{{ $fullName }}-vespa"
         - name: BACKEND_PORT
@@ -783,6 +765,7 @@ spec:
         env:
         - name: COGNIVERSE_INFERENCE_API_KEY
 {{ include "cogniverse.inferenceApiKeyEnv" . | nindent 10 }}
+{{ include "cogniverse.redisUrlEnv" . | nindent 8 }}
         - name: RUNTIME_URL
           value: "http://{{ $fullName }}-runtime:{{ .Values.runtime.service.port }}"
         - name: BACKEND_URL

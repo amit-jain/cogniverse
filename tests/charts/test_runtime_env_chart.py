@@ -443,3 +443,69 @@ class TestInferenceApiKeyDelivery:
         assert self._api_key_entry(_ingestor_container_env_entries(manifests)) == (
             self.SECRET_ENTRY
         )
+
+
+def _cogniverse_app_containers(manifests: list) -> dict[str, dict]:
+    """Every container running first-party cogniverse application code.
+
+    Derived from the render rather than a restated list, so a Deployment added
+    later is covered without editing this test. Sidecars built from third-party
+    images (vLLM, redis, minio, phoenix) are excluded: they do not import
+    cogniverse code and have no reason to carry its configuration.
+    """
+    found: dict[str, dict] = {}
+    for m in manifests:
+        if m.get("kind") != "Deployment":
+            continue
+        name = m["metadata"]["name"]
+        for c in m["spec"]["template"]["spec"]["containers"]:
+            image = c.get("image", "")
+            if not image.startswith("cogniverse/"):
+                continue
+            if "/pylate" in image or "/clap" in image or "/gliner" in image:
+                continue  # model servers, not application code
+            found[f"{name}/{c['name']}"] = {
+                e["name"]: e.get("value") for e in c.get("env", [])
+            }
+    return found
+
+
+def test_every_cogniverse_app_container_gets_redis_url():
+    """REDIS_URL reaches every container running cogniverse application code.
+
+    The dashboard shipped without it. cogniverse_dashboard.tabs.approval_queue
+    raises ValueError("REDIS_URL is required for approval item replacement"),
+    which aborted the Synthetic Data tab's render partway through, so its
+    primary "Generate Synthetic Data" button never appeared -- measured live:
+    the button existed 0 times inside that panel while the panel's text ended
+    at the error.
+    """
+    manifests = _render_chart("redis.enabled=true")
+    containers = _cogniverse_app_containers(manifests)
+    assert containers, "no cogniverse application containers found in the render"
+    missing = sorted(n for n, env in containers.items() if "REDIS_URL" not in env)
+    assert missing == [], (
+        f"cogniverse application containers without REDIS_URL: {missing}; "
+        f"inspected {sorted(containers)}"
+    )
+
+
+def test_no_container_declares_the_same_env_var_twice():
+    """No container repeats an env var name.
+
+    Kubernetes keeps the last occurrence silently, so a duplicate hides which
+    value actually applies. Factoring REDIS_URL into a shared template briefly
+    produced exactly that on the runtime container: the include emitted it
+    alongside the inline block it was meant to replace.
+    """
+    manifests = _render_chart("redis.enabled=true")
+    offenders = {}
+    for m in manifests:
+        if m.get("kind") != "Deployment":
+            continue
+        for c in m["spec"]["template"]["spec"]["containers"]:
+            names = [e["name"] for e in c.get("env", [])]
+            dupes = sorted({n for n in names if names.count(n) > 1})
+            if dupes:
+                offenders[f"{m['metadata']['name']}/{c['name']}"] = dupes
+    assert offenders == {}, f"containers declaring an env var twice: {offenders}"
