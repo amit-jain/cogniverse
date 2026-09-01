@@ -8,20 +8,35 @@ need a live Vespa.
 
 from __future__ import annotations
 
+import json
+from pathlib import Path
 from unittest.mock import MagicMock
 
 import pytest
 from fastapi import FastAPI
 from fastapi.testclient import TestClient
 
+from cogniverse_core.schemas.filesystem_loader import FilesystemSchemaLoader
 from cogniverse_runtime.admin import tenant_manager
+
+REPO_ROOT = Path(__file__).resolve().parents[3]
+SHIPPED_SCHEMAS_DIR = REPO_ROOT / "configs" / "schemas"
+SHIPPED_CONFIG = REPO_ROOT / "configs" / "config.json"
 
 
 @pytest.fixture
 def admin_client():
-    """TestClient mounting the tenant_manager router with a mock backend."""
+    """TestClient mounting the tenant_manager router with a mock backend.
+
+    The schema loader is the real filesystem loader over the shipped
+    ``configs/schemas``, so orphan attribution runs against the base
+    schema set the platform actually ships.
+    """
     app = FastAPI()
     app.include_router(tenant_manager.router, prefix="/admin")
+
+    previous_loader = tenant_manager._schema_loader
+    tenant_manager.set_schema_loader(FilesystemSchemaLoader(SHIPPED_SCHEMAS_DIR))
 
     backend = MagicMock()
     schema_manager = MagicMock()
@@ -41,6 +56,7 @@ def admin_client():
     yield TestClient(app), backend, schema_manager, schema_registry
 
     tenant_manager.backend = None
+    tenant_manager.set_schema_loader(previous_loader)
 
 
 @pytest.mark.unit
@@ -95,9 +111,9 @@ class TestReconcileOrphansDryRun:
         schema_manager.delete_orphan_schemas.assert_not_called()
 
     def test_unknown_base_prefix_listed_separately(self, admin_client):
-        """Schemas whose base prefix isn't in ``KNOWN_BASES`` are
-        reported under ``unrecovered_schemas`` so the operator can
-        review them rather than silently treated as no-op.
+        """Schemas whose base prefix is not a shipped schema are reported
+        under ``unrecovered_schemas`` so the operator can review them
+        rather than silently treated as no-op.
         """
         client, _, schema_manager, schema_registry = admin_client
 
@@ -120,38 +136,66 @@ class TestReconcileOrphansDryRun:
         assert "weird_custom_schema_acme" in data["unrecovered_schemas"]
         assert data["orphan_tenants"] == []
 
-    def test_every_shipped_base_schema_is_attributable(self, admin_client):
-        """An orphan of ANY shipped base must be attributed to its tenant.
+    def test_attribution_matches_longest_base_first(self, admin_client, tmp_path):
+        """When one shipped base is a prefix of another, the LONGER one wins.
 
-        The reconciler strips a KNOWN_BASES prefix to recover the orphan's
-        tenant; a shipped base missing from that list makes its orphans
-        unattributable — never a deletion target — and (since the redeploy
-        refuses unresolved survivors) one such orphan then blocks every
-        tenant-delete and reconcile. Drives the real route with one orphan per
-        base schema shipped in configs/schemas and asserts none land in
-        unrecovered_schemas.
+        First-match-wins on the shorter ``document_text`` base would strip a
+        ``document_text_semantic_<tid>`` orphan to the bogus tenant
+        ``semantic_<tid>``, deleting a schema attributed to a tenant that
+        never existed. No shipped pair is currently a prefix of another, so
+        the rule is driven through a loader carrying the prefix pair.
         """
-        from pathlib import Path
-
         client, _, schema_manager, schema_registry = admin_client
 
-        repo_root = Path(__file__).resolve().parents[3]
-        protected = {
+        for base in ("document_text", "document_text_semantic"):
+            (tmp_path / f"{base}_schema.json").write_text(json.dumps({"name": base}))
+        tenant_manager.set_schema_loader(FilesystemSchemaLoader(tmp_path))
+
+        schema_manager.list_deployed_document_types.return_value = [
+            "tenant_metadata",
+            "config_metadata",
+            "organization_metadata",
+            "adapter_registry",
+            "document_text_semantic_acme_acme",
+            "document_text_beta",
+            "knowledge_graph_legit",
+        ]
+        legit = MagicMock()
+        legit.full_schema_name = "knowledge_graph_legit"
+        schema_registry._get_all_schemas.return_value = [legit]
+
+        resp = client.post("/admin/reconcile-orphans?dry_run=true")
+        assert resp.status_code == 200
+        data = resp.json()
+        assert data["orphan_tenants"] == ["acme_acme", "beta"]
+        assert data["unrecovered_schemas"] == []
+
+    def test_every_profile_schema_is_attributable(self, admin_client):
+        """An orphan of any profile's ``schema_name`` must attribute to its tenant.
+
+        Cross-checks the shipped profiles against the shipped schema files:
+        a profile whose schema file is missing yields an unattributable
+        orphan, which is never a deletion target and blocks every tenant
+        delete once the redeploy refuses unresolved survivors.
+        """
+        client, _, schema_manager, schema_registry = admin_client
+
+        profiles = json.loads(SHIPPED_CONFIG.read_text())["backend"]["profiles"]
+        schema_names = sorted(
+            {p["schema_name"] for p in profiles.values() if p.get("schema_name")}
+        )
+        assert len(schema_names) == len(profiles), (
+            "expected one schema per shipped profile",
+            len(schema_names),
+            len(profiles),
+        )
+
+        schema_manager.list_deployed_document_types.return_value = [
             "tenant_metadata",
             "organization_metadata",
             "config_metadata",
             "adapter_registry",
-        }
-        shipped_bases = sorted(
-            p.name.removesuffix("_schema.json")
-            for p in (repo_root / "configs" / "schemas").glob("*_schema.json")
-            if p.name.removesuffix("_schema.json") not in protected
-        )
-        assert shipped_bases  # the glob found the shipped schema set
-
-        schema_manager.list_deployed_document_types.return_value = [
-            *protected,
-            *[f"{base}_pt_pt" for base in shipped_bases],
+            *[f"{name}_pt_pt" for name in schema_names],
             "knowledge_graph_legit",
         ]
         legit = MagicMock()
@@ -164,18 +208,65 @@ class TestReconcileOrphansDryRun:
         assert data["unrecovered_schemas"] == []
         assert data["orphan_tenants"] == ["pt_pt"]
 
-    def test_attribution_matches_longest_base_first(self, admin_client):
-        """A ``document_text_semantic`` orphan must attribute to its real
-        tenant token — first-match-wins on the shorter ``document_text`` prefix
-        would strip it to the bogus tenant ``semantic_<tid>``."""
+
+@pytest.mark.unit
+@pytest.mark.ci_fast
+class TestReconcileOrphansBaseSchemaSource:
+    def test_uninitialized_schema_loader_refuses_reconcile(self, admin_client):
+        """Without a loader the base set is unknown, so every orphan would read
+        as unrecoverable — blocking tenant deletes rather than reporting the
+        real cause. Refuse loudly instead."""
         client, _, schema_manager, schema_registry = admin_client
+        tenant_manager.set_schema_loader(None)
 
         schema_manager.list_deployed_document_types.return_value = [
             "tenant_metadata",
-            "config_metadata",
-            "organization_metadata",
-            "adapter_registry",
-            "document_text_semantic_acme_acme",
+            "knowledge_graph_alpha",
+            "knowledge_graph_legit",
+        ]
+        legit = MagicMock()
+        legit.full_schema_name = "knowledge_graph_legit"
+        schema_registry._get_all_schemas.return_value = [legit]
+
+        resp = client.post("/admin/reconcile-orphans?dry_run=false")
+        assert resp.status_code == 503
+        assert "SchemaLoader not initialized" in resp.json()["detail"]
+        schema_manager.delete_orphan_schemas.assert_not_called()
+
+    def test_empty_shipped_schema_set_refuses_reconcile(self, admin_client, tmp_path):
+        """An empty schema directory must not read as "no known bases" and
+        silently strand every orphan."""
+        client, _, schema_manager, schema_registry = admin_client
+        tenant_manager.set_schema_loader(FilesystemSchemaLoader(tmp_path))
+
+        schema_manager.list_deployed_document_types.return_value = [
+            "tenant_metadata",
+            "knowledge_graph_alpha",
+            "knowledge_graph_legit",
+        ]
+        legit = MagicMock()
+        legit.full_schema_name = "knowledge_graph_legit"
+        schema_registry._get_all_schemas.return_value = [legit]
+
+        resp = client.post("/admin/reconcile-orphans?dry_run=false")
+        assert resp.status_code == 503
+        assert "no shipped schemas" in resp.json()["detail"]
+        schema_manager.delete_orphan_schemas.assert_not_called()
+
+    def test_newly_shipped_base_is_attributable_without_editing_the_module(
+        self, admin_client, tmp_path
+    ):
+        """Adding a schema file is enough to make its orphans attributable."""
+        client, _, schema_manager, schema_registry = admin_client
+
+        (tmp_path / "video_brand_new_sv_schema.json").write_text(
+            json.dumps({"name": "video_brand_new_sv"})
+        )
+        tenant_manager.set_schema_loader(FilesystemSchemaLoader(tmp_path))
+
+        schema_manager.list_deployed_document_types.return_value = [
+            "tenant_metadata",
+            "video_brand_new_sv_acme",
             "knowledge_graph_legit",
         ]
         legit = MagicMock()
@@ -185,7 +276,7 @@ class TestReconcileOrphansDryRun:
         resp = client.post("/admin/reconcile-orphans?dry_run=true")
         assert resp.status_code == 200
         data = resp.json()
-        assert data["orphan_tenants"] == ["acme_acme"]
+        assert data["orphan_tenants"] == ["acme"]
         assert data["unrecovered_schemas"] == []
 
 

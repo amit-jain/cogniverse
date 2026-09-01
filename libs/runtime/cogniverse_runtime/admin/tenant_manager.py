@@ -962,13 +962,42 @@ async def delete_tenant_internal(tenant_full_id: str) -> Dict:
 # ============================================================================
 
 
+def _known_base_schemas() -> tuple[str, ...]:
+    """Base schema names a tenant suffix can be stripped back to.
+
+    Derived from the shipped schema files so a newly added base is
+    recoverable without editing this module.
+    """
+    if _schema_loader is None:
+        raise HTTPException(
+            status_code=503,
+            detail=(
+                "SchemaLoader not initialized — refusing to reconcile orphans "
+                "without the shipped base-schema list. Call set_schema_loader() "
+                "during app startup."
+            ),
+        )
+
+    names = tuple(_schema_loader.list_available_schemas())
+    if not names:
+        raise HTTPException(
+            status_code=503,
+            detail=(
+                "Schema loader reported no shipped schemas — refusing to "
+                "reconcile orphans. Every orphan would be reported unrecoverable, "
+                "which blocks tenant deletes."
+            ),
+        )
+    return names
+
+
 def _list_orphan_schemas() -> Dict[str, list]:
     """Diff Vespa-deployed schemas against the registry's active set.
 
     Returns a dict with two lists: ``orphan_schemas`` (Vespa-only full
     schema names) and ``orphan_tenants`` (tenants implied by stripping
-    known base prefixes from those names). Bases unknown to the
-    well-known list are reported in ``unrecovered_schemas``.
+    known base prefixes from those names). Names whose base is not a
+    shipped schema are reported in ``unrecovered_schemas``.
     """
     backend = get_backend()
     schema_manager = backend.schema_manager
@@ -999,40 +1028,12 @@ def _list_orphan_schemas() -> Dict[str, list]:
 
     orphans = sorted(deployed - registered - schema_manager._PROTECTED_SCHEMAS)
 
-    # Recover tenant_id from the orphan name by stripping a known base
-    # schema prefix. Bases that ship with the platform; if a deployment
-    # adds new base schema names, extend this list.
-    KNOWN_BASES = (
-        "video_colpali_smol500_mv_frame",
-        "video_videoprism_base_mv_chunk_30s",
-        "video_videoprism_large_mv_chunk_30s",
-        "video_videoprism_lvt_base_sv_chunk_6s",
-        "video_videoprism_lvt_large_sv_chunk_6s",
-        "video_colqwen_omni_mv_chunk_30s",
-        "image_colpali_mv",
-        "audio_clap_semantic",
-        "audio_content",
-        "document_text",
-        "document_text_semantic",
-        "document_visual",
-        "knowledge_graph",
-        "agent_memories",
-        "wiki_pages",
-        "code_lateon_mv",
-        "lateon_mv",
-        # Knowledge-system per-tenant provenance schema. Without this
-        # entry the orphan reconciler couldn't strip provenance_<tid>
-        # back to <tid>, so every Knowledge System e2e test left a
-        # provenance schema behind that the next sweep tripped over
-        # ("Refusing to deploy: Vespa has schemas X not in registry").
-        "provenance",
-    )
     orphan_tenants: set = set()
     unrecovered: list = []
     # Longest base first: with first-match-wins, "document_text" would strip a
     # "document_text_semantic_<tid>" orphan to "semantic_<tid>" — a bogus
     # tenant token.
-    bases_longest_first = sorted(KNOWN_BASES, key=len, reverse=True)
+    bases_longest_first = sorted(_known_base_schemas(), key=len, reverse=True)
     for orphan in orphans:
         for base in bases_longest_first:
             prefix = f"{base}_"
