@@ -158,9 +158,9 @@ EXPECTED_RATCHET_KEYS = {
 }
 
 EXPECTED_KEY_COUNTS = {
-    CONFIG_PATHS[0]: 331,
-    CONFIG_PATHS[1]: 316,
-    CONFIG_PATHS[2]: 296,
+    CONFIG_PATHS[0]: 318,
+    CONFIG_PATHS[1]: 303,
+    CONFIG_PATHS[2]: 286,
 }
 
 EXPECTED_AGENT_MAPPINGS = {
@@ -180,14 +180,23 @@ def _load_json(path: Path) -> dict:
     return json.loads(raw)
 
 
-def _all_keys(node, seen: set[str]) -> set[str]:
+# Mappings whose entry NAMES are data rather than config keys: code iterates
+# them and never reads an entry by literal name, so demanding a literal reader
+# would only reward hardcoding the names into libs/. Their values are still
+# walked, so the keys INSIDE each entry are checked as usual.
+DYNAMIC_MAPPING_PATHS = {("backend", "profiles")}
+
+
+def _all_keys(node, seen: set[str], path: tuple[str, ...] = ()) -> set[str]:
     if isinstance(node, dict):
+        names_are_data = path in DYNAMIC_MAPPING_PATHS
         for key, value in node.items():
-            seen.add(key)
-            _all_keys(value, seen)
+            if not names_are_data:
+                seen.add(key)
+            _all_keys(value, seen, path + (key,))
     elif isinstance(node, list):
         for item in node:
-            _all_keys(item, seen)
+            _all_keys(item, seen, path)
     return seen
 
 
