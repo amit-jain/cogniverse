@@ -1334,13 +1334,22 @@ class TestMemoryLifecycle:
 
         # Alerts persist (no st.rerun): exactly one "Found N memories" alert
         # and exactly one detailed-view expander for the seeded row.
-        found_alert = page.locator('[data-testid="stAlert"]:has-text("Found")')
-        no_memories = page.locator('[data-testid="stAlert"]:has-text("No memories")')
+        #
+        # Scoped to the Memory panel. Six other tabs render their own
+        # "Found ..." alerts (routing_evaluation, backend_profile and
+        # optimization x4), and Streamlit renders every tab body, so the
+        # page-wide locator matched seven.
+        found_alert = memory_panel.locator(
+            '[data-testid="stAlert"]:has-text("memories")'
+        ).filter(has_text="Found")
+        no_memories = memory_panel.locator(
+            '[data-testid="stAlert"]:has-text("No memories")'
+        )
         assert found_alert.count() == 1, (
             "View All must report the seeded memory: "
             f"found={found_alert.count()}, no_memories={no_memories.count()}"
         )
-        seeded_expander = page.locator(
+        seeded_expander = memory_panel.locator(
             f'[data-testid="stExpander"]:has-text("{memory_id}")'
         )
         assert seeded_expander.count() == 1, (
