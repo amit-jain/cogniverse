@@ -1211,6 +1211,71 @@
           "binary_dim": 128
         }
       },
+      "video_xclip_sv_chunk_6s": {
+        "type": "video",
+        "description": "X-CLIP large for 6-second chunk single-vector embeddings with 768-dim. Encodes video and text into one space, so a text query retrieves clips directly. Served by the video_embed sidecar; no in-process model.",
+        "schema_name": "video_xclip_sv_chunk_6s",
+        "result_granularity": "source",
+        "embedding_model": "microsoft/xclip-large-patch14",
+        "pipeline_config": {
+          "extract_keyframes": false,
+          "transcribe_audio": true,
+          "generate_descriptions": false,
+          "generate_embeddings": true
+        },
+        "strategies": {
+          "segmentation": {
+            "class": "SingleVectorSegmentationStrategy",
+            "params": {
+              "strategy": "chunks",
+              "segment_duration": 6.0,
+              "segment_overlap": 1.0,
+              "sampling_fps": 2.0,
+              "max_frames_per_segment": 8,
+              "store_as_single_doc": true
+            }
+          },
+          "transcription": {
+            "class": "AudioTranscriptionStrategy",
+            "params": {
+              "model": "openai/whisper-large-v3-turbo"
+            }
+          },
+          "description": {
+            "class": "NoDescriptionStrategy",
+            "params": {}
+          },
+          "embedding": {
+            "class": "SingleVectorEmbeddingStrategy",
+            "params": {}
+          }
+        },
+        "embedding_type": "single_vector",
+        "model_loader": "xclip",
+        "inference_services": {
+          "embedding": "video_embed",
+          "transcription": "vllm_asr"
+        },
+        "model_specific": {
+          "chunk_duration": 6.0,
+          "chunk_overlap": 1.0,
+          "sampling_fps": 2.0,
+          "max_frames_per_chunk": 8,
+          "min_frames": 8
+        },
+        "inference_config": {
+          "model_type": "xclip",
+          "backend": "remote",
+          "query_encoder": "microsoft/xclip-large-patch14"
+        },
+        "schema_config": {
+          "schema_name": "video_xclip_sv_chunk_6s",
+          "model_name": "X-CLIP-Large",
+          "embedding_dim": 768,
+          "binary_dim": 96,
+          "chunk_based": true
+        }
+      },
       "video_videoprism_lvt_base_sv_chunk_6s": {
         "type": "video",
         "description": "VideoPrism LVT base for 6-second chunk single-vector embeddings with 768-dim. Optimized for shorter segments with temporal context.",

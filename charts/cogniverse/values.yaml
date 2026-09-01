@@ -1585,6 +1585,58 @@ inference:
       timeoutSeconds: 5
       failureThreshold: 5
 
+  # X-CLIP sidecar serving 768-dim temporal video embeddings and matching
+  # text embeddings in one joint space. Frames are encoded with cross-frame
+  # attention, so a segment vector describes motion across the clip rather
+  # than a single keyframe, and a text vector is directly comparable to it.
+  # Profiles route here via ``inference_services.embedding: "video_embed"``.
+  video_embed:
+    enabled: false
+    externalUrl: ""
+    engine: fastapi
+    replicaCount: 1
+    image:
+      repository: cogniverse/video-embed
+      tag: "0.1.0"
+      pullPolicy: IfNotPresent
+    service:
+      type: NodePort
+      port: 8000
+      nodePort: 29012
+    # Must match INFERENCE_SERVICE_SPECS["video_embed"]; the width is
+    # asserted on every response, so a drift here fails the request rather
+    # than writing a mis-shaped vector.
+    env:
+      VIDEO_EMBED_MODEL: microsoft/xclip-large-patch14
+      VIDEO_EMBED_MODEL_REVISION: a9dd1429a16cf305df2aaea232d5e8dceba1c675
+      VIDEO_EMBED_NUM_FRAMES: "8"
+      VIDEO_EMBED_DIM: "768"
+    # Guaranteed QoS: xclip-large at fp32 is ~1.7 GiB of weights, and the
+    # 8-frame stack plus activations roughly doubles peak. Requests equal
+    # limits so the pod cannot be evicted out of the shared pool.
+    resources:
+      limits:
+        cpu: "2"
+        memory: "6Gi"
+      requests:
+        cpu: "500m"
+        memory: "6Gi"
+    livenessProbe:
+      tcpSocket:
+        port: 8000
+      initialDelaySeconds: 30
+      periodSeconds: 30
+      timeoutSeconds: 5
+      failureThreshold: 5
+    readinessProbe:
+      httpGet:
+        path: /health
+        port: 8000
+      initialDelaySeconds: 0
+      periodSeconds: 10
+      timeoutSeconds: 5
+      failureThreshold: 5
+
 # ===========================================
 # Messaging Gateway (Telegram/Slack)
 # ===========================================
