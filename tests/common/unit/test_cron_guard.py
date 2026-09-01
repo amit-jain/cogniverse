@@ -8,7 +8,12 @@ from dataclasses import dataclass
 
 import pytest
 
+import tests.e2e.conftest as e2e_conftest
 import tests.e2e.cron_guard as cron_guard
+
+# cron_guard reads this from the e2e conftest at call time; deriving it here
+# means a context change fails on the real contract rather than on a literal.
+KUBECTL_CTX = e2e_conftest.KUBECTL_CONTEXT
 
 
 @dataclass
@@ -46,6 +51,7 @@ class _FakeKubectl:
         self.patch_failures_on_suspend = patch_failures_on_suspend or set()
         self.annotate_failures = annotate_failures or set()
         self.commands: list[list[str]] = []
+        self.context: str | None = None
 
     def _payload(self) -> str:
         return json.dumps(
@@ -56,7 +62,20 @@ class _FakeKubectl:
         command = list(argv)
         self.commands.append(command)
 
-        if command[:3] == ["kubectl", "get", "cronworkflows"]:
+        # Every kubectl call must name its context. An omitted --context acts
+        # on whatever context happens to be current, which on a developer box
+        # is a different cluster entirely.
+        assert command[0] == "kubectl", command
+        assert command[1] == "--context", command
+        # An empty or flag-shaped context silently acts on whatever context is
+        # current, so it must be a real name -- and the same one every call.
+        assert command[2] and not command[2].startswith("-"), command
+        if self.context is None:
+            self.context = command[2]
+        assert command[2] == self.context, command
+        rest = command[3:]
+
+        if rest[:2] == ["get", "cronworkflows"]:
             return subprocess.CompletedProcess(
                 command,
                 self.get_rc,
@@ -64,8 +83,8 @@ class _FakeKubectl:
                 stderr=self.get_stderr if self.get_rc else "",
             )
 
-        if command[:3] == ["kubectl", "patch", "cronworkflow"]:
-            name = command[3]
+        if rest[:2] == ["patch", "cronworkflow"]:
+            name = rest[2]
             suspend = json.loads(command[-1])["spec"]["suspend"]
             if suspend and name in self.patch_failures_on_suspend:
                 return subprocess.CompletedProcess(
@@ -79,8 +98,8 @@ class _FakeKubectl:
                 command, 0, stdout=f"{name}\n", stderr=""
             )
 
-        if command[:2] == ["kubectl", "annotate"]:
-            name = command[3]
+        if rest[:1] == ["annotate"]:
+            name = rest[2]
             if name in self.annotate_failures:
                 return subprocess.CompletedProcess(
                     command,
@@ -88,7 +107,7 @@ class _FakeKubectl:
                     stdout="",
                     stderr=f"annotate failed for {name}",
                 )
-            marker = command[4]
+            marker = rest[3]
             if marker.endswith("-"):
                 self.items[name].annotation = None
             else:
@@ -132,9 +151,21 @@ def test_suspend_then_restore_finally_only_touches_session_owned_cronworkflows(
     assert restore.restored_names == ("alpha",)
     assert restore.failures == ()
     assert fake.commands == [
-        ["kubectl", "get", "cronworkflows", "-n", "cogniverse", "-o", "json"],
         [
             "kubectl",
+            "--context",
+            KUBECTL_CTX,
+            "get",
+            "cronworkflows",
+            "-n",
+            "cogniverse",
+            "-o",
+            "json",
+        ],
+        [
+            "kubectl",
+            "--context",
+            KUBECTL_CTX,
             "annotate",
             "cronworkflow",
             "alpha",
@@ -145,6 +176,8 @@ def test_suspend_then_restore_finally_only_touches_session_owned_cronworkflows(
         ],
         [
             "kubectl",
+            "--context",
+            KUBECTL_CTX,
             "patch",
             "cronworkflow",
             "alpha",
@@ -155,9 +188,21 @@ def test_suspend_then_restore_finally_only_touches_session_owned_cronworkflows(
             "-p",
             '{"spec":{"suspend":true}}',
         ],
-        ["kubectl", "get", "cronworkflows", "-n", "cogniverse", "-o", "json"],
         [
             "kubectl",
+            "--context",
+            KUBECTL_CTX,
+            "get",
+            "cronworkflows",
+            "-n",
+            "cogniverse",
+            "-o",
+            "json",
+        ],
+        [
+            "kubectl",
+            "--context",
+            KUBECTL_CTX,
             "patch",
             "cronworkflow",
             "alpha",
@@ -170,6 +215,8 @@ def test_suspend_then_restore_finally_only_touches_session_owned_cronworkflows(
         ],
         [
             "kubectl",
+            "--context",
+            KUBECTL_CTX,
             "annotate",
             "cronworkflow",
             "alpha",
@@ -200,9 +247,21 @@ def test_already_suspended_by_user_cronworkflow_is_never_toggled_or_restored(
     assert restore.failures == ()
 
     assert fake.commands == [
-        ["kubectl", "get", "cronworkflows", "-n", "cogniverse", "-o", "json"],
         [
             "kubectl",
+            "--context",
+            KUBECTL_CTX,
+            "get",
+            "cronworkflows",
+            "-n",
+            "cogniverse",
+            "-o",
+            "json",
+        ],
+        [
+            "kubectl",
+            "--context",
+            KUBECTL_CTX,
             "annotate",
             "cronworkflow",
             "alpha",
@@ -213,6 +272,8 @@ def test_already_suspended_by_user_cronworkflow_is_never_toggled_or_restored(
         ],
         [
             "kubectl",
+            "--context",
+            KUBECTL_CTX,
             "patch",
             "cronworkflow",
             "alpha",
@@ -223,9 +284,21 @@ def test_already_suspended_by_user_cronworkflow_is_never_toggled_or_restored(
             "-p",
             '{"spec":{"suspend":true}}',
         ],
-        ["kubectl", "get", "cronworkflows", "-n", "cogniverse", "-o", "json"],
         [
             "kubectl",
+            "--context",
+            KUBECTL_CTX,
+            "get",
+            "cronworkflows",
+            "-n",
+            "cogniverse",
+            "-o",
+            "json",
+        ],
+        [
+            "kubectl",
+            "--context",
+            KUBECTL_CTX,
             "patch",
             "cronworkflow",
             "alpha",
@@ -238,6 +311,8 @@ def test_already_suspended_by_user_cronworkflow_is_never_toggled_or_restored(
         ],
         [
             "kubectl",
+            "--context",
+            KUBECTL_CTX,
             "annotate",
             "cronworkflow",
             "alpha",
@@ -264,10 +339,32 @@ def test_restore_stale_annotation_from_previous_session(monkeypatch):
     assert restored.restored_names == ("stale",)
     assert restored.failures == ()
     assert fake.commands == [
-        ["kubectl", "get", "cronworkflows", "-n", "cogniverse", "-o", "json"],
-        ["kubectl", "get", "cronworkflows", "-n", "cogniverse", "-o", "json"],
         [
             "kubectl",
+            "--context",
+            KUBECTL_CTX,
+            "get",
+            "cronworkflows",
+            "-n",
+            "cogniverse",
+            "-o",
+            "json",
+        ],
+        [
+            "kubectl",
+            "--context",
+            KUBECTL_CTX,
+            "get",
+            "cronworkflows",
+            "-n",
+            "cogniverse",
+            "-o",
+            "json",
+        ],
+        [
+            "kubectl",
+            "--context",
+            KUBECTL_CTX,
             "patch",
             "cronworkflow",
             "stale",
@@ -280,6 +377,8 @@ def test_restore_stale_annotation_from_previous_session(monkeypatch):
         ],
         [
             "kubectl",
+            "--context",
+            KUBECTL_CTX,
             "annotate",
             "cronworkflow",
             "stale",
@@ -306,7 +405,17 @@ def test_restore_stale_skips_cronworkflows_owned_by_this_session(monkeypatch):
     assert restored.restored_names == ()
     assert restored.failures == ()
     assert fake.commands == [
-        ["kubectl", "get", "cronworkflows", "-n", "cogniverse", "-o", "json"],
+        [
+            "kubectl",
+            "--context",
+            KUBECTL_CTX,
+            "get",
+            "cronworkflows",
+            "-n",
+            "cogniverse",
+            "-o",
+            "json",
+        ],
     ]
 
 
@@ -323,7 +432,17 @@ def test_get_failure_raises_with_rc_and_stderr(monkeypatch):
 
     assert str(exc_info.value) == "kubectl get cronworkflows failed: rc=1 stderr='boom'"
     assert fake.commands == [
-        ["kubectl", "get", "cronworkflows", "-n", "cogniverse", "-o", "json"],
+        [
+            "kubectl",
+            "--context",
+            KUBECTL_CTX,
+            "get",
+            "cronworkflows",
+            "-n",
+            "cogniverse",
+            "-o",
+            "json",
+        ],
     ]
 
 
@@ -345,9 +464,21 @@ def test_suspend_records_patch_failures_and_keeps_the_broken_cronworkflow(
     assert suspended.restore_names == ("good-a", "broken", "good-b")
     assert suspended.failures == ("broken",)
     assert fake.commands == [
-        ["kubectl", "get", "cronworkflows", "-n", "cogniverse", "-o", "json"],
         [
             "kubectl",
+            "--context",
+            KUBECTL_CTX,
+            "get",
+            "cronworkflows",
+            "-n",
+            "cogniverse",
+            "-o",
+            "json",
+        ],
+        [
+            "kubectl",
+            "--context",
+            KUBECTL_CTX,
             "annotate",
             "cronworkflow",
             "good-a",
@@ -358,6 +489,8 @@ def test_suspend_records_patch_failures_and_keeps_the_broken_cronworkflow(
         ],
         [
             "kubectl",
+            "--context",
+            KUBECTL_CTX,
             "patch",
             "cronworkflow",
             "good-a",
@@ -370,6 +503,8 @@ def test_suspend_records_patch_failures_and_keeps_the_broken_cronworkflow(
         ],
         [
             "kubectl",
+            "--context",
+            KUBECTL_CTX,
             "annotate",
             "cronworkflow",
             "broken",
@@ -380,6 +515,8 @@ def test_suspend_records_patch_failures_and_keeps_the_broken_cronworkflow(
         ],
         [
             "kubectl",
+            "--context",
+            KUBECTL_CTX,
             "patch",
             "cronworkflow",
             "broken",
@@ -392,6 +529,8 @@ def test_suspend_records_patch_failures_and_keeps_the_broken_cronworkflow(
         ],
         [
             "kubectl",
+            "--context",
+            KUBECTL_CTX,
             "annotate",
             "cronworkflow",
             "good-b",
@@ -402,6 +541,8 @@ def test_suspend_records_patch_failures_and_keeps_the_broken_cronworkflow(
         ],
         [
             "kubectl",
+            "--context",
+            KUBECTL_CTX,
             "patch",
             "cronworkflow",
             "good-b",
@@ -443,9 +584,21 @@ def test_restore_is_idempotent_for_already_restored_cronworkflows(monkeypatch):
     assert second.restored_names == ()
     assert second.failures == ()
     assert fake.commands == [
-        ["kubectl", "get", "cronworkflows", "-n", "cogniverse", "-o", "json"],
         [
             "kubectl",
+            "--context",
+            KUBECTL_CTX,
+            "get",
+            "cronworkflows",
+            "-n",
+            "cogniverse",
+            "-o",
+            "json",
+        ],
+        [
+            "kubectl",
+            "--context",
+            KUBECTL_CTX,
             "patch",
             "cronworkflow",
             "alpha",
@@ -458,6 +611,8 @@ def test_restore_is_idempotent_for_already_restored_cronworkflows(monkeypatch):
         ],
         [
             "kubectl",
+            "--context",
+            KUBECTL_CTX,
             "annotate",
             "cronworkflow",
             "alpha",
@@ -467,6 +622,8 @@ def test_restore_is_idempotent_for_already_restored_cronworkflows(monkeypatch):
         ],
         [
             "kubectl",
+            "--context",
+            KUBECTL_CTX,
             "patch",
             "cronworkflow",
             "beta",
@@ -479,6 +636,8 @@ def test_restore_is_idempotent_for_already_restored_cronworkflows(monkeypatch):
         ],
         [
             "kubectl",
+            "--context",
+            KUBECTL_CTX,
             "annotate",
             "cronworkflow",
             "beta",
@@ -486,5 +645,15 @@ def test_restore_is_idempotent_for_already_restored_cronworkflows(monkeypatch):
             "-n",
             "cogniverse",
         ],
-        ["kubectl", "get", "cronworkflows", "-n", "cogniverse", "-o", "json"],
+        [
+            "kubectl",
+            "--context",
+            KUBECTL_CTX,
+            "get",
+            "cronworkflows",
+            "-n",
+            "cogniverse",
+            "-o",
+            "json",
+        ],
     ]

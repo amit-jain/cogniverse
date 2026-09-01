@@ -13,7 +13,12 @@ from pathlib import Path
 
 import pytest
 
+import tests.e2e.conftest as e2e_conftest
 import tests.e2e.deployment.conftest as deploy_conftest
+
+# Derived from the same place the helper reads it, so a context change fails on
+# the real contract rather than on a restated literal.
+KUBECTL_CTX = e2e_conftest.KUBECTL_CONTEXT
 
 CHART_TEMPLATE = (
     Path(__file__).resolve().parents[3]
@@ -54,6 +59,8 @@ def test_deployed_inference_components_reads_deployment_labels(monkeypatch):
     assert calls == [
         [
             "kubectl",
+            "--context",
+            KUBECTL_CTX,
             "get",
             "deploy",
             "-n",
@@ -82,6 +89,8 @@ def test_ready_pod_wait_excludes_completed_hook_pods_and_inference_pods():
         "cogniverse", inference_components=["inference-gliner", "inference-vllm_asr"]
     ) == [
         "kubectl",
+        "--context",
+        KUBECTL_CTX,
         "wait",
         "--for=condition=ready",
         "pod",
@@ -100,6 +109,8 @@ def test_ready_pod_wait_without_inference_pods_keeps_the_plain_selector():
         "cogniverse", inference_components=[]
     ) == [
         "kubectl",
+        "--context",
+        KUBECTL_CTX,
         "wait",
         "--for=condition=ready",
         "pod",
@@ -117,7 +128,7 @@ def test_wait_for_stack_ready_excludes_the_deployed_inference_pods(monkeypatch):
 
     def fake_cmd(args, *, timeout=120, check=True):
         calls.append((list(args), timeout))
-        if args[1] == "get":
+        if "get" in args:
             return _completed(
                 "runtime\ninference-vllm_llm_student\ninference-denseon\n"
             )
@@ -137,7 +148,7 @@ def test_wait_for_stack_ready_raises_when_pods_never_become_ready(monkeypatch):
 
     def cmd(args, *, timeout=120, check=True):
         assert check is True
-        if args[1] == "get":
+        if "get" in args:
             return _completed("runtime\ninference-gliner\n")
         raise subprocess.CalledProcessError(
             1, args, stderr="timed out waiting for the condition on pods/x"
