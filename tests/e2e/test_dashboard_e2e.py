@@ -1568,7 +1568,7 @@ class TestMonitoringDashboard:
 
     def test_analytics_tab(self, page):
         self._goto_monitoring(page)
-        click_sub_tab(page, "Analytics")
+        click_top_tab(page, "Analytics")
         page.wait_for_load_state("networkidle")
 
         body_text = active_tab_panel(page).inner_text().lower()
@@ -1605,7 +1605,7 @@ class TestMonitoringDashboard:
 
     def test_evaluation_tab(self, page):
         self._goto_monitoring(page)
-        click_sub_tab(page, "Evaluation")
+        click_top_tab(page, "Evaluation")
         page.wait_for_load_state("networkidle")
 
         panel_text = active_tab_panel(page).inner_text().lower()
@@ -1621,7 +1621,7 @@ class TestMonitoringDashboard:
 
     def test_routing_evaluation_tab(self, page):
         self._goto_monitoring(page)
-        click_sub_tab(page, "Routing Evaluation")
+        click_top_tab(page, "Routing Evaluation")
         page.wait_for_load_state("networkidle")
 
         body_text = active_tab_panel(page).inner_text().lower()
@@ -1646,7 +1646,7 @@ class TestMonitoringDashboard:
 
     def test_orchestration_tab(self, page):
         self._goto_monitoring(page)
-        click_sub_tab(page, "Orchestration")
+        click_top_tab(page, "Orchestration")
         page.wait_for_load_state("networkidle")
 
         body_text = active_tab_panel(page).inner_text().lower()
@@ -1666,7 +1666,7 @@ class TestMonitoringDashboard:
 
     def test_embedding_atlas_tab(self, page):
         self._goto_monitoring(page)
-        click_sub_tab(page, "Embedding Atlas")
+        click_top_tab(page, "Embedding Atlas")
         page.wait_for_load_state("networkidle")
 
         body_text = active_tab_panel(page).inner_text().lower()

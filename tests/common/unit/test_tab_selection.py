@@ -107,3 +107,45 @@ def test_scope_preserves_the_visible_before_hidden_ordering():
 def test_an_unknown_scope_is_rejected_rather_than_silently_matching_everything(scope):
     with pytest.raises(ValueError):
         tab_candidates_in_scope(NESTED_PAIR, "Synthetic Data", scope)
+
+
+# The shipped top strip, in DOM order. Two of these labels contain another as
+# a substring, which is what makes the monitoring tabs worth pinning.
+SHIPPED_TOP = [
+    "📊 Analytics",
+    "🧪 Evaluation",
+    "🗺️ Embedding Atlas",
+    "🎯 Routing Evaluation",
+    "🔄 Orchestration Annotation",
+    "🔬 Synthetic Data & Optimization",
+]
+
+
+@pytest.mark.parametrize(
+    ("target", "expected"),
+    [
+        ("Analytics", "📊 Analytics"),
+        ("Evaluation", "🧪 Evaluation"),
+        ("Routing Evaluation", "🎯 Routing Evaluation"),
+        ("Orchestration", "🔄 Orchestration Annotation"),
+        ("Embedding Atlas", "🗺️ Embedding Atlas"),
+    ],
+)
+def test_each_monitoring_label_resolves_to_exactly_one_top_tab(target, expected):
+    """`Evaluation` is a substring of `Routing Evaluation`, so the first
+    candidate must be the exact match rather than DOM order."""
+    tabs = [(label, True, False) for label in SHIPPED_TOP]
+    candidates = tab_candidates_in_scope(tabs, target, "top")
+    assert [SHIPPED_TOP[i] for i in candidates][:1] == [expected]
+
+
+def test_an_exact_match_wins_over_an_earlier_substring_container():
+    """Ordering, not just uniqueness.
+
+    In the shipped strip `Evaluation` happens to precede `Routing Evaluation`,
+    so DOM order alone returns the right tab and the case above would pass
+    against a resolver that does no exact-match preference at all. Put the
+    container first so only the preference can satisfy it.
+    """
+    tabs = [("🎯 Routing Evaluation", True, False), ("🧪 Evaluation", True, False)]
+    assert tab_candidates_in_scope(tabs, "Evaluation", "top")[0] == 1
