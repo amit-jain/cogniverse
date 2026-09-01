@@ -367,20 +367,35 @@ class TestMultiModalChat:
         _wait_for_rerun_complete(page, timeout_ms=LLM_TIMEOUT)
         page.wait_for_load_state("networkidle")
 
-        # Chat uses st.rerun() after sending — response appears as chat message elements
-        chat_msgs = page.locator('[data-testid="stChatMessage"]')
-        markdown = page.locator('[data-testid="stMarkdown"]')
+        # Chat uses st.rerun() after sending — the reply lands as chat message
+        # elements inside the Chat panel. Scoped to that panel: every tab body
+        # is in the DOM, so a page-wide count is satisfied by other panels.
+        panel = active_tab_panel(page)
+        chat_msgs = panel.locator('[data-testid="stChatMessage"]')
+        assert chat_msgs.count() == 2, (
+            f"One send must render exactly two chat messages, the user's and the "
+            f"assistant's, got {chat_msgs.count()}"
+        )
 
-        # Must have at least 2 chat messages (user + assistant) or response markdown
-        assert chat_msgs.count() >= 2 or markdown.count() >= 2, (
-            f"Chat should show user message + assistant response, "
-            f"got chat_msgs={chat_msgs.count()}, markdown={markdown.count()}"
+        body_text = panel.inner_text()
+        lowered = body_text.lower()
+
+        # The gateway answers with a search payload, so its rendered reply
+        # carries the result count and per-hit scores.
+        assert "results for" in lowered and "score" in lowered, (
+            "The assistant reply must be the gateway's rendered search answer — "
+            "its 'Found N results for ...' message plus scored hits. Got: "
+            f"{body_text[:400]!r}"
+        )
+        assert "document_id" not in lowered, (
+            "The chat must render the gateway payload, not a stringified dict; "
+            f"'document_id' means the raw response leaked into the UI. Got: "
+            f"{body_text[:400]!r}"
         )
 
         # The response must contain words beyond the query — not just echo
-        body_text = active_tab_panel(page).inner_text()
         query_words = {"what", "videos", "do", "you", "have", "about", "animals"}
-        response_words = set(body_text.lower().split())
+        response_words = set(lowered.split())
         non_query_words = response_words - query_words
         assert len(non_query_words) > 20, (
             "Chat response must contain substantial content beyond the query "
@@ -425,34 +440,43 @@ class TestMultiModalChat:
         # The counter renders at the END of the script run, after the send
         # block's LLM call — under load that run outlives networkidle, so poll
         # for the counter instead of asserting on one immediate snapshot.
+        sidebar = page.locator('[data-testid="stSidebar"]')
         deadline = time.monotonic() + LLM_TIMEOUT / 1000
         msg_match = None
         while msg_match is None and time.monotonic() < deadline:
-            body_text = active_tab_panel(page).inner_text().lower()
-            msg_match = re.search(r"messages:\s*(\d+)", body_text)
+            msg_match = re.search(r"messages:\s*(\d+)", sidebar.inner_text().lower())
             if msg_match is None:
                 page.wait_for_timeout(2_000)
 
-        assert msg_match is not None, (
-            "Sidebar must show a 'messages: N' counter after multi-turn chat"
+        assert msg_match, (
+            "The sidebar must show a 'messages: N' counter after multi-turn chat. "
+            "The dashboard renders that counter only once chat_messages is "
+            "non-empty, so its absence means no turn was ever recorded. "
+            f"Sidebar text: {sidebar.inner_text()!r}"
         )
-        msg_count = int(msg_match.group(1))
-        assert msg_count >= 2, (
-            f"Multi-turn chat must process at least 2 messages, sidebar shows {msg_count}"
+        # Each turn appends the user message and the assistant reply, so the two
+        # turns above are exactly four entries.
+        assert int(msg_match.group(1)) == 4, (
+            f"Two chat turns must record exactly 4 messages (user + assistant "
+            f"each), sidebar shows {msg_match.group(1)}"
         )
 
-        # The second exchange should be visible in the conversation area
-        assert "tell me more" in body_text or "first one" in body_text, (
-            "Second turn query must be visible in the conversation"
+        panel_text = active_tab_panel(page).inner_text().lower()
+
+        # The second turn's query is echoed back as the user's chat message.
+        assert "tell me more about the first one" in panel_text, (
+            "The second turn's query must be visible in the conversation. Got: "
+            f"{panel_text[:400]!r}"
         )
 
-        # At least one agent response should be visible (routed / search result)
-        assert (
-            "gateway_agent" in body_text
-            or "search_agent" in body_text
-            or "orchestrator_agent" in body_text
-            or "routed" in body_text
-        ), "At least one agent response must be visible in the conversation"
+        # Both turns are answered by the gateway, whose reply is a rendered
+        # search payload -- the dispatcher's "Found N results for '...'"
+        # message plus scored hits -- so the phrase appears once per turn.
+        assert panel_text.count("results for") == 2, (
+            "Each of the two turns must be answered by a rendered gateway "
+            f"search reply, found {panel_text.count('results for')}. Got: "
+            f"{panel_text[:400]!r}"
+        )
 
 
 class TestOptimizationOverview:
