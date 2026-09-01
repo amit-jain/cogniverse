@@ -1167,15 +1167,40 @@ class TestMemoryLifecycle:
         click_top_tab(page, "Memory")
         page.wait_for_load_state("networkidle")
 
-        # Verify memory sub-tabs
-        search_tab = page.locator('button[role="tab"]:has-text("Search")')
-        add_tab = page.locator('button[role="tab"]:has-text("Add")')
+        # Memory is the 15th of 16 top-level tabs, so Streamlit renders its
+        # body last: measured 8.7s from the click to the sub-tabs appearing,
+        # against click_top_tab's 3s settle. expect() retries against the
+        # condition instead of asserting after a fixed wait.
+        #
+        # The labels are the full sub-tab names. Substrings like "Search" and
+        # "Delete" also match Interactive Search and Configuration's Delete
+        # tab, so a bare-substring locator passes whether or not the Memory
+        # tab rendered at all.
+        search_tab = page.locator('button[role="tab"]:has-text("Search Memories")')
+        add_tab = page.locator('button[role="tab"]:has-text("Add Memory")')
         view_tab = page.locator('button[role="tab"]:has-text("View All")')
-        delete_tab = page.locator('button[role="tab"]:has-text("Delete")')
-        assert search_tab.count() > 0, "Search Memories sub-tab should be present"
-        assert add_tab.count() > 0, "Add Memory sub-tab should be present"
-        assert view_tab.count() > 0, "View All sub-tab should be present"
-        assert delete_tab.count() > 0, "Delete Memory sub-tab should be present"
+        delete_tab = page.locator('button[role="tab"]:has-text("Delete Memory")')
+        expect(add_tab).to_have_count(1, timeout=INTERACTION_TIMEOUT)
+        expect(search_tab).to_have_count(1, timeout=INTERACTION_TIMEOUT)
+        expect(view_tab).to_have_count(1, timeout=INTERACTION_TIMEOUT)
+        expect(delete_tab).to_have_count(1, timeout=INTERACTION_TIMEOUT)
+
+        # Pin the rendered labels themselves. The expects above prove the
+        # sub-tabs exist; these prove they are the four the tab declares, in
+        # the order it declares them, so a renamed or reordered sub-tab is a
+        # failure here rather than something a substring locator absorbs.
+        assert [t.strip() for t in search_tab.all_inner_texts()] == [
+            "\U0001f50d Search Memories"
+        ]
+        assert [t.strip() for t in add_tab.all_inner_texts()] == [
+            "\U0001f4dd Add Memory"
+        ]
+        assert [t.strip() for t in view_tab.all_inner_texts()] == [
+            "\U0001f4cb View All"
+        ]
+        assert [t.strip() for t in delete_tab.all_inner_texts()] == [
+            "\U0001f5d1\ufe0f Delete Memory"
+        ]
 
     def test_add_and_search_memory(self, page):
         memory_text = f"E2E test memory {unique_id()}"
