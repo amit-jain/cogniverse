@@ -17,7 +17,11 @@ from cogniverse_messaging.command_router import parse_message
 from cogniverse_messaging.runtime_client import RuntimeClient
 from cogniverse_messaging.telegram_handler import format_agent_response
 
-from tests.e2e.conftest import assert_orchestrated, expected_gateway_routing
+from tests.e2e.conftest import (
+    assert_orchestrated,
+    assert_telegram_chunks,
+    expected_gateway_routing,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -191,9 +195,7 @@ class TestMessageHandlingIntegration:
             _assert_search_response(response, parsed.query)
             assert response["results_count"] <= 3, response
             chunks = format_agent_response(response)
-            assert len(chunks) >= 1
-            assert all(len(c) <= 4096 for c in chunks)
-            assert all(c for c in chunks), chunks
+            assert_telegram_chunks(chunks, response)
         finally:
             await client.close()
 
@@ -215,7 +217,6 @@ class TestMessageHandlingIntegration:
 
             _assert_gateway_response(response, parsed.query)
             chunks = format_agent_response(response)
-            assert len(chunks) >= 1
-            assert all(0 < len(c) <= 4096 for c in chunks), chunks
+            assert_telegram_chunks(chunks, response)
         finally:
             await client.close()

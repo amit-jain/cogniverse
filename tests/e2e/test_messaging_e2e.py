@@ -15,7 +15,12 @@ import subprocess
 import httpx
 import pytest
 
-from tests.e2e.conftest import KUBECTL_CONTEXT, RUNTIME, TENANT_ID
+from tests.e2e.conftest import (
+    KUBECTL_CONTEXT,
+    RUNTIME,
+    TENANT_ID,
+    assert_telegram_chunks,
+)
 
 pytestmark = [pytest.mark.e2e, pytest.mark.requires_telegram_bot]
 
@@ -236,8 +241,7 @@ class TestTelegramRealFlow:
 
                 # Format response
                 chunks = format_agent_response(response)
-                assert len(chunks) >= 1
-                assert all(0 < len(chunk) <= 4096 for chunk in chunks), chunks
+                assert_telegram_chunks(chunks, response)
 
                 # Send formatted response to real Telegram chat
                 async with httpx.AsyncClient(trust_env=False) as http:
