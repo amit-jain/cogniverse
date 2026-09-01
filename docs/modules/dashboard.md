@@ -60,7 +60,9 @@ The Runtime handles routing, agent dispatch, and telemetry internally.
 ```text
 libs/dashboard/cogniverse_dashboard/
   __init__.py
+  agent_status.py               # Agent availability probes against the unified runtime
   app.py                        # Main Streamlit entry point
+  chat.py                       # Chat reply formatting for the multi-modal chat tab
   search_summary.py             # Streaming summarization control for search results
   tabs/
     __init__.py

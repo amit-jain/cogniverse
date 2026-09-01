@@ -18,6 +18,7 @@ import plotly.express as px
 import plotly.graph_objects as go
 import streamlit as st
 
+from cogniverse_dashboard.chat import format_gateway_answer
 from cogniverse_dashboard.search_summary import render_search_summary
 
 # Import config and memory management tabs
@@ -2994,11 +2995,17 @@ with main_tabs[11]:
 
     col_send, col_clear = st.columns([1, 5])
     with col_send:
-        send_clicked = st.button("Send", type="primary", disabled=not chat_input_area)
+        # A text_area commits its value on the same interaction that delivers
+        # the click, so a `disabled=` computed from this render is always one
+        # render stale. Emptiness is enforced in the handler instead.
+        send_clicked = st.button("Send", type="primary")
     with col_clear:
         if st.button("Clear History"):
             st.session_state.chat_messages = []
             st.rerun()
+
+    if send_clicked and not chat_input_area:
+        st.warning("Enter a message before sending.")
 
     if send_clicked and chat_input_area:
         st.session_state.chat_messages.append(
@@ -3023,10 +3030,7 @@ with main_tabs[11]:
                         timeout=300.0,
                     )
                     if resp.status_code == 200:
-                        result = resp.json()
-                        answer = result.get(
-                            "response", result.get("result", str(result))
-                        )
+                        answer = format_gateway_answer(resp.json())
                         st.markdown(answer)
                         st.session_state.chat_messages.append(
                             {"role": "assistant", "content": answer}
