@@ -1307,8 +1307,19 @@ class TestMemoryLifecycle:
         page.wait_for_load_state("networkidle")
         page.wait_for_timeout(5_000)
 
-        agent_input = page.locator('input[aria-label="Agent Name"]')
+        # Configuration also renders an "Agent Name" input, and Streamlit
+        # renders every tab body, so a page-wide locator matches two (measured:
+        # values ['', 'gateway_agent']). Scope to the panel that owns the
+        # Memory sub-tabs.
+        memory_panel = page.locator('[role="tabpanel"]').filter(
+            has=page.locator('button[role="tab"]:has-text("Search Memories")')
+        )
+        expect(memory_panel).to_have_count(1, timeout=INTERACTION_TIMEOUT)
+        agent_input = memory_panel.locator('input[aria-label="Agent Name"]')
         assert agent_input.count() == 1, "Memory tab must render one Agent Name input"
+        assert agent_input.first.input_value() == "gateway_agent", (
+            "Memory tab's Agent Name input should carry the shipped default"
+        )
         fill_input(agent_input, "_user_memories")
         page.wait_for_load_state("networkidle")
 
@@ -1540,6 +1551,13 @@ class TestIngestionTesting:
         set_tenant(page, TENANT_ID)
         click_top_tab(page, "Ingestion")
         page.wait_for_load_state("networkidle")
+        # Streamlit streams tab bodies over the websocket, so networkidle can
+        # fire while later tabs are still rendering and the page still shows
+        # the default Analytics tab. Wait for this tab's own header before
+        # asserting anything about the body.
+        expect(
+            page.locator("h1,h2,h3").filter(has_text="Ingestion Pipeline Testing")
+        ).to_have_count(1, timeout=INTERACTION_TIMEOUT)
 
     def test_ingestion_header_and_description(self, page):
         self._goto_ingestion(page)
