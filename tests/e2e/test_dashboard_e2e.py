@@ -1909,7 +1909,7 @@ class TestManualOptimizationTrigger:
         )
         expect(optimization_panel).to_have_count(1, timeout=INTERACTION_TIMEOUT)
         mode_select = optimization_panel.locator(
-            '[data-testid="stSelectbox"]:has-text("Mode")'
+            '[data-testid="stSelectbox"]:has-text("Mode"):visible'
         )
         expect(mode_select).to_have_count(1, timeout=INTERACTION_TIMEOUT)
         assert mode_select.count() == 1, (
@@ -1920,7 +1920,10 @@ class TestManualOptimizationTrigger:
         # it explicitly so we can assert the full option list.
         mode_select.click()
         page.wait_for_timeout(1_000)
-        opt_region_text = active_tab_panel(page).inner_text()
+        # Read the whole page here, deliberately: Streamlit renders the open
+        # dropdown's options in a popover attached to the document body, not
+        # inside the tab panel, so a panel-scoped read cannot see them.
+        opt_region_text = page.inner_text("body")
         for expected in (
             "gateway-thresholds",
             "simba",
