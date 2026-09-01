@@ -55,3 +55,45 @@ def tab_candidates(
     return [i for i, visible in partial if visible] + [
         i for i, visible in partial if not visible
     ]
+
+
+_SCOPES = {"top": False, "sub": True}
+
+
+def tab_candidates_in_scope(
+    tabs: Sequence[tuple[str, bool, bool]] | Iterable[tuple[str, bool, bool]],
+    target: str,
+    scope: str,
+) -> list[int]:
+    """Indices of the tabs to try for ``target`` within one tab strip.
+
+    ``tabs`` is ``(label, is_visible, is_nested)`` in DOM order, where
+    ``is_nested`` is true for a tab rendered inside a ``[role="tabpanel"]``
+    -- that is, a sub-tab of some other tab.
+
+    Scoping is what disambiguates a label that names two tabs. A page-wide
+    search for "Synthetic Data" finds an exact match on the nested sub-tab and
+    only a substring match on the top-level "Synthetic Data & Optimization"
+    parent, so a caller asking for the parent is sent into a panel that is not
+    open and every click is swallowed. Which strip a tab lives in is the fact
+    that separates them; preferring an exact match is a proxy for it that
+    happens to point the wrong way here.
+
+    Within a scope the ordering rule is unchanged: exact before substring,
+    visible before hidden.
+    """
+
+    if scope not in _SCOPES:
+        raise ValueError(f"tab scope must be one of {sorted(_SCOPES)}, got {scope!r}")
+    want_nested = _SCOPES[scope]
+
+    entries = list(tabs)
+    in_scope = [
+        (dom_index, label, visible)
+        for dom_index, (label, visible, nested) in enumerate(entries)
+        if nested is want_nested
+    ]
+    ordered = tab_candidates(
+        [(label, visible) for _, label, visible in in_scope], target
+    )
+    return [in_scope[i][0] for i in ordered]
