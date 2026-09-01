@@ -27,6 +27,10 @@ from cogniverse_dashboard.tabs.config_management import (
 )
 from cogniverse_dashboard.tabs.memory_management import render_memory_management_tab
 from cogniverse_dashboard.tabs.tenant_management import render_tenant_management_tab
+from cogniverse_dashboard.tenant_gate import (
+    TenantProbe,
+    decide_tenant_gate,
+)
 
 # Add project root to path
 project_root = Path(__file__).parent.parent
@@ -683,25 +687,52 @@ if not _selected_tenant:
 
 
 @st.cache_data(ttl=30)
-def _validate_tenant(tenant_id: str) -> tuple[bool, str]:
+def _probe_tenant(tenant_id: str) -> TenantProbe:
+    # The runtime serves this probe alongside real query traffic, so the
+    # budget covers a loaded runtime rather than an idle one.
     try:
-        resp = httpx.get(f"{RUNTIME_URL}/admin/tenants/{tenant_id}", timeout=5.0)
+        resp = httpx.get(f"{RUNTIME_URL}/admin/tenants/{tenant_id}", timeout=20.0)
     except Exception as exc:  # pragma: no cover - network-dependent
-        return False, f"runtime unreachable at {RUNTIME_URL}: {exc}"
+        return TenantProbe(
+            reachable=False,
+            registered=False,
+            detail=f"runtime unreachable at {RUNTIME_URL}: {exc}",
+        )
     if resp.status_code == 200:
-        return True, ""
+        return TenantProbe(reachable=True, registered=True)
     if resp.status_code == 404:
-        return False, f"tenant '{tenant_id}' is not registered"
-    return False, f"HTTP {resp.status_code} from /admin/tenants/{tenant_id}"
-
-
-_tenant_ok, _tenant_err = _validate_tenant(_selected_tenant)
-if not _tenant_ok:
-    st.error(
-        f"❌ Tenant **{_selected_tenant}** cannot be used: {_tenant_err}. "
-        "Register the tenant first via `POST /admin/tenants` or pick a "
-        "registered tenant in the sidebar."
+        return TenantProbe(
+            reachable=True,
+            registered=False,
+            detail=f"tenant '{tenant_id}' is not registered",
+        )
+    return TenantProbe(
+        reachable=False,
+        registered=False,
+        detail=f"HTTP {resp.status_code} from /admin/tenants/{tenant_id}",
     )
+
+
+_probe = _probe_tenant(_selected_tenant)
+_validated_tenants = st.session_state.setdefault("validated_tenants", set())
+_decision = decide_tenant_gate(
+    _probe,
+    _selected_tenant,
+    previously_validated=_selected_tenant in _validated_tenants,
+)
+
+if _probe.reachable and _probe.registered:
+    _validated_tenants.add(_selected_tenant)
+elif _probe.reachable:
+    _validated_tenants.discard(_selected_tenant)
+else:
+    # Don't hold a transient failure for the full TTL; the next run retries.
+    _probe_tenant.clear()
+
+if _decision.warning:
+    st.warning(f"⚠️ {_decision.warning}")
+if not _decision.allow:
+    st.error(f"❌ {_decision.error}")
     st.stop()
 
 # Create main tabs

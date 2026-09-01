@@ -64,6 +64,7 @@ libs/dashboard/cogniverse_dashboard/
   app.py                        # Main Streamlit entry point
   chat.py                       # Chat reply formatting for the multi-modal chat tab
   search_summary.py             # Streaming summarization control for search results
+  tenant_gate.py                # Tenant gate decision for rendering the dashboard
   tabs/
     __init__.py
     approval_queue.py
