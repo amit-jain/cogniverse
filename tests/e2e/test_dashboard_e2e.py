@@ -43,6 +43,27 @@ SEARCH_TIMEOUT = 120_000
 LLM_TIMEOUT = 300_000
 
 
+def _fill_chat_message(page, message: str) -> None:
+    """Type a message into the Chat tab's own text area.
+
+    Scoped to the open panel and never widened. The page-wide text-input
+    fallback this replaces resolved to the sidebar's Active Tenant box, so a
+    chat area that had not rendered yet was typed over the tenant instead;
+    the gate then rejected the query-as-tenant and blanked the dashboard,
+    turning a timing miss into a poisoned session.
+    """
+    panel = active_tab_panel(page)
+    box = panel.locator('[data-testid="stTextArea"] textarea')
+    try:
+        box.first.wait_for(state="visible", timeout=60_000)
+    except Exception as exc:
+        raise AssertionError(
+            "The Chat tab must render its message text area. Panel text: "
+            f"{panel.inner_text()[:400]!r}"
+        ) from exc
+    fill_textarea(box.first, message)
+
+
 def _wait_for_rerun_complete(page, timeout_ms=SEARCH_TIMEOUT):
     """Wait for the in-flight Streamlit rerun to finish instead of
     sleeping a fixed interval — the status widget is attached while a
@@ -353,14 +374,7 @@ class TestMultiModalChat:
         click_top_tab(page, "Chat")
 
         # Find chat input (text_area or text_input) — use JS fill for hidden elements
-        chat_input = active_tab_panel(page).locator(
-            '[data-testid="stTextArea"] textarea'
-        )
-        if chat_input.count() > 0:
-            fill_textarea(chat_input.first, "What videos do you have about animals?")
-        else:
-            chat_input = page.locator('[data-testid="stTextInput"] input')
-            fill_input(chat_input.first, "What videos do you have about animals?")
+        _fill_chat_message(page, "What videos do you have about animals?")
 
         click_button(page, "Send")
 
@@ -408,27 +422,13 @@ class TestMultiModalChat:
         click_top_tab(page, "Chat")
 
         # Turn 1 — use JS fill for hidden elements
-        chat_input = active_tab_panel(page).locator(
-            '[data-testid="stTextArea"] textarea'
-        )
-        if chat_input.count() > 0:
-            fill_textarea(chat_input.first, "search for sports clips")
-        else:
-            chat_input = page.locator('[data-testid="stTextInput"] input')
-            fill_input(chat_input.first, "search for sports clips")
+        _fill_chat_message(page, "search for sports clips")
         click_button(page, "Send")
         _wait_for_rerun_complete(page, timeout_ms=LLM_TIMEOUT)
         page.wait_for_load_state("networkidle")
 
         # Turn 2
-        chat_input = active_tab_panel(page).locator(
-            '[data-testid="stTextArea"] textarea'
-        )
-        if chat_input.count() > 0:
-            fill_textarea(chat_input.first, "Tell me more about the first one")
-        else:
-            chat_input = page.locator('[data-testid="stTextInput"] input')
-            fill_input(chat_input.first, "Tell me more about the first one")
+        _fill_chat_message(page, "Tell me more about the first one")
         click_button(page, "Send")
         _wait_for_rerun_complete(page, timeout_ms=LLM_TIMEOUT)
         page.wait_for_load_state("networkidle")
@@ -735,10 +735,22 @@ class TestSyntheticDataAndApproval:
         click_sub_tab(page, "Synthetic Data")
         page.wait_for_load_state("networkidle")
 
-        # Generate button MUST exist — this is the primary action
-        generate_btn = page.locator('button:has-text("Generate")')
-        assert generate_btn.count() > 0, (
-            "Synthetic Data tab must have Generate Synthetic Data button"
+        # Generate button MUST exist — this is the primary action. Matched on
+        # its full label and scoped to the panel: "Generate" alone also hits
+        # buttons in the other tab bodies, which are all in the DOM.
+        generate_btn = active_tab_panel(page).locator(
+            'button:has-text("Generate Synthetic Data")'
+        )
+        try:
+            generate_btn.first.wait_for(state="visible", timeout=60_000)
+        except Exception as exc:
+            raise AssertionError(
+                "Synthetic Data tab must have a Generate Synthetic Data button. "
+                f"Panel text: {active_tab_panel(page).inner_text()[:300]!r}"
+            ) from exc
+        assert generate_btn.count() == 1, (
+            f"Synthetic Data tab must have exactly one Generate Synthetic Data "
+            f"button, got {generate_btn.count()}"
         )
 
         # Optimizer selectbox MUST exist with selectable options
@@ -753,10 +765,18 @@ class TestSyntheticDataAndApproval:
             "Synthetic Data tab must have the Min Rating Threshold slider"
         )
 
-        # Number inputs (for count or profiles)
-        body_text = active_tab_panel(page).inner_text().lower()
-        assert "synthetic" in body_text and "generation" in body_text, (
-            "Synthetic Data tab must show 'Synthetic Data Generation' header"
+        # The panel keeps streaming after its widgets attach, so poll for the
+        # subheader instead of sampling the text once.
+        deadline = time.monotonic() + 60
+        body_text = ""
+        while time.monotonic() < deadline:
+            body_text = active_tab_panel(page).inner_text().lower()
+            if "synthetic data generation" in body_text:
+                break
+            page.wait_for_timeout(1_000)
+        assert "synthetic data generation" in body_text, (
+            "Synthetic Data tab must show its 'Synthetic Data Generation' "
+            f"subheader; panel text: {body_text[:300]!r}"
         )
 
 
@@ -912,10 +932,21 @@ class TestProfileRoutingMetrics:
 
         # Lookback (hours) input is the only always-rendered widget — the
         # rest depends on whether Phoenix has profile_selection spans yet.
+        # The panel turns visible carrying only its header, so wait for the
+        # widget itself: a count taken while the body is still streaming reads
+        # zero and blames the product for a render that had not finished.
         lookback_input = active_panel.locator('[data-testid="stNumberInput"]')
+        try:
+            lookback_input.first.wait_for(state="visible", timeout=60_000)
+        except Exception as exc:
+            raise AssertionError(
+                "Profile Routing Metrics must expose a Lookback (hours) input. "
+                f"Panel text: {active_panel.first.inner_text()[:300]!r}"
+            ) from exc
         assert lookback_input.count() == 1, (
-            f"Profile Routing Metrics must expose a Lookback (hours) input; "
-            f"panel text: {active_panel.first.inner_text()[:300]}"
+            f"Profile Routing Metrics must expose exactly one Lookback (hours) "
+            f"input, got {lookback_input.count()}; panel text: "
+            f"{active_panel.first.inner_text()[:300]}"
         )
 
         # Acceptable terminal states: empty-spans info, missing-attribute
@@ -924,11 +955,10 @@ class TestProfileRoutingMetrics:
             '[data-testid="stAlert"]:has-text("Phoenix span query failed"), '
             '[data-testid="stAlert"]:has-text("Failed to initialise telemetry")'
         )
-        if error_alerts.count() > 0:
-            pytest.fail(
-                f"Profile Routing Metrics surfaced an error: "
-                f"{error_alerts.first.inner_text()}"
-            )
+        assert error_alerts.all_inner_texts() == [], (
+            "Profile Routing Metrics surfaced an error: "
+            f"{error_alerts.all_inner_texts()}"
+        )
 
 
 class TestTenantLifecycleDashboard:
