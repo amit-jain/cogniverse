@@ -48,7 +48,7 @@ from cogniverse_foundation.config.inference_auth import (
     is_modal_inference_url,
 )
 from tests.e2e import backend_env, cron_guard
-from tests.e2e.tab_selection import tab_candidates
+from tests.e2e.tab_selection import tab_candidates_in_scope
 
 # Deployment-lifecycle tests bring up their own port-forward-based cluster
 # and are exercised via a dedicated ``pytest tests/e2e/deployment/`` run —
@@ -2912,15 +2912,20 @@ def _activate_tab(page, tab, settle_ms: int) -> bool:
     return True
 
 
-def _click_tab_by_label(page, label: str, retries: int = 6, settle_ms: int = 3_000):
+def _click_tab_by_label(
+    page, label: str, scope: str, retries: int = 6, settle_ms: int = 3_000
+):
     """Click a Streamlit tab by matching its visible text (ignoring emojis).
 
-    Prefers exact matches over substring matches to avoid ambiguity
-    (e.g., "Synthetic Data" should match the sub-tab, not
-    "Synthetic Data & Optimization").
+    ``scope`` is ``"top"`` or ``"sub"`` and is what disambiguates a label that
+    names two tabs: the dashboard nests a "Synthetic Data" sub-tab inside a
+    "Synthetic Data & Optimization" parent, so a page-wide search finds an
+    exact match on the sub-tab and only a substring match on the parent. A
+    caller asking for the parent is then sent into a panel that is not open,
+    and every click is swallowed.
 
-    Prefers visible tabs over hidden ones to handle duplicate sub-tab
-    labels across different parent tabs.
+    Within a scope, exact matches come before substring ones and visible tabs
+    before hidden ones.
     """
     # The tab strip renders only after the tenant gate resolves, which calls
     # the runtime. While the cluster is warming that call is slow, so the strip
@@ -2936,27 +2941,25 @@ def _click_tab_by_label(page, label: str, retries: int = 6, settle_ms: int = 3_0
 
     for attempt in range(retries):
         tabs = page.locator('button[role="tab"]')
-        count = tabs.count()
 
-        # Collect tab info once per attempt
-        tab_info = []
-        for i in range(count):
-            tab = tabs.nth(i)
-            raw = tab.text_content() or ""
-            clean = _strip_emoji(raw).lower()
-            visible = tab.is_visible()
-            tab_info.append((tab, raw, clean, visible))
+        # Collect label / visibility / containment for every tab in one round
+        # trip. ``closest('[role="tabpanel"]')`` is the containment fact: a tab
+        # rendered inside another tab's panel is a sub-tab. Read from ARIA
+        # rather than a Streamlit-version-specific attribute.
+        raw_info = page.eval_on_selector_all(
+            'button[role="tab"]',
+            """els => els.map(el => ({
+                text: el.textContent || "",
+                visible: !!(el.offsetParent || el.getClientRects().length),
+                nested: !!el.closest('[role="tabpanel"]'),
+            }))""",
+        )
+        scoped = [
+            (entry["text"], entry["visible"], entry["nested"]) for entry in raw_info
+        ]
 
-        # An exact match suppresses the substring fallback: the dashboard nests
-        # a "Synthetic Data" sub-tab inside a "Synthetic Data & Optimization"
-        # parent, and by the time a caller asks for the sub-tab the parent is
-        # already selected. Clicking it is a no-op that reports success and
-        # leaves the caller reading the parent's panel.
-        for idx in tab_candidates(
-            [(raw, visible) for _, raw, _, visible in tab_info], label
-        ):
-            tab = tab_info[idx][0]
-            if _activate_tab(page, tab, settle_ms):
+        for idx in tab_candidates_in_scope(scoped, label, scope):
+            if _activate_tab(page, tabs.nth(idx), settle_ms):
                 return
 
         if attempt < retries - 1:
@@ -2969,10 +2972,13 @@ def _click_tab_by_label(page, label: str, retries: int = 6, settle_ms: int = 3_0
             "is satisfied, which calls the runtime; an empty strip means that "
             "gate never completed, not that the tab is missing."
         )
+    in_scope = [text for text, _visible, nested in scoped if nested is (scope == "sub")]
     raise ValueError(
-        f"Tab '{label}' was never activated after {retries} attempts. A tab "
-        "that is present but never reports aria-selected has had every click "
-        f"swallowed by an in-flight rerun. Available tabs: {tab_texts}"
+        f"Tab '{label}' was never activated in the '{scope}' strip after "
+        f"{retries} attempts. A tab that is present but never reports "
+        "aria-selected has had every click swallowed by an in-flight rerun; a "
+        "tab absent from this strip is in the other one. "
+        f"Tabs in the '{scope}' strip: {in_scope}. All tabs: {tab_texts}"
     )
 
 
@@ -2996,7 +3002,7 @@ def _wait_for_visible_panel(page, timeout: int = 60_000):
 def click_top_tab(page, label: str):
     """Click a top-level Streamlit tab."""
     start = _time.monotonic()
-    _click_tab_by_label(page, label)
+    _click_tab_by_label(page, label, scope="top")
     _wait_for_visible_panel(page)
     elapsed = (_time.monotonic() - start) * 1000
     if _report_collector:
@@ -3010,7 +3016,7 @@ def click_sub_tab(page, label: str):
     often trigger heavy Streamlit reruns (API calls, data loading).
     """
     start = _time.monotonic()
-    _click_tab_by_label(page, label, settle_ms=4_000)
+    _click_tab_by_label(page, label, scope="sub", settle_ms=4_000)
     _wait_for_visible_panel(page)
     elapsed = (_time.monotonic() - start) * 1000
     if _report_collector:
