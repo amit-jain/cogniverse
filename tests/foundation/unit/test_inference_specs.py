@@ -38,6 +38,11 @@ EXPECTED_MODELS = {
         "be719a406d563b66f0ac969e7c94bab8e997c81a",
         768,
     ),
+    "video_embed": (
+        "microsoft/xclip-large-patch14",
+        "a9dd1429a16cf305df2aaea232d5e8dceba1c675",
+        768,
+    ),
     "vllm_llm_student": (
         "google/gemma-4-e4b-it",
         "ee0ef6023621cff504d758262d4e04895a5af4a2",
@@ -120,8 +125,8 @@ def test_videoprism_definition_pins_source_and_checkpoint_independently():
 def test_each_service_has_an_independent_scale_to_zero_app():
     specs = tuple(INFERENCE_SERVICE_SPECS.values())
 
-    assert len(specs) == 11
-    assert len({spec.modal_app for spec in specs}) == 11
+    assert len(specs) == 12
+    assert len({spec.modal_app for spec in specs}) == 12
     assert all(
         spec.modal_app == f"cogniverse-{spec.name.replace('_', '-')}" for spec in specs
     )
@@ -171,3 +176,21 @@ def test_chat_models_prefer_a_high_bandwidth_gpu():
         candidates = get_inference_service_spec(name).gpu_candidates
         assert candidates[0] in _HIGH_BANDWIDTH_GPUS, name
         assert candidates == ("H100", "A100-80GB", "L40S"), name
+
+
+def test_video_embed_spec_agrees_with_the_sidecar_it_serves():
+    """The spec and the sidecar must describe the same checkpoint.
+
+    Derived from ``VideoEmbedConfig`` rather than restated, so a sidecar that
+    moves to a different checkpoint or projection width fails here instead of
+    silently serving vectors the schema cannot hold.
+    """
+    from cogniverse_cli.modal_inference.servers.video_embed import VideoEmbedConfig
+
+    sidecar = VideoEmbedConfig()
+    spec = get_inference_service_spec("video_embed")
+
+    assert spec.model_id == sidecar.model_name
+    assert spec.model_revision == sidecar.model_revision
+    assert spec.output_dimension == sidecar.embedding_dim
+    assert sidecar.num_frames == 8
