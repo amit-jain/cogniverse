@@ -358,7 +358,7 @@ class TestMultiModalChat:
         )
 
         # The response must contain words beyond the query — not just echo
-        body_text = page.inner_text("body")
+        body_text = active_tab_panel(page).inner_text()
         query_words = {"what", "videos", "do", "you", "have", "about", "animals"}
         response_words = set(body_text.lower().split())
         non_query_words = response_words - query_words
@@ -404,7 +404,7 @@ class TestMultiModalChat:
         deadline = time.monotonic() + LLM_TIMEOUT / 1000
         msg_match = None
         while msg_match is None and time.monotonic() < deadline:
-            body_text = page.inner_text("body").lower()
+            body_text = active_tab_panel(page).inner_text().lower()
             msg_match = re.search(r"messages:\s*(\d+)", body_text)
             if msg_match is None:
                 page.wait_for_timeout(2_000)
@@ -442,7 +442,7 @@ class TestOptimizationOverview:
         click_sub_tab(page, "Overview")
         page.wait_for_load_state("networkidle")
 
-        body_text = page.inner_text("body").lower()
+        body_text = active_tab_panel(page).inner_text().lower()
 
         # Overview must show the specific optimization pipeline metrics
         metrics = page.locator('[data-testid="stMetric"]')
@@ -480,7 +480,7 @@ class TestOptimizationOverview:
             "Metrics Dashboard must have Refresh Metrics button"
         )
 
-        body_text = page.inner_text("body").lower()
+        body_text = active_tab_panel(page).inner_text().lower()
         # Must show the unified metrics dashboard header or tenant input
         assert "metrics" in body_text or "tenant" in body_text, (
             "Metrics Dashboard must show metrics content or tenant configuration"
@@ -643,7 +643,7 @@ class TestSyntheticDataAndApproval:
 
         # Success must show "Generated N examples" or example data on page
         success_alert = page.locator('[data-testid="stAlert"]:has-text("Generated")')
-        body_text = page.inner_text("body").lower()
+        body_text = active_tab_panel(page).inner_text().lower()
         has_examples = "example" in body_text and "confidence" in body_text
 
         assert success_alert.count() > 0 or has_examples, (
@@ -683,7 +683,7 @@ class TestSyntheticDataAndApproval:
         )
 
         # Number inputs (for count or profiles)
-        body_text = page.inner_text("body").lower()
+        body_text = active_tab_panel(page).inner_text().lower()
         assert "synthetic" in body_text and "generation" in body_text, (
             "Synthetic Data tab must show 'Synthetic Data Generation' header"
         )
@@ -714,7 +714,7 @@ class TestModuleOptimization:
         )
 
         # Verify DSPy optimizer selection controls exist
-        body_text = page.inner_text("body").lower()
+        body_text = active_tab_panel(page).inner_text().lower()
         has_optimizer_controls = (
             "optimizer" in body_text
             or "dspy" in body_text
@@ -784,7 +784,7 @@ class TestRerankingAndProfileOptimization:
         click_sub_tab(page, "Reranking")
         page.wait_for_load_state("networkidle")
 
-        body_text = page.inner_text("body").lower()
+        body_text = active_tab_panel(page).inner_text().lower()
         # Reranking tab must show "Current Annotations" metric and Train button
         assert "reranking" in body_text, "Reranking tab must show 'Reranking' in header"
 
@@ -810,7 +810,7 @@ class TestRerankingAndProfileOptimization:
         click_sub_tab(page, "Profile Selection")
         page.wait_for_load_state("networkidle")
 
-        body_text = page.inner_text("body").lower()
+        body_text = active_tab_panel(page).inner_text().lower()
         assert "profile selection" in body_text, (
             "Profile Selection tab must show 'Profile Selection' in header"
         )
@@ -964,7 +964,7 @@ class TestTenantLifecycleDashboard:
         page.wait_for_load_state("networkidle")
 
         # Verify Create Tenant form widgets
-        body_text = page.inner_text("body").lower()
+        body_text = active_tab_panel(page).inner_text().lower()
         assert "tenant" in body_text, "Create Tenant sub-tab should mention 'tenant'"
         inputs = page.locator('[data-testid="stTextInput"] input')
         selectboxes = page.locator('[data-testid="stSelectbox"]')
@@ -979,7 +979,7 @@ class TestTenantLifecycleDashboard:
         click_sub_tab(page, "Tenants")
         page.wait_for_load_state("networkidle")
 
-        body_text = page.inner_text("body").lower()
+        body_text = active_tab_panel(page).inner_text().lower()
         assert "tenant" in body_text, "Tenants list tab must mention 'tenant'"
 
         # Must show either tenant list (selectbox + expanders) or "No tenants" info
@@ -1022,7 +1022,7 @@ class TestConfigManagement:
         )
 
         # Verify page content shows config-specific terms
-        body_text = page.inner_text("body").lower()
+        body_text = active_tab_panel(page).inner_text().lower()
         has_config_content = (
             "environment" in body_text
             or "backend" in body_text
@@ -1082,7 +1082,7 @@ class TestConfigManagement:
         click_sub_tab(page, "Agent Configs")
         page.wait_for_load_state("networkidle")
 
-        body_text = page.inner_text("body").lower()
+        body_text = active_tab_panel(page).inner_text().lower()
         # Agent Configs has a Save button and agent name input/selectbox
         assert "agent" in body_text, "Agent Configs tab must mention 'agent' in content"
         save_btn = page.locator('button:has-text("Save")')
@@ -1103,7 +1103,7 @@ class TestConfigManagement:
         # Routing Config must have a Save Routing Configuration button
         save_btn = page.locator('button:has-text("Save")')
         assert save_btn.count() > 0, "Routing Config must have Save button"
-        body_text = page.inner_text("body").lower()
+        body_text = active_tab_panel(page).inner_text().lower()
         assert "routing" in body_text, (
             "Routing Config tab must mention 'routing' in content"
         )
@@ -1119,7 +1119,7 @@ class TestConfigManagement:
         # Telemetry Config must have Save button and mention telemetry/phoenix
         save_btn = page.locator('button:has-text("Save")')
         assert save_btn.count() > 0, "Telemetry Config must have Save button"
-        body_text = page.inner_text("body").lower()
+        body_text = active_tab_panel(page).inner_text().lower()
         assert "telemetry" in body_text or "phoenix" in body_text, (
             "Telemetry Config must mention 'telemetry' or 'phoenix'"
         )
@@ -1152,7 +1152,7 @@ class TestConfigManagement:
         selectboxes = panel_widget(page, "stSelectbox", "Scope")
         assert selectboxes.count() == 1, "History tab must have Scope selectbox"
 
-        body_text = page.inner_text("body").lower()
+        body_text = active_tab_panel(page).inner_text().lower()
         # Must show history-specific content — not just generic page text
         assert "history" in body_text or "version" in body_text, (
             "History tab must show 'history' or 'version' in content"
@@ -1412,7 +1412,7 @@ class TestMonitoringDashboard:
         click_sub_tab(page, "Analytics")
         page.wait_for_load_state("networkidle")
 
-        body_text = page.inner_text("body").lower()
+        body_text = active_tab_panel(page).inner_text().lower()
         # Analytics MUST NOT show "no tenant selected" — this means tenant didn't propagate
         assert "no tenant selected" not in body_text, (
             "Analytics tab should not show 'No tenant selected' after set_tenant"
@@ -1465,7 +1465,7 @@ class TestMonitoringDashboard:
         click_sub_tab(page, "Routing Evaluation")
         page.wait_for_load_state("networkidle")
 
-        body_text = page.inner_text("body").lower()
+        body_text = active_tab_panel(page).inner_text().lower()
         not_available = page.locator(
             '[data-testid="stAlert"]:has-text("not available")'
         )
@@ -1490,7 +1490,7 @@ class TestMonitoringDashboard:
         click_sub_tab(page, "Orchestration")
         page.wait_for_load_state("networkidle")
 
-        body_text = page.inner_text("body").lower()
+        body_text = active_tab_panel(page).inner_text().lower()
         not_available = page.locator(
             '[data-testid="stAlert"]:has-text("not available")'
         )
@@ -1510,7 +1510,7 @@ class TestMonitoringDashboard:
         click_sub_tab(page, "Embedding Atlas")
         page.wait_for_load_state("networkidle")
 
-        body_text = page.inner_text("body").lower()
+        body_text = active_tab_panel(page).inner_text().lower()
         not_available = page.locator(
             '[data-testid="stAlert"]:has-text("not available"), '
             '[data-testid="stAlert"]:has-text("dependencies")'
@@ -1525,7 +1525,7 @@ class TestMonitoringDashboard:
         click_top_tab(page, "Synthetic Data")
         page.wait_for_load_state("networkidle")
 
-        body_text = page.inner_text("body").lower()
+        body_text = active_tab_panel(page).inner_text().lower()
 
         # The enhanced optimization tab renders Overview by default with
         # optimization metrics and workflow controls.
@@ -1550,7 +1550,7 @@ class TestMonitoringDashboard:
         # Overview should show optimization pipeline metrics
         metrics = page.locator('[data-testid="stMetric"]')
         alerts = page.locator('[data-testid="stAlert"]')
-        body_text = page.inner_text("body").lower()
+        body_text = active_tab_panel(page).inner_text().lower()
         has_overview_content = (
             metrics.count() > 0
             or alerts.count() > 0
@@ -1643,7 +1643,7 @@ class TestApprovalQueueTab:
         click_top_tab(page, "Approval Queue")
         page.wait_for_load_state("networkidle")
 
-        body_text = page.inner_text("body").lower()
+        body_text = active_tab_panel(page).inner_text().lower()
 
         if "not available" in body_text:
             # Module import failed — verify the error message is informative
@@ -1837,7 +1837,7 @@ class TestManualOptimizationTrigger:
         page.get_by_text("🚀 Run Optimization", exact=True).wait_for(
             state="visible", timeout=INTERACTION_TIMEOUT
         )
-        body_text = page.inner_text("body")
+        body_text = active_tab_panel(page).inner_text()
         assert "Run Optimization" in body_text, (
             "Optimization tab must expose the 'Run Optimization' section "
             "(added with manual-optimize Argo submit feature). Body:\n"
@@ -1872,7 +1872,7 @@ class TestManualOptimizationTrigger:
         # it explicitly so we can assert the full option list.
         mode_select.click()
         page.wait_for_timeout(1_000)
-        opt_region_text = page.inner_text("body")
+        opt_region_text = active_tab_panel(page).inner_text()
         for expected in (
             "gateway-thresholds",
             "simba",
@@ -1903,7 +1903,7 @@ class TestManualOptimizationTrigger:
         # The dashboard prints `✅ Submitted: manual-optimize-<mode>-<suffix>`
         # on 200. The workflow_name prefix is what we pin — the Argo
         # suffix is random.
-        body_text = page.inner_text("body")
+        body_text = active_tab_panel(page).inner_text()
         assert "manual-optimize-gateway-thresholds-" in body_text, (
             "Expected a manual-optimize workflow name in the UI after "
             "clicking Run — either the POST failed or Streamlit didn't "
@@ -1935,7 +1935,7 @@ class TestManualOptimizationTrigger:
         deadline = time.monotonic() + 60
         body_text = ""
         while time.monotonic() < deadline:
-            body_text = page.inner_text("body")
+            body_text = active_tab_panel(page).inner_text()
             if any(f"Phase: {p}" in body_text for p in phases):
                 break
             page.wait_for_timeout(1_000)
