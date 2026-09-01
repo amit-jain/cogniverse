@@ -997,12 +997,18 @@ class VespaBackend(Backend):
                     # when the orphan is a peer tenant's schema mid-registration
                     # that is silent cross-tenant data loss. Refuse: a transient
                     # orphan clears on retry once the peer registers; a
-                    # persistent one is a registry inconsistency to resolve.
+                    # persistent one is cleared by the reconciler, which drops
+                    # every orphan in one redeploy and so has a reconstructable
+                    # survivor set; a per-tenant delete cannot, because it
+                    # leaves the other orphans in that set and refuses here.
                     raise BackendDeploymentError(
                         f"Refusing to deploy: {len(unresolved)} schema(s) live in "
                         f"Vespa have no registry entry and cannot be reconstructed "
                         f"({sorted(unresolved)}); proceeding would remove them and "
-                        f"destroy their documents."
+                        f"destroy their documents. Clear them with "
+                        f"POST /admin/reconcile-orphans?dry_run=false, which drops "
+                        f"every orphan together; deleting one tenant at a time is "
+                        f"refused here for as long as any orphan remains."
                     )
 
             # Get application name from system config
