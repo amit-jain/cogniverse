@@ -58,8 +58,8 @@ def deploy_json_schema(
     print(f"🚀 Deploying to {deploy_url}...")
 
     try:
-        # Generate the ZIP package
-        app_zip = app_package.to_zip()
+        # Materialise the zip as bytes; a BytesIO body is consumed on send.
+        app_zip = app_package.to_zip().getvalue()
 
         # Deploy via HTTP
         response = requests.post(
