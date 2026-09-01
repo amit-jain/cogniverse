@@ -16,6 +16,10 @@ pytestmark = pytest.mark.skipif(
 )
 
 
+MODAL_LLM_VALUES = ("-f", str(CHART_PATH / "values.modal-llm.yaml"))
+"""The serving overlay this host deploys: both chat models move to Modal."""
+
+
 def _render(*extra: str, rocm: bool = True) -> list[dict]:
     command = [
         "helm",
@@ -63,7 +67,7 @@ def _gate_env(deployment: dict) -> dict[str, str]:
 
 
 def test_rocm_chain_gates_each_model_on_its_predecessor():
-    deployments = _inference_deployments()
+    deployments = _inference_deployments(*MODAL_LLM_VALUES)
 
     chain = {
         name: (
@@ -74,12 +78,9 @@ def test_rocm_chain_gates_each_model_on_its_predecessor():
         if _gate(deployment) is not None
     }
 
-    # The sequence still names vllm_llm_teacher at position 0, but it is not
-    # resident on this host, so the chain re-forms behind vllm_colpali and the
-    # remaining positions keep their budgets.
+    # Both chat models are served from Modal, so the sequence re-forms behind
+    # the encoders and each surviving position keeps its own budget.
     assert chain == {
-        "vllm_llm_student": ("http://cogniverse-vllm-colpali:8000/health", "1200"),
-        "vllm_asr": ("http://cogniverse-vllm-llm-student:8000/health", "1800"),
         "denseon": ("http://cogniverse-vllm-asr:8000/health", "2400"),
         "colbert_pylate": ("http://cogniverse-denseon:8000/health", "3000"),
         "code_colbert_pylate": ("http://cogniverse-colbert-pylate:8000/health", "3600"),
@@ -87,15 +88,18 @@ def test_rocm_chain_gates_each_model_on_its_predecessor():
 
 
 def test_chain_head_and_non_sequenced_services_start_immediately():
-    deployments = _inference_deployments()
+    deployments = _inference_deployments(*MODAL_LLM_VALUES)
 
     ungated = {name for name, d in deployments.items() if _gate(d) is None}
 
-    assert ungated == {"vllm_colpali", "gliner"}
+    # vllm_asr is ungated because its predecessor (the student) is served from
+    # Modal: a disabled predecessor releases its successor rather than
+    # stranding it behind a health check that can never answer.
+    assert ungated == {"vllm_colpali", "vllm_asr", "gliner"}
 
 
 def test_gated_deployments_extend_the_rollout_progress_deadline():
-    deployments = _inference_deployments()
+    deployments = _inference_deployments(*MODAL_LLM_VALUES)
 
     deadlines = {
         name: deployment["spec"].get("progressDeadlineSeconds")
@@ -105,8 +109,7 @@ def test_gated_deployments_extend_the_rollout_progress_deadline():
     assert deadlines == {
         "gliner": None,
         "vllm_colpali": None,
-        "vllm_llm_student": 2100,
-        "vllm_asr": 2700,
+        "vllm_asr": None,
         "denseon": 3300,
         "colbert_pylate": 3900,
         "code_colbert_pylate": 4500,
@@ -115,24 +118,25 @@ def test_gated_deployments_extend_the_rollout_progress_deadline():
 
 def test_weight_download_runs_before_the_gate_so_only_gpu_load_serializes():
     deployments = _inference_deployments(
+        *MODAL_LLM_VALUES,
         "--set",
         "hfCache.enabled=false",
         "--set",
         "hfCache.persistence.enabled=true",
     )
 
-    student = deployments["vllm_llm_student"]["spec"]["template"]["spec"]
-    colpali = deployments["vllm_colpali"]["spec"]["template"]["spec"]
+    gated = deployments["denseon"]["spec"]["template"]["spec"]
+    chain_head = deployments["vllm_colpali"]["spec"]["template"]["spec"]
 
-    assert [c["name"] for c in student["initContainers"]] == [
+    assert [c["name"] for c in gated["initContainers"]] == [
         "model-warm",
         "startup-gate",
     ]
-    assert [c["name"] for c in colpali["initContainers"]] == ["model-warm"]
+    assert [c["name"] for c in chain_head["initContainers"]] == ["model-warm"]
 
 
 def test_gating_leaves_the_readiness_contract_untouched():
-    deployments = _inference_deployments()
+    deployments = _inference_deployments(*MODAL_LLM_VALUES)
 
     probes = {
         name: (
@@ -148,7 +152,6 @@ def test_gating_leaves_the_readiness_contract_untouched():
 
     assert probes == {
         "vllm_colpali": (0, 600),
-        "vllm_llm_student": (0, 600),
         "vllm_asr": (0, 600),
         "denseon": (0, 90),
         "colbert_pylate": (0, 120),
