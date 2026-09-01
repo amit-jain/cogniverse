@@ -1326,9 +1326,15 @@ class TestMemoryLifecycle:
         click_sub_tab(page, "View All")
         page.wait_for_load_state("networkidle")
 
-        load_btn = page.locator('button:has-text("Load")')
-        assert load_btn.count() > 0, "View All tab should have Load All Memories button"
-        click_button(page, "Load")
+        # Page-wide, has-text("Load") matches six buttons -- the first is a
+        # hidden "Upload" in another panel (substring match, every tab body
+        # is rendered). Scope to the Memory panel and click that button.
+        load_btn = memory_panel.locator('button:not([role="tab"]):has-text("Load")')
+        assert load_btn.count() == 1, (
+            f"View All must render one Load All Memories button, got {load_btn.count()}"
+        )
+        assert load_btn.first.inner_text().strip() == "🔄 Load All Memories"
+        load_btn.first.click()
         page.wait_for_timeout(INTERACTION_TIMEOUT)
         page.wait_for_load_state("networkidle")
 
