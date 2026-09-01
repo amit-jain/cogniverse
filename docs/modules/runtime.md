@@ -168,6 +168,22 @@ whose `detail` matches
 Run the sidecar locally with
 `uv run python -m cogniverse_cli.modal_inference.servers.clap`.
 
+Temporal video embeddings come from the video-embed sidecar at
+`cogniverse_cli.modal_inference.servers.video_embed`. It serves one joint
+video-text space: `POST /embed/video` takes `{"video_b64": "..."}` (a segment's
+raw bytes), samples `VIDEO_EMBED_NUM_FRAMES` frames evenly across the clip and
+encodes them with cross-frame attention, so the vector describes motion rather
+than a single frame; `POST /embed/text` returns a directly comparable vector
+for the same space, which is what makes text-to-video search possible. The
+model is named only in configuration: `VIDEO_EMBED_MODEL` and
+`VIDEO_EMBED_MODEL_REVISION` pin it, `VIDEO_EMBED_DIM` states the width every
+response is checked against, and `VIDEO_EMBED_DEVICE` selects the device. The
+defaults pin `microsoft/xclip-large-patch14` at revision
+`a9dd1429a16cf305df2aaea232d5e8dceba1c675` on `cpu`, 8 frames, 768 dims. A
+response of any other width returns HTTP 500 rather than reaching Vespa, whose
+own rejection would name neither the model nor the endpoint. Run it locally
+with `uv run python -m cogniverse_cli.modal_inference.servers.video_embed`.
+
 For both sidecars, the Helm readiness probe calls the model-backed `/health`
 route. Their liveness probe checks only the TCP serving socket, so a model load
 failure removes the pod from service without creating a restart loop.
