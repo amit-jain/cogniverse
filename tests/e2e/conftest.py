@@ -2980,6 +2980,36 @@ def fill_textarea(locator, value: str):
         _report_collector.record_browser_op("fill_textarea", "textarea", value, elapsed)
 
 
+def active_tab_panel(page, timeout: int = 20_000):
+    """The visible top-level tab panel.
+
+    Streamlit renders every tab body into the DOM, so a page-wide locator
+    also matches widgets belonging to tabs that are not open: at the time of
+    writing the Configuration tab alone contributes 14 selectboxes and 16 text
+    inputs. Scope widget assertions to this panel so a test can only observe
+    the tab it opened. Nested panels are children of their parent, so the
+    first visible one in DOM order is the top-level panel.
+    """
+    panel = page.locator('[role="tabpanel"]:visible').first
+    panel.wait_for(state="visible", timeout=timeout)
+    return panel
+
+
+def panel_widget(page, testid: str, label: str, timeout: int = 20_000):
+    """Locator for the Streamlit widget of ``testid`` labelled ``label``,
+    scoped to the visible tab panel.
+
+    A bare ``[data-testid="stSelectbox"]`` matches every selectbox the app
+    renders, so asserting it is non-empty proves nothing about the tab under
+    test. Naming the widget makes the assertion able to fail.
+    """
+    return (
+        active_tab_panel(page, timeout=timeout)
+        .locator(f'[data-testid="{testid}"]')
+        .filter(has_text=label)
+    )
+
+
 def click_button(page, text: str):
     """Click a Streamlit button by text, excluding tab buttons.
 
