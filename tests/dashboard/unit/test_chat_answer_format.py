@@ -142,3 +142,56 @@ def test_boolean_score_is_not_formatted_as_a_number():
     )
 
     assert answer == "Found 1 result\n\n**1.** `seg_1`"
+
+
+def test_orchestrated_payload_renders_its_execution_summary():
+    """An orchestrated answer carries its substance in execution_summary; the
+    message is only a pipeline status line, so rendering the message alone
+    told the user nothing about what was asked."""
+    answer = format_gateway_answer(
+        {
+            "status": "success",
+            "agent": "orchestrator_agent",
+            "message": "Orchestrated 'Tell me more about the first one' via A2A pipeline",
+            "orchestration_result": {
+                "query": "Tell me more about the first one",
+                "execution_summary": "Ran search_agent then summarizer_agent; 3 clips matched.",
+                "final_output": {
+                    "query": "Tell me more about the first one",
+                    "status": "success",
+                    "results": {"search_agent": [{"id": "seg_1"}]},
+                },
+            },
+        }
+    )
+
+    assert answer == (
+        "Orchestrated 'Tell me more about the first one' via A2A pipeline\n"
+        "\n"
+        "Ran search_agent then summarizer_agent; 3 clips matched."
+    )
+
+
+def test_fusion_shaped_results_dict_does_not_render_as_hits():
+    """final_output keys results by agent, so `results` arrives as a dict on
+    the orchestration path. Slicing it would raise and surface to the user as
+    a failed request."""
+    answer = format_gateway_answer(
+        {
+            "message": "Orchestrated 'x' via A2A pipeline",
+            "results": {"search_agent": [{"id": "seg_1", "score": 1.0}]},
+        }
+    )
+
+    assert answer == "Orchestrated 'x' via A2A pipeline"
+
+
+def test_non_dict_entries_in_the_results_list_are_skipped():
+    answer = format_gateway_answer(
+        {
+            "message": "Found 2 results",
+            "results": ["a bare string", {"id": "seg_9", "score": 0.25}],
+        }
+    )
+
+    assert answer == "Found 2 results\n\n**1.** `seg_9` — score 0.250"

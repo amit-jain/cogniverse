@@ -461,21 +461,34 @@ class TestMultiModalChat:
             f"each), sidebar shows {msg_match.group(1)}"
         )
 
-        panel_text = active_tab_panel(page).inner_text().lower()
-
-        # The second turn's query is echoed back as the user's chat message.
-        assert "tell me more about the first one" in panel_text, (
-            "The second turn's query must be visible in the conversation. Got: "
-            f"{panel_text[:400]!r}"
+        panel = active_tab_panel(page)
+        chat_msgs = panel.locator('[data-testid="stChatMessage"]')
+        assert chat_msgs.count() == 4, (
+            f"Two turns must render exactly four chat messages, a user and an "
+            f"assistant message each, got {chat_msgs.count()}"
         )
 
-        # Both turns are answered by the gateway, whose reply is a rendered
-        # search payload -- the dispatcher's "Found N results for '...'"
-        # message plus scored hits -- so the phrase appears once per turn.
-        assert panel_text.count("results for") == 2, (
-            "Each of the two turns must be answered by a rendered gateway "
-            f"search reply, found {panel_text.count('results for')}. Got: "
-            f"{panel_text[:400]!r}"
+        panel_text = panel.inner_text().lower()
+
+        # Both turns' queries are echoed back as the user's chat messages.
+        for query in ("search for sports clips", "tell me more about the first one"):
+            assert query in panel_text, (
+                f"The turn {query!r} must be visible in the conversation. Got: "
+                f"{panel_text[:400]!r}"
+            )
+
+        # A turn is answered either from search ("Found N results for '...'")
+        # or through orchestration ("Orchestrated '...' via A2A pipeline") --
+        # the two reply templates in agent_dispatcher.py. Which route a turn
+        # takes is the router's decision, so pin the pair rather than one.
+        replies = panel_text.count("results for") + panel_text.count("orchestrated")
+        assert replies == 2, (
+            f"Each of the two turns must render one gateway reply, found "
+            f"{replies}. Got: {panel_text[:400]!r}"
+        )
+        assert "document_id" not in panel_text, (
+            "The chat must render the gateway payload, not a stringified dict; "
+            f"'document_id' means the raw response leaked. Got: {panel_text[:400]!r}"
         )
 
 
