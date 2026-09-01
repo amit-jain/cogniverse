@@ -48,6 +48,7 @@ from cogniverse_foundation.config.inference_auth import (
     is_modal_inference_url,
 )
 from tests.e2e import backend_env, cron_guard
+from tests.e2e.tab_selection import tab_candidates
 
 # Deployment-lifecycle tests bring up their own port-forward-based cluster
 # and are exercised via a dedicated ``pytest tests/e2e/deployment/`` run —
@@ -2934,26 +2935,16 @@ def _click_tab_by_label(page, label: str, retries: int = 6, settle_ms: int = 3_0
             visible = tab.is_visible()
             tab_info.append((tab, raw, clean, visible))
 
-        target = label.lower()
-
-        # Pass 1: exact match on visible tabs
-        for tab, raw, clean, visible in tab_info:
-            if clean == target and visible and _activate_tab(page, tab, settle_ms):
-                return
-
-        # Pass 2: substring match on visible tabs
-        for tab, raw, clean, visible in tab_info:
-            if target in clean and visible and _activate_tab(page, tab, settle_ms):
-                return
-
-        # Pass 3: exact match on hidden tabs (force-click)
-        for tab, raw, clean, visible in tab_info:
-            if clean == target and _activate_tab(page, tab, settle_ms, force=True):
-                return
-
-        # Pass 4: substring match on hidden tabs (force-click)
-        for tab, raw, clean, visible in tab_info:
-            if target in clean and _activate_tab(page, tab, settle_ms, force=True):
+        # An exact match suppresses the substring fallback: the dashboard nests
+        # a "Synthetic Data" sub-tab inside a "Synthetic Data & Optimization"
+        # parent, and by the time a caller asks for the sub-tab the parent is
+        # already selected. Clicking it is a no-op that reports success and
+        # leaves the caller reading the parent's panel.
+        for idx in tab_candidates(
+            [(raw, visible) for _, raw, _, visible in tab_info], label
+        ):
+            tab, _, _, visible = tab_info[idx]
+            if _activate_tab(page, tab, settle_ms, force=not visible):
                 return
 
         if attempt < retries - 1:
