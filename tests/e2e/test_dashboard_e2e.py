@@ -274,7 +274,14 @@ class TestInteractiveSearch:
         # Every result renders one expander: the threshold slider defaults to
         # 0.0 and the render gate is `score >= confidence_threshold`
         # (app.py:2787), so the count is the Results metric, not a lower bound.
-        metric_text = (results_metric.first.inner_text() or "").strip().splitlines()
+        # stMetric renders label, delta, value, and the delta slot is empty
+        # here, so the raw split carries a blank line between the two parts
+        # this reads.
+        metric_text = [
+            line
+            for line in (results_metric.first.inner_text() or "").strip().splitlines()
+            if line.strip()
+        ]
         assert len(metric_text) == 2 and metric_text[0] == "Results", metric_text
         expected_results = int(metric_text[1].replace(",", ""))
 
