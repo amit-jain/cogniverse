@@ -4124,3 +4124,35 @@ def student_llm() -> Iterator[StudentLLM]:
             proc.wait(timeout=5)
         except subprocess.TimeoutExpired:
             proc.kill()
+
+
+def assert_telegram_chunks(chunks, response):
+    """The formatted chunks must carry the agent's own content.
+
+    ``len(chunks) >= 1`` cannot fail: format_agent_response returns at least
+    one element on every branch, including its warming, unavailable, error and
+    "No results found." branches, so it passed just as happily on a degraded
+    reply as on a real answer.
+    """
+    from cogniverse_messaging.telegram_handler import MAX_MESSAGE_LENGTH
+
+    assert len(chunks) == 1, (
+        f"a top_k<=3 answer formats to a single chunk; got {len(chunks)} of "
+        f"lengths {[len(chunk) for chunk in chunks]}"
+    )
+    assert all(0 < len(chunk) <= MAX_MESSAGE_LENGTH for chunk in chunks), chunks
+
+    joined = "\n\n".join(chunks)
+    assert response["message"] in joined, (
+        f"the reply must carry the agent's message {response['message']!r}; "
+        f"got {joined!r}"
+    )
+    for result in (response.get("results") or [])[:5]:
+        title = (
+            result.get("video_title")
+            or result.get("title")
+            or result.get("source_id", "Unknown")
+        )
+        assert title in joined, (
+            f"the reply must list the returned result {title!r}; got {joined!r}"
+        )

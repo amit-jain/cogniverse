@@ -474,11 +474,21 @@ class TestSearchAPI:
         assert resp.status_code == 200
         data = resp.json()
         strategies = data["strategies"]
-        assert isinstance(strategies, list)
-        assert len(strategies) > 0
-        # Strategies must be the real per-profile set POST /search accepts,
-        # not the old hardcoded advertisement.
-        assert "default" in strategies
+
+        # Strategies are the real per-profile set POST /search accepts, so the
+        # route must return exactly what the profile's schema declares.
+        assert data["profile"] == PROFILE, (
+            f"the route must resolve the tenant's active profile, got "
+            f"{data['profile']!r}"
+        )
+        assert sorted(strategies) == _expected_strategy_names(PROFILE), (
+            f"advertised strategies must equal the profile's schema-declared "
+            f"set; got {sorted(strategies)}"
+        )
+        assert data["count"] == len(strategies), (
+            f"count must describe the returned list: count={data['count']} "
+            f"len={len(strategies)}"
+        )
 
     def test_list_profiles(self):
         with httpx.Client(base_url=RUNTIME, timeout=30.0) as client:
@@ -491,11 +501,13 @@ class TestSearchAPI:
         data = resp.json()
         profiles = data.get("profiles", data) if isinstance(data, dict) else data
         assert isinstance(profiles, list)
-        assert len(profiles) > 0
         profile_names = [p["name"] if isinstance(p, dict) else p for p in profiles]
-        assert PROFILE in profile_names, (
-            f"Expected {PROFILE} in profiles, got: {profile_names}"
-        )
+
+        # The route advertises what the tenant can actually use, so compare
+        # against the full derived set rather than probing for one member.
+        assert sorted(profile_names) == sorted(
+            _expected_available_profile_names(TENANT_ID)
+        ), f"advertised profiles must equal the tenant-usable set; got {profile_names}"
 
     def test_search_with_explicit_profile(self):
         with httpx.Client(base_url=RUNTIME, timeout=900.0) as client:
@@ -2268,6 +2280,30 @@ def _expected_available_profile_names(tenant_id: str) -> list[str]:
             f"vacuously. tenant_id={tenant_id!r}"
         )
     return names
+
+
+def _expected_strategy_names(profile_name: str) -> list[str]:
+    """Ranking strategies the profile's schema declares.
+
+    Derived through the same extractor the serving path uses, so a schema edit
+    moves the expectation with the product instead of drifting from it.
+    """
+    from cogniverse_vespa.ranking_strategy_extractor import (
+        extract_all_ranking_strategies,
+    )
+
+    config = json.loads(CONFIG_PATH.read_text())
+    schema_name = config["backend"]["profiles"][profile_name]["schema_name"]
+    strategies = extract_all_ranking_strategies(CONFIG_PATH.parent / "schemas").get(
+        schema_name, {}
+    )
+    if not strategies:
+        pytest.fail(
+            f"no ranking strategies extracted for schema {schema_name!r}, so "
+            "the expected list would be empty and every comparison against it "
+            "would pass vacuously"
+        )
+    return sorted(strategies)
 
 
 def _profile_type_map() -> dict[str, str]:
