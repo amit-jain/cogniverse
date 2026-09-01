@@ -65,6 +65,7 @@ class EmbeddingGeneratorImpl(BaseEmbeddingGenerator):
         self.model = None
         self.processor = None
         self.videoprism_loader = None
+        self.xclip_loader = None
         self.colbert_model = None
 
         # Per-thread cv2 capture cache: concurrent video threads share this
@@ -78,6 +79,49 @@ class EmbeddingGeneratorImpl(BaseEmbeddingGenerator):
         # Load model if needed
         if self._should_load_model():
             self._load_model()
+
+    @property
+    def _segment_embedder(self):
+        """Loader that embeds a whole video segment in one remote call.
+
+        VideoPrism and X-CLIP both return ``{"embeddings_np": ...}`` from
+        ``process_video_segment``, so the segment paths are shared.
+        """
+        return self.videoprism_loader or self.xclip_loader
+
+    def _embed_segment_remotely(
+        self,
+        video_path,
+        start_time: float,
+        end_time: float,
+        *,
+        label: str,
+        error_path,
+    ):
+        """Embed one segment, raising when the service returns no vector.
+
+        A missing vector must not fall through as ``None``: the caller stores
+        what it gets, so an empty embedding is indexed as a document with no
+        content instead of surfacing the failed call.
+        """
+        model_loader = self.profile_config.get("model_loader")
+        result = self._segment_embedder.process_video_segment(
+            video_path, start_time, end_time
+        )
+        embeddings = (
+            result.get("embeddings_np", result.get("embeddings")) if result else None
+        )
+        if embeddings is None:
+            self._raise_embedding_error(
+                label,
+                error_path,
+                f"{model_loader} returned no embeddings",
+            )
+        self.logger.debug(
+            f"    Generated {label.lower()} embeddings: "
+            f"shape={getattr(embeddings, 'shape', 'unknown')}"
+        )
+        return embeddings
 
     def _should_load_model(self) -> bool:
         """Check if model should be loaded during initialization.
@@ -112,6 +156,10 @@ class EmbeddingGeneratorImpl(BaseEmbeddingGenerator):
                 )
             elif model_loader == "videoprism":
                 self.videoprism_loader, _ = get_or_load_model(
+                    self.model_name, self.profile_config, self.logger
+                )
+            elif model_loader == "xclip":
+                self.xclip_loader, _ = get_or_load_model(
                     self.model_name, self.profile_config, self.logger
                 )
             elif model_loader in ("colpali", "colqwen"):
@@ -1228,8 +1276,7 @@ class EmbeddingGeneratorImpl(BaseEmbeddingGenerator):
                 del batch_inputs, embeddings, embeddings_np
                 return result
 
-            elif self.videoprism_loader:
-                # VideoPrism processing
+            elif self._segment_embedder is not None:
                 import subprocess
 
                 cmd = [
@@ -1242,26 +1289,13 @@ class EmbeddingGeneratorImpl(BaseEmbeddingGenerator):
                     "default=noprint_wrappers=1:nokey=1",
                     str(chunk_path),
                 ]
-                result = subprocess.run(cmd, capture_output=True, text=True)
+                probe = subprocess.run(cmd, capture_output=True, text=True)
                 duration = (
-                    float(result.stdout.strip()) if result.returncode == 0 else 30.0
+                    float(probe.stdout.strip()) if probe.returncode == 0 else 30.0
                 )
 
-                result = self.videoprism_loader.process_video_segment(
-                    chunk_path, 0, duration
-                )
-
-                if result:
-                    embeddings = result.get("embeddings_np", result.get("embeddings"))
-                    if embeddings is None:
-                        self._raise_embedding_error(
-                            "Chunk",
-                            chunk_path,
-                            "VideoPrism returned no embeddings",
-                        )
-                    return embeddings
-                self._raise_embedding_error(
-                    "Chunk", chunk_path, "VideoPrism returned no embeddings"
+                return self._embed_segment_remotely(
+                    chunk_path, 0, duration, label="Chunk", error_path=chunk_path
                 )
 
             else:
@@ -1320,21 +1354,17 @@ class EmbeddingGeneratorImpl(BaseEmbeddingGenerator):
     ) -> np.ndarray | None:
         """Generate embeddings for a time segment."""
         try:
-            if self.videoprism_loader:
-                # Use VideoPrism for time-based segments
+            if self._segment_embedder is not None:
                 self.logger.debug(
                     f"    Time segment: start={start_time:.1f}s, end={end_time:.1f}s"
                 )
-                result = self.videoprism_loader.process_video_segment(
-                    video_path, start_time, end_time
+                return self._embed_segment_remotely(
+                    video_path,
+                    start_time,
+                    end_time,
+                    label="Time segment",
+                    error_path=video_path,
                 )
-                if result:
-                    embeddings = result.get("embeddings_np", result.get("embeddings"))
-                    if embeddings is not None:
-                        self.logger.debug(
-                            f"    Generated time segment embeddings: shape={embeddings.shape if hasattr(embeddings, 'shape') else 'unknown'}"
-                        )
-                    return embeddings
             else:
                 # Extract frames from time segment for other models
                 import cv2
