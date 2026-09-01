@@ -222,14 +222,32 @@ class TestInteractiveSearch:
         results_metric = panel.locator('[data-testid="stMetric"]:has-text("Results")')
 
         # The search streams, so the page is still filling in when the click
-        # returns. Settle on its terminal state: either a Results metric, which
-        # renders only once results exist, or the no-match alert.
-        expect(
-            panel.locator(
-                '[data-testid="stMetric"]:has-text("Results"),'
-                '[data-testid="stAlert"]:has-text("No results")'
-            ).first
-        ).to_be_visible(timeout=INTERACTION_TIMEOUT)
+        # returns. Settle on its terminal state. The dashboard has THREE, not
+        # two (app.py:2729-2737): a Results metric, "Search returned no
+        # results", and "Search failed: <cause>". Waiting only for the first
+        # two turns a failed search into a 30s timeout that names nothing, so
+        # wait for any alert and then classify it.
+        terminal = panel.locator(
+            '[data-testid="stMetric"]:has-text("Results"),[data-testid="stAlert"]'
+        )
+        try:
+            expect(terminal.first).to_be_visible(timeout=INTERACTION_TIMEOUT)
+        except AssertionError as exc:  # pragma: no cover - diagnostic path
+            raise AssertionError(
+                "Search reached no terminal state: no Results metric and no "
+                "alert. The panel rendered:\n"
+                f"{(panel.inner_text() or '')[:800]}"
+            ) from exc
+
+        # A failed search is the app reporting a broken backend, not an empty
+        # corpus. Surface its own message rather than letting the run continue
+        # into assertions that can only fail obscurely.
+        alerts = [
+            (a.inner_text() or "").strip()
+            for a in panel.locator('[data-testid="stAlert"]').all()
+        ]
+        broken = [t for t in alerts if "Search failed" in t or "Check runtime" in t]
+        assert broken == [], f"the dashboard reported a failed search: {broken}"
 
         if no_results_alert.count():
             # A no-match search is a valid outcome, but it must not also claim
