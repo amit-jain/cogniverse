@@ -1820,15 +1820,30 @@ class TestManualOptimizationTrigger:
 
         # Mode dropdown must list every mode the endpoint accepts. Absence
         # of any means the UI got out of sync with _MANUAL_OPTIMIZE_MODES.
-        # Streamlit renders the selectbox's selected value inline in the
-        # tab body; additional options appear when opened. We assert on
-        # the full tab body_text — scoped by the click_top_tab above.
-        mode_widgets = page.locator('[data-testid="stSelectbox"]')
-        assert mode_widgets.count() > 0, "At least one selectbox must exist"
+        #
+        # Scope to the Optimization panel: Streamlit renders every tab body,
+        # not just the selected one, so clicking a top tab does not narrow
+        # any locator. Page-wide, `stSelectbox:has-text("Mode")` matches
+        # three elements -- Evaluation's "Select Dataset dspy-model-..."
+        # (`:has-text` is case-insensitive, so "model" matches "Mode") and
+        # Configuration's "Routing Mode", both in hidden panels. `.first`
+        # picked a hidden one and the click waited out its timeout.
+        optimization_panel = page.locator('[role="tabpanel"]').filter(
+            has=page.get_by_role(
+                "heading", name="\U0001f680 Optimization Controls", exact=True
+            )
+        )
+        expect(optimization_panel).to_have_count(1, timeout=INTERACTION_TIMEOUT)
+        mode_select = optimization_panel.locator(
+            '[data-testid="stSelectbox"]:has-text("Mode")'
+        )
+        expect(mode_select).to_have_count(1, timeout=INTERACTION_TIMEOUT)
+        assert mode_select.count() == 1, (
+            "Optimization panel must render exactly one Mode selectbox"
+        )
         # The default value ``gateway-thresholds`` is always rendered.
         # The other options only appear when the dropdown is opened; open
         # it explicitly so we can assert the full option list.
-        mode_select = page.locator('[data-testid="stSelectbox"]:has-text("Mode")').first
         mode_select.click()
         page.wait_for_timeout(1_000)
         opt_region_text = page.inner_text("body")
