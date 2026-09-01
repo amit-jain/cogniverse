@@ -436,3 +436,29 @@ point at Modal.
 {{- end -}}
 }
 {{- end -}}
+
+{{/*
+REDIS_URL for containers running cogniverse application code.
+
+cogniverse_dashboard.tabs.approval_queue raises when it is absent, which
+aborts a Streamlit render partway through and silently drops every widget
+after that point. Defined once so a new deployment cannot pick up a stale
+copy of the auth branch.
+*/}}
+{{- define "cogniverse.redisUrlEnv" -}}
+{{- $fullName := include "cogniverse.fullname" . -}}
+{{- if .Values.redis.enabled }}
+{{- if .Values.redis.auth.enabled }}
+- name: REDIS_PASSWORD
+  valueFrom:
+    secretKeyRef:
+      name: {{ $fullName }}-redis-auth
+      key: redis-password
+- name: REDIS_URL
+  value: "redis://:$(REDIS_PASSWORD)@{{ $fullName }}-redis:{{ .Values.redis.service.port }}/0"
+{{- else }}
+- name: REDIS_URL
+  value: "redis://{{ $fullName }}-redis:{{ .Values.redis.service.port }}/0"
+{{- end }}
+{{- end }}
+{{- end }}
