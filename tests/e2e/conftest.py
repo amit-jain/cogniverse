@@ -3029,7 +3029,24 @@ def active_tab_panel(page, timeout: int = 60_000):
     first visible one in DOM order is the top-level panel.
     """
     panel = page.locator('[role="tabpanel"]:visible').first
-    panel.wait_for(state="visible", timeout=timeout)
+    try:
+        panel.wait_for(state="visible", timeout=timeout)
+    except Exception as exc:
+        # No panel at all is almost never a tab problem: the dashboard
+        # st.stop()s before rendering any tab when the tenant gate is not
+        # satisfied, so report what the page actually shows rather than a bare
+        # selector timeout.
+        body = ""
+        try:
+            body = (page.inner_text("body") or "").strip()
+        except Exception:
+            pass
+        raise AssertionError(
+            "No tab panel became visible. The dashboard renders its tabs only "
+            "after the tenant gate passes, so an empty page means that gate "
+            f"stopped the script rather than that a tab is missing. Page text: "
+            f"{body[:600]!r}"
+        ) from exc
     # The element turns visible before Streamlit streams its children in, so a
     # query issued right after networkidle can read an empty panel. Settle on
     # the panel carrying content rather than merely existing.
