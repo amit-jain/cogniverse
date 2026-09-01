@@ -211,7 +211,9 @@ class TestInteractiveSearch:
         )
 
         # Result expanders with actual result content (scores, video IDs)
-        result_expanders = page.locator('[data-testid="stExpander"]:has-text("score")')
+        result_expanders = active_tab_panel(page).locator(
+            '[data-testid="stExpander"]:has-text("score")'
+        )
         assert result_expanders.count() > 0, (
             "Search results must render as expanders with score information"
         )
@@ -230,8 +232,10 @@ class TestInteractiveSearch:
         page.wait_for_load_state("networkidle")
 
         # Click the exact "Search" button (not "Interactive Search" tab)
-        exact_search = page.locator('button[kind="primary"]:has-text("Search")')
-        assert exact_search.count() > 0, "Search button must be present"
+        exact_search = active_tab_panel(page).locator(
+            'button[kind="primary"]:has-text("Search"):visible'
+        )
+        assert exact_search.count() == 1, "Search button must be present"
         exact_search.click()
         _wait_for_rerun_complete(page)
         page.wait_for_load_state("networkidle")
@@ -261,14 +265,18 @@ class TestInteractiveSearch:
             # Check for actual result expanders (only if Vespa has data)
             result_expanders = page.locator('[data-testid="stExpander"]')
             if result_expanders.count() > 0:
-                save_btn = page.locator('button:has-text("Save Annotation")')
+                save_btn = active_tab_panel(page).locator(
+                    'button:has-text("Save Annotation")'
+                )
                 assert save_btn.count() > 0, (
                     "Save Annotation buttons must be visible in expanded result expanders"
                 )
 
                 relevance_radios = page.locator('radiogroup:has-text("Relevant")')
                 if relevance_radios.count() == 0:
-                    relevance_radios = page.locator('label:has-text("Highly Relevant")')
+                    relevance_radios = active_tab_panel(page).locator(
+                        'label:has-text("Highly Relevant")'
+                    )
                 assert relevance_radios.count() > 0, (
                     "Relevance radio buttons must be visible in result expanders"
                 )
@@ -291,8 +299,10 @@ class TestInteractiveSearch:
         page.wait_for_timeout(5_000)
         page.wait_for_load_state("networkidle")
 
-        exact_search = page.locator('button[kind="primary"]:has-text("Search")')
-        assert exact_search.count() > 0, "Search button must be present"
+        exact_search = active_tab_panel(page).locator(
+            'button[kind="primary"]:has-text("Search"):visible'
+        )
+        assert exact_search.count() == 1, "Search button must be present"
         exact_search.click()
         _wait_for_rerun_complete(page)
         page.wait_for_load_state("networkidle")
@@ -315,12 +325,16 @@ class TestInteractiveSearch:
 
         result_expanders = page.locator('[data-testid="stExpander"]')
         if result_expanders.count() > 0:
-            save_btn = page.locator('button:has-text("Save Annotation")')
+            save_btn = active_tab_panel(page).locator(
+                'button:has-text("Save Annotation")'
+            )
             assert save_btn.count() > 0, (
                 "Save Annotation buttons must exist in search results"
             )
 
-            relevance_labels = page.locator('label:has-text("Highly Relevant")')
+            relevance_labels = active_tab_panel(page).locator(
+                'label:has-text("Highly Relevant")'
+            )
             assert relevance_labels.count() > 0, (
                 "Relevance radio buttons must exist in search results"
             )
@@ -475,8 +489,10 @@ class TestOptimizationOverview:
         page.wait_for_load_state("networkidle")
 
         # Metrics Dashboard must have the Refresh Metrics button
-        refresh_btn = page.locator('button:has-text("Refresh")')
-        assert refresh_btn.count() > 0, (
+        refresh_btn = active_tab_panel(page).locator(
+            'button:has-text("Refresh"):visible'
+        )
+        assert refresh_btn.count() == 1, (
             "Metrics Dashboard must have Refresh Metrics button"
         )
 
@@ -504,15 +520,17 @@ class TestAnnotationHarvesting:
             "Lookback Hours number input should be present"
         )
 
-        fetch_btn = page.locator('button:has-text("Fetch")')
-        assert fetch_btn.count() > 0, "Fetch Search Results button should be present"
+        fetch_btn = active_tab_panel(page).locator('button:has-text("Fetch"):visible')
+        assert fetch_btn.count() == 1, "Fetch Search Results button should be present"
 
         click_button(page, "Fetch")
         page.wait_for_timeout(INTERACTION_TIMEOUT)
         page.wait_for_load_state("networkidle")
 
         # Exact alert text: "Fetched N search results" or "No results returned"
-        fetched_alert = page.locator('[data-testid="stAlert"]:has-text("Fetched")')
+        fetched_alert = active_tab_panel(page).locator(
+            '[data-testid="stAlert"]:has-text("Fetched")'
+        )
         no_results = page.locator(
             '[data-testid="stAlert"]:has-text("No results returned")'
         )
@@ -549,8 +567,8 @@ class TestGoldenDataset:
         )
 
         # Verify Build button
-        build_btn = page.locator('button:has-text("Build")')
-        assert build_btn.count() > 0, "Build Golden Dataset button should be present"
+        build_btn = active_tab_panel(page).locator('button:has-text("Build"):visible')
+        assert build_btn.count() == 1, "Build Golden Dataset button should be present"
 
     def test_build_golden_dataset_execution(self, page):
         """Click Build Golden Dataset and verify it produces a result.
@@ -642,7 +660,9 @@ class TestSyntheticDataAndApproval:
             pytest.fail("Synthetic generation failed: request timed out")
 
         # Success must show "Generated N examples" or example data on page
-        success_alert = page.locator('[data-testid="stAlert"]:has-text("Generated")')
+        success_alert = active_tab_panel(page).locator(
+            '[data-testid="stAlert"]:has-text("Generated")'
+        )
         body_text = active_tab_panel(page).inner_text().lower()
         has_examples = "example" in body_text and "confidence" in body_text
 
@@ -707,9 +727,9 @@ class TestModuleOptimization:
         )
 
         # Verify submit or upload button
-        submit_btn = page.locator('button:has-text("Submit")')
+        submit_btn = active_tab_panel(page).locator('button:has-text("Submit"):visible')
         upload_btn = page.locator('button:has-text("Upload")')
-        assert submit_btn.count() > 0 or upload_btn.count() > 0, (
+        assert submit_btn.count() == 1 or upload_btn.count() == 1, (
             "Submit Workflow or Upload Dataset button should be present"
         )
 
@@ -742,8 +762,8 @@ class TestModuleOptimization:
         page.wait_for_load_state("networkidle")
 
         # Submit button MUST exist
-        submit_btn = page.locator('button:has-text("Submit")')
-        assert submit_btn.count() > 0, (
+        submit_btn = active_tab_panel(page).locator('button:has-text("Submit"):visible')
+        assert submit_btn.count() == 1, (
             "Module Optimization must have Submit Workflow button"
         )
 
@@ -799,8 +819,8 @@ class TestRerankingAndProfileOptimization:
             )
 
         # Train Reranker button MUST exist
-        train_btn = page.locator('button:has-text("Train")')
-        assert train_btn.count() > 0, "Reranking tab must have Train Reranker button"
+        train_btn = active_tab_panel(page).locator('button:has-text("Train"):visible')
+        assert train_btn.count() == 1, "Reranking tab must have Train Reranker button"
 
     def test_profile_selection_tab(self, page):
         _nav(page)
@@ -816,9 +836,9 @@ class TestRerankingAndProfileOptimization:
         )
 
         # Train Profile Selector and Load Existing Model buttons
-        train_btn = page.locator('button:has-text("Train")')
+        train_btn = active_tab_panel(page).locator('button:has-text("Train"):visible')
         load_btn = page.locator('button:has-text("Load")')
-        assert train_btn.count() > 0 or load_btn.count() > 0, (
+        assert train_btn.count() == 1 or load_btn.count() == 1, (
             "Profile Selection must have Train or Load Model button"
         )
 
@@ -870,11 +890,13 @@ class TestTenantLifecycleDashboard:
         page.wait_for_load_state("networkidle")
 
         # Verify sub-tabs exist
-        org_tab = page.locator('button[role="tab"]:has-text("Organizations")')
+        org_tab = active_tab_panel(page).locator(
+            'button[role="tab"]:has-text("Organizations"):visible'
+        )
         create_org_tab = page.locator(
             'button[role="tab"]:has-text("Create Organization")'
         )
-        assert org_tab.count() > 0, "Organizations sub-tab should be present"
+        assert org_tab.count() == 1, "Organizations sub-tab should be present"
         assert create_org_tab.count() > 0, (
             "Create Organization sub-tab should be present"
         )
@@ -1016,8 +1038,8 @@ class TestConfigManagement:
         )
 
         # Verify Save button exists and is inside a form
-        save_btn = page.locator('button:has-text("Save")')
-        assert save_btn.count() > 0, (
+        save_btn = active_tab_panel(page).locator('button:has-text("Save"):visible')
+        assert save_btn.count() == 1, (
             "Save System Configuration button should be present"
         )
 
@@ -1055,7 +1077,9 @@ class TestConfigManagement:
         page.wait_for_load_state("networkidle")
 
         # Export produces: "Exported N configurations" success alert
-        export_success = page.locator('[data-testid="stAlert"]:has-text("Exported")')
+        export_success = active_tab_panel(page).locator(
+            '[data-testid="stAlert"]:has-text("Exported")'
+        )
         export_error = page.locator('[data-testid="stAlert"]:has-text("Export failed")')
         download_btn = page.locator('[data-testid="stDownloadButton"]')
 
@@ -1101,8 +1125,8 @@ class TestConfigManagement:
         page.wait_for_load_state("networkidle")
 
         # Routing Config must have a Save Routing Configuration button
-        save_btn = page.locator('button:has-text("Save")')
-        assert save_btn.count() > 0, "Routing Config must have Save button"
+        save_btn = active_tab_panel(page).locator('button:has-text("Save"):visible')
+        assert save_btn.count() == 1, "Routing Config must have Save button"
         body_text = active_tab_panel(page).inner_text().lower()
         assert "routing" in body_text, (
             "Routing Config tab must mention 'routing' in content"
@@ -1117,8 +1141,8 @@ class TestConfigManagement:
         page.wait_for_load_state("networkidle")
 
         # Telemetry Config must have Save button and mention telemetry/phoenix
-        save_btn = page.locator('button:has-text("Save")')
-        assert save_btn.count() > 0, "Telemetry Config must have Save button"
+        save_btn = active_tab_panel(page).locator('button:has-text("Save"):visible')
+        assert save_btn.count() == 1, "Telemetry Config must have Save button"
         body_text = active_tab_panel(page).inner_text().lower()
         assert "telemetry" in body_text or "phoenix" in body_text, (
             "Telemetry Config must mention 'telemetry' or 'phoenix'"
@@ -1226,8 +1250,12 @@ class TestMemoryLifecycle:
         page.wait_for_load_state("networkidle")
 
         # Target the "Memory Content" textarea specifically (not Chat's textarea)
-        memory_textarea = page.locator('textarea[aria-label="Memory Content"]')
-        assert memory_textarea.count() > 0, "Memory Content text area should be present"
+        memory_textarea = active_tab_panel(page).locator(
+            'textarea[aria-label="Memory Content"]:visible'
+        )
+        assert memory_textarea.count() == 1, (
+            "Memory Content text area should be present"
+        )
         fill_textarea(memory_textarea, memory_text)
 
         assert page.locator('button:has-text("Add Memory")').count() > 0, (
@@ -1238,7 +1266,9 @@ class TestMemoryLifecycle:
         page.wait_for_load_state("networkidle")
 
         # Memory add alerts persist (no st.rerun) — assert exact feedback
-        success = page.locator('[data-testid="stAlert"]:has-text("added successfully")')
+        success = active_tab_panel(page).locator(
+            '[data-testid="stAlert"]:has-text("added successfully")'
+        )
         error = page.locator('[data-testid="stAlert"]:has-text("Failed")')
         assert success.count() > 0 or error.count() > 0, (
             "Memory add must show 'added successfully' or 'Failed' alert — "
@@ -1262,7 +1292,9 @@ class TestMemoryLifecycle:
         page.wait_for_load_state("networkidle")
 
         # Memory search alerts persist (no st.rerun) — assert specific feedback
-        found_alert = page.locator('[data-testid="stAlert"]:has-text("Found")')
+        found_alert = active_tab_panel(page).locator(
+            '[data-testid="stAlert"]:has-text("Found")'
+        )
         no_results = page.locator(
             '[data-testid="stAlert"]:has-text("No memories found")'
         )
@@ -1891,8 +1923,8 @@ class TestManualOptimizationTrigger:
 
         # Click Run. The button is disabled unless a tenant is set — we
         # set a real tenant above, so it must be enabled.
-        run_btn = page.locator('button:has-text("▶️ Run")')
-        assert run_btn.count() > 0, "Run button must exist"
+        run_btn = active_tab_panel(page).locator('button:has-text("▶️ Run"):visible')
+        assert run_btn.count() == 1, "Run button must exist"
         assert run_btn.first.is_enabled(), (
             "Run button should be enabled when an Active Tenant is set"
         )
@@ -1918,7 +1950,9 @@ class TestManualOptimizationTrigger:
         # Click Refresh status — the dashboard calls GET
         # /admin/tenant/{id}/optimize/runs/{name}, which returns a real
         # Argo phase.
-        refresh_btn = page.locator('button:has-text("🔄 Refresh status")')
+        refresh_btn = active_tab_panel(page).locator(
+            'button:has-text("🔄 Refresh status")'
+        )
         assert refresh_btn.count() > 0, (
             "Refresh status button must appear after a successful submit"
         )
