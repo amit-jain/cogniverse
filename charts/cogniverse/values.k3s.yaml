@@ -128,7 +128,7 @@ vespa:
   resources:
     requests:
       cpu: "2"
-      memory: "4Gi"
+      memory: "16Gi"
     limits:
       cpu: "4"
       memory: "16Gi"
@@ -256,7 +256,7 @@ dashboard:
   resources:
     requests:
       cpu: "500m"
-      memory: "1Gi"
+      memory: "4Gi"
     limits:
       cpu: "2"
       memory: "4Gi"
@@ -271,7 +271,7 @@ phoenix:
   resources:
     requests:
       cpu: "1"
-      memory: "1Gi"
+      memory: "4Gi"
     limits:
       cpu: "2"
       memory: "4Gi"

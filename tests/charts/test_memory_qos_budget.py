@@ -153,3 +153,39 @@ def test_cluster_service_limits_stay_within_the_gpu_budget_reservation():
         f"pool arithmetic is oversubscribed by {total - reserved:.2f}Gi.\n  "
         + "\n  ".join(sorted(breakdown))
     )
+
+
+def test_every_container_reading_the_config_can_authenticate_to_inference():
+    """A container that mounts the config must be able to call what it names.
+
+    ``cogniverse-config`` carries the inference endpoints, and under Modal
+    serving those reject unauthenticated requests. The dashboard hit this: its
+    memory tab constructs Mem0 in-process, and the two Vespa schema deploys
+    inside ``initialize`` run *before* the line that raises on the missing key,
+    so every Streamlit rerun re-ran both deploys on the render thread until the
+    liveness probe killed the pod.
+
+    Derived from the render, not a restated list, so a new container that
+    mounts the config without the bearer fails here.
+    """
+    documents = _render()
+    offenders = []
+    for document in documents:
+        if document.get("kind") not in RESIDENT_KINDS:
+            continue
+        workload = document["metadata"]["name"]
+        spec = document["spec"]["template"]["spec"]
+        mounts_config = any(
+            (volume.get("configMap") or {}).get("name") == "cogniverse-config"
+            for volume in spec.get("volumes", [])
+        )
+        if not mounts_config:
+            continue
+        for container in spec["containers"]:
+            names = {entry["name"] for entry in container.get("env", [])}
+            if "COGNIVERSE_INFERENCE_API_KEY" not in names:
+                offenders.append(f"{workload}/{container['name']}")
+    assert offenders == [], (
+        "containers mount cogniverse-config (which names the inference "
+        f"endpoints) but cannot authenticate to them: {sorted(offenders)}"
+    )

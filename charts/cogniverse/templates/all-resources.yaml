@@ -567,6 +567,8 @@ spec:
         - {{ .Release.Namespace | quote }}
         {{- end }}
         env:
+        - name: COGNIVERSE_INFERENCE_API_KEY
+{{ include "cogniverse.inferenceApiKeyEnv" . | nindent 10 }}
         - name: BACKEND_URL
           value: "http://{{ $fullName }}-vespa"
         - name: BACKEND_PORT
@@ -779,6 +781,8 @@ spec:
         - name: http
           containerPort: 8501
         env:
+        - name: COGNIVERSE_INFERENCE_API_KEY
+{{ include "cogniverse.inferenceApiKeyEnv" . | nindent 10 }}
         - name: RUNTIME_URL
           value: "http://{{ $fullName }}-runtime:{{ .Values.runtime.service.port }}"
         - name: BACKEND_URL
