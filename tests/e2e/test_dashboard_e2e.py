@@ -230,8 +230,12 @@ class TestInteractiveSearch:
         terminal = panel.locator(
             '[data-testid="stMetric"]:has-text("Results"),[data-testid="stAlert"]'
         )
+        # A search, not an interaction: this is the first of the session, so it
+        # pays the model cold start. Measured 49.7s cold against 1.8s warm, and
+        # stream_agent_call (app.py:112) gives up at 120s, so that bound is the
+        # contract -- waiting less asserts a promise the app never made.
         try:
-            expect(terminal.first).to_be_visible(timeout=INTERACTION_TIMEOUT)
+            expect(terminal.first).to_be_visible(timeout=SEARCH_TIMEOUT)
         except AssertionError as exc:  # pragma: no cover - diagnostic path
             raise AssertionError(
                 "Search reached no terminal state: no Results metric and no "
