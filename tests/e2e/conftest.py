@@ -2875,25 +2875,37 @@ def _strip_emoji(text: str) -> str:
     ).strip()
 
 
-def _activate_tab(page, tab, settle_ms: int, *, force: bool = False) -> bool:
+def _activate_tab(page, tab, settle_ms: int) -> bool:
     """Click a tab and confirm it became the selected one.
 
     A click that lands while Streamlit is mid-rerun is swallowed. Returning
     anyway leaves the previous tab open, and every later locator then reads a
     panel the test never asked for, which surfaces as a missing widget rather
     than as a missed click.
-    """
-    if not force:
-        tab.scroll_into_view_if_needed()
-        page.wait_for_timeout(500)
-    tab.click(force=force)
-    page.wait_for_timeout(1_000)
 
-    if tab.get_attribute("aria-selected") != "true":
-        tab.dispatch_event("click")
+    Visibility is read here rather than taken from the caller's snapshot.
+    Trying one candidate re-renders the strip, so a tab recorded as visible
+    when the candidates were collected can be hidden by the time it is
+    reached; an unforced click then raises instead of yielding the next
+    candidate.
+    """
+    from playwright.sync_api import Error as PlaywrightError
+
+    try:
+        visible = tab.is_visible()
+        if visible:
+            tab.scroll_into_view_if_needed()
+            page.wait_for_timeout(500)
+        tab.click(force=not visible)
         page.wait_for_timeout(1_000)
+
         if tab.get_attribute("aria-selected") != "true":
-            return False
+            tab.dispatch_event("click")
+            page.wait_for_timeout(1_000)
+            if tab.get_attribute("aria-selected") != "true":
+                return False
+    except PlaywrightError:
+        return False
 
     page.wait_for_timeout(settle_ms)
     page.wait_for_load_state("networkidle")
@@ -2943,8 +2955,8 @@ def _click_tab_by_label(page, label: str, retries: int = 6, settle_ms: int = 3_0
         for idx in tab_candidates(
             [(raw, visible) for _, raw, _, visible in tab_info], label
         ):
-            tab, _, _, visible = tab_info[idx]
-            if _activate_tab(page, tab, settle_ms, force=not visible):
+            tab = tab_info[idx][0]
+            if _activate_tab(page, tab, settle_ms):
                 return
 
         if attempt < retries - 1:
