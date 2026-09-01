@@ -176,33 +176,30 @@ class TestInteractiveSearch:
         set_tenant(page, TENANT_ID)
         click_top_tab(page, "Interactive Search")
 
-        # Streamlit reconciles widgets a beat after the tab-click network
-        # goes idle, so a bare count() check races and reports 0.
-        try:
-            page.get_by_role("textbox", name="Enter your search query").first.wait_for(
-                state="visible", timeout=15_000
-            )
-        except Exception:
-            pass
-
-        # Verify search widgets present
-        assert (
-            page.get_by_role("textbox", name="Enter your search query").count() > 0
-        ), "Search input must be present"
-        assert page.locator('button[kind="primary"]:has-text("Search")').count() > 0, (
-            "Search button must be present"
+        # This tab body renders behind an agent-status call, so in the minute
+        # after the models load it can take longer to reconcile than an
+        # ordinary interaction. Wait on the widgets themselves: swallowing the
+        # timeout and then testing count() reports "must be present" without
+        # revealing that it waited at all, and turns a slow render into a
+        # missing-widget claim.
+        search_input = page.get_by_role("textbox", name="Enter your search query")
+        search_button = page.locator('button[kind="primary"]:has-text("Search")')
+        expect(search_input).to_have_count(1, timeout=SEARCH_TIMEOUT)
+        expect(search_button).to_have_count(1, timeout=SEARCH_TIMEOUT)
+        assert search_input.count() == 1, "exactly one search input must render"
+        assert search_button.count() == 1, (
+            "exactly one primary Search button must render"
         )
 
         # Use .fill() to properly trigger Streamlit's React component bridge.
         # .type() and JS-based fill don't reliably commit to session state.
-        search_input = page.get_by_role("textbox", name="Enter your search query")
         search_input.fill("sports activity")
         search_input.press("Enter")
         page.wait_for_timeout(5_000)
         page.wait_for_load_state("networkidle")
 
         # Click the exact "Search" button
-        page.locator('button[kind="primary"]:has-text("Search")').click()
+        search_button.click()
         _wait_for_rerun_complete(page)
         page.wait_for_load_state("networkidle")
 
