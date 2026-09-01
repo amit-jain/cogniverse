@@ -35,16 +35,35 @@ def _streamlit_call_name(node: ast.AST) -> str | None:
 
 
 def _deferred_commit_names(tree: ast.AST) -> set[str]:
-    """Names bound to the return of a deferred-commit text widget."""
+    """Names deriving, directly or transitively, from a deferred-commit widget.
+
+    Transitivity is the whole point: ``disabled=`` is rarely the widget value
+    itself. The shape that ships is ``flag = not query or not online`` followed
+    by ``st.button(disabled=flag)``, on which a one-hop check reports clean.
+    """
     names: set[str] = set()
+    derived: list[tuple[set[str], ast.AST]] = []
     for node in ast.walk(tree):
         if not isinstance(node, ast.Assign):
             continue
-        if _streamlit_call_name(node.value) not in _DEFERRED_COMMIT_WIDGETS:
+        targets = {t.id for t in node.targets if isinstance(t, ast.Name)}
+        if not targets:
             continue
-        for target in node.targets:
-            if isinstance(target, ast.Name):
-                names.add(target.id)
+        if _streamlit_call_name(node.value) in _DEFERRED_COMMIT_WIDGETS:
+            names |= targets
+        else:
+            derived.append((targets, node.value))
+
+    changed = True
+    while changed:
+        changed = False
+        for targets, value in derived:
+            if targets <= names:
+                continue
+            referenced = {n.id for n in ast.walk(value) if isinstance(n, ast.Name)}
+            if referenced & names:
+                names |= targets
+                changed = True
     return names
 
 
@@ -61,6 +80,25 @@ def _buttons_disabled_by(tree: ast.AST, names: set[str]) -> list[tuple[int, str]
                 if isinstance(referenced, ast.Name) and referenced.id in names:
                     offenders.append((node.lineno, referenced.id))
     return offenders
+
+
+def test_taint_reaches_a_button_through_intermediate_names():
+    """The fixed point, pinned independently of the dashboard's current source.
+
+    Without this, reverting the propagation to a single hop leaves the
+    repository-wide test below green, because no offending site remains.
+    """
+    source = """
+query = st.text_input("q")
+online = probe()
+ready = not query or not online
+blocked = not ready
+st.button("Search", disabled=blocked)
+st.button("Other", disabled=online)
+"""
+    tree = ast.parse(source)
+    assert _deferred_commit_names(tree) == {"query", "ready", "blocked"}
+    assert _buttons_disabled_by(tree, _deferred_commit_names(tree)) == [(6, "blocked")]
 
 
 def test_no_button_is_disabled_by_a_deferred_commit_widget_value():

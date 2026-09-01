@@ -2630,14 +2630,10 @@ with main_tabs[10]:
             agent_status.get("Search Agent", {}).get("status") == "online"
             or agent_status.get("Video Search Agent", {}).get("status") == "online"
         )
-        search_button_disabled = not search_query or not search_agent_available
-
         if not search_agent_available:
             st.warning("🔧 Search Agent is offline")
 
-        search_button = st.button(
-            "🔍 Search", type="primary", disabled=search_button_disabled
-        )
+        search_button = st.button("🔍 Search", type="primary")
 
     # Search Configuration
     st.subheader("⚙️ Search Configuration")
@@ -2670,7 +2666,12 @@ with main_tabs[10]:
         confidence_threshold = st.slider("Confidence Threshold", 0.0, 1.0, 0.0)
 
     # Search Results
-    if search_button and search_query:
+    if search_button and not search_query:
+        st.warning("Enter a search query before searching.")
+    elif search_button and not search_agent_available:
+        st.error("Search failed: the Search Agent is offline.")
+
+    if search_button and search_query and search_agent_available:
         st.subheader("🎯 Search Results")
 
         try:
