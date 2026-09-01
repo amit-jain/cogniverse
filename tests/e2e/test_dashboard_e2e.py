@@ -23,11 +23,13 @@ from tests.e2e.conftest import (
     DASHBOARD,
     RUNTIME,
     TENANT_ID,
+    active_tab_panel,
     click_button,
     click_sub_tab,
     click_top_tab,
     fill_input,
     fill_textarea,
+    panel_widget,
     set_tenant,
     unique_id,
     wait_for_streamlit,
@@ -86,9 +88,15 @@ class TestSidebarAndNavigation:
         # Streamlit may render sidebar inputs hidden in headless mode;
         # verify the element exists in the DOM (not necessarily visible)
         sidebar = page.locator('[data-testid="stSidebar"]')
+        # set_tenant() drives input[aria-label="Active Tenant"]; the sidebar
+        # also renders a separate "Tenant ID" input, so a bare count of text
+        # inputs cannot tell the two apart.
+        assert sidebar.locator('input[aria-label="Active Tenant"]').count() == 1, (
+            "Sidebar must expose exactly one Active Tenant input"
+        )
         tenant_inputs = sidebar.locator('[data-testid="stTextInput"] input')
-        assert tenant_inputs.count() > 0, (
-            "Tenant input should be present in the sidebar DOM"
+        assert tenant_inputs.count() == 2, (
+            f"Sidebar renders Active Tenant and Tenant ID; got {tenant_inputs.count()}"
         )
 
     def test_set_tenant_persists(self, page):
@@ -491,8 +499,8 @@ class TestAnnotationHarvesting:
         page.wait_for_load_state("networkidle")
 
         # Verify key widgets: Lookback Hours input and Fetch button
-        lookback_input = page.locator('[data-testid="stNumberInput"]')
-        assert lookback_input.count() > 0, (
+        lookback_input = panel_widget(page, "stNumberInput", "Lookback Hours")
+        assert lookback_input.count() == 1, (
             "Lookback Hours number input should be present"
         )
 
@@ -535,8 +543,10 @@ class TestGoldenDataset:
         page.wait_for_load_state("networkidle")
 
         # Verify Lookback Days number input
-        number_inputs = page.locator('[data-testid="stNumberInput"]')
-        assert number_inputs.count() > 0, "Lookback Days number input should be present"
+        number_inputs = panel_widget(page, "stNumberInput", "Lookback Days")
+        assert number_inputs.count() == 1, (
+            "Lookback Days number input should be present"
+        )
 
         # Verify Build button
         build_btn = page.locator('button:has-text("Build")')
@@ -593,8 +603,8 @@ class TestSyntheticDataAndApproval:
         page.wait_for_load_state("networkidle")
 
         # Verify Examples to Generate number input
-        number_inputs = page.locator('[data-testid="stNumberInput"]')
-        assert number_inputs.count() > 0, (
+        number_inputs = panel_widget(page, "stNumberInput", "Examples to Generate")
+        assert number_inputs.count() == 1, (
             "Examples to Generate number input should be present"
         )
 
@@ -661,15 +671,15 @@ class TestSyntheticDataAndApproval:
         )
 
         # Optimizer selectbox MUST exist with selectable options
-        selectboxes = page.locator('[data-testid="stSelectbox"]')
-        assert selectboxes.count() > 0, (
-            "Synthetic Data tab must have Optimizer selectbox"
+        selectboxes = panel_widget(page, "stSelectbox", "Optimizer Type")
+        assert selectboxes.count() == 1, (
+            "Synthetic Data tab must have Optimizer Type selectbox"
         )
 
         # Confidence threshold and max profiles sliders
-        sliders = page.locator('[data-testid="stSlider"]')
-        assert sliders.count() >= 1, (
-            "Synthetic Data tab must have Confidence Threshold slider"
+        sliders = panel_widget(page, "stSlider", "Min Rating Threshold")
+        assert sliders.count() == 1, (
+            "Synthetic Data tab must have the Min Rating Threshold slider"
         )
 
         # Number inputs (for count or profiles)
@@ -691,9 +701,9 @@ class TestModuleOptimization:
         page.wait_for_load_state("networkidle")
 
         # Verify optimizer/dataset selectbox
-        selectboxes = page.locator('[data-testid="stSelectbox"]')
-        assert selectboxes.count() > 0, (
-            "Optimizer or dataset selectbox should be present"
+        selectboxes = panel_widget(page, "stSelectbox", "Module to Optimize")
+        assert selectboxes.count() == 1, (
+            "Module to Optimize selectbox should be present"
         )
 
         # Verify submit or upload button
@@ -832,7 +842,7 @@ class TestProfileRoutingMetrics:
         # Lookback (hours) input is the only always-rendered widget — the
         # rest depends on whether Phoenix has profile_selection spans yet.
         lookback_input = active_panel.locator('[data-testid="stNumberInput"]')
-        assert lookback_input.count() > 0, (
+        assert lookback_input.count() == 1, (
             f"Profile Routing Metrics must expose a Lookback (hours) input; "
             f"panel text: {active_panel.first.inner_text()[:300]}"
         )
@@ -998,9 +1008,11 @@ class TestConfigManagement:
         page.wait_for_load_state("networkidle")
 
         # System Config is default sub-tab. Verify form elements
-        selectboxes = page.locator('[data-testid="stSelectbox"]')
-        assert selectboxes.count() > 0, (
-            "System Config should have selectboxes (Environment, Backend Type)"
+        assert panel_widget(page, "stSelectbox", "Backend Type").count() == 1, (
+            "System Config should have the Backend Type selectbox"
+        )
+        assert panel_widget(page, "stSelectbox", "Environment").count() == 1, (
+            "System Config should have the Environment selectbox"
         )
 
         # Verify Save button exists and is inside a form
@@ -1055,8 +1067,10 @@ class TestConfigManagement:
         )
 
         # Verify file uploader for import
-        file_uploader = page.locator('[data-testid="stFileUploader"]')
-        assert file_uploader.count() > 0, (
+        file_uploader = panel_widget(
+            page, "stFileUploader", "Upload Configuration JSON"
+        )
+        assert file_uploader.count() == 1, (
             "File uploader for config import should be present"
         )
 
@@ -1118,16 +1132,13 @@ class TestConfigManagement:
         click_sub_tab(page, "Backend Profiles")
         page.wait_for_load_state("networkidle")
 
-        body_text = page.inner_text("body").lower()
-        # Backend Profiles must show profile/schema content AND management controls
-        assert "profile" in body_text or "schema" in body_text, (
-            "Backend Profiles must mention 'profile' or 'schema'"
-        )
-        selectboxes = page.locator('[data-testid="stSelectbox"]')
-        buttons = page.locator('button:has-text("Create"), button:has-text("Deploy")')
-        assert selectboxes.count() > 0 or buttons.count() > 0, (
-            "Backend Profiles must have selectbox or Create/Deploy buttons"
-        )
+        panel_text = active_tab_panel(page).inner_text().lower()
+        assert "profile" in panel_text or "schema" in panel_text, panel_text[:300]
+        # A bare selectbox count matched any of the 33 selectboxes Streamlit
+        # keeps in the DOM, and the `or` on buttons made it weaker still.
+        assert (
+            panel_widget(page, "stSelectbox", "Select Profile to Manage").count() == 1
+        ), "Backend Profiles must expose the profile selector"
 
     def test_config_history(self, page):
         _nav(page)
@@ -1138,8 +1149,8 @@ class TestConfigManagement:
         page.wait_for_load_state("networkidle")
 
         # History tab MUST have Scope selectbox for filtering
-        selectboxes = page.locator('[data-testid="stSelectbox"]')
-        assert selectboxes.count() > 0, "History tab must have Scope selectbox"
+        selectboxes = panel_widget(page, "stSelectbox", "Scope")
+        assert selectboxes.count() == 1, "History tab must have Scope selectbox"
 
         body_text = page.inner_text("body").lower()
         # Must show history-specific content — not just generic page text
@@ -1373,8 +1384,8 @@ class TestMemoryLifecycle:
         page.wait_for_load_state("networkidle")
 
         # Verify Memory ID input and Delete button present
-        inputs = page.locator('[data-testid="stTextInput"] input')
-        assert inputs.count() > 0, "Delete Memory tab should have Memory ID text input"
+        inputs = panel_widget(page, "stTextInput", "Memory ID")
+        assert inputs.count() == 1, "Delete Memory tab should have Memory ID text input"
         delete_btn = page.locator('button:has-text("Delete")')
         assert delete_btn.count() > 0, (
             "Delete Memory tab should have Delete Memory button"
@@ -1438,21 +1449,16 @@ class TestMonitoringDashboard:
         click_sub_tab(page, "Evaluation")
         page.wait_for_load_state("networkidle")
 
-        body_text = page.inner_text("body").lower()
-        # Evaluation tab must show dataset selector and evaluation-specific content
-        selectboxes = page.locator('[data-testid="stSelectbox"]')
-        not_available = page.locator(
-            '[data-testid="stAlert"]:has-text("not found"), '
-            '[data-testid="stAlert"]:has-text("not available")'
+        panel_text = active_tab_panel(page).inner_text().lower()
+        # The Select Dataset control is structural -- it renders whether or not
+        # any dataset exists -- so it can be pinned exactly instead of being
+        # disjoined with a page-wide "not available" alert.
+        assert panel_widget(page, "stSelectbox", "Select Dataset").count() == 1, (
+            "Evaluation tab must show the dataset selector"
         )
-        assert selectboxes.count() > 0 or not_available.count() > 0, (
-            "Evaluation tab must show dataset selector or 'module not available' message"
-        )
-        assert (
-            "evaluation" in body_text
-            or "experiment" in body_text
-            or not_available.count() > 0
-        ), "Evaluation tab must mention 'evaluation' or 'experiment' in content"
+        assert "evaluation" in panel_text or "experiment" in panel_text, panel_text[
+            :300
+        ]
 
     def test_routing_evaluation_tab(self, page):
         self._goto_monitoring(page)
@@ -1576,41 +1582,55 @@ class TestIngestionTesting:
 
     def test_ingestion_header_and_description(self, page):
         self._goto_ingestion(page)
-        body_text = page.inner_text("body").lower()
-        assert "ingestion" in body_text, (
-            "Ingestion tab should display header with 'Ingestion'"
-        )
-        assert "pipeline" in body_text or "processing" in body_text, (
-            "Ingestion tab should describe pipeline or processing"
-        )
+        # Scoped to this tab's panel: page.inner_text("body") spans every tab
+        # Streamlit keeps in the DOM, so "ingestion" matched the nav and the
+        # assertion held whether or not this tab rendered.
+        panel_text = active_tab_panel(page).inner_text()
+        assert "Ingestion Pipeline Testing" in panel_text, panel_text[:300]
+        assert (
+            "Interactive testing and configuration of video ingestion "
+            "pipelines with different processing profiles." in panel_text
+        ), panel_text[:300]
 
     def test_file_uploader_present(self, page):
         self._goto_ingestion(page)
-        uploader = page.locator('[data-testid="stFileUploader"]')
-        assert uploader.count() > 0, (
+        uploader = panel_widget(page, "stFileUploader", "Upload test video")
+        assert uploader.count() == 1, (
             "Ingestion tab should have a file uploader for video upload"
         )
 
     def test_profile_multiselect_present(self, page):
         self._goto_ingestion(page)
-        multiselect = page.locator('[data-testid="stMultiSelect"]')
-        assert multiselect.count() > 0, (
+        multiselect = panel_widget(page, "stMultiSelect", "Select profiles to test")
+        assert multiselect.count() == 1, (
             "Ingestion tab should have a multiselect for processing profiles"
         )
 
     def test_pipeline_status_section(self, page):
         self._goto_ingestion(page)
-        body_text = page.inner_text("body").lower()
-        assert "pipeline" in body_text or "ingestion" in body_text, (
-            "Ingestion tab should show pipeline or ingestion content"
-        )
+        # Previously a body-wide substring check that was a strict subset of
+        # test_ingestion_header_and_description; pin this tab's own sections.
+        panel_text = active_tab_panel(page).inner_text()
+        assert "Video Upload & Processing" in panel_text, panel_text[:300]
+        assert "Results" in panel_text, panel_text[:300]
 
-    def test_about_expander(self, page):
+    def test_documentation_is_inline_not_an_expander(self, page):
+        """This tab documents itself inline; it renders no expander.
+
+        The previous assertion required an "About expander with
+        documentation". app.py renders the Ingestion section with no expander
+        at all -- the only About expander in the app belongs to another tab --
+        so the assertion held solely because Streamlit keeps 49 expanders from
+        other panels in the DOM. Pin both halves of the real contract.
+        """
         self._goto_ingestion(page)
-        expander = page.locator('[data-testid="stExpander"]')
-        assert expander.count() > 0, (
-            "Ingestion tab should have an About expander with documentation"
+        panel = active_tab_panel(page)
+        assert panel.locator('[data-testid="stExpander"]').count() == 0, (
+            "Ingestion tab renders no expander; add one and update this pin"
         )
+        assert "Upload a video file to start testing ingestion pipelines" in (
+            panel.inner_text()
+        ), panel.inner_text()[:300]
 
 
 class TestApprovalQueueTab:
