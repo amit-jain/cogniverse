@@ -1785,6 +1785,7 @@ E2E_HOST_PORTS = {
     33909: 29009,
     33910: 29010,
     33911: 29011,
+    33912: 29012,  # video_embed (X-CLIP)
 }
 
 _E2E_TOMORO_MODEL = "TomoroAI/tomoro-colqwen3-embed-4b"
@@ -2121,6 +2122,70 @@ def _e2e_required_model_probes(backend: str) -> list[tuple[str, str]]:
     return probes
 
 
+# Sidecars the session fixture's own bootstrap exercises: video embedding
+# (colpali), transcription (asr), document and text embeddings
+# (colbert_pylate, denseon), audio embedding (clap_embed) and graph extraction
+# (gliner). Only the first two speak OpenAI's /v1/models, so the rest were
+# ungated -- on 2026-09-01 a run proceeded with gliner still starting and the
+# seven selected tests ERRORed reporting "ingestion did not complete", which
+# names the symptom rather than the missing model. Every sidecar serves
+# /health, so all six are gateable.
+_E2E_GATED_INFERENCE_SERVICES = (
+    "vllm_colpali",
+    "vllm_asr",
+    "colbert_pylate",
+    "denseon",
+    "clap_embed",
+    "gliner",
+)
+
+# The e2e loadbalancer maps NodePort 290NN to host port 339NN (E2E_HOST_PORTS).
+_E2E_NODEPORT_TO_HOST = 33900 - 29000
+
+
+def _chart_inference_node_ports() -> dict[str, int]:
+    """service -> nodePort, read from the shipped chart rather than restated."""
+
+    import re as _re
+
+    values = Path(__file__).resolve().parents[2] / "charts/cogniverse/values.yaml"
+    ports: dict[str, int] = {}
+    current: str | None = None
+    for line in values.read_text().splitlines():
+        header = _re.match(r"^  ([a-z_]+):\s*$", line)
+        if header:
+            current = header.group(1)
+        port = _re.search(r"nodePort:\s*(\d+)", line)
+        if port and current:
+            ports[current] = int(port.group(1))
+    return ports
+
+
+def e2e_required_health_probes(backend: str) -> list[tuple[str, str]]:
+    """(service, base_url) for every enabled sidecar this cluster must serve.
+
+    A service switched off by the deployment overrides has no pod to probe, so
+    gating on it would fail readiness for something nothing deployed.
+    """
+
+    node_ports = _chart_inference_node_ports()
+    probes: list[tuple[str, str]] = []
+    for service in _E2E_GATED_INFERENCE_SERVICES:
+        if service in _E2E_DISABLED_INFERENCE_SERVICES:
+            continue
+        node_port = node_ports.get(service)
+        if node_port is None:
+            raise RuntimeError(
+                f"{service} is gated for e2e readiness but the shipped chart "
+                "declares no nodePort for it, so the gate cannot reach it. "
+                "Either the service was renamed or its Service lost nodePort."
+            )
+        probes.append(
+            (service, f"http://localhost:{node_port + _E2E_NODEPORT_TO_HOST}")
+        )
+    return probes
+
+
 def _required_e2e_models_ready(backend: str | None = None) -> tuple[bool, str]:
     from cogniverse_cli.images import detect_torch_backend
 
@@ -2130,6 +2195,20 @@ def _required_e2e_models_ready(backend: str | None = None) -> tuple[bool, str]:
     for url, model in _e2e_required_model_probes(resolved_backend):
         if not serves_exact_model(url, model, timeout=5.0):
             return False, f"{model} is not served exactly at {url}/v1/models"
+    # The remaining sidecars do not speak /v1/models, but the session fixture's
+    # own bootstrap calls them: leaving them ungated turns "a model never came
+    # up" into an ingestion timeout reported against every selected test.
+    for service, base_url in e2e_required_health_probes(resolved_backend):
+        try:
+            response = httpx.get(f"{base_url}/health", timeout=5.0)
+        except httpx.HTTPError as exc:
+            return False, f"{service} is not reachable at {base_url}/health: {exc}"
+        if response.status_code != 200:
+            return (
+                False,
+                f"{service} is not healthy at {base_url}/health: "
+                f"HTTP {response.status_code}",
+            )
     return True, ""
 
 
