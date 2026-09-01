@@ -364,7 +364,11 @@ class TestInteractiveSearch:
         set_tenant(page, TENANT_ID)
         click_top_tab(page, "Interactive Search")
 
+        # Same render race as test_search_and_view_results: this body renders
+        # behind an agent-status call, and filling without waiting spends
+        # Playwright's actionability timeout instead of the panel's budget.
         search_input = page.get_by_role("textbox", name="Enter your search query")
+        expect(search_input).to_have_count(1, timeout=SEARCH_TIMEOUT)
         search_input.fill("sports throwing discus")
         search_input.press("Enter")
         page.wait_for_timeout(5_000)
@@ -954,11 +958,19 @@ class TestRerankingAndProfileOptimization:
             "Profile Selection tab must show 'Profile Selection' in header"
         )
 
-        # Train Profile Selector and Load Existing Model buttons
-        train_btn = active_tab_panel(page).locator('button:has-text("Train"):visible')
-        load_btn = page.locator('button:has-text("Load")')
-        assert train_btn.count() == 1 or load_btn.count() == 1, (
-            "Profile Selection must have Train or Load Model button"
+        # The Train button renders unconditionally (optimization.py:1418); the
+        # Load button only once a trained model is on disk (:1421), so it
+        # cannot stand in for the Train button in an unconditional contract.
+        # `has-text` is case-insensitive substring, so the previous
+        # page-wide `has-text("Load")` counted Upload and Download buttons
+        # belonging to other tabs -- 6 of them here, none a Load Model button.
+        train_btn = active_tab_panel(page).locator(
+            'button:has-text("Train Profile Selector Model"):visible'
+        )
+        expect(train_btn).to_have_count(1, timeout=SEARCH_TIMEOUT)
+        assert train_btn.count() == 1, (
+            "Profile Selection must render exactly one Train Profile Selector "
+            f"Model button; got {train_btn.count()}"
         )
 
 
@@ -976,7 +988,10 @@ class TestProfileRoutingMetrics:
         active_panel = page.locator(
             '[role="tabpanel"]:not([hidden]):has-text("Profile Routing Metrics")'
         )
-        active_panel.first.wait_for(state="visible", timeout=15_000)
+        # This body reads Phoenix spans while it renders, so under sweep load
+        # it is a full rerun rather than a plain interaction; budget it like
+        # one, as _wait_for_rerun_complete already does.
+        expect(active_panel.first).to_be_visible(timeout=SEARCH_TIMEOUT)
 
         # Lookback (hours) input is the only always-rendered widget — the
         # rest depends on whether Phoenix has profile_selection spans yet.

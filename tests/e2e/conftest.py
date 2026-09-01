@@ -3011,10 +3011,19 @@ def _click_tab_by_label(
     # can be empty for far longer than the retry loop below allows. Wait for it
     # to exist before searching it; a genuine absence still falls through to the
     # loop and is reported by the empty-strip branch at the end.
+    #
+    # Wait for the strip the caller actually asked for. A sub-tab strip renders
+    # only once its parent panel opens, so waiting on any tab is satisfied
+    # immediately by the top strip and the loop then searches a sub strip that
+    # does not exist yet, spending every attempt on an empty candidate list.
+    # Containment is the same ARIA fact the scoping below reads.
+    strip_selector = (
+        '[role="tabpanel"] button[role="tab"]'
+        if scope == "sub"
+        else 'button[role="tab"]'
+    )
     try:
-        page.locator('button[role="tab"]').first.wait_for(
-            state="attached", timeout=60_000
-        )
+        page.locator(strip_selector).first.wait_for(state="attached", timeout=60_000)
     except Exception:
         pass
 
