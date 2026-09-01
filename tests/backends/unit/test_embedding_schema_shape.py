@@ -117,3 +117,61 @@ def test_visual_schemas_are_320_dim():
         raw = open(path).read()
         assert "v[320]" in raw and "v[40]" in raw, f"{name} not widened"
         assert "v[128]" not in raw and "v[16]" not in raw, f"{name} still has 128/16"
+
+
+def _shipped_profiles():
+    import json
+
+    return json.load(open("configs/config.json"))["backend"]["profiles"]
+
+
+def _schema_embedding_width(schema_name: str) -> int | None:
+    """The declared width of a shipped schema's embedding tensor, or None."""
+    import json
+    import pathlib
+    import re
+
+    path = pathlib.Path(f"configs/schemas/{schema_name}_schema.json")
+    if not path.exists():
+        return None
+    for field in json.loads(path.read_text())["document"]["fields"]:
+        if field["name"] == "embedding":
+            match = re.search(r"v\[(\d+)\]", field["type"])
+            return int(match.group(1)) if match else None
+    return None
+
+
+def test_every_profile_agrees_with_the_service_that_embeds_for_it():
+    """A profile's declared width must match the sidecar that serves it.
+
+    A sidecar producing a different width than the schema declares does not
+    fail at ingest -- Vespa rejects the document, and the failure surfaces as a
+    tensor parse error naming neither the profile nor the service. Comparing
+    the shipped profile against the spec catches it here instead.
+    """
+    from cogniverse_foundation.inference_specs import INFERENCE_SERVICE_SPECS
+
+    checked = []
+    for name, profile in sorted(_shipped_profiles().items()):
+        service = (profile.get("inference_services") or {}).get("embedding")
+        if not service:
+            continue
+        assert service in INFERENCE_SERVICE_SPECS, (
+            f"{name} embeds via '{service}', which no spec declares"
+        )
+        spec = INFERENCE_SERVICE_SPECS[service]
+        declared = (profile.get("schema_config") or {}).get("embedding_dim")
+        assert spec.output_dimension == declared, (
+            f"{name}: schema_config.embedding_dim={declared} but service "
+            f"'{service}' emits {spec.output_dimension}"
+        )
+        width = _schema_embedding_width(profile["schema_name"])
+        if width is not None:
+            assert width == declared, (
+                f"{name}: schema file declares v[{width}] but "
+                f"schema_config.embedding_dim={declared}"
+            )
+        checked.append(name)
+
+    # A vacuous pass is the failure mode this guard exists to avoid.
+    assert len(checked) >= len(_shipped_profiles()) // 2, checked
