@@ -16,6 +16,7 @@ import hashlib
 import logging
 import subprocess
 import threading
+import time
 import weakref
 from abc import ABC, abstractmethod
 from collections import OrderedDict
@@ -157,6 +158,48 @@ class ModelLoader(ABC):
             return torch.bfloat16
         else:
             return torch.float32
+
+
+def _extract_segment_b64(video_path: Path, start_time: float, end_time: float) -> str:
+    """Cut ``[start_time, end_time)`` from a video and return it base64-encoded.
+
+    Re-encodes rather than stream-copying: a copy cuts on the nearest keyframe,
+    which shifts the segment boundary and silently embeds the wrong span.
+    """
+    import base64
+    import os
+    import tempfile
+
+    with tempfile.NamedTemporaryFile(suffix=".mp4", delete=False) as tmp_file:
+        tmp_path = tmp_file.name
+
+    try:
+        subprocess.run(
+            [
+                "ffmpeg",
+                "-i",
+                str(video_path),
+                "-ss",
+                str(start_time),
+                "-t",
+                str(end_time - start_time),
+                "-c:v",
+                "libx264",
+                "-c:a",
+                "aac",
+                "-y",
+                tmp_path,
+            ],
+            capture_output=True,
+            check=True,
+        )
+        with open(tmp_path, "rb") as handle:
+            return base64.b64encode(handle.read()).decode("utf-8")
+    finally:
+        try:
+            os.unlink(tmp_path)
+        except OSError:
+            pass
 
 
 class RemoteInferenceClient:
@@ -445,6 +488,39 @@ class RemoteInferenceClient:
             ),
         )
     )
+    def _embed_vector(self, route: str, payload: Dict[str, Any]) -> np.ndarray:
+        """POST to a video_embed route and return its vector.
+
+        A missing or empty ``vec`` is raised, never returned as an empty
+        array: downstream it would be indexed as a zero-length embedding and
+        read as a document with no content rather than as a failed call.
+        """
+        response = self.session.post(
+            f"{self.endpoint_url}{route}",
+            json=payload,
+            timeout=600,
+        )
+        response.raise_for_status()
+        vector = response.json().get("vec")
+        if not vector:
+            raise ValueError(
+                f"video_embed {route} returned no vector (endpoint={self.endpoint_url})"
+            )
+        return np.asarray(vector, dtype=np.float32)
+
+    def embed_video_segment(
+        self, video_path: Path, start_time: float, end_time: float
+    ) -> np.ndarray:
+        """Embed a video segment into the joint video-text space."""
+        return self._embed_vector(
+            "/embed/video",
+            {"video_b64": _extract_segment_b64(video_path, start_time, end_time)},
+        )
+
+    def embed_text(self, text: str) -> np.ndarray:
+        """Embed query text into the same space the video vectors live in."""
+        return self._embed_vector("/embed/text", {"text": text})
+
     def process_video_segment(
         self, video_path: Path, start_time: float, end_time: float, **kwargs
     ) -> Dict[str, Any]:
@@ -461,42 +537,7 @@ class RemoteInferenceClient:
             Dict with inference results
         """
         try:
-            import base64
-            import subprocess
-            import tempfile
-
-            # Extract video segment to temporary file
-            with tempfile.NamedTemporaryFile(suffix=".mp4", delete=False) as tmp_file:
-                tmp_path = tmp_file.name
-
-                # Use ffmpeg to extract segment
-                duration = end_time - start_time
-                cmd = [
-                    "ffmpeg",
-                    "-i",
-                    str(video_path),
-                    "-ss",
-                    str(start_time),
-                    "-t",
-                    str(duration),
-                    "-c:v",
-                    "libx264",
-                    "-c:a",
-                    "aac",
-                    "-y",
-                    tmp_path,
-                ]
-
-                subprocess.run(cmd, capture_output=True, check=True)
-
-                # Read video file and encode to base64
-                with open(tmp_path, "rb") as f:
-                    video_base64 = base64.b64encode(f.read()).decode("utf-8")
-
-                # Clean up temp file
-                import os
-
-                os.unlink(tmp_path)
+            video_base64 = _extract_segment_b64(video_path, start_time, end_time)
 
             # Prepare request payload
             payload = {
@@ -654,6 +695,71 @@ class RemoteVideoPrismLoader(ModelLoader):
 
         wrapper = VideoPrismRemoteWrapper(self.client, self.model_name)
         return wrapper, None  # No separate processor for VideoPrism
+
+
+class RemoteXClipLoader(ModelLoader):
+    """Remote video-embedding loader against the ``video_embed`` sidecar.
+
+    X-CLIP encodes a clip and a text query into ONE space, so the same
+    service answers ingestion (``POST /embed/video``) and query
+    (``POST /embed/text``). The returned wrapper keeps the VideoPrism
+    ``process_video_segment`` shape so the ingestion paths are shared, and
+    adds ``embed_text`` for the query encoder.
+    """
+
+    def __init__(
+        self,
+        model_name: str,
+        config: Dict[str, Any],
+        logger: Optional[logging.Logger] = None,
+        *,
+        _resolved_headers: Optional[Mapping[str, str]] = None,
+    ):
+        super().__init__(model_name, config, logger)
+
+        self.remote_url = config.get("remote_inference_url")
+        self.api_key = config.get("remote_inference_api_key")
+
+        if not self.remote_url:
+            raise ValueError("remote_inference_url required for remote X-CLIP loader")
+
+        resolved_headers = _resolved_headers or _resolved_inference_headers(
+            self.remote_url, self.api_key
+        )
+        self.client = RemoteInferenceClient(
+            self.remote_url,
+            logger=self.logger,
+            _resolved_headers=resolved_headers,
+        )
+
+    def load_model(self) -> Tuple[Any, Any]:
+        """Return a remote client for X-CLIP inference."""
+        self.logger.info(f"Initialized remote X-CLIP inference at {self.remote_url}")
+
+        class XClipRemoteWrapper:
+            def __init__(self, client, model_name: str):
+                self.client = client
+                self.model_name = model_name
+
+            def process_video_segment(
+                self, video_path: Path, start_time: float, end_time: float
+            ) -> Dict[str, Any]:
+                started = time.monotonic()
+                vector = self.client.embed_video_segment(
+                    video_path, start_time, end_time
+                )
+                return {
+                    "embeddings_np": vector,
+                    "processing_time": time.monotonic() - started,
+                }
+
+            def embed_text(self, text: str) -> np.ndarray:
+                return self.client.embed_text(text)
+
+            def _close(self) -> None:
+                self.client._close()
+
+        return XClipRemoteWrapper(self.client, self.model_name), None
 
 
 class RemoteColBERTLoader(ModelLoader):
@@ -1241,6 +1347,7 @@ class ModelLoaderFactory:
         "colpali": RemoteColPaliLoader,
         "colqwen": RemoteColPaliLoader,
         "videoprism": RemoteVideoPrismLoader,
+        "xclip": RemoteXClipLoader,
         "colbert": RemoteColBERTLoader,
         "whisper": RemoteWhisperLoader,
     }

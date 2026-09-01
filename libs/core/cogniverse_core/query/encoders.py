@@ -295,6 +295,54 @@ class VideoPrismQueryEncoder(QueryEncoder):
         return self.embedding_dim
 
 
+class XClipQueryEncoder(QueryEncoder):
+    """Encode a query into the joint video-text space X-CLIP was trained on.
+
+    Ingestion and query hit the SAME ``video_embed`` sidecar, so a text
+    vector is directly comparable to the stored clip vectors. Remote only:
+    the sidecar owns the checkpoint, and a local fallback would silently
+    answer from a different space.
+    """
+
+    def __init__(
+        self,
+        model_name: str,
+        inference_service_url: Optional[str] = None,
+        embedding_dim: int = 768,
+    ):
+        if not inference_service_url:
+            raise ValueError(
+                f"XClipQueryEncoder requires an inference service URL for "
+                f"{model_name!r}. Set inference_services.embedding on the "
+                f"profile and enable that service in the Helm values."
+            )
+
+        from cogniverse_core.common.models.model_loaders import get_or_load_model
+
+        self.model_name = model_name
+        self.embedding_dim = embedding_dim
+        config = {
+            "model_name": model_name,
+            "embedding_type": "single_vector",
+            "model_loader": "xclip",
+            "remote_inference_url": inference_service_url,
+        }
+        self.xclip_loader, _ = get_or_load_model(model_name, config, logger)
+
+    def encode(self, query: str) -> np.ndarray:
+        embeddings_np = np.asarray(self.xclip_loader.embed_text(query)).flatten()
+        if embeddings_np.shape[0] != self.embedding_dim:
+            raise ValueError(
+                f"video_embed returned a {embeddings_np.shape[0]}-dim text vector "
+                f"but the profile indexes {self.embedding_dim} dims; the query "
+                f"would score against a different space."
+            )
+        return embeddings_np
+
+    def get_embedding_dim(self) -> int:
+        return self.embedding_dim
+
+
 def _build_colbert_encoder(
     model_name: str,
     profile: str,
@@ -471,6 +519,14 @@ class QueryEncoderFactory:
         if model_loader == "videoprism":
             return VideoPrismQueryEncoder(
                 model_name, inference_service_url=inference_url
+            )
+        if model_loader == "xclip":
+            return XClipQueryEncoder(
+                model_name,
+                inference_service_url=inference_url,
+                embedding_dim=(profile_config.get("schema_config") or {}).get(
+                    "embedding_dim", 768
+                ),
             )
 
         name = model_name.lower()
