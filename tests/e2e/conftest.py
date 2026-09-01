@@ -2224,6 +2224,60 @@ def _wait_for_e2e_reuse_convergence(
         _time.sleep(poll_interval_s)
 
 
+def _reconcile_orphan_schemas() -> None:
+    """Drop schemas left in Vespa by runs that never reached their teardown.
+
+    Every tenant fixture deletes what it created, but a killed run never gets
+    to its finally, and one leftover schema is enough to refuse every later
+    deploy -- including this session's own bootstrap. A per-tenant delete
+    cannot clear it, because that leaves the other orphans in its survivor set
+    and is refused for the same reason; the reconciler drops them together, so
+    its survivor set is reconstructable.
+
+    Safe because it only drops schemas with no registry record, and it runs
+    before this session creates anything. It must stay at the head of the
+    pre-flight: a schema registered by a concurrent session would look like an
+    orphan while its registry write is still in flight, which is why two
+    suites may not share this cluster.
+    """
+    with httpx.Client(base_url=RUNTIME, timeout=900.0) as client:
+        preview = client.post("/admin/reconcile-orphans", params={"dry_run": True})
+        if preview.status_code != 200:
+            pytest.fail(
+                "Session pre-flight: could not list orphan schemas "
+                f"(HTTP {preview.status_code}): {preview.text[:300]}"
+            )
+        orphans = sorted(preview.json().get("orphan_schemas") or [])
+        if not orphans:
+            return
+
+        print(
+            f"Session pre-flight: dropping {len(orphans)} orphan schema(s) left "
+            f"by earlier runs: {orphans}"
+        )
+        dropped = client.post("/admin/reconcile-orphans", params={"dry_run": False})
+        if dropped.status_code != 200:
+            pytest.fail(
+                "Session pre-flight: failed to drop orphan schemas "
+                f"(HTTP {dropped.status_code}): {dropped.text[:500]}"
+            )
+
+        # Read back: the reconciler reports what it dropped, but the state that
+        # matters is whether any orphan survives to refuse the bootstrap.
+        after = client.post("/admin/reconcile-orphans", params={"dry_run": True})
+        if after.status_code != 200:
+            pytest.fail(
+                "Session pre-flight: could not re-list orphan schemas after "
+                f"dropping them (HTTP {after.status_code}): {after.text[:300]}"
+            )
+        remaining = sorted(after.json().get("orphan_schemas") or [])
+        if remaining:
+            pytest.fail(
+                "Session pre-flight: orphan schemas survived reconciliation and "
+                f"will refuse every deploy this session makes: {remaining}"
+            )
+
+
 @pytest.fixture(scope="session", autouse=True)
 def e2e_stack(request, resolved_inference_endpoints):
     """Provide a healthy, bootstrapped e2e stack without replacing shared state.
@@ -2409,6 +2463,7 @@ def e2e_stack(request, resolved_inference_endpoints):
                 "Session pre-flight: failed to suspend cronworkflow(s): "
                 f"{', '.join(_cron_result_failures(suspend_result))}"
             )
+        _reconcile_orphan_schemas()
         _bootstrap_tenant_and_schemas()
         _ingest_sample_video()
         _ingest_sample_frame()
