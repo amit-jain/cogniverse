@@ -1109,8 +1109,9 @@ class VespaBackend(Backend):
         deploy_url = f"{base_url}:{self._config_port}/application/v2/tenant/default/prepareandactivate"
 
         try:
-            # Generate the ZIP package
-            app_zip = app_package.to_zip()
+            # Materialise the zip as bytes: to_zip() returns a BytesIO that
+            # requests reads to EOF, so a retry would post an empty body.
+            app_zip = app_package.to_zip().getvalue()
 
             # Vespa serializes app-package activation: if another deploy
             # activated its session between our prepare and our activate,

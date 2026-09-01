@@ -479,7 +479,9 @@ class VespaSchemaManager:
         deploy_url = f"{base_url}:{self.backend_port}/application/v2/tenant/default/prepareandactivate"
 
         try:
-            app_zip = app_package.to_zip()
+            # Materialise the zip as bytes: to_zip() returns a BytesIO that
+            # requests reads to EOF, so a retry would post an empty body.
+            app_zip = app_package.to_zip().getvalue()
             import time as _time
 
             # Retry on any 409 from prepareandactivate. Vespa's session
