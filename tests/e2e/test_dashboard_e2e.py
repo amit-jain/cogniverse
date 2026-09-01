@@ -1923,6 +1923,30 @@ class TestStreamingEndpointFromDashboard:
         assert isinstance(result["results"], list)
 
 
+@pytest.fixture
+def optimization_tenant():
+    """A tenant owned by this test and removed afterwards.
+
+    The optimization run deploys a schema for whatever tenant it is given, so
+    leaving the tenant behind leaves that schema live in Vespa. A later run is
+    then refused with "schema(s) live in Vespa have no registry entry", which
+    is a guard doing its job: the run that created the schema is the one that
+    has to take it away.
+    """
+    tenant_id = unique_id("opt")
+    with httpx.Client(base_url=RUNTIME, timeout=30.0) as client:
+        created = client.post(
+            "/admin/tenants",
+            json={"tenant_id": tenant_id, "created_by": "e2e-test"},
+        )
+    assert created.status_code in (200, 201, 409), created.text
+    try:
+        yield tenant_id
+    finally:
+        with httpx.Client(base_url=RUNTIME, timeout=120.0) as client:
+            client.delete(f"/admin/tenants/{tenant_id}")
+
+
 class TestManualOptimizationTrigger:
     """The Optimization tab exposes a Run Optimization control that
     submits an Argo Workflow via POST /admin/tenant/{id}/optimize. This
@@ -1931,15 +1955,11 @@ class TestManualOptimizationTrigger:
     a real Argo phase. No mocks — the click hits the live runtime, which
     hits the live Argo API, which creates a real Workflow in k3d."""
 
-    def test_run_optimization_submits_workflow_and_status_reflects_argo(self, page):
+    def test_run_optimization_submits_workflow_and_status_reflects_argo(
+        self, page, optimization_tenant
+    ):
         _nav(page)
-        tenant_id = unique_id("opt")
-        with httpx.Client(base_url=RUNTIME, timeout=30.0) as client:
-            resp = client.post(
-                "/admin/tenants",
-                json={"tenant_id": tenant_id, "created_by": "e2e-test"},
-            )
-        assert resp.status_code in (200, 201, 409), resp.text
+        tenant_id = optimization_tenant
 
         set_tenant(page, tenant_id)
         click_top_tab(page, "Optimization")
