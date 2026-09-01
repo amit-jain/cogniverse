@@ -206,37 +206,59 @@ class TestInteractiveSearch:
         _wait_for_rerun_complete(page)
         page.wait_for_load_state("networkidle")
 
-        # Verify search actually executed — "Search Results" heading is the
-        # authoritative proof (not statistics metrics which are always present)
+        # The subheader renders when the button is clicked, BEFORE
+        # display_streaming_result runs (app.py:2674) -- so it proves the click
+        # landed, not that the search finished.
         results_heading = page.get_by_role("heading", name=re.compile("Search Results"))
-        no_results_alert = active_tab_panel(page).locator(
-            '[data-testid="stAlert"]:has-text("No results")'
-        )
-
-        # The subheader renders exactly once per executed search, before the
-        # dashboard knows whether the query matched anything.
         assert results_heading.count() == 1, (
             "Search Results heading must appear exactly once after executing a "
-            f"search; headings={results_heading.count()}, "
-            f"no_results={no_results_alert.count()}"
+            f"search; headings={results_heading.count()}"
         )
 
-        if no_results_alert.count() > 0:
-            # "No results found for this query" is a valid search outcome
+        panel = active_tab_panel(page)
+        no_results_alert = panel.locator(
+            '[data-testid="stAlert"]:has-text("No results")'
+        )
+        results_metric = panel.locator('[data-testid="stMetric"]:has-text("Results")')
+
+        # The search streams, so the page is still filling in when the click
+        # returns. Settle on its terminal state: either a Results metric, which
+        # renders only once results exist, or the no-match alert.
+        expect(
+            panel.locator(
+                '[data-testid="stMetric"]:has-text("Results"),'
+                '[data-testid="stAlert"]:has-text("No results")'
+            ).first
+        ).to_be_visible(timeout=INTERACTION_TIMEOUT)
+
+        if no_results_alert.count():
+            # A no-match search is a valid outcome, but it must not also claim
+            # a result count.
+            assert results_metric.count() == 0, (
+                "A no-results search must not render a Results metric; "
+                f"metrics={panel.locator("[data-testid='stMetric']").count()}"
+            )
             return
 
-        # Search result metrics: Results count, Latency, Profile
-        metrics = page.locator('[data-testid="stMetric"]')
-        assert metrics.count() >= 3, (
-            f"Search must show Results + Latency + Profile metrics, got {metrics.count()}"
+        # Exactly Results + Latency + Profile, scoped to this panel: page-wide
+        # the Analytics tab alone contributes several, so a page-wide count is
+        # true whatever this search rendered.
+        panel_metrics = panel.locator('[data-testid="stMetric"]')
+        labels = sorted(
+            (m.inner_text() or "").strip().splitlines()[0] for m in panel_metrics.all()
         )
+        assert labels == ["Latency", "Profile", "Results"], labels
 
-        # Result expanders with actual result content (scores, video IDs)
-        result_expanders = active_tab_panel(page).locator(
-            '[data-testid="stExpander"]:has-text("score")'
-        )
-        assert result_expanders.count() > 0, (
-            "Search results must render as expanders with score information"
+        # Every result renders one expander: the threshold slider defaults to
+        # 0.0 and the render gate is `score >= confidence_threshold`
+        # (app.py:2787), so the count is the Results metric, not a lower bound.
+        metric_text = (results_metric.first.inner_text() or "").strip().splitlines()
+        assert len(metric_text) == 2 and metric_text[0] == "Results", metric_text
+        expected_results = int(metric_text[1].replace(",", ""))
+
+        result_expanders = panel.locator('[data-testid="stExpander"]:has-text("score")')
+        expect(result_expanders).to_have_count(
+            expected_results, timeout=INTERACTION_TIMEOUT
         )
 
     def test_search_annotation(self, page):
