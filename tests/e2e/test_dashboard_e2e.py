@@ -587,12 +587,25 @@ class TestOptimizationOverview:
         click_sub_tab(page, "Metrics Dashboard")
         page.wait_for_load_state("networkidle")
 
-        # Metrics Dashboard must have the Refresh Metrics button
+        # This body renders the Refresh button only past a telemetry-provider
+        # probe (optimization.py:1620), and that probe's result is cached for
+        # 60s, so a single sample taken while the read is slow observes a tab
+        # that reports the provider missing. Wait past the cache rather than
+        # sampling once.
         refresh_btn = active_tab_panel(page).locator(
             'button:has-text("Refresh"):visible'
         )
+        try:
+            expect(refresh_btn).to_have_count(1, timeout=SEARCH_TIMEOUT)
+        except AssertionError as exc:  # pragma: no cover - diagnostic path
+            raise AssertionError(
+                "Metrics Dashboard never rendered its Refresh Metrics button. "
+                "The panel rendered:\n"
+                f"{(active_tab_panel(page).inner_text() or '')[:600]}"
+            ) from exc
         assert refresh_btn.count() == 1, (
-            "Metrics Dashboard must have Refresh Metrics button"
+            f"Metrics Dashboard must have exactly one Refresh Metrics button; "
+            f"got {refresh_btn.count()}"
         )
 
         body_text = active_tab_panel(page).inner_text().lower()
