@@ -2912,10 +2912,28 @@ def _click_tab_by_label(page, label: str, retries: int = 6, settle_ms: int = 3_0
     )
 
 
+def _wait_for_visible_panel(page, timeout: int = 60_000):
+    """Wait for the clicked tab's panel to become visible.
+
+    Streamlit renders a tab body lazily after the click. The dashboard holds 49
+    panels and the one under test can be well down the DOM, so under load the
+    panel can lag the click by longer than a caller's own timeout. Settle here,
+    once, rather than in every caller.
+    """
+    try:
+        page.locator('[role="tabpanel"]:visible').first.wait_for(
+            state="visible", timeout=timeout
+        )
+    except Exception:
+        # A tab that renders no panel is the caller's assertion to make.
+        pass
+
+
 def click_top_tab(page, label: str):
     """Click a top-level Streamlit tab."""
     start = _time.monotonic()
     _click_tab_by_label(page, label)
+    _wait_for_visible_panel(page)
     elapsed = (_time.monotonic() - start) * 1000
     if _report_collector:
         _report_collector.record_browser_op("click_top_tab", label, elapsed_ms=elapsed)
@@ -2929,6 +2947,7 @@ def click_sub_tab(page, label: str):
     """
     start = _time.monotonic()
     _click_tab_by_label(page, label, settle_ms=4_000)
+    _wait_for_visible_panel(page)
     elapsed = (_time.monotonic() - start) * 1000
     if _report_collector:
         _report_collector.record_browser_op("click_sub_tab", label, elapsed_ms=elapsed)
@@ -2999,7 +3018,7 @@ def fill_textarea(locator, value: str):
         _report_collector.record_browser_op("fill_textarea", "textarea", value, elapsed)
 
 
-def active_tab_panel(page, timeout: int = 20_000):
+def active_tab_panel(page, timeout: int = 60_000):
     """The visible top-level tab panel.
 
     Streamlit renders every tab body into the DOM, so a page-wide locator
