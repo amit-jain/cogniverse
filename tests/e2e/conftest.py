@@ -2819,6 +2819,31 @@ def _strip_emoji(text: str) -> str:
     ).strip()
 
 
+def _activate_tab(page, tab, settle_ms: int, *, force: bool = False) -> bool:
+    """Click a tab and confirm it became the selected one.
+
+    A click that lands while Streamlit is mid-rerun is swallowed. Returning
+    anyway leaves the previous tab open, and every later locator then reads a
+    panel the test never asked for, which surfaces as a missing widget rather
+    than as a missed click.
+    """
+    if not force:
+        tab.scroll_into_view_if_needed()
+        page.wait_for_timeout(500)
+    tab.click(force=force)
+    page.wait_for_timeout(1_000)
+
+    if tab.get_attribute("aria-selected") != "true":
+        tab.dispatch_event("click")
+        page.wait_for_timeout(1_000)
+        if tab.get_attribute("aria-selected") != "true":
+            return False
+
+    page.wait_for_timeout(settle_ms)
+    page.wait_for_load_state("networkidle")
+    return True
+
+
 def _click_tab_by_label(page, label: str, retries: int = 6, settle_ms: int = 3_000):
     """Click a Streamlit tab by matching its visible text (ignoring emojis).
 
@@ -2858,43 +2883,22 @@ def _click_tab_by_label(page, label: str, retries: int = 6, settle_ms: int = 3_0
 
         # Pass 1: exact match on visible tabs
         for tab, raw, clean, visible in tab_info:
-            if clean == target and visible:
-                tab.scroll_into_view_if_needed()
-                page.wait_for_timeout(500)
-                tab.click()
-                page.wait_for_timeout(1_000)
-                # Verify tab is now selected (aria-selected="true")
-                if tab.get_attribute("aria-selected") != "true":
-                    # Click didn't register — try JS dispatch
-                    tab.dispatch_event("click")
-                    page.wait_for_timeout(1_000)
-                page.wait_for_timeout(settle_ms)
-                page.wait_for_load_state("networkidle")
+            if clean == target and visible and _activate_tab(page, tab, settle_ms):
                 return
 
         # Pass 2: substring match on visible tabs
         for tab, raw, clean, visible in tab_info:
-            if target in clean and visible:
-                tab.scroll_into_view_if_needed()
-                tab.click()
-                page.wait_for_timeout(settle_ms)
-                page.wait_for_load_state("networkidle")
+            if target in clean and visible and _activate_tab(page, tab, settle_ms):
                 return
 
         # Pass 3: exact match on hidden tabs (force-click)
         for tab, raw, clean, visible in tab_info:
-            if clean == target:
-                tab.click(force=True)
-                page.wait_for_timeout(settle_ms)
-                page.wait_for_load_state("networkidle")
+            if clean == target and _activate_tab(page, tab, settle_ms, force=True):
                 return
 
         # Pass 4: substring match on hidden tabs (force-click)
         for tab, raw, clean, visible in tab_info:
-            if target in clean:
-                tab.click(force=True)
-                page.wait_for_timeout(settle_ms)
-                page.wait_for_load_state("networkidle")
+            if target in clean and _activate_tab(page, tab, settle_ms, force=True):
                 return
 
         if attempt < retries - 1:
@@ -2908,7 +2912,9 @@ def _click_tab_by_label(page, label: str, retries: int = 6, settle_ms: int = 3_0
             "gate never completed, not that the tab is missing."
         )
     raise ValueError(
-        f"Tab '{label}' not found after {retries} attempts. Available tabs: {tab_texts}"
+        f"Tab '{label}' was never activated after {retries} attempts. A tab "
+        "that is present but never reports aria-selected has had every click "
+        f"swallowed by an in-flight rerun. Available tabs: {tab_texts}"
     )
 
 
