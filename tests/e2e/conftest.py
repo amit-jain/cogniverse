@@ -3012,15 +3012,18 @@ def _click_tab_by_label(
     # to exist before searching it; a genuine absence still falls through to the
     # loop and is reported by the empty-strip branch at the end.
     #
-    # Wait for the strip the caller actually asked for. A sub-tab strip renders
-    # only once its parent panel opens, so waiting on any tab is satisfied
-    # immediately by the top strip and the loop then searches a sub strip that
-    # does not exist yet, spending every attempt on an empty candidate list.
-    # Containment is the same ARIA fact the scoping below reads.
+    # Wait for the tab the caller actually asked for, in the containment the
+    # scope selects. Waiting on any tab is satisfied immediately by the top
+    # strip; waiting on any nested tab is satisfied by whichever panel's sub
+    # strip is already open, which is generally not the one being opened here.
+    # Either way the loop then searches a strip the target is absent from and
+    # spends every attempt on an empty candidate list. `has-text` matches a
+    # case-insensitive substring, the same way the scoping below does.
+    escaped = label.replace('"', '\\"')
     strip_selector = (
-        '[role="tabpanel"] button[role="tab"]'
+        f'[role="tabpanel"] button[role="tab"]:has-text("{escaped}")'
         if scope == "sub"
-        else 'button[role="tab"]'
+        else f'button[role="tab"]:has-text("{escaped}")'
     )
     try:
         page.locator(strip_selector).first.wait_for(state="attached", timeout=60_000)
