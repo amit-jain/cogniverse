@@ -2985,11 +2985,20 @@ def click_button(page, text: str):
 
     Uses JS click to bypass visibility checks. Excludes buttons with
     role="tab" to avoid accidentally clicking tabs instead of form buttons.
+
+    Prefers a VISIBLE match. Streamlit renders every tab body, not just the
+    selected one, and ``has-text`` is a case-insensitive substring, so a
+    label routinely matches buttons in other panels: "Load" matches six
+    buttons, of which the first is a hidden "Upload". Combined with the JS
+    click, ``.first`` silently actuated the wrong widget and the calling
+    test saw nothing happen.
     """
     start = _time.monotonic()
     btn = page.locator(f'button:not([role="tab"]):has-text("{text}")')
+    visible = page.locator(f'button:not([role="tab"]):has-text("{text}"):visible')
+    target = visible.first if visible.count() > 0 else btn.first
     if btn.count() > 0:
-        btn.first.evaluate("el => el.click()")
+        target.evaluate("el => el.click()")
         page.wait_for_timeout(2_000)
         page.wait_for_load_state("networkidle")
         elapsed = (_time.monotonic() - start) * 1000
