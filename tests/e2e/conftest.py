@@ -2829,6 +2829,18 @@ def _click_tab_by_label(page, label: str, retries: int = 6, settle_ms: int = 3_0
     Prefers visible tabs over hidden ones to handle duplicate sub-tab
     labels across different parent tabs.
     """
+    # The tab strip renders only after the tenant gate resolves, which calls
+    # the runtime. While the cluster is warming that call is slow, so the strip
+    # can be empty for far longer than the retry loop below allows. Wait for it
+    # to exist before searching it; a genuine absence still falls through to the
+    # loop and is reported by the empty-strip branch at the end.
+    try:
+        page.locator('button[role="tab"]').first.wait_for(
+            state="attached", timeout=60_000
+        )
+    except Exception:
+        pass
+
     for attempt in range(retries):
         tabs = page.locator('button[role="tab"]')
         count = tabs.count()
@@ -2888,6 +2900,13 @@ def _click_tab_by_label(page, label: str, retries: int = 6, settle_ms: int = 3_0
         if attempt < retries - 1:
             page.wait_for_timeout(3_000)
     tab_texts = [tabs.nth(i).text_content() or "" for i in range(tabs.count())]
+    if not tab_texts:
+        raise ValueError(
+            f"No tabs rendered at all, so tab '{label}' could not be found. "
+            "The dashboard renders its tab strip only once the tenant gate "
+            "is satisfied, which calls the runtime; an empty strip means that "
+            "gate never completed, not that the tab is missing."
+        )
     raise ValueError(
         f"Tab '{label}' not found after {retries} attempts. Available tabs: {tab_texts}"
     )
@@ -2992,6 +3011,14 @@ def active_tab_panel(page, timeout: int = 20_000):
     """
     panel = page.locator('[role="tabpanel"]:visible').first
     panel.wait_for(state="visible", timeout=timeout)
+    # The element turns visible before Streamlit streams its children in, so a
+    # query issued right after networkidle can read an empty panel. Settle on
+    # the panel carrying content rather than merely existing.
+    deadline = _time.monotonic() + timeout / 1000.0
+    while _time.monotonic() < deadline:
+        if (panel.inner_text() or "").strip():
+            break
+        page.wait_for_timeout(250)
     return panel
 
 
@@ -3003,11 +3030,19 @@ def panel_widget(page, testid: str, label: str, timeout: int = 20_000):
     renders, so asserting it is non-empty proves nothing about the tab under
     test. Naming the widget makes the assertion able to fail.
     """
-    return (
+    located = (
         active_tab_panel(page, timeout=timeout)
         .locator(f'[data-testid="{testid}"]')
         .filter(has_text=label)
     )
+    # Wait for the widget itself: a panel can carry content while this
+    # particular widget is still streaming. A genuine absence is the caller's
+    # assertion to report, so a timeout here is not an error.
+    try:
+        located.first.wait_for(state="attached", timeout=timeout)
+    except Exception:
+        pass
+    return located
 
 
 def click_button(page, text: str):

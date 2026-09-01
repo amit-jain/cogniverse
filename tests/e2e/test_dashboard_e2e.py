@@ -188,7 +188,7 @@ class TestInteractiveSearch:
         # Verify search actually executed — "Search Results" heading is the
         # authoritative proof (not statistics metrics which are always present)
         results_heading = page.get_by_role("heading", name=re.compile("Search Results"))
-        no_results_alert = page.locator(
+        no_results_alert = active_tab_panel(page).locator(
             '[data-testid="stAlert"]:has-text("No results")'
         )
 
@@ -263,7 +263,9 @@ class TestInteractiveSearch:
             )
 
             # Check for actual result expanders (only if Vespa has data)
-            result_expanders = page.locator('[data-testid="stExpander"]')
+            result_expanders = active_tab_panel(page).locator(
+                '[data-testid="stExpander"]'
+            )
             if result_expanders.count() > 0:
                 save_btn = active_tab_panel(page).locator(
                     'button:has-text("Save Annotation")'
@@ -308,7 +310,9 @@ class TestInteractiveSearch:
         page.wait_for_load_state("networkidle")
 
         results_heading = page.get_by_role("heading", name=re.compile("Search Results"))
-        no_results_info = page.locator('[data-testid="stAlert"]:has-text("No results")')
+        no_results_info = active_tab_panel(page).locator(
+            '[data-testid="stAlert"]:has-text("No results")'
+        )
 
         if no_results_info.count() > 0:
             return
@@ -323,7 +327,7 @@ class TestInteractiveSearch:
             f"Search must show Results + Latency + Profile metrics, got {metrics.count()}"
         )
 
-        result_expanders = page.locator('[data-testid="stExpander"]')
+        result_expanders = active_tab_panel(page).locator('[data-testid="stExpander"]')
         if result_expanders.count() > 0:
             save_btn = active_tab_panel(page).locator(
                 'button:has-text("Save Annotation")'
@@ -349,7 +353,9 @@ class TestMultiModalChat:
         click_top_tab(page, "Chat")
 
         # Find chat input (text_area or text_input) — use JS fill for hidden elements
-        chat_input = page.locator('[data-testid="stTextArea"] textarea')
+        chat_input = active_tab_panel(page).locator(
+            '[data-testid="stTextArea"] textarea'
+        )
         if chat_input.count() > 0:
             fill_textarea(chat_input.first, "What videos do you have about animals?")
         else:
@@ -387,7 +393,9 @@ class TestMultiModalChat:
         click_top_tab(page, "Chat")
 
         # Turn 1 — use JS fill for hidden elements
-        chat_input = page.locator('[data-testid="stTextArea"] textarea')
+        chat_input = active_tab_panel(page).locator(
+            '[data-testid="stTextArea"] textarea'
+        )
         if chat_input.count() > 0:
             fill_textarea(chat_input.first, "search for sports clips")
         else:
@@ -398,7 +406,9 @@ class TestMultiModalChat:
         page.wait_for_load_state("networkidle")
 
         # Turn 2
-        chat_input = page.locator('[data-testid="stTextArea"] textarea')
+        chat_input = active_tab_panel(page).locator(
+            '[data-testid="stTextArea"] textarea'
+        )
         if chat_input.count() > 0:
             fill_textarea(chat_input.first, "Tell me more about the first one")
         else:
@@ -534,7 +544,7 @@ class TestAnnotationHarvesting:
         no_results = page.locator(
             '[data-testid="stAlert"]:has-text("No results returned")'
         )
-        error_alert = page.locator(
+        error_alert = active_tab_panel(page).locator(
             '[data-testid="stAlert"]:has-text("Failed to fetch")'
         )
 
@@ -593,7 +603,9 @@ class TestGoldenDataset:
             '[data-testid="stAlert"]:has-text("Built golden dataset")'
         )
         no_data_alert = page.locator('[data-testid="stAlert"]:has-text("No annotated")')
-        error_alert = page.locator('[data-testid="stAlert"]:has-text("Failed")')
+        error_alert = active_tab_panel(page).locator(
+            '[data-testid="stAlert"]:has-text("Failed")'
+        )
 
         # System errors are test failures — infrastructure must be working
         if error_alert.count() > 0:
@@ -650,10 +662,12 @@ class TestSyntheticDataAndApproval:
         page.wait_for_load_state("networkidle")
 
         # Connection and timeout errors = infrastructure broken
-        connect_error = page.locator(
+        connect_error = active_tab_panel(page).locator(
             '[data-testid="stAlert"]:has-text("Cannot connect")'
         )
-        timeout_error = page.locator('[data-testid="stAlert"]:has-text("timed out")')
+        timeout_error = active_tab_panel(page).locator(
+            '[data-testid="stAlert"]:has-text("timed out")'
+        )
         if connect_error.count() > 0:
             pytest.fail("Synthetic generation failed: cannot connect to runtime API")
         if timeout_error.count() > 0:
@@ -809,7 +823,7 @@ class TestRerankingAndProfileOptimization:
         assert "reranking" in body_text, "Reranking tab must show 'Reranking' in header"
 
         # "Current Annotations" metric is always shown
-        metrics = page.locator('[data-testid="stMetric"]')
+        metrics = active_tab_panel(page).locator('[data-testid="stMetric"]')
         if metrics.count() > 0:
             metric_text = " ".join(
                 metrics.nth(i).inner_text().lower() for i in range(metrics.count())
@@ -869,7 +883,7 @@ class TestProfileRoutingMetrics:
 
         # Acceptable terminal states: empty-spans info, missing-attribute
         # warning, or rendered metrics. Any error alert is a real failure.
-        error_alerts = page.locator(
+        error_alerts = active_tab_panel(page).locator(
             '[data-testid="stAlert"]:has-text("Phoenix span query failed"), '
             '[data-testid="stAlert"]:has-text("Failed to initialise telemetry")'
         )
@@ -1080,7 +1094,9 @@ class TestConfigManagement:
         export_success = active_tab_panel(page).locator(
             '[data-testid="stAlert"]:has-text("Exported")'
         )
-        export_error = page.locator('[data-testid="stAlert"]:has-text("Export failed")')
+        export_error = active_tab_panel(page).locator(
+            '[data-testid="stAlert"]:has-text("Export failed")'
+        )
         download_btn = page.locator('[data-testid="stDownloadButton"]')
 
         if export_error.count() > 0:
