@@ -1,0 +1,13 @@
+--extra-index-url https://download.pytorch.org/whl/cpu
+fastapi==0.120.1
+uvicorn[standard]==0.44.0
+pydantic==2.13.0
+numpy==1.26.4
+httpx==0.27.2
+# Frame sampling reads the segment container directly; the headless build
+# drops the GUI libraries the server never uses.
+opencv-python-headless==4.10.0.84
+# X-CLIP (microsoft/xclip-large-patch14) via transformers; CPU torch wheels
+# from the pytorch index keep the image GPU-free.
+transformers==4.56.2
+torch==2.8.0

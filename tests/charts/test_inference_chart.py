@@ -146,6 +146,33 @@ def test_default_gliner_deployment_uses_the_pinned_production_model():
     assert _inference_env(deps, "gliner")["MODEL_NAME"] == ("urchade/gliner_large-v2.1")
 
 
+def test_video_embed_sidecar_env_matches_the_shipped_spec():
+    """The chart must serve the checkpoint the spec declares.
+
+    The sidecar asserts its embedding width on every response, so a chart
+    that ships a different model or width fails each request instead of
+    writing a mis-shaped vector. Compared against the production constant,
+    not restated literals, so a spec change cannot pass unnoticed.
+    """
+    spec = INFERENCE_SERVICE_SPECS["video_embed"]
+    deps = _inference_deployments(_render("inference.video_embed.enabled=true"))
+    env = _inference_env(deps, "video_embed")
+
+    assert env["VIDEO_EMBED_MODEL"] == spec.model_id
+    assert env["VIDEO_EMBED_MODEL_REVISION"] == spec.model_revision
+    assert env["VIDEO_EMBED_DIM"] == str(spec.output_dimension)
+    assert env["VIDEO_EMBED_NUM_FRAMES"] == "8"
+
+    container = deps["video_embed"]["spec"]["template"]["spec"]["containers"][0]
+    assert container["image"] == "cogniverse/video-embed:0.1.0"
+    # Model weights live in RAM for the pod's life; a request below the limit
+    # makes the pod Burstable and evictable out of the shared pool.
+    assert (
+        container["resources"]["requests"]["memory"]
+        == (container["resources"]["limits"]["memory"])
+    )
+
+
 def test_gliner_and_face_nodeports_are_distinct_when_both_are_exposed():
     services = _inference_services(
         _render(
@@ -225,6 +252,22 @@ def test_gliner_and_face_nodeports_are_distinct_when_both_are_exposed():
                 "timeoutSeconds": 5,
             },
         ),
+        (
+            "video_embed",
+            8000,
+            {
+                "failureThreshold": 5,
+                "initialDelaySeconds": 0,
+                "periodSeconds": 10,
+                "timeoutSeconds": 5,
+            },
+            {
+                "failureThreshold": 5,
+                "initialDelaySeconds": 30,
+                "periodSeconds": 30,
+                "timeoutSeconds": 5,
+            },
+        ),
     ],
 )
 def test_model_sidecars_separate_model_readiness_from_process_liveness(
@@ -237,6 +280,7 @@ def test_model_sidecars_separate_model_readiness_from_process_liveness(
         _render(
             "inference.clap_embed.enabled=true",
             "inference.face_embed.enabled=true",
+            "inference.video_embed.enabled=true",
         )
     )
     container = deps[service]["spec"]["template"]["spec"]["containers"][0]
