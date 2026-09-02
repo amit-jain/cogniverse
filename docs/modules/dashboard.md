@@ -65,6 +65,7 @@ libs/dashboard/cogniverse_dashboard/
   chat.py                       # Chat reply formatting for the multi-modal chat tab
   search_summary.py             # Streaming summarization control for search results
   tenant_gate.py                # Tenant gate decision for rendering the dashboard
+  telemetry_gate.py             # Telemetry-probe classification for the metrics tabs
   tabs/
     __init__.py
     approval_queue.py

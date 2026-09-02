@@ -19,6 +19,11 @@ from uuid import uuid4
 import pytest
 from streamlit.testing.v1 import AppTest
 
+from cogniverse_dashboard.telemetry_gate import (
+    classify_telemetry_probe,
+    decide_telemetry_gate,
+)
+
 pytestmark = pytest.mark.integration
 
 
@@ -76,7 +81,18 @@ def test_profile_selection_tab_shows_search_spans(
     at.run()
 
     assert at.exception == [], [str(e) for e in at.exception]
-    assert not any("Telemetry provider is not available" in w.value for w in at.warning)
+    # Derived from the production gate rather than restated: pinning the old
+    # literal would go vacuously true the moment the wording changed, and the
+    # gate now reports the cause instead of one catch-all string.
+    gate_errors = [
+        decide_telemetry_gate(classify_telemetry_probe(exc, timeout_s=1.0)).error.split(
+            "("
+        )[0]
+        for exc in (TimeoutError(), ValueError("x"))
+    ]
+    assert all(
+        marker.strip() not in w.value for w in at.warning for marker in gate_errors
+    ), [w.value for w in at.warning]
     assert not any("Error fetching profile data" in e.value for e in at.error)
     assert any("Found 1 search spans" in s.value for s in at.success)
     assert any("Profile Usage Statistics" in m.value for m in at.subheader)
