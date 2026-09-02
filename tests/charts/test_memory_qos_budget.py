@@ -20,7 +20,7 @@ from pathlib import Path
 import pytest
 import yaml
 
-from tests.charts.test_gpu_memory_budget import RESERVED_GIB
+from tests.charts.test_gpu_memory_budget import RESERVED_GIB, SYSTEM_RAM_GIB
 
 REPO_ROOT = Path(__file__).resolve().parents[2]
 CHART_PATH = REPO_ROOT / "charts" / "cogniverse"
@@ -188,4 +188,112 @@ def test_every_container_reading_the_config_can_authenticate_to_inference():
     assert offenders == [], (
         "containers mount cogniverse-config (which names the inference "
         f"endpoints) but cannot authenticate to them: {sorted(offenders)}"
+    )
+
+
+def _render_as_deployed(*extra: str) -> list[dict]:
+    """Render the overlay stack the k3d deploy path actually applies.
+
+    ``_render`` above takes the device overlay alone, which is enough for the
+    QoS shape but not for the budget: values.k3s.yaml is what sets the replica
+    counts the scheduler multiplies by.
+    """
+    command = [
+        "helm",
+        "template",
+        "cogniverse",
+        str(CHART_PATH),
+        "-f",
+        str(CHART_PATH / "values.k3s.yaml"),
+        "-f",
+        str(CHART_PATH / "values.rocm.yaml"),
+    ]
+    for values in extra:
+        command.extend(["-f", str(CHART_PATH / values)])
+    command.extend(["--set", "runtime.qualityMonitor.tenantId=test-tenant"])
+    result = subprocess.run(command, capture_output=True, text=True, check=False)
+    assert result.returncode == 0, (
+        f"helm template failed (exit {result.returncode}):\n{result.stderr}"
+    )
+    return [d for d in yaml.safe_load_all(result.stdout) if d]
+
+
+def _scheduled_memory_gib(documents: list[dict]) -> float:
+    """Memory the scheduler must find for one copy of the release.
+
+    A pod's request is ``max(largest init container, sum of the run
+    containers)`` -- init containers run before the others, so their
+    reservations do not add. Summing all containers flat overstates any
+    workload with a heavy init container and understates nothing, so the
+    distinction has to be kept or the budget is measuring the wrong number.
+    """
+    total = 0.0
+    for document in documents:
+        if document.get("kind") not in RESIDENT_KINDS:
+            continue
+        spec = document["spec"]["template"]["spec"]
+        replicas = document["spec"].get("replicas", 1) or 1
+        running = sum(
+            _quantity_gib(
+                ((c.get("resources") or {}).get("requests") or {}).get("memory")
+            )
+            for c in spec.get("containers", [])
+        )
+        init = max(
+            [
+                _quantity_gib(
+                    ((c.get("resources") or {}).get("requests") or {}).get("memory")
+                )
+                for c in spec.get("initContainers", [])
+            ]
+            or [0.0]
+        )
+        total += max(running, init) * replicas
+    return total
+
+
+def test_modal_llm_serving_fits_the_host_the_overlay_targets():
+    """The deployed release must fit the node, or nothing schedules.
+
+    Requests are what the scheduler places on, so a release whose requests
+    exceed the node does not degrade -- it wedges. The pods that do fit are
+    bound and hold their reservations while the ones that do not sit Pending,
+    and because the startup gate chain makes the later pods wait on an earlier
+    one, a single unplaceable pod at the head strands every pod behind it.
+    """
+    total = _scheduled_memory_gib(_render_as_deployed("values.modal-llm.yaml"))
+
+    assert round(total, 2) == 108.50, (
+        f"resident memory requests under Modal chat serving are {total:.2f}Gi, "
+        "not the pinned 108.50Gi"
+    )
+    assert total <= SYSTEM_RAM_GIB, (
+        f"the release requests {total:.2f}Gi but the host has "
+        f"{SYSTEM_RAM_GIB}Gi; it cannot schedule"
+    )
+
+
+def test_local_chat_serving_overcommits_this_host_by_the_overlay_delta():
+    """Serving both chat models locally does not fit, which is why it is opt-out.
+
+    values.modal-llm.yaml states it returns 44Gi of node memory requests.
+    That figure is load-bearing -- it is the difference between a release that
+    schedules and one that wedges -- so it is checked against the render
+    rather than trusted as prose.
+    """
+    local = _scheduled_memory_gib(_render_as_deployed())
+    modal = _scheduled_memory_gib(_render_as_deployed("values.modal-llm.yaml"))
+
+    assert round(local - modal, 2) == 44.00, (
+        f"the Modal overlay returns {local - modal:.2f}Gi, not the 44Gi its "
+        "own header claims"
+    )
+    assert round(local, 2) == 152.50, (
+        f"resident memory requests under local chat serving are {local:.2f}Gi, "
+        "not the pinned 152.50Gi"
+    )
+    assert local > SYSTEM_RAM_GIB, (
+        f"local chat serving now fits in {SYSTEM_RAM_GIB}Gi ({local:.2f}Gi); "
+        "the Modal overlay is no longer required on this host and the deploy "
+        "path's serving default should be revisited"
     )
