@@ -86,6 +86,131 @@ def _nav(page):
     wait_for_streamlit(page)
 
 
+def _run_search(page, query: str) -> int:
+    """Execute a search on the open Interactive Search panel; return its result count.
+
+    Returns 0 for a no-match search. Raises when the search does not reach a
+    terminal state or the dashboard reports it failed, so a broken backend
+    fails here by its own message instead of downstream on an absent widget.
+    """
+    panel = active_tab_panel(page)
+
+    # This body renders behind an agent-status call, so in the minute after the
+    # models load it can take longer to reconcile than an ordinary interaction.
+    # Wait on the widgets themselves: swallowing the timeout and then testing
+    # count() reports "must be present" without revealing that it waited at
+    # all, and turns a slow render into a missing-widget claim.
+    search_input = page.get_by_role("textbox", name="Enter your search query")
+    search_button = panel.locator('button[kind="primary"]:has-text("Search"):visible')
+    expect(search_input).to_have_count(1, timeout=SEARCH_TIMEOUT)
+    expect(search_button).to_have_count(1, timeout=SEARCH_TIMEOUT)
+    assert search_input.count() == 1, "exactly one search input must render"
+    assert search_button.count() == 1, "exactly one primary Search button must render"
+
+    # .fill() drives Streamlit's React bridge; .type() and JS-based fill do not
+    # reliably commit to session state.
+    search_input.fill(query)
+    search_input.press("Enter")
+    page.wait_for_timeout(5_000)
+    page.wait_for_load_state("networkidle")
+
+    search_button.click()
+    _wait_for_rerun_complete(page)
+    page.wait_for_load_state("networkidle")
+
+    # The search streams, so the page is still filling in when the click
+    # returns. The dashboard has THREE terminal states (app.py:2729-2737): a
+    # Results metric, "Search returned no results", and "Search failed:
+    # <cause>". Waiting only for the first two turns a failed search into a
+    # timeout that names nothing, so wait for any of them and then classify.
+    terminal = panel.locator(
+        '[data-testid="stMetric"]:has-text("Results"),[data-testid="stAlert"]'
+    )
+    try:
+        # A search, not an interaction: the first of a session pays the model
+        # cold start (measured 49.7s cold against 1.8s warm), and
+        # stream_agent_call (app.py:112) gives up at 120s, so that bound is the
+        # contract -- waiting less asserts a promise the app never made.
+        expect(terminal.first).to_be_visible(timeout=SEARCH_TIMEOUT)
+    except AssertionError as exc:  # pragma: no cover - diagnostic path
+        raise AssertionError(
+            "Search reached no terminal state: no Results metric and no alert. "
+            f"The panel rendered:\n{(panel.inner_text() or '')[:800]}"
+        ) from exc
+
+    alerts = [
+        (a.inner_text() or "").strip()
+        for a in panel.locator('[data-testid="stAlert"]').all()
+    ]
+    broken = [t for t in alerts if "Search failed" in t or "Check runtime" in t]
+    assert broken == [], f"the dashboard reported a failed search: {broken}"
+
+    # The heading renders when the button is clicked, before the search
+    # finishes (app.py:2745), so this proves the click landed rather than that
+    # results arrived -- but it must land exactly once.
+    heading = page.get_by_role("heading", name=re.compile("Search Results"))
+    assert heading.count() == 1, (
+        f"Search Results heading must appear exactly once; headings={heading.count()}"
+    )
+
+    results_metric = panel.locator('[data-testid="stMetric"]:has-text("Results")')
+    if panel.locator('[data-testid="stAlert"]:has-text("No results")').count():
+        # A no-match search is a valid outcome, but it must not also claim a
+        # result count.
+        assert results_metric.count() == 0, (
+            "A no-results search must not render a Results metric"
+        )
+        return 0
+
+    # Exactly Results + Latency + Profile, scoped to this panel: page-wide the
+    # Analytics tab alone contributes several, so a page-wide count is true
+    # whatever this search rendered.
+    labels = sorted(
+        (m.inner_text() or "").strip().splitlines()[0]
+        for m in panel.locator('[data-testid="stMetric"]').all()
+    )
+    assert labels == ["Latency", "Profile", "Results"], labels
+
+    # stMetric renders label, delta, value, and the delta slot is empty here,
+    # so the raw split carries a blank line between the two parts this reads.
+    metric_text = [
+        line
+        for line in (results_metric.first.inner_text() or "").strip().splitlines()
+        if line.strip()
+    ]
+    assert len(metric_text) == 2 and metric_text[0] == "Results", metric_text
+
+    # The query must survive the rerun the click triggers: a text input whose
+    # value is dropped is how the Search button ended up permanently disabled,
+    # and a search running on an empty query would still render a metric.
+    assert search_input.input_value() == query, search_input.input_value()
+
+    # A result count with no latency and no profile is a half-rendered search.
+    # Both are formatted by the app (app.py:2760,2762): "<n>ms", and the
+    # profile name or the literal "auto" when the search did not report one.
+    def _metric_value(label: str) -> str:
+        lines = [
+            line
+            for line in (
+                panel.locator(
+                    f'[data-testid="stMetric"]:has-text("{label}")'
+                ).first.inner_text()
+                or ""
+            ).splitlines()
+            if line.strip()
+        ]
+        assert len(lines) == 2 and lines[0] == label, lines
+        return lines[1].strip()
+
+    assert re.fullmatch(r"\d+ms", _metric_value("Latency")), _metric_value("Latency")
+    assert _metric_value("Profile") != "", "the search must report which profile ran"
+
+    # A search cannot both report a count and claim it found nothing.
+    assert panel.locator('[data-testid="stAlert"]:has-text("No results")').count() == 0
+
+    return int(metric_text[1].replace(",", ""))
+
+
 class TestSidebarAndNavigation:
     """Verify sidebar tenant input and top-level tab navigation."""
 
@@ -176,113 +301,18 @@ class TestInteractiveSearch:
         set_tenant(page, TENANT_ID)
         click_top_tab(page, "Interactive Search")
 
-        # This tab body renders behind an agent-status call, so in the minute
-        # after the models load it can take longer to reconcile than an
-        # ordinary interaction. Wait on the widgets themselves: swallowing the
-        # timeout and then testing count() reports "must be present" without
-        # revealing that it waited at all, and turns a slow render into a
-        # missing-widget claim.
-        search_input = page.get_by_role("textbox", name="Enter your search query")
-        search_button = page.locator('button[kind="primary"]:has-text("Search")')
-        expect(search_input).to_have_count(1, timeout=SEARCH_TIMEOUT)
-        expect(search_button).to_have_count(1, timeout=SEARCH_TIMEOUT)
-        assert search_input.count() == 1, "exactly one search input must render"
-        assert search_button.count() == 1, (
-            "exactly one primary Search button must render"
-        )
-
-        # Use .fill() to properly trigger Streamlit's React component bridge.
-        # .type() and JS-based fill don't reliably commit to session state.
-        search_input.fill("sports activity")
-        search_input.press("Enter")
-        page.wait_for_timeout(5_000)
-        page.wait_for_load_state("networkidle")
-
-        # Click the exact "Search" button
-        search_button.click()
-        _wait_for_rerun_complete(page)
-        page.wait_for_load_state("networkidle")
-
-        # The subheader renders when the button is clicked, BEFORE
-        # display_streaming_result runs (app.py:2674) -- so it proves the click
-        # landed, not that the search finished.
-        results_heading = page.get_by_role("heading", name=re.compile("Search Results"))
-        assert results_heading.count() == 1, (
-            "Search Results heading must appear exactly once after executing a "
-            f"search; headings={results_heading.count()}"
-        )
-
-        panel = active_tab_panel(page)
-        no_results_alert = panel.locator(
-            '[data-testid="stAlert"]:has-text("No results")'
-        )
-        results_metric = panel.locator('[data-testid="stMetric"]:has-text("Results")')
-
-        # The search streams, so the page is still filling in when the click
-        # returns. Settle on its terminal state. The dashboard has THREE, not
-        # two (app.py:2729-2737): a Results metric, "Search returned no
-        # results", and "Search failed: <cause>". Waiting only for the first
-        # two turns a failed search into a 30s timeout that names nothing, so
-        # wait for any alert and then classify it.
-        terminal = panel.locator(
-            '[data-testid="stMetric"]:has-text("Results"),[data-testid="stAlert"]'
-        )
-        # A search, not an interaction: this is the first of the session, so it
-        # pays the model cold start. Measured 49.7s cold against 1.8s warm, and
-        # stream_agent_call (app.py:112) gives up at 120s, so that bound is the
-        # contract -- waiting less asserts a promise the app never made.
-        try:
-            expect(terminal.first).to_be_visible(timeout=SEARCH_TIMEOUT)
-        except AssertionError as exc:  # pragma: no cover - diagnostic path
-            raise AssertionError(
-                "Search reached no terminal state: no Results metric and no "
-                "alert. The panel rendered:\n"
-                f"{(panel.inner_text() or '')[:800]}"
-            ) from exc
-
-        # A failed search is the app reporting a broken backend, not an empty
-        # corpus. Surface its own message rather than letting the run continue
-        # into assertions that can only fail obscurely.
-        alerts = [
-            (a.inner_text() or "").strip()
-            for a in panel.locator('[data-testid="stAlert"]').all()
-        ]
-        broken = [t for t in alerts if "Search failed" in t or "Check runtime" in t]
-        assert broken == [], f"the dashboard reported a failed search: {broken}"
-
-        if no_results_alert.count():
-            # A no-match search is a valid outcome, but it must not also claim
-            # a result count.
-            assert results_metric.count() == 0, (
-                "A no-results search must not render a Results metric; "
-                f"metrics={panel.locator("[data-testid='stMetric']").count()}"
-            )
-            return
-
-        # Exactly Results + Latency + Profile, scoped to this panel: page-wide
-        # the Analytics tab alone contributes several, so a page-wide count is
-        # true whatever this search rendered.
-        panel_metrics = panel.locator('[data-testid="stMetric"]')
-        labels = sorted(
-            (m.inner_text() or "").strip().splitlines()[0] for m in panel_metrics.all()
-        )
-        assert labels == ["Latency", "Profile", "Results"], labels
+        # _run_search carries the whole contract: the widgets render, the
+        # search reaches one of its three terminal states, the dashboard did
+        # not report a failure, and the panel shows exactly Results + Latency
+        # + Profile. It returns the count that metric reports.
+        expected_results = _run_search(page, "sports activity")
 
         # Every result renders one expander: the threshold slider defaults to
         # 0.0 and the render gate is `score >= confidence_threshold`
-        # (app.py:2787), so the count is the Results metric, not a lower bound.
-        # stMetric renders label, delta, value, and the delta slot is empty
-        # here, so the raw split carries a blank line between the two parts
-        # this reads.
-        metric_text = [
-            line
-            for line in (results_metric.first.inner_text() or "").strip().splitlines()
-            if line.strip()
-        ]
-        assert len(metric_text) == 2 and metric_text[0] == "Results", metric_text
-        expected_results = int(metric_text[1].replace(",", ""))
-
-        result_expanders = panel.locator('[data-testid="stExpander"]:has-text("score")')
+        # (app.py:2781), so the count is the Results metric, not a lower bound.
+        result_expanders = active_tab_panel(page).locator(
+            '[data-testid="stExpander"]:has-text("score")'
+        )
         expect(result_expanders).to_have_count(
             expected_results, timeout=INTERACTION_TIMEOUT
         )
@@ -292,65 +322,64 @@ class TestInteractiveSearch:
         set_tenant(page, TENANT_ID)
         click_top_tab(page, "Interactive Search")
 
-        # Fill search input — .fill() + Enter commits the value in Streamlit's
-        # session state via the React bridge.
-        search_input = page.get_by_role("textbox", name="Enter your search query")
-        search_input.fill("throwing discus")
-        search_input.press("Enter")
-        page.wait_for_timeout(5_000)
-        page.wait_for_load_state("networkidle")
+        # _run_search raises if the search never reaches a terminal state or
+        # the dashboard reports it failed, so reaching this line proves the
+        # search actually executed. Previously three page-wide `count() > 0`
+        # guards let this test pass while the Search button was disabled and
+        # no search could run at all -- one of them even counted "Search
+        # error" as proof of success.
+        expected_results = _run_search(page, "throwing discus")
 
-        # Click the exact "Search" button (not "Interactive Search" tab)
-        exact_search = active_tab_panel(page).locator(
-            'button[kind="primary"]:has-text("Search"):visible'
+        panel = active_tab_panel(page)
+        result_expanders = panel.locator('[data-testid="stExpander"]:has-text("score")')
+        expect(result_expanders).to_have_count(
+            expected_results, timeout=INTERACTION_TIMEOUT
         )
-        assert exact_search.count() == 1, "Search button must be present"
-        exact_search.click()
-        _wait_for_rerun_complete(page)
-        page.wait_for_load_state("networkidle")
+        if expected_results == 0:
+            return
 
-        # Verify search executed — "Search Results" heading or "No results" must appear
-        results_heading = page.get_by_role("heading", name=re.compile("Search Results"))
-        no_results_info = page.locator('[data-testid="stAlert"]:has-text("No results")')
-        search_error = page.locator('[data-testid="stAlert"]:has-text("Search error")')
-
-        # Any of these proves the search executed
-        search_executed = (
-            results_heading.count() > 0
-            or no_results_info.count() > 0
-            or search_error.count() > 0
+        # One Save Annotation button and one relevance radio group per result:
+        # both render unconditionally inside each result expander
+        # (app.py:2806-2828), so an exact count is the contract, not a lower
+        # bound. Scoped to the panel because the page holds every tab body
+        # simultaneously. The radio is matched as a group rather than by its
+        # option label -- `has-text` is a substring match that also matches
+        # ancestors, and a radio group cannot nest.
+        save_buttons = panel.locator('button:has-text("Save Annotation")')
+        radio_groups = panel.locator('[role="radiogroup"]:has-text("Highly Relevant")')
+        expect(save_buttons).to_have_count(
+            expected_results, timeout=INTERACTION_TIMEOUT
         )
-        assert search_executed, (
-            "Search must execute and show results heading, 'No results', or error"
+        expect(radio_groups).to_have_count(
+            expected_results, timeout=INTERACTION_TIMEOUT
         )
 
-        # With results: verify metrics + annotation controls
-        if results_heading.count() > 0:
-            metrics = page.locator('[data-testid="stMetric"]')
-            assert metrics.count() >= 3, (
-                f"Search must show Results + Latency + Profile metrics, got {metrics.count()}"
-            )
+        # Present is not usable. Pin what the controls carry, so a renamed
+        # label or a dropped option fails here rather than at annotation time.
+        assert [(b.inner_text() or "").strip() for b in save_buttons.all()] == [
+            "💾 Save Annotation"
+        ] * expected_results
 
-            # Check for actual result expanders (only if Vespa has data)
-            result_expanders = active_tab_panel(page).locator(
-                '[data-testid="stExpander"]'
-            )
-            if result_expanders.count() > 0:
-                save_btn = active_tab_panel(page).locator(
-                    'button:has-text("Save Annotation")'
-                )
-                assert save_btn.count() > 0, (
-                    "Save Annotation buttons must be visible in expanded result expanders"
-                )
+        shipped_options = ["Highly Relevant", "Somewhat Relevant", "Not Relevant"]
+        assert [
+            [
+                line.strip()
+                for line in (g.inner_text() or "").splitlines()
+                if line.strip()
+            ]
+            for g in radio_groups.all()
+        ] == [shipped_options] * expected_results
 
-                relevance_radios = page.locator('radiogroup:has-text("Relevant")')
-                if relevance_radios.count() == 0:
-                    relevance_radios = active_tab_panel(page).locator(
-                        'label:has-text("Highly Relevant")'
-                    )
-                assert relevance_radios.count() > 0, (
-                    "Relevance radio buttons must be visible in result expanders"
-                )
+        # Every expander is a result expander titled by the app's own format
+        # (app.py:2782): "Result N: <video id> (Score: 0.000)".
+        titles = [
+            (e.inner_text() or "").strip().splitlines()[0]
+            for e in result_expanders.all()
+        ]
+        assert [
+            bool(re.match(r"^Result \d+: .+ \(Score: -?\d+\.\d{3}\)$", t))
+            for t in titles
+        ] == [True] * expected_results, titles
 
         # NOTE: Actually clicking Save Annotation does NOT work due to a known
         # Streamlit limitation — the Save button is inside `if search_button:`
@@ -364,57 +393,42 @@ class TestInteractiveSearch:
         set_tenant(page, TENANT_ID)
         click_top_tab(page, "Interactive Search")
 
-        # Same render race as test_search_and_view_results: this body renders
-        # behind an agent-status call, and filling without waiting spends
-        # Playwright's actionability timeout instead of the panel's budget.
-        search_input = page.get_by_role("textbox", name="Enter your search query")
-        expect(search_input).to_have_count(1, timeout=SEARCH_TIMEOUT)
-        search_input.fill("sports throwing discus")
-        search_input.press("Enter")
-        page.wait_for_timeout(5_000)
-        page.wait_for_load_state("networkidle")
-
-        exact_search = active_tab_panel(page).locator(
-            'button[kind="primary"]:has-text("Search"):visible'
-        )
-        assert exact_search.count() == 1, "Search button must be present"
-        exact_search.click()
-        _wait_for_rerun_complete(page)
-        page.wait_for_load_state("networkidle")
-
-        results_heading = page.get_by_role("heading", name=re.compile("Search Results"))
-        no_results_info = active_tab_panel(page).locator(
-            '[data-testid="stAlert"]:has-text("No results")'
-        )
-
-        if no_results_info.count() > 0:
+        expected_results = _run_search(page, "sports throwing discus")
+        if expected_results == 0:
             return
 
-        assert results_heading.count() > 0, (
-            "Search Results heading must appear after executing a search"
+        # Every result carries both controls, so the counts are exact rather
+        # than `> 0` -- and scoped to this panel, since page-wide the other 53
+        # tab bodies render simultaneously.
+        panel = active_tab_panel(page)
+        save_buttons = panel.locator('button:has-text("Save Annotation")')
+        radio_groups = panel.locator('[role="radiogroup"]:has-text("Highly Relevant")')
+        expect(save_buttons).to_have_count(
+            expected_results, timeout=INTERACTION_TIMEOUT
+        )
+        expect(radio_groups).to_have_count(
+            expected_results, timeout=INTERACTION_TIMEOUT
         )
 
-        # Verify annotation controls in result expanders
-        metrics = page.locator('[data-testid="stMetric"]')
-        assert metrics.count() >= 3, (
-            f"Search must show Results + Latency + Profile metrics, got {metrics.count()}"
-        )
+        # Rendered is not usable. A Streamlit widget whose `disabled=` is
+        # computed from a value that commits on the same interaction that
+        # delivers the click is permanently unclickable -- that shipped in this
+        # dashboard twice (Chat Send, Interactive Search), so an annotation
+        # control being enabled is a contract, not an assumption.
+        assert [b.is_enabled() for b in save_buttons.all()] == [True] * expected_results
+        assert [b.is_visible() for b in save_buttons.all()] == [True] * expected_results
 
-        result_expanders = active_tab_panel(page).locator('[data-testid="stExpander"]')
-        if result_expanders.count() > 0:
-            save_btn = active_tab_panel(page).locator(
-                'button:has-text("Save Annotation")'
+        # st.radio defaults to its first option (app.py:2807-2814), so every
+        # result starts on "Highly Relevant" and an annotation saved without
+        # touching the control records that rather than an empty value. Read
+        # through the radio's own checked state, not Streamlit's DOM shape.
+        checked_indices = []
+        for group in radio_groups.all():
+            options = group.locator('input[type="radio"]')
+            checked_indices.append(
+                [i for i in range(options.count()) if options.nth(i).is_checked()]
             )
-            assert save_btn.count() > 0, (
-                "Save Annotation buttons must exist in search results"
-            )
-
-            relevance_labels = active_tab_panel(page).locator(
-                'label:has-text("Highly Relevant")'
-            )
-            assert relevance_labels.count() > 0, (
-                "Relevance radio buttons must exist in search results"
-            )
+        assert checked_indices == [[0]] * expected_results, checked_indices
 
 
 class TestMultiModalChat:
