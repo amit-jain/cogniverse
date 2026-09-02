@@ -1753,20 +1753,25 @@ class TestMemoryLifecycle:
 class TestMonitoringDashboard:
     """Scenario 20: Analytics, evaluation, routing eval, orchestration tabs."""
 
-    def _goto_monitoring(self, page):
-        """Navigate to dashboard and click Monitoring top tab with wait."""
+    def _goto_dashboard(self, page):
+        """Open the dashboard with the test tenant active.
+
+        Stops at the tenant gate: every caller opens its own top tab as its
+        next statement, so opening one here re-rendered a panel no test read.
+
+        Neither step needs a fixed sleep on top of it. ``set_tenant`` returns
+        only once the "Current tenant" alert confirms the commit, and
+        ``_click_tab_by_label`` waits for script idle and then requires
+        aria-selected on the tab it clicked. A sleep beside a verified wait
+        cannot make either outcome more certain -- it only pays for the wait
+        twice, and pins the cost at a guessed duration rather than the
+        measured one.
+        """
         _nav(page)
         set_tenant(page, TENANT_ID)
-        # Wait for tenant to be committed and page to re-render
-        page.wait_for_timeout(5_000)
-        wait_for_script_idle(page)
-        click_top_tab(page, "Analytics")
-        # Streamlit needs time to re-render after top-tab switch
-        page.wait_for_timeout(5_000)
-        wait_for_script_idle(page)
 
     def test_analytics_tab(self, page):
-        self._goto_monitoring(page)
+        self._goto_dashboard(page)
         click_top_tab(page, "Analytics")
         wait_for_script_idle(page)
 
@@ -1788,7 +1793,7 @@ class TestMonitoringDashboard:
             )
 
     def test_evaluation_tab(self, page):
-        self._goto_monitoring(page)
+        self._goto_dashboard(page)
         click_top_tab(page, "Evaluation")
         wait_for_script_idle(page)
 
@@ -1804,7 +1809,7 @@ class TestMonitoringDashboard:
         ]
 
     def test_routing_evaluation_tab(self, page):
-        self._goto_monitoring(page)
+        self._goto_dashboard(page)
         click_top_tab(page, "Routing Evaluation")
         wait_for_script_idle(page)
 
@@ -1824,7 +1829,7 @@ class TestMonitoringDashboard:
             )
 
     def test_orchestration_tab(self, page):
-        self._goto_monitoring(page)
+        self._goto_dashboard(page)
         click_top_tab(page, "Orchestration")
         wait_for_script_idle(page)
 
@@ -1836,7 +1841,7 @@ class TestMonitoringDashboard:
         )
 
     def test_embedding_atlas_tab(self, page):
-        self._goto_monitoring(page)
+        self._goto_dashboard(page)
         click_top_tab(page, "Embedding Atlas")
         wait_for_script_idle(page)
 
@@ -1848,7 +1853,7 @@ class TestMonitoringDashboard:
         )
 
     def test_finetuning_tab(self, page):
-        self._goto_monitoring(page)
+        self._goto_dashboard(page)
         click_top_tab(page, "Synthetic Data")
         wait_for_script_idle(page)
 
@@ -1863,7 +1868,7 @@ class TestMonitoringDashboard:
 
     def test_finetuning_dataset_analysis(self, page):
         """Navigate to optimization and verify overview metrics render."""
-        self._goto_monitoring(page)
+        self._goto_dashboard(page)
         click_top_tab(page, "Synthetic Data")
         wait_for_script_idle(page)
 
