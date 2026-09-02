@@ -113,11 +113,11 @@ def _run_search(page, query: str) -> int:
     search_input.fill(query)
     search_input.press("Enter")
     page.wait_for_timeout(5_000)
-    page.wait_for_load_state("networkidle")
+    wait_for_script_idle(page)
 
     search_button.click()
     _wait_for_rerun_complete(page)
-    page.wait_for_load_state("networkidle")
+    wait_for_script_idle(page)
 
     # The search streams, so the page is still filling in when the click
     # returns. The dashboard has THREE terminal states (app.py:2729-2737): a
@@ -468,7 +468,7 @@ class TestMultiModalChat:
         click_button(page, "Send")
 
         _wait_for_rerun_complete(page, timeout_ms=LLM_TIMEOUT)
-        page.wait_for_load_state("networkidle")
+        wait_for_script_idle(page)
 
         # Chat uses st.rerun() after sending — the reply lands as chat message
         # elements inside the Chat panel. Scoped to that panel: every tab body
@@ -514,13 +514,13 @@ class TestMultiModalChat:
         _fill_chat_message(page, "search for sports clips")
         click_button(page, "Send")
         _wait_for_rerun_complete(page, timeout_ms=LLM_TIMEOUT)
-        page.wait_for_load_state("networkidle")
+        wait_for_script_idle(page)
 
         # Turn 2
         _fill_chat_message(page, "Tell me more about the first one")
         click_button(page, "Send")
         _wait_for_rerun_complete(page, timeout_ms=LLM_TIMEOUT)
-        page.wait_for_load_state("networkidle")
+        wait_for_script_idle(page)
 
         # Multi-turn: verify both turns were processed
         # Streamlit st.rerun() after each message re-renders the page; the first
@@ -588,9 +588,9 @@ class TestOptimizationOverview:
         _nav(page)
         set_tenant(page, TENANT_ID)
         click_top_tab(page, "Synthetic Data")
-        page.wait_for_load_state("networkidle")
+        wait_for_script_idle(page)
         click_sub_tab(page, "Overview")
-        page.wait_for_load_state("networkidle")
+        wait_for_script_idle(page)
 
         body_text = active_tab_panel(page).inner_text().lower()
 
@@ -620,9 +620,9 @@ class TestOptimizationOverview:
         _nav(page)
         set_tenant(page, TENANT_ID)
         click_top_tab(page, "Synthetic Data")
-        page.wait_for_load_state("networkidle")
+        wait_for_script_idle(page)
         click_sub_tab(page, "Metrics Dashboard")
-        page.wait_for_load_state("networkidle")
+        wait_for_script_idle(page)
 
         # This body renders the Refresh button only past a telemetry-provider
         # probe (optimization.py:1620), and that probe's result is cached for
@@ -659,9 +659,9 @@ class TestAnnotationHarvesting:
         _nav(page)
         set_tenant(page, TENANT_ID)
         click_top_tab(page, "Synthetic Data")
-        page.wait_for_load_state("networkidle")
+        wait_for_script_idle(page)
         click_sub_tab(page, "Search Annotations")
-        page.wait_for_load_state("networkidle")
+        wait_for_script_idle(page)
 
         # Verify key widgets: Lookback Hours input and Fetch button
         lookback_input = panel_widget(page, "stNumberInput", "Lookback Hours")
@@ -711,9 +711,9 @@ class TestGoldenDataset:
         _nav(page)
         set_tenant(page, TENANT_ID)
         click_top_tab(page, "Synthetic Data")
-        page.wait_for_load_state("networkidle")
+        wait_for_script_idle(page)
         click_sub_tab(page, "Golden Dataset")
-        page.wait_for_load_state("networkidle")
+        wait_for_script_idle(page)
 
         # Verify Lookback Days number input
         number_inputs = panel_widget(page, "stNumberInput", "Lookback Days")
@@ -735,13 +735,13 @@ class TestGoldenDataset:
         _nav(page)
         set_tenant(page, TENANT_ID)
         click_top_tab(page, "Synthetic Data")
-        page.wait_for_load_state("networkidle")
+        wait_for_script_idle(page)
         click_sub_tab(page, "Golden Dataset")
-        page.wait_for_load_state("networkidle")
+        wait_for_script_idle(page)
 
         click_button(page, "Build")
         _wait_for_rerun_complete(page)
-        page.wait_for_load_state("networkidle")
+        wait_for_script_idle(page)
 
         # Check for specific outcomes
         built_alert = page.locator(
@@ -773,9 +773,9 @@ class TestSyntheticDataAndApproval:
         _nav(page)
         set_tenant(page, TENANT_ID)
         click_top_tab(page, "Synthetic Data")
-        page.wait_for_load_state("networkidle")
+        wait_for_script_idle(page)
         click_sub_tab(page, "Synthetic Data")
-        page.wait_for_load_state("networkidle")
+        wait_for_script_idle(page)
 
         # Verify Examples to Generate number input
         number_inputs = panel_widget(page, "stNumberInput", "Examples to Generate")
@@ -798,13 +798,13 @@ class TestSyntheticDataAndApproval:
         _nav(page)
         set_tenant(page, TENANT_ID)
         click_top_tab(page, "Synthetic Data")
-        page.wait_for_load_state("networkidle")
+        wait_for_script_idle(page)
         click_sub_tab(page, "Synthetic Data")
-        page.wait_for_load_state("networkidle")
+        wait_for_script_idle(page)
 
         click_button(page, "Generate")
         _wait_for_rerun_complete(page, timeout_ms=LLM_TIMEOUT)
-        page.wait_for_load_state("networkidle")
+        wait_for_script_idle(page)
 
         # Connection and timeout errors = infrastructure broken
         connect_error = active_tab_panel(page).locator(
@@ -839,9 +839,9 @@ class TestSyntheticDataAndApproval:
         _nav(page)
         set_tenant(page, TENANT_ID)
         click_top_tab(page, "Synthetic Data")
-        page.wait_for_load_state("networkidle")
+        wait_for_script_idle(page)
         click_sub_tab(page, "Synthetic Data")
-        page.wait_for_load_state("networkidle")
+        wait_for_script_idle(page)
 
         # Generate button MUST exist — this is the primary action. Matched on
         # its full label and scoped to the panel: "Generate" alone also hits
@@ -895,9 +895,9 @@ class TestModuleOptimization:
         _nav(page)
         set_tenant(page, TENANT_ID)
         click_top_tab(page, "Synthetic Data")
-        page.wait_for_load_state("networkidle")
+        wait_for_script_idle(page)
         click_sub_tab(page, "Module Optimization")
-        page.wait_for_load_state("networkidle")
+        wait_for_script_idle(page)
 
         # Verify optimizer/dataset selectbox
         selectboxes = panel_widget(page, "stSelectbox", "Module to Optimize")
@@ -936,9 +936,9 @@ class TestModuleOptimization:
         _nav(page)
         set_tenant(page, TENANT_ID)
         click_top_tab(page, "Synthetic Data")
-        page.wait_for_load_state("networkidle")
+        wait_for_script_idle(page)
         click_sub_tab(page, "Module Optimization")
-        page.wait_for_load_state("networkidle")
+        wait_for_script_idle(page)
 
         # Submit button MUST exist
         submit_btn = active_tab_panel(page).locator('button:has-text("Submit"):visible')
@@ -948,7 +948,7 @@ class TestModuleOptimization:
 
         click_button(page, "Submit")
         _wait_for_rerun_complete(page)
-        page.wait_for_load_state("networkidle")
+        wait_for_script_idle(page)
 
         success = page.locator(
             '[data-testid="stAlert"]:has-text("submitted successfully")'
@@ -979,9 +979,9 @@ class TestRerankingAndProfileOptimization:
         _nav(page)
         set_tenant(page, TENANT_ID)
         click_top_tab(page, "Synthetic Data")
-        page.wait_for_load_state("networkidle")
+        wait_for_script_idle(page)
         click_sub_tab(page, "Reranking")
-        page.wait_for_load_state("networkidle")
+        wait_for_script_idle(page)
 
         body_text = active_tab_panel(page).inner_text().lower()
         # Reranking tab must show "Current Annotations" metric and Train button
@@ -1005,9 +1005,9 @@ class TestRerankingAndProfileOptimization:
         _nav(page)
         set_tenant(page, TENANT_ID)
         click_top_tab(page, "Synthetic Data")
-        page.wait_for_load_state("networkidle")
+        wait_for_script_idle(page)
         click_sub_tab(page, "Profile Selection")
-        page.wait_for_load_state("networkidle")
+        wait_for_script_idle(page)
 
         body_text = active_tab_panel(page).inner_text().lower()
         assert "profile selection" in body_text, (
@@ -1038,7 +1038,7 @@ class TestProfileRoutingMetrics:
         _nav(page)
         set_tenant(page, TENANT_ID)
         click_top_tab(page, "Profile Routing Metrics")
-        page.wait_for_load_state("networkidle")
+        wait_for_script_idle(page)
         # Tab content lazy-renders after click; wait for the active panel
         # to contain our subheader before asserting on widgets within it.
         active_panel = page.locator(
@@ -1087,7 +1087,7 @@ class TestTenantLifecycleDashboard:
         _nav(page)
         set_tenant(page, TENANT_ID)
         click_top_tab(page, "Tenant Management")
-        page.wait_for_load_state("networkidle")
+        wait_for_script_idle(page)
 
         # expect() retries; count() samples once. networkidle fires while
         # Streamlit is still streaming the panel body, so a bare count() reads
@@ -1115,9 +1115,9 @@ class TestTenantLifecycleDashboard:
         _nav(page)
         set_tenant(page, TENANT_ID)
         click_top_tab(page, "Tenant Management")
-        page.wait_for_load_state("networkidle")
+        wait_for_script_idle(page)
         click_sub_tab(page, "Create Organization")
-        page.wait_for_load_state("networkidle")
+        wait_for_script_idle(page)
 
         # Scope to the Create Organization tabpanel — the sidebar also
         # has a text input (Active Tenant) and filling it with an org_id
@@ -1188,9 +1188,9 @@ class TestTenantLifecycleDashboard:
         _nav(page)
         set_tenant(page, TENANT_ID)
         click_top_tab(page, "Tenant Management")
-        page.wait_for_load_state("networkidle")
+        wait_for_script_idle(page)
         click_sub_tab(page, "Create Tenant")
-        page.wait_for_load_state("networkidle")
+        wait_for_script_idle(page)
 
         # Verify Create Tenant form widgets
         body_text = active_tab_panel(page).inner_text().lower()
@@ -1204,9 +1204,9 @@ class TestTenantLifecycleDashboard:
         _nav(page)
         set_tenant(page, TENANT_ID)
         click_top_tab(page, "Tenant Management")
-        page.wait_for_load_state("networkidle")
+        wait_for_script_idle(page)
         click_sub_tab(page, "Tenants")
-        page.wait_for_load_state("networkidle")
+        wait_for_script_idle(page)
 
         body_text = active_tab_panel(page).inner_text().lower()
         assert "tenant" in body_text, "Tenants list tab must mention 'tenant'"
@@ -1234,7 +1234,7 @@ class TestConfigManagement:
         _nav(page)
         set_tenant(page, TENANT_ID)
         click_top_tab(page, "Configuration")
-        page.wait_for_load_state("networkidle")
+        wait_for_script_idle(page)
 
         # System Config is default sub-tab. Verify form elements
         assert panel_widget(page, "stSelectbox", "Backend Type").count() == 1, (
@@ -1266,9 +1266,9 @@ class TestConfigManagement:
         _nav(page)
         set_tenant(page, TENANT_ID)
         click_top_tab(page, "Configuration")
-        page.wait_for_load_state("networkidle")
+        wait_for_script_idle(page)
         click_sub_tab(page, "Import/Export")
-        page.wait_for_load_state("networkidle")
+        wait_for_script_idle(page)
 
         # The full text of the Import/Export sub-tab's button is
         # "📥 Export Configurations". A bare 'has-text("Export")' selector
@@ -1310,9 +1310,9 @@ class TestConfigManagement:
         _nav(page)
         set_tenant(page, TENANT_ID)
         click_top_tab(page, "Configuration")
-        page.wait_for_load_state("networkidle")
+        wait_for_script_idle(page)
         click_sub_tab(page, "Agent Configs")
-        page.wait_for_load_state("networkidle")
+        wait_for_script_idle(page)
 
         body_text = active_tab_panel(page).inner_text().lower()
         # Agent Configs has a Save button and agent name input/selectbox
@@ -1328,9 +1328,9 @@ class TestConfigManagement:
         _nav(page)
         set_tenant(page, TENANT_ID)
         click_top_tab(page, "Configuration")
-        page.wait_for_load_state("networkidle")
+        wait_for_script_idle(page)
         click_sub_tab(page, "Routing Config")
-        page.wait_for_load_state("networkidle")
+        wait_for_script_idle(page)
 
         # Routing Config must have a Save Routing Configuration button
         save_btn = active_tab_panel(page).locator('button:has-text("Save"):visible')
@@ -1344,9 +1344,9 @@ class TestConfigManagement:
         _nav(page)
         set_tenant(page, TENANT_ID)
         click_top_tab(page, "Configuration")
-        page.wait_for_load_state("networkidle")
+        wait_for_script_idle(page)
         click_sub_tab(page, "Telemetry Config")
-        page.wait_for_load_state("networkidle")
+        wait_for_script_idle(page)
 
         # Telemetry Config must have Save button and mention telemetry/phoenix
         save_btn = active_tab_panel(page).locator('button:has-text("Save"):visible')
@@ -1360,9 +1360,9 @@ class TestConfigManagement:
         _nav(page)
         set_tenant(page, TENANT_ID)
         click_top_tab(page, "Configuration")
-        page.wait_for_load_state("networkidle")
+        wait_for_script_idle(page)
         click_sub_tab(page, "Backend Profiles")
-        page.wait_for_load_state("networkidle")
+        wait_for_script_idle(page)
 
         panel_text = active_tab_panel(page).inner_text().lower()
         assert "profile" in panel_text or "schema" in panel_text, panel_text[:300]
@@ -1376,9 +1376,9 @@ class TestConfigManagement:
         _nav(page)
         set_tenant(page, TENANT_ID)
         click_top_tab(page, "Configuration")
-        page.wait_for_load_state("networkidle")
+        wait_for_script_idle(page)
         click_sub_tab(page, "History")
-        page.wait_for_load_state("networkidle")
+        wait_for_script_idle(page)
 
         # History tab MUST have Scope selectbox for filtering
         selectboxes = panel_widget(page, "stSelectbox", "Scope")
@@ -1408,7 +1408,7 @@ class TestMemoryLifecycle:
         _nav(page)
         set_tenant(page, TENANT_ID)
         click_top_tab(page, "Memory")
-        page.wait_for_load_state("networkidle")
+        wait_for_script_idle(page)
 
         # Memory is the 15th of 16 top-level tabs, so Streamlit renders its
         # body last: measured 8.7s from the click to the sub-tabs appearing,
@@ -1451,11 +1451,11 @@ class TestMemoryLifecycle:
         _nav(page)
         set_tenant(page, TENANT_ID)
         click_top_tab(page, "Memory")
-        page.wait_for_load_state("networkidle")
+        wait_for_script_idle(page)
 
         # Add Memory
         click_sub_tab(page, "Add Memory")
-        page.wait_for_load_state("networkidle")
+        wait_for_script_idle(page)
 
         # Target the "Memory Content" textarea specifically (not Chat's textarea)
         memory_textarea = active_tab_panel(page).locator(
@@ -1490,7 +1490,7 @@ class TestMemoryLifecycle:
 
         # Search for the memory
         click_sub_tab(page, "Search Memories")
-        page.wait_for_load_state("networkidle")
+        wait_for_script_idle(page)
 
         # Target the "Search Query" textarea specifically
         search_textarea = page.locator('textarea[aria-label="Search Query"]')
@@ -1560,7 +1560,7 @@ class TestMemoryLifecycle:
         _nav(page)
         set_tenant(page, TENANT_ID)
         click_top_tab(page, "Memory")
-        page.wait_for_load_state("networkidle")
+        wait_for_script_idle(page)
         page.wait_for_timeout(5_000)
 
         # Configuration also renders an "Agent Name" input, and Streamlit
@@ -1577,10 +1577,10 @@ class TestMemoryLifecycle:
             "Memory tab's Agent Name input should carry the shipped default"
         )
         fill_input(agent_input, "_user_memories")
-        page.wait_for_load_state("networkidle")
+        wait_for_script_idle(page)
 
         click_sub_tab(page, "View All")
-        page.wait_for_load_state("networkidle")
+        wait_for_script_idle(page)
 
         # Page-wide, has-text("Load") matches six buttons -- the first is a
         # hidden "Upload" in another panel (substring match, every tab body
@@ -1622,10 +1622,10 @@ class TestMemoryLifecycle:
         _nav(page)
         set_tenant(page, TENANT_ID)
         click_top_tab(page, "Memory")
-        page.wait_for_load_state("networkidle")
+        wait_for_script_idle(page)
         page.wait_for_timeout(5_000)
         click_sub_tab(page, "Delete Memory")
-        page.wait_for_load_state("networkidle")
+        wait_for_script_idle(page)
 
         # Verify Memory ID input and Delete button present
         inputs = panel_widget(page, "stTextInput", "Memory ID")
@@ -1645,16 +1645,16 @@ class TestMonitoringDashboard:
         set_tenant(page, TENANT_ID)
         # Wait for tenant to be committed and page to re-render
         page.wait_for_timeout(5_000)
-        page.wait_for_load_state("networkidle")
+        wait_for_script_idle(page)
         click_top_tab(page, "Analytics")
         # Streamlit needs time to re-render after top-tab switch
         page.wait_for_timeout(5_000)
-        page.wait_for_load_state("networkidle")
+        wait_for_script_idle(page)
 
     def test_analytics_tab(self, page):
         self._goto_monitoring(page)
         click_top_tab(page, "Analytics")
-        page.wait_for_load_state("networkidle")
+        wait_for_script_idle(page)
 
         body_text = active_tab_panel(page).inner_text().lower()
         # Analytics MUST NOT show "no tenant selected" — this means tenant didn't propagate
@@ -1691,7 +1691,7 @@ class TestMonitoringDashboard:
     def test_evaluation_tab(self, page):
         self._goto_monitoring(page)
         click_top_tab(page, "Evaluation")
-        page.wait_for_load_state("networkidle")
+        wait_for_script_idle(page)
 
         panel_text = active_tab_panel(page).inner_text().lower()
         # The Select Dataset control is structural -- it renders whether or not
@@ -1707,7 +1707,7 @@ class TestMonitoringDashboard:
     def test_routing_evaluation_tab(self, page):
         self._goto_monitoring(page)
         click_top_tab(page, "Routing Evaluation")
-        page.wait_for_load_state("networkidle")
+        wait_for_script_idle(page)
 
         body_text = active_tab_panel(page).inner_text().lower()
         not_available = page.locator(
@@ -1732,7 +1732,7 @@ class TestMonitoringDashboard:
     def test_orchestration_tab(self, page):
         self._goto_monitoring(page)
         click_top_tab(page, "Orchestration")
-        page.wait_for_load_state("networkidle")
+        wait_for_script_idle(page)
 
         body_text = active_tab_panel(page).inner_text().lower()
         not_available = page.locator(
@@ -1752,7 +1752,7 @@ class TestMonitoringDashboard:
     def test_embedding_atlas_tab(self, page):
         self._goto_monitoring(page)
         click_top_tab(page, "Embedding Atlas")
-        page.wait_for_load_state("networkidle")
+        wait_for_script_idle(page)
 
         body_text = active_tab_panel(page).inner_text().lower()
         not_available = page.locator(
@@ -1767,7 +1767,7 @@ class TestMonitoringDashboard:
     def test_finetuning_tab(self, page):
         self._goto_monitoring(page)
         click_top_tab(page, "Synthetic Data")
-        page.wait_for_load_state("networkidle")
+        wait_for_script_idle(page)
 
         body_text = active_tab_panel(page).inner_text().lower()
 
@@ -1789,7 +1789,7 @@ class TestMonitoringDashboard:
         """Navigate to optimization and verify overview metrics render."""
         self._goto_monitoring(page)
         click_top_tab(page, "Synthetic Data")
-        page.wait_for_load_state("networkidle")
+        wait_for_script_idle(page)
 
         # Overview should show optimization pipeline metrics
         metrics = page.locator('[data-testid="stMetric"]')
@@ -1815,7 +1815,7 @@ class TestIngestionTesting:
         _nav(page)
         set_tenant(page, TENANT_ID)
         click_top_tab(page, "Ingestion")
-        page.wait_for_load_state("networkidle")
+        wait_for_script_idle(page)
         # Streamlit streams tab bodies over the websocket, so networkidle can
         # fire while later tabs are still rendering and the page still shows
         # the default Analytics tab. Wait for this tab's own header before
@@ -1885,7 +1885,7 @@ class TestApprovalQueueTab:
         _nav(page)
         set_tenant(page, TENANT_ID)
         click_top_tab(page, "Approval Queue")
-        page.wait_for_load_state("networkidle")
+        wait_for_script_idle(page)
 
         body_text = active_tab_panel(page).inner_text().lower()
 
@@ -2092,7 +2092,7 @@ class TestManualOptimizationTrigger:
 
         set_tenant(page, tenant_id)
         click_top_tab(page, "Optimization")
-        page.wait_for_load_state("networkidle")
+        wait_for_script_idle(page)
 
         # The visible subheader includes the rocket emoji prefix.
         page.get_by_role(
