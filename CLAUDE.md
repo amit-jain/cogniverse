@@ -60,6 +60,28 @@ nothing. Whatever the live path was covering incidentally — that the producers
 still emit this shape, that generation still validates and persists — gets a
 named test in the same commit. A recording never silently replaces coverage.
 
+**Wait for, guard on, and pin THE thing — never the KIND of thing.** A
+condition that names a category is satisfied by any member of it, so it passes
+instantly in exactly the situation it exists to handle, and reads as correct
+while verifying nothing. Waiting for "any tab to attach" is satisfied by a
+strip that was already there; waiting for "any nested tab" is satisfied by an
+unrelated panel's. Match on identity within its container — the label, the id,
+the row — not the type. The same defect wears other clothes: a taint check that
+follows one hop while the offender sits two hops away; a search scoped to a
+page where the value lives in one panel of many; a "top-N" that is really the
+first N in whatever order arrived.
+
+**A pin that today's data satisfies by accident is not a pin.** Before trusting
+any guard, mutate away the property it exists to enforce and watch it go red.
+If it stays green, the shipped arrangement was doing the work: the DOM already
+ordered the way you wanted, the list already held one element, the only
+offending call site was already fixed. Construct the adversarial case — the
+container ordered before its child, two candidates instead of one, synthetic
+source the fixed point must reach — and pin that. A repository-wide "no
+offenders remain" assertion cannot protect its own detector; once the last
+offender is fixed, gutting the detector leaves it green, so the detector needs
+its own test on synthetic input.
+
 **Any change with shared/cached state, an async path, or a boundary call also
 ships two more tests in that same commit:**
 - **Concurrency invariant** — what holds under N concurrent requests: single
