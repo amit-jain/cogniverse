@@ -947,3 +947,148 @@ def test_concurrent_generated_batch_ids_are_unique_and_canonical() -> None:
         re.fullmatch(r"synthetic_profile_[0-9a-f]{32}", batch_id)
         for batch_id in batch_ids
     )
+
+
+@pytest.mark.parametrize("outcome", ["timeout", "empty_frame", "no_search_spans"])
+def test_profile_training_controls_survive_a_failed_span_analysis(monkeypatch, outcome):
+    """The tab's primary action must not vanish when telemetry has no answer.
+
+    ``_render_profile_selection_tab`` shows a span analysis and then the
+    training controls. Every early return in the analysis exits the whole
+    function, so a slow store, an empty window, or a window holding no search
+    spans removes the "Train Profile Selector Model" button from the page
+    entirely -- the user is not told the feature exists, let alone why it is
+    unavailable. The analysis may give up; the controls below it may not.
+    """
+    import pandas as pd
+    import streamlit as st
+
+    from cogniverse_dashboard import telemetry_gate
+    from cogniverse_dashboard.tabs import optimization
+
+    buttons: list[str] = []
+    for name in (
+        "subheader",
+        "markdown",
+        "caption",
+        "info",
+        "warning",
+        "success",
+        "write",
+        "divider",
+        "code",
+        "json",
+        "dataframe",
+        "metric",
+    ):
+        monkeypatch.setattr(st, name, lambda *a, **k: None, raising=False)
+    monkeypatch.setattr(st, "slider", lambda *a, **k: 30)
+    monkeypatch.setattr(
+        st, "button", lambda label, *a, **k: buttons.append(label) or False
+    )
+    monkeypatch.setattr(st, "columns", lambda *a, **k: (_NullCtx(), _NullCtx()))
+    monkeypatch.setattr(st, "expander", lambda *a, **k: _NullCtx())
+    monkeypatch.setitem(st.session_state, "current_tenant", "acme")
+
+    monkeypatch.setattr(
+        optimization,
+        "_probe_telemetry",
+        lambda tenant_id: telemetry_gate.TelemetryProbe(reachable=True),
+    )
+
+    frames = {
+        "empty_frame": pd.DataFrame(),
+        "no_search_spans": pd.DataFrame([{"name": "cogniverse.routing"}]),
+    }
+
+    class _Traces:
+        async def get_spans(self, **kwargs):
+            if outcome == "timeout":
+                raise TimeoutError("phoenix is walking spans")
+            return frames[outcome]
+
+    class _Provider:
+        traces = _Traces()
+
+    class _Manager:
+        def get_provider(self, tenant_id=None):
+            return _Provider()
+
+    monkeypatch.setattr(
+        "cogniverse_foundation.telemetry.manager.get_telemetry_manager",
+        lambda: _Manager(),
+    )
+
+    optimization._render_profile_selection_tab()
+
+    assert "🚀 Train Profile Selector Model" in buttons, (
+        f"the training control disappeared when the analysis returned "
+        f"'{outcome}'; rendered buttons were {buttons}"
+    )
+
+
+def test_training_click_without_an_analysis_explains_instead_of_raising(monkeypatch):
+    """Pressing Train with no analysis must report why, not raise NameError.
+
+    The handler reads the analysis' own frame and columns. Rendering the button
+    without them is only an improvement if the click path says so -- otherwise
+    the control is visible and detonates when used, which is worse than absent.
+    """
+    import streamlit as st
+
+    from cogniverse_dashboard import telemetry_gate
+    from cogniverse_dashboard.tabs import optimization
+
+    errors: list[str] = []
+    for name in (
+        "subheader",
+        "markdown",
+        "caption",
+        "info",
+        "warning",
+        "success",
+        "write",
+        "divider",
+        "code",
+        "json",
+        "dataframe",
+        "metric",
+    ):
+        monkeypatch.setattr(st, name, lambda *a, **k: None, raising=False)
+    monkeypatch.setattr(st, "error", lambda msg, *a, **k: errors.append(str(msg)))
+    monkeypatch.setattr(st, "slider", lambda *a, **k: 30)
+    monkeypatch.setattr(st, "button", lambda label, *a, **k: True)
+    monkeypatch.setattr(st, "columns", lambda *a, **k: (_NullCtx(), _NullCtx()))
+    monkeypatch.setattr(st, "expander", lambda *a, **k: _NullCtx())
+    monkeypatch.setitem(st.session_state, "current_tenant", "acme")
+    monkeypatch.setattr(
+        optimization,
+        "_probe_telemetry",
+        lambda tenant_id: telemetry_gate.TelemetryProbe(reachable=True),
+    )
+
+    class _Traces:
+        async def get_spans(self, **kwargs):
+            raise TimeoutError("phoenix is walking spans")
+
+    class _Provider:
+        traces = _Traces()
+
+    monkeypatch.setattr(
+        "cogniverse_foundation.telemetry.manager.get_telemetry_manager",
+        lambda: type(
+            "_M", (), {"get_provider": lambda self, tenant_id=None: _Provider()}
+        )(),
+    )
+
+    optimization._render_profile_selection_tab()
+
+    assert any("span analysis above did not complete" in e for e in errors), errors
+
+
+class _NullCtx:
+    def __enter__(self):
+        return self
+
+    def __exit__(self, *exc):
+        return False

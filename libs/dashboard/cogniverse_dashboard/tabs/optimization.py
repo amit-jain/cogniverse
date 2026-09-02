@@ -17,7 +17,7 @@ import asyncio
 import json
 import logging
 from datetime import datetime, timedelta, timezone
-from typing import Dict
+from typing import Dict, NamedTuple
 from uuid import uuid4
 
 import pandas as pd
@@ -1247,28 +1247,30 @@ def _render_reranking_optimization_tab():
             st.warning(f"Need {min_annotations - current_annotations} more annotations")
 
 
-def _render_profile_selection_tab():
-    """Render profile selection optimization with real Phoenix data"""
-    st.subheader("📈 Profile Selection Optimization")
-    st.markdown(
-        "Learn which processing profile works best for different query types from telemetry data"
-    )
+class _ProfileAnalysis(NamedTuple):
+    """What the span analysis produced, for the training controls below it.
 
-    # Tenant comes from the gate-validated session state
-    tenant_id = st.session_state["current_tenant"]
-    st.caption(f"Tenant: **{tenant_id}**")
+    The training handler reads the analysis' own frame and columns, so the
+    two are only separable if the analysis hands them back; ``None`` means
+    it did not complete and the handler must say so rather than raise.
+    """
 
-    probe = _probe_telemetry(tenant_id)
+    search_spans: pd.DataFrame
+    profile_cols: list[str]
+    quality_cols: list[str]
+    start_time: datetime
+    end_time: datetime
 
-    decision = decide_telemetry_gate(probe)
-    if not decision.render:
-        st.warning(f"⚠️ {decision.message}")
-        return
-    if decision.caveat:
-        # Rendered, but the store did not confirm itself in time.
-        st.warning(f"⚠️ {decision.caveat}")
 
-    # Query for profile performance data
+def _render_profile_span_analysis(tenant_id: str) -> None:
+    """Render the telemetry-derived profile analysis for one tenant.
+
+    Split out of the tab so its early returns end the analysis rather than
+    the tab: a slow store, an empty window, or a window carrying no search
+    spans used to remove the training controls below it from the page, so
+    the user was not told the feature existed, let alone why it could not
+    run.
+    """
     try:
         from cogniverse_foundation.telemetry.manager import get_telemetry_manager
 
@@ -1299,13 +1301,13 @@ def _render_profile_selection_tab():
                 f"⚠️ Phoenix did not answer within {RENDER_SPAN_QUERY_TIMEOUT_S:g}s. "
                 "The store is slow, not empty; retry shortly."
             )
-            return
+            return None
 
         if spans_df is None or spans_df.empty:
             st.warning(
                 f"No spans found in the last {lookback_days} days. Run searches first."
             )
-            return
+            return None
 
         # Filter for search spans that have profile information
         search_spans = (
@@ -1318,7 +1320,7 @@ def _render_profile_selection_tab():
             st.info(
                 "No search spans found. Run video searches with different profiles to see performance data."
             )
-            return
+            return None
 
         st.success(f"Found {len(search_spans)} search spans")
 
@@ -1380,8 +1382,44 @@ def _render_profile_selection_tab():
                 "No quality metrics (NDCG, accuracy) found in spans. Run evaluations to collect quality data."
             )
 
+        return _ProfileAnalysis(
+            search_spans=search_spans,
+            profile_cols=profile_cols,
+            quality_cols=quality_cols,
+            start_time=start_time,
+            end_time=end_time,
+        )
         st.markdown("---")
+    except Exception as e:
+        st.error(f"Error fetching profile data: {e}")
+        st.info("Check telemetry provider configuration and connectivity")
+        return None
 
+
+def _render_profile_selection_tab():
+    """Render profile selection optimization with real Phoenix data"""
+    st.subheader("📈 Profile Selection Optimization")
+    st.markdown(
+        "Learn which processing profile works best for different query types from telemetry data"
+    )
+
+    # Tenant comes from the gate-validated session state
+    tenant_id = st.session_state["current_tenant"]
+    st.caption(f"Tenant: **{tenant_id}**")
+
+    probe = _probe_telemetry(tenant_id)
+
+    decision = decide_telemetry_gate(probe)
+    if not decision.render:
+        st.warning(f"⚠️ {decision.message}")
+        return
+    if decision.caveat:
+        # Rendered, but the store did not confirm itself in time.
+        st.warning(f"⚠️ {decision.caveat}")
+
+    analysis = _render_profile_span_analysis(tenant_id)
+
+    try:
         # Training section
         st.subheader("🔧 Train Profile Selector")
 
@@ -1417,7 +1455,12 @@ def _render_profile_selection_tab():
                 load_button = False
 
         if train_button:
-            if not profile_cols or not quality_cols:
+            if analysis is None:
+                st.error(
+                    "Cannot train: the span analysis above did not complete, so "
+                    "there is no telemetry to train on. Its message says why."
+                )
+            elif not analysis.profile_cols or not analysis.quality_cols:
                 st.error(
                     "Cannot train: Need both profile information and quality metrics in telemetry spans"
                 )
@@ -1432,7 +1475,7 @@ def _render_profile_selection_tab():
                         )
 
                         st.info(
-                            f"Extracting training data from {len(search_spans)} search spans..."
+                            f"Extracting training data from {len(analysis.search_spans)} search spans..."
                         )
 
                         # Initialize optimizer
@@ -1443,8 +1486,8 @@ def _render_profile_selection_tab():
                             return await optimizer.extract_training_data_from_phoenix(
                                 tenant_id=tenant_id,
                                 project_name=f"cogniverse-{tenant_id}",
-                                start_time=start_time,
-                                end_time=end_time,
+                                start_time=analysis.start_time,
+                                end_time=analysis.end_time,
                                 min_samples=10,
                             )
 
