@@ -3265,14 +3265,15 @@ def active_sub_tab_panel(page, timeout: int = 60_000):
 
     ``active_tab_panel`` narrows to the open top-level tab, which is not
     enough for an assertion about a sub-tab: Streamlit renders every sub-tab
-    body into that panel too, and a ``locator`` matches a subtree whether or
+    body into that panel too, and a CSS locator matches a subtree whether or
     not it is displayed. Counting metrics in the Optimization tab's Overview
     sub-tab found seven -- its own four plus three belonging to sub-tabs the
     test never opened.
 
-    Only the selected sub-panel is visible, so ``:visible`` picks it out, and
-    scoping to the active top panel first keeps another top tab's open
-    sub-panel from matching.
+    Narrowing by CONTAINMENT rather than by ``:visible``. The two are not
+    interchangeable: Streamlit collapses expanders by default, so their
+    contents are in the open panel and undisplayed, and a visibility filter
+    drops the very widgets a test means to count.
     """
     panel = (
         active_tab_panel(page, timeout=timeout)
@@ -3296,15 +3297,9 @@ def panel_widget(page, testid: str, label: str, timeout: int = 20_000):
     renders, so asserting it is non-empty proves nothing about the tab under
     test. Naming the widget makes the assertion able to fail.
     """
-    # ``:visible`` because a CSS locator matches its whole subtree whether or
-    # not the element is displayed, and the open top-level panel also holds
-    # every one of its sub-tab bodies. Without it a widget belonging to a
-    # sub-tab the test never opened counts toward the caller's assertion.
-    # ``get_by_role`` needs no equivalent: hidden elements are not in the
-    # accessibility tree.
     located = (
         active_tab_panel(page, timeout=timeout)
-        .locator(f'[data-testid="{testid}"]:visible')
+        .locator(f'[data-testid="{testid}"]')
         .filter(has_text=label)
     )
     # Wait for the widget itself: a panel can carry content while this
