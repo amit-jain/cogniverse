@@ -708,75 +708,79 @@ def deploy_stack(
 INFERENCE_COMPONENT_PREFIX = "inference-"
 
 
-def deployed_inference_components(namespace: str) -> list[str]:
-    """Component labels of the inference deployments helm actually created.
+# One budget for the whole stack, not one per workload: a per-workload budget
+# multiplies by however many workloads the chart happens to render.
+STACK_READY_BUDGET_S = 300
 
-    Read from the cluster rather than derived from the values files: the
-    e2e deploy disables services through ``--set`` overrides the values
-    files still enable, and vLLM services are not sidecar builds."""
+
+def stack_workloads(namespace: str) -> list[str]:
+    """Non-inference Deployments and StatefulSets, as ``kind/name`` targets.
+
+    Inference workloads are sequenced GPU model loads gated separately by the
+    session fixture's 2400s deployment-available wait; including them here
+    turns every deploy that restarts a model into a timeout.
+    """
     listing = _cmd(
         [
             "kubectl",
             "--context",
             KUBECTL_CONTEXT,
             "get",
-            "deploy",
+            "deploy,statefulset",
             "-n",
             namespace,
             "-l",
             "app.kubernetes.io/instance=cogniverse",
             "-o",
-            "jsonpath={range .items[*]}"
+            'jsonpath={range .items[*]}{.kind}{"/"}{.metadata.name}{" "}'
             '{.metadata.labels.app\\.kubernetes\\.io/component}{"\\n"}{end}',
         ]
     )
-    return sorted(
-        {
-            line.strip()
-            for line in listing.stdout.splitlines()
-            if line.strip().startswith(INFERENCE_COMPONENT_PREFIX)
-        }
-    )
+    targets = []
+    for line in listing.stdout.splitlines():
+        parts = line.split()
+        if len(parts) != 2:
+            continue
+        target, component = parts
+        if component.startswith(INFERENCE_COMPONENT_PREFIX):
+            continue
+        targets.append(target.lower())
+    return sorted(set(targets))
 
 
-def ready_pod_wait_args(
-    namespace: str, *, inference_components: list[str]
-) -> list[str]:
-    """Completed hook-job pods never become ready, so they are excluded from
-    the selection or the wait burns its whole budget on every deploy.
-    Inference pods load GPU weights sequentially over 20-40 minutes and are
-    gated by the session fixture's 2400s deployment-available wait; this
-    wait covers the rest of the stack within its 300s budget."""
-    selector = "app.kubernetes.io/instance=cogniverse"
-    if inference_components:
-        selector += (
-            ",app.kubernetes.io/component notin ("
-            + ",".join(inference_components)
-            + ")"
-        )
+def rollout_wait_args(namespace: str, target: str, *, timeout_s: int) -> list[str]:
     return [
         "kubectl",
         "--context",
         KUBECTL_CONTEXT,
-        "wait",
-        "--for=condition=ready",
-        "pod",
-        "-l",
-        selector,
-        "--field-selector=status.phase!=Succeeded",
+        "rollout",
+        "status",
+        target,
         "-n",
         namespace,
-        "--timeout=300s",
+        f"--timeout={timeout_s}s",
     ]
 
 
 def wait_for_stack_ready(namespace: str) -> None:
-    inference_components = deployed_inference_components(namespace)
+    """Wait for each workload's rollout, not for a snapshot of its pods.
+
+    ``kubectl wait`` resolves its pod set once and then watches those exact
+    pods, so a rolling update deletes them underneath it and the wait fails
+    with "Error from server (NotFound): pods ... not found" -- on precisely
+    the deploys that changed an image, which is the case it exists to cover.
+    ``rollout status`` tracks the workload, so a replaced pod is the success
+    path rather than the failure.
+    """
+    targets = stack_workloads(namespace)
+    deadline = time.monotonic() + STACK_READY_BUDGET_S
     try:
-        _cmd(
-            ready_pod_wait_args(namespace, inference_components=inference_components),
-            timeout=310,
-        )
+        for target in targets:
+            remaining = max(1, int(deadline - time.monotonic()))
+            _cmd(
+                rollout_wait_args(namespace, target, timeout_s=remaining),
+                timeout=remaining + 10,
+            )
     except subprocess.CalledProcessError:
         dump_pod_state(namespace)
         raise
