@@ -2939,10 +2939,43 @@ def browser_context_args():
     return {"viewport": {"width": 1920, "height": 1080}}
 
 
+def wait_for_script_idle(page, timeout_ms: int = 240_000, settle_ms: int = 1_500):
+    """Block until no Streamlit script run is in flight.
+
+    Streamlit streams a run's output over the websocket, so
+    ``wait_for_load_state("networkidle")`` reports idle while the run is still
+    executing and the later tabs have not been written yet. Measured against
+    this dashboard: the tab strip appears at t=1s, the last of the 54 tabs at
+    t=19.6s, and the run ends at t=20.6s -- an assertion fired on networkidle
+    reads a page that is 19 seconds short of complete.
+
+    The status widget exists for exactly the duration of a run, so its absence
+    is the completion signal. It is also absent *before* the run starts, which
+    makes a bare ``state="detached"`` wait return instantly in precisely the
+    case this exists to handle; requiring a continuous absence of ``settle_ms``
+    is what distinguishes "finished" from "not started".
+    """
+    deadline = _time.monotonic() + timeout_ms / 1000
+    idle_since = None
+    while _time.monotonic() < deadline:
+        if page.locator('[data-testid="stStatusWidget"]').count():
+            idle_since = None
+        elif idle_since is None:
+            idle_since = _time.monotonic()
+        elif _time.monotonic() - idle_since >= settle_ms / 1000:
+            return
+        page.wait_for_timeout(250)
+    raise TimeoutError(
+        f"Streamlit was still running a script after {timeout_ms / 1000:g}s. "
+        "The run never completed, so any widget assertion here would be "
+        "reading a partially rendered page."
+    )
+
+
 def wait_for_streamlit(page, timeout: int = 30_000):
-    """Wait for Streamlit app to fully render."""
+    """Wait for the Streamlit app to finish rendering."""
     page.wait_for_selector('[data-testid="stAppViewContainer"]', timeout=timeout)
-    page.wait_for_load_state("networkidle")
+    wait_for_script_idle(page)
 
 
 def _strip_emoji(text: str) -> str:
@@ -2987,7 +3020,10 @@ def _activate_tab(page, tab, settle_ms: int) -> bool:
         return False
 
     page.wait_for_timeout(settle_ms)
-    page.wait_for_load_state("networkidle")
+    # Selecting a tab reruns the script; wait for that run rather than for
+    # networkidle, which the websocket satisfies while the panel is still
+    # being written.
+    wait_for_script_idle(page)
     return True
 
 
@@ -3025,6 +3061,11 @@ def _click_tab_by_label(
         if scope == "sub"
         else f'button[role="tab"]:has-text("{escaped}")'
     )
+    # Let the in-flight run finish before reading the strip. Otherwise the
+    # search runs against however much of the script has been written so far,
+    # and a tab that has merely not been rendered yet is indistinguishable
+    # from one that is absent.
+    wait_for_script_idle(page)
     try:
         page.locator(strip_selector).first.wait_for(state="attached", timeout=60_000)
     except Exception:
@@ -3308,7 +3349,9 @@ def set_tenant(page, tenant_id: str, retries: int = 3):
         tenant_input.type(tenant_id, delay=30)
         tenant_input.press("Enter")
         page.wait_for_timeout(4_000)
-        page.wait_for_load_state("networkidle")
+        # Setting the tenant reruns the whole script, which is the expensive
+        # one: every tab body re-executes. Wait for that run to finish.
+        wait_for_script_idle(page)
 
         # Verify tenant was committed to Streamlit session state
         # by checking for the confirmation alert
