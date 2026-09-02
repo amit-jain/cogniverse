@@ -23,6 +23,7 @@ from tests.e2e.conftest import (
     DASHBOARD,
     RUNTIME,
     TENANT_ID,
+    active_sub_tab_panel,
     active_tab_panel,
     click_button,
     click_sub_tab,
@@ -671,7 +672,11 @@ class TestOptimizationOverview:
         click_sub_tab(page, "Overview")
         wait_for_script_idle(page)
 
-        panel = active_tab_panel(page)
+        # Scoped to the open SUB-panel, not the Optimization panel that holds
+        # it. A locator matches its whole subtree regardless of display, and
+        # the sibling sub-tab bodies Streamlit renders alongside Overview
+        # carry metrics of their own: counting from the top panel found seven.
+        panel = active_sub_tab_panel(page)
 
         # optimization.py:111-159 renders exactly these four metrics whenever
         # the Overview sub-tab is open. The `if metrics.count() >= 3` this
