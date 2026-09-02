@@ -18,6 +18,10 @@ import plotly.express as px
 import plotly.graph_objects as go
 import streamlit as st
 
+from cogniverse_dashboard import configure_dashboard_logging
+
+configure_dashboard_logging()
+
 from cogniverse_dashboard.chat import format_gateway_answer
 from cogniverse_dashboard.search_summary import render_search_summary
 
