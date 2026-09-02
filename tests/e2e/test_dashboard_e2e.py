@@ -1082,17 +1082,25 @@ class TestTenantLifecycleDashboard:
         click_top_tab(page, "Tenant Management")
         page.wait_for_load_state("networkidle")
 
-        # Verify sub-tabs exist
-        org_tab = active_tab_panel(page).locator(
-            'button[role="tab"]:has-text("Organizations"):visible'
-        )
-        create_org_tab = page.locator(
-            'button[role="tab"]:has-text("Create Organization")'
-        )
-        assert org_tab.count() == 1, "Organizations sub-tab should be present"
-        assert create_org_tab.count() > 0, (
-            "Create Organization sub-tab should be present"
-        )
+        # expect() retries; count() samples once. networkidle fires while
+        # Streamlit is still streaming the panel body, so a bare count() reads
+        # the strip before its sub-tabs attach. Both are scoped to the open
+        # panel: page-wide, "Create Organization" would also be satisfied by
+        # another tab body, since every body is in the DOM at once.
+        panel = active_tab_panel(page)
+        sub_tabs = panel.locator('button[role="tab"]:visible')
+        shipped = ["Organizations", "Create Organization", "Tenants", "Create Tenant"]
+        expect(sub_tabs).to_have_count(len(shipped), timeout=INTERACTION_TIMEOUT)
+
+        # The shipped set (tenant_management.py:93), pinned whole rather than
+        # spot-checking two of it: with the count above, "each of these
+        # resolves once" means exactly these and no others. Matched by
+        # substring because no label here is a substring of another
+        # ("Organizations" vs "Create Organization" differ by the plural).
+        assert [
+            panel.locator(f'button[role="tab"]:has-text("{name}"):visible').count()
+            for name in shipped
+        ] == [1] * len(shipped), sub_tabs.all_text_contents()
 
     def test_create_and_delete_organization(self, page):
         org_id = unique_id("dashorg")
