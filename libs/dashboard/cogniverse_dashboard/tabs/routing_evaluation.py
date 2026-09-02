@@ -32,7 +32,16 @@ from cogniverse_agents.routing.llm_auto_annotator import (
     AnnotationLabel,
     LLMAutoAnnotator,
 )
+from cogniverse_dashboard.telemetry_gate import (
+    classify_telemetry_probe,
+    decide_telemetry_gate,
+)
 from cogniverse_evaluation.evaluators.routing_evaluator import RoutingEvaluator
+
+# The 1000-span pull this tab makes is served alongside real ingest traffic, so
+# a slow answer is a normal condition rather than an outage. Only used to word
+# the timeout branch; the fetch itself is bounded by the client's own budget.
+_ROUTING_SPAN_FETCH_TIMEOUT_S = 30.0
 from cogniverse_foundation.telemetry.config import SERVICE_NAME_ORCHESTRATION
 
 logger = logging.getLogger(__name__)
@@ -140,9 +149,14 @@ def render_routing_evaluation_tab():
         routing_spans = _fetch_routing_spans(
             evaluator, project_name, start_time.isoformat(), end_time.isoformat()
         )
-    except Exception:
-        st.warning("⚠️ Telemetry provider is not available")
-        st.info("Check your telemetry configuration and ensure the provider is running")
+    except Exception as exc:
+        # A store that was busy is not a store that is misconfigured. Report
+        # which one, and drop a transient from the cache so the next rerun
+        # retries instead of showing the same failure for the TTL.
+        probe = classify_telemetry_probe(exc, timeout_s=_ROUTING_SPAN_FETCH_TIMEOUT_S)
+        if probe.transient:
+            _fetch_routing_spans.clear()
+        st.warning(f"⚠️ {decide_telemetry_gate(probe).error}")
         return
 
     if not routing_spans:

@@ -35,6 +35,11 @@ from cogniverse_dashboard.tabs.approval_queue import (
     _review_reasoning,
     _schema_correction_template,
 )
+from cogniverse_dashboard.telemetry_gate import (
+    TelemetryProbe,
+    classify_telemetry_probe,
+    decide_telemetry_gate,
+)
 from cogniverse_dashboard.utils.async_utils import run_async_in_streamlit
 from cogniverse_synthetic.registry import APPROVED_TRAINING_AGENT_BY_OPTIMIZER
 
@@ -1252,35 +1257,13 @@ def _render_profile_selection_tab():
     tenant_id = st.session_state["current_tenant"]
     st.caption(f"Tenant: **{tenant_id}**")
 
-    # Check telemetry provider availability
-    try:
-        from cogniverse_foundation.telemetry.manager import get_telemetry_manager
+    probe = _probe_telemetry(tenant_id)
+    if not probe.reachable and probe.transient:
+        _probe_telemetry.clear()
 
-        telemetry_manager = get_telemetry_manager()
-        provider = telemetry_manager.get_provider(tenant_id=tenant_id)
-
-        # Test provider connectivity
-        async def check_provider():
-            try:
-                # Try to fetch spans with small limit to test connectivity
-                _now = datetime.now(timezone.utc)
-                await provider.traces.get_spans(
-                    start_time=_now - timedelta(minutes=1),
-                    end_time=_now,
-                    project=f"cogniverse-{tenant_id}",
-                    limit=1,
-                )
-                return True
-            except Exception:
-                return False
-
-        provider_available = run_async_in_streamlit(check_provider())
-    except Exception:
-        provider_available = False
-
-    if not provider_available:
-        st.warning("⚠️ Telemetry provider is not available")
-        st.info("Check your telemetry configuration and ensure the provider is running")
+    decision = decide_telemetry_gate(probe)
+    if not decision.render:
+        st.warning(f"⚠️ {decision.error}")
         return
 
     # Query for profile performance data
@@ -1577,6 +1560,38 @@ def _render_profile_selection_tab():
         st.info("Check telemetry provider configuration and connectivity")
 
 
+# The store serves this probe alongside real ingest traffic, so the budget
+# covers a loaded store rather than an idle one. It is deliberately finite: an
+# unbounded probe holds the render thread, and Streamlit's health endpoint
+# starves behind it until the liveness probe kills the pod.
+_TELEMETRY_PROBE_TIMEOUT_S = 20.0
+
+
+@st.cache_data(ttl=60, show_spinner=False)
+def _probe_telemetry(tenant_id: str) -> TelemetryProbe:
+    """Ask the tenant's telemetry store for one span, and classify the outcome."""
+    from cogniverse_foundation.telemetry.manager import get_telemetry_manager
+
+    async def _read_one() -> None:
+        provider = get_telemetry_manager().get_provider(tenant_id=tenant_id)
+        now = datetime.now(timezone.utc)
+        await asyncio.wait_for(
+            provider.traces.get_spans(
+                start_time=now - timedelta(minutes=1),
+                end_time=now,
+                project=f"cogniverse-{tenant_id}",
+                limit=1,
+            ),
+            timeout=_TELEMETRY_PROBE_TIMEOUT_S,
+        )
+
+    try:
+        run_async_in_streamlit(_read_one())
+    except Exception as exc:  # pragma: no cover - network-dependent
+        return classify_telemetry_probe(exc, timeout_s=_TELEMETRY_PROBE_TIMEOUT_S)
+    return classify_telemetry_probe(None, timeout_s=_TELEMETRY_PROBE_TIMEOUT_S)
+
+
 def _render_metrics_dashboard_tab():
     """Render unified optimization metrics dashboard with actual optimization metrics"""
     st.subheader("📉 Optimization Metrics Dashboard")
@@ -1588,39 +1603,19 @@ def _render_metrics_dashboard_tab():
     tenant_id = st.session_state["current_tenant"]
     st.caption(f"Tenant: **{tenant_id}**")
 
-    # Check telemetry provider availability
-    try:
-        from cogniverse_foundation.telemetry.manager import get_telemetry_manager
+    # Probe telemetry, then classify. The store is measurably slow under load
+    # here (a read timed at 0.02s idle and over 30s while spans were being
+    # walked), so the probe carries an explicit budget and its failure is
+    # reported by cause rather than collapsed into "not available".
+    probe = _probe_telemetry(tenant_id)
+    if not probe.reachable and probe.transient:
+        # Never hold a transient failure for the TTL: the store may recover
+        # before the next rerun, and caching blanks the tab meanwhile.
+        _probe_telemetry.clear()
 
-        telemetry_manager = get_telemetry_manager()
-        provider = telemetry_manager.get_provider(tenant_id=tenant_id)
-
-        # Test provider connectivity — cached so every rerun doesn't pay a
-        # probe query (Streamlit re-executes this tab per widget interaction).
-        @st.cache_data(ttl=60, show_spinner=False)
-        def _provider_available(_prov, tenant: str) -> bool:
-            async def check_provider():
-                try:
-                    _now = datetime.now(timezone.utc)
-                    await _prov.traces.get_spans(
-                        start_time=_now - timedelta(minutes=1),
-                        end_time=_now,
-                        project=f"cogniverse-{tenant}",
-                        limit=1,
-                    )
-                    return True
-                except Exception:
-                    return False
-
-            return run_async_in_streamlit(check_provider())
-
-        provider_available = _provider_available(provider, tenant_id)
-    except Exception:
-        provider_available = False
-
-    if not provider_available:
-        st.warning("⚠️ Telemetry provider is not available")
-        st.info("Check your telemetry configuration and ensure the provider is running")
+    decision = decide_telemetry_gate(probe)
+    if not decision.render:
+        st.warning(f"⚠️ {decision.error}")
         return
 
     # Time range selector
