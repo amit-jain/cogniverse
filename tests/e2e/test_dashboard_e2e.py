@@ -1855,7 +1855,19 @@ class TestMonitoringDashboard:
 
         # embedding_atlas.py:168 renders this header before checking for the
         # optional extras, so it holds whether or not umap is installed.
-        assert_tab_rendered(page, "Embedding Atlas")
+        panel_text = assert_tab_rendered(page, "Embedding Atlas")
+
+        # _render_missing_deps_hint (embedding_atlas.py:38-46) emits the
+        # warning and the command that resolves it together, then returns, so
+        # the two stand or fall as one. A warning that told the reader a
+        # library was missing without naming the install would leave the tab
+        # unusable and still read as a handled state.
+        needs_libraries = "needs extra libraries" in panel_text
+        names_the_install = "uv pip install umap-learn embedding-atlas" in panel_text
+        assert needs_libraries == names_the_install, (
+            "Embedding Atlas must pair its missing-dependency warning with the "
+            f"install command that clears it:\n{panel_text[:400]}"
+        )
 
     def test_finetuning_tab(self, page):
         self._goto_dashboard(page)
