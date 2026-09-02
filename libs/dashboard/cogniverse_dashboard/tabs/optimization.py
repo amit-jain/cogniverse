@@ -1567,9 +1567,13 @@ def _render_profile_selection_tab():
 # starves behind it until the liveness probe kills the pod.
 # The probe blocks the render and Streamlit executes every tab body on every
 # rerun, so the budget is a page-blocking cost, not a background one. It must
-# fit inside the cache window below or the cache bounds nothing. A healthy
-# limit=1 read measured 0.02s here, so 3s is ~150x the healthy latency.
-_TELEMETRY_PROBE_TIMEOUT_S = 3.0
+# fit inside the cache window below or the cache bounds nothing. Since a
+# timeout now renders the body anyway, the budget only has to separate a
+# store that is down or misconfigured (which fails immediately) from one that
+# is merely busy. Measured on this deployment: 0.003-0.014s idle against
+# 10.89-36.67s while spans were being walked. 1s sits ~70x above the healthy
+# read and three orders of magnitude below the loaded one.
+_TELEMETRY_PROBE_TIMEOUT_S = 1.0
 # Short enough that a store which recovers is visible again within a couple
 # of interactions, rather than the minute that motivated classifying at all.
 _PROBE_CACHE_TTL_S = 5.0
