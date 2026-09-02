@@ -41,117 +41,86 @@ def test_inference_component_prefix_matches_the_chart_label_form():
     )
 
 
-def test_deployed_inference_components_reads_deployment_labels(monkeypatch):
+def test_stack_workloads_lists_non_inference_deployments_and_statefulsets(monkeypatch):
+    """The wait must name the workloads, not a snapshot of their pods."""
     calls: list[list[str]] = []
 
     def fake_cmd(args, *, timeout=120, check=True):
         calls.append(list(args))
         return _completed(
-            "dashboard\ninference-vllm_asr\ningestor\ninference-gliner\n"
-            "runtime\ninference-vllm_asr\n\n"
+            "Deployment/cogniverse-dashboard dashboard\n"
+            "Deployment/cogniverse-gliner inference-gliner\n"
+            "Deployment/cogniverse-runtime runtime\n"
+            "StatefulSet/cogniverse-vespa vespa\n"
+            "Deployment/cogniverse-vllm-asr inference-vllm_asr\n"
+            "\n"
         )
 
     monkeypatch.setattr(deploy_conftest, "_cmd", fake_cmd)
-    assert deploy_conftest.deployed_inference_components("cogniverse") == [
-        "inference-gliner",
-        "inference-vllm_asr",
+    assert deploy_conftest.stack_workloads("cogniverse") == [
+        "deployment/cogniverse-dashboard",
+        "deployment/cogniverse-runtime",
+        "statefulset/cogniverse-vespa",
     ]
-    assert calls == [
-        [
-            "kubectl",
-            "--context",
-            KUBECTL_CTX,
-            "get",
-            "deploy",
-            "-n",
-            "cogniverse",
-            "-l",
-            "app.kubernetes.io/instance=cogniverse",
-            "-o",
-            "jsonpath={range .items[*]}"
-            '{.metadata.labels.app\\.kubernetes\\.io/component}{"\\n"}{end}',
-        ]
-    ]
+    assert len(calls) == 1 and calls[0][:3] == ["kubectl", "--context", KUBECTL_CTX]
 
 
-def test_deployed_inference_components_raises_when_kubectl_fails(monkeypatch):
-    def failing_cmd(args, *, timeout=120, check=True):
-        raise subprocess.CalledProcessError(1, args, stderr="connection refused")
-
-    monkeypatch.setattr(deploy_conftest, "_cmd", failing_cmd)
-    with pytest.raises(subprocess.CalledProcessError) as excinfo:
-        deploy_conftest.deployed_inference_components("cogniverse")
-    assert excinfo.value.stderr == "connection refused"
-
-
-def test_ready_pod_wait_excludes_completed_hook_pods_and_inference_pods():
-    assert deploy_conftest.ready_pod_wait_args(
-        "cogniverse", inference_components=["inference-gliner", "inference-vllm_asr"]
+def test_rollout_wait_args_target_one_workload_with_the_remaining_budget():
+    assert deploy_conftest.rollout_wait_args(
+        "cogniverse", "deployment/cogniverse-runtime", timeout_s=142
     ) == [
         "kubectl",
         "--context",
         KUBECTL_CTX,
-        "wait",
-        "--for=condition=ready",
-        "pod",
-        "-l",
-        "app.kubernetes.io/instance=cogniverse,"
-        "app.kubernetes.io/component notin (inference-gliner,inference-vllm_asr)",
-        "--field-selector=status.phase!=Succeeded",
+        "rollout",
+        "status",
+        "deployment/cogniverse-runtime",
         "-n",
         "cogniverse",
-        "--timeout=300s",
+        "--timeout=142s",
     ]
 
 
-def test_ready_pod_wait_without_inference_pods_keeps_the_plain_selector():
-    assert deploy_conftest.ready_pod_wait_args(
-        "cogniverse", inference_components=[]
-    ) == [
-        "kubectl",
-        "--context",
-        KUBECTL_CTX,
-        "wait",
-        "--for=condition=ready",
-        "pod",
-        "-l",
-        "app.kubernetes.io/instance=cogniverse",
-        "--field-selector=status.phase!=Succeeded",
-        "-n",
-        "cogniverse",
-        "--timeout=300s",
-    ]
+def test_stack_ready_waits_on_rollouts_not_on_a_pod_snapshot(monkeypatch):
+    """`kubectl wait` resolves its pod set once and then watches those pods.
 
-
-def test_wait_for_stack_ready_excludes_the_deployed_inference_pods(monkeypatch):
-    calls: list[tuple[list[str], int]] = []
+    A rolling update deletes them underneath it, so the wait fails with
+    "Error from server (NotFound): pods ... not found" on exactly the deploys
+    that changed an image -- the case it exists to cover. `rollout status`
+    tracks the workload, so a replaced pod is the success path.
+    """
+    calls: list[list[str]] = []
 
     def fake_cmd(args, *, timeout=120, check=True):
-        calls.append((list(args), timeout))
+        calls.append(list(args))
         if "get" in args:
             return _completed(
-                "runtime\ninference-vllm_llm_student\ninference-denseon\n"
+                "Deployment/cogniverse-runtime runtime\n"
+                "Deployment/cogniverse-gliner inference-gliner\n"
+                "StatefulSet/cogniverse-vespa vespa\n"
             )
         return _completed("")
 
     monkeypatch.setattr(deploy_conftest, "_cmd", fake_cmd)
     deploy_conftest.wait_for_stack_ready("cogniverse")
-    assert [args for args, _ in calls][1] == deploy_conftest.ready_pod_wait_args(
-        "cogniverse",
-        inference_components=["inference-denseon", "inference-vllm_llm_student"],
-    )
-    assert [timeout for _, timeout in calls] == [120, 310]
+
+    issued = [a for a in calls if "rollout" in a]
+    assert [a[5] for a in issued] == [
+        "deployment/cogniverse-runtime",
+        "statefulset/cogniverse-vespa",
+    ], issued
+    # No pod-snapshot wait may remain: that is the racing command.
+    assert [a for a in calls if "wait" in a] == [], calls
 
 
-def test_wait_for_stack_ready_raises_when_pods_never_become_ready(monkeypatch):
+def test_stack_ready_dumps_and_raises_when_a_rollout_never_completes(monkeypatch):
     dumps: list[str] = []
 
     def cmd(args, *, timeout=120, check=True):
-        assert check is True
         if "get" in args:
-            return _completed("runtime\ninference-gliner\n")
+            return _completed("Deployment/cogniverse-runtime runtime\n")
         raise subprocess.CalledProcessError(
-            1, args, stderr="timed out waiting for the condition on pods/x"
+            1, args, stderr="timed out waiting for the condition"
         )
 
     monkeypatch.setattr(deploy_conftest, "_cmd", cmd)
@@ -160,5 +129,73 @@ def test_wait_for_stack_ready_raises_when_pods_never_become_ready(monkeypatch):
     )
     with pytest.raises(subprocess.CalledProcessError) as excinfo:
         deploy_conftest.wait_for_stack_ready("cogniverse")
-    assert excinfo.value.stderr == "timed out waiting for the condition on pods/x"
+    assert excinfo.value.stderr == "timed out waiting for the condition"
     assert dumps == ["cogniverse"]
+
+
+def test_stack_ready_shares_one_budget_across_the_workloads(monkeypatch):
+    """Per-workload budgets multiply: 300s each across a dozen workloads is an
+    hour, which is not a budget."""
+    budgets: list[int] = []
+
+    def cmd(args, *, timeout=120, check=True):
+        if "get" in args:
+            return _completed(
+                "Deployment/a runtime\nDeployment/b dashboard\nDeployment/c minio\n"
+            )
+        budgets.append(int(args[-1].removeprefix("--timeout=").removesuffix("s")))
+        return _completed("")
+
+    monkeypatch.setattr(deploy_conftest, "_cmd", cmd)
+    deploy_conftest.wait_for_stack_ready("cogniverse")
+    assert len(budgets) == 3
+    assert sum(budgets) <= deploy_conftest.STACK_READY_BUDGET_S * len(budgets)
+    assert max(budgets) <= deploy_conftest.STACK_READY_BUDGET_S
+
+
+def test_stack_workloads_raises_when_kubectl_fails(monkeypatch):
+    """A listing that fails must not degrade to an empty workload set: waiting
+    on nothing reports the stack ready without checking anything."""
+
+    def failing_cmd(args, *, timeout=120, check=True):
+        raise subprocess.CalledProcessError(1, args, stderr="connection refused")
+
+    monkeypatch.setattr(deploy_conftest, "_cmd", failing_cmd)
+    with pytest.raises(subprocess.CalledProcessError) as excinfo:
+        deploy_conftest.stack_workloads("cogniverse")
+    assert excinfo.value.stderr == "connection refused"
+
+
+def test_stack_workloads_targets_are_kind_prefixed_and_deduplicated(monkeypatch):
+    """`rollout status` needs kind/name; a bare name is ambiguous, and the
+    listing can repeat a workload when labels are duplicated."""
+
+    def fake_cmd(args, *, timeout=120, check=True):
+        return _completed(
+            "Deployment/cogniverse-runtime runtime\n"
+            "Deployment/cogniverse-runtime runtime\n"
+            "StatefulSet/cogniverse-phoenix phoenix\n"
+            "garbage-without-a-component\n"
+        )
+
+    monkeypatch.setattr(deploy_conftest, "_cmd", fake_cmd)
+    assert deploy_conftest.stack_workloads("cogniverse") == [
+        "deployment/cogniverse-runtime",
+        "statefulset/cogniverse-phoenix",
+    ]
+
+
+def test_hook_jobs_are_structurally_out_of_scope(monkeypatch):
+    """Completed helm-hook pods never reach Ready, and the old pod-snapshot
+    wait had to exclude them explicitly. Targeting workloads removes the
+    class: a Job is neither a Deployment nor a StatefulSet."""
+    listed: list[list[str]] = []
+
+    def fake_cmd(args, *, timeout=120, check=True):
+        listed.append(list(args))
+        return _completed("Deployment/cogniverse-runtime runtime\n")
+
+    monkeypatch.setattr(deploy_conftest, "_cmd", fake_cmd)
+    deploy_conftest.stack_workloads("cogniverse")
+    assert "deploy,statefulset" in listed[0]
+    assert not any("job" in part for part in listed[0])
