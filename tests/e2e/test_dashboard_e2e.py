@@ -86,6 +86,14 @@ OPTIMIZATION_OVERVIEW_METRICS = (
 INTERACTION_TIMEOUT = 30_000
 SEARCH_TIMEOUT = 120_000
 LLM_TIMEOUT = 300_000
+# Synthetic generation is not one LLM call, it is one per example. Measured
+# against the Modal-served chat model from the runtime's own
+# profile_selection_agent log: 2.75s mean and 4.0s max over 19 consecutive
+# calls, for the 100 examples the tab requests. LLM_TIMEOUT's 300s covers the
+# mean projection of 275s and nothing else, so the wait expired mid-generation
+# and the tab's own "timed out" notice was read as a backend fault. Budget the
+# observed maximum, not the mean, plus the sampling and rerun either side.
+SYNTHETIC_GENERATION_TIMEOUT = 600_000
 
 
 def _fill_chat_message(page, message: str) -> None:
@@ -98,7 +106,7 @@ def _fill_chat_message(page, message: str) -> None:
     turning a timing miss into a poisoned session.
     """
     panel = active_tab_panel(page)
-    box = panel.locator('[data-testid="stTextArea"] textarea')
+    box = panel.locator('[data-testid="stTextArea"] textarea:visible')
     try:
         box.first.wait_for(state="visible", timeout=60_000)
     except Exception as exc:
@@ -199,7 +207,7 @@ def _run_search(page, query: str) -> int:
     # <cause>". Waiting only for the first two turns a failed search into a
     # timeout that names nothing, so wait for any of them and then classify.
     terminal = panel.locator(
-        '[data-testid="stMetric"]:has-text("Results"),[data-testid="stAlert"]'
+        '[data-testid="stMetric"]:has-text("Results"):visible, [data-testid="stAlert"]:visible'
     )
     try:
         # A search, not an interaction: the first of a session pays the model
@@ -215,7 +223,7 @@ def _run_search(page, query: str) -> int:
 
     alerts = [
         (a.inner_text() or "").strip()
-        for a in panel.locator('[data-testid="stAlert"]').all()
+        for a in panel.locator('[data-testid="stAlert"]:visible').all()
     ]
     broken = [t for t in alerts if "Search failed" in t or "Check runtime" in t]
     assert broken == [], f"the dashboard reported a failed search: {broken}"
@@ -228,8 +236,10 @@ def _run_search(page, query: str) -> int:
         f"Search Results heading must appear exactly once; headings={heading.count()}"
     )
 
-    results_metric = panel.locator('[data-testid="stMetric"]:has-text("Results")')
-    if panel.locator('[data-testid="stAlert"]:has-text("No results")').count():
+    results_metric = panel.locator(
+        '[data-testid="stMetric"]:has-text("Results"):visible'
+    )
+    if panel.locator('[data-testid="stAlert"]:has-text("No results"):visible').count():
         # A no-match search is a valid outcome, but it must not also claim a
         # result count.
         assert results_metric.count() == 0, (
@@ -242,7 +252,7 @@ def _run_search(page, query: str) -> int:
     # whatever this search rendered.
     labels = sorted(
         (m.inner_text() or "").strip().splitlines()[0]
-        for m in panel.locator('[data-testid="stMetric"]').all()
+        for m in panel.locator('[data-testid="stMetric"]:visible').all()
     )
     assert labels == ["Latency", "Profile", "Results"], labels
 
@@ -281,7 +291,10 @@ def _run_search(page, query: str) -> int:
     assert _metric_value("Profile") != "", "the search must report which profile ran"
 
     # A search cannot both report a count and claim it found nothing.
-    assert panel.locator('[data-testid="stAlert"]:has-text("No results")').count() == 0
+    assert (
+        panel.locator('[data-testid="stAlert"]:has-text("No results"):visible').count()
+        == 0
+    )
 
     return int(metric_text[1].replace(",", ""))
 
@@ -392,7 +405,7 @@ class TestInteractiveSearch:
         # 0.0 and the render gate is `score >= confidence_threshold`
         # (app.py:2781), so the count is the Results metric, not a lower bound.
         result_expanders = active_tab_panel(page).locator(
-            '[data-testid="stExpander"]:has-text("score")'
+            '[data-testid="stExpander"]:has-text("score"):visible'
         )
         expect(result_expanders).to_have_count(
             expected_results, timeout=INTERACTION_TIMEOUT
@@ -412,7 +425,9 @@ class TestInteractiveSearch:
         expected_results = _run_search(page, "throwing discus")
 
         panel = active_tab_panel(page)
-        result_expanders = panel.locator('[data-testid="stExpander"]:has-text("score")')
+        result_expanders = panel.locator(
+            '[data-testid="stExpander"]:has-text("score"):visible'
+        )
         expect(result_expanders).to_have_count(
             expected_results, timeout=INTERACTION_TIMEOUT
         )
@@ -426,8 +441,10 @@ class TestInteractiveSearch:
         # simultaneously. The radio is matched as a group rather than by its
         # option label -- `has-text` is a substring match that also matches
         # ancestors, and a radio group cannot nest.
-        save_buttons = panel.locator('button:has-text("Save Annotation")')
-        radio_groups = panel.locator('[role="radiogroup"]:has-text("Highly Relevant")')
+        save_buttons = panel.locator('button:has-text("Save Annotation"):visible')
+        radio_groups = panel.locator(
+            '[role="radiogroup"]:has-text("Highly Relevant"):visible'
+        )
         expect(save_buttons).to_have_count(
             expected_results, timeout=INTERACTION_TIMEOUT
         )
@@ -496,8 +513,10 @@ class TestInteractiveSearch:
         # than `> 0` -- and scoped to this panel, since page-wide the other 53
         # tab bodies render simultaneously.
         panel = active_tab_panel(page)
-        save_buttons = panel.locator('button:has-text("Save Annotation")')
-        radio_groups = panel.locator('[role="radiogroup"]:has-text("Highly Relevant")')
+        save_buttons = panel.locator('button:has-text("Save Annotation"):visible')
+        radio_groups = panel.locator(
+            '[role="radiogroup"]:has-text("Highly Relevant"):visible'
+        )
         expect(save_buttons).to_have_count(
             expected_results, timeout=INTERACTION_TIMEOUT
         )
@@ -554,7 +573,7 @@ class TestMultiModalChat:
         # elements inside the Chat panel. Scoped to that panel: every tab body
         # is in the DOM, so a page-wide count is satisfied by other panels.
         panel = active_tab_panel(page)
-        chat_msgs = panel.locator('[data-testid="stChatMessage"]')
+        chat_msgs = panel.locator('[data-testid="stChatMessage"]:visible')
         assert chat_msgs.count() == 2, (
             f"One send must render exactly two chat messages, the user's and the "
             f"assistant's, got {chat_msgs.count()}"
@@ -631,7 +650,7 @@ class TestMultiModalChat:
         )
 
         panel = active_tab_panel(page)
-        chat_msgs = panel.locator('[data-testid="stChatMessage"]')
+        chat_msgs = panel.locator('[data-testid="stChatMessage"]:visible')
         assert chat_msgs.count() == 4, (
             f"Two turns must render exactly four chat messages, a user and an "
             f"assistant message each, got {chat_msgs.count()}"
@@ -683,7 +702,7 @@ class TestOptimizationOverview:
         # replaces was page-wide *and* a branch: when the open panel rendered
         # none of its own metrics the count was still satisfied by Analytics',
         # and when it was not, the else-branch accepted generic body text.
-        metrics = panel.locator('[data-testid="stMetric"]')
+        metrics = panel.locator('[data-testid="stMetric"]:visible')
         expect(metrics).to_have_count(
             len(OPTIMIZATION_OVERVIEW_METRICS), timeout=INTERACTION_TIMEOUT
         )
@@ -757,13 +776,13 @@ class TestAnnotationHarvesting:
 
         # Exact alert text: "Fetched N search results" or "No results returned"
         fetched_alert = active_tab_panel(page).locator(
-            '[data-testid="stAlert"]:has-text("Fetched")'
+            '[data-testid="stAlert"]:has-text("Fetched"):visible'
         )
         no_results = active_tab_panel(page).locator(
-            '[data-testid="stAlert"]:has-text("No results returned")'
+            '[data-testid="stAlert"]:has-text("No results returned"):visible'
         )
         error_alert = active_tab_panel(page).locator(
-            '[data-testid="stAlert"]:has-text("Failed to fetch")'
+            '[data-testid="stAlert"]:has-text("Failed to fetch"):visible'
         )
 
         # The fetch is a backend call: wait for one of the three terminal
@@ -826,13 +845,13 @@ class TestGoldenDataset:
         # Check for specific outcomes
         panel = active_tab_panel(page)
         built_alert = panel.locator(
-            '[data-testid="stAlert"]:has-text("Built golden dataset")'
+            '[data-testid="stAlert"]:has-text("Built golden dataset"):visible'
         )
         no_data_alert = panel.locator(
-            '[data-testid="stAlert"]:has-text("No annotated")'
+            '[data-testid="stAlert"]:has-text("No annotated"):visible'
         )
         error_alert = active_tab_panel(page).locator(
-            '[data-testid="stAlert"]:has-text("Failed")'
+            '[data-testid="stAlert"]:has-text("Failed"):visible'
         )
 
         # System errors are test failures — infrastructure must be working
@@ -888,15 +907,15 @@ class TestSyntheticDataAndApproval:
         wait_for_script_idle(page)
 
         click_button(page, "Generate")
-        _wait_for_rerun_complete(page, timeout_ms=LLM_TIMEOUT)
+        _wait_for_rerun_complete(page, timeout_ms=SYNTHETIC_GENERATION_TIMEOUT)
         wait_for_script_idle(page)
 
         # Connection and timeout errors = infrastructure broken
         connect_error = active_tab_panel(page).locator(
-            '[data-testid="stAlert"]:has-text("Cannot connect")'
+            '[data-testid="stAlert"]:has-text("Cannot connect"):visible'
         )
         timeout_error = active_tab_panel(page).locator(
-            '[data-testid="stAlert"]:has-text("timed out")'
+            '[data-testid="stAlert"]:has-text("timed out"):visible'
         )
         if connect_error.count() > 0:
             pytest.fail("Synthetic generation failed: cannot connect to runtime API")
@@ -905,7 +924,7 @@ class TestSyntheticDataAndApproval:
 
         # Success must show "Generated N examples" or example data on page
         success_alert = active_tab_panel(page).locator(
-            '[data-testid="stAlert"]:has-text("Generated")'
+            '[data-testid="stAlert"]:has-text("Generated"):visible'
         )
         body_text = active_tab_panel(page).inner_text().lower()
         has_examples = "example" in body_text and "confidence" in body_text
@@ -932,7 +951,7 @@ class TestSyntheticDataAndApproval:
         # its full label and scoped to the panel: "Generate" alone also hits
         # buttons in the other tab bodies, which are all in the DOM.
         generate_btn = active_tab_panel(page).locator(
-            'button:has-text("Generate Synthetic Data")'
+            'button:has-text("Generate Synthetic Data"):visible'
         )
         try:
             generate_btn.first.wait_for(state="visible", timeout=60_000)
@@ -1044,14 +1063,17 @@ class TestModuleOptimization:
         # alert, so this four-way disjunction held whatever this submission did.
         panel = active_tab_panel(page)
         success = panel.locator(
-            '[data-testid="stAlert"]:has-text("submitted successfully")'
+            '[data-testid="stAlert"]:has-text("submitted successfully"):visible'
         )
-        kubectl_warning = panel.locator('[data-testid="stAlert"]:has-text("kubectl")')
+        kubectl_warning = panel.locator(
+            '[data-testid="stAlert"]:has-text("kubectl"):visible'
+        )
         no_dataset = panel.locator(
-            '[data-testid="stAlert"]:has-text("No dataset"), '
-            '[data-testid="stAlert"]:has-text("training data")'
+            '[data-testid="stAlert"]:has-text("No dataset"):visible, [data-testid="stAlert"]:has-text("training data"):visible'
         )
-        upload_prompt = panel.locator('[data-testid="stAlert"]:has-text("Upload")')
+        upload_prompt = panel.locator(
+            '[data-testid="stAlert"]:has-text("Upload"):visible'
+        )
 
         # These are all valid outcomes (system works but prerequisites vary)
         assert (
@@ -1081,7 +1103,7 @@ class TestRerankingAndProfileOptimization:
         assert "reranking" in body_text, "Reranking tab must show 'Reranking' in header"
 
         # "Current Annotations" metric is always shown
-        metrics = active_tab_panel(page).locator('[data-testid="stMetric"]')
+        metrics = active_tab_panel(page).locator('[data-testid="stMetric"]:visible')
         if metrics.count() > 0:
             metric_text = " ".join(
                 metrics.nth(i).inner_text().lower() for i in range(metrics.count())
@@ -1164,8 +1186,7 @@ class TestProfileRoutingMetrics:
         # Acceptable terminal states: empty-spans info, missing-attribute
         # warning, or rendered metrics. Any error alert is a real failure.
         error_alerts = active_tab_panel(page).locator(
-            '[data-testid="stAlert"]:has-text("Phoenix span query failed"), '
-            '[data-testid="stAlert"]:has-text("Failed to initialise telemetry")'
+            '[data-testid="stAlert"]:has-text("Phoenix span query failed"):visible, [data-testid="stAlert"]:has-text("Failed to initialise telemetry"):visible'
         )
         assert error_alerts.all_inner_texts() == [], (
             "Profile Routing Metrics surfaced an error: "
@@ -1292,9 +1313,9 @@ class TestTenantLifecycleDashboard:
         # panel. Page-wide, Configuration alone contributes 16 text inputs and
         # 14 selectboxes, so the old disjunction could not fail.
         panel = active_tab_panel(page)
-        expect(panel.locator('[data-testid="stTextInput"] input')).not_to_have_count(
-            0, timeout=INTERACTION_TIMEOUT
-        )
+        expect(
+            panel.locator('[data-testid="stTextInput"] input:visible')
+        ).not_to_have_count(0, timeout=INTERACTION_TIMEOUT)
         assert "Create Tenant" in panel.inner_text(), (
             "The open panel must be the Create Tenant sub-tab"
         )
@@ -1318,9 +1339,11 @@ class TestTenantLifecycleDashboard:
         expect(
             panel.get_by_role("button", name="Refresh Tenants", exact=True)
         ).to_have_count(1, timeout=INTERACTION_TIMEOUT)
-        selectboxes = panel.locator('[data-testid="stSelectbox"]')
-        expanders = panel.locator('[data-testid="stExpander"]')
-        no_tenants = panel.locator('[data-testid="stAlert"]:has-text("No tenants")')
+        selectboxes = panel.locator('[data-testid="stSelectbox"]:visible')
+        expanders = panel.locator('[data-testid="stExpander"]:visible')
+        no_tenants = panel.locator(
+            '[data-testid="stAlert"]:has-text("No tenants"):visible'
+        )
         assert (
             selectboxes.count() > 0 or expanders.count() > 0 or no_tenants.count() > 0
         ), (
@@ -1388,13 +1411,13 @@ class TestConfigManagement:
 
         # Export produces: "Exported N configurations" success alert
         export_success = active_tab_panel(page).locator(
-            '[data-testid="stAlert"]:has-text("Exported")'
+            '[data-testid="stAlert"]:has-text("Exported"):visible'
         )
         export_error = active_tab_panel(page).locator(
-            '[data-testid="stAlert"]:has-text("Export failed")'
+            '[data-testid="stAlert"]:has-text("Export failed"):visible'
         )
         download_btn = active_tab_panel(page).locator(
-            '[data-testid="stDownloadButton"]'
+            '[data-testid="stDownloadButton"]:visible'
         )
 
         if export_error.count() > 0:
@@ -1500,9 +1523,11 @@ class TestConfigManagement:
 
         # If versions exist, verify dataframe or rollback button is present
         panel = active_tab_panel(page)
-        dataframes = panel.locator('[data-testid="stDataFrame"]')
-        rollback_btn = panel.locator('button:has-text("Rollback")')
-        no_history = panel.locator('[data-testid="stAlert"]:has-text("No history")')
+        dataframes = panel.locator('[data-testid="stDataFrame"]:visible')
+        rollback_btn = panel.locator('button:has-text("Rollback"):visible')
+        no_history = panel.locator(
+            '[data-testid="stAlert"]:has-text("No history"):visible'
+        )
         assert (
             dataframes.count() > 0 or rollback_btn.count() > 0 or no_history.count() > 0
         ), (
@@ -1586,10 +1611,10 @@ class TestMemoryLifecycle:
 
         # Memory add alerts persist (no st.rerun) — assert exact feedback
         success = active_tab_panel(page).locator(
-            '[data-testid="stAlert"]:has-text("added successfully")'
+            '[data-testid="stAlert"]:has-text("added successfully"):visible'
         )
         error = active_tab_panel(page).locator(
-            '[data-testid="stAlert"]:has-text("Failed")'
+            '[data-testid="stAlert"]:has-text("Failed"):visible'
         )
         # The add is a backend write, so wait for its outcome rather than
         # sampling once. Accepting the failure alert as proof would let a
@@ -1606,7 +1631,7 @@ class TestMemoryLifecycle:
 
         # Target the "Search Query" textarea specifically
         search_textarea = active_tab_panel(page).locator(
-            'textarea[aria-label="Search Query"]'
+            'textarea[aria-label="Search Query"]:visible'
         )
         assert search_textarea.count() > 0, "Search Query text area should be present"
         fill_textarea(search_textarea, "E2E test memory")
@@ -1622,10 +1647,10 @@ class TestMemoryLifecycle:
 
         # Memory search alerts persist (no st.rerun) — assert specific feedback
         found_alert = active_tab_panel(page).locator(
-            '[data-testid="stAlert"]:has-text("Found")'
+            '[data-testid="stAlert"]:has-text("Found"):visible'
         )
         no_results = active_tab_panel(page).locator(
-            '[data-testid="stAlert"]:has-text("No memories found")'
+            '[data-testid="stAlert"]:has-text("No memories found"):visible'
         )
         expect(found_alert.or_(no_results).first).to_be_visible(
             timeout=INTERACTION_TIMEOUT
@@ -1635,9 +1660,9 @@ class TestMemoryLifecycle:
         if found_alert.count() > 0:
             # Search results are rendered as expanders or in a dataframe
             panel = active_tab_panel(page)
-            expanders = panel.locator('[data-testid="stExpander"]')
-            dataframes = panel.locator('[data-testid="stDataFrame"]')
-            json_blocks = panel.locator('[data-testid="stJson"]')
+            expanders = panel.locator('[data-testid="stExpander"]:visible')
+            dataframes = panel.locator('[data-testid="stDataFrame"]:visible')
+            json_blocks = panel.locator('[data-testid="stJson"]:visible')
             assert (
                 expanders.count() > 0
                 or dataframes.count() > 0
@@ -1902,7 +1927,7 @@ class TestIngestionTesting:
         # asserting anything about the body.
         expect(
             active_tab_panel(page)
-            .locator("h1,h2,h3")
+            .locator("h1:visible, h2:visible, h3:visible")
             .filter(has_text="Ingestion Pipeline Testing")
         ).to_have_count(1, timeout=INTERACTION_TIMEOUT)
 
@@ -1951,7 +1976,7 @@ class TestIngestionTesting:
         """
         self._goto_ingestion(page)
         panel = active_tab_panel(page)
-        assert panel.locator('[data-testid="stExpander"]').count() == 0, (
+        assert panel.locator('[data-testid="stExpander"]:visible').count() == 0, (
             "Ingestion tab renders no expander; add one and update this pin"
         )
         assert "Upload a video file to start testing ingestion pipelines" in (
@@ -2268,7 +2293,7 @@ class TestManualOptimizationTrigger:
         # /admin/tenant/{id}/optimize/runs/{name}, which returns a real
         # Argo phase.
         refresh_btn = active_tab_panel(page).locator(
-            'button:has-text("🔄 Refresh status")'
+            'button:has-text("🔄 Refresh status"):visible'
         )
         assert refresh_btn.count() > 0, (
             "Refresh status button must appear after a successful submit"
