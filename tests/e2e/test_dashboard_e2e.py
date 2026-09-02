@@ -356,22 +356,34 @@ class TestInteractiveSearch:
 
         # Present is not usable. Pin what the controls carry, so a renamed
         # label or a dropped option fails here rather than at annotation time.
-        assert [(b.inner_text() or "").strip() for b in save_buttons.all()] == [
+        # st.expander renders collapsed (app.py:2782 passes no expanded=True),
+        # so its contents are in the DOM but hidden: inner_text() returns ""
+        # for them while :has-text still matches, which is why the count can
+        # be right and the text empty. text_content() reads the DOM node.
+        assert [(b.text_content() or "").strip() for b in save_buttons.all()] == [
             "💾 Save Annotation"
         ] * expected_results
 
+        # Each group offers exactly the three shipped options and no more.
+        # Matched by accessible role and name rather than by reading the
+        # group's text: text_content() concatenates every descendant with no
+        # separator, so splitting it would pin Streamlit's DOM shape instead
+        # of what the control offers.
         shipped_options = ["Highly Relevant", "Somewhat Relevant", "Not Relevant"]
         assert [
             [
-                line.strip()
-                for line in (g.inner_text() or "").splitlines()
-                if line.strip()
+                g.get_by_role(
+                    "radio", name=name, exact=True, include_hidden=True
+                ).count()
+                for name in shipped_options
             ]
+            + [g.locator('input[type="radio"]').count()]
             for g in radio_groups.all()
-        ] == [shipped_options] * expected_results
+        ] == [[1, 1, 1, 3]] * expected_results
 
         # Every expander is a result expander titled by the app's own format
-        # (app.py:2782): "Result N: <video id> (Score: 0.000)".
+        # (app.py:2782): "Result N: <video id> (Score: 0.000)". The summary is
+        # visible while collapsed, so the title is the expander's first line.
         titles = [
             (e.inner_text() or "").strip().splitlines()[0]
             for e in result_expanders.all()
@@ -415,20 +427,28 @@ class TestInteractiveSearch:
         # delivers the click is permanently unclickable -- that shipped in this
         # dashboard twice (Chat Send, Interactive Search), so an annotation
         # control being enabled is a contract, not an assumption.
+        # Not is_visible(): the expanders render collapsed, so their contents
+        # are correctly hidden until the user opens one. Enabled is the
+        # contract; visible is UI state the user controls.
         assert [b.is_enabled() for b in save_buttons.all()] == [True] * expected_results
-        assert [b.is_visible() for b in save_buttons.all()] == [True] * expected_results
+        assert [b.is_disabled() for b in save_buttons.all()] == [
+            False
+        ] * expected_results
 
         # st.radio defaults to its first option (app.py:2807-2814), so every
         # result starts on "Highly Relevant" and an annotation saved without
-        # touching the control records that rather than an empty value. Read
-        # through the radio's own checked state, not Streamlit's DOM shape.
-        checked_indices = []
-        for group in radio_groups.all():
-            options = group.locator('input[type="radio"]')
-            checked_indices.append(
-                [i for i in range(options.count()) if options.nth(i).is_checked()]
-            )
-        assert checked_indices == [[0]] * expected_results, checked_indices
+        # touching the control records that rather than an empty value.
+        # include_hidden because the expanders render collapsed, so the radios
+        # are outside the accessibility tree until one is opened.
+        assert [
+            [
+                g.get_by_role(
+                    "radio", checked=True, include_hidden=True, name=name, exact=True
+                ).count()
+                for name in ["Highly Relevant", "Somewhat Relevant", "Not Relevant"]
+            ]
+            for g in radio_groups.all()
+        ] == [[1, 0, 0]] * expected_results
 
 
 class TestMultiModalChat:
