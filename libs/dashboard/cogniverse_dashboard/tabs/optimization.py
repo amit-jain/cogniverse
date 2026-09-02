@@ -36,6 +36,7 @@ from cogniverse_dashboard.tabs.approval_queue import (
     _schema_correction_template,
 )
 from cogniverse_dashboard.telemetry_gate import (
+    RENDER_SPAN_QUERY_TIMEOUT_S,
     TelemetryProbe,
     classify_telemetry_probe,
     decide_telemetry_gate,
@@ -1289,7 +1290,16 @@ def _render_profile_selection_tab():
                 end_time=end_time,
             )
 
-        spans_df = run_async_in_streamlit(fetch_spans())
+        try:
+            spans_df = run_async_in_streamlit(
+                fetch_spans(), timeout_s=RENDER_SPAN_QUERY_TIMEOUT_S
+            )
+        except TimeoutError:
+            st.warning(
+                f"⚠️ Phoenix did not answer within {RENDER_SPAN_QUERY_TIMEOUT_S:g}s. "
+                "The store is slow, not empty; retry shortly."
+            )
+            return
 
         if spans_df is None or spans_df.empty:
             st.warning(
@@ -1671,11 +1681,20 @@ def _render_metrics_dashboard_tab():
                     end_time=datetime.fromisoformat(end_iso),
                 )
 
-            return run_async_in_streamlit(_fetch_spans())
+            return run_async_in_streamlit(
+                _fetch_spans(), timeout_s=RENDER_SPAN_QUERY_TIMEOUT_S
+            )
 
-        spans_df = _fetch_spans_cached(
-            provider, tenant_id, start_time.isoformat(), end_time.isoformat()
-        )
+        try:
+            spans_df = _fetch_spans_cached(
+                provider, tenant_id, start_time.isoformat(), end_time.isoformat()
+            )
+        except TimeoutError:
+            st.warning(
+                f"⚠️ Phoenix did not answer within {RENDER_SPAN_QUERY_TIMEOUT_S:g}s. "
+                "The store is slow, not empty; retry shortly."
+            )
+            return
 
         if spans_df is None or spans_df.empty:
             st.warning(
