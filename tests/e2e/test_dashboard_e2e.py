@@ -39,6 +39,49 @@ from tests.e2e.conftest import (
 pytestmark = [pytest.mark.e2e, pytest.mark.browser]
 
 # Streamlit takes time to rerun on interactions
+# Every top-level tab app.py:743-761 declares, in order. Restating them here
+# is deliberate: the point is to notice when the shipped strip changes, which a
+# derivation from the same source could not do.
+MAIN_TAB_LABELS = (
+    "\U0001f4ca Analytics",
+    "\U0001f9ea Evaluation",
+    "\U0001f5fa\ufe0f Embedding Atlas",
+    "\U0001f3af Routing Evaluation",
+    "\U0001f504 Orchestration Annotation",
+    "\U0001f4c8 Profile Routing Metrics",
+    "\U0001f527 Optimization",
+    "\U0001f52c Synthetic Data & Optimization",
+    "\u2705 Approval Queue",
+    "\U0001f4e5 Ingestion Testing",
+    "\U0001f50d Interactive Search",
+    "\U0001f4ac Chat",
+    "\u2699\ufe0f Configuration",
+    "\U0001f465 Tenant Management",
+    "\U0001f9e0 Memory",
+    "\U0001f170\ufe0f\U0001f171\ufe0f RLM A/B Compare",
+)
+
+# The unconditional half of the Analytics sub-tab strip (app.py:857-868); the
+# Root Cause Analysis tab is appended only when that feature is enabled.
+ANALYTICS_SUB_TABS = (
+    "\U0001f4ca Overview",
+    "\U0001f4c8 Time Series",
+    "\U0001f4ca Distributions",
+    "\U0001f5fa\ufe0f Heatmaps",
+    "\U0001f3af Outliers",
+    "\U0001f50d Trace Explorer",
+)
+
+# The Optimization Overview block renders these four metrics unconditionally
+# (optimization.py:111-159; "Last Optimization" is emitted by both branches of
+# its if/else, so it is structural rather than data-dependent).
+OPTIMIZATION_OVERVIEW_METRICS = (
+    "Total Annotations",
+    "Golden Dataset Size",
+    "Optimization Runs",
+    "Last Optimization",
+)
+
 INTERACTION_TIMEOUT = 30_000
 SEARCH_TIMEOUT = 120_000
 LLM_TIMEOUT = 300_000
@@ -87,6 +130,36 @@ def _nav(page):
     wait_for_streamlit(page)
 
 
+def assert_tab_rendered(page, identity: str, *, unavailable: str | None = None) -> str:
+    """Assert the open panel is the tab that renders ``identity``; return its text.
+
+    ``identity`` is a heading the tab's own module renders, so a tab body that
+    rendered nothing cannot satisfy it. This replaces page-wide widget counts,
+    which were satisfied by whatever *other* tab happened to render a metric or
+    an alert: Streamlit keeps all 54 tab bodies in the DOM at once.
+
+    Where a feature can be genuinely absent -- optional dependencies, a backend
+    that is down -- ``unavailable`` names the notice the tab renders instead.
+    Exactly one of the two states holds, and both are scoped to this panel so
+    another tab's notice cannot stand in for this one's.
+    """
+    panel = active_tab_panel(page)
+    text = panel.inner_text() or ""
+    if unavailable is not None:
+        notice = panel.locator(f'[data-testid="stAlert"]:has-text("{unavailable}")')
+        if notice.count():
+            assert identity not in text, (
+                f"The panel showed the {unavailable!r} notice and {identity!r} at "
+                f"once; these are mutually exclusive states:\n{text[:400]}"
+            )
+            return text
+    assert identity in text, (
+        f"The open panel must be the tab whose module renders {identity!r}. "
+        f"It rendered:\n{text[:400]}"
+    )
+    return text
+
+
 def _run_search(page, query: str) -> int:
     """Execute a search on the open Interactive Search panel; return its result count.
 
@@ -101,7 +174,7 @@ def _run_search(page, query: str) -> int:
     # Wait on the widgets themselves: swallowing the timeout and then testing
     # count() reports "must be present" without revealing that it waited at
     # all, and turns a slow render into a missing-widget claim.
-    search_input = page.get_by_role("textbox", name="Enter your search query")
+    search_input = panel.get_by_role("textbox", name="Enter your search query")
     search_button = panel.locator('button[kind="primary"]:has-text("Search"):visible')
     expect(search_input).to_have_count(1, timeout=SEARCH_TIMEOUT)
     expect(search_button).to_have_count(1, timeout=SEARCH_TIMEOUT)
@@ -149,7 +222,7 @@ def _run_search(page, query: str) -> int:
     # The heading renders when the button is clicked, before the search
     # finishes (app.py:2745), so this proves the click landed rather than that
     # results arrived -- but it must land exactly once.
-    heading = page.get_by_role("heading", name=re.compile("Search Results"))
+    heading = panel.get_by_role("heading", name=re.compile("Search Results"))
     assert heading.count() == 1, (
         f"Search Results heading must appear exactly once; headings={heading.count()}"
     )
@@ -225,10 +298,13 @@ class TestSidebarAndNavigation:
         expect(sidebar).to_be_visible(timeout=INTERACTION_TIMEOUT)
         app = page.locator('[data-testid="stAppViewContainer"]')
         expect(app).to_be_visible(timeout=INTERACTION_TIMEOUT)
-        tabs = page.locator('button[role="tab"]')
-        assert tabs.count() >= 3, (
-            f"Expected at least 3 top-level tabs, got {tabs.count()}"
-        )
+        # Pin every top-level tab app.py:743-761 declares. `count() >= 3` was
+        # satisfied by any three of the 54 tabs Streamlit renders (sub-tabs
+        # included), so it could not notice a missing top-level tab.
+        for label in MAIN_TAB_LABELS:
+            expect(page.get_by_role("tab", name=label, exact=True)).to_have_count(
+                1, timeout=INTERACTION_TIMEOUT
+            )
 
     def test_sidebar_tenant_input(self, page):
         _nav(page)
@@ -259,9 +335,12 @@ class TestSidebarAndNavigation:
         sidebar = page.locator('[data-testid="stSidebar"]')
         tenant_input = sidebar.locator('input[aria-label="Active Tenant"]')
         value = tenant_input.evaluate("el => el.value || ''")
-        body_text = page.inner_text("body")
-        assert TENANT_ID in value or TENANT_ID in body_text, (
-            f"Tenant should persist after tab switch. Input value: '{value}'"
+        # The sidebar input is where the tenant persists. The page-wide body
+        # fallback this replaces matched the id anywhere on the page --
+        # including the tabs that merely echo it -- so it passed even when the
+        # control had lost its value.
+        assert value == TENANT_ID, (
+            f"Active Tenant input must still hold the committed tenant; got {value!r}"
         )
 
     def test_top_level_tabs_present(self, page):
@@ -592,29 +671,25 @@ class TestOptimizationOverview:
         click_sub_tab(page, "Overview")
         wait_for_script_idle(page)
 
-        body_text = active_tab_panel(page).inner_text().lower()
+        panel = active_tab_panel(page)
 
-        # Overview must show the specific optimization pipeline metrics
-        metrics = page.locator('[data-testid="stMetric"]')
-        expected_labels = ["total annotations", "golden dataset", "optimization runs"]
-        if metrics.count() >= 3:
-            metric_text = " ".join(
-                metrics.nth(i).inner_text().lower() for i in range(metrics.count())
-            )
-            found = [lbl for lbl in expected_labels if lbl in metric_text]
-            assert len(found) >= 2, (
-                f"Overview metrics should include pipeline stats, "
-                f"found: {found}, metric_text: {metric_text[:200]}"
-            )
-        else:
-            # If no metrics, must show the optimization workflow or history sections
-            assert (
-                "optimization workflow" in body_text
-                or "recent optimization" in body_text
-            ), (
-                "Overview must show optimization metrics or workflow section, "
-                f"got: {body_text[:300]}"
-            )
+        # optimization.py:111-159 renders exactly these four metrics whenever
+        # the Overview sub-tab is open. The `if metrics.count() >= 3` this
+        # replaces was page-wide *and* a branch: when the open panel rendered
+        # none of its own metrics the count was still satisfied by Analytics',
+        # and when it was not, the else-branch accepted generic body text.
+        metrics = panel.locator('[data-testid="stMetric"]')
+        expect(metrics).to_have_count(
+            len(OPTIMIZATION_OVERVIEW_METRICS), timeout=INTERACTION_TIMEOUT
+        )
+        metric_text = " ".join(
+            metrics.nth(i).inner_text() for i in range(metrics.count())
+        )
+        missing = [m for m in OPTIMIZATION_OVERVIEW_METRICS if m not in metric_text]
+        assert missing == [], (
+            f"Optimization Overview must label every pipeline metric; missing "
+            f"{missing} in:\n{metric_text[:300]}"
+        )
 
     def test_metrics_dashboard_tab(self, page):
         _nav(page)
@@ -744,10 +819,13 @@ class TestGoldenDataset:
         wait_for_script_idle(page)
 
         # Check for specific outcomes
-        built_alert = page.locator(
+        panel = active_tab_panel(page)
+        built_alert = panel.locator(
             '[data-testid="stAlert"]:has-text("Built golden dataset")'
         )
-        no_data_alert = page.locator('[data-testid="stAlert"]:has-text("No annotated")')
+        no_data_alert = panel.locator(
+            '[data-testid="stAlert"]:has-text("No annotated")'
+        )
         error_alert = active_tab_panel(page).locator(
             '[data-testid="stAlert"]:has-text("Failed")'
         )
@@ -784,10 +862,12 @@ class TestSyntheticDataAndApproval:
         )
 
         # Verify Generate button
-        generate_btn = page.locator('button:has-text("Generate")')
-        assert generate_btn.count() > 0, (
-            "Generate Synthetic Data button should be present"
+        # optimization.py:678 renders exactly this label. `has-text("Generate")`
+        # page-wide also matched other tabs' buttons.
+        generate_btn = active_tab_panel(page).get_by_role(
+            "button", name="🚀 Generate Synthetic Data", exact=True
         )
+        expect(generate_btn).to_have_count(1, timeout=INTERACTION_TIMEOUT)
 
     def test_generate_synthetic_data_execution(self, page):
         """Click Generate and verify synthetic data is produced.
@@ -907,7 +987,12 @@ class TestModuleOptimization:
 
         # Verify submit or upload button
         submit_btn = active_tab_panel(page).locator('button:has-text("Submit"):visible')
-        upload_btn = page.locator('button:has-text("Upload")')
+        # `has-text("Upload")` also matches the file uploader's own "Upload"
+        # affordance in other tabs, so scope it and use the label
+        # optimization.py renders.
+        upload_btn = active_tab_panel(page).get_by_role(
+            "button", name="📤 Upload Dataset", exact=True
+        )
         assert submit_btn.count() == 1 or upload_btn.count() == 1, (
             "Submit Workflow or Upload Dataset button should be present"
         )
@@ -950,15 +1035,18 @@ class TestModuleOptimization:
         _wait_for_rerun_complete(page)
         wait_for_script_idle(page)
 
-        success = page.locator(
+        # Scoped: page-wide, any tab reporting anything at all rendered an
+        # alert, so this four-way disjunction held whatever this submission did.
+        panel = active_tab_panel(page)
+        success = panel.locator(
             '[data-testid="stAlert"]:has-text("submitted successfully")'
         )
-        kubectl_warning = page.locator('[data-testid="stAlert"]:has-text("kubectl")')
-        no_dataset = page.locator(
+        kubectl_warning = panel.locator('[data-testid="stAlert"]:has-text("kubectl")')
+        no_dataset = panel.locator(
             '[data-testid="stAlert"]:has-text("No dataset"), '
             '[data-testid="stAlert"]:has-text("training data")'
         )
-        upload_prompt = page.locator('[data-testid="stAlert"]:has-text("Upload")')
+        upload_prompt = panel.locator('[data-testid="stAlert"]:has-text("Upload")')
 
         # These are all valid outcomes (system works but prerequisites vary)
         assert (
@@ -1195,10 +1283,16 @@ class TestTenantLifecycleDashboard:
         # Verify Create Tenant form widgets
         body_text = active_tab_panel(page).inner_text().lower()
         assert "tenant" in body_text, "Create Tenant sub-tab should mention 'tenant'"
-        inputs = page.locator('[data-testid="stTextInput"] input')
-        selectboxes = page.locator('[data-testid="stSelectbox"]')
-        has_form = inputs.count() > 0 or selectboxes.count() > 0
-        assert has_form, "Create Tenant tab should have input fields or selectboxes"
+        # tenant_management.py renders the Create Tenant form inside this
+        # panel. Page-wide, Configuration alone contributes 16 text inputs and
+        # 14 selectboxes, so the old disjunction could not fail.
+        panel = active_tab_panel(page)
+        expect(panel.locator('[data-testid="stTextInput"] input')).not_to_have_count(
+            0, timeout=INTERACTION_TIMEOUT
+        )
+        assert "Create Tenant" in panel.inner_text(), (
+            "The open panel must be the Create Tenant sub-tab"
+        )
 
     def test_tenants_list_sub_tab(self, page):
         _nav(page)
@@ -1211,16 +1305,19 @@ class TestTenantLifecycleDashboard:
         body_text = active_tab_panel(page).inner_text().lower()
         assert "tenant" in body_text, "Tenants list tab must mention 'tenant'"
 
-        # Must show either tenant list (selectbox + expanders) or "No tenants" info
-        selectboxes = page.locator('[data-testid="stSelectbox"]')
-        expanders = page.locator('[data-testid="stExpander"]')
-        no_tenants = page.locator('[data-testid="stAlert"]:has-text("No tenants")')
-        refresh_btn = page.locator('button:has-text("Refresh")')
+        # tenant_management.py renders "Refresh Tenants" whenever this sub-tab
+        # is open, so it is structural rather than data-dependent. The four-way
+        # disjunction it replaces was page-wide: six other tabs render a
+        # Refresh button, so it held whatever this tab did.
+        panel = active_tab_panel(page)
+        expect(
+            panel.get_by_role("button", name="Refresh Tenants", exact=True)
+        ).to_have_count(1, timeout=INTERACTION_TIMEOUT)
+        selectboxes = panel.locator('[data-testid="stSelectbox"]')
+        expanders = panel.locator('[data-testid="stExpander"]')
+        no_tenants = panel.locator('[data-testid="stAlert"]:has-text("No tenants")')
         assert (
-            selectboxes.count() > 0
-            or expanders.count() > 0
-            or no_tenants.count() > 0
-            or refresh_btn.count() > 0
+            selectboxes.count() > 0 or expanders.count() > 0 or no_tenants.count() > 0
         ), (
             "Tenants tab must show org selector, tenant expanders, "
             "'No tenants' message, or Refresh button"
@@ -1277,8 +1374,10 @@ class TestConfigManagement:
         # click_button() can target a hidden button whose React handler
         # doesn't fire. Use the precise text + a Playwright native click so
         # Streamlit picks up the rerun.
-        export_btn = page.get_by_role("button", name="📥 Export Configurations")
-        assert export_btn.count() > 0, "Export Configurations button should be present"
+        export_btn = active_tab_panel(page).get_by_role(
+            "button", name="📥 Export Configurations", exact=True
+        )
+        expect(export_btn).to_have_count(1, timeout=INTERACTION_TIMEOUT)
         export_btn.first.click()
         wait_for_script_idle(page)
 
@@ -1289,7 +1388,9 @@ class TestConfigManagement:
         export_error = active_tab_panel(page).locator(
             '[data-testid="stAlert"]:has-text("Export failed")'
         )
-        download_btn = page.locator('[data-testid="stDownloadButton"]')
+        download_btn = active_tab_panel(page).locator(
+            '[data-testid="stDownloadButton"]'
+        )
 
         if export_error.count() > 0:
             pytest.fail(f"Export failed: {export_error.first.inner_text()}")
@@ -1317,11 +1418,13 @@ class TestConfigManagement:
         body_text = active_tab_panel(page).inner_text().lower()
         # Agent Configs has a Save button and agent name input/selectbox
         assert "agent" in body_text, "Agent Configs tab must mention 'agent' in content"
-        save_btn = page.locator('button:has-text("Save")')
-        inputs = page.locator('[data-testid="stTextInput"]')
-        selectboxes = page.locator('[data-testid="stSelectbox"]')
-        assert save_btn.count() > 0 or inputs.count() > 0 or selectboxes.count() > 0, (
-            "Agent Configs must have Save button, text inputs, or selectboxes"
+        # config_management.py:250 renders this heading for the Agent
+        # Configurations sub-tab. The disjunction it replaces was page-wide,
+        # and Configuration's own sibling sub-tabs contribute 14 selectboxes,
+        # so it held even when this sub-tab rendered nothing.
+        panel = active_tab_panel(page)
+        assert "Agent Configurations" in panel.inner_text(), (
+            f"The open panel must be Agent Configurations:\n{panel.inner_text()[:400]}"
         )
 
     def test_routing_config_tab(self, page):
@@ -1391,9 +1494,10 @@ class TestConfigManagement:
         )
 
         # If versions exist, verify dataframe or rollback button is present
-        dataframes = page.locator('[data-testid="stDataFrame"]')
-        rollback_btn = page.locator('button:has-text("Rollback")')
-        no_history = page.locator('[data-testid="stAlert"]:has-text("No history")')
+        panel = active_tab_panel(page)
+        dataframes = panel.locator('[data-testid="stDataFrame"]')
+        rollback_btn = panel.locator('button:has-text("Rollback")')
+        no_history = panel.locator('[data-testid="stAlert"]:has-text("No history")')
         assert (
             dataframes.count() > 0 or rollback_btn.count() > 0 or no_history.count() > 0
         ), (
@@ -1466,9 +1570,12 @@ class TestMemoryLifecycle:
         )
         fill_textarea(memory_textarea, memory_text)
 
-        assert page.locator('button:has-text("Add Memory")').count() > 0, (
-            "Add Memory button should be present"
-        )
+        assert (
+            active_tab_panel(page)
+            .get_by_role("button", name="💾 Add Memory", exact=True)
+            .count()
+            == 1
+        ), "Add Memory button should be present"
         click_button(page, "Add Memory")
         wait_for_script_idle(page)
 
@@ -1493,13 +1600,18 @@ class TestMemoryLifecycle:
         wait_for_script_idle(page)
 
         # Target the "Search Query" textarea specifically
-        search_textarea = page.locator('textarea[aria-label="Search Query"]')
+        search_textarea = active_tab_panel(page).locator(
+            'textarea[aria-label="Search Query"]'
+        )
         assert search_textarea.count() > 0, "Search Query text area should be present"
         fill_textarea(search_textarea, "E2E test memory")
 
-        assert page.locator('button:has-text("Search")').count() > 0, (
-            "Search button should be present"
-        )
+        assert (
+            active_tab_panel(page)
+            .get_by_role("button", name="🔍 Search", exact=True)
+            .count()
+            == 1
+        ), "Search button should be present"
         click_button(page, "Search")
         wait_for_script_idle(page)
 
@@ -1630,10 +1742,12 @@ class TestMemoryLifecycle:
         # Verify Memory ID input and Delete button present
         inputs = panel_widget(page, "stTextInput", "Memory ID")
         assert inputs.count() == 1, "Delete Memory tab should have Memory ID text input"
-        delete_btn = page.locator('button:has-text("Delete")')
-        assert delete_btn.count() > 0, (
-            "Delete Memory tab should have Delete Memory button"
+        # memory_management.py renders exactly this label; `has-text("Delete")`
+        # page-wide also matched Configuration's own Delete control.
+        delete_btn = active_tab_panel(page).get_by_role(
+            "button", name="🗑️ Delete Memory", exact=True
         )
+        expect(delete_btn).to_have_count(1, timeout=INTERACTION_TIMEOUT)
 
 
 class TestMonitoringDashboard:
@@ -1662,31 +1776,16 @@ class TestMonitoringDashboard:
             "Analytics tab should not show 'No tenant selected' after set_tenant"
         )
 
-        # Verify analytics-specific UI elements rendered
-        metrics = page.locator('[data-testid="stMetric"]')
-        selectboxes = page.locator('[data-testid="stSelectbox"]')
-        charts = page.locator(
-            '[data-testid="stPlotlyChart"], [data-testid="stVegaLiteChart"]'
-        )
-        dataframes = page.locator('[data-testid="stDataFrame"]')
-        sub_tabs = page.locator('button[role="tab"]')
-
-        # Analytics should show at least one of: metrics, charts, data tables, sub-tabs
-        has_data_ui = (
-            metrics.count() > 0
-            or charts.count() > 0
-            or dataframes.count() > 0
-            or selectboxes.count() > 0
-        )
-        # Or analytics sub-tabs (Overview, Time Series, etc.) rendered
-        has_sub_tabs = sub_tabs.count() > 10
-
-        assert has_data_ui or has_sub_tabs, (
-            f"Analytics tab should show data widgets — "
-            f"metrics={metrics.count()}, charts={charts.count()}, "
-            f"dataframes={dataframes.count()}, selectboxes={selectboxes.count()}, "
-            f"tabs={sub_tabs.count()}"
-        )
+        # app.py:857-868 builds this sub-tab strip from a literal list, so
+        # every label is structural. The disjunction it replaces was page-wide
+        # in both halves -- any tab's metric satisfied `has_data_ui`, and
+        # `sub_tabs.count() > 10` counted all 54 tabs in the DOM, so it was
+        # true before Analytics rendered anything at all.
+        panel = active_tab_panel(page)
+        for label in ANALYTICS_SUB_TABS:
+            expect(panel.get_by_role("tab", name=label, exact=True)).to_have_count(
+                1, timeout=INTERACTION_TIMEOUT
+            )
 
     def test_evaluation_tab(self, page):
         self._goto_monitoring(page)
@@ -1709,44 +1808,31 @@ class TestMonitoringDashboard:
         click_top_tab(page, "Routing Evaluation")
         wait_for_script_idle(page)
 
-        body_text = active_tab_panel(page).inner_text().lower()
-        not_available = page.locator(
-            '[data-testid="stAlert"]:has-text("not available")'
+        # routing_evaluation.py:98 renders this heading whenever the tab is
+        # reachable. The previous page-wide "not available" alert count was
+        # satisfied by any other tab's notice.
+        panel_text = assert_tab_rendered(
+            page, "Routing Evaluation Dashboard", unavailable="not available"
         )
-        # Routing evaluation must show routing-specific content
-        assert "routing" in body_text or not_available.count() > 0, (
-            "Routing Evaluation must mention 'routing' in content or show unavailable message"
-        )
-
-        # If available, must have lookback controls or metrics
-        if not_available.count() == 0:
-            number_inputs = page.locator('[data-testid="stNumberInput"]')
-            selectboxes = page.locator('[data-testid="stSelectbox"]')
-            metrics = page.locator('[data-testid="stMetric"]')
-            assert (
-                number_inputs.count() > 0
-                or selectboxes.count() > 0
-                or metrics.count() > 0
-            ), "Routing Evaluation must have lookback input, selectbox, or metrics"
+        if "Routing Evaluation Dashboard" in panel_text:
+            # routing_evaluation.py:195 renders the summary block for a
+            # reachable evaluator, so its heading is structural rather than
+            # data-dependent.
+            assert "Summary Metrics" in panel_text, (
+                f"A reachable Routing Evaluation must show its summary block:\n"
+                f"{panel_text[:400]}"
+            )
 
     def test_orchestration_tab(self, page):
         self._goto_monitoring(page)
         click_top_tab(page, "Orchestration")
         wait_for_script_idle(page)
 
-        body_text = active_tab_panel(page).inner_text().lower()
-        not_available = page.locator(
-            '[data-testid="stAlert"]:has-text("not available")'
-        )
-        # Must show orchestration-specific content or "Refresh Workflows" button
-        refresh_btn = page.locator('button:has-text("Refresh")')
-        assert (
-            "orchestration" in body_text
-            or refresh_btn.count() > 0
-            or not_available.count() > 0
-        ), (
-            "Orchestration tab must mention 'orchestration', have Refresh button, "
-            "or show unavailable message"
+        # orchestration_annotation.py:92 renders this header unconditionally.
+        # The disjunction it replaces counted Refresh buttons page-wide, and
+        # six other tabs render one.
+        assert_tab_rendered(
+            page, "Orchestration Workflow Annotation", unavailable="not available"
         )
 
     def test_embedding_atlas_tab(self, page):
@@ -1754,14 +1840,11 @@ class TestMonitoringDashboard:
         click_top_tab(page, "Embedding Atlas")
         wait_for_script_idle(page)
 
-        body_text = active_tab_panel(page).inner_text().lower()
-        not_available = page.locator(
-            '[data-testid="stAlert"]:has-text("not available"), '
-            '[data-testid="stAlert"]:has-text("dependencies")'
-        )
-        # Must show embedding-specific content
-        assert "embedding" in body_text or not_available.count() > 0, (
-            "Embedding Atlas must mention 'embedding' or show dependency message"
+        # embedding_atlas.py:170 renders this header; :39 renders a missing
+        # dependency warning instead, which is a legitimate state on a build
+        # without the optional extras.
+        assert_tab_rendered(
+            page, "Embedding Atlas", unavailable="needs extra libraries"
         )
 
     def test_finetuning_tab(self, page):
@@ -1769,20 +1852,13 @@ class TestMonitoringDashboard:
         click_top_tab(page, "Synthetic Data")
         wait_for_script_idle(page)
 
-        body_text = active_tab_panel(page).inner_text().lower()
-
-        # The enhanced optimization tab renders Overview by default with
-        # optimization metrics and workflow controls.
-
-        # 1. Verify optimization-specific content
-        assert "optim" in body_text or "framework" in body_text, (
-            "Optimization tab should mention optimization in its content"
-        )
-
-        # 2. Overview metrics (Total Annotations, Golden Dataset, etc.)
-        metrics = page.locator('[data-testid="stMetric"]')
-        assert metrics.count() >= 2, (
-            f"Optimization overview should show pipeline metrics, got {metrics.count()}"
+        # optimization.py:57 and :103 render these headers unconditionally, so
+        # the tab cannot be blank and satisfy them. The metric count they
+        # replace was page-wide: test_overview_tab establishes that Analytics
+        # alone renders several, so it passed whether or not this tab rendered.
+        panel_text = assert_tab_rendered(page, "Optimization Framework")
+        assert "Optimization Overview" in panel_text, (
+            f"The optimization tab must render its overview block:\n{panel_text[:400]}"
         )
 
     def test_finetuning_dataset_analysis(self, page):
@@ -1791,20 +1867,14 @@ class TestMonitoringDashboard:
         click_top_tab(page, "Synthetic Data")
         wait_for_script_idle(page)
 
-        # Overview should show optimization pipeline metrics
-        metrics = page.locator('[data-testid="stMetric"]')
-        alerts = page.locator('[data-testid="stAlert"]')
-        body_text = active_tab_panel(page).inner_text().lower()
-        has_overview_content = (
-            metrics.count() > 0
-            or alerts.count() > 0
-            or "annotation" in body_text
-            or "golden" in body_text
-            or "optimization" in body_text
-        )
-        assert has_overview_content, (
-            "Optimization overview must show metrics, alerts, or pipeline status — "
-            f"metrics={metrics.count()}, alerts={alerts.count()}"
+        # A bare stAlert count is the weakest possible form here: every tab
+        # that reports anything renders one, so the old disjunction passed on
+        # another tab's alert. optimization.py:1228 labels the annotation
+        # metric, which only this tab renders.
+        panel_text = assert_tab_rendered(page, "Optimization Overview")
+        assert "Annotations" in panel_text, (
+            f"The optimization overview must report its annotation pipeline "
+            f"state:\n{panel_text[:400]}"
         )
 
 
@@ -1821,7 +1891,9 @@ class TestIngestionTesting:
         # the default Analytics tab. Wait for this tab's own header before
         # asserting anything about the body.
         expect(
-            page.locator("h1,h2,h3").filter(has_text="Ingestion Pipeline Testing")
+            active_tab_panel(page)
+            .locator("h1,h2,h3")
+            .filter(has_text="Ingestion Pipeline Testing")
         ).to_have_count(1, timeout=INTERACTION_TIMEOUT)
 
     def test_ingestion_header_and_description(self, page):
