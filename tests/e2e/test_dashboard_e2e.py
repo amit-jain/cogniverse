@@ -382,16 +382,18 @@ class TestInteractiveSearch:
         ] == [[1, 1, 1, 3]] * expected_results
 
         # Every expander is a result expander titled by the app's own format
-        # (app.py:2782): "Result N: <video id> (Score: 0.000)". The summary is
-        # visible while collapsed, so the title is the expander's first line.
-        titles = [
-            (e.inner_text() or "").strip().splitlines()[0]
-            for e in result_expanders.all()
-        ]
+        # (app.py:2782): "Result N: <video id> (Score: 0.000)". Counted across
+        # the expander's lines rather than read from a fixed one: the collapse
+        # chevron is a Material icon ligature that renders as its own text node
+        # ("keyboard_arrow_right") ahead of the title, so line 0 is the icon.
+        # Requiring exactly one match per expander pins the shipped format
+        # without pinning where Streamlit happens to place it.
+        title_pattern = re.compile(r"^Result \d+: .+ \(Score: -?\d+\.\d{3}\)$")
+        expander_texts = [(e.inner_text() or "") for e in result_expanders.all()]
         assert [
-            bool(re.match(r"^Result \d+: .+ \(Score: -?\d+\.\d{3}\)$", t))
-            for t in titles
-        ] == [True] * expected_results, titles
+            sum(1 for line in text.splitlines() if title_pattern.match(line.strip()))
+            for text in expander_texts
+        ] == [1] * expected_results, expander_texts
 
         # NOTE: Actually clicking Save Annotation does NOT work due to a known
         # Streamlit limitation — the Save button is inside `if search_button:`
