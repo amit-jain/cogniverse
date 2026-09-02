@@ -156,7 +156,10 @@ def render_routing_evaluation_tab():
         probe = classify_telemetry_probe(exc, timeout_s=_ROUTING_SPAN_FETCH_TIMEOUT_S)
         if probe.transient:
             _fetch_routing_spans.clear()
-        st.warning(f"⚠️ {decide_telemetry_gate(probe).error}")
+        # The fetch itself raised, so unlike the metrics tabs there is no body
+        # to render behind a caveat -- report why the spans are absent.
+        decision = decide_telemetry_gate(probe)
+        st.warning(f"⚠️ {decision.message}")
         return
 
     if not routing_spans:

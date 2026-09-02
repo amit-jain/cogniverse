@@ -17,6 +17,24 @@ from pathlib import Path
 import pytest
 from streamlit.testing.v1 import AppTest
 
+
+@pytest.fixture(autouse=True)
+def _isolate_streamlit_cache():
+    """Give every test its own ``st.cache_data``.
+
+    The routing tab quantizes its span window to 30s so reruns share a cache
+    key. Tests in this module land in the same bucket, so one test's fetch
+    result answered the next test's fetch: a stubbed failure never ran and
+    the assertion saw no warning at all. Fetch-count assertions have the same
+    exposure in the other order.
+    """
+    import streamlit as st
+
+    st.cache_data.clear()
+    yield
+    st.cache_data.clear()
+
+
 # Tabs that render purely from session_state + helpers, no backend calls.
 # Each entry is the bare-minimum session_state needed to reach the render
 # without exercising a live backend connection.
@@ -210,6 +228,51 @@ def test_routing_evaluation_tab_fetches_spans_once(tmp_path, monkeypatch):
     assert get_spans_calls["n"] == 1, (
         f"expected exactly one span fetch, got {get_spans_calls['n']}"
     )
+
+
+def test_routing_evaluation_names_the_cause_when_the_span_fetch_times_out(
+    tmp_path, monkeypatch
+):
+    """A slow store must be reported as slow, not as a bare warning marker.
+
+    The fetch raising means there are no spans to render behind a caveat, so
+    this tab still stops -- but the warning has to carry the reason. Reading
+    the decision's ``error`` alone printed an empty string here, because a
+    timeout populates ``caveat`` instead.
+    """
+    import asyncio
+
+    class _Traces:
+        async def get_spans(self, **kwargs):
+            raise asyncio.TimeoutError()
+
+    class _Provider:
+        traces = _Traces()
+
+    class _Manager:
+        def get_provider(self, tenant_id=None):
+            return _Provider()
+
+    monkeypatch.setattr(
+        "cogniverse_foundation.telemetry.manager.get_telemetry_manager",
+        lambda: _Manager(),
+    )
+
+    script_path = _build_app_script(
+        tmp_path,
+        "routing_evaluation",
+        "render_routing_evaluation_tab",
+        {"current_tenant": "acme"},
+    )
+    at = AppTest.from_file(script_path, default_timeout=30)
+    at.run()
+
+    assert at.exception == [], f"render raised: {[str(e.value) for e in at.exception]}"
+    assert [w.value for w in at.warning] == [
+        # Streamlit lifts the leading emoji out of the body into the icon.
+        "The telemetry store TimeoutError: did not answer within 30.0s. "
+        "Some figures may be missing or stale."
+    ]
 
 
 def test_annotation_section_wires_max_annotations_per_batch_from_config(
