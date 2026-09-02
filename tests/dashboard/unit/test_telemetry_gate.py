@@ -12,10 +12,12 @@ timeout branch is the common one, not the rare one.
 from __future__ import annotations
 
 import asyncio
+import time
 
 import httpx
 import pytest
 
+from cogniverse_dashboard import telemetry_gate
 from cogniverse_dashboard.telemetry_gate import (
     TelemetryProbe,
     classify_telemetry_probe,
@@ -321,3 +323,71 @@ def test_the_cause_walk_terminates_on_a_cyclic_chain():
 
     probe = classify_telemetry_probe(a, timeout_s=TIMEOUT_S)
     assert (probe.reachable, probe.transient) == (False, False)
+
+
+class TestRenderSpanQueryIsBounded:
+    """A span read on Streamlit's render path must not run unbounded.
+
+    Streamlit executes every tab body on every rerun, so one unbounded Phoenix
+    read stalls every later tab. Measured 2026-09-02: a healthy read is
+    1.22-1.81s, while an abandoned one kept a full scan running server-side and
+    took the host disk to 90% utilisation until Phoenix was restarted.
+    """
+
+    def test_returns_the_frame_when_the_query_completes(self):
+        async def _q():
+            return "FRAME"
+
+        out = telemetry_gate.run_render_span_query(_q, timeout_s=5.0)
+        assert out.frame == "FRAME"
+        assert out.timed_out is False
+        assert out.error == ""
+
+    def test_a_slow_query_times_out_instead_of_blocking_the_render(self):
+        import asyncio as _a
+
+        async def _q():
+            await _a.sleep(30)
+            return "NEVER"
+
+        started = time.monotonic()
+        out = telemetry_gate.run_render_span_query(_q, timeout_s=0.25)
+        elapsed = time.monotonic() - started
+
+        assert out.timed_out is True
+        assert out.frame is None
+        assert "0.25" in out.error, out.error
+        assert elapsed < 5.0, elapsed
+
+    def test_a_failing_query_reports_its_cause_and_is_not_a_timeout(self):
+        async def _q():
+            raise ValueError("phoenix exploded")
+
+        out = telemetry_gate.run_render_span_query(_q, timeout_s=5.0)
+        assert out.timed_out is False
+        assert out.frame is None
+        assert "ValueError" in out.error and "phoenix exploded" in out.error, out.error
+
+    def test_every_outcome_carries_exactly_one_non_empty_signal(self):
+        import asyncio as _a
+
+        async def _ok():
+            return "F"
+
+        async def _slow():
+            await _a.sleep(30)
+
+        async def _boom():
+            raise RuntimeError("x")
+
+        outs = [
+            telemetry_gate.run_render_span_query(_ok, timeout_s=1.0),
+            telemetry_gate.run_render_span_query(_slow, timeout_s=0.2),
+            telemetry_gate.run_render_span_query(_boom, timeout_s=1.0),
+        ]
+        assert [o.frame is not None for o in outs] == [True, False, False]
+        assert [o.error != "" for o in outs] == [False, True, True]
+
+    def test_the_default_budget_clears_the_measured_healthy_latency(self):
+        # A budget below the measured healthy latency fails every healthy read.
+        assert telemetry_gate.RENDER_SPAN_QUERY_TIMEOUT_S >= 3 * 1.81

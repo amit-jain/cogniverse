@@ -16,6 +16,7 @@ import pandas as pd
 import plotly.express as px
 import streamlit as st
 
+from cogniverse_dashboard.telemetry_gate import run_render_span_query
 from cogniverse_foundation.telemetry.config import (
     SPAN_NAME_PROFILE_SELECTION,
     TelemetryConfig,
@@ -104,10 +105,10 @@ def render_profile_metrics_tab() -> None:
 
     @st.cache_data(ttl=30, show_spinner="Querying Phoenix...")
     def _fetch_spans(_provider, project: str, start_iso: str, end_iso: str):
-        import asyncio
-
-        return asyncio.run(
-            _provider.traces.get_spans(
+        # Bounded: this runs on Streamlit's render path, which executes every
+        # tab body in order, so an unbounded read here stalls every later tab.
+        return run_render_span_query(
+            lambda: _provider.traces.get_spans(
                 project=project,
                 start_time=datetime.fromisoformat(start_iso),
                 end_time=datetime.fromisoformat(end_iso),
@@ -115,13 +116,17 @@ def render_profile_metrics_tab() -> None:
             )
         )
 
-    try:
-        spans_df = _fetch_spans(
-            provider, project_name, start.isoformat(), end.isoformat()
+    outcome = _fetch_spans(provider, project_name, start.isoformat(), end.isoformat())
+    if outcome.timed_out:
+        st.warning(
+            f"⚠️ Phoenix did not answer within the render budget "
+            f"({outcome.error}). The store is slow, not empty; retry shortly."
         )
-    except Exception as exc:
-        st.error(f"Phoenix span query failed: {exc}")
         return
+    if outcome.error:
+        st.error(f"Phoenix span query failed: {outcome.error}")
+        return
+    spans_df = outcome.frame
 
     if spans_df is None or spans_df.empty:
         st.info(
