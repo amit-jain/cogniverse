@@ -139,7 +139,7 @@ def _nav(page):
     wait_for_streamlit(page)
 
 
-def assert_tab_rendered(page, identity: str, *, unavailable: str | None = None) -> str:
+def assert_tab_rendered(page, identity: str) -> str:
     """Assert the open panel is the tab that renders ``identity``; return its text.
 
     ``identity`` is a heading the tab's own module renders, so a tab body that
@@ -147,21 +147,14 @@ def assert_tab_rendered(page, identity: str, *, unavailable: str | None = None) 
     which were satisfied by whatever *other* tab happened to render a metric or
     an alert: Streamlit keeps all 54 tab bodies in the DOM at once.
 
-    Where a feature can be genuinely absent -- optional dependencies, a backend
-    that is down -- ``unavailable`` names the notice the tab renders instead.
-    Exactly one of the two states holds, and both are scoped to this panel so
-    another tab's notice cannot stand in for this one's.
+    The heading is unconditional. Each of these tabs writes it before deciding
+    whether its feature is usable (embedding_atlas.py:168,
+    orchestration_annotation.py:92, routing_evaluation.py:98), so a tab that
+    reports missing dependencies or an unreachable backend still carries it,
+    and a caller must read the returned text to tell those states apart rather
+    than treat them as alternatives to the heading.
     """
-    panel = active_tab_panel(page)
-    text = panel.inner_text() or ""
-    if unavailable is not None:
-        notice = panel.locator(f'[data-testid="stAlert"]:has-text("{unavailable}")')
-        if notice.count():
-            assert identity not in text, (
-                f"The panel showed the {unavailable!r} notice and {identity!r} at "
-                f"once; these are mutually exclusive states:\n{text[:400]}"
-            )
-            return text
+    text = active_tab_panel(page).inner_text() or ""
     assert identity in text, (
         f"The open panel must be the tab whose module renders {identity!r}. "
         f"It rendered:\n{text[:400]}"
@@ -1829,16 +1822,20 @@ class TestMonitoringDashboard:
         # routing_evaluation.py:98 renders this heading whenever the tab is
         # reachable. The previous page-wide "not available" alert count was
         # satisfied by any other tab's notice.
-        panel_text = assert_tab_rendered(
-            page, "Routing Evaluation Dashboard", unavailable="not available"
-        )
+        panel_text = assert_tab_rendered(page, "Routing Evaluation Dashboard")
         if "Routing Evaluation Dashboard" in panel_text:
-            # routing_evaluation.py:195 renders the summary block for a
-            # reachable evaluator, so its heading is structural rather than
-            # data-dependent.
-            assert "Summary Metrics" in panel_text, (
-                f"A reachable Routing Evaluation must show its summary block:\n"
-                f"{panel_text[:400]}"
+            # The body reaches the summary block (routing_evaluation.py:195)
+            # only past two no-data returns (:167 and :175, both worded "No
+            # routing decisions found"). They are terminal and mutually
+            # exclusive with it, so exactly one may hold. Requiring the summary
+            # outright made an empty telemetry window a test failure; accepting
+            # either without the exclusion would pass on a panel showing both,
+            # or neither.
+            has_summary = "Summary Metrics" in panel_text
+            has_no_decisions = "No routing decisions found" in panel_text
+            assert has_summary != has_no_decisions, (
+                "Routing Evaluation must either summarise its decisions or say "
+                f"it found none, and not both:\n{panel_text[:400]}"
             )
 
     def test_orchestration_tab(self, page):
@@ -1849,21 +1846,16 @@ class TestMonitoringDashboard:
         # orchestration_annotation.py:92 renders this header unconditionally.
         # The disjunction it replaces counted Refresh buttons page-wide, and
         # six other tabs render one.
-        assert_tab_rendered(
-            page, "Orchestration Workflow Annotation", unavailable="not available"
-        )
+        assert_tab_rendered(page, "Orchestration Workflow Annotation")
 
     def test_embedding_atlas_tab(self, page):
         self._goto_dashboard(page)
         click_top_tab(page, "Embedding Atlas")
         wait_for_script_idle(page)
 
-        # embedding_atlas.py:170 renders this header; :39 renders a missing
-        # dependency warning instead, which is a legitimate state on a build
-        # without the optional extras.
-        assert_tab_rendered(
-            page, "Embedding Atlas", unavailable="needs extra libraries"
-        )
+        # embedding_atlas.py:168 renders this header before checking for the
+        # optional extras, so it holds whether or not umap is installed.
+        assert_tab_rendered(page, "Embedding Atlas")
 
     def test_finetuning_tab(self, page):
         self._goto_dashboard(page)
