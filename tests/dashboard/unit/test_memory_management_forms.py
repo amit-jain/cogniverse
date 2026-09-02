@@ -87,10 +87,17 @@ def _memory_app(tmp_path: Path, probe_status: int) -> AppTest:
                     }},
                 ]
 
-            def add_memory(self, content, tenant_id, agent_name, metadata):
+            def add_memory(
+                self, content, tenant_id, agent_name, metadata, infer=True
+            ):
                 st.session_state.setdefault("_add_calls", []).append(
-                    (content, tenant_id, agent_name, metadata)
+                    (content, tenant_id, agent_name, metadata, infer)
                 )
+                # Mirrors Mem0MemoryManager.add_memory: under infer=True the
+                # extraction pass can distil the text to no facts and store
+                # no row, which the real manager reports as None.
+                if infer:
+                    return None
                 return {{"results": [{{"id": "mem-9", "memory": content}}]}}
 
             def delete_memory(self, memory_id, tenant_id, agent_name):
@@ -179,8 +186,16 @@ def test_add_flow_calls_add_memory_with_exact_args(tmp_path: Path) -> None:
     at.button(key="add_btn").click().run()
 
     assert at.exception == []
+    # infer=False: the text typed into this form is the memory, so the
+    # extraction pass must not be allowed to distil it away.
     assert at.session_state["_add_calls"] == [
-        ("User plays golf on Sundays", "acme", "gateway_agent", {"topic": "hobbies"})
+        (
+            "User plays golf on Sundays",
+            "acme",
+            "gateway_agent",
+            {"topic": "hobbies"},
+            False,
+        )
     ]
     assert "Memory added successfully!" in [s.value for s in at.success]
     assert "View Added Memory" in [e.label for e in at.expander]
