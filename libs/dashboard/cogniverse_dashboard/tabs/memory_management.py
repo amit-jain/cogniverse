@@ -216,11 +216,15 @@ def render_memory_management_tab():
                     if metadata_json:
                         metadata = json.loads(metadata_json)
 
+                    # The text in this form is the memory. Mem0's extraction
+                    # pass may distil it to nothing and store no row, which
+                    # this form can only report as a failure.
                     result = manager.add_memory(
                         content=memory_content,
                         tenant_id=tenant_id,
                         agent_name=agent_name,
                         metadata=metadata,
+                        infer=False,
                     )
 
                     if result:
