@@ -17,9 +17,11 @@ import os
 import subprocess
 import sys
 import time
+from pathlib import Path
 
 import httpx
 import pytest
+import yaml
 
 from tests.e2e.conftest import KUBECTL_CONTEXT
 
@@ -378,6 +380,87 @@ def k3d_cluster():
     }
 
 
+def _refuse_release_larger_than_the_node(
+    project_root, helm_values, helm_set_overrides
+) -> None:
+    """Fail before deploying a release whose pods cannot all be scheduled.
+
+    Kubernetes places pods on requests, so a release that asks for more than
+    the node has does not degrade -- it wedges. The pods that fit are bound
+    and hold their reservations, the rest stay Pending, and because the ROCm
+    overlay gates sidecar startup in a chain, one unplaceable pod at the head
+    strands every pod behind it. Serving both chat models locally asks for
+    152.50Gi against this node's 123.46Gi, which took the runtime down with
+    it and cost a 20 minute helm timeout to report nothing useful.
+
+    Compared against MemTotal, the physical ceiling: anything above it cannot
+    schedule regardless of how the node is carved up.
+    """
+    import re as _re
+
+    command = [
+        "helm",
+        "template",
+        "cogniverse",
+        str(project_root / "charts" / "cogniverse"),
+    ]
+    for values in helm_values:
+        command.extend(["-f", str(values)])
+    for key, value in helm_set_overrides.items():
+        command.extend(["--set", f"{key}={value}"])
+    rendered = subprocess.run(command, capture_output=True, text=True, check=False)
+    if rendered.returncode != 0:
+        raise RuntimeError(
+            f"helm template failed while budgeting the release:\n{rendered.stderr}"
+        )
+
+    def _gib(value):
+        if not value:
+            return 0.0
+        text = str(value)
+        for suffix, scale in (("Gi", 1.0), ("Mi", 1 / 1024), ("Ki", 1 / 1024**2)):
+            if text.endswith(suffix):
+                return float(text[: -len(suffix)]) * scale
+        return float(text) / 1024**3
+
+    requested = 0.0
+    for document in yaml.safe_load_all(rendered.stdout):
+        if not document or document.get("kind") not in {
+            "Deployment",
+            "StatefulSet",
+            "DaemonSet",
+        }:
+            continue
+        spec = document["spec"]["template"]["spec"]
+        replicas = document["spec"].get("replicas", 1) or 1
+        running = sum(
+            _gib(((c.get("resources") or {}).get("requests") or {}).get("memory"))
+            for c in spec.get("containers", [])
+        )
+        # A pod reserves max(largest init container, sum of run containers):
+        # init containers finish before the others start.
+        init = max(
+            [
+                _gib(((c.get("resources") or {}).get("requests") or {}).get("memory"))
+                for c in spec.get("initContainers", [])
+            ]
+            or [0.0]
+        )
+        requested += max(running, init) * replicas
+
+    meminfo = Path("/proc/meminfo").read_text()
+    total_kb = int(_re.search(r"MemTotal:\s+(\d+) kB", meminfo).group(1))
+    node_gib = total_kb / 1024**2
+    if requested > node_gib:
+        raise RuntimeError(
+            f"this release requests {requested:.2f}Gi of memory but the node has "
+            f"{node_gib:.2f}Gi, so it cannot schedule. Serving the chat models "
+            "from Modal returns 44Gi and is how this host fits: rerun with "
+            "COGNIVERSE_LLM_SERVING=modal. Values applied: "
+            + ", ".join(v.name for v in helm_values)
+        )
+
+
 def deployment_helm_inputs(
     project_root,
     *,
@@ -434,6 +517,7 @@ def deployment_helm_inputs(
     )
     if extra_set:
         helm_set_overrides.update(extra_set)
+    _refuse_release_larger_than_the_node(project_root, helm_values, helm_set_overrides)
     return {
         "backend": backend,
         "image_version": image_version,
