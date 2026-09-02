@@ -111,12 +111,34 @@ def test_probe_detail_carries_the_exception_type_for_every_branch():
     assert TelemetryProbe(reachable=True).detail == ""
 
 
-def test_metrics_tab_drops_a_transient_probe_from_the_cache(monkeypatch):
-    """The decision is worthless if the tab caches the transient anyway.
+def test_probe_budget_cannot_outlast_its_own_cache_window():
+    """A probe that runs longer than it is cached for is not rate limited.
 
-    ``st.cache_data`` holds an entry for its TTL, so a store that recovers a
-    second later still leaves the tab blank until the entry expires. The tab
-    must evict the entry itself on the transient branch.
+    The probe blocks the render, and Streamlit executes every tab body on
+    every rerun, so an unbounded probe rate makes a slow store block every
+    interaction. The cache is the only rate limit, and it only limits
+    anything while the budget fits inside the window.
+    """
+    from cogniverse_dashboard.tabs import optimization
+
+    assert optimization._TELEMETRY_PROBE_TIMEOUT_S < optimization._PROBE_CACHE_TTL_S, (
+        optimization._TELEMETRY_PROBE_TIMEOUT_S,
+        optimization._PROBE_CACHE_TTL_S,
+    )
+    # Short enough that a blank tab recovers within a couple of interactions
+    # rather than the minute that motivated classifying the probe at all.
+    assert optimization._PROBE_CACHE_TTL_S <= 10.0
+
+
+def test_metrics_tab_keeps_a_transient_probe_cached(monkeypatch):
+    """Transient outcomes stay cached, so the retry rate stays bounded.
+
+    An earlier version evicted the entry on every transient branch. That made
+    the cache inert: Streamlit reruns on each interaction and renders every
+    tab body, so each rerun paid a fresh probe and a slow store blocked the
+    whole page for the probe budget -- worse in exactly the condition the
+    classification was written for. A short TTL recovers quickly without
+    giving up the rate limit.
     """
     import streamlit as st
 
@@ -144,7 +166,7 @@ def test_metrics_tab_drops_a_transient_probe_from_the_cache(monkeypatch):
     transient = classify_telemetry_probe(asyncio.TimeoutError(), timeout_s=TIMEOUT_S)
     monkeypatch.setattr(optimization, "_probe_telemetry", _FakeProbe(transient))
     optimization._render_metrics_dashboard_tab()
-    assert cleared == ["cleared"], "a transient probe must be evicted from the cache"
+    assert cleared == [], "a transient probe must stay cached to bound the retry rate"
     assert len(warnings) == 1 and "rerun to try again" in warnings[0], warnings
 
     # A configuration verdict will not change between reruns, so it stays.

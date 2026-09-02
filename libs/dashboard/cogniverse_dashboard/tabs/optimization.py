@@ -1258,8 +1258,6 @@ def _render_profile_selection_tab():
     st.caption(f"Tenant: **{tenant_id}**")
 
     probe = _probe_telemetry(tenant_id)
-    if not probe.reachable and probe.transient:
-        _probe_telemetry.clear()
 
     decision = decide_telemetry_gate(probe)
     if not decision.render:
@@ -1564,10 +1562,17 @@ def _render_profile_selection_tab():
 # covers a loaded store rather than an idle one. It is deliberately finite: an
 # unbounded probe holds the render thread, and Streamlit's health endpoint
 # starves behind it until the liveness probe kills the pod.
-_TELEMETRY_PROBE_TIMEOUT_S = 20.0
+# The probe blocks the render and Streamlit executes every tab body on every
+# rerun, so the budget is a page-blocking cost, not a background one. It must
+# fit inside the cache window below or the cache bounds nothing. A healthy
+# limit=1 read measured 0.02s here, so 3s is ~150x the healthy latency.
+_TELEMETRY_PROBE_TIMEOUT_S = 3.0
+# Short enough that a store which recovers is visible again within a couple
+# of interactions, rather than the minute that motivated classifying at all.
+_PROBE_CACHE_TTL_S = 5.0
 
 
-@st.cache_data(ttl=60, show_spinner=False)
+@st.cache_data(ttl=_PROBE_CACHE_TTL_S, show_spinner=False)
 def _probe_telemetry(tenant_id: str) -> TelemetryProbe:
     """Ask the tenant's telemetry store for one span, and classify the outcome."""
     from cogniverse_foundation.telemetry.manager import get_telemetry_manager
@@ -1608,11 +1613,6 @@ def _render_metrics_dashboard_tab():
     # walked), so the probe carries an explicit budget and its failure is
     # reported by cause rather than collapsed into "not available".
     probe = _probe_telemetry(tenant_id)
-    if not probe.reachable and probe.transient:
-        # Never hold a transient failure for the TTL: the store may recover
-        # before the next rerun, and caching blanks the tab meanwhile.
-        _probe_telemetry.clear()
-
     decision = decide_telemetry_gate(probe)
     if not decision.render:
         st.warning(f"⚠️ {decision.error}")
