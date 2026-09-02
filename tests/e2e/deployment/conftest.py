@@ -380,24 +380,8 @@ def k3d_cluster():
     }
 
 
-def _refuse_release_larger_than_the_node(
-    project_root, helm_values, helm_set_overrides
-) -> None:
-    """Fail before deploying a release whose pods cannot all be scheduled.
-
-    Kubernetes places pods on requests, so a release that asks for more than
-    the node has does not degrade -- it wedges. The pods that fit are bound
-    and hold their reservations, the rest stay Pending, and because the ROCm
-    overlay gates sidecar startup in a chain, one unplaceable pod at the head
-    strands every pod behind it. Serving both chat models locally asks for
-    152.50Gi against this node's 123.46Gi, which took the runtime down with
-    it and cost a 20 minute helm timeout to report nothing useful.
-
-    Compared against MemTotal, the physical ceiling: anything above it cannot
-    schedule regardless of how the node is carved up.
-    """
-    import re as _re
-
+def _render_release(project_root, helm_values, helm_set_overrides) -> list[dict]:
+    """The manifests this deploy is about to apply."""
     command = [
         "helm",
         "template",
@@ -413,6 +397,50 @@ def _refuse_release_larger_than_the_node(
         raise RuntimeError(
             f"helm template failed while budgeting the release:\n{rendered.stderr}"
         )
+    return [d for d in yaml.safe_load_all(rendered.stdout) if d]
+
+
+def rollout_timeout_minutes(documents: list[dict]) -> int:
+    """How long helm must allow, taken from the chart's own rollout deadline.
+
+    values.rocm.yaml paces sidecar startup by making each one wait on the
+    previous, and the gate deadline grows with position in that sequence, so
+    the tail of the chain declares a progressDeadlineSeconds far beyond any
+    single model's load. A helm --timeout shorter than that gives up while the
+    chain is still pacing exactly as designed, and reports a bare timeout that
+    names no model. Deriving it keeps the two budgets from disagreeing when
+    the sequence or the per-link pacing changes.
+    """
+    deadlines = [
+        int(d["spec"]["progressDeadlineSeconds"])
+        for d in documents
+        if d.get("kind") == "Deployment" and d["spec"].get("progressDeadlineSeconds")
+    ]
+    if not deadlines:
+        raise RuntimeError(
+            "no Deployment declared progressDeadlineSeconds, so the deploy "
+            "timeout cannot be derived from the chart"
+        )
+    # Round up to the next minute and add one, so helm outlives the rollout it
+    # is waiting on rather than racing it.
+    return max(deadlines) // 60 + 1
+
+
+def _refuse_release_larger_than_the_node(documents: list[dict]) -> None:
+    """Fail before deploying a release whose pods cannot all be scheduled.
+
+    Kubernetes places pods on requests, so a release that asks for more than
+    the node has does not degrade -- it wedges. The pods that fit are bound
+    and hold their reservations, the rest stay Pending, and because the ROCm
+    overlay paces sidecar startup in a chain, each pod behind an unplaceable
+    one waits out its whole pacing deadline before starting anyway. Serving
+    both chat models locally asks for 152.50Gi against this node's 123.46Gi,
+    which took the runtime down with it and reported nothing useful.
+
+    Compared against MemTotal, the physical ceiling: anything above it cannot
+    schedule regardless of how the node is carved up.
+    """
+    import re as _re
 
     def _gib(value):
         if not value:
@@ -424,7 +452,7 @@ def _refuse_release_larger_than_the_node(
         return float(text) / 1024**3
 
     requested = 0.0
-    for document in yaml.safe_load_all(rendered.stdout):
+    for document in documents:
         if not document or document.get("kind") not in {
             "Deployment",
             "StatefulSet",
@@ -456,8 +484,7 @@ def _refuse_release_larger_than_the_node(
             f"this release requests {requested:.2f}Gi of memory but the node has "
             f"{node_gib:.2f}Gi, so it cannot schedule. Serving the chat models "
             "from Modal returns 44Gi and is how this host fits: rerun with "
-            "COGNIVERSE_LLM_SERVING=modal. Values applied: "
-            + ", ".join(v.name for v in helm_values)
+            "COGNIVERSE_LLM_SERVING=modal."
         )
 
 
@@ -517,7 +544,6 @@ def deployment_helm_inputs(
     )
     if extra_set:
         helm_set_overrides.update(extra_set)
-    _refuse_release_larger_than_the_node(project_root, helm_values, helm_set_overrides)
     return {
         "backend": backend,
         "image_version": image_version,
@@ -774,13 +800,21 @@ def deploy_stack(
         f"{sorted(k for k in helm_set_overrides if k.endswith('.image.tag'))}"
     )
 
+    # Budgeted here rather than while resolving inputs: this is the first
+    # point that necessarily has the real chart on disk.
+    documents = _render_release(project_root, helm_values, helm_set_overrides)
+    _refuse_release_larger_than_the_node(documents)
+
     try:
         helm_install(
             chart_path,
             helm_values,
             set_values=helm_set_overrides,
             namespace=namespace,
-            timeout="20m",
+            # Derived from the chart, not fixed: the sidecar pacing chain's
+            # tail declares a rollout deadline well past 20m, so a hardcoded
+            # 20m gave up mid-pacing and reported a timeout naming no model.
+            timeout=f"{rollout_timeout_minutes(documents)}m",
         )
     except RuntimeError:
         dump_pod_state(namespace)

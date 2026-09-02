@@ -16,6 +16,7 @@ from __future__ import annotations
 
 import ast
 import asyncio
+import copy
 import json
 import subprocess
 import threading
@@ -2643,3 +2644,73 @@ def test_report_collector_cap_is_exact_under_concurrent_appends():
     assert not any(t.is_alive() for t in threads), "worker threads still alive"
     assert len(collector.operations) == 100
     assert collector.operations_dropped == 300
+
+
+def _rocm_release_documents():
+    from tests.e2e.deployment.conftest import _render_release
+
+    repo_root = Path(__file__).resolve().parents[2]
+    chart = repo_root / "charts" / "cogniverse"
+    return _render_release(
+        repo_root,
+        [
+            chart / "values.k3s.yaml",
+            chart / "values.rocm.yaml",
+            chart / "values.modal-llm.yaml",
+        ],
+        {"runtime.qualityMonitor.tenantId": "t"},
+    )
+
+
+def test_deploy_timeout_outlives_the_rollout_the_chart_declares():
+    """helm must not give up while the chart still expects to be rolling.
+
+    values.rocm.yaml paces sidecar startup by position in a sequence, so the
+    tail of the chain declares a progressDeadlineSeconds far past any single
+    model's load -- 4500s where the deploy previously allowed a fixed 20m.
+    Helm therefore abandoned a rollout that was proceeding as designed and
+    reported a bare timeout naming no model, which is how an unschedulable
+    pod at the head of the chain came to look like a deploy failure with no
+    cause. Derived from the render so the two budgets cannot drift apart.
+    """
+    from tests.e2e.deployment.conftest import rollout_timeout_minutes
+
+    documents = _rocm_release_documents()
+    declared = [
+        int(d["spec"]["progressDeadlineSeconds"])
+        for d in documents
+        if d.get("kind") == "Deployment" and d["spec"].get("progressDeadlineSeconds")
+    ]
+    assert declared, "the chart declared no rollout deadline to derive from"
+
+    allowed_seconds = rollout_timeout_minutes(documents) * 60
+    assert allowed_seconds > max(declared), (
+        f"helm is allowed {allowed_seconds}s but the chart's slowest rollout "
+        f"declares {max(declared)}s, so helm gives up first"
+    )
+
+
+def test_deploy_timeout_tracks_a_longer_pacing_chain():
+    """The timeout follows the chart rather than restating a number.
+
+    A pin on today's 76m would still pass if the sequence grew and the deploy
+    kept giving up early, so drive a longer deadline through and require the
+    derived budget to move with it.
+    """
+    from tests.e2e.deployment.conftest import rollout_timeout_minutes
+
+    documents = _rocm_release_documents()
+    baseline = rollout_timeout_minutes(documents)
+
+    stretched = copy.deepcopy(documents)
+    for document in stretched:
+        if document.get("kind") == "Deployment" and document["spec"].get(
+            "progressDeadlineSeconds"
+        ):
+            document["spec"]["progressDeadlineSeconds"] = 9000
+            break
+
+    assert rollout_timeout_minutes(stretched) > baseline, (
+        "a longer declared rollout did not widen the deploy timeout, so the "
+        "budget is not actually derived from the chart"
+    )
