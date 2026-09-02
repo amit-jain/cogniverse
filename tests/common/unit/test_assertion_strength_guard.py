@@ -21,7 +21,11 @@ import pytest
 
 REPO_ROOT = Path(__file__).resolve().parents[3]
 
-_ASSERT = re.compile(r"^[+-]\s*assert\b")
+# ``expect(...)`` raises on failure exactly as ``assert`` does, and against a
+# rendered page it is the stronger form: it retries until the condition holds
+# rather than sampling once. Counting only ``assert`` made this guard reward
+# the sampling form it exists to discourage.
+_ASSERT = re.compile(r"^[+-]\s*(assert\b|expect\()")
 _WEAK_FORMS: tuple[tuple[str, re.Pattern[str]], ...] = (
     ("skip", re.compile(r"pytest\.skip\(")),
     ("xfail", re.compile(r"pytest\.mark\.xfail")),
@@ -163,6 +167,64 @@ def test_detector_catches_a_removed_assertion():
         "-    assert result == {'a': 1}\n"
         "-    assert order == ['a', 'b']\n"
         "+    assert result == {'a': 1}\n"
+    )
+    assert analyze_diff(diff) == {
+        "tests/foo/test_x.py": {"removed": 2, "added": 1, "weak": []}
+    }
+
+
+def test_expect_counts_as_an_assertion():
+    """``expect(...)`` raises on failure, so it is an assertion.
+
+    Counting only ``assert`` made the guard reward the weaker form: swapping
+    a one-shot ``assert x.count() > 0`` for a retrying
+    ``expect(x).to_have_count(1)`` read as a loss, so the guard pushed a fix
+    toward the sampling form it exists to discourage.
+    """
+    diff = (
+        "diff --git a/tests/foo/test_x.py b/tests/foo/test_x.py\n"
+        "--- a/tests/foo/test_x.py\n"
+        "+++ b/tests/foo/test_x.py\n"
+        "-    assert widgets.count() > 0\n"
+        "+    expect(widgets).to_have_count(1, timeout=INTERACTION_TIMEOUT)\n"
+    )
+    assert analyze_diff(diff) == {
+        "tests/foo/test_x.py": {"removed": 1, "added": 1, "weak": []}
+    }
+
+
+def test_detector_does_not_count_non_assertion_lines():
+    """A loss must be visible even when the change adds other lines.
+
+    Every other fixture here is made entirely of assertion lines, so a
+    detector that counted *any* changed line scored identically on all of
+    them and its own suite stayed green. This is the case that separates
+    them: one assertion removed while three ordinary lines are added. A
+    correct detector reports the loss; one that counts lines sees a gain.
+    """
+    diff = (
+        "diff --git a/tests/foo/test_x.py b/tests/foo/test_x.py\n"
+        "--- a/tests/foo/test_x.py\n"
+        "+++ b/tests/foo/test_x.py\n"
+        "-    assert result == {'a': 1}\n"
+        "+    # explain the setup\n"
+        "+    helper = build_helper()\n"
+        "+    value = helper.compute()\n"
+    )
+    assert analyze_diff(diff) == {
+        "tests/foo/test_x.py": {"removed": 1, "added": 0, "weak": []}
+    }
+
+
+def test_removing_an_expect_is_still_a_loss():
+    """Counting ``expect`` must not become a way to drop coverage."""
+    diff = (
+        "diff --git a/tests/foo/test_x.py b/tests/foo/test_x.py\n"
+        "--- a/tests/foo/test_x.py\n"
+        "+++ b/tests/foo/test_x.py\n"
+        "-    expect(rows).to_have_count(3)\n"
+        "-    expect(title).to_have_text('Results')\n"
+        "+    expect(rows).to_have_count(3)\n"
     )
     assert analyze_diff(diff) == {
         "tests/foo/test_x.py": {"removed": 2, "added": 1, "weak": []}
