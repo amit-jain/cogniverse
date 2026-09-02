@@ -32,6 +32,7 @@ from tests.e2e.conftest import (
     panel_widget,
     set_tenant,
     unique_id,
+    wait_for_script_idle,
     wait_for_streamlit,
 )
 
@@ -672,18 +673,24 @@ class TestAnnotationHarvesting:
         assert fetch_btn.count() == 1, "Fetch Search Results button should be present"
 
         click_button(page, "Fetch")
-        page.wait_for_timeout(INTERACTION_TIMEOUT)
-        page.wait_for_load_state("networkidle")
+        wait_for_script_idle(page)
 
         # Exact alert text: "Fetched N search results" or "No results returned"
         fetched_alert = active_tab_panel(page).locator(
             '[data-testid="stAlert"]:has-text("Fetched")'
         )
-        no_results = page.locator(
+        no_results = active_tab_panel(page).locator(
             '[data-testid="stAlert"]:has-text("No results returned")'
         )
         error_alert = active_tab_panel(page).locator(
             '[data-testid="stAlert"]:has-text("Failed to fetch")'
+        )
+
+        # The fetch is a backend call: wait for one of the three terminal
+        # alerts before reading any of them, or a mid-render page reads as
+        # "no alert" and the error branch below is skipped silently.
+        expect(fetched_alert.or_(no_results).or_(error_alert).first).to_be_visible(
+            timeout=INTERACTION_TIMEOUT
         )
 
         # Fetch errors are system failures — Phoenix must be reachable
@@ -1141,8 +1148,7 @@ class TestTenantLifecycleDashboard:
         page.wait_for_timeout(1_000)
 
         click_button(page, "Create Organization")
-        page.wait_for_timeout(INTERACTION_TIMEOUT)
-        page.wait_for_load_state("networkidle")
+        wait_for_script_idle(page)
 
         # st.rerun() clears transient alerts — authoritative check via API
         page.wait_for_timeout(3_000)
@@ -1274,8 +1280,7 @@ class TestConfigManagement:
         export_btn = page.get_by_role("button", name="📥 Export Configurations")
         assert export_btn.count() > 0, "Export Configurations button should be present"
         export_btn.first.click()
-        page.wait_for_timeout(INTERACTION_TIMEOUT)
-        page.wait_for_load_state("networkidle")
+        wait_for_script_idle(page)
 
         # Export produces: "Exported N configurations" success alert
         export_success = active_tab_panel(page).locator(
@@ -1465,18 +1470,23 @@ class TestMemoryLifecycle:
             "Add Memory button should be present"
         )
         click_button(page, "Add Memory")
-        page.wait_for_timeout(INTERACTION_TIMEOUT)
-        page.wait_for_load_state("networkidle")
+        wait_for_script_idle(page)
 
         # Memory add alerts persist (no st.rerun) — assert exact feedback
         success = active_tab_panel(page).locator(
             '[data-testid="stAlert"]:has-text("added successfully")'
         )
-        error = page.locator('[data-testid="stAlert"]:has-text("Failed")')
-        assert success.count() > 0 or error.count() > 0, (
-            "Memory add must show 'added successfully' or 'Failed' alert — "
-            f"success={success.count()}, error={error.count()}"
+        error = active_tab_panel(page).locator(
+            '[data-testid="stAlert"]:has-text("Failed")'
         )
+        # The add is a backend write, so wait for its outcome rather than
+        # sampling once. Accepting the failure alert as proof would let a
+        # broken add pass the test that exists to exercise it.
+        expect(success.or_(error).first).to_be_visible(timeout=INTERACTION_TIMEOUT)
+        assert error.count() == 0, (
+            f"Memory add reported a failure: {error.first.inner_text()}"
+        )
+        expect(success).to_have_count(1)
 
         # Search for the memory
         click_sub_tab(page, "Search Memories")
@@ -1491,26 +1501,26 @@ class TestMemoryLifecycle:
             "Search button should be present"
         )
         click_button(page, "Search")
-        page.wait_for_timeout(INTERACTION_TIMEOUT)
-        page.wait_for_load_state("networkidle")
+        wait_for_script_idle(page)
 
         # Memory search alerts persist (no st.rerun) — assert specific feedback
         found_alert = active_tab_panel(page).locator(
             '[data-testid="stAlert"]:has-text("Found")'
         )
-        no_results = page.locator(
+        no_results = active_tab_panel(page).locator(
             '[data-testid="stAlert"]:has-text("No memories found")'
         )
-        assert found_alert.count() > 0 or no_results.count() > 0, (
-            "Memory search must show 'Found N memories' or 'No memories found'"
+        expect(found_alert.or_(no_results).first).to_be_visible(
+            timeout=INTERACTION_TIMEOUT
         )
 
         # If memories were found, verify they are rendered with actual content
         if found_alert.count() > 0:
             # Search results are rendered as expanders or in a dataframe
-            expanders = page.locator('[data-testid="stExpander"]')
-            dataframes = page.locator('[data-testid="stDataFrame"]')
-            json_blocks = page.locator('[data-testid="stJson"]')
+            panel = active_tab_panel(page)
+            expanders = panel.locator('[data-testid="stExpander"]')
+            dataframes = panel.locator('[data-testid="stDataFrame"]')
+            json_blocks = panel.locator('[data-testid="stJson"]')
             assert (
                 expanders.count() > 0
                 or dataframes.count() > 0
@@ -1581,8 +1591,7 @@ class TestMemoryLifecycle:
         )
         assert load_btn.first.inner_text().strip() == "🔄 Load All Memories"
         load_btn.first.click()
-        page.wait_for_timeout(INTERACTION_TIMEOUT)
-        page.wait_for_load_state("networkidle")
+        wait_for_script_idle(page)
 
         # Alerts persist (no st.rerun): exactly one "Found N memories" alert
         # and exactly one detailed-view expander for the seeded row.
