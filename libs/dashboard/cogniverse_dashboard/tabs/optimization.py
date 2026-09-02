@@ -1261,8 +1261,11 @@ def _render_profile_selection_tab():
 
     decision = decide_telemetry_gate(probe)
     if not decision.render:
-        st.warning(f"⚠️ {decision.error}")
+        st.warning(f"⚠️ {decision.message}")
         return
+    if decision.caveat:
+        # Rendered, but the store did not confirm itself in time.
+        st.warning(f"⚠️ {decision.caveat}")
 
     # Query for profile performance data
     try:
@@ -1615,8 +1618,11 @@ def _render_metrics_dashboard_tab():
     probe = _probe_telemetry(tenant_id)
     decision = decide_telemetry_gate(probe)
     if not decision.render:
-        st.warning(f"⚠️ {decision.error}")
+        st.warning(f"⚠️ {decision.message}")
         return
+    if decision.caveat:
+        # Rendered, but the store did not confirm itself in time.
+        st.warning(f"⚠️ {decision.caveat}")
 
     # Time range selector
     col1, col2 = st.columns([3, 1])

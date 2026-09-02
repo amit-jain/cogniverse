@@ -14,6 +14,7 @@ from __future__ import annotations
 import asyncio
 
 import httpx
+import pytest
 
 from cogniverse_dashboard.telemetry_gate import (
     TelemetryProbe,
@@ -37,13 +38,18 @@ def test_timeout_is_transient_and_never_cached():
     assert (probe.reachable, probe.transient) == (False, True)
     assert "5.0s" in probe.detail and "TimeoutError" in probe.detail
 
+    assert probe.timed_out is True
+
     decision = decide_telemetry_gate(probe)
-    assert decision.render is False
-    # Caching a timeout keeps the tab blank for the TTL after the store has
-    # recovered, so the next rerun must probe again.
+    # A timeout renders the body with a caveat rather than blanking the tab:
+    # the store is measurably slower under load than any budget that fits
+    # inside a render, so failing closed hides the tab exactly when it is
+    # wanted. Slowness only -- a refused connection still blocks.
+    assert decision.render is True
     assert decision.cacheable is False
-    assert "did not answer within 5.0s" in decision.error
-    assert "not available" not in decision.error
+    assert decision.error == ""
+    assert "did not answer within 5.0s" in decision.caveat
+    assert "not available" not in decision.caveat
 
 
 def test_connection_error_is_transient_and_names_the_cause():
@@ -111,6 +117,38 @@ def test_probe_detail_carries_the_exception_type_for_every_branch():
     assert TelemetryProbe(reachable=True).detail == ""
 
 
+def test_a_busy_store_renders_the_body_with_a_caveat():
+    """A slow store must not blank the tab.
+
+    Measured 2026-09-02 during a sweep: Phoenix answered its simplest
+    endpoint in 11s, 11s and 37s while sitting at 270m CPU, so it is I/O
+    bound on its store, not busy. No probe budget short enough to keep the
+    page responsive can succeed against that, and failing closed on a
+    timeout means the tab is permanently blank under exactly the load an
+    operator most wants to look at it. A timeout is not evidence the store
+    is unusable - only that it did not answer inside a render.
+    """
+    probe = classify_telemetry_probe(asyncio.TimeoutError(), timeout_s=TIMEOUT_S)
+    decision = decide_telemetry_gate(probe)
+    assert decision.render is True
+    assert decision.error == ""
+    assert "did not answer" in decision.caveat and str(TIMEOUT_S) in decision.caveat
+
+
+def test_a_rejected_query_still_blocks_the_body():
+    """Fail-open applies to slowness only, never to a verdict.
+
+    A configuration error will not fix itself between reruns, and rendering
+    a body whose every call raises would replace one clear message with a
+    page of tracebacks.
+    """
+    probe = classify_telemetry_probe(ValueError("no such project"), timeout_s=TIMEOUT_S)
+    decision = decide_telemetry_gate(probe)
+    assert decision.render is False
+    assert decision.caveat == ""
+    assert "rejected the query" in decision.error
+
+
 def test_probe_budget_cannot_outlast_its_own_cache_window():
     """A probe that runs longer than it is cached for is not rate limited.
 
@@ -163,7 +201,9 @@ def test_metrics_tab_keeps_a_transient_probe_cached(monkeypatch):
     monkeypatch.setattr(st, "caption", lambda *a, **k: None)
     monkeypatch.setitem(st.session_state, "current_tenant", "acme")
 
-    transient = classify_telemetry_probe(asyncio.TimeoutError(), timeout_s=TIMEOUT_S)
+    transient = classify_telemetry_probe(
+        ConnectionError("connection refused"), timeout_s=TIMEOUT_S
+    )
     monkeypatch.setattr(optimization, "_probe_telemetry", _FakeProbe(transient))
     optimization._render_metrics_dashboard_tab()
     assert cleared == [], "a transient probe must stay cached to bound the retry rate"
@@ -177,3 +217,107 @@ def test_metrics_tab_keeps_a_transient_probe_cached(monkeypatch):
     optimization._render_metrics_dashboard_tab()
     assert cleared == [], "a configuration verdict must stay cached"
     assert len(warnings) == 1 and "no endpoint" in warnings[0], warnings
+
+
+@pytest.mark.parametrize("tab", ["metrics", "profile"])
+def test_a_slow_store_renders_the_body_behind_a_caveat(monkeypatch, tab):
+    """A timeout must not blank a tab -- it renders, carrying the warning.
+
+    The store answers its simplest endpoint in 11-36s while spans are being
+    walked, so no budget that fits inside a page render can succeed under
+    load. Failing closed on slowness hides the tab in exactly the condition
+    it exists to report on. Each case raises from the first call past its
+    gate, which proves the body was reached rather than skipped; the sentinel
+    derives from BaseException so the profile tab's ``except Exception``
+    cannot swallow it and turn a skipped body into a passing test.
+
+    Parametrized over both gate sites: covering one left the other free to
+    drop the caveat with every test still green.
+    """
+    import streamlit as st
+
+    from cogniverse_dashboard.tabs import optimization
+
+    class _PastTheGate(BaseException):
+        pass
+
+    def _raise(*_a, **_k):
+        raise _PastTheGate()
+
+    warnings: list[str] = []
+    monkeypatch.setattr(st, "warning", lambda msg: warnings.append(str(msg)))
+    monkeypatch.setattr(st, "subheader", lambda *a, **k: None)
+    monkeypatch.setattr(st, "markdown", lambda *a, **k: None)
+    monkeypatch.setattr(st, "caption", lambda *a, **k: None)
+    monkeypatch.setitem(st.session_state, "current_tenant", "acme")
+
+    if tab == "metrics":
+        render = optimization._render_metrics_dashboard_tab
+        monkeypatch.setattr(st, "columns", _raise)
+    else:
+        render = optimization._render_profile_selection_tab
+        monkeypatch.setattr(
+            "cogniverse_foundation.telemetry.manager.get_telemetry_manager", _raise
+        )
+
+    slow = classify_telemetry_probe(asyncio.TimeoutError(), timeout_s=TIMEOUT_S)
+    monkeypatch.setattr(optimization, "_probe_telemetry", lambda tenant_id: slow)
+
+    with pytest.raises(_PastTheGate):
+        render()
+
+    assert len(warnings) == 1, warnings
+    assert "did not answer within 5.0s" in warnings[0], warnings[0]
+
+
+def test_every_gate_verdict_carries_exactly_one_message():
+    """No branch may emit a bare warning marker with nothing after it.
+
+    Call sites format ``f"warning {decision.error}"``; a verdict that leaves
+    both fields empty renders a warning icon and no cause. Fail-open added a
+    branch where ``error`` is empty by design, so the invariant is now that
+    exactly one of the two is populated.
+    """
+    verdicts = [
+        classify_telemetry_probe(asyncio.TimeoutError(), timeout_s=TIMEOUT_S),
+        classify_telemetry_probe(ConnectionError("refused"), timeout_s=TIMEOUT_S),
+        classify_telemetry_probe(ValueError("no endpoint"), timeout_s=TIMEOUT_S),
+        TelemetryProbe(reachable=True),
+    ]
+    populated = [
+        (bool(d.error), bool(d.caveat))
+        for d in (decide_telemetry_gate(p) for p in verdicts)
+    ]
+    assert populated == [(False, True), (True, False), (True, False), (False, False)]
+
+
+def test_a_wrapped_timeout_is_still_classified_as_slow():
+    """A busy store re-raised as another type must not read as misconfigured.
+
+    The routing evaluator wraps every failure in ``RuntimeError(...) from e``.
+    Classifying the outermost type alone sent a timeout down the permanent
+    branch -- "check the telemetry configuration" for a store that was merely
+    busy, with the fail-open path unreachable behind it.
+    """
+    wrapped = RuntimeError("Failed to query routing spans: ")
+    wrapped.__cause__ = asyncio.TimeoutError()
+
+    probe = classify_telemetry_probe(wrapped, timeout_s=TIMEOUT_S)
+    assert (probe.reachable, probe.transient, probe.timed_out) == (False, True, True)
+    assert probe.detail == "TimeoutError: did not answer within 5.0s"
+
+    # A wrapper with no transient cause stays a configuration verdict.
+    plain = RuntimeError("Failed to query routing spans: bad project")
+    plain.__cause__ = ValueError("bad project")
+    assert classify_telemetry_probe(plain, timeout_s=TIMEOUT_S).transient is False
+
+
+def test_the_cause_walk_terminates_on_a_cyclic_chain():
+    """A self-referential chain must not hang the render thread."""
+    a = RuntimeError("a")
+    b = RuntimeError("b")
+    a.__cause__ = b
+    b.__cause__ = a
+
+    probe = classify_telemetry_probe(a, timeout_s=TIMEOUT_S)
+    assert (probe.reachable, probe.transient) == (False, False)
