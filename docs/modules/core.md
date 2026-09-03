@@ -203,8 +203,8 @@ These are Pydantic BaseModel subclasses that define agent interfaces:
 from cogniverse_core.agents.base import AgentInput, AgentOutput, AgentDeps
 
 class AgentInput(BaseModel):
-    """Base class for all agent inputs. Flexible - extra fields ignored."""
-    model_config = ConfigDict(extra="ignore")
+    """Base class for all agent inputs. Undeclared fields are retained."""
+    model_config = ConfigDict(extra="allow")
 
 class AgentOutput(BaseModel):
     """Base class for all agent outputs. Strict - no extra fields allowed."""
