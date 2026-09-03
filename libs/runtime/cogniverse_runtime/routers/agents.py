@@ -202,6 +202,10 @@ class AgentTask(BaseModel):
     # nest it under context. Any value other than "deep" is ignored.
     synthesis_depth: Optional[str] = None
     session_id: Optional[str] = None
+    # RLM promotion stamped by the orchestrator (or an explicit caller
+    # opt-in); threaded into the dispatch context and consumed by the
+    # promotable agents' typed inputs as RLMOptions.
+    rlm: Optional[Dict[str, Any]] = None
 
 
 class AgentRegistrationData(BaseModel):
@@ -546,6 +550,8 @@ async def process_agent_task(
         dispatch_context["synthesis_depth"] = task.synthesis_depth
     if task.session_id is not None:
         dispatch_context["session_id"] = task.session_id
+    if task.rlm is not None:
+        dispatch_context["rlm"] = task.rlm
 
     # Stable per-request seed for canary/variant bucketing — session-sticky
     # when a session/context id is present, else a fresh id so one-shot calls

@@ -903,3 +903,102 @@ class TestStreamingInputCarriesContext:
         )
 
         assert typed_input.synthesis_depth == "exhaustive"
+
+
+@pytest.mark.unit
+@pytest.mark.asyncio
+class TestRlmThreadsIntoTypedInputs:
+    """The orchestrator's RLM promotion stamps ``rlm`` on the sub-agent
+    payload; each promotable execution seam must feed context["rlm"] into
+    the typed input, or the promoted flag dies between the HTTP boundary
+    and the agent and RLM synthesis never activates."""
+
+    _RLM = {"enabled": True, "auto_detect": True, "context_threshold": 50_000}
+
+    def _expected_options(self):
+        from cogniverse_core.agents.rlm_options import RLMOptions
+
+        return RLMOptions(enabled=True, auto_detect=True, context_threshold=50_000)
+
+    async def test_search_task_threads_rlm_into_input(self, dispatcher, monkeypatch):
+        fake_config = MagicMock()
+        fake_config.get = lambda key, default=None: default
+        monkeypatch.setattr(
+            "cogniverse_foundation.config.utils.get_config",
+            lambda **kwargs: fake_config,
+        )
+        captured = {}
+
+        class _CapturingSearchStub(_SearchAgentStub):
+            async def _process_impl(self, inp):
+                captured["input"] = inp
+                return await super()._process_impl(inp)
+
+        dispatcher._get_search_agent = lambda profile: _CapturingSearchStub(profile)
+        dispatcher.consult_egress_policy = lambda *a, **k: None
+        dispatcher._verify_search_egress = lambda *a, **k: None
+
+        await dispatcher._execute_search_task(
+            "robots", "acme:acme", 5, context={"rlm": dict(self._RLM)}
+        )
+
+        assert captured["input"].rlm == self._expected_options()
+
+    async def test_coding_task_threads_rlm_into_input(self, dispatcher, monkeypatch):
+        captured = {}
+
+        class _StubCodingAgent:
+            def __init__(self, *args, **kwargs):
+                pass
+
+            async def process(self, input):
+                captured["input"] = input
+                return SimpleNamespace(model_dump=lambda: {"ok": True})
+
+        monkeypatch.setattr(
+            "cogniverse_agents.coding_agent.CodingAgent", _StubCodingAgent
+        )
+        monkeypatch.setattr(
+            "cogniverse_foundation.config.utils.get_config",
+            lambda **kwargs: MagicMock(),
+        )
+        monkeypatch.setattr(
+            "cogniverse_foundation.config.semantic_router.create_routed_lm",
+            lambda *args, **kwargs: MagicMock(),
+        )
+        monkeypatch.setattr(
+            "cogniverse_foundation.config.semantic_router.resolve_semantic_router_config",
+            lambda *args, **kwargs: MagicMock(),
+        )
+        dispatcher._init_agent_memory = lambda *args, **kwargs: None
+
+        await dispatcher._execute_coding_task(
+            "add a retry helper", "acme:acme", context={"rlm": dict(self._RLM)}
+        )
+
+        assert captured["input"].rlm == self._expected_options()
+
+    async def test_deep_research_task_threads_rlm_into_input(
+        self, dispatcher, monkeypatch
+    ):
+        captured = {}
+
+        class _StubResearchAgent:
+            def __init__(self, *args, **kwargs):
+                pass
+
+            async def process(self, input):
+                captured["input"] = input
+                return SimpleNamespace(model_dump=lambda: {"ok": True})
+
+        monkeypatch.setattr(
+            "cogniverse_agents.deep_research_agent.DeepResearchAgent",
+            _StubResearchAgent,
+        )
+        dispatcher._init_agent_memory = lambda *args, **kwargs: None
+
+        await dispatcher._execute_deep_research_task(
+            "trace the supply chain", "acme:acme", context={"rlm": dict(self._RLM)}
+        )
+
+        assert captured["input"].rlm == self._expected_options()

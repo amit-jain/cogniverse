@@ -1810,3 +1810,41 @@ class TestAnnotationQueueItemRoute:
         resp = client.get("/agents/annotations/queue/nope")
         assert resp.status_code == 404
         assert resp.json() == {"detail": "Span nope not in queue"}
+
+
+@pytest.mark.unit
+class TestRlmFieldReachesDispatchContext:
+    """The orchestrator POSTs its RLM promotion as a top-level ``rlm`` field
+    on the AgentTask payload. The route must declare it and thread it into
+    the dispatch context, or pydantic drops it at the HTTP boundary and the
+    promotion is inert for every sub-agent call."""
+
+    def test_top_level_rlm_reaches_dispatch_context(self, monkeypatch):
+        stub_dispatcher = MagicMock()
+        captured = {}
+
+        async def _dispatch(agent_name, query, context, top_k):
+            captured["context"] = context
+            return {"status": "success"}
+
+        stub_dispatcher.dispatch = _dispatch
+        monkeypatch.setattr(
+            agents_router, "_ensure_dispatcher", lambda: stub_dispatcher
+        )
+
+        test_app = FastAPI()
+        test_app.include_router(agents_router.router, prefix="/agents")
+        rlm = {"enabled": True, "auto_detect": True, "context_threshold": 50000}
+        with TestClient(test_app) as client:
+            resp = client.post(
+                "/agents/search_agent/process",
+                json={
+                    "agent_name": "search_agent",
+                    "query": "robots",
+                    "context": {"tenant_id": "acme:prod"},
+                    "rlm": rlm,
+                },
+            )
+
+        assert resp.status_code == 200
+        assert captured["context"]["rlm"] == rlm
