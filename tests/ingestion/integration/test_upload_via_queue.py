@@ -577,6 +577,18 @@ async def real_stack(
     test_config_path.write_text(json.dumps(config_blob))
     monkeypatch.setenv("COGNIVERSE_CONFIG", str(test_config_path))
 
+    # The entrypoint injects the OTLP endpoint into the manager singleton
+    # (main.py get_telemetry_manager(..., otlp_endpoint=...)); the in-process
+    # worker bypasses main(), so prime the singleton the same way or its spans
+    # export to the default localhost:4317 instead of this stack's Phoenix.
+    from cogniverse_foundation.telemetry.manager import (
+        TelemetryManager,
+        get_telemetry_manager,
+    )
+
+    TelemetryManager.reset()
+    get_telemetry_manager(otlp_endpoint=os.environ["TELEMETRY_OTLP_ENDPOINT"])
+
     # Seed SystemConfig in the test Vespa so ConfigManager.get_system_config
     # returns the right backend_port instead of falling back to SystemConfig()
     # defaults (which would also point at 8080).
@@ -630,6 +642,7 @@ async def real_stack(
         "phoenix_http_endpoint": phoenix_container["http_endpoint"],
     }
     await close_redis()
+    TelemetryManager.reset()
 
 
 @pytest_asyncio.fixture
@@ -642,6 +655,7 @@ async def worker_task(real_stack):
         _claim_loop,
         _default_processor,
         _mark_graph_pending,
+        _media_config_from_defaults,
     )
 
     stop = asyncio.Event()
@@ -658,6 +672,13 @@ async def worker_task(real_stack):
                 service_urls=config.inference_service_urls,
                 mark_graph_pending=partial(_mark_graph_pending, redis),
                 graph_deadline_s=config.graph_deadline_s,
+                # The worker entrypoint builds this from its resolved env;
+                # the in-process loop must wire it the same way or the media
+                # locator downloads s3:// URIs against the default AWS
+                # endpoint instead of this stack's MinIO.
+                media_config=_media_config_from_defaults(
+                    {"minio_endpoint": os.environ["MINIO_ENDPOINT"]}
+                ),
             ),
         )
     )
@@ -1100,11 +1121,17 @@ class TestUploadRealStack:
         assert body2 == {
             "ingest_id": ingest_id,
             "sha": sha,
-            "state": "in_flight",
+            "state": "complete",
             "existing": True,
             "filename": UPLOAD_FILENAME,
             "source_url": expected_source_url,
-            "status": "queued",
+            "video_id": content_digest,
+            "chunks_created": EXPECTED_CHUNKS,
+            "documents_fed": EXPECTED_CHUNKS,
+            "status": "success",
+            # The echo surfaces the first run's terminal record verbatim.
+            "graph_nodes": body["graph_nodes"],
+            "graph_edges": body["graph_edges"],
         }
         indexed_titles_2 = _vespa_video_titles(
             real_stack["vespa_http_port"], PROFILE, TENANT_ID
