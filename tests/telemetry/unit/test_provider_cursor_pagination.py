@@ -582,16 +582,11 @@ async def test_projected_frames_survive_phoenix_named_index():
 
 @pytest.mark.asyncio
 async def test_projected_window_that_fits_the_cap_uses_a_single_call():
-    """A projected window under the memory cap costs ONE request, not a split walk.
-
-    Measured against live Phoenix: the split walk spent 81.9s on a window the
-    single call served in 1.7s, because every non-leaf query is discarded and
-    re-issued as two halves.
-    """
+    """A projected window under the memory cap costs ONE request, not a split walk."""
     base_time = datetime(2026, 8, 4, 0, 0, tzinfo=timezone.utc)
-    # Phoenix returns rows in no guaranteed order -- measured against the live
-    # store, neither ascending nor descending by start_time. The fake is fed a
-    # scrambled order so a test cannot pass by depending on one.
+    # Phoenix returns rows in no guaranteed order, neither ascending nor
+    # descending by start_time. The fake is fed a scrambled order so a test
+    # cannot pass by depending on one.
     rows = [
         {
             "name": "approval_batch",
@@ -638,9 +633,9 @@ async def test_projected_window_over_the_cap_falls_back_to_splitting(monkeypatch
     monkeypatch.setattr(provider_module, "PROJECTED_SPAN_MAX_ROWS_PER_CALL", 2)
 
     base_time = datetime(2026, 8, 4, 0, 0, tzinfo=timezone.utc)
-    # Phoenix returns rows in no guaranteed order -- measured against the live
-    # store, neither ascending nor descending by start_time. The fake is fed a
-    # scrambled order so a test cannot pass by depending on one.
+    # Phoenix returns rows in no guaranteed order, neither ascending nor
+    # descending by start_time. The fake is fed a scrambled order so a test
+    # cannot pass by depending on one.
     rows = [
         {
             "name": "approval_batch",

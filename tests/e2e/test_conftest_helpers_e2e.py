@@ -2667,11 +2667,7 @@ def test_deploy_timeout_outlives_the_rollout_the_chart_declares():
 
     values.rocm.yaml paces sidecar startup by position in a sequence, so the
     tail of the chain declares a progressDeadlineSeconds far past any single
-    model's load -- 4500s where the deploy previously allowed a fixed 20m.
-    Helm therefore abandoned a rollout that was proceeding as designed and
-    reported a bare timeout naming no model, which is how an unschedulable
-    pod at the head of the chain came to look like a deploy failure with no
-    cause. Derived from the render so the two budgets cannot drift apart.
+    model's load. The budget is taken from the render, not restated.
     """
     from tests.e2e.deployment.conftest import rollout_timeout_minutes
 

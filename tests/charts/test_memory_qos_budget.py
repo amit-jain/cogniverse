@@ -274,12 +274,10 @@ def test_modal_llm_serving_fits_the_host_the_overlay_targets():
 
 
 def test_local_chat_serving_overcommits_this_host_by_the_overlay_delta():
-    """Serving both chat models locally does not fit, which is why it is opt-out.
+    """Serving both chat models locally exceeds this host by the overlay's 44Gi.
 
-    values.modal-llm.yaml states it returns 44Gi of node memory requests.
-    That figure is load-bearing -- it is the difference between a release that
-    schedules and one that wedges -- so it is checked against the render
-    rather than trusted as prose.
+    values.modal-llm.yaml states that figure in prose; this checks it against
+    the render.
     """
     local = _scheduled_memory_gib(_render_as_deployed())
     modal = _scheduled_memory_gib(_render_as_deployed("values.modal-llm.yaml"))

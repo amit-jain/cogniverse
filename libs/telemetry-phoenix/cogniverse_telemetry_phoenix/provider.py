@@ -101,15 +101,13 @@ def _prune_closed_loops() -> None:
 
 
 # Dataset ops run the sync phoenix Client, whose per-request default is 5s —
-# too short for a large trigger dataset or a loaded Phoenix (the same
-# under-sizing the span path fixed with 120s). Pass this to every dataset call.
+# too short for a large trigger dataset or a loaded Phoenix. Pass this to every dataset call.
 _DATASET_OP_TIMEOUT_S = 120
 _SPAN_QUERY_WINDOW_MIN_STEP = timedelta(microseconds=1)
 
-# A projected span row carries only the requested columns. Measured against the
-# live store: 42,790 rows of ("start_time", "end_time") occupy 3.5 MB, i.e. 82
-# bytes per row. The cap is that rate against an explicit memory ceiling, so the
-# bound is arithmetic rather than a chosen row count.
+# A projected span row carries only the requested columns: 82 bytes per row for
+# ("start_time", "end_time"). The page cap is that rate against the memory
+# ceiling below, so the bound is arithmetic rather than a chosen row count.
 PROJECTED_SPAN_BYTES_PER_ROW = 82
 PROJECTED_SPAN_MEMORY_CEILING_BYTES = 256 * 1024 * 1024
 PROJECTED_SPAN_MAX_ROWS_PER_CALL = (
