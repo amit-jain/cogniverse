@@ -11,6 +11,7 @@ from unittest.mock import MagicMock
 
 import pytest
 
+from cogniverse_agents.inference import deno_check
 from cogniverse_agents.mixins.rlm_aware_mixin import RLMAwareMixin
 from cogniverse_core.agents.rlm_options import RLMOptions
 from cogniverse_foundation.config.unified_config import (
@@ -98,7 +99,7 @@ class TestRLMAwareMixinRouting:
         return LLMEndpointConfig(model="openai/gpt-4o", api_base=_DIRECT)
 
     def test_enabled_routes_cached_rlm_through_semantic_router(self, monkeypatch):
-        monkeypatch.setenv("COGNIVERSE_RLM_SKIP_DENO_CHECK", "1")
+        monkeypatch.setattr(deno_check, "_skip_deno_check", True)
         _patch_enabled_get_config(monkeypatch)
         host = _MixinHost("acme:prod", MagicMock())
 
@@ -113,7 +114,7 @@ class TestRLMAwareMixinRouting:
         assert rlm._tenant_id == "acme:prod"
 
     def test_disabled_keeps_direct_endpoint(self, monkeypatch):
-        monkeypatch.setenv("COGNIVERSE_RLM_SKIP_DENO_CHECK", "1")
+        monkeypatch.setattr(deno_check, "_skip_deno_check", True)
         cfg = MagicMock()
         cfg.get_semantic_router.return_value = SemanticRouterConfig(enabled=False)
         monkeypatch.setattr(
@@ -127,7 +128,7 @@ class TestRLMAwareMixinRouting:
         assert rlm.llm_config.extra_headers is None
 
     def test_no_config_manager_keeps_direct_endpoint(self, monkeypatch):
-        monkeypatch.setenv("COGNIVERSE_RLM_SKIP_DENO_CHECK", "1")
+        monkeypatch.setattr(deno_check, "_skip_deno_check", True)
         host = _MixinHost("acme:prod", None)
 
         rlm = host.get_rlm(self._endpoint())
@@ -135,7 +136,7 @@ class TestRLMAwareMixinRouting:
         assert rlm.llm_config.api_base == _DIRECT
 
     def test_cache_invalidates_on_tenant_change(self, monkeypatch):
-        monkeypatch.setenv("COGNIVERSE_RLM_SKIP_DENO_CHECK", "1")
+        monkeypatch.setattr(deno_check, "_skip_deno_check", True)
         _patch_enabled_get_config(monkeypatch)
         host = _MixinHost("acme:prod", MagicMock())
 
@@ -148,7 +149,7 @@ class TestRLMAwareMixinRouting:
         assert second.llm_config.extra_headers["x-authz-user-groups"] == "free"
 
     def test_cache_reuses_same_instance_for_same_tenant(self, monkeypatch):
-        monkeypatch.setenv("COGNIVERSE_RLM_SKIP_DENO_CHECK", "1")
+        monkeypatch.setattr(deno_check, "_skip_deno_check", True)
         _patch_enabled_get_config(monkeypatch)
         host = _MixinHost("acme:prod", MagicMock())
 
@@ -179,7 +180,7 @@ class TestHostAgentsThreadConfigManagerToRLM:
 
     @pytest.mark.parametrize("which", ["coding", "deep_research"])
     def test_constructor_config_manager_routes_rlm(self, which, monkeypatch):
-        monkeypatch.setenv("COGNIVERSE_RLM_SKIP_DENO_CHECK", "1")
+        monkeypatch.setattr(deno_check, "_skip_deno_check", True)
         _patch_enabled_get_config(monkeypatch)
         cm = MagicMock()
 

@@ -216,6 +216,7 @@ class TestNoOsGetenvInAgentModules:
     @pytest.mark.parametrize(
         "module_path",
         [
+            "cogniverse_agents._rlm_promotion",
             "cogniverse_agents.orchestrator_agent",
             "cogniverse_agents.entity_extraction_agent",
             "cogniverse_agents.profile_selection_agent",

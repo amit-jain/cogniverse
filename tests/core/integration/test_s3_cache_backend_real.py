@@ -110,6 +110,9 @@ class TestS3CacheBackendReal:
                 "semantic_embed_url": None,
                 "semantic_embed_model": None,
                 "tenant_cache_capacity": 1,
+                "rlm_promotion_enabled": True,
+                "rlm_promotion_fraction": 0.75,
+                "rlm_skip_deno_check": True,
             }
         )
 

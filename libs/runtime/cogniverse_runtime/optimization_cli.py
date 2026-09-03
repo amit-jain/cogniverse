@@ -6380,10 +6380,14 @@ def main():
         format="%(asctime)s - %(name)s - %(levelname)s - %(message)s",
     )
 
-    from cogniverse_runtime.entrypoint_env import resolve_library_env_defaults
+    from cogniverse_runtime.entrypoint_env import (
+        configure_runtime_library_defaults,
+        resolve_library_env_defaults,
+    )
     from cogniverse_runtime.inference_services import parse_inference_service_urls
 
     runtime_env = resolve_library_env_defaults()
+    configure_runtime_library_defaults(runtime_env)
     telemetry_otlp_endpoint = runtime_env["telemetry_otlp_endpoint"]
     inference_service_urls = parse_inference_service_urls(
         os.environ.get("INFERENCE_SERVICE_URLS")

@@ -512,7 +512,7 @@ def _bootstrap_metadata_schemas(bootstrap, application_name: str) -> None:
     logger.info("Metadata schemas bootstrapped for fresh backend")
 
 
-def _resolve_library_env_defaults() -> dict[str, str | int | None]:
+def _resolve_library_env_defaults() -> dict[str, str | int | float | bool | None]:
     """Read the library-module defaults from the shared runtime resolver."""
     return _resolve_library_env_defaults_from_entrypoint()
 
@@ -528,6 +528,9 @@ def _configure_library_module_defaults(
     semantic_embed_url: str | None,
     semantic_embed_model: str | None,
     tenant_cache_capacity: int,
+    rlm_promotion_enabled: bool,
+    rlm_promotion_fraction: float,
+    rlm_skip_deno_check: bool,
 ) -> None:
     """Inject the runtime defaults into the library modules that use them."""
     from cogniverse_agents.text_analysis_agent import (
@@ -548,6 +551,9 @@ def _configure_library_module_defaults(
             "minio_endpoint": minio_endpoint,
             "minio_access_key": minio_access_key,
             "minio_secret_key": minio_secret_key,
+            "rlm_promotion_enabled": rlm_promotion_enabled,
+            "rlm_promotion_fraction": rlm_promotion_fraction,
+            "rlm_skip_deno_check": rlm_skip_deno_check,
         }
     )
     configure_semantic_embedder_defaults(

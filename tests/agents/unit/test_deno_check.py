@@ -5,9 +5,11 @@ from pathlib import Path
 
 import pytest
 
+from cogniverse_agents.inference import deno_check
 from cogniverse_agents.inference.deno_check import (
     DenoNotInstalledError,
     assert_deno_available,
+    configure_deno_check,
     is_deno_available,
 )
 
@@ -61,7 +63,7 @@ class TestAssertDenoAvailable:
         monkeypatch.setenv("HOME", str(empty_home))
         monkeypatch.setattr(Path, "home", lambda: empty_home)
         monkeypatch.setenv("PATH", str(tmp_path))
-        monkeypatch.delenv("COGNIVERSE_RLM_SKIP_DENO_CHECK", raising=False)
+        monkeypatch.setattr(deno_check, "_skip_deno_check", False)
 
         with pytest.raises(DenoNotInstalledError) as exc:
             assert_deno_available()
@@ -70,38 +72,33 @@ class TestAssertDenoAvailable:
         assert "Deno is required" in message
         assert "COGNIVERSE_RLM_SKIP_DENO_CHECK" in message  # escape-hatch surfaced
 
-    def test_skip_env_var_bypasses(self, tmp_path, monkeypatch):
-        """Setting COGNIVERSE_RLM_SKIP_DENO_CHECK=1 lets construction proceed."""
+    def test_configured_skip_bypasses(self, tmp_path, monkeypatch):
+        """configure_deno_check(skip=True) lets construction proceed."""
         empty_home = tmp_path / "empty_home"
         empty_home.mkdir()
         monkeypatch.setenv("HOME", str(empty_home))
         monkeypatch.setattr(Path, "home", lambda: empty_home)
         monkeypatch.setenv("PATH", str(tmp_path))
-        monkeypatch.setenv("COGNIVERSE_RLM_SKIP_DENO_CHECK", "1")
+        monkeypatch.setattr(deno_check, "_skip_deno_check", True)
 
         # Must not raise.
         assert_deno_available()
 
-    @pytest.mark.parametrize("value", ["true", "yes", "TRUE", "Yes"])
-    def test_skip_env_var_accepts_truthy_values(self, value, tmp_path, monkeypatch):
-        """Probe honours common truthy spellings, not just '1'."""
+    def test_configure_deno_check_sets_and_clears(self, monkeypatch):
+        """The setter drives the module flag in both directions."""
+        monkeypatch.setattr(deno_check, "_skip_deno_check", False)
+        configure_deno_check(skip=True)
+        assert deno_check._skip_deno_check is True
+        configure_deno_check(skip=False)
+        assert deno_check._skip_deno_check is False
+
+    def test_unconfigured_skip_does_not_bypass(self, tmp_path, monkeypatch):
+        """With skip unset the probe stays active."""
         empty_home = tmp_path / "empty_home"
         empty_home.mkdir()
         monkeypatch.setenv("HOME", str(empty_home))
         monkeypatch.setattr(Path, "home", lambda: empty_home)
         monkeypatch.setenv("PATH", str(tmp_path))
-        monkeypatch.setenv("COGNIVERSE_RLM_SKIP_DENO_CHECK", value)
-
-        assert_deno_available()  # no raise
-
-    def test_skip_env_var_falsy_values_dont_bypass(self, tmp_path, monkeypatch):
-        """0 / empty / 'no' must not bypass the probe."""
-        empty_home = tmp_path / "empty_home"
-        empty_home.mkdir()
-        monkeypatch.setenv("HOME", str(empty_home))
-        monkeypatch.setattr(Path, "home", lambda: empty_home)
-        monkeypatch.setenv("PATH", str(tmp_path))
-        for falsy in ("0", "", "no", "false"):
-            monkeypatch.setenv("COGNIVERSE_RLM_SKIP_DENO_CHECK", falsy)
-            with pytest.raises(DenoNotInstalledError):
-                assert_deno_available()
+        monkeypatch.setattr(deno_check, "_skip_deno_check", False)
+        with pytest.raises(DenoNotInstalledError):
+            assert_deno_available()

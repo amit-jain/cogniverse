@@ -1,20 +1,30 @@
-"""RLM-promotion helper extracted from ``orchestrator_agent``.
+"""RLM-promotion helper for ``orchestrator_agent``.
 
-Lives in its own module so the env-var reads (``COGNIVERSE_ORCH_RLM_PROMOTION``,
-``COGNIVERSE_ORCH_RLM_PROMOTION_FRACTION``) stay outside the seven agent
-modules that ``test_no_os_getenv_in_module`` enforces against.
+Promotion knobs are module state set once at process start via
+``configure_rlm_promotion`` (the runtime entrypoint resolves
+``COGNIVERSE_ORCH_RLM_PROMOTION`` / ``COGNIVERSE_ORCH_RLM_PROMOTION_FRACTION``).
 """
 
 from __future__ import annotations
 
 import logging
-import os
 from typing import Any, Dict
 
 logger = logging.getLogger(__name__)
 
 _RLM_PROMOTION_DEFAULT_FRACTION = 0.75
 _RLM_PROMOTION_DEFAULT_THRESHOLD = 50_000
+
+_promotion_enabled: bool = True
+_promotion_fraction: float = _RLM_PROMOTION_DEFAULT_FRACTION
+
+
+def configure_rlm_promotion(*, enabled: bool, fraction: float) -> None:
+    """Set the promotion knobs for this process."""
+    global _promotion_enabled, _promotion_fraction
+    _promotion_enabled = enabled
+    _promotion_fraction = fraction
+
 
 _RLM_PROMOTABLE_AGENTS = frozenset(
     {
@@ -47,10 +57,9 @@ def maybe_promote_to_rlm(agent_name: str, agent_input: Dict[str, Any]) -> None:
 
     Idempotent: if the caller already supplied an ``rlm`` field (any value,
     including ``None`` for explicit opt-out), this is a no-op. Disabled
-    entirely via ``COGNIVERSE_ORCH_RLM_PROMOTION=disabled``.
+    entirely via ``configure_rlm_promotion(enabled=False, ...)``.
     """
-    enforcement = os.environ.get("COGNIVERSE_ORCH_RLM_PROMOTION", "").lower()
-    if enforcement == "disabled":
+    if not _promotion_enabled:
         return
 
     canonical = agent_name if agent_name.endswith("_agent") else f"{agent_name}_agent"
@@ -60,16 +69,7 @@ def maybe_promote_to_rlm(agent_name: str, agent_input: Dict[str, Any]) -> None:
     if "rlm" in agent_input:
         return
 
-    try:
-        threshold_pct = float(
-            os.environ.get(
-                "COGNIVERSE_ORCH_RLM_PROMOTION_FRACTION",
-                _RLM_PROMOTION_DEFAULT_FRACTION,
-            )
-        )
-    except (TypeError, ValueError):
-        threshold_pct = _RLM_PROMOTION_DEFAULT_FRACTION
-    cutoff = int(_RLM_PROMOTION_DEFAULT_THRESHOLD * threshold_pct)
+    cutoff = int(_RLM_PROMOTION_DEFAULT_THRESHOLD * _promotion_fraction)
 
     projected = _projected_payload_chars(agent_input)
     if projected < cutoff:

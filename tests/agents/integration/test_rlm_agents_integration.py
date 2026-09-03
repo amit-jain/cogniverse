@@ -8,6 +8,7 @@ in ``tests/agents/integration/conftest.py`` when missing.
 
 import pytest
 
+from cogniverse_agents.inference import deno_check
 from tests.agents.integration.conftest import skip_if_no_lm
 from tests.fixtures.llm import (
     resolve_base_url,
@@ -142,7 +143,7 @@ class TestRLMBootProbe:
         monkeypatch.setenv("HOME", str(empty_home))
         monkeypatch.setattr(Path, "home", lambda: empty_home)
         monkeypatch.setenv("PATH", str(tmp_path))  # no deno on PATH
-        monkeypatch.delenv("COGNIVERSE_RLM_SKIP_DENO_CHECK", raising=False)
+        monkeypatch.setattr(deno_check, "_skip_deno_check", False)
 
         with pytest.raises(DenoNotInstalledError) as exc:
             RLMInference(llm_config=LLMEndpointConfig(model="openai/gpt-4o"))
@@ -150,8 +151,8 @@ class TestRLMBootProbe:
         # Error must name the install URL so operators can act on it.
         assert "deno.com" in str(exc.value).lower() or "deno" in str(exc.value).lower()
 
-    def test_construction_with_skip_env_var_succeeds(self, tmp_path, monkeypatch):
-        """Operators can bypass the probe with COGNIVERSE_RLM_SKIP_DENO_CHECK=1."""
+    def test_construction_with_configured_skip_succeeds(self, tmp_path, monkeypatch):
+        """configure_deno_check(skip=True) bypasses the probe at construction."""
         from pathlib import Path
 
         from cogniverse_agents.inference import RLMInference
@@ -162,7 +163,7 @@ class TestRLMBootProbe:
         monkeypatch.setenv("HOME", str(empty_home))
         monkeypatch.setattr(Path, "home", lambda: empty_home)
         monkeypatch.setenv("PATH", str(tmp_path))
-        monkeypatch.setenv("COGNIVERSE_RLM_SKIP_DENO_CHECK", "1")
+        monkeypatch.setattr(deno_check, "_skip_deno_check", True)
 
         # Must not raise — the bypass is documented behaviour.
         rlm = RLMInference(llm_config=LLMEndpointConfig(model="openai/gpt-4o"))
