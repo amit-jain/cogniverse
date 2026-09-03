@@ -96,7 +96,7 @@ def test_get_tenant_instructions_reuses_injected_config_manager(monkeypatch):
     obj._memory_tenant_id = "acme:acme"
     obj._config_manager = cm
 
-    assert obj._get_tenant_instructions() == "be concise"
+    assert obj._get_tenant_instructions() == ("be concise", "loaded")
 
 
 def test_get_tenant_instructions_served_from_manager_ttl_cache():
@@ -119,7 +119,9 @@ def test_get_tenant_instructions_served_from_manager_ttl_cache():
     obj._memory_tenant_id = "acme:acme"
     obj._config_manager = cm
 
-    assert [obj._get_tenant_instructions() for _ in range(3)] == ["be concise"] * 3
+    assert [obj._get_tenant_instructions() for _ in range(3)] == [
+        ("be concise", "loaded")
+    ] * 3
     assert calls["get"] == 1, "repeat reads within the TTL must hit the cache"
 
 

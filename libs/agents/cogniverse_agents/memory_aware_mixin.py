@@ -10,9 +10,16 @@ import logging
 from contextvars import ContextVar
 from typing import Any, Dict, List, Optional
 
+from opentelemetry import trace as _otel_trace
+
 from cogniverse_core.memory.manager import Mem0MemoryManager
 
 logger = logging.getLogger(__name__)
+
+TENANT_INSTRUCTIONS_LOADED = "loaded"
+TENANT_INSTRUCTIONS_NONE = "none"
+TENANT_INSTRUCTIONS_UNAVAILABLE = "unavailable"
+TENANT_INSTRUCTIONS_SPAN_ATTRIBUTE = "enrichment.tenant_instructions"
 
 # Per-request state lives in ContextVars, NOT instance attributes: the dispatcher
 # caches and SHARES one agent instance across requests (e.g. _get_search_agent
@@ -67,6 +74,11 @@ class MemoryAwareMixin:
 
                 return result
     """
+
+    # Status of the last completed enrichment on this instance. Diagnostic
+    # only: agent instances are shared across concurrent requests, so the
+    # per-request truth is the span attribute set by inject_context_into_prompt.
+    last_tenant_instructions_status: Optional[str] = None
 
     def __init__(self, **kwargs):
         """Initialize memory-aware mixin.
@@ -623,11 +635,17 @@ class MemoryAwareMixin:
             return StrategyLearner.format_strategies_for_context(strategies)
         return None
 
-    def _get_tenant_instructions(self) -> Optional[str]:
-        """Load tenant instructions from ConfigStore."""
+    def _get_tenant_instructions(self) -> tuple[Optional[str], str]:
+        """Load tenant instructions from ConfigStore.
+
+        Returns ``(text, status)`` with status one of
+        ``TENANT_INSTRUCTIONS_LOADED`` / ``_NONE`` / ``_UNAVAILABLE`` so a
+        ConfigStore outage is distinguishable from a tenant that has no
+        instructions.
+        """
         tenant_id = self._current_memory_tenant_id()
         if not tenant_id:
-            return None
+            return None, TENANT_INSTRUCTIONS_NONE
         try:
             import json
 
@@ -645,24 +663,27 @@ class MemoryAwareMixin:
                 getattr(self, "_config_manager", None) or get_config_manager_singleton()
             )
             value = cm.get_tenant_instructions_config(tenant_id)
-            if value:
-                if isinstance(value, dict):
-                    return value.get("text", "") or None
-                if isinstance(value, str):
-                    try:
-                        return json.loads(value).get("text", "") or None
-                    except (json.JSONDecodeError, AttributeError):
-                        return value or None
-        except Exception as exc:  # noqa: BLE001 — log + degrade
-            # Tenant instructions feed the LLM prompt; silently
-            # dropping them on a ConfigStore error means the LLM
-            # call runs without any tenant-specific instructions.
+            text: Optional[str] = None
+            if isinstance(value, dict):
+                text = value.get("text", "") or None
+            elif isinstance(value, str) and value:
+                try:
+                    text = json.loads(value).get("text", "") or None
+                except (json.JSONDecodeError, AttributeError):
+                    text = value or None
+            if text:
+                return text, TENANT_INSTRUCTIONS_LOADED
+            return None, TENANT_INSTRUCTIONS_NONE
+        except Exception as exc:  # noqa: BLE001 — mark degraded, don't fail dispatch
+            # Tenant instructions feed the LLM prompt; the UNAVAILABLE status
+            # marks the degraded call on the agent and the active span so an
+            # outage is distinguishable from a tenant with no instructions.
             logger.warning(
                 "Tenant-instruction fetch failed for tenant %s: %s",
                 getattr(self, "tenant_id", "?"),
                 exc,
             )
-        return None
+            return None, TENANT_INSTRUCTIONS_UNAVAILABLE
 
     def inject_context_into_prompt(self, prompt: str, query: str) -> str:
         """
@@ -670,9 +691,16 @@ class MemoryAwareMixin:
         into a prompt.
 
         Instructions are always loaded (from ConfigStore, no memory needed).
-        Strategies and memory context require memory to be initialized.
+        Strategies and memory context require memory to be initialized. The
+        instruction fetch status (loaded / none / unavailable) is recorded on
+        ``last_tenant_instructions_status`` and as the span attribute
+        ``enrichment.tenant_instructions`` on the active span.
         """
-        instructions = self._get_tenant_instructions()
+        instructions, instructions_status = self._get_tenant_instructions()
+        self.last_tenant_instructions_status = instructions_status
+        _otel_trace.get_current_span().set_attribute(
+            TENANT_INSTRUCTIONS_SPAN_ATTRIBUTE, instructions_status
+        )
 
         context = None
         strategies = None

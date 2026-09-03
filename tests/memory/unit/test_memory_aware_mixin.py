@@ -443,3 +443,144 @@ class TestMemoryAwareMixin:
 
         assert summary["enabled"] is False
         assert summary["initialized"] is False
+
+
+class TestTenantInstructionsFaultContract:
+    """A ConfigStore outage is distinguishable from a tenant with no instructions."""
+
+    def _agent_with_manager(self, manager):
+        agent = MockAgentWithMemory()
+        agent._memory_tenant_id = "acme:prod"
+        agent._config_manager = manager
+        return agent
+
+    def test_status_vocabulary_is_the_wire_contract(self):
+        from cogniverse_agents.memory_aware_mixin import (
+            TENANT_INSTRUCTIONS_LOADED,
+            TENANT_INSTRUCTIONS_NONE,
+            TENANT_INSTRUCTIONS_SPAN_ATTRIBUTE,
+            TENANT_INSTRUCTIONS_UNAVAILABLE,
+        )
+
+        assert TENANT_INSTRUCTIONS_LOADED == "loaded"
+        assert TENANT_INSTRUCTIONS_NONE == "none"
+        assert TENANT_INSTRUCTIONS_UNAVAILABLE == "unavailable"
+        assert TENANT_INSTRUCTIONS_SPAN_ATTRIBUTE == "enrichment.tenant_instructions"
+
+    def test_loaded_instructions_carry_loaded_status(self):
+        manager = MagicMock()
+        manager.get_tenant_instructions_config.return_value = {"text": "Be terse."}
+        agent = self._agent_with_manager(manager)
+        assert agent._get_tenant_instructions() == ("Be terse.", "loaded")
+
+    def test_absent_instructions_carry_none_status(self):
+        manager = MagicMock()
+        manager.get_tenant_instructions_config.return_value = None
+        agent = self._agent_with_manager(manager)
+        assert agent._get_tenant_instructions() == (None, "none")
+
+    def test_store_outage_carries_unavailable_status(self):
+        manager = MagicMock()
+        manager.get_tenant_instructions_config.side_effect = ConnectionError(
+            "config store down"
+        )
+        agent = self._agent_with_manager(manager)
+        assert agent._get_tenant_instructions() == (None, "unavailable")
+
+    def test_inject_context_records_unavailable_status_on_agent(self):
+        manager = MagicMock()
+        manager.get_tenant_instructions_config.side_effect = ConnectionError(
+            "config store down"
+        )
+        agent = self._agent_with_manager(manager)
+        prompt = agent.inject_context_into_prompt("Answer the query", "q")
+        assert prompt == "Answer the query"
+        assert agent.last_tenant_instructions_status == "unavailable"
+
+    def test_inject_context_records_loaded_status_on_agent(self):
+        manager = MagicMock()
+        manager.get_tenant_instructions_config.return_value = {"text": "Be terse."}
+        agent = self._agent_with_manager(manager)
+        prompt = agent.inject_context_into_prompt("Answer the query", "q")
+        assert "## Tenant Instructions\nBe terse." in prompt
+        assert agent.last_tenant_instructions_status == "loaded"
+
+    def test_inject_context_span_attribute_marks_unavailable(self):
+        from opentelemetry.sdk.trace import TracerProvider
+        from opentelemetry.sdk.trace.export import SimpleSpanProcessor
+        from opentelemetry.sdk.trace.export.in_memory_span_exporter import (
+            InMemorySpanExporter,
+        )
+
+        exporter = InMemorySpanExporter()
+        provider = TracerProvider()
+        provider.add_span_processor(SimpleSpanProcessor(exporter))
+        tracer = provider.get_tracer("test-tenant-instructions")
+
+        manager = MagicMock()
+        manager.get_tenant_instructions_config.side_effect = ConnectionError(
+            "config store down"
+        )
+        agent = self._agent_with_manager(manager)
+        with tracer.start_as_current_span("dispatch"):
+            agent.inject_context_into_prompt("Answer the query", "q")
+
+        (span,) = exporter.get_finished_spans()
+        assert span.attributes["enrichment.tenant_instructions"] == "unavailable"
+
+    def test_concurrent_requests_mark_their_own_span(self):
+        import threading
+
+        from opentelemetry.sdk.trace import TracerProvider
+        from opentelemetry.sdk.trace.export import SimpleSpanProcessor
+        from opentelemetry.sdk.trace.export.in_memory_span_exporter import (
+            InMemorySpanExporter,
+        )
+
+        from cogniverse_agents.memory_aware_mixin import _MEMORY_TENANT_ID
+
+        exporter = InMemorySpanExporter()
+        provider = TracerProvider()
+        provider.add_span_processor(SimpleSpanProcessor(exporter))
+        tracer = provider.get_tracer("test-tenant-instructions-concurrency")
+
+        def _by_tenant(tenant_id):
+            if tenant_id == "acme:down":
+                raise ConnectionError("config store down")
+            return {"text": "Be terse."}
+
+        manager = MagicMock()
+        manager.get_tenant_instructions_config.side_effect = _by_tenant
+        agent = self._agent_with_manager(manager)
+
+        barrier = threading.Barrier(2)
+        failures = []
+
+        def _run(tenant_id):
+            try:
+                _MEMORY_TENANT_ID.set(tenant_id)
+                barrier.wait(timeout=10)
+                with tracer.start_as_current_span(f"dispatch-{tenant_id}"):
+                    agent.inject_context_into_prompt("Answer the query", "q")
+            except Exception as exc:  # noqa: BLE001 - surfaced via assert below
+                failures.append(exc)
+
+        threads = [
+            threading.Thread(target=_run, args=("acme:down",)),
+            threading.Thread(target=_run, args=("acme:up",)),
+        ]
+        for t in threads:
+            t.start()
+        for t in threads:
+            t.join(timeout=30)
+
+        assert failures == []
+        spans = {s.name: s for s in exporter.get_finished_spans()}
+        assert (
+            spans["dispatch-acme:down"].attributes["enrichment.tenant_instructions"]
+            == "unavailable"
+        )
+        assert (
+            spans["dispatch-acme:up"].attributes["enrichment.tenant_instructions"]
+            == "loaded"
+        )
