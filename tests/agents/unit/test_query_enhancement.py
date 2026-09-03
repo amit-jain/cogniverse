@@ -168,19 +168,23 @@ class TestDSPyAgentOptimizer:
         """Test optimizer initialization."""
         optimizer = DSPyAgentPromptOptimizer()
 
-        assert optimizer.__dict__ == {
-            "config": {},
-            "lm": None,
-            "teacher_lm": None,
-            "optimization_settings": {
-                "max_bootstrapped_demos": 8,
-                "max_labeled_demos": 16,
-                "max_rounds": 3,
-                "num_candidate_programs": 16,
-                "teacher_settings": {},
-                "max_errors": 10,
-                "stop_at_score": 0.95,
-            },
+        assert set(optimizer.__dict__) == {
+            "config",
+            "lm",
+            "teacher_lm",
+            "optimization_settings",
+        }
+        assert optimizer.config == {}
+        assert optimizer.lm is None
+        assert optimizer.teacher_lm is None
+        assert optimizer.optimization_settings == {
+            "max_bootstrapped_demos": 8,
+            "max_labeled_demos": 16,
+            "max_rounds": 3,
+            "num_candidate_programs": 16,
+            "teacher_settings": {},
+            "max_errors": 10,
+            "stop_at_score": 0.95,
         }
 
     @patch("cogniverse_agents.optimizer.dspy_agent_optimizer.create_dspy_lm")
@@ -238,11 +242,10 @@ class TestDSPyAgentOptimizer:
         optimizer = DSPyAgentPromptOptimizer()
         pipeline = DSPyAgentOptimizerPipeline(optimizer)
 
-        assert pipeline.__dict__ == {
-            "optimizer": optimizer,
-            "modules": {},
-            "compiled_modules": {},
-        }
+        assert set(pipeline.__dict__) == {"optimizer", "modules", "compiled_modules"}
+        assert pipeline.optimizer is optimizer
+        assert pipeline.modules == {}
+        assert pipeline.compiled_modules == {}
 
     def test_pipeline_module_initialization(self):
         """Test pipeline module initialization."""
