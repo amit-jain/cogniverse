@@ -39,7 +39,7 @@ async def test_concurrent_cold_get_builds_one_client():
 
 @pytest.mark.asyncio
 async def test_concurrent_close_closes_current_loop_client_once():
-    loop_key = id(asyncio.get_running_loop())
+    loop_key = asyncio.get_running_loop()
     close_started = asyncio.Event()
     allow_close = asyncio.Event()
     client = AsyncMock()
@@ -71,7 +71,7 @@ async def test_concurrent_close_closes_current_loop_client_once():
 
 @pytest.mark.asyncio
 async def test_close_failure_clears_resources_and_raises_with_context():
-    loop_key = id(asyncio.get_running_loop())
+    loop_key = asyncio.get_running_loop()
     client = AsyncMock()
     client.is_closed = False
     client.aclose.side_effect = OSError("socket close failed")
@@ -87,3 +87,47 @@ async def test_close_failure_clears_resources_and_raises_with_context():
     assert isinstance(exc_info.value.__cause__, OSError)
     assert loop_key not in orchestrator_module._http_clients
     assert loop_key not in orchestrator_module._orch_semaphores
+
+
+class TestLoopKeyedClientMap:
+    """The client and semaphore maps key by the loop OBJECT, weakly. Keyed by
+    id(loop), a recycled loop address handed a NEW loop the PREVIOUS loop's
+    client/semaphore (bound to a dead loop), and closed-loop entries lived
+    forever because close_orchestrator_http_client has no production caller."""
+
+    def test_no_entries_survive_a_closed_loop(self):
+        import gc
+
+        async def grab():
+            await orchestrator_module._get_http_client()
+            orchestrator_module._get_orchestration_semaphore()
+
+        asyncio.run(grab())
+        gc.collect()
+
+        live_clients = [
+            loop
+            for loop in list(orchestrator_module._http_clients.keys())
+            if not loop.is_closed()
+        ]
+        assert live_clients == []
+        assert len(orchestrator_module._http_clients) == 0
+        assert len(orchestrator_module._orch_semaphores) == 0
+
+    def test_new_loop_never_receives_previous_loops_client(self):
+        grabbed = []
+
+        async def grab():
+            grabbed.append(
+                (
+                    await orchestrator_module._get_http_client(),
+                    orchestrator_module._get_orchestration_semaphore(),
+                )
+            )
+
+        asyncio.run(grab())
+        asyncio.run(grab())
+
+        (client1, sem1), (client2, sem2) = grabbed
+        assert client2 is not client1
+        assert sem2 is not sem1

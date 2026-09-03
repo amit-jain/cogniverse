@@ -19,6 +19,7 @@ import math
 import threading
 import time
 import uuid
+import weakref
 from contextvars import ContextVar
 from dataclasses import dataclass, field
 from enum import Enum
@@ -105,36 +106,44 @@ _request_tenant_id: ContextVar[Optional[str]] = ContextVar(
 # pool, DNS resolver state and async dispatch workers; creating a fresh
 # one per sub-agent call turns each orchestration into 5+ client spin-ups
 # that stack thread/socket pressure across concurrent orchestrations.
-# The client is lazily initialised per running event loop — at test time
-# the loop gets torn down between sessions, so a cached client bound to
-# a dead loop would wedge; keying by id(loop) avoids that.
+# Keyed WEAKLY by the loop OBJECT: a torn-down loop's entry is reaped, and
+# a new loop at a recycled address can never alias a dead loop's client.
+# Closed-loop entries are also pruned on access so the maps stay bounded
+# regardless of GC timing.
 _HTTP_CLIENT_TIMEOUT = httpx.Timeout(240.0, connect=10.0)
-_http_clients: Dict[int, httpx.AsyncClient] = {}
+_http_clients: "weakref.WeakKeyDictionary[asyncio.AbstractEventLoop, httpx.AsyncClient]" = weakref.WeakKeyDictionary()
 _http_clients_lock = threading.Lock()
+
+
+def _prune_closed_loops() -> None:
+    for stale in [loop for loop in list(_http_clients.keys()) if loop.is_closed()]:
+        _http_clients.pop(stale, None)
+    for stale in [loop for loop in list(_orch_semaphores.keys()) if loop.is_closed()]:
+        _orch_semaphores.pop(stale, None)
 
 
 async def _get_http_client() -> httpx.AsyncClient:
     """Return a loop-scoped shared AsyncClient, building on first use."""
     loop = asyncio.get_running_loop()
-    key = id(loop)
-    client = _http_clients.get(key)
+    client = _http_clients.get(loop)
     if client is not None and not client.is_closed:
         return client
     with _http_clients_lock:
-        client = _http_clients.get(key)
+        _prune_closed_loops()
+        client = _http_clients.get(loop)
         if client is not None and not client.is_closed:
             return client
         client = httpx.AsyncClient(timeout=_HTTP_CLIENT_TIMEOUT)
-        _http_clients[key] = client
+        _http_clients[loop] = client
         return client
 
 
 async def close_orchestrator_http_client() -> None:
     """Close and forget the shared client owned by the current event loop."""
-    key = id(asyncio.get_running_loop())
+    loop = asyncio.get_running_loop()
     with _http_clients_lock:
-        client = _http_clients.pop(key, None)
-        _orch_semaphores.pop(key, None)
+        client = _http_clients.pop(loop, None)
+        _orch_semaphores.pop(loop, None)
 
     if client is None or client.is_closed:
         return
@@ -155,17 +164,16 @@ async def close_orchestrator_http_client() -> None:
 # read the value in the runtime startup hook and thread it through the
 # constructor.
 _ORCH_CONCURRENCY = 4
-_orch_semaphores: Dict[int, asyncio.Semaphore] = {}
+_orch_semaphores: "weakref.WeakKeyDictionary[asyncio.AbstractEventLoop, asyncio.Semaphore]" = weakref.WeakKeyDictionary()
 
 
 def _get_orchestration_semaphore() -> asyncio.Semaphore:
     """Return a loop-scoped semaphore (see httpx client comment for why)."""
     loop = asyncio.get_running_loop()
-    key = id(loop)
-    sem = _orch_semaphores.get(key)
+    sem = _orch_semaphores.get(loop)
     if sem is None:
         sem = asyncio.Semaphore(_ORCH_CONCURRENCY)
-        _orch_semaphores[key] = sem
+        _orch_semaphores[loop] = sem
     return sem
 
 
