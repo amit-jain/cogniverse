@@ -549,7 +549,7 @@ class TestManagerPoolLifecycle:
         mgr._client = old_client
         mgr._available = True
         stale = mgr._get_or_create_pool()
-        assert stale is not None
+        assert stale is mgr._pool
         assert stale.client is old_client
 
         assert mgr.reconnect() is True

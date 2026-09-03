@@ -147,6 +147,7 @@ class TestLifespanWiresSyntheticBackend:
         monkeypatch.setenv("COGNIVERSE_MEMORY_LIFECYCLE_DISABLED", "1")
 
         from cogniverse_synthetic import api as synthetic_api
+        from cogniverse_vespa.backend import VespaBackend
 
         app = FastAPI()
         from cogniverse_runtime.main import lifespan
@@ -154,7 +155,7 @@ class TestLifespanWiresSyntheticBackend:
         async with lifespan(app):
             service = synthetic_api._service
             assert service is not None, "lifespan did not configure the service"
-            assert service.backend is not None
+            assert type(service.backend) is VespaBackend
             assert service.backend_config.backend_type == "vespa"
             profile = service.backend_config.profiles["video_colpali_smol500_mv_frame"]
             assert profile.type == "video"
@@ -273,5 +274,7 @@ class TestLifespanWiresSyntheticBackend:
             )
             service = synthetic_api._service
             assert service is not None, "lifespan did not configure the service"
-            assert service.backend is not None
+            from cogniverse_vespa.backend import VespaBackend
+
+            assert type(service.backend) is VespaBackend
             assert service.backend_config.backend_type == "vespa"

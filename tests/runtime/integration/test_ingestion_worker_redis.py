@@ -170,7 +170,7 @@ class TestIdempotency:
         assert await idempotency.get_existing_ingest_id(redis, sha) == "dead_id"
         # The worker never reaches clear_inflight (simulated crash). The TTL
         # must reap the key on its own.
-        assert await redis.ttl(f"{idempotency.INFLIGHT_KEY_PREFIX}{sha}") > 0
+        assert 0 < await redis.ttl(f"{idempotency.INFLIGHT_KEY_PREFIX}{sha}") <= 1
         await asyncio.sleep(1.5)
         assert await idempotency.get_existing_ingest_id(redis, sha) is None
 
@@ -780,7 +780,11 @@ class TestEnqueueCompensation:
         # The failed decrement leaves the counter at 1 — bounded by the
         # self-healing TTL set at increment time.
         assert await queue.get_active(redis, tenant) == 1
-        assert await redis.ttl(f"{queue.ACTIVE_KEY_PREFIX}{tenant}") > 0
+        assert (
+            0
+            < await redis.ttl(f"{queue.ACTIVE_KEY_PREFIX}{tenant}")
+            <= queue.ACTIVE_TTL_SECONDS
+        )
 
 
 class TestDedupeStatusSurface:
@@ -1468,6 +1472,17 @@ class TestMalformedEntrySettlement:
 
 
 class TestGraphStageDurability:
+    @pytest.fixture(autouse=True)
+    def _minio_outage_env(self, monkeypatch):
+        """MinIO endpoint that refuses connections, single boto3 attempt: the
+        worker's original-filename lookup exercises its real outage fallback
+        ("") instead of failing the job on unset env."""
+        monkeypatch.setenv("MINIO_ENDPOINT", "http://127.0.0.1:29071")
+        monkeypatch.setenv("MINIO_ACCESS_KEY", "test")
+        monkeypatch.setenv("MINIO_SECRET_KEY", "test")
+        monkeypatch.setenv("AWS_RETRY_MODE", "standard")
+        monkeypatch.setenv("AWS_MAX_ATTEMPTS", "1")
+
     @pytest.mark.no_shared_vespa
     @pytest.mark.parametrize("value", ["0", "-1", "nan", "inf"])
     def test_graph_deadline_must_be_positive_and_finite(

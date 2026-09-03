@@ -119,7 +119,7 @@ async def test_agent_registry_health_check_writes_aware_utc() -> None:
     stored = registry.agents["x"]
     assert stored is ep
     assert stored.health_status == "healthy"
-    assert stored.last_health_check is not None
+    assert stored.needs_health_check() is False
     assert stored.last_health_check.tzinfo is timezone.utc
     assert before <= stored.last_health_check <= after
 
