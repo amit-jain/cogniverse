@@ -641,7 +641,10 @@ class Mem0MemoryManager:
         """
         if not self.memory:
             raise RuntimeError("Mem0MemoryManager not initialized")
-        storage_tenant_id = self._storage_tenant_id
+        # Partition by the canonicalized per-call tenant - the same
+        # derivation the read paths use, so a write is visible to the read
+        # that names the same tenant.
+        storage_tenant_id = canonical_tenant_id(tenant_id)
 
         # schema enforcement. When a registry is wired, every write
         # is checked against the schema for the metadata.kind:
@@ -1085,10 +1088,14 @@ class Mem0MemoryManager:
 
         try:
             storage_tenant_id = canonical_tenant_id(tenant_id)
-            if not self.tenant_partition_schema_exists(storage_tenant_id):
+            # The storage schema belongs to this manager's own binding; the
+            # per-call tenant_id only scopes the user_id partition (the
+            # org-strategy read pattern passes a different one).
+            schema_tenant_id = canonical_tenant_id(self.tenant_id)
+            if not self.tenant_partition_schema_exists(schema_tenant_id):
                 logger.info(
                     "No deployed schema for tenant %s; returning no memories",
-                    storage_tenant_id,
+                    schema_tenant_id,
                 )
                 return []
 

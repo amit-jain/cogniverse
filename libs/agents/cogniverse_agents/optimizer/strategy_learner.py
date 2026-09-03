@@ -618,32 +618,26 @@ class StrategyLearner:
         else:
             lookup_namespace = STRATEGY_AGENT_NAME
 
-        try:
-            user_results = self.memory_manager.search_memory(
+        user_results = self.memory_manager.search_memory(
+            query=f"strategy for {query}",
+            tenant_id=self.tenant_id,
+            agent_name=lookup_namespace,
+            top_k=top_k,
+        )
+        for r in user_results:
+            r["_level"] = "user"
+            all_strategies.append(r)
+
+        if self.org_id != self.tenant_id:
+            org_results = self.memory_manager.search_memory(
                 query=f"strategy for {query}",
-                tenant_id=self.tenant_id,
+                tenant_id=self.org_id,
                 agent_name=lookup_namespace,
                 top_k=top_k,
             )
-            for r in user_results:
-                r["_level"] = "user"
+            for r in org_results:
+                r["_level"] = "org"
                 all_strategies.append(r)
-        except Exception as e:
-            logger.debug(f"User strategy retrieval failed: {e}")
-
-        if self.org_id != self.tenant_id:
-            try:
-                org_results = self.memory_manager.search_memory(
-                    query=f"strategy for {query}",
-                    tenant_id=self.org_id,
-                    agent_name=lookup_namespace,
-                    top_k=top_k,
-                )
-                for r in org_results:
-                    r["_level"] = "org"
-                    all_strategies.append(r)
-            except Exception as e:
-                logger.debug(f"Org strategy retrieval failed: {e}")
 
         # apply confirmation-aware decay so low-confirmation old
         # strategies sink in the result list rather than continuing to
