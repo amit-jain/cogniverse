@@ -1153,7 +1153,7 @@ class TestSyntheticApprovalIntegration:
             ApprovalBatch(batch_id=batch_id, items=[item], context=context)
         )
         ready_batch = await storage.get_batch(batch_id)
-        assert ready_batch is not None
+        assert ready_batch.batch_id == batch_id
         assert [
             (candidate.item_id, candidate.status, candidate.reviewed_at)
             for candidate in ready_batch.items
@@ -1263,7 +1263,10 @@ class TestSyntheticApprovalIntegration:
             f"tenant={tenant_id} dataset={dataset_name} "
             f"batch={batch_id} item={item.item_id}"
         )
-        assert error.value.__cause__ is not None
+        assert str(error.value.__cause__) == (
+            "Failed to query every span from Phoenix project "
+            f"{storage.full_project_name}"
+        )
         assert boundary_events == ["human_approval_visible", "phoenix_stopped"]
 
         retry_storage = ApprovalStorageImpl(
@@ -1274,7 +1277,7 @@ class TestSyntheticApprovalIntegration:
             redis_url=approval_redis_url,
         )
         pending = await retry_storage.get_batch(batch_id)
-        assert pending is not None
+        assert pending.batch_id == batch_id
         assert [
             (candidate.item_id, candidate.status, candidate.reviewed_at)
             for candidate in pending.items
@@ -1434,7 +1437,7 @@ class TestSyntheticApprovalIntegration:
         )
         assert isinstance(redis_error.value.__cause__, RedisConnectionError)
         redis_pending = await healthy_redis_storage.get_batch(redis_batch_id)
-        assert redis_pending is not None
+        assert redis_pending.batch_id == redis_batch_id
         assert [
             (candidate.item_id, candidate.status, candidate.reviewed_at)
             for candidate in redis_pending.items
@@ -1496,7 +1499,7 @@ class TestSyntheticApprovalIntegration:
             get_dataset,
         )
         phoenix_pending = await phoenix_storage.get_batch(phoenix_batch_id)
-        assert phoenix_pending is not None
+        assert phoenix_pending.batch_id == phoenix_batch_id
         assert [
             (candidate.item_id, candidate.status, candidate.reviewed_at)
             for candidate in phoenix_pending.items
@@ -1618,7 +1621,7 @@ class TestSyntheticApprovalIntegration:
         assert generator.calls == 2
 
         persisted = await approval_storage.get_batch(batch_id)
-        assert persisted is not None
+        assert persisted.batch_id == batch_id
         assert [(item.item_id, item.status) for item in persisted.items] == [
             (original.item_id, ApprovalStatus.PENDING_REVIEW)
         ]
@@ -1858,7 +1861,7 @@ class TestSyntheticApprovalIntegration:
         }
 
         persisted = await approval_storage.get_batch(batch_id)
-        assert persisted is not None
+        assert persisted.batch_id == batch_id
         by_id = {item.item_id: item for item in persisted.items}
         assert set(by_id) == {item_id, result.item_id}
         assert by_id[item_id].status is ApprovalStatus.REJECTED
@@ -1973,7 +1976,7 @@ class TestSyntheticApprovalIntegration:
         assert confidence_extractor.extract(regenerated.data) == 0.0
 
         persisted = await approval_storage.get_batch(batch_id)
-        assert persisted is not None
+        assert persisted.batch_id == batch_id
         persisted_by_id = {item.item_id: item for item in persisted.items}
         assert set(persisted_by_id) == {
             original_item.item_id,
@@ -2300,7 +2303,7 @@ class TestSyntheticApprovalIntegration:
 
         wait_for_phoenix_processing(delay=1.0, description="rejection annotations")
         persisted = await approval_storage.get_batch(batch_id)
-        assert persisted is not None
+        assert persisted.batch_id == batch_id
         persisted_item = persisted.items[0]
         assert persisted_item.status is ApprovalStatus.REJECTED
         assert persisted_item.reviewed_at == decision_time
@@ -2370,8 +2373,8 @@ class TestSyntheticApprovalIntegration:
             approval_storage.get_batch(batch_ids[1]),
         )
 
-        assert first_batch is not None
-        assert second_batch is not None
+        assert first_batch.batch_id == batch_ids[0]
+        assert second_batch.batch_id == batch_ids[1]
         assert [(item.data, item.status) for item in first_batch.items] == [
             ({"query": "query for batch 0"}, ApprovalStatus.APPROVED)
         ]
@@ -2487,7 +2490,7 @@ class TestSyntheticApprovalIntegration:
         )
 
         persisted = await approval_storage.get_batch(batch_id)
-        assert persisted is not None
+        assert persisted.batch_id == batch_id
         by_id = {item.item_id: item for item in persisted.items}
         assert set(by_id) == {
             *(original.item_id for original in originals),
@@ -2668,7 +2671,7 @@ class TestSyntheticApprovalIntegration:
         assert selected_snapshot in expected_snapshots
 
         persisted = await storage_one.get_batch(batch_id)
-        assert persisted is not None
+        assert persisted.batch_id == batch_id
         persisted_by_id = {item.item_id: item for item in persisted.items}
         assert set(persisted_by_id) == {
             original.item_id,
@@ -2807,7 +2810,7 @@ class TestSyntheticApprovalIntegration:
 
         if event_kind == "duplicate":
             batch = await approval_storage.get_batch(batch_id)
-            assert batch is not None
+            assert batch.batch_id == batch_id
             assert [(item.item_id, item.status, item.data) for item in batch.items] == [
                 (original.item_id, ApprovalStatus.REJECTED, original.data),
                 (
@@ -2860,7 +2863,7 @@ class TestSyntheticApprovalIntegration:
             )
         )
         before = await approval_storage.get_batch(batch_id)
-        assert before is not None
+        assert before.batch_id == batch_id
         assert [(item.item_id, item.status) for item in before.items] == [
             (original.item_id, ApprovalStatus.PENDING_REVIEW)
         ]
@@ -2905,7 +2908,7 @@ class TestSyntheticApprovalIntegration:
                 pytest.fail("Phoenix did not recover after replacement outage")
 
         after = await approval_storage.get_batch(batch_id)
-        assert after is not None
+        assert after.batch_id == batch_id
         assert [(item.item_id, item.status) for item in after.items] == [
             (original.item_id, ApprovalStatus.PENDING_REVIEW)
         ]
@@ -2928,7 +2931,7 @@ class TestSyntheticApprovalIntegration:
         await approval_storage.replace_item(batch_id, original, competing)
 
         recovered = await approval_storage.get_batch(batch_id)
-        assert recovered is not None
+        assert recovered.batch_id == batch_id
         assert [(item.item_id, item.status) for item in recovered.items] == [
             (original.item_id, ApprovalStatus.REJECTED),
             (replacement.item_id, ApprovalStatus.REGENERATED),

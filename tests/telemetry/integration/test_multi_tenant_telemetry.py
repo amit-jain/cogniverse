@@ -999,15 +999,15 @@ class TestManagerResetRebuildRealPhoenix:
             alpha_df = client.spans.get_spans_dataframe(
                 project_identifier=alpha_project
             )
-            assert alpha_df is not None
             pre = alpha_df[alpha_df["name"].str.startswith(f"pre_{run_id}_")]
+            assert sorted(pre["name"]) == [f"pre_{run_id}_{i}" for i in range(3)]
             assert len(pre) == 3, f"pre-reset spans in {alpha_project}: {len(pre)}"
 
             # The rebuilt manager emitted its spans to the live instance.
             beta_project = cfg_obj.get_project_name("tenant-beta", "routing")
             beta_df = client.spans.get_spans_dataframe(project_identifier=beta_project)
-            assert beta_df is not None
             post = beta_df[beta_df["name"].str.startswith(f"post_{run_id}_")]
+            assert sorted(post["name"]) == [f"post_{run_id}_{i}" for i in range(3)]
             assert len(post) == 3, f"post-reset spans in {beta_project}: {len(post)}"
         finally:
             TelemetryManager.reset()
@@ -1095,7 +1095,10 @@ class TestRequiredSpanRealBoundary:
 
             observed_project, matches, project_names = await load_record()
             assert observed_project == project, project_names
-            assert matches is not None
+            assert matches["name"].value_counts().to_dict() == {
+                f"required_record_{run_id}": 1,
+                f"required_thread_control_{run_id}": 1,
+            }
             assert set(matches["name"]) == {
                 f"required_record_{run_id}",
                 f"required_thread_control_{run_id}",
