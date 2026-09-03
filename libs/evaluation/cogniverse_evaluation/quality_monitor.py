@@ -484,8 +484,10 @@ class QualityMonitor:
             f"live every {self.live_eval_interval}s)"
         )
 
-        last_golden = 0.0
-        last_live = 0.0
+        # loop.time() has an arbitrary epoch (often host boot); -inf marks
+        # both evals due on the first iteration regardless of the clock value.
+        last_golden = float("-inf")
+        last_live = float("-inf")
 
         while True:
             now = asyncio.get_event_loop().time()

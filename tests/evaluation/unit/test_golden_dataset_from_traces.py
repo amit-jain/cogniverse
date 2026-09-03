@@ -80,6 +80,11 @@ def test_span_query_reads_clean_input_value_and_nested_input():
     assert (
         _span_query(pd.Series({"attributes.input.value": "raw query"})) == "raw query"
     )
+    # A JSON-dict string is query TEXT under the clean contract — no unwrapping.
+    assert (
+        _span_query(pd.Series({"attributes.input.value": '{"query": "q1"}'}))
+        == '{"query": "q1"}'
+    )
     # A nested input dict still resolves via the input.query fallback.
     assert _span_query(pd.Series({"input": {"query": "q2"}})) == "q2"
     assert _span_query(pd.Series({"other": 1})) == ""
