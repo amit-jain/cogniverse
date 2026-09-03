@@ -1634,7 +1634,17 @@ class AgentDispatcher:
                 schema_loader=self._schema_loader,
                 config_manager=self._config_manager,
             )
-            typed_input = SearchInput(query=query, tenant_id=tenant_id)
+            ctx = context or {}
+            typed_input = SearchInput(
+                query=query,
+                tenant_id=tenant_id,
+                top_k=ctx.get("top_k", 10),
+                enhanced_query=ctx.get("enhanced_query"),
+                entities=ctx.get("entities") or [],
+                relationships=ctx.get("relationships") or [],
+                query_variants=ctx.get("query_variants") or [],
+                profiles=ctx.get("profiles"),
+            )
             return agent, typed_input
 
         if capabilities & {"coding"}:
@@ -1672,7 +1682,14 @@ class AgentDispatcher:
                 config_manager=self._config_manager,
             )
             agent._dspy_lm = coding_lm  # type: ignore[attr-defined]
-            typed_input = CodingInput(task=query, tenant_id=tenant_id)
+            ctx = context or {}
+            typed_input = CodingInput(
+                task=query,
+                tenant_id=tenant_id,
+                codebase_path=ctx.get("codebase_path", ""),
+                max_iterations=ctx.get("max_iterations", 5),
+                language=ctx.get("language", "python"),
+            )
             return agent, typed_input
 
         if capabilities & {"orchestration", "planning"}:
@@ -1682,7 +1699,20 @@ class AgentDispatcher:
             # workflow templates (it previously planned with none) and shares the
             # dispatch path's cached instance instead of building a bare one.
             agent = await self._get_or_build_orchestrator(tenant_id)
-            return agent, OrchestratorInput(query=query, tenant_id=tenant_id)
+            ctx = context or {}
+            nested_gateway = ctx.get("gateway_context") or {}
+            return agent, OrchestratorInput(
+                query=query,
+                tenant_id=tenant_id,
+                session_id=ctx.get("session_id"),
+                conversation_history=ctx.get("conversation_history"),
+                modality=nested_gateway.get("modality"),
+                detected_modalities=ctx.get("detected_modalities"),
+                generation_type=nested_gateway.get("generation_type"),
+                synthesis_depth=(
+                    nested_gateway.get("synthesis_depth") or ctx.get("synthesis_depth")
+                ),
+            )
 
         # Generic fallback: any registered agent that follows the
         # Agent/Deps/Input convention (image/audio/document search, entity

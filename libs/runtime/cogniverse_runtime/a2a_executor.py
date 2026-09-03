@@ -272,6 +272,7 @@ class CogniverseAgentExecutor(AgentExecutor):
                 agent_name,
                 query,
                 tenant_id,
+                context=task_context,
             )
 
             await asyncio.to_thread(
