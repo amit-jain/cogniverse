@@ -53,10 +53,10 @@ class TestPinQuotaEndpoints:
         resp = client.get(f"/admin/tenants/{tenant}/pin_quotas")
         assert resp.status_code == 200
         body = resp.json()
+        assert set(body) == {"tenant_id", "quotas"}
         assert body["tenant_id"] == tenant
-        # Defaults from PinQuotas dataclass.
-        assert body["quotas"]["user"] >= 0
-        assert body["quotas"]["tenant_admin"] >= 0
+        # Defaults from PinQuotas dataclass; org_admin None (unlimited) -> -1.
+        assert body["quotas"] == {"user": 50, "tenant_admin": 500, "org_admin": -1}
 
     def test_put_updates_one_field_keeps_others(self, client: TestClient, phoenix_env):
         tenant = f"pinq_{uuid.uuid4().hex[:8]}"
@@ -72,9 +72,11 @@ class TestPinQuotaEndpoints:
         assert updated["user"] == 99
         # Other fields preserved.
         assert updated["tenant_admin"] == baseline["tenant_admin"]
-        # GET reflects the put.
+        assert updated["org_admin"] == baseline["org_admin"]
+        # GET reflects the put, field for field.
         again = client.get(f"/admin/tenants/{tenant}/pin_quotas").json()["quotas"]
         assert again["user"] == 99
+        assert again == updated
 
     def test_put_survives_process_restart(self, client: TestClient, phoenix_env):
         """A PUT must persist durably, not just in the process cache. Clearing
@@ -86,6 +88,9 @@ class TestPinQuotaEndpoints:
             json={"user": 7, "tenant_admin": 3},
         )
         assert put.status_code == 200
+        put_body = put.json()
+        assert put_body["tenant_id"] == tenant
+        assert put_body["quotas"] == {"user": 7, "tenant_admin": 3, "org_admin": -1}
 
         # Simulate a fresh process: drop the write-through cache so the next
         # read must hit the durable store.
@@ -94,6 +99,7 @@ class TestPinQuotaEndpoints:
         reloaded = client.get(f"/admin/tenants/{tenant}/pin_quotas").json()["quotas"]
         assert reloaded["user"] == 7
         assert reloaded["tenant_admin"] == 3
+        assert reloaded["org_admin"] == -1
 
     def test_negative_quota_rejected(self, client: TestClient):
         # Validation happens before any store access, so no Phoenix needed.

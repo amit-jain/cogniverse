@@ -1406,7 +1406,7 @@ class TestAnnotationEnqueueAndPersist:
         assert data["enqueued"] == 2
         assert data["skipped"] == 1
         assert queue.get("span-e1") is not None
-        assert queue.get("span-e2") is not None
+        assert queue.get("span-e2").span_id == "span-e2"
         assert queue.get("span-e1").tenant_id == "acme:acme"
         assert queue.get("span-e1").agent_type == "routing"
 

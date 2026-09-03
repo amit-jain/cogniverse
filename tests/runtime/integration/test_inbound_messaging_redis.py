@@ -389,7 +389,8 @@ async def test_close_racing_enqueue_never_orphans_a_list_key(redis_client):
     reg = RedisInboundQueueRegistry(redis_client, active_ttl_seconds=60)
     await reg.get_or_create_queue("sess-race", "tenant-x")
     q = await reg.get_queue("sess-race")
-    assert q is not None
+    assert q.session_id == "sess-race"
+    assert q.tenant_id == "tenant-x"
 
     close_fired = {"done": False}
 
