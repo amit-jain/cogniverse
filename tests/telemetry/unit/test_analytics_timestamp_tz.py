@@ -279,9 +279,11 @@ def test_ensure_utc_handles_string_and_epoch_cells() -> None:
 
     f = PhoenixAnalytics._ensure_utc
     # str timestamp -> coerced to a UTC-aware Timestamp
-    assert f("2026-01-01 10:00:00").tzinfo is not None
+    assert f("2026-01-01 10:00:00") == pd.Timestamp("2026-01-01 10:00:00", tz="UTC")
     # np.datetime64 -> UTC-aware
-    assert f(np.datetime64("2026-01-01T10:00:00")).tzinfo is not None
+    assert f(np.datetime64("2026-01-01T10:00:00")) == pd.Timestamp(
+        "2026-01-01 10:00:00", tz="UTC"
+    )
     # None / NaT pass through
     assert f(None) is None
     # An uncoercible value is handed back untouched. Returning None here would
