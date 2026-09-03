@@ -64,6 +64,7 @@ class _Enc:
 async def test_image_search_raises_on_4xx(patch_vespa_400):
     agent = ImageSearchAgent.__new__(ImageSearchAgent)
     agent._tenant_id = "acme:acme"
+    agent._deployed_image_schema = True
     agent._vespa_endpoint = "http://vespa:8080"
     with pytest.raises(VespaSearchError, match="400"):
         await agent._search_vespa(
@@ -107,6 +108,7 @@ async def test_audio_transcript_search_raises_on_4xx(monkeypatch):
         deps=AudioAnalysisDeps(
             tenant_id="acme:acme",
             vespa_endpoint="http://vespa:8080",
+            deployed_audio_schema=True,
             config_manager=config_manager,
             schema_loader=schema_loader,
             backend_config={
@@ -132,6 +134,9 @@ async def test_audio_transcript_search_raises_on_4xx(monkeypatch):
         config=backend.config,
         config_manager=config_manager,
         schema_loader=schema_loader,
+    )
+    monkeypatch.setattr(
+        search_backend, "_tenant_schema_exists", lambda base, tenant_id: True
     )
 
     class _Conn:
