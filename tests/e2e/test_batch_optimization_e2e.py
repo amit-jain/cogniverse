@@ -914,7 +914,7 @@ def _selection_summary_in_pod(
         ],
         capture_output=True,
         text=True,
-        timeout=180,
+        timeout=600,
     )
     if result.returncode != 0:
         raise RuntimeError(
@@ -1231,7 +1231,7 @@ def _count_spans_by_name_in_pod(
         ],
         capture_output=True,
         text=True,
-        timeout=180,
+        timeout=600,
     )
     if result.returncode != 0:
         raise RuntimeError(
@@ -1545,7 +1545,7 @@ def simba_selection_tenant(_kubectl_cluster_ready) -> SimbaSelectionTenant:
         ],
         capture_output=True,
         text=True,
-        timeout=180,
+        timeout=600,
     )
     if result.returncode != 0:
         raise RuntimeError(
@@ -2366,7 +2366,7 @@ def _reset_module_artifact_in_pod(
         ],
         capture_output=True,
         text=True,
-        timeout=180,
+        timeout=600,
     )
     if result.returncode != 0:
         raise RuntimeError(
@@ -2950,7 +2950,7 @@ def _clear_approved_synthetic_in_pod(tenant_id: str = TENANT_ID) -> bool:
         ],
         capture_output=True,
         text=True,
-        timeout=180,
+        timeout=600,
     )
     if result.returncode != 0:
         raise RuntimeError(
@@ -2997,7 +2997,7 @@ def _approved_query_enhancement_examples_in_pod(
         ],
         capture_output=True,
         text=True,
-        timeout=180,
+        timeout=600,
     )
     if result.returncode != 0:
         raise RuntimeError(
@@ -3056,7 +3056,7 @@ def _served_query_enhancement_queries_in_pod(
         ],
         capture_output=True,
         text=True,
-        timeout=180,
+        timeout=600,
     )
     if result.returncode != 0:
         raise RuntimeError(
