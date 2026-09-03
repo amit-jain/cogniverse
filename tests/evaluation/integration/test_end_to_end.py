@@ -278,8 +278,9 @@ class TestEndToEnd:
             time.sleep(1)
 
         assert result.exit_code == 0
+        assert result.exception is None
         assert result.output.count(f"Query: {query}...") == 1
-        assert "Results: 1" in result.output
+        assert result.output.count("Results: 1") == 1
 
         trace_manager = TraceManager(tenant_id="test:unit")
         barrier = threading.Barrier(4)

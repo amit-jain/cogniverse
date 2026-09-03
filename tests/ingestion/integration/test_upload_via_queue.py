@@ -538,6 +538,11 @@ async def real_stack(
     monkeypatch.setenv("MINIO_ACCESS_KEY", minio_container["access_key"])
     monkeypatch.setenv("MINIO_SECRET_KEY", minio_container["secret_key"])
     monkeypatch.setenv("MINIO_DEFAULT_BUCKET", minio_container["bucket"])
+    # The worker entrypoint maps MINIO_* onto AWS_* for botocore
+    # (configure_runtime_library_defaults); the in-process worker bypasses
+    # main(), so the media locator's s3fs download needs the mapping here.
+    monkeypatch.setenv("AWS_ACCESS_KEY_ID", minio_container["access_key"])
+    monkeypatch.setenv("AWS_SECRET_ACCESS_KEY", minio_container["secret_key"])
     monkeypatch.setenv("BACKEND_URL", "http://localhost")
     monkeypatch.setenv("BACKEND_PORT", str(vespa_backend["http_port"]))
 
