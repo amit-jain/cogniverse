@@ -59,7 +59,7 @@ def test_system_config_submit_calls_save_with_edit_kwargs(tmp_path: Path) -> Non
     assert len(calls) == 1, calls
     edits = calls[0]
     # The form threads its fields through to save_system_config_edits.
-    for key in ("video_agent_url", "search_backend", "llm_model", "environment"):
+    for key in ("summarizer_agent_url", "search_backend", "llm_model", "environment"):
         assert key in edits
 
 

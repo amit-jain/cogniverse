@@ -334,7 +334,6 @@ class ConfigUtils:
 
         # System config mappings
         system_keys = {
-            "video_agent_url": lambda: self._system_config.video_agent_url,
             "summarizer_agent_url": lambda: self._system_config.summarizer_agent_url,
             "detailed_report_agent_url": lambda: (
                 self._system_config.summarizer_agent_url
@@ -424,7 +423,6 @@ class ConfigUtils:
         all_keys.update(
             [
                 "backend",
-                "video_agent_url",
                 "summarizer_agent_url",
                 "detailed_report_agent_url",
                 "orchestrator_agent_port",

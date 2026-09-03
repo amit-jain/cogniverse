@@ -87,7 +87,6 @@ class BackendFactory:
                 config_manager=config_manager,
                 backend=backend_instance,
                 schema_loader=schema_loader,
-                strict_mode=True,
             )
 
         # Backend can now use schema_registry for schema operations

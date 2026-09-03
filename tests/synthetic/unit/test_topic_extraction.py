@@ -7,7 +7,7 @@ import pytest
 
 from cogniverse_synthetic.generators.base import (
     CANONICAL_TOPIC_FIELDS,
-    extract_topic,
+    first_topic_field,
     is_identifier_topic,
     is_non_speech_annotation,
 )
@@ -205,19 +205,19 @@ def test_saliency_extract_topic_preserves_interior_punctuation():
     )
 
 
-def test_extract_topic_rejects_annotation_only_transcript():
+def test_first_topic_field_rejects_annotation_only_transcript():
     item = {"audio_transcript": "*Screaming*"}
 
-    assert extract_topic(item) is None
+    assert first_topic_field(item) is None
 
 
-def test_extract_topic_preserves_mixed_transcript_annotations():
+def test_first_topic_field_preserves_mixed_transcript_annotations():
     item = {"audio_transcript": "[Music] hello there"}
 
-    assert extract_topic(item) == "[Music] hello there"
+    assert first_topic_field(item) == "[Music] hello there"
 
 
-def test_extract_topic_refuses_metadata_only_fallback():
+def test_first_topic_field_refuses_metadata_only_fallback():
     item = {
         "tenant_id": "tenant-123",
         "org_id": "org-456",
@@ -237,7 +237,7 @@ def test_extract_topic_refuses_metadata_only_fallback():
         "agent_type": "query_enhancement",
     }
 
-    assert extract_topic(item) is None
+    assert first_topic_field(item) is None
 
 
 def test_canonical_topic_fields_cover_all_shipped_schema_text_roles():
@@ -312,3 +312,13 @@ def test_saliency_identifier_only_record_yields_no_topic():
     saliency = TopicSaliency.from_records(records)
     identifier_only_record = records[0]
     assert sal_extract(identifier_only_record, saliency=saliency) is None
+
+
+def test_first_field_extractor_does_not_share_the_saliency_extractors_name():
+    """One package must not export two different ``extract_topic`` algorithms."""
+    import cogniverse_synthetic.generators.base as generators_base
+    import cogniverse_synthetic.topics as topics
+
+    assert not hasattr(generators_base, "extract_topic")
+    assert callable(generators_base.first_topic_field)
+    assert callable(topics.extract_topic)

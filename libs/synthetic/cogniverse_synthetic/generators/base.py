@@ -235,7 +235,7 @@ def entity_candidate_text_fields() -> tuple[str, ...]:
     return tuple(canonical_fields) + _schema_text_extras()
 
 
-def extract_topic(
+def first_topic_field(
     item: Mapping[str, Any],
     *,
     field_order: Sequence[str] = CANONICAL_TOPIC_FIELDS,

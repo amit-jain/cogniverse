@@ -57,7 +57,7 @@ Global, deployment-wide infrastructure settings shared across all agents (`Syste
 - LLM model/engine and endpoint (`llm_model`, `llm_engine`, `base_url`, `llm_api_key`), plus opt-in `semantic_router` settings
 - Backend connection settings (`search_backend`, `backend_url`, `backend_port`, `application_name`)
 - Telemetry endpoints (`telemetry_url`, `telemetry_collector_endpoint`)
-- Agent service URLs and registry (`agents` dict, `agent_registry_url`, `video_agent_url`, `summarizer_agent_url`, `ingestion_api_url`)
+- Agent service URLs and registry (`agents` dict, `agent_registry_url`, `summarizer_agent_url`, `ingestion_api_url`)
 - Inference service URLs (`inference_service_urls`, `colpali_inference_url`)
 - Iterative-retrieval budgets (`iter_retrieval_max_iter`, `iter_retrieval_token_budget`, `iter_retrieval_wall_clock_ms`)
 - Cross-pod messaging, finetuning cache, and ingestion-upload endpoints (`redis_url`, `adapter_cache_dir`, `minio_endpoint`)
@@ -568,7 +568,7 @@ manager = create_default_config_manager()
 
 # Configure the video/visual Search Agent with ReAct and GEPA optimizer.
 # "search_agent" is the registered agent name (configs/config.json ->
-# agents.search_agent); its URL matches SystemConfig.video_agent_url.
+# agents.search_agent).
 video_agent_config = AgentConfig(
     agent_name="search_agent",
     agent_version="1.0.0",

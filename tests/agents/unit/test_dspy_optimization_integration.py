@@ -332,8 +332,7 @@ class TestTrainingDataShapes:
         assert len(data["agent_routing"]) == 3
         assert len(data["summary_generation"]) == 2
         assert len(data["detailed_report"]) == 1
-        # load_training_data caches the result on the instance.
-        assert pipeline.training_data is data
+        assert not hasattr(pipeline, "training_data")
 
     @pytest.mark.ci_fast
     def test_example_fields_are_verbatim(self, pipeline):

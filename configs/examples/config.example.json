@@ -177,7 +177,6 @@
       "llm_auto_annotator": null
     }
   },
-  "video_agent_url": "http://localhost:8002",
   "detailed_report_agent_url": "http://localhost:8003",
   "summarizer_agent_url": "http://localhost:8004",
   "orchestrator_agent_port": 8013,

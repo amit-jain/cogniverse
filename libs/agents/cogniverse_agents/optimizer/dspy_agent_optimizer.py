@@ -42,7 +42,6 @@ class DSPyAgentPromptOptimizer:
     def __init__(self, config: Optional[Dict[str, Any]] = None):
         """Initialize the DSPy optimizer."""
         self.config = config or {}
-        self.optimized_prompts = {}
         self.lm = None
         self.teacher_lm = None
 
@@ -313,7 +312,6 @@ class DSPyAgentOptimizerPipeline:
         self.optimizer = optimizer
         self.modules = {}
         self.compiled_modules = {}
-        self.training_data = {}
 
     def initialize_modules(self):
         """Initialize all DSPy modules for optimization."""
@@ -420,7 +418,6 @@ class DSPyAgentOptimizerPipeline:
             ).with_inputs("search_results", "query_context", "analysis_depth"),
         ]
 
-        self.training_data = training_data
         return training_data
 
     def optimize_module(

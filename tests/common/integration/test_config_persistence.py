@@ -84,7 +84,7 @@ class TestConfigPersistence:
         """Test system configuration persists and loads"""
         # Create system config
         system_config = SystemConfig(
-            video_agent_url="http://localhost:9002",
+            summarizer_agent_url="http://localhost:9004",
             search_backend="vespa",
             llm_model="test-model",
         )
@@ -95,7 +95,7 @@ class TestConfigPersistence:
         # Load back
         loaded_config = config_manager.get_system_config()
 
-        assert loaded_config.video_agent_url == "http://localhost:9002"
+        assert loaded_config.summarizer_agent_url == "http://localhost:9004"
         assert loaded_config.llm_model == "test-model"
 
     def test_routing_config_persistence(self, config_manager):

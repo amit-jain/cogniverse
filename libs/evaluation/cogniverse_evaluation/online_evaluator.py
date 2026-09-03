@@ -14,7 +14,6 @@ from datetime import datetime, timezone
 from typing import TYPE_CHECKING, Any, Dict, List, Optional
 
 from cogniverse_evaluation.evaluators.agent_evaluators import get_agent_evaluator
-from cogniverse_evaluation.evaluators.routing_evaluator import RoutingEvaluator
 
 if TYPE_CHECKING:
     from cogniverse_agents.routing.config import OnlineEvaluationConfig
@@ -49,7 +48,7 @@ class OnlineEvaluator:
     """
     Evaluates routing spans in real-time during the optimization loop.
 
-    Wraps RoutingEvaluator with:
+    Provides:
     - Configurable sampling rate to control evaluation overhead
     - Score persistence via telemetry annotations
     - Multiple evaluator dispatch (routing_outcome, confidence_calibration)
@@ -79,10 +78,6 @@ class OnlineEvaluator:
             self.evaluator_names = ["routing_outcome", "confidence_calibration"]
             self.persist_scores = True
             self.annotation_name = "online_eval"
-
-        self.routing_evaluator = RoutingEvaluator(
-            provider=provider, project_name=project_name
-        )
 
         self._total_evaluated = 0
         self._total_skipped = 0
