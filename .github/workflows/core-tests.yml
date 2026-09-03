@@ -38,6 +38,8 @@ jobs:
 
     steps:
     - uses: actions/checkout@v4
+      with:
+        fetch-depth: 0
 
     - name: Set up Python 3.12
       uses: actions/setup-python@v4
@@ -61,7 +63,26 @@ jobs:
         uv sync --all-packages --all-extras --no-extra cuda --no-extra rocm
         uv pip install pytest-cov
 
+    - name: Resolve assertion-guard base
+      id: guard_base
+      run: |
+        set -euo pipefail
+        if [ "${{ github.event_name }}" = "pull_request" ]; then
+          BASE="${{ github.event.pull_request.base.sha }}"
+        else
+          BASE="${{ github.event.before }}"
+          case "$BASE" in
+            ""|0000000000000000000000000000000000000000)
+              BASE="$(git rev-parse HEAD~1)"
+              ;;
+          esac
+        fi
+        git cat-file -e "$BASE^{commit}"
+        echo "sha=$BASE" >> "$GITHUB_OUTPUT"
+
     - name: Run unit tests
+      env:
+        ASSERTION_GUARD_BASE: ${{ steps.guard_base.outputs.sha }}
       run: |
         JAX_PLATFORM_NAME=cpu uv run python -m pytest tests/common/unit -m "unit or not integration" \
           -v --tb=short \
