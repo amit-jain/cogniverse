@@ -2319,7 +2319,7 @@ def _profile_type_map() -> dict[str, str]:
 
 def _profile_family(profile_name: str) -> str:
     normalized = profile_name.lower()
-    for family in ("colpali", "colqwen", "videoprism"):
+    for family in ("colpali", "colqwen", "xclip"):
         if re.search(rf"(?<![a-z0-9]){re.escape(family)}(?![a-z0-9])", normalized):
             return family
     return profile_name

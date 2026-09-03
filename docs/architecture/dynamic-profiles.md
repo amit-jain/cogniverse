@@ -616,10 +616,7 @@ Schema templates stored on disk:
 configs/schemas/
 ├── video_colpali_smol500_mv_frame_schema.json
 ├── video_colqwen_omni_mv_chunk_30s_schema.json
-├── video_videoprism_base_mv_chunk_30s_schema.json
-├── video_videoprism_large_mv_chunk_30s_schema.json
-├── video_videoprism_lvt_base_sv_chunk_6s_schema.json
-├── video_videoprism_lvt_large_sv_chunk_6s_schema.json
+├── video_xclip_sv_chunk_6s_schema.json
 ├── ranking_strategies.json
 └── ... (other schemas)
 ```

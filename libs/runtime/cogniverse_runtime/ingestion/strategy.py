@@ -183,14 +183,14 @@ class StrategyConfig:
             # Frame-based multi-vector model like ColPali
             return "frame_based", "frames"
         elif num_patches > 1:
-            # Multi-vector model with chunks (ColQwen, VideoPrism MV)
+            # Multi-vector model with chunks (ColQwen)
             # Check if it has segment_duration to determine chunk size
             if profile.get("model_specific", {}).get("segment_duration"):
                 return "direct_video", "chunks"
             else:
                 return "direct_video", "windows"
         elif profile.get("model_specific", {}).get("chunk_duration"):
-            # Single-vector with chunks (VideoPrism LVT)
+            # Single-vector with chunks (X-CLIP)
             return "single_vector", "chunks"
 
         # 5. Check process_type in profile

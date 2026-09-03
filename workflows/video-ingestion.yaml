@@ -15,7 +15,7 @@ spec:
     - name: tenant-id
       value: "default"
     - name: profiles
-      value: "video_colpali_smol500_mv_frame,video_videoprism_base_mv_chunk_30s"
+      value: "video_colpali_smol500_mv_frame,video_xclip_sv_chunk_6s"
     - name: batch-size
       value: "10"
     - name: max-workers

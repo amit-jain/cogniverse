@@ -542,7 +542,7 @@ sequenceDiagram
 
 Examples:
 - video_colpali_smol500_mv_frame_acme_production
-- video_videoprism_base_mv_chunk_30s_initech_staging
+- video_xclip_sv_chunk_6s_initech_staging
 ```
 
 **Usage**:

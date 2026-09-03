@@ -94,7 +94,7 @@ The test suite validates processing across **all content modalities**:
 
 | Modality | Processors Tested | Embedding Models | Backend Tests |
 |----------|------------------|------------------|---------------|
-| **Video** | Frame extraction, chunk segmentation | ColPali, VideoPrism, ColQwen | Multi-vector, single-vector |
+| **Video** | Frame extraction, chunk segmentation | ColPali, X-CLIP, ColQwen | Multi-vector, single-vector |
 | **Audio** | Whisper transcription, chunking | Text embeddings on transcripts | BM25 + dense hybrid |
 | **Images** | Frame-level processing | ColPali (visual embeddings) | Frame-based schemas |
 | **Documents** | PDF, text extraction | ColPali, text embeddings | Document schemas |
@@ -211,7 +211,7 @@ uv run pytest tests/ingestion/integration/test_backend_ingestion.py::TestVespaBa
 
 ### Inference Service Requirements
 - `requires_inference("vllm_colpali")`: ColPali and ColQwen embedding tests
-- `requires_inference("videoprism_jax")`: VideoPrism embedding tests
+- `requires_inference("video_embed")`: X-CLIP embedding tests
 - `requires_inference("vllm_asr")`: Remote ASR tests
 - `requires_whisper`: Local Whisper model tests
 
@@ -340,7 +340,7 @@ uv run python scripts/test_ingestion.py --exclude-heavy 2>&1 > /tmp/ingestion-li
 ### Smart Environment Detection
 The test system automatically detects:
 - Available dependencies (Docker, Vespa, FFmpeg, OpenCV)
-- Available models (ColPali, VideoPrism, ColQwen, Whisper)
+- Available models (ColPali, X-CLIP, ColQwen, Whisper)
 - Environment type (CI vs Local development)
 - Resource availability (GPU, memory)
 
@@ -480,7 +480,7 @@ uv run python scripts/test_ingestion.py --env-info
 # Common fixes
 ./scripts/start_vespa.sh  # Start Vespa
 pip install colpali-engine  # Install ColPali
-# Ensure ../videoprism/ directory exists for VideoPrism
+# Ensure ../xclip/ directory exists for X-CLIP
 ```
 
 #### CI Failures

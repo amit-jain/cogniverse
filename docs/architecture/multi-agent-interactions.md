@@ -200,15 +200,15 @@ sequenceDiagram
         Note over Orch: Execute planned execution agent<br/>(search_agent, summarizer_agent, etc.)
 
         alt Ensemble Mode (profiles specified)
-            Orch->>Search: POST /agents/search_agent/process<br/>{query, profiles: ["colpali", "videoprism"], modality: "video"}
+            Orch->>Search: POST /agents/search_agent/process<br/>{query, profiles: ["colpali", "xclip"], modality: "video"}
 
             Note over Search: Parallel Profile Execution
             par Profile 1: ColPali
                 Search->>Backend: search(query_dict)<br/>{profile: "colpali", query_embedding}
                 Backend-->>Search: Results 1 (ranked by ColPali similarity)
-            and Profile 2: VideoPrism
-                Search->>Backend: search(query_dict)<br/>{profile: "videoprism", query_embedding}
-                Backend-->>Search: Results 2 (ranked by VideoPrism similarity)
+            and Profile 2: X-CLIP
+                Search->>Backend: search(query_dict)<br/>{profile: "xclip", query_embedding}
+                Backend-->>Search: Results 2 (ranked by X-CLIP similarity)
             end
 
             Search->>Search: RRF Fusion<br/>score(doc) = Σ 1/(k+rank)
@@ -334,15 +334,15 @@ flowchart TB
     Start[<span style='color:#000'>User Query</span>] --> Encode{<span style='color:#000'>For Each Selected Profile</span>}
 
     Encode -->|Profile 1| Enc1[<span style='color:#000'>Encode with ColPali</span>]
-    Encode -->|Profile 2| Enc2[<span style='color:#000'>Encode with VideoPrism</span>]
+    Encode -->|Profile 2| Enc2[<span style='color:#000'>Encode with X-CLIP</span>]
     Encode -->|Profile 3| Enc3[<span style='color:#000'>Encode with Qwen</span>]
 
     Enc1 --> Search1[<span style='color:#000'>Backend Search<br/>Profile: colpali</span>]
-    Enc2 --> Search2[<span style='color:#000'>Backend Search<br/>Profile: videoprism</span>]
+    Enc2 --> Search2[<span style='color:#000'>Backend Search<br/>Profile: xclip</span>]
     Enc3 --> Search3[<span style='color:#000'>Backend Search<br/>Profile: qwen</span>]
 
     Search1 --> Results1[<span style='color:#000'>Results 1<br/>Ranked by ColPali</span>]
-    Search2 --> Results2[<span style='color:#000'>Results 2<br/>Ranked by VideoPrism</span>]
+    Search2 --> Results2[<span style='color:#000'>Results 2<br/>Ranked by X-CLIP</span>]
     Search3 --> Results3[<span style='color:#000'>Results 3<br/>Ranked by Qwen</span>]
 
     Results1 --> RRF[<span style='color:#000'>RRF Fusion Algorithm</span>]

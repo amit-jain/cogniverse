@@ -32,8 +32,8 @@ All Vespa schema definitions for video processing profiles:
 
 - `video_colpali_smol500_mv_frame_schema.json`: ColPali multi-vector frame-based schema
 - `video_colqwen_omni_mv_chunk_30s_schema.json`: ColQwen multi-vector 30s chunk schema
-- `video_videoprism_base_mv_chunk_30s_schema.json`: VideoPrism base 30s chunk schema  
-- `video_videoprism_large_mv_chunk_30s_schema.json`: VideoPrism large 30s chunk schema
-- `video_videoprism_lvt_base_sv_chunk_6s_schema.json`: VideoPrism LVT base 6s chunk schema
-- `video_videoprism_lvt_large_sv_chunk_6s_schema.json`: VideoPrism LVT large 6s chunk schema
+- `video_xclip_base_mv_chunk_30s_schema.json`: X-CLIP base 30s chunk schema  
+- `video_xclip_large_mv_chunk_30s_schema.json`: X-CLIP large 30s chunk schema
+- `video_xclip_lvt_base_sv_chunk_6s_schema.json`: X-CLIP LVT base 6s chunk schema
+- `video_xclip_lvt_large_sv_chunk_6s_schema.json`: X-CLIP LVT large 6s chunk schema
 - `ranking_strategies.json`: Ranking strategy definitions for all schemas

@@ -381,7 +381,7 @@ class TestProfileSelectionAgent:
     async def test_process_derives_exact_tenant_usable_profiles(self, profile_agent):
         """Profiles missing services or missing from tenant config stay hidden."""
         profile_agent.deps.available_profiles = [
-            "video_videoprism_base_mv_chunk_30s",
+            "video_xclip_base_mv_chunk_30s",
             "video_colqwen_omni_mv_chunk_30s",
             "video_colpali_smol500_mv_frame",
             "image_colpali_mv",
@@ -406,13 +406,13 @@ class TestProfileSelectionAgent:
                     "inference_services": {"embedding": "vllm_colpali"},
                 },
             ),
-            "video_videoprism_base_mv_chunk_30s": BackendProfileConfig.from_dict(
-                "video_videoprism_base_mv_chunk_30s",
+            "video_xclip_base_mv_chunk_30s": BackendProfileConfig.from_dict(
+                "video_xclip_base_mv_chunk_30s",
                 {
                     "type": "video",
-                    "schema_name": "video_videoprism_base_mv_chunk_30s",
-                    "embedding_model": "videoprism_public_v1_base_hf",
-                    "inference_services": {"embedding": "videoprism_jax"},
+                    "schema_name": "video_xclip_base_mv_chunk_30s",
+                    "embedding_model": "microsoft/xclip-large-patch14",
+                    "inference_services": {"embedding": "video_embed"},
                 },
             ),
         }
@@ -453,9 +453,7 @@ class TestProfileSelectionAgent:
             "video_colpali_smol500_mv_frame",
             "image_colpali_mv",
         ]
-        assert (
-            "video_videoprism_base_mv_chunk_30s" not in captured["available_profiles"]
-        )
+        assert "video_xclip_base_mv_chunk_30s" not in captured["available_profiles"]
         assert "video_colqwen_omni_mv_chunk_30s" not in captured["available_profiles"]
         assert result.selected_profile == "video_colpali_smol500_mv_frame"
 

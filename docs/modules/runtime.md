@@ -533,7 +533,7 @@ strategy.get_required_processors()
 # -> {"keyframe": {"fps": 0.5, "threshold": 0.999, "max_frames": 3000}}
 ```
 
-**ChunkSegmentationStrategy** - Extract video chunks (for ColQwen, VideoPrism):
+**ChunkSegmentationStrategy** - Extract video chunks (for ColQwen, X-CLIP):
 ```python
 from cogniverse_runtime.ingestion.strategies import ChunkSegmentationStrategy
 
@@ -544,7 +544,7 @@ strategy = ChunkSegmentationStrategy(
 )
 ```
 
-**SingleVectorSegmentationStrategy** - Single-vector embeddings (for VideoPrism LVT):
+**SingleVectorSegmentationStrategy** - Single-vector embeddings (for X-CLIP):
 ```python
 from cogniverse_runtime.ingestion.strategies import SingleVectorSegmentationStrategy
 
@@ -567,8 +567,8 @@ from cogniverse_runtime.ingestion.strategies import (
 # Multi-vector (ColPali, ColQwen)
 mv_strategy = MultiVectorEmbeddingStrategy(model_name="TomoroAI/tomoro-colqwen3-embed-4b")
 
-# Single-vector (VideoPrism)
-sv_strategy = SingleVectorEmbeddingStrategy(model_name="google/videoprism-base")
+# Single-vector (X-CLIP)
+sv_strategy = SingleVectorEmbeddingStrategy(model_name="microsoft/xclip-large-patch14")
 ```
 
 ### Processor Architecture
@@ -1149,9 +1149,9 @@ backend:
           params:
             model_name: TomoroAI/tomoro-colqwen3-embed-4b
 
-    video_videoprism_sv_chunk:
+    video_xclip_sv_chunk:
       type: single_vector
-      embedding_model: google/videoprism-base
+      embedding_model: microsoft/xclip-large-patch14
       strategies:
         segmentation:
           class: SingleVectorSegmentationStrategy
@@ -1169,7 +1169,7 @@ backend:
         embedding:
           class: SingleVectorEmbeddingStrategy
           params:
-            model_name: google/videoprism-base
+            model_name: microsoft/xclip-large-patch14
 ```
 
 ### Environment Variables

@@ -195,7 +195,7 @@ uv run pytest tests/agents/unit -m "unit and ci_fast"
 - Error handling
 
 **Video Search Agent** (10 tests):
-- Initialization with profiles (ColPali, VideoPrism, ColQwen)
+- Initialization with profiles (ColPali, X-CLIP, ColQwen)
 - Video frame analysis
 - Multi-modal search execution
 - Reranking with relationship boosting

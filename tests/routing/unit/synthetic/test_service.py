@@ -162,7 +162,7 @@ def create_test_backend_config() -> BackendConfig:
             "video_frames": BackendProfileConfig(
                 profile_name="video_frames",
                 type="video",
-                schema_name="video_videoprism_large_mv_chunk_30s",
+                schema_name="video_xclip_sv_chunk_6s",
                 embedding_type="multi_vector",
                 pipeline_config={
                     "extract_keyframes": True,
@@ -764,7 +764,7 @@ class TestSyntheticDataService:
                         "video_frames": BackendProfileConfig(
                             profile_name="video_frames",
                             type="video",
-                            schema_name="video_videoprism_large_mv_chunk_30s",
+                            schema_name="video_xclip_sv_chunk_6s",
                             embedding_type="multi_vector",
                         )
                     },
@@ -818,7 +818,7 @@ class TestSyntheticDataService:
                         "video_frames": BackendProfileConfig(
                             profile_name="video_frames",
                             type="video",
-                            schema_name="video_videoprism_large_mv_chunk_30s",
+                            schema_name="video_xclip_sv_chunk_6s",
                             embedding_type="multi_vector",
                         )
                     },
@@ -1783,7 +1783,7 @@ class TestServiceWithBackendConfig:
             "video_colqwen": BackendProfileConfig(
                 profile_name="video_colqwen",
                 type="video",
-                schema_name="video_videoprism_large_mv_chunk_30s",
+                schema_name="video_xclip_sv_chunk_6s",
                 embedding_type="multi_vector",
                 pipeline_config={"transcribe_audio": True},
             ),
@@ -1891,7 +1891,7 @@ def _tenant_profile_service(backend) -> SyntheticDataService:
 async def test_live_backend_samples_a_deployed_configured_profile_schema():
     tenant_id = "acme:media"
     profile_name = "video_frames"
-    schema_name = "video_videoprism_large_mv_chunk_30s"
+    schema_name = "video_xclip_sv_chunk_6s"
     backend = _TenantProfileBackend({tenant_id: {schema_name}})
     profiles = {
         profile_name: BackendProfileConfig(

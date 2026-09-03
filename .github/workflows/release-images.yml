@@ -54,10 +54,6 @@ jobs:
             dockerfile: deploy/gliner/Dockerfile
             context: .
             backend: ""
-          - repo: videoprism
-            dockerfile: deploy/videoprism/Dockerfile
-            context: .
-            backend: ""
           - repo: clap-embed
             dockerfile: deploy/clap_embed/Dockerfile
             context: .

@@ -1068,11 +1068,6 @@ def test_local_llm_provisioning_failure_preserves_error_and_retries_release(
     ("service", "relative_dockerfile", "relative_context"),
     [
         ("gliner", "deploy/gliner/Dockerfile", "."),
-        (
-            "videoprism_jax",
-            "deploy/videoprism/Dockerfile",
-            ".",
-        ),
         ("clap_embed", "deploy/clap_embed/Dockerfile", "."),
         ("face_embed", "deploy/face_embed/Dockerfile", "."),
         ("colbert_pylate", "deploy/pylate/Dockerfile", "."),
@@ -1216,14 +1211,14 @@ def test_local_container_build_failure_names_service_dockerfile_and_context(
         "docker",
         "build",
         "-f",
-        str(repo / "deploy/videoprism/Dockerfile"),
+        str(repo / "deploy/face_embed/Dockerfile"),
         "-t",
-        "cogniverse/videoprism:0.1.0-dev",
+        "cogniverse/face-embed:0.1.0-dev",
         str(repo),
     ]
 
     with pytest.raises(ProviderUnavailable) as caught:
-        provider._start_container(get_inference_service_spec("videoprism_jax"))
+        provider._start_container(get_inference_service_spec("face_embed"))
 
     assert build_attempts == 2
     cause = caught.value.__cause__
@@ -1232,8 +1227,8 @@ def test_local_container_build_failure_names_service_dockerfile_and_context(
     assert cause.returncode == 17
     assert cause.stderr == "missing server.py"
     assert str(caught.value) == (
-        "videoprism_jax: Docker image build failed twice using "
-        f"{repo / 'deploy/videoprism/Dockerfile'} with context {repo} "
+        "face_embed: Docker image build failed twice using "
+        f"{repo / 'deploy/face_embed/Dockerfile'} with context {repo} "
         f"(CalledProcessError: {cause})"
     )
 
@@ -1269,7 +1264,7 @@ def test_local_container_build_retries_once_after_transient_failure(monkeypatch)
     )
     provider = LocalEndpointProvider()
 
-    url = provider._start_container(get_inference_service_spec("videoprism_jax"))
+    url = provider._start_container(get_inference_service_spec("face_embed"))
 
     assert url == "http://127.0.0.1:39124"
     assert build_attempts == 2
@@ -1550,13 +1545,13 @@ def test_collection_uses_only_exact_markers_without_mutating_other_markers():
             raise AssertionError("collection must not inspect marker keywords")
 
     unrelated_skip = _Marker("skipif", True, reason="unrelated capability")
-    exact_marker = _Marker("requires_inference", "videoprism_jax")
+    exact_marker = _Marker("requires_inference", "vllm_colpali")
     item = ExactMarkerItem(markers=(unrelated_skip, exact_marker))
     item.keywords = UnreadableKeywords()
 
     required = collect_required_inference_services([item])
 
-    assert required == frozenset({"videoprism_jax", "vllm_asr"})
+    assert required == frozenset({"vllm_colpali", "vllm_asr"})
     assert item.own_markers == [unrelated_skip, exact_marker]
 
 

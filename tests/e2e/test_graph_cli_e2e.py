@@ -455,7 +455,7 @@ class TestCliIndexWithGraph:
                 "It uses Vespa as the storage backend and runs on the configured LM for embeddings. "
                 "The SearchAgent orchestrates queries across multiple profiles.\n\n"
                 "## Architecture\n\n"
-                "ColPali and VideoPrism are the two main encoders supported.\n"
+                "ColPali and X-CLIP are the two main encoders supported.\n"
             )
 
             summary = index_files(

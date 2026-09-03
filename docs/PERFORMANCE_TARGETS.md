@@ -70,7 +70,7 @@ Performance benchmarks and targets for the Cogniverse multi-agent video search s
 | **Frame Extraction** | < 5s | < 30s | < 4 min |
 | **Transcription** | < 10s | < 60s | < 8 min |
 | **ColPali Embedding** | < 3s | < 20s | < 3 min |
-| **VideoPrism Embedding** | < 8s | < 50s | < 7 min |
+| **X-CLIP Embedding** | < 8s | < 50s | < 7 min |
 | **Backend Ingestion** | < 2s | < 10s | < 90s |
 
 ### Embedding Model Performance
@@ -78,15 +78,11 @@ Performance benchmarks and targets for the Cogniverse multi-agent video search s
 |-------|------------|----------------|--------|
 | **ColPali** (frame-based, `TomoroAI/tomoro-colqwen3-embed-4b`) | Patch-based (1024 patches × 320D) | < 100ms/frame | 2GB |
 | **ColQwen2** (chunk-based, 30s chunks, `TomoroAI/tomoro-colqwen3-embed-4b` weights) | Patch-based (1024 patches × 320D) | < 150ms/frame | 4GB |
-| **VideoPrism Base** (multi-vector, 30s chunks) | 768 (4096 patches) | < 200ms/chunk | 3GB |
-| **VideoPrism Large** (multi-vector, 30s chunks) | 1024 (2048 patches) | < 250ms/chunk | 4GB |
-| **VideoPrism LVT Base** (single-vector, 6s chunks) | 768 | < 250ms/chunk | 3GB |
-| **VideoPrism LVT Large** (single-vector, 6s chunks) | 1024 | < 300ms/chunk | 4GB |
+| **X-CLIP** (single-vector, 6s chunks, `microsoft/xclip-large-patch14`) | 768 | < 250ms/chunk | 3GB |
 
 > **Source**: `configs/config.json` → `video_colpali_smol500_mv_frame`,
-> `video_colqwen_omni_mv_chunk_30s`, `video_videoprism_base_mv_chunk_30s`,
-> `video_videoprism_large_mv_chunk_30s`, `video_videoprism_lvt_base_sv_chunk_6s`,
-> `video_videoprism_lvt_large_sv_chunk_6s` (`schema_config.embedding_dim` /
+> `video_colqwen_omni_mv_chunk_30s`, `video_xclip_sv_chunk_6s`
+> (`schema_config.embedding_dim` /
 > `num_patches`). The chunk-based profile's own `schema_config.model_name` is
 > `ColQwen2`; both it and the frame-based ColPali profile load
 > `TomoroAI/tomoro-colqwen3-embed-4b` weights.

@@ -205,96 +205,6 @@ def ColQwenQueryEncoder(  # noqa: N802 — factory exposed under a class-style n
     )
 
 
-def _videoprism_is_global(model_name: str) -> bool:
-    """True for global (single-vector) VideoPrism models.
-
-    Matches the token-bracketed ``_lvt_`` marker (consistent with the
-    authoritative ``_SINGLE_VECTOR_TOKENS`` classifier) or the explicit
-    ``global`` marker — not a bare ``lvt`` substring, which would also fire
-    on an unrelated name that merely embeds those three letters.
-    """
-    name = model_name.lower()
-    return "_lvt_" in name or "global" in name
-
-
-class VideoPrismQueryEncoder(QueryEncoder):
-    """Query encoder for VideoPrism models"""
-
-    def __init__(
-        self,
-        model_name: str = "videoprism_public_v1_base_hf",
-        inference_service_url: Optional[str] = None,
-    ):
-        self.model_name = model_name
-
-        # VideoPrism dimensions
-        self.is_global = _videoprism_is_global(model_name)
-        if "large" in model_name:
-            self.embedding_dim = 1024
-            self.num_patches = 2048  # For patch-based models
-        else:
-            self.embedding_dim = 768
-            self.num_patches = 4096  # For patch-based models
-
-        # Use v2 model loader - it returns the videoprism loader instance
-        config = {
-            "colpali_model": model_name,
-            "model_name": model_name,
-            "embedding_type": "single_vector",
-            "model_loader": "videoprism",
-        }
-        if inference_service_url:
-            config["remote_inference_url"] = inference_service_url
-        logger.info(f"Creating VideoPrism loader for model: {model_name}")
-        self.videoprism_loader, _ = get_or_load_model(model_name, config, logger)
-        logger.debug(
-            "VideoPrism loader %s: encode_text=%s",
-            type(self.videoprism_loader).__name__,
-            hasattr(self.videoprism_loader, "encode_text"),
-        )
-
-        # Text encoding delegates to the loader; warn early if the loader
-        # lacks the capability the hot path calls.
-        if not hasattr(self.videoprism_loader, "encode_text"):
-            logger.warning(
-                "VideoPrism loader %s has no encode_text; text-to-video queries "
-                "will fail",
-                type(self.videoprism_loader).__name__,
-            )
-
-    def encode(self, query: str) -> np.ndarray:
-        """Encode text query to embeddings matching VideoPrism format"""
-        if not hasattr(self.videoprism_loader, "encode_text"):
-            raise RuntimeError(
-                "VideoPrism loader doesn't have text encoding support. "
-                "Ensure the model supports text encoding (LVT models)."
-            )
-
-        try:
-            # Use the videoprism loader's text encoding method
-            embeddings_np = self.videoprism_loader.encode_text(query)
-
-            logger.info(f"Generated text embeddings shape: {embeddings_np.shape}")
-
-            # For global embedding models, return as-is (single vector)
-            if self.is_global:
-                logger.info("Using global embedding format")
-                # Ensure we return a 1D array for global models
-                if len(embeddings_np.shape) > 1:
-                    embeddings_np = embeddings_np.flatten()
-                return embeddings_np
-
-            # For patch-based models, the loader should handle the format
-            return embeddings_np
-
-        except Exception as e:
-            logger.error(f"Failed to encode text query: {e}")
-            raise
-
-    def get_embedding_dim(self) -> int:
-        return self.embedding_dim
-
-
 class XClipQueryEncoder(QueryEncoder):
     """Encode a query into the joint video-text space X-CLIP was trained on.
 
@@ -516,10 +426,6 @@ class QueryEncoderFactory:
             return ColPaliQueryEncoder(model_name, inference_service_url=inference_url)
         if model_loader == "colqwen":
             return ColQwenQueryEncoder(model_name, inference_service_url=inference_url)
-        if model_loader == "videoprism":
-            return VideoPrismQueryEncoder(
-                model_name, inference_service_url=inference_url
-            )
         if model_loader == "xclip":
             return XClipQueryEncoder(
                 model_name,
@@ -534,10 +440,6 @@ class QueryEncoderFactory:
             return ColPaliQueryEncoder(model_name, inference_service_url=inference_url)
         if "colqwen" in name:
             return ColQwenQueryEncoder(model_name, inference_service_url=inference_url)
-        if "videoprism" in name:
-            return VideoPrismQueryEncoder(
-                model_name, inference_service_url=inference_url
-            )
         if "colbert" in name or "lateon" in name:
             return _build_colbert_encoder(
                 model_name, profile, profile_config, system_config
@@ -548,10 +450,6 @@ class QueryEncoderFactory:
             return ColPaliQueryEncoder(model_name)
         if "colqwen" in profile_lower:
             return ColQwenQueryEncoder(model_name)
-        if "videoprism" in profile_lower:
-            return VideoPrismQueryEncoder(
-                model_name, inference_service_url=inference_url
-            )
         if "colbert" in profile_lower or "document" in profile_lower:
             return _build_colbert_encoder(
                 model_name, profile, profile_config, system_config

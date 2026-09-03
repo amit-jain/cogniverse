@@ -33,7 +33,6 @@ def _make_project_root(
     tmp_path: Path,
     *,
     app_version: str = "0.1.0",
-    videoprism: bool = False,
     clap_embed: bool = False,
     face_embed: bool = False,
     colbert_pylate: bool = False,
@@ -48,7 +47,6 @@ def _make_project_root(
     )
     values = {
         "inference": {
-            "videoprism_jax": {"enabled": videoprism},
             "clap_embed": {"enabled": clap_embed},
             "face_embed": {"enabled": face_embed},
             "colbert_pylate": {"enabled": colbert_pylate},
@@ -225,38 +223,6 @@ class TestBuildImages:
         assert overrides["inference.code_colbert_pylate.image.tag"] == DEV_TAG
 
     @patch("cogniverse_cli.images.subprocess.run")
-    def test_enabled_videoprism_build_uses_canonical_server_context(
-        self, mock_run: MagicMock, tmp_path: Path
-    ) -> None:
-        """VideoPrism builds from the repository root so its canonical CLI
-        server is available to the Dockerfile."""
-        _completed(mock_run)
-        root = _make_project_root(tmp_path, videoprism=True)
-
-        built = build_images(root, torch_backend="cpu", version=DEV_VERSION)
-
-        assert built == [
-            f"cogniverse/runtime-cpu:{DEV_TAG}",
-            f"cogniverse/dashboard-cpu:{DEV_TAG}",
-            f"cogniverse/gliner:{DEV_TAG}",
-            f"cogniverse/videoprism:{DEV_TAG}",
-        ]
-        videoprism_cmd = next(
-            call[0][0]
-            for call in mock_run.call_args_list
-            if f"cogniverse/videoprism:{DEV_TAG}" in call[0][0]
-        )
-        assert videoprism_cmd == [
-            "docker",
-            "build",
-            "-f",
-            "deploy/videoprism/Dockerfile",
-            "-t",
-            f"cogniverse/videoprism:{DEV_TAG}",
-            ".",
-        ]
-
-    @patch("cogniverse_cli.images.subprocess.run")
     def test_disabled_sidecars_are_not_built(
         self, mock_run: object, tmp_path: Path
     ) -> None:
@@ -270,7 +236,6 @@ class TestBuildImages:
         joined = " ".join(" ".join(c[0][0]) for c in mock_run.call_args_list)  # type: ignore[attr-defined]
         assert "cogniverse/face-embed" not in joined
         assert "cogniverse/clap-embed" not in joined
-        assert "cogniverse/videoprism" not in joined
         assert len(built) == 3
 
     @patch("cogniverse_cli.images.subprocess.run")
@@ -308,7 +273,7 @@ class TestBuildImages:
         assert not any(a.startswith("TORCH_BACKEND=") for a in face_cmd)
 
 
-def test_release_gliner_and_videoprism_builds_include_canonical_servers() -> None:
+def test_release_gliner_build_includes_canonical_server() -> None:
     workflow_path = Path(__file__).parents[3] / ".github/workflows/release-images.yml"
     workflow = yaml.safe_load(workflow_path.read_text())
     image_matrix = workflow["jobs"]["build-push"]["strategy"]["matrix"]["include"]
@@ -320,12 +285,7 @@ def test_release_gliner_and_videoprism_builds_include_canonical_servers() -> Non
         "context": ".",
         "backend": "",
     }
-    assert entries["videoprism"] == {
-        "repo": "videoprism",
-        "dockerfile": "deploy/videoprism/Dockerfile",
-        "context": ".",
-        "backend": "",
-    }
+    assert "videoprism" not in entries
 
 
 class TestDevImageSetValues:
@@ -375,13 +335,13 @@ class TestEnabledSidecars:
             yaml.safe_dump(
                 {
                     "inference": {
+                        "face_embed": {"enabled": True},
                         "clap_embed": {"enabled": True},
-                        "videoprism_jax": {"enabled": True},
                     }
                 }
             )
         )
-        assert enabled_sidecars(root, [overlay]) == ["videoprism_jax", "clap_embed"]
+        assert enabled_sidecars(root, [overlay]) == ["clap_embed", "face_embed"]
 
     def test_external_url_excludes_the_sidecar_build(self, tmp_path: Path) -> None:
         """A Modal-hosted service deploys no local pod, so its sidecar image

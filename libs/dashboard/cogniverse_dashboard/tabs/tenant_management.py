@@ -83,8 +83,7 @@ def _fetch_profiles() -> List[str]:
     return [
         "video_colpali_smol500_mv_frame",
         "video_colqwen_omni_mv_chunk_30s",
-        "video_videoprism_base_mv_chunk_30s",
-        "video_videoprism_lvt_base_sv_chunk_6s",
+        "video_xclip_sv_chunk_6s",
     ]
 
 

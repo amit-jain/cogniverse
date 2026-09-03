@@ -314,7 +314,7 @@ tenant is doubled, not single.
 | Base Schema | Tenant ID | Tenant Schema |
 |------------|-----------|---------------|
 | `video_colpali_smol500_mv_frame` | `acme` | `video_colpali_smol500_mv_frame_acme_acme` |
-| `video_videoprism_base_mv_chunk_30s` | `startup` | `video_videoprism_base_mv_chunk_30s_startup_startup` |
+| `video_xclip_sv_chunk_6s` | `startup` | `video_xclip_sv_chunk_6s_startup_startup` |
 | `agent_memories` | `acme:production` | `agent_memories_acme_production` |
 
 **Schema Name Rules** (`validate_tenant_id()` in `tenant_utils.py`):
@@ -350,10 +350,7 @@ configs/schemas/
 ├── tenant_metadata_schema.json
 ├── video_colpali_smol500_mv_frame_schema.json
 ├── video_colqwen_omni_mv_chunk_30s_schema.json
-├── video_videoprism_base_mv_chunk_30s_schema.json
-├── video_videoprism_large_mv_chunk_30s_schema.json
-├── video_videoprism_lvt_base_sv_chunk_6s_schema.json
-├── video_videoprism_lvt_large_sv_chunk_6s_schema.json
+├── video_xclip_sv_chunk_6s_schema.json
 └── wiki_pages_schema.json
 ```
 
@@ -484,7 +481,7 @@ def list_available_base_schemas() -> list[str]:
     schema_dir = Path("configs/schemas")
     return [f.stem for f in schema_dir.glob("*_schema.json")]
 
-# Returns: ['video_colpali_smol500_mv_frame', 'agent_memories', 'video_videoprism_base_mv_chunk_30s', ...]
+# Returns: ['video_colpali_smol500_mv_frame', 'agent_memories', 'video_xclip_sv_chunk_6s', ...]
 ```
 
 #### Schema Name Generation

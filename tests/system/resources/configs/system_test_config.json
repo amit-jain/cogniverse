@@ -56,11 +56,11 @@
           "transcription": "vllm_asr"
         }
       },
-      "video_videoprism_base_mv_chunk_30s": {
+      "video_xclip_base_mv_chunk_30s": {
         "type": "video",
-        "description": "Test alias backed by the deployed colpali schema. Real VideoPrism inference would require the videoprism sidecar; ensemble RRF tests just need three distinct profile names against the same backing schema.",
+        "description": "Test alias backed by the deployed colpali schema. Real X-CLIP inference would require the xclip sidecar; ensemble RRF tests just need three distinct profile names against the same backing schema.",
         "schema_name": "video_colpali_smol500_mv_frame",
-        "embedding_model": "videoprism_public_v1_base_hf",
+        "embedding_model": "microsoft/xclip-large-patch14",
         "embedding_type": "multi_vector",
         "model_loader": "colpali",
         "schema_config": {
@@ -71,13 +71,13 @@
           "binary_dim": 40
         },
         "inference_services": {
-          "embedding": "videoprism_jax",
+          "embedding": "video_embed",
           "transcription": "vllm_asr"
         }
       },
       "video_colqwen_omni_mv_chunk_30s": {
         "type": "video",
-        "description": "Test alias backed by the deployed colpali schema. See note on video_videoprism_base_mv_chunk_30s.",
+        "description": "Test alias backed by the deployed colpali schema. See note on video_xclip_base_mv_chunk_30s.",
         "schema_name": "video_colpali_smol500_mv_frame",
         "embedding_model": "TomoroAI/tomoro-colqwen3-embed-4b",
         "embedding_type": "multi_vector",

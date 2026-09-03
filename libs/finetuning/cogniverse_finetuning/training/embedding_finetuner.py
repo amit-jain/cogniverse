@@ -66,7 +66,7 @@ class EmbeddingFinetuner:
 
     Supports:
     - Text embeddings (jina-embeddings-v3, e5-mistral)
-    - Vision embeddings (ColPali, VideoPrism via sentence-transformers wrapper)
+    - Vision embeddings (ColPali via sentence-transformers wrapper)
     - Multi-modal embeddings (CLIP, SigLIP)
 
     Training:

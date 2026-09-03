@@ -371,7 +371,7 @@ a keyword/word-count heuristic fallback.
 - `ProfileSelectionModule`: `dspy.ChainOfThought(ProfileSelectionSignature)` producing `selected_profile`,
   `confidence`, `reasoning`, `query_intent`, `modality`, `complexity`
 - Default candidate profiles (`ProfileSelectionDeps.available_profiles`): `video_colpali_smol500_mv_frame`,
-  `video_colqwen_omni_mv_chunk_30s`, `video_videoprism_base_mv_chunk_30s`, `video_videoprism_large_mv_chunk_30s`
+  `video_colqwen_omni_mv_chunk_30s`, `video_xclip_sv_chunk_6s`
 - Overrides the LM's `modality` field with the modality encoded in the chosen profile name for consistency
 - Generates up to 3 alternative `ProfileCandidate` entries (`profile_name`, `score`, `reasoning`)
 - Applies per-tenant memory injection (`MemoryAwareMixin`) to the prompt while preserving the caller's original
@@ -856,7 +856,7 @@ print(f"Alternatives: {[c.profile_name for c in result.alternatives]}")
 # Output:
 # Selected profile: video_colpali_smol500_mv_frame
 # Confidence: 0.79
-# Alternatives: ['video_colqwen_omni_mv_chunk_30s', 'video_videoprism_base_mv_chunk_30s']
+# Alternatives: ['video_colqwen_omni_mv_chunk_30s', 'video_xclip_sv_chunk_6s']
 ```
 
 ---

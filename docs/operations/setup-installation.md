@@ -450,7 +450,7 @@ TELEMETRY_OTLP_ENDPOINT=localhost:4317
 TEST_LLM_API_BASE=http://localhost:29110/v1
 TEST_LLM_MODEL=google/gemma-4-e4b-it
 
-# JAX (for VideoPrism)
+# JAX (for X-CLIP)
 JAX_PLATFORM_NAME=cpu
 EOF
 ```
@@ -459,7 +459,7 @@ EOF
 
 **Multi-Modal Support:** Cogniverse supports six content types:
 
-- **VIDEO**: Frame-based (ColPali) and chunk-based (VideoPrism) processing
+- **VIDEO**: Frame-based (ColPali) and chunk-based (X-CLIP) processing
 
 - **AUDIO**: Speech and audio analysis extracted from video
 
@@ -506,7 +506,7 @@ JAX_PLATFORM_NAME=cpu uv run python scripts/deploy_json_schema.py \
 
 # Deploy additional schemas
 JAX_PLATFORM_NAME=cpu uv run python scripts/deploy_json_schema.py \
-  configs/schemas/video_videoprism_base_mv_chunk_30s_schema.json
+  configs/schemas/video_xclip_sv_chunk_6s_schema.json
 ```
 
 ### 3. Download Test Dataset

@@ -31,18 +31,13 @@ DASHBOARD_REPOS_BY_BACKEND = {
 # chart image uses pullPolicy: Never, so k3d must have it built+imported or
 # the pod ErrImageNeverPulls on a fresh deploy. One image, all backends.
 GLINER_REPO = "cogniverse/gliner"
-# Optional embedder sidecars — each backs a real opt-in feature (VideoPrism
-# embeddings, acoustic search, face re-ID). Built only when their
+# Optional embedder sidecars — each backs a real opt-in feature (acoustic
+# search, face re-ID). Built only when their
 # inference.<svc>.enabled resolves true in the deploy values, so a default
 # build stays fast but flipping one on "just works". Their canonical servers
 # live in the CLI modal-inference package, so every sidecar build uses the
 # repository root as its context. Keyed by inference service name.
 SIDECAR_BUILDS = {
-    "videoprism_jax": (
-        "cogniverse/videoprism",
-        "deploy/videoprism/Dockerfile",
-        ".",
-    ),
     "clap_embed": ("cogniverse/clap-embed", "deploy/clap_embed/Dockerfile", "."),
     "face_embed": ("cogniverse/face-embed", "deploy/face_embed/Dockerfile", "."),
     # Both LateOn services run the same PyLate image — LateOn retrieval

@@ -212,11 +212,11 @@ curl "http://localhost:8000/admin/profiles?tenant_id=acme_corp"
       "created_at": "2024-01-15T10:00:00.000Z"
     },
     {
-      "profile_name": "video_videoprism_global",
+      "profile_name": "video_xclip_global",
       "type": "video",
-      "schema_name": "video_videoprism_base_mv_chunk_30s",
-      "embedding_model": "videoprism_public_v1_base_hf",
-      "description": "VideoPrism global embeddings",
+      "schema_name": "video_xclip_sv_chunk_6s",
+      "embedding_model": "microsoft/xclip-large-patch14",
+      "description": "X-CLIP global embeddings",
       "schema_deployed": false,
       "created_at": "2024-01-15T10:00:00.000Z"
     }

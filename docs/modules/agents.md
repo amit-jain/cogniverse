@@ -62,7 +62,7 @@ The Agents package (`cogniverse-agents`) provides concrete agent implementations
 
 1. **GatewayAgent** - Query entry point: GLiNER-based triage classifying queries as simple or complex (<100ms, no LLM)
 2. **OrchestratorAgent** - Autonomous A2A orchestrator: DSPy planning, parallel execution, cross-modal fusion
-3. **SearchAgent** - Multi-modal video search (ColPali, VideoPrism)
+3. **SearchAgent** - Multi-modal video search (ColPali, X-CLIP)
 4. **ProfileSelectionAgent** - LLM-based intelligent backend profile selection and ensemble composition
 5. **EntityExtractionAgent** - Named entity extraction with DSPy primary path; GLiNER + SpaCy fallback (PERSON, ORGANIZATION, CONCEPT, PLACE, EVENT, TECHNOLOGY; verbatim query spans)
 6. **SearchAgent** - Enhanced with ensemble mode and RRF fusion for multi-profile queries
@@ -218,7 +218,7 @@ subpackage; `wiki_manager.py` owns page persistence and lint reporting.
 
 ### 1. SearchAgent
 
-**Purpose**: Text-to-video search with ColPali and VideoPrism embeddings
+**Purpose**: Text-to-video search with ColPali and X-CLIP embeddings
 **Constructor**: `SearchAgent(deps: SearchAgentDeps, schema_loader=None, config_manager=None, port: int = 8002)`
 
 #### Multi-Modal Support
@@ -230,15 +230,15 @@ flowchart LR
     Input --> ImageFile["<span style='color:#000'>Image File</span>"]
 
     TextQuery --> ColPaliEncode["<span style='color:#000'>ColPali Text Encoder</span>"]
-    TextQuery --> VideoPrismEncode["<span style='color:#000'>VideoPrism Text Encoder</span>"]
+    TextQuery --> X-CLIPEncode["<span style='color:#000'>X-CLIP Text Encoder</span>"]
 
     VideoFile --> FrameExtract["<span style='color:#000'>Extract Frames<br/>1 FPS</span>"]
-    FrameExtract --> VideoEncode["<span style='color:#000'>Encode Frames<br/>ColPali/VideoPrism</span>"]
+    FrameExtract --> VideoEncode["<span style='color:#000'>Encode Frames<br/>ColPali/X-CLIP</span>"]
 
-    ImageFile --> ImageEncode["<span style='color:#000'>Encode Image<br/>ColPali/VideoPrism</span>"]
+    ImageFile --> ImageEncode["<span style='color:#000'>Encode Image<br/>ColPali/X-CLIP</span>"]
 
     ColPaliEncode --> VespaSearch["<span style='color:#000'>Vespa Search<br/>Schema: video_frames_{tenant_id}</span>"]
-    VideoPrismEncode --> VespaSearch
+    X-CLIPEncode --> VespaSearch
     VideoEncode --> VespaSearch
     ImageEncode --> VespaSearch
 
@@ -250,7 +250,7 @@ flowchart LR
     style VideoFile fill:#90caf9,stroke:#1565c0,color:#000
     style ImageFile fill:#90caf9,stroke:#1565c0,color:#000
     style ColPaliEncode fill:#81d4fa,stroke:#0288d1,color:#000
-    style VideoPrismEncode fill:#81d4fa,stroke:#0288d1,color:#000
+    style X-CLIPEncode fill:#81d4fa,stroke:#0288d1,color:#000
     style FrameExtract fill:#ffcc80,stroke:#ef6c00,color:#000
     style VideoEncode fill:#81d4fa,stroke:#0288d1,color:#000
     style ImageEncode fill:#81d4fa,stroke:#0288d1,color:#000
@@ -755,8 +755,8 @@ class ProfileSelectionDeps(AgentDeps):
         default_factory=lambda: [
             "video_colpali_smol500_mv_frame",
             "video_colqwen_omni_mv_chunk_30s",
-            "video_videoprism_base_mv_chunk_30s",
-            "video_videoprism_large_mv_chunk_30s",
+            "video_xclip_sv_chunk_6s",
+            "video_xclip_sv_chunk_6s",
         ],
         description="Default available profiles (must match config.json backend.profiles)",
     )
@@ -906,7 +906,7 @@ deps = ProfileSelectionDeps()
         {
           "type": "data",
           "data": {
-            "available_profiles": ["colpali", "videoprism", "qwen"]
+            "available_profiles": ["colpali", "xclip", "qwen"]
           }
         }
       ]
@@ -1700,15 +1700,15 @@ flowchart TB
     Input["<span style='color:#000'>Query</span>"] --> Encode{"<span style='color:#000'>For Each Profile</span>"}
 
     Encode -->|Profile 1| Enc1["<span style='color:#000'>ColPali Encoder</span>"]
-    Encode -->|Profile 2| Enc2["<span style='color:#000'>VideoPrism Encoder</span>"]
+    Encode -->|Profile 2| Enc2["<span style='color:#000'>X-CLIP Encoder</span>"]
     Encode -->|Profile 3| Enc3["<span style='color:#000'>Qwen Encoder</span>"]
 
     Enc1 --> Search1["<span style='color:#000'>Vespa Search<br/>Profile: colpali</span>"]
-    Enc2 --> Search2["<span style='color:#000'>Vespa Search<br/>Profile: videoprism</span>"]
+    Enc2 --> Search2["<span style='color:#000'>Vespa Search<br/>Profile: xclip</span>"]
     Enc3 --> Search3["<span style='color:#000'>Vespa Search<br/>Profile: qwen</span>"]
 
     Search1 --> Results1["<span style='color:#000'>Results 1<br/>Ranked by ColPali</span>"]
-    Search2 --> Results2["<span style='color:#000'>Results 2<br/>Ranked by VideoPrism</span>"]
+    Search2 --> Results2["<span style='color:#000'>Results 2<br/>Ranked by X-CLIP</span>"]
     Search3 --> Results3["<span style='color:#000'>Results 3<br/>Ranked by Qwen</span>"]
 
     Results1 --> RRF["<span style='color:#000'>RRF Fusion<br/>score = Σ 1/(k+rank)</span>"]

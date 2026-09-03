@@ -138,7 +138,7 @@ class ProcessorManager:
 
     # Processor types handled directly by ProcessingStrategySet._process_segmentation()
     # — they do not require a processor plugin, so skip them gracefully.
-    # ``embedding`` is in this set because the live ColPali/VideoPrism embedders
+    # ``embedding`` is in this set because the live ColPali/X-CLIP embedders
     # live in the ``embedding_generator/`` subpackage, which the discovery loop
     # below skips (it only loads top-level ``.py`` modules under ``processors/``).
     _STRATEGY_HANDLED_TYPES = frozenset(

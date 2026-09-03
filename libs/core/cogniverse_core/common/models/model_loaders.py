@@ -544,7 +544,7 @@ class RemoteInferenceClient:
                 "video": video_base64,
                 "start_time": start_time,
                 "end_time": end_time,
-                "model": kwargs.get("model_name", "videoprism"),
+                "model": kwargs.get("model_name", "video_embed"),
                 **kwargs,
             }
 
@@ -631,79 +631,13 @@ class RemoteColPaliLoader(ModelLoader):
         return self.client, self.client
 
 
-class RemoteVideoPrismLoader(ModelLoader):
-    """
-    Remote VideoPrism model loader using inference endpoints.
-
-    Sends video segments to remote service for processing.
-    """
-
-    def __init__(
-        self,
-        model_name: str,
-        config: Dict[str, Any],
-        logger: Optional[logging.Logger] = None,
-        *,
-        _resolved_headers: Optional[Mapping[str, str]] = None,
-    ):
-        super().__init__(model_name, config, logger)
-
-        self.remote_url = config.get("remote_inference_url")
-        self.api_key = config.get("remote_inference_api_key")
-
-        if not self.remote_url:
-            raise ValueError("remote_inference_url required for remote model loader")
-
-        resolved_headers = _resolved_headers or _resolved_inference_headers(
-            self.remote_url, self.api_key
-        )
-        self.client = RemoteInferenceClient(
-            self.remote_url,
-            logger=self.logger,
-            _resolved_headers=resolved_headers,
-        )
-
-    def load_model(self) -> Tuple[Any, Any]:
-        """Return remote client for VideoPrism inference."""
-        self.logger.info(
-            f"Initialized remote VideoPrism inference at {self.remote_url}"
-        )
-
-        # Create a wrapper that matches VideoPrism interface
-        class VideoPrismRemoteWrapper:
-            def __init__(self, client, model_name: str):
-                self.client = client
-                self.model_name = model_name
-
-            def process_video_segment(
-                self, video_path: Path, start_time: float, end_time: float
-            ) -> Dict[str, Any]:
-                result = self.client.process_video_segment(
-                    video_path,
-                    start_time,
-                    end_time,
-                    model_name=self.model_name,
-                )
-                # Convert to VideoPrism expected format
-                return {
-                    "embeddings_np": result["embeddings"],
-                    "processing_time": result.get("processing_time", 0),
-                }
-
-            def _close(self) -> None:
-                self.client._close()
-
-        wrapper = VideoPrismRemoteWrapper(self.client, self.model_name)
-        return wrapper, None  # No separate processor for VideoPrism
-
-
 class RemoteXClipLoader(ModelLoader):
     """Remote video-embedding loader against the ``video_embed`` sidecar.
 
     X-CLIP encodes a clip and a text query into ONE space, so the same
     service answers ingestion (``POST /embed/video``) and query
-    (``POST /embed/text``). The returned wrapper keeps the VideoPrism
-    ``process_video_segment`` shape so the ingestion paths are shared, and
+    (``POST /embed/text``). The returned wrapper exposes
+    ``process_video_segment`` so the ingestion paths are shared, and
     adds ``embed_text`` for the query encoder.
     """
 
@@ -1233,63 +1167,6 @@ class ColQwenModelLoader(ModelLoader):
             raise  # Re-raise for retry
 
 
-class VideoPrismModelLoader(ModelLoader):
-    """Loader for VideoPrism models with production fixes"""
-
-    @retry_with_backoff(
-        config=RetryConfig(
-            max_attempts=3,
-            initial_delay=2.0,
-            exceptions=(Exception,),  # Retry on any exception during model loading
-        )
-    )
-    def load_model(self) -> Tuple[Any, Any]:
-        """Load VideoPrism model with JAX platform fix and text encoder support with retry logic"""
-        try:
-            self.logger.info(f"Loading VideoPrism model: {self.model_name}")
-
-            # JAX_PLATFORM_NAME must be set before importing JAX (at startup boundary,
-            # e.g. via JAX_PLATFORM_NAME=cpu env var or in __main__ before model loading).
-
-            from .videoprism_loader import get_videoprism_loader as videoprism_loader
-
-            # Get loader instance with proper config
-            loader_config = self.config.copy()
-            loader_config["model_name"] = self.model_name
-
-            # Check if this is a global model that needs text encoder
-            if (
-                "global" in self.model_name.lower()
-                or "_lvt_" in self.model_name.lower()
-            ):
-                loader_config["load_text_encoder"] = True
-                self.logger.info(
-                    "Loading VideoPrism with text encoder for global embeddings"
-                )
-
-            loader = videoprism_loader(self.model_name, loader_config)
-            loader.load_model()
-
-            if loader_config.get("load_text_encoder"):
-                if not hasattr(loader, "load_text_encoder"):
-                    raise AttributeError(
-                        f"VideoPrism loader {type(loader).__name__} does not implement "
-                        "load_text_encoder(), which is required for global/lvt models."
-                    )
-                loader.load_text_encoder()
-                self.logger.info("VideoPrism text encoder loaded successfully")
-
-            self.model = loader
-            self.processor = None  # VideoPrism doesn't use a separate processor
-
-            self.logger.info("VideoPrism model loaded successfully")
-            return loader, None
-
-        except Exception as e:
-            self.logger.error(f"Failed to load VideoPrism model: {e}")
-            raise  # Re-raise for retry
-
-
 class ColBERTModelLoader(ModelLoader):
     """Loader for ColBERT multi-vector models (e.g., lightonai/Reason-ModernColBERT).
 
@@ -1339,14 +1216,12 @@ class ModelLoaderFactory:
     LOADERS: Dict[str, type] = {
         "colpali": ColPaliModelLoader,
         "colqwen": ColQwenModelLoader,
-        "videoprism": VideoPrismModelLoader,
         "colbert": ColBERTModelLoader,
     }
 
     REMOTE_LOADERS: Dict[str, type] = {
         "colpali": RemoteColPaliLoader,
         "colqwen": RemoteColPaliLoader,
-        "videoprism": RemoteVideoPrismLoader,
         "xclip": RemoteXClipLoader,
         "colbert": RemoteColBERTLoader,
         "whisper": RemoteWhisperLoader,

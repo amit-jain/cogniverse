@@ -250,7 +250,7 @@ async def _delete(app, path, **params):
 @pytest.mark.asyncio
 async def test_list_profiles_returns_exact_summaries_and_deployment_flags(env):
     env.cm.profiles["prof_a"] = _profile("prof_a", "video_colpali_sv", "colpali-v1.2")
-    env.cm.profiles["prof_b"] = _profile("prof_b", "video_prism_mv", "videoprism-lvt")
+    env.cm.profiles["prof_b"] = _profile("prof_b", "video_prism_mv", "xclip-lvt")
     # Only prof_a's base schema is deployed, so its summary flag is True.
     env.backend.deployed_schemas = {"video_colpali_sv"}
 
@@ -278,7 +278,7 @@ async def test_list_profiles_returns_exact_summaries_and_deployment_flags(env):
             "type": "video",
             "description": "desc for prof_b",
             "schema_name": "video_prism_mv",
-            "embedding_model": "videoprism-lvt",
+            "embedding_model": "xclip-lvt",
             "schema_deployed": False,
         },
     ]
@@ -484,7 +484,7 @@ async def test_delete_profile_with_schema_drops_vespa_schema(env):
 @pytest.mark.asyncio
 async def test_deploy_schema_success_invokes_deploy_primitive(env):
     env.cm.profiles["video_prism"] = _profile(
-        "video_prism", "video_prism_mv", "videoprism-lvt"
+        "video_prism", "video_prism_mv", "xclip-lvt"
     )
     # base schema not yet deployed -> route proceeds to deploy_schema.
     env.backend.deployed_schemas = set()
@@ -511,7 +511,7 @@ async def test_deploy_schema_success_invokes_deploy_primitive(env):
 @pytest.mark.asyncio
 async def test_deploy_schema_lookup_failure_raises_500(env):
     env.cm.profiles["video_prism"] = _profile(
-        "video_prism", "video_prism_mv", "videoprism-lvt"
+        "video_prism", "video_prism_mv", "xclip-lvt"
     )
     env.backend.schema_exists = MagicMock(
         side_effect=RuntimeError("registry lookup failed")

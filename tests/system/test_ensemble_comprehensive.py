@@ -2,7 +2,7 @@
 COMPREHENSIVE END-TO-END TEST for Ensemble Search with REAL Profiles.
 
 This test validates the ensemble search pipeline with:
-1. REAL existing profiles with production Tomoro and VideoPrism models
+1. REAL existing profiles with production Tomoro and X-CLIP models
 2. Each profile has its own schema with different embedding dimensions
 3. Real Vespa deployment and real searches
 4. Real parallel execution and RRF fusion
@@ -27,7 +27,7 @@ logger = logging.getLogger(__name__)
 # must be provisioned or every document fails to embed.
 pytestmark = [
     pytest.mark.requires_inference("vllm_colpali"),
-    pytest.mark.requires_inference("videoprism_jax"),
+    pytest.mark.requires_inference("video_embed"),
 ]
 
 # Real profile definitions from the system
@@ -37,8 +37,8 @@ REAL_PROFILES = {
         "embedding_dim": 320,
         "binary_dim": 40,
     },
-    "video_videoprism_base_mv_chunk_30s": {
-        "model": "google/videoprism-base",
+    "video_xclip_base_mv_chunk_30s": {
+        "model": "microsoft/xclip-large-patch14",
         "embedding_dim": 768,
         "binary_dim": 96,
     },
@@ -174,7 +174,7 @@ class TestComprehensiveEnsembleSearch:
 
         Real profiles:
         - video_colpali_smol500_mv_frame: 320-dim → 40 bytes
-        - video_videoprism_base_mv_chunk_30s: 768-dim → 96 bytes
+        - video_xclip_base_mv_chunk_30s: 768-dim → 96 bytes
         - video_colqwen_omni_mv_chunk_30s: 320-dim → 40 bytes
 
         Validates:

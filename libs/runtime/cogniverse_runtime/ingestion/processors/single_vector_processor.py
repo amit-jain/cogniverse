@@ -9,9 +9,7 @@ This processor is model-agnostic and strategy-flexible. It handles:
 - Document preparation
 
 The same processor can be used for:
-- single__video_videoprism_large_6s (6-second chunks)
-- single__video_videoprism_large_30s (30-second windows)
-- single__video_videoprism_lvt_base_global (entire video)
+- video_xclip_sv_chunk_6s (6-second chunks)
 - single__video_anymodel_anystrategy (any future approach)
 """
 
@@ -434,7 +432,7 @@ class SingleVectorVideoProcessor(BaseProcessor):
             }
 
     def prepare_for_embedding_generation(
-        self, segments: list[VideoSegment], model_type: str = "videoprism"
+        self, segments: list[VideoSegment], model_type: str = "xclip"
     ) -> list[dict[str, Any]]:
         """
         Prepare segments for embedding generation.

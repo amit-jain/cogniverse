@@ -68,43 +68,6 @@ def is_module_available(module_name: str) -> bool:
         return False
 
 
-def is_videoprism_available() -> bool:
-    """Check if VideoPrism module is available."""
-    try:
-        # First try to import videoprism directly
-        importlib.import_module("videoprism")
-        return True
-    except ImportError:
-        # Check if it exists in the adjacent directory structure
-        import sys
-        from pathlib import Path
-
-        project_root = Path(
-            __file__
-        ).parent.parent.parent  # From tests/utils/ to project root
-        videoprism_path = project_root.parent / "videoprism"  # Adjacent to cogniverse
-
-        if (
-            videoprism_path.exists()
-            and (videoprism_path / "videoprism" / "__init__.py").exists()
-        ):
-            # Add to path temporarily to check if it's loadable
-            videoprism_parent = str(videoprism_path)
-            if videoprism_parent not in sys.path:
-                sys.path.insert(0, videoprism_parent)
-                try:
-                    importlib.import_module("videoprism")
-                    return True
-                except ImportError:
-                    pass
-                finally:
-                    # Clean up path
-                    if videoprism_parent in sys.path:
-                        sys.path.remove(videoprism_parent)
-
-        return False
-
-
 def is_cv2_available() -> bool:
     """Check if OpenCV (cv2) is available."""
     return is_module_available("cv2")
@@ -163,11 +126,6 @@ skip_if_no_whisper = pytest.mark.skipif(
     not is_whisper_available(), reason="Whisper not available"
 )
 
-skip_if_no_videoprism = pytest.mark.skipif(
-    not is_videoprism_available(),
-    reason="VideoPrism not available in adjacent directory",
-)
-
 skip_if_no_gpu = pytest.mark.skipif(not has_gpu_support(), reason="GPU not available")
 
 skip_if_ci = pytest.mark.skipif(
@@ -195,8 +153,6 @@ def get_available_models() -> Dict[str, bool]:
     """Get availability status of different models."""
     return {
         "colpali": is_module_available("colpali_engine"),
-        "videoprism": is_videoprism_available()
-        and has_sufficient_memory(8.0),  # Check adjacent directory
         "colqwen": is_module_available("transformers") and has_sufficient_memory(8.0),
         "whisper": is_whisper_available(),
         "cv2": is_cv2_available(),

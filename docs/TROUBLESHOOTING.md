@@ -296,9 +296,7 @@ Expected 768 values, got 1024
 
 - Check schema embedding dimension matches model:
   - ColPali (Tomoro ColQwen3), `video_colpali_smol500_mv_frame`: multi-vector, 320-dim patches (float) or 40-dim (binary): `tensor<bfloat16>(patch{}, v[320])`
-  - VideoPrism base, single-vector profile `video_videoprism_lvt_base_sv_chunk_6s`: 768-dim: `tensor<float>(v[768])`
-  - VideoPrism large, single-vector profile `video_videoprism_lvt_large_sv_chunk_6s`: 1024-dim: `tensor<float>(v[1024])`
-  - VideoPrism base/large also ship multi-vector chunk profiles (`video_videoprism_base_mv_chunk_30s`, `video_videoprism_large_mv_chunk_30s`) using `tensor<bfloat16>(patch{}, v[768])` / `v[1024])`
+  - X-CLIP, single-vector profile `video_xclip_sv_chunk_6s`: 768-dim: `tensor<float>(v[768])`
 
 ```bash
 # Check schema tensor types (schemas are JSON files in configs/schemas/)

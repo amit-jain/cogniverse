@@ -873,10 +873,7 @@ uploaded_video = st.file_uploader("Upload test video for ingestion", type=["mp4"
 selected_profiles = st.multiselect("Select profiles to test", [
     "video_colpali_smol500_mv_frame",
     "video_colqwen_omni_mv_chunk_30s",
-    "video_videoprism_base_mv_chunk_30s",
-    "video_videoprism_large_mv_chunk_30s",
-    "video_videoprism_lvt_base_sv_chunk_6s",
-    "video_videoprism_lvt_large_sv_chunk_6s",
+    "video_xclip_sv_chunk_6s",
 ], default=["video_colpali_smol500_mv_frame"])
 
 # Per profile: builds a processing_task dict (action, video_path, profile, config)
@@ -887,10 +884,7 @@ result = run_async_in_streamlit(call_agent_async(agent_url, processing_task))
 **Available Profiles** (verified against `configs/schemas/*.json` embedding dims):
 1. `video_colpali_smol500_mv_frame` (320-dim, frame-based)
 2. `video_colqwen_omni_mv_chunk_30s` (320-dim, 30s chunks)
-3. `video_videoprism_base_mv_chunk_30s` (768-dim, 30s chunks)
-4. `video_videoprism_large_mv_chunk_30s` (1024-dim, 30s chunks)
-5. `video_videoprism_lvt_base_sv_chunk_6s` (768-dim, 6s chunks)
-6. `video_videoprism_lvt_large_sv_chunk_6s` (1024-dim, 6s chunks)
+3. `video_xclip_sv_chunk_6s` (768-dim, 6s chunks)
 
 ### 11. Interactive Search Tab
 
@@ -900,10 +894,9 @@ result = run_async_in_streamlit(call_agent_async(agent_url, processing_task))
 
 **Key Functions**: streams results through the A2A protocol via
 `display_streaming_result(agent_name="search_agent", query=..., tenant_id=..., metadata={"top_k": ..., "modality": "video"})`.
-The profile selectbox here only offers 4 of the 6 ingestion profiles
+The profile selectbox here offers all 3 ingestion profiles
 (`video_colpali_smol500_mv_frame`, `video_colqwen_omni_mv_chunk_30s`,
-`video_videoprism_base_mv_chunk_30s`, `video_videoprism_lvt_base_sv_chunk_6s` — the
-two `large` variants are omitted). Ranking-strategy multiselect offers
+`video_xclip_sv_chunk_6s`). Ranking-strategy multiselect offers
 `binary_binary` / `float_float` / `binary_float` / `float_binary`. Maintains a
 `session_id` and `conversation_history` in `st.session_state` for multi-turn context;
 a "🔄 New Session" button resets both.

@@ -33,11 +33,6 @@ EXPECTED_MODELS = {
         "abd49a1f1ebc12af1be84d06f6848221cf96dcad",
         None,
     ),
-    "videoprism_jax": (
-        "videoprism_public_v1_base_hf",
-        "be719a406d563b66f0ac969e7c94bab8e997c81a",
-        768,
-    ),
     "video_embed": (
         "microsoft/xclip-large-patch14",
         "a9dd1429a16cf305df2aaea232d5e8dceba1c675",
@@ -115,18 +110,11 @@ def test_exact_hf_token_services_are_the_chat_models():
     assert observed == EXPECTED_HF_TOKEN_SERVICES
 
 
-def test_videoprism_definition_pins_source_and_checkpoint_independently():
-    spec = get_inference_service_spec("videoprism_jax")
-
-    assert spec.source_revision == "d481d91b9bf8c9d330d1e526e511a359c799bbe1"
-    assert spec.model_revision == "be719a406d563b66f0ac969e7c94bab8e997c81a"
-
-
 def test_each_service_has_an_independent_scale_to_zero_app():
     specs = tuple(INFERENCE_SERVICE_SPECS.values())
 
-    assert len(specs) == 12
-    assert len({spec.modal_app for spec in specs}) == 12
+    assert len(specs) == 11
+    assert len({spec.modal_app for spec in specs}) == 11
     assert all(
         spec.modal_app == f"cogniverse-{spec.name.replace('_', '-')}" for spec in specs
     )

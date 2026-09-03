@@ -1048,7 +1048,7 @@ class TestSearchAgentEnsembleSearch:
                         "embedding_type": "video_based",
                     },
                     "profile3": {
-                        "embedding_model": "google/videoprism-base",
+                        "embedding_model": "microsoft/xclip-large-patch14",
                         "embedding_type": "video_based",
                     },
                 }

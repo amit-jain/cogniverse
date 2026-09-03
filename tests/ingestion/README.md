@@ -2,7 +2,7 @@
 
 **Last Updated:** 2025-11-13
 
-This directory contains comprehensive unit and integration tests for **cogniverse-runtime** (Application Layer) multi-modal ingestion pipeline with smart environment-aware execution. Tests validate processing of all content modalities: video, audio, images, documents, text, and dataframes with ColPali, VideoPrism, ColQwen embeddings and Vespa backend integration.
+This directory contains comprehensive unit and integration tests for **cogniverse-runtime** (Application Layer) multi-modal ingestion pipeline with smart environment-aware execution. Tests validate processing of all content modalities: video, audio, images, documents, text, and dataframes with ColPali, X-CLIP, ColQwen embeddings and Vespa backend integration.
 
 ## Structure
 
@@ -107,7 +107,7 @@ uv run python scripts/test_ingestion.py --requires-vespa 2>&1 > /tmp/ingestion-v
 #### **3. Exact Inference-Service Tests**
 
 Inference-backed tests name the exact service they require. ColPali and ColQwen
-share the `vllm_colpali` embedding service, while VideoPrism and ASR use their
+share the `vllm_colpali` embedding service, while X-CLIP and ASR use their
 own services:
 
 ```python
@@ -115,8 +115,8 @@ own services:
 def test_colpali_or_colqwen_ingestion(): ...
 
 
-@pytest.mark.requires_inference("videoprism_jax")
-def test_videoprism_ingestion(): ...
+@pytest.mark.requires_inference("video_embed")
+def test_xclip_ingestion(): ...
 
 
 @pytest.mark.requires_inference("vllm_asr")
@@ -168,7 +168,7 @@ vespa_running: ✅  # Started with ./scripts/start_vespa.sh
 ffmpeg_available: ✅
 available_models:
   colpali: ✅  # pip install colpali-engine
-  videoprism: ✅  # ../videoprism/ directory exists
+  xclip: ✅  # ../xclip/ directory exists
   colqwen: ✅  # transformers package available
   whisper: ✅  # whisper package available
   cv2: ✅  # opencv-python available
@@ -183,7 +183,7 @@ ci_environment: ✅  # GitHub Actions
 vespa_running: ✅  # Lightweight container in CI
 available_models:
   colpali: ❌  # Heavy models not installed in CI
-  videoprism: ❌  # Adjacent directory not in CI
+  xclip: ❌  # Adjacent directory not in CI
   colqwen: ❌  # Heavy models not installed in CI
   whisper: ✅  # Lightweight whisper in CI
   cv2: ✅  # OpenCV available in CI
@@ -200,7 +200,7 @@ uv run python scripts/test_ingestion.py --env-info
 # Common fixes:
 ./scripts/start_vespa.sh  # Start Vespa
 pip install colpali-engine  # Install ColPali
-# Ensure ../videoprism/ directory exists for VideoPrism
+# Ensure ../xclip/ directory exists for X-CLIP
 ```
 
 **Want to run specific tests regardless of dependencies?**
@@ -234,7 +234,7 @@ Our test system uses intelligent markers for conditional execution:
 
 ### **Inference Service Requirements**
 - `requires_inference("vllm_colpali")`: ColPali and ColQwen embedding tests
-- `requires_inference("videoprism_jax")`: VideoPrism embedding tests
+- `requires_inference("video_embed")`: X-CLIP embedding tests
 - `requires_inference("vllm_asr")`: Remote ASR tests
 - `requires_whisper`: Local Whisper model tests
 
@@ -275,8 +275,8 @@ class TestMockBackendIngestion:  # Mocked backends, no heavy models
 class TestColPaliVespaIngestion:  # Real model + backend integration
 
 @pytest.mark.local_only  # ← Automatically skipped in CI
-@pytest.mark.requires_inference("videoprism_jax")
-class TestVideoPrismIngestion:  # Exact VideoPrism service required
+@pytest.mark.requires_inference("video_embed")
+class TestX-CLIPIngestion:  # Exact X-CLIP service required
 ```
 
 ### **CI Workflow Stages**
@@ -342,7 +342,7 @@ The test suite uses **smart mocking** that adapts to the environment:
 - [x] Smart environment detection and conditional execution
 - [x] Integration tests with mock and real backends
 - [x] GitHub Actions CI workflow with proper separation
-- [x] VideoPrism detection from adjacent directory structure
+- [x] X-CLIP detection from adjacent directory structure
 - [x] Comprehensive documentation and examples
 
 ### **🔄 Future Enhancements**

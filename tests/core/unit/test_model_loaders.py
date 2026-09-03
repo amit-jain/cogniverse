@@ -242,39 +242,6 @@ class TestProcessImagesVllmConcurrent:
         assert arr.shape == (1, 4)
 
 
-@pytest.mark.unit
-@pytest.mark.ci_fast
-class TestVideoPrismVespaFormat:
-    """Multi-vector VideoPrism → Vespa conversion must emit the compact
-    mixed-tensor blocks form (one dense row per patch), not a dict per
-    tensor cell, with values identical to the source array."""
-
-    def test_blocks_form_carries_exact_rows(self):
-        from cogniverse_core.common.models.videoprism_loader import (
-            VideoPrismLoader,
-        )
-
-        loader = object.__new__(VideoPrismLoader)
-        rng = np.random.default_rng(3)
-        embeddings = rng.standard_normal((5, 8)).astype(np.float32)
-
-        float_dict, binary_dict = loader.embeddings_to_vespa_format(embeddings)
-
-        assert set(float_dict.keys()) == {"blocks"}
-        blocks = float_dict["blocks"]
-        assert sorted(blocks.keys(), key=int) == ["0", "1", "2", "3", "4"]
-        for idx in range(5):
-            assert blocks[str(idx)] == embeddings[idx].tolist()
-
-        # Binary side unchanged: one hex string per patch, dim/8 bytes each.
-        assert sorted(binary_dict.keys()) == [f"patch{i}" for i in range(5)]
-        for i in range(5):
-            expected_bits = np.packbits(np.where(embeddings[i] > 0, 1, 0)).astype(
-                np.int8
-            )
-            assert binary_dict[f"patch{i}"] == expected_bits.tobytes().hex()
-
-
 class TestPerKeyModelLoadLocks:
     """A cold load of one model must not block cache hits for another —
     the single global lock previously serialized every lookup behind any
@@ -1128,70 +1095,6 @@ def test_remote_inference_client_rejects_modal_caller_key(monkeypatch):
             "https://colpali.modal.run",
             api_key="caller-specific-key",
         )
-
-
-def test_remote_videoprism_wrapper_forwards_exact_model_name():
-    import base64
-    import json
-    import threading
-    from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
-    from pathlib import Path
-
-    from cogniverse_core.common.models.model_loaders import RemoteVideoPrismLoader
-
-    received = {}
-
-    class Handler(BaseHTTPRequestHandler):
-        def do_POST(self):
-            length = int(self.headers["Content-Length"])
-            received.update(json.loads(self.rfile.read(length)))
-            payload = json.dumps(
-                {
-                    "embeddings": [[0.5, -0.25]],
-                    "processing_time": 0.125,
-                    "model": "videoprism_public_v1_base_hf",
-                    "frames_processed": 16,
-                }
-            ).encode()
-            self.send_response(200)
-            self.send_header("Content-Type", "application/json")
-            self.send_header("Content-Length", str(len(payload)))
-            self.end_headers()
-            self.wfile.write(payload)
-
-        def log_message(self, format, *args):
-            return
-
-    server = ThreadingHTTPServer(("127.0.0.1", 0), Handler)
-    thread = threading.Thread(target=server.serve_forever, daemon=True)
-    thread.start()
-    source_video = (
-        Path(__file__).resolve().parents[2]
-        / "system/resources/videos/v_-D1gdv_gQyw.mp4"
-    )
-    base_url = f"http://127.0.0.1:{server.server_port}"
-    try:
-        loader = RemoteVideoPrismLoader(
-            "videoprism_public_v1_base_hf",
-            {"remote_inference_url": base_url},
-        )
-        wrapper, processor = loader.load_model()
-        result = wrapper.process_video_segment(source_video, 0.0, 0.25)
-    finally:
-        server.shutdown()
-        server.server_close()
-        thread.join(timeout=5)
-
-    assert processor is None
-    assert received["start_time"] == 0.0
-    assert received["end_time"] == 0.25
-    assert received["model"] == "videoprism_public_v1_base_hf"
-    assert base64.b64decode(received["video"], validate=True)[4:8] == b"ftyp"
-    np.testing.assert_array_equal(
-        result["embeddings_np"],
-        np.array([[0.5, -0.25]], dtype=np.float32),
-    )
-    assert result["processing_time"] == 0.125
 
 
 @pytest.mark.parametrize(

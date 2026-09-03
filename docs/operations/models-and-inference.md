@@ -16,7 +16,7 @@ Cogniverse runs five classes of inference services:
 | Class | Purpose |
 |---|---|
 | **LLMs** (chat / generation) | Agent reasoning, query enhancement, distillation. Two tiers: a small **student** model used at runtime, and a larger **teacher** model used only during DSPy optimization (`BootstrapFewShot`'s `teacher_settings`). |
-| **Visual / multimodal embeddings** | ColPali/ColQwen (one pod, one model, shared by both retrieval families) for video/image patch embeddings, VideoPrism for chunk embeddings. |
+| **Visual / multimodal embeddings** | ColPali/ColQwen (one pod, one model, shared by both retrieval families) for video/image patch embeddings, X-CLIP for chunk embeddings. |
 | **Text embeddings** | ColBERT-style late-interaction (LateOn, served by the PyLate sidecar) for documents/code, DenseOn (ModernBERT, served by vLLM) for query/single-vector text. |
 | **Audio (ASR + acoustic embeddings)** | Whisper transcription of audio files; CLAP for a joint audio/text acoustic embedding space. |
 | **Vision/NLP sidecars** | GLiNER zero-shot entity extraction (gateway routing + entity extraction agents), InsightFace face embeddings (knowledge-graph face clustering). |
@@ -217,21 +217,21 @@ a CPU-only `cogniverse up` does not allocate a ColPali/ColQwen pod. On ROCm
 official vLLM pooling runner serves the `vllm_token_embed` multi-vector
 contract.
 
-### VideoPrism (chunk-level video embeddings)
+### X-CLIP (chunk-level video embeddings)
 
 | Field | Value |
 |---|---|
-| Chart key | `inference.videoprism_jax` |
-| Model | `videoprism_public_v1_base_hf` |
-| Image | **`cogniverse/videoprism:0.1.0-dev` (CUSTOM, `deploy/videoprism/Dockerfile`)** |
-| Engine | `videoprism_jax` |
+| Chart key | `inference.video_embed` |
+| Model | `microsoft/xclip-large-patch14` |
+| Image | **`cogniverse/xclip:0.1.0-dev` (CUSTOM, `deploy/xclip/Dockerfile`)** |
+| Engine | `video_embed` |
 | NodePort | 29003 |
 | Default state | disabled |
 
 Custom JAX sidecar — no upstream vLLM equivalent. Used by the
-`video_videoprism_*` family of profiles. Build with
-`docker build -f deploy/videoprism/Dockerfile -t cogniverse/videoprism:0.1.0-dev .`; see
-[`deploy/videoprism/README.md`](../../deploy/videoprism/README.md) for the
+`video_xclip_*` family of profiles. Build with
+`docker build -f deploy/xclip/Dockerfile -t cogniverse/xclip:0.1.0-dev .`; see
+[`deploy/xclip/README.md`](../../deploy/xclip/README.md) for the
 endpoint, supported models, and the video-only scope.
 
 ---
@@ -417,7 +417,7 @@ the whole ingest.
 | `colbert_pylate` | `cogniverse/pylate` | **Yes** (`deploy/pylate/Dockerfile`) |
 | `code_colbert_pylate` | `cogniverse/pylate` (shared image, built once) | **Yes** (`deploy/pylate/Dockerfile`) |
 | `denseon` | `vllm/vllm-openai-cpu` / `vllm/vllm-openai-rocm` | No (official) |
-| `videoprism_jax` | `cogniverse/videoprism:0.1.0-dev` | **Yes** (`deploy/videoprism/Dockerfile`) |
+| `video_embed` | `cogniverse/xclip:0.1.0-dev` | **Yes** (`deploy/xclip/Dockerfile`) |
 | `clap_embed` | `cogniverse/clap-embed` | **Yes** (`deploy/clap_embed/`) |
 | `gliner` | `cogniverse/gliner` | **Yes** (`deploy/gliner/Dockerfile`) |
 | `face_embed` | `cogniverse/face-embed` | **Yes** (`deploy/face_embed/`) |

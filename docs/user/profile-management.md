@@ -7,7 +7,7 @@ This guide shows how to manage backend profiles (video processing configurations
 Backend profiles define how videos are processed and indexed in Cogniverse. Each profile specifies:
 
 - **Schema**: Vespa schema template for document structure
-- **Embedding Model**: Model used for generating embeddings (e.g., ColPali, VideoPrism)
+- **Embedding Model**: Model used for generating embeddings (e.g., ColPali, X-CLIP)
 - **Embedding Type**: Processing approach (multi_vector, single_vector)
 - **Strategies**: Processing strategy configurations (segmentation, embedding, etc.)
 - **Pipeline Configuration**: Processing pipeline settings
@@ -51,7 +51,7 @@ The create form will appear with the following fields:
 
 - **Schema Name**: Vespa schema template name
   - Must exist in your schema directory
-  - Example: `video_colpali_smol500_mv_frame`, `video_videoprism_base_mv_chunk_30s`
+  - Example: `video_colpali_smol500_mv_frame`, `video_xclip_sv_chunk_6s`
 
 - **Schema Config** (optional JSON, defaults to `{}`): Schema metadata such as `embedding_dim`, `model_name`, `num_patches`, `binary_dim`
   - If `embedding_dim` is set, it must be an integer between 1 and 100000
@@ -60,7 +60,7 @@ The create form will appear with the following fields:
 
 - **Embedding Model**: Model identifier
   - Format: `org/model-name` (e.g., `vidore/colpali`)
-  - Or simple name (e.g., `videoprism-base`)
+  - Or simple name (e.g., `xclip-base`)
 
 - **Embedding Type**: Processing approach
   - `multi_vector`: Multi-vector embedding (frames or chunks)
@@ -360,7 +360,7 @@ curl -X POST http://localhost:8000/admin/profiles \
 ## Best Practices
 
 1. **Naming Convention**: Use descriptive, structured names
-   - Good: `video_videoprism_base_mv_chunk_30s`
+   - Good: `video_xclip_sv_chunk_6s`
    - Bad: `my_profile_v2`
 
 2. **Documentation**: Always add meaningful descriptions

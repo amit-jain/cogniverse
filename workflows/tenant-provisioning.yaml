@@ -15,7 +15,7 @@ spec:
     - name: tenant-name
       value: ""
     - name: profiles
-      value: "video_colpali_smol500_mv_frame,video_videoprism_base_mv_chunk_30s"
+      value: "video_colpali_smol500_mv_frame,video_xclip_sv_chunk_6s"
     - name: storage-quota
       value: "100Gi"
     - name: cpu-quota
@@ -323,7 +323,7 @@ spec:
     - name: tenant-name
       value: "NewCorp Inc"
     - name: profiles
-      value: "video_colpali_smol500_mv_frame,video_videoprism_base_mv_chunk_30s"
+      value: "video_colpali_smol500_mv_frame,video_xclip_sv_chunk_6s"
     - name: storage-quota
       value: "200Gi"
     - name: cpu-quota

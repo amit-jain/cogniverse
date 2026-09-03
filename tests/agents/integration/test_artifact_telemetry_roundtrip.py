@@ -1654,8 +1654,8 @@ class TestArtifactAffectsBehavior:
             available_profiles=[
                 "video_colpali_smol500_mv_frame",
                 "video_colqwen_omni_mv_chunk_30s",
-                "video_videoprism_base_mv_chunk_30s",
-                "video_videoprism_large_mv_chunk_30s",
+                "video_xclip_base_mv_chunk_30s",
+                "video_xclip_large_mv_chunk_30s",
             ],
         )
         agent = ProfileSelectionAgent(deps=deps)
@@ -1685,8 +1685,8 @@ class TestArtifactAffectsBehavior:
         known_profiles = {
             "video_colpali_smol500_mv_frame",
             "video_colqwen_omni_mv_chunk_30s",
-            "video_videoprism_base_mv_chunk_30s",
-            "video_videoprism_large_mv_chunk_30s",
+            "video_xclip_base_mv_chunk_30s",
+            "video_xclip_large_mv_chunk_30s",
         }
         assert result.selected_profile in known_profiles, (
             f"selected_profile '{result.selected_profile}' not in known profiles. "

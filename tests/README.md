@@ -77,7 +77,7 @@ The test suite validates all content modalities:
 
 | Modality | Processors | Embedding Models | Schema Types |
 |----------|-----------|------------------|--------------|
-| **Video** | Frame extraction, chunk segmentation | ColPali, VideoPrism, ColQwen | Multi-vector, single-vector |
+| **Video** | Frame extraction, chunk segmentation | ColPali, X-CLIP, ColQwen | Multi-vector, single-vector |
 | **Audio** | Whisper transcription, chunking | Text embeddings | BM25 + dense hybrid |
 | **Images** | Frame-level processing | ColPali visual embeddings | Frame-based |
 | **Documents** | PDF extraction, text chunking | ColPali, text embeddings | Document schemas |
@@ -110,7 +110,7 @@ The test suite validates all content modalities:
 #### Model Requirements
 - `@pytest.mark.requires_inference("vllm_colpali")` - Exact ColPali/ColQwen
   HTTP embedding service; collection also requests `vllm_asr`
-- `@pytest.mark.requires_inference("videoprism_jax")` - Exact VideoPrism
+- `@pytest.mark.requires_inference("video_embed")` - Exact X-CLIP
   service; collection also requests `vllm_asr`
 - `@pytest.mark.requires_gliner` - GLiNER models (gliner package)
 - `@pytest.mark.requires_lm` - Configured test LM endpoint

@@ -165,7 +165,6 @@ class BackendEmbeddingExporter:
             "video_embedding",
             "text_embedding",
             "colpali_embedding",
-            "videoprism_embedding",
         ]
 
         for field_name in embedding_fields:

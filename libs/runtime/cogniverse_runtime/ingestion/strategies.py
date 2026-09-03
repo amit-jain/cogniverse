@@ -82,7 +82,7 @@ class FrameSegmentationStrategy(BaseStrategy):
 
 
 class ChunkSegmentationStrategy(BaseStrategy):
-    """Extract video chunks (e.g., for ColQwen, VideoPrism)."""
+    """Extract video chunks (e.g., for ColQwen, X-CLIP)."""
 
     def __init__(
         self,
@@ -106,7 +106,7 @@ class ChunkSegmentationStrategy(BaseStrategy):
 
 
 class SingleVectorSegmentationStrategy(BaseStrategy):
-    """Process video for single-vector embeddings (e.g., VideoPrism LVT)."""
+    """Process video for single-vector embeddings (e.g., X-CLIP)."""
 
     def __init__(
         self,
@@ -721,7 +721,7 @@ class SingleVectorEmbeddingStrategy(BaseStrategy):
 
     def __init__(
         self,
-        model_name: str = "google/videoprism-base",
+        model_name: str = "microsoft/xclip-large-patch14",
         inference_service: str | None = None,
     ):
         self.model_name = model_name

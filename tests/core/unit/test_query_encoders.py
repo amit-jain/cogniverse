@@ -2,41 +2,14 @@
 
 from __future__ import annotations
 
-import logging
 from unittest.mock import MagicMock, patch
 
-import numpy as np
 import pytest
 
-from cogniverse_core.query import encoders
 from cogniverse_core.query.encoders import (
     ColBERTQueryEncoder,
     QueryEncoderFactory,
-    _videoprism_is_global,
 )
-
-
-@pytest.mark.parametrize(
-    "model_name, expected",
-    [
-        # Real LVT (global / single-vector) model names — token-bracketed _lvt_.
-        ("videoprism_lvt_public_v1_base", True),
-        ("videoprism_lvt_public_v1_large", True),
-        ("video_videoprism_lvt_base_sv_chunk_", True),
-        ("VIDEOPRISM_LVT_PUBLIC_V1_BASE", True),
-        # Explicit global marker.
-        ("direct_video_global", True),
-        # Real patch (multi-vector) model names — no _lvt_ token.
-        ("videoprism_public_v1_base_hf", False),
-        ("videoprism_base_mv_chunk_30s", False),
-        ("videoprism_large_mv_chunk_30s", False),
-        # Footgun: a bare "lvt" substring must NOT classify as global. Old code
-        # (`"lvt" in name.lower()`) misfired True here.
-        ("videoprism_solvt_base", False),
-    ],
-)
-def test_videoprism_is_global_token_match(model_name, expected):
-    assert _videoprism_is_global(model_name) is expected
 
 
 @pytest.fixture(autouse=True)
@@ -207,67 +180,6 @@ def test_factory_routes_shipped_audio_profile_to_colbert(mock_get_model):
     assert loaded_model_name == "lightonai/LateOn"
     assert profile_body["embedding_model"] == "laion/clap-htsat-unfused"
     assert passed_config["remote_inference_url"] == "COLBERT_REMOTE_URL"
-
-
-@patch("cogniverse_core.query.encoders.get_or_load_model")
-def test_factory_wires_remote_url_for_videoprism(mock_get_model):
-    """VideoPrism profiles must forward inference_services.embedding to the
-    loader as remote_inference_url, like the ColPali/ColBERT branches."""
-    mock_get_model.return_value = (MagicMock(), None)
-    profile_body = {
-        "embedding_model": "videoprism_public_v1_base_hf",
-        "model_loader": "videoprism",
-        "inference_services": {"embedding": "videoprism_jax"},
-        "schema_config": {"embedding_dim": 768},
-    }
-    config = _build_system_config(
-        "videoprism_base",
-        profile_body,
-        inference_service_urls={"videoprism_jax": "REMOTE_URL_SENTINEL"},
-    )
-
-    QueryEncoderFactory.create_encoder(profile="videoprism_base", config=config)
-
-    passed_config = mock_get_model.call_args[0][1]
-    assert passed_config["remote_inference_url"] == "REMOTE_URL_SENTINEL"
-
-
-class _LoaderWithTextEncoding:
-    text_tokenizer = None
-    is_global = True
-
-    def encode_text(self, query: str) -> np.ndarray:
-        return np.zeros((768,), dtype=np.float32)
-
-
-class _LoaderWithoutTextEncoding:
-    text_tokenizer = None
-    is_global = True
-
-
-def _build_video_prism_encoder(monkeypatch, loader):
-    monkeypatch.setattr(
-        encoders, "get_or_load_model", lambda name, config, log: (loader, None)
-    )
-    return encoders.VideoPrismQueryEncoder("videoprism_public_v1_large_hf")
-
-
-def test_loader_without_encode_text_warns_once(monkeypatch, caplog):
-    with caplog.at_level(logging.WARNING, logger=encoders.logger.name):
-        _build_video_prism_encoder(monkeypatch, _LoaderWithoutTextEncoding())
-
-    assert [record.getMessage() for record in caplog.records] == [
-        "VideoPrism loader _LoaderWithoutTextEncoding has no encode_text; "
-        "text-to-video queries will fail"
-    ]
-
-
-def test_loader_with_encode_text_warns_nothing(monkeypatch, caplog):
-    with caplog.at_level(logging.WARNING, logger=encoders.logger.name):
-        encoder = _build_video_prism_encoder(monkeypatch, _LoaderWithTextEncoding())
-
-    assert [record.getMessage() for record in caplog.records] == []
-    assert encoder.encode("a man throwing a discus").shape == (768,)
 
 
 @patch("cogniverse_core.query.encoders.get_or_load_model")

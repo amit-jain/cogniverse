@@ -255,7 +255,7 @@ class Document:
 
 - **Content-Agnostic**: Works for video, audio, image, text, dataframes
 - **Flexible Metadata**: Store any metadata as dict
-- **Multiple Embeddings**: Store different embedding types (ColPali, VideoPrism, etc.)
+- **Multiple Embeddings**: Store different embedding types (ColPali, X-CLIP, etc.)
 - **Processing Status**: Track document lifecycle with error messages
 - **Timestamps**: Automatic creation and update tracking (Unix int timestamps)
 - **Auto-Detection**: Content type auto-detected from file extension
@@ -920,7 +920,7 @@ doc = Document(
     },
     embeddings={
         "colpali": np.array([...]),
-        "videoprism": np.array([...])
+        "xclip": np.array([...])
     }
 )
 ```
@@ -1268,9 +1268,9 @@ video_doc = Document(
 colpali_embeddings = np.random.randn(1024, 320)  # 1024 patches, 320 dims
 video_doc.add_embedding("colpali_patch", colpali_embeddings)
 
-# Add global embeddings (VideoPrism)
-videoprism_embedding = np.random.randn(768)  # Global video embedding
-video_doc.add_embedding("videoprism_global", videoprism_embedding)
+# Add global embeddings (X-CLIP)
+xclip_embedding = np.random.randn(768)  # Global video embedding
+video_doc.add_embedding("xclip_global", xclip_embedding)
 
 # ===== AUDIO CONTENT =====
 audio_doc = Document(

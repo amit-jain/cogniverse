@@ -464,7 +464,7 @@ flowchart TB
     subgraph Backend["<span style='color:#000'><b>Search Backend</b></span>"]
         ConnectionPool["<span style='color:#000'>Connection Pool<br/>Per Schema</span>"]
         Schema1["<span style='color:#000'>video_colpali_acme</span>"]
-        Schema2["<span style='color:#000'>video_videoprism_acme</span>"]
+        Schema2["<span style='color:#000'>video_xclip_acme</span>"]
     end
 
     ConfigFile --> SystemBase

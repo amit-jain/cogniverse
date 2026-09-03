@@ -22,8 +22,8 @@ from cogniverse_vespa.embedding_processor import (
 @pytest.mark.parametrize(
     "schema_name",
     [
-        "video_videoprism_lvt_base_sv_chunk_6s",
-        "video_videoprism_lvt_large_sv_chunk_6s",
+        "video_xclip_lvt_base_sv_chunk_6s",
+        "video_xclip_lvt_large_sv_chunk_6s",
         "video_VIDEOPRISM_SV_global",  # uppercase variant must match
         "anything_with_lvt_token",
         "anything_with_sv_token",
@@ -38,7 +38,7 @@ def test_single_vector_tokens_match(schema_name: str) -> None:
     [
         "audio_alvtree_index",  # 'lvt' substring without token bounds — must NOT match
         "video_colpali_smol500_mv_frame",
-        "video_videoprism_large_mv_chunk_30s",
+        "video_xclip_large_mv_chunk_30s",
         "video_colqwen_omni_mv_chunk_30s",
         "agent_memories_tenant_acme",
         "sv_prefix_only_no_underscore",  # 'sv' at start without trailing underscore in token form
@@ -63,9 +63,7 @@ def test_multi_vector_schema_with_substring_collision_preserves_all_patches() ->
 def test_single_vector_token_schema_returns_flat_list() -> None:
     """A real ``_sv_`` schema formats its single vector as a flat float list
     (not a per-patch hex dict)."""
-    processor = VespaEmbeddingProcessor(
-        schema_name="video_videoprism_lvt_base_sv_chunk_6s"
-    )
+    processor = VespaEmbeddingProcessor(schema_name="video_xclip_lvt_base_sv_chunk_6s")
     embeddings = np.arange(16, dtype=np.float32)
     result = processor.process_embeddings(embeddings)
     assert isinstance(result["embedding"], list)

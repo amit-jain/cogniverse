@@ -37,7 +37,7 @@ _BASE_SCHEMA_FILES = {
     "provenance": "provenance_schema.json",
     "knowledge_graph": "knowledge_graph_schema.json",
     "video_colpali_smol500_mv_frame": "video_colpali_smol500_mv_frame_schema.json",
-    "video_videoprism_base_mv_chunk_30s": "video_videoprism_base_mv_chunk_30s_schema.json",
+    "video_xclip_base_mv_chunk_30s": "video_xclip_base_mv_chunk_30s_schema.json",
     "video_colqwen_omni_mv_chunk_30s": "video_colqwen_omni_mv_chunk_30s_schema.json",
 }
 

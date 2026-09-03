@@ -18,10 +18,11 @@ Asserts on the OUTPUT, not just structural shape:
     matching ingest_id.
   - Idempotency: re-submit hits the done set, no new Vespa documents.
 
-Profile choice: ``video_videoprism_base_mv_chunk_30s`` routes through the
-production ``RemoteVideoPrismLoader`` to the exact session-owned VideoPrism
-service and sends the real audio track to the exact ASR service; neither model
-loads inside the ingestion worker.
+Profile choice: ``video_colqwen_omni_mv_chunk_30s`` routes through the
+production remote ColQwen loader to the exact session-owned ColQwen
+(``vllm_colpali``) service and sends the real audio track to the exact ASR
+service; neither model loads inside the ingestion worker. It is multi-vector,
+so each 30-second chunk is stored as its own document.
 """
 
 from __future__ import annotations
@@ -47,7 +48,7 @@ import requests
 from fastapi import FastAPI
 
 TENANT_ID = "test_upload_queue"
-PROFILE = "video_videoprism_base_mv_chunk_30s"
+PROFILE = "video_colqwen_omni_mv_chunk_30s"
 SOURCE_VIDEO_PATH = Path("tests/system/resources/videos/v_-D1gdv_gQyw.mp4")
 UPLOAD_FILENAME = "repeated-real-video.mp4"
 EXPECTED_CHUNKS = 3
@@ -587,7 +588,7 @@ async def real_stack(
             redis_url=redis_container,
             minio_endpoint=minio_container["endpoint"],
             # The embedding factory and the worker's GraphManager factory
-            # both resolve endpoints from this dict (videoprism_jax at
+            # both resolve endpoints from this dict (vllm_colpali at
             # embedding-generator build time; gliner/colbert_pylate at graph
             # extraction). Seed every marker-resolved endpoint so KG-enabled
             # profiles reach the real sidecars.
@@ -897,7 +898,7 @@ def _vespa_graph_documents(
     return nodes, edges
 
 
-# This class stands up its own Vespa, Redis, and MinIO containers. VideoPrism
+# This class stands up its own Vespa, Redis, and MinIO containers. ColQwen
 # comes from the collection-owned exact inference resolver.
 @pytest.mark.integration
 @pytest.mark.requires_docker
@@ -906,7 +907,7 @@ class TestUploadRealStack:
     """``POST /ingestion/upload`` end-to-end with real Redis + MinIO +
     Vespa + worker + pipeline + actual video bytes."""
 
-    @pytest.mark.requires_inference("videoprism_jax")
+    @pytest.mark.requires_inference("vllm_colpali")
     @pytest.mark.requires_inference("vllm_asr")
     @pytest.mark.requires_inference("gliner")
     @pytest.mark.requires_inference("colbert_pylate")
@@ -1116,7 +1117,7 @@ class TestUploadRealStack:
             f"{vespa_doc_count}, now {vespa_doc_count_2}"
         )
 
-    @pytest.mark.requires_inference("videoprism_jax")
+    @pytest.mark.requires_inference("vllm_colpali")
     @pytest.mark.requires_inference("gliner")
     @pytest.mark.requires_inference("colbert_pylate")
     @pytest.mark.asyncio

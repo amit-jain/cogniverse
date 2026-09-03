@@ -17,7 +17,7 @@ uv sync
 export ROUTER_OPTIMIZER_TEACHER_KEY=...   # for DSPy teacher model (any LiteLLM-supported provider)
 export ANNOTATION_API_KEY=...             # for LLM auto-annotator (optional)
 
-# VideoPrism requires JAX on CPU (unless you have a TPU)
+# X-CLIP requires JAX on CPU (unless you have a TPU)
 export JAX_PLATFORM_NAME=cpu
 
 # Every `cogniverse index` / `cogniverse code` / `cogniverse graph` command needs a
@@ -135,7 +135,7 @@ curl -X POST "$RUNTIME_URL/admin/tenants" \
     "created_by": "admin",
     "base_schemas": [
       "video_colpali_smol500_mv_frame",
-      "video_videoprism_base_mv_chunk_30s"
+      "video_xclip_sv_chunk_6s"
     ]
   }'
 ```
@@ -149,7 +149,7 @@ the live Vespa schema is each of these suffixed with `_{org_id}_{tenant_name}`):
   "tenant_name": "production",
   "schemas_deployed": [
     "video_colpali_smol500_mv_frame",
-    "video_videoprism_base_mv_chunk_30s"
+    "video_xclip_sv_chunk_6s"
   ],
   "status": "active",
   "created_at": 1736938200000
@@ -185,7 +185,7 @@ curl -sfX POST "$RUNTIME_URL/admin/profiles/video_colpali_smol500_mv_frame/deplo
   -d '{"tenant_id": "acme:production", "force": false}'
 
 # Multiple profiles for the same tenant
-for profile in video_colpali_smol500_mv_frame video_videoprism_base_mv_chunk_30s; do
+for profile in video_colpali_smol500_mv_frame video_xclip_sv_chunk_6s; do
   curl -sfX POST "$RUNTIME_URL/admin/profiles/$profile/deploy" \
     -H 'Content-Type: application/json' \
     -d '{"tenant_id": "acme:production"}'
@@ -215,16 +215,11 @@ curl -X POST http://localhost:9000/admin/tenants \
 |---------|-------|---------------|----------|------------|
 | `video_colpali_smol500_mv_frame` | Tomoro ColQwen3 | 320d (multi-vector, 1024 patches) | Frame-based | per-frame |
 | `video_colqwen_omni_mv_chunk_30s` | Tomoro ColQwen3 | 320d (multi-vector, 1024 patches) | Chunk-based | 30s |
-| `video_videoprism_base_mv_chunk_30s` | VideoPrism Base | 768d (multi-vector, 4096 patches) | Chunk-based | 30s |
-| `video_videoprism_large_mv_chunk_30s` | VideoPrism Large | 1024d (multi-vector, 2048 patches) | Chunk-based | 30s |
-| `video_videoprism_lvt_base_sv_chunk_6s` | VideoPrism LVT Base | 768d (single-vector) | Temporal | 6s |
-| `video_videoprism_lvt_large_sv_chunk_6s` | VideoPrism LVT Large | 1024d (single-vector) | Temporal | 6s |
+| `video_xclip_sv_chunk_6s` | X-CLIP (`microsoft/xclip-large-patch14`) | 768d (single-vector) | Temporal | 6s |
 
 **Key distinctions:**
 - **Tomoro ColQwen3** — multi-vector patch embeddings (1024 patches per frame/chunk), matched via MaxSim
-- **VideoPrism (`_mv_` profiles)** — multi-vector patch embeddings per chunk, matched via MaxSim
-- **VideoPrism LVT** — single global embedding per chunk, matched via cosine similarity
-- **LVT (Learned Video Tokenizer)** — temporal models with 6s chunks for fine-grained temporal search
+- **X-CLIP** — one dense embedding per 6s chunk that puts video and text in one space, matched via cosine similarity; a text query retrieves clips directly
 - **`_sv_` profiles** — single-vector (one dense embedding per chunk); `_mv_` profiles — multi-vector (patch/token embeddings per frame or chunk)
 
 ---
@@ -277,8 +272,8 @@ uv run python scripts/run_ingestion.py \
   --backend vespa \
   --profile video_colpali_smol500_mv_frame \
            video_colqwen_omni_mv_chunk_30s \
-           video_videoprism_base_mv_chunk_30s \
-           video_videoprism_lvt_base_sv_chunk_6s
+           video_xclip_sv_chunk_6s \
+           video_xclip_sv_chunk_6s
 
 # Test mode — limited frames for faster iteration
 uv run python scripts/run_ingestion.py \
@@ -309,7 +304,7 @@ uv run python scripts/run_ingestion.py \
 Watch the log output for:
 - **docs/sec** — ingestion throughput per profile
 - **Success rate** — percentage of videos successfully processed
-- **Embedding dimensions** — confirms the profile schema matches (320d for ColPali, 768d for VideoPrism Base, etc.)
+- **Embedding dimensions** — confirms the profile schema matches (320d for ColPali, 768d for X-CLIP, etc.)
 
 ```bash
 # Follow logs during ingestion
@@ -347,7 +342,7 @@ uv run python tests/comprehensive_video_query_test_v2.py \
 
 # Multi-profile comparison across strategies
 JAX_PLATFORM_NAME=cpu uv run python tests/comprehensive_video_query_test_v2.py \
-  --profiles video_videoprism_base_mv_chunk_30s video_videoprism_large_mv_chunk_30s video_colpali_smol500_mv_frame \
+  --profiles video_xclip_sv_chunk_6s video_xclip_sv_chunk_6s video_colpali_smol500_mv_frame \
   --test-multiple-strategies
 ```
 

@@ -254,7 +254,7 @@ class ConfigUtils:
     def inference_service_urls(self) -> dict[str, str]:
         """Pass-through to ``SystemConfig.inference_service_urls``.
 
-        Search-side encoders (ColPali / ColQwen / VideoPrism) need to
+        Search-side encoders (ColPali / ColQwen / X-CLIP) need to
         resolve the deployed sidecar URL for the profile's
         ``inference_services.embedding`` setting; without this passthrough
         they fall back to in-process model loading (which then fails when

@@ -1,7 +1,6 @@
 from __future__ import annotations
 
 import asyncio
-import base64
 import socket
 import sys
 import threading
@@ -12,38 +11,26 @@ from pathlib import Path
 from types import SimpleNamespace
 
 import httpx
-import numpy as np
 import pytest
 import uvicorn
 from cogniverse_cli.modal_inference.gliner import app as gliner_app
 from cogniverse_cli.modal_inference.servers import gliner as gliner_server
-from cogniverse_cli.modal_inference.servers import videoprism as videoprism_server
-from cogniverse_cli.modal_inference.videoprism import app as videoprism_app
 
 from cogniverse_core.common.models.model_loaders import (
     RemoteGlinerClient,
-    RemoteInferenceClient,
 )
 from cogniverse_foundation.inference_specs import get_inference_service_spec
 
 API_KEY = "language-video-test-key"
 VIDEO_PATH = Path("tests/system/resources/videos/v_-6dz6tBH77I.mp4")
 GLINER_DOCKERFILE = Path("deploy/gliner/Dockerfile")
-VIDEOPRISM_DOCKERFILE = Path("deploy/videoprism/Dockerfile")
-VIDEOPRISM_MODAL_DEFINITION = Path(
-    "libs/cli/cogniverse_cli/modal_inference/videoprism.py"
-)
-VIDEOPRISM_SOURCE_REVISION = "d481d91b9bf8c9d330d1e526e511a359c799bbe1"
-VIDEOPRISM_MODEL_REVISION = "be719a406d563b66f0ac969e7c94bab8e997c81a"
 
 
 @pytest.fixture(autouse=True)
 def _reset_model_state():
     gliner_server._models.clear()
-    videoprism_server._MODEL.clear()
     yield
     gliner_server._models.clear()
-    videoprism_server._MODEL.clear()
 
 
 async def _request(app, method: str, path: str, **kwargs) -> httpx.Response:
@@ -124,7 +111,6 @@ class _ExactEntityModel:
 def test_modal_apps_pin_identity_gpu_cache_auth_and_scale_to_zero():
     expected = {
         "gliner": gliner_app,
-        "videoprism_jax": videoprism_app,
     }
 
     for service, modal_app in expected.items():
@@ -420,366 +406,3 @@ def test_gliner_rejects_an_unpinned_request_model():
 
     assert response.status_code == 422
     assert response.json()["detail"][0]["loc"] == ["body", "model"]
-
-
-def test_videoprism_container_pins_source_and_checkpoint_revisions():
-    dockerfile = VIDEOPRISM_DOCKERFILE.read_text()
-
-    assert "videoprism.git@d481d91b9bf8c9d330d1e526e511a359c799bbe1" in dockerfile
-    assert "MODEL_REVISION=be719a406d563b66f0ac969e7c94bab8e997c81a" in dockerfile
-    assert "SOURCE_REVISION=d481d91b9bf8c9d330d1e526e511a359c799bbe1" in dockerfile
-    assert "videoprism.git@main" not in dockerfile
-
-
-def test_modal_videoprism_installs_the_source_revision():
-    definition = VIDEOPRISM_MODAL_DEFINITION.read_text()
-    install_start = definition.index("pip install --no-deps 'videoprism")
-    install_end = definition.index(".env(", install_start)
-    install_definition = definition[install_start:install_end]
-
-    assert 'f"{_SPEC.source_revision}\'"' in install_definition
-    assert "_SPEC.model_revision" not in install_definition
-
-
-def test_videoprism_loader_downloads_the_exact_checkpoint_revision(monkeypatch):
-    downloads: list[dict[str, str]] = []
-    weight_loads: list[tuple[str, str]] = []
-    model = SimpleNamespace(apply=lambda state, frames, train: (frames, None))
-
-    def hf_hub_download(*, repo_id: str, filename: str, revision: str) -> str:
-        downloads.append(
-            {"repo_id": repo_id, "filename": filename, "revision": revision}
-        )
-        return "/cache/flax_base_f16r288_repeated.npz"
-
-    def load_pretrained_weights(model_name: str, *, checkpoint_path: str):
-        weight_loads.append((model_name, checkpoint_path))
-        return {"params": "exact-checkpoint"}
-
-    monkeypatch.setitem(
-        sys.modules, "jax", SimpleNamespace(jit=lambda forward: forward)
-    )
-    monkeypatch.setitem(
-        sys.modules,
-        "huggingface_hub",
-        SimpleNamespace(hf_hub_download=hf_hub_download),
-    )
-    monkeypatch.setitem(
-        sys.modules,
-        "videoprism",
-        SimpleNamespace(
-            models=SimpleNamespace(
-                get_model=lambda model_name: model,
-                load_pretrained_weights=load_pretrained_weights,
-            )
-        ),
-    )
-
-    loaded = videoprism_server._load_videoprism("videoprism_public_v1_base_hf")
-
-    assert downloads == [
-        {
-            "repo_id": "google/videoprism-base-f16r288",
-            "filename": "flax_base_f16r288_repeated.npz",
-            "revision": VIDEOPRISM_MODEL_REVISION,
-        }
-    ]
-    assert weight_loads == [
-        (
-            "videoprism_public_v1_base",
-            "/cache/flax_base_f16r288_repeated.npz",
-        )
-    ]
-    assert loaded["state"] == {"params": "exact-checkpoint"}
-
-
-def _fixed_video_forward(batch):
-    pixels = np.asarray(batch, dtype=np.float32)
-    mean = float(pixels.mean())
-    standard_deviation = float(pixels.std())
-    return np.asarray(
-        [
-            [
-                [mean, standard_deviation, -mean],
-                [float(pixels.min()), float(pixels.max()), mean - standard_deviation],
-            ]
-        ],
-        dtype=np.float32,
-    )
-
-
-def test_videoprism_modal_wrapper_preserves_fixed_video_embedding(monkeypatch):
-    spec = get_inference_service_spec("videoprism_jax")
-    monkeypatch.setenv("COGNIVERSE_INFERENCE_API_KEY", API_KEY)
-    monkeypatch.setenv("NUM_FRAMES", "4")
-    videoprism_server._MODEL.update(
-        {
-            "name": spec.model_id,
-            "forward": _fixed_video_forward,
-            "embedding_dim": 3,
-            "num_patches": 2,
-        }
-    )
-    app = _modal_asgi_app(videoprism_app)
-
-    identity = asyncio.run(_request(app, "GET", "/v1/models", headers=_authorization()))
-    health = asyncio.run(_request(app, "GET", "/health", headers=_authorization()))
-    response = asyncio.run(
-        _request(
-            app,
-            "POST",
-            "/v1/video/embeddings",
-            headers=_authorization(),
-            json={
-                "video": base64.b64encode(VIDEO_PATH.read_bytes()).decode("ascii"),
-                "start_time": 0.0,
-                "end_time": 4.0,
-                "model": spec.model_id,
-            },
-        )
-    )
-
-    assert identity.status_code == 200
-    assert identity.json() == {
-        "data": [
-            {
-                "created": 0,
-                "id": "videoprism_public_v1_base_hf",
-                "object": "model",
-                "owned_by": "cogniverse",
-                "revision": VIDEOPRISM_MODEL_REVISION,
-            }
-        ],
-        "object": "list",
-    }
-    assert health.status_code == 200
-    assert health.json() == {
-        "status": "ready",
-        "model": "videoprism_public_v1_base_hf",
-        "model_revision": VIDEOPRISM_MODEL_REVISION,
-        "source_revision": VIDEOPRISM_SOURCE_REVISION,
-        "embedding_dim": 3,
-        "num_patches": 2,
-    }
-    assert response.status_code == 200
-    result = response.json()
-    assert result["model"] == "videoprism_public_v1_base_hf"
-    assert result["frames_processed"] == 4
-    assert result["embeddings"] == [
-        [0.526079535484314, 0.21042095124721527, -0.526079535484314],
-        [0.0, 1.0, 0.3156585693359375],
-    ]
-
-
-def test_remote_inference_client_reaches_authenticated_video_route(monkeypatch):
-    spec = get_inference_service_spec("videoprism_jax")
-    monkeypatch.setenv("COGNIVERSE_INFERENCE_API_KEY", API_KEY)
-    monkeypatch.setenv("NUM_FRAMES", "4")
-    videoprism_server._MODEL.update(
-        {
-            "name": spec.model_id,
-            "forward": _fixed_video_forward,
-            "embedding_dim": 3,
-            "num_patches": 2,
-        }
-    )
-
-    with _live_server(_modal_asgi_app(videoprism_app)) as endpoint:
-        client = RemoteInferenceClient(endpoint, api_key=API_KEY)
-        result = client.process_video_segment(
-            VIDEO_PATH,
-            0.0,
-            4.0,
-            model_name=spec.model_id,
-        )
-
-    embeddings = result["embeddings"]
-    assert result["model"] == "videoprism_public_v1_base_hf"
-    assert result["frames_processed"] == 4
-    np.testing.assert_array_equal(
-        embeddings,
-        np.asarray(
-            [
-                [0.5230030417442322, 0.21172189712524414, -0.5230030417442322],
-                [0.0, 1.0, 0.31128114461898804],
-            ]
-        ),
-    )
-
-
-def test_videoprism_concurrent_cold_requests_load_one_model(monkeypatch):
-    spec = get_inference_service_spec("videoprism_jax")
-    loaded_model = {
-        "name": spec.model_id,
-        "forward": object(),
-        "embedding_dim": 768,
-        "num_patches": 4096,
-    }
-    loads: list[str] = []
-
-    def load(name: str):
-        loads.append(name)
-        time.sleep(0.05)
-        return loaded_model
-
-    monkeypatch.setattr(videoprism_server, "_load_videoprism", load)
-
-    with ThreadPoolExecutor(max_workers=12) as executor:
-        models = list(
-            executor.map(videoprism_server._get_videoprism, [spec.model_id] * 12)
-        )
-
-    assert loads == ["videoprism_public_v1_base_hf"]
-    assert models == [loaded_model] * 12
-
-
-def test_videoprism_model_load_failure_has_service_model_and_cause(monkeypatch):
-    spec = get_inference_service_spec("videoprism_jax")
-
-    def load(name: str):
-        raise OSError(f"checkpoint {name} is truncated")
-
-    monkeypatch.setattr(videoprism_server, "_load_videoprism", load)
-
-    response = asyncio.run(
-        _request(
-            videoprism_server.app,
-            "POST",
-            "/v1/video/embeddings",
-            json={
-                "video": base64.b64encode(VIDEO_PATH.read_bytes()).decode("ascii"),
-                "model": spec.model_id,
-            },
-        )
-    )
-
-    assert response.status_code == 503
-    assert response.json() == {
-        "detail": (
-            "videoprism_jax: model videoprism_public_v1_base_hf load failed "
-            "(OSError): checkpoint videoprism_public_v1_base_hf is truncated"
-        )
-    }
-
-
-def test_videoprism_inference_failure_has_service_model_and_cause():
-    spec = get_inference_service_spec("videoprism_jax")
-
-    def failed_forward(batch):
-        raise RuntimeError("device execution failed")
-
-    videoprism_server._MODEL.update(
-        {
-            "name": spec.model_id,
-            "forward": failed_forward,
-            "embedding_dim": 768,
-            "num_patches": 4096,
-        }
-    )
-
-    response = asyncio.run(
-        _request(
-            videoprism_server.app,
-            "POST",
-            "/v1/video/embeddings",
-            json={
-                "video": base64.b64encode(VIDEO_PATH.read_bytes()).decode("ascii"),
-                "model": spec.model_id,
-            },
-        )
-    )
-
-    assert response.status_code == 500
-    assert response.json() == {
-        "detail": (
-            "videoprism_jax: model videoprism_public_v1_base_hf inference failed "
-            "(RuntimeError): device execution failed"
-        )
-    }
-
-
-def test_videoprism_temp_video_cleanup_failure_names_the_path_and_cause(monkeypatch):
-    spec = get_inference_service_spec("videoprism_jax")
-    monkeypatch.setenv("NUM_FRAMES", "4")
-    videoprism_server._MODEL.update(
-        {
-            "name": spec.model_id,
-            "forward": _fixed_video_forward,
-            "embedding_dim": 3,
-            "num_patches": 2,
-        }
-    )
-    real_unlink = videoprism_server.os.unlink
-    cleanup_paths: list[str] = []
-
-    def deny_cleanup(path: str) -> None:
-        cleanup_paths.append(path)
-        raise PermissionError("read-only temporary filesystem")
-
-    monkeypatch.setattr(videoprism_server.os, "unlink", deny_cleanup)
-    try:
-        response = asyncio.run(
-            _request(
-                videoprism_server.app,
-                "POST",
-                "/v1/video/embeddings",
-                json={
-                    "video": base64.b64encode(VIDEO_PATH.read_bytes()).decode("ascii"),
-                    "model": spec.model_id,
-                },
-            )
-        )
-
-        assert len(cleanup_paths) == 1
-        assert response.status_code == 500
-        assert response.json() == {
-            "detail": (
-                "videoprism_jax: model videoprism_public_v1_base_hf inference failed "
-                f"(RuntimeError): failed to remove temporary video {cleanup_paths[0]} "
-                "(PermissionError): read-only temporary filesystem"
-            )
-        }
-    finally:
-        for path in cleanup_paths:
-            real_unlink(path)
-
-
-def test_videoprism_rejects_an_unpinned_request_model():
-    response = asyncio.run(
-        _request(
-            videoprism_server.app,
-            "POST",
-            "/v1/video/embeddings",
-            json={
-                "video": base64.b64encode(VIDEO_PATH.read_bytes()).decode("ascii"),
-                "model": "videoprism_public_v1_large_hf",
-            },
-        )
-    )
-
-    assert response.status_code == 422
-    assert response.json()["detail"][0]["loc"] == ["body", "model"]
-
-
-def test_videoprism_rejects_non_base64_video_before_inference():
-    spec = get_inference_service_spec("videoprism_jax")
-    videoprism_server._MODEL.update(
-        {
-            "name": spec.model_id,
-            "forward": _fixed_video_forward,
-            "embedding_dim": 3,
-            "num_patches": 2,
-        }
-    )
-
-    response = asyncio.run(
-        _request(
-            videoprism_server.app,
-            "POST",
-            "/v1/video/embeddings",
-            json={"video": "not base64!!", "model": spec.model_id},
-        )
-    )
-
-    assert response.status_code == 400
-    assert response.json() == {"detail": "videoprism_jax: video is not valid base64"}

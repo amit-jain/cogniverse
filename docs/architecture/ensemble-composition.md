@@ -22,7 +22,7 @@ flowchart TB
 
     subgraph Ensemble["<span style='color:#000'><b>Ensemble Mode</b></span>"]
         P1["<span style='color:#000'>Profile 1<br/>ColPali</span>"]
-        P2["<span style='color:#000'>Profile 2<br/>VideoPrism</span>"]
+        P2["<span style='color:#000'>Profile 2<br/>X-CLIP</span>"]
         P3["<span style='color:#000'>Profile 3<br/>Qwen</span>"]
     end
 
@@ -78,7 +78,7 @@ Where:
 Given 3 profiles ranking a document differently (0-indexed):
 
 - Profile 1 (ColPali): rank = 1 (2nd position)
-- Profile 2 (VideoPrism): rank = 4 (5th position)
+- Profile 2 (X-CLIP): rank = 4 (5th position)
 - Profile 3 (Qwen): rank = 0 (1st position)
 
 RRF score = 1/(60+1) + 1/(60+4) + 1/(60+0)
@@ -327,10 +327,10 @@ Profiles are defined in `config.json`:
           "embedding_dim": 320
         }
       },
-      "video_videoprism_base_mv_chunk_30s": {
+      "video_xclip_sv_chunk_6s": {
         "type": "video",
-        "description": "VideoPrism base model for 30-second chunk embeddings with 768-dim global representations",
-        "embedding_model": "videoprism_public_v1_base_hf",
+        "description": "X-CLIP base model for 30-second chunk embeddings with 768-dim global representations",
+        "embedding_model": "microsoft/xclip-large-patch14",
         "embedding_type": "multi_vector",
         "schema_config": {
           "embedding_dim": 768
@@ -362,7 +362,7 @@ search_input = SearchInput(
     query="robots playing soccer",
     tenant_id="acme_corp",
     modality="video",
-    profiles=["video_colpali_smol500_mv_frame", "video_videoprism_base_mv_chunk_30s"],
+    profiles=["video_colpali_smol500_mv_frame", "video_xclip_sv_chunk_6s"],
     top_k=10,
     rrf_k=60,  # RRF constant for fusion
 )
@@ -374,7 +374,7 @@ search_input = SearchInput(
 
 **Choose profiles with complementary strengths**:
 
-- ✅ Good: ColPali (visual) + VideoPrism (temporal) + Qwen (cross-modal)
+- ✅ Good: ColPali (visual) + X-CLIP (temporal) + Qwen (cross-modal)
 - ❌ Poor: ColPali + ColPali-Large + ColPali-XL (redundant)
 
 ### 2. Limit Ensemble Size
@@ -390,7 +390,7 @@ search_input = SearchInput(
 **Order profiles by expected relevance** (for early stopping):
 ```python
 # ProfileSelectionAgent should rank profiles
-selected_profiles = ["colpali", "videoprism", "qwen"]  # Best first
+selected_profiles = ["colpali", "xclip", "qwen"]  # Best first
 ```
 
 ### 4. Conditional Ensemble

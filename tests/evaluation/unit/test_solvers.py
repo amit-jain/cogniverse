@@ -230,7 +230,7 @@ def _populated_traces_df():
                 "end_time": pd.Timestamp("2026-01-01T00:00:30.900Z"),
                 "attributes.input.value": "explain entanglement",
                 "attributes.output.value": json.dumps(["v3"]),
-                "attributes.metadata.profile": "videoprism_global",
+                "attributes.metadata.profile": "xclip_global",
                 "attributes.metadata.strategy": "float_float",
             },
         ]

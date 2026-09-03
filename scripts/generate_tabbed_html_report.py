@@ -57,8 +57,6 @@ def generate_html_report(test_results_file: str = None):
     profiles = [
         ("frame_based_colpali", "ColPali"),
         ("colqwen_chunks", "ColQwen Chunks"),
-        ("direct_video_global", "VideoPrism Base"),
-        ("direct_video_global_large", "VideoPrism Large"),
     ]
 
     # Define strategies for each profile
@@ -75,16 +73,6 @@ def generate_html_report(test_results_file: str = None):
             ("float_float", "Float"),
             ("binary_binary", "Binary"),
             ("hybrid_binary_bm25", "Hybrid"),
-            ("phased", "Phased"),
-        ],
-        "direct_video_global": [
-            ("float_float", "Float"),
-            ("binary_binary", "Binary"),
-            ("phased", "Phased"),
-        ],
-        "direct_video_global_large": [
-            ("float_float", "Float"),
-            ("binary_binary", "Binary"),
             ("phased", "Phased"),
         ],
     }

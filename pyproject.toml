@@ -44,9 +44,6 @@ dependencies = [
     "mem0ai==1.0.11",
     # Machine Learning
     "torch==2.8.0",
-    # JAX/jaxlib used to live here for VideoPrism in-process inference;
-    # VideoPrism now runs in the dedicated `deploy/videoprism` sidecar
-    # and the JAX stack lives only in that image.
     "transformers==4.56.2",
     "colpali-engine==0.3.13",
     "gliner==0.2.26",

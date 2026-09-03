@@ -92,12 +92,6 @@ whisper-local = [
     "openai-whisper==20250625",
     "faster-whisper==1.2.1",
 ]
-# VideoPrism is now served by the dedicated `deploy/videoprism` sidecar
-# and addressed via `inference_services.embedding=videoprism_jax` on the
-# profile (see RemoteVideoPrismLoader). The runtime image therefore no
-# longer carries the JAX / flax / tensorflow stack — TF's static
-# initialiser used to abort on darwin when loaded into the same process
-# as uvicorn server threads, and TF has no ROCm wheel.
 all = ["cogniverse-vespa", "cogniverse-agents"]
 
 [tool.uv.sources]

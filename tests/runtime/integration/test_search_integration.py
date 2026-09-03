@@ -182,19 +182,21 @@ class TestListProfilesIntegration:
         profile_names = {p["name"] for p in data["profiles"]}
 
         assert "test_colpali" in profile_names
-        assert "test_videoprism" in profile_names
+        assert "test_xclip" in profile_names
 
         profiles_by_name = {p["name"]: p for p in data["profiles"]}
         assert profiles_by_name["test_colpali"]["model"] == COLPALI_MODEL_NAME
         assert profiles_by_name["test_colpali"]["type"] == "video"
-        assert profiles_by_name["test_videoprism"]["model"] == "google/videoprism-base"
-        assert profiles_by_name["test_videoprism"]["type"] == "video"
+        assert (
+            profiles_by_name["test_xclip"]["model"] == "microsoft/xclip-large-patch14"
+        )
+        assert profiles_by_name["test_xclip"]["type"] == "video"
 
     def test_list_profiles_tenant_scoping(self, search_client):
         """GET /search/profiles?tenant_id=tenant_b returns that tenant's profiles.
 
         tenant_b has its own seeded profile plus system profiles from config.json.
-        The key assertion is that default-only profiles (test_colpali, test_videoprism)
+        The key assertion is that default-only profiles (test_colpali, test_xclip)
         are NOT present for tenant_b.
         """
         resp = search_client.get("/search/profiles?tenant_id=tenant_b")
@@ -209,7 +211,7 @@ class TestListProfilesIntegration:
 
         # Profiles seeded exclusively for default tenant should not appear
         assert "test_colpali" not in profile_names
-        assert "test_videoprism" not in profile_names
+        assert "test_xclip" not in profile_names
 
 
 @pytest.mark.integration

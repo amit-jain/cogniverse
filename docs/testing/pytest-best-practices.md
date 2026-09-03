@@ -177,13 +177,13 @@ def test_colpali_or_colqwen_boundary():
     ...
 
 
-@pytest.mark.requires_inference("videoprism_jax")
-def test_videoprism_boundary():
+@pytest.mark.requires_inference("video_embed")
+def test_xclip_boundary():
     ...
 ```
 
 ColPali and ColQwen use the same `vllm_colpali` HTTP service. The collector
-also requests `vllm_asr` for either `vllm_colpali` or `videoprism_jax`. Use
+also requests `vllm_asr` for either `vllm_colpali` or `video_embed`. Use
 `@pytest.mark.requires_modal_inference("vllm_llm_student")` only when the test
 explicitly requires that exact service through paid Modal provisioning.
 

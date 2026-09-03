@@ -104,7 +104,7 @@ The Ingestion Module transforms raw content files into searchable, multi-modal r
 1. **Video Segmentation** - Extract frames, chunks, or sliding windows
 2. **Audio Transcription** - Whisper-based speech-to-text
 3. **Visual Description** - VLM-based frame descriptions
-4. **Embedding Generation** - ColPali, VideoPrism, ColQwen, ColBERT embeddings
+4. **Embedding Generation** - ColPali, X-CLIP, ColQwen, ColBERT embeddings
 5. **Image Processing** - Directory of images presented as keyframes (`ImageSegmentationStrategy`) for ColPali embedding
 6. **Document Processing** - Text extraction and ColBERT semantic embeddings for PDFs/documents
 7. **Document Visual Processing** - PDF pages rendered to images (pdf2image) with ColPali multi-vector page embeddings (`document_visual_colpali` profile → `document_visual` schema)
@@ -175,11 +175,11 @@ flowchart TB
     EmbedGen --> ModelInference["<span style='color:#000'>Model Inference</span>"]
     ModelInference --> ModelType{"<span style='color:#000'>Embedding Model</span>"}
     ModelType -->|ColPali| ColPaliInfer["<span style='color:#000'>ColPali Multi-Vector</span>"]
-    ModelType -->|VideoPrism| VideoPrismInfer["<span style='color:#000'>VideoPrism Single-Vector</span>"]
+    ModelType -->|X-CLIP| X-CLIPInfer["<span style='color:#000'>X-CLIP Single-Vector</span>"]
     ModelType -->|ColQwen| ColQwenInfer["<span style='color:#000'>ColQwen Multi-Vector</span>"]
 
     ColPaliInfer --> DocBuild["<span style='color:#000'>Document Building</span>"]
-    VideoPrismInfer --> DocBuild
+    X-CLIPInfer --> DocBuild
     ColQwenInfer --> DocBuild
 
     DocBuild --> StrategyAware["<span style='color:#000'>Strategy-Aware Document Construction</span>"]
@@ -229,7 +229,7 @@ flowchart TB
     style ModelInference fill:#ffcc80,stroke:#ef6c00,color:#000
     style ModelType fill:#b0bec5,stroke:#546e7a,color:#000
     style ColPaliInfer fill:#ce93d8,stroke:#7b1fa2,color:#000
-    style VideoPrismInfer fill:#ce93d8,stroke:#7b1fa2,color:#000
+    style X-CLIPInfer fill:#ce93d8,stroke:#7b1fa2,color:#000
     style ColQwenInfer fill:#ce93d8,stroke:#7b1fa2,color:#000
     style DocBuild fill:#ffcc80,stroke:#ef6c00,color:#000
     style StrategyAware fill:#ffcc80,stroke:#ef6c00,color:#000
@@ -352,7 +352,7 @@ flowchart LR
 
     subgraph Embedding["<span style='color:#000'>Embedding Strategies</span>"]
         MultiVec["<span style='color:#000'>MultiVectorEmbeddingStrategy<br/>ColPali, ColQwen</span>"]
-        SingleVec["<span style='color:#000'>SingleVectorEmbeddingStrategy<br/>VideoPrism</span>"]
+        SingleVec["<span style='color:#000'>SingleVectorEmbeddingStrategy<br/>X-CLIP</span>"]
         AudioEmb["<span style='color:#000'>AudioEmbeddingStrategy<br/>CLAP + ColBERT dual</span>"]
         DocText["<span style='color:#000'>DocumentTextEmbeddingStrategy<br/>ColBERT for text</span>"]
         DocVisEmb["<span style='color:#000'>DocumentVisualEmbeddingStrategy<br/>ColPali for PDF pages</span>"]
@@ -441,7 +441,7 @@ sequenceDiagram
 
 **Embedding Processing Types** (selected by which key `video_data` carries, checked in `generate_embeddings()`):
 
-- **Frame/Chunk/Window** (`_process_multi_documents` / `_process_single_document`, default path): ColPali multi-vector per frame, ColQwen multi-vector per chunk, or VideoPrism single-vector per segment/global — dispatch is by `storage_mode` (`multi_doc` vs `single_doc`), not a `processing_type` field
+- **Frame/Chunk/Window** (`_process_multi_documents` / `_process_single_document`, default path): ColPali multi-vector per frame, ColQwen multi-vector per chunk, or X-CLIP single-vector per segment/global — dispatch is by `storage_mode` (`multi_doc` vs `single_doc`), not a `processing_type` field
 - **Document ColBERT** (`document_files` present → `_process_document_segments`): ColBERT 128-dim per-token multi-vector for text documents
 - **Document Visual ColPali** (`document_pages` present → `_process_document_visual_segments`): ColPali (Tomoro ColQwen3) 320-dim per-patch multi-vector for PDF pages rendered to images (`DocumentVisualSegmentationStrategy` → `DocumentVisualEmbeddingStrategy`)
 - **Code ColBERT** (`code_files` present → `_process_code_segments`): LateOn-Code-edge 48-dim per-token multi-vector for source-code chunks (`CodeSegmentationStrategy` → `CodeTextEmbeddingStrategy`)
@@ -992,7 +992,7 @@ ffprobe failures in chunk extraction raise `RuntimeError` with the video path an
 # model_loader key maps directly to a loader class:
 # "colpali"    → ColPaliModelLoader
 # "colqwen"    → ColQwenModelLoader
-# "videoprism" → VideoPrismModelLoader
+# "xclip" → RemoteXClipLoader (remote only)
 # "colbert"    → ColBERTModelLoader
 ```
 
@@ -1108,7 +1108,7 @@ strategy = SingleVectorSegmentationStrategy(
 )
 ```
 
-**Best For**: VideoPrism LVT single-vector embeddings
+**Best For**: X-CLIP single-vector embeddings
 
 **Custom Method**:
 
@@ -1197,12 +1197,12 @@ embeddings = await strategy.generate_embeddings_with_processor(
 
 **Parameters**:
 
-- `model_name`: Embedding model (default `"google/videoprism-base"`)
-- `inference_service`: Optional named remote service for VideoPrism inference (default `None`)
+- `model_name`: Embedding model (default `"microsoft/xclip-large-patch14"`)
+- `inference_service`: Optional named remote service for X-CLIP inference (default `None`)
 
 **Usage**:
 ```python
-strategy = SingleVectorEmbeddingStrategy(model_name="google/videoprism-lvt-base")
+strategy = SingleVectorEmbeddingStrategy(model_name="microsoft/xclip-large-patch14")
 ```
 
 ### 8. NoDescriptionStrategy / NoTranscriptionStrategy
@@ -1758,18 +1758,18 @@ print(f"Throughput: {results['total_videos'] / (results['total_processing_time']
 # Throughput: 2.0 videos/min
 ```
 
-### Example 3: VideoPrism Single-Vector Processing
+### Example 3: X-CLIP Single-Vector Processing
 
 ```python
 import asyncio
 from pathlib import Path
 from cogniverse_runtime.ingestion.pipeline import VideoIngestionPipeline
 
-async def ingest_with_videoprism():
-    # Create pipeline for VideoPrism single-vector embeddings
+async def ingest_with_xclip():
+    # Create pipeline for X-CLIP single-vector embeddings
     pipeline = VideoIngestionPipeline(
         tenant_id="your_org:production",
-        schema_name="video_videoprism_lvt_base_sv_chunk_6s"
+        schema_name="video_xclip_sv_chunk_6s"
     )
 
     # Process video
@@ -1786,12 +1786,12 @@ async def ingest_with_videoprism():
     # Document structure: multi_document
     # Documents fed: 20
 
-asyncio.run(ingest_with_videoprism())
+asyncio.run(ingest_with_xclip())
 ```
 
 **Profile Configuration**:
 ```yaml
-video_videoprism_lvt_base_sv_chunk_6s:
+video_xclip_sv_chunk_6s:
   strategies:
     segmentation:
       class: "SingleVectorSegmentationStrategy"
@@ -1812,7 +1812,7 @@ video_videoprism_lvt_base_sv_chunk_6s:
     embedding:
       class: "SingleVectorEmbeddingStrategy"
       params:
-        model_name: "google/videoprism-lvt-base"
+        model_name: "microsoft/xclip-large-patch14"
 ```
 
 ### Example 4: ColQwen Chunk-Based Processing
@@ -1937,7 +1937,7 @@ from cogniverse_runtime.ingestion.pipeline import VideoIngestionPipeline
 async def main():
     profiles = [
         "video_colpali_smol500_mv_frame",
-        "video_videoprism_base_mv_chunk_30s",
+        "video_xclip_sv_chunk_6s",
         "video_colqwen_omni_mv_chunk_30s"
     ]
 
@@ -2072,7 +2072,7 @@ outputs/processing/
 │   ├── transcripts/
 │   │   └── video_001_transcript.json
 │   └── pipeline_summary.json
-└── profile_video_videoprism_base_mv_chunk_30s/
+└── profile_video_xclip_sv_chunk_6s/
     └── ...
 ```
 
@@ -2106,7 +2106,7 @@ pipeline.process_videos_concurrent(assigned_videos, max_concurrent=3)
 ```python
 # Process different profiles on different GPUs
 profiles_gpu0 = ["video_colpali_smol500_mv_frame"]
-profiles_gpu1 = ["video_videoprism_base_mv_chunk_30s"]
+profiles_gpu1 = ["video_xclip_sv_chunk_6s"]
 
 # GPU 0
 os.environ["CUDA_VISIBLE_DEVICES"] = "0"

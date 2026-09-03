@@ -1188,66 +1188,6 @@ inference:
       timeoutSeconds: 5
       failureThreshold: 30
 
-  # VideoPrism (JAX) video multi-vector embeddings served by the custom
-  # FastAPI sidecar in deploy/videoprism (cogniverse/videoprism:dev).
-  # Externalising VideoPrism keeps the runtime image free of the
-  # tensorflow + flax + jax dep stack — TF 2.20's static initialiser
-  # combined with uvicorn server threads aborts on darwin, and TF has
-  # no AMD ROCm wheel. Profiles route here via
-  # ``inference_service: "videoprism_jax"``; the in-process
-  # ``VideoPrismModelLoader`` is no longer wired by default.
-  videoprism_jax:
-    enabled: false
-    externalUrl: ""
-    engine: videoprism_jax
-    model: videoprism_public_v1_base_hf
-    type: multi_vector
-    device: cpu                    # cpu | cuda | rocm
-    image:
-      repository: cogniverse/videoprism
-      tag: "0.1.0"
-      pullPolicy: IfNotPresent
-    imagesByDevice: {}
-    gpuCount: 1
-    nodeSelector: {}
-    tolerations: []
-    # Number of frames sampled per segment. The public checkpoint was
-    # trained at 16; temporal positional embeddings interpolate but
-    # quality drops past ~32.
-    numFrames: 16
-    # Selects JAX backend at runtime. ``cpu`` is safe on every node;
-    # set to ``gpu`` after building a CUDA-base image.
-    jaxPlatform: cpu
-    replicaCount: 1
-    service:
-      type: ClusterIP
-      port: 7999
-      nodePort: 29003
-    resources:
-      limits:
-        cpu: "4"
-        memory: "8Gi"
-      requests:
-        cpu: "1"
-        memory: "8Gi"
-    livenessProbe:
-      httpGet:
-        path: /health
-        port: 7999
-      # First JIT trace can take 60-90s on a cold container.
-      initialDelaySeconds: 600
-      periodSeconds: 30
-      timeoutSeconds: 10
-      failureThreshold: 24
-    readinessProbe:
-      httpGet:
-        path: /health
-        port: 7999
-      initialDelaySeconds: 0
-      periodSeconds: 30
-      timeoutSeconds: 10
-      failureThreshold: 24
-
   # vLLM-served LLM student — runtime hot path. Single instance handling
   # all DSPy / agent / search / judge calls. Gemma 4 E4B (4B effective)
   # for low-latency. Multimodal (text + image + video + audio) so it
@@ -1706,9 +1646,6 @@ config:
   models:
     colpali:
       name: "vidore/colsmol-500m"
-      device: "cuda"
-    videoprism:
-      name: "google/videoprism-base"
       device: "cuda"
     colqwen:
       name: "vidore/colqwen2-v1.0"

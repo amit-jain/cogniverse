@@ -123,7 +123,7 @@ async def test_cross_modal_selection_prefers_sampleable_modalities() -> None:
     profiles = {
         name: _shipped_backend_profile(name)
         for name in (
-            "video_videoprism_large_mv_chunk_30s",
+            "video_xclip_sv_chunk_6s",
             "document_text_semantic",
         )
     }

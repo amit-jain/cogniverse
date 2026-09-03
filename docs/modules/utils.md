@@ -87,7 +87,7 @@ flowchart LR
     BRIDGE["<span style='color:#000'><b>async_bridge.py</b><br/>run_coro_blocking</span>"]
     POLL["<span style='color:#000'><b>async_polling.py</b><br/>wait_for_retry_backoff</span>"]
 
-    MODELS["<span style='color:#000'>Model loaders<br/>(VideoPrism, ColPali)</span>"]
+    MODELS["<span style='color:#000'>Model loaders<br/>(X-CLIP, ColPali)</span>"]
     VESPA["<span style='color:#000'>Vespa search &amp; ingestion<br/>clients</span>"]
     INGEST["<span style='color:#000'>Ingestion pipeline &amp;<br/>processors</span>"]
     AGENTS["<span style='color:#000'>Agents<br/>(gateway, orchestrator,<br/>entity extraction, ...)</span>"]
@@ -661,7 +661,7 @@ The Utils Module provides production-ready utilities that support the entire Cog
 
 ### Integration Points
 
-- **Model loaders** (`libs/core/cogniverse_core/common/models/model_loaders.py`, `videoprism_loader.py`): use `retry_with_backoff`/`RetryConfig` around model download and load
+- **Model loaders** (`libs/core/cogniverse_core/common/models/model_loaders.py`, `xclip_loader.py`): use `retry_with_backoff`/`RetryConfig` around model download and load
 - **Vespa backend** (`libs/vespa/cogniverse_vespa/search_backend.py`, `ingestion_client.py`): use `retry_with_backoff`/`RetryConfig` for query/feed retries, and `OutputManager` for artifact paths
 - **Ingestion pipeline and processors** (`libs/runtime/cogniverse_runtime/ingestion/`): use `OutputManager` for logs, processing, and export directories
 - **Agents** (`gateway_agent`, `orchestrator_agent`, `query_enhancement_agent`, `profile_selection_agent`, `entity_extraction_agent`, `graph/claim_extractor`): use `run_coro_blocking` to call async ArtifactManager/telemetry APIs from sync code
