@@ -546,6 +546,7 @@ class TestGatewayTopKForwarding:
             conversation_history,
             enrichment=None,
             image_b64=None,
+            context=None,
         ):
             seen["top_k"] = top_k
             seen["agent_name"] = agent_name
@@ -673,3 +674,72 @@ class TestHistoryRewriteOnModalityBranches:
             enrichment=enrichment,
         )
         assert seen["enrichment"] == enrichment
+
+
+@pytest.mark.unit
+@pytest.mark.asyncio
+class TestDownstreamDispatchThreadsRequestContext:
+    """The gateway "simple" path routes through ``_execute_downstream_agent``.
+    It must pass the request context to the execution tasks: the canary/variant
+    artefact overlay travels in ``context["_artefact_overlay"]`` and threaded
+    ``context["search_results"]`` ground the answer agents. Dropping the
+    context makes both silently no-op for every gateway-routed request while
+    direct ``/agents/{name}/process`` dispatch still applies them.
+    """
+
+    async def test_overlay_reaches_search_agent_via_downstream_dispatch(
+        self, dispatcher, monkeypatch
+    ):
+        fake_config = MagicMock()
+        fake_config.get = lambda key, default=None: default
+        monkeypatch.setattr(
+            "cogniverse_foundation.config.utils.get_config",
+            lambda **kwargs: fake_config,
+        )
+        stub = _SearchAgentStub("video_colpali_smol500_mv_frame")
+        dispatcher._get_search_agent = lambda profile: stub
+        dispatcher.consult_egress_policy = lambda *a, **k: None
+        dispatcher._verify_search_egress = lambda *a, **k: None
+        dispatcher._registry.get_agent = lambda name: SimpleNamespace(
+            capabilities=["search"]
+        )
+
+        overlay = {
+            "prompts": {"query_enhancement": "canary prompt"},
+            "served_from": "canary",
+            "version": 7,
+            "variant_id": "v-canary-7",
+        }
+        try:
+            await dispatcher._execute_downstream_agent(
+                agent_name="search_agent",
+                query="robots",
+                tenant_id="acme:acme",
+                top_k=5,
+                context={"_artefact_overlay": overlay},
+            )
+            # Real MemoryAwareMixin state, set by the real
+            # _apply_artefact_overlay inside the real _execute_search_task.
+            assert stub.get_dispatched_artefact() is overlay
+        finally:
+            stub.set_dispatched_artefact(None)
+
+    async def test_downstream_report_dispatch_threads_request_context(self, dispatcher):
+        captured = {}
+
+        async def _spy(query, tenant_id, context=None):
+            captured["context"] = context
+            return {"status": "success", "agent": "detailed_report_agent"}
+
+        dispatcher._execute_detailed_report_task = _spy
+        dispatcher._registry.get_agent = lambda name: SimpleNamespace(
+            capabilities=["detailed_report"]
+        )
+        ctx = {"search_results": [_s3_hit(9)], "_artefact_overlay": None}
+        await dispatcher._execute_downstream_agent(
+            agent_name="detailed_report_agent",
+            query="q",
+            tenant_id="acme:acme",
+            context=ctx,
+        )
+        assert captured["context"] is ctx
