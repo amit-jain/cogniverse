@@ -623,8 +623,10 @@ class TestActiveAdapterRouting:
             agent = _AdapterRoutingAgent(self._config(), adapter_model="entity_sft_v3")
             # LM model routed to the adapter's served name (provider-prefixed).
             assert mock_lm.call_args[0][0] == "openai/entity_sft_v3"
-            # The base model is preserved as adapter_path bookkeeping.
-            assert agent._dspy_lm is not None
+            # The adapter is recorded for refresh detection and the built LM
+            # is the one the agent holds.
+            assert agent._active_adapter_model_name == "entity_sft_v3"
+            assert agent._dspy_lm is mock_lm.return_value
 
     def test_lm_stays_on_base_model_without_adapter(self):
         with patch("dspy.LM") as mock_lm:

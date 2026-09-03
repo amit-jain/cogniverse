@@ -166,8 +166,8 @@ def test_empty_string_top_level_falls_through_to_metadata():
     shadow the real value under metadata."""
     hit = _video_hit(3)
     hit["source_url"] = ""
-    expected = hit_keyframe_uri(_video_hit(3))
-    assert expected is not None
+    expected = "s3://media/acme:acme/keyframes/vid123/0003.jpg"
+    assert hit_keyframe_uri(_video_hit(3)) == expected
     assert hit_keyframe_uri(hit) == expected
 
 

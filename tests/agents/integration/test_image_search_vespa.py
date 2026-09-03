@@ -79,6 +79,8 @@ def agent(image_schema):
     a = ImageSearchAgent.__new__(ImageSearchAgent)
     a._tenant_id = TENANT
     a._vespa_endpoint = f"http://localhost:{image_schema['http_port']}"
+    # __init__ always sets this from deps; the fixture deployed the schema.
+    a._deployed_image_schema = True
     return a
 
 
@@ -105,7 +107,10 @@ async def test_search_vespa_retrieves_and_ranks_matching_image(agent):
     assert "img_sunset" in ids
     # The aligned image must outrank the opposed one.
     assert results[0].image_id == "img_sunset", ids
-    assert results[0].relevance_score > 0
+    assert ids == ["img_sunset", "img_cat"]
+    # max_sim of the fed 0.5-blocks against the 0.5-query token: 320 x 0.25.
+    assert results[0].relevance_score == pytest.approx(80.0)
+    assert results[1].relevance_score == pytest.approx(-80.0)
 
     sunset = next(r for r in results if r.image_id == "img_sunset")
     assert sunset.image_url == "s3://corpus/images/sunset.jpg"
@@ -127,9 +132,12 @@ async def test_hybrid_search_scores_bm25_match(agent):
     )
 
     assert results, "hybrid image query returned no results"
-    assert results[0].image_id == "img_sunset"
-    assert results[0].relevance_score > 0
-    assert results[0].relevance_score != 0.0
+    # The second phase reranks on bm25(image_title) + bm25(image_description);
+    # both query terms hit the sunset doc, neither hits the cat doc, so the
+    # cat doc's bm25 relevance is exactly 0.
+    assert [r.image_id for r in results] == ["img_sunset", "img_cat"]
+    assert results[0].relevance_score == pytest.approx(999.0)
+    assert results[1].relevance_score == 0.0
 
 
 @pytest.mark.asyncio
@@ -140,6 +148,7 @@ async def test_search_images_propagates_vespa_outage():
     a = ImageSearchAgent.__new__(ImageSearchAgent)
     a._tenant_id = TENANT
     a._vespa_endpoint = "http://127.0.0.1:1"  # closed port -> ConnectionError
+    a._deployed_image_schema = True
     a._query_encoder = SimpleNamespace(
         encode=lambda q: np.zeros((1, 320), dtype=np.float32)
     )

@@ -605,10 +605,11 @@ def test_search_lifespan_builds_agent(monkeypatch: pytest.MonkeyPatch) -> None:
 
     try:
         with TestClient(sa_module.app):
-            assert sa_module.search_agent is not None
+            assert type(sa_module.search_agent) is sa_module.SearchAgent
             # The encoder resolved the sidecar URL (remote mode) instead of
             # crashing on the missing-URL fail-loud or loading a local model.
-            assert sa_module.search_agent.query_encoder is not None
+            encoder = sa_module.search_agent.query_encoder
+            assert encoder._remote_client.endpoint_url == "http://127.0.0.1:9"
     finally:
         # Don't leak the loopback-URL encoder to later tests via the
         # process-wide factory cache.

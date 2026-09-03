@@ -266,7 +266,7 @@ class TestProfileSelectionAgent:
             ),
         )
 
-        assert heartbeat_elapsed is not None
+        assert heartbeat_elapsed >= 0.01
         assert heartbeat_elapsed < 0.1
 
     @pytest.mark.asyncio

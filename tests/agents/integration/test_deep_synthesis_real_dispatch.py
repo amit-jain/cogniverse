@@ -293,6 +293,7 @@ class TestRateLimiterSharedAcrossBuilds:
         orchestrator, _, _ = orchestrator_with_subagent
         from cogniverse_agents.deep_synthesis_workflow import (
             DeepSynthesisRateLimiter,
+            DeepSynthesisWorkflow,
         )
 
         orchestrator._deep_synth_limiter = DeepSynthesisRateLimiter(
@@ -300,9 +301,13 @@ class TestRateLimiterSharedAcrossBuilds:
         )
         wf1 = orchestrator._build_deep_synthesis_workflow("acme:acme")
         wf2 = orchestrator._build_deep_synthesis_workflow("acme:acme")
-        assert wf1 is not None and wf2 is not None
+        # The builder degrades to None when prerequisites are missing — the
+        # exact-type pin proves both builds completed.
+        assert type(wf1) is DeepSynthesisWorkflow
+        assert type(wf2) is DeepSynthesisWorkflow
         assert wf1 is not wf2
         assert wf1.rate_limiter is wf2.rate_limiter
+        assert wf1.rate_limiter is orchestrator._deep_synth_limiter
 
         assert await wf1.rate_limiter.try_acquire("acme:acme") is True
         assert await wf1.rate_limiter.try_acquire("acme:acme") is True

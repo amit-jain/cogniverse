@@ -370,7 +370,7 @@ class TestWikiVespaIntegration:
             agent_name="search_agent",
         )
         base_doc = _get_vespa_doc(port, doc_id)
-        assert base_doc is not None
+        assert base_doc["id"] == f"id:wiki_content:{WIKI_SCHEMA}::{doc_id}"
         base_count = base_doc.get("fields", {}).get("update_count", 0)
 
         def _save(marker: str) -> None:
@@ -386,7 +386,7 @@ class TestWikiVespaIntegration:
                 fut.result()
 
         final = _get_vespa_doc(port, doc_id)
-        assert final is not None
+        assert final["id"] == f"id:wiki_content:{WIKI_SCHEMA}::{doc_id}"
         content = final.get("fields", {}).get("content", "")
         assert "BASE_attention_notes" in content
         assert "CONTENT_ALPHA" in content, "first concurrent write was lost"
