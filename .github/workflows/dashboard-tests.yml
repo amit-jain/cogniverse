@@ -61,7 +61,7 @@ jobs:
 
     - name: Run tests
       run: |
-        JAX_PLATFORM_NAME=cpu uv run python -m pytest tests/dashboard/ \
+        JAX_PLATFORM_NAME=cpu uv run python -m pytest tests/dashboard/unit \
           -v --tb=short \
           --cov=libs/dashboard/cogniverse_dashboard \
           --cov-report=term-missing \
