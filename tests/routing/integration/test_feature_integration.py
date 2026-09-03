@@ -33,7 +33,7 @@ from tests.utils.async_polling import (
 
 logger = logging.getLogger(__name__)
 
-pytestmark = [pytest.mark.integration, pytest.mark.requires_lm]
+pytestmark = [pytest.mark.integration, pytest.mark.requires_lm, pytest.mark.local_only]
 
 
 @pytest.fixture

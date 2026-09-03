@@ -21,7 +21,7 @@ from cogniverse_foundation.telemetry.manager import NoOpSpan, TelemetryManager
 
 logger = logging.getLogger(__name__)
 
-pytestmark = [pytest.mark.integration, pytest.mark.requires_lm]
+pytestmark = [pytest.mark.integration, pytest.mark.requires_lm, pytest.mark.local_only]
 
 
 def skip_if_no_provider(span):
