@@ -168,9 +168,20 @@ class TestDSPyAgentOptimizer:
         """Test optimizer initialization."""
         optimizer = DSPyAgentPromptOptimizer()
 
-        assert optimizer.optimized_prompts == {}
-        assert optimizer.lm is None
-        assert "max_bootstrapped_demos" in optimizer.optimization_settings
+        assert optimizer.__dict__ == {
+            "config": {},
+            "lm": None,
+            "teacher_lm": None,
+            "optimization_settings": {
+                "max_bootstrapped_demos": 8,
+                "max_labeled_demos": 16,
+                "max_rounds": 3,
+                "num_candidate_programs": 16,
+                "teacher_settings": {},
+                "max_errors": 10,
+                "stop_at_score": 0.95,
+            },
+        }
 
     @patch("cogniverse_agents.optimizer.dspy_agent_optimizer.create_dspy_lm")
     def test_language_model_initialization(self, mock_create_dspy_lm):
@@ -227,10 +238,11 @@ class TestDSPyAgentOptimizer:
         optimizer = DSPyAgentPromptOptimizer()
         pipeline = DSPyAgentOptimizerPipeline(optimizer)
 
-        assert pipeline.optimizer == optimizer
-        assert pipeline.modules == {}
-        assert pipeline.compiled_modules == {}
-        assert pipeline.training_data == {}
+        assert pipeline.__dict__ == {
+            "optimizer": optimizer,
+            "modules": {},
+            "compiled_modules": {},
+        }
 
     def test_pipeline_module_initialization(self):
         """Test pipeline module initialization."""
