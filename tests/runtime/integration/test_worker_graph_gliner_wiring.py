@@ -16,6 +16,19 @@ from cogniverse_core.common.models.model_loaders import RemoteColBERTLoader
 from cogniverse_runtime.ingestion_worker import queue, worker
 from cogniverse_runtime.ingestion_worker.worker import _build_worker_graph_factory
 
+
+@pytest.fixture(autouse=True)
+def _minio_outage_env(monkeypatch):
+    """MinIO endpoint that refuses connections, single boto3 attempt: the
+    worker's original-filename lookup exercises its real outage fallback
+    ("") instead of failing the job on unset env."""
+    monkeypatch.setenv("MINIO_ENDPOINT", "http://127.0.0.1:29071")
+    monkeypatch.setenv("MINIO_ACCESS_KEY", "test")
+    monkeypatch.setenv("MINIO_SECRET_KEY", "test")
+    monkeypatch.setenv("AWS_RETRY_MODE", "standard")
+    monkeypatch.setenv("AWS_MAX_ATTEMPTS", "1")
+
+
 pytestmark = [
     pytest.mark.integration,
     pytest.mark.ci_fast,
