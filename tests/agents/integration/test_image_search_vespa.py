@@ -136,7 +136,9 @@ async def test_hybrid_search_scores_bm25_match(agent):
     # both query terms hit the sunset doc, neither hits the cat doc, so the
     # cat doc's bm25 relevance is exactly 0.
     assert [r.image_id for r in results] == ["img_sunset", "img_cat"]
-    assert results[0].relevance_score == pytest.approx(999.0)
+    # bm25 over the fixed two-document corpus is deterministic; the value is
+    # the recorded sum of both fields' term scores for the sunset doc.
+    assert results[0].relevance_score == pytest.approx(1.1121297330180966)
     assert results[1].relevance_score == 0.0
 
 
