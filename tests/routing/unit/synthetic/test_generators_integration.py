@@ -295,6 +295,22 @@ class _BoundaryQueryGenerator:
         return result
 
 
+class _TopicEchoQueryGenerator:
+    max_retries = 3
+
+    def __call__(self, *, topics, entities, entity_types):
+        result = SimpleNamespace(
+            query=f"find {topics}",
+            reasoning=(
+                f"Use the grounded {entity_types[0]} entity {entities[0]} from "
+                f"{topics}."
+            ),
+        )
+        result._retry_count = 0
+        result._max_retries = self.max_retries
+        return result
+
+
 async def _extract_boundary_entity(text: str, tenant_id: str):
     assert tenant_id == "tenant-a"
     return {
@@ -695,6 +711,7 @@ class TestRoutingGeneratorIntegration:
             routing_decider=route_query,
             optimizer_config=create_routing_config(),
         )
+        generator.query_generator = _TopicEchoQueryGenerator()
 
         mock_content = [
             routing_sample(
@@ -717,6 +734,12 @@ class TestRoutingGeneratorIntegration:
 
         assert len(examples) == 1
         assert all(isinstance(ex, RoutingExperienceSchema) for ex in examples)
+        assert [example.query for example in examples] == [
+            "find Learn TensorFlow for deep learning"
+        ]
+        assert [example.enhanced_query for example in examples] == [
+            "find Learn TensorFlow(TECHNOLOGY) for deep learning"
+        ]
         assert all(len(ex.entities) >= 1 for ex in examples)
         assert all(
             ex.enhanced_query != ex.query for ex in examples
@@ -1859,16 +1882,15 @@ class TestAllGeneratorsTogether:
                 "Lunar guidance telemetry and mission control",
             ),
         ]
+        routing_generator = RoutingGenerator(
+            entity_extractor=extract_entities,
+            routing_decider=route_query,
+            optimizer_config=create_routing_config(),
+        )
+        routing_generator.query_generator = _TopicEchoQueryGenerator()
 
         generators = [
-            (
-                RoutingGenerator(
-                    entity_extractor=extract_entities,
-                    routing_decider=route_query,
-                    optimizer_config=create_routing_config(),
-                ),
-                1,
-            ),
+            (routing_generator, 1),
             (WorkflowGenerator(agent_inferrer=agent_inferrer), 3),
         ]
 

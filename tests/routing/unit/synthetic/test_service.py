@@ -15,6 +15,7 @@ from unittest.mock import AsyncMock
 
 import pytest
 
+from cogniverse_foundation.common.tenant_utils import TEST_TENANT_ID
 from cogniverse_foundation.config.manager import ConfigManager
 from cogniverse_foundation.config.unified_config import (
     AgentMappingRule,
@@ -352,7 +353,7 @@ def _generator_config_with_mappings(
 
 
 async def _extract_grounded_entities(text: str, tenant_id: str) -> dict:
-    assert tenant_id == "test:unit"
+    assert tenant_id == TEST_TENANT_ID
     assert "Saturn V" in text
     return {
         "query": text,
@@ -362,7 +363,7 @@ async def _extract_grounded_entities(text: str, tenant_id: str) -> dict:
 
 
 async def _route_grounded_query(query: str, tenant_id: str) -> dict:
-    assert tenant_id == "test:unit"
+    assert tenant_id == TEST_TENANT_ID
     return {"query": query, "routed_to": "video_search", "confidence": 0.79}
 
 
@@ -428,7 +429,7 @@ async def _label_grounded_profile(
 
 
 async def _enhance_grounded_query(query: str, tenant_id: str, source_text: str) -> dict:
-    assert tenant_id == "test:unit"
+    assert tenant_id == TEST_TENANT_ID
     assert query in source_text
     return {
         "original_query": query,
@@ -437,6 +438,18 @@ async def _enhance_grounded_query(query: str, tenant_id: str, source_text: str) 
         "synonyms": ["flight"],
         "reasoning": "The production enhancer added a source-grounded term.",
     }
+
+
+class _TopicEchoQueryGenerator:
+    max_retries = 3
+
+    def __call__(self, *, topics, entities, entity_types):
+        result = type("QueryResult", (), {})()
+        result.query = f"find {topics}"
+        result.reasoning = f"Use grounded {entity_types[0]} entity {entities[0]}."
+        result._retry_count = 0
+        result._max_retries = self.max_retries
+        return result
 
 
 def create_test_service(
@@ -572,8 +585,8 @@ class TestSyntheticDataService:
                 assert entities == ["Saturn V"]
                 assert entity_types == ["TECHNOLOGY"]
                 result = type("QueryResult", (), {})()
-                result.query = "find Saturn V"
-                result.reasoning = f"Use Saturn V from {topics}."
+                result.query = f"find {topics}"
+                result.reasoning = f"Use {entities[0]} from {topics}."
                 result._retry_count = 0
                 result._max_retries = self.max_retries
                 return result
@@ -601,14 +614,14 @@ class TestSyntheticDataService:
                         _title_sample("Apollo guidance computer"),
                     ],
                     target_count=1,
-                    tenant_id="test:unit",
+                    tenant_id=TEST_TENANT_ID,
                 ),
                 timeout=1.0,
             )
 
         assert str(raised.value) == (
             "routing optimizer callback routing_decider timed out after 0.02 "
-            "seconds for tenant='test:unit' query='find Saturn V'"
+            f"seconds for tenant={TEST_TENANT_ID!r} query='find Saturn V launch'"
         )
         assert isinstance(raised.value.__cause__, TimeoutError)
 
@@ -1014,6 +1027,7 @@ class TestSyntheticDataService:
     async def test_generate_routing_examples(self):
         """Test generating routing experience examples"""
         service = create_test_service()
+        service._get_generator("routing").query_generator = _TopicEchoQueryGenerator()
 
         request = SyntheticDataRequest(
             tenant_id="test:unit", optimizer="routing", count=1
@@ -1119,7 +1133,7 @@ class TestSyntheticDataService:
         calls: list[str] = []
 
         async def flaky_enhance_query(query: str, tenant_id: str, source_text: str):
-            assert tenant_id == "test:unit"
+            assert tenant_id == TEST_TENANT_ID
             calls.append(query)
             if len(calls) == 1:
                 raise ValueError("first candidate rejected")
@@ -1172,7 +1186,7 @@ class TestSyntheticDataService:
         calls: list[str] = []
 
         async def flaky_extract_entities(text: str, tenant_id: str):
-            assert tenant_id == "test:unit"
+            assert tenant_id == TEST_TENANT_ID
             calls.append(text)
             if len(calls) == 1:
                 return {
@@ -1354,6 +1368,7 @@ class TestSyntheticDataService:
         # Request -> Profile Selection -> Backend Query -> Generation -> Response
 
         service = create_test_service()
+        service._get_generator("routing").query_generator = _TopicEchoQueryGenerator()
 
         request = SyntheticDataRequest(
             tenant_id="test:unit", optimizer="routing", count=1, vespa_sample_size=20

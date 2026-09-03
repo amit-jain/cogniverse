@@ -11,10 +11,12 @@ pin both contracts against a real Vespa instance.
 import logging
 import threading
 from concurrent.futures import ThreadPoolExecutor
+from unittest.mock import Mock
 
 import pytest
 import requests
 
+import cogniverse_vespa.config.config_store as config_store_module
 from cogniverse_sdk.interfaces.config_store import ConfigScope
 from cogniverse_vespa.config.config_store import VespaConfigStore
 
@@ -137,24 +139,39 @@ class TestVespaConfigStoreListAllConfigs:
     def test_point_and_filtered_reads_propagate_visit_timeout(
         self, vespa_config_store, monkeypatch
     ):
-        def timeout(*args, **kwargs):
-            raise requests.Timeout("Document visit timed out")
+        expected_message = (
+            "Failed to read Vespa config visit after 5 attempts over 3.751s: "
+            "Timeout: Document visit timed out"
+        )
+        monotonic_values = iter([100.0, 103.751, 200.0, 203.751])
+        monkeypatch.setattr(
+            config_store_module.time, "monotonic", lambda: next(monotonic_values)
+        )
+        monkeypatch.setattr(config_store_module.time, "sleep", lambda *_: None)
+        monkeypatch.setattr(
+            requests,
+            "get",
+            Mock(side_effect=requests.Timeout("Document visit timed out")),
+        )
 
-        monkeypatch.setattr(requests, "get", timeout)
-
-        with pytest.raises(requests.Timeout, match="Document visit timed out"):
+        with pytest.raises(RuntimeError) as error:
             vespa_config_store.get_config(
                 "cs_timeout_a",
                 ConfigScope.SYSTEM,
                 "runtime",
                 "key",
             )
-        with pytest.raises(requests.Timeout, match="Document visit timed out"):
+        assert str(error.value) == expected_message
+        assert requests.get.call_count == 5
+
+        with pytest.raises(RuntimeError) as error:
             vespa_config_store.list_configs(
                 "cs_timeout_a",
                 scope=ConfigScope.SYSTEM,
                 service="runtime",
             )
+        assert str(error.value) == expected_message
+        assert requests.get.call_count == 10
 
     def test_concurrent_writers_allocate_distinct_versions(self, vespa_config_store):
         store = vespa_config_store
