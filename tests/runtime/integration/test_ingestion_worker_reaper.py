@@ -101,6 +101,18 @@ async def redis(redis_container, monkeypatch):
 
 
 @pytest.fixture(autouse=True)
+def _minio_outage_env(monkeypatch):
+    """MinIO endpoint that refuses connections, single boto3 attempt: the
+    worker's original-filename lookup exercises its real outage fallback
+    ("") instead of failing the job on unset env."""
+    monkeypatch.setenv("MINIO_ENDPOINT", "http://127.0.0.1:29071")
+    monkeypatch.setenv("MINIO_ACCESS_KEY", "test")
+    monkeypatch.setenv("MINIO_SECRET_KEY", "test")
+    monkeypatch.setenv("AWS_RETRY_MODE", "standard")
+    monkeypatch.setenv("AWS_MAX_ATTEMPTS", "1")
+
+
+@pytest.fixture(autouse=True)
 def worker_telemetry(telemetry_manager_without_phoenix):
     from cogniverse_foundation.telemetry.config import TelemetryLevel
 
@@ -629,6 +641,10 @@ class TestReaperWiredIntoWorkerRun:
         monkeypatch.setenv("INGEST_REAPER_INTERVAL_SECONDS", "1")
         monkeypatch.setenv("INGEST_REAPER_MIN_IDLE_MS", "0")
         monkeypatch.setenv("INGEST_CLAIM_BLOCK_MS", "200")
+        # run()'s pipeline-cache fail-fast reads config from the backend; this
+        # stack has only Redis, and that gate is pinned by the entrypoint
+        # bootstrap tests. The subject here is the reaper wiring.
+        monkeypatch.setattr(worker, "_validate_pipeline_cache_defaults", lambda: None)
 
         seed_config = worker.WorkerConfig()
         tenant, sha, ingest_id = "acme:acme", "sha_wire", "ing_wire"
