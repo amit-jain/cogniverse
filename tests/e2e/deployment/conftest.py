@@ -429,16 +429,11 @@ def rollout_timeout_minutes(documents: list[dict]) -> int:
 def _refuse_release_larger_than_the_node(documents: list[dict]) -> None:
     """Fail before deploying a release whose pods cannot all be scheduled.
 
-    Kubernetes places pods on requests, so a release that asks for more than
-    the node has does not degrade -- it wedges. The pods that fit are bound
-    and hold their reservations, the rest stay Pending, and because the ROCm
-    overlay paces sidecar startup in a chain, each pod behind an unplaceable
-    one waits out its whole pacing deadline before starting anyway. Serving
-    both chat models locally asks for 152.50Gi against this node's 123.46Gi,
-    which took the runtime down with it and reported nothing useful.
-
-    Compared against MemTotal, the physical ceiling: anything above it cannot
-    schedule regardless of how the node is carved up.
+    Kubernetes places pods on requests, so a release asking for more than the
+    node has does not degrade -- it wedges: the pods that fit hold their
+    reservations and the rest stay Pending. Compared against MemTotal, the
+    physical ceiling, since anything above it cannot schedule regardless of
+    how the node is carved up.
     """
     import re as _re
 

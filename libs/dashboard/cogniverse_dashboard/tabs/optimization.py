@@ -1265,11 +1265,8 @@ class _ProfileAnalysis(NamedTuple):
 def _render_profile_span_analysis(tenant_id: str) -> None:
     """Render the telemetry-derived profile analysis for one tenant.
 
-    Split out of the tab so its early returns end the analysis rather than
-    the tab: a slow store, an empty window, or a window carrying no search
-    spans used to remove the training controls below it from the page, so
-    the user was not told the feature existed, let alone why it could not
-    run.
+    Early returns here end the analysis, not the tab: the training controls
+    below it render whether or not the store answers.
     """
     try:
         from cogniverse_foundation.telemetry.manager import get_telemetry_manager

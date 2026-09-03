@@ -406,10 +406,7 @@ class TestInteractiveSearch:
 
         # _run_search raises if the search never reaches a terminal state or
         # the dashboard reports it failed, so reaching this line proves the
-        # search actually executed. Previously three page-wide `count() > 0`
-        # guards let this test pass while the Search button was disabled and
-        # no search could run at all -- one of them even counted "Search
-        # error" as proof of success.
+        # search actually executed.
         expected_results = _run_search(page, "throwing discus")
 
         panel = active_tab_panel(page)
@@ -436,12 +433,9 @@ class TestInteractiveSearch:
             expected_results, timeout=INTERACTION_TIMEOUT
         )
 
-        # Present is not usable. Pin what the controls carry, so a renamed
-        # label or a dropped option fails here rather than at annotation time.
-        # st.expander renders collapsed (app.py:2782 passes no expanded=True),
-        # so its contents are in the DOM but hidden: inner_text() returns ""
-        # for them while :has-text still matches, which is why the count can
-        # be right and the text empty. text_content() reads the DOM node.
+        # st.expander renders collapsed, so its contents are in the DOM but
+        # hidden: inner_text() returns "" for them while :has-text still
+        # matches. text_content() reads the DOM node regardless.
         assert [(b.text_content() or "").strip() for b in save_buttons.all()] == [
             "💾 Save Annotation"
         ] * expected_results
@@ -705,11 +699,9 @@ class TestOptimizationOverview:
         click_sub_tab(page, "Metrics Dashboard")
         wait_for_script_idle(page)
 
-        # This body renders the Refresh button only past a telemetry-provider
-        # probe (optimization.py:1620), and that probe's result is cached for
-        # 60s, so a single sample taken while the read is slow observes a tab
-        # that reports the provider missing. Wait past the cache rather than
-        # sampling once.
+        # The Refresh button renders only past a telemetry-provider probe
+        # (optimization.py:1620) whose result is cached for 60s, so this waits
+        # past the cache rather than sampling once.
         refresh_btn = active_tab_panel(page).locator(
             'button:has-text("Refresh"):visible'
         )

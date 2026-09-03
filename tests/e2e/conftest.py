@@ -2944,23 +2944,10 @@ def wait_for_script_idle(page, timeout_ms: int = 480_000, settle_ms: int = 1_500
 
     Streamlit streams a run's output over the websocket, so
     ``wait_for_load_state("networkidle")`` reports idle while the run is still
-    executing and the later tabs have not been written yet. Measured against
-    this dashboard: the tab strip appears at t=1s, the last of the 54 tabs at
-    t=19.6s, and the run ends at t=20.6s -- an assertion fired on networkidle
-    reads a page that is 19 seconds short of complete.
-
-    The status widget exists for exactly the duration of a run, so its absence
-    is the completion signal. It is also absent *before* the run starts, which
-    makes a bare ``state="detached"`` wait return instantly in precisely the
-    case this exists to handle; requiring a continuous absence of ``settle_ms``
-    is what distinguishes "finished" from "not started".
-
-    The ceiling is a stopgap at twice its original 240s. One run exceeded 240s
-    inside set_tenant when the tab ran straight after another test, and passed
-    twice on its own, so the trigger is a run-order interaction that has not
-    been isolated. The number is doubled rather than derived: settling it needs
-    a distribution of full-render durations under that interaction, not the
-    single sample there is now.
+    executing and the later tabs have not been written yet. The status widget
+    is present for exactly the duration of a run, and absent both before and
+    after one, so completion is a continuous absence of ``settle_ms`` rather
+    than a bare ``state="detached"`` wait.
     """
     deadline = _time.monotonic() + timeout_ms / 1000
     idle_since = None
