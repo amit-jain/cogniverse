@@ -189,9 +189,12 @@ class TestMem0MemoryManager:
         )
 
         assert memory_id == "mem_123"
+        # The write partitions by the canonicalized per-call tenant - the
+        # same derivation search_memory and get_all_memories read with, so a
+        # write is visible to the read that names the same tenant.
         mock_memory.add.assert_called_once_with(
             "Test content",
-            user_id=manager._storage_tenant_id,
+            user_id=canonical_tenant_id("tenant1"),
             agent_id="test_agent",
             metadata={},
             infer=True,
@@ -274,7 +277,7 @@ class TestMem0MemoryManager:
             {"id": "mem_2", "text": "Memory 2"},
         ]
         backend.schema_exists.assert_called_once_with(
-            "agent_memories", tenant_id=canonical_tenant_id("tenant1")
+            "agent_memories", tenant_id=canonical_tenant_id("test_tenant")
         )
         mock_memory.get_all.assert_called_once_with(
             user_id=canonical_tenant_id("tenant1"),
@@ -329,7 +332,7 @@ class TestMem0MemoryManager:
         assert memories == []
         mock_backend.schema_exists.assert_called_once_with(
             "agent_memories",
-            tenant_id=canonical_tenant_id("tenant1"),
+            tenant_id=canonical_tenant_id("test_tenant"),
         )
         mock_memory.get_all.assert_not_called()
 
@@ -376,7 +379,7 @@ class TestMem0MemoryManager:
 
         mock_backend.schema_exists.assert_called_once_with(
             "agent_memories",
-            tenant_id=canonical_tenant_id("tenant1"),
+            tenant_id=canonical_tenant_id("test_tenant"),
         )
         mock_memory.get_all.assert_not_called()
 
@@ -432,6 +435,31 @@ class TestMem0MemoryManager:
 
         assert success is True
         assert mock_memory.delete.call_count == 2
+
+    @patch("cogniverse_core.memory.manager.Memory")
+    def test_get_all_memories_cross_partition_uses_managers_own_schema(
+        self, mock_memory_class, manager
+    ):
+        """The storage schema belongs to the manager's binding; a read scoped
+        to another partition (the org-strategy read pattern, and seeded test
+        tenants) must not consult a schema derived from the passed partition
+        id - that schema never exists and the guard silently returned []."""
+        mock_memory = MagicMock()
+        mock_memory.get_all.return_value = [{"id": "m1", "memory": "s"}]
+        backend = self._bind_deployed_partition(manager, mock_memory)
+
+        rows = manager.get_all_memories(tenant_id="filter_test_123", agent_name="ns")
+
+        assert [r["id"] for r in rows] == ["m1"]
+        backend.schema_exists.assert_called_once_with(
+            "agent_memories", tenant_id=canonical_tenant_id("test_tenant")
+        )
+        mock_memory.get_all.assert_called_once_with(
+            user_id=canonical_tenant_id("filter_test_123"),
+            agent_id="ns",
+            filters=None,
+            limit=100,
+        )
 
     def test_delete_memory_returns_false_only_on_not_found(self, manager):
         """mem0 raises ValueError for a genuinely missing id; that maps to

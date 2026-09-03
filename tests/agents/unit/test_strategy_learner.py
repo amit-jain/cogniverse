@@ -596,3 +596,32 @@ class TestLearnFromTriggerDataset:
         assert len(strategies) >= 1
         assert all(isinstance(s, Strategy) for s in strategies)
         assert all(s.source == "pattern_extraction" for s in strategies)
+
+
+class TestStrategyRetrievalFaultContract:
+    """A memory outage must propagate from get_strategies_for_agent - the
+    debug-level swallow returned [] ("this agent has learned nothing") on an
+    outage, and an org-read failure alone returned a half-populated list
+    indistinguishable from a tenant with no org trunk."""
+
+    def test_user_read_outage_propagates(self, learner, mock_memory_manager):
+        mock_memory_manager.search_memory.side_effect = RuntimeError(
+            "Vespa query failed: connection refused"
+        )
+
+        with pytest.raises(RuntimeError, match="connection refused"):
+            learner.get_strategies_for_agent("robots", "search_agent")
+
+    def test_org_read_outage_propagates(self, mock_memory_manager):
+        learner = StrategyLearner(
+            memory_manager=mock_memory_manager,
+            tenant_id="acme:alice",
+        )
+        assert learner.org_id != learner.tenant_id
+        mock_memory_manager.search_memory.side_effect = [
+            [{"memory": "user strategy", "score": 0.9, "metadata": {}}],
+            RuntimeError("Vespa query failed: connection refused"),
+        ]
+
+        with pytest.raises(RuntimeError, match="connection refused"):
+            learner.get_strategies_for_agent("robots", "search_agent")
