@@ -73,8 +73,10 @@ def test_analytics_raises_on_non_transport_error():
     )
     analytics._breaker = _breaker("phoenix:analytics-nontransport")
 
-    with pytest.raises(KeyError, match="unexpected frame shape"):
+    with pytest.raises(KeyError, match="unexpected frame shape") as error:
         analytics.get_traces(project_name=TEST_PROJECT_NAME)
+    assert error.value.args == ("unexpected frame shape",)
+    assert analytics.client.spans.get_spans_dataframe.call_count == 1
 
 
 @pytest.mark.asyncio

@@ -142,25 +142,27 @@ class TestTelemetryManagerSessionSpan:
         """Test that session_span() raises ValueError without tenant_id."""
         manager = TelemetryManager(telemetry_config_sync)
 
-        with pytest.raises(ValueError, match="tenant_id is required"):
+        with pytest.raises(ValueError, match="tenant_id is required") as error:
             with manager.session_span(
                 name="operation",
                 tenant_id="",
                 session_id="session-123",
             ):
                 pass
+        assert str(error.value) == "tenant_id is required for session_span"
 
     def test_session_span_requires_session_id(self, telemetry_config_sync):
         """Test that session_span() raises ValueError without session_id."""
         manager = TelemetryManager(telemetry_config_sync)
 
-        with pytest.raises(ValueError, match="session_id is required"):
+        with pytest.raises(ValueError, match="session_id is required") as error:
             with manager.session_span(
                 name="operation",
                 tenant_id="test-tenant",
                 session_id="",
             ):
                 pass
+        assert str(error.value) == "session_id is required for session_span"
 
     def test_session_span_with_disabled_telemetry(self):
         """Test session_span() returns NoOpSpan when telemetry disabled."""
@@ -215,6 +217,18 @@ class TestSearchRouterSessionIntegration:
         )
 
         assert request.session_id == "test-session-123"
+        assert request.model_dump() == {
+            "query": "test query",
+            "profile": None,
+            "strategy": "default",
+            "result_granularity": None,
+            "top_k": 10,
+            "filters": {},
+            "tenant_id": "test-tenant",
+            "org_id": None,
+            "session_id": "test-session-123",
+            "stream": False,
+        }
 
     def test_search_request_session_id_optional(self, search_models):
         """Test that session_id is optional in SearchRequest (client provides it)."""
@@ -242,6 +256,14 @@ class TestSearchRouterSessionIntegration:
             session_id="client-session-456",
         )
         assert response_with.session_id == "client-session-456"
+        assert response_with.model_dump() == {
+            "query": "test query",
+            "profile": "default",
+            "strategy": "hybrid",
+            "results_count": 0,
+            "results": [],
+            "session_id": "client-session-456",
+        }
 
         # Response without session_id (client didn't provide one)
         response_without = SearchResponse(
