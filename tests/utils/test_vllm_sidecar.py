@@ -2693,7 +2693,7 @@ def test_stale_bright_stack_skip_requests_runtime_provisioning(
     assert Parent.own_markers == []
     for item in items:
         assert item.get_closest_marker("skipif") is None
-        assert item.get_closest_marker("requires_lm") is not None
+        assert item.get_closest_marker("requires_lm") == pytest.mark.requires_lm.mark
         assert item._cogniverse_lm_roles == frozenset({"primary"})
         assert item.fixturenames == ["ensure_host_ollama"]
 
