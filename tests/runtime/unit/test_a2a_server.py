@@ -715,7 +715,7 @@ class TestTerminalEventFinalFlag:
         agent = _FakeStreamAgent([{"type": "final", "data": {"summary": "done"}}])
         captured: dict = {}
 
-        def _fake_create(agent_name, query, tenant_id):
+        def _fake_create(agent_name, query, tenant_id, context=None):
             captured["query"] = query
             return (agent, None)
 
@@ -784,6 +784,38 @@ class TestTerminalEventFinalFlag:
         assert mem_threads[0] != loop_thread
         assert len(bind_threads) == 1
         assert bind_threads[0] != loop_thread
+
+    async def test_streaming_passes_task_context_to_agent_factory(
+        self, mock_dispatcher
+    ):
+        """The task context must reach create_streaming_agent, or every
+        streamed request builds its typed input from query and tenant_id
+        alone - threaded search results, top_k, codebase_path and session
+        fields are all lost before the agent is even constructed."""
+        agent = _FakeStreamAgent([{"type": "final", "data": {"summary": "done"}}])
+        captured: dict = {}
+
+        async def _fake_create(agent_name, query, tenant_id, context=None):
+            captured["context"] = context
+            return (agent, None)
+
+        mock_dispatcher.create_streaming_agent = _fake_create
+
+        executor = CogniverseAgentExecutor(dispatcher=mock_dispatcher)
+        queue = _CapturingQueue()
+        task_context = {"top_k": 25, "session_id": "s-1"}
+
+        await executor._execute_streaming(
+            "search_agent",
+            "find the demo",
+            "test:unit",
+            "task-1",
+            "ctx-1",
+            queue,
+            task_context,
+        )
+
+        assert captured["context"] is task_context
 
 
 class _MemoryStreamAgent(MemoryAwareMixin):

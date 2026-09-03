@@ -743,3 +743,163 @@ class TestDownstreamDispatchThreadsRequestContext:
             context=ctx,
         )
         assert captured["context"] is ctx
+
+
+@pytest.mark.unit
+@pytest.mark.asyncio
+class TestStreamingInputCarriesContext:
+    """create_streaming_agent must build the same typed input from context
+    that the non-streaming dispatch builds. The search, coding, and
+    orchestrator branches constructed inputs from query and tenant_id only,
+    so a streamed request lost top_k, enrichment, codebase_path,
+    max_iterations, language, session_id, conversation_history and the
+    gateway-shaped modality hints its caller threaded through context."""
+
+    async def test_streaming_search_input_carries_context_fields(
+        self, dispatcher, monkeypatch
+    ):
+        d = dispatcher
+        d._registry.get_agent.return_value = SimpleNamespace(capabilities=["search"])
+
+        class _StubSearchAgent:
+            def __init__(self, *args, **kwargs):
+                pass
+
+        monkeypatch.setattr(
+            "cogniverse_agents.search_agent.SearchAgent", _StubSearchAgent
+        )
+
+        agent, typed_input = await d.create_streaming_agent(
+            "search_agent",
+            "find the demo",
+            "acme:acme",
+            context={
+                "top_k": 25,
+                "enhanced_query": "find the product demo",
+                "entities": [{"text": "demo", "label": "PRODUCT"}],
+                "relationships": [
+                    {"subject": "demo", "relation": "shows", "object": "product"}
+                ],
+                "query_variants": [{"query": "product demo video"}],
+                "profiles": ["video_colpali_smol500_mv_frame"],
+            },
+        )
+
+        assert isinstance(agent, _StubSearchAgent)
+        assert typed_input.query == "find the demo"
+        assert typed_input.tenant_id == "acme:acme"
+        assert typed_input.top_k == 25
+        assert typed_input.enhanced_query == "find the product demo"
+        assert typed_input.entities == [{"text": "demo", "label": "PRODUCT"}]
+        assert typed_input.relationships == [
+            {"subject": "demo", "relation": "shows", "object": "product"}
+        ]
+        assert typed_input.query_variants == [{"query": "product demo video"}]
+        assert typed_input.profiles == ["video_colpali_smol500_mv_frame"]
+
+    async def test_streaming_coding_input_carries_context_fields(
+        self, dispatcher, monkeypatch
+    ):
+        d = dispatcher
+        d._registry.get_agent.return_value = SimpleNamespace(capabilities=["coding"])
+
+        class _StubCodingAgent:
+            def __init__(self, *args, **kwargs):
+                pass
+
+        monkeypatch.setattr(
+            "cogniverse_agents.coding_agent.CodingAgent", _StubCodingAgent
+        )
+        monkeypatch.setattr(
+            "cogniverse_foundation.config.utils.get_config",
+            lambda tenant_id=None, config_manager=None: MagicMock(),
+        )
+        monkeypatch.setattr(
+            "cogniverse_foundation.config.semantic_router.create_routed_lm",
+            lambda *args, **kwargs: MagicMock(),
+        )
+        monkeypatch.setattr(
+            "cogniverse_foundation.config.semantic_router.resolve_semantic_router_config",
+            lambda *args, **kwargs: MagicMock(),
+        )
+
+        agent, typed_input = await d.create_streaming_agent(
+            "coding_agent",
+            "add a retry helper",
+            "acme:acme",
+            context={
+                "codebase_path": "/repo/svc",
+                "max_iterations": 9,
+                "language": "go",
+            },
+        )
+
+        assert isinstance(agent, _StubCodingAgent)
+        assert typed_input.task == "add a retry helper"
+        assert typed_input.tenant_id == "acme:acme"
+        assert typed_input.codebase_path == "/repo/svc"
+        assert typed_input.max_iterations == 9
+        assert typed_input.language == "go"
+
+    async def test_streaming_orchestrator_input_carries_context_fields(
+        self, dispatcher, monkeypatch
+    ):
+        from unittest.mock import AsyncMock
+
+        d = dispatcher
+        d._registry.get_agent.return_value = SimpleNamespace(
+            capabilities=["orchestration"]
+        )
+        stub_agent = MagicMock()
+        monkeypatch.setattr(
+            d, "_get_or_build_orchestrator", AsyncMock(return_value=stub_agent)
+        )
+
+        history = [{"role": "user", "content": "show me the two demos"}]
+        agent, typed_input = await d.create_streaming_agent(
+            "orchestrator_agent",
+            "compare the two demos",
+            "acme:acme",
+            context={
+                "session_id": "s-1",
+                "conversation_history": history,
+                "detected_modalities": ["video", "text"],
+                "gateway_context": {
+                    "modality": "video",
+                    "generation_type": "raw_results",
+                    "synthesis_depth": "detailed",
+                },
+            },
+        )
+
+        assert agent is stub_agent
+        assert typed_input.query == "compare the two demos"
+        assert typed_input.tenant_id == "acme:acme"
+        assert typed_input.session_id == "s-1"
+        assert typed_input.conversation_history == history
+        assert typed_input.detected_modalities == ["video", "text"]
+        assert typed_input.modality == "video"
+        assert typed_input.generation_type == "raw_results"
+        assert typed_input.synthesis_depth == "detailed"
+
+    async def test_streaming_orchestrator_plain_synthesis_depth(
+        self, dispatcher, monkeypatch
+    ):
+        from unittest.mock import AsyncMock
+
+        d = dispatcher
+        d._registry.get_agent.return_value = SimpleNamespace(
+            capabilities=["orchestration"]
+        )
+        monkeypatch.setattr(
+            d, "_get_or_build_orchestrator", AsyncMock(return_value=MagicMock())
+        )
+
+        _, typed_input = await d.create_streaming_agent(
+            "orchestrator_agent",
+            "compare the two demos",
+            "acme:acme",
+            context={"synthesis_depth": "exhaustive"},
+        )
+
+        assert typed_input.synthesis_depth == "exhaustive"
