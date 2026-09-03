@@ -592,7 +592,7 @@ def test_initialize_honors_enable_metrics_false():
     """
     with (
         patch("cogniverse_vespa.search_backend.ConnectionPool"),
-        patch("cogniverse_vespa.search_backend.SearchMetrics"),
+        patch("cogniverse_vespa.search_backend.SearchMetrics") as metrics_cls,
     ):
         backend = VespaSearchBackend(enable_metrics=False)
         assert backend.metrics is None  # __init__ respected the knob
@@ -605,7 +605,8 @@ def test_initialize_honors_enable_metrics_false():
         default_backend.initialize(
             {"url": "http://localhost", "port": 8080, "schema_name": "s"}
         )
-        assert default_backend.metrics is not None  # default path keeps it on
+        # Default path keeps metrics on: the built SearchMetrics survives.
+        assert default_backend.metrics is metrics_cls.return_value
 
 
 def test_search_types_hits_by_resolved_profile_not_by_query_type():

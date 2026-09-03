@@ -439,7 +439,7 @@ def test_backup_workflow_dump_step_targets_configured_data_path_and_label():
         "hostStorage.backup.existingSecret=cogniverse-minio",
     )
     vespa = _named(docs, "CronWorkflow", "cogniverse-backup-vespa")
-    assert vespa is not None
+    assert vespa["metadata"]["labels"]["app.kubernetes.io/component"] == "backup"
 
     def _dump_args(cw: dict) -> str:
         for tmpl in cw["spec"]["workflowSpec"]["templates"]:
@@ -458,7 +458,7 @@ def test_vespa_backup_image_executes_rendered_shell_and_kubectl():
         "hostStorage.backup.existingSecret=cogniverse-minio",
     )
     vespa = _named(docs, "CronWorkflow", "cogniverse-backup-vespa")
-    assert vespa is not None
+    assert vespa["metadata"]["labels"]["app.kubernetes.io/component"] == "backup"
     dump = next(
         template
         for template in vespa["spec"]["workflowSpec"]["templates"]

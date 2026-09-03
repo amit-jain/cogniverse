@@ -8,6 +8,7 @@ present fields are written), so embeddings survive. These pin the wiring;
 Vespa's documented partial-update semantics guarantee the field preservation.
 """
 
+import time
 from pathlib import Path
 from unittest.mock import MagicMock
 
@@ -186,9 +187,11 @@ class TestVespaTimestampOnPartialUpdate:
 
     def test_full_feed_stamps_created_at(self):
         client = self._memory_client()
+        before = int(time.time())
         fields = client.process(self._doc(), operation_type="feed")["fields"]
+        after = int(time.time())
         assert isinstance(fields["created_at"], int)
-        assert fields["created_at"] > 0
+        assert before <= fields["created_at"] <= after
 
     def test_caller_supplied_created_at_honoured_on_update(self):
         client = self._memory_client()
@@ -223,11 +226,13 @@ class TestVespaTimestampOnPartialUpdate:
         """A non-numeric created_at cannot be an epoch — a full feed stamps an
         int now() rather than writing the raw string into the timestamp field."""
         client = self._memory_client()
+        before = int(time.time())
         fields = client.process(
             self._doc(created_at="not-a-timestamp"), operation_type="feed"
         )["fields"]
+        after = int(time.time())
         assert isinstance(fields["created_at"], int)
-        assert fields["created_at"] > 0
+        assert before <= fields["created_at"] <= after
 
     def test_nonfinite_created_at_raises_not_crashes(self):
         """A NaN/Inf timestamp — as the string 'nan' (now parsed to a float) or a

@@ -95,9 +95,11 @@ class TestArgoTimeouts:
         install_argo_controller("argo")
 
         assert mock_run.call_count == 4  # type: ignore[attr-defined]
-        for call in mock_run.call_args_list:  # type: ignore[attr-defined]
-            timeout = call.kwargs.get("timeout")
-            assert isinstance(timeout, int) and timeout > 0
+        # create-namespace, apply, patch, wait — in call order.
+        assert [
+            call.kwargs["timeout"]
+            for call in mock_run.call_args_list  # type: ignore[attr-defined]
+        ] == [30, 300, 60, 330]
         # The wait step's subprocess timeout must exceed kubectl's own
         # --timeout=300s so the outer bound never fires first.
         wait_call = next(
