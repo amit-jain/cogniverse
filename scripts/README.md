@@ -683,19 +683,6 @@ uv run python scripts/start_phoenix.py --storage-dir data/phoenix
 
 ---
 
-#### `run_servers.sh` - Start All Services
-**Launch all required services (Vespa, Phoenix, API server)**
-
-```bash
-# Start all services
-bash scripts/run_servers.sh
-
-# Production mode
-bash scripts/run_servers.sh --environment production --detach
-```
-
----
-
 ## Common Workflows
 
 ### First-Time Setup
@@ -704,8 +691,8 @@ bash scripts/run_servers.sh --environment production --detach
 # 1. Initialize system
 uv run python scripts/setup_system.py
 
-# 2. Start services
-bash scripts/run_servers.sh
+# 2. Start the runtime
+uv run python -m cogniverse_runtime.main
 
 # 3. Deploy Vespa schemas via the runtime admin API
 #    (schemas are per-tenant; register tenant first, then deploy profiles)
@@ -923,7 +910,7 @@ bash scripts/start_phoenix.sh
 | **Dataset Management** | 5 | `manage_datasets.py`, `manage_golden_datasets.py`, `create_golden_dataset_from_traces.py` |
 | **Deployment** | 1 | Schema deployment flows through runtime `POST /admin/profiles/{profile}/deploy` |
 | **Monitoring** | 5 | `analyze_traces.py`, `phoenix_dashboard.py`, `export_backend_embeddings.py`, `embedding_atlas_tab.py` |
-| **Setup** | 5 | `setup_system.py`, `start_phoenix.py`, `run_servers.sh`, `setup_evaluation.sh` |
+| **Setup** | 4 | `setup_system.py`, `start_phoenix.py`, `setup_evaluation.sh` |
 | **Total** | **36+** | Core operational scripts |
 
 ---

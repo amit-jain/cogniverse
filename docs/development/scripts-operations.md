@@ -99,7 +99,7 @@ scripts/
     ├── download_test_data.sh         # Download the evaluation dataset
     ├── start_vespa.sh / stop_vespa.sh        # Vespa container lifecycle (persistent volumes)
     ├── start_phoenix.sh              # Start/stop/restart Phoenix via Docker
-    ├── run_servers.sh / stop_servers.sh      # Launch/stop agent servers from config.json
+    ├── stop_servers.sh               # Stop agent-server processes
     ├── run_multi_video_agents.sh     # Run multiple video agent instances for comparison
     ├── setup_evaluation.sh           # Set up the Cogniverse evaluation framework
     ├── setup_local_tests.sh          # Probe every endpoint the local integration tests depend on

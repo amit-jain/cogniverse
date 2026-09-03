@@ -63,7 +63,6 @@ else
 fi
 
 echo ""
-echo "🎯 To restart the system: ./scripts/run_servers.sh"
 echo "🛑 To stop Vespa: docker stop vespa"
 LOG_DIR=$(python -c "from src.utils.output_manager import get_output_manager; print(get_output_manager().get_logs_dir())" 2>/dev/null || echo "logs")
 echo "📜 To view logs: ls -la $LOG_DIR/"

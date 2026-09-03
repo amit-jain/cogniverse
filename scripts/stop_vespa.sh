@@ -49,4 +49,4 @@ fi
 
 echo ""
 echo "🎯 To restart Vespa: ./scripts/start_vespa.sh"
-echo "🎯 To restart full system: ./scripts/run_servers.sh"
+echo "🎯 To restart the runtime: uv run python -m cogniverse_runtime.main"
