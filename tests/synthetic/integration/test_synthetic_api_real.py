@@ -32,7 +32,7 @@ from tests.agents.unit._recording_telemetry import RecordingTelemetryManager
 from tests.utils.synthetic_config import video_synthetic_generator_config
 from tests.utils.vespa_test_helpers import make_config_manager
 
-pytestmark = [pytest.mark.integration, pytest.mark.requires_lm]
+pytestmark = [pytest.mark.integration, pytest.mark.requires_lm, pytest.mark.local_only]
 
 
 @pytest.fixture(scope="module")

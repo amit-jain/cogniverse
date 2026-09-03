@@ -73,7 +73,7 @@ from tests.utils.vespa_test_helpers import make_config_manager
 
 logger = logging.getLogger(__name__)
 
-pytestmark = [pytest.mark.integration, pytest.mark.requires_lm]
+pytestmark = [pytest.mark.integration, pytest.mark.requires_lm, pytest.mark.local_only]
 
 
 class _BoundTestRegenerator(ValidatedSyntheticExampleRegenerator):

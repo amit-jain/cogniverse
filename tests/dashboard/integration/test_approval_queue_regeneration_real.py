@@ -25,7 +25,7 @@ from cogniverse_foundation.config.utils import (
 from cogniverse_synthetic.approval import SyntheticDataConfidenceExtractor
 from cogniverse_synthetic.schemas import RoutingExperienceSchema
 
-pytestmark = pytest.mark.integration
+pytestmark = [pytest.mark.integration, pytest.mark.local_only]
 
 
 class _SessionState(dict):

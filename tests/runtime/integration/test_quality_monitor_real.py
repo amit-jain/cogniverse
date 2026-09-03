@@ -463,6 +463,7 @@ class TestForceOptimizationCycle:
         await monitor.close()
 
     @pytest.mark.requires_lm
+    @pytest.mark.local_only
     @pytest.mark.asyncio
     async def test_force_cycle_with_live_spans_returns_ok(
         self, real_telemetry, vespa_instance
@@ -952,6 +953,7 @@ class TestLiveTrafficRealPhoenix:
         )
 
     @pytest.mark.requires_lm
+    @pytest.mark.local_only
     @pytest.mark.asyncio
     async def test_evaluate_live_traffic_scores_summary_agent(self, real_telemetry):
         """Full path: a summary span is fetched, scored by the real LLM judge,

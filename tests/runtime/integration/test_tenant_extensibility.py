@@ -241,6 +241,7 @@ class TestTenantJobsRealVespa:
 
 @pytest.mark.integration
 @skip_if_no_lm
+@pytest.mark.local_only
 class TestMemoryManagementRealMem0:
     """Memory management with real Mem0/Vespa.
 
@@ -339,6 +340,7 @@ class TestMemoryManagementRealMem0:
 
 @pytest.mark.integration
 @skip_if_no_lm
+@pytest.mark.local_only
 class TestJobExecutorRealLLM:
     """Job executor routing with real LLM — verifies the routing module
     produces meaningful agent selections for different query types."""

@@ -18,6 +18,7 @@ import pytest
 from tests.utils.llm_config import _load_config
 
 pytestmark = [
+    pytest.mark.local_only,
     pytest.mark.integration,
     pytest.mark.requires_lm,
     pytest.mark.requires_teacher_model,
