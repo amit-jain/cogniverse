@@ -25,6 +25,7 @@ skip_if_no_lm = pytest.mark.requires_lm
 
 @pytest.mark.integration
 @skip_if_no_lm
+@pytest.mark.local_only
 class TestReflectiveRecompile:
     """Run the real reflective compile through _optimize_agent end-to-end."""
 

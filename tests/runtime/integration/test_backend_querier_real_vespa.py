@@ -42,7 +42,7 @@ from cogniverse_vespa.backend import VespaBackend
 from tests.utils.synthetic_config import video_synthetic_generator_config
 from tests.utils.vespa_test_helpers import deploy_tenant_schema
 
-pytestmark = pytest.mark.integration
+pytestmark = [pytest.mark.integration, pytest.mark.local_only]
 
 
 def _backend_config(
