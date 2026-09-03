@@ -1036,7 +1036,8 @@ async def list_jobs(tenant_id: str):
     # The manager has no list-by-service read, so canonicalize explicitly —
     # create_job writes through the manager, and listing with the raw path
     # param would read an empty namespace for any non-canonical tenant id.
-    entries = cm.store.list_configs(
+    entries = await asyncio.to_thread(
+        cm.store.list_configs,
         tenant_id=canonical_tenant_id(tenant_id),
         scope=ConfigScope.SYSTEM,
         service=_JOBS_SERVICE,

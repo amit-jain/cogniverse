@@ -648,3 +648,20 @@ async def test_admin_restore_memory_offloaded(monkeypatch):
     monkeypatch.setattr(admin, "_pin_service_for", _svc_for)
     ticks = await _ticks_during(lambda: admin.restore_memory("acme:acme", "m1"))
     assert ticks >= 10, f"only {ticks} ticks — restore_archived_memory ran on the loop"
+
+
+@pytest.mark.asyncio
+async def test_tenant_list_jobs_offloaded(monkeypatch):
+    from cogniverse_runtime.routers import tenant
+
+    cm = MagicMock()
+
+    def _slow_list(*a, **k):
+        time.sleep(0.3)
+        return []
+
+    cm.store.list_configs = _slow_list
+    monkeypatch.setattr(tenant, "_require_config_manager", lambda: cm)
+
+    ticks = await _ticks_during(lambda: tenant.list_jobs("acme:acme"))
+    assert ticks >= 10, f"only {ticks} ticks — list_configs ran on the loop"

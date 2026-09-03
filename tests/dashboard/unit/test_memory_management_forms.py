@@ -42,7 +42,9 @@ def _restore_patched_boundaries():
     st.cache_data.clear()
 
 
-def _memory_app(tmp_path: Path, probe_status: int) -> AppTest:
+def _memory_app(
+    tmp_path: Path, probe_status: int, probe_error: str | None = None
+) -> AppTest:
     script = textwrap.dedent(
         f"""
         import streamlit as st
@@ -57,6 +59,8 @@ def _memory_app(tmp_path: Path, probe_status: int) -> AppTest:
 
         def _fake_get(url, timeout=None):
             st.session_state.setdefault("_probe_urls", []).append(url)
+            if {probe_error!r} is not None:
+                raise httpx.ConnectTimeout({probe_error!r})
             return _ProbeResponse()
 
         httpx.get = _fake_get
@@ -132,7 +136,9 @@ def test_vespa_unavailable_renders_warning_and_no_sub_tabs(tmp_path: Path) -> No
     at.run()
 
     assert at.exception == []
-    assert [w.value for w in at.warning] == ["Vespa backend is not running"]
+    assert [w.value for w in at.warning] == [
+        "Vespa backend is not reachable: HTTP 503 from the status probe"
+    ]
     assert len(at.info) == 1
     info = at.info[0].value
     assert "Memory management requires Vespa. Configured backend:" in info
@@ -215,3 +221,14 @@ def test_delete_flow_calls_delete_memory_with_exact_id(tmp_path: Path) -> None:
     assert at.exception == []
     assert at.session_state["_delete_calls"] == [("mem-42", "acme", "gateway_agent")]
     assert "Memory mem-42 deleted successfully" in [s.value for s in at.success]
+
+
+def test_vespa_probe_failure_names_the_cause(tmp_path: Path) -> None:
+    """A timeout, DNS failure and misconfig must not all render as the one
+    'not running' message - the warning names the probe failure."""
+    at = _memory_app(tmp_path, probe_status=200, probe_error="connect timed out")
+    at.run()
+
+    assert [w.value for w in at.warning] == [
+        "Vespa backend is not reachable: ConnectTimeout: connect timed out"
+    ]

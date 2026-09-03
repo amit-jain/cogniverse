@@ -39,18 +39,17 @@ _MAX_CAS_ATTEMPTS = 6
 # overwrite the first — silently losing one interaction's text. The lock makes
 # the merge atomic within this process; cross-replica correctness would need a
 # conditional put (a single runtime process per tenant is the guarantee here).
-_TOPIC_LOCKS: Dict[Tuple[str, str], threading.Lock] = {}
-_TOPIC_LOCKS_GUARD = threading.Lock()
+# Striped: a fixed pool indexed by key hash bounds memory at the stripe count
+# (a per-key map grew one retained Lock per topic forever); a hash collision
+# only serializes two unrelated topics, which is harmless.
+_TOPIC_LOCK_STRIPES = 256
+_TOPIC_LOCKS: Tuple[threading.Lock, ...] = tuple(
+    threading.Lock() for _ in range(_TOPIC_LOCK_STRIPES)
+)
 
 
 def _topic_lock(tenant_id: str, doc_id: str) -> threading.Lock:
-    key = (tenant_id, doc_id)
-    with _TOPIC_LOCKS_GUARD:
-        lock = _TOPIC_LOCKS.get(key)
-        if lock is None:
-            lock = threading.Lock()
-            _TOPIC_LOCKS[key] = lock
-        return lock
+    return _TOPIC_LOCKS[hash((tenant_id, doc_id)) % _TOPIC_LOCK_STRIPES]
 
 
 class WikiManager:
