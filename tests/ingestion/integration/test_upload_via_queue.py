@@ -1336,6 +1336,6 @@ class TestMinioOffload:
             data=data,
         )
         assert resp.status_code in (200, 202), f"{resp.status_code}: {resp.text[:300]}"
-        assert recorded.get("thread") is not None
+        assert set(recorded) == {"thread"}
         # to_thread offload => real MinIO put ran on a worker thread, not the loop.
         assert recorded["thread"] != loop_thread

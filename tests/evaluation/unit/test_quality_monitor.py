@@ -2029,3 +2029,69 @@ class TestRunLoop:
         store.assert_awaited_once()
         submit.assert_awaited_once()
         assert submit.await_args.kwargs["trigger_dataset"] == "opt-trigger-ds"
+
+    @pytest.mark.asyncio
+    async def test_first_iteration_is_due_whatever_the_loop_clock_epoch(self, monitor):
+        """loop.time() counts from an arbitrary epoch, often host boot. Both
+        evals must be due on the first iteration even when the clock reads
+        less than an eval interval, as on a freshly booted host."""
+        golden = GoldenEvalResult(
+            timestamp=datetime.utcnow(),
+            tenant_id=CANON,
+            mean_mrr=0.4,
+            mean_ndcg=0.5,
+            mean_precision_at_5=0.3,
+            query_count=10,
+            baseline_mrr=0.9,
+        )
+        live = LiveEvalResult(timestamp=datetime.utcnow(), tenant_id=CANON)
+
+        class _StopLoop(Exception):
+            pass
+
+        loop_clock = MagicMock()
+        loop_clock.time.return_value = 42.0  # host up 42s < both intervals
+
+        with (
+            patch.object(
+                monitor,
+                "evaluate_golden_set",
+                new_callable=AsyncMock,
+                return_value=golden,
+            ) as golden_eval,
+            patch.object(
+                monitor,
+                "evaluate_live_traffic",
+                new_callable=AsyncMock,
+                return_value=live,
+            ) as live_eval,
+            patch.object(
+                monitor,
+                "_store_trigger_dataset",
+                new_callable=AsyncMock,
+                return_value="opt-trigger-ds",
+            ) as store,
+            patch.object(
+                monitor,
+                "submit_optimization",
+                new_callable=AsyncMock,
+                return_value=True,
+            ) as submit,
+            patch(
+                "cogniverse_evaluation.quality_monitor.asyncio.get_event_loop",
+                return_value=loop_clock,
+            ),
+            patch(
+                "cogniverse_evaluation.quality_monitor.asyncio.sleep",
+                new_callable=AsyncMock,
+                side_effect=_StopLoop,
+            ),
+        ):
+            with pytest.raises(_StopLoop):
+                await monitor.run()
+
+        golden_eval.assert_awaited_once()
+        live_eval.assert_awaited_once()
+        store.assert_awaited_once()
+        submit.assert_awaited_once()
+        assert submit.await_args.kwargs["trigger_dataset"] == "opt-trigger-ds"

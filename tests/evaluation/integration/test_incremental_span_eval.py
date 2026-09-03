@@ -157,7 +157,7 @@ async def test_incremental_run_skips_already_annotated_spans(
                 ),
             },
         ) as span:
-            assert span is not None
+            assert span.name == "search_service.search"
     manager.force_flush(timeout_millis=10000)
 
     provider = search_evaluator_provider
@@ -256,7 +256,7 @@ async def test_get_recent_spans_keeps_non_search_agent_outputs(
             "output.value": summary_text,
         },
     ) as span:
-        assert span is not None
+        assert span.name == span_name
     manager.force_flush(timeout_millis=10000)
 
     provider = search_evaluator_provider
@@ -312,7 +312,7 @@ async def test_get_recent_spans_survives_name_crowding(search_evaluator_provider
             "output.value": json.dumps([{"video_id": "v_target", "score": 0.9}]),
         },
     ) as span:
-        assert span is not None
+        assert span.name == "search_service.search"
     manager.force_flush(timeout_millis=10000)
     await asyncio.sleep(0.2)
 
@@ -322,7 +322,7 @@ async def test_get_recent_spans_survives_name_crowding(search_evaluator_provider
             tenant_id=tenant_id,
             attributes={"input.value": f"noise {i}", "output.value": json.dumps([])},
         ) as s:
-            assert s is not None
+            assert s.name == "search_child.embed"
     manager.force_flush(timeout_millis=10000)
 
     provider = search_evaluator_provider

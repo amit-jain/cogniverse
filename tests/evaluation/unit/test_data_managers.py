@@ -194,7 +194,9 @@ class TestDatasetManager:
     @pytest.mark.unit
     def test_delete_dataset(self, manager, store):
         manager.create_from_queries([{"query": "q", "expected_videos": []}], "gone")
-        assert manager.get_dataset("gone") is not None
+        fetched = manager.get_dataset("gone")
+        assert fetched["id"] == "ds-gone"
+        assert fetched["dataframe"]["query"].tolist() == ["q"]
 
         assert manager.delete_dataset("gone") is True
         assert "gone" not in store._frames
@@ -227,7 +229,7 @@ class TestDatasetManager:
         manager.create_from_queries([{"query": "q", "expected_videos": []}], "tz")
 
         created_at = manager.datasets["tz"]["created_at"]
-        assert created_at.tzinfo is not None
+        assert created_at.tzinfo == timezone.utc
         assert created_at.utcoffset().total_seconds() == 0
 
 
