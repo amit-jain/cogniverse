@@ -111,4 +111,6 @@ async def test_failing_request_does_not_tear_down_cached_client():
 
     # The cached client must survive a failed request for the next one to reuse.
     spy_client.aclose.assert_not_awaited()
-    assert dispatcher._orchestrator_agents.get("acme:prod") is not None
+    assert dispatcher._orchestrator_agents.get("acme:prod").agent.http_client is (
+        spy_client
+    )

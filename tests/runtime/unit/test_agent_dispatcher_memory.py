@@ -271,8 +271,8 @@ class TestGatewayAgentCaching:
         await mock_dispatcher._execute_gateway_task("second", {}, "acme:prod")
 
         assert count["n"] == 1
+        assert len(mock_dispatcher._gateway_agents) == 1
         entry = mock_dispatcher._gateway_agents.get("acme:prod")
-        assert entry is not None
         assert isinstance(entry.agent, _FakeGateway)
 
 

@@ -78,11 +78,7 @@ class TestSignalTriggersReload:
 
         app = FastAPI()
         async with lifespan(app):
-            if not app.state.sigusr1_registered:
-                pytest.skip(
-                    "SIGUSR1 handler not registered (likely Windows or "
-                    "nested loop) — wire is N/A"
-                )
+            assert app.state.sigusr1_registered is True
             # Send SIGUSR1 to ourselves; asyncio routes it to the loop's
             # registered handler.
             os.kill(os.getpid(), signal.SIGUSR1)
@@ -110,8 +106,7 @@ class TestSignalTriggersReload:
 
         app = FastAPI()
         async with lifespan(app):
-            if not app.state.sigusr1_registered:
-                pytest.skip("SIGUSR1 handler not registered in this env")
+            assert app.state.sigusr1_registered is True
             for _ in range(3):
                 os.kill(os.getpid(), signal.SIGUSR1)
                 await asyncio.sleep(0.05)
@@ -136,8 +131,7 @@ class TestResilience:
 
         app = FastAPI()
         async with lifespan(app):
-            if not app.state.sigusr1_registered:
-                pytest.skip("SIGUSR1 handler not registered in this env")
+            assert app.state.sigusr1_registered is True
             os.kill(os.getpid(), signal.SIGUSR1)
             await asyncio.sleep(0.1)
             # Counter still incremented — the handler ran, the exception
@@ -160,18 +154,14 @@ class TestCleanup:
 
         app = FastAPI()
         async with lifespan(app):
-            registered = getattr(app.state, "sigusr1_registered", False)
-            if not registered:
-                pytest.skip("SIGUSR1 handler not registered in this env")
+            assert app.state.sigusr1_registered is True
 
-        # After lifespan exit, asyncio's signal handler has been removed.
-        # We can re-register a fresh one without conflict — proves cleanup.
+        # After lifespan exit, asyncio's signal handler has been removed:
+        # remove_signal_handler returns False when no handler is set.
         loop = asyncio.get_running_loop()
-        try:
-            loop.add_signal_handler(signal.SIGUSR1, lambda: None)
-            loop.remove_signal_handler(signal.SIGUSR1)
-        except (NotImplementedError, ValueError):
-            pytest.skip("add_signal_handler unavailable in this env")
+        assert loop.remove_signal_handler(signal.SIGUSR1) is False, (
+            "lifespan shutdown must remove the SIGUSR1 handler"
+        )
 
 
 class TestLoopNotBlocked:
@@ -194,8 +184,7 @@ class TestLoopNotBlocked:
 
         app = FastAPI()
         async with lifespan(app):
-            if not app.state.sigusr1_registered:
-                pytest.skip("SIGUSR1 handler not registered in this env")
+            assert app.state.sigusr1_registered is True
 
             ticks = 0
             stop = asyncio.Event()
