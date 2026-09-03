@@ -14,6 +14,7 @@ from __future__ import annotations
 import asyncio
 import threading
 import time
+from concurrent.futures import ThreadPoolExecutor
 from types import SimpleNamespace
 
 import pytest
@@ -65,7 +66,13 @@ async def test_concurrent_thread_first_touches_build_search_agent_once(monkeypat
         barrier.wait(timeout=5)
         return d._get_search_agent("profile_x")
 
-    results = await asyncio.gather(*(asyncio.to_thread(_call) for _ in range(_N)))
+    # asyncio.to_thread shares the default executor, whose worker ceiling
+    # (cpu_count + 4) is below _N on small CI hosts and starves the barrier.
+    loop = asyncio.get_running_loop()
+    with ThreadPoolExecutor(max_workers=_N) as pool:
+        results = await asyncio.gather(
+            *(loop.run_in_executor(pool, _call) for _ in range(_N))
+        )
 
     assert builds["n"] == 1
     assert all(r is results[0] for r in results)
@@ -94,7 +101,11 @@ async def test_concurrent_thread_first_touches_build_rail_chains_once(monkeypatc
         barrier.wait(timeout=5)
         return d._get_rail_chains("acme:acme")
 
-    results = await asyncio.gather(*(asyncio.to_thread(_call) for _ in range(_N)))
+    loop = asyncio.get_running_loop()
+    with ThreadPoolExecutor(max_workers=_N) as pool:
+        results = await asyncio.gather(
+            *(loop.run_in_executor(pool, _call) for _ in range(_N))
+        )
 
     # One Vespa get_config read for the tenant, and every caller sees the same
     # (None) cached result.
