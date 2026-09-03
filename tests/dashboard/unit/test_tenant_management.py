@@ -18,11 +18,23 @@ from streamlit.testing.v1 import AppTest
 def _restore_patched_module_attr():
     """The AppTest scripts below monkey-patch a real module attribute
     in-process; restore it so the fake doesn't leak into later test files."""
+    import streamlit as st
+
     import cogniverse_dashboard.tabs.tenant_management as _m
 
-    original = _m._api_call
+    originals = {
+        name: getattr(_m, name)
+        for name in (
+            "_api_call",
+            "_fetch_organizations",
+            "_fetch_tenants",
+            "_deployable_base_schemas",
+        )
+    }
     yield
-    _m._api_call = original
+    for name, value in originals.items():
+        setattr(_m, name, value)
+    st.cache_data.clear()
 
 
 def _create_tenant_app(tmp_path: Path) -> AppTest:
@@ -31,8 +43,8 @@ def _create_tenant_app(tmp_path: Path) -> AppTest:
         import streamlit as st
         import cogniverse_dashboard.tabs.tenant_management as tm
 
-        tm._fetch_organizations = lambda: []
-        tm._fetch_profiles = lambda: ["video_colpali", "video_colqwen"]
+        tm._fetch_organizations = lambda api_url: []
+        tm._deployable_base_schemas = lambda: ["video_colpali", "video_colqwen"]
 
         calls = st.session_state.setdefault("_api_calls", [])
 
@@ -116,3 +128,95 @@ class TestSidebarTenantCanonicalization:
 
         app_src = (Path(cogniverse_dashboard.__file__).parent / "app.py").read_text()
         assert "canonicalize_tenant_input(active_tenant)" in app_src
+
+
+def _org_list_app(tmp_path: Path, api_result: dict) -> AppTest:
+    script = textwrap.dedent(
+        f"""
+        import streamlit as st
+        import cogniverse_dashboard.tabs.tenant_management as tm
+
+        st.session_state["runtime_url"] = "http://runtime:8000"
+        calls = st.session_state.setdefault("_api_calls", [])
+
+        def _fake_api(method, path, **kwargs):
+            calls.append({{"method": method, "path": path}})
+            return {api_result!r}
+
+        tm._api_call = _fake_api
+        tm._render_organizations_list()
+        """
+    ).strip()
+    path = tmp_path / "app_org_list.py"
+    path.write_text(script)
+    return AppTest.from_file(str(path), default_timeout=30)
+
+
+def test_runtime_outage_renders_error_not_empty_state(tmp_path: Path) -> None:
+    """A runtime outage must render as an error - the discarded-error []
+    rendered 'No organizations found. Create one to get started.', identical
+    to a fresh install."""
+    at = _org_list_app(
+        tmp_path,
+        {"success": False, "error": "HTTP 503: runtime unavailable"},
+    )
+    at.run()
+
+    assert [e.value for e in at.error] == [
+        "Could not load organizations: HTTP 503: runtime unavailable"
+    ]
+    assert [i.value for i in at.info] == []
+
+
+def test_org_fetch_is_cached_across_calls(tmp_path: Path) -> None:
+    """Tab 13's body runs on every rerun of every other tab; the org fetch
+    must be served from st.cache_data instead of a fresh 30s-timeout HTTP
+    round-trip per rerun."""
+    script = textwrap.dedent(
+        """
+        import streamlit as st
+        import cogniverse_dashboard.tabs.tenant_management as tm
+
+        calls = st.session_state.setdefault("_api_calls", [])
+
+        def _fake_api(method, path, **kwargs):
+            calls.append({"method": method, "path": path})
+            return {"success": True, "data": {"organizations": [{"org_id": "acme"}]}}
+
+        tm._api_call = _fake_api
+        first = tm._fetch_organizations("http://runtime:8000")
+        second = tm._fetch_organizations("http://runtime:8000")
+        st.session_state["_results"] = (first, second)
+        """
+    ).strip()
+    path = tmp_path / "app_org_cache.py"
+    path.write_text(script)
+    at = AppTest.from_file(str(path), default_timeout=30)
+    at.run()
+
+    assert at.session_state["_results"] == (
+        [{"org_id": "acme"}],
+        [{"org_id": "acme"}],
+    )
+    assert at.session_state["_api_calls"] == [
+        {"method": "get", "path": "/admin/organizations"}
+    ]
+
+
+def test_deployable_base_schemas_derived_from_shipped_config() -> None:
+    """The tenant-creation schema list is derived from the shipped
+    config.json backend profiles, not a hardcoded subset."""
+    import cogniverse_dashboard.tabs.tenant_management as tm
+
+    assert tm._deployable_base_schemas() == [
+        "audio_content",
+        "code_lateon_mv",
+        "document_text",
+        "document_visual",
+        "image_colpali_mv",
+        "lateon_mv",
+        "video_colpali_smol500_mv_frame",
+        "video_colqwen_omni_mv_chunk_30s",
+        "video_xclip_sv_chunk_6s",
+        "wiki_pages",
+    ]

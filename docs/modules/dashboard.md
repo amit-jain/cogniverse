@@ -503,7 +503,7 @@ render_config_management_tab()
 
 - Tenants — list tenants within an organization
 
-- Create Tenant — register a new tenant, scoped to an organization and a set of profiles
+- Create Tenant — register a new tenant, scoped to an organization and the base schemas to deploy (derived from the shipped profiles)
 
 ```python
 from cogniverse_dashboard.tabs.tenant_management import render_tenant_management_tab
