@@ -168,7 +168,7 @@ async def get_system_stats(
 
         stats: Dict[str, Any] = {
             "registered_backends": list(backend_registry.list_backends()),
-            "timestamp": datetime.now().isoformat(),
+            "timestamp": datetime.now(timezone.utc).isoformat(),
         }
 
         if backend and tenant_id:
@@ -307,7 +307,7 @@ async def create_profile(
             tenant_id=request.tenant_id,
             schema_deployed=schema_deployed,
             tenant_schema_name=tenant_schema_name,
-            created_at=datetime.now().isoformat(),
+            created_at=datetime.now(timezone.utc).isoformat(),
             version=actual_version,
         )
 
@@ -365,7 +365,9 @@ async def list_profiles(
                     schema_name=profile.schema_name,
                     embedding_model=profile.embedding_model,
                     schema_deployed=schema_deployed,
-                    created_at=datetime.now().isoformat(),  # config store does not persist creation time
+                    created_at=datetime.now(
+                        timezone.utc
+                    ).isoformat(),  # config store does not persist creation time
                 )
             )
 
@@ -458,7 +460,7 @@ async def get_profile(
             tenant_schema_name=tenant_schema_name,
             created_at=config_entry.created_at.isoformat()
             if config_entry
-            else datetime.now().isoformat(),
+            else datetime.now(timezone.utc).isoformat(),
             version=config_version,
         )
 
@@ -658,7 +660,7 @@ async def delete_profile(
             profile_name=profile_name,
             tenant_id=tenant_id,
             schema_deleted=schema_deleted,
-            deleted_at=datetime.now().isoformat(),
+            deleted_at=datetime.now(timezone.utc).isoformat(),
         )
 
     except HTTPException:
@@ -728,7 +730,7 @@ async def deploy_profile_schema(
                 schema_name=profile.schema_name,
                 tenant_schema_name=tenant_schema_name,
                 deployment_status="already_deployed",
-                deployed_at=datetime.now().isoformat(),
+                deployed_at=datetime.now(timezone.utc).isoformat(),
             )
 
         try:
@@ -750,7 +752,7 @@ async def deploy_profile_schema(
                 schema_name=profile.schema_name,
                 tenant_schema_name=tenant_schema_name,
                 deployment_status="success",
-                deployed_at=datetime.now().isoformat(),
+                deployed_at=datetime.now(timezone.utc).isoformat(),
             )
 
         except Exception as e:
@@ -761,7 +763,7 @@ async def deploy_profile_schema(
                 schema_name=profile.schema_name,
                 tenant_schema_name="",
                 deployment_status="failed",
-                deployed_at=datetime.now().isoformat(),
+                deployed_at=datetime.now(timezone.utc).isoformat(),
                 error_message=str(e),
             )
 

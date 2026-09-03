@@ -3490,7 +3490,7 @@ async def run_monthly_reports(
 
     tenant_manager.set_schema_loader(FilesystemSchemaLoader(schemas_dir))
 
-    period = datetime.now().strftime("%Y%m")
+    period = datetime.now(timezone.utc).strftime("%Y%m")
     generated_at = datetime.now(timezone.utc).isoformat() + "Z"
     out = Path(output_dir)
     out.mkdir(parents=True, exist_ok=True)
