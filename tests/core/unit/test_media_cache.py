@@ -277,7 +277,7 @@ class TestTtlEviction:
         cache.put(MediaCache.make_key("s3://b/fresh"), "fresh.mp4", fresh_src)
 
         assert walks["n"] == 0
-        assert cache.get(MediaCache.make_key("s3://b/old"), "old.mp4") is not None
+        assert cache.get(MediaCache.make_key("s3://b/old"), "old.mp4") == old
 
     def test_recent_entry_survives_ttl(self, tmp_path):
         cache = MediaCache(tmp_path / "cache", max_bytes=10_000_000, ttl_seconds=100)
@@ -305,7 +305,7 @@ class TestTtlEviction:
         cache.put(MediaCache.make_key("s3://b/trigger"), "trigger.mp4", trigger)
 
         # No TTL => the ancient entry stays (only size eviction applies).
-        assert cache.get(MediaCache.make_key("s3://b/old"), "old.mp4") is not None
+        assert cache.get(MediaCache.make_key("s3://b/old"), "old.mp4") == old
 
 
 @pytest.mark.unit

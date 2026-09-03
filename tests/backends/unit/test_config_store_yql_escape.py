@@ -38,7 +38,7 @@ def test_versioned_config_selection_is_escaped(monkeypatch):
         return _EmptyVisitResponse()
 
     monkeypatch.setattr(requests, "get", capture_get)
-    store.get_config(
+    result = store.get_config(
         tenant_id='acme:"quoted',
         scope=ConfigScope.SCHEMA,
         service='svc"; bad',
@@ -46,6 +46,8 @@ def test_versioned_config_selection_is_escaped(monkeypatch):
         version=2,
     )
 
+    # An empty visit means the requested version does not exist.
+    assert result is None
     assert captured == {
         "url": (
             "http://localhost:8080/document/v1/config_metadata/config_metadata/docid/"

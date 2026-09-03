@@ -320,12 +320,17 @@ class TestBackendFailureVisibility:
         return FederationService(memory_manager_factory=factory, registry=MagicMock())
 
     def test_factory_failure_propagates(self):
+        factory_calls: List[str] = []
+
         def boom(tenant_id):
+            factory_calls.append(tenant_id)
             raise ConnectionError("mem0 down")
 
         svc = self._service(boom)
-        with pytest.raises(ConnectionError, match="mem0 down"):
+        with pytest.raises(ConnectionError, match="mem0 down") as exc:
             svc._fetch("acme:acme", "search")
+        assert str(exc.value) == "mem0 down"
+        assert factory_calls == ["acme:acme"]
 
     def test_get_all_failure_propagates(self):
         from unittest.mock import MagicMock
@@ -335,5 +340,11 @@ class TestBackendFailureVisibility:
         mm.get_all_memories.side_effect = TimeoutError("vespa timeout")
 
         svc = self._service(lambda tenant_id: mm)
-        with pytest.raises(TimeoutError, match="vespa timeout"):
+        with pytest.raises(TimeoutError, match="vespa timeout") as exc:
             svc._fetch("acme:acme", "search")
+        assert str(exc.value) == "vespa timeout"
+        assert mm.get_all_memories.call_count == 1
+        assert mm.get_all_memories.call_args.kwargs == {
+            "tenant_id": "acme:acme",
+            "agent_name": "search",
+        }

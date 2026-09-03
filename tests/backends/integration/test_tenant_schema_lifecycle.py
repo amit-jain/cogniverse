@@ -636,7 +636,11 @@ class TestBulkTenantDelete:
                 ["knowledge_graph_orphan_boundary_down_orphan_boundary_down"]
             )
 
-        assert exc.value.__cause__ is not None
+        cause = exc.value.__cause__
+        assert isinstance(cause, requests.exceptions.ConnectionError)
+        assert str(exc.value) == (
+            f"Cannot enumerate Vespa-deployed schemas before orphan delete: {cause}"
+        )
 
 
 @pytest.mark.integration

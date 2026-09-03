@@ -670,7 +670,9 @@ class TestPinCorednsUpstreams:
         from cogniverse_cli.cluster import pinned_corefile
 
         patched = pinned_corefile(self.K3D_COREFILE)
-        assert patched is not None
+        assert patched == self.K3D_COREFILE.replace(
+            "forward . /etc/resolv.conf", "forward . 1.1.1.1 8.8.8.8"
+        )
         assert "forward . 1.1.1.1 8.8.8.8" in patched
         assert "forward . /etc/resolv.conf" not in patched
 

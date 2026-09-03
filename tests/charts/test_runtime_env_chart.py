@@ -289,8 +289,8 @@ def _render_with_values(*values_files: str) -> list:
     return [doc for doc in yaml.safe_load_all(result.stdout) if doc]
 
 
-def _dev_mount_count(manifests: list) -> int:
-    count = 0
+def _dev_mount_deployments(manifests: list) -> list[str]:
+    names = []
     for m in manifests:
         if m.get("kind") != "Deployment":
             continue
@@ -299,8 +299,8 @@ def _dev_mount_count(manifests: list) -> int:
             or []
         ):
             if vol.get("name") == "src-libs":
-                count += 1
-    return count
+                names.append(m["metadata"]["name"])
+    return sorted(names)
 
 
 class TestDeviceOverlaysKeepDevMode:
@@ -311,15 +311,21 @@ class TestDeviceOverlaysKeepDevMode:
 
     def test_k3s_plus_cuda_keeps_dev_mounts(self):
         manifests = _render_with_values("values.k3s.yaml", "values.cuda.yaml")
-        assert _dev_mount_count(manifests) > 0
+        assert _dev_mount_deployments(manifests) == [
+            "cogniverse-dashboard",
+            "cogniverse-runtime",
+        ]
 
     def test_base_plus_cuda_stays_non_dev(self):
         manifests = _render_with_values("values.cuda.yaml")
-        assert _dev_mount_count(manifests) == 0
+        assert _dev_mount_deployments(manifests) == []
 
     def test_k3s_plus_rocm_keeps_dev_mounts(self):
         manifests = _render_with_values("values.k3s.yaml", "values.rocm.yaml")
-        assert _dev_mount_count(manifests) > 0
+        assert _dev_mount_deployments(manifests) == [
+            "cogniverse-dashboard",
+            "cogniverse-runtime",
+        ]
 
 
 class TestWorkflowApiUrlTargetsTheDeployedArgo:
