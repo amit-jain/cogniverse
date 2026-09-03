@@ -449,13 +449,16 @@ class TestEntityExtractionAgent:
                 {
                     "text": "Barack Obama",
                     "type": "PERSON",
-                    "confidence": 0.9916797280311584,
+                    # GLiNER forward-pass floats vary in the last digits
+                    # across BLAS builds; four significant decimals pin the
+                    # model's decision without pinning the hardware.
+                    "confidence": pytest.approx(0.99168, rel=1e-4),
                     "context": "Barack Obama in Chicago",
                 },
                 {
                     "text": "Chicago",
                     "type": "PLACE",
-                    "confidence": 0.9902434945106506,
+                    "confidence": pytest.approx(0.99024, rel=1e-4),
                     "context": "Barack Obama in Chicago",
                 },
             ],
