@@ -36,8 +36,9 @@ def real_dspy_lm(gemma_inference_endpoint):
             api_key=resolve_api_key(),
         )
     )
+    assert lm.model == resolve_prefixed_model()
     test_response = lm("test")
-    assert test_response is not None
+    assert len(test_response) == 1
     return lm
 
 

@@ -770,9 +770,10 @@ class TestAudioAnalysisAgent:
         release = threading.Event()
 
         def response_for(request_body: bytes):
-            match = re.search(rb'filename="clip-(\d+)\.wav"', request_body)
-            assert match is not None
-            index = int(match.group(1))
+            names = re.findall(rb'filename="clip-(\d+)\.wav"', request_body)
+            assert len(names) == 1, request_body[:200]
+            index = int(names[0])
+            assert 0 <= index < request_count
             return {
                 "text": f"transcript-{index}",
                 "language": "en",
