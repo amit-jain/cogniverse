@@ -12,7 +12,7 @@ from unittest.mock import MagicMock, patch
 
 import pytest
 from click.testing import CliRunner
-from cogniverse_cli.cluster import CLUSTER_NAME
+from cogniverse_cli.cluster import CLUSTER_NAME, get_install_commands
 from cogniverse_cli.main import (
     SERVICE_ENDPOINTS,
     SERVICE_HEALTH_URLS,
@@ -195,17 +195,33 @@ class TestUpCommand:
 
     @patch("cogniverse_cli.main.check_prerequisites", return_value=["docker"])
     @patch("cogniverse_cli.main.has_existing_k8s", return_value=False)
-    def test_up_aborts_on_missing_prerequisites(
-        self, mock_k8s: MagicMock, mock_prereq: MagicMock
+    @patch("cogniverse_cli.main.discover_cluster_name", return_value=None)
+    def test_up_aborts_when_prerequisite_install_declined(
+        self, mock_cluster: MagicMock, mock_k8s: MagicMock, mock_prereq: MagicMock
     ) -> None:
-        """Exits with error code when prerequisites are missing."""
+        """Declining the offer to install missing prerequisites exits 1."""
         runner = CliRunner()
-        result = runner.invoke(cli, ["up"])
-        assert result.exit_code != 0
-        assert (
-            "Failed to install" in result.output
-            or "Missing prerequisites" in result.output
-        )
+        result = runner.invoke(cli, ["up"], input="n\n")
+        assert result.exit_code == 1
+        mock_prereq.assert_called_once_with(require_k3d=True)
+        assert "Missing prerequisites:" in result.output
+        [(tool, command)] = get_install_commands(["docker"])
+        assert f"{tool}: {command}" in result.output
+        assert "Cannot proceed without prerequisites." in result.output
+
+    @patch("cogniverse_cli.main.check_prerequisites", return_value=["docker"])
+    @patch("cogniverse_cli.main.has_existing_k8s", return_value=False)
+    @patch("cogniverse_cli.main.discover_cluster_name", return_value=None)
+    def test_up_aborts_when_prerequisite_install_fails(
+        self, mock_cluster: MagicMock, mock_k8s: MagicMock, mock_prereq: MagicMock
+    ) -> None:
+        """Accepting the install offer still exits 1 when docker stays missing."""
+        runner = CliRunner()
+        result = runner.invoke(cli, ["up"], input="y\n")
+        assert result.exit_code == 1
+        mock_prereq.assert_called_once_with(require_k3d=True)
+        assert "Failed to install: docker" in result.output
+        assert "Please install manually using the commands above." in result.output
 
     @patch("cogniverse_cli.main._print_status_table")
     @patch("cogniverse_cli.main.deploy_workflow_templates")
