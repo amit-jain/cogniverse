@@ -192,6 +192,34 @@ def _retrieve_future_exc(fut: "asyncio.Future[Any]") -> None:
         fut.exception()
 
 
+def typed_input_from_context(input_cls, *, query, tenant_id, context, **overrides):
+    """Build an agent's declared input model from dispatch context.
+
+    Every context key that names a declared input field flows through (None
+    values are treated as absent so model defaults apply); ``profiles`` also
+    fills a declared ``available_profiles`` field. Dispatch-owned values —
+    ``query``, ``tenant_id``, and explicit overrides such as resolved
+    ``search_results`` — always win over context copies.
+    """
+    ctx = dict(context or {})
+    kwargs = {
+        k: v for k, v in ctx.items() if k in input_cls.model_fields and v is not None
+    }
+    if (
+        "available_profiles" in input_cls.model_fields
+        and ctx.get("profiles") is not None
+    ):
+        kwargs.setdefault("available_profiles", ctx["profiles"])
+    if "query" in input_cls.model_fields:
+        kwargs["query"] = query
+    if "tenant_id" in input_cls.model_fields:
+        kwargs["tenant_id"] = tenant_id
+    else:
+        kwargs.pop("tenant_id", None)
+    kwargs.update(overrides)
+    return input_cls.model_validate(kwargs)
+
+
 def _flatten_search_hit(hit: Dict[str, Any]) -> Dict[str, Any]:
     """Lift a ``SearchResult``/gateway-shaped hit's ``metadata`` to the top level
     so the answer agents' text helpers see the retrieved content.
@@ -1503,23 +1531,9 @@ class AgentDispatcher:
         # bleeds one request's canary/variant overlay into another.
         self._apply_artefact_overlay(agent, context)
 
-        # Build input — pass query + tenant_id + any extra context fields
-        input_kwargs = {"query": query}
-        if "tenant_id" in input_cls.model_fields:
-            input_kwargs["tenant_id"] = tenant_id
-        if "source_text" in input_cls.model_fields:
-            source_text = context.get("source_text")
-            if source_text is not None:
-                input_kwargs["source_text"] = source_text
-
-        # Forward upstream agent results from context (e.g., entities from entity extraction)
-        for key in ("entities", "relationships", "enhanced_query"):
-            if key in context and key in input_cls.model_fields:
-                input_kwargs[key] = context[key]
-        if "profiles" in context and "available_profiles" in input_cls.model_fields:
-            input_kwargs["available_profiles"] = context["profiles"]
-
-        typed_input = input_cls(**input_kwargs)
+        typed_input = typed_input_from_context(
+            input_cls, query=query, tenant_id=tenant_id, context=context
+        )
         # Bind the tenant-routed LM for the whole call so a direct dispatch of
         # entity_extraction / query_enhancement / any generic agent honors the
         # tenant's SEMANTIC_ROUTER tier instead of the process-global default —
@@ -1587,8 +1601,11 @@ class AgentDispatcher:
                 **self._agent_behavior_kwargs(tenant_id, "detailed_report_agent"),
             )
             agent = DetailedReportAgent(deps=deps, config_manager=self._config_manager)
-            typed_input = DetailedReportInput(
+            typed_input = typed_input_from_context(
+                DetailedReportInput,
                 query=query,
+                tenant_id=tenant_id,
+                context=context,
                 search_results=await self._resolve_answer_search_results(
                     query, tenant_id, context, top_k=20
                 ),
@@ -1607,12 +1624,14 @@ class AgentDispatcher:
                 **self._agent_behavior_kwargs(tenant_id, "summarizer_agent"),
             )
             agent = SummarizerAgent(deps=deps, config_manager=self._config_manager)
-            typed_input = SummarizerInput(
+            typed_input = typed_input_from_context(
+                SummarizerInput,
                 query=query,
+                tenant_id=tenant_id,
+                context=context,
                 search_results=await self._resolve_answer_search_results(
                     query, tenant_id, context, top_k=10
                 ),
-                summary_type="general",
             )
             return agent, typed_input
 
@@ -1634,16 +1653,8 @@ class AgentDispatcher:
                 schema_loader=self._schema_loader,
                 config_manager=self._config_manager,
             )
-            ctx = context or {}
-            typed_input = SearchInput(
-                query=query,
-                tenant_id=tenant_id,
-                top_k=ctx.get("top_k", 10),
-                enhanced_query=ctx.get("enhanced_query"),
-                entities=ctx.get("entities") or [],
-                relationships=ctx.get("relationships") or [],
-                query_variants=ctx.get("query_variants") or [],
-                profiles=ctx.get("profiles"),
+            typed_input = typed_input_from_context(
+                SearchInput, query=query, tenant_id=tenant_id, context=context
             )
             return agent, typed_input
 
@@ -1682,13 +1693,12 @@ class AgentDispatcher:
                 config_manager=self._config_manager,
             )
             agent._dspy_lm = coding_lm  # type: ignore[attr-defined]
-            ctx = context or {}
-            typed_input = CodingInput(
-                task=query,
+            typed_input = typed_input_from_context(
+                CodingInput,
+                query=query,
                 tenant_id=tenant_id,
-                codebase_path=ctx.get("codebase_path", ""),
-                max_iterations=ctx.get("max_iterations", 5),
-                language=ctx.get("language", "python"),
+                context=context,
+                task=query,
             )
             return agent, typed_input
 
@@ -2442,12 +2452,16 @@ class AgentDispatcher:
         # DSPy module(s) for canary/variant prompts.
         self._apply_artefact_overlay(agent, context)
 
+        request_kwargs = {}
+        summary_type = (context or {}).get("summary_type")
+        if summary_type is not None:
+            request_kwargs["summary_type"] = summary_type
         request = SummaryRequest(
             query=query,
             search_results=await self._resolve_answer_search_results(
                 query, tenant_id, context, top_k=10
             ),
-            summary_type="general",
+            **request_kwargs,
         )
         result = await agent.summarize(request)
 
@@ -2487,7 +2501,7 @@ class AgentDispatcher:
         from cogniverse_agents.detailed_report_agent import (
             DetailedReportAgent,
             DetailedReportDeps,
-            ReportRequest,
+            DetailedReportInput,
         )
 
         deps = DetailedReportDeps(
@@ -2499,20 +2513,32 @@ class AgentDispatcher:
             self._init_agent_memory, agent, "detailed_report_agent", tenant_id
         )
 
-        request = ReportRequest(
+        self._apply_artefact_overlay(agent, context)
+
+        typed_input = typed_input_from_context(
+            DetailedReportInput,
             query=query,
+            tenant_id=tenant_id,
+            context=context,
             search_results=await self._resolve_answer_search_results(
                 query, tenant_id, context, top_k=20
             ),
-            report_type="comprehensive",
         )
-        result = await agent.generate_report(request)
+        from cogniverse_foundation.config.semantic_router import (
+            routed_lm_context_for,
+        )
+
+        with self._scoped_session(agent, (context or {}).get("session_id")):
+            with routed_lm_context_for(
+                self._config_manager, tenant_id, "detailed_report_agent"
+            ):
+                result = await agent.process(typed_input)
 
         return {
             "status": "success",
             "agent": "detailed_report_agent",
             "message": f"Generated detailed report for '{query}'",
-            "result": dataclasses.asdict(result),
+            "result": result.model_dump(),
         }
 
     async def _build_encoder_config(self):

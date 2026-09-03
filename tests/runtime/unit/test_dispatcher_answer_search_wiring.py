@@ -68,9 +68,11 @@ class _CaptureAgent:
     def __init__(self, *args, **kwargs):
         pass
 
-    async def generate_report(self, request):
-        _CaptureAgent.captured["request"] = request
-        return _FakeReport()
+    async def process(self, typed_input):
+        from cogniverse_agents.detailed_report_agent import DetailedReportOutput
+
+        _CaptureAgent.captured["request"] = typed_input
+        return DetailedReportOutput(executive_summary="ok")
 
     async def summarize(self, request):
         _CaptureAgent.captured["request"] = request
@@ -1002,3 +1004,305 @@ class TestRlmThreadsIntoTypedInputs:
         )
 
         assert captured["input"].rlm == self._expected_options()
+
+
+@pytest.mark.unit
+class TestTypedInputFromContext:
+    """Every context key naming a declared input field reaches the agent."""
+
+    def test_search_input_modality_rrf_k_and_dates_reachable(self):
+        from cogniverse_agents.search_agent import SearchInput
+        from cogniverse_runtime.agent_dispatcher import typed_input_from_context
+
+        typed = typed_input_from_context(
+            SearchInput,
+            query="robots",
+            tenant_id="acme:prod",
+            context={
+                "query": "context copy must lose",
+                "tenant_id": "evil:tenant",
+                "modality": "image",
+                "rrf_k": 30,
+                "start_date": "2026-01-01",
+                "end_date": "2026-02-01",
+                "top_k": 25,
+                "profiles": ["image_colpali_mv"],
+                "unknown_key": "dropped",
+            },
+        )
+        assert typed == SearchInput(
+            query="robots",
+            tenant_id="acme:prod",
+            modality="image",
+            rrf_k=30,
+            start_date="2026-01-01",
+            end_date="2026-02-01",
+            top_k=25,
+            profiles=["image_colpali_mv"],
+        )
+
+    def test_summarizer_summary_type_reachable_and_defaults(self):
+        from cogniverse_agents.summarizer_agent import SummarizerInput
+        from cogniverse_runtime.agent_dispatcher import typed_input_from_context
+
+        typed = typed_input_from_context(
+            SummarizerInput,
+            query="q",
+            tenant_id="t:t",
+            context={"summary_type": "bullet_points"},
+            search_results=[{"video_id": "v1"}],
+        )
+        assert typed.summary_type == "bullet_points"
+        assert typed.search_results == [{"video_id": "v1"}]
+
+        defaulted = typed_input_from_context(
+            SummarizerInput, query="q", tenant_id="t:t", context={}
+        )
+        assert defaulted.summary_type == "comprehensive"
+
+    def test_detailed_report_rlm_and_enrichment_reachable(self):
+        from cogniverse_agents.detailed_report_agent import DetailedReportInput
+        from cogniverse_core.agents.rlm_options import RLMOptions
+        from cogniverse_runtime.agent_dispatcher import typed_input_from_context
+
+        typed = typed_input_from_context(
+            DetailedReportInput,
+            query="q",
+            tenant_id="t:t",
+            context={
+                "rlm": {
+                    "enabled": True,
+                    "auto_detect": True,
+                    "context_threshold": 50000,
+                },
+                "entities": [{"text": "GPU"}],
+                "relationships": [{"subject": "a", "object": "b"}],
+                "enhanced_query": "better q",
+                "report_type": "technical",
+            },
+            search_results=[{"video_id": "v1"}],
+        )
+        assert typed.rlm == RLMOptions(
+            enabled=True, auto_detect=True, context_threshold=50000
+        )
+        assert typed.entities == [{"text": "GPU"}]
+        assert typed.relationships == [{"subject": "a", "object": "b"}]
+        assert typed.enhanced_query == "better q"
+        assert typed.report_type == "technical"
+        assert typed.search_results == [{"video_id": "v1"}]
+
+    def test_coding_input_built_via_task_override(self):
+        from cogniverse_agents.coding_agent import CodingInput
+        from cogniverse_runtime.agent_dispatcher import typed_input_from_context
+
+        typed = typed_input_from_context(
+            CodingInput,
+            query="fix the bug",
+            tenant_id="t:t",
+            context={"codebase_path": "/repo", "max_iterations": 3, "language": "go"},
+            task="fix the bug",
+        )
+        assert typed == CodingInput(
+            task="fix the bug",
+            tenant_id="t:t",
+            codebase_path="/repo",
+            max_iterations=3,
+            language="go",
+        )
+
+    def test_profiles_context_key_fills_available_profiles(self):
+        from cogniverse_agents.profile_selection_agent import ProfileSelectionInput
+        from cogniverse_runtime.agent_dispatcher import typed_input_from_context
+
+        typed = typed_input_from_context(
+            ProfileSelectionInput,
+            query="q",
+            tenant_id="t:t",
+            context={"profiles": ["p1", "p2"]},
+        )
+        assert typed.available_profiles == ["p1", "p2"]
+
+    def test_none_context_values_fall_to_model_defaults(self):
+        from cogniverse_agents.summarizer_agent import SummarizerInput
+        from cogniverse_runtime.agent_dispatcher import typed_input_from_context
+
+        typed = typed_input_from_context(
+            SummarizerInput,
+            query="q",
+            tenant_id="t:t",
+            context={"summary_type": None, "enhanced_query": None},
+        )
+        assert typed.summary_type == "comprehensive"
+        assert typed.enhanced_query is None
+
+
+class _ProcessCaptureReportAgent:
+    """Stands in for DetailedReportAgent, capturing the typed input process()
+    receives and returning a real DetailedReportOutput."""
+
+    captured = {}
+
+    def __init__(self, *args, **kwargs):
+        pass
+
+    async def process(self, typed_input):
+        from cogniverse_agents.detailed_report_agent import DetailedReportOutput
+
+        _ProcessCaptureReportAgent.captured["input"] = typed_input
+        return DetailedReportOutput(executive_summary="ES from process")
+
+
+@pytest.mark.unit
+@pytest.mark.asyncio
+class TestDetailedReportDispatchThroughProcess:
+    """The dispatch task must go through process() (spans, rails, memory
+    enrichment, RLM synthesis), not the bare generate_report() bypass, and the
+    context must reach the typed input."""
+
+    async def test_task_calls_process_with_context_derived_input(
+        self, dispatcher, monkeypatch
+    ):
+        from cogniverse_agents.detailed_report_agent import DetailedReportInput
+        from cogniverse_core.agents.rlm_options import RLMOptions
+
+        hits = [_s3_hit(7)]
+
+        async def _search(query, tenant_id, top_k, **kw):
+            return {"results": hits}
+
+        dispatcher._execute_search_task = _search
+        dispatcher._init_agent_memory = lambda *a, **k: None
+        dispatcher._apply_artefact_overlay = lambda *a, **k: None
+        _ProcessCaptureReportAgent.captured = {}
+        monkeypatch.setattr(
+            "cogniverse_agents.detailed_report_agent.DetailedReportAgent",
+            _ProcessCaptureReportAgent,
+        )
+
+        result = await dispatcher._execute_detailed_report_task(
+            "q",
+            "acme:acme",
+            context={
+                "rlm": {"enabled": True, "auto_detect": True},
+                "enhanced_query": "better q",
+            },
+        )
+
+        typed = _ProcessCaptureReportAgent.captured["input"]
+        assert isinstance(typed, DetailedReportInput)
+        assert typed.tenant_id == "acme:acme"
+        assert typed.rlm == RLMOptions(enabled=True, auto_detect=True)
+        assert typed.enhanced_query == "better q"
+        assert typed.search_results == [_flatten_search_hit(h) for h in hits]
+        assert result["status"] == "success"
+        assert result["result"]["executive_summary"] == "ES from process"
+
+
+@pytest.mark.unit
+@pytest.mark.asyncio
+class TestSummaryTypeReachableFromContext:
+    async def test_summarization_task_threads_summary_type(
+        self, dispatcher, monkeypatch
+    ):
+        async def _search(*a, **k):
+            return {"results": []}
+
+        dispatcher._execute_search_task = _search
+        dispatcher._init_agent_memory = lambda *a, **k: None
+        dispatcher.consult_egress_policy = lambda *a, **k: None
+        dispatcher._verify_summarizer_egress = lambda *a, **k: None
+        dispatcher._apply_artefact_overlay = lambda *a, **k: None
+        _CaptureAgent.captured = {}
+        monkeypatch.setattr(
+            "cogniverse_agents.summarizer_agent.SummarizerAgent", _CaptureAgent
+        )
+        await dispatcher._execute_summarization_task(
+            "q", "acme:acme", context={"summary_type": "brief"}
+        )
+        assert _CaptureAgent.captured["request"].summary_type == "brief"
+
+    async def test_summarization_task_defaults_to_comprehensive(
+        self, dispatcher, monkeypatch
+    ):
+        async def _search(*a, **k):
+            return {"results": []}
+
+        dispatcher._execute_search_task = _search
+        dispatcher._init_agent_memory = lambda *a, **k: None
+        dispatcher.consult_egress_policy = lambda *a, **k: None
+        dispatcher._verify_summarizer_egress = lambda *a, **k: None
+        dispatcher._apply_artefact_overlay = lambda *a, **k: None
+        _CaptureAgent.captured = {}
+        monkeypatch.setattr(
+            "cogniverse_agents.summarizer_agent.SummarizerAgent", _CaptureAgent
+        )
+        await dispatcher._execute_summarization_task("q", "acme:acme")
+        assert _CaptureAgent.captured["request"].summary_type == "comprehensive"
+
+
+@pytest.mark.unit
+@pytest.mark.asyncio
+class TestStreamingInputsDeriveFromContext:
+    async def test_streaming_search_input_gets_modality_dates_rrf_k(
+        self, dispatcher, monkeypatch
+    ):
+        entry = MagicMock()
+        entry.capabilities = ["search"]
+        dispatcher._registry.get_agent = MagicMock(return_value=entry)
+
+        class _SearchStub:
+            def __init__(self, *a, **k):
+                pass
+
+        monkeypatch.setattr("cogniverse_agents.search_agent.SearchAgent", _SearchStub)
+
+        agent, typed_input = await dispatcher.create_streaming_agent(
+            "search_agent",
+            "robots",
+            "acme:acme",
+            context={
+                "modality": "image",
+                "rrf_k": 30,
+                "start_date": "2026-01-01",
+                "end_date": "2026-02-01",
+                "top_k": 7,
+            },
+        )
+        assert typed_input.modality == "image"
+        assert typed_input.rrf_k == 30
+        assert typed_input.start_date == "2026-01-01"
+        assert typed_input.end_date == "2026-02-01"
+        assert typed_input.top_k == 7
+        assert typed_input.tenant_id == "acme:acme"
+
+    async def test_streaming_summarizer_input_gets_summary_type(
+        self, dispatcher, monkeypatch
+    ):
+        async def _no_search(*a, **k):
+            return {"results": []}
+
+        dispatcher._execute_search_task = _no_search
+        entry = MagicMock()
+        entry.capabilities = ["summarization"]
+        dispatcher._registry.get_agent = MagicMock(return_value=entry)
+
+        class _SummaryStub:
+            def __init__(self, *a, **k):
+                pass
+
+        monkeypatch.setattr(
+            "cogniverse_agents.summarizer_agent.SummarizerAgent", _SummaryStub
+        )
+
+        agent, typed_input = await dispatcher.create_streaming_agent(
+            "summarizer_agent",
+            "sum it up",
+            "acme:acme",
+            context={"summary_type": "bullet_points"},
+        )
+        assert typed_input.summary_type == "bullet_points"
+
+        agent, defaulted = await dispatcher.create_streaming_agent(
+            "summarizer_agent", "sum it up", "acme:acme"
+        )
+        assert defaulted.summary_type == "comprehensive"
