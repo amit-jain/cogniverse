@@ -1155,6 +1155,7 @@ class TestGatewayComplexHandoff:
             conversation_history,
             enrichment=None,
             image_b64=None,
+            context=None,
         ):
             return {"status": "success", "agent": agent_name, "results": []}
 
@@ -1168,6 +1169,55 @@ class TestGatewayComplexHandoff:
         assert orchestration_called is False
         assert result["gateway"]["complexity"] == "simple"
         assert result["gateway"]["routed_to"] == "video_search_agent"
+
+    async def test_simple_path_threads_request_context_downstream(
+        self, mock_dispatcher
+    ):
+        from cogniverse_agents.gateway_agent import GatewayOutput
+
+        gw_output = GatewayOutput(
+            query="find the red car clip",
+            complexity="simple",
+            modality="video",
+            generation_type="raw_results",
+            routed_to="search_agent",
+            confidence=0.9,
+            fast_path_confidence_threshold=0.4,
+            gliner_threshold=0.3,
+            reasoning="simple lookup",
+        )
+        mock_dispatcher._get_or_build_gateway_agent = self._gateway_returning(gw_output)
+        self._isolate(mock_dispatcher)
+
+        captured = {}
+
+        async def _spy_downstream(
+            *,
+            agent_name,
+            query,
+            tenant_id,
+            top_k,
+            conversation_history,
+            enrichment=None,
+            image_b64=None,
+            context=None,
+        ):
+            captured["context"] = context
+            return {"status": "success", "agent": agent_name, "results": []}
+
+        mock_dispatcher._execute_downstream_agent = _spy_downstream
+
+        ctx = {
+            "tenant_id": "acme:prod",
+            "_artefact_overlay": {"served_from": "canary", "variant_id": "v1"},
+        }
+        await mock_dispatcher._execute_gateway_task(
+            "find the red car clip", ctx, "acme:prod"
+        )
+
+        # The caller's exact context object crosses the seam, so the artefact
+        # overlay and threaded search results reach the execution task.
+        assert captured["context"] is ctx
 
 
 @pytest.mark.unit

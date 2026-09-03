@@ -2194,6 +2194,7 @@ class AgentDispatcher:
                 conversation_history=conversation_history,
                 enrichment=enrichment or None,
                 image_b64=context.get("media_content_b64"),
+                context=context,
             )
             # Surface the downstream agent's answer as the gateway response so
             # the rendered reply and the persisted assistant turn are the answer
@@ -2308,13 +2309,16 @@ class AgentDispatcher:
         conversation_history: Optional[List[Dict[str, str]]] = None,
         enrichment: Optional[Dict[str, Any]] = None,
         image_b64: Optional[str] = None,
+        context: Optional[Dict[str, Any]] = None,
     ) -> Dict[str, Any]:
         """Execute the downstream agent that the router recommended.
 
         Re-uses the existing _execute_*_task methods based on the agent's
         capabilities, passing conversation_history through for query rewrite,
-        the router's enrichment through to the search path, and a supplied query
-        image through to image search.
+        the router's enrichment through to the search path, a supplied query
+        image through to image search, and the request context through to the
+        execution tasks so the artefact overlay and threaded search results
+        apply on gateway-routed traffic exactly as on direct dispatch.
         """
         agent = self._registry.get_agent(agent_name)
         if not agent:
@@ -2332,6 +2336,7 @@ class AgentDispatcher:
                 top_k,
                 conversation_history=conversation_history,
                 enrichment=enrichment,
+                context=context,
             )
         elif capabilities & {"image_search", "visual_analysis"}:
             return await self._execute_image_search_task(
@@ -2353,16 +2358,20 @@ class AgentDispatcher:
                 top_k,
             )
         elif capabilities & {"detailed_report"}:
-            return await self._execute_detailed_report_task(query, tenant_id)
+            return await self._execute_detailed_report_task(
+                query, tenant_id, context=context
+            )
         elif capabilities & {"summarization", "text_generation"}:
-            return await self._execute_summarization_task(query, tenant_id)
+            return await self._execute_summarization_task(
+                query, tenant_id, context=context
+            )
         elif capabilities & {"text_analysis", "sentiment", "classification"}:
             return await self._execute_text_analysis_task(
-                query, {"tenant_id": tenant_id}, tenant_id
+                query, {**(context or {}), "tenant_id": tenant_id}, tenant_id
             )
         elif "coding" in capabilities:
             return await self._execute_coding_task(
-                query, tenant_id, {"tenant_id": tenant_id}
+                query, tenant_id, {**(context or {}), "tenant_id": tenant_id}
             )
         else:
             raise ValueError(
