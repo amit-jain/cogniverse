@@ -90,6 +90,10 @@ def test_winner_tie_break_is_deterministic():
     # The tie-break ranks by name, so an equal overall resolves to the
     # lexicographically first model, not to either arbitrarily.
     assert select_winner(agg) == "model-a"
+    # The same winner regardless of dict insertion order.
+    assert select_winner(
+        {"model-a": {"overall": 8.0}, "model-b": {"overall": 8.0}}
+    ) == ("model-a")
 
 
 def test_model_averaged_only_over_scored_frames():

@@ -233,6 +233,12 @@ class TestBatchSolverRealPhoenix:
             pytest.fail("emitted spans were not indexed within 60s")
 
         assert "context.trace_id" in df.columns
+        wanted_rows = df[
+            (df["context.trace_id"] == wanted_trace)
+            & (df["name"] == "search_service.search")
+        ]
+        assert len(wanted_rows) == 1
+        wanted_row = wanted_rows.iloc[0]
 
         solver = create_batch_solver(
             trace_ids=[wanted_trace], config={"tenant_id": tenant_id}
@@ -244,8 +250,12 @@ class TestBatchSolverRealPhoenix:
         assert [t["trace_id"] for t in loaded] == [wanted_trace]
         trace = loaded[0]
         assert trace["query"] == "kite surfing on a windy beach"
-        assert trace["duration_ms"] is not None and trace["duration_ms"] > 0
-        assert trace["timestamp"] is not None
+        assert (
+            trace["duration_ms"]
+            == (wanted_row["end_time"] - wanted_row["start_time"]).total_seconds()
+            * 1000.0
+        )
+        assert trace["timestamp"] == wanted_row["start_time"]
         # No backend configured: the schema-aware strategy reports that
         # explicitly instead of fabricating ground truth.
         assert trace["ground_truth"] == []
