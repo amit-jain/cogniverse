@@ -106,6 +106,15 @@ class TestEventQueueWithIngestionPipeline:
                     )
                     assert await queue.get_latest_offset() == 1
 
+                    replayed = []
+                    async for event in queue.subscribe(from_offset=0):
+                        replayed.append(event)
+                        break
+                    assert replayed[0].event_type == "status"
+                    assert replayed[0].task_id == "test_job_123"
+                    assert replayed[0].tenant_id == "test_tenant"
+                    assert replayed[0].state == TaskState.WORKING
+
     @pytest.mark.ci_fast
     @pytest.mark.asyncio
     async def test_pipeline_emit_event_helper(self, mock_config_manager, tmp_path):
@@ -154,6 +163,16 @@ class TestEventQueueWithIngestionPipeline:
                     offset = await queue.get_latest_offset()
                     assert offset == 1
 
+                    # The enqueued event is the one _emit_event was handed.
+                    replayed = []
+                    async for received in queue.subscribe(from_offset=0):
+                        replayed.append(received)
+                        break
+                    assert replayed[0].event_type == "status"
+                    assert replayed[0].task_id == "test_job_123"
+                    assert replayed[0].tenant_id == "test_tenant"
+                    assert replayed[0].state == TaskState.WORKING
+
     @pytest.mark.ci_fast
     @pytest.mark.asyncio
     async def test_pipeline_cancellation_check(self, mock_config_manager, tmp_path):
@@ -188,13 +207,16 @@ class TestEventQueueWithIngestionPipeline:
                     )
 
                     # Initially not cancelled
-                    assert not pipeline._is_cancelled()
+                    assert pipeline._is_cancelled() is False
+                    assert queue.cancellation_token.is_cancelled is False
 
                     # Cancel the queue
                     queue.cancel("Test cancellation")
 
-                    # Now should be cancelled
-                    assert pipeline._is_cancelled()
+                    # Now should be cancelled, carrying the reason
+                    assert pipeline._is_cancelled() is True
+                    assert queue.cancellation_token.is_cancelled is True
+                    assert queue.cancellation_token.reason == "Test cancellation"
 
 
 class TestEventQueueMultipleSubscribers:
@@ -274,6 +296,8 @@ class TestEventQueueReconnection:
                 phase=f"phase_{i}",
             )
             await queue.enqueue(event)
+
+        assert await queue.get_latest_offset() == 5
 
         # First client receives first 2 events
         first_client_events = []

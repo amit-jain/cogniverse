@@ -46,20 +46,22 @@ class TestChunkVLMIncompatibility:
 
     def test_frame_segmentation_with_vlm_description_ok(self):
         """The compatible pairing (keyframes + VLM) must still construct."""
+        description = VLMDescriptionStrategy(vlm_endpoint="http://vlm.invalid/v1")
         pss = ProcessingStrategySet(
             segmentation=FrameSegmentationStrategy(max_frames=10, fps=1.0),
-            description=VLMDescriptionStrategy(vlm_endpoint="http://vlm.invalid/v1"),
+            description=description,
         )
-        assert pss.get_strategy("description") is not None
+        assert pss.get_strategy("description") is description
 
     def test_chunk_segmentation_without_vlm_description_ok(self):
         """Chunk segmentation with no VLM description (the real chunk profiles,
         which use NoDescriptionStrategy) constructs cleanly."""
+        segmentation = ChunkSegmentationStrategy(chunk_duration=30.0)
         pss = ProcessingStrategySet(
-            segmentation=ChunkSegmentationStrategy(chunk_duration=30.0),
+            segmentation=segmentation,
             description=NoDescriptionStrategy(),
         )
-        assert pss.get_strategy("segmentation") is not None
+        assert pss.get_strategy("segmentation") is segmentation
 
 
 @pytest.mark.unit

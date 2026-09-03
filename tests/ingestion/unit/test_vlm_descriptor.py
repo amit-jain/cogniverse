@@ -536,10 +536,18 @@ class TestProgressFlushCadence:
         # Flushes at batch 10, batch 20, and the final write after the loop.
         assert dumped_sizes == [10, 20, 25]
         assert mkdir_calls["n"] == 1
+        assert set(result) == {
+            "video_id",
+            "descriptions",
+            "total_descriptions",
+            "created_at",
+        }
+        assert result["video_id"] == "flush_video"
         assert result["total_descriptions"] == 25
         on_disk = json.loads(
             (tmp_path / "out" / "descriptions" / "flush_video.json").read_text()
         )
+        assert on_disk == result["descriptions"]
         assert len(on_disk) == 25
         assert on_disk["f0"] == "desc f0"
         assert on_disk["f24"] == "desc f24"
@@ -574,6 +582,8 @@ class TestProgressFlushCadence:
             result = descriptor.generate_descriptions(metadata, tmp_path / "out")
 
         assert dumped_sizes == [3]
+        assert result["video_id"] == "short_video"
+        assert result["descriptions"] == {"f0": "d", "f1": "d", "f2": "d"}
         assert result["total_descriptions"] == 3
 
 
@@ -659,10 +669,10 @@ class TestVLMOpenAIConcurrency:
 
         # All 8 POSTs in flight simultaneously under the 8-worker pool.
         assert server.max_concurrency == 8
-        assert set(result.keys()) == {f"f{i}" for i in range(8)}
-        assert result["f3"] == "desc for f3"
+        assert result == {f"f{i}": f"desc for f{i}" for i in range(8)}
         assert server.chat_request_count == 8
-        assert server.models_request_count >= 1
+        # Model discovery is cached: one /models GET for the whole batch.
+        assert server.models_request_count == 1
         # 8 x 0.3s serial would be ~2.4s; concurrent is ~0.3s.
         assert elapsed < 1.0
 
@@ -694,7 +704,8 @@ class TestVLMOpenAIConcurrency:
         assert server.max_concurrency == 3
         # ...and every frame still described.
         assert server.chat_request_count == 12
-        assert set(result.keys()) == {f"f{i}" for i in range(12)}
+        assert server.models_request_count == 1
+        assert result == {f"f{i}": f"desc for f{i}" for i in range(12)}
 
     def _openai_descriptor(self, monkeypatch) -> VLMDescriptor:
         d = VLMDescriptor(vlm_endpoint="http://vlm/v1")
@@ -744,6 +755,18 @@ class TestVLMOpenAIConcurrency:
         ]
         with pytest.raises(RuntimeError, match="all 2 keyframes"):
             d._process_vlm_batch(keyframes)
+
+    def test_missing_frame_files_are_skipped_without_requests(self, monkeypatch):
+        """A keyframe whose file is gone is skipped (no POST, no failure);
+        an empty batch short-circuits to an empty map."""
+        d = self._openai_descriptor(monkeypatch)
+
+        assert d._process_vlm_batch([]) == {}
+        keyframes = [
+            {"frame_id": "f1", "path": "/nonexistent/f1.jpg"},
+            {"frame_id": "f2", "path": "/nonexistent/f2.jpg"},
+        ]
+        assert d._process_vlm_batch(keyframes) == {}
 
 
 @pytest.mark.unit
@@ -831,7 +854,9 @@ class TestVLMDescriptorInferenceAuth:
             frame.write_bytes(b"\xff\xd8\xff\xd9")
 
             model = descriptor._resolve_openai_model()
-            descriptor._describe_one_openai(
+            assert model == "test-model"
+            assert descriptor._openai_model == "test-model"
+            pair = descriptor._describe_one_openai(
                 {"path": str(frame), "frame_id": "f0"},
                 model,
                 f"http://127.0.0.1:{port}/v1/chat/completions",
@@ -839,4 +864,5 @@ class TestVLMDescriptorInferenceAuth:
         finally:
             server.shutdown()
 
+        assert pair == ("f0", "a description")
         assert seen == ["Bearer wired", "Bearer wired"]

@@ -254,7 +254,7 @@ class TestEndToEnd:
                 "strategy": "cli-strategy",
             },
         ) as span:
-            assert span is not None
+            assert span.name == "search_service.search"
         assert telemetry_manager.force_flush(timeout_millis=10000) is True
 
         runner = CliRunner()
@@ -277,9 +277,8 @@ class TestEndToEnd:
                 break
             time.sleep(1)
 
-        assert result is not None
         assert result.exit_code == 0
-        assert f"Query: {query}..." in result.output
+        assert result.output.count(f"Query: {query}...") == 1
         assert "Results: 1" in result.output
 
         trace_manager = TraceManager(tenant_id="test:unit")
