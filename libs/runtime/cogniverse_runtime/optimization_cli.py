@@ -58,6 +58,8 @@ from cogniverse_foundation.telemetry.config import (
     SPAN_NAME_QUERY_ENHANCEMENT,
 )
 from cogniverse_foundation.telemetry.span_contract import (
+    QUERY_ENHANCEMENT_PATH_ATTRIBUTE,
+    QUERY_ENHANCEMENT_PATH_HEURISTIC_FALLBACK,
     read_span_attributes,
     read_span_id,
     read_span_io,
@@ -363,7 +365,11 @@ def _query_enhancement_pairs(spans_df) -> List[Dict[str, Any]]:
     prompt inputs; ``output.value`` carries every produced field. Rows without a
     query or an enhanced query are skipped. ``trainable`` marks a record worth
     serving as a demo — a non-identity enhancement with at least one expansion
-    term; every record is still an evaluation probe (its inputs are real).
+    term, excluding heuristic-fallback output (marked via ``enhancement.path``,
+    or recognised by the fallback's append-first-expansion shape on rows
+    recorded before the marker existed) — a fallback demo teaches the
+    optimizer to append a constant word from a fixed vocabulary. Every record
+    is still an evaluation probe (its inputs are real).
     """
     pairs: List[Dict[str, Any]] = []
     for position, (_, row) in enumerate(spans_df.iterrows()):
@@ -378,6 +384,14 @@ def _query_enhancement_pairs(spans_df) -> List[Dict[str, Any]]:
         )
         attrs = read_span_attributes(row)
         expansion_terms = [str(t) for t in output.get("expansion_terms", []) or []]
+        marked_fallback = (
+            str(attrs.get(QUERY_ENHANCEMENT_PATH_ATTRIBUTE) or "")
+            == QUERY_ENHANCEMENT_PATH_HEURISTIC_FALLBACK
+        )
+        fallback_shaped = (
+            bool(expansion_terms)
+            and enhanced.strip() == f"{original.strip()} {expansion_terms[0]}"
+        )
         pairs.append(
             {
                 "query": original,
@@ -392,6 +406,8 @@ def _query_enhancement_pairs(spans_df) -> List[Dict[str, Any]]:
                 "trainable": (
                     enhanced.strip().lower() != original.strip().lower()
                     and bool(expansion_terms)
+                    and not marked_fallback
+                    and not fallback_shaped
                 ),
             }
         )

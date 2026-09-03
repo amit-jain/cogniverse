@@ -1712,9 +1712,14 @@ def _qe_span_row(
     source_text: str = "",
     confidence: float = 0.8,
     span_id: str = "span-0",
+    enhancement_path: str | None = None,
 ) -> dict:
     """A cogniverse.query_enhancement span row as the agent writes it."""
+    row = {}
+    if enhancement_path is not None:
+        row["attributes.enhancement.path"] = enhancement_path
     return {
+        **row,
         "context.span_id": span_id,
         "attributes.input.value": query,
         "attributes.input.source_text": source_text,
@@ -2518,6 +2523,50 @@ class TestSimbaQueryEnhancement:
             },
         ]
 
+    def test_heuristic_fallback_rows_are_not_trainable(self):
+        """The heuristic fallback appends a constant word from a fixed
+        vocabulary; serving it as a demo teaches the optimizer to append a
+        constant. A row marked enhancement.path=heuristic_fallback, and an
+        unmarked row with the fallback's append-first-expansion shape (the
+        committed corpus predates the marker), are evaluation probes only.
+        A marked LM row keeps its trainable flag."""
+        from cogniverse_runtime.optimization_cli import _query_enhancement_pairs
+
+        spans_df = _make_spans_df(
+            "cogniverse.query_enhancement",
+            [
+                _qe_span_row(
+                    "find the assembly video",
+                    "find the assembly video tutorial",
+                    expansion_terms=["tutorial", "guide", "demonstration"],
+                    span_id="s-marked",
+                    enhancement_path="heuristic_fallback",
+                ),
+                _qe_span_row(
+                    "find information about robots",
+                    "find information about robots locate",
+                    expansion_terms=["locate", "discover"],
+                    span_id="s-shaped",
+                ),
+                _qe_span_row(
+                    "find tutorials",
+                    "find TensorFlow tutorials",
+                    expansion_terms=["TensorFlow", "neural networks"],
+                    span_id="s-lm",
+                    enhancement_path="lm",
+                ),
+            ],
+        )
+
+        flags = {
+            r["example_id"]: r["trainable"] for r in _query_enhancement_pairs(spans_df)
+        }
+        assert flags == {
+            "span:s-marked": False,
+            "span:s-shaped": False,
+            "span:s-lm": True,
+        }
+
     def test_pairs_carry_the_span_id_as_example_id(self):
         """Every production record carries example_id = span:<span_id>, the id
         the optimizer ledger records as the example's source."""
@@ -2753,7 +2802,7 @@ class TestSimbaQueryEnhancement:
         rows = [
             _qe_span_row(
                 f"query {i}",
-                f"query {i} expanded",
+                f"expanded query {i}",
                 expansion_terms=["expanded"],
                 source_text="src",
                 span_id=f"qe-{i}",
@@ -2823,7 +2872,7 @@ class TestSimbaQueryEnhancement:
         ] + [
             _qe_span_row(
                 f"query {i}",
-                f"query {i} expanded",
+                f"expanded query {i}",
                 expansion_terms=["expanded"],
                 source_text="src",
                 span_id=f"qe-{i}",
@@ -2947,7 +2996,7 @@ class TestSimbaQueryEnhancement:
         rows = [
             _qe_span_row(
                 f"query {i}",
-                f"query {i} expanded",
+                f"expanded query {i}",
                 expansion_terms=["expanded"],
                 source_text="src",
                 span_id=f"qe-{i}",
@@ -3013,7 +3062,7 @@ class TestSimbaQueryEnhancement:
         rows = [
             _qe_span_row(
                 f"query {i}",
-                f"query {i} expanded",
+                f"expanded query {i}",
                 expansion_terms=["expanded"],
                 source_text="src",
                 span_id=f"qe-{i}",
@@ -3039,7 +3088,7 @@ class TestSimbaQueryEnhancement:
         rows = [
             _qe_span_row(
                 f"query {i}",
-                f"query {i} expanded",
+                f"expanded query {i}",
                 expansion_terms=["expanded"],
                 source_text="src",
                 span_id=f"qe-{i}",
@@ -3077,7 +3126,7 @@ class TestSimbaQueryEnhancement:
         rows = [
             _qe_span_row(
                 f"query {i}",
-                f"query {i} expanded",
+                f"expanded query {i}",
                 expansion_terms=["expanded"],
                 source_text="src",
                 span_id=f"qe-{i}",
@@ -3111,7 +3160,7 @@ class TestSimbaQueryEnhancement:
         rows = [
             _qe_span_row(
                 "same query",
-                "same query expanded",
+                "expanded same query",
                 expansion_terms=["expanded"],
                 span_id=f"qe-{i}",
             )
@@ -3144,7 +3193,7 @@ class TestSimbaQueryEnhancement:
         rows = [
             _qe_span_row(
                 f"query {i}",
-                f"query {i} expanded",
+                f"expanded query {i}",
                 expansion_terms=["expanded"],
                 source_text="src",
                 span_id=f"qe-{i}",
@@ -3195,7 +3244,7 @@ class TestSimbaQueryEnhancement:
         rows = [
             _qe_span_row(
                 f"query {i}",
-                f"query {i} expanded",
+                f"expanded query {i}",
                 expansion_terms=["expanded"],
                 source_text="src",
                 span_id=f"qe-{i}",
@@ -3301,7 +3350,7 @@ class TestSimbaQueryEnhancement:
                 [
                     _qe_span_row(
                         "q",
-                        "q expanded",
+                        "expanded q",
                         expansion_terms=["expanded"],
                         source_text="src",
                     )
@@ -3344,7 +3393,7 @@ class TestSimbaQueryEnhancement:
         rows = [
             _qe_span_row(
                 f"query {i}",
-                f"query {i} expanded",
+                f"expanded query {i}",
                 expansion_terms=["expanded"],
                 source_text="src",
                 span_id=f"qe-{i}",
@@ -3374,33 +3423,33 @@ class TestSimbaQueryEnhancement:
         rows = [
             _qe_span_row(
                 "plain 0",
-                "plain 0 expanded",
+                "expanded plain 0",
                 expansion_terms=["expanded"],
                 span_id="qe-u0",
             ),
             _qe_span_row(
                 "plain 1",
-                "plain 1 expanded",
+                "expanded plain 1",
                 expansion_terms=["expanded"],
                 span_id="qe-u1",
             ),
             _qe_span_row(
                 "grounded 2",
-                "grounded 2 expanded",
+                "expanded grounded 2",
                 expansion_terms=["expanded"],
                 source_text="src",
                 span_id="qe-s2",
             ),
             _qe_span_row(
                 "grounded 3",
-                "grounded 3 expanded",
+                "expanded grounded 3",
                 expansion_terms=["expanded"],
                 source_text="src",
                 span_id="qe-s3",
             ),
             _qe_span_row(
                 "grounded 4",
-                "grounded 4 expanded",
+                "expanded grounded 4",
                 expansion_terms=["expanded"],
                 source_text="src",
                 span_id="qe-s4",
