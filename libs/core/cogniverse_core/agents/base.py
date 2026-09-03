@@ -143,9 +143,9 @@ class AgentInput(BaseModel):
     Pydantic validation is automatic.
     """
 
-    # Use "ignore" to allow orchestrator to pass additional context fields
-    # from previous agent results, while still validating known fields
-    model_config = ConfigDict(extra="ignore")
+    # Undeclared fields are retained so context an upstream threads through
+    # (previous agent results, overlay hints) survives validation.
+    model_config = ConfigDict(extra="allow")
 
 
 class AgentOutput(BaseModel):
