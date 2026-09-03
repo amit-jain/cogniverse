@@ -447,9 +447,9 @@ class TestSystemStats:
     def test_general_stats_top_level_keys_and_types(self, monkeypatch):
         app, _, _, registry = self._app(monkeypatch)
         with TestClient(app) as client:
-            before = datetime.now()
+            before = datetime.now(timezone.utc)
             resp = client.get("/admin/system/stats")
-            after = datetime.now()
+            after = datetime.now(timezone.utc)
 
         assert resp.status_code == 200
         body = resp.json()

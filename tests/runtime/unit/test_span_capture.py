@@ -585,6 +585,8 @@ class TestReplayExportContract:
     empty population.
     """
 
+    _DEAD_PHOENIX_HTTP_ENDPOINT = "http://127.0.0.1:29071"
+
     def _one_record_capture(self, tmp_path):
         record = _span_record(
             name="cogniverse.query_enhancement",
@@ -615,13 +617,14 @@ class TestReplayExportContract:
 
         span_capture.replay_spans(
             capture_path=self._one_record_capture(tmp_path),
-            phoenix_http_endpoint="http://localhost:33006",
+            phoenix_http_endpoint=self._DEAD_PHOENIX_HTTP_ENDPOINT,
             tenant_id="acme:prod",
+            existing_span_ids=(),
         )
 
-        assert seen.get("endpoint") == "http://localhost:33006/v1/traces", (
-            f"replay must post to the OTLP HTTP traces path; exporter kwargs={seen}"
-        )
+        assert (
+            seen.get("endpoint") == f"{self._DEAD_PHOENIX_HTTP_ENDPOINT}/v1/traces"
+        ), f"replay must post to the OTLP HTTP traces path; exporter kwargs={seen}"
 
     def test_failed_export_raises_instead_of_reporting_success(self, tmp_path):
         """A dropped export must surface, not return a full record list."""
@@ -635,9 +638,10 @@ class TestReplayExportContract:
         with pytest.raises(span_capture.SpanCaptureError) as excinfo:
             span_capture.replay_spans(
                 capture_path=self._one_record_capture(tmp_path),
-                phoenix_http_endpoint="http://localhost:33006",
+                phoenix_http_endpoint=self._DEAD_PHOENIX_HTTP_ENDPOINT,
                 tenant_id="acme:prod",
                 span_exporter=FailingExporter(),
+                existing_span_ids=(),
             )
 
         assert "export failed" in str(excinfo.value), str(excinfo.value)
