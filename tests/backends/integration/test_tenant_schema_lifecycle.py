@@ -5,6 +5,7 @@ Tests actual schema deployment, deletion, and tenant isolation via SchemaRegistr
 Requires Docker to be running.
 """
 
+import json
 import logging
 import socket
 from pathlib import Path
@@ -16,6 +17,16 @@ from cogniverse_core.registries.backend_registry import BackendRegistry
 from cogniverse_core.schemas.filesystem_loader import FilesystemSchemaLoader
 
 logger = logging.getLogger(__name__)
+
+_REPO_ROOT = Path(__file__).resolve().parents[3]
+_SHIPPED_CONFIG = json.loads((_REPO_ROOT / "configs" / "config.json").read_text())
+_SHIPPED_BACKEND_PROFILES = _SHIPPED_CONFIG["backend"]["profiles"]
+_SHIPPED_ACTIVE_VIDEO_PROFILE = _SHIPPED_CONFIG["active_video_profile"]
+_SHIPPED_VIDEO_BASE_SCHEMAS = tuple(
+    profile_name
+    for profile_name, profile_config in _SHIPPED_BACKEND_PROFILES.items()
+    if profile_config.get("type") == "video"
+)
 
 
 def _dead_port() -> int:
@@ -85,9 +96,7 @@ def get_backend(vespa_instance, temp_config_manager, schema_loader):
     return _get_backend
 
 
-_KNOWN_BASE_SCHEMAS = (
-    "video_colpali_smol500_mv_frame",
-    "video_xclip_base_mv_chunk_30s",
+_KNOWN_BASE_SCHEMAS = _SHIPPED_VIDEO_BASE_SCHEMAS + (
     "agent_memories",
     "knowledge_graph",
     "wiki",
@@ -138,10 +147,10 @@ def wipe_non_protected_schemas(get_backend):
     shared_vespa container.
 
     A wipe of every non-protected schema matching the base-name list would
-    erase the memory suite's ``agent_memories_*`` and the agent suite's
-    ``video_colpali_smol500_mv_frame_*`` schemas, which live on the same
-    container. The ``_THIS_MODULES_TENANTS`` allow-list bounds the wipe to
-    schemas this file itself deployed in prior tests.
+    erase the memory suite's ``agent_memories_*`` and this module's shipped
+    video-profile schemas, which live on the same container. The
+    ``_THIS_MODULES_TENANTS`` allow-list bounds the wipe to schemas this file
+    itself deployed in prior tests.
     """
     backend = get_backend("__bootstrap_cleanup__")
     sm = backend.schema_manager
@@ -176,32 +185,35 @@ class TestSchemaRegistryDeployment:
         backend = get_backend("acme")
 
         # Deploy schema
-        backend.schema_registry.deploy_schema("acme", "video_colpali_smol500_mv_frame")
+        backend.schema_registry.deploy_schema("acme", _SHIPPED_ACTIVE_VIDEO_PROFILE)
 
         # Verify registered
         schemas = backend.schema_registry.get_tenant_schemas("acme")
         assert len(schemas) == 1
-        assert schemas[0].base_schema_name == "video_colpali_smol500_mv_frame"
-        assert schemas[0].full_schema_name == "video_colpali_smol500_mv_frame_acme_acme"
+        assert schemas[0].base_schema_name == _SHIPPED_ACTIVE_VIDEO_PROFILE
+        assert (
+            schemas[0].full_schema_name == f"{_SHIPPED_ACTIVE_VIDEO_PROFILE}_acme_acme"
+        )
 
     def test_deploy_multiple_schemas_same_tenant(self, get_backend):
         """Test deploying multiple schemas for the same tenant"""
         backend = get_backend("startup")
+        second_video_profile = next(
+            profile_name
+            for profile_name in _SHIPPED_VIDEO_BASE_SCHEMAS
+            if profile_name != _SHIPPED_ACTIVE_VIDEO_PROFILE
+        )
 
         # Deploy two schemas
-        backend.schema_registry.deploy_schema(
-            "startup", "video_colpali_smol500_mv_frame"
-        )
-        backend.schema_registry.deploy_schema(
-            "startup", "video_xclip_base_mv_chunk_30s"
-        )
+        backend.schema_registry.deploy_schema("startup", _SHIPPED_ACTIVE_VIDEO_PROFILE)
+        backend.schema_registry.deploy_schema("startup", second_video_profile)
 
         # Verify both registered
         schemas = backend.schema_registry.get_tenant_schemas("startup")
         assert len(schemas) == 2
         base_names = {s.base_schema_name for s in schemas}
-        assert "video_colpali_smol500_mv_frame" in base_names
-        assert "video_xclip_base_mv_chunk_30s" in base_names
+        assert _SHIPPED_ACTIVE_VIDEO_PROFILE in base_names
+        assert second_video_profile in base_names
 
     def test_deploy_same_schema_multiple_tenants(self, get_backend):
         """Test deploying the same base schema for different tenants"""
@@ -210,12 +222,8 @@ class TestSchemaRegistryDeployment:
         backend = get_backend("multi_tenant_test")
 
         # Deploy for both tenants via same SchemaRegistry
-        backend.schema_registry.deploy_schema(
-            "tenant_a", "video_colpali_smol500_mv_frame"
-        )
-        backend.schema_registry.deploy_schema(
-            "tenant_b", "video_colpali_smol500_mv_frame"
-        )
+        backend.schema_registry.deploy_schema("tenant_a", _SHIPPED_ACTIVE_VIDEO_PROFILE)
+        backend.schema_registry.deploy_schema("tenant_b", _SHIPPED_ACTIVE_VIDEO_PROFILE)
 
         # Verify isolation - each tenant has their own schema
         schemas_a = backend.schema_registry.get_tenant_schemas("tenant_a")
@@ -225,11 +233,11 @@ class TestSchemaRegistryDeployment:
         assert len(schemas_b) == 1
         assert (
             schemas_a[0].full_schema_name
-            == "video_colpali_smol500_mv_frame_tenant_a_tenant_a"
+            == f"{_SHIPPED_ACTIVE_VIDEO_PROFILE}_tenant_a_tenant_a"
         )
         assert (
             schemas_b[0].full_schema_name
-            == "video_colpali_smol500_mv_frame_tenant_b_tenant_b"
+            == f"{_SHIPPED_ACTIVE_VIDEO_PROFILE}_tenant_b_tenant_b"
         )
 
     def test_idempotent_deployment(self, get_backend):
@@ -238,16 +246,16 @@ class TestSchemaRegistryDeployment:
 
         # Deploy twice
         result1 = backend.schema_registry.deploy_schema(
-            "idempotent_test", "video_colpali_smol500_mv_frame"
+            "idempotent_test", _SHIPPED_ACTIVE_VIDEO_PROFILE
         )
         result2 = backend.schema_registry.deploy_schema(
-            "idempotent_test", "video_colpali_smol500_mv_frame"
+            "idempotent_test", _SHIPPED_ACTIVE_VIDEO_PROFILE
         )
 
         # Both should succeed and return same name
         assert result1 == result2
-        assert (
-            result1 == "video_colpali_smol500_mv_frame_idempotent_test_idempotent_test"
+        assert result1 == (
+            f"{_SHIPPED_ACTIVE_VIDEO_PROFILE}_idempotent_test_idempotent_test"
         )
 
         # Should only have one schema registered
@@ -263,12 +271,12 @@ class TestSchemaRegistryDeployment:
             ValueError, match="only alphanumeric, underscore, and colon allowed"
         ):
             backend.schema_registry.deploy_schema(
-                "tenant-with-dash", "video_colpali_smol500_mv_frame"
+                "tenant-with-dash", _SHIPPED_ACTIVE_VIDEO_PROFILE
             )
 
         # Empty tenant_id
         with pytest.raises(ValueError, match="tenant_id is required"):
-            backend.schema_registry.deploy_schema("", "video_colpali_smol500_mv_frame")
+            backend.schema_registry.deploy_schema("", _SHIPPED_ACTIVE_VIDEO_PROFILE)
 
     def test_invalid_schema_name_rejected(self, get_backend):
         """Test that invalid schema names are rejected"""
