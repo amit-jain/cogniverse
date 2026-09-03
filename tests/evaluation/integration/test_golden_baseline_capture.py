@@ -19,6 +19,8 @@ from cogniverse_evaluation.quality_monitor import (
     QualityMonitor,
     Verdict,
 )
+from cogniverse_foundation.telemetry.config import TelemetryConfig
+from cogniverse_foundation.telemetry.manager import TelemetryManager
 
 pytestmark = [pytest.mark.integration, pytest.mark.ci_fast]
 
@@ -45,17 +47,39 @@ class _FakeSearchClient:
 
 @pytest.fixture
 def monitor(phoenix_container):
+    tenant_id = f"qm_baseline_{uuid.uuid4().hex[:8]}"
+    # The entrypoint injects the telemetry manager; built here explicitly so
+    # the monitor's dataset access targets this test's Phoenix without a
+    # config-store read (no Vespa in this stack).
+    manager = TelemetryManager(
+        TelemetryConfig(
+            enabled=True,
+            otlp_endpoint=phoenix_container["otlp_endpoint"],
+            provider_config={
+                "http_endpoint": phoenix_container["http_endpoint"],
+                "grpc_endpoint": phoenix_container["grpc_endpoint"],
+            },
+            service_name="qm-baseline-test",
+            environment="test",
+        )
+    )
     m = QualityMonitor(
-        tenant_id=f"qm_baseline_{uuid.uuid4().hex[:8]}",
+        tenant_id=tenant_id,
         runtime_url="http://unused",
         phoenix_http_endpoint=phoenix_container["http_endpoint"],
         llm_base_url="http://unused",
         llm_model="unused",
         golden_dataset_path="/unused.json",
+        telemetry_provider=manager.get_provider(tenant_id=tenant_id),
     )
-    m._load_golden_queries = lambda: [{"query": "q", "expected_videos": ["vidA"]}]
+    # Pre-populate the loader's cache slot; evaluate_golden_set reads it first.
+    m._golden_queries = [{"query": "q", "expected_videos": ["vidA"]}]
     # vidA at rank 2 -> reciprocal rank 0.5
     m._http_client = _FakeSearchClient([{"source_id": "other"}, {"source_id": "vidA"}])
+    # This file pins the baseline-capture contract; the XGBoost timing gate
+    # (its own policy, exercised by test_quality_monitor) would override the
+    # threshold verdict off this stack's empty training history.
+    m._apply_training_decision_model = lambda verdicts, golden, live: verdicts
     return m
 
 

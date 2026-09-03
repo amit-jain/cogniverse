@@ -30,7 +30,7 @@ from tests.fixtures.llm import (
 logger = logging.getLogger(__name__)
 
 
-pytestmark = [pytest.mark.integration, pytest.mark.requires_lm]
+pytestmark = [pytest.mark.integration, pytest.mark.requires_lm, pytest.mark.local_only]
 
 
 @pytest.fixture(scope="module", autouse=True)

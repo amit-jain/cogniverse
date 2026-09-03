@@ -170,7 +170,7 @@ jobs:
         COVERAGE_FILE: .coverage
       run: |
         uv run --no-sync python -m pytest tests/routing/integration \
-          -m "integration and not local_only" \
+          -m "integration and not local_only and not requires_lm" \
           --cov=libs/agents/cogniverse_agents/routing \
           --cov-report=term-missing \
           --cov-report=xml:coverage_routing_integration.xml

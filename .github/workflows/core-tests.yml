@@ -63,6 +63,15 @@ jobs:
         uv sync --all-packages --all-extras --no-extra cuda --no-extra rocm
         uv pip install pytest-cov
 
+    - name: Install system libraries
+      run: |
+        sudo apt-get update
+        sudo apt-get install -y ffmpeg
+
+    - name: Prefetch DenseOn tokenizer
+      run: |
+        uv run python -c "from huggingface_hub import snapshot_download; snapshot_download('lightonai/DenseOn', allow_patterns=['config.json', 'tokenizer.json', 'tokenizer_config.json', 'special_tokens_map.json', 'vocab*', 'merges.txt', '*.model'])"
+
     - name: Resolve assertion-guard base
       id: guard_base
       run: |
