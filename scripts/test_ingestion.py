@@ -74,7 +74,7 @@ def build_pytest_command(args) -> List[str]:
         [
             "-v",
             "--tb=long",
-            "--cov=src/app/ingestion/processors",
+            "--cov=libs/runtime/cogniverse_runtime/ingestion/processors",
             "--cov-report=term-missing",
         ]
     )
