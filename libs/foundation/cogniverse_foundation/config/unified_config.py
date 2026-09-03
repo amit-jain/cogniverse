@@ -299,7 +299,6 @@ class SystemConfig:
     """
 
     # Agent service URLs
-    video_agent_url: str = "http://localhost:8002"
     summarizer_agent_url: str = "http://localhost:8004"
 
     # API service URLs
@@ -391,7 +390,6 @@ class SystemConfig:
     def to_dict(self) -> Dict[str, Any]:
         """Convert to dictionary"""
         return {
-            "video_agent_url": self.video_agent_url,
             "summarizer_agent_url": self.summarizer_agent_url,
             "ingestion_api_url": self.ingestion_api_url,
             "search_backend": self.search_backend,
@@ -424,7 +422,6 @@ class SystemConfig:
     def from_dict(cls, data: Dict[str, Any]) -> "SystemConfig":
         """Create from dictionary"""
         return cls(
-            video_agent_url=data.get("video_agent_url", "http://localhost:8002"),
             summarizer_agent_url=data.get(
                 "summarizer_agent_url", "http://localhost:8004"
             ),

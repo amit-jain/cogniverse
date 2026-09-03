@@ -241,18 +241,18 @@ def render_system_config_ui(manager, tenant_id: str):
     system_config = manager.get_system_config()
 
     with st.form("system_config_form"):
-        video_agent_url = st.text_input(
-            "Video Agent URL", value=system_config.video_agent_url
+        summarizer_agent_url = st.text_input(
+            "Summarizer Agent URL", value=system_config.summarizer_agent_url
         )
         backend_url = st.text_input("Backend URL", value=system_config.backend_url)
         backend_port = st.number_input("Backend Port", value=system_config.backend_port)
-        # ... summarizer_agent_url, search_backend, llm_model, base_url,
+        # ... search_backend, llm_model, base_url,
         #     llm_api_key, telemetry_url, telemetry_collector_endpoint, environment
 
         if st.form_submit_button("💾 Save System Configuration"):
             save_system_config_edits(
                 manager, system_config,
-                video_agent_url=video_agent_url,
+                summarizer_agent_url=summarizer_agent_url,
                 backend_url=backend_url,
                 backend_port=backend_port,
                 # ... other fields
@@ -1025,7 +1025,7 @@ Backend Port: [8080]
 Version: 2
 Updated: 2025-10-07 14:30:00
 Changes:
-  - video_agent_url: http://localhost:8002 (added)
+  - summarizer_agent_url: http://localhost:8004 (added)
   - backend_url: http://localhost (updated)
 
 [Rollback to Version 1] [Export Version]

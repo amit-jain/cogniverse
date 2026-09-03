@@ -110,7 +110,6 @@ def test_save_preserves_unedited_infra_fields():
     save_system_config_edits(
         manager,
         current,
-        video_agent_url="http://video.svc",
         summarizer_agent_url="http://summ.svc",
         search_backend="vespa",
         backend_url="http://vespa.svc",
@@ -128,7 +127,7 @@ def test_save_preserves_unedited_infra_fields():
     # Edited fields took effect.
     assert reloaded.llm_model == "new-model"
     assert reloaded.environment == "production"
-    assert reloaded.video_agent_url == "http://video.svc"
+    assert reloaded.summarizer_agent_url == "http://summ.svc"
 
     # Unedited infra fields survived (these were wiped by the old code).
     assert reloaded.redis_url == "redis://redis.svc:6379/0"

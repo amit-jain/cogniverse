@@ -27,7 +27,6 @@ import numpy as np
 import requests
 from vespa.exceptions import VespaError
 
-from cogniverse_core.common.utils.output_manager import OutputManager
 from cogniverse_core.common.utils.retry import RetryConfig, retry_with_backoff
 from cogniverse_core.registries.backend_registry import get_backend_registry
 from cogniverse_sdk.document import (
@@ -711,7 +710,6 @@ class VespaSearchBackend(SearchBackend):
             self.default_profiles = {}
 
         full_url = f"{self.backend_url}:{self.backend_port}"
-        self.output_manager = OutputManager()
 
         if enable_connection_pool:
             self.pool = ConnectionPool(full_url, pool_config or ConnectionPoolConfig())
@@ -800,7 +798,6 @@ class VespaSearchBackend(SearchBackend):
         full_url = f"{self.backend_url}:{self.backend_port}"
 
         # Initialize output manager
-        self.output_manager = OutputManager()
 
         old_pool = self.pool
         if old_pool is not None:
@@ -1911,6 +1908,7 @@ class VespaSearchBackend(SearchBackend):
         if self.metrics:
             metrics["search_metrics"] = {
                 "total_searches": self.metrics.total_searches,
+                "failed_searches": self.metrics.failed_searches,
                 "success_rate": self.metrics.success_rate,
                 "avg_latency_ms": self.metrics.avg_latency_ms,
                 "p95_latency_ms": self.metrics.p95_latency_ms,

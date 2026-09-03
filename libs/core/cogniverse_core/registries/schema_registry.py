@@ -73,9 +73,7 @@ class SchemaRegistry:
     # stampede the shared storage read.
     _storage_read_lock = threading.RLock()
 
-    def __init__(
-        self, config_manager, backend, schema_loader, strict_mode: bool = True
-    ):
+    def __init__(self, config_manager, backend, schema_loader):
         """
         Initialize SchemaRegistry with required dependencies.
 
@@ -86,7 +84,6 @@ class SchemaRegistry:
             config_manager: ConfigManager instance (REQUIRED)
             backend: Backend instance for schema deployment (REQUIRED)
             schema_loader: SchemaLoader instance for loading schema definitions (REQUIRED)
-            strict_mode: Retained for constructor compatibility.
 
         Raises:
             ValueError: If any required parameter is None
@@ -102,7 +99,6 @@ class SchemaRegistry:
         self._config_manager = config_manager
         self._backend = backend
         self._schema_loader = schema_loader
-        self.strict_mode = strict_mode
 
         # In-memory registry of all deployed schemas
         # Key: (tenant_id, base_schema_name), Value: SchemaInfo

@@ -38,7 +38,6 @@ COMMON_RATCHET_KEYS = {
     "boundary_low",
     "cache_config",
     "cache_ttl_seconds",
-    "chunk_based",
     "cleanup_on_startup",
     "cohere",
     "default_system_prompt",
@@ -56,13 +55,11 @@ COMMON_RATCHET_KEYS = {
     "extract_audio",
     "failure_lookback_hours",
     "feedback_interval_minutes",
-    "frame_features",
     "gliner_config",
     "gliner_label_optimization",
     "gliner_labels",
     "gliner_threshold_optimization",
     "include_original",
-    "inference_config",
     "input_rails",
     "intervals",
     "jina",
@@ -78,7 +75,6 @@ COMMON_RATCHET_KEYS = {
     "max_annotations_per_cycle",
     "max_annotations_per_run",
     "max_cache_size",
-    "max_frames_per_chunk",
     "max_length",
     "max_message_length",
     "max_patches",
@@ -95,10 +91,8 @@ COMMON_RATCHET_KEYS = {
     "min_annotations_for_update",
     "min_days_between_optimizations",
     "min_entities_for_fast_path",
-    "min_frames",
     "modal_visual_judge",
     "monitoring_config",
-    "native_dimensions",
     "ollama_bge",
     "ollama_config",
     "ollama_mxbai",
@@ -132,6 +126,10 @@ COMMON_RATCHET_KEYS = {
 CONFIG_EXTRA_RATCHET_KEYS = {
     "advisory",
     "bucket",
+    "chunk_based",
+    "inference_config",
+    "max_frames_per_chunk",
+    "min_frames",
     "enable_reflective_recompile",
     "key_prefix",
     "lifecycle_expiration_days",
@@ -141,6 +139,10 @@ CONFIG_EXTRA_RATCHET_KEYS = {
 
 CHART_EXTRA_RATCHET_KEYS = {
     "bucket",
+    "chunk_based",
+    "inference_config",
+    "max_frames_per_chunk",
+    "min_frames",
     "key_prefix",
     "lifecycle_expiration_days",
 }
@@ -158,9 +160,9 @@ EXPECTED_RATCHET_KEYS = {
 }
 
 EXPECTED_KEY_COUNTS = {
-    CONFIG_PATHS[0]: 318,
-    CONFIG_PATHS[1]: 303,
-    CONFIG_PATHS[2]: 286,
+    CONFIG_PATHS[0]: 314,
+    CONFIG_PATHS[1]: 299,
+    CONFIG_PATHS[2]: 274,
 }
 
 EXPECTED_AGENT_MAPPINGS = {

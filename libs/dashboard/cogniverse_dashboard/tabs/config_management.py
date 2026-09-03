@@ -142,19 +142,10 @@ def render_system_config_ui(manager, tenant_id: str):
 
     with st.form("system_config_form"):
         st.markdown("### Agent Service URLs")
-        col1, col2 = st.columns(2)
-
-        with col1:
-            video_agent_url = st.text_input(
-                "Video Agent URL",
-                value=system_config.video_agent_url,
-            )
-
-        with col2:
-            summarizer_agent_url = st.text_input(
-                "Summarizer Agent URL",
-                value=system_config.summarizer_agent_url,
-            )
+        summarizer_agent_url = st.text_input(
+            "Summarizer Agent URL",
+            value=system_config.summarizer_agent_url,
+        )
 
         st.markdown("### Search Backend")
         col1, col2, col3 = st.columns(3)
@@ -227,7 +218,6 @@ def render_system_config_ui(manager, tenant_id: str):
                 save_system_config_edits(
                     manager,
                     system_config,
-                    video_agent_url=video_agent_url,
                     summarizer_agent_url=summarizer_agent_url,
                     search_backend=search_backend,
                     backend_url=backend_url,

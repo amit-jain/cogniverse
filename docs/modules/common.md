@@ -240,7 +240,6 @@ from cogniverse_foundation.config.unified_config import SystemConfig
 @dataclass
 class SystemConfig:
     # Agent service URLs
-    video_agent_url: str = "http://localhost:8002"
     summarizer_agent_url: str = "http://localhost:8004"
 
     # API service URLs

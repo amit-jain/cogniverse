@@ -248,7 +248,6 @@ from cogniverse_foundation.config.unified_config import SystemConfig
 
 system_config = SystemConfig(
     search_backend="vespa",
-    video_agent_url="http://localhost:8002",
     backend_url="http://localhost",
     backend_port=8080
 )
@@ -497,7 +496,7 @@ Configurations are organized by scope for isolation:
 
 | Scope | Description | Example Keys |
 |-------|-------------|--------------|
-| `SYSTEM` | Infrastructure settings | backend_url, backend_port, video_agent_url |
+| `SYSTEM` | Infrastructure settings | backend_url, backend_port, summarizer_agent_url |
 | `AGENT` | Per-agent settings | module_config, llm_model, llm_temperature |
 | `ROUTING` | Routing agent settings | routing_mode, enable_fast_path, gliner_threshold |
 | `TELEMETRY` | Telemetry settings | otlp_endpoint, otlp_enabled, level |
@@ -1000,7 +999,6 @@ config_manager = create_default_config_manager()
 # Set global system config (not per-tenant)
 system_config = SystemConfig(
     search_backend="vespa",
-    video_agent_url="http://localhost:8002",
     backend_url="http://localhost",
     backend_port=8080
 )
