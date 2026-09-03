@@ -1855,6 +1855,7 @@ class AgentDispatcher:
             relationships=enrichment.get("relationships") or [],
             query_variants=enrichment.get("query_variants") or [],
             profiles=enrichment.get("profiles"),
+            rlm=(context or {}).get("rlm"),
         )
 
         # Bind the tenant-routed LM so the SearchAgent's DSPy query enhancement
@@ -2728,6 +2729,8 @@ class AgentDispatcher:
         input_kwargs: Dict[str, Any] = {"query": query, "tenant_id": tenant_id}
         if "max_iterations" in ctx:
             input_kwargs["max_iterations"] = ctx["max_iterations"]
+        if ctx.get("rlm") is not None:
+            input_kwargs["rlm"] = ctx["rlm"]
         input_data = DeepResearchInput(**input_kwargs)
         result = await agent.process(input_data)
 
@@ -2792,6 +2795,7 @@ class AgentDispatcher:
             tenant_id=tenant_id,
             max_iterations=ctx.get("max_iterations", 5),
             language=ctx.get("language", "python"),
+            rlm=ctx.get("rlm"),
         )
         with dspy.context(lm=coding_lm):
             result = await agent.process(input_data)
