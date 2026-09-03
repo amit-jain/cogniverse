@@ -30,6 +30,7 @@ import httpx
 import pytest
 from fastapi import FastAPI
 
+from cogniverse_agents.inference import deno_check
 from cogniverse_agents.orchestrator_agent import (
     OrchestratorAgent,
     OrchestratorDeps,
@@ -108,7 +109,7 @@ class TestRealSubagentDispatch:
     ):
         # Skip Deno requirement so RLMInference constructor doesn't blow up
         # when _build_deep_synthesis_workflow runs.
-        monkeypatch.setenv("COGNIVERSE_RLM_SKIP_DENO_CHECK", "1")
+        monkeypatch.setattr(deno_check, "_skip_deno_check", True)
         orchestrator, app, _ = orchestrator_with_subagent
         # Build with a REQUEST tenant distinct from any deps value — the
         # dispatch must carry THIS tenant, not deps.tenant_id / __system__.
@@ -133,7 +134,7 @@ class TestRealSubagentDispatch:
     async def test_unregistered_subagent_returns_error_string(
         self, orchestrator_with_subagent, monkeypatch
     ):
-        monkeypatch.setenv("COGNIVERSE_RLM_SKIP_DENO_CHECK", "1")
+        monkeypatch.setattr(deno_check, "_skip_deno_check", True)
         orchestrator, app, _ = orchestrator_with_subagent
         workflow = orchestrator._build_deep_synthesis_workflow("t")
         snippet = await workflow._dispatch("anything", "agent_does_not_exist")
@@ -145,7 +146,7 @@ class TestRealSubagentDispatch:
         assert "agent_does_not_exist" in snippet
 
     async def test_subagent_5xx_surfaces_as_failure_snippet(self, monkeypatch):
-        monkeypatch.setenv("COGNIVERSE_RLM_SKIP_DENO_CHECK", "1")
+        monkeypatch.setattr(deno_check, "_skip_deno_check", True)
         cm = create_default_config_manager()
         registry = AgentRegistry(tenant_id="f41_5xx", config_manager=cm)
         registry.agents = {
@@ -185,7 +186,7 @@ class TestRealSubagentDispatch:
     async def test_dispatcher_response_without_known_answer_field_is_serialised(
         self, monkeypatch
     ):
-        monkeypatch.setenv("COGNIVERSE_RLM_SKIP_DENO_CHECK", "1")
+        monkeypatch.setattr(deno_check, "_skip_deno_check", True)
         cm = create_default_config_manager()
         registry = AgentRegistry(tenant_id="f41_weird", config_manager=cm)
         registry.agents = {
@@ -231,7 +232,7 @@ class TestEndToEndWorkflowRunWithRealDispatch:
         """Run the full workflow with a stubbed RLM so the loop terminates
         deterministically; assert the dispatched evidence in its trajectory
         comes from the REAL sub-agent, not a stub string."""
-        monkeypatch.setenv("COGNIVERSE_RLM_SKIP_DENO_CHECK", "1")
+        monkeypatch.setattr(deno_check, "_skip_deno_check", True)
         orchestrator, app, _ = orchestrator_with_subagent
         workflow = orchestrator._build_deep_synthesis_workflow("t")
 
@@ -288,7 +289,7 @@ class TestRateLimiterSharedAcrossBuilds:
         through the first build must exhaust a cap of 2 for the SECOND build
         too — a limiter allocated inside the workflow constructor would start
         every request with an empty window and admit unboundedly."""
-        monkeypatch.setenv("COGNIVERSE_RLM_SKIP_DENO_CHECK", "1")
+        monkeypatch.setattr(deno_check, "_skip_deno_check", True)
         orchestrator, _, _ = orchestrator_with_subagent
         from cogniverse_agents.deep_synthesis_workflow import (
             DeepSynthesisRateLimiter,

@@ -26,6 +26,7 @@ from cogniverse_agents.deep_synthesis_workflow import (
     DeepSynthesisResult,
     DeepSynthesisWorkflow,
 )
+from cogniverse_agents.inference import deno_check
 from cogniverse_agents.orchestrator_agent import (
     OrchestratorAgent,
     OrchestratorDeps,
@@ -262,10 +263,10 @@ class TestBuildHelper:
         DeepSynthesisWorkflow — proving the constructor wire is alive.
 
         Deno is required for the actual RLM REPL execution; for this
-        wire-coverage test we set COGNIVERSE_RLM_SKIP_DENO_CHECK=1 so
+        wire-coverage test we bypass the probe via configure state so
         the wire passes on dev machines without Deno installed.
         """
-        monkeypatch.setenv("COGNIVERSE_RLM_SKIP_DENO_CHECK", "1")
+        monkeypatch.setattr(deno_check, "_skip_deno_check", True)
         cm = create_default_config_manager()
         registry = AgentRegistry(tenant_id="b7_with_llm", config_manager=cm)
         orchestrator = OrchestratorAgent(
@@ -282,7 +283,7 @@ class TestBuildHelper:
         """When router routing is enabled, the deep-synthesis RLM's endpoint is
         rewritten to the semantic router with the tenant tier + the ``rlm_inference``
         task header — the direct backend endpoint is never used."""
-        monkeypatch.setenv("COGNIVERSE_RLM_SKIP_DENO_CHECK", "1")
+        monkeypatch.setattr(deno_check, "_skip_deno_check", True)
         from cogniverse_foundation.config.unified_config import SemanticRouterConfig
 
         router = SemanticRouterConfig(

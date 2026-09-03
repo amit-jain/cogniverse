@@ -130,6 +130,9 @@ class TestMirrorMinioCredentialsToAws:
             "semantic_embed_url": None,
             "semantic_embed_model": None,
             "tenant_cache_capacity": 1,
+            "rlm_promotion_enabled": True,
+            "rlm_promotion_fraction": 0.75,
+            "rlm_skip_deno_check": True,
         }
 
     def test_mirrors_minio_secret_onto_aws_names(self, monkeypatch):

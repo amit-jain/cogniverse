@@ -27,6 +27,15 @@ class DenoNotInstalledError(RuntimeError):
     """Raised at RLMInference construction when Deno is required but missing."""
 
 
+_skip_deno_check: bool = False
+
+
+def configure_deno_check(*, skip: bool) -> None:
+    """Set whether the availability probe is bypassed in this process."""
+    global _skip_deno_check
+    _skip_deno_check = skip
+
+
 def is_deno_available() -> bool:
     """Return True iff a Deno binary is reachable for subprocess execution.
 
@@ -47,14 +56,12 @@ def is_deno_available() -> bool:
 def assert_deno_available() -> None:
     """Raise DenoNotInstalledError unless Deno is reachable.
 
-    Honours ``COGNIVERSE_RLM_SKIP_DENO_CHECK=1`` for environments that need to
-    boot without Deno (e.g. test collection, agents that never invoke RLM).
+    Bypassed when ``configure_deno_check(skip=True)`` was applied (the runtime
+    entrypoint resolves ``COGNIVERSE_RLM_SKIP_DENO_CHECK`` at process start)
+    for environments that boot without Deno (e.g. test collection, agents that
+    never invoke RLM).
     """
-    if os.environ.get("COGNIVERSE_RLM_SKIP_DENO_CHECK", "").lower() in {
-        "1",
-        "true",
-        "yes",
-    }:
+    if _skip_deno_check:
         return
 
     if is_deno_available():

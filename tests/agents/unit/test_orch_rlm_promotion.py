@@ -4,9 +4,11 @@ from __future__ import annotations
 
 import pytest
 
+from cogniverse_agents import _rlm_promotion
 from cogniverse_agents._rlm_promotion import (
     _RLM_PROMOTION_DEFAULT_THRESHOLD,
     _projected_payload_chars,
+    configure_rlm_promotion,
 )
 from cogniverse_agents._rlm_promotion import (
     maybe_promote_to_rlm as _maybe_promote_to_rlm,
@@ -87,27 +89,27 @@ class TestPromotionDecision:
         _maybe_promote_to_rlm("search", agent_input)
         assert "rlm" in agent_input
 
-    def test_env_disabled_skips_promotion(self, monkeypatch):
-        monkeypatch.setenv("COGNIVERSE_ORCH_RLM_PROMOTION", "disabled")
+    def test_disabled_skips_promotion(self, monkeypatch):
+        monkeypatch.setattr(_rlm_promotion, "_promotion_enabled", False)
         big_value = "X" * (_RLM_PROMOTION_DEFAULT_THRESHOLD)
         agent_input = {"query": "q", "context": big_value}
         _maybe_promote_to_rlm("search_agent", agent_input)
         assert "rlm" not in agent_input
 
-    def test_custom_fraction_via_env(self, monkeypatch):
+    def test_custom_fraction(self, monkeypatch):
         # Tighten the fraction so a smaller payload triggers.
-        monkeypatch.setenv("COGNIVERSE_ORCH_RLM_PROMOTION_FRACTION", "0.1")
+        monkeypatch.setattr(_rlm_promotion, "_promotion_fraction", 0.1)
         # 10% of 50_000 = 5_000 chars; our payload is 6000.
         agent_input = {"query": "q" * 6000}
         _maybe_promote_to_rlm("search_agent", agent_input)
         assert "rlm" in agent_input
 
-    def test_env_invalid_fraction_falls_back_to_default(self, monkeypatch):
-        monkeypatch.setenv("COGNIVERSE_ORCH_RLM_PROMOTION_FRACTION", "not-a-float")
-        # Below default cutoff; should NOT promote.
-        agent_input = {"query": "small"}
-        _maybe_promote_to_rlm("search_agent", agent_input)
-        assert "rlm" not in agent_input
+    def test_configure_sets_module_state(self, monkeypatch):
+        monkeypatch.setattr(_rlm_promotion, "_promotion_enabled", True)
+        monkeypatch.setattr(_rlm_promotion, "_promotion_fraction", 0.75)
+        configure_rlm_promotion(enabled=False, fraction=0.2)
+        assert _rlm_promotion._promotion_enabled is False
+        assert _rlm_promotion._promotion_fraction == 0.2
 
     @pytest.mark.parametrize(
         "agent",

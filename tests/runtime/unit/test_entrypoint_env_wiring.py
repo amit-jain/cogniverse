@@ -44,6 +44,9 @@ def _resolver_spy(events: list[str]):
             "semantic_embed_url": "http://embed.internal:8000",
             "semantic_embed_model": "embed-model",
             "tenant_cache_capacity": 23,
+            "rlm_promotion_enabled": True,
+            "rlm_promotion_fraction": 0.75,
+            "rlm_skip_deno_check": True,
         }
 
     return _resolve
@@ -76,6 +79,11 @@ def _patch_shared_resolver(monkeypatch, events: list[str]):
 
 
 def test_optimization_cli_resolves_before_telemetry(monkeypatch):
+    from cogniverse_agents import _rlm_promotion
+    from cogniverse_agents.inference import deno_check
+
+    monkeypatch.setattr(_rlm_promotion, "_promotion_fraction", 0.33)
+    monkeypatch.setattr(deno_check, "_skip_deno_check", False)
     events: list[str] = []
 
     async def _fake_simba_optimization(**kwargs):
@@ -106,6 +114,11 @@ def test_optimization_cli_resolves_before_telemetry(monkeypatch):
         "mode",
         f"telemetry:{{'otlp_endpoint': '{TELEMETRY_OTLP_ENDPOINT}'}}",
     ]
+    from cogniverse_agents import _rlm_promotion
+    from cogniverse_agents.inference import deno_check
+
+    assert _rlm_promotion._promotion_fraction == 0.75
+    assert deno_check._skip_deno_check is True
 
 
 def test_optimization_cli_monthly_reports_resolves_before_telemetry(
@@ -151,6 +164,9 @@ def test_optimization_cli_monthly_reports_resolves_before_telemetry(
 
 
 def test_quality_monitor_cli_resolves_before_telemetry(monkeypatch):
+    from cogniverse_agents.inference import deno_check
+
+    monkeypatch.setattr(deno_check, "_skip_deno_check", False)
     events: list[str] = []
 
     class _StubMonitor:
@@ -198,6 +214,9 @@ def test_quality_monitor_cli_resolves_before_telemetry(monkeypatch):
         "monitor",
         "annotation-cycle",
     ]
+    from cogniverse_agents.inference import deno_check
+
+    assert deno_check._skip_deno_check is True
 
 
 @pytest.mark.asyncio
@@ -350,6 +369,9 @@ async def test_worker_bootstrap_sets_exact_s3_defaults(monkeypatch):
             "semantic_embed_url": "http://embed.internal:8000",
             "semantic_embed_model": "embed-model",
             "tenant_cache_capacity": 23,
+            "rlm_promotion_enabled": True,
+            "rlm_promotion_fraction": 0.75,
+            "rlm_skip_deno_check": True,
         },
     )
     monkeypatch.setattr(worker, "_validate_pipeline_cache_defaults", lambda: None)
@@ -421,6 +443,9 @@ def test_main_bootstrap_sets_exact_s3_defaults(monkeypatch):
         semantic_embed_url="http://embed.internal:8000",
         semantic_embed_model="embed-model",
         tenant_cache_capacity=23,
+        rlm_promotion_enabled=True,
+        rlm_promotion_fraction=0.75,
+        rlm_skip_deno_check=True,
     )
 
     assert s3_backend.configured_s3_backend_defaults() == s3_backend.S3BackendDefaults(
@@ -445,6 +470,9 @@ async def test_worker_bootstrap_fails_without_minio_when_s3_cache_enabled(monkey
             "semantic_embed_url": None,
             "semantic_embed_model": None,
             "tenant_cache_capacity": 23,
+            "rlm_promotion_enabled": True,
+            "rlm_promotion_fraction": 0.75,
+            "rlm_skip_deno_check": True,
         },
     )
     monkeypatch.setenv("REDIS_URL", "redis://stub")
@@ -475,3 +503,78 @@ async def test_worker_bootstrap_fails_without_minio_when_s3_cache_enabled(monkey
         ),
     ):
         await worker.run(stop=asyncio.Event())
+
+
+class TestRlmKnobResolution:
+    """RLM promotion/deno knobs are parsed once at the entrypoint."""
+
+    def test_resolves_rlm_knob_defaults_with_empty_env(self, monkeypatch):
+        for var in (
+            "COGNIVERSE_ORCH_RLM_PROMOTION",
+            "COGNIVERSE_ORCH_RLM_PROMOTION_FRACTION",
+            "COGNIVERSE_RLM_SKIP_DENO_CHECK",
+        ):
+            monkeypatch.delenv(var, raising=False)
+        resolved = runtime_main._resolve_library_env_defaults()
+        assert resolved["rlm_promotion_enabled"] is True
+        assert resolved["rlm_promotion_fraction"] == 0.75
+        assert resolved["rlm_skip_deno_check"] is False
+
+    def test_resolves_rlm_knobs_from_env(self, monkeypatch):
+        monkeypatch.setenv("COGNIVERSE_ORCH_RLM_PROMOTION", "disabled")
+        monkeypatch.setenv("COGNIVERSE_ORCH_RLM_PROMOTION_FRACTION", "0.1")
+        monkeypatch.setenv("COGNIVERSE_RLM_SKIP_DENO_CHECK", "TRUE")
+        resolved = runtime_main._resolve_library_env_defaults()
+        assert resolved["rlm_promotion_enabled"] is False
+        assert resolved["rlm_promotion_fraction"] == 0.1
+        assert resolved["rlm_skip_deno_check"] is True
+
+    def test_invalid_fraction_resolves_to_default(self, monkeypatch):
+        monkeypatch.setenv("COGNIVERSE_ORCH_RLM_PROMOTION_FRACTION", "not-a-float")
+        resolved = runtime_main._resolve_library_env_defaults()
+        assert resolved["rlm_promotion_fraction"] == 0.75
+
+    @pytest.mark.parametrize(
+        ("value", "expected"),
+        [
+            ("1", True),
+            ("true", True),
+            ("yes", True),
+            ("TRUE", True),
+            ("Yes", True),
+            ("0", False),
+            ("", False),
+            ("no", False),
+            ("false", False),
+        ],
+    )
+    def test_skip_deno_spellings(self, monkeypatch, value, expected):
+        monkeypatch.setenv("COGNIVERSE_RLM_SKIP_DENO_CHECK", value)
+        resolved = runtime_main._resolve_library_env_defaults()
+        assert resolved["rlm_skip_deno_check"] is expected
+
+    def test_configure_applies_rlm_state_to_library_modules(self, monkeypatch):
+        from cogniverse_agents import _rlm_promotion
+        from cogniverse_agents.inference import deno_check
+        from cogniverse_runtime.entrypoint_env import (
+            configure_runtime_library_defaults,
+        )
+
+        monkeypatch.setattr(_rlm_promotion, "_promotion_enabled", True)
+        monkeypatch.setattr(_rlm_promotion, "_promotion_fraction", 0.75)
+        monkeypatch.setattr(deno_check, "_skip_deno_check", False)
+
+        configure_runtime_library_defaults(
+            {
+                "minio_endpoint": None,
+                "minio_access_key": None,
+                "minio_secret_key": None,
+                "rlm_promotion_enabled": False,
+                "rlm_promotion_fraction": 0.1,
+                "rlm_skip_deno_check": True,
+            }
+        )
+
+        assert _rlm_promotion._promotion_enabled is False
+        assert _rlm_promotion._promotion_fraction == 0.1
+        assert deno_check._skip_deno_check is True

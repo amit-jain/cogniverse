@@ -3524,7 +3524,9 @@ must be reachable on `PATH` (the runtime container installs it to `/usr/local`
 in `libs/runtime/Dockerfile`). `RLMInference.__init__` probes for Deno and
 raises `DenoNotInstalledError` at construction if missing — failing fast at
 boot rather than on the first call. Set `COGNIVERSE_RLM_SKIP_DENO_CHECK=1`
-to bypass the probe (only when you are certain RLM will not be invoked).
+to bypass the probe (only when you are certain RLM will not be invoked); the
+runtime entrypoint resolves it once at process start via
+`configure_deno_check`.
 
 ### Key Components
 
@@ -3702,6 +3704,9 @@ Eligible agents (their input schema accepts an `rlm` field):
 |---|---|---|
 | `COGNIVERSE_ORCH_RLM_PROMOTION` | unset | Set to `disabled` to skip promotion entirely. |
 | `COGNIVERSE_ORCH_RLM_PROMOTION_FRACTION` | `0.75` | Override the threshold fraction. |
+
+Both are resolved once at process start by the runtime entrypoint and applied
+via `configure_rlm_promotion`; the promotion module itself reads no env.
 
 The promotion is **idempotent**: if the caller already supplied an
 `rlm` field (any value, including `None` for explicit opt-out), the

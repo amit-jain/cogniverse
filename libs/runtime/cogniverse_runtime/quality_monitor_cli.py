@@ -943,9 +943,13 @@ def main():
     # artifacts by the canonical form, so a bare chart value like "default"
     # must not fork a parallel tenant world.
     from cogniverse_core.common.tenant_utils import canonical_tenant_id
-    from cogniverse_runtime.entrypoint_env import resolve_library_env_defaults
+    from cogniverse_runtime.entrypoint_env import (
+        configure_runtime_library_defaults,
+        resolve_library_env_defaults,
+    )
 
     runtime_env = resolve_library_env_defaults()
+    configure_runtime_library_defaults(runtime_env)
     telemetry_otlp_endpoint = runtime_env["telemetry_otlp_endpoint"]
     telemetry_http_endpoint = runtime_env["telemetry_http_endpoint"] or args.phoenix_url
 
