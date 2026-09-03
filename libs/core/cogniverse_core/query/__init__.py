@@ -6,7 +6,6 @@ from cogniverse_core.query.encoders import (
     ColQwenQueryEncoder,
     QueryEncoder,
     QueryEncoderFactory,
-    VideoPrismQueryEncoder,
 )
 
 __all__ = [
@@ -15,5 +14,4 @@ __all__ = [
     "ColPaliFamilyQueryEncoder",
     "ColPaliQueryEncoder",
     "ColQwenQueryEncoder",
-    "VideoPrismQueryEncoder",
 ]

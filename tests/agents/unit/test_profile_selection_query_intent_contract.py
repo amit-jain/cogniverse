@@ -80,12 +80,12 @@ def _base_profile_selection_available_profiles() -> str:
     )
     config_manager.add_backend_profile(
         BackendProfileConfig.from_dict(
-            "video_videoprism_base_mv_chunk_30s",
+            "video_xclip_base_mv_chunk_30s",
             {
                 "type": "video",
-                "schema_name": "video_videoprism_base_mv_chunk_30s",
-                "embedding_model": "videoprism_public_v1_base_hf",
-                "inference_services": {"embedding": "videoprism_jax"},
+                "schema_name": "video_xclip_base_mv_chunk_30s",
+                "embedding_model": "microsoft/xclip-large-patch14",
+                "inference_services": {"embedding": "video_embed"},
             },
         ),
         tenant_id="acme:docs",

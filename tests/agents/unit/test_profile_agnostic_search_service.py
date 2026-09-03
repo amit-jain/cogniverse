@@ -41,13 +41,13 @@ def mock_config():
                     "embedding_format": "binary",
                     "schema_name": "video_colqwen_omni",
                 },
-                "video_videoprism_base": {
+                "video_xclip_base": {
                     "type": "video",
                     "result_granularity": "source",
-                    "embedding_model": "google/videoprism-base",
+                    "embedding_model": "microsoft/xclip-large-patch14",
                     "embedding_dim": 768,
                     "embedding_format": "float",
-                    "schema_name": "video_videoprism_base",
+                    "schema_name": "video_xclip_base",
                 },
                 "audio_clap_semantic": {
                     "type": "audio",
@@ -147,12 +147,12 @@ class TestProfileRouting:
         colpali = search_service._get_profile_config(
             "frame_based_colpali", tenant_id="test:unit"
         )
-        videoprism = search_service._get_profile_config(
-            "video_videoprism_base", tenant_id="test:unit"
+        xclip = search_service._get_profile_config(
+            "video_xclip_base", tenant_id="test:unit"
         )
 
-        assert colpali["embedding_model"] != videoprism["embedding_model"]
-        assert colpali["embedding_dim"] != videoprism["embedding_dim"]
+        assert colpali["embedding_model"] != xclip["embedding_model"]
+        assert colpali["embedding_dim"] != xclip["embedding_dim"]
 
     def test_get_profile_config_unknown_raises(self, search_service):
         """Unknown profile raises ValueError with available profiles."""
@@ -162,7 +162,7 @@ class TestProfileRouting:
         # Error message includes available profiles
         assert "frame_based_colpali" in str(exc.value)
         assert "video_colqwen_omni" in str(exc.value)
-        assert "video_videoprism_base" in str(exc.value)
+        assert "video_xclip_base" in str(exc.value)
 
 
 @pytest.mark.unit

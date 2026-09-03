@@ -426,7 +426,6 @@ def test_inference_readiness_has_no_fixed_cold_start_delay():
     docs = _render(
         "inference.vllm_colpali.enabled=true",
         "inference.code_colbert_pylate.enabled=true",
-        "inference.videoprism_jax.enabled=true",
         "inference.vllm_llm_student.enabled=true",
         "inference.vllm_llm_teacher.enabled=true",
         "inference.clap_embed.enabled=true",
@@ -521,7 +520,6 @@ def test_k3s_exposes_every_stateless_inference_service_on_a_unique_node_port():
     docs = _render(
         "inference.vllm_colpali.enabled=true",
         "inference.code_colbert_pylate.enabled=true",
-        "inference.videoprism_jax.enabled=true",
         "inference.vllm_llm_student.enabled=true",
         "inference.clap_embed.enabled=true",
         "inference.face_embed.enabled=true",
@@ -531,7 +529,6 @@ def test_k3s_exposes_every_stateless_inference_service_on_a_unique_node_port():
     expected_ports = {
         "vllm_colpali": 29001,
         "colbert_pylate": 29002,
-        "videoprism_jax": 29003,
         "code_colbert_pylate": 29004,
         "vllm_asr": 29005,
         "denseon": 29006,

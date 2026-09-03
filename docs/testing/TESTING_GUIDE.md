@@ -271,7 +271,7 @@ rejects any unregistered marker) plus a per-package override in
   `requires_gliner`, `requires_models`, `requires_cv2`, `requires_ffmpeg` —
   infrastructure/model dependencies
 - `requires_inference("vllm_colpali")` — exact ColPali/ColQwen HTTP embedding
-  service; `requires_inference("videoprism_jax")` — exact VideoPrism service.
+  service; `requires_inference("video_embed")` — exact X-CLIP service.
   Both also request their `vllm_asr` dependency during collection. Cluster
   discovery reads `--revision` from rendered workload args: a pinned workload
   is tagged `identity_evidence=DEPLOYMENT`, and an unpinned one stays

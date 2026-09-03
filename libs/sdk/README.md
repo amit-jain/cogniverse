@@ -52,14 +52,14 @@ document = Document(
     },
 )
 document.add_embedding(
-    "videoprism_global",
+    "video_global",
     [0.1, 0.2, 0.3],
-    metadata={"model": "videoprism"},
+    metadata={"model": "xclip"},
 )
 
-assert document.get_embedding("videoprism_global") == [0.1, 0.2, 0.3]
-assert document.get_embedding_metadata("videoprism_global") == {
-    "model": "videoprism"
+assert document.get_embedding("video_global") == [0.1, 0.2, 0.3]
+assert document.get_embedding_metadata("video_global") == {
+    "model": "xclip"
 }
 ```
 
@@ -84,7 +84,7 @@ mapping = DocumentFieldMapping.from_dict(
         "created_at": "creation_timestamp",
         "created_at_format": "epoch",
         "metadata_fields": {"metadata_category": "category"},
-        "embeddings": {"videoprism_global": "embedding"},
+        "embeddings": {"video_global": "embedding"},
     }
 )
 

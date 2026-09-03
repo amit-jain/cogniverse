@@ -3,7 +3,7 @@
 **Package**: cogniverse-vespa (Implementation Layer)
 **Related**: cogniverse-core (backend configuration)
 
-This document describes the 14 ranking strategies available on the ColPali/ColQwen patch-based schemas (video, image, and visual-document search) in the Vespa search backend — the richest and most commonly used strategy set. These strategies are implemented in the `cogniverse-vespa` package and configured through the backend profile system in `cogniverse-core`. Other schema families (VideoPrism, LateOn text/code, audio, knowledge graph) implement overlapping but smaller strategy sets, some under different names — see [Schema Family Coverage](#schema-family-coverage) below.
+This document describes the 14 ranking strategies available on the ColPali/ColQwen patch-based schemas (video, image, and visual-document search) in the Vespa search backend — the richest and most commonly used strategy set. These strategies are implemented in the `cogniverse-vespa` package and configured through the backend profile system in `cogniverse-core`. Other schema families (X-CLIP, LateOn text/code, audio, knowledge graph) implement overlapping but smaller strategy sets, some under different names — see [Schema Family Coverage](#schema-family-coverage) below.
 
 ## Strategy Categories
 
@@ -116,7 +116,7 @@ The 14 strategy names above are not implemented identically by every schema — 
 | Schema family | Example profiles (`backend.profiles`) | Strategy set |
 |---|---|---|
 | ColPali/ColQwen patch (has description field) | `video_colpali_smol500_mv_frame`, `image_colpali_mv`, `video_colqwen_omni_mv_chunk_30s`, `document_visual_colpali` | All 14 strategies + `default` (15 rank profiles) |
-| VideoPrism mv_chunk / LVT sv_chunk (no description field) | `video_videoprism_base_mv_chunk_30s`, `video_videoprism_large_mv_chunk_30s`, `video_videoprism_lvt_base_sv_chunk_6s`, `video_videoprism_lvt_large_sv_chunk_6s` | 9 of the 14 (`bm25_only`, `float_float`, `binary_binary`, `float_binary`, `phased`, `hybrid_float_bm25`, `hybrid_binary_bm25`, `hybrid_bm25_binary`, `hybrid_bm25_float`) + `default`; `bm25_no_description` and all `*_no_description` hybrids are absent because there is no description field to exclude |
+| X-CLIP sv_chunk (no description field) | `video_xclip_sv_chunk_6s` | 9 of the 14 (`bm25_only`, `float_float`, `binary_binary`, `float_binary`, `phased`, `hybrid_float_bm25`, `hybrid_binary_bm25`, `hybrid_bm25_binary`, `hybrid_bm25_float`) + `default`; `bm25_no_description` and all `*_no_description` hybrids are absent because there is no description field to exclude |
 | LateOn text (`document_text` schema) | `document_text_semantic` | 7 of the 14 (`bm25_only`, `float_float`, `binary_binary`, `float_binary`, `phased`, `hybrid_float_bm25`, `hybrid_binary_bm25`) + `default`; no `hybrid_bm25_binary`/`hybrid_bm25_float` or `*_no_description` variants |
 | LateOn document (`lateon_mv` schema) | `lateon_mv` | `bm25_only`, `float_float`, `float_binary`, `hybrid_binary_bm25`, `hybrid_float_bm25` + `default`; the visual-search-only strategy is named `binary_only`, **not** `binary_binary` |
 | LateOn code (`code_lateon_mv` schema) | `code_lateon_mv` | Only 3: `float_float`, `bm25_only`, `hybrid_float_bm25` — no `default`, no binary/phased/no-description variants |
@@ -128,7 +128,7 @@ flowchart TD
     A["<span style='color:#000'><b>VespaSearchBackend.search</b><br/>query_dict.type + query_dict.profile</span>"] --> B["<span style='color:#000'><b>backend.profiles(profile)</b><br/>resolves schema_name</span>"]
     B --> C{"<span style='color:#000'>Schema family</span>"}
     C -->|"video/image/document (ColPali/ColQwen)"| D["<span style='color:#000'><b>ColPali/ColQwen patch schema</b><br/>14 strategies + default</span>"]
-    C -->|"video (VideoPrism)"| E["<span style='color:#000'><b>VideoPrism mv_chunk / LVT schema</b><br/>9 strategies + default</span>"]
+    C -->|"video (X-CLIP)"| E["<span style='color:#000'><b>X-CLIP mv_chunk / LVT schema</b><br/>9 strategies + default</span>"]
     C -->|"document/code (LateOn)"| F["<span style='color:#000'><b>LateOn text/doc/code schema</b><br/>3-7 strategies, binary_only naming</span>"]
     C -->|"audio"| G["<span style='color:#000'><b>Audio (CLAP) schema</b><br/>transcript_search / semantic_* / acoustic_*</span>"]
 
@@ -158,11 +158,11 @@ All BM25 strategies use fieldsets to search across:
 
 - `video_title`: Video file names and metadata
 
-- `segment_description`: Generated visual descriptions (ColPali schemas only - VideoPrism schemas do not include description fields)
+- `segment_description`: Generated visual descriptions (ColPali schemas only - X-CLIP schemas do not include description fields)
 
 - `audio_transcript`: Transcribed audio content
 
-**Note**: Different schemas use different field names and available fields. ColPali schemas use `segment_description` and `segment_id`. VideoPrism schemas use `segment_id` but have no description field. `VespaSearchBackend` handles these variations automatically.
+**Note**: Different schemas use different field names and available fields. ColPali schemas use `segment_description` and `segment_id`. X-CLIP schemas use `segment_id` but have no description field. `VespaSearchBackend` handles these variations automatically.
 
 ## Technical Implementation
 
@@ -170,12 +170,12 @@ All BM25 strategies use fieldsets to search across:
 - **Fieldset name**: `default`
 - **Fields**: `video_title`, `segment_description` (ColPali schemas only), `audio_transcript`
 - **Query method**: `VespaSearchBackend._build_query` emits YQL `userInput(@userQuery)`, which Vespa resolves against the schema's `default` fieldset; strategies without a text component build filter-only or `nearestNeighbor(...)` YQL instead. The rank profile's `first-phase`/`second-phase` expression then sums `bm25(field)` per fieldset member (e.g. `bm25_only` is `bm25(video_title) + bm25(segment_description) + bm25(audio_transcript)`) rather than relying on a single `model.defaultIndex` override.
-- **Note**: VideoPrism schemas exclude segment_description from the fieldset as they do not generate descriptions
+- **Note**: X-CLIP schemas exclude segment_description from the fieldset as they do not generate descriptions
 
 ### Embedding Types
-- **Multi-vector float** (ColPali/ColQwen, VideoPrism mv_chunk): `tensor<bfloat16>(patch{}, v[D])` where D is embedding dimension (320 for ColPali/ColQwen via `TomoroAI/tomoro-colqwen3-embed-4b`, 768 for VideoPrism base, 1024 for VideoPrism large)
-- **Multi-vector binary** (ColPali/ColQwen, VideoPrism mv_chunk): `tensor<int8>(patch{}, v[B])` where B = D/8 (40 for ColPali/ColQwen, 96 for VideoPrism base, 128 for VideoPrism large)
-- **Single-vector float** (LVT sv_chunk): `tensor<float>(v[D])` where D is 768 (base) or 1024 (large) — no patch dimension
+- **Multi-vector float** (ColPali/ColQwen): `tensor<bfloat16>(patch{}, v[D])` where D is embedding dimension (320 for ColPali/ColQwen via `TomoroAI/tomoro-colqwen3-embed-4b`)
+- **Multi-vector binary** (ColPali/ColQwen): `tensor<int8>(patch{}, v[B])` where B = D/8 (40 for ColPali/ColQwen)
+- **Single-vector float** (X-CLIP sv_chunk): `tensor<float>(v[768])` — no patch dimension
 - **Single-vector binary** (LVT sv_chunk): `tensor<int8>(v[B])` where B is 96 (base) or 128 (large) — no patch dimension
 - **Multi-vector token** (LateOn family — `lateon_mv`, `document_text`, `code_lateon_mv`): `tensor<bfloat16>(token{}, v[D])` where D is 128 (`lightonai/LateOn`) or 48 (`lightonai/LateOn-Code-edge`); binary counterpart `tensor<int8>(token{}, v[D/8])`
 
@@ -235,7 +235,7 @@ results = backend.search({
 ### Multi-Modal Support
 `query_dict["type"]` is matched against each profile's `type` value (`cogniverse_sdk.document.ContentType` enumerates VIDEO, AUDIO, IMAGE, TEXT, DATAFRAME, DOCUMENT, but the field is a plain string — `backend.profiles` also declares a `code` type for `code_lateon_mv` that is outside the enum). Coverage per type, using the strategy set that schema family actually implements (see [Schema Family Coverage](#schema-family-coverage)):
 
-- VIDEO: Frame/chunk-level visual search with temporal context — ColPali/ColQwen (14 strategies) or VideoPrism (9 strategies)
+- VIDEO: Frame/chunk-level visual search with temporal context — ColPali/ColQwen (14 strategies) or X-CLIP (9 strategies)
 
 - AUDIO: Transcript search (`transcript_search`, BM25) plus CLAP acoustic and ColBERT-style semantic embedding strategies — named differently from the 14-strategy set
 

@@ -67,8 +67,7 @@ class ProfileSelectionExampleSchema(BaseModel):
                 "available_profiles": (
                     "video_colpali_smol500_mv_frame,"
                     "video_colqwen_omni_mv_chunk_30s,"
-                    "video_videoprism_base_mv_chunk_30s,"
-                    "video_videoprism_large_mv_chunk_30s"
+                    "video_xclip_sv_chunk_6s"
                 ),
                 "selected_profile": "video_colqwen_omni_mv_chunk_30s",
                 "reasoning": "Selected chunk-based profile for medium-complexity video search",
@@ -381,7 +380,7 @@ class SyntheticDataResponse(BaseModel):
                 "count": 100,
                 "selected_profiles": [
                     "video_colpali_smol500_mv_frame",
-                    "video_videoprism_base_mv_chunk_30s",
+                    "video_xclip_sv_chunk_6s",
                 ],
                 "profile_selection_reasoning": "Selected frame-based and chunk-based profiles for content diversity",
                 "data": [],

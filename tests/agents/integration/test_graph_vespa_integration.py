@@ -715,7 +715,7 @@ class TestSearchNodesRealVespa:
         self, graph_vespa, shared_memory_vespa, monkeypatch
     ):
         """Other schemas in the shared content cluster declare
-        hybrid_binary_bm25 with different query(qt) dims (videoprism
+        hybrid_binary_bm25 with different query(qt) dims (xclip
         ``v[768]`` vs the graph's ``v[128]``). Without ``model.restrict``
         the query 400s on the conflicting input declarations and silently
         falls back to substring _visit. Deploys the conflicting schema
@@ -728,12 +728,12 @@ class TestSearchNodesRealVespa:
         deploy_tenant_schema(
             shared_memory_vespa,
             tenant_id=TENANT_ID,
-            base_schema_name="video_videoprism_base_mv_chunk_30s",
+            base_schema_name="video_xclip_base_mv_chunk_30s",
             config_manager=shared_memory_vespa["config_manager"],
         )
         port = graph_vespa["http_port"]
-        conflicting = schema_full_name("video_videoprism_base_mv_chunk_30s", TENANT_ID)
-        # The graph probe document doesn't fit the videoprism schema, so
+        conflicting = schema_full_name("video_xclip_base_mv_chunk_30s", TENANT_ID)
+        # The graph probe document doesn't fit the xclip schema, so
         # poll doc-type liveness via GET: 404 = type known + doc absent.
         probe_url = (
             f"http://localhost:{port}/document/v1/graph_content/"

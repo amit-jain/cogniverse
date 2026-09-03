@@ -87,7 +87,7 @@ def get_backend(vespa_instance, temp_config_manager, schema_loader):
 
 _KNOWN_BASE_SCHEMAS = (
     "video_colpali_smol500_mv_frame",
-    "video_videoprism_base_mv_chunk_30s",
+    "video_xclip_base_mv_chunk_30s",
     "agent_memories",
     "knowledge_graph",
     "wiki",
@@ -193,7 +193,7 @@ class TestSchemaRegistryDeployment:
             "startup", "video_colpali_smol500_mv_frame"
         )
         backend.schema_registry.deploy_schema(
-            "startup", "video_videoprism_base_mv_chunk_30s"
+            "startup", "video_xclip_base_mv_chunk_30s"
         )
 
         # Verify both registered
@@ -201,7 +201,7 @@ class TestSchemaRegistryDeployment:
         assert len(schemas) == 2
         base_names = {s.base_schema_name for s in schemas}
         assert "video_colpali_smol500_mv_frame" in base_names
-        assert "video_videoprism_base_mv_chunk_30s" in base_names
+        assert "video_xclip_base_mv_chunk_30s" in base_names
 
     def test_deploy_same_schema_multiple_tenants(self, get_backend):
         """Test deploying the same base schema for different tenants"""

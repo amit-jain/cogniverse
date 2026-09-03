@@ -211,7 +211,7 @@ async def main() -> None:
                 "embedding_type": "multi_vector",
                 "pipeline_config": {"chunk_strategy": "frame"},
             },
-            "video_videoprism_base_mv_chunk_30s": {
+            "video_xclip_sv_chunk_6s": {
                 "embedding_type": "global",
                 "pipeline_config": {"chunk_strategy": "temporal"},
             },
@@ -996,11 +996,11 @@ backend_config = BackendConfig(
             embedding_model="TomoroAI/tomoro-colqwen3-embed-4b",
             pipeline_config={"chunk_strategy": "frame"},
         ),
-        "video_videoprism_base_mv_chunk_30s": BackendProfileConfig(
-            profile_name="video_videoprism_base_mv_chunk_30s",
+        "video_xclip_sv_chunk_6s": BackendProfileConfig(
+            profile_name="video_xclip_sv_chunk_6s",
             type="video",
-            schema_name="video_videoprism_base_mv_chunk_30s",
-            embedding_model="videoprism_public_v1_base_hf",
+            schema_name="video_xclip_sv_chunk_6s",
+            embedding_model="microsoft/xclip-large-patch14",
             pipeline_config={"chunk_strategy": "temporal"},
         ),
     },

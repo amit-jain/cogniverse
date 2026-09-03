@@ -953,7 +953,7 @@ flowchart TB
     StreamingMod["<span style='color:#000'>streaming.py</span>"]
     CodeMod["<span style='color:#000'>code.py</span>"]
     ModalInference["<span style='color:#000'><b>modal_inference/</b><br/>Modal app definitions</span>"]
-    ModalServers["<span style='color:#000'><b>servers/</b><br/>clap.py / face.py / gliner.py / videoprism.py</span>"]
+    ModalServers["<span style='color:#000'><b>servers/</b><br/>clap.py / face.py / gliner.py / xclip.py</span>"]
 
     CliPkg --> MainCli
     MainCli --> GraphGroup
@@ -1664,7 +1664,7 @@ This diagram collection provides comprehensive visual documentation of the **lay
 6. **Knowledge Subsystem**: Full memory/ subsystem — provenance, contradiction, trust, federation, pinning, lifecycle
 7. **All 23 Agents**: Generation + routing (7), search + analysis (5), research + coding (2), and knowledge-graph/multi-tenant agents (9) — see the `cogniverse_agents Package Structure` diagram
 8. **Sandbox Policy Flow**: SandboxPolicy REQUIRED/OPTIONAL/DISABLED decision tree with GatewayHealthProbe
-9. **Application Package Structure**: Runtime internals include 12 FastAPI routers, the async ingestion worker, sandbox, and optimizer CLI; `cogniverse_cli/modal_inference/servers/` owns the CLAP, face, GLiNER, and VideoPrism services
+9. **Application Package Structure**: Runtime internals include 12 FastAPI routers, the async ingestion worker, sandbox, and optimizer CLI; `cogniverse_cli/modal_inference/servers/` owns the CLAP, face, GLiNER, and X-CLIP services
 
 **Layered Architecture Layers:**
 

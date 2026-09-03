@@ -1411,12 +1411,12 @@ class TestProfileSelectionTrainingExamples:
         )
         config_manager.add_backend_profile(
             BackendProfileConfig.from_dict(
-                "video_videoprism_base_mv_chunk_30s",
+                "video_xclip_base_mv_chunk_30s",
                 {
                     "type": "video",
-                    "schema_name": "video_videoprism_base_mv_chunk_30s",
-                    "embedding_model": "videoprism_public_v1_base_hf",
-                    "inference_services": {"embedding": "videoprism_jax"},
+                    "schema_name": "video_xclip_base_mv_chunk_30s",
+                    "embedding_model": "microsoft/xclip-large-patch14",
+                    "inference_services": {"embedding": "video_embed"},
                 },
             ),
             tenant_id="acme:docs",
@@ -1581,8 +1581,7 @@ class TestProfileSelectionTrainingExamples:
         retired_pool = (
             "video_colpali_smol500_mv_frame,"
             "video_colqwen_omni_mv_chunk_30s,"
-            "video_videoprism_base_mv_chunk_30s,"
-            "video_videoprism_large_mv_chunk_30s"
+            "video_xclip_sv_chunk_6s"
         )
         assert retired_pool not in text
 
@@ -3892,7 +3891,7 @@ class TestProfileSelectionOptimization:
                 "video_colqwen_omni_mv_chunk_30s",
             ],
         )
-        assert _profile_selection_quality(_sel("video_videoprism_base"), ex) == 0.0
+        assert _profile_selection_quality(_sel("video_xclip_base"), ex) == 0.0
 
     def test_profile_selection_floor_gap_is_exact(self):
         from cogniverse_runtime.optimization_cli import (
@@ -4690,10 +4689,7 @@ class TestProfileSelectionOptimization:
             "document_visual_colpali": "document_title",
             "lateon_mv": "title",
             "video_colqwen_omni_mv_chunk_30s": "video_title",
-            "video_videoprism_base_mv_chunk_30s": "video_title",
-            "video_videoprism_large_mv_chunk_30s": "video_title",
-            "video_videoprism_lvt_base_sv_chunk_6s": "video_title",
-            "video_videoprism_lvt_large_sv_chunk_6s": "video_title",
+            "video_xclip_sv_chunk_6s": "video_title",
             "code_lateon_mv": "chunk_name",
             "wiki_semantic": "title",
         }

@@ -678,9 +678,9 @@ def get_best_strategy_for_profile(profile: str) -> str:
     best_strategies = {
         "video_colpali_smol500_mv_frame": "binary_binary",  # Changed to visual-only for fair comparison
         "video_colqwen_omni_sv_chunk": "hybrid_binary_bm25",
-        "video_videoprism_lvt_base_sv_global": "binary_binary",
-        "video_videoprism_lvt_large_sv_global": "binary_binary",
-        "single__video_videoprism_large_6s": "default",  # Use default for video_chunks
+        "video_xclip_lvt_base_sv_global": "binary_binary",
+        "video_xclip_lvt_large_sv_global": "binary_binary",
+        "single__video_xclip_large_6s": "default",  # Use default for video_chunks
     }
     return best_strategies.get(profile, "float_float")
 
@@ -817,9 +817,9 @@ def main():
         default=[
             "video_colpali_smol500_mv_frame",
             "video_colqwen_omni_sv_chunk",
-            "video_videoprism_lvt_base_sv_global",
-            "video_videoprism_lvt_large_sv_global",
-            "single__video_videoprism_large_6s",
+            "video_xclip_lvt_base_sv_global",
+            "video_xclip_lvt_large_sv_global",
+            "single__video_xclip_large_6s",
         ],
         help="Profiles to test",
     )

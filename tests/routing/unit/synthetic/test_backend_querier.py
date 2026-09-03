@@ -605,7 +605,7 @@ async def test_entity_rich_query_profiles_skips_non_qualifying_shipped_profiles(
         profiles={
             name: _shipped_backend_profile_dict(name)
             for name in (
-                "video_videoprism_large_mv_chunk_30s",
+                "image_colpali_mv",
                 "video_colpali_smol500_mv_frame",
                 "audio_clap_semantic",
             )
@@ -615,7 +615,7 @@ async def test_entity_rich_query_profiles_skips_non_qualifying_shipped_profiles(
     with caplog.at_level(logging.WARNING):
         samples = await querier.query_profiles(
             [
-                _shipped_backend_profile_dict("video_videoprism_large_mv_chunk_30s"),
+                _shipped_backend_profile_dict("image_colpali_mv"),
                 _shipped_backend_profile_dict("video_colpali_smol500_mv_frame"),
                 _shipped_backend_profile_dict("audio_clap_semantic"),
             ],
@@ -667,7 +667,7 @@ async def test_entity_rich_query_profiles_skips_non_qualifying_shipped_profiles(
     ] == [
         (
             "entity_rich skips non-qualifying backend profiles for tenant "
-            "'acme:media': video_videoprism_large_mv_chunk_30s (entity_rich "
+            "'acme:media': image_colpali_mv (entity_rich "
             "requires the profile pipeline to generate descriptions or "
             "transcribe audio)"
         )
@@ -684,8 +684,8 @@ async def test_entity_rich_query_profiles_raises_when_no_qualifying_profiles_rem
         profiles={
             name: _shipped_backend_profile_dict(name)
             for name in (
-                "video_videoprism_large_mv_chunk_30s",
-                "video_videoprism_base_mv_chunk_30s",
+                "image_colpali_mv",
+                "document_visual_colpali",
             )
         },
     )
@@ -696,20 +696,18 @@ async def test_entity_rich_query_profiles_raises_when_no_qualifying_profiles_rem
             match=(
                 "^entity_rich requires at least one qualifying backend profile "
                 "for tenant 'acme:media'; excluded profiles: "
-                "video_videoprism_large_mv_chunk_30s \\("
+                "image_colpali_mv \\("
                 "entity_rich requires the profile pipeline to generate "
                 "descriptions or transcribe audio\\), "
-                "video_videoprism_base_mv_chunk_30s \\("
+                "document_visual_colpali \\("
                 "entity_rich requires the profile pipeline to generate "
                 "descriptions or transcribe audio\\)$"
             ),
         ):
             await querier.query_profiles(
                 [
-                    _shipped_backend_profile_dict(
-                        "video_videoprism_large_mv_chunk_30s"
-                    ),
-                    _shipped_backend_profile_dict("video_videoprism_base_mv_chunk_30s"),
+                    _shipped_backend_profile_dict("image_colpali_mv"),
+                    _shipped_backend_profile_dict("document_visual_colpali"),
                 ],
                 sample_size=1,
                 strategy="entity_rich",

@@ -318,7 +318,7 @@ class TestSearchAgentEnsemble:
         """
         REAL TEST: Execute ensemble search with REAL encoders and REAL Vespa.
 
-        Uses 3 different REAL encoders (ColPali, VideoPrism, ColQwen) loaded by QueryEncoderFactory.
+        Uses 3 different REAL encoders (ColPali, X-CLIP, ColQwen) loaded by QueryEncoderFactory.
 
         Validates:
         - REAL query encoder loading for each profile
@@ -330,7 +330,7 @@ class TestSearchAgentEnsemble:
 
         # NO PATCHING - QueryEncoderFactory loads real encoders for each profile
         logger.info(
-            "🔄 Loading REAL query encoders for all 3 profiles (ColPali, VideoPrism, ColQwen)"
+            "🔄 Loading REAL query encoders for all 3 profiles (ColPali, X-CLIP, ColQwen)"
         )
 
         result = await agent._process_impl(

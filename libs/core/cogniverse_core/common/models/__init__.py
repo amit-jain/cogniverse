@@ -7,18 +7,12 @@ from .model_loaders import (
     ModelLoader,
     ModelLoaderFactory,
     RemoteColBERTLoader,
-    VideoPrismModelLoader,
     get_or_load_gliner,
     get_or_load_model,
     is_remote_only_model,
 )
 from .model_loaders import (
     _model_lock as model_load_lock,
-)
-from .videoprism_loader import (
-    VideoPrismGlobalLoader,
-    VideoPrismLoader,
-    get_videoprism_loader,
 )
 
 __all__ = [
@@ -32,8 +26,4 @@ __all__ = [
     "ColPaliModelLoader",
     "ColQwenModelLoader",
     "RemoteColBERTLoader",
-    "VideoPrismModelLoader",
-    "VideoPrismLoader",
-    "VideoPrismGlobalLoader",
-    "get_videoprism_loader",
 ]

@@ -651,7 +651,7 @@ QueryEncoderFactory.get_supported_profiles(config=system_config)
 | `ColBERTQueryEncoder` | ColBERT / LateOn | Per-token multi-vector; `embedding_dim` is required (read from `schema_config.embedding_dim`); supports joint query+CoT-trace encoding |
 | `ColPaliFamilyQueryEncoder` | ColPali, ColQwen, ColSmol | 320-d patch multi-vector; local or remote (`inference_service_url`) |
 | `ColPaliQueryEncoder(...)` / `ColQwenQueryEncoder(...)` | — | Thin factory functions over `ColPaliFamilyQueryEncoder` with `model_loader="colpali"`/`"colqwen"` |
-| `VideoPrismQueryEncoder` | VideoPrism | Single-vector (global, `_lvt_`/`global` in name) or patch-based (768/1024-d) |
+| `XClipQueryEncoder` | X-CLIP | Single-vector 768-d; remote via the `video_embed` sidecar; encodes video and text into one space |
 
 `QueryEncoderFactory._create_encoder_instance` resolves the encoder in this
 order: `profile_config["model_loader"]` (authoritative) → model-name substring
@@ -1685,12 +1685,12 @@ is_remote_only_model("TomoroAI/tomoro-colqwen3-embed-4b")  # True
 |---------------------|--------------|---------------|
 | `colpali` | `ColPaliModelLoader` | `RemoteColPaliLoader` |
 | `colqwen` | `ColQwenModelLoader` | `RemoteColPaliLoader` |
-| `videoprism` | `VideoPrismModelLoader` | `RemoteVideoPrismLoader` |
+| `xclip` | — (remote only) | `RemoteXClipLoader` |
 | `colbert` | `ColBERTModelLoader` | `RemoteColBERTLoader` |
 | `whisper` | — | `RemoteWhisperLoader` |
 
 Remote loaders are selected when `remote_inference_url` is set in config.
-`RemoteVideoPrismLoader` forwards its exact configured model name on every
+`RemoteXClipLoader` forwards its exact configured model name on every
 video-segment request, so the remote service can reject requests for any other
 checkpoint instead of silently selecting a default. Remote loader cache keys
 include a one-way fingerprint of the exact credential snapshot used to
@@ -1789,87 +1789,6 @@ construct the client.
 cause on a transport or HTTP failure and rejecting any response whose vector
 is not exactly 512 floats. The runtime audio embedding generator delegates
 its remote CLAP calls to it.
-
-### VideoPrismLoader (videoprism_loader.py)
-
-Handles VideoPrism model loading and inference:
-
-```python
-from cogniverse_core.common.models import get_videoprism_loader
-
-loader = get_videoprism_loader(
-    model_name="videoprism_public_v1_base_hf",
-    config={"videoprism_repo_path": "/path/to/videoprism"}
-)
-
-# Load model (with retry logic)
-loader.load_model()
-
-# Extract embeddings from frames
-embeddings = loader.extract_embeddings(frames)
-# Returns: {embeddings, embedding_dim, num_patches, model_name}
-
-# Preprocess frames for model input
-video_input = loader.preprocess_frames(frames)  # (1, num_frames, 288, 288, 3)
-```
-
-The factory snapshots the configuration and shares one loader for each
-equivalent `(model_name, config)` pair. Concurrent cold calls wait for one
-weight load; a failed candidate is not published and remains retryable.
-
-**Model Variants:**
-
-| Variant | Output Embedding Dim | Internal Spatial Tokens | Input Shape |
-|---------|---------------------|------------------------|-------------|
-| base | 768 | 16x16x16 = 4096 | (1, N, 288, 288, 3) |
-| large | 1024 | 8x16x16 = 2048 | (1, N, 288, 288, 3) |
-
-Note: Output Embedding Dim is the final embedding vector dimension. Spatial Tokens is the internal representation before pooling.
-
-### VideoPrismModel (videoprism_models.py)
-
-Minimal VideoPrism model wrapper for JAX. The following is illustrative usage
-and requires the optional JAX and VideoPrism dependencies:
-
-```python
-from cogniverse_core.common.models.videoprism_models import get_videoprism_model
-
-model = get_videoprism_model("videoprism_public_v1_base")
-model.load_model()
-
-# Preprocess and extract
-video_input = model.preprocess_video(frames)
-result = model.extract_embeddings(video_input)
-```
-
-**Configuration:**
-
-- `videoprism_repo_path` in config.json or `VIDEOPRISM_REPO_PATH` env var
-- JAX forced to CPU backend to avoid Metal issues on macOS
-
-### VideoPrismTextEncoder (videoprism_text_encoder.py)
-
-Production-hardened VideoPrism LVT text encoder with an LRU model cache,
-circuit breaker, and performance metrics — distinct from the lighter-weight
-`VideoPrismQueryEncoder` in `query/encoders.py`.
-
-```python
-from cogniverse_core.common.models.videoprism_text_encoder import create_text_encoder
-
-encoder = create_text_encoder(
-    model_name="videoprism_public_v1_base_hf",
-    embedding_dim=768,
-    enable_circuit_breaker=True,
-    enable_metrics=True,
-)
-```
-
-| Component | Purpose |
-|---|---|
-| `VideoPrismTextEncoder` | Main encoder; class-level `_model_cache` shares loaded models across instances |
-| `CircuitBreaker` / `CircuitState` | Trips after repeated encode failures to avoid hammering a broken model |
-| `ModelPool` | Pools loaded model handles for reuse under concurrent requests |
-| `PerformanceMetrics` | Tracks latency/error counters for the encoder |
 
 ### SemanticEmbedder (semantic_embedder.py)
 

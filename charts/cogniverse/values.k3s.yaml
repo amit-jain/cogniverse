@@ -50,12 +50,6 @@ inference:
       pullPolicy: Never
     service:
       type: NodePort
-  videoprism_jax:
-    image:
-      tag: "0.1.0-dev"
-      pullPolicy: Never
-    service:
-      type: NodePort
   # audio_analysis_agent encodes acoustic queries with CLAP and the runtime
   # image ships no torch, so audio search works only via this sidecar.
   clap_embed:

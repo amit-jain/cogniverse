@@ -270,14 +270,14 @@ class TestVespaBackendIngestion:
         assert "embeddings" in result.get("results", {})
 
     @pytest.mark.local_only
-    @pytest.mark.requires_inference("videoprism_jax")
+    @pytest.mark.requires_inference("video_embed")
     @skip_heavy_models_in_ci
     @skip_if_low_memory
     @pytest.mark.asyncio
-    async def test_videoprism_vespa_ingestion(
+    async def test_xclip_vespa_ingestion(
         self, vespa_backend, vespa_test_videos, tmp_path
     ):
-        """Test VideoPrism model ingestion to Vespa (local only)."""
+        """Test X-CLIP model ingestion to Vespa (local only)."""
         from cogniverse_runtime.ingestion.pipeline import (
             PipelineConfig,
             VideoIngestionPipeline,
@@ -299,7 +299,7 @@ class TestVespaBackendIngestion:
             config=config,
             config_manager=config_manager,
             schema_loader=schema_loader,
-            schema_name="video_videoprism_base_mv_chunk_30s",
+            schema_name="video_xclip_sv_chunk_6s",
         )
         result = await pipeline.process_video_async(vespa_test_videos[0])
 
@@ -307,7 +307,7 @@ class TestVespaBackendIngestion:
         assert "embeddings" in result.get("results", {})
 
     @pytest.mark.local_only
-    @pytest.mark.requires_inference("videoprism_jax")
+    @pytest.mark.requires_inference("video_embed")
     @skip_heavy_models_in_ci
     @skip_if_low_memory
     @pytest.mark.asyncio
@@ -317,7 +317,7 @@ class TestVespaBackendIngestion:
         """Two videos ingested CONCURRENTLY through ONE pipeline must land in
         Vespa each carrying its OWN source_url — never cross-assigned.
 
-        Real VideoPrism embeddings, real Vespa feed, real concurrency. The
+        Real X-CLIP embeddings, real Vespa feed, real concurrency. The
         pipeline shares one instance across the concurrent videos; when the
         per-video identity lived on that shared instance a downstream await let
         one video overwrite another's video_path/source_url, so a video's
@@ -349,7 +349,7 @@ class TestVespaBackendIngestion:
             config=config,
             config_manager=config_manager,
             schema_loader=schema_loader,
-            schema_name="video_videoprism_base_mv_chunk_30s",
+            schema_name="video_xclip_sv_chunk_6s",
         )
 
         await pipeline.process_videos_concurrent([v0, v1], max_concurrent=2)
@@ -435,7 +435,7 @@ class TestVespaIngestionViaMinio:
     ``VideoIngestionPipeline.process_video_async`` end-to-end against real
     Vespa + real MinIO containers.
 
-    Heavy model invocation (ColPali / VideoPrism / ColQwen) is disabled so
+    Heavy model invocation (ColPali / X-CLIP / ColQwen) is disabled so
     the test is runnable without GPU/large model weights — the focus is the
     URI → locator → orchestrator → Vespa chain, not the
     embedding model itself.
@@ -551,7 +551,7 @@ class TestComprehensiveIngestion:
 
     @pytest.mark.slow
     @pytest.mark.requires_vespa
-    @pytest.mark.requires_inference("videoprism_jax")
+    @pytest.mark.requires_inference("video_embed")
     @pytest.mark.requires_inference("vllm_colpali")
     @pytest.mark.asyncio
     async def test_multi_profile_ingestion(
@@ -560,12 +560,12 @@ class TestComprehensiveIngestion:
         """Test ingestion with multiple profiles.
 
         Gated on both exact embedding services because ``profiles_to_test``
-        includes ColPali, VideoPrism, and ColQwen profiles. The pipeline
+        includes ColPali, X-CLIP, and ColQwen profiles. The pipeline
         raises at initialization when either declared service URL is absent.
         """
         profiles_to_test = [
             "video_colpali_smol500_mv_frame",
-            "video_videoprism_base_mv_chunk_30s",
+            "video_xclip_sv_chunk_6s",
             "video_colqwen_omni_mv_chunk_30s",
         ]
 

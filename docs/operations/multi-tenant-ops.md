@@ -264,7 +264,7 @@ The colon is then replaced with `_`:
 Examples (bare tenant_id — org and tenant name are the same string,
 so the suffix repeats it):
 - video_colpali_smol500_mv_frame_acme_acme        (tenant_id="acme")
-- video_videoprism_base_mv_chunk_30s_default_default  (tenant_id="default")
+- video_xclip_sv_chunk_6s_default_default  (tenant_id="default")
 
 Examples (explicit org:tenant — no repetition):
 - video_colpali_smol500_mv_frame_acme_production  (tenant_id="acme:production")
@@ -304,7 +304,7 @@ curl -sfX POST "$RUNTIME_URL/admin/tenants" \
 # Deploy profile schemas for this tenant
 SCHEMAS=(
   "video_colpali_smol500_mv_frame"
-  "video_videoprism_base_mv_chunk_30s"
+  "video_xclip_sv_chunk_6s"
 )
 
 for schema in "${SCHEMAS[@]}"; do
@@ -1212,7 +1212,7 @@ echo "Backing up tenant: $TENANT_ID"
 # Configuration is already persisted in the backend config store
 
 # 2. Backup backend documents (per schema - example for Vespa)
-for schema in video_colpali_smol500_mv_frame video_videoprism_base_mv_chunk_30s; do
+for schema in video_colpali_smol500_mv_frame video_xclip_sv_chunk_6s; do
   schema_name="${schema}_${SCHEMA_SUFFIX}"
   # Use backend visit API to export all documents
   curl "http://localhost:8080/document/v1/${schema_name}/frame/docid" \
@@ -1293,7 +1293,7 @@ def diagnose_tenant_schemas(tenant_id: str):
     suffix = canonical_tenant_id(tenant_id).replace(":", "_")
     expected_schemas = [
         f"video_colpali_smol500_mv_frame_{suffix}",
-        f"video_videoprism_base_mv_chunk_30s_{suffix}",
+        f"video_xclip_sv_chunk_6s_{suffix}",
     ]
 
     print(f"Expected schemas for {tenant_id}:")

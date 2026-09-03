@@ -23,12 +23,12 @@ TEST_PROJECT_NAME = f"cogniverse-{TEST_TENANT_ID}"
 
 
 def _traces() -> list[TraceMetrics]:
-    """10 traces: colpali 100..500ms (2 errors), videoprism 600..1000ms clean."""
+    """10 traces: colpali 100..500ms (2 errors), xclip 600..1000ms clean."""
     base = datetime(2026, 7, 15, 10, 0, 0, tzinfo=timezone.utc)
     out = []
     for i in range(10):
         duration = (i + 1) * 100.0
-        profile = "colpali" if i < 5 else "videoprism"
+        profile = "colpali" if i < 5 else "xclip"
         status = "error" if i in (1, 3) else "success"
         out.append(
             TraceMetrics(
@@ -104,9 +104,9 @@ def test_group_by_profile_math_is_exact(analytics):
     assert by_profile["colpali"]["count"] == 5
     assert by_profile["colpali"]["mean_duration"] == 300.0
     assert by_profile["colpali"]["error_rate"] == 0.4
-    assert by_profile["videoprism"]["count"] == 5
-    assert by_profile["videoprism"]["mean_duration"] == 800.0
-    assert by_profile["videoprism"]["error_rate"] == 0.0
+    assert by_profile["xclip"]["count"] == 5
+    assert by_profile["xclip"]["mean_duration"] == 800.0
+    assert by_profile["xclip"]["error_rate"] == 0.0
 
 
 def test_empty_traces_return_error_marker(analytics):

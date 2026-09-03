@@ -141,12 +141,10 @@ class TestProcessFieldOutput:
     def test_video_chunk30s_drops_absent_segment_description(self):
         # This schema has segment_id but no segment_description field: the
         # description rename target is gated out, total_segments too.
-        out = _client("video_videoprism_base_mv_chunk_30s").process(
+        out = _client("video_colqwen_omni_mv_chunk_30s").process(
             _video_doc("vid123_seg_1", 1, "ignored-no-field"), "feed"
         )
-        assert (
-            out["put"] == "id:content:video_videoprism_base_mv_chunk_30s::vid123_seg_1"
-        )
+        assert out["put"] == "id:content:video_colqwen_omni_mv_chunk_30s::vid123_seg_1"
         fields = out["fields"]
         scalars = _split_timestamp(fields, schema_has_ts=True)
         scalars.pop("embedding")

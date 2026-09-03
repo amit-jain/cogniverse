@@ -707,7 +707,7 @@ class TestContentBackrefsClaimIdsEqualRelationIds:
 _MODALITY_FIXTURES = [
     pytest.param(
         "video_chunk",
-        "video_videoprism_base_mv_chunk_30s",
+        "video_xclip_base_mv_chunk_30s",
         "content_backrefs_video_chunk.json",
         id="video_chunk",
     ),

@@ -4,7 +4,7 @@ Video content analysis and search over configurable pipelines. 11-package UV
 workspace (Foundation → Core → Implementation → Application). Production ready.
 
 - **Routing Agent** — query routing with orchestration handoff (DSPy)
-- **Video Search Agent** — ColPali/VideoPrism retrieval via Vespa
+- **Video Search Agent** — ColPali/X-CLIP retrieval via Vespa
 - **Ingestion Pipeline** — keyframe extraction, transcription, embeddings
 
 ---

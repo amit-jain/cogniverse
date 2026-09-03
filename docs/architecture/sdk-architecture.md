@@ -214,7 +214,7 @@ cogniverse_core/
 ├── factories/   # Backend factory patterns
 ├── interfaces/  # Interface definitions
 ├── memory/      # Mem0MemoryManager, vector store
-├── query/       # Query encoders (ColBERT, ColPali/ColQwen, VideoPrism)
+├── query/       # Query encoders (ColBERT, ColPali/ColQwen, X-CLIP)
 ├── registries/  # Agent, backend, DSPy, schema, adapter_store, workflow_store registries
 ├── schemas/     # Filesystem schema loader
 ├── telemetry/   # Telemetry utilities
@@ -498,7 +498,7 @@ cogniverse_runtime/
 - **Ingestion Pipeline**: Process video (frames/chunks), audio (transcription), images, documents, text with configurable profiles
 - **Inference Services**: Modal inference service for remote processing
 - **Dynamic Backend Loading**: Load backends (Vespa, agents) based on configuration with optional dependencies
-- **Multi-Modal Processing**: Support video (ColPali, VideoPrism, ColQwen), audio (Whisper, faster-whisper), images, documents, text
+- **Multi-Modal Processing**: Support video (ColPali, X-CLIP, ColQwen), audio (Whisper, faster-whisper), images, documents, text
 
 ---
 

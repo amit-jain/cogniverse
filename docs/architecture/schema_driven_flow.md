@@ -261,7 +261,7 @@ flowchart TD
 | hybrid_bm25_binary | ✓ | - | ✓ | - | Same fields as hybrid_binary_bm25, but BM25-first ranking; not nearestNeighbor-eligible |
 | phased | ✓ | ✓ | ✓ | ✓* | Two-phase: binary → float |
 
-*nearestNeighbor used by single-vector schemas (detected via `_sv_` or `_lvt_` token in the schema name, e.g., `video_videoprism_lvt_base_sv_chunk_6s`), and only for the profile names the extractor recognizes as nearestNeighbor-eligible (the `default` and `hybrid_bm25_*` profiles above always use tensor ranking, even on single-vector schemas).
+*nearestNeighbor used by single-vector schemas (detected via `_sv_` or `_lvt_` token in the schema name, e.g., `video_xclip_sv_chunk_6s`), and only for the profile names the extractor recognizes as nearestNeighbor-eligible (the `default` and `hybrid_bm25_*` profiles above always use tensor ranking, even on single-vector schemas).
 
 The colpali/colqwen video schemas also carry `bm25_no_description` and
 `hybrid_*_bm25_no_description` variants of the text/hybrid strategies above,
@@ -278,7 +278,7 @@ from pathlib import Path
 from cogniverse_vespa.ranking_strategy_extractor import RankingStrategyExtractor
 
 extractor = RankingStrategyExtractor()
-strategies = extractor.extract_from_schema(Path("configs/schemas/video_videoprism_base_mv_chunk_30s_schema.json"))
+strategies = extractor.extract_from_schema(Path("configs/schemas/video_xclip_sv_chunk_6s_schema.json"))
 
 # Example: Get float_float strategy info
 float_strategy = strategies["float_float"]
@@ -291,8 +291,8 @@ print(f"Strategy type: {float_strategy.strategy_type}")             # SearchStra
 ```
 
 **Search Method Logic:**
-- **Single-vector embeddings** (sv schemas containing `_sv_` like `video_videoprism_lvt_base_sv_chunk_6s`): `use_nearestneighbor=True` for visual/hybrid strategies → uses `nearestNeighbor(embedding, qt)` YQL for efficient ANN search - embeddings are `tensor<float>(v[N])` with no sparse dimensions
-- **Multi-vector embeddings** (mv schemas like `video_colpali_smol500_mv_frame`, `video_videoprism_base_mv_chunk_30s`): `use_nearestneighbor=False` → uses tensor ranking expression - embeddings have `patch{}` or similar sparse dimensions
+- **Single-vector embeddings** (sv schemas containing `_sv_` like `video_xclip_sv_chunk_6s`): `use_nearestneighbor=True` for visual/hybrid strategies → uses `nearestNeighbor(embedding, qt)` YQL for efficient ANN search - embeddings are `tensor<float>(v[N])` with no sparse dimensions
+- **Multi-vector embeddings** (mv schemas like `video_colpali_smol500_mv_frame`, `video_xclip_sv_chunk_6s`): `use_nearestneighbor=False` → uses tensor ranking expression - embeddings have `patch{}` or similar sparse dimensions
 - **Text-only** (`bm25_only`): Uses `userInput` YQL function
 
 ## 4. Multi-Tenant Schema Deployment
@@ -362,10 +362,7 @@ Each embedding profile has its own Vespa schema file. The schema name matches th
 |---------|-------------|----------------|
 | `video_colpali_smol500_mv_frame` | `video_colpali_smol500_mv_frame_schema.json` | Patch (multi-vector) |
 | `video_colqwen_omni_mv_chunk_30s` | `video_colqwen_omni_mv_chunk_30s_schema.json` | Patch (multi-vector) |
-| `video_videoprism_base_mv_chunk_30s` | `video_videoprism_base_mv_chunk_30s_schema.json` | Chunk (multi-vector) |
-| `video_videoprism_large_mv_chunk_30s` | `video_videoprism_large_mv_chunk_30s_schema.json` | Chunk (multi-vector) |
-| `video_videoprism_lvt_base_sv_chunk_6s` | `video_videoprism_lvt_base_sv_chunk_6s_schema.json` | Chunk (single-vector) |
-| `video_videoprism_lvt_large_sv_chunk_6s` | `video_videoprism_lvt_large_sv_chunk_6s_schema.json` | Chunk (single-vector) |
+| `video_xclip_sv_chunk_6s` | `video_xclip_sv_chunk_6s_schema.json` | Chunk (single-vector) |
 
 **Schema Structure Example** (`configs/schemas/video_colpali_smol500_mv_frame_schema.json`):
 ```json

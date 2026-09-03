@@ -66,7 +66,7 @@ def profile_agent_with_real_lm(real_dspy_lm, real_telemetry):
         available_profiles=[
             "video_colpali_base",
             "video_colpali_large",
-            "video_videoprism_base",
+            "video_xclip_base",
             "image_colpali_base",
             "text_bge_base",
         ],

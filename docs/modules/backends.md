@@ -37,7 +37,7 @@ The Vespa package (`cogniverse-vespa`) provides backend integration for vector a
 ### Key Features
 
 1. **Multi-Tenant Schema Management**: Physical isolation via schema-per-tenant
-2. **Search Backend**: Video search with ColPali and VideoPrism embeddings
+2. **Search Backend**: Video search with ColPali and X-CLIP embeddings
 3. **Ingestion**: Batch document feeding with retry logic
 4. **Schema Deployment**: JSON-based schema parsing and deployment
 5. **Tenant Isolation**: Dedicated schemas for each tenant
@@ -118,7 +118,7 @@ Cogniverse uses a **profile-based backend configuration system** with multi-tena
 **Key Features**:
 
 - **Auto-Discovery**: Automatic config.json discovery from standard locations
-- **Profile-Based**: Multiple processing profiles per backend (ColPali, VideoPrism, ColQwen-Omni, etc.)
+- **Profile-Based**: Multiple processing profiles per backend (ColPali, X-CLIP, ColQwen-Omni, etc.)
 - **Tenant Overlays**: Tenant-specific config merges with system base
 - **Deep Merge**: System profiles + Tenant overrides = Merged configuration
 - **Type-Safe**: BackendConfig and BackendProfileConfig dataclasses
@@ -237,11 +237,11 @@ flowchart TD
           "binary_dim": 40
         }
       },
-      "video_videoprism_base_mv_chunk_30s": {
+      "video_xclip_sv_chunk_6s": {
         "type": "video",
-        "description": "VideoPrism for 30-second chunk embeddings",
-        "schema_name": "video_videoprism_base_mv_chunk_30s",
-        "embedding_model": "videoprism_public_v1_base_hf",
+        "description": "X-CLIP for 30-second chunk embeddings",
+        "schema_name": "video_xclip_sv_chunk_6s",
+        "embedding_model": "microsoft/xclip-large-patch14",
         "embedding_type": "multi_vector",
         "schema_config": {
           "embedding_dim": 768,
@@ -288,7 +288,7 @@ profile = BackendProfileConfig(
 - `profile_name`: Unique identifier for the profile
 - `schema_name`: Vespa schema name (without tenant suffix)
 - `embedding_model`: HuggingFace model ID or local path
-- `model_loader`: Loader class key (`colpali`, `colqwen`, `videoprism`, `colbert`)
+- `model_loader`: Loader class key (`colpali`, `colqwen`, `xclip`, `colbert`)
 - `pipeline_config`: Video processing pipeline settings
 - `strategies`: Processing strategy classes and params
 - `embedding_type`: Type of embeddings (`multi_vector` or `single_vector`)
@@ -306,7 +306,7 @@ config = BackendConfig(
     port=8080,
     profiles={
         "video_colpali_smol500_mv_frame": profile1,
-        "video_videoprism_base_mv_chunk_30s": profile2
+        "video_xclip_sv_chunk_6s": profile2
     }
 )
 
@@ -329,7 +329,7 @@ flowchart TB
     TenantConfig["<span style='color:#000'>Tenant Override Config<br/>ConfigManager.get_backend_config</span>"] --> Merge
     Merge --> MergedConfig["<span style='color:#000'>Merged BackendConfig<br/>System profiles + Tenant profiles</span>"]
 
-    SystemConfig -.->|"type: vespa<br/>url: localhost<br/>profiles: [colpali, videoprism]"| Merge
+    SystemConfig -.->|"type: vespa<br/>url: localhost<br/>profiles: [colpali, xclip]"| Merge
     TenantConfig -.->|"url: custom-vespa.acme.com<br/>profiles: [acme_custom_profile]"| Merge
     MergedConfig -.->|"All system profiles +<br/>Tenant custom profiles +<br/>Tenant URL override"| Result["<span style='color:#000'>Available to Application</span>"]
 
@@ -356,7 +356,7 @@ flowchart TB
     "port": 8080,
     "profiles": {
       "video_colpali": {...},
-      "video_videoprism": {...}
+      "video_xclip": {...}
     }
   }
 }
@@ -373,7 +373,7 @@ tenant_config = BackendConfig(
 
 # Merged result for tenant "acme"
 # → url: http://vespa.acme.com (tenant override)
-# → profiles: {video_colpali, video_videoprism, acme_custom_profile} (merged)
+# → profiles: {video_colpali, video_xclip, acme_custom_profile} (merged)
 ```
 
 #### Partial Profile Updates
@@ -480,7 +480,7 @@ flowchart TB
     MergedBackend --> Profiles{"<span style='color:#000'>Available Profiles</span>"}
 
     Profiles --> ColPali["<span style='color:#000'>video_colpali<br/>System</span>"]
-    Profiles --> VideoPrism["<span style='color:#000'>video_videoprism<br/>System</span>"]
+    Profiles --> X-CLIP["<span style='color:#000'>video_xclip<br/>System</span>"]
     Profiles --> AcmeCustom["<span style='color:#000'>acme_custom<br/>Tenant Override</span>"]
 
     MergedBackend --> VespaBackend["<span style='color:#000'>VespaBackend</span>"]
@@ -498,7 +498,7 @@ flowchart TB
     style MergedBackend fill:#a5d6a7,stroke:#388e3c,color:#000
     style Profiles fill:#b0bec5,stroke:#546e7a,color:#000
     style ColPali fill:#90caf9,stroke:#1565c0,color:#000
-    style VideoPrism fill:#90caf9,stroke:#1565c0,color:#000
+    style X-CLIP fill:#90caf9,stroke:#1565c0,color:#000
     style AcmeCustom fill:#ffcc80,stroke:#ef6c00,color:#000
     style VespaBackend fill:#90caf9,stroke:#1565c0,color:#000
     style Application fill:#a5d6a7,stroke:#388e3c,color:#000
@@ -633,8 +633,8 @@ operations:
 ### What is a Profile?
 
 A **profile** is a complete content processing configuration that defines:
-1. **Model Loader**: Which loader class to use (`colpali`, `colqwen`, `videoprism`, `colbert`) — the `model_loader` config key
-2. **Embedding Model**: Which model to use (ColPali, VideoPrism, ColQwen, ColBERT)
+1. **Model Loader**: Which loader class to use (`colpali`, `colqwen`, `xclip`, `colbert`) — the `model_loader` config key
+2. **Embedding Model**: Which model to use (ColPali, X-CLIP, ColQwen, ColBERT)
 3. **Embedding Type**: Processing mode (`multi_vector` or `single_vector`)
 4. **Processing Pipeline**: Keyframe extraction, transcription, description generation
 5. **Segmentation Strategy**: Frame-based, chunk-based, direct video, document segments, or audio segments
@@ -649,26 +649,26 @@ A **profile** is a complete content processing configuration that defines:
 flowchart TB
     subgraph Profiles["<span style='color:#000'>Backend Profiles</span>"]
         ColPali["<span style='color:#000'>video_colpali_smol500_mv_frame<br/>Frame-Based<br/>1024 patches × 320-dim<br/>Binary embeddings</span>"]
-        VideoPrism["<span style='color:#000'>video_videoprism_base_mv_chunk_30s<br/>Direct Video<br/>768-dim global<br/>30s chunks</span>"]
+        X-CLIP["<span style='color:#000'>video_xclip_sv_chunk_6s<br/>Direct Video<br/>768-dim global<br/>30s chunks</span>"]
         ColQwen["<span style='color:#000'>video_colqwen_omni_mv_chunk_30s<br/>Chunk-Based<br/>Multi-modal<br/>Audio + Visual</span>"]
     end
 
     subgraph QueryTime["<span style='color:#000'>Query-Time Selection</span>"]
         Query["<span style='color:#000'>User Query</span>"] --> AutoSelect{"<span style='color:#000'>Auto-Select Profile</span>"}
-        AutoSelect -->|has_video| SelectVideoPrism
+        AutoSelect -->|has_video| SelectX-CLIP
         AutoSelect -->|Fine-grained search| SelectColPali
         AutoSelect -->|Multimodal| SelectColQwen
     end
 
     subgraph Strategies["<span style='color:#000'>Processing Strategies</span>"]
         SelectColPali["<span style='color:#000'>ColPali</span>"] --> FrameSeg["<span style='color:#000'>FrameSegmentationStrategy<br/>1 FPS keyframe extraction</span>"]
-        SelectVideoPrism["<span style='color:#000'>VideoPrism</span>"] --> DirectVideo["<span style='color:#000'>DirectVideoStrategy<br/>No frame extraction</span>"]
+        SelectX-CLIP["<span style='color:#000'>X-CLIP</span>"] --> DirectVideo["<span style='color:#000'>DirectVideoStrategy<br/>No frame extraction</span>"]
         SelectColQwen["<span style='color:#000'>ColQwen</span>"] --> ChunkSeg["<span style='color:#000'>ChunkSegmentationStrategy<br/>30s audio+visual chunks</span>"]
     end
 
     subgraph VespaSchemas["<span style='color:#000'>Vespa Schemas per Tenant (bare tenant_id 'acme' canonicalizes to 'acme:acme')</span>"]
         FrameSeg --> ColPaliSchema["<span style='color:#000'>video_colpali_smol500_mv_frame_acme_acme<br/>Multi-vector binary</span>"]
-        DirectVideo --> VideoPrismSchema["<span style='color:#000'>video_videoprism_base_mv_chunk_30s_acme_acme<br/>Global float vectors</span>"]
+        DirectVideo --> X-CLIPSchema["<span style='color:#000'>video_xclip_sv_chunk_6s_acme_acme<br/>Global float vectors</span>"]
         ChunkSeg --> ColQwenSchema["<span style='color:#000'>video_colqwen_omni_mv_chunk_30s_acme_acme<br/>Multi-modal vectors</span>"]
     end
 
@@ -677,18 +677,18 @@ flowchart TB
     style Strategies fill:#ce93d8,stroke:#7b1fa2,color:#000
     style VespaSchemas fill:#a5d6a7,stroke:#388e3c,color:#000
     style ColPali fill:#90caf9,stroke:#1565c0,color:#000
-    style VideoPrism fill:#90caf9,stroke:#1565c0,color:#000
+    style X-CLIP fill:#90caf9,stroke:#1565c0,color:#000
     style ColQwen fill:#90caf9,stroke:#1565c0,color:#000
     style Query fill:#ffcc80,stroke:#ef6c00,color:#000
     style AutoSelect fill:#ffcc80,stroke:#ef6c00,color:#000
     style SelectColPali fill:#ce93d8,stroke:#7b1fa2,color:#000
-    style SelectVideoPrism fill:#ce93d8,stroke:#7b1fa2,color:#000
+    style SelectX-CLIP fill:#ce93d8,stroke:#7b1fa2,color:#000
     style SelectColQwen fill:#ce93d8,stroke:#7b1fa2,color:#000
     style FrameSeg fill:#ce93d8,stroke:#7b1fa2,color:#000
     style DirectVideo fill:#ce93d8,stroke:#7b1fa2,color:#000
     style ChunkSeg fill:#ce93d8,stroke:#7b1fa2,color:#000
     style ColPaliSchema fill:#a5d6a7,stroke:#388e3c,color:#000
-    style VideoPrismSchema fill:#a5d6a7,stroke:#388e3c,color:#000
+    style X-CLIPSchema fill:#a5d6a7,stroke:#388e3c,color:#000
     style ColQwenSchema fill:#a5d6a7,stroke:#388e3c,color:#000
 ```
 
@@ -707,7 +707,7 @@ flowchart TB
 - Best for: Semantic content search, audio+visual comprehension
 
 #### Direct Video Profiles
-**Example**: `video_videoprism_base_mv_chunk_30s`
+**Example**: `video_xclip_sv_chunk_6s`
 - Native video understanding without keyframes
 - Global 768-dim or 1024-dim embeddings
 - Schema: High-dimensional global vectors
@@ -728,7 +728,7 @@ config = get_config(tenant_id="acme", config_manager=config_manager)
 # List available profiles from backend config
 backend_config = config_manager.get_backend_config("acme")
 profiles = list(backend_config.profiles.keys())
-# → ['video_colpali_smol500_mv_frame', 'video_videoprism_base_mv_chunk_30s', ...]
+# → ['video_colpali_smol500_mv_frame', 'video_xclip_sv_chunk_6s', ...]
 
 # Select profile dynamically
 profile_name = "video_colpali_smol500_mv_frame"
@@ -923,15 +923,15 @@ query_dict = {
     "query": "cooking videos",
     "type": "video",  # REQUIRED
     "tenant_id": "acme:prod",  # REQUIRED
-    "profile": "video_videoprism_base_mv_chunk_30s",  # Explicit
+    "profile": "video_xclip_sv_chunk_6s",  # Explicit
     "strategy": "float_float",  # Explicit
     "top_k": 20
 }
 
 # Backend uses explicit values:
-# 1. Profile: "video_videoprism_base_mv_chunk_30s" (explicit)
+# 1. Profile: "video_xclip_sv_chunk_6s" (explicit)
 # 2. Strategy: "float_float" (explicit, validated against profile)
-# 3. Schema: "video_videoprism_base_mv_chunk_30s_acme_prod" (tenant-scoped)
+# 3. Schema: "video_xclip_sv_chunk_6s_acme_prod" (tenant-scoped)
 
 results = backend.search(query_dict)
 ```
@@ -1423,7 +1423,7 @@ deleted = schema_manager.delete_tenant_schemas(tenant_id="old_tenant")
 | Base Schema | Tenant ID | Tenant Schema |
 |------------|-----------|---------------|
 | video_colpali_smol500_mv_frame | acme | video_colpali_smol500_mv_frame_acme_acme |
-| video_videoprism_base_mv_chunk_30s | startup | video_videoprism_base_mv_chunk_30s_startup_startup |
+| video_xclip_sv_chunk_6s | startup | video_xclip_sv_chunk_6s_startup_startup |
 | agent_memories | acme:production | agent_memories_acme_production |
 
 #### Schema Lifecycle
@@ -1582,7 +1582,7 @@ the schema's available rank profiles (there is no enum). Valid names:
 | `hybrid_*_no_description` variants | Hybrid | Same as above, ignoring the description field |
 
 For the video `video_colpali_smol500_mv_frame`, `video_colqwen_omni_mv_chunk_30s`,
-`video_videoprism_base_mv_chunk_30s`, and `video_videoprism_large_mv_chunk_30s`
+`video_xclip_sv_chunk_6s`, and `video_xclip_sv_chunk_6s`
 schemas, `default` resolves to `phased` (`max_sim_hamming` first phase with
 `max_sim` rerank). Measured on an 85-query / 10-video corpus, that shift moved
 chunk video-MRR from 0.445 to 0.612 and frame video-MRR from 0.308 to 0.345,
@@ -2215,7 +2215,7 @@ schema_manager = VespaSchemaManager(
 # Deploy all required schemas for tenant
 schemas_to_deploy = [
     "video_colpali_smol500_mv_frame",
-    "video_videoprism_base_mv_chunk_30s",
+    "video_xclip_sv_chunk_6s",
     "agent_memories"
 ]
 
@@ -2230,7 +2230,7 @@ for base_schema in schemas_to_deploy:
 # Expected tenant schemas follow naming convention (a bare tenant_id
 # canonicalizes to "acme:acme" before the suffix is built, doubling it):
 # ['video_colpali_smol500_mv_frame_acme_acme',
-#  'video_videoprism_base_mv_chunk_30s_acme_acme',
+#  'video_xclip_sv_chunk_6s_acme_acme',
 #  'agent_memories_acme_acme']
 ```
 
@@ -2713,7 +2713,7 @@ raw = np.random.randn(1024, 320)  # ColPali (Tomoro ColQwen3): 1024 patches × 3
 result = processor.process_embeddings(raw)
 # Returns: {"embedding": {...}, "embedding_binary": {...}}
 
-# Single-vector processing (VideoPrism LVT)
+# Single-vector processing (X-CLIP)
 raw = np.random.randn(768)  # Global embedding
 result = processor.process_embeddings(raw)
 # Returns: {"embedding": [float, float, ...], "embedding_binary": "hex..."}

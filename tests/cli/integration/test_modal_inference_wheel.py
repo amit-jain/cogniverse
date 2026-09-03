@@ -33,7 +33,7 @@ _INSTALLED_WHEEL_PROBE = textwrap.dedent(
         "cogniverse_cli.modal_inference.servers.face",
         "cogniverse_cli.modal_inference.servers.gliner",
         "cogniverse_cli.modal_inference.servers.pylate",
-        "cogniverse_cli.modal_inference.servers.videoprism",
+        "cogniverse_cli.modal_inference.servers.xclip",
     )
 
     for module_name in (*deployment_modules, *server_modules):

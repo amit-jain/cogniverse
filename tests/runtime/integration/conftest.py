@@ -175,10 +175,10 @@ def config_manager(vespa_instance):
     )
     cm.add_backend_profile(
         BackendProfileConfig(
-            profile_name="test_videoprism",
+            profile_name="test_xclip",
             type="video",
-            schema_name="video_videoprism_base_mv_chunk_30s",
-            embedding_model="google/videoprism-base",
+            schema_name="video_xclip_base_mv_chunk_30s",
+            embedding_model="microsoft/xclip-large-patch14",
         ),
         tenant_id="test:unit",
     )

@@ -463,7 +463,7 @@ except Exception as e:
     # 2. Try alternate agent with different profile
     try:
         fallback_agent = SearchAgent(
-            deps=SearchAgentDeps(profile="video_videoprism_base_mv_chunk_30s"),
+            deps=SearchAgentDeps(profile="video_xclip_sv_chunk_6s"),
             config_manager=config_manager,
             schema_loader=schema_loader
         )

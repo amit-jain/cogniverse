@@ -153,14 +153,14 @@ class TestSchemaNameAuthority:
     wrong tensor shape."""
 
     def test_single_row_mv_float_returns_mapped_dict(self):
-        mv = VespaEmbeddingProcessor(schema_name="video_videoprism_base_mv_chunk_30s")
+        mv = VespaEmbeddingProcessor(schema_name="video_xclip_base_mv_chunk_30s")
         out = mv._convert_to_float_dict(np.random.rand(1, 768).astype(np.float32))
         assert isinstance(out, dict)
         assert list(out.keys()) == ["0"]
         assert isinstance(out["0"], str)  # hex-encoded bfloat16
 
     def test_single_row_mv_binary_returns_mapped_dict(self):
-        mv = VespaEmbeddingProcessor(schema_name="video_videoprism_base_mv_chunk_30s")
+        mv = VespaEmbeddingProcessor(schema_name="video_xclip_base_mv_chunk_30s")
         out = mv._convert_to_binary_dict(np.random.rand(1, 768).astype(np.float32))
         assert isinstance(out, dict)
         assert list(out.keys()) == ["0"]
@@ -168,9 +168,7 @@ class TestSchemaNameAuthority:
 
     def test_sv_schema_returns_flat_list(self):
         # Real sv schema names have ``_sv_`` (both underscores).
-        sv = VespaEmbeddingProcessor(
-            schema_name="video_videoprism_lvt_base_sv_chunk_6s"
-        )
+        sv = VespaEmbeddingProcessor(schema_name="video_xclip_lvt_base_sv_chunk_6s")
         out = sv._convert_to_float_dict(np.random.rand(1, 768).astype(np.float32))
         assert isinstance(out, list)
         assert len(out) == 768

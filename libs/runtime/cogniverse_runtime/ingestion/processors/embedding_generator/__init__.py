@@ -6,7 +6,6 @@ from cogniverse_core.common.models import (
     ColQwenModelLoader,
     ModelLoader,
     ModelLoaderFactory,
-    VideoPrismModelLoader,
     get_or_load_model,
 )
 from cogniverse_sdk.document import ContentType, Document, ProcessingStatus
@@ -38,7 +37,6 @@ __all__ = [
     "ColBERTModelLoader",
     "ColPaliModelLoader",
     "ColQwenModelLoader",
-    "VideoPrismModelLoader",
     # Processors and factories
     "BackendFactory",
     # Factory function

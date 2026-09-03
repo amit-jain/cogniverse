@@ -64,7 +64,6 @@ class EmbeddingGeneratorImpl(BaseEmbeddingGenerator):
         # Model and processor
         self.model = None
         self.processor = None
-        self.videoprism_loader = None
         self.xclip_loader = None
         self.colbert_model = None
 
@@ -84,10 +83,9 @@ class EmbeddingGeneratorImpl(BaseEmbeddingGenerator):
     def _segment_embedder(self):
         """Loader that embeds a whole video segment in one remote call.
 
-        VideoPrism and X-CLIP both return ``{"embeddings_np": ...}`` from
-        ``process_video_segment``, so the segment paths are shared.
+        X-CLIP returns ``{"embeddings_np": ...}`` from ``process_video_segment``.
         """
-        return self.videoprism_loader or self.xclip_loader
+        return self.xclip_loader
 
     def _embed_segment_remotely(
         self,
@@ -127,7 +125,7 @@ class EmbeddingGeneratorImpl(BaseEmbeddingGenerator):
         """Check if model should be loaded during initialization.
 
         ColPali/ColQwen models are loaded lazily when the first frame/chunk
-        is processed. All other models (ColBERT, VideoPrism) load at init.
+        is processed. All other models (ColBERT, X-CLIP) load at init.
         """
         model_loader = self.profile_config.get("model_loader")
         if not model_loader:
@@ -153,10 +151,6 @@ class EmbeddingGeneratorImpl(BaseEmbeddingGenerator):
                 model_name = self.profile_config.get("semantic_model", self.model_name)
                 self.colbert_model, _ = get_or_load_model(
                     model_name, self.profile_config, self.logger
-                )
-            elif model_loader == "videoprism":
-                self.videoprism_loader, _ = get_or_load_model(
-                    self.model_name, self.profile_config, self.logger
                 )
             elif model_loader == "xclip":
                 self.xclip_loader, _ = get_or_load_model(

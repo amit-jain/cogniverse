@@ -120,7 +120,7 @@ class TestEmbeddingGeneratorImpl:
             "embedding_model": "test_model",
             "storage_mode": "multi_doc",
             "embedding_type": "multi_vector",
-            "model_loader": "videoprism",
+            "model_loader": "xclip",
         }
 
     @pytest.fixture
@@ -137,7 +137,7 @@ class TestEmbeddingGeneratorImpl:
     def test_initialization_with_model_load(
         self, mock_get_model, basic_config, mock_logger, mock_backend_client
     ):
-        """Test EmbeddingGeneratorImpl initialization loads model for videoprism."""
+        """Test EmbeddingGeneratorImpl initialization loads model for xclip."""
         mock_loader = Mock()
         mock_get_model.return_value = (mock_loader, None)
 
@@ -150,7 +150,7 @@ class TestEmbeddingGeneratorImpl:
         assert generator.backend_client == mock_backend_client
         assert generator.schema_name == "test_schema"
         assert generator.storage_mode == "multi_doc"
-        assert generator.videoprism_loader == mock_loader
+        assert generator.xclip_loader == mock_loader
 
         mock_get_model.assert_called_once_with("test_model", basic_config, mock_logger)
 
@@ -165,21 +165,21 @@ class TestEmbeddingGeneratorImpl:
 
         assert generator.model is None
         assert generator.processor is None
-        assert generator.videoprism_loader is None
+        assert generator.xclip_loader is None
 
         # Model should not be loaded for frame_based
         mock_get_model.assert_not_called()
 
     @patch("cogniverse_core.common.models.get_or_load_model")
-    def test_initialization_videoprism_model(
+    def test_initialization_xclip_model(
         self, mock_get_model, mock_logger, mock_backend_client
     ):
-        """Test EmbeddingGeneratorImpl initialization with VideoPrism model."""
+        """Test EmbeddingGeneratorImpl initialization with X-CLIP model."""
         config = {
             "schema_name": "test_schema",
-            "embedding_model": "videoprism_large",
+            "embedding_model": "microsoft/xclip-large-patch14",
             "embedding_type": "multi_vector",
-            "model_loader": "videoprism",
+            "model_loader": "xclip",
         }
 
         mock_loader = Mock()
@@ -187,7 +187,7 @@ class TestEmbeddingGeneratorImpl:
 
         generator = EmbeddingGeneratorImpl(config, mock_logger, mock_backend_client)
 
-        assert generator.videoprism_loader == mock_loader
+        assert generator.xclip_loader == mock_loader
         assert generator.model is None
 
     @patch("cogniverse_core.common.models.get_or_load_model")
@@ -224,8 +224,8 @@ class TestEmbeddingGeneratorImpl:
                     f"model_loader={loader} should defer model loading"
                 )
 
-        # ColBERT and VideoPrism should load model at init
-        for loader in ("colbert", "videoprism"):
+        # ColBERT and X-CLIP should load model at init
+        for loader in ("colbert", "xclip"):
             config = {
                 "embedding_type": "multi_vector",
                 "embedding_model": "test_model",
@@ -1006,7 +1006,7 @@ class TestEmbeddingGeneratorImpl:
 
     @patch("cogniverse_core.common.models.get_or_load_model")
     @patch("subprocess.run")
-    def test_generate_chunk_embeddings_videoprism_single_vector_not_pooled(
+    def test_generate_chunk_embeddings_xclip_single_vector_not_pooled(
         self,
         mock_subprocess,
         mock_get_or_load_model,
@@ -1014,7 +1014,7 @@ class TestEmbeddingGeneratorImpl:
         mock_logger,
         mock_backend_client,
     ):
-        """A VideoPrism-style single-vector chunk return is never pooled, even
+        """An X-CLIP single-vector chunk return is never pooled, even
         when token_pool_factor is set — pooling a single vector is corrupting.
 
         The shape guard (ndim == 2 and shape[0] > 1) protects it.
@@ -1023,11 +1023,11 @@ class TestEmbeddingGeneratorImpl:
         config = {
             **frame_based_config,
             "embedding_type": "multi_vector",
-            "model_loader": "videoprism",
+            "model_loader": "xclip",
             "token_pool_factor": 3,
         }
         generator = EmbeddingGeneratorImpl(config, mock_logger, mock_backend_client)
-        generator.videoprism_loader = Mock()
+        generator.xclip_loader = Mock()
 
         mock_result = Mock()
         mock_result.returncode = 0
@@ -1036,7 +1036,7 @@ class TestEmbeddingGeneratorImpl:
 
         rng = np.random.default_rng(1)
         single_vector = rng.standard_normal((768,)).astype(np.float32)
-        generator.videoprism_loader.process_video_segment.return_value = {
+        generator.xclip_loader.process_video_segment.return_value = {
             "embeddings_np": single_vector
         }
 
@@ -1203,7 +1203,7 @@ class TestEmbeddingGeneratorImpl:
         """The time-segment path must lazy-load ColQwen, like the frame path.
 
         Time-based (single-vector) segments with a ColQwen/ColPali loader take
-        the non-VideoPrism branch, which uses ``self.model``/``self.processor``.
+        the non-X-CLIP branch, which uses ``self.model``/``self.processor``.
         Without the guard the model stays ``None`` and the segment yields no
         embedding. This pins that ``_load_model`` fires from this path too.
         """
@@ -1222,7 +1222,7 @@ class TestEmbeddingGeneratorImpl:
         generator.model_name = "colqwen_test"
 
         assert generator.model is None
-        assert generator.videoprism_loader is None  # non-VideoPrism else branch
+        assert generator.xclip_loader is None  # non-X-CLIP else branch
 
         mock_cap = Mock()
         mock_cap.get.return_value = 25.0  # fps
@@ -1255,30 +1255,29 @@ class TestEmbeddingGeneratorImpl:
 
     @patch("cogniverse_core.common.models.get_or_load_model")
     @patch("subprocess.run")
-    def test_generate_chunk_embeddings_videoprism(
+    def test_generate_chunk_embeddings_xclip(
         self,
         mock_subprocess,
         mock_get_or_load_model,
         mock_logger,
         mock_backend_client,
     ):
-        """Test _generate_chunk_embeddings with VideoPrism model."""
-        # Constructor calls ``get_or_load_model`` for model_loader=videoprism;
-        # without this mock the real loader fires ``import jax`` (the
-        # JAX/flax stack now lives only in the deploy/videoprism sidecar
-        # image, not in base deps) and the test fails to even instantiate.
+        """Test _generate_chunk_embeddings with X-CLIP model."""
+        # Constructor calls ``get_or_load_model`` for model_loader=xclip; the
+        # mock stands in for the remote video_embed sidecar client so the test
+        # needs no network and instantiates without the sidecar.
         mock_get_or_load_model.return_value = (Mock(), None)
-        videoprism_config = {
+        xclip_config = {
             "schema_name": "test_schema",
             "embedding_model": "test_model",
             "storage_mode": "multi_doc",
             "embedding_type": "multi_vector",
-            "model_loader": "videoprism",
+            "model_loader": "xclip",
         }
         generator = EmbeddingGeneratorImpl(
-            videoprism_config, mock_logger, mock_backend_client
+            xclip_config, mock_logger, mock_backend_client
         )
-        generator.videoprism_loader = Mock()
+        generator.xclip_loader = Mock()
 
         # Mock ffprobe output
         mock_result = Mock()
@@ -1286,16 +1285,16 @@ class TestEmbeddingGeneratorImpl:
         mock_result.stdout = "30.5"
         mock_subprocess.return_value = mock_result
 
-        # Mock videoprism processing
+        # Mock xclip processing
         mock_embeddings = np.random.rand(768)
-        generator.videoprism_loader.process_video_segment.return_value = {
+        generator.xclip_loader.process_video_segment.return_value = {
             "embeddings_np": mock_embeddings
         }
 
         result = generator._generate_chunk_embeddings(Path("/path/to/chunk.mp4"))
 
         np.testing.assert_array_equal(result, mock_embeddings)
-        generator.videoprism_loader.process_video_segment.assert_called_once_with(
+        generator.xclip_loader.process_video_segment.assert_called_once_with(
             Path("/path/to/chunk.mp4"), 0, 30.5
         )
 
@@ -1440,17 +1439,17 @@ class TestEmbeddingGeneratorImpl:
             f"unexpected shape (3,){_EMPTY_EMBEDDING_CONTEXT}"
         )
 
-    def test_generate_time_segment_embeddings_videoprism(
+    def test_generate_time_segment_embeddings_xclip(
         self, frame_based_config, mock_logger, mock_backend_client
     ):
-        """Test _generate_time_segment_embeddings with VideoPrism."""
+        """Test _generate_time_segment_embeddings with X-CLIP."""
         generator = EmbeddingGeneratorImpl(
             frame_based_config, mock_logger, mock_backend_client
         )
-        generator.videoprism_loader = Mock()
+        generator.xclip_loader = Mock()
 
         mock_embeddings = np.random.rand(768)
-        generator.videoprism_loader.process_video_segment.return_value = {
+        generator.xclip_loader.process_video_segment.return_value = {
             "embeddings_np": mock_embeddings
         }
 
@@ -1459,19 +1458,19 @@ class TestEmbeddingGeneratorImpl:
         )
 
         np.testing.assert_array_equal(result, mock_embeddings)
-        generator.videoprism_loader.process_video_segment.assert_called_once_with(
+        generator.xclip_loader.process_video_segment.assert_called_once_with(
             Path("/video.mp4"), 10.0, 20.0
         )
 
-    def test_generate_time_segment_embeddings_videoprism_no_result(
+    def test_generate_time_segment_embeddings_xclip_no_result(
         self, frame_based_config, mock_logger, mock_backend_client
     ):
-        """Test _generate_time_segment_embeddings with VideoPrism returning no result."""
+        """Test _generate_time_segment_embeddings with X-CLIP returning no result."""
         generator = EmbeddingGeneratorImpl(
             frame_based_config, mock_logger, mock_backend_client
         )
-        generator.videoprism_loader = Mock()
-        generator.videoprism_loader.process_video_segment.return_value = None
+        generator.xclip_loader = Mock()
+        generator.xclip_loader.process_video_segment.return_value = None
 
         result = generator._generate_time_segment_embeddings(
             Path("/video.mp4"), 10.0, 20.0
@@ -1668,7 +1667,7 @@ class TestEmbeddingGeneratorImpl:
 
         assert generator.colbert_model == mock_colbert
         assert generator.model is None
-        assert generator.videoprism_loader is None
+        assert generator.xclip_loader is None
         mock_get_model.assert_called_once_with(
             "lightonai/Reason-ModernColBERT", config, mock_logger
         )
@@ -1805,18 +1804,18 @@ class TestModelLoaderFactoryModelLoader:
         )
         assert isinstance(loader, ColQwenModelLoader)
 
-    def test_videoprism_loader(self):
+    def test_xclip_loader(self):
         from cogniverse_core.common.models.model_loaders import (
             ModelLoaderFactory,
-            VideoPrismModelLoader,
+            RemoteXClipLoader,
         )
 
         loader = ModelLoaderFactory.create_loader(
-            "videoprism_public_v1_base_hf",
-            {"model_loader": "videoprism"},
+            "microsoft/xclip-large-patch14",
+            {"model_loader": "xclip", "remote_inference_url": "http://localhost:9999"},
             None,
         )
-        assert isinstance(loader, VideoPrismModelLoader)
+        assert isinstance(loader, RemoteXClipLoader)
 
     def test_missing_model_loader_raises(self):
         from cogniverse_core.common.models.model_loaders import ModelLoaderFactory

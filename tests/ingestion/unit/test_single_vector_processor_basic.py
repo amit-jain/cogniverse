@@ -261,7 +261,7 @@ class TestSingleVectorVideoProcessor:
             transcript_text="Test transcript",
         )
 
-        prepared = processor.prepare_for_embedding_generation([segment], "videoprism")
+        prepared = processor.prepare_for_embedding_generation([segment], "xclip")
 
         assert len(prepared) == 1
         assert prepared[0]["segment_id"] == 0
@@ -270,7 +270,7 @@ class TestSingleVectorVideoProcessor:
         assert prepared[0]["metadata"]["start_time"] == 0.0
         assert prepared[0]["metadata"]["end_time"] == 10.0
         assert prepared[0]["metadata"]["transcript"] == "Test transcript"
-        assert prepared[0]["metadata"]["model_type"] == "videoprism"
+        assert prepared[0]["metadata"]["model_type"] == "xclip"
 
     def test_processor_name_constant(self, mock_logger):
         """Test processor name constant."""

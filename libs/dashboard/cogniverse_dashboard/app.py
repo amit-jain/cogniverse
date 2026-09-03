@@ -2346,10 +2346,7 @@ with main_tabs[9]:
             [
                 "video_colpali_smol500_mv_frame",
                 "video_colqwen_omni_mv_chunk_30s",
-                "video_videoprism_base_mv_chunk_30s",
-                "video_videoprism_large_mv_chunk_30s",
-                "video_videoprism_lvt_base_sv_chunk_6s",
-                "video_videoprism_lvt_large_sv_chunk_6s",
+                "video_xclip_sv_chunk_6s",
             ],
             default=["video_colpali_smol500_mv_frame"],
         )
@@ -2541,8 +2538,6 @@ with main_tabs[9]:
                 # Determine dimensions based on profile
                 if "colpali" in profile:
                     dims = "128"
-                elif "videoprism" in profile and "large" in profile:
-                    dims = "1024"
                 else:
                     dims = "768"
                 st.metric("Dimensions", dims)
@@ -2649,8 +2644,7 @@ with main_tabs[10]:
             [
                 "video_colpali_smol500_mv_frame",
                 "video_colqwen_omni_mv_chunk_30s",
-                "video_videoprism_base_mv_chunk_30s",
-                "video_videoprism_lvt_base_sv_chunk_6s",
+                "video_xclip_sv_chunk_6s",
             ],
             help="Select the video processing profile for search",
         )

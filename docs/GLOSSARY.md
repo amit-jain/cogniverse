@@ -333,7 +333,7 @@ Multi-turn conversation context. Tracked via `session_id` in telemetry for conve
 Training technique using instruction-response pairs. Cogniverse extracts SFT data from traces.
 
 ### Single-Vector
-Embedding strategy that produces one vector per document. Used by VideoPrism for video-level embeddings.
+Embedding strategy that produces one vector per document. Used by X-CLIP for video-level embeddings.
 
 ### Span
 OpenTelemetry trace unit representing an operation. Has attributes, events, and parent/child relationships.
@@ -382,7 +382,7 @@ Multi-turn conversation sequence for fine-tuning. Extracted from session-aware t
 ### Vespa
 Vector database used for content storage and search. Supports multi-vector, hybrid search, tenant isolation.
 
-### VideoPrism
+### X-CLIP
 Google's video embedding model. Produces global embeddings from video chunks/segments.
 
 ### VLM (Vision Language Model)

@@ -372,8 +372,8 @@ class TestOrchestratorWithRealAgents:
         valid_profiles = [
             "video_colpali_smol500_mv_frame",
             "video_colqwen_omni_mv_chunk_30s",
-            "video_videoprism_base_mv_chunk_30s",
-            "video_videoprism_large_mv_chunk_30s",
+            "video_xclip_base_mv_chunk_30s",
+            "video_xclip_large_mv_chunk_30s",
         ]
         assert selected in valid_profiles, (
             f"Selected profile '{selected}' (raw: '{result.selected_profile}') "

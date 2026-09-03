@@ -98,7 +98,7 @@ See [Getting Started](operations/setup-installation.md) for ingestion and config
 
 | Category | Technologies |
 |----------|-------------|
-| **Embedding Models** | ColPali, VideoPrism, ColQwen, Whisper |
+| **Embedding Models** | ColPali, X-CLIP, ColQwen, Whisper |
 | **Entity Extraction** | GLiNER (zero-shot NER) |
 | **LLM Inference** | Ollama (Llama, Qwen, SmolLM, Gemma) |
 | **Remote Infra** | Modal (inference, training) |

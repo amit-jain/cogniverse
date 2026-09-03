@@ -204,7 +204,7 @@ class TestInferenceServiceInProcessorRequirements:
         assert strategy.get_required_processors() == {
             "embedding": {
                 "type": "single_vector",
-                "model_name": "google/videoprism-base",
+                "model_name": "microsoft/xclip-large-patch14",
                 "inference_service": "vllm_colpali",
             }
         }
@@ -214,7 +214,7 @@ class TestInferenceServiceInProcessorRequirements:
         assert strategy.get_required_processors() == {
             "embedding": {
                 "type": "single_vector",
-                "model_name": "google/videoprism-base",
+                "model_name": "microsoft/xclip-large-patch14",
             }
         }
 

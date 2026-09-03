@@ -826,7 +826,7 @@ def _get_runtime_config_manager():
         "vllm_colpali": "http://localhost:33901",
         "colbert_pylate": "http://localhost:33902",
         "code_colbert_pylate": "http://localhost:33904",
-        "videoprism_jax": "http://localhost:33903",
+        "video_embed": "http://localhost:33903",
         "vllm_asr": "http://localhost:33905",
     }
     sys_cfg.inference_service_urls = {

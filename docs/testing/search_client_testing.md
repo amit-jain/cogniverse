@@ -149,7 +149,7 @@ for result in results:
 - **Single-vector schemas** (LVT sv_chunk): numpy array flattened to a dense list —
   `tensor(v[dim])` binding (e.g. `tensor<float>(v[768])`). A `(1, dim)` array is
   flattened before serialisation.
-- **Multi-vector schemas** (ColPali, VideoPrism mv_chunk): numpy array converted to a
+- **Multi-vector schemas** (ColPali, X-CLIP mv_chunk): numpy array converted to a
   `{str(token_index): vector_list}` dict — `tensor<float>(querytoken{}, v[dim])` or
   `tensor<int8>(querytoken{}, v[dim])` binding (the query-side input tensor; the
   *stored* document embedding field uses `tensor<bfloat16>(patch{}, v[dim])`,
@@ -164,8 +164,8 @@ The bound input name depends on the rank profile's declared inputs (see
 
 | Input name | Type | Used by |
 |---|---|---|
-| `qt` | float | ColPali/VideoPrism `float_float`, `float_binary`, `phased`, `hybrid_*float*` strategies |
-| `qtb` | int8 (binary) | ColPali/VideoPrism `binary_binary`, `float_binary`, `phased`, `hybrid_*binary*` strategies |
+| `qt` | float | ColPali/X-CLIP `float_float`, `float_binary`, `phased`, `hybrid_*float*` strategies |
+| `qtb` | int8 (binary) | ColPali/X-CLIP `binary_binary`, `float_binary`, `phased`, `hybrid_*binary*` strategies |
 | `acoustic_query` | float | audio schema strategies only (e.g. `audio_content`); same code branch as `qt` |
 | `q` | generic | schemas whose rank profiles declare a bare `q` input (e.g. `wiki_pages`, `agent_memories`) |
 

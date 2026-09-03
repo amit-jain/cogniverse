@@ -240,7 +240,7 @@ Create a `.env` file in the workspace root:
 BACKEND_URL=http://localhost
 BACKEND_PORT=8080
 
-# JAX (for VideoPrism models)
+# JAX (for X-CLIP models)
 JAX_PLATFORM_NAME=cpu
 
 # Config file path (optional — defaults to configs/config.json)
@@ -335,7 +335,7 @@ cluster. `modal token new` writes `~/.modal.toml`; `MODAL_TOKEN_ID` /
 
 3. Deploy and warm the Modal services (canonical names: `vllm_colpali`,
    `colbert_pylate`, `code_colbert_pylate`, `denseon`, `gliner`,
-   `videoprism_jax`, `vllm_llm_student`, `vllm_asr`, `clap_embed`,
+   `video_embed`, `vllm_llm_student`, `vllm_asr`, `clap_embed`,
    `face_embed`):
 
    ```bash
@@ -536,10 +536,7 @@ The schema names inside the schema JSON files do not include the
 |-------------|----------------------|---------|-----------------|------------|---------------|
 | `video_colpali_smol500_mv_frame_schema.json` | `video_colpali_smol500_mv_frame` | `video_colpali_smol500_mv_frame` | TomoroAI/tomoro-colqwen3-embed-4b | 320 per patch | `_<tenant_id>` |
 | `video_colqwen_omni_mv_chunk_30s_schema.json` | `video_colqwen_omni_mv_chunk_30s` | `video_colqwen_omni_mv_chunk_30s` | TomoroAI/tomoro-colqwen3-embed-4b | 320 per patch | `_<tenant_id>` |
-| `video_videoprism_base_mv_chunk_30s_schema.json` | `video_videoprism_base_mv_chunk_30s` | `video_videoprism_base_mv_chunk_30s` | videoprism_public_v1_base_hf | 768 per patch | `_<tenant_id>` |
-| `video_videoprism_large_mv_chunk_30s_schema.json` | `video_videoprism_large_mv_chunk_30s` | `video_videoprism_large_mv_chunk_30s` | videoprism_public_v1_large_hf | 1024 per patch | `_<tenant_id>` |
-| `video_videoprism_lvt_base_sv_chunk_6s_schema.json` | `video_videoprism_lvt_base_sv_chunk_6s` | `video_videoprism_lvt_base_sv_chunk_6s` | videoprism_lvt_public_v1_base | 768 | `_<tenant_id>` |
-| `video_videoprism_lvt_large_sv_chunk_6s_schema.json` | `video_videoprism_lvt_large_sv_chunk_6s` | `video_videoprism_lvt_large_sv_chunk_6s` | videoprism_lvt_public_v1_large | 1024 | `_<tenant_id>` |
+| `video_xclip_sv_chunk_6s_schema.json` | `video_xclip_sv_chunk_6s` | `video_xclip_sv_chunk_6s` | microsoft/xclip-large-patch14 | 768 | `_<tenant_id>` |
 | `image_colpali_mv_schema.json` | `image_colpali_mv` | `image_colpali_mv` | TomoroAI/tomoro-colqwen3-embed-4b | 320 per patch | `_<tenant_id>` |
 | `audio_content_schema.json` | `audio_content` | `audio_clap_semantic` | laion/clap-htsat-unfused | 128 per token + 512 dense | `_<tenant_id>` |
 | `document_text_schema.json` | `document_text` | `document_text_semantic` | lightonai/LateOn | 128 per token | `_<tenant_id>` |

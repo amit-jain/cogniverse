@@ -60,35 +60,6 @@ class ColPaliStub(EncoderStub):
         return rng.randn(16, 320).astype(np.float32)
 
 
-class VideoPrismBaseStub(EncoderStub):
-    """Stub for VideoPrism Base encoder (768-dim global embeddings)"""
-
-    def __init__(self, model_name: str = "google/videoprism-base", **kwargs):
-        super().__init__(model_name, embedding_dim=768, load_time_ms=20.0)
-
-    def encode(self, query: str, **kwargs) -> np.ndarray:
-        """Return 16x768 patch embeddings for consistency with ColPali"""
-        seed = hash(query) % (2**32)
-        rng = np.random.RandomState(seed)
-
-        # Return patch format for consistency with other models
-        return rng.randn(16, 768).astype(np.float32)
-
-
-class VideoPrismLargeStub(EncoderStub):
-    """Stub for VideoPrism Large encoder (1024-dim global embeddings)"""
-
-    def __init__(self, model_name: str = "google/videoprism-large", **kwargs):
-        super().__init__(model_name, embedding_dim=1024, load_time_ms=25.0)
-
-    def encode(self, query: str, **kwargs) -> np.ndarray:
-        """Return 16x1024 patch embeddings for consistency"""
-        seed = hash(query) % (2**32)
-        rng = np.random.RandomState(seed)
-
-        return rng.randn(16, 1024).astype(np.float32)
-
-
 class ColQwenStub(EncoderStub):
     """Stub for ColQwen encoder (320-dim patch-based embeddings)"""
 
@@ -118,11 +89,6 @@ def create_encoder_stub(model_name: str, **kwargs) -> EncoderStub:
 
     if "colpali" in model_name_lower:
         return ColPaliStub(model_name, **kwargs)
-    elif "videoprism" in model_name_lower:
-        if "large" in model_name_lower:
-            return VideoPrismLargeStub(model_name, **kwargs)
-        else:
-            return VideoPrismBaseStub(model_name, **kwargs)
     elif "colqwen" in model_name_lower:
         return ColQwenStub(model_name, **kwargs)
     else:

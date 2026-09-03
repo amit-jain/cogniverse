@@ -3,7 +3,7 @@
 **Experience-Guided Multi-Agent System for Multi-Modal Understanding**
 
 
-Multi-agent AI platform for video, audio, image, and document understanding. Processes all content types using ColPali, VideoPrism, ColQwen, and LateOn embeddings with Vespa-backed retrieval. Agents coordinate via A2A protocol with DSPy-powered reasoning, streaming responses, and Phoenix observability. 13-package UV workspace with multi-tenant isolation.
+Multi-agent AI platform for video, audio, image, and document understanding. Processes all content types using ColPali, X-CLIP, ColQwen, and LateOn embeddings with Vespa-backed retrieval. Agents coordinate via A2A protocol with DSPy-powered reasoning, streaming responses, and Phoenix observability. 13-package UV workspace with multi-tenant isolation.
 
 ## 🎯 What Makes Cogniverse Different
 
@@ -12,7 +12,7 @@ Multi-agent AI platform for video, audio, image, and document understanding. Pro
 - **🤖 Multi-Agent Orchestration**: DSPy 3.1 A2A protocol-based coordination of specialized agents working together
 - **🔀 Cross-Modal Fusion**: Intelligent combination of insights across different modalities for richer understanding
 - **⚡ Production Performance**: <500ms P95 latency at 500+ concurrent users with 7 Vespa ranking strategies
-- **🎯 Multiple SOTA Models**: ColPali (frame-level), VideoPrism (global+temporal), ColQwen (multi-modal fusion)
+- **🎯 Multiple SOTA Models**: ColPali (frame-level), X-CLIP (temporal video), ColQwen (multi-modal fusion)
 - **🏢 Multi-Tenant Ready**: Complete schema-per-tenant isolation with independent Phoenix projects and memory
 - **📊 Full Observability**: Comprehensive Phoenix telemetry with traces, experiments, and real-time dashboards
 - **🧪 Evaluation Framework**: Provider-agnostic metrics with reference-free, visual LLM, and classical evaluators
@@ -43,7 +43,7 @@ Multi-agent AI platform for video, audio, image, and document understanding. Pro
 ### Prerequisites
 - Python 3.12+
 - 16GB+ RAM
-- CUDA-capable GPU (recommended for VideoPrism)
+- CUDA-capable GPU (recommended for embedding models)
 - Docker for Vespa and Phoenix
 - uv package manager: `pip install uv`
 
@@ -80,7 +80,7 @@ uv run python scripts/run_ingestion.py \
     --tenant-id default \
     --content-dir data/testset/evaluation/sample_videos \
     --profile video_colpali_smol500_mv_frame \
-               video_videoprism_base_mv_chunk_30s \
+               video_xclip_sv_chunk_6s \
                video_colqwen_omni_mv_chunk_30s
 ```
 
@@ -351,8 +351,7 @@ Ports and `enabled` status come from `configs/config.json` (`agents.*`); dashed 
 | Model | Type | Dimensions | Use Case |
 |-------|------|------------|----------|
 | **ColPali** | Frame-level | 320 (patch vector) | Visual document search |
-| **VideoPrism Base** | Global video | 768 | Semantic video understanding |
-| **VideoPrism LVT** | Temporal | 768/1024 | Action/motion search |
+| **X-CLIP Large** | Temporal video | 768 | Text-to-video clip retrieval |
 | **ColQwen3 Omni** (TomoroAI/tomoro-colqwen3-embed-4b) | Multi-modal | 320 (patch vector) | Text+visual fusion |
 
 ### Vespa Ranking Strategies

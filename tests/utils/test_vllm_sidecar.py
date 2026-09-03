@@ -3069,7 +3069,7 @@ def test_isolated_multi_profile_collection_requests_every_profile_service(
     inference_plugin.pytest_collection_modifyitems(config, [item])
 
     assert config._cogniverse_required_inference_services == {
-        "videoprism_jax",
+        "video_embed",
         "vllm_asr",
         "vllm_colpali",
     }
@@ -3082,7 +3082,7 @@ def test_ingestion_partial_resolution_closes_provider_once():
         name = "local"
 
         def resolve(self, spec):
-            if spec.name == "videoprism_jax":
+            if spec.name == "face_embed":
                 return _resolved_endpoint(spec.name, "http://127.0.0.1:34125")
             raise RuntimeError("vLLM exact fallback failed")
 
@@ -3093,7 +3093,7 @@ def test_ingestion_partial_resolution_closes_provider_once():
     resolver = InferenceSessionResolver(providers=(Provider(),))
 
     with pytest.raises(RuntimeError, match="vLLM exact fallback failed"):
-        resolver.resolve_required(("videoprism_jax", "vllm_colpali"))
+        resolver.resolve_required(("face_embed", "vllm_colpali"))
 
     assert closed == 1
 
@@ -3104,13 +3104,13 @@ def test_ingestion_teardown_failure_restores_environment(monkeypatch):
     monkeypatch.setenv("INFERENCE_SERVICE_URLS", original_urls)
     monkeypatch.setenv("COGNIVERSE_INFERENCE_API_KEY", original_key)
     endpoints = {
-        "videoprism_jax": _resolved_endpoint("videoprism_jax", "http://127.0.0.1:34125")
+        "face_embed": _resolved_endpoint("face_embed", "http://127.0.0.1:34125")
     }
 
     with pytest.raises(RuntimeError, match="consumer failed"):
         with publish_inference_endpoints(endpoints):
             assert json.loads(os.environ["INFERENCE_SERVICE_URLS"]) == {
-                "videoprism_jax": "http://127.0.0.1:34125"
+                "face_embed": "http://127.0.0.1:34125"
             }
             assert os.environ["COGNIVERSE_INFERENCE_API_KEY"] == "fixture-secret"
             raise RuntimeError("consumer failed")
@@ -3123,7 +3123,7 @@ def test_ingestion_sidecar_failure_raises_with_logs_and_cleanup(monkeypatch):
     import tests.fixtures.inference as inference_fixture
 
     commands: list[list[str]] = []
-    spec = get_inference_service_spec("videoprism_jax")
+    spec = get_inference_service_spec("face_embed")
 
     def fail_launch(command, **kwargs):
         commands.append(list(command))
@@ -3156,7 +3156,7 @@ def test_ingestion_sidecar_failure_raises_with_logs_and_cleanup(monkeypatch):
         provider.resolve(spec)
 
     message = str(exc_info.value)
-    assert "videoprism_jax" in message
+    assert "face_embed" in message
     assert spec.model_id in message
     assert "container creation failed" in message
     assert "model initialization failed" in message
@@ -3164,7 +3164,7 @@ def test_ingestion_sidecar_failure_raises_with_logs_and_cleanup(monkeypatch):
         command for command in commands if command[:3] == ["docker", "run", "-d"]
     )
     container = launch[launch.index("--name") + 1]
-    assert container.startswith("cogniverse-videoprism_jax-test-")
+    assert container.startswith("cogniverse-face_embed-test-")
     assert ["docker", "rm", "-f", container] in commands
 
 
@@ -3176,7 +3176,7 @@ def test_ingestion_sidecar_inspect_timeout_raises_with_logs_and_cleanup(
     import tests.fixtures.inference as inference_fixture
 
     commands: list[list[str]] = []
-    spec = get_inference_service_spec("videoprism_jax")
+    spec = get_inference_service_spec("face_embed")
 
     def fail_inspect(command, **kwargs):
         commands.append(list(command))
@@ -3215,7 +3215,7 @@ def test_ingestion_sidecar_inspect_timeout_raises_with_logs_and_cleanup(
         provider.resolve(spec)
 
     message = str(exc_info.value)
-    assert "videoprism_jax" in message
+    assert "face_embed" in message
     assert spec.model_id in message
     assert "did not become ready" in message
     assert "health server never initialized" in message

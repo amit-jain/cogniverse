@@ -8,7 +8,7 @@ backend search layer.
 
 We bypass the /search/ HTTP endpoint because it routes through
 `QueryEncoderFactory` which only knows ColPali/ColQwen/ColBERT/
-VideoPrism encoders — not generic text embedders like
+X-CLIP encoders — not generic text embedders like
 DenseOn. The backend search layer accepts pre-computed
 query_embeddings directly, so we call it that way and assert the
 ingested document is returned by id.

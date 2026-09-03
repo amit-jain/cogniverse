@@ -121,15 +121,6 @@ INFERENCE_SERVICE_SPECS: Mapping[str, InferenceServiceSpec] = MappingProxyType(
             "T4",
             "L4",
         ),
-        "videoprism_jax": _spec(
-            "videoprism_jax",
-            "videoprism_public_v1_base_hf",
-            "be719a406d563b66f0ac969e7c94bab8e997c81a",
-            768,
-            "T4",
-            "L4",
-            source_revision="d481d91b9bf8c9d330d1e526e511a359c799bbe1",
-        ),
         "video_embed": _spec(
             "video_embed",
             "microsoft/xclip-large-patch14",

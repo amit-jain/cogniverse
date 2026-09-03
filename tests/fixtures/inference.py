@@ -43,7 +43,6 @@ _MODAL_SERVICES_ATTR = "_cogniverse_modal_inference_services"
 TEST_INFERENCE_API_KEY = "cogniverse-test-inference"
 _SERVICE_DEPENDENCIES = {
     "vllm_colpali": frozenset({"vllm_asr"}),
-    "videoprism_jax": frozenset({"vllm_asr"}),
 }
 _VLLM_ARGS: Mapping[str, tuple[str, ...]] = MappingProxyType(
     {
@@ -408,19 +407,6 @@ _CONTAINER_SPECS = {
         ".",
         8080,
         MappingProxyType({"MODEL_NAME": INFERENCE_SERVICE_SPECS["gliner"].model_id}),
-    ),
-    "videoprism_jax": _ContainerSpec(
-        "cogniverse/videoprism:0.1.0-dev",
-        "deploy/videoprism/Dockerfile",
-        ".",
-        7999,
-        MappingProxyType(
-            {
-                "MODEL_NAME": INFERENCE_SERVICE_SPECS["videoprism_jax"].model_id,
-                "JAX_PLATFORM_NAME": "cpu",
-                "JAX_PLATFORMS": "cpu",
-            }
-        ),
     ),
     "clap_embed": _ContainerSpec(
         "cogniverse/clap-embed:0.1.0-dev",

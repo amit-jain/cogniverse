@@ -38,14 +38,6 @@ _VIDEO_PHASED_DEFAULTS = {
         "qtb": "tensor<int8>(querytoken{}, v[40])",
         "qt": "tensor<float>(querytoken{}, v[320])",
     },
-    "configs/schemas/video_videoprism_base_mv_chunk_30s_schema.json": {
-        "qtb": "tensor<int8>(querytoken{}, v[96])",
-        "qt": "tensor<float>(querytoken{}, v[768])",
-    },
-    "configs/schemas/video_videoprism_large_mv_chunk_30s_schema.json": {
-        "qtb": "tensor<int8>(querytoken{}, v[128])",
-        "qt": "tensor<float>(querytoken{}, v[1024])",
-    },
 }
 
 
@@ -74,7 +66,7 @@ def test_lvt_schema_enables_nearest_neighbor(tmp_path):
     path = _write_schema(
         tmp_path,
         {
-            "name": "video_videoprism_lvt_global",
+            "name": "video_xclip_lvt_global",
             "document": {
                 "fields": [{"name": "embedding", "type": "tensor<float>(x[128])"}]
             },

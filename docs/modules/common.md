@@ -48,7 +48,7 @@ libs/core/cogniverse_core/
 │   ├── agent_models.py              # Agent data models
 │   ├── cache/                       # Caching infrastructure
 │   ├── media/                       # Media URI dispatch (file://, pvc://, s3://, http://)
-│   ├── models/                      # Model loaders (VideoPrism, etc.)
+│   ├── models/                      # Model loaders (X-CLIP, etc.)
 │   └── utils/                       # Utility functions
 └── memory/                           # Memory management
     ├── manager.py                   # Mem0MemoryManager
@@ -114,12 +114,9 @@ surface without repeating their implementation guides.
 
 | Model module | Public API | Purpose |
 | --- | --- | --- |
-| `models.model_loaders` | `ModelLoader`, `ColPaliModelLoader`, `ColQwenModelLoader`, `VideoPrismModelLoader`, `ColBERTModelLoader`, `ModelLoaderFactory`, `get_or_load_model`, `is_remote_only_model` | Local loader contracts, concrete loaders, loader selection, and cache lookup. |
-| `models.model_loaders` | `RemoteInferenceClient`, `RemoteColPaliLoader`, `RemoteVideoPrismLoader`, `RemoteColBERTLoader`, `RemoteWhisperLoader`, `RemoteGlinerClient`, `get_or_load_gliner` | Authenticated remote inference clients and cached GLiNER resolution. |
+| `models.model_loaders` | `ModelLoader`, `ColPaliModelLoader`, `ColQwenModelLoader`, `ColBERTModelLoader`, `ModelLoaderFactory`, `get_or_load_model`, `is_remote_only_model` | Local loader contracts, concrete loaders, loader selection, and cache lookup. |
+| `models.model_loaders` | `RemoteInferenceClient`, `RemoteColPaliLoader`, `RemoteXClipLoader`, `RemoteColBERTLoader`, `RemoteWhisperLoader`, `RemoteGlinerClient`, `get_or_load_gliner` | Authenticated remote inference clients and cached GLiNER resolution. |
 | `models.semantic_embedder` | `SemanticEmbedder`, `LocalSentenceTransformerEmbedder`, `RemoteOpenAIEmbedder`, `get_semantic_embedder`, `reset_semantic_embedder_cache` | Local or OpenAI-compatible semantic embedding and cache control. |
-| `models.videoprism_loader` | `VIDEOPRISM_AVAILABLE`, `VideoPrismLoader`, `VideoPrismGlobalLoader`, `get_videoprism_loader` | VideoPrism availability, loading, global embedding, and cached lookup. |
-| `models.videoprism_models` | `VideoPrismModel`, `get_videoprism_model` | VideoPrism embedding wrapper and factory. |
-| `models.videoprism_text_encoder` | `CircuitState`, `PerformanceMetrics`, `CircuitBreaker`, `ModelPool`, `VideoPrismTextEncoder`, `create_text_encoder` | Text-encoder lifecycle, pooling, failure control, metrics, and factory. |
 
 | Utility module | Public API | Purpose |
 | --- | --- | --- |
@@ -1688,7 +1685,7 @@ memory, and verifies that the other tenant cannot retrieve that exact record.
 Integration tests name each production inference dependency with
 `@pytest.mark.requires_inference("<service>")`. Collection resolves the named
 services plus their declared dependencies: `vllm_colpali` and
-`videoprism_jax` each expand to include `vllm_asr`. The registered automatic
+`video_embed` each expand to include `vllm_asr`. The registered automatic
 provider order is:
 
 1. the `cogniverse-e2e` k3d workload;

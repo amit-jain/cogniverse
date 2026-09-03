@@ -92,7 +92,7 @@ flowchart TB
 | **Frame Extraction** | Variable | Depends on video length, resolution, and keyframe extraction strategy |
 | **Transcription** | Variable | Depends on audio length and Whisper model size |
 | **ColPali Embedding** | Variable | Depends on number of frames/chunks and GPU availability |
-| **VideoPrism Embedding** | Variable | Depends on number of chunks and GPU/TPU availability |
+| **X-CLIP Embedding** | Variable | Depends on number of chunks and GPU/TPU availability |
 | **Vespa Ingestion** | Variable | Depends on batch size, document size, and network latency |
 
 ### Embedding Model Performance
@@ -101,12 +101,9 @@ flowchart TB
 |---------|-----------------|------------|----------------|--------|
 | **video_colpali_smol500_mv_frame** | `TomoroAI/tomoro-colqwen3-embed-4b` | up to 1024 patches × 320-dim (float) / 40-dim (binary) | Variable | 4GB |
 | **video_colqwen_omni_mv_chunk_30s** | `TomoroAI/tomoro-colqwen3-embed-4b` | up to 1024 patches × 320-dim (float) / 40-dim (binary) | Variable | 4GB |
-| **video_videoprism_base_mv_chunk_30s** | `videoprism_public_v1_base_hf` | 768 | Variable | 3GB |
-| **video_videoprism_large_mv_chunk_30s** | `videoprism_public_v1_large_hf` | 1024 | Variable | 4GB |
-| **video_videoprism_lvt_base_sv_chunk_6s** | `videoprism_lvt_public_v1_base` | 768 (global, single-vector) | Variable | 3GB |
-| **video_videoprism_lvt_large_sv_chunk_6s** | `videoprism_lvt_public_v1_large` | 1024 (global, single-vector) | Variable | 4GB |
+| **video_xclip_sv_chunk_6s** | `microsoft/xclip-large-patch14` | 768 (single-vector) | Variable | 3GB |
 
-> **Note**: Inference times are hardware-dependent and vary based on input size. Both ColPali/ColQwen profiles share the same `TomoroAI/tomoro-colqwen3-embed-4b` model (patch-based multi-vector embeddings, `tensor<bfloat16>(patch{}, v[320])` float / `tensor<int8>(patch{}, v[40])` binary in the Vespa schema); they differ in keyframe-extraction vs 30-second-chunk sampling, not in model architecture. VideoPrism Base/Large produce 768/1024-dim multi-vector chunk embeddings; VideoPrism LVT Base/Large produce 768/1024-dim single-vector (global) embeddings over shorter 6-second chunks.
+> **Note**: Inference times are hardware-dependent and vary based on input size. Both ColPali/ColQwen profiles share the same `TomoroAI/tomoro-colqwen3-embed-4b` model (patch-based multi-vector embeddings, `tensor<bfloat16>(patch{}, v[320])` float / `tensor<int8>(patch{}, v[40])` binary in the Vespa schema); they differ in keyframe-extraction vs 30-second-chunk sampling, not in model architecture. X-CLIP (`microsoft/xclip-large-patch14`) produces a 768-dim single-vector embedding per 6-second chunk, encoding video and text into one space so a text query retrieves clips directly.
 
 ---
 
@@ -316,7 +313,7 @@ agent dispatcher — there is no per-agent container or replica count.
 | **dashboard** | 1 core | 2GB | 2 cores | 4GB | 1 (static) |
 | **phoenix** | 1 core | 2GB | 2 cores | 4GB | 1 (static) |
 
-> **Note**: Mem0 uses the same Vespa backend, so no separate deployment is needed. Model-inference sidecars (ColPali/ColQwen/VideoPrism/LLM) are configured separately under the `inference` and `llm` chart values and are not shown here.
+> **Note**: Mem0 uses the same Vespa backend, so no separate deployment is needed. Model-inference sidecars (ColPali/ColQwen/X-CLIP/LLM) are configured separately under the `inference` and `llm` chart values and are not shown here.
 
 ---
 
