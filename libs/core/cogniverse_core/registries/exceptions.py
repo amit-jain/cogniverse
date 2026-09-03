@@ -17,6 +17,14 @@ class SchemaDeploymentError(Exception):
     pass
 
 
+class SchemaLoadError(SchemaDeploymentError):
+    """The base schema definition could not be loaded.
+
+    Chained from the loader's own error so callers can tell a missing
+    schema file (permanent) from the schema store being unreachable
+    (transient)."""
+
+
 class BackendDeploymentError(SchemaDeploymentError):
     """
     Backend failed to deploy schemas.

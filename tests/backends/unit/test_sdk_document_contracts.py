@@ -1193,7 +1193,7 @@ class TestDeclaredSchemaMappings:
     def test_all_declared_mappings_are_valid(self):
         from cogniverse_sdk.document import DocumentFieldMapping
 
-        checked = 0
+        checked = []
         for name, schema_json in self._schemas_with_mappings():
             mapping = DocumentFieldMapping.from_dict(schema_json["document_mapping"])
             types = self._field_types(schema_json)
@@ -1230,6 +1230,17 @@ class TestDeclaredSchemaMappings:
                     assert types[target] == "string", (
                         f"{name}: {target} is {types[target]}, iso needs string"
                     )
-            checked += 1
+            checked.append(name)
 
-        assert checked >= 13, f"expected all declared mappings, found {checked}"
+        assert checked == [
+            "audio_content_schema.json",
+            "code_lateon_mv_schema.json",
+            "document_text_schema.json",
+            "document_visual_schema.json",
+            "image_colpali_mv_schema.json",
+            "lateon_mv_schema.json",
+            "video_colpali_smol500_mv_frame_schema.json",
+            "video_colqwen_omni_mv_chunk_30s_schema.json",
+            "video_xclip_sv_chunk_6s_schema.json",
+            "wiki_pages_schema.json",
+        ]

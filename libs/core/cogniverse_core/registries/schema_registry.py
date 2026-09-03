@@ -13,6 +13,7 @@ from typing import Any, Dict, List, Optional
 from cogniverse_core.registries.exceptions import (
     BackendDeploymentError,
     RegistryStorageError,
+    SchemaLoadError,
     SchemaRegistryInitializationError,
 )
 
@@ -416,7 +417,9 @@ class SchemaRegistry:
         try:
             base_schema_json = self._schema_loader.load_schema(base_schema_name)
         except Exception as e:
-            raise Exception(f"Failed to load base schema '{base_schema_name}': {e}")
+            raise SchemaLoadError(
+                f"Failed to load base schema '{base_schema_name}': {e}"
+            ) from e
 
         # Transform schema name to tenant-specific
         base_schema_json["name"] = tenant_schema_name
