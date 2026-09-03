@@ -93,7 +93,11 @@ def restore_library_module_defaults():
     directly and put back through the public ``configure_*`` functions, which also
     rebuild the cache objects the capacity setters replace.
     """
+    from cogniverse_agents import _rlm_promotion as rlm_promotion_module
     from cogniverse_agents import text_analysis_agent as text_analysis_module
+    from cogniverse_agents._rlm_promotion import configure_rlm_promotion
+    from cogniverse_agents.inference import deno_check as deno_check_module
+    from cogniverse_agents.inference.deno_check import configure_deno_check
     from cogniverse_agents.text_analysis_agent import (
         configure_tenant_cache_capacity as configure_text_analysis_capacity,
     )
@@ -131,6 +135,9 @@ def restore_library_module_defaults():
     original_entry_point_capacity = (
         entry_point_registry_module._CONFIGURED_TENANT_CACHE_CAPACITY
     )
+    original_rlm_promotion_enabled = rlm_promotion_module._promotion_enabled
+    original_rlm_promotion_fraction = rlm_promotion_module._promotion_fraction
+    original_skip_deno_check = deno_check_module._skip_deno_check
 
     yield
 
@@ -149,6 +156,11 @@ def restore_library_module_defaults():
         configure_backend_registry_capacity(original_backend_registry_capacity)
     if original_entry_point_capacity is not None:
         configure_entry_point_capacity(original_entry_point_capacity)
+    configure_rlm_promotion(
+        enabled=original_rlm_promotion_enabled,
+        fraction=original_rlm_promotion_fraction,
+    )
+    configure_deno_check(skip=original_skip_deno_check)
 
 
 def test_runtime_main_resolves_and_injects_target_env_vars(
@@ -162,6 +174,9 @@ def test_runtime_main_resolves_and_injects_target_env_vars(
     monkeypatch.setenv("COGNIVERSE_SEMANTIC_EMBED_URL", "http://embed.internal:8000")
     monkeypatch.setenv("COGNIVERSE_SEMANTIC_EMBED_MODEL", "from-config")
     monkeypatch.setenv("COGNIVERSE_TENANT_CACHE_CAPACITY", "23")
+    monkeypatch.setenv("COGNIVERSE_ORCH_RLM_PROMOTION", "disabled")
+    monkeypatch.setenv("COGNIVERSE_ORCH_RLM_PROMOTION_FRACTION", "0.5")
+    monkeypatch.setenv("COGNIVERSE_RLM_SKIP_DENO_CHECK", "true")
 
     resolved = runtime_main._resolve_library_env_defaults()
 
@@ -174,6 +189,9 @@ def test_runtime_main_resolves_and_injects_target_env_vars(
         "semantic_embed_url": "http://embed.internal:8000",
         "semantic_embed_model": "from-config",
         "tenant_cache_capacity": 23,
+        "rlm_promotion_enabled": False,
+        "rlm_promotion_fraction": 0.5,
+        "rlm_skip_deno_check": True,
     }
 
     monkeypatch.setattr(
@@ -197,6 +215,13 @@ def test_runtime_main_resolves_and_injects_target_env_vars(
     assert BackendRegistry._backend_instances.capacity == 23
     assert EntryPointRegistry._instances.capacity == 23
 
+    from cogniverse_agents import _rlm_promotion
+    from cogniverse_agents.inference import deno_check
+
+    assert _rlm_promotion._promotion_enabled is False
+    assert _rlm_promotion._promotion_fraction == 0.5
+    assert deno_check._skip_deno_check is True
+
 
 def test_injected_library_defaults_do_not_leak_into_later_tests():
     """The injected sentinels must not survive the test that installs them.
@@ -217,3 +242,10 @@ def test_injected_library_defaults_do_not_leak_into_later_tests():
     assert s3_backend._CONFIGURED_ACCESS_KEY != "minio-access"
     assert s3_backend._CONFIGURED_SECRET_KEY != "minio-secret"
     assert text_analysis_module._agent_instances.capacity != 23
+
+    from cogniverse_agents import _rlm_promotion
+    from cogniverse_agents.inference import deno_check
+
+    assert _rlm_promotion._promotion_enabled is True
+    assert _rlm_promotion._promotion_fraction == 0.75
+    assert deno_check._skip_deno_check is False
