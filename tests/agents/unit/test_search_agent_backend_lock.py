@@ -12,6 +12,7 @@ from __future__ import annotations
 import asyncio
 import threading
 import time
+from concurrent.futures import ThreadPoolExecutor
 from types import SimpleNamespace
 
 import pytest
@@ -60,7 +61,13 @@ async def test_concurrent_get_backend_builds_once(monkeypatch):
         barrier.wait(timeout=5)
         return agent._get_backend()
 
-    results = await asyncio.gather(*(asyncio.to_thread(_call) for _ in range(_N)))
+    # asyncio.to_thread shares the default executor, whose worker ceiling
+    # (cpu_count + 4) is below _N on small CI hosts and starves the barrier.
+    loop = asyncio.get_running_loop()
+    with ThreadPoolExecutor(max_workers=_N) as pool:
+        results = await asyncio.gather(
+            *(loop.run_in_executor(pool, _call) for _ in range(_N))
+        )
 
     assert builds["n"] == 1
     assert all(r is winner for r in results)
