@@ -28,9 +28,11 @@ def get_runtime_api_url() -> str:
     return create_default_config_manager().get_system_config().agent_registry_url
 
 
-def _api_call(method: str, path: str, **kwargs) -> Dict[str, Any]:
+def _api_call(
+    method: str, path: str, api_url: str | None = None, **kwargs
+) -> Dict[str, Any]:
     """Make an API call to the Runtime and return parsed response."""
-    url = f"{get_runtime_api_url()}{path}"
+    url = f"{api_url or get_runtime_api_url()}{path}"
     try:
         with httpx.Client(timeout=30.0) as client:
             response = getattr(client, method)(url, **kwargs)
@@ -55,36 +57,39 @@ def _api_call(method: str, path: str, **kwargs) -> Dict[str, Any]:
         return {"success": False, "error": str(e)}
 
 
-def _fetch_organizations() -> List[Dict]:
-    """Fetch all organizations from the API."""
-    result = _api_call("get", "/admin/organizations")
-    if result["success"]:
-        return result["data"].get("organizations", [])
-    return []
+@st.cache_data(ttl=30, show_spinner=False)
+def _fetch_organizations(api_url: str) -> List[Dict]:
+    """All organizations from the runtime. Raises on an API failure so an
+    outage is never rendered as an empty fresh-install state."""
+    result = _api_call("get", "/admin/organizations", api_url=api_url)
+    if not result["success"]:
+        raise RuntimeError(result["error"])
+    return result["data"].get("organizations", [])
 
 
-def _fetch_tenants(org_id: str) -> List[Dict]:
-    """Fetch tenants for an organization."""
-    result = _api_call("get", f"/admin/organizations/{org_id}/tenants")
-    if result["success"]:
-        return result["data"].get("tenants", [])
-    return []
+@st.cache_data(ttl=30, show_spinner=False)
+def _fetch_tenants(api_url: str, org_id: str) -> List[Dict]:
+    """Tenants for an organization. Raises on an API failure."""
+    result = _api_call("get", f"/admin/organizations/{org_id}/tenants", api_url=api_url)
+    if not result["success"]:
+        raise RuntimeError(result["error"])
+    return result["data"].get("tenants", [])
 
 
-def _fetch_profiles() -> List[str]:
-    """Return the shipped base-schema names available for tenant deployment.
+def _deployable_base_schemas() -> List[str]:
+    """Base schemas the shipped profiles serve, derived from the shipped
+    config.json ``backend.profiles`` so the list tracks the product."""
+    import json
 
-    These are the static set of schema definitions under
-    ``configs/schemas/`` that a tenant can deploy a profile against. This is
-    a fixed list, not a runtime query — the runtime's ``/admin/profiles``
-    endpoint lists a tenant's *deployed* profiles, not the available base
-    schemas, so there is no endpoint to fetch this from today.
-    """
-    return [
-        "video_colpali_smol500_mv_frame",
-        "video_colqwen_omni_mv_chunk_30s",
-        "video_xclip_sv_chunk_6s",
-    ]
+    from cogniverse_foundation.config.utils import ConfigUtils
+
+    config_path = ConfigUtils._discover_config_file()
+    if config_path is None:
+        raise RuntimeError("config.json not found; cannot list deployable schemas")
+    profiles = (
+        json.loads(config_path.read_text()).get("backend", {}).get("profiles", {})
+    )
+    return sorted({p["schema_name"] for p in profiles.values() if p.get("schema_name")})
 
 
 def render_tenant_management_tab():
@@ -116,9 +121,15 @@ def _render_organizations_list():
     st.subheader("Organizations")
 
     if st.button("Refresh Organizations", key="refresh_orgs"):
+        _fetch_organizations.clear()
+        _fetch_tenants.clear()
         st.rerun()
 
-    orgs = _fetch_organizations()
+    try:
+        orgs = _fetch_organizations(get_runtime_api_url())
+    except RuntimeError as exc:
+        st.error(f"Could not load organizations: {exc}")
+        return
 
     if not orgs:
         st.info("No organizations found. Create one to get started.")
@@ -211,7 +222,11 @@ def _render_tenants_list():
     """List tenants per organization."""
     st.subheader("Tenants")
 
-    orgs = _fetch_organizations()
+    try:
+        orgs = _fetch_organizations(get_runtime_api_url())
+    except RuntimeError as exc:
+        st.error(f"Could not load organizations: {exc}")
+        return
     if not orgs:
         st.info("No organizations found. Create an organization first.")
         return
@@ -222,12 +237,17 @@ def _render_tenants_list():
     )
 
     if st.button("Refresh Tenants", key="refresh_tenants"):
+        _fetch_tenants.clear()
         st.rerun()
 
     if not selected_org:
         return
 
-    tenants = _fetch_tenants(selected_org)
+    try:
+        tenants = _fetch_tenants(get_runtime_api_url(), selected_org)
+    except RuntimeError as exc:
+        st.error(f"Could not load tenants: {exc}")
+        return
 
     if not tenants:
         st.info(f"No tenants found for organization '{selected_org}'.")
@@ -277,7 +297,11 @@ def _render_create_tenant():
     """Form for creating a new tenant."""
     st.subheader("Create Tenant")
 
-    orgs = _fetch_organizations()
+    try:
+        orgs = _fetch_organizations(get_runtime_api_url())
+    except RuntimeError as exc:
+        st.error(f"Could not load organizations: {exc}")
+        orgs = []
     org_ids = [org["org_id"] for org in orgs] if orgs else []
 
     with st.form("create_tenant_form"):
@@ -305,7 +329,11 @@ def _render_create_tenant():
             help="Who is creating this tenant",
         )
 
-        available_schemas = _fetch_profiles()
+        try:
+            available_schemas = _deployable_base_schemas()
+        except RuntimeError as exc:
+            st.error(f"Could not list deployable schemas: {exc}")
+            available_schemas = []
         base_schemas = st.multiselect(
             "Base Schemas to Deploy",
             options=available_schemas,
