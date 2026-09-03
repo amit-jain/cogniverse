@@ -2094,7 +2094,9 @@ def _load_blob_in_pod(kind: str, key: str, tenant_id: str = TENANT_ID) -> str:
         ],
         capture_output=True,
         text=True,
-        timeout=60,
+        # Measured 179s while Phoenix serves span traffic (2026-09-04): the
+        # blob read rides the dataset API, which queues behind span scans.
+        timeout=300,
     )
     if result.returncode != 0:
         raise RuntimeError(
@@ -2139,7 +2141,7 @@ def _load_blob_version_in_pod(
         ],
         capture_output=True,
         text=True,
-        timeout=60,
+        timeout=300,
     )
     if result.returncode != 0:
         raise RuntimeError(
@@ -2188,7 +2190,7 @@ def _blob_state_in_pod(
         ],
         capture_output=True,
         text=True,
-        timeout=60,
+        timeout=300,
     )
     if result.returncode != 0:
         raise RuntimeError(
@@ -2234,7 +2236,7 @@ def _blob_version_lineage_in_pod(
         ],
         capture_output=True,
         text=True,
-        timeout=60,
+        timeout=300,
     )
     if result.returncode != 0:
         raise RuntimeError(
@@ -2278,7 +2280,7 @@ def _active_blob_version_in_pod(kind: str, key: str, tenant_id: str = TENANT_ID)
         ],
         capture_output=True,
         text=True,
-        timeout=60,
+        timeout=300,
     )
     if result.returncode != 0:
         raise RuntimeError(
@@ -2412,7 +2414,7 @@ def _population_floor_in_pod(
         ],
         capture_output=True,
         text=True,
-        timeout=60,
+        timeout=300,
     )
     if result.returncode != 0:
         raise RuntimeError(
@@ -2801,7 +2803,7 @@ class TestWorkflowOptimization:
             ],
             capture_output=True,
             text=True,
-            timeout=60,
+            timeout=300,
         )
         demos = json.loads(out.stdout.strip() or "[]")
 
