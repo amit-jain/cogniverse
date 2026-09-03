@@ -173,16 +173,12 @@ class WorkflowStateMachine:
             if trans.from_state != self.current_state:
                 continue
 
-            # Check condition
-            try:
-                if trans.condition(self.context):
-                    self._execute_transition(trans)
-                    return True
-            except Exception as e:
-                logger.error(
-                    f"Transition condition check failed: {e} "
-                    f"({trans.from_state.value} -> {trans.to_state.value})"
-                )
+            # A raising condition is a programming error, not "condition not
+            # met" - swallowing it read as no-matching-transition and stalled
+            # approval workflows in place.
+            if trans.condition(self.context):
+                self._execute_transition(trans)
+                return True
 
         logger.debug(f"No matching transition from {self.current_state.value}")
         return False
@@ -226,12 +222,11 @@ class WorkflowStateMachine:
             f"({transition.description})"
         )
 
-        # Execute callback
+        # A raising entry callback propagates before the state advances, so
+        # the machine never reports a state whose entry side effect did not
+        # run.
         if transition.on_transition:
-            try:
-                transition.on_transition(self.context)
-            except Exception as e:
-                logger.error(f"Transition callback failed: {e}")
+            transition.on_transition(self.context)
 
         # Update state
         self.current_state = new_state

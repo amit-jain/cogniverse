@@ -38,20 +38,25 @@ def render_memory_management_tab():
     system_config = config_manager.get_system_config()
 
     @st.cache_data(ttl=30, show_spinner=False)
-    def _vespa_available(check_url: str) -> bool:
+    def _vespa_probe(check_url: str) -> tuple[bool, str]:
+        """(reachable, failure detail) - a timeout, DNS failure and non-200
+        each carry their own cause instead of one 'not running' message."""
         try:
             import httpx
 
-            return httpx.get(check_url, timeout=2).status_code == 200
-        except Exception:
-            return False
+            status = httpx.get(check_url, timeout=2).status_code
+        except Exception as exc:
+            return False, f"{type(exc).__name__}: {exc}"
+        if status == 200:
+            return True, ""
+        return False, f"HTTP {status} from the status probe"
 
-    vespa_available = _vespa_available(
+    vespa_available, probe_detail = _vespa_probe(
         f"{system_config.backend_url}:{system_config.backend_port}/ApplicationStatus"
     )
 
     if not vespa_available:
-        st.warning("⚠️ Vespa backend is not running")
+        st.warning(f"Vespa backend is not reachable: {probe_detail}")
         st.info(
             f"💡 Memory management requires Vespa. Configured backend: "
             f"`{system_config.backend_url}:{system_config.backend_port}`. "

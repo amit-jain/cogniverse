@@ -13,6 +13,7 @@ import os
 import threading
 import time
 from datetime import datetime, timezone
+from types import SimpleNamespace
 from unittest.mock import MagicMock
 
 import pytest
@@ -177,6 +178,11 @@ def wiki_manager(wiki_vespa):
     backend._schema_loader_instance = FilesystemSchemaLoader(Path("configs/schemas"))
     backend.config = {}
     backend.search = MagicMock(return_value=[])
+    # The wiki read path guards on the tenant schema being deployed; the
+    # module fixture deploys it for real, so the slice answers True.
+    backend.schema_manager = SimpleNamespace(
+        tenant_schema_exists=lambda tenant_id, base_schema_name: True
+    )
 
     manager = WikiManager(
         backend=backend,
