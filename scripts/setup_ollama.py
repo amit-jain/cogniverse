@@ -199,7 +199,7 @@ def main():
     print("\n🎉 Ollama setup completed successfully!")
     print("\nNext steps:")
     print("1. Run the system setup: python scripts/setup_system.py")
-    print("2. Start the servers: ./scripts/run_servers.sh")
+    print("2. Start the runtime: uv run python -m cogniverse_runtime.main")
     print("3. Open http://localhost:8000 in your browser")
 
     print("\n📋 Configuration:")
