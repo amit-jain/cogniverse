@@ -3,7 +3,10 @@ from __future__ import annotations
 import os
 import subprocess
 import textwrap
+import zipfile
 from pathlib import Path
+
+from packaging.requirements import Requirement
 
 _REPO_ROOT = Path(__file__).parents[3]
 
@@ -33,10 +36,14 @@ _INSTALLED_WHEEL_PROBE = textwrap.dedent(
         "cogniverse_cli.modal_inference.servers.face",
         "cogniverse_cli.modal_inference.servers.gliner",
         "cogniverse_cli.modal_inference.servers.pylate",
-        "cogniverse_cli.modal_inference.servers.xclip",
+        "cogniverse_cli.modal_inference.servers.video_embed",
+    )
+    foundation_modules = (
+        "cogniverse_foundation.config.inference_auth",
+        "cogniverse_foundation.inference_specs",
     )
 
-    for module_name in (*deployment_modules, *server_modules):
+    for module_name in (*deployment_modules, *server_modules, *foundation_modules):
         spec = find_spec(module_name)
         assert spec is not None and spec.origin is not None, module_name
         assert "site-packages" in spec.origin, (module_name, spec.origin)
@@ -125,40 +132,69 @@ _INSTALLED_WHEEL_PROBE = textwrap.dedent(
 )
 
 
-def test_installed_cli_wheel_owns_modal_deployments_and_servers(tmp_path):
-    distribution_dir = tmp_path / "dist"
+def _declared_workspace_dependencies(wheel: Path) -> frozenset[str]:
+    """Names of the cogniverse-* distributions the wheel's metadata requires."""
+    with zipfile.ZipFile(wheel) as archive:
+        metadata_path = next(
+            name for name in archive.namelist() if name.endswith(".dist-info/METADATA")
+        )
+        metadata = archive.read(metadata_path).decode()
+    return frozenset(
+        requirement.name
+        for requirement in (
+            Requirement(line.removeprefix("Requires-Dist:").strip())
+            for line in metadata.splitlines()
+            if line.startswith("Requires-Dist:")
+        )
+        if requirement.name.startswith("cogniverse-")
+    )
+
+
+def _build_wheel(package: str, out_dir: Path) -> Path:
     build = subprocess.run(
-        [
-            "uv",
-            "build",
-            "--package",
-            "cogniverse-cli",
-            "--wheel",
-            "--out-dir",
-            str(distribution_dir),
-        ],
+        ["uv", "build", "--package", package, "--wheel", "--out-dir", str(out_dir)],
         cwd=_REPO_ROOT,
         capture_output=True,
         text=True,
         timeout=120,
     )
     assert build.returncode == 0, build.stdout + build.stderr
-    wheels = tuple(distribution_dir.glob("cogniverse_cli-*.whl"))
-    assert len(wheels) == 1, tuple(path.name for path in distribution_dir.iterdir())
+    wheels = tuple(out_dir.glob(f"{package.replace('-', '_')}-*.whl"))
+    assert len(wheels) == 1, tuple(path.name for path in out_dir.iterdir())
+    return wheels[0]
+
+
+def test_installed_cli_wheel_owns_modal_deployments_and_servers(tmp_path):
+    distribution_dir = tmp_path / "dist"
+    wheels = {"cogniverse-cli": _build_wheel("cogniverse-cli", distribution_dir)}
+    pending = sorted(_declared_workspace_dependencies(wheels["cogniverse-cli"]))
+    while pending:
+        package = pending.pop()
+        if package in wheels:
+            continue
+        wheels[package] = _build_wheel(package, distribution_dir)
+        pending.extend(sorted(_declared_workspace_dependencies(wheels[package])))
+    assert set(wheels) == {
+        "cogniverse-cli",
+        "cogniverse-foundation",
+        "cogniverse-sdk",
+    }
 
     run_dir = tmp_path / "run"
     run_dir.mkdir()
     environment = os.environ.copy()
     environment.pop("PYTHONPATH", None)
     environment.pop("UV_NO_SYNC", None)
+    with_requirements = [
+        argument for wheel in wheels.values() for argument in ("--with", str(wheel))
+    ]
     probe = subprocess.run(
         [
             "uv",
             "run",
             "--isolated",
             "--no-project",
-            "--with",
-            str(wheels[0]),
+            *with_requirements,
             "python",
             "-c",
             _INSTALLED_WHEEL_PROBE,
@@ -167,7 +203,7 @@ def test_installed_cli_wheel_owns_modal_deployments_and_servers(tmp_path):
         env=environment,
         capture_output=True,
         text=True,
-        timeout=180,
+        timeout=300,
     )
     assert probe.returncode == 0, probe.stdout + probe.stderr
     assert probe.stdout.strip() == (
