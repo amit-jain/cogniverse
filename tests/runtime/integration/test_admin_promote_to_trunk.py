@@ -87,7 +87,7 @@ def trunk_setup(vespa_instance, shared_denseon, memory_manager):
 
 
 @pytest.fixture
-def promote_client(trunk_setup, vespa_instance):
+def promote_client(trunk_setup, vespa_instance, admin_phoenix_endpoints):
     tenant_mm, trunk_mm = trunk_setup
     # No registry monkeypatch: the endpoint resolves promotable kinds through
     # build_promotable_registry, where knowledge_summary is genuinely org-shared.

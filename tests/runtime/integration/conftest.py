@@ -731,3 +731,18 @@ def _test_owned_telemetry():
         and telemetry_manager_module._telemetry_manager is installed
     ):
         telemetry_manager_module._telemetry_manager = None
+
+
+@pytest.fixture
+def admin_phoenix_endpoints(phoenix_container):
+    """Point the admin router's artifact-manager wiring at the docker-managed
+    Phoenix for the test, restoring the prior endpoints afterwards. The pin,
+    promote and endorse routes load their quota / gating blobs through it."""
+    from cogniverse_runtime.routers import admin
+
+    previous = dict(admin._phoenix_endpoints)
+    admin.set_phoenix_endpoints(
+        phoenix_container["http_endpoint"], phoenix_container["grpc_endpoint"]
+    )
+    yield phoenix_container
+    admin.set_phoenix_endpoints(previous["http_endpoint"], previous["grpc_endpoint"])

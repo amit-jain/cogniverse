@@ -29,7 +29,7 @@ pytestmark = pytest.mark.integration
 
 
 @pytest.fixture
-def endorse_client(memory_manager):
+def endorse_client(memory_manager, admin_phoenix_endpoints):
     """Mount the admin router. Wire the knowledge_registry onto the
     runtime conftest's memory_manager so writes auto-attach trust —
     the conftest fixture initialises Mem0 without a registry by

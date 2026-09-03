@@ -25,7 +25,7 @@ pytestmark = pytest.mark.integration
 
 
 @pytest.fixture
-def admin_pin_client(memory_manager):
+def admin_pin_client(memory_manager, admin_phoenix_endpoints):
     """TestClient with the admin router mounted.
 
     Mem0MemoryManager is a tenant-keyed singleton — once the

@@ -1136,20 +1136,20 @@ class Mem0MemoryManager:
             agent_name: Agent name (not used, for API compatibility)
 
         Returns:
-            Success status
+            True when deleted, False when the id does not exist. Backend
+            failures propagate so an outage is never read as not-found.
         """
         if not self.memory:
             return False
 
         try:
             self.memory.delete(memory_id)
-
-            logger.info(f"Deleted memory {memory_id}")
-            return True
-
-        except Exception as e:
-            logger.error(f"Failed to delete memory: {e}")
+        except ValueError:
+            # mem0 raises ValueError for a genuinely missing id.
             return False
+
+        logger.info(f"Deleted memory {memory_id}")
+        return True
 
     def clear_agent_memory(
         self,
@@ -1164,41 +1164,26 @@ class Mem0MemoryManager:
             agent_name: Agent name
 
         Returns:
-            Success status
+            True when every listed memory is gone (an id already deleted by
+            a concurrent writer counts as gone). Backend failures propagate.
         """
         if not self.memory:
             return False
 
-        try:
-            # Get all memories and delete them
-            memories = self.get_all_memories(tenant_id, agent_name)
+        memories = self.get_all_memories(tenant_id, agent_name)
 
-            failed_count = 0
-            for memory in memories:
-                # Memory can be a dict or a string ID
-                if isinstance(memory, dict):
-                    memory_id = memory.get("id")
-                else:
-                    memory_id = str(memory)
+        for memory in memories:
+            # Memory can be a dict or a string ID
+            if isinstance(memory, dict):
+                memory_id = memory.get("id")
+            else:
+                memory_id = str(memory)
 
-                if memory_id:
-                    success = self.delete_memory(memory_id, tenant_id, agent_name)
-                    if not success:
-                        failed_count += 1
+            if memory_id:
+                self.delete_memory(memory_id, tenant_id, agent_name)
 
-            if failed_count > 0:
-                logger.error(
-                    f"Failed to delete {failed_count}/{len(memories)} memories "
-                    f"for {tenant_id}/{agent_name}"
-                )
-                return False
-
-            logger.info(f"Cleared all memory for {tenant_id}/{agent_name}")
-            return True
-
-        except Exception as e:
-            logger.error(f"Failed to clear agent memory: {e}")
-            return False
+        logger.info(f"Cleared all memory for {tenant_id}/{agent_name}")
+        return True
 
     def cleanup_with_schema(
         self,
