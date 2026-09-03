@@ -38,6 +38,7 @@ _DEPLOYMENT_MODULES = {
     "vllm_asr": "cogniverse_cli.modal_inference.whisper",
     "clap_embed": "cogniverse_cli.modal_inference.clap",
     "face_embed": "cogniverse_cli.modal_inference.face",
+    "video_embed": "cogniverse_cli.modal_inference.video_embed",
 }
 _RETRYABLE_HEALTH_STATUSES = frozenset({502, 503, 504})
 
