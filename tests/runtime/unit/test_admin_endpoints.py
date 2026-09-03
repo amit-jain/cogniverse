@@ -97,9 +97,12 @@ class TestAdminDeleteMemory:
             "_strategy_store",
         ]
 
-    def test_delete_found_in_second_namespace(self, client, monkeypatch):
+    def test_delete_calls_manager_exactly_once(self, client, monkeypatch):
+        """delete_memory addresses the memory by id alone (the namespace
+        argument is signature compatibility), so the route makes exactly one
+        manager call."""
         stub_cls = _make_stub_manager_class(
-            delete_results={"_user_memories": False, "_strategy_store": True}
+            delete_results={"_user_memories": True, "_strategy_store": True}
         )
         monkeypatch.setattr(
             "cogniverse_core.memory.manager.Mem0MemoryManager", stub_cls
@@ -109,6 +112,7 @@ class TestAdminDeleteMemory:
         assert resp.status_code == 200
         assert resp.json() == {"status": "deleted", "memory_id": "mem-123"}
 
+        assert len(stub_cls.instances) == 1
         (mgr,) = stub_cls.instances
         assert mgr.tenant_id == "acme:prod"
         assert mgr.delete_calls == [
@@ -117,28 +121,9 @@ class TestAdminDeleteMemory:
                 "tenant_id": "acme:prod",
                 "agent_name": "_user_memories",
             },
-            {
-                "memory_id": "mem-123",
-                "tenant_id": "acme:prod",
-                "agent_name": "_strategy_store",
-            },
         ]
 
-    def test_delete_short_circuits_on_first_namespace_hit(self, client, monkeypatch):
-        stub_cls = _make_stub_manager_class(
-            delete_results={"_user_memories": True, "_strategy_store": True}
-        )
-        monkeypatch.setattr(
-            "cogniverse_core.memory.manager.Mem0MemoryManager", stub_cls
-        )
-
-        resp = client.delete("/admin/memories/acme:prod/mem-1st")
-        assert resp.status_code == 200
-        assert resp.json() == {"status": "deleted", "memory_id": "mem-1st"}
-        (mgr,) = stub_cls.instances
-        assert [c["agent_name"] for c in mgr.delete_calls] == ["_user_memories"]
-
-    def test_delete_unknown_memory_returns_404_after_both_namespaces(
+    def test_delete_unknown_memory_returns_404_after_one_call(
         self, client, monkeypatch
     ):
         stub_cls = _make_stub_manager_class(delete_results={})
@@ -150,10 +135,31 @@ class TestAdminDeleteMemory:
         assert resp.status_code == 404
         assert resp.json() == {"detail": "Memory mem-404 not found"}
         (mgr,) = stub_cls.instances
-        assert [c["agent_name"] for c in mgr.delete_calls] == [
-            "_user_memories",
-            "_strategy_store",
+        assert mgr.tenant_id == "acme:prod"
+        assert mgr.delete_calls == [
+            {
+                "memory_id": "mem-404",
+                "tenant_id": "acme:prod",
+                "agent_name": "_user_memories",
+            },
         ]
+
+    def test_delete_backend_outage_is_not_404(self, client, monkeypatch):
+        """An outage propagates; it must never be converted into the 404 a
+        client reads as a definitive not-found."""
+        stub_cls = _make_stub_manager_class()
+
+        def _raising_delete(self, memory_id, tenant_id, agent_name):
+            raise RuntimeError("Vespa delete failed: connection refused")
+
+        stub_cls.delete_memory = _raising_delete
+        monkeypatch.setattr(
+            "cogniverse_core.memory.manager.Mem0MemoryManager", stub_cls
+        )
+
+        with pytest.raises(RuntimeError, match="connection refused"):
+            client.delete("/admin/memories/acme:prod/mem-x")
+        assert len(stub_cls.instances) == 1
 
     def test_uninitialised_memory_backend_returns_503(self, client, monkeypatch):
         stub_cls = _make_stub_manager_class()
@@ -252,8 +258,24 @@ class TestAdminClearMemories:
         resp = client.delete("/admin/memories/acme:prod", params={"type": "bogus"})
         assert resp.status_code == 400
         assert resp.json() == {"detail": "Unknown memory type: bogus"}
-        (mgr,) = stub_cls.instances
-        assert mgr.clear_calls == []
+        assert stub_cls.instances == []
+
+    def test_clear_backend_outage_propagates(self, client, monkeypatch):
+        """An outage mid-clear propagates; the route must not report
+        {"status": "cleared"} for a tenant whose memories still exist."""
+        stub_cls = _make_stub_manager_class()
+
+        def _raising_clear(self, tenant_id, agent_name):
+            raise RuntimeError("Vespa delete failed: connection refused")
+
+        stub_cls.clear_agent_memory = _raising_clear
+        monkeypatch.setattr(
+            "cogniverse_core.memory.manager.Mem0MemoryManager", stub_cls
+        )
+
+        with pytest.raises(RuntimeError, match="connection refused"):
+            client.delete("/admin/memories/acme:prod")
+        assert len(stub_cls.instances) == 1
 
 
 @pytest.mark.unit

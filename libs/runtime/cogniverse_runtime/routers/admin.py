@@ -1103,19 +1103,24 @@ async def admin_delete_memory(tenant_id: str, memory_id: str):
     from cogniverse_core.memory.manager import Mem0MemoryManager
 
     tenant_id = canonical_tenant_id(tenant_id)
-    mgr = Mem0MemoryManager(tenant_id)
-    if not mgr.memory:
-        raise HTTPException(status_code=503, detail="Memory backend not initialised")
 
-    for ns in _ADMIN_ALL_NAMESPACES:
-        if mgr.delete_memory(memory_id=memory_id, tenant_id=tenant_id, agent_name=ns):
-            logger.info(
-                "Admin deleted memory %s (ns=%s) for tenant %s",
-                memory_id,
-                ns,
-                tenant_id,
+    def _delete() -> bool:
+        mgr = Mem0MemoryManager(tenant_id)
+        if not mgr.memory:
+            raise HTTPException(
+                status_code=503, detail="Memory backend not initialised"
             )
-            return {"status": "deleted", "memory_id": memory_id}
+        # delete_memory addresses the memory by id alone; the namespace
+        # argument is signature compatibility.
+        return mgr.delete_memory(
+            memory_id=memory_id,
+            tenant_id=tenant_id,
+            agent_name="_user_memories",
+        )
+
+    if await asyncio.to_thread(_delete):
+        logger.info("Admin deleted memory %s for tenant %s", memory_id, tenant_id)
+        return {"status": "deleted", "memory_id": memory_id}
 
     raise HTTPException(status_code=404, detail=f"Memory {memory_id} not found")
 
@@ -1131,22 +1136,29 @@ async def admin_clear_memories(
     from cogniverse_core.memory.manager import Mem0MemoryManager
 
     tenant_id = canonical_tenant_id(tenant_id)
-    mgr = Mem0MemoryManager(tenant_id)
-    if not mgr.memory:
-        raise HTTPException(status_code=503, detail="Memory backend not initialised")
 
     if type and type != "all":
         ns = _ADMIN_TYPE_TO_NAMESPACE.get(type)
         if ns is None:
             raise HTTPException(status_code=400, detail=f"Unknown memory type: {type}")
-        mgr.clear_agent_memory(tenant_id=tenant_id, agent_name=ns)
-        logger.info("Admin cleared '%s' memories for tenant %s", type, tenant_id)
-        return {"status": "cleared", "type": type}
+        namespaces = [ns]
+        cleared_type = type
+    else:
+        namespaces = list(_ADMIN_ALL_NAMESPACES)
+        cleared_type = "all"
 
-    for ns in _ADMIN_ALL_NAMESPACES:
-        mgr.clear_agent_memory(tenant_id=tenant_id, agent_name=ns)
-    logger.info("Admin cleared all memories for tenant %s", tenant_id)
-    return {"status": "cleared", "type": "all"}
+    def _clear() -> None:
+        mgr = Mem0MemoryManager(tenant_id)
+        if not mgr.memory:
+            raise HTTPException(
+                status_code=503, detail="Memory backend not initialised"
+            )
+        for namespace in namespaces:
+            mgr.clear_agent_memory(tenant_id=tenant_id, agent_name=namespace)
+
+    await asyncio.to_thread(_clear)
+    logger.info("Admin cleared '%s' memories for tenant %s", cleared_type, tenant_id)
+    return {"status": "cleared", "type": cleared_type}
 
 
 @router.delete("/tenants/{tenant_id}/sessions/{session_id}")
@@ -1164,12 +1176,17 @@ async def admin_drop_session(tenant_id: str, session_id: str):
         raise HTTPException(status_code=400, detail="session_id must be non-empty")
 
     tenant_id = canonical_tenant_id(tenant_id)
-    mgr = Mem0MemoryManager(tenant_id)
-    if not mgr.memory:
-        raise HTTPException(status_code=503, detail="Memory backend not initialised")
-
     registry = build_default_registry()
-    deleted_by_kind = mgr.drop_session(session_id, registry)
+
+    def _drop() -> Dict[str, int]:
+        mgr = Mem0MemoryManager(tenant_id)
+        if not mgr.memory:
+            raise HTTPException(
+                status_code=503, detail="Memory backend not initialised"
+            )
+        return mgr.drop_session(session_id, registry)
+
+    deleted_by_kind = await asyncio.to_thread(_drop)
     total = sum(deleted_by_kind.values())
     logger.info(
         "Admin drop_session(%s) for tenant %s: deleted %d memories %s",
@@ -1211,28 +1228,33 @@ async def admin_close_session(session_id: str):
         raise HTTPException(status_code=400, detail="session_id must be non-empty")
 
     registry = build_default_registry()
-    per_tenant: Dict[str, Dict[str, int]] = {}
-    total = 0
-    skipped: List[str] = []
-    for mgr in list(Mem0MemoryManager._instances.values()):
-        tenant_id = getattr(mgr, "tenant_id", None) or "unknown"
-        if not getattr(mgr, "memory", None):
-            skipped.append(tenant_id)
-            continue
-        try:
-            deleted = mgr.drop_session(session_id, registry)
-        except Exception as exc:  # pragma: no cover - defensive
-            logger.warning(
-                "drop_session failed for tenant %s session %s: %s",
-                tenant_id,
-                session_id,
-                exc,
-            )
-            skipped.append(tenant_id)
-            continue
-        if deleted:
-            per_tenant[tenant_id] = deleted
-            total += sum(deleted.values())
+
+    def _sweep() -> tuple[Dict[str, Dict[str, int]], int, List[str]]:
+        per_tenant: Dict[str, Dict[str, int]] = {}
+        total = 0
+        skipped: List[str] = []
+        for mgr in list(Mem0MemoryManager._instances.values()):
+            tenant_id = getattr(mgr, "tenant_id", None) or "unknown"
+            if not getattr(mgr, "memory", None):
+                skipped.append(tenant_id)
+                continue
+            try:
+                deleted = mgr.drop_session(session_id, registry)
+            except Exception as exc:
+                logger.warning(
+                    "drop_session failed for tenant %s session %s: %s",
+                    tenant_id,
+                    session_id,
+                    exc,
+                )
+                skipped.append(tenant_id)
+                continue
+            if deleted:
+                per_tenant[tenant_id] = deleted
+                total += sum(deleted.values())
+        return per_tenant, total, skipped
+
+    per_tenant, total, skipped = await asyncio.to_thread(_sweep)
 
     logger.info(
         "Admin close_session(%s) swept %d warm tenants, deleted %d memories",
@@ -1775,7 +1797,8 @@ async def pin_memory(
     tenant_id = canonical_tenant_id(tenant_id)
     svc = await _pin_service_for(tenant_id)
     try:
-        record = svc.pin(
+        record = await asyncio.to_thread(
+            svc.pin,
             target_memory_id=memory_id,
             target_kind=body.target_kind,
             pinned_by=pinned_by,
@@ -1822,7 +1845,8 @@ async def unpin_memory(
     tenant_id = canonical_tenant_id(tenant_id)
     svc = await _pin_service_for(tenant_id)
     try:
-        removed = svc.unpin(
+        removed = await asyncio.to_thread(
+            svc.unpin,
             target_memory_id=memory_id,
             requester=requester,
             actor_id=body.actor_id,
@@ -1849,7 +1873,7 @@ async def list_pins(tenant_id: str) -> PinListResponse:
     """list all pin records for a tenant (audit + UI)."""
     tenant_id = canonical_tenant_id(tenant_id)
     svc = await _pin_service_for(tenant_id)
-    records = svc.list_pins(tenant_id)
+    records = await asyncio.to_thread(svc.list_pins, tenant_id)
     return PinListResponse(
         tenant_id=tenant_id,
         pins=[
@@ -1927,7 +1951,8 @@ async def promote_to_org_trunk(
         registry=build_promotable_registry(),
     )
     try:
-        result = svc.promote_to_org_trunk(
+        result = await asyncio.to_thread(
+            svc.promote_to_org_trunk,
             source_tenant_id=tenant_id,
             source_memory=src,
             actor_role=actor_role,
@@ -2067,7 +2092,7 @@ async def restore_memory(tenant_id: str, memory_id: str) -> RestoreMemoryRespons
     """clear the archived flag on a soft-deleted memory."""
     tenant_id = canonical_tenant_id(tenant_id)
     source_mm = (await _pin_service_for(tenant_id))._mm  # reuse the lazy-init path
-    ok = source_mm.restore_archived_memory(memory_id)
+    ok = await asyncio.to_thread(source_mm.restore_archived_memory, memory_id)
     if not ok:
         raise HTTPException(
             404,

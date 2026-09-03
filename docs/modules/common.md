@@ -651,7 +651,8 @@ def delete_memory(
         agent_name: Agent name (accepted for API symmetry; not used)
 
     Returns:
-        Success status
+        True when deleted, False when the id does not exist. Backend
+        failures propagate so an outage is never read as not-found.
     """
 ```
 
@@ -665,7 +666,9 @@ def clear_agent_memory(
     """
     Clear all memory for an agent.
 
-    Use case: Reset agent memory for testing or tenant offboarding
+    Use case: Reset agent memory for testing or tenant offboarding.
+    Returns True when every listed memory is gone; backend failures
+    propagate.
     """
 ```
 

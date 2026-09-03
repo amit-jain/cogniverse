@@ -458,3 +458,193 @@ async def test_coding_code_search_offloaded(monkeypatch):
 
     ticks = await _ticks_during(lambda: d._code_search("q", "acme:acme"))
     assert ticks >= 10, f"only {ticks} ticks — code search ran on the event loop"
+
+
+def _stub_admin_memory_manager(monkeypatch, **methods):
+    """Patch the admin routes' Mem0MemoryManager with a recording stub whose
+    given methods are installed verbatim."""
+    import cogniverse_core.memory.manager as manager_mod
+
+    mgr = MagicMock()
+    mgr.memory = object()
+    for name, fn in methods.items():
+        setattr(mgr, name, fn)
+    cls = MagicMock(return_value=mgr)
+    monkeypatch.setattr(manager_mod, "Mem0MemoryManager", cls)
+    return mgr
+
+
+@pytest.mark.asyncio
+async def test_admin_delete_memory_offloaded(monkeypatch):
+    from cogniverse_runtime.routers import admin
+
+    _stub_admin_memory_manager(monkeypatch, delete_memory=_blocking(0.3))
+    ticks = await _ticks_during(lambda: admin.admin_delete_memory("acme:acme", "mem-1"))
+    assert ticks >= 10, f"only {ticks} ticks — delete_memory ran on the loop"
+
+
+@pytest.mark.asyncio
+async def test_admin_clear_memories_offloaded(monkeypatch):
+    from cogniverse_runtime.routers import admin
+
+    _stub_admin_memory_manager(monkeypatch, clear_agent_memory=_blocking(0.3))
+    ticks = await _ticks_during(
+        lambda: admin.admin_clear_memories("acme:acme", type=None)
+    )
+    assert ticks >= 10, f"only {ticks} ticks — clear_agent_memory ran on the loop"
+
+
+@pytest.mark.asyncio
+async def test_admin_drop_session_offloaded(monkeypatch):
+    from cogniverse_runtime.routers import admin
+
+    def _slow_drop(*a, **k):
+        time.sleep(0.3)
+        return {"chat": 2}
+
+    _stub_admin_memory_manager(monkeypatch, drop_session=_slow_drop)
+    ticks = await _ticks_during(lambda: admin.admin_drop_session("acme:acme", "sess-1"))
+    assert ticks >= 10, f"only {ticks} ticks — drop_session ran on the loop"
+
+
+@pytest.mark.asyncio
+async def test_admin_close_session_sweep_offloaded(monkeypatch):
+    from types import SimpleNamespace
+
+    from cogniverse_runtime.routers import admin
+
+    def _slow_drop(*a, **k):
+        time.sleep(0.3)
+        return {"chat": 1}
+
+    warm = SimpleNamespace(
+        tenant_id="acme:acme", memory=object(), drop_session=_slow_drop
+    )
+    import cogniverse_core.memory.manager as manager_mod
+
+    monkeypatch.setattr(
+        manager_mod,
+        "Mem0MemoryManager",
+        SimpleNamespace(_instances={"acme:acme": warm}),
+    )
+    ticks = await _ticks_during(lambda: admin.admin_close_session("sess-1"))
+    assert ticks >= 10, f"only {ticks} ticks — the warm-tenant sweep ran on the loop"
+
+
+def _stub_pin_service(monkeypatch, **methods):
+    from cogniverse_runtime.routers import admin
+
+    svc = MagicMock()
+    for name, fn in methods.items():
+        setattr(svc, name, fn)
+
+    async def _svc_for(tenant_id):
+        return svc
+
+    monkeypatch.setattr(admin, "_pin_service_for", _svc_for)
+    return svc
+
+
+@pytest.mark.asyncio
+async def test_admin_pin_offloaded(monkeypatch):
+    from types import SimpleNamespace
+
+    from cogniverse_runtime.routers import admin
+
+    def _slow_pin(*a, **k):
+        time.sleep(0.3)
+        return SimpleNamespace(
+            memory_id="p1",
+            target_memory_id="m1",
+            target_kind="chat",
+            pinned_by=SimpleNamespace(value="user"),
+            pinned_by_actor="alice",
+        )
+
+    _stub_pin_service(monkeypatch, pin=_slow_pin)
+    body = admin.PinCreateRequest(
+        target_kind="chat", pinned_by="user", actor_id="alice"
+    )
+    ticks = await _ticks_during(lambda: admin.pin_memory("acme:acme", "m1", body))
+    assert ticks >= 10, f"only {ticks} ticks — svc.pin ran on the loop"
+
+
+@pytest.mark.asyncio
+async def test_admin_unpin_offloaded(monkeypatch):
+    from cogniverse_runtime.routers import admin
+
+    def _slow_unpin(*a, **k):
+        time.sleep(0.3)
+        return 1
+
+    _stub_pin_service(monkeypatch, unpin=_slow_unpin)
+    body = admin.PinUnpinRequest(requester_role="user", actor_id="alice")
+    ticks = await _ticks_during(lambda: admin.unpin_memory("acme:acme", "m1", body))
+    assert ticks >= 10, f"only {ticks} ticks — svc.unpin ran on the loop"
+
+
+@pytest.mark.asyncio
+async def test_admin_list_pins_call_offloaded(monkeypatch):
+    from cogniverse_runtime.routers import admin
+
+    def _slow_list(*a, **k):
+        time.sleep(0.3)
+        return []
+
+    _stub_pin_service(monkeypatch, list_pins=_slow_list)
+    ticks = await _ticks_during(lambda: admin.list_pins("acme:acme"))
+    assert ticks >= 10, f"only {ticks} ticks — svc.list_pins ran on the loop"
+
+
+@pytest.mark.asyncio
+async def test_admin_promote_to_org_trunk_offloaded(monkeypatch):
+    from types import SimpleNamespace
+
+    import cogniverse_core.memory.federation as federation_mod
+    from cogniverse_runtime.routers import admin
+
+    def _slow_promote(*a, **k):
+        time.sleep(0.3)
+        return SimpleNamespace(
+            source_memory_id="m1",
+            promoted_memory_id="trunk-m1",
+            org_trunk_tenant_id="acme:_org_trunk",
+        )
+
+    svc = MagicMock()
+    svc.promote_to_org_trunk = _slow_promote
+    monkeypatch.setattr(
+        federation_mod, "FederationService", MagicMock(return_value=svc)
+    )
+
+    pin_svc = MagicMock()
+    pin_svc._mm.memory.get = lambda mid: {"user_id": "acme:acme", "id": mid}
+
+    async def _svc_for(tenant_id):
+        return pin_svc
+
+    monkeypatch.setattr(admin, "_pin_service_for", _svc_for)
+    body = admin.PromoteToOrgTrunkRequest(actor_role="org_admin", actor_id="alice")
+    ticks = await _ticks_during(
+        lambda: admin.promote_to_org_trunk("acme:acme", "m1", body)
+    )
+    assert ticks >= 10, f"only {ticks} ticks — promote_to_org_trunk ran on the loop"
+
+
+@pytest.mark.asyncio
+async def test_admin_restore_memory_offloaded(monkeypatch):
+    from cogniverse_runtime.routers import admin
+
+    def _slow_restore(*a, **k):
+        time.sleep(0.3)
+        return True
+
+    pin_svc = MagicMock()
+    pin_svc._mm.restore_archived_memory = _slow_restore
+
+    async def _svc_for(tenant_id):
+        return pin_svc
+
+    monkeypatch.setattr(admin, "_pin_service_for", _svc_for)
+    ticks = await _ticks_during(lambda: admin.restore_memory("acme:acme", "m1"))
+    assert ticks >= 10, f"only {ticks} ticks — restore_archived_memory ran on the loop"

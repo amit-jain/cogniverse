@@ -433,6 +433,72 @@ class TestMem0MemoryManager:
         assert success is True
         assert mock_memory.delete.call_count == 2
 
+    def test_delete_memory_returns_false_only_on_not_found(self, manager):
+        """mem0 raises ValueError for a genuinely missing id; that maps to
+        False. Anything else is a backend failure and must propagate."""
+        mock_memory = MagicMock()
+        mock_memory.delete.side_effect = ValueError("Memory with id mem_123 not found")
+        manager.memory = mock_memory
+
+        assert (
+            manager.delete_memory(
+                memory_id="mem_123", tenant_id="tenant1", agent_name="a"
+            )
+            is False
+        )
+
+    def test_delete_memory_raises_on_backend_outage(self, manager):
+        """A backend outage must never read as not-found: the admin route
+        turned the swallowed False into a definitive 404 for a memory that
+        still exists."""
+        mock_memory = MagicMock()
+        mock_memory.delete.side_effect = RuntimeError(
+            "Vespa delete failed: connection refused"
+        )
+        manager.memory = mock_memory
+
+        with pytest.raises(RuntimeError, match="connection refused"):
+            manager.delete_memory(
+                memory_id="mem_123", tenant_id="tenant1", agent_name="a"
+            )
+
+    @patch("cogniverse_core.memory.manager.Memory")
+    def test_clear_agent_memory_raises_on_backend_outage(
+        self, mock_memory_class, manager
+    ):
+        """An outage mid-clear must propagate, not return the False the admin
+        route discarded while reporting {"status": "cleared"}."""
+        mock_memory = MagicMock()
+        mock_memory.get_all.return_value = [{"id": "mem_1"}, {"id": "mem_2"}]
+        mock_memory.delete.side_effect = RuntimeError(
+            "Vespa delete failed: connection refused"
+        )
+        self._bind_deployed_partition(manager, mock_memory)
+
+        with pytest.raises(RuntimeError, match="connection refused"):
+            manager.clear_agent_memory(tenant_id="tenant1", agent_name="test_agent")
+
+    @patch("cogniverse_core.memory.manager.Memory")
+    def test_clear_agent_memory_treats_missing_as_cleared(
+        self, mock_memory_class, manager
+    ):
+        """A concurrent deletion between the listing and the delete is the
+        goal state, not a failure: clear still reports success and attempts
+        every listed id."""
+        mock_memory = MagicMock()
+        mock_memory.get_all.return_value = [{"id": "mem_1"}, {"id": "mem_2"}]
+        mock_memory.delete.side_effect = [
+            ValueError("Memory with id mem_1 not found"),
+            None,
+        ]
+        self._bind_deployed_partition(manager, mock_memory)
+
+        assert (
+            manager.clear_agent_memory(tenant_id="tenant1", agent_name="test_agent")
+            is True
+        )
+        assert mock_memory.delete.call_count == 2
+
     @patch("cogniverse_core.memory.manager.Memory")
     def test_update_memory(self, mock_memory_class, manager):
         """Test updating memory"""
