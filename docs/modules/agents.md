@@ -2758,6 +2758,16 @@ class MemoryAwareMixin:
         """Retrieve relevant memories for query. Returns None if memory not initialized."""
         ...
 
+    def inject_context_into_prompt(self, prompt: str, query: str) -> str:
+        """Enrich a prompt with tenant instructions, strategies, and memory context.
+
+        The tenant-instruction fetch status ("loaded" / "none" / "unavailable")
+        is recorded on last_tenant_instructions_status and as the span attribute
+        enrichment.tenant_instructions, so a ConfigStore outage is
+        distinguishable from a tenant with no instructions.
+        """
+        ...
+
     def update_memory(self, content: str, metadata: Optional[Dict[str, Any]] = None) -> bool:
         """Add content to agent's memory. Returns success status."""
         ...

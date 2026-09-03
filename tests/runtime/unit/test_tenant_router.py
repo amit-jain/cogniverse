@@ -588,7 +588,11 @@ class TestMemoryAwareMixinInstructions:
             patch.object(
                 agent, "get_strategies", return_value="## Learned Strategies\n- Try A"
             ),
-            patch.object(agent, "_get_tenant_instructions", return_value="Be concise."),
+            patch.object(
+                agent,
+                "_get_tenant_instructions",
+                return_value=("Be concise.", "loaded"),
+            ),
         ):
             result = agent.inject_context_into_prompt("Base prompt", "test query")
 
@@ -602,7 +606,11 @@ class TestMemoryAwareMixinInstructions:
         with (
             patch.object(agent, "get_relevant_context", return_value=None),
             patch.object(agent, "get_strategies", return_value=None),
-            patch.object(agent, "_get_tenant_instructions", return_value=None),
+            patch.object(
+                agent,
+                "_get_tenant_instructions",
+                return_value=(None, "none"),
+            ),
         ):
             result = agent.inject_context_into_prompt("Base prompt", "test query")
 
@@ -648,7 +656,7 @@ class TestMemoryAwareMixinInstructions:
 
         result = agent._get_tenant_instructions()
 
-        assert result == "Always be helpful."
+        assert result == ("Always be helpful.", "loaded")
 
     def test_get_tenant_instructions_returns_none_on_error(self):
         agent, store = self._agent_with_stored_instructions("Always be helpful.")
@@ -660,14 +668,14 @@ class TestMemoryAwareMixinInstructions:
 
         result = agent._get_tenant_instructions()
 
-        assert result is None
+        assert result == (None, "unavailable")
 
     def test_get_tenant_instructions_returns_none_for_empty_text(self):
         agent, _ = self._agent_with_stored_instructions("")
 
         result = agent._get_tenant_instructions()
 
-        assert result is None
+        assert result == (None, "none")
 
 
 @pytest.mark.unit
