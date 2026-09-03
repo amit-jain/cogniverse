@@ -51,7 +51,7 @@ fi
 uv run pytest tests/ \
     -v \
     -m "$MARKERS" \
-    --cov=src/app/routing \
+    --cov=libs/agents/cogniverse_agents/routing \
     --cov-report=term-missing \
     --cov-report=html \
     --cov-report=json \
@@ -76,13 +76,8 @@ with open('coverage.json', 'r') as f:
 print('Module Coverage:')
 print('-' * 50)
 
-routing_files = [
-    'src/app/routing/router.py',
-    'src/app/routing/strategies.py', 
-    'src/app/routing/optimizer.py',
-    'src/app/routing/config.py',
-    'src/app/routing/base.py'
-]
+routing_prefix = 'libs/agents/cogniverse_agents/routing/'
+routing_files = sorted(f for f in data['files'] if f.startswith(routing_prefix))
 
 total_stmts = 0
 total_miss = 0
