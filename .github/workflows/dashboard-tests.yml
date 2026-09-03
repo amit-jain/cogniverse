@@ -157,5 +157,5 @@ jobs:
       run: |
         JAX_PLATFORM_NAME=cpu uv run python -m pytest \
           tests/dashboard/ \
-          -m "integration and ci_fast" \
+          -m "integration and ci_fast and not requires_lm" \
           -v --tb=short

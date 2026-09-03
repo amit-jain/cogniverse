@@ -225,7 +225,7 @@ jobs:
         # Tests manage their own Vespa containers via fixtures
         JAX_PLATFORM_NAME=cpu uv run --no-sync python -m pytest \
           tests/ingestion/integration/ \
-          -m "integration and ci_fast" \
+          -m "integration and ci_fast and not requires_lm" \
           -v --tb=short \
           --cov=libs/runtime/cogniverse_runtime/ingestion \
           --cov-report=term-missing \

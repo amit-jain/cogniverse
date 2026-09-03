@@ -158,7 +158,7 @@ jobs:
         COVERAGE_FILE: .coverage
       run: |
         uv run --no-sync python -m pytest tests/evaluation/integration \
-          -m "integration and ci_fast" \
+          -m "integration and ci_fast and not requires_lm" \
           -v \
           --cov=libs/evaluation/cogniverse_evaluation \
           --cov-report=term-missing \
