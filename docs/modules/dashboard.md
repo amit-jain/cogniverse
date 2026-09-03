@@ -84,6 +84,7 @@ libs/dashboard/cogniverse_dashboard/
     __init__.py
     annotations.py                # Persist search-result relevance annotations to telemetry
     async_utils.py
+    runtime_client.py   # shared pooled httpx.Client for runtime calls (st.cache_resource)
     traces.py
 ```
 
