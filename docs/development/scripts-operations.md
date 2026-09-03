@@ -94,7 +94,6 @@ scripts/
 └── Shell Scripts (build, local dev, test infrastructure)
     ├── build_packages.sh             # Build all SDK packages in dependency order
     ├── publish_packages.sh           # Publish SDK packages to (Test)PyPI
-    ├── install_modular.sh            # Install cogniverse modules in dev mode
     ├── install_with_gpu.sh           # uv sync with the PyTorch backend matching local hardware
     ├── download_test_data.sh         # Download the evaluation dataset
     ├── start_vespa.sh / stop_vespa.sh        # Vespa container lifecycle (persistent volumes)
