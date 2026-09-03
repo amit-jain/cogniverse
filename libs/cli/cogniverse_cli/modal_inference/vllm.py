@@ -255,11 +255,16 @@ def _build_process_proxy_app(
     if request_timeout <= 0:
         raise ValueError("request_timeout must be positive")
 
+    # One upstream client for the app's lifetime: a fresh AsyncClient per
+    # request paid pool construction and teardown on every proxied call.
+    client = httpx.AsyncClient(timeout=request_timeout)
+
     @asynccontextmanager
     async def lifespan(_: FastAPI) -> AsyncIterator[None]:
         try:
             yield
         finally:
+            await client.aclose()
             await process.close()
 
     app = FastAPI(lifespan=lifespan)
@@ -290,7 +295,6 @@ def _build_process_proxy_app(
                 f"{process.service}: request body read failed ({type(exc).__name__})"
             )
 
-        client = httpx.AsyncClient(timeout=request_timeout)
         try:
             upstream_request = client.build_request(
                 request.method,
@@ -300,7 +304,6 @@ def _build_process_proxy_app(
             )
             upstream = await client.send(upstream_request, stream=True)
         except httpx.HTTPError as exc:
-            await client.aclose()
             try:
                 await process.invalidate(serving_process)
             except _ServingProcessError as process_exc:
@@ -308,9 +311,6 @@ def _build_process_proxy_app(
             return _service_unavailable(
                 f"{process.service}: vLLM serving request failed ({type(exc).__name__})"
             )
-        except BaseException:
-            await client.aclose()
-            raise
 
         async def response_body():
             try:
@@ -318,7 +318,6 @@ def _build_process_proxy_app(
                     yield chunk
             finally:
                 await upstream.aclose()
-                await client.aclose()
 
         response = StreamingResponse(
             response_body(),

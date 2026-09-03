@@ -48,6 +48,7 @@ import httpx
 
 from cogniverse_core.common.tenant_utils import SYSTEM_TENANT_ID
 from cogniverse_dashboard.utils.async_utils import run_async_in_streamlit
+from cogniverse_dashboard.utils.runtime_client import get_runtime_client
 from cogniverse_dashboard.utils.traces import (
     fetch_tenant_traces_safely,
     filter_traces_df,
@@ -114,26 +115,26 @@ def stream_agent_call(
     }
 
     events = []
-    with httpx.Client(timeout=120.0) as client:
-        with client.stream("POST", f"{RUNTIME_URL}/a2a/", json=payload) as resp:
-            for line in resp.iter_lines():
-                line = line.strip()
-                if line.startswith("data:"):
-                    data_str = line[len("data:") :].strip()
-                    if data_str:
-                        raw = _json.loads(data_str)
-                        for part in (
-                            raw.get("result", {})
-                            .get("status", {})
-                            .get("message", {})
-                            .get("parts", [])
-                        ):
-                            text = part.get("text", "")
-                            if text:
-                                try:
-                                    events.append(_json.loads(text))
-                                except _json.JSONDecodeError:
-                                    pass
+    client = get_runtime_client()
+    with client.stream("POST", f"{RUNTIME_URL}/a2a/", json=payload) as resp:
+        for line in resp.iter_lines():
+            line = line.strip()
+            if line.startswith("data:"):
+                data_str = line[len("data:") :].strip()
+                if data_str:
+                    raw = _json.loads(data_str)
+                    for part in (
+                        raw.get("result", {})
+                        .get("status", {})
+                        .get("message", {})
+                        .get("parts", [])
+                    ):
+                        text = part.get("text", "")
+                        if text:
+                            try:
+                                events.append(_json.loads(text))
+                            except _json.JSONDecodeError:
+                                pass
     return events
 
 
@@ -581,8 +582,7 @@ def show_agent_status():
     return agent_status
 
 
-# Helper function for async A2A calls
-async def call_agent_async(agent_url: str, task_data: dict) -> dict:
+def call_agent(task_data: dict) -> dict:
     """Route all agent calls through the runtime at RUNTIME_URL.
 
     Every action goes through the runtime's agent process endpoint or
@@ -590,75 +590,74 @@ async def call_agent_async(agent_url: str, task_data: dict) -> dict:
     """
     try:
         action = task_data.get("action", "")
+        client = get_runtime_client()
 
         if action == "process_video":
             # task_data is built inside a tab, which is only rendered after
             # the gate has committed a valid tenant to session state.
             _tenant = st.session_state["current_tenant"]
-            async with httpx.AsyncClient(timeout=120.0) as client:
-                response = await client.post(
-                    f"{RUNTIME_URL}/ingestion/start",
-                    json={
-                        "video_dir": task_data.get("video_path", ""),
-                        "profile": task_data.get(
-                            "profile", "video_colpali_smol500_mv_frame"
-                        ),
-                        "tenant_id": _tenant,
-                    },
-                )
-                if response.status_code == 200:
-                    result = response.json()
-                    return {
-                        "status": "success",
-                        "job_id": result.get("job_id"),
-                        "message": result.get("message", "Ingestion started"),
-                    }
+            response = client.post(
+                f"{RUNTIME_URL}/ingestion/start",
+                json={
+                    "video_dir": task_data.get("video_path", ""),
+                    "profile": task_data.get(
+                        "profile", "video_colpali_smol500_mv_frame"
+                    ),
+                    "tenant_id": _tenant,
+                },
+            )
+            if response.status_code == 200:
+                result = response.json()
                 return {
-                    "status": "error",
-                    "message": f"Ingestion error: HTTP {response.status_code}: {response.text}",
+                    "status": "success",
+                    "job_id": result.get("job_id"),
+                    "message": result.get("message", "Ingestion started"),
                 }
+            return {
+                "status": "error",
+                "message": f"Ingestion error: HTTP {response.status_code}: {response.text}",
+            }
 
         elif action == "search_videos":
             _tenant = st.session_state["current_tenant"]
-            async with httpx.AsyncClient(timeout=60.0) as client:
-                response = await client.post(
-                    f"{RUNTIME_URL}/agents/search_agent/process",
-                    json={
-                        "agent_name": "search_agent",
-                        "query": task_data.get("query", ""),
-                        "top_k": task_data.get("top_k", 10),
-                        "context": {
-                            "tenant_id": _tenant,
-                            "profile": task_data.get("profile"),
-                        },
+            response = client.post(
+                f"{RUNTIME_URL}/agents/search_agent/process",
+                json={
+                    "agent_name": "search_agent",
+                    "query": task_data.get("query", ""),
+                    "top_k": task_data.get("top_k", 10),
+                    "context": {
+                        "tenant_id": _tenant,
+                        "profile": task_data.get("profile"),
                     },
-                    headers=trace_headers(),
-                )
-                if response.status_code == 200:
-                    return response.json()
-                return {
-                    "status": "error",
-                    "message": f"Search error: HTTP {response.status_code}: {response.text}",
-                }
+                },
+                headers=trace_headers(),
+                timeout=60.0,
+            )
+            if response.status_code == 200:
+                return response.json()
+            return {
+                "status": "error",
+                "message": f"Search error: HTTP {response.status_code}: {response.text}",
+            }
 
         elif action == "generate_report":
             _tenant = st.session_state["current_tenant"]
-            async with httpx.AsyncClient(timeout=120.0) as client:
-                response = await client.post(
-                    f"{RUNTIME_URL}/agents/detailed_report_agent/process",
-                    json={
-                        "agent_name": "detailed_report_agent",
-                        "query": "Generate optimization performance report",
-                        "context": {"tenant_id": _tenant},
-                    },
-                    headers=trace_headers(),
-                )
-                if response.status_code == 200:
-                    return {"status": "success", "report": response.json()}
-                return {
-                    "status": "error",
-                    "message": f"Report error: HTTP {response.status_code}: {response.text}",
-                }
+            response = client.post(
+                f"{RUNTIME_URL}/agents/detailed_report_agent/process",
+                json={
+                    "agent_name": "detailed_report_agent",
+                    "query": "Generate optimization performance report",
+                    "context": {"tenant_id": _tenant},
+                },
+                headers=trace_headers(),
+            )
+            if response.status_code == 200:
+                return {"status": "success", "report": response.json()}
+            return {
+                "status": "error",
+                "message": f"Report error: HTTP {response.status_code}: {response.text}",
+            }
 
         else:
             return {"status": "error", "message": f"Unknown action: {action}"}
@@ -2432,12 +2431,7 @@ with main_tabs[9]:
                             )
 
                             # Make real async call to video processing agent
-                            result = run_async_in_streamlit(
-                                call_agent_async(
-                                    agent_config.get("video_processing_agent_url"),
-                                    processing_task,
-                                )
-                            )
+                            result = call_agent(processing_task)
 
                             if result.get("status") == "success":
                                 processing_results.append(

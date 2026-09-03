@@ -6,6 +6,7 @@ import subprocess
 import sys
 import time
 from collections.abc import Sequence
+from types import SimpleNamespace
 
 import httpx
 import modal
@@ -476,12 +477,13 @@ def test_proxy_reports_request_body_read_failure_before_opening_upstream_client(
         async def close(self) -> None:
             return None
 
-    client_constructions = 0
+    sends = 0
 
-    def unexpected_client(*args, **kwargs):
-        nonlocal client_constructions
-        client_constructions += 1
-        raise AssertionError("upstream client opened before request body was read")
+    class _NoSendClient(httpx.AsyncClient):
+        async def send(self, *args, **kwargs):
+            nonlocal sends
+            sends += 1
+            raise AssertionError("upstream request sent before request body was read")
 
     async def failed_receive():
         raise OSError("controlled request body failure")
@@ -499,7 +501,12 @@ def test_proxy_reports_request_body_read_failure_before_opening_upstream_client(
         "server": ("modal.test", 443),
     }
     monkeypatch.setattr(
-        "cogniverse_cli.modal_inference.vllm.httpx.AsyncClient", unexpected_client
+        "cogniverse_cli.modal_inference.vllm.httpx",
+        SimpleNamespace(
+            AsyncClient=_NoSendClient,
+            Timeout=httpx.Timeout,
+            HTTPError=httpx.HTTPError,
+        ),
     )
     app = _build_process_proxy_app(ReadyProcess())
     endpoint = next(
@@ -514,7 +521,51 @@ def test_proxy_reports_request_body_read_failure_before_opening_upstream_client(
     assert response.body == (
         b'{"detail":"vllm_colpali: request body read failed (OSError)"}'
     )
-    assert client_constructions == 0
+    assert sends == 0
+
+
+def test_proxy_reuses_one_upstream_client_across_requests(monkeypatch):
+    """The proxy holds one app-scoped upstream client - a fresh AsyncClient
+    per request paid pool construction and teardown on every proxied
+    inference call."""
+    monkeypatch.setenv("COGNIVERSE_INFERENCE_API_KEY", API_KEY)
+    spec = get_inference_service_spec("vllm_colpali")
+    port = _unused_port()
+    process = _ServingProcess(
+        service=spec.name,
+        command=_server_command(port),
+        host="127.0.0.1",
+        port=port,
+        startup_timeout=2,
+    )
+
+    constructions = 0
+    real_client = httpx.AsyncClient
+
+    def counting_client(*args, **kwargs):
+        nonlocal constructions
+        constructions += 1
+        return real_client(*args, **kwargs)
+
+    monkeypatch.setattr(
+        "cogniverse_cli.modal_inference.vllm.httpx",
+        SimpleNamespace(
+            AsyncClient=counting_client,
+            Timeout=httpx.Timeout,
+            HTTPError=httpx.HTTPError,
+        ),
+    )
+
+    app = build_authenticated_asgi_app(
+        _build_process_proxy_app(process),
+        model_id=spec.model_id,
+        model_revision=spec.model_revision,
+    )
+
+    responses = asyncio.run(_concurrent_proxy_requests(app, 4))
+
+    assert tuple(r.status_code for r in responses) == (200,) * 4
+    assert constructions == 1
 
 
 def test_proxy_bounds_hung_real_upstream_request(monkeypatch):
