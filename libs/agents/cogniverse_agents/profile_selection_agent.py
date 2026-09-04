@@ -24,7 +24,11 @@ from cogniverse_core.approval.training_schema import (
     ProfileQueryIntent,
 )
 from cogniverse_core.common.tenant_utils import require_tenant_id
-from cogniverse_foundation.config.unified_config import BackendProfileConfig
+from cogniverse_foundation.config.unified_config import (
+    BackendProfileConfig,
+    profile_embedding_service,
+    profile_is_servable,
+)
 from cogniverse_foundation.telemetry.span_contract import (
     OP_PROFILE_SELECTION,
     record_span_io,
@@ -69,8 +73,10 @@ def _default_available_profiles() -> List[str]:
     return [name for name, _profile in sorted(profiles.items(), key=_sort_key)]
 
 
-def tenant_usable_profile_names(config_manager: Any, tenant_id: str) -> List[str]:
-    """Return the tenant-scoped profiles the runtime can actually serve."""
+def servable_tenant_profiles(
+    config_manager: Any, tenant_id: str
+) -> List[tuple[str, BackendProfileConfig]]:
+    """The tenant's servable profiles as ``(name, profile)``, in selection order."""
     tenant_id = require_tenant_id(tenant_id, source="ProfileSelectionInput")
     tenant_profiles = config_manager.list_backend_profiles(tenant_id)
     system_config = config_manager.get_system_config()
@@ -81,42 +87,12 @@ def tenant_usable_profile_names(config_manager: Any, tenant_id: str) -> List[str
             "inference_service_urls"
         )
 
-    usable: list[tuple[str, BackendProfileConfig]] = []
-    missing_services: list[tuple[str, str]] = []
-
-    for profile_name, profile in tenant_profiles.items():
-        if not isinstance(profile, BackendProfileConfig):
-            continue
-        profile_dict = profile.to_dict()
-        inference_services = profile_dict.get("inference_services") or {}
-        if not isinstance(inference_services, dict):
-            inference_services = {}
-        embedding_service = inference_services.get("embedding")
-        if (
-            isinstance(embedding_service, str)
-            and embedding_service.strip()
-            and embedding_service not in service_urls
-        ):
-            missing_services.append((profile_name, embedding_service))
-            continue
-        usable.append((profile_name, profile))
-
-    if not usable:
-        configured = ", ".join(sorted(tenant_profiles)) or "<none>"
-        if missing_services:
-            missing = ", ".join(
-                f"{profile_name}:{service_name}"
-                for profile_name, service_name in sorted(missing_services)
-            )
-            raise ValueError(
-                f"No usable backend profiles are configured for tenant "
-                f"{tenant_id!r}; configured profiles={configured}; "
-                f"missing inference services={missing}"
-            )
-        raise ValueError(
-            f"No usable backend profiles are configured for tenant "
-            f"{tenant_id!r}; configured profiles={configured}"
-        )
+    usable = [
+        (profile_name, profile)
+        for profile_name, profile in tenant_profiles.items()
+        if isinstance(profile, BackendProfileConfig)
+        and profile_is_servable(profile.to_dict(), service_urls)
+    ]
 
     def _sort_key(item: tuple[str, BackendProfileConfig]) -> tuple[int, str]:
         profile_name, profile = item
@@ -126,7 +102,42 @@ def tenant_usable_profile_names(config_manager: Any, tenant_id: str) -> List[str
             profile_name,
         )
 
-    return [name for name, _profile in sorted(usable, key=_sort_key)]
+    return sorted(usable, key=_sort_key)
+
+
+def tenant_usable_profile_names(config_manager: Any, tenant_id: str) -> List[str]:
+    """Return the tenant-scoped profiles the runtime can actually serve."""
+    usable = servable_tenant_profiles(config_manager, tenant_id)
+    if usable:
+        return [name for name, _profile in usable]
+
+    tenant_id = require_tenant_id(tenant_id, source="ProfileSelectionInput")
+    tenant_profiles = config_manager.list_backend_profiles(tenant_id)
+    service_urls = (
+        getattr(config_manager.get_system_config(), "inference_service_urls", None)
+        or {}
+    )
+    missing_services = sorted(
+        (profile_name, profile_embedding_service(profile.to_dict()))
+        for profile_name, profile in tenant_profiles.items()
+        if isinstance(profile, BackendProfileConfig)
+        and not profile_is_servable(profile.to_dict(), service_urls)
+    )
+    configured = ", ".join(sorted(tenant_profiles)) or "<none>"
+    if missing_services:
+        missing = ", ".join(
+            f"{profile_name}:{service_name}"
+            for profile_name, service_name in missing_services
+        )
+        raise ValueError(
+            f"No usable backend profiles are configured for tenant "
+            f"{tenant_id!r}; configured profiles={configured}; "
+            f"missing inference services={missing}"
+        )
+    raise ValueError(
+        f"No usable backend profiles are configured for tenant "
+        f"{tenant_id!r}; configured profiles={configured}"
+    )
 
 
 class ProfileCandidate(BaseModel):
