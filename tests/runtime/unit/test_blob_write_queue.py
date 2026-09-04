@@ -10,6 +10,7 @@ a typed error instead of silently reverting to the stale durable value.
 """
 
 import asyncio
+import logging
 
 import pytest
 
@@ -209,3 +210,51 @@ async def test_failed_error_retains_the_accepted_content():
     assert isinstance(error, BlobWriteFailed)
     assert error.content == '{"user": 5}'
     assert queue.failed_error(TENANT, "config", "other") is None
+
+
+QUEUE_LOGGER = "cogniverse_runtime.blob_write_queue"
+
+
+def _records(caplog, level):
+    return [
+        r.getMessage()
+        for r in caplog.records
+        if r.name == QUEUE_LOGGER and r.levelno == level
+    ]
+
+
+@pytest.mark.asyncio
+async def test_applied_write_is_logged_with_its_identity(caplog):
+    """An operator reads pod logs, not the queue object. Terminal failures
+    log; an applied write logged nothing, so a write that landed was
+    indistinguishable from one the worker never drained."""
+    queue = BlobWriteQueue(GatedApplier())
+
+    with caplog.at_level(logging.INFO, logger=QUEUE_LOGGER):
+        queue.enqueue(TENANT, "config", "pin_quotas", '{"user": 3}')
+        await queue.flush()
+
+    assert _records(caplog, logging.INFO) == [
+        "Blob write config/pin_quotas for tenant org:tenant applied"
+    ]
+
+
+@pytest.mark.asyncio
+async def test_retried_write_logs_every_failed_attempt(caplog):
+    """A store degrading under load retried silently: a write that succeeded
+    on attempt 3 looked identical to one that succeeded on attempt 1."""
+    queue = BlobWriteQueue(GatedApplier(fail_times=2), backoff_s=0)
+
+    with caplog.at_level(logging.INFO, logger=QUEUE_LOGGER):
+        queue.enqueue(TENANT, "config", "pin_quotas", '{"user": 3}')
+        await queue.flush()
+
+    assert _records(caplog, logging.WARNING) == [
+        "Blob write config/pin_quotas for tenant org:tenant failed on "
+        "attempt 1/3, retrying: phoenix unreachable",
+        "Blob write config/pin_quotas for tenant org:tenant failed on "
+        "attempt 2/3, retrying: phoenix unreachable",
+    ]
+    assert _records(caplog, logging.INFO) == [
+        "Blob write config/pin_quotas for tenant org:tenant applied"
+    ]
