@@ -1203,6 +1203,14 @@ def _count_spans_script(
     sample into one lookback window, so a row count reports a multiple of the
     corpus; the distinct-id count is exactly the corpus size regardless.
     """
+    from cogniverse_foundation.telemetry import config as _telemetry_config
+
+    assert span_name_symbol.startswith("SPAN_NAME_") and hasattr(
+        _telemetry_config, span_name_symbol
+    ), (
+        "span_name_symbol must be a SPAN_NAME_* symbol defined in "
+        f"cogniverse_foundation.telemetry.config, got {span_name_symbol!r}"
+    )
     if distinct_replay_identities:
         tail = (
             f"cols = [c for c in df.columns if c.endswith({REPLAY_IDENTITY_ATTRIBUTE!r})]; "
@@ -1754,17 +1762,17 @@ def generate_spans_for_batch_jobs(_kubectl_cluster_ready):
         lookback_hours = _module_lookback_hours()
         _wait_for_seeded_query_enhancement_queries_in_pod(lookback_hours=lookback_hours)
         _wait_for_seeded_span_lower_bound_in_pod(
-            TENANT_ID, span_names[0], spans_per_agent, lookback_hours
+            TENANT_ID, "SPAN_NAME_GATEWAY", spans_per_agent, lookback_hours
         )
         _wait_for_seeded_span_lower_bound_in_pod(
-            TENANT_ID, span_names[1], spans_per_agent, lookback_hours
+            TENANT_ID, "SPAN_NAME_ENTITY_EXTRACTION", spans_per_agent, lookback_hours
         )
         _wait_for_seeded_span_lower_bound_in_pod(
-            TENANT_ID, span_names[3], spans_per_agent, lookback_hours
+            TENANT_ID, "SPAN_NAME_PROFILE_SELECTION", spans_per_agent, lookback_hours
         )
         _wait_for_seeded_span_lower_bound_in_pod(
             TENANT_ID,
-            span_names[4],
+            "SPAN_NAME_ORCHESTRATION",
             len(COMPLEX_QUERIES),
             lookback_hours,
         )

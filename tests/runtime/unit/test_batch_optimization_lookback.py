@@ -436,3 +436,85 @@ def test_batch_job_duration_records_host_memory_conditions(tmp_path, monkeypatch
         }
     ]
     _MOD.BATCH_JOB_DURATIONS.clear()
+
+
+def _span_symbol_call_violations(source: str) -> list[str]:
+    """Call sites of the in-pod span-count helpers whose span argument is not
+    a ``SPAN_NAME_*`` symbol literal (or the helpers' own forwarding param)."""
+    import ast
+    import re
+
+    helpers = {
+        "_count_spans_by_name_in_pod",
+        "_wait_for_seeded_span_lower_bound_in_pod",
+        "_count_spans_script",
+    }
+    symbol_re = re.compile(r"^SPAN_NAME_[A-Z_]+$")
+    violations: list[str] = []
+    for node in ast.walk(ast.parse(source)):
+        if not isinstance(node, ast.Call):
+            continue
+        func = node.func
+        name = func.id if isinstance(func, ast.Name) else getattr(func, "attr", None)
+        if name not in helpers:
+            continue
+        arg: ast.expr | None = None
+        if len(node.args) >= 2:
+            arg = node.args[1]
+        else:
+            for kw in node.keywords:
+                if kw.arg == "span_name_symbol":
+                    arg = kw.value
+        if arg is None:
+            continue
+        if (
+            isinstance(arg, ast.Constant)
+            and isinstance(arg.value, str)
+            and symbol_re.match(arg.value)
+        ):
+            continue
+        if isinstance(arg, ast.Name) and arg.id == "span_name_symbol":
+            continue
+        violations.append(f"line {node.lineno}: {ast.unparse(arg)}")
+    return violations
+
+
+def test_span_symbol_call_site_detector_flags_value_and_subscript():
+    violating = (
+        "def f(tenant_id, span_names):\n"
+        "    _count_spans_by_name_in_pod(tenant_id, 'cogniverse.gateway', 1.0)\n"
+        "    _wait_for_seeded_span_lower_bound_in_pod(\n"
+        "        tenant_id, span_names[0], 5, 1.0\n"
+        "    )\n"
+    )
+    flagged = [v.split(": ", 1)[1] for v in _span_symbol_call_violations(violating)]
+    assert flagged == ["'cogniverse.gateway'", "span_names[0]"]
+
+
+def test_every_span_count_call_site_passes_a_symbol_literal():
+    """Record-only call sites never execute in replay sweeps, so the symbol
+    contract is enforced statically across every call site in the module."""
+    violations = _span_symbol_call_violations(_SCRIPT.read_text(encoding="utf-8"))
+    assert violations == []
+
+
+def test_count_spans_script_rejects_a_span_name_value():
+    from cogniverse_foundation.telemetry.config import SPAN_NAME_GATEWAY
+
+    with pytest.raises(AssertionError, match="got 'cogniverse.gateway'"):
+        _MOD._count_spans_script(
+            tenant_id="flywheel_org:production",
+            span_name_symbol=SPAN_NAME_GATEWAY,
+            lookback_hours=0.5,
+            distinct_replay_identities=False,
+        )
+
+
+def test_count_spans_script_rejects_an_undefined_symbol():
+    with pytest.raises(AssertionError, match="got 'SPAN_NAME_GATEWY'"):
+        _MOD._count_spans_script(
+            tenant_id="flywheel_org:production",
+            span_name_symbol="SPAN_NAME_GATEWY",
+            lookback_hours=0.5,
+            distinct_replay_identities=False,
+        )
