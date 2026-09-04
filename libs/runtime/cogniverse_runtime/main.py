@@ -1508,6 +1508,11 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
 
     # Shutdown
     logger.info("Shutting down Cogniverse Runtime...")
+    # Accepted admin config-blob writes are write-behind; land them before
+    # teardown so a PUT moments before SIGTERM is not lost.
+    from cogniverse_runtime.routers.admin import drain_blob_writes
+
+    await drain_blob_writes()
     try:
         asyncio.get_running_loop().remove_signal_handler(_signal.SIGUSR1)
     except (NotImplementedError, ValueError, RuntimeError):

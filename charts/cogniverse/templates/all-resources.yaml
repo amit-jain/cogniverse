@@ -255,6 +255,8 @@ spec:
         {{- include "cogniverse.selectorLabels" . | nindent 8 }}
         app.kubernetes.io/component: runtime
     spec:
+      # Covers the shutdown drain of accepted admin blob writes plus teardown.
+      terminationGracePeriodSeconds: 90
       {{- with .Values.global.imagePullSecrets }}
       imagePullSecrets:
         {{- toYaml . | nindent 8 }}
