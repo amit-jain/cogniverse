@@ -15,6 +15,7 @@ from fastapi import FastAPI
 from fastapi.testclient import TestClient
 
 from cogniverse_foundation.config.manager import ConfigManager
+from cogniverse_foundation.config.unified_config import BackendProfileConfig
 from cogniverse_runtime.routers import search
 from cogniverse_runtime.routers.search import SearchRequest
 from cogniverse_sdk.document import (
@@ -58,11 +59,12 @@ def _make_noop_telemetry_manager():
 
 
 @contextmanager
-def _search_app_context():
+def _search_app_context(config_manager: ConfigManager | None = None):
     test_app = FastAPI()
     test_app.include_router(search.router, prefix="/search")
 
-    config_manager = _make_config_manager()
+    if config_manager is None:
+        config_manager = _make_config_manager()
     schema_loader = _make_mock_schema_loader()
 
     test_app.dependency_overrides[search.get_config_manager_dependency] = lambda: (
@@ -204,21 +206,116 @@ class TestListProfiles:
         assert resp.status_code == 422
 
     def test_list_profiles_custom_tenant(self, search_client):
-        """GET /search/profiles?tenant_id=acme scopes to that tenant."""
+        """A tenant with no configured profiles advertises none."""
         resp = search_client.get("/search/profiles?tenant_id=acme")
         assert resp.status_code == 200
-        assert resp.json()["tenant_id"] == "acme"
+        assert resp.json() == {"tenant_id": "acme", "count": 0, "profiles": []}
 
-    def test_list_profiles_response_structure(self, search_client):
-        """Profile list entries have name, model, and type fields."""
-        resp = search_client.get("/search/profiles?tenant_id=acme")
-        data = resp.json()
-        assert isinstance(data["count"], int)
-        assert isinstance(data["profiles"], list)
-        for profile in data["profiles"]:
-            assert "name" in profile
-            assert "model" in profile
-            assert "type" in profile
+    def test_list_profiles_entries_follow_profile_type_order(self):
+        """Entries carry name/model/type, ordered video before document."""
+        tenant_id = "acme:ordered"
+        config_manager = _make_config_manager()
+        system_config = config_manager.get_system_config()
+        system_config.inference_service_urls = {"live_embedding": "http://live:8000"}
+        config_manager.set_system_config(system_config)
+
+        for profile_name, profile_type, model in (
+            ("doc_profile", "document", "doc/model"),
+            ("video_profile", "video", "video/model"),
+        ):
+            config_manager.add_backend_profile(
+                BackendProfileConfig(
+                    profile_name=profile_name,
+                    type=profile_type,
+                    embedding_model=model,
+                    extra_config={
+                        "inference_services": {"embedding": "live_embedding"}
+                    },
+                ),
+                tenant_id=tenant_id,
+            )
+
+        with _search_app_context(config_manager=config_manager) as test_app:
+            with TestClient(test_app) as client:
+                resp = client.get("/search/profiles", params={"tenant_id": tenant_id})
+
+        assert resp.status_code == 200
+        assert resp.json() == {
+            "tenant_id": tenant_id,
+            "count": 2,
+            "profiles": [
+                {"name": "video_profile", "model": "video/model", "type": "video"},
+                {"name": "doc_profile", "model": "doc/model", "type": "document"},
+            ],
+        }
+
+
+@pytest.mark.unit
+@pytest.mark.ci_fast
+class TestListProfilesAdvertisesOnlyServable:
+    def test_profile_with_unconfigured_embedding_service_is_not_advertised(self):
+        """Advertised profiles equal the servable set, not every configured one."""
+        tenant_id = "acme:profiles"
+        config_manager = _make_config_manager()
+        system_config = config_manager.get_system_config()
+        system_config.inference_service_urls = {"live_embedding": "http://live:8000"}
+        config_manager.set_system_config(system_config)
+
+        for profile_name, model, service in (
+            ("servable_video", "live/model", "live_embedding"),
+            ("unservable_video", "missing/model", "absent_embedding"),
+        ):
+            config_manager.add_backend_profile(
+                BackendProfileConfig(
+                    profile_name=profile_name,
+                    type="video",
+                    embedding_model=model,
+                    extra_config={"inference_services": {"embedding": service}},
+                ),
+                tenant_id=tenant_id,
+            )
+
+        with _search_app_context(config_manager=config_manager) as test_app:
+            with TestClient(test_app) as client:
+                resp = client.get("/search/profiles", params={"tenant_id": tenant_id})
+
+                assert resp.status_code == 200
+                assert resp.json() == {
+                    "tenant_id": tenant_id,
+                    "count": 1,
+                    "profiles": [
+                        {
+                            "name": "servable_video",
+                            "model": "live/model",
+                            "type": "video",
+                        }
+                    ],
+                }
+
+                # Configuring the absent service makes the profile servable:
+                # the filter tracks configuration, not the profile's name.
+                system_config = config_manager.get_system_config()
+                system_config.inference_service_urls = {
+                    "live_embedding": "http://live:8000",
+                    "absent_embedding": "http://late:8000",
+                }
+                config_manager.set_system_config(system_config)
+
+                resp = client.get("/search/profiles", params={"tenant_id": tenant_id})
+
+        assert resp.status_code == 200
+        assert resp.json() == {
+            "tenant_id": tenant_id,
+            "count": 2,
+            "profiles": [
+                {"name": "servable_video", "model": "live/model", "type": "video"},
+                {
+                    "name": "unservable_video",
+                    "model": "missing/model",
+                    "type": "video",
+                },
+            ],
+        }
 
 
 # ── POST /search ─────────────────────────────────────────────────────────
