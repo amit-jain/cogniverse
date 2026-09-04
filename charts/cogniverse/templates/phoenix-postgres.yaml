@@ -1,0 +1,136 @@
+{{- /*
+Postgres backing store for Phoenix. SQLite cannot cancel a query whose
+client has disconnected, so an abandoned span/dataset scan keeps reading
+until it finishes and the disk saturates; Postgres terminates the query
+when the client goes away.
+*/}}
+{{- $fullName := include "cogniverse.fullname" . -}}
+{{- if and .Values.phoenix.enabled .Values.phoenix.postgres.enabled }}
+apiVersion: v1
+kind: Secret
+metadata:
+  name: {{ $fullName }}-phoenix-postgres-auth
+  labels:
+    {{- include "cogniverse.labels" . | nindent 4 }}
+    app.kubernetes.io/component: phoenix-postgres
+type: Opaque
+stringData:
+  password: {{ required "phoenix.postgres.auth.password must be set when phoenix.postgres.enabled=true (override the dev default in values.prod.yaml)" .Values.phoenix.postgres.auth.password | quote }}
+---
+apiVersion: apps/v1
+kind: StatefulSet
+metadata:
+  name: {{ $fullName }}-phoenix-postgres
+  labels:
+    {{- include "cogniverse.labels" . | nindent 4 }}
+    app.kubernetes.io/component: phoenix-postgres
+spec:
+  serviceName: {{ $fullName }}-phoenix-postgres
+  replicas: 1
+  selector:
+    matchLabels:
+      {{- include "cogniverse.selectorLabels" . | nindent 6 }}
+      app.kubernetes.io/component: phoenix-postgres
+  template:
+    metadata:
+      labels:
+        {{- include "cogniverse.selectorLabels" . | nindent 8 }}
+        app.kubernetes.io/component: phoenix-postgres
+    spec:
+      {{- with .Values.global.imagePullSecrets }}
+      imagePullSecrets:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      serviceAccountName: {{ include "cogniverse.serviceAccountName" . }}
+      initContainers:
+      # hostPath volumes ignore fsGroup: DirectoryOrCreate hands the pod a
+      # root-owned directory the non-root server cannot initdb into. Chown
+      # to the alpine postgres uid before the server starts.
+      - name: data-dir-ownership
+        image: "{{ .Values.phoenix.postgres.image.repository }}:{{ .Values.phoenix.postgres.image.tag }}"
+        imagePullPolicy: {{ .Values.phoenix.postgres.image.pullPolicy }}
+        securityContext:
+          runAsUser: 0
+        command: ["sh", "-c", "chown -R 70:70 /var/lib/postgresql/data"]
+        volumeMounts:
+        - name: data
+          mountPath: /var/lib/postgresql/data
+      containers:
+      - name: postgres
+        image: "{{ .Values.phoenix.postgres.image.repository }}:{{ .Values.phoenix.postgres.image.tag }}"
+        imagePullPolicy: {{ .Values.phoenix.postgres.image.pullPolicy }}
+        securityContext:
+          runAsNonRoot: true
+          runAsUser: 70
+          runAsGroup: 70
+        ports:
+        - name: postgres
+          containerPort: 5432
+        env:
+        - name: POSTGRES_USER
+          value: {{ .Values.phoenix.postgres.auth.username | quote }}
+        - name: POSTGRES_DB
+          value: {{ .Values.phoenix.postgres.auth.database | quote }}
+        - name: POSTGRES_PASSWORD
+          valueFrom:
+            secretKeyRef:
+              name: {{ $fullName }}-phoenix-postgres-auth
+              key: password
+        - name: PGDATA
+          value: /var/lib/postgresql/data/pgdata
+        readinessProbe:
+          exec:
+            command: ["pg_isready", "-U", {{ .Values.phoenix.postgres.auth.username | quote }}, "-d", {{ .Values.phoenix.postgres.auth.database | quote }}]
+          initialDelaySeconds: 5
+          periodSeconds: 10
+          timeoutSeconds: 5
+          failureThreshold: 3
+        livenessProbe:
+          exec:
+            command: ["pg_isready", "-U", {{ .Values.phoenix.postgres.auth.username | quote }}, "-d", {{ .Values.phoenix.postgres.auth.database | quote }}]
+          initialDelaySeconds: 30
+          periodSeconds: 30
+          timeoutSeconds: 5
+          failureThreshold: 3
+        resources:
+          {{- toYaml .Values.phoenix.postgres.resources | nindent 10 }}
+        volumeMounts:
+        - name: data
+          mountPath: /var/lib/postgresql/data
+      {{- if .Values.hostStorage.enabled }}
+      volumes:
+      - name: data
+        hostPath:
+          path: {{ .Values.hostStorage.path }}/phoenix-postgres
+          type: DirectoryOrCreate
+      {{- end }}
+  {{- if not .Values.hostStorage.enabled }}
+  volumeClaimTemplates:
+  - metadata:
+      name: data
+    spec:
+      accessModes:
+        - ReadWriteOnce
+      resources:
+        requests:
+          storage: {{ .Values.phoenix.postgres.persistence.size }}
+  {{- end }}
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: {{ $fullName }}-phoenix-postgres
+  labels:
+    {{- include "cogniverse.labels" . | nindent 4 }}
+    app.kubernetes.io/component: phoenix-postgres
+spec:
+  type: ClusterIP
+  ports:
+  - port: 5432
+    targetPort: postgres
+    protocol: TCP
+    name: postgres
+  selector:
+    {{- include "cogniverse.selectorLabels" . | nindent 4 }}
+    app.kubernetes.io/component: phoenix-postgres
+{{- end }}

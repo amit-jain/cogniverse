@@ -33,6 +33,9 @@ def test_prod_values_empty_the_dev_secrets():
     assert prod["openshell"]["server"]["sshHandshakeSecret"] == "", (
         "prod must not ship the openshell handshake secret"
     )
+    assert prod["phoenix"]["postgres"]["auth"]["password"] == "", (
+        "prod must not ship the phoenix postgres password"
+    )
 
 
 @pytest.mark.unit
@@ -51,10 +54,12 @@ def test_prod_install_fails_loud_without_minio_password():
             str(CHART),
             "-f",
             str(PROD_VALUES),
-            # Prod also requires a redis password; give one so this isolates
-            # the minio required check.
+            # Prod also requires redis and postgres passwords; give them so
+            # this isolates the minio required check.
             "--set",
             "redis.auth.password=x",
+            "--set",
+            "phoenix.postgres.auth.password=x",
             "--show-only",
             "templates/minio.yaml",
         ],
@@ -83,3 +88,57 @@ def test_dev_install_still_renders_minio_secret():
     )
     assert result.returncode == 0, result.stderr
     assert "rootPassword:" in result.stdout
+
+
+POSTGRES_TMPL = CHART / "templates" / "phoenix-postgres.yaml"
+
+
+@pytest.mark.unit
+def test_postgres_template_requires_password():
+    assert "required" in POSTGRES_TMPL.read_text()
+    assert ".Values.phoenix.postgres.auth.password" in POSTGRES_TMPL.read_text()
+
+
+@pytest.mark.unit
+@pytest.mark.skipif(shutil.which("helm") is None, reason="helm not installed")
+def test_prod_install_fails_loud_without_postgres_password():
+    result = subprocess.run(
+        [
+            "helm",
+            "template",
+            str(CHART),
+            "-f",
+            str(PROD_VALUES),
+            # Isolate the postgres required check from the other prod guards.
+            "--set",
+            "redis.auth.password=x",
+            "--set",
+            "minio.rootPassword=x",
+            "--show-only",
+            "templates/phoenix-postgres.yaml",
+        ],
+        capture_output=True,
+        text=True,
+    )
+    assert result.returncode != 0
+    assert "phoenix.postgres.auth.password must be set" in result.stderr
+
+
+@pytest.mark.unit
+@pytest.mark.skipif(shutil.which("helm") is None, reason="helm not installed")
+def test_dev_install_still_renders_postgres_secret():
+    result = subprocess.run(
+        [
+            "helm",
+            "template",
+            str(CHART),
+            "-f",
+            str(K3S_VALUES),
+            "--show-only",
+            "templates/phoenix-postgres.yaml",
+        ],
+        capture_output=True,
+        text=True,
+    )
+    assert result.returncode == 0, result.stderr
+    assert "password:" in result.stdout

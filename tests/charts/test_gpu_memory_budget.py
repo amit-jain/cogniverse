@@ -36,7 +36,7 @@ RESERVED_GIB = {
     # every gigabyte the scheduler had handed out twice.
     # Pinned against the render by
     # test_memory_qos_budget.test_cluster_service_limits_stay_within_the_gpu_budget_reservation.
-    "cluster services": 30.5,
+    "cluster services": 31.5,
     "desktop and daemons": 10.0,
     "test containers": 12.0,
     # Pool-allocating pods that declare no fraction, reserved at their
@@ -48,8 +48,8 @@ RESERVED_GIB = {
     "page cache slack": 8.0,
 }
 # Bounded by what is left of system RAM after RESERVED_GIB, not by the nominal
-# pool: 123.46 - 76.5 = 46.96 GiB, and 0.48 * 96 = 46.08 GiB fits inside it.
-MAX_UTILIZATION_SUM = 0.48
+# pool: 123.46 - 77.5 = 45.96 GiB, and 0.47 * 96 = 45.12 GiB fits inside it.
+MAX_UTILIZATION_SUM = 0.47
 
 pytestmark = pytest.mark.skipif(
     shutil.which("helm") is None,
@@ -118,11 +118,11 @@ def _rocm_utilizations(*extra: str) -> dict[str, float]:
 def test_reserved_ram_leaves_the_expected_pool_share_for_models():
     reserved = sum(RESERVED_GIB.values())
 
-    assert reserved == 76.5
-    assert round(SYSTEM_RAM_GIB - reserved, 2) == 46.96
+    assert reserved == 77.5
+    assert round(SYSTEM_RAM_GIB - reserved, 2) == 45.96
     # The ceiling has to be buyable out of what is left after the reservations
     # above, not merely out of the nominal pool.
-    assert round(MAX_UTILIZATION_SUM * POOL_GIB, 2) == 46.08
+    assert round(MAX_UTILIZATION_SUM * POOL_GIB, 2) == 45.12
     assert MAX_UTILIZATION_SUM * POOL_GIB <= SYSTEM_RAM_GIB - reserved
 
 
@@ -145,14 +145,14 @@ def test_deployed_rocm_modal_models_fit_the_unified_pool_budget():
     assert total <= MAX_UTILIZATION_SUM
     assert round(total * POOL_GIB, 2) == 25.92
     # Named headroom: what the budget still has after every model reserves.
-    assert round((MAX_UTILIZATION_SUM - total) * POOL_GIB, 2) == 20.16
+    assert round((MAX_UTILIZATION_SUM - total) * POOL_GIB, 2) == 19.20
 
 
 def test_all_local_serving_exceeds_the_pool_budget_which_is_why_modal_is_default():
     """All-local serving does not fit this host, and the numbers say by how much.
 
     Measured rather than asserted: with the chat models resident the declared
-    fractions sum to 0.69 of a 96 GiB pool -- 66.24 GiB -- against a 46.08 GiB
+    fractions sum to 0.69 of a 96 GiB pool -- 66.24 GiB -- against a 45.12 GiB
     ceiling. Peak GTT during a full run with everything resident measured
     56-59 GiB, and the three hard freezes on this host all began with the
     stack idle at that residency. Modal serving is the resolution; this pins
@@ -172,7 +172,7 @@ def test_all_local_serving_exceeds_the_pool_budget_which_is_why_modal_is_default
     assert total == 0.69
     assert total > MAX_UTILIZATION_SUM
     assert round(total * POOL_GIB, 2) == 66.24
-    assert round((total - MAX_UTILIZATION_SUM) * POOL_GIB, 2) == 20.16
+    assert round((total - MAX_UTILIZATION_SUM) * POOL_GIB, 2) == 21.12
 
 
 def _pool_pods(*extra: str) -> dict[str, dict]:

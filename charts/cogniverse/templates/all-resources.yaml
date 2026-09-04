@@ -951,6 +951,15 @@ spec:
         runAsNonRoot: true
         runAsUser: 1000
         fsGroup: 1000
+      {{- if .Values.phoenix.postgres.enabled }}
+      # Without this gate Phoenix crash-loops until Postgres accepts
+      # connections and the accumulated backoff delays stack readiness.
+      initContainers:
+      - name: wait-for-postgres
+        image: "{{ .Values.phoenix.postgres.image.repository }}:{{ .Values.phoenix.postgres.image.tag }}"
+        imagePullPolicy: {{ .Values.phoenix.postgres.image.pullPolicy }}
+        command: ["sh", "-c", "until pg_isready -h {{ $fullName }}-phoenix-postgres -p 5432; do sleep 2; done"]
+      {{- end }}
       containers:
       - name: phoenix
         image: "{{ .Values.phoenix.image.repository }}:{{ .Values.phoenix.image.tag }}"
@@ -964,6 +973,15 @@ spec:
         {{- range $key, $value := .Values.phoenix.env }}
         - name: {{ $key }}
           value: {{ $value | quote }}
+        {{- end }}
+        {{- if .Values.phoenix.postgres.enabled }}
+        - name: PHOENIX_POSTGRES_PASSWORD
+          valueFrom:
+            secretKeyRef:
+              name: {{ $fullName }}-phoenix-postgres-auth
+              key: password
+        - name: PHOENIX_SQL_DATABASE_URL
+          value: "postgresql://{{ .Values.phoenix.postgres.auth.username }}:$(PHOENIX_POSTGRES_PASSWORD)@{{ $fullName }}-phoenix-postgres:5432/{{ .Values.phoenix.postgres.auth.database }}"
         {{- end }}
         livenessProbe:
           {{- toYaml .Values.phoenix.livenessProbe | nindent 10 }}
@@ -988,9 +1006,9 @@ spec:
       {{- end }}
       {{- if .Values.hostStorage.enabled }}
       # Host-bound: pin the ``data`` volume to a host-side directory so
-      # cluster recreation preserves Phoenix's SQLite database (traces,
-      # experiments, datasets, dataset versions). See ``hostStorage`` in
-      # values.yaml for the cross-cutting layout.
+      # cluster recreation preserves Phoenix's working directory. Trace/
+      # dataset rows live in the phoenix-postgres StatefulSet's volume.
+      # See ``hostStorage`` in values.yaml for the cross-cutting layout.
       volumes:
       - name: data
         hostPath:

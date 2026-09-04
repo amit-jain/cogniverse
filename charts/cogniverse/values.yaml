@@ -128,7 +128,7 @@ commonAnnotations: {}
 # Host-bound stateful storage
 # ===========================================
 # Bind stateful service data directories (Vespa document store + config,
-# Phoenix SQLite + traces) to host-side directories instead of the
+# Phoenix Postgres data + working dir) to host-side directories instead of the
 # default ``local-path`` PVC provisioner. Off by default — production
 # clusters want real PVCs backed by cloud storage. Dev/k3s overlays
 # opt in so cluster recreation (``cogniverse up`` after a previous
@@ -651,6 +651,29 @@ phoenix:
     accessMode: ReadWriteOnce
     size: "50Gi"
     annotations: {}
+
+  # Postgres backing store. SQLite cannot cancel a query whose client has
+  # disconnected, so abandoned scans saturate disk until the pod restarts;
+  # Postgres terminates them.
+  postgres:
+    enabled: true
+    image:
+      repository: postgres
+      tag: "16.10-alpine"
+      pullPolicy: IfNotPresent
+    auth:
+      username: phoenix
+      password: "phoenix-dev"
+      database: phoenix
+    resources:
+      limits:
+        cpu: "1"
+        memory: "1Gi"
+      requests:
+        cpu: "250m"
+        memory: "1Gi"
+    persistence:
+      size: "20Gi"
 
   service:
     type: ClusterIP

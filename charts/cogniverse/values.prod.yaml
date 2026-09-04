@@ -50,6 +50,11 @@ openshell:
   server:
     sshHandshakeSecret: ""
 
+phoenix:
+  postgres:
+    auth:
+      password: ""  # fail loud until the operator supplies a real value
+
 redis:
   auth:
     enabled: true

@@ -272,7 +272,7 @@ selection.
 | **Span Export** | Async | Non-blocking async export |
 | **Batch Size** | Configurable | Spans batched before export |
 | **Export Interval** | Configurable | Batch export frequency |
-| **Span Storage** | SQLite DB | Persistent storage in Phoenix |
+| **Span Storage** | Postgres | Persistent storage in Phoenix (`cogniverse-phoenix-postgres`) |
 
 ### Experiment Tracking
 
