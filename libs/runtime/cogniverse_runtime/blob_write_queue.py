@@ -122,6 +122,12 @@ class BlobWriteQueue:
                         blob_key[0],
                     )
             else:
+                logger.info(
+                    "Blob write %s/%s for tenant %s applied",
+                    blob_key[1],
+                    blob_key[2],
+                    blob_key[0],
+                )
                 if self._pending.get(blob_key) == content:
                     del self._pending[blob_key]
                 # else: superseded mid-apply; reprocess with the newer content.
@@ -138,4 +144,14 @@ class BlobWriteQueue:
             except Exception as exc:
                 if attempt == self._max_attempts:
                     raise BlobWriteFailed(tenant_id, kind, key, exc, content) from exc
+                logger.warning(
+                    "Blob write %s/%s for tenant %s failed on attempt %d/%d, "
+                    "retrying: %s",
+                    kind,
+                    key,
+                    tenant_id,
+                    attempt,
+                    self._max_attempts,
+                    exc,
+                )
                 await asyncio.sleep(self._backoff_s * attempt)
