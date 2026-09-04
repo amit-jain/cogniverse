@@ -151,8 +151,8 @@ class TestOptimizerCaptureSampleCaps:
             "cogniverse.query_enhancement": 120,
             "cogniverse.profile_selection": 24,
             "cogniverse.entity_extraction": 36,
-            "cogniverse.gateway": 70,
-            "cogniverse.orchestration": 60,
+            "cogniverse.gateway": 126,
+            "cogniverse.orchestration": 26,
         }
 
     def test_sampled_corpus_clears_every_shipped_floor_and_unique_minimum(self):
@@ -193,9 +193,9 @@ class TestOptimizerCaptureSampleCaps:
             )
 
         assert measured == {
-            "simba_query_enhancement": (120, 100, 91, 3),
-            "profile_selection": (24, 20, 12, 6),
-            "entity_extraction": (36, 30, 35, 15),
+            "simba_query_enhancement": (120, 100, 114, 3),
+            "profile_selection": (24, 20, 23, 6),
+            "entity_extraction": (36, 30, 36, 15),
         }
 
     def test_replayed_orchestration_counts_match_the_committed_capture(self):
@@ -203,8 +203,8 @@ class TestOptimizerCaptureSampleCaps:
             "cogniverse.query_enhancement": 120,
             "cogniverse.profile_selection": 24,
             "cogniverse.entity_extraction": 36,
-            "cogniverse.gateway": 70,
-            "cogniverse.orchestration": 60,
+            "cogniverse.gateway": 126,
+            "cogniverse.orchestration": 26,
         }
 
     def test_sampling_reduces_the_replayed_corpus_below_the_recording(self):
@@ -213,12 +213,12 @@ class TestOptimizerCaptureSampleCaps:
         archive = load_capture_json(_MOD.OPTIMIZER_SPAN_CAPTURE_PATH)
         sampled = sample_capture_by_name(archive, _MOD._optimizer_capture_sample_caps())
 
-        assert (len(archive), len(sampled)) == (787, 310)
+        assert (len(archive), len(sampled)) == (588, 332)
 
     def test_replayed_workflow_templates_match_the_committed_capture(self):
-        """The committed replay corpus currently yields 26 workflow templates."""
+        """The committed replay corpus currently yields 15 workflow templates."""
 
-        assert _MOD._replayed_optimizer_template_count() == 26
+        assert _MOD._replayed_optimizer_template_count() == 15
 
     def test_replayed_workflow_result_matches_the_committed_capture(self):
         """The replay-only workflow golden is derived from the shipped capture."""
@@ -232,7 +232,7 @@ class TestOptimizerCaptureSampleCaps:
             "workflows_extracted": orchestration_count,
             "execution_demos_saved": orchestration_count,
             "agent_profiles_saved": 10,
-            "workflow_templates_saved": 26,
+            "workflow_templates_saved": 15,
         }
 
 
@@ -598,3 +598,79 @@ def test_span_fixture_defines_join_names_in_both_capture_branches():
         "capture_mode",
     )
     assert violations == []
+
+
+class TestCommittedCaptureEnhancementPathMarker:
+    """The committed corpus carries the production path marker on every
+    query-enhancement record, so trainability classification reads the marker
+    rather than inferring from row shape."""
+
+    def _qe_path_counts(self, records):
+        import collections
+
+        from cogniverse_foundation.telemetry.config import (
+            SPAN_NAME_QUERY_ENHANCEMENT,
+        )
+        from cogniverse_foundation.telemetry.span_contract import (
+            QUERY_ENHANCEMENT_PATH_ATTRIBUTE,
+        )
+
+        qe = [r for r in records if r["name"] == SPAN_NAME_QUERY_ENHANCEMENT]
+        return len(qe), collections.Counter(
+            r["attributes"].get(QUERY_ENHANCEMENT_PATH_ATTRIBUTE) for r in qe
+        )
+
+    def test_every_archived_record_carries_a_production_path_value(self):
+        from cogniverse_foundation.telemetry.span_contract import (
+            QUERY_ENHANCEMENT_PATH_HEURISTIC_FALLBACK,
+            QUERY_ENHANCEMENT_PATH_LM,
+        )
+
+        total, paths = self._qe_path_counts(
+            _MOD.load_capture_json(_MOD.OPTIMIZER_SPAN_CAPTURE_PATH)
+        )
+        assert (total, dict(paths)) == (
+            165,
+            {
+                QUERY_ENHANCEMENT_PATH_HEURISTIC_FALLBACK: 127,
+                QUERY_ENHANCEMENT_PATH_LM: 38,
+            },
+        )
+
+    def test_replayed_subset_keeps_lm_path_rows(self):
+        from cogniverse_foundation.telemetry.span_contract import (
+            QUERY_ENHANCEMENT_PATH_HEURISTIC_FALLBACK,
+            QUERY_ENHANCEMENT_PATH_LM,
+        )
+        from tests.e2e.span_capture import load_capture_json, sample_capture_by_name
+
+        sampled = sample_capture_by_name(
+            load_capture_json(_MOD.OPTIMIZER_SPAN_CAPTURE_PATH),
+            _MOD._optimizer_capture_sample_caps(),
+        )
+        total, paths = self._qe_path_counts(sampled)
+        assert (total, dict(paths)) == (
+            120,
+            {
+                QUERY_ENHANCEMENT_PATH_HEURISTIC_FALLBACK: 94,
+                QUERY_ENHANCEMENT_PATH_LM: 26,
+            },
+        )
+
+    def test_marker_pin_fires_on_a_markerless_record(self):
+        import copy
+
+        from cogniverse_foundation.telemetry.config import (
+            SPAN_NAME_QUERY_ENHANCEMENT,
+        )
+        from cogniverse_foundation.telemetry.span_contract import (
+            QUERY_ENHANCEMENT_PATH_ATTRIBUTE,
+        )
+
+        records = copy.deepcopy(
+            _MOD.load_capture_json(_MOD.OPTIMIZER_SPAN_CAPTURE_PATH)
+        )
+        victim = next(r for r in records if r["name"] == SPAN_NAME_QUERY_ENHANCEMENT)
+        del victim["attributes"][QUERY_ENHANCEMENT_PATH_ATTRIBUTE]
+        _total, paths = self._qe_path_counts(records)
+        assert paths[None] == 1
