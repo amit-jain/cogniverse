@@ -827,7 +827,7 @@ spec:
           mountPath: /reports
 {{- end }}
 ---
-# RBAC: Allow the quality monitor sidecar (via the shared ServiceAccount)
+# RBAC: Allow the quality monitor Deployment (via the shared ServiceAccount)
 # to create Workflow resources for on-demand optimization.
 apiVersion: rbac.authorization.k8s.io/v1
 kind: Role

@@ -115,6 +115,28 @@ def refresh_workload_pods_if_devmode(
     if not devmode_pods:
         return True  # production mode — no bind-mounts, no stale-code risk
 
+    # The rollout-wait targets are the Deployments selected by the SAME
+    # devMode-volume predicate that selected the pods for deletion, so every
+    # deleted pod's owner is waited on (runtime, dashboard, quality-monitor).
+    deploys_json = _kc(
+        "get",
+        "deploy",
+        "-n",
+        namespace,
+        "-l",
+        "app.kubernetes.io/instance=cogniverse",
+        "-o",
+        'jsonpath={range .items[*]}{.metadata.name}|{.spec.template.spec.volumes[?(@.hostPath.path=="/cogniverse-src/libs")].name}\n{end}',
+        timeout=15,
+    )
+    devmode_deploys = [
+        line.split("|", 1)[0]
+        for line in deploys_json.stdout.strip().splitlines()
+        if "|" in line and line.split("|", 1)[1].strip()
+    ]
+    if deploys_json.returncode != 0 or not devmode_deploys:
+        return False  # pods carry devMode mounts but their owners are unknown
+
     print(f"Refreshing {len(devmode_pods)} devMode pod(s) to pick up latest code...")
     for pod in devmode_pods:
         _kc("delete", "pod", pod, "-n", namespace, "--grace-period=5", timeout=30)
@@ -122,7 +144,7 @@ def refresh_workload_pods_if_devmode(
     # kubectl rollout status blocks until readyReplicas == replicas, which
     # /health probes alone don't guarantee — they can land on a pod from
     # the old rollout that's about to terminate.
-    for deploy in ("cogniverse-runtime", "cogniverse-dashboard"):
+    for deploy in devmode_deploys:
         rollout = _kc(
             "rollout",
             "status",

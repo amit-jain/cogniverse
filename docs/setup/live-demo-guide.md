@@ -687,13 +687,13 @@ After optimization runs, check Phoenix:
 
 ## 10. Quality Monitor
 
-The quality monitor is a continuous sidecar that evaluates all agents and triggers optimization when quality degrades below thresholds.
+The quality monitor is a continuous loop in its own Deployment that evaluates all agents and triggers optimization when quality degrades below thresholds.
 
 ### Architecture
 
 ```mermaid
 flowchart TD
-    QM["<span style='color:#000'>QualityMonitor<br/>(sidecar)</span>"]
+    QM["<span style='color:#000'>QualityMonitor<br/>(Deployment)</span>"]
     GOLDEN["<span style='color:#000'>Golden Set Eval<br/>(every 2h)</span>"]
     LIVE["<span style='color:#000'>Live Traffic Eval<br/>(every 4h)</span>"]
     GATE["<span style='color:#000'>XGBoost Gate<br/>(should we optimize?)</span>"]
@@ -723,7 +723,7 @@ python -m cogniverse_runtime.quality_monitor_cli \
   --llm-model google/gemma-4-e4b-it \
   --once
 
-# Continuous monitoring (production sidecar)
+# Continuous monitoring (production Deployment)
 python -m cogniverse_runtime.quality_monitor_cli \
   --tenant-id acme:production \
   --runtime-url http://localhost:28000 \
@@ -756,7 +756,7 @@ python -m cogniverse_runtime.quality_monitor_cli \
 | `--llm-model` | *(required, no default)* | LLM model id for judge evaluations, e.g. `google/gemma-4-e4b-it` |
 | `--once` | false | Single cycle and exit (for Argo CronWorkflows) |
 
-In production, the quality monitor runs as a Kubernetes sidecar (`runtime.qualityMonitor.enabled: true` in Helm values).
+In production, the quality monitor runs as its own Kubernetes Deployment (`runtime.qualityMonitor.enabled: true` in Helm values).
 
 ---
 

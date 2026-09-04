@@ -1812,7 +1812,7 @@ See [Evaluation & Optimization Loop](../architecture/evaluation-optimization-loo
 
 **Location:** `libs/runtime/cogniverse_runtime/quality_monitor_cli.py`
 
-CLI entry point for the quality-monitor sidecar: a continuous loop that runs golden-set and live-traffic evaluations against a running runtime, scores agents via an LLM judge, and auto-submits Argo optimization workflows when quality degrades.
+CLI entry point for the quality-monitor Deployment: a continuous loop that runs golden-set and live-traffic evaluations against a running runtime, scores agents via an LLM judge, and auto-submits Argo optimization workflows when quality degrades.
 
 ```bash
 python -m cogniverse_runtime.quality_monitor_cli \

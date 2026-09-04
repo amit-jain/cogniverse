@@ -199,3 +199,78 @@ def test_hook_jobs_are_structurally_out_of_scope(monkeypatch):
     deploy_conftest.stack_workloads("cogniverse")
     assert "deploy,statefulset" in listed[0]
     assert not any("job" in part for part in listed[0])
+
+
+class TestDevmodeRefreshWaitsOnDerivedOwners:
+    """The refresh deletes every pod carrying the devMode bind-mount, so it
+    must rollout-wait every Deployment owning such a pod — derived by the same
+    volume predicate, never a hardcoded pair that silently omits a workload
+    (the quality-monitor Deployment carries the mount too)."""
+
+    PODS = (
+        "cogniverse-runtime-abc-1|src-libs\n"
+        "cogniverse-dashboard-def-2|src-libs\n"
+        "cogniverse-quality-monitor-ghi-3|src-libs\n"
+        "cogniverse-minio-jkl-4|\n"
+    )
+    DEPLOYS = (
+        "cogniverse-dashboard|src-libs\n"
+        "cogniverse-minio|\n"
+        "cogniverse-quality-monitor|src-libs\n"
+        "cogniverse-runtime|src-libs\n"
+    )
+
+    def _run(self, monkeypatch, deploys_stdout):
+        deleted: list[str] = []
+        waited: list[str] = []
+
+        def fake_run(cmd, **kwargs):
+            if "ns" in cmd:
+                return _completed("namespace/cogniverse")
+            if "pods" in cmd:
+                return _completed(self.PODS)
+            if "deploy" in cmd:
+                return _completed(deploys_stdout)
+            if "delete" in cmd:
+                deleted.append(cmd[cmd.index("pod") + 1])
+                return _completed("")
+            if "rollout" in cmd:
+                waited.append(cmd[cmd.index("status") + 1])
+                return _completed("")
+            raise AssertionError(f"unexpected kubectl call: {cmd}")
+
+        class _OK:
+            status_code = 200
+
+        monkeypatch.setattr(subprocess, "run", fake_run)
+        monkeypatch.setattr("httpx.get", lambda *a, **k: _OK())
+        monkeypatch.setattr("time.sleep", lambda _: None)
+        monkeypatch.delenv("COGNIVERSE_SKIP_POD_REFRESH", raising=False)
+        result = deploy_conftest.refresh_workload_pods_if_devmode(timeout_s=3)
+        return result, deleted, waited
+
+    def test_waits_on_exactly_the_deployments_carrying_the_devmode_volume(
+        self, monkeypatch
+    ):
+        result, deleted, waited = self._run(monkeypatch, self.DEPLOYS)
+        assert result is True
+        assert deleted == [
+            "cogniverse-runtime-abc-1",
+            "cogniverse-dashboard-def-2",
+            "cogniverse-quality-monitor-ghi-3",
+        ]
+        assert waited == [
+            "deployment/cogniverse-dashboard",
+            "deployment/cogniverse-quality-monitor",
+            "deployment/cogniverse-runtime",
+        ]
+
+    def test_refuses_when_no_owner_carries_the_volume(self, monkeypatch):
+        """devMode pods with no derivable owners: refuse before deleting
+        anything rather than delete pods and wait on nothing."""
+        result, deleted, waited = self._run(
+            monkeypatch, "cogniverse-dashboard|\ncogniverse-runtime|\n"
+        )
+        assert result is False
+        assert deleted == []
+        assert waited == []

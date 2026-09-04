@@ -500,7 +500,7 @@ argo submit --from cronwf/cogniverse-monthly-reports -n cogniverse
 The chart resolves the runtime's primary chat LLM into two helper templates in `templates/_helpers.tpl`:
 
 - **`cogniverse.primaryLLMModel`** — DSPy / litellm form, always prefixed with the provider (`openai/<bare-model>` for in-cluster vLLM or Ollama; `anthropic/<id>` for SaaS providers if overridden via `runtime.primaryLLM.model`). Used by DSPy LM construction (`create_dspy_lm`) where the prefix selects provider routing.
-- **`cogniverse.primaryLLMModelBare`** — same model id **without** the provider prefix. Use this when calling an OpenAI-compatible `/v1/chat/completions` endpoint directly (vLLM, llama.cpp server, Ollama) — those servers serve the bare model name and return 404 on the prefixed form. Used by the `quality-monitor` sidecar (`charts/.../all-resources.yaml`) and the scheduled-distillation cron (`charts/.../optimization-workflows.yaml`).
+- **`cogniverse.primaryLLMModelBare`** — same model id **without** the provider prefix. Use this when calling an OpenAI-compatible `/v1/chat/completions` endpoint directly (vLLM, llama.cpp server, Ollama) — those servers serve the bare model name and return 404 on the prefixed form. Used by the `quality-monitor` Deployment (`charts/.../all-resources.yaml`) and the scheduled-distillation cron (`charts/.../optimization-workflows.yaml`).
 
 Resolution order for both: `runtime.primaryLLM.model` if set, else the engine-derived model (`inference.vllm_llm_student.model` when `llm.engine: vllm`, else `llm.model`).
 

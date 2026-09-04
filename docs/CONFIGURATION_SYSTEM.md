@@ -182,11 +182,11 @@ wm = WikiManager(
 
 ### Quality Monitor Configuration
 
-Sidecar configuration (Helm values under `runtime.qualityMonitor.*`):
+Monitor configuration (Helm values under `runtime.qualityMonitor.*`):
 
 | Key | Default | Description |
 |-----|---------|-------------|
-| `enabled` | `true` | Enable/disable the quality monitor sidecar |
+| `enabled` | `true` | Enable/disable the quality monitor Deployment |
 | `goldenIntervalSeconds` | `7200` | Seconds between golden set evaluations (2h) |
 | `liveIntervalSeconds` | `14400` | Seconds between live traffic evaluations (4h) |
 | `liveSampleCount` | `20` | Number of spans sampled per agent for live eval |
@@ -687,7 +687,7 @@ with dspy.context(lm=lm):
 The chart resolves the primary model into two templates in `charts/cogniverse/templates/_helpers.tpl`:
 
 - `cogniverse.primaryLLMModel` — `openai/<bare-model>` (or `<provider>/<id>` when overridden via `runtime.primaryLLM.model`). Written into `config.json` and consumed by `create_dspy_lm()` / litellm, where the prefix selects provider routing.
-- `cogniverse.primaryLLMModelBare` — same id **without** the provider prefix. OpenAI-compatible `/v1/chat/completions` servers (vLLM, llama.cpp, Ollama) serve the bare name and reject the prefixed form with 404. Used by the `quality-monitor` sidecar and the `cogniverse-scheduled-distillation` cron (both call vLLM directly over HTTP rather than through DSPy).
+- `cogniverse.primaryLLMModelBare` — same id **without** the provider prefix. OpenAI-compatible `/v1/chat/completions` servers (vLLM, llama.cpp, Ollama) serve the bare name and reject the prefixed form with 404. Used by the `quality-monitor` Deployment and the `cogniverse-scheduled-distillation` cron (both call vLLM directly over HTTP rather than through DSPy).
 
 Both resolve in the same order: `runtime.primaryLLM.model` if set, else engine-derived (`inference.vllm_llm_student.model` when `llm.engine: vllm`, else `llm.model`).
 

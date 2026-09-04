@@ -505,98 +505,6 @@ spec:
         - name: src-data
           mountPath: /app/data
         {{- end }}
-      {{- if .Values.runtime.qualityMonitor.enabled }}
-      {{- if not .Values.runtime.qualityMonitor.llmModel }}
-      {{- fail "runtime.qualityMonitor.llmModel must be set when qualityMonitor.enabled=true" }}
-      {{- end }}
-      {{- if not .Values.runtime.qualityMonitor.tenantId }}
-      {{- fail "runtime.qualityMonitor.tenantId must be set when qualityMonitor.enabled=true (e.g. via values.k3s.yaml for the local stack)" }}
-      {{- end }}
-      - name: quality-monitor
-        image: "{{ $runtimeImage.repository }}:{{ $runtimeImage.tag }}"
-        imagePullPolicy: {{ $runtimeImage.pullPolicy }}
-        command: ["python", "-m", "cogniverse_runtime.quality_monitor_cli"]
-        args:
-        - "--tenant-id"
-        - {{ .Values.runtime.qualityMonitor.tenantId | quote }}
-        - "--runtime-url"
-        - "http://localhost:{{ .Values.runtime.service.port }}"
-        - "--phoenix-url"
-        - "http://{{ $fullName }}-phoenix:{{ .Values.phoenix.service.port }}"
-        - "--llm-base-url"
-        - {{ include "cogniverse.primaryLLMEndpoint" . | quote }}
-        - "--llm-model"
-        # Bare model id (no provider prefix) — same reason as the
-        # scheduled-distillation cron: LLMJudge posts directly to
-        # vLLM /v1/chat/completions which matches against the served
-        # model name, not the DSPy/litellm provider-routed form.
-        - {{ include "cogniverse.primaryLLMModelBare" . | quote }}
-        - "--golden-interval"
-        - {{ .Values.runtime.qualityMonitor.goldenIntervalSeconds | quote }}
-        - "--live-interval"
-        - {{ .Values.runtime.qualityMonitor.liveIntervalSeconds | quote }}
-        - "--live-sample-count"
-        - {{ .Values.runtime.qualityMonitor.liveSampleCount | quote }}
-        {{- if .Values.runtime.qualityMonitor.goldenDatasetPath }}
-        - "--golden-dataset-path"
-        - {{ .Values.runtime.qualityMonitor.goldenDatasetPath | quote }}
-        {{- end }}
-        {{- if .Values.argo.enabled }}
-        - "--argo-url"
-        - "https://argo-server.argo.svc.cluster.local:2746"
-        - "--argo-namespace"
-        - {{ .Release.Namespace | quote }}
-        {{- end }}
-        env:
-        - name: COGNIVERSE_INFERENCE_API_KEY
-{{ include "cogniverse.inferenceApiKeyEnv" . | nindent 10 }}
-{{ include "cogniverse.redisUrlEnv" . | nindent 8 }}
-        - name: BACKEND_URL
-          value: "http://{{ $fullName }}-vespa"
-        - name: BACKEND_PORT
-          value: "{{ .Values.vespa.service.ports.query }}"
-        - name: TELEMETRY_HTTP_ENDPOINT
-          value: "http://{{ $fullName }}-phoenix:{{ .Values.phoenix.service.port }}"
-        - name: TELEMETRY_OTLP_ENDPOINT
-          value: "{{ $fullName }}-phoenix:4317"
-        - name: LLM_ENDPOINT
-          value: {{ include "cogniverse.primaryLLMEndpoint" . | quote }}
-        - name: LLM_ENGINE
-          value: {{ .Values.llm.engine | quote }}
-        - name: LLM_MODEL
-          value: {{ .Values.llm.model | quote }}
-        # Wiring the monitor mirrors onto the compile workflows it spawns —
-        # without it the spawned pod runs the bare fallback manifest
-        # (default image, no backend endpoints, no config mount).
-        - name: OPTIMIZATION_WORKFLOW_IMAGE
-          value: "{{ $runtimeImage.repository }}:{{ $runtimeImage.tag }}"
-        - name: OPTIMIZATION_CONFIG_MAP
-          value: {{ $fullName }}-config
-        {{- if .Values.devMode.enabled }}
-        - name: OPTIMIZATION_DEV_HOSTPATH
-          value: {{ .Values.devMode.hostPath | quote }}
-        {{- end }}
-        resources:
-          {{- toYaml .Values.runtime.qualityMonitor.resources | nindent 10 }}
-        volumeMounts:
-        - name: config
-          mountPath: /app/configs/config.json
-          subPath: config.json
-          readOnly: true
-        {{- if .Values.runtime.qualityMonitor.goldenDatasetPath }}
-        # The golden-set seed file, mounted only when a seed path is configured.
-        - name: quality-monitor-data
-          mountPath: /app/data/quality-monitor/golden_dataset.json
-          subPath: golden_dataset.json
-          readOnly: true
-        {{- end }}
-        {{- if .Values.devMode.enabled }}
-        - name: src-libs
-          mountPath: /app/libs
-        - name: src-scripts
-          mountPath: /app/scripts
-        {{- end }}
-      {{- end }}
       volumes:
       - name: config
         configMap:
@@ -629,16 +537,6 @@ spec:
       - name: dri
         hostPath:
           path: /dev/dri
-      {{- end }}
-      {{- if .Values.runtime.qualityMonitor.enabled }}
-      # Golden dataset for the QualityMonitor sidecar.
-      {{- if .Values.runtime.qualityMonitor.goldenDatasetPath }}
-      # ConfigMap is built by templates/configmap.yaml from
-      # files/quality-monitor/golden_dataset.json.
-      - name: quality-monitor-data
-        configMap:
-          name: {{ $fullName }}-quality-monitor-data
-      {{- end }}
       {{- end }}
       {{- if .Values.runtime.sandbox.enabled }}
       {{- if or .Values.runtime.sandbox.inCluster.enabled (.Values.runtime.sandbox.external).enabled }}
@@ -718,6 +616,169 @@ spec:
   selector:
     {{- include "cogniverse.selectorLabels" . | nindent 4 }}
     app.kubernetes.io/component: runtime
+{{- end }}
+---
+# QualityMonitor Deployment. Its own workload: a monitor crash or OOMKill
+# never drops the runtime Service endpoints.
+{{- if and .Values.runtime.enabled .Values.runtime.qualityMonitor.enabled }}
+{{- if not .Values.runtime.qualityMonitor.llmModel }}
+{{- fail "runtime.qualityMonitor.llmModel must be set when qualityMonitor.enabled=true" }}
+{{- end }}
+{{- if not .Values.runtime.qualityMonitor.tenantId }}
+{{- fail "runtime.qualityMonitor.tenantId must be set when qualityMonitor.enabled=true (e.g. via values.k3s.yaml for the local stack)" }}
+{{- end }}
+{{- $runtimeBackend := default "cuda" .Values.runtime.backend }}
+{{- $runtimeImage := .Values.runtime.image }}
+{{- if .Values.runtime.imagesByBackend }}
+{{- $runtimeImage = (index .Values.runtime.imagesByBackend $runtimeBackend) | default .Values.runtime.image }}
+{{- end }}
+{{- $goldenContent := "" }}
+{{- if .Values.runtime.qualityMonitor.goldenDatasetPath }}
+{{- $goldenContent = .Files.Get "files/quality-monitor/golden_dataset.json" }}
+{{- end }}
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: {{ $fullName }}-quality-monitor
+  labels:
+    {{- include "cogniverse.labels" . | nindent 4 }}
+    app.kubernetes.io/component: quality-monitor
+spec:
+  replicas: 1
+  # Recreate: two monitors running concurrently would double-run the
+  # golden/live evaluation loops and double-write baselines.
+  strategy:
+    type: Recreate
+  selector:
+    matchLabels:
+      {{- include "cogniverse.selectorLabels" . | nindent 6 }}
+      app.kubernetes.io/component: quality-monitor
+  template:
+    metadata:
+      labels:
+        {{- include "cogniverse.selectorLabels" . | nindent 8 }}
+        app.kubernetes.io/component: quality-monitor
+      annotations:
+        # The monitor reads config.json and the golden dataset at startup
+        # only and its image tag does not change on a config edit; the
+        # checksum makes the pod spec change with the content.
+        cogniverse.io/quality-monitor-config-checksum: {{ printf "%s%s" (tpl (.Files.Get "files/config.json") .) $goldenContent | sha256sum }}
+    spec:
+      {{- with .Values.global.imagePullSecrets }}
+      imagePullSecrets:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      serviceAccountName: {{ include "cogniverse.serviceAccountName" . }}
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 1000
+        fsGroup: 1000
+      containers:
+      - name: quality-monitor
+        image: "{{ $runtimeImage.repository }}:{{ $runtimeImage.tag }}"
+        imagePullPolicy: {{ $runtimeImage.pullPolicy }}
+        command: ["python", "-m", "cogniverse_runtime.quality_monitor_cli"]
+        args:
+        - "--tenant-id"
+        - {{ .Values.runtime.qualityMonitor.tenantId | quote }}
+        - "--runtime-url"
+        - "http://{{ $fullName }}-runtime:{{ .Values.runtime.service.port }}"
+        - "--phoenix-url"
+        - "http://{{ $fullName }}-phoenix:{{ .Values.phoenix.service.port }}"
+        - "--llm-base-url"
+        - {{ include "cogniverse.primaryLLMEndpoint" . | quote }}
+        - "--llm-model"
+        # Bare model id (no provider prefix) — same reason as the
+        # scheduled-distillation cron: LLMJudge posts directly to
+        # vLLM /v1/chat/completions which matches against the served
+        # model name, not the DSPy/litellm provider-routed form.
+        - {{ include "cogniverse.primaryLLMModelBare" . | quote }}
+        - "--golden-interval"
+        - {{ .Values.runtime.qualityMonitor.goldenIntervalSeconds | quote }}
+        - "--live-interval"
+        - {{ .Values.runtime.qualityMonitor.liveIntervalSeconds | quote }}
+        - "--live-sample-count"
+        - {{ .Values.runtime.qualityMonitor.liveSampleCount | quote }}
+        {{- if .Values.runtime.qualityMonitor.goldenDatasetPath }}
+        - "--golden-dataset-path"
+        - {{ .Values.runtime.qualityMonitor.goldenDatasetPath | quote }}
+        {{- end }}
+        {{- if .Values.argo.enabled }}
+        - "--argo-url"
+        - "https://argo-server.argo.svc.cluster.local:2746"
+        - "--argo-namespace"
+        - {{ .Release.Namespace | quote }}
+        {{- end }}
+        env:
+        - name: COGNIVERSE_INFERENCE_API_KEY
+{{ include "cogniverse.inferenceApiKeyEnv" . | nindent 10 }}
+{{ include "cogniverse.redisUrlEnv" . | nindent 8 }}
+        - name: BACKEND_URL
+          value: "http://{{ $fullName }}-vespa"
+        - name: BACKEND_PORT
+          value: "{{ .Values.vespa.service.ports.query }}"
+        - name: TELEMETRY_HTTP_ENDPOINT
+          value: "http://{{ $fullName }}-phoenix:{{ .Values.phoenix.service.port }}"
+        - name: TELEMETRY_OTLP_ENDPOINT
+          value: "{{ $fullName }}-phoenix:4317"
+        - name: LLM_ENDPOINT
+          value: {{ include "cogniverse.primaryLLMEndpoint" . | quote }}
+        - name: LLM_ENGINE
+          value: {{ .Values.llm.engine | quote }}
+        - name: LLM_MODEL
+          value: {{ .Values.llm.model | quote }}
+        # Wiring the monitor mirrors onto the compile workflows it spawns —
+        # without it the spawned pod runs the bare fallback manifest
+        # (default image, no backend endpoints, no config mount).
+        - name: OPTIMIZATION_WORKFLOW_IMAGE
+          value: "{{ $runtimeImage.repository }}:{{ $runtimeImage.tag }}"
+        - name: OPTIMIZATION_CONFIG_MAP
+          value: {{ $fullName }}-config
+        {{- if .Values.devMode.enabled }}
+        - name: OPTIMIZATION_DEV_HOSTPATH
+          value: {{ .Values.devMode.hostPath | quote }}
+        {{- end }}
+        resources:
+          {{- toYaml .Values.runtime.qualityMonitor.resources | nindent 10 }}
+        volumeMounts:
+        - name: config
+          mountPath: /app/configs/config.json
+          subPath: config.json
+          readOnly: true
+        {{- if .Values.runtime.qualityMonitor.goldenDatasetPath }}
+        # The golden-set seed file, mounted only when a seed path is configured.
+        - name: quality-monitor-data
+          mountPath: /app/data/quality-monitor/golden_dataset.json
+          subPath: golden_dataset.json
+          readOnly: true
+        {{- end }}
+        {{- if .Values.devMode.enabled }}
+        - name: src-libs
+          mountPath: /app/libs
+        - name: src-scripts
+          mountPath: /app/scripts
+        {{- end }}
+      volumes:
+      - name: config
+        configMap:
+          name: {{ $fullName }}-config
+      {{- if .Values.runtime.qualityMonitor.goldenDatasetPath }}
+      # ConfigMap is built by templates/configmap.yaml from
+      # files/quality-monitor/golden_dataset.json.
+      - name: quality-monitor-data
+        configMap:
+          name: {{ $fullName }}-quality-monitor-data
+      {{- end }}
+      {{- if .Values.devMode.enabled }}
+      - name: src-libs
+        hostPath:
+          path: {{ .Values.devMode.hostPath }}/libs
+          type: Directory
+      - name: src-scripts
+        hostPath:
+          path: {{ .Values.devMode.hostPath }}/scripts
+          type: Directory
+      {{- end }}
 {{- end }}
 ---
 # Dashboard Deployment

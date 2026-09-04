@@ -150,7 +150,7 @@ flowchart TB
 
 ### Quality Monitor Architecture
 
-The quality monitor is a continuous evaluation sidecar deployed alongside the runtime pod. It applies two independent scoring strategies:
+The quality monitor is a continuous evaluation loop in its own Deployment (`cogniverse-quality-monitor`), reaching the runtime over its Service. It applies two independent scoring strategies:
 
 - **Golden set evaluation** (every 2h by default): runs a curated set of queries against the runtime API and scores results using IR metrics (MRR, NDCG, Precision@5). Baselines are stored as Phoenix datasets.
 - **Live traffic evaluation** (every 4h by default): samples recent spans from Phoenix, uses an LLM judge to score response quality, and detects drift from the stored baseline.
