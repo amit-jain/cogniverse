@@ -1085,6 +1085,10 @@ def _call_agent(
     tenant_id: str = TENANT_ID,
     context_extra: dict | None = None,
 ) -> dict[str, object]:
+    assert agent_name != "gateway_agent", (
+        "gateway responses carry no query echo; route gateway calls through "
+        "_drive_gateway_decision"
+    )
     resp = httpx.post(
         f"{RUNTIME}/agents/{agent_name}/process",
         json={
@@ -1703,7 +1707,8 @@ def generate_spans_for_batch_jobs(_kubectl_cluster_ready):
         )
         i = 0
         while emitted_gateway_spans < spans_per_agent:
-            _call_agent("gateway_agent", gateway_pool[i % len(gateway_pool)])
+            body = _drive_gateway_decision(gateway_pool[i % len(gateway_pool)])
+            assert body["agent"] == "gateway_agent", body
             i += 1
             emitted_gateway_spans += 1
 
