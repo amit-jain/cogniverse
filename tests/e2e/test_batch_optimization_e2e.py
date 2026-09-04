@@ -38,7 +38,14 @@ from cogniverse_agents.profile_selection_agent import ProfileSelectionModule
 from cogniverse_agents.query_enhancement_agent import QueryEnhancementModule
 from cogniverse_agents.routing.orchestration_evaluator import OrchestrationEvaluator
 from cogniverse_foundation.telemetry.config import SPAN_NAME_ORCHESTRATION
-from cogniverse_runtime.optimization_cli import OPTIMIZER_METRIC_IDS
+from cogniverse_runtime.optimization_cli import (
+    OPTIMIZER_METRIC_IDS,
+    _entity_extraction_is_scoreable,
+    _entity_extraction_pairs,
+    _query_enhancement_pairs,
+    _served_scoreable_indices,
+    is_scoreable,
+)
 from tests.e2e.conftest import (
     EVALUATION_QUERY_ASSET,
     GATEWAY_VIDEO_QUERIES,
@@ -1347,6 +1354,111 @@ def _served_holdout_minimum_in_pod(optimizer_type: str = "query_enhancement") ->
     return max(1, min_samples // 10)
 
 
+# (span symbol, pair-builder call, scoreable predicate) per optimizer type. The
+# builder and predicate are the ones the batch job runs, so a rename in
+# production breaks this rather than being absorbed.
+_SERVED_SCOREABLE_SPECS = {
+    "query_enhancement": (
+        "SPAN_NAME_QUERY_ENHANCEMENT",
+        "_query_enhancement_pairs(df)",
+        "is_scoreable",
+    ),
+    "entity_extraction": (
+        "SPAN_NAME_ENTITY_EXTRACTION",
+        "_entity_extraction_pairs(df)",
+        "_entity_extraction_is_scoreable",
+    ),
+    "profile_selection": (
+        "SPAN_NAME_PROFILE_SELECTION",
+        (
+            "_profile_selection_pairs(df, "
+            "config_manager=create_default_config_manager(), "
+            "tenant_id={tenant!r})"
+        ),
+        "_profile_selection_is_scoreable",
+    ),
+}
+
+
+def _served_scoreable_count_script(
+    *, tenant_id: str, optimizer_type: str, lookback_hours: float
+) -> str:
+    """Build the in-pod count of SERVED-SCOREABLE records for one optimizer.
+
+    Counting spans by name answers "are there spans of this type", not "can the
+    holdout split use them": a record carrying no scoreable context is invisible
+    to the split, so a by-name count clears its floor while the split returns an
+    empty holdout.
+    """
+    span_symbol, builder_call, predicate = _SERVED_SCOREABLE_SPECS[optimizer_type]
+    builder_call = builder_call.format(tenant=tenant_id)
+    builder_name = builder_call.split("(")[0]
+    return IN_POD_TELEMETRY_PRELUDE + (
+        "import asyncio; "
+        f"from cogniverse_foundation.telemetry.config import {span_symbol}; "
+        "from cogniverse_foundation.telemetry.manager import get_telemetry_manager; "
+        "from cogniverse_foundation.config.utils import create_default_config_manager; "
+        "from cogniverse_runtime.optimization_cli import ("
+        f"_query_spans_by_name, _served_scoreable_indices, {builder_name}, "
+        f"{predicate}); "
+        "tm = get_telemetry_manager(); "
+        f"tp = tm.get_provider(tenant_id={tenant_id!r}); "
+        "df = asyncio.run(_query_spans_by_name("
+        f"tm, tp, {tenant_id!r}, {span_symbol}, {lookback_hours!r})); "
+        "print('__SPANS__' + str(len(_served_scoreable_indices("
+        f"{builder_call}, scoreable_predicate={predicate}))))"
+    )
+
+
+def _count_served_scoreable_in_pod(
+    tenant_id: str,
+    optimizer_type: str,
+    lookback_hours: float | None = None,
+) -> int:
+    """Count records the holdout split can actually score, via the runtime pod."""
+    if lookback_hours is None:
+        lookback_hours = _module_lookback_hours()
+    script = _served_scoreable_count_script(
+        tenant_id=tenant_id,
+        optimizer_type=optimizer_type,
+        lookback_hours=lookback_hours,
+    )
+    result = subprocess.run(
+        [
+            "kubectl",
+            "--context",
+            KUBECTL_CONTEXT,
+            "exec",
+            "-n",
+            NAMESPACE,
+            DEPLOYMENT,
+            "-c",
+            CONTAINER,
+            "--",
+            "python3",
+            "-c",
+            script,
+        ],
+        capture_output=True,
+        text=True,
+        timeout=600,
+    )
+    if result.returncode != 0:
+        raise RuntimeError(
+            _subprocess_failure_message(
+                f"count_served_scoreable_{optimizer_type}",
+                result,
+                operation=(
+                    f"count_served_scoreable(optimizer_type={optimizer_type!r}, "
+                    f"tenant_id={tenant_id!r})"
+                ),
+            )
+        )
+    line = result.stdout.strip().splitlines()[-1]
+    assert line.startswith("__SPANS__"), result.stdout[-500:]
+    return int(line[len("__SPANS__") :])
+
+
 def _wait_for_served_scoreable_span_floor_in_pod(
     tenant_id: str = TENANT_ID,
     timeout_s: float = 240.0,
@@ -1368,15 +1480,8 @@ def _wait_for_served_scoreable_span_floor_in_pod(
     }
     while time.monotonic() < deadline:
         seen = {
-            "query_enhancement": _count_spans_by_name_in_pod(
-                tenant_id, "SPAN_NAME_QUERY_ENHANCEMENT"
-            ),
-            "entity_extraction": _count_spans_by_name_in_pod(
-                tenant_id, "SPAN_NAME_ENTITY_EXTRACTION"
-            ),
-            "profile_selection": _count_spans_by_name_in_pod(
-                tenant_id, "SPAN_NAME_PROFILE_SELECTION"
-            ),
+            optimizer_type: _count_served_scoreable_in_pod(tenant_id, optimizer_type)
+            for optimizer_type in minimums
         }
         if all(
             count >= minimums[optimizer_type] for optimizer_type, count in seen.items()
@@ -1733,7 +1838,18 @@ def generate_spans_for_batch_jobs(_kubectl_cluster_ready):
         for i in range(spans_per_agent):
             q = ENHANCEMENT_QUERIES[i % len(ENHANCEMENT_QUERIES)]
             _call_agent("query_enhancement_agent", q)
-        for q, entities, relationships in GROUNDED_ENHANCEMENT_QUERIES:
+        # Grounded calls are the only scoreable query-enhancement records (an
+        # ungrounded call carries neither source text nor entity context), and
+        # the corpus is sampled down before replay, so seed a multiple of the
+        # holdout minimum rather than one pass over the query list.
+        grounded_target = max(
+            len(GROUNDED_ENHANCEMENT_QUERIES),
+            3 * _served_holdout_minimum_in_pod("query_enhancement"),
+        )
+        for i in range(grounded_target):
+            q, entities, relationships = GROUNDED_ENHANCEMENT_QUERIES[
+                i % len(GROUNDED_ENHANCEMENT_QUERIES)
+            ]
             _call_agent(
                 "query_enhancement_agent",
                 q,
@@ -1852,6 +1968,46 @@ def generate_spans_for_batch_jobs(_kubectl_cluster_ready):
                 f"{capped_name} replay carries {len(distinct)} distinct queries, "
                 f"below the shipped minimum {min_unique}"
             )
+        # The holdout split consumes SERVED-SCOREABLE records, not spans. A
+        # corpus can clear the population floor above while carrying too few
+        # scoreable rows, and the split then returns an empty holdout.
+        import pandas as pd
+
+        for capped_name, optimizer_type, pair_builder, scoreable_predicate in (
+            (
+                span_names[2],
+                "query_enhancement",
+                _query_enhancement_pairs,
+                is_scoreable,
+            ),
+            (
+                span_names[1],
+                "entity_extraction",
+                _entity_extraction_pairs,
+                _entity_extraction_is_scoreable,
+            ),
+        ):
+            minimum = _served_holdout_minimum_in_pod(optimizer_type)
+            rows = [
+                {
+                    **record["attributes"],
+                    "context.span_id": record["context"]["span_id"],
+                }
+                for record in replayed_records
+                if record["name"] == capped_name
+            ]
+            scoreable = len(
+                _served_scoreable_indices(
+                    pair_builder(pd.DataFrame(rows)),
+                    scoreable_predicate=scoreable_predicate,
+                )
+            )
+            assert scoreable >= minimum, (
+                f"{capped_name} replay carries {scoreable} served-scoreable "
+                f"records, below the {minimum} the holdout split requires; "
+                "the optimizer would return an empty holdout"
+            )
+
         captured_query_enhancement_queries = {
             str(record["attributes"].get("input.value") or "")
             for record in replayed_records
