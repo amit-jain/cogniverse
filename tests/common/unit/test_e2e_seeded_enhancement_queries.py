@@ -24,7 +24,7 @@ def test_replay_seeded_queries_are_exactly_the_sampled_recording(monkeypatch):
     monkeypatch.delenv(e2e.OPTIMIZER_SPAN_CAPTURE_MODE_ENV, raising=False)
     seeded = e2e._seeded_enhancement_queries()
     assert seeded == _sampled_qe_inputs()
-    assert len(seeded) == 91
+    assert len(seeded) == 114
     assert "a fire starter" not in seeded
 
 
