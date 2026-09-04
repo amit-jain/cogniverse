@@ -429,7 +429,7 @@ COMMITTED_CAPTURE = _committed_capture_path()
 # corpus must be re-captured rather than silently feeding the old shape.
 _EXPECTED_CAPTURE = {
     "cogniverse.gateway": (
-        70,
+        126,
         {
             "environment",
             "input.value",
@@ -440,7 +440,7 @@ _EXPECTED_CAPTURE = {
         },
     ),
     "cogniverse.orchestration": (
-        60,
+        26,
         {
             "environment",
             "input.value",
@@ -451,7 +451,7 @@ _EXPECTED_CAPTURE = {
         },
     ),
     "cogniverse.entity_extraction": (
-        110,
+        171,
         {
             "environment",
             "input.value",
@@ -462,7 +462,7 @@ _EXPECTED_CAPTURE = {
         },
     ),
     "cogniverse.profile_selection": (
-        204,
+        100,
         {
             "available_profiles",
             "environment",
@@ -474,8 +474,9 @@ _EXPECTED_CAPTURE = {
         },
     ),
     "cogniverse.query_enhancement": (
-        343,
+        165,
         {
+            "enhancement.path",
             "environment",
             "input.grounding_context",
             "input.source_text",
