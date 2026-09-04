@@ -65,6 +65,7 @@ cogniverse_runtime/
 ├── openshell_cert_rotator.py        # mTLS cert rotation for OpenShell sandbox
 ├── openshell_health.py              # OpenShell gateway health probing
 ├── optimization_cli.py              # DSPy optimizer entrypoint (compile/serve)
+├── blob_write_queue.py              # Write-behind queue for admin config blobs
 ├── quality_monitor_cli.py           # Quality-monitor CLI entry
 ├── sandbox_http.py                  # Sandbox HTTP transport layer
 ├── sandbox_manager.py               # SandboxManager + policy enforcement
@@ -968,9 +969,9 @@ Org admin can unpin anything; tenant admin can unpin tenant_admin+user pins; use
 **GET /admin/tenants/{tenant_id}/pins** — List pin records for a tenant. Response: `{tenant_id, pins: [PinRecordResponse, ...]}`.
 
 **GET /admin/tenants/{tenant_id}/pin_quotas** — Read effective per-role pin quotas.
-Response: `{tenant_id, quotas: {"user": int, "tenant_admin": int, "org_admin": int}}` (`-1` for org_admin means unlimited). A blob-store outage answers 503 (both GET and PUT) — never an opaque 500, and never the defaults masquerading as the persisted values.
+Response: `{tenant_id, quotas: {"user": int, "tenant_admin": int, "org_admin": int}, pending_write}` (`-1` for org_admin means unlimited; `pending_write` is true while an accepted PUT has not yet landed in the durable blob). A blob-store outage answers 503 (both GET and PUT) — never an opaque 500, and never the defaults masquerading as the persisted values.
 
-**PUT /admin/tenants/{tenant_id}/pin_quotas** — Set per-role pin quotas. Body: `{user?, tenant_admin?, org_admin?}` (only non-null fields update). Negative values rejected (400) except `org_admin=-1` (unlimited sentinel). Overrides persist durably as a per-tenant `config/pin_quotas` blob in the artifact store (the same store canary state uses), so they survive a restart and are shared across replicas; a process-local dict caches reads in front of it. `PinQuotas.for_tenant` canonicalizes the tenant id before consulting the override, so a bare id (`acme`) resolves the same blob the endpoint wrote under the canonical form (`acme:acme`).
+**PUT /admin/tenants/{tenant_id}/pin_quotas** — Set per-role pin quotas. Body: `{user?, tenant_admin?, org_admin?}` (only non-null fields update). Negative values rejected (400) except `org_admin=-1` (unlimited sentinel). Overrides persist durably as a per-tenant `config/pin_quotas` blob in the artifact store (the same store canary state uses), so they survive a restart and are shared across replicas; a process-local dict caches reads in front of it. Persistence is write-behind through `blob_write_queue.BlobWriteQueue`: the PUT is accepted immediately (`pending_write: true` in the response), readers see the accepted value at once, and a write the queue cannot persist surfaces as a 503 on every read until a newer PUT supersedes it; accepted writes are drained at shutdown. `PinQuotas.for_tenant` canonicalizes the tenant id before consulting the override, so a bare id (`acme`) resolves the same blob the endpoint wrote under the canonical form (`acme:acme`).
 
 **PUT /admin/tenants/{tenant_id}/profile_selection_ground_truth** — Upload tenant profile-selection ground truth. Body: a JSON array of rows with `query` and `expected_videos`. `query` must be non-empty after trimming, and `expected_videos` must normalize to at least one non-empty video title. The upload is canonicalized and stored as the tenant's versioned `config/profile_selection_ground_truth` blob, then activated in the artifact store. Response: `{tenant_id, row_count, version, active}`. Validation failures return 400; store failures return 503.
 
@@ -998,9 +999,9 @@ Response: `{source_tenant_id, source_memory_id, promoted_memory_id, org_trunk_te
 
 **DELETE /admin/tenant/{tenant_id}/memories?category=...** — Clear user-owned memories (system/strategy namespaces are untouched). Omitted `category` clears all user memories and returns `{status: "cleared"}`; a `category` value scopes the delete and the response reports the count: `{status: "cleared", category, deleted}`. The messaging-gateway `/memories clear` command calls this route with `category` — not `agent_name`, which the route does not accept.
 
-**GET /admin/tenants/{tenant_id}/signature_variants** — List per-agent variant selections for a tenant. Response: `{tenant_id, selections: {agent_type: variant_id}}`.
+**GET /admin/tenants/{tenant_id}/signature_variants** — List per-agent variant selections for a tenant. Response: `{tenant_id, selections: {agent_type: variant_id}, pending_write}`.
 
-**PUT /admin/tenants/{tenant_id}/signature_variants/{agent_type}** — Pick a variant id for an agent. Body: `{"variant_id": str}`. Selections persist in a process-local dict (see optimization.md `Signature Variants`).
+**PUT /admin/tenants/{tenant_id}/signature_variants/{agent_type}** — Pick a variant id for an agent. Body: `{"variant_id": str}`. Selections persist durably as a per-tenant `config/signature_variants` blob, write-behind through the same `BlobWriteQueue` as pin quotas (see optimization.md `Signature Variants`).
 
 **POST /admin/tenants/{tenant_id}/canary/{agent_type}/promote** — Promote a versioned artefact to canary at a traffic percentage.
 Body: `{"version": int, "traffic_pct": int = 10}` (range `[1, 100]`; 400 otherwise).

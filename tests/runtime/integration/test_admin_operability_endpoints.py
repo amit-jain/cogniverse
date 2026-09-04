@@ -12,6 +12,7 @@ in-memory override store (no persistence layer for those keys yet).
 
 from __future__ import annotations
 
+import time
 import uuid
 
 import pytest
@@ -28,7 +29,11 @@ def client() -> TestClient:
     app = FastAPI()
     app.include_router(admin.router, prefix="/admin")
     admin._reset_admin_overrides_for_tests()
-    return TestClient(app)
+    # Context-managed so every request shares one portal event loop — the
+    # write-behind queue's worker lives on the loop that served the PUT and
+    # must survive across requests, as it does under a real server.
+    with TestClient(app) as managed:
+        yield managed
 
 
 @pytest.fixture
@@ -53,7 +58,7 @@ class TestPinQuotaEndpoints:
         resp = client.get(f"/admin/tenants/{tenant}/pin_quotas")
         assert resp.status_code == 200
         body = resp.json()
-        assert set(body) == {"tenant_id", "quotas"}
+        assert set(body) == {"tenant_id", "quotas", "pending_write"}
         assert body["tenant_id"] == tenant
         # Defaults from PinQuotas dataclass; org_admin None (unlimited) -> -1.
         assert body["quotas"] == {"user": 50, "tenant_admin": 500, "org_admin": -1}
@@ -91,9 +96,16 @@ class TestPinQuotaEndpoints:
         put_body = put.json()
         assert put_body["tenant_id"] == tenant
         assert put_body["quotas"] == {"user": 7, "tenant_admin": 3, "org_admin": -1}
+        assert put_body["pending_write"] is True
 
-        # Simulate a fresh process: drop the write-through cache so the next
-        # read must hit the durable store.
+        # Persistence is write-behind: wait for the accepted write to land
+        # (pending_write is the reportable settle signal), then simulate a
+        # fresh process by dropping the write-through cache so the next read
+        # must hit the durable store.
+        deadline = time.monotonic() + 30
+        while client.get(f"/admin/tenants/{tenant}/pin_quotas").json()["pending_write"]:
+            assert time.monotonic() < deadline, "pin-quota write never landed"
+            time.sleep(0.05)
         admin._reset_admin_overrides_for_tests()
 
         reloaded = client.get(f"/admin/tenants/{tenant}/pin_quotas").json()["quotas"]

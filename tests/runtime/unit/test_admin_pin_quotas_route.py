@@ -72,6 +72,7 @@ async def test_pin_quotas_returns_persisted_blob(monkeypatch):
     assert resp.json() == {
         "tenant_id": "acme:acme",
         "quotas": {"user": 7, "tenant_admin": 20, "org_admin": -1},
+        "pending_write": False,
     }
     # The blob was read from the durable store under the canonical tenant key.
     assert stub.received == [("config", "pin_quotas")]
@@ -94,7 +95,11 @@ async def test_pin_quotas_unset_returns_defaults(monkeypatch):
         admin_router._reset_admin_overrides_for_tests()
 
     assert resp.status_code == 200, resp.text
-    assert resp.json() == {"tenant_id": "acme:acme", "quotas": expected}
+    assert resp.json() == {
+        "tenant_id": "acme:acme",
+        "quotas": expected,
+        "pending_write": False,
+    }
     assert stub.received == [("config", "pin_quotas")]
     # The CANONICAL tenant must reach the per-tenant store — a factory that
     # dropped or mis-derived the tenant would read another tenant's quotas.

@@ -182,8 +182,9 @@ class TestFallbackChain:
 @pytest.mark.asyncio
 async def test_concurrent_same_tenant_puts_serialize_and_stay_consistent(monkeypatch):
     """Two concurrent PUTs for one tenant must serialize: the per-tenant write
-    lock keeps their save_blob critical sections from overlapping, so the
-    durable blob and the served override dict never diverge."""
+    lock serializes acceptance and the write-behind queue's single worker
+    keeps save_blob critical sections from overlapping, so the durable blob
+    and the served override dict never diverge."""
     admin._reset_admin_overrides_for_tests()
     in_flight = {"n": 0, "max": 0}
     blob: dict = {}
@@ -209,8 +210,9 @@ async def test_concurrent_same_tenant_puts_serialize_and_stay_consistent(monkeyp
         admin.set_pin_quotas("acme:acme", admin.PinQuotasUpdateRequest(user=10)),
         admin.set_pin_quotas("acme:acme", admin.PinQuotasUpdateRequest(user=20)),
     )
+    await admin._blob_write_queue.flush()
 
-    # Serialized: the two save_blob critical sections never ran concurrently.
+    # Serialized: the save_blob critical sections never ran concurrently.
     assert in_flight["max"] == 1
     # The served override dict equals the durable blob — no divergence.
     served = admin._pin_quota_overrides["acme:acme"]

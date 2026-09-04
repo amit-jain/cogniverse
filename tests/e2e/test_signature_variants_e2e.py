@@ -17,6 +17,7 @@ selection HTTP route:
 from __future__ import annotations
 
 import logging
+import time
 
 import httpx
 import pytest
@@ -179,17 +180,28 @@ class TestSetVariantViaHTTP:
                 json={"variant_id": "with_jurisdiction"},
             )
             assert put_resp.status_code == 200, put_resp.text[:300]
-            put_body = put_resp.json()
-            assert put_body == {
+            assert put_resp.json() == {
                 "tenant_id": tenant_id,
                 "selections": {"query_enhancement_agent": "with_jurisdiction"},
+                "pending_write": True,
             }
 
-            get_resp = client.get(
-                f"/admin/tenants/{tenant_id}/signature_variants",
-            )
-            assert get_resp.status_code == 200, get_resp.text[:300]
-            assert get_resp.json() == put_body
+            # Persistence is write-behind; pending_write is the settle signal.
+            deadline = time.time() + 30
+            while True:
+                get_resp = client.get(
+                    f"/admin/tenants/{tenant_id}/signature_variants",
+                )
+                assert get_resp.status_code == 200, get_resp.text[:300]
+                if not get_resp.json()["pending_write"]:
+                    break
+                assert time.time() < deadline, "variant write never landed"
+                time.sleep(0.2)
+            assert get_resp.json() == {
+                "tenant_id": tenant_id,
+                "selections": {"query_enhancement_agent": "with_jurisdiction"},
+                "pending_write": False,
+            }
 
             # Empty variant_id rejected up front.
             bad = client.put(

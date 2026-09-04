@@ -55,8 +55,10 @@ async def test_variant_persists_and_resolves_on_cold_replica(real_admin):
     assert resp.status_code == 200
     assert resp.json()["selections"]["search_agent"] == "search_v2"
 
-    # Cold replica: cache cleared. It must resolve the persisted variant from
-    # the durable blob, not fall back to the default.
+    # Land the write-behind persist, then cold replica: cache cleared. It
+    # must resolve the persisted variant from the durable blob, not fall
+    # back to the default.
+    await admin_router._blob_write_queue.flush()
     admin_router._reset_admin_overrides_for_tests()
     loaded = await admin_router.load_signature_variants(TENANT)
     assert loaded == {"search_agent": "search_v2"}
@@ -82,6 +84,7 @@ async def test_second_agent_selection_merges_not_replaces(real_admin):
     resp = await _put(app, TENANT, "summarizer_agent", "sum_v3")
     assert resp.status_code == 200
 
+    await admin_router._blob_write_queue.flush()
     admin_router._reset_admin_overrides_for_tests()
     loaded = await admin_router.load_signature_variants(TENANT)
     assert loaded == {"search_agent": "search_v2", "summarizer_agent": "sum_v3"}

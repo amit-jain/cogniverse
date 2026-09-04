@@ -124,3 +124,29 @@ def test_startup_probe_can_be_disabled_by_operator():
     manifests = _render_chart("runtime.startupProbe=null")
     container = _runtime_container(manifests)
     assert "startupProbe" not in container
+
+
+def test_termination_grace_covers_the_blob_write_drain():
+    """Shutdown drains accepted admin blob writes before teardown; the pod's
+    grace period must cover that drain plus the rest of teardown, or SIGKILL
+    lands mid-drain and the accepted write is lost."""
+    import inspect
+
+    from cogniverse_runtime.routers.admin import drain_blob_writes
+
+    deployments = [
+        m
+        for m in _render_chart()
+        if m.get("kind") == "Deployment"
+        and m.get("metadata", {}).get("name") == "cogniverse-runtime"
+    ]
+    assert len(deployments) == 1
+    grace = deployments[0]["spec"]["template"]["spec"].get(
+        "terminationGracePeriodSeconds"
+    )
+    assert grace == 90
+    drain_budget = inspect.signature(drain_blob_writes).parameters["timeout_s"].default
+    assert grace - drain_budget >= 15, (
+        f"grace {grace}s leaves {grace - drain_budget}s after the {drain_budget}s "
+        f"blob-write drain for the rest of teardown"
+    )
