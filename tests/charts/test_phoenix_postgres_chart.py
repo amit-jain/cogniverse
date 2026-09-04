@@ -209,7 +209,7 @@ class TestPhoenixConsumesPostgres:
                 assert init[0]["command"] == [
                     "sh",
                     "-c",
-                    "until pg_isready -h cogniverse-phoenix-postgres -p 5432; "
+                    "until pg_isready -h cogniverse-phoenix-postgres -p 5432 -U phoenix; "
                     "do sleep 2; done",
                 ]
                 return
