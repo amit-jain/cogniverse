@@ -164,10 +164,24 @@ spec:
             -l {{ $svcCfg.podLabel }} \
             -o jsonpath='{.items[0].metadata.name}')
           STAMP=$(date -u +%Y%m%dT%H%M%SZ)
-          echo "Snapshotting $POD:{{ $svcCfg.dataPath }} → /stage/{{ $svc }}-$STAMP.tar"
+          BASE=$(basename {{ $svcCfg.dataPath }})
+          OUT=/stage/{{ $svc }}-$STAMP.tar
+          echo "Snapshotting $POD:{{ $svcCfg.dataPath }} → $OUT"
+          # The source is a LIVE data directory: files are rewritten and
+          # removed while tar reads them, and tar reports that with exit 1
+          # ("file changed as we read it"). The archive is still readable, so
+          # only exit 2 and above is a failure.
+          set +e
           kubectl -n {{ $.Release.Namespace }} exec "$POD" -- \
-            tar -cf - -C "$(dirname {{ $svcCfg.dataPath }})" "$(basename {{ $svcCfg.dataPath }})" \
-            > /stage/{{ $svc }}-$STAMP.tar
+            tar -cf - -C "$(dirname {{ $svcCfg.dataPath }})" "$BASE" \
+            > "$OUT"
+          rc=$?
+          set -e
+          if [ "$rc" -ge 2 ]; then
+            echo "tar failed with exit $rc" >&2
+            exit "$rc"
+          fi
+          tar -tf "$OUT" | grep -q "^$BASE"
         env:
         - name: COGNIVERSE_INFERENCE_API_KEY
 {{ include "cogniverse.inferenceApiKeyEnv" $ | nindent 10 }}
