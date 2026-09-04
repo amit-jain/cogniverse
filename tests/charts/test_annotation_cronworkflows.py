@@ -71,16 +71,16 @@ def _env_map(container):
     return {e["name"]: e.get("value") for e in container.get("env", [])}
 
 
-def _quality_monitor_sidecar(manifests):
+def _quality_monitor_container(manifests):
     for doc in manifests:
         if (
             doc.get("kind") == "Deployment"
-            and doc.get("metadata", {}).get("name") == "cogniverse-runtime"
+            and doc.get("metadata", {}).get("name") == "cogniverse-quality-monitor"
         ):
-            for container in doc["spec"]["template"]["spec"]["containers"]:
-                if container["name"] == "quality-monitor":
-                    return container
-    raise AssertionError("quality-monitor sidecar not rendered")
+            containers = doc["spec"]["template"]["spec"]["containers"]
+            assert [c["name"] for c in containers] == ["quality-monitor"]
+            return containers[0]
+    raise AssertionError("cogniverse-quality-monitor Deployment not rendered")
 
 
 def test_annotation_cycle_cronworkflow_invokes_the_flag():
@@ -234,10 +234,10 @@ def test_annotation_crons_fall_back_to_default_tenant():
         assert tenant == "default", f"{name}: --tenant-id {tenant!r}"
 
 
-def test_quality_monitor_sidecar_carries_workflow_pod_env():
-    """The sidecar's quality-drop trigger submits workflows too — same env
+def test_quality_monitor_carries_workflow_pod_env():
+    """The monitor's quality-drop trigger submits workflows too — same env
     contract as the feedback cron."""
-    container = _quality_monitor_sidecar(
+    container = _quality_monitor_container(
         _render_chart(["devMode.enabled=true", "devMode.hostPath=/cogniverse-src"])
     )
     env = _env_map(container)

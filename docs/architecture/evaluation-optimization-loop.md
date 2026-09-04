@@ -484,7 +484,7 @@ compiled module still runs on the agent's regular (smaller/faster) LM in product
 Trigger thresholds live in `AutomationRulesConfig` (`cogniverse_agents.routing.config`),
 consumed by the annotation cycles in `quality_monitor_cli`, and
 `QualityMonitor.QualityThresholds` (`cogniverse_evaluation.quality_monitor`), consumed by
-the quality-monitor sidecar — not by a live in-process RL loop:
+the quality-monitor Deployment — not by a live in-process RL loop:
 
 | Config | Field | Default | Meaning |
 |---|---|---|---|
@@ -623,7 +623,7 @@ and `AnnotationStorage` — plus two scheduled cycles in
 `cogniverse_runtime.quality_monitor_cli`:
 
 - `run_annotation_cycle` (`--annotation-cycle`, the `annotation-cycle` CronWorkflow, and
-  a loop inside the quality-monitor sidecar): identifies spans needing review per agent
+  a loop inside the quality-monitor Deployment): identifies spans needing review per agent
   type, drops already-annotated spans, caps at
   `optimization_triggers.max_annotations_per_cycle`, and POSTs the worklist to the
   runtime's `POST /agents/annotations/queue/enqueue`. The "already-annotated" check
@@ -768,7 +768,7 @@ that wiring into the manifest; without it the spawned pod runs a bare fallback
 Vespa or Phoenix.
 
 The chart sets the contract on every submitting pod (the annotation-feedback
-CronWorkflow and the quality-monitor sidecar), and
+CronWorkflow and the quality-monitor Deployment), and
 `quality_monitor_cli._workflow_pod_spec_from_env` reads it once at the
 entrypoint:
 
@@ -829,13 +829,13 @@ stored in `output.value` at write time.
 
 ## Continuous Quality Monitoring
 
-The Quality Monitor (`cogniverse_evaluation.quality_monitor.QualityMonitor`) runs as a sidecar in the runtime pod. It applies two independent evaluation strategies on a schedule and triggers Argo optimization workflows when quality falls below threshold.
+The Quality Monitor (`cogniverse_evaluation.quality_monitor.QualityMonitor`) runs in its own Deployment (`cogniverse-quality-monitor`) and reaches the runtime over its Service DNS name, so a monitor crash never drops the runtime Service endpoints. It applies two independent evaluation strategies on a schedule and triggers Argo optimization workflows when quality falls below threshold.
 
 ### Dual Evaluation Strategy
 
 ```mermaid
 flowchart TD
-    subgraph "Quality Monitor (sidecar)"
+    subgraph "Quality Monitor (Deployment)"
         GM["<span style='color:#000'>Golden Set Eval<br/>every 2h</span>"]
         LT["<span style='color:#000'>Live Traffic Eval<br/>every 4h</span>"]
         THR{"<span style='color:#000'>Naive threshold:<br/>MRR dropped?<br/>Score below floor?</span>"}
@@ -935,7 +935,7 @@ Agents retrieve strategies at inference time via `MemoryAwareMixin.get_strategie
 | **Confidence Calibration** | Model quality | Pearson correlation between confidence and actual success |
 | **Phoenix Telemetry** | Observability | Span-level routing instrumentation with annotation support |
 | **LLM Auto-Annotation** | Semi-automated labeling | Pre-screen routing decisions before human review |
-| **Quality Monitor** | Continuous evaluation | Dual-strategy sidecar: golden set (2h) + live LLM judge (4h); triggers Argo on degradation |
+| **Quality Monitor** | Continuous evaluation | Dual-strategy Deployment: golden set (2h) + live LLM judge (4h); triggers Argo on degradation |
 | **XGBoost Training Decision Model** | Optimization gating | Meta-model confirms, downgrades, or upgrades naive threshold verdicts based on data volume, model staleness, and expected improvement |
 | **Strategy Distillation** | Knowledge transfer | Pattern + LLM contrastive distillation from traces into Vespa-stored strategies |
 | **Two-Level Strategy Scoping** | Personalization | Org-level shared strategies + user-level personalized strategies via Mem0 |

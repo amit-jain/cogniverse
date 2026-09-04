@@ -313,6 +313,7 @@ class TestDeviceOverlaysKeepDevMode:
         manifests = _render_with_values("values.k3s.yaml", "values.cuda.yaml")
         assert _dev_mount_deployments(manifests) == [
             "cogniverse-dashboard",
+            "cogniverse-quality-monitor",
             "cogniverse-runtime",
         ]
 
@@ -324,6 +325,7 @@ class TestDeviceOverlaysKeepDevMode:
         manifests = _render_with_values("values.k3s.yaml", "values.rocm.yaml")
         assert _dev_mount_deployments(manifests) == [
             "cogniverse-dashboard",
+            "cogniverse-quality-monitor",
             "cogniverse-runtime",
         ]
 

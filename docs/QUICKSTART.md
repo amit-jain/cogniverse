@@ -252,7 +252,7 @@ Auto-filing triggers automatically when an interaction has 3+ extracted entities
 
 ## Optional: Enable Quality Monitor
 
-The quality monitor runs as a sidecar, continuously evaluating all agents and triggering optimization when quality degrades:
+The quality monitor runs as its own Deployment, continuously evaluating all agents and triggering optimization when quality degrades:
 
 ```bash
 # Run directly

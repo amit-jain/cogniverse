@@ -1,5 +1,5 @@
 """
-E2E tests for quality monitor sidecar, strategy learning, and Argo workflows.
+E2E tests for the quality monitor, strategy learning, and Argo workflows.
 
 Requires live k3d stack via `cogniverse up` with:
 - Runtime at localhost:33000 (Service NodePort, exposed via k3d loadbalancer)
@@ -117,32 +117,37 @@ def require_kubectl_cluster() -> None:
 
 
 @pytest.mark.e2e
-class TestQualityMonitorSidecar:
-    """Verify the quality monitor sidecar is deployed and running."""
+class TestQualityMonitorDeployment:
+    """Verify the quality monitor runs in its own pod, decoupled from serving."""
 
-    def test_sidecar_container_running(self):
-        """Runtime pod has a quality-monitor sidecar container."""
-        pods = _kubectl(
+    def test_monitor_pod_runs_only_the_monitor_container(self):
+        containers = _kubectl(
+            "get",
+            "pods",
+            "-l",
+            "app.kubernetes.io/component=quality-monitor",
+            "-o",
+            "jsonpath={.items[0].spec.containers[*].name}",
+        ).split()
+        assert containers == ["quality-monitor"], containers
+
+    def test_runtime_pod_carries_no_monitor_container(self):
+        containers = _kubectl(
             "get",
             "pods",
             "-l",
             "app.kubernetes.io/component=runtime",
             "-o",
             "jsonpath={.items[0].spec.containers[*].name}",
-        )
-        containers = pods.split()
-        assert "quality-monitor" in containers, (
-            f"Expected quality-monitor sidecar in runtime pod, "
-            f"got containers: {containers}"
-        )
+        ).split()
+        assert containers == ["runtime"], containers
 
-    def test_sidecar_container_not_crashlooping(self):
-        """Quality monitor sidecar should be running, not CrashLoopBackOff."""
+    def test_monitor_container_not_crashlooping(self):
         statuses = _kubectl(
             "get",
             "pods",
             "-l",
-            "app.kubernetes.io/component=runtime",
+            "app.kubernetes.io/component=quality-monitor",
             "-o",
             "jsonpath={.items[0].status.containerStatuses[*].state}",
         )

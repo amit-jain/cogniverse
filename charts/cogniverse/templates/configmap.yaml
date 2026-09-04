@@ -10,13 +10,11 @@ data:
     {{ tpl (.Files.Get "files/config.json") . | nindent 4 }}
 {{- if and .Values.runtime.qualityMonitor.enabled .Values.runtime.qualityMonitor.goldenDatasetPath }}
 ---
-# Golden-set seed file for the QualityMonitor sidecar, rendered only when a
-# seed path is configured. Without this
-# the sidecar crash-loops: data/testset/ is never mounted in the pod.
-# Bundling the dataset as a ConfigMap (sourced from
-# files/quality-monitor/golden_dataset.json, which is a copy of
+# Golden-set seed file for the quality-monitor Deployment, rendered only when
+# a seed path is configured. Bundling the dataset as a ConfigMap (sourced from
+# files/quality-monitor/golden_dataset.json, a copy of
 # data/testset/evaluation/sample_videos_retrieval_queries.json) makes the
-# sidecar self-contained in any environment, dev or production.
+# monitor self-contained in any environment, dev or production.
 apiVersion: v1
 kind: ConfigMap
 metadata:
