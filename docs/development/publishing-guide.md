@@ -346,18 +346,22 @@ minio/vllm/envoy/…) — enumerated from a chart render — into a registry you
 - **Release** (`release-images.yml` on a `v*` tag) → `docker.io/cogniverse/<name>:<version>`
   plus an immutable `:<git-sha>`, `pullPolicy: IfNotPresent` (a clean cluster pulls).
 - **Local dev** (`cogniverse up` → `build_images`) → `cogniverse/<name>:<git-version>`,
-  where `<git-version>` is the deploy-input-derived version with `+`→`-` (e.g.
-  `0.1.dev2137-g9ba33d3f`) — stable across tests-only commits, so two local
-  builds reuse the same tag until a deploy input changes. `pullPolicy: Never`
-  (built + imported into k3d). `values.k3s.yaml` carries a static `<line>-dev`
-  placeholder that `cogniverse up` overrides at deploy via `--set`
-  (`dev_image_set_values`) with the exact tag it just built.
+  where each image's `<git-version>` comes from its own Dockerfile and local
+  `COPY`/`ADD` inputs after applying `.dockerignore`; the ignore file itself is
+  also an input. Tags replace `+` with `-` (e.g. `0.1.dev2137-g9ba33d3f`). A
+  source change therefore retags only the images that consume it. Existing host
+  tags are not rebuilt, and existing k3d-node tags are not re-imported.
+  PyLate appends `-cpu`, `-cuda`, or `-rocm` because its build argument changes
+  image bytes; runtime and dashboard encode that backend in their repositories.
+  `pullPolicy: Never` selects those local images. `values.k3s.yaml` carries a
+  static `<line>-dev` placeholder that `cogniverse up` replaces via per-image
+  `--set` values from `dev_image_set_values`.
 
 `.dockerignore` excludes `.git`, so the runtime/dashboard images (which install the
 workspace and thus trigger hatch-vcs) receive the version through the
 `SETUPTOOLS_SCM_PRETEND_VERSION` build-arg that `build_images` / `release-images.yml`
-set from the host, where git is available — so the packages *inside* a dev image
-carry the same git version as its tag.
+set from the host, where git is available. Each package therefore carries the
+version derived for its containing image.
 
 ---
 

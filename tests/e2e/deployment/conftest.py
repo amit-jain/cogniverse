@@ -517,10 +517,10 @@ def deployment_helm_inputs(
         get_llm_serving_values_file,
     )
     from cogniverse_cli.images import (
-        RUNTIME_REPOS_BY_BACKEND,
         detect_torch_backend,
         dev_image_set_values,
-        dev_version,
+        dev_image_tags,
+        dev_versions,
     )
 
     chart_path = project_root / "charts" / "cogniverse"
@@ -530,7 +530,7 @@ def deployment_helm_inputs(
 
     backend = detect_torch_backend()
     device_values_file = get_device_values_file(backend, project_root=project_root)
-    image_version = dev_version(project_root)
+    image_versions = dev_versions(project_root)
     helm_values = [values_file]
     if device_values_file:
         helm_values.append(device_values_file)
@@ -556,15 +556,21 @@ def deployment_helm_inputs(
             project_root,
             torch_backend=backend,
             values_files=helm_values,
-            version=image_version,
+            versions=image_versions,
         )
     )
     if extra_set:
         helm_set_overrides.update(extra_set)
     return {
         "backend": backend,
-        "image_version": image_version,
-        "image_repository": RUNTIME_REPOS_BY_BACKEND[backend],
+        "image_version": image_versions["runtime"],
+        "image_versions": image_versions,
+        "image_tags": dev_image_tags(
+            project_root,
+            torch_backend=backend,
+            values_files=helm_values,
+            versions=image_versions,
+        ),
         "helm_values": helm_values,
         "helm_set_overrides": helm_set_overrides,
     }
@@ -676,12 +682,7 @@ def deploy_stack(
     )
 
     backend = deployment_inputs["backend"]
-    # One deploy-input-derived version for the built tags AND the helm
-    # overrides — without the override the chart falls back to its static
-    # ``0.1.0-dev`` placeholder and every first-party pod dies with
-    # ErrImageNeverPull (pullPolicy=Never can only see the imported, tagged
-    # images).
-    image_version = deployment_inputs["image_version"]
+    image_versions = deployment_inputs["image_versions"]
 
     # Build from the same overlays helm receives: the enabled set is derived
     # from those values, so building without them misses every sidecar an
@@ -691,14 +692,15 @@ def deploy_stack(
         project_root,
         torch_backend=backend,
         values_files=deployment_inputs["helm_values"],
-        version=image_version,
+        versions=image_versions,
     )
     import_images(cluster_name, built_tags)
     verify_local_images_cover_deploy(
         project_root,
         deployment_inputs["helm_values"],
         built_tags=built_tags,
-        version=image_version,
+        versions=image_versions,
+        torch_backend=backend,
     )
 
     # Reclaim superseded generations (host + k3d node containerd) like
@@ -708,7 +710,7 @@ def deploy_stack(
     # trips its 80% feed-block and the runtime crash-loops on NO_SPACE.
     try:
         prune_superseded_images(
-            image_version, node_container=f"k3d-{cluster_name}-server-0"
+            built_tags, node_container=f"k3d-{cluster_name}-server-0"
         )
     except Exception as exc:  # noqa: BLE001 — cleanup is best-effort
         print(f"Superseded-image prune skipped: {exc}", file=sys.stderr)

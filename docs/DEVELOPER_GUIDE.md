@@ -294,14 +294,16 @@ No build, no tag, no helm. Tests run straight off the tree too
 **2. Deploy loop — `cogniverse up` (minutes, occasional).** Required only
 when something *outside* the mounts changes: dependencies
 (`pyproject.toml` / `uv.lock` bake into image layers), Dockerfiles, chart
-templates or values, new sidecars — or when you want the artifact stamps to
-match HEAD again. It rebuilds the images (layer-cached), imports them into
-k3d, and helm-upgrades.
+templates or values, new sidecars — or when you want to refresh the deployed
+artifact identity. It builds image tags absent from the host, imports tags
+absent from k3d, and helm-upgrades.
 
-Versioning is a **single train**: one git-derived version
-(`0.1.devN+g<sha>`, computed from the latest deploy-input commit) stamps every
-image, the packaged chart, and the wheels together. A tests-only commit keeps
-the same version; only a deploy-input change re-stamps.
+Each image has a git-derived version (`0.1.devN+g<sha>`) from the latest commit
+to its Dockerfile, copied inputs after `.dockerignore` filtering, or the ignore
+file itself. A tests-only commit keeps every image tag; a source change
+re-stamps only the images that consume it. The packaged chart uses the runtime
+version as its scalar package version while Helm receives each image tag
+independently.
 A consequence worth knowing: because of the dev mounts, the image tag on a
 dev cluster records the *base image's* provenance, not the running code's —
 the running code is always your tree as of the last pod restart. (In dev
