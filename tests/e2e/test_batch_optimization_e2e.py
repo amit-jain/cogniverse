@@ -1786,6 +1786,10 @@ def generate_spans_for_batch_jobs(_kubectl_cluster_ready):
             span_names=span_names,
         )
         write_capture_json(OPTIMIZER_SPAN_CAPTURE_PATH, capture_records)
+        # A fresh recording replays nothing: Phoenix holds every captured span.
+        capture_counts = collections.Counter(
+            record["name"] for record in capture_records
+        )
     else:
         from datetime import datetime as _dt
         from datetime import timedelta as _td
@@ -1863,37 +1867,46 @@ def generate_spans_for_batch_jobs(_kubectl_cluster_ready):
             profile_selection_minimum=replayed_counts[span_names[3]],
             orchestration_minimum=replayed_counts[span_names[4]],
         )
+        # The replayed subset is what Phoenix holds; the archive is a superset
+        # the replay deliberately samples down, so expectations read the subset.
+        capture_counts = replayed_counts
 
-    # The replayed subset is what Phoenix holds; the archive is a superset the
-    # replay deliberately samples down, so expectations read the subset.
-    capture_counts = replayed_counts
     served_scoreable_counts = _wait_for_served_scoreable_span_floor_in_pod(TENANT_ID)
     expected_served_scoreable_counts = {
         "query_enhancement": capture_counts[span_names[2]],
         "entity_extraction": capture_counts[span_names[1]],
         "profile_selection": capture_counts[span_names[3]],
     }
-    # Count DISTINCT capture ids, not replayed rows: consecutive runs
-    # re-replay the same deterministic sample into one lookback window, so a
-    # row count reports a multiple of the corpus. Distinct ids pin the
-    # committed capture exactly however many runs preceded this one. The
-    # SERVED population is a superset -- agents emit organic spans of these
-    # same types while a run optimizes -- so it is checked as a floor.
-    replayed_counts = {
-        "query_enhancement": _count_spans_by_name_in_pod(
-            TENANT_ID, "SPAN_NAME_QUERY_ENHANCEMENT", distinct_replay_identities=True
-        ),
-        "entity_extraction": _count_spans_by_name_in_pod(
-            TENANT_ID, "SPAN_NAME_ENTITY_EXTRACTION", distinct_replay_identities=True
-        ),
-        "profile_selection": _count_spans_by_name_in_pod(
-            TENANT_ID, "SPAN_NAME_PROFILE_SELECTION", distinct_replay_identities=True
-        ),
-    }
-    assert replayed_counts == expected_served_scoreable_counts, (
-        f"Replayed corpus drifted from the committed capture: "
-        f"replayed={replayed_counts} expected={expected_served_scoreable_counts}"
-    )
+    if capture_mode == "replay":
+        # Count DISTINCT capture ids, not replayed rows: consecutive runs
+        # re-replay the same deterministic sample into one lookback window, so
+        # a row count reports a multiple of the corpus. Distinct ids pin the
+        # committed capture exactly however many runs preceded this one. The
+        # SERVED population is a superset -- agents emit organic spans of these
+        # same types while a run optimizes -- so it is checked as a floor.
+        # Recorded spans carry no capture ids, so this pin is replay-only.
+        distinct_capture_identities = {
+            "query_enhancement": _count_spans_by_name_in_pod(
+                TENANT_ID,
+                "SPAN_NAME_QUERY_ENHANCEMENT",
+                distinct_replay_identities=True,
+            ),
+            "entity_extraction": _count_spans_by_name_in_pod(
+                TENANT_ID,
+                "SPAN_NAME_ENTITY_EXTRACTION",
+                distinct_replay_identities=True,
+            ),
+            "profile_selection": _count_spans_by_name_in_pod(
+                TENANT_ID,
+                "SPAN_NAME_PROFILE_SELECTION",
+                distinct_replay_identities=True,
+            ),
+        }
+        assert distinct_capture_identities == expected_served_scoreable_counts, (
+            f"Replayed corpus drifted from the committed capture: "
+            f"replayed={distinct_capture_identities} "
+            f"expected={expected_served_scoreable_counts}"
+        )
     missing_floor = {
         key: (served_scoreable_counts[key], floor)
         for key, floor in expected_served_scoreable_counts.items()

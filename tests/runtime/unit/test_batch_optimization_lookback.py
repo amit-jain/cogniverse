@@ -518,3 +518,83 @@ def test_count_spans_script_rejects_an_undefined_symbol():
             lookback_hours=0.5,
             distinct_replay_identities=False,
         )
+
+
+def _mode_branch_parity_violations(
+    source: str, func_name: str, guard_name: str
+) -> list[str]:
+    """Names read after a mode conditional but assigned in only one branch.
+
+    The record branch of a record/replay conditional never executes in replay
+    sweeps, so a join-level read of a replay-only name is an UnboundLocalError
+    that only a live record run can surface. This checker finds it statically.
+    """
+    import ast
+
+    tree = ast.parse(source)
+    func = next(
+        n
+        for n in ast.walk(tree)
+        if isinstance(n, ast.FunctionDef) and n.name == func_name
+    )
+    branch_if = None
+    for stmt in func.body:
+        if (
+            isinstance(stmt, ast.If)
+            and stmt.orelse
+            and any(
+                isinstance(x, ast.Name) and x.id == guard_name
+                for x in ast.walk(stmt.test)
+            )
+        ):
+            branch_if = stmt
+    assert branch_if is not None, f"no {guard_name} conditional in {func_name}"
+
+    def _stores(nodes: list[ast.stmt]) -> set[str]:
+        out: set[str] = set()
+        for n in nodes:
+            for x in ast.walk(n):
+                if isinstance(x, ast.Name) and isinstance(x.ctx, ast.Store):
+                    out.add(x.id)
+        return out
+
+    one_branch_only = _stores(branch_if.body) ^ _stores(branch_if.orelse)
+    stored: set[str] = set()
+    violations: list[str] = []
+    # Statement-granular ordering: a statement's own Stores (assignment and
+    # comprehension/loop targets) bind before its Loads are judged.
+    for stmt in func.body:
+        if stmt.lineno <= (branch_if.end_lineno or 0):
+            continue
+        stored |= _stores([stmt])
+        for x in ast.walk(stmt):
+            if (
+                isinstance(x, ast.Name)
+                and isinstance(x.ctx, ast.Load)
+                and x.id in one_branch_only
+                and x.id not in stored
+            ):
+                violations.append(f"line {x.lineno}: {x.id}")
+    return violations
+
+
+def test_mode_branch_parity_detector_flags_one_branch_name():
+    src = (
+        "def fx(mode):\n"
+        "    if mode == 'record':\n"
+        "        a = 1\n"
+        "    else:\n"
+        "        a = 2\n"
+        "        b = 3\n"
+        "    c = a + b\n"
+    )
+    assert _mode_branch_parity_violations(src, "fx", "mode") == ["line 7: b"]
+
+
+def test_span_fixture_defines_join_names_in_both_capture_branches():
+    violations = _mode_branch_parity_violations(
+        _SCRIPT.read_text(encoding="utf-8"),
+        "generate_spans_for_batch_jobs",
+        "capture_mode",
+    )
+    assert violations == []
