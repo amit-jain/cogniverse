@@ -958,7 +958,7 @@ spec:
       - name: wait-for-postgres
         image: "{{ .Values.phoenix.postgres.image.repository }}:{{ .Values.phoenix.postgres.image.tag }}"
         imagePullPolicy: {{ .Values.phoenix.postgres.image.pullPolicy }}
-        command: ["sh", "-c", "until pg_isready -h {{ $fullName }}-phoenix-postgres -p 5432; do sleep 2; done"]
+        command: ["sh", "-c", "until pg_isready -h {{ $fullName }}-phoenix-postgres -p 5432 -U {{ .Values.phoenix.postgres.auth.username }}; do sleep 2; done"]
       {{- end }}
       containers:
       - name: phoenix
