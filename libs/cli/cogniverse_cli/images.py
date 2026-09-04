@@ -2,20 +2,25 @@
 
 from __future__ import annotations
 
+import fcntl
+import hashlib
 import json
 import os
 import re
 import shutil
 import subprocess
+import tempfile
 import tomllib
+from contextlib import contextmanager
 from pathlib import Path
 
 import yaml
+from pathspec import GitIgnoreSpec
 
 # First-party image repositories keyed by torch backend. Runtime + dashboard
 # ship one image per backend; each bakes in the matching torch wheel —
 # runtime-cpu carries torch+cpu, -cuda torch+cu128, -rocm torch+rocm6.4. Tags
-# derive from the latest deploy-input commit: dev builds are
+# derive from the latest commit to their own build inputs: dev builds are
 # ``<release>.dev<N>+g<sha>`` (``+`` later sanitizes to ``-`` for Docker).
 RUNTIME_REPOS_BY_BACKEND = {
     "cpu": "cogniverse/runtime-cpu",
@@ -62,15 +67,75 @@ LOCAL_IMAGE_BUILDS = {
 # lightonai/DenseOn via inference.denseon (vllm_embed engine)
 # Operators pull vllm/vllm-openai-cpu (or per-device variants) directly.
 
-DEPLOY_INPUT_PATHS = (
-    "libs",
-    "configs",
-    "charts",
-    "deploy",
-    "scripts",
+_APP_WORKSPACE_INPUTS = (
     "pyproject.toml",
     "uv.lock",
-    ".dockerignore",
+    "libs/sdk",
+    "libs/foundation",
+    "libs/evaluation",
+    "libs/core",
+    "libs/synthetic",
+    "libs/vespa",
+    "libs/agents",
+    "libs/telemetry-phoenix",
+)
+
+IMAGE_DOCKERFILES = {
+    "runtime": "libs/runtime/Dockerfile",
+    "dashboard": "libs/dashboard/Dockerfile",
+    "pylate": "deploy/pylate/Dockerfile",
+    "gliner": "deploy/gliner/Dockerfile",
+    "clap_embed": "deploy/clap_embed/Dockerfile",
+    "face_embed": "deploy/face_embed/Dockerfile",
+}
+
+# Host-side inputs read by each Docker build. Every set includes the Dockerfile
+# and the root ignore rules in addition to all local COPY/ADD sources.
+IMAGE_INPUT_PATHS = {
+    "runtime": (
+        IMAGE_DOCKERFILES["runtime"],
+        *_APP_WORKSPACE_INPUTS,
+        "libs/runtime",
+        "configs/schemas",
+        "configs/config.json",
+        ".dockerignore",
+    ),
+    "dashboard": (
+        IMAGE_DOCKERFILES["dashboard"],
+        *_APP_WORKSPACE_INPUTS,
+        "libs/dashboard",
+        "configs/schemas",
+        "configs/config.json",
+        "scripts",
+        ".dockerignore",
+    ),
+    "pylate": (
+        IMAGE_DOCKERFILES["pylate"],
+        "libs/cli/cogniverse_cli/modal_inference/servers/pylate.py",
+        ".dockerignore",
+    ),
+    "gliner": (
+        IMAGE_DOCKERFILES["gliner"],
+        "libs/cli/cogniverse_cli/modal_inference/servers/gliner.py",
+        ".dockerignore",
+    ),
+    "clap_embed": (
+        IMAGE_DOCKERFILES["clap_embed"],
+        "deploy/clap_embed/requirements.txt",
+        "libs/cli/cogniverse_cli/modal_inference/servers/clap.py",
+        ".dockerignore",
+    ),
+    "face_embed": (
+        IMAGE_DOCKERFILES["face_embed"],
+        "deploy/face_embed/requirements.txt",
+        "libs/cli/cogniverse_cli/modal_inference/servers/face.py",
+        ".dockerignore",
+    ),
+}
+
+# Every path that affects at least one locally built image.
+DEPLOY_INPUT_PATHS = tuple(
+    dict.fromkeys(path for paths in IMAGE_INPUT_PATHS.values() for path in paths)
 )
 
 
@@ -149,34 +214,49 @@ def _read_project_release_line(project_root: Path) -> str:
     return ".".join(parts)
 
 
-def _latest_deploy_input_commit(project_root: Path) -> str:
+def _latest_deploy_input_commit(project_root: Path, image: str) -> str:
     result = subprocess.run(
         [
             "git",
             "-C",
             str(project_root),
             "log",
-            "-1",
-            "--format=%H",
+            "--format=%x1e%H",
+            "--name-only",
+            "--no-renames",
             "--",
-            *DEPLOY_INPUT_PATHS,
+            *IMAGE_INPUT_PATHS[image],
         ],
         capture_output=True,
         text=True,
         check=True,
     )
-    return result.stdout.strip()
+    dockerignore = GitIgnoreSpec.from_lines(
+        (project_root / ".dockerignore").read_text().splitlines()
+    )
+    always_included = {IMAGE_DOCKERFILES[image], ".dockerignore"}
+    commit = ""
+    for line in result.stdout.split("\n"):
+        if line.startswith("\x1e"):
+            commit = line.removeprefix("\x1e")
+        elif (
+            line
+            and commit
+            and (line in always_included or not dockerignore.match_file(line))
+        ):
+            return commit
+    raise RuntimeError(f"No committed inputs found for image family {image!r}")
 
 
-def dev_version(project_root: Path) -> str:
-    """Git-derived version for the latest deploy-input commit.
+def dev_version(project_root: Path, image: str) -> str:
+    """Git-derived version for the latest commit to one image's inputs.
 
     The shape still matches hatch-vcs' ``0.1.devN+g<sha>`` output, but the
-    commit behind it is the most recent commit that touched the deploy-input
-    set. A tests-only commit therefore keeps the same image tag.
+    commit behind it is the most recent commit that touched that image's
+    declared input set. A commit outside the set therefore keeps its tag.
     """
     release = _read_project_release_line(project_root)
-    commit = _latest_deploy_input_commit(project_root)
+    commit = _latest_deploy_input_commit(project_root, image)
     count = subprocess.run(
         [
             "git",
@@ -206,6 +286,11 @@ def dev_version(project_root: Path) -> str:
     return f"{release}.dev{count}+g{short_sha}"
 
 
+def dev_versions(project_root: Path) -> dict[str, str]:
+    """Return the git-derived version for every locally built image family."""
+    return {image: dev_version(project_root, image) for image in IMAGE_INPUT_PATHS}
+
+
 def _docker_tag(version: str) -> str:
     # Docker tags can't contain '+'; the git version already marks a dev build
     # (e.g. 0.1.dev2137-g<sha>), so there is no separate -dev suffix.
@@ -214,6 +299,18 @@ def _docker_tag(version: str) -> str:
 
 def _dev_tag(repo: str, version: str) -> str:
     return f"{repo}:{_docker_tag(version)}"
+
+
+@contextmanager
+def _image_cache_lock(scope: str):
+    lock_id = hashlib.sha256(scope.encode()).hexdigest()[:16]
+    lock_path = Path(tempfile.gettempdir()) / f"cogniverse-image-cache-{lock_id}.lock"
+    with lock_path.open("w") as lock_file:
+        fcntl.flock(lock_file, fcntl.LOCK_EX)
+        try:
+            yield
+        finally:
+            fcntl.flock(lock_file, fcntl.LOCK_UN)
 
 
 def _deep_merge(base: dict, overlay: dict) -> dict:
@@ -289,12 +386,154 @@ def first_party_services(
     return required
 
 
+def _resolved_versions(
+    project_root: Path, versions: dict[str, str] | None
+) -> dict[str, str]:
+    resolved = dev_versions(project_root) if versions is None else dict(versions)
+    missing = sorted(set(IMAGE_INPUT_PATHS) - set(resolved))
+    if missing:
+        raise ValueError(f"Missing versions for image families: {missing}")
+    return resolved
+
+
+def _image_family_for_dockerfile(dockerfile: str) -> str:
+    for image, declared_dockerfile in IMAGE_DOCKERFILES.items():
+        if declared_dockerfile == dockerfile:
+            return image
+    raise RuntimeError(
+        f"No image input set is defined for Dockerfile {dockerfile!r}. "
+        "Add matching IMAGE_DOCKERFILES and IMAGE_INPUT_PATHS entries."
+    )
+
+
+def _resolved_builds(
+    project_root: Path,
+    torch_backend: str,
+    values_files: list[Path] | None,
+    versions: dict[str, str],
+) -> list[tuple[str, str, str, list[str]]]:
+    unbuildable = sorted(
+        set(first_party_services(project_root, values_files)) - set(LOCAL_IMAGE_BUILDS)
+    )
+    if unbuildable:
+        raise RuntimeError(
+            f"No image build is defined for enabled services: {unbuildable}. "
+            "Add a LOCAL_IMAGE_BUILDS entry (repository, dockerfile, context)."
+        )
+
+    runtime_args = [
+        "--build-arg",
+        f"TORCH_BACKEND={torch_backend}",
+        "--build-arg",
+        f"SETUPTOOLS_SCM_PRETEND_VERSION={versions['runtime']}",
+    ]
+    dashboard_args = [
+        "--build-arg",
+        f"TORCH_BACKEND={torch_backend}",
+        "--build-arg",
+        f"SETUPTOOLS_SCM_PRETEND_VERSION={versions['dashboard']}",
+    ]
+    builds = [
+        (
+            _dev_tag(RUNTIME_REPOS_BY_BACKEND[torch_backend], versions["runtime"]),
+            IMAGE_DOCKERFILES["runtime"],
+            ".",
+            runtime_args,
+        ),
+        (
+            _dev_tag(DASHBOARD_REPOS_BY_BACKEND[torch_backend], versions["dashboard"]),
+            IMAGE_DOCKERFILES["dashboard"],
+            ".",
+            dashboard_args,
+        ),
+        (
+            _dev_tag(LOCAL_IMAGE_BUILDS["gliner"][0], versions["gliner"]),
+            LOCAL_IMAGE_BUILDS["gliner"][1],
+            LOCAL_IMAGE_BUILDS["gliner"][2],
+            [],
+        ),
+    ]
+    to_build = list(enabled_sidecars(project_root, values_files))
+    to_build += [
+        svc
+        for svc in first_party_services(project_root, values_files)
+        if svc not in to_build and svc != "gliner"
+    ]
+    for svc in to_build:
+        repo, dockerfile, context = LOCAL_IMAGE_BUILDS[svc]
+        image = _image_family_for_dockerfile(dockerfile)
+        version = versions[image]
+        if svc in _TORCH_BACKEND_SIDECARS:
+            version = f"{version}-{torch_backend}"
+        sidecar_args = (
+            ["--build-arg", f"TORCH_BACKEND={torch_backend}"]
+            if svc in _TORCH_BACKEND_SIDECARS
+            else []
+        )
+        builds.append((_dev_tag(repo, version), dockerfile, context, sidecar_args))
+    return builds
+
+
+def dev_image_tags(
+    project_root: Path,
+    torch_backend: str | None = None,
+    values_files: list[Path] | None = None,
+    versions: dict[str, str] | None = None,
+) -> tuple[str, ...]:
+    """Return the ordered, deduplicated tags required by one deployment."""
+    backend = torch_backend or detect_torch_backend()
+    resolved = _resolved_versions(project_root, versions)
+    return tuple(
+        dict.fromkeys(
+            tag
+            for tag, _, _, _ in _resolved_builds(
+                project_root, backend, values_files, resolved
+            )
+        )
+    )
+
+
+def dev_deployment_identity(
+    project_root: Path,
+    *,
+    torch_backend: str,
+    values_files: list[Path],
+    set_overrides: dict[str, str],
+    versions: dict[str, str] | None = None,
+) -> dict[str, object]:
+    """Return the exact image and Helm inputs that identify a dev deploy."""
+    chart_root = project_root / "charts" / "cogniverse"
+    chart_hasher = hashlib.sha256()
+    for path in sorted(
+        candidate for candidate in chart_root.rglob("*") if candidate.is_file()
+    ):
+        chart_hasher.update(path.relative_to(chart_root).as_posix().encode())
+        chart_hasher.update(b"\0")
+        chart_hasher.update(path.read_bytes())
+        chart_hasher.update(b"\0")
+    return {
+        "backend": torch_backend,
+        "values_files": tuple(
+            os.path.relpath(path, project_root) for path in values_files
+        ),
+        "set_overrides": dict(set_overrides),
+        "image_tags": dev_image_tags(
+            project_root,
+            torch_backend=torch_backend,
+            values_files=values_files,
+            versions=versions,
+        ),
+        "chart_digest": f"sha256:{chart_hasher.hexdigest()}",
+    }
+
+
 def verify_local_images_cover_deploy(
     project_root: Path,
     values_files: list[Path] | None,
     *,
     built_tags: list[str],
-    version: str,
+    versions: dict[str, str] | None = None,
+    torch_backend: str | None = None,
 ) -> None:
     """Raise unless every first-party image the deploy renders was built.
 
@@ -304,13 +543,23 @@ def verify_local_images_cover_deploy(
     far from the cause. Call this with the values files helm receives, before
     installing.
     """
-    tag = _docker_tag(version)
+    resolved = _resolved_versions(project_root, versions)
+    backend = torch_backend or detect_torch_backend()
     have = set(built_tags)
-    missing = {
-        svc: f"{repo}:{tag}"
-        for svc, repo in first_party_services(project_root, values_files).items()
-        if f"{repo}:{tag}" not in have
-    }
+    missing: dict[str, str] = {}
+    for svc, repo in first_party_services(project_root, values_files).items():
+        build_spec = LOCAL_IMAGE_BUILDS.get(svc)
+        if build_spec is None:
+            missing[svc] = repo
+            continue
+        _, dockerfile, _ = build_spec
+        image = _image_family_for_dockerfile(dockerfile)
+        version = resolved[image]
+        if svc in _TORCH_BACKEND_SIDECARS:
+            version = f"{version}-{backend}"
+        expected = _dev_tag(repo, version)
+        if expected not in have:
+            missing[svc] = expected
     if missing:
         detail = ", ".join(f"{svc} -> {ref}" for svc, ref in sorted(missing.items()))
         raise RuntimeError(
@@ -323,12 +572,13 @@ def build_images(
     project_root: Path,
     torch_backend: str | None = None,
     values_files: list[Path] | None = None,
-    version: str | None = None,
+    versions: dict[str, str] | None = None,
 ) -> list[str]:
-    """Build all cogniverse-owned Docker images, tagged with the
-    deploy-input-derived version (``dev_version``), so unchanged deploy inputs
-    reuse the same image tag. Pass ``version`` to override (tests, no git
-    checkout).
+    """Build absent cogniverse-owned images under their input-derived tags.
+
+    Existing host tags are reused. Pass ``versions`` to override each image
+    family's version (tests, no git checkout). The return value is the complete
+    required tag set, including reused images.
 
     Builds the runtime + dashboard variants matching ``torch_backend``
     (auto-detected when None) plus the backend-agnostic GLiNER sidecar. Each
@@ -343,119 +593,117 @@ def build_images(
     that has no ``LOCAL_IMAGE_BUILDS`` spec, rather than leaving its pod to
     fail at image pull.
     """
-    unbuildable = sorted(
-        set(first_party_services(project_root, values_files)) - set(LOCAL_IMAGE_BUILDS)
-    )
-    if unbuildable:
-        raise RuntimeError(
-            f"No image build is defined for enabled services: {unbuildable}. "
-            "Add a LOCAL_IMAGE_BUILDS entry (repository, dockerfile, context)."
-        )
-    version = version or dev_version(project_root)
     backend = torch_backend or detect_torch_backend()
-
-    # Runtime + dashboard install the workspace, and the docker context
-    # excludes .git, so pass the deploy-input-derived version in explicitly.
-    workspace_arg = [
-        "--build-arg",
-        f"TORCH_BACKEND={backend}",
-        "--build-arg",
-        f"SETUPTOOLS_SCM_PRETEND_VERSION={version}",
-    ]
-    builds = [
-        (
-            _dev_tag(RUNTIME_REPOS_BY_BACKEND[backend], version),
-            "libs/runtime/Dockerfile",
-            ".",
-            workspace_arg,
-        ),
-        (
-            _dev_tag(DASHBOARD_REPOS_BY_BACKEND[backend], version),
-            "libs/dashboard/Dockerfile",
-            ".",
-            workspace_arg,
-        ),
-        # GLiNER takes no TORCH_BACKEND arg and uses the repository-root
-        # context for its canonical CLI modal-inference server.
-        (
-            _dev_tag(LOCAL_IMAGE_BUILDS["gliner"][0], version),
-            LOCAL_IMAGE_BUILDS["gliner"][1],
-            LOCAL_IMAGE_BUILDS["gliner"][2],
-            [],
-        ),
-    ]
-    # Union of the enabled sidecars and every first-party image the rendered
-    # chart references, so a service reaches the build through either seam.
-    to_build = list(enabled_sidecars(project_root, values_files))
-    to_build += [
-        svc
-        for svc in first_party_services(project_root, values_files)
-        if svc not in to_build and svc != "gliner"
-    ]
-    for svc in to_build:
-        repo, dockerfile, context = LOCAL_IMAGE_BUILDS[svc]
-        sidecar_args = (
-            ["--build-arg", f"TORCH_BACKEND={backend}"]
-            if svc in _TORCH_BACKEND_SIDECARS
-            else []
-        )
-        builds.append((_dev_tag(repo, version), dockerfile, context, sidecar_args))
-
-    built: list[str] = []
-    seen_tags: set[str] = set()
-    for tag, dockerfile, context, extra_args in builds:
-        if tag in seen_tags:
-            continue
-        seen_tags.add(tag)
-        subprocess.run(
-            ["docker", "build", "-f", dockerfile, *extra_args, "-t", tag, context],
-            cwd=str(project_root),
+    resolved = _resolved_versions(project_root, versions)
+    builds = _resolved_builds(project_root, backend, values_files, resolved)
+    with _image_cache_lock("build"):
+        host_inventory = subprocess.run(
+            ["docker", "image", "ls", "--format", "{{.Repository}}:{{.Tag}}"],
+            capture_output=True,
+            text=True,
             check=True,
-            timeout=3600,
+            timeout=30,
         )
-        built.append(tag)
-    return built
+        host_tags = set((host_inventory.stdout or "").splitlines())
+        required: list[str] = []
+        for tag, dockerfile, context, extra_args in builds:
+            if tag in required:
+                continue
+            required.append(tag)
+            if tag in host_tags:
+                continue
+            subprocess.run(
+                [
+                    "docker",
+                    "build",
+                    "-f",
+                    dockerfile,
+                    *extra_args,
+                    "-t",
+                    tag,
+                    context,
+                ],
+                cwd=str(project_root),
+                check=True,
+                timeout=3600,
+            )
+    return required
 
 
 def dev_image_set_values(
     project_root: Path,
     torch_backend: str | None = None,
     values_files: list[Path] | None = None,
-    version: str | None = None,
+    versions: dict[str, str] | None = None,
 ) -> dict[str, str]:
-    """Chart ``--set`` overrides pointing every first-party image at the
-    deploy-input-derived dev tag ``build_images`` produces, so ``cogniverse up``
-    deploys exactly what it built. ``values.k3s.yaml`` carries a static
-    ``<line>-dev`` placeholder that these override with the built tag."""
+    """Chart ``--set`` overrides for each first-party image's derived dev tag.
+
+    These point Helm at the exact tags ``build_images`` resolves. The static
+    ``<line>-dev`` placeholders in ``values.k3s.yaml`` are never deployed.
+    """
     backend = torch_backend or detect_torch_backend()
-    tag = _docker_tag(version or dev_version(project_root))
+    resolved = _resolved_versions(project_root, versions)
     overrides = {
-        f"runtime.imagesByBackend.{backend}.tag": tag,
-        f"dashboard.imagesByBackend.{backend}.tag": tag,
-        "inference.gliner.image.tag": tag,
+        f"runtime.imagesByBackend.{backend}.tag": _docker_tag(resolved["runtime"]),
+        f"dashboard.imagesByBackend.{backend}.tag": _docker_tag(resolved["dashboard"]),
+        "inference.gliner.image.tag": _docker_tag(resolved["gliner"]),
     }
     for svc in enabled_sidecars(project_root, values_files):
-        overrides[f"inference.{svc}.image.tag"] = tag
+        _, dockerfile, _ = LOCAL_IMAGE_BUILDS[svc]
+        image = _image_family_for_dockerfile(dockerfile)
+        version = resolved[image]
+        if svc in _TORCH_BACKEND_SIDECARS:
+            version = f"{version}-{backend}"
+        overrides[f"inference.{svc}.image.tag"] = _docker_tag(version)
     return overrides
 
 
 def import_images(cluster_name: str, tags: list[str]) -> None:
-    """Import Docker images into a k3d cluster."""
-    for tag in tags:
-        subprocess.run(
+    """Import tags that are absent from the k3d server node."""
+    with _image_cache_lock(f"import:{cluster_name}"):
+        inventory = subprocess.run(
             [
-                "k3d",
-                "image",
-                "import",
-                "--mode",
-                "direct",
-                tag,
-                "-c",
-                cluster_name,
+                "docker",
+                "exec",
+                f"k3d-{cluster_name}-server-0",
+                "crictl",
+                "images",
+                "-o",
+                "json",
             ],
+            capture_output=True,
+            text=True,
             check=True,
-            timeout=1800,
+            timeout=30,
         )
+        try:
+            node_images = json.loads(inventory.stdout or "{}").get("images", [])
+        except (AttributeError, TypeError, ValueError) as exc:
+            raise RuntimeError(
+                "k3d node image inventory returned invalid JSON"
+            ) from exc
+        node_tags = {
+            tag.removeprefix("docker.io/")
+            for image in node_images
+            for tag in image.get("repoTags", [])
+        }
+        for tag in tags:
+            if tag in node_tags:
+                continue
+            subprocess.run(
+                [
+                    "k3d",
+                    "image",
+                    "import",
+                    "--mode",
+                    "direct",
+                    tag,
+                    "-c",
+                    cluster_name,
+                ],
+                check=True,
+                timeout=1800,
+            )
 
 
 _DEV_NUM_RE = re.compile(r"dev(\d+)")
@@ -467,17 +715,15 @@ def _dev_number(tag: str) -> int | None:
 
 
 def prune_superseded_images(
-    version: str,
+    current_tags: list[str],
     *,
     node_container: str | None = None,
     runner=subprocess.run,
 ) -> list[str]:
-    """Remove ``cogniverse/*`` image generations older than the current build.
+    """Remove old generations for each current ``cogniverse/*`` repository.
 
-    Keeps the current build and the one generation immediately preceding it
-    (so a quick ``helm rollback`` to the prior image needs no rebuild) and
-    drops everything older — otherwise each ``cogniverse up`` leaves ~25GB of
-    superseded tags on the host and inside the k3d node's containerd.
+    Each repository keeps its current tag and the generation immediately
+    preceding that tag, so independently versioned images retain one rollback.
 
     On the host, superseded tags are untagged with ``docker rmi`` (which only
     frees the image when its last tag goes). When ``node_container`` is set,
@@ -487,8 +733,11 @@ def prune_superseded_images(
 
     ``runner`` is injectable for tests. Returns the removed host tags.
     """
-    current_tag = _docker_tag(version)
-    current_num = _dev_number(current_tag)
+    current_by_repo = {
+        tag.rsplit(":", 1)[0]: _dev_number(tag)
+        for tag in current_tags
+        if tag.startswith("cogniverse/") and ":" in tag
+    }
 
     result = runner(
         ["docker", "images", "--format", "{{.Repository}}:{{.Tag}}\t{{.ID}}"],
@@ -504,15 +753,32 @@ def prune_superseded_images(
         if tag.startswith("cogniverse/"):
             host_tags.append(tag)
 
-    numbers = {n for t in host_tags if (n := _dev_number(t)) is not None}
-    kept_nums: set[int] = {current_num} if current_num is not None else set()
-    below = [n for n in numbers if current_num is not None and n < current_num]
-    if below:
-        kept_nums.add(max(below))
+    kept_by_repo: dict[str, set[int]] = {}
+    for repo, current_num in current_by_repo.items():
+        if current_num is None:
+            continue
+        kept = {current_num}
+        below = [
+            number
+            for tag in host_tags
+            if tag.rsplit(":", 1)[0] == repo
+            and (number := _dev_number(tag)) is not None
+            and number < current_num
+        ]
+        if below:
+            kept.add(max(below))
+        kept_by_repo[repo] = kept
 
     def _superseded(tag: str) -> bool:
+        repo = tag.rsplit(":", 1)[0]
         n = _dev_number(tag)
-        return n is not None and n not in kept_nums
+        current_num = current_by_repo.get(repo)
+        return (
+            current_num is not None
+            and n is not None
+            and n < current_num
+            and n not in kept_by_repo[repo]
+        )
 
     removed: list[str] = []
     for tag in host_tags:

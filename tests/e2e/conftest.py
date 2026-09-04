@@ -1955,24 +1955,30 @@ def _current_e2e_deploy_sha(repo_root: Path | None = None) -> str:
 def _normalize_e2e_deployment_identity(
     identity: dict[str, object],
 ) -> dict[str, object]:
-    return dict(identity)
+    normalized = dict(identity)
+    for key in ("values_files", "image_tags"):
+        value = normalized.get(key)
+        if isinstance(value, list):
+            normalized[key] = tuple(value)
+    return normalized
 
 
 def _effective_e2e_deployment_identity(repo_root: Path) -> dict:
+    from cogniverse_cli.images import dev_deployment_identity
+
     from tests.e2e.deployment.conftest import deployment_helm_inputs
 
     inputs = deployment_helm_inputs(
         repo_root,
         extra_set=_e2e_deployment_overrides(),
     )
-    return {
-        "backend": inputs["backend"],
-        "values_files": [
-            os.path.relpath(path, repo_root) for path in inputs["helm_values"]
-        ],
-        "set_overrides": inputs["helm_set_overrides"],
-        "image_repository": inputs["image_repository"],
-    }
+    return dev_deployment_identity(
+        repo_root,
+        torch_backend=inputs["backend"],
+        values_files=inputs["helm_values"],
+        set_overrides=inputs["helm_set_overrides"],
+        versions=inputs["image_versions"],
+    )
 
 
 def _current_e2e_deploy_state(repo_root: Path | None = None) -> dict:
@@ -2010,7 +2016,11 @@ def _read_e2e_deploy_state() -> dict | None:
         payload = json.loads(raw)
     except json.JSONDecodeError:
         return None
-    return payload if isinstance(payload, dict) else None
+    return (
+        _normalize_e2e_deployment_identity(payload)
+        if isinstance(payload, dict)
+        else None
+    )
 
 
 def _stamp_e2e_deploy_state(deploy_state: dict) -> None:
@@ -2066,12 +2076,15 @@ def _e2e_deploy_reuse_state(
         "backend",
         "values_files",
         "set_overrides",
-        "image_repository",
+        "image_tags",
+        "chart_digest",
     }:
         return "stale", "deploy stamp is missing or malformed"
     if current_identity is None:
         current_identity = _effective_e2e_deployment_identity(repo_root)
-    if deployed_state == current_identity:
+    if _normalize_e2e_deployment_identity(
+        deployed_state
+    ) == _normalize_e2e_deployment_identity(current_identity):
         return "reusable", ""
     return "stale", "deployment identity changed"
 

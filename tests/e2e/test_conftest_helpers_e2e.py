@@ -317,6 +317,18 @@ def _expected_e2e_deployment_set_overrides() -> dict[str, str]:
     }
 
 
+def _expected_e2e_image_tags(backend: str = "rocm") -> tuple[str, ...]:
+    return (
+        f"cogniverse/runtime-{backend}:0.1.dev3019-g51f8bee27",
+        f"cogniverse/dashboard-{backend}:0.1.dev3017-g61e9ccd38",
+        "cogniverse/gliner:0.1.dev2988-gbf5b73d11",
+    )
+
+
+def _expected_e2e_chart_digest() -> str:
+    return "sha256:4e803bfbbc1fca29d55c61abe0e1d722b4ddbbd9e0df645abbd5c57a5d96f5c4"
+
+
 def test_event_loop_reset_does_not_warn_when_no_loop_is_attached():
     previous_policy = asyncio.get_event_loop_policy()
     asyncio.set_event_loop_policy(asyncio.DefaultEventLoopPolicy())
@@ -963,22 +975,25 @@ class TestSharedClusterOwnership:
         backend: str = "rocm",
         values_files: list[str] | None = None,
         set_overrides: dict[str, str] | None = None,
-        image_repository: str = "cogniverse/runtime-rocm",
+        image_tags: tuple[str, ...] | None = None,
     ) -> dict[str, object]:
         return {
             "backend": backend,
-            "values_files": values_files
-            or [
-                "charts/cogniverse/values.k3s.yaml",
-                "charts/cogniverse/values.rocm.yaml",
-            ],
+            "values_files": tuple(
+                values_files
+                or [
+                    "charts/cogniverse/values.k3s.yaml",
+                    "charts/cogniverse/values.rocm.yaml",
+                ]
+            ),
             "set_overrides": set_overrides
             or {
                 "devMode.enabled": "false",
                 "runtime.backend": backend,
                 "dashboard.backend": backend,
             },
-            "image_repository": image_repository,
+            "image_tags": image_tags or _expected_e2e_image_tags(backend),
+            "chart_digest": _expected_e2e_chart_digest(),
         }
 
     def test_tests_only_commit_between_deployed_sha_and_head_is_not_stale(
@@ -1148,9 +1163,7 @@ class TestSharedClusterOwnership:
     def test_backend_differs_is_stale(self, tmp_path):
         repo_root, _ = self._seed_git_repo(tmp_path)
         deployed_identity = self._current_identity(backend="rocm")
-        current_identity = self._current_identity(
-            backend="cuda", image_repository="cogniverse/runtime-cuda"
-        )
+        current_identity = self._current_identity(backend="cuda")
         deployed_stamp = dict(deployed_identity)
 
         assert e2e_conftest._e2e_deploy_reuse_state(
@@ -1165,7 +1178,6 @@ class TestSharedClusterOwnership:
                 "charts/cogniverse/values.k3s.yaml",
                 "charts/cogniverse/values.cuda.yaml",
             ],
-            image_repository="cogniverse/runtime-cuda",
         )
         deployed_stamp = dict(deployed_identity)
 
@@ -1190,11 +1202,15 @@ class TestSharedClusterOwnership:
             repo_root, deployed_stamp, current_identity=current_identity
         ) == ("stale", "deployment identity changed")
 
-    def test_image_repository_differs_is_stale(self, tmp_path):
+    def test_image_tag_tuple_differs_is_stale(self, tmp_path):
         repo_root, _ = self._seed_git_repo(tmp_path)
         deployed_identity = self._current_identity()
         current_identity = self._current_identity(
-            image_repository="cogniverse/runtime-cuda"
+            image_tags=(
+                "cogniverse/runtime-rocm:0.1.dev3020-gabcdef123",
+                "cogniverse/dashboard-rocm:0.1.dev3017-g61e9ccd38",
+                "cogniverse/gliner:0.1.dev2988-gbf5b73d11",
+            )
         )
         deployed_stamp = dict(deployed_identity)
 
@@ -1207,6 +1223,7 @@ class TestSharedClusterOwnership:
         deployment_inputs = {
             "backend": "rocm",
             "image_version": "build-abc",
+            "image_versions": dict.fromkeys(images_mod.IMAGE_INPUT_PATHS, "build-abc"),
             "helm_values": [
                 repo_root / "charts" / "cogniverse" / "values.k3s.yaml",
                 repo_root / "charts" / "cogniverse" / "values.rocm.yaml",
@@ -1217,7 +1234,6 @@ class TestSharedClusterOwnership:
                 "dashboard.backend": "rocm",
                 "somefuture.imagesByBackend.rocm.tag": "0.1.dev9999-gdeadbeef00",
             },
-            "image_repository": "cogniverse/runtime-rocm",
         }
         from tests.e2e.deployment import conftest as deployment_conftest
 
@@ -1234,17 +1250,22 @@ class TestSharedClusterOwnership:
 
         assert current_identity == {
             "backend": "rocm",
-            "values_files": [
+            "values_files": (
                 "charts/cogniverse/values.k3s.yaml",
                 "charts/cogniverse/values.rocm.yaml",
-            ],
+            ),
             "set_overrides": {
                 "devMode.enabled": "false",
                 "runtime.backend": "rocm",
                 "dashboard.backend": "rocm",
                 "somefuture.imagesByBackend.rocm.tag": "0.1.dev9999-gdeadbeef00",
             },
-            "image_repository": "cogniverse/runtime-rocm",
+            "image_tags": (
+                "cogniverse/runtime-rocm:build-abc",
+                "cogniverse/dashboard-rocm:build-abc",
+                "cogniverse/gliner:build-abc",
+            ),
+            "chart_digest": _expected_e2e_chart_digest(),
         }
         assert e2e_conftest._e2e_deploy_reuse_state(
             repo_root, deployed_stamp, current_identity=current_identity
@@ -1369,7 +1390,11 @@ class TestSharedClusterOwnership:
         current_identity = self._current_identity()
         deployed_stamp = {
             **current_identity,
-            "image_repository": "cogniverse/runtime-cuda",
+            "image_tags": (
+                "cogniverse/runtime-cuda:0.1.dev3019-g51f8bee27",
+                "cogniverse/dashboard-rocm:0.1.dev3017-g61e9ccd38",
+                "cogniverse/gliner:0.1.dev2988-gbf5b73d11",
+            ),
         }
 
         assert e2e_conftest._e2e_deploy_reuse_state(
@@ -1397,8 +1422,7 @@ class TestSharedClusterOwnership:
             _expected_e2e_sandbox_overrides,
         )
 
-        baseline_version = images_mod.dev_version(repo_root)
-        baseline_tag = baseline_version.replace("+", "-")
+        baseline_versions = images_mod.dev_versions(repo_root)
         baseline_tags = images_mod.build_images(repo_root, torch_backend="cpu")
         baseline_identity = e2e_conftest._effective_e2e_deployment_identity(repo_root)
 
@@ -1409,21 +1433,70 @@ class TestSharedClusterOwnership:
             "tests-only",
         )
 
-        assert images_mod.dev_version(repo_root) == baseline_version
+        assert images_mod.dev_versions(repo_root) == baseline_versions
         assert images_mod.build_images(repo_root, torch_backend="cpu") == baseline_tags
         assert baseline_tags == [
-            f"cogniverse/runtime-cpu:{baseline_tag}",
-            f"cogniverse/dashboard-cpu:{baseline_tag}",
-            f"cogniverse/gliner:{baseline_tag}",
+            f"cogniverse/runtime-cpu:{baseline_versions['runtime'].replace('+', '-')}",
+            "cogniverse/dashboard-cpu:"
+            f"{baseline_versions['dashboard'].replace('+', '-')}",
+            f"cogniverse/gliner:{baseline_versions['gliner'].replace('+', '-')}",
         ]
         assert e2e_conftest._effective_e2e_deployment_identity(repo_root) == (
             baseline_identity
         )
-        assert len(build_calls) == 6
+        assert len(build_calls) == 8
 
-    @pytest.mark.parametrize("deploy_input_path", e2e_conftest._E2E_DEPLOY_DIFF_PATHS)
-    def test_each_deploy_input_path_changes_build_tag_and_identity(
-        self, tmp_path, monkeypatch, deploy_input_path
+    @pytest.mark.parametrize(
+        (
+            "relative_path",
+            "content",
+            "expected_changed_images",
+            "expected_identity_change",
+        ),
+        [
+            ("libs/runtime/module.py", "value = 'changed'\n", {"runtime"}, True),
+            (
+                "configs/config.json",
+                '{"backend": "cuda"}\n',
+                {"dashboard", "runtime"},
+                True,
+            ),
+            ("charts/cogniverse/values.yaml", "replicaCount: 2\n", set(), True),
+            (
+                "deploy/pylate/Dockerfile",
+                "FROM python:3.13-slim\n",
+                {"pylate"},
+                False,
+            ),
+            (
+                "scripts/dashboard_tab.py",
+                "VALUE = 'changed'\n",
+                {"dashboard"},
+                True,
+            ),
+            (
+                "pyproject.toml",
+                "[project]\nname = 'demo'\nversion = '0.2.0'\n",
+                set(images_mod.IMAGE_INPUT_PATHS),
+                True,
+            ),
+            ("uv.lock", "lock-version = 2\n", {"dashboard", "runtime"}, True),
+            (
+                ".dockerignore",
+                "__pycache__\n*.tmp\n",
+                set(images_mod.IMAGE_INPUT_PATHS),
+                True,
+            ),
+        ],
+    )
+    def test_each_deploy_input_path_has_exact_per_image_expectations(
+        self,
+        tmp_path,
+        monkeypatch,
+        relative_path,
+        content,
+        expected_changed_images,
+        expected_identity_change,
     ):
         repo_root, _ = self._seed_git_repo(tmp_path)
         real_run = subprocess.run
@@ -1441,33 +1514,34 @@ class TestSharedClusterOwnership:
             _expected_e2e_sandbox_overrides,
         )
 
-        baseline_version = images_mod.dev_version(repo_root)
-        baseline_tag = baseline_version.replace("+", "-")
+        baseline_versions = images_mod.dev_versions(repo_root)
         baseline_tags = images_mod.build_images(repo_root, torch_backend="cpu")
         baseline_identity = e2e_conftest._effective_e2e_deployment_identity(repo_root)
 
-        relative_path, content = self._deploy_input_change(deploy_input_path)
         self._commit_change(
-            repo_root, relative_path, content, f"{deploy_input_path}-change"
+            repo_root, relative_path, content, f"{relative_path}-change"
         )
 
-        changed_version = images_mod.dev_version(repo_root)
-        changed_tag = changed_version.replace("+", "-")
+        changed_versions = images_mod.dev_versions(repo_root)
         changed_tags = images_mod.build_images(repo_root, torch_backend="cpu")
         changed_identity = e2e_conftest._effective_e2e_deployment_identity(repo_root)
 
+        changed_images = {
+            image
+            for image in baseline_versions
+            if baseline_versions[image] != changed_versions[image]
+        }
+        assert changed_images == expected_changed_images
         assert baseline_tags == [
-            f"cogniverse/runtime-cpu:{baseline_tag}",
-            f"cogniverse/dashboard-cpu:{baseline_tag}",
-            f"cogniverse/gliner:{baseline_tag}",
+            f"cogniverse/runtime-cpu:{baseline_versions['runtime'].replace('+', '-')}",
+            "cogniverse/dashboard-cpu:"
+            f"{baseline_versions['dashboard'].replace('+', '-')}",
+            f"cogniverse/gliner:{baseline_versions['gliner'].replace('+', '-')}",
         ]
-        assert changed_tags == [
-            f"cogniverse/runtime-cpu:{changed_tag}",
-            f"cogniverse/dashboard-cpu:{changed_tag}",
-            f"cogniverse/gliner:{changed_tag}",
-        ]
-        assert changed_version != baseline_version
-        assert changed_identity != baseline_identity
+        enabled_images = {"dashboard", "gliner", "runtime"}
+        expected_deploy_change = bool(expected_changed_images & enabled_images)
+        assert (changed_tags != baseline_tags) is expected_deploy_change
+        assert (changed_identity != baseline_identity) is expected_identity_change
 
     def test_deploy_stamp_round_trips_identity(self, monkeypatch, tmp_path):
         repo_root, _ = self._seed_git_repo(tmp_path)
@@ -1561,12 +1635,13 @@ class TestSharedClusterOwnership:
             "_effective_e2e_deployment_identity",
             lambda repo_root: {
                 "backend": "rocm",
-                "values_files": [
+                "values_files": (
                     "charts/cogniverse/values.k3s.yaml",
                     "charts/cogniverse/values.rocm.yaml",
-                ],
+                ),
                 "set_overrides": _expected_e2e_deployment_set_overrides(),
-                "image_repository": "cogniverse/runtime-rocm",
+                "image_tags": _expected_e2e_image_tags(),
+                "chart_digest": _expected_e2e_chart_digest(),
             },
         )
         monkeypatch.setattr(
@@ -1933,12 +2008,13 @@ class TestSharedClusterOwnership:
         sandbox_overrides = _expected_e2e_sandbox_overrides()
         deployment_identity = {
             "backend": "rocm",
-            "values_files": [
+            "values_files": (
                 "charts/cogniverse/values.k3s.yaml",
                 "charts/cogniverse/values.rocm.yaml",
-            ],
+            ),
             "set_overrides": _expected_e2e_deployment_set_overrides(),
-            "image_repository": "cogniverse/runtime-rocm",
+            "image_tags": _expected_e2e_image_tags(),
+            "chart_digest": _expected_e2e_chart_digest(),
         }
         monkeypatch.setattr(
             e2e_conftest,
@@ -2088,12 +2164,13 @@ class TestSharedClusterOwnership:
         assert calls["stamp"] == [
             {
                 "backend": "rocm",
-                "values_files": [
+                "values_files": (
                     "charts/cogniverse/values.k3s.yaml",
                     "charts/cogniverse/values.rocm.yaml",
-                ],
+                ),
                 "set_overrides": _expected_e2e_deployment_set_overrides(),
-                "image_repository": "cogniverse/runtime-rocm",
+                "image_tags": _expected_e2e_image_tags(),
+                "chart_digest": _expected_e2e_chart_digest(),
             }
         ]
         stack.close()

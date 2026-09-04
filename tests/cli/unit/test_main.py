@@ -20,6 +20,15 @@ from cogniverse_cli.main import (
     cli,
 )
 
+TEST_IMAGE_VERSIONS = {
+    "runtime": "0.1.dev91+gaaa111aaa",
+    "dashboard": "0.1.dev92+gbbb222bbb",
+    "pylate": "0.1.dev93+gccc333ccc",
+    "gliner": "0.1.dev94+gddd444ddd",
+    "clap_embed": "0.1.dev95+geee555eee",
+    "face_embed": "0.1.dev96+gfff666fff",
+}
+
 
 def _install_fake_cluster_tools(
     tmp_path: Path,
@@ -686,8 +695,11 @@ class TestUpImagePrune:
             "check_prerequisites": [],
             "resolve_project_root": Path("/root"),
             "has_workspace_source": True,
-            "dev_version": "0.1.dev99-gabc",
-            "build_images": ["cogniverse/runtime-rocm:0.1.dev99-gabc"],
+            "dev_versions": TEST_IMAGE_VERSIONS,
+            "build_images": [
+                "cogniverse/runtime-rocm:0.1.dev91-gaaa111aaa",
+                "cogniverse/dashboard-rocm:0.1.dev92-gbbb222bbb",
+            ],
             "dev_image_set_values": {},
             "_probe_host_llm": False,
         }
@@ -702,7 +714,7 @@ class TestUpImagePrune:
             "check_prerequisites": vals["check_prerequisites"],
             "resolve_project_root": vals["resolve_project_root"],
             "has_workspace_source": vals["has_workspace_source"],
-            "dev_version": vals["dev_version"],
+            "dev_versions": vals["dev_versions"],
             "build_images": vals["build_images"],
             "dev_image_set_values": vals["dev_image_set_values"],
             "_probe_host_llm": vals["_probe_host_llm"],
@@ -749,13 +761,23 @@ class TestUpImagePrune:
         result, mock_prune = self._run(existing_k8s=False)
         assert result.exit_code == 0, result.output
         mock_prune.assert_called_once_with(
-            "0.1.dev99-gabc", node_container="k3d-cogniverse-server-0"
+            [
+                "cogniverse/runtime-rocm:0.1.dev91-gaaa111aaa",
+                "cogniverse/dashboard-rocm:0.1.dev92-gbbb222bbb",
+            ],
+            node_container="k3d-cogniverse-server-0",
         )
 
     def test_non_k3d_deploy_prunes_host_only(self):
         result, mock_prune = self._run(existing_k8s=True)
         assert result.exit_code == 0, result.output
-        mock_prune.assert_called_once_with("0.1.dev99-gabc", node_container=None)
+        mock_prune.assert_called_once_with(
+            [
+                "cogniverse/runtime-rocm:0.1.dev91-gaaa111aaa",
+                "cogniverse/dashboard-rocm:0.1.dev92-gbbb222bbb",
+            ],
+            node_container=None,
+        )
 
     def test_prune_failure_does_not_fail_the_deploy(self):
         result, mock_prune = self._run(
@@ -1340,7 +1362,10 @@ class TestUpImageSource:
         ("cogniverse_cli.main.has_existing_k8s", {"return_value": False}),
         ("cogniverse_cli.main.prune_superseded_images", {}),
         ("cogniverse_cli.main.import_images", {}),
-        ("cogniverse_cli.main.dev_version", {"return_value": "0.1.dev1"}),
+        (
+            "cogniverse_cli.main.dev_versions",
+            {"return_value": TEST_IMAGE_VERSIONS},
+        ),
         ("cogniverse_cli.main.dev_image_set_values", {"return_value": {}}),
         ("cogniverse_cli.main.verify_local_images_cover_deploy", {}),
     ]
@@ -1372,7 +1397,21 @@ class TestUpImageSource:
         assert result.exit_code == 0, result.output
         built_from = mocks["build_images"].call_args.args[0]
         assert built_from == tmp_path.resolve()
-        assert mocks["dev_version"].call_args.args[0] == tmp_path.resolve()
+        assert mocks["dev_versions"].call_args.args[0] == tmp_path.resolve()
+        assert mocks["build_images"].call_args.kwargs["versions"] == (
+            TEST_IMAGE_VERSIONS
+        )
+        assert mocks["dev_image_set_values"].call_args.kwargs["versions"] == (
+            TEST_IMAGE_VERSIONS
+        )
+        assert (
+            mocks["verify_local_images_cover_deploy"].call_args.kwargs["versions"]
+            == TEST_IMAGE_VERSIONS
+        )
+        assert (
+            mocks["helm_install"].call_args.kwargs["chart_version"]
+            == (TEST_IMAGE_VERSIONS["runtime"])
+        )
 
     def test_default_builds_from_checkout(self) -> None:
         result, mocks = self._invoke(["up"])

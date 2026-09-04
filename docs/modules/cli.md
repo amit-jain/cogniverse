@@ -86,14 +86,14 @@ comes from `cogniverse_foundation.inference_specs`.
 
 ```bash
 # Deploy the full stack (creates a k3d cluster if none exists, otherwise uses
-# the discovered cogniverse* cluster). Builds the images at the git-derived
-# dev version, pulls third-party images one at a time, then imports each image
-# with `k3d image import --mode direct` in a separate operation to bound peak
-# memory use. A failed pull or import stops the remaining image operations and
-# aborts deployment. After all imports, `up` helm-upgrades with the chart
-# stamped to the same version. In dev mode the pods mount the working tree
-# over the images, so day-to-day code changes only need a `kubectl rollout
-# restart` of the affected deployment — rerun `cogniverse up` when
+# the discovered cogniverse* cluster). Derives each first-party image's dev tag
+# from that image's build inputs, builds only tags absent from the host, and
+# imports only tags absent from the k3d node. Third-party images are pulled one
+# at a time. A failed pull, inventory, build, or import aborts deployment. After
+# all imports, `up` helm-upgrades with per-image tag overrides; the runtime tag
+# supplies the chart's scalar package version. In dev mode the pods mount the
+# working tree over the images, so day-to-day code changes only need a
+# `kubectl rollout restart` of the affected deployment — rerun `cogniverse up` when
 # dependencies, Dockerfiles, or the chart change (see "Development Workflow:
 # Three Loops" in docs/DEVELOPER_GUIDE.md).
 cogniverse up
@@ -302,9 +302,10 @@ flowchart TB
     style Dashboard fill:#64b5f6,stroke:#1565c0,color:#000
 ```
 
-`cogniverse-cli` does not import from and is not imported by any other `libs/*` package — it drives the deployed stack over `kubectl`/`helm` and the runtime's HTTP API rather than in-process calls.
+`cogniverse-cli` imports shared inference contracts from `cogniverse-foundation`.
+It drives deployed services over `kubectl`/`helm` and the runtime's HTTP API.
 
-**Dependencies:** `click`, `fastapi`, `rich`, `httpx`, `httpx-sse`, `modal`, `pyyaml`, `setuptools-scm`
+**Dependencies:** `click`, `cogniverse-foundation`, `fastapi`, `rich`, `httpx`, `httpx-sse`, `modal`, `pathspec`, `pyyaml`, `setuptools-scm`
 
 **Dependents:** none (standalone entry point)
 

@@ -417,7 +417,7 @@ the whole ingest.
 | `colbert_pylate` | `cogniverse/pylate` | **Yes** (`deploy/pylate/Dockerfile`) |
 | `code_colbert_pylate` | `cogniverse/pylate` (shared image, built once) | **Yes** (`deploy/pylate/Dockerfile`) |
 | `denseon` | `vllm/vllm-openai-cpu` / `vllm/vllm-openai-rocm` | No (official) |
-| `video_embed` | `cogniverse/xclip:0.1.0-dev` | **Yes** (`deploy/xclip/Dockerfile`) |
+| `video_embed` | `cogniverse/video-embed` | **Yes** (`deploy/video_embed/Dockerfile`) |
 | `clap_embed` | `cogniverse/clap-embed` | **Yes** (`deploy/clap_embed/`) |
 | `gliner` | `cogniverse/gliner` | **Yes** (`deploy/gliner/Dockerfile`) |
 | `face_embed` | `cogniverse/face-embed` | **Yes** (`deploy/face_embed/`) |
@@ -425,11 +425,12 @@ the whole ingest.
 
 Custom images are built locally by `cogniverse up` (which calls
 `build_images()` in `libs/cli/cogniverse_cli/images.py`) and imported
-into the k3d cluster. `build_images()` tags them from the latest deploy-input
-commit, so tests-only commits reuse the same image set. They are NOT published
-to a public registry —
-they're loaded from the host docker daemon into the cluster's
-containerd via `k3d image import`.
+into the k3d cluster. Each tag comes from the latest commit that touched that
+image's Dockerfile, local `COPY`/`ADD` sources, or `.dockerignore`. Images whose
+tag already exists on the host are not rebuilt, and tags already present in the
+k3d node are not re-imported. They are NOT published to a public registry —
+they're loaded from the host docker daemon into the cluster's containerd via
+`k3d image import`.
 
 ### Modal-hosted services (`inference.<svc>.externalUrl`)
 
@@ -541,11 +542,11 @@ the next configured cluster or starts its own exact-model sidecar.
 
 Warm e2e reuse is tied to both working-tree deployment content and the exact
 effective deployment inputs: detected backend, selected device overlay,
-git-derived image tags, Helm overrides, and the deployment helper itself. A
-stopped shared cluster is started and polled for Kubernetes access, runtime
-readiness, exact Tomoro/ASR identities, and the matching fingerprint. That
-poll has a 40-minute hard deadline so a failed model start cannot hang the test
-session indefinitely.
+the ordered per-image tag tuple, a content digest of the Helm chart, Helm
+values-file paths, and `--set` overrides. A stopped shared cluster is started
+and polled for Kubernetes access, runtime readiness, exact Tomoro/ASR identities,
+and the matching fingerprint. That poll has a 40-minute hard deadline so a
+failed model start cannot hang the test session indefinitely.
 
 ---
 

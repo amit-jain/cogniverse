@@ -50,7 +50,7 @@ from cogniverse_cli.images import (
     build_images,
     detect_torch_backend,
     dev_image_set_values,
-    dev_version,
+    dev_versions,
     has_workspace_source,
     import_images,
     prune_superseded_images,
@@ -368,11 +368,16 @@ def up(
     image_version: str | None = None
     if build_root and has_workspace_source(build_root):
         console.print("[cyan]Building container images...[/cyan]")
-        # Derive the git version once so the built image tag, the deployed
-        # --set override, and the stamped chart version are all identical.
-        image_version = dev_version(build_root)
+        image_backend = host_backend if use_k3d else detect_torch_backend()
+        image_versions = dev_versions(build_root)
+        # Chart package metadata remains scalar; the runtime version identifies
+        # the application chart while image selection uses the full map below.
+        image_version = image_versions["runtime"]
         tags = build_images(
-            build_root, values_files=values_files, version=image_version
+            build_root,
+            torch_backend=image_backend,
+            values_files=values_files,
+            versions=image_versions,
         )
         if use_k3d:
             console.print("[cyan]Importing images into k3d...[/cyan]")
@@ -382,7 +387,7 @@ def up(
         # block; keeps the current build and one previous for rollback.
         try:
             prune_superseded_images(
-                image_version,
+                tags,
                 node_container=(
                     f"k3d-{resolved_cluster_name}-server-0" if use_k3d else None
                 ),
@@ -390,10 +395,17 @@ def up(
         except Exception as exc:
             console.print(f"[yellow]Image prune skipped: {exc}[/yellow]")
         dev_image_overrides = dev_image_set_values(
-            project_root, values_files=values_files, version=image_version
+            project_root,
+            torch_backend=image_backend,
+            values_files=values_files,
+            versions=image_versions,
         )
         verify_local_images_cover_deploy(
-            build_root, values_files, built_tags=tags, version=image_version
+            build_root,
+            values_files,
+            built_tags=tags,
+            versions=image_versions,
+            torch_backend=image_backend,
         )
 
     # 6. Detect LLM mode and build Helm set_values overrides. The dev-image

@@ -3,7 +3,11 @@
 from __future__ import annotations
 
 import json
+import shlex
 import subprocess
+import threading
+from collections import Counter
+from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 from unittest.mock import MagicMock, patch
 from unittest.mock import call as mock_call
@@ -16,6 +20,7 @@ from cogniverse_cli.images import (
     build_images,
     detect_torch_backend,
     dev_image_set_values,
+    dev_version,
     enabled_sidecars,
     has_workspace_source,
     import_images,
@@ -27,6 +32,16 @@ from cogniverse_cli.images import (
 # Passed explicitly so the tests don't need a real git checkout.
 DEV_VERSION = "0.1.dev5+gabc1234"
 DEV_TAG = "0.1.dev5-gabc1234"
+DEV_VERSIONS = {
+    "runtime": "0.1.dev11+gaaa111aaa",
+    "dashboard": "0.1.dev12+gbbb222bbb",
+    "pylate": "0.1.dev13+gccc333ccc",
+    "gliner": "0.1.dev14+gddd444ddd",
+    "clap_embed": "0.1.dev15+geee555eee",
+    "face_embed": "0.1.dev16+gfff666fff",
+}
+DEV_TAGS = {image: version.replace("+", "-") for image, version in DEV_VERSIONS.items()}
+UNIFORM_DEV_VERSIONS = dict.fromkeys(DEV_VERSIONS, DEV_VERSION)
 
 
 def _make_project_root(
@@ -85,8 +100,609 @@ class TestReadAppVersion:
         assert read_app_version(root) == "3.1.4"
 
 
+class TestPerImageDevVersion:
+    """Each image tag follows only the repository inputs copied into it."""
+
+    ALL_IMAGE_FAMILIES = {
+        "runtime",
+        "dashboard",
+        "pylate",
+        "gliner",
+        "clap_embed",
+        "face_embed",
+    }
+    INPUT_CASES = [
+        (
+            "libs/runtime/Dockerfile",
+            "libs/runtime/Dockerfile",
+            "FROM scratch\n",
+            {"runtime"},
+        ),
+        (
+            "pyproject.toml",
+            "pyproject.toml",
+            "[project]\nname = 'demo'\nversion = '0.1.0'\n# changed\n",
+            {"dashboard", "runtime"},
+        ),
+        ("uv.lock", "uv.lock", "lock-version = 2\n", {"dashboard", "runtime"}),
+        (
+            "libs/sdk",
+            "libs/sdk/input.py",
+            "VALUE = 'changed'\n",
+            {"dashboard", "runtime"},
+        ),
+        (
+            "libs/foundation",
+            "libs/foundation/input.py",
+            "VALUE = 'changed'\n",
+            {"dashboard", "runtime"},
+        ),
+        (
+            "libs/evaluation",
+            "libs/evaluation/input.py",
+            "VALUE = 'changed'\n",
+            {"dashboard", "runtime"},
+        ),
+        (
+            "libs/core",
+            "libs/core/input.py",
+            "VALUE = 'changed'\n",
+            {"dashboard", "runtime"},
+        ),
+        (
+            "libs/synthetic",
+            "libs/synthetic/input.py",
+            "VALUE = 'changed'\n",
+            {"dashboard", "runtime"},
+        ),
+        (
+            "libs/vespa",
+            "libs/vespa/input.py",
+            "VALUE = 'changed'\n",
+            {"dashboard", "runtime"},
+        ),
+        (
+            "libs/agents",
+            "libs/agents/input.py",
+            "VALUE = 'changed'\n",
+            {"dashboard", "runtime"},
+        ),
+        (
+            "libs/telemetry-phoenix",
+            "libs/telemetry-phoenix/input.py",
+            "VALUE = 'changed'\n",
+            {"dashboard", "runtime"},
+        ),
+        ("libs/runtime", "libs/runtime/input.py", "VALUE = 'changed'\n", {"runtime"}),
+        (
+            "configs/schemas",
+            "configs/schemas/input.json",
+            "{}\n",
+            {"dashboard", "runtime"},
+        ),
+        (
+            "configs/config.json",
+            "configs/config.json",
+            '{"changed": true}\n',
+            {"dashboard", "runtime"},
+        ),
+        (
+            ".dockerignore",
+            ".dockerignore",
+            "tests/\nscripts/run_*.py\n*.md\n# changed\n",
+            ALL_IMAGE_FAMILIES,
+        ),
+        (
+            "libs/dashboard/Dockerfile",
+            "libs/dashboard/Dockerfile",
+            "FROM scratch\n",
+            {"dashboard"},
+        ),
+        (
+            "libs/dashboard",
+            "libs/dashboard/input.py",
+            "VALUE = 'changed'\n",
+            {"dashboard"},
+        ),
+        ("scripts", "scripts/dashboard_tab.py", "VALUE = 'changed'\n", {"dashboard"}),
+        (
+            "deploy/pylate/Dockerfile",
+            "deploy/pylate/Dockerfile",
+            "FROM busybox\n",
+            {"pylate"},
+        ),
+        (
+            "libs/cli/cogniverse_cli/modal_inference/servers/pylate.py",
+            "libs/cli/cogniverse_cli/modal_inference/servers/pylate.py",
+            "VALUE = 'changed'\n",
+            {"pylate"},
+        ),
+        (
+            "deploy/gliner/Dockerfile",
+            "deploy/gliner/Dockerfile",
+            "FROM busybox\n",
+            {"gliner"},
+        ),
+        (
+            "libs/cli/cogniverse_cli/modal_inference/servers/gliner.py",
+            "libs/cli/cogniverse_cli/modal_inference/servers/gliner.py",
+            "VALUE = 'changed'\n",
+            {"gliner"},
+        ),
+        (
+            "deploy/clap_embed/Dockerfile",
+            "deploy/clap_embed/Dockerfile",
+            "FROM busybox\n",
+            {"clap_embed"},
+        ),
+        (
+            "deploy/clap_embed/requirements.txt",
+            "deploy/clap_embed/requirements.txt",
+            "package==1\n",
+            {"clap_embed"},
+        ),
+        (
+            "libs/cli/cogniverse_cli/modal_inference/servers/clap.py",
+            "libs/cli/cogniverse_cli/modal_inference/servers/clap.py",
+            "VALUE = 'changed'\n",
+            {"clap_embed"},
+        ),
+        (
+            "deploy/face_embed/Dockerfile",
+            "deploy/face_embed/Dockerfile",
+            "FROM busybox\n",
+            {"face_embed"},
+        ),
+        (
+            "deploy/face_embed/requirements.txt",
+            "deploy/face_embed/requirements.txt",
+            "package==1\n",
+            {"face_embed"},
+        ),
+        (
+            "libs/cli/cogniverse_cli/modal_inference/servers/face.py",
+            "libs/cli/cogniverse_cli/modal_inference/servers/face.py",
+            "VALUE = 'changed'\n",
+            {"face_embed"},
+        ),
+    ]
+
+    @staticmethod
+    def _git(repo_root: Path, *args: str) -> str:
+        result = subprocess.run(
+            ["git", "-C", str(repo_root), *args],
+            capture_output=True,
+            text=True,
+            check=True,
+        )
+        return result.stdout.strip()
+
+    @classmethod
+    def _seed_git_repo(cls, tmp_path: Path) -> Path:
+        repo_root = tmp_path / "repo"
+        files = {
+            "pyproject.toml": "[project]\nname = 'demo'\nversion = '0.1.0'\n",
+            ".dockerignore": "tests/\nscripts/run_*.py\n*.md\n",
+            "libs/core/module.py": "CORE = 'base'\n",
+            "libs/dashboard/module.py": "DASHBOARD = 'base'\n",
+            "libs/runtime/module.py": "RUNTIME = 'base'\n",
+            "scripts/run_ignored.py": "VALUE = 'base'\n",
+            "deploy/pylate/Dockerfile": "FROM scratch\n",
+            "deploy/gliner/Dockerfile": "FROM scratch\n",
+            "deploy/clap_embed/Dockerfile": "FROM scratch\n",
+            "deploy/face_embed/Dockerfile": "FROM scratch\n",
+            "tests/test_only.py": "VALUE = 'base'\n",
+        }
+        for relative_path, content in files.items():
+            path = repo_root / relative_path
+            path.parent.mkdir(parents=True, exist_ok=True)
+            path.write_text(content)
+        cls._git(repo_root, "init")
+        cls._git(repo_root, "config", "user.email", "tests@example.com")
+        cls._git(repo_root, "config", "user.name", "Tests")
+        cls._git(repo_root, "add", "-A")
+        cls._git(repo_root, "commit", "-m", "base")
+        return repo_root
+
+    @classmethod
+    def _commit(cls, repo_root: Path, relative_path: str, content: str) -> None:
+        path = repo_root / relative_path
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text(content)
+        cls._git(repo_root, "add", "-A")
+        cls._git(repo_root, "commit", "-m", f"change {relative_path}")
+
+    @staticmethod
+    def _versions(repo_root: Path) -> dict[str, str]:
+        return {
+            image: dev_version(repo_root, image)
+            for image in images_mod.IMAGE_INPUT_PATHS
+        }
+
+    @staticmethod
+    def _changed_images(before: dict[str, str], after: dict[str, str]) -> set[str]:
+        return {image for image in before if before[image] != after[image]}
+
+    def test_tests_only_commit_changes_no_image_tag(self, tmp_path: Path) -> None:
+        repo_root = self._seed_git_repo(tmp_path)
+        before = self._versions(repo_root)
+
+        self._commit(repo_root, "tests/test_only.py", "VALUE = 'changed'\n")
+
+        assert self._versions(repo_root) == before
+
+    def test_dashboard_commit_changes_only_dashboard_tag(self, tmp_path: Path) -> None:
+        repo_root = self._seed_git_repo(tmp_path)
+        before = self._versions(repo_root)
+
+        self._commit(repo_root, "libs/dashboard/module.py", "DASHBOARD = 'changed'\n")
+        after = self._versions(repo_root)
+
+        assert self._changed_images(before, after) == {"dashboard"}
+
+    def test_dockerignored_copy_source_commit_changes_no_image_tag(
+        self, tmp_path: Path
+    ) -> None:
+        repo_root = self._seed_git_repo(tmp_path)
+        before = self._versions(repo_root)
+
+        self._commit(repo_root, "scripts/run_ignored.py", "VALUE = 'ignored change'\n")
+
+        assert self._versions(repo_root) == before
+
+    def test_core_commit_changes_both_app_image_tags(self, tmp_path: Path) -> None:
+        repo_root = self._seed_git_repo(tmp_path)
+        before = self._versions(repo_root)
+
+        self._commit(repo_root, "libs/core/module.py", "CORE = 'changed'\n")
+        after = self._versions(repo_root)
+
+        assert self._changed_images(before, after) == {"dashboard", "runtime"}
+
+    def test_pylate_deploy_commit_changes_only_pylate_tag(self, tmp_path: Path) -> None:
+        repo_root = self._seed_git_repo(tmp_path)
+        before = self._versions(repo_root)
+
+        self._commit(repo_root, "deploy/pylate/Dockerfile", "FROM python:3.12\n")
+        after = self._versions(repo_root)
+
+        assert self._changed_images(before, after) == {"pylate"}
+
+    def test_input_case_table_covers_every_declared_path(self) -> None:
+        assert {case[0] for case in self.INPUT_CASES} == set(
+            images_mod.DEPLOY_INPUT_PATHS
+        )
+
+    @pytest.mark.parametrize(
+        ("declared_path", "relative_path", "content", "expected_changed_images"),
+        INPUT_CASES,
+    )
+    def test_each_declared_input_changes_exact_image_tags(
+        self,
+        tmp_path: Path,
+        declared_path: str,
+        relative_path: str,
+        content: str,
+        expected_changed_images: set[str],
+    ) -> None:
+        repo_root = self._seed_git_repo(tmp_path)
+        before = self._versions(repo_root)
+
+        self._commit(repo_root, relative_path, content)
+        after = self._versions(repo_root)
+
+        assert declared_path in images_mod.DEPLOY_INPUT_PATHS
+        assert self._changed_images(before, after) == expected_changed_images
+
+
+class TestImageInputDeclarations:
+    """Declared inputs cannot omit a source copied from a local build context."""
+
+    REPO_ROOT = Path(__file__).resolve().parents[3]
+
+    @staticmethod
+    def _local_copy_sources(dockerfile: Path) -> list[str]:
+        logical_lines: list[str] = []
+        pending = ""
+        for raw_line in dockerfile.read_text().splitlines():
+            stripped = raw_line.strip()
+            if not stripped or stripped.startswith("#"):
+                continue
+            pending = f"{pending} {stripped}".strip()
+            if pending.endswith("\\"):
+                pending = pending[:-1].rstrip()
+                continue
+            logical_lines.append(pending)
+            pending = ""
+
+        sources: list[str] = []
+        for line in logical_lines:
+            tokens = shlex.split(line)
+            if not tokens or tokens[0].upper() not in {"ADD", "COPY"}:
+                continue
+            if any(token.startswith("--from=") for token in tokens[1:]):
+                continue
+            operands = [token for token in tokens[1:] if not token.startswith("--")]
+            sources.extend(operands[:-1])
+        return sources
+
+    def test_every_dockerfile_copy_source_is_covered_by_its_image_inputs(
+        self,
+    ) -> None:
+        assert set(images_mod.IMAGE_DOCKERFILES) == set(images_mod.IMAGE_INPUT_PATHS)
+        for image, dockerfile_path in images_mod.IMAGE_DOCKERFILES.items():
+            declared = images_mod.IMAGE_INPUT_PATHS[image]
+            assert dockerfile_path in declared, f"{image} omits its Dockerfile"
+            assert ".dockerignore" in declared, f"{image} omits .dockerignore"
+            for source in self._local_copy_sources(self.REPO_ROOT / dockerfile_path):
+                covered = any(
+                    source == path or source.startswith(f"{path.rstrip('/')}/")
+                    for path in declared
+                )
+                assert covered, (
+                    f"{image} input set omits {source!r} copied by {dockerfile_path}"
+                )
+
+
+class TestDeploymentImageIdentity:
+    def test_identity_records_ordered_tags_values_and_set_overrides(
+        self, tmp_path: Path
+    ) -> None:
+        root = _make_project_root(
+            tmp_path,
+            clap_embed=True,
+            colbert_pylate=True,
+            code_colbert_pylate=True,
+        )
+        values_file = root / "charts" / "cogniverse" / "values.yaml"
+        set_overrides = {
+            "runtime.backend": "rocm",
+            "dashboard.backend": "rocm",
+        }
+
+        identity = images_mod.dev_deployment_identity(
+            root,
+            torch_backend="rocm",
+            values_files=[values_file],
+            set_overrides=set_overrides,
+            versions=DEV_VERSIONS,
+        )
+
+        assert identity == {
+            "backend": "rocm",
+            "values_files": ("charts/cogniverse/values.yaml",),
+            "set_overrides": {
+                "runtime.backend": "rocm",
+                "dashboard.backend": "rocm",
+            },
+            "image_tags": (
+                f"cogniverse/runtime-rocm:{DEV_TAGS['runtime']}",
+                f"cogniverse/dashboard-rocm:{DEV_TAGS['dashboard']}",
+                f"cogniverse/gliner:{DEV_TAGS['gliner']}",
+                f"cogniverse/clap-embed:{DEV_TAGS['clap_embed']}",
+                f"cogniverse/pylate:{DEV_TAGS['pylate']}-rocm",
+            ),
+            "chart_digest": (
+                "sha256:9bfac69a7266217612dce4dd1601bf7402118883b53fdf6e9f649c29db9628e1"
+            ),
+        }
+
+    def test_chart_content_changes_identity_without_changing_image_tags(
+        self, tmp_path: Path
+    ) -> None:
+        root = _make_project_root(tmp_path)
+        values_file = root / "charts" / "cogniverse" / "values.yaml"
+        kwargs = {
+            "torch_backend": "rocm",
+            "values_files": [values_file],
+            "set_overrides": {"runtime.backend": "rocm"},
+            "versions": DEV_VERSIONS,
+        }
+        before = images_mod.dev_deployment_identity(root, **kwargs)
+
+        template = root / "charts" / "cogniverse" / "templates" / "runtime.yaml"
+        template.parent.mkdir()
+        template.write_text("kind: Deployment\n")
+        after = images_mod.dev_deployment_identity(root, **kwargs)
+
+        assert after["image_tags"] == before["image_tags"]
+        assert after["chart_digest"] != before["chart_digest"]
+
+
 class TestBuildImages:
     """Tests for :func:`build_images`."""
+
+    @patch("cogniverse_cli.images.subprocess.run")
+    def test_build_images_uses_each_images_own_version(
+        self, mock_run: object, tmp_path: Path
+    ) -> None:
+        _completed(mock_run)
+        root = _make_project_root(tmp_path)
+
+        tags = build_images(root, torch_backend="rocm", versions=DEV_VERSIONS)
+
+        assert tags == [
+            f"cogniverse/runtime-rocm:{DEV_TAGS['runtime']}",
+            f"cogniverse/dashboard-rocm:{DEV_TAGS['dashboard']}",
+            f"cogniverse/gliner:{DEV_TAGS['gliner']}",
+        ]
+        build_commands = [
+            call.args[0]
+            for call in mock_run.call_args_list  # type: ignore[attr-defined]
+            if call.args[0][:2] == ["docker", "build"]
+        ]
+        assert (
+            f"SETUPTOOLS_SCM_PRETEND_VERSION={DEV_VERSIONS['runtime']}"
+            in (build_commands[0])
+        )
+        assert (
+            f"SETUPTOOLS_SCM_PRETEND_VERSION={DEV_VERSIONS['dashboard']}"
+            in (build_commands[1])
+        )
+
+    @patch("cogniverse_cli.images.subprocess.run")
+    def test_build_images_skips_host_present_tag_but_returns_complete_set(
+        self, mock_run: MagicMock, tmp_path: Path
+    ) -> None:
+        root = _make_project_root(tmp_path)
+        runtime_tag = f"cogniverse/runtime-cpu:{DEV_TAGS['runtime']}"
+        mock_run.side_effect = [
+            subprocess.CompletedProcess(
+                args=[], returncode=0, stdout=f"{runtime_tag}\n", stderr=""
+            ),
+            subprocess.CompletedProcess(args=[], returncode=0),
+            subprocess.CompletedProcess(args=[], returncode=0),
+        ]
+
+        tags = build_images(root, torch_backend="cpu", versions=DEV_VERSIONS)
+
+        assert tags == [
+            runtime_tag,
+            f"cogniverse/dashboard-cpu:{DEV_TAGS['dashboard']}",
+            f"cogniverse/gliner:{DEV_TAGS['gliner']}",
+        ]
+        build_commands = [
+            call.args[0]
+            for call in mock_run.call_args_list
+            if call.args[0][:2] == ["docker", "build"]
+        ]
+        assert build_commands == [
+            [
+                "docker",
+                "build",
+                "-f",
+                "libs/dashboard/Dockerfile",
+                "--build-arg",
+                "TORCH_BACKEND=cpu",
+                "--build-arg",
+                f"SETUPTOOLS_SCM_PRETEND_VERSION={DEV_VERSIONS['dashboard']}",
+                "-t",
+                f"cogniverse/dashboard-cpu:{DEV_TAGS['dashboard']}",
+                ".",
+            ],
+            [
+                "docker",
+                "build",
+                "-f",
+                "deploy/gliner/Dockerfile",
+                "-t",
+                f"cogniverse/gliner:{DEV_TAGS['gliner']}",
+                ".",
+            ],
+        ]
+
+    @patch("cogniverse_cli.images.subprocess.run")
+    def test_build_images_stops_when_host_inventory_fails(
+        self, mock_run: MagicMock, tmp_path: Path
+    ) -> None:
+        root = _make_project_root(tmp_path)
+        inventory_command = [
+            "docker",
+            "image",
+            "ls",
+            "--format",
+            "{{.Repository}}:{{.Tag}}",
+        ]
+        mock_run.side_effect = subprocess.CalledProcessError(1, inventory_command)
+
+        with pytest.raises(subprocess.CalledProcessError) as exc_info:
+            build_images(root, torch_backend="cpu", versions=DEV_VERSIONS)
+
+        assert exc_info.value.cmd == inventory_command
+        assert [call.args[0] for call in mock_run.call_args_list] == [inventory_command]
+
+    def test_dev_image_tags_are_ordered_and_dedupe_shared_pylate(
+        self, tmp_path: Path
+    ) -> None:
+        root = _make_project_root(
+            tmp_path,
+            clap_embed=True,
+            colbert_pylate=True,
+            code_colbert_pylate=True,
+        )
+
+        tags = images_mod.dev_image_tags(
+            root,
+            torch_backend="rocm",
+            values_files=None,
+            versions=DEV_VERSIONS,
+        )
+
+        assert tags == (
+            f"cogniverse/runtime-rocm:{DEV_TAGS['runtime']}",
+            f"cogniverse/dashboard-rocm:{DEV_TAGS['dashboard']}",
+            f"cogniverse/gliner:{DEV_TAGS['gliner']}",
+            f"cogniverse/clap-embed:{DEV_TAGS['clap_embed']}",
+            f"cogniverse/pylate:{DEV_TAGS['pylate']}-rocm",
+        )
+
+    def test_pylate_tag_distinguishes_torch_backend(self, tmp_path: Path) -> None:
+        root = _make_project_root(tmp_path, colbert_pylate=True)
+
+        cpu_tags = images_mod.dev_image_tags(
+            root, torch_backend="cpu", versions=DEV_VERSIONS
+        )
+        rocm_tags = images_mod.dev_image_tags(
+            root, torch_backend="rocm", versions=DEV_VERSIONS
+        )
+
+        assert cpu_tags[-1] == f"cogniverse/pylate:{DEV_TAGS['pylate']}-cpu"
+        assert rocm_tags[-1] == f"cogniverse/pylate:{DEV_TAGS['pylate']}-rocm"
+
+    def test_concurrent_builds_share_one_cold_build(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        root = _make_project_root(tmp_path)
+        first_inventory = threading.Event()
+        second_inventory = threading.Event()
+        release_first = threading.Event()
+        state_lock = threading.Lock()
+        host_tags: set[str] = set()
+        build_counts: Counter[str] = Counter()
+        inventory_count = 0
+
+        def run(command, **kwargs):
+            nonlocal inventory_count
+            if command[:3] == ["docker", "image", "ls"]:
+                with state_lock:
+                    inventory_count += 1
+                    call_number = inventory_count
+                    snapshot = "\n".join(sorted(host_tags))
+                if call_number == 1:
+                    first_inventory.set()
+                    release_first.wait(timeout=2)
+                else:
+                    second_inventory.set()
+                return subprocess.CompletedProcess(command, 0, stdout=snapshot)
+            if command[:2] == ["docker", "build"]:
+                tag = command[command.index("-t") + 1]
+                with state_lock:
+                    build_counts[tag] += 1
+                    host_tags.add(tag)
+                return subprocess.CompletedProcess(command, 0)
+            raise AssertionError(f"unexpected command: {command}")
+
+        monkeypatch.setattr(images_mod.subprocess, "run", run)
+        with ThreadPoolExecutor(max_workers=2) as executor:
+            first = executor.submit(
+                build_images, root, torch_backend="cpu", versions=DEV_VERSIONS
+            )
+            assert first_inventory.wait(timeout=1) is True
+            second = executor.submit(
+                build_images, root, torch_backend="cpu", versions=DEV_VERSIONS
+            )
+            overlapped_inventory = second_inventory.wait(timeout=0.2)
+            release_first.set()
+            results = [first.result(timeout=3), second.result(timeout=3)]
+
+        expected_tags = [
+            f"cogniverse/runtime-cpu:{DEV_TAGS['runtime']}",
+            f"cogniverse/dashboard-cpu:{DEV_TAGS['dashboard']}",
+            f"cogniverse/gliner:{DEV_TAGS['gliner']}",
+        ]
+        assert overlapped_inventory is False
+        assert results == [expected_tags, expected_tags]
+        assert build_counts == Counter({tag: 1 for tag in expected_tags})
 
     @patch("cogniverse_cli.images.subprocess.run")
     def test_build_images_calls_docker_build(
@@ -100,15 +716,15 @@ class TestBuildImages:
         _completed(mock_run)
         root = _make_project_root(tmp_path)
 
-        tags = build_images(root, torch_backend="cpu", version=DEV_VERSION)
+        tags = build_images(root, torch_backend="cpu", versions=UNIFORM_DEV_VERSIONS)
 
         assert tags == [
             f"cogniverse/runtime-cpu:{DEV_TAG}",
             f"cogniverse/dashboard-cpu:{DEV_TAG}",
             f"cogniverse/gliner:{DEV_TAG}",
         ]
-        assert mock_run.call_count == 3  # type: ignore[attr-defined]
-        for call in mock_run.call_args_list:  # type: ignore[attr-defined]
+        assert mock_run.call_count == 4  # type: ignore[attr-defined]
+        for call in mock_run.call_args_list[1:]:  # type: ignore[attr-defined]
             cmd = call[0][0]
             assert cmd[0] == "docker"
             assert cmd[1] == "build"
@@ -125,11 +741,14 @@ class TestBuildImages:
         _completed(mock_run)
         root = _make_project_root(tmp_path)
 
-        build_images(root, torch_backend="rocm", version=DEV_VERSION)
+        build_images(root, torch_backend="rocm", versions=UNIFORM_DEV_VERSIONS)
 
-        runtime_cmd = mock_run.call_args_list[0][0][0]  # type: ignore[attr-defined]
-        dashboard_cmd = mock_run.call_args_list[1][0][0]  # type: ignore[attr-defined]
-        gliner_cmd = mock_run.call_args_list[2][0][0]  # type: ignore[attr-defined]
+        build_commands = [
+            call.args[0]
+            for call in mock_run.call_args_list  # type: ignore[attr-defined]
+            if call.args[0][:2] == ["docker", "build"]
+        ]
+        runtime_cmd, dashboard_cmd, gliner_cmd = build_commands
         assert "TORCH_BACKEND=rocm" in runtime_cmd
         assert f"cogniverse/runtime-rocm:{DEV_TAG}" in runtime_cmd
         assert f"SETUPTOOLS_SCM_PRETEND_VERSION={DEV_VERSION}" in runtime_cmd
@@ -150,7 +769,7 @@ class TestBuildImages:
         _completed(mock_run)
         root = _make_project_root(tmp_path)
 
-        built = build_images(root, torch_backend="cpu", version=DEV_VERSION)
+        built = build_images(root, torch_backend="cpu", versions=UNIFORM_DEV_VERSIONS)
 
         assert built == [
             f"cogniverse/runtime-cpu:{DEV_TAG}",
@@ -189,18 +808,18 @@ class TestBuildImages:
             tmp_path, colbert_pylate=True, code_colbert_pylate=True
         )
 
-        built = build_images(root, torch_backend="rocm", version=DEV_VERSION)
+        built = build_images(root, torch_backend="rocm", versions=UNIFORM_DEV_VERSIONS)
 
         assert built == [
             f"cogniverse/runtime-rocm:{DEV_TAG}",
             f"cogniverse/dashboard-rocm:{DEV_TAG}",
             f"cogniverse/gliner:{DEV_TAG}",
-            f"cogniverse/pylate:{DEV_TAG}",
+            f"cogniverse/pylate:{DEV_TAG}-rocm",
         ]
         pylate_cmds = [
             call[0][0]
             for call in mock_run.call_args_list  # type: ignore[attr-defined]
-            if f"cogniverse/pylate:{DEV_TAG}" in call[0][0]
+            if f"cogniverse/pylate:{DEV_TAG}-rocm" in call[0][0]
         ]
         assert pylate_cmds == [
             [
@@ -211,16 +830,16 @@ class TestBuildImages:
                 "--build-arg",
                 "TORCH_BACKEND=rocm",
                 "-t",
-                f"cogniverse/pylate:{DEV_TAG}",
+                f"cogniverse/pylate:{DEV_TAG}-rocm",
                 ".",
             ]
         ]
 
         overrides = dev_image_set_values(
-            root, torch_backend="rocm", version=DEV_VERSION
+            root, torch_backend="rocm", versions=UNIFORM_DEV_VERSIONS
         )
-        assert overrides["inference.colbert_pylate.image.tag"] == DEV_TAG
-        assert overrides["inference.code_colbert_pylate.image.tag"] == DEV_TAG
+        assert overrides["inference.colbert_pylate.image.tag"] == f"{DEV_TAG}-rocm"
+        assert overrides["inference.code_colbert_pylate.image.tag"] == f"{DEV_TAG}-rocm"
 
     @patch("cogniverse_cli.images.subprocess.run")
     def test_disabled_sidecars_are_not_built(
@@ -231,7 +850,7 @@ class TestBuildImages:
         _completed(mock_run)
         root = _make_project_root(tmp_path)
 
-        built = build_images(root, torch_backend="cpu", version=DEV_VERSION)
+        built = build_images(root, torch_backend="cpu", versions=UNIFORM_DEV_VERSIONS)
 
         joined = " ".join(" ".join(c[0][0]) for c in mock_run.call_args_list)  # type: ignore[attr-defined]
         assert "cogniverse/face-embed" not in joined
@@ -254,7 +873,10 @@ class TestBuildImages:
         )
 
         built = build_images(
-            root, torch_backend="cpu", values_files=[overlay], version=DEV_VERSION
+            root,
+            torch_backend="cpu",
+            values_files=[overlay],
+            versions=UNIFORM_DEV_VERSIONS,
         )
 
         assert built == [
@@ -293,25 +915,29 @@ class TestDevImageSetValues:
 
     def test_maps_core_images_to_the_git_tag(self, tmp_path: Path) -> None:
         root = _make_project_root(tmp_path)
-        overrides = dev_image_set_values(root, torch_backend="cpu", version=DEV_VERSION)
+        overrides = dev_image_set_values(
+            root, torch_backend="cpu", versions=DEV_VERSIONS
+        )
         assert overrides == {
-            "runtime.imagesByBackend.cpu.tag": DEV_TAG,
-            "dashboard.imagesByBackend.cpu.tag": DEV_TAG,
-            "inference.gliner.image.tag": DEV_TAG,
+            "runtime.imagesByBackend.cpu.tag": DEV_TAGS["runtime"],
+            "dashboard.imagesByBackend.cpu.tag": DEV_TAGS["dashboard"],
+            "inference.gliner.image.tag": DEV_TAGS["gliner"],
         }
 
     def test_backend_scopes_runtime_and_dashboard(self, tmp_path: Path) -> None:
         root = _make_project_root(tmp_path)
         overrides = dev_image_set_values(
-            root, torch_backend="rocm", version=DEV_VERSION
+            root, torch_backend="rocm", versions=DEV_VERSIONS
         )
         assert "runtime.imagesByBackend.rocm.tag" in overrides
         assert "runtime.imagesByBackend.cpu.tag" not in overrides
 
     def test_includes_enabled_sidecars_only(self, tmp_path: Path) -> None:
         root = _make_project_root(tmp_path, face_embed=True)
-        overrides = dev_image_set_values(root, torch_backend="cpu", version=DEV_VERSION)
-        assert overrides["inference.face_embed.image.tag"] == DEV_TAG
+        overrides = dev_image_set_values(
+            root, torch_backend="cpu", versions=DEV_VERSIONS
+        )
+        assert overrides["inference.face_embed.image.tag"] == DEV_TAGS["face_embed"]
         assert "inference.clap_embed.image.tag" not in overrides
 
 
@@ -368,6 +994,125 @@ class TestImportImages:
     """Tests for :func:`import_images`."""
 
     @patch("cogniverse_cli.images.subprocess.run")
+    def test_import_images_skips_tags_already_present_on_node(
+        self, mock_run: MagicMock
+    ) -> None:
+        node_images = json.dumps(
+            {
+                "images": [
+                    {
+                        "id": "sha-present",
+                        "repoTags": ["docker.io/img:a"],
+                    }
+                ]
+            }
+        )
+        mock_run.side_effect = [
+            subprocess.CompletedProcess(
+                args=[], returncode=0, stdout=node_images, stderr=""
+            ),
+            subprocess.CompletedProcess(args=[], returncode=0),
+        ]
+
+        import_images("cogniverse", ["img:a", "img:b"])
+
+        assert [call.args[0] for call in mock_run.call_args_list] == [
+            [
+                "docker",
+                "exec",
+                "k3d-cogniverse-server-0",
+                "crictl",
+                "images",
+                "-o",
+                "json",
+            ],
+            [
+                "k3d",
+                "image",
+                "import",
+                "--mode",
+                "direct",
+                "img:b",
+                "-c",
+                "cogniverse",
+            ],
+        ]
+
+    @patch("cogniverse_cli.images.subprocess.run")
+    def test_import_images_stops_when_node_inventory_fails(
+        self, mock_run: MagicMock
+    ) -> None:
+        inventory_command = [
+            "docker",
+            "exec",
+            "k3d-cogniverse-server-0",
+            "crictl",
+            "images",
+            "-o",
+            "json",
+        ]
+        mock_run.side_effect = subprocess.CalledProcessError(1, inventory_command)
+
+        with pytest.raises(subprocess.CalledProcessError) as exc_info:
+            import_images("cogniverse", ["img:a"])
+
+        assert exc_info.value.cmd == inventory_command
+        assert [call.args[0] for call in mock_run.call_args_list] == [inventory_command]
+
+    def test_concurrent_imports_share_one_cold_import(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        first_inventory = threading.Event()
+        second_inventory = threading.Event()
+        release_first = threading.Event()
+        state_lock = threading.Lock()
+        node_tags: set[str] = set()
+        import_counts: Counter[str] = Counter()
+        inventory_count = 0
+
+        def run(command, **kwargs):
+            nonlocal inventory_count
+            if command[:3] == ["docker", "exec", "k3d-cogniverse-server-0"]:
+                with state_lock:
+                    inventory_count += 1
+                    call_number = inventory_count
+                    snapshot = json.dumps(
+                        {
+                            "images": [
+                                {"id": tag, "repoTags": [f"docker.io/{tag}"]}
+                                for tag in sorted(node_tags)
+                            ]
+                        }
+                    )
+                if call_number == 1:
+                    first_inventory.set()
+                    release_first.wait(timeout=2)
+                else:
+                    second_inventory.set()
+                return subprocess.CompletedProcess(command, 0, stdout=snapshot)
+            if command[:3] == ["k3d", "image", "import"]:
+                tag = command[5]
+                with state_lock:
+                    import_counts[tag] += 1
+                    node_tags.add(tag)
+                return subprocess.CompletedProcess(command, 0)
+            raise AssertionError(f"unexpected command: {command}")
+
+        monkeypatch.setattr(images_mod.subprocess, "run", run)
+        tags = ["img:a", "img:b"]
+        with ThreadPoolExecutor(max_workers=2) as executor:
+            first = executor.submit(import_images, "cogniverse", tags)
+            assert first_inventory.wait(timeout=1) is True
+            second = executor.submit(import_images, "cogniverse", tags)
+            overlapped_inventory = second_inventory.wait(timeout=0.2)
+            release_first.set()
+            first.result(timeout=3)
+            second.result(timeout=3)
+
+        assert overlapped_inventory is False
+        assert import_counts == Counter({"img:a": 1, "img:b": 1})
+
+    @patch("cogniverse_cli.images.subprocess.run")
     def test_import_images_calls_k3d_import(self, mock_run: object) -> None:
         """Images are imported independently without a memory-heavy tools pod."""
         _completed(mock_run)
@@ -375,6 +1120,21 @@ class TestImportImages:
         import_images("cogniverse", ["img:a", "img:b"])
 
         assert mock_run.call_args_list == [  # type: ignore[attr-defined]
+            mock_call(
+                [
+                    "docker",
+                    "exec",
+                    "k3d-cogniverse-server-0",
+                    "crictl",
+                    "images",
+                    "-o",
+                    "json",
+                ],
+                capture_output=True,
+                text=True,
+                check=True,
+                timeout=30,
+            ),
             mock_call(
                 [
                     "k3d",
@@ -421,6 +1181,7 @@ class TestImportImages:
         ]
         mock_run.side_effect = [  # type: ignore[attr-defined]
             subprocess.CompletedProcess(args=[], returncode=0),
+            subprocess.CompletedProcess(args=[], returncode=0),
             subprocess.CalledProcessError(returncode=1, cmd=failed_command),
         ]
 
@@ -429,6 +1190,15 @@ class TestImportImages:
 
         assert exc_info.value.cmd == failed_command
         assert [call.args[0] for call in mock_run.call_args_list] == [  # type: ignore[attr-defined]
+            [
+                "docker",
+                "exec",
+                "k3d-cogniverse-server-0",
+                "crictl",
+                "images",
+                "-o",
+                "json",
+            ],
             [
                 "k3d",
                 "image",
@@ -493,6 +1263,12 @@ class TestPruneSupersededImages:
         }
     )
 
+    CURRENT_TAGS = [
+        "cogniverse/runtime-rocm:0.1.dev2420-g813e8e5c8",
+        "cogniverse/dashboard-rocm:0.1.dev2420-g813e8e5c8",
+        "cogniverse/gliner:0.1.dev2420-g813e8e5c8",
+    ]
+
     def _runner(self, calls):
         host_listing = self.HOST_LISTING
         node_json = self.NODE_JSON
@@ -512,15 +1288,12 @@ class TestPruneSupersededImages:
         from cogniverse_cli.images import prune_superseded_images
 
         calls: list = []
-        removed = prune_superseded_images(
-            "0.1.dev2420+g813e8e5c8", runner=self._runner(calls)
-        )
+        removed = prune_superseded_images(self.CURRENT_TAGS, runner=self._runner(calls))
 
         rmi_cmds = [c for c in calls if c[:2] == ["docker", "rmi"]]
         removed_tags = {tag for c in rmi_cmds for tag in c[2:]}
         assert removed_tags == {
             "cogniverse/runtime-rocm:0.1.dev2397-g0f2366466",
-            "cogniverse/dashboard-rocm:0.1.dev2397-g0f2366466",
         }
         assert set(removed) == removed_tags
 
@@ -529,7 +1302,7 @@ class TestPruneSupersededImages:
 
         calls: list = []
         prune_superseded_images(
-            "0.1.dev2420+g813e8e5c8",
+            self.CURRENT_TAGS,
             node_container="k3d-cogniverse-server-0",
             runner=self._runner(calls),
         )
@@ -543,6 +1316,20 @@ class TestPruneSupersededImages:
         assert "sha-gliner-shared" not in removed_ids
         assert "sha-vespa" not in removed_ids
         assert "sha-runtime-new" not in removed_ids
+
+    def test_each_repository_keeps_its_own_current_generation(self):
+        from cogniverse_cli.images import prune_superseded_images
+
+        calls: list = []
+        current_tags = [
+            "cogniverse/runtime-rocm:0.1.dev2420-g813e8e5c8",
+            "cogniverse/dashboard-rocm:0.1.dev2397-g0f2366466",
+            "cogniverse/gliner:0.1.dev2420-g813e8e5c8",
+        ]
+
+        removed = prune_superseded_images(current_tags, runner=self._runner(calls))
+
+        assert removed == ["cogniverse/runtime-rocm:0.1.dev2397-g0f2366466"]
 
 
 class TestDetectTorchBackend:
@@ -931,11 +1718,16 @@ class TestDeviceOverlaySidecarTags:
             self.REPO_ROOT,
             torch_backend="rocm",
             values_files=[self._chart("values.rocm.yaml")],
-            version=DEV_VERSION,
+            versions=DEV_VERSIONS,
         )
 
-        assert overrides["inference.colbert_pylate.image.tag"] == DEV_TAG
-        assert overrides["inference.code_colbert_pylate.image.tag"] == DEV_TAG
+        assert overrides["inference.colbert_pylate.image.tag"] == (
+            f"{DEV_TAGS['pylate']}-rocm"
+        )
+        assert (
+            overrides["inference.code_colbert_pylate.image.tag"]
+            == f"{DEV_TAGS['pylate']}-rocm"
+        )
 
     def test_omitting_the_overlay_leaves_its_sidecar_on_the_placeholder_tag(
         self,
@@ -946,7 +1738,7 @@ class TestDeviceOverlaySidecarTags:
         it under pullPolicy=Never.
         """
         overrides = dev_image_set_values(
-            self.REPO_ROOT, torch_backend="rocm", version=DEV_VERSION
+            self.REPO_ROOT, torch_backend="rocm", versions=DEV_VERSIONS
         )
 
         assert "inference.colbert_pylate.image.tag" in overrides
@@ -1044,6 +1836,33 @@ class TestFirstPartyImageCoverage:
         )
         assert first_party_services(root, [overlay]) == {}
 
+    def test_verification_rejects_pylate_tag_for_another_backend(
+        self, tmp_path: Path
+    ) -> None:
+        from cogniverse_cli.images import verify_local_images_cover_deploy
+
+        root = _make_project_root(tmp_path, colbert_pylate=True)
+        values_file = root / "charts" / "cogniverse" / "values.yaml"
+        values = yaml.safe_load(values_file.read_text())
+        values["inference"]["colbert_pylate"]["image"] = {
+            "repository": "cogniverse/pylate"
+        }
+        values_file.write_text(yaml.safe_dump(values))
+        built_tags = [
+            f"cogniverse/pylate:{DEV_TAGS['pylate']}-cpu",
+        ]
+
+        with pytest.raises(RuntimeError) as exc_info:
+            verify_local_images_cover_deploy(
+                root,
+                None,
+                built_tags=built_tags,
+                versions=DEV_VERSIONS,
+                torch_backend="rocm",
+            )
+
+        assert f"cogniverse/pylate:{DEV_TAGS['pylate']}-rocm" in str(exc_info.value)
+
     @patch("subprocess.run")
     def test_verification_fails_when_build_skipped_a_deploy_overlay(
         self, mock_run: MagicMock, tmp_path: Path
@@ -1075,11 +1894,15 @@ class TestFirstPartyImageCoverage:
             )
         )
 
-        built = build_images(root, torch_backend="cpu", version=DEV_VERSION)
+        built = build_images(root, torch_backend="cpu", versions=UNIFORM_DEV_VERSIONS)
 
         with pytest.raises(RuntimeError) as excinfo:
             verify_local_images_cover_deploy(
-                root, [overlay], built_tags=built, version=DEV_VERSION
+                root,
+                [overlay],
+                built_tags=built,
+                versions=UNIFORM_DEV_VERSIONS,
+                torch_backend="cpu",
             )
         assert "future_embed" in str(excinfo.value)
         assert "cogniverse/future-embed" in str(excinfo.value)
@@ -1120,12 +1943,19 @@ class TestFirstPartyImageCoverage:
         )
 
         built = build_images(
-            root, torch_backend="cpu", values_files=[overlay], version=DEV_VERSION
+            root,
+            torch_backend="cpu",
+            values_files=[overlay],
+            versions=UNIFORM_DEV_VERSIONS,
         )
 
         assert f"cogniverse/future-embed:{DEV_TAG}" in built
         verify_local_images_cover_deploy(
-            root, [overlay], built_tags=built, version=DEV_VERSION
+            root,
+            [overlay],
+            built_tags=built,
+            versions=UNIFORM_DEV_VERSIONS,
+            torch_backend="cpu",
         )
 
     @patch("subprocess.run")
@@ -1154,5 +1984,8 @@ class TestFirstPartyImageCoverage:
 
         with pytest.raises(RuntimeError, match="unknown_embed"):
             build_images(
-                root, torch_backend="cpu", values_files=[overlay], version=DEV_VERSION
+                root,
+                torch_backend="cpu",
+                values_files=[overlay],
+                versions=UNIFORM_DEV_VERSIONS,
             )
