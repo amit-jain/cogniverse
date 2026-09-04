@@ -1109,6 +1109,34 @@ def _call_agent(
     return body
 
 
+def _drive_gateway_decision(
+    query: str, tenant_id: str = TENANT_ID
+) -> dict[str, object]:
+    """Route one query through the gateway and return the handled response.
+
+    The served classifier decides fast-path vs orchestration; callers branch
+    on ``body["agent"]`` instead of pinning a handler the calibration owns.
+    """
+    resp = httpx.post(
+        f"{RUNTIME}/agents/gateway_agent/process",
+        json={
+            "agent_name": "gateway_agent",
+            "query": query,
+            "context": {"tenant_id": tenant_id},
+            "top_k": 3,
+        },
+        timeout=GATEWAY_PROCESS_TIMEOUT_S,
+    )
+    assert resp.status_code == 200, (
+        f"gateway rejected span-seeding query {query!r}: "
+        f"HTTP {resp.status_code} {resp.text[:500]}"
+    )
+    body = resp.json()
+    assert body["status"] == "success", body
+    assert body["agent"] in ("gateway_agent", "orchestrator_agent"), body
+    return body
+
+
 @pytest.fixture(scope="module")
 def _kubectl_cluster_ready() -> None:
     """Require kubectl access after the session E2E stack is initialized."""
@@ -1658,10 +1686,26 @@ def generate_spans_for_batch_jobs(_kubectl_cluster_ready):
 
     span_names = _optimizer_span_capture_names()
     if capture_mode in {"record", "re-record"}:
-        # Gateway spans — simple queries through gateway
-        for i in range(spans_per_agent):
-            q = GATEWAY_QUERIES[i % len(GATEWAY_QUERIES)]
-            _call_agent("gateway_agent", q)
+        # Gateway spans. The SERVED classifier decides which evaluation
+        # queries take the fast path (deterministic per query), so membership
+        # is discovered from its verdicts rather than pinned in a list the
+        # calibration outgrows; the pool then cycles up to the span budget.
+        gateway_pool: list[str] = []
+        emitted_gateway_spans = 0
+        for q in GATEWAY_QUERIES:
+            body = _drive_gateway_decision(q)
+            if body["agent"] == "gateway_agent":
+                gateway_pool.append(q)
+                emitted_gateway_spans += 1
+        assert len(gateway_pool) >= 3, (
+            "served gateway fast-paths fewer than 3 of the evaluation "
+            f"queries; corpus would lack distinct-query support: {gateway_pool}"
+        )
+        i = 0
+        while emitted_gateway_spans < spans_per_agent:
+            _call_agent("gateway_agent", gateway_pool[i % len(gateway_pool)])
+            i += 1
+            emitted_gateway_spans += 1
 
         # Entity extraction spans
         for i in range(spans_per_agent):
@@ -1691,7 +1735,10 @@ def generate_spans_for_batch_jobs(_kubectl_cluster_ready):
         # Orchestration spans (10+ complex queries — each also produces
         # entity_extraction, routing, and search spans via A2A pipeline)
         for q in COMPLEX_QUERIES:
-            _call_agent("gateway_agent", q)
+            body = _drive_gateway_decision(q)
+            assert body["agent"] == "orchestrator_agent", (
+                f"complex query was fast-pathed instead of orchestrated: {body}"
+            )
 
         # Wait for Phoenix to ingest EVERY seeded span type before any optimizer
         # reads them. Emitters are async best-effort (batch export), so seeded
