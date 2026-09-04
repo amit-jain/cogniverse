@@ -20,6 +20,7 @@ These tests pin the wiring so a refactor of any of those templates can't
 silently break the others.
 """
 
+import os
 import shutil
 import subprocess
 from pathlib import Path
@@ -823,3 +824,61 @@ def test_backup_grants_pods_exec_via_role():
     exec_rule = next((r for r in rules if "pods/exec" in r["resources"]), None)
     assert exec_rule is not None, f"Role must grant pods/exec, got {rules}"
     assert "create" in exec_rule["verbs"]
+
+
+def _backup_dump_script(service: str) -> str:
+    docs = _render("hostStorage.backup.enabled=true")
+    workflow = _named(docs, "CronWorkflow", f"cogniverse-backup-{service}")
+    assert workflow is not None, f"no backup CronWorkflow rendered for {service}"
+    dump = next(
+        t for t in workflow["spec"]["workflowSpec"]["templates"] if t["name"] == "dump"
+    )
+    return dump["container"]["args"][0]
+
+
+@pytest.mark.parametrize(
+    ("tar_exit", "expected_exit"),
+    [(0, 0), (1, 0), (2, 2)],
+)
+def test_vespa_backup_tolerates_live_file_changes_and_fails_on_tar_errors(
+    tmp_path, tar_exit, expected_exit
+):
+    """tar exits 1 when a live file changes mid-read; the archive stays usable.
+
+    Vespa's data directory is written continuously, so every snapshot of a
+    running cluster hits that. Exit 2 and above is a real tar failure.
+    """
+    script = _backup_dump_script("vespa").replace("/stage", str(tmp_path))
+
+    source = tmp_path / "src" / "var"
+    source.mkdir(parents=True)
+    (source / "payload").write_text("data")
+
+    bin_dir = tmp_path / "bin"
+    bin_dir.mkdir()
+    kubectl = bin_dir / "kubectl"
+    kubectl.write_text(
+        "#!/bin/sh\n"
+        'case "$*" in\n'
+        '  *"get pod"*) echo cogniverse-vespa-0 ;;\n'
+        f'  *exec*) tar -cf - -C "{tmp_path / "src"}" var; exit {tar_exit} ;;\n'
+        "esac\n"
+    )
+    kubectl.chmod(0o755)
+
+    result = subprocess.run(
+        ["sh", "-c", script],
+        capture_output=True,
+        text=True,
+        env={**os.environ, "PATH": f"{bin_dir}:{os.environ['PATH']}"},
+    )
+
+    assert result.returncode == expected_exit, result.stderr
+
+    archives = sorted(tmp_path.glob("vespa-*.tar"))
+    assert len(archives) == 1, archives
+    listing = subprocess.run(
+        ["tar", "-tf", str(archives[0])], capture_output=True, text=True
+    )
+    if expected_exit == 0:
+        assert "var/payload" in listing.stdout.split()
