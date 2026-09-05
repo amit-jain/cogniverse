@@ -11,6 +11,8 @@ from __future__ import annotations
 from importlib import resources
 from pathlib import Path
 
+import yaml
+
 
 def resolve_project_root(start: Path | None = None) -> Path | None:
     """Walk up from *start* looking for a ``pyproject.toml`` that contains
@@ -118,6 +120,33 @@ _LLM_SERVING_OVERLAYS = {
     LLM_SERVING_LOCAL: None,
     LLM_SERVING_MODAL: "values.modal-llm.yaml",
 }
+
+
+def llm_serving_mode_from_values(
+    deployed_values: dict | None, project_root: Path | None = None
+) -> str | None:
+    """Return the serving mode a deployed release is using.
+
+    ``None`` when no release is deployed, so a caller can tell "not installed"
+    from "installed and serving locally".
+    """
+    if deployed_values is None:
+        return None
+    deployed_api_base = (
+        (deployed_values.get("runtime") or {}).get("primaryLLM") or {}
+    ).get("apiBase")
+    if deployed_api_base:
+        for mode in _LLM_SERVING_OVERLAYS:
+            overlay_file = get_llm_serving_values_file(mode, project_root=project_root)
+            if overlay_file is None:
+                continue
+            overlay = yaml.safe_load(overlay_file.read_text()) or {}
+            overlay_api_base = (
+                (overlay.get("runtime") or {}).get("primaryLLM") or {}
+            ).get("apiBase")
+            if overlay_api_base and overlay_api_base == deployed_api_base:
+                return mode
+    return LLM_SERVING_LOCAL
 
 
 def get_llm_serving_values_file(
