@@ -2028,11 +2028,26 @@ def generate_spans_for_batch_jobs(_kubectl_cluster_ready):
         capture_counts = replayed_counts
 
     served_scoreable_counts = _wait_for_served_scoreable_span_floor_in_pod(TENANT_ID)
-    expected_served_scoreable_counts = {
-        "query_enhancement": capture_counts[span_names[2]],
-        "entity_extraction": capture_counts[span_names[1]],
-        "profile_selection": capture_counts[span_names[3]],
-    }
+    if capture_mode == "replay":
+        # Every replayed record is a scoreable one, so the corpus size is the
+        # floor the served population must clear.
+        expected_served_scoreable_counts = {
+            "query_enhancement": capture_counts[span_names[2]],
+            "entity_extraction": capture_counts[span_names[1]],
+            "profile_selection": capture_counts[span_names[3]],
+        }
+    else:
+        # A recorded corpus counts every emitted span, of which the scoreable
+        # records are a strict subset, so its size cannot be a floor for them.
+        # What a fresh recording owes is the holdout split's minimum.
+        expected_served_scoreable_counts = {
+            optimizer_type: _served_holdout_minimum_in_pod(optimizer_type)
+            for optimizer_type in (
+                "query_enhancement",
+                "entity_extraction",
+                "profile_selection",
+            )
+        }
     if capture_mode == "replay":
         # Count DISTINCT capture ids, not replayed rows: consecutive runs
         # re-replay the same deterministic sample into one lookback window, so
