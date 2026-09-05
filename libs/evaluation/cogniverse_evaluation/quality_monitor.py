@@ -1263,7 +1263,12 @@ class QualityMonitor:
             metadata={
                 "description": f"Live traffic eval for tenant {self.tenant_id}",
                 "input_keys": ["agent"],
-                "output_keys": ["score", "degradation_pct"],
+                "output_keys": [
+                    "score",
+                    "baseline_score",
+                    "degradation_pct",
+                    "sample_count",
+                ],
             },
         )
         logger.info(f"Stored live eval results: {dataset_name}")
