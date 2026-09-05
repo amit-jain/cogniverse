@@ -1352,14 +1352,10 @@ async def run_ingestion(
                 continue
             if video_result.get("status") == "failed" or video_result.get("error"):
                 detail = video_result.get("error", "unknown error")
-                reasons = [
-                    str(r)
-                    for r in (video_result.get("errors") or [])
-                    if str(r) != str(detail)
-                ]
+                reasons = video_result.get("errors") or []
                 message = f"{video_result.get('video_path', '<unknown>')}: {detail}"
                 if reasons:
-                    message += " [" + "; ".join(reasons) + "]"
+                    message += " [" + "; ".join(str(r) for r in reasons) + "]"
                 job.errors.append(message)
         job.status = result.get("status", "completed")
 
