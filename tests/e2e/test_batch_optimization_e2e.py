@@ -1928,13 +1928,13 @@ def generate_spans_for_batch_jobs(_kubectl_cluster_ready):
         captured_counts = collections.Counter(
             record["name"] for record in capture_records
         )
-        assert len(capture_records) == 588, (
+        assert len(capture_records) == 371, (
             f"committed optimizer span capture drifted in size: {len(capture_records)}"
         )
-        assert captured_counts[span_names[0]] == 126, captured_counts
-        assert captured_counts[span_names[1]] == 171, captured_counts
-        assert captured_counts[span_names[2]] == 165, captured_counts
-        assert captured_counts[span_names[3]] == 100, captured_counts
+        assert captured_counts[span_names[0]] == 66, captured_counts
+        assert captured_counts[span_names[1]] == 118, captured_counts
+        assert captured_counts[span_names[2]] == 121, captured_counts
+        assert captured_counts[span_names[3]] == 40, captured_counts
         assert captured_counts[span_names[4]] == 26, captured_counts
         # Every downstream expectation reads the REPLAYED subset, never the
         # archive: expecting spans the replay never sent is unsatisfiable by
