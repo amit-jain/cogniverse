@@ -49,7 +49,7 @@ EXPECTED_PACKAGE_ENTRIES = {
 class _ConfigServer:
     """Real config-server stand-in recording every request body."""
 
-    def __init__(self, statuses):
+    def __init__(self, statuses, *, activated_session_id=4242, include_session_id=True):
         self.bodies: list[bytes] = []
         self.paths: list[str] = []
         statuses = list(statuses)
@@ -62,10 +62,13 @@ class _ConfigServer:
                 recorder.paths.append(self.path)
                 idx = len(recorder.bodies) - 1
                 status = statuses[min(idx, len(statuses) - 1)]
+                ok_body = {"message": f"Session {activated_session_id} activated."}
+                if include_session_id:
+                    ok_body["session-id"] = str(activated_session_id)
                 payload = (
                     json.dumps(CONFLICT_BODY).encode()
                     if status == 409
-                    else json.dumps({"message": "ok"}).encode()
+                    else json.dumps(ok_body).encode()
                 )
                 self.send_response(status)
                 self.send_header("Content-Type", "application/json")
@@ -117,8 +120,9 @@ def test_activation_conflict_retry_resends_the_complete_package():
 
     with _ConfigServer([409, 200]) as server:
         backend = _make_backend(server.port)
-        backend._deploy_package(app_package)
+        generation = backend._deploy_package(app_package)
 
+    assert generation == 4242
     assert len(server.bodies) == 2, (
         f"Expected one conflict then one retry, got {len(server.bodies)} requests"
     )
@@ -135,12 +139,29 @@ def test_successful_deploy_sends_the_package_once():
     """Pin the happy path: exactly one POST carrying the full package."""
     app_package = ApplicationPackage(name="conflictprobe")
 
-    with _ConfigServer([200]) as server:
+    with _ConfigServer([200], activated_session_id=7) as server:
         backend = _make_backend(server.port)
-        backend._deploy_package(app_package)
+        generation = backend._deploy_package(app_package)
 
+    assert generation == 7
     assert len(server.bodies) == 1
     assert _entries(server.bodies[0]) == EXPECTED_PACKAGE_ENTRIES
+
+
+def test_activation_without_session_id_raises():
+    """A 200 the config server answers without a session-id is not a usable
+    activation: the generation is unknown, so the deploy must raise rather
+    than convergence-probe against an unknown generation."""
+    app_package = ApplicationPackage(name="conflictprobe")
+
+    with _ConfigServer([200], include_session_id=False) as server:
+        backend = _make_backend(server.port)
+        with pytest.raises(RuntimeError) as exc_info:
+            backend._deploy_package(app_package)
+
+    assert str(exc_info.value).startswith(
+        "Deployment succeeded but the config server response carries no session-id:"
+    )
 
 
 def test_non_retriable_status_raises_after_one_attempt():
