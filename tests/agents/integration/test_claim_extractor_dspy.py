@@ -668,3 +668,86 @@ def _suppress_unused_warning() -> Dict[str, Any]:
     flag them. Kept as a function so it can be referenced from a test
     without polluting module-level state."""
     return {"VIDEO_ID": VIDEO_ID}
+
+
+# --------------------------------------------------------------------------- #
+# Output budget on the e2e corpus document                                    #
+# --------------------------------------------------------------------------- #
+
+E2E_DOCUMENT = (
+    Path(__file__).resolve().parents[3] / "data" / "testset" / "dataset_summary.md"
+)
+
+# GLiNER's per-chunk entity names for the document above; the first segment of
+# a source carries no prior-entity pool, so these are the exact hints the
+# ingest path passes for each chunk.
+E2E_DOCUMENT_CHUNK_HINTS = [
+    ["mbzuai-oryx", "Large Vision and Language Models", "Blender Foundation", "Google"],
+    ["ActivityNet"],
+    ["Whisper cache"],
+]
+
+
+class TestClaimBudgetOnCorpusDocument:
+    def test_every_chunk_of_the_e2e_document_terminates_inside_the_budget(
+        self, hermetic_test_lm, monkeypatch
+    ):
+        """The production ``ClaimExtractor`` clamps the tenant endpoint to the
+        derived output budget. Fed the e2e document chunk by chunk with the
+        hints the ingest path produces, every completion must end on its own:
+        a ``length`` finish fails the segment, and a single-segment document
+        then fails the whole ingest after its content was already fed."""
+        from cogniverse_agents.graph.doc_extractor import DocExtractor
+        from cogniverse_agents.graph.graph_schema import DOCUMENT_MODALITY
+        from cogniverse_foundation.config import semantic_router
+        from cogniverse_foundation.config.llm_factory import create_dspy_lm
+        from cogniverse_foundation.config.unified_config import LLMEndpointConfig
+        from tests.utils.hermetic_llm import MODEL as SIDECAR_MODEL
+
+        recorded_lms: list = []
+
+        def _uncached_lm(endpoint):
+            lm = create_dspy_lm(endpoint)
+            lm.cache = False
+            recorded_lms.append(lm)
+            return lm
+
+        monkeypatch.setattr(semantic_router, "create_dspy_lm", _uncached_lm)
+
+        endpoint = LLMEndpointConfig(
+            model=f"openai/{SIDECAR_MODEL}",
+            api_base=hermetic_test_lm,
+            api_key=resolve_api_key(),
+            temperature=0.0,
+            max_tokens=8000,
+        )
+        extractor = ClaimExtractor(llm_config=endpoint)
+        chunks = DocExtractor._chunk_text(
+            DocExtractor.__new__(DocExtractor), E2E_DOCUMENT.read_text()
+        )
+        assert [len(c) for c in chunks] == [1608, 1391, 774]
+
+        finish_reasons: list[str] = []
+        for index, (chunk, hints) in enumerate(zip(chunks, E2E_DOCUMENT_CHUNK_HINTS)):
+            extractor.extract(
+                text=chunk,
+                entity_hints=hints,
+                modality_hint=DOCUMENT_MODALITY,
+                segment_anchor=Mention(
+                    source_doc_id="dataset_summary",
+                    segment_id="file_0",
+                    ts_start=0.0,
+                    ts_end=0.0,
+                    modality=DOCUMENT_MODALITY,
+                    evidence_span=chunk[:200],
+                ),
+                tenant_id=TENANT_ID,
+                source_doc_id="dataset_summary",
+            )
+            entry = recorded_lms[-1].history[-1]
+            finish_reasons.append(entry["response"].choices[0].finish_reason)
+            assert recorded_lms[-1].kwargs["max_tokens"] == (
+                extractor._llm_config.max_tokens
+            ), (index, recorded_lms[-1].kwargs)
+
+        assert finish_reasons == ["stop", "stop", "stop"]
