@@ -478,6 +478,54 @@ class TestReaperRecovery:
         )
 
     @pytest.mark.asyncio
+    async def test_reaper_redrive_keeps_graph_stage_failure_retrying(
+        self, redis, telemetry_manager_without_phoenix
+    ):
+        """A re-driven job whose graph stage fails again stays nonterminal:
+        the sweep publishes ``retrying`` with the graph error, retains the
+        PEL entry and graph-pending marker, and leaves the tenant slot,
+        in-flight marker and done marker untouched for the next sweep."""
+        from cogniverse_foundation.telemetry.config import TelemetryLevel
+
+        telemetry_manager_without_phoenix.config.level = TelemetryLevel.BASIC
+        config = worker.WorkerConfig()
+        config.consumer_id = "live-graph-retry"
+        tenant, sha, ingest_id = "acme:graph", "sha_graph_retry", "ing_graph_retry"
+        job = await _orphan_job(
+            redis, config, ingest_id=ingest_id, sha=sha, tenant=tenant
+        )
+        await worker._mark_graph_pending(redis, job)
+
+        async def _graph_fails(j):
+            raise worker.GraphStageIncomplete(
+                f"graph extraction failed for ingest {j.ingest_id}"
+            ) from RuntimeError(
+                "claim extraction failed for source 'doc1' across 1 segments"
+            )
+
+        recovered = await reaper.run_reaper_once(
+            redis, config, min_idle_ms=0, processor=_graph_fails
+        )
+
+        assert recovered == 1
+        events = [e for _, e in await queue.read_status_since(redis, ingest_id)]
+        assert [e["state"] for e in events] == ["running", "retrying"]
+        assert events[-1]["error_type"] == "GraphStageIncomplete"
+        assert events[-1]["error"] == (
+            f"graph extraction failed for ingest {ingest_id}"
+        )
+        pending = await redis.xpending(queue.QUEUE_STREAM, config.consumer_group)
+        assert pending["pending"] == 1
+        assert (
+            await redis.get(f"{worker.GRAPH_PENDING_KEY_PREFIX}{job.message_id}")
+            == ingest_id
+        )
+        assert await queue.get_active(redis, tenant) == 1
+        assert await redis.get(f"{idempotency.INFLIGHT_KEY_PREFIX}{sha}") == ingest_id
+        assert await idempotency.get_done_ingest_id(redis, sha) is None
+        assert await redis.xrange(reaper.DEAD_STREAM) == []
+
+    @pytest.mark.asyncio
     async def test_dead_letter_crash_before_ack_never_double_settles(
         self, redis, monkeypatch
     ):
