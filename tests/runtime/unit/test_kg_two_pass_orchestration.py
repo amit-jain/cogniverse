@@ -622,3 +622,91 @@ async def test_all_claim_segments_failed_raise(monkeypatch):
 
     assert claim_calls == ["s0", "s1"]
     mgr.upsert.assert_not_called()
+
+
+class _RecordingSpan:
+    def __init__(self):
+        self.attributes: dict = {}
+        self.status = None
+        self.exceptions: list = []
+
+    def set_attribute(self, key, value):
+        self.attributes[key] = value
+
+    def record_exception(self, exc):
+        self.exceptions.append(exc)
+
+    def set_status(self, status):
+        self.status = status
+
+
+@pytest.mark.asyncio
+async def test_span_wrapper_propagates_claim_failure_with_zero_counts(monkeypatch):
+    """When every segment's claim pass fails, the wrapper re-raises the inner
+    RuntimeError verbatim and still stamps zero counts on the span; a
+    ``finally`` that itself raises would replace the cause with its own
+    error."""
+    from contextlib import contextmanager
+
+    import cogniverse_foundation.telemetry.manager as telemetry_manager_module
+    from cogniverse_runtime.routers import graph as graph_router
+
+    span = _RecordingSpan()
+    span_calls: list[tuple] = []
+
+    class _Manager:
+        @contextmanager
+        def span(self, name, tenant_id, **kwargs):
+            span_calls.append(
+                (name, tenant_id, kwargs["component"], kwargs["attributes"])
+            )
+            try:
+                yield span
+            except Exception as exc:
+                span.record_exception(exc)
+                raise
+
+    monkeypatch.setattr(
+        telemetry_manager_module, "get_telemetry_manager", lambda **kw: _Manager()
+    )
+    monkeypatch.setattr(graph_router, "_graph_manager_factory", lambda tenant: object())
+
+    async def _inner_all_segments_failed(**kwargs):
+        raise RuntimeError(
+            "claim extraction failed for source 'doc1' across 1 segments"
+        )
+
+    monkeypatch.setattr(
+        ingestion, "_extract_graph_per_segment_inner", _inner_all_segments_failed
+    )
+
+    with pytest.raises(
+        RuntimeError,
+        match=r"^claim extraction failed for source 'doc1' across 1 segments$",
+    ) as raised:
+        await ingestion._extract_graph_per_segment(
+            processing_results={},
+            source_doc_id="doc1",
+            tenant_id="acme:acme",
+            config_manager=SimpleNamespace(),
+        )
+
+    assert raised.value.__context__ is None
+    assert span_calls == [
+        (
+            "pipeline.kg.extract_per_segment",
+            "acme:acme",
+            "pipeline",
+            {"kg.source_doc_id": "doc1"},
+        )
+    ]
+    assert [type(e).__name__ for e in span.exceptions] == ["RuntimeError"]
+    duration_ms = span.attributes.pop("duration_ms")
+    assert isinstance(duration_ms, int) and 0 <= duration_ms < 10_000
+    assert span.attributes == {
+        "kg.nodes_count": 0,
+        "kg.edges_count": 0,
+        "kg.failed_count": 0,
+        "kg.claim_segments_failed": 0,
+        "kg.segments_count": 0,
+    }
