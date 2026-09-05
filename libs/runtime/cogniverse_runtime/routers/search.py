@@ -327,27 +327,27 @@ async def list_profiles(
     tenant_id: str = Query(..., description="Tenant identifier (required)"),
     config_manager: ConfigManager = Depends(get_config_manager_dependency),
 ) -> Dict[str, Any]:
-    """List available search profiles for a tenant.
+    """List the search profiles a tenant can actually use.
 
-    Returns profile name, type, and model — safe for user-facing display.
-    Detailed config (pipeline, strategies, schema internals) is admin-only
-    via GET /admin/profiles.
+    A profile whose embedding inference service is not configured is not
+    servable, so it is not advertised. Returns profile name, type, and model —
+    safe for user-facing display. Detailed config (pipeline, strategies, schema
+    internals) is admin-only via GET /admin/profiles.
     """
-    config = get_config(tenant_id=tenant_id, config_manager=config_manager)
+    from cogniverse_agents.profile_selection_agent import servable_tenant_profiles
 
-    backend_config = config.get("backend", {})
-    profiles = backend_config.get("profiles", {})
+    servable = servable_tenant_profiles(config_manager, tenant_id)
 
     return {
         "tenant_id": tenant_id,
-        "count": len(profiles),
+        "count": len(servable),
         "profiles": [
             {
                 "name": name,
-                "model": profile.get("embedding_model"),
-                "type": profile.get("type"),
+                "model": profile.embedding_model,
+                "type": profile.type,
             }
-            for name, profile in profiles.items()
+            for name, profile in servable
         ],
     }
 

@@ -616,6 +616,21 @@ class AgentConfigUnified:
         return cls(tenant_id=tenant_id, agent_config=agent_config)
 
 
+def profile_embedding_service(profile: Dict[str, Any]) -> str:
+    """The embedding inference service a profile declares, or ``""`` if none."""
+    inference_services = profile.get("inference_services") or {}
+    if not isinstance(inference_services, dict):
+        return ""
+    service = inference_services.get("embedding")
+    return service.strip() if isinstance(service, str) else ""
+
+
+def profile_is_servable(profile: Dict[str, Any], service_urls: Any) -> bool:
+    """True when the profile needs no embedding service or names a configured one."""
+    service = profile_embedding_service(profile)
+    return not service or service in service_urls
+
+
 @dataclass
 class BackendProfileConfig:
     """
