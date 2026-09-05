@@ -165,11 +165,11 @@ def seeded_documents(vespa_instance, colpali_client):
 @pytest.mark.ci_fast
 @pytest.mark.requires_vespa
 class TestListProfilesIntegration:
-    def test_list_profiles_from_vespa_config(self, search_client):
-        """GET /search/profiles returns seeded profiles from real VespaConfigStore.
+    def test_list_profiles_from_vespa_config(self, search_client, tomoro_search_url):
+        """GET /search/profiles returns the tenant profiles it can serve.
 
-        Profile list includes both system profiles (from configs/config.json)
-        and tenant-specific profiles seeded via ConfigManager.add_backend_profile().
+        ``test_colpali`` is advertised only while ``tomoro_search_url`` has
+        configured the ``tomoro_embedding`` service its profile references.
         """
         resp = search_client.get("/search/profiles?tenant_id=test:unit")
 
