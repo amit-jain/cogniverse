@@ -1179,93 +1179,66 @@ class VespaBackend(Backend):
     def _wait_for_schema_convergence(
         self, schema_names: List[str], timeout: int = 60
     ) -> None:
-        """
-        Wait for Vespa content nodes to converge after schema deployment.
+        """Wait for conditional feeds to reach every requested document type.
 
-        After deploying an application package, the config server accepts
-        it immediately but content/distributor nodes need extra time to
-        recognise new document types. Queries via ``/search/`` can return
-        200 before content distributors are ready, and ``GET /document/v1/``
-        returns 404 for *any* URL (even an unknown schema), so neither is
-        discriminative.
-
-        The discriminative probe is a per-schema YQL query
-        (``select documentid from <name> where true limit 0``): while the
-        content distributor hasn't loaded the doctype Vespa returns
-        ``root.errors``; once loaded, the query returns 200 with no errors.
-        Once every probed schema is visible we add a short buffer — search
-        visibility converges a beat before the document API accepts feeds,
-        so without this buffer the first feed still races.
-
-        Args:
-            schema_names: Names of schemas that were just deployed
-            timeout: Maximum seconds to wait for convergence
+        A POST with a false condition must return 412 from the feed path
+        without creating or replacing a document. Only unresolved schemas
+        are retried, using one HTTP session and a shared wall-clock deadline.
 
         Raises:
-            RuntimeError: If any schema is still not query-visible when the
-                timeout expires. Reporting success for a schema Vespa never
-                activated lets callers feed/search a nonexistent doctype.
+            RuntimeError: If any schema is not feed-ready before the deadline.
         """
         import time
 
         import requests
 
-        # If there are no schemas to wait for (e.g., the rollback path
-        # re-deploying 0 previous schemas), there's nothing to probe.
         if not schema_names:
             logger.debug("Skipping convergence probe: no schemas in deployment package")
             return
 
         base_url = re.sub(r":\d+$", "", self._url)
-        probe_url = f"{base_url}:{self._port}/search/"
-
-        logger.info(
-            f"Waiting for content node convergence (schemas: {schema_names})..."
-        )
-        # Probe each schema directly via YQL `from <schema>`. When content
-        # distributors haven't loaded the doctype yet, Vespa returns errors
-        # like "Schema 'X' not found" or 4xx; once it's loaded, the query
-        # returns 200 with an empty hit list and no errors. The previous
-        # `model.restrict` form was unreliable on recent Vespa versions —
-        # it silently returns 200 with empty results for unknown schemas
-        # instead of erroring, falsely confirming convergence after a single
-        # probe.
+        document_url = f"{base_url}:{self._port}/document/v1"
+        logger.info(f"Waiting for feed convergence (schemas: {schema_names})...")
         remaining = set(schema_names)
-        for i in range(timeout):
-            for name in list(remaining):
-                try:
-                    response = requests.post(
-                        probe_url,
-                        json={
-                            "yql": f"select documentid from {name} where true limit 0",
-                            "hits": 0,
-                        },
-                        timeout=5,
-                    )
-                    if response.status_code != 200:
-                        continue
-                    body = response.json()
-                    errors = body.get("root", {}).get("errors", [])
-                    if not errors:
-                        remaining.discard(name)
-                except (requests.exceptions.ConnectionError, ValueError):
-                    pass
+        started = time.monotonic()
+        deadline = started + timeout
+        with requests.Session() as session:
+            while remaining:
+                for name in sorted(remaining):
+                    request_timeout = min(5.0, deadline - time.monotonic())
+                    if request_timeout <= 0:
+                        break
+                    try:
+                        response = session.post(
+                            f"{document_url}/{name}/{name}/docid/convergence_probe",
+                            params={
+                                "condition": "false",
+                                "timeout": f"{max(1, int(request_timeout * 1000))}ms",
+                            },
+                            json={"fields": {}},
+                            timeout=request_timeout,
+                        )
+                        if response.status_code == 412:
+                            remaining.remove(name)
+                    except requests.RequestException:
+                        pass
 
-            if not remaining:
-                logger.info(
-                    f"Content nodes converged after {i + 1}s (schemas={schema_names})"
-                )
-                # Feed-path (document/v1) converges a beat after search
-                # visibility — a short buffer eliminates the first-feed
-                # race without significantly slowing deploys.
-                time.sleep(3)
-                return
-            time.sleep(1)
+                if not remaining:
+                    logger.info(
+                        "Feed paths converged after %.1fs (schemas=%s)",
+                        time.monotonic() - started,
+                        schema_names,
+                    )
+                    return
+                delay = min(1.0, deadline - time.monotonic())
+                if delay <= 0:
+                    break
+                time.sleep(delay)
 
         raise RuntimeError(
             f"Schema convergence not confirmed after {timeout}s — deploy was "
             f"accepted by the config server but these schemas never became "
-            f"query-visible: {sorted(remaining)}"
+            f"feed-ready: {sorted(remaining)}"
         )
 
     def delete_schema(
