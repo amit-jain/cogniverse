@@ -11,15 +11,18 @@ from __future__ import annotations
 import json
 import multiprocessing
 import os
+import socket
 import subprocess
 import threading
 import time
 import uuid
+from concurrent.futures import ThreadPoolExecutor
 from contextlib import contextmanager
 from datetime import datetime, timedelta, timezone
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 
 import pytest
+import requests
 from cogniverse_cli.inference_endpoints import ResolvedInferenceEndpoint
 
 import tests.utils.hermetic_llm as hermetic_llm
@@ -71,6 +74,7 @@ def _models_server(
     fail_first: int = 0,
     fail_status: int = 500,
     attempts: list | None = None,
+    bind_host: str = "127.0.0.1",
 ):
     if malformed:
         payload = {"models": list(model_ids)}
@@ -118,11 +122,11 @@ def _models_server(
         def log_message(self, format, *args):
             pass
 
-    server = ThreadingHTTPServer(("127.0.0.1", 0), Handler)
+    server = ThreadingHTTPServer((bind_host, 0), Handler)
     thread = threading.Thread(target=server.serve_forever, daemon=True)
     thread.start()
     try:
-        yield f"http://127.0.0.1:{server.server_port}"
+        yield f"http://{bind_host}:{server.server_port}"
     finally:
         server.shutdown()
         server.server_close()
@@ -3451,10 +3455,72 @@ class TestProbeBudgetMatchesEndpointLocality:
             > sidecar_module._MEASURED_REMOTE_SCALE_UP_S
         )
 
-    def test_the_derived_budget_is_the_one_actually_used(self, caplog):
-        with caplog.at_level("WARNING", logger="tests.utils.vllm_sidecar"):
-            assert listed_model_ids("http://127.0.0.1:29071") is None
-        assert "after 2.0s" in caplog.records[-1].getMessage()
+    @pytest.mark.parametrize("fail_first", [0, 2, 99])
+    def test_the_derived_budget_is_the_one_actually_used(self, monkeypatch, fail_first):
+        with socket.socket(socket.AF_INET, socket.SOCK_DGRAM) as route:
+            route.connect(("192.0.2.1", 9))
+            remote_host = route.getsockname()[0]
+        monkeypatch.setenv("NO_PROXY", "*")
+        calls = []
+        send = requests.adapters.HTTPAdapter.send
+
+        def record_send(adapter, request, **kwargs):
+            calls.append((request.method, request.url, kwargs["timeout"]))
+            return send(adapter, request, **kwargs)
+
+        monkeypatch.setattr(requests.adapters.HTTPAdapter, "send", record_send)
+        attempts = []
+        with _models_server(
+            GEMMA, bind_host=remote_host, fail_first=fail_first, attempts=attempts
+        ) as url:
+            result = listed_model_ids(url)
+        assert result == (None if fail_first == 99 else {GEMMA})
+        count = 1 if fail_first == 0 else 3
+        assert calls == [("GET", f"{url}/v1/models", 90.0)] * count
+        assert attempts == ["/v1/models"] * count
+
+    def test_concurrent_probes_keep_their_own_http_timeouts(self, monkeypatch):
+        with socket.socket(socket.AF_INET, socket.SOCK_DGRAM) as route:
+            route.connect(("192.0.2.1", 9))
+            remote_host = route.getsockname()[0]
+        monkeypatch.setenv("NO_PROXY", "*")
+        calls = []
+        start = threading.Barrier(3, timeout=10)
+        send = requests.adapters.HTTPAdapter.send
+
+        def record_send(adapter, request, **kwargs):
+            calls.append((request.url, kwargs["timeout"]))
+            start.wait()
+            return send(adapter, request, **kwargs)
+
+        monkeypatch.setattr(requests.adapters.HTTPAdapter, "send", record_send)
+        local_attempts, remote_attempts = [], []
+        with (
+            _models_server(GEMMA, attempts=local_attempts) as local_url,
+            _models_server(
+                TEACHER_GEMMA, bind_host=remote_host, attempts=remote_attempts
+            ) as remote_url,
+            ThreadPoolExecutor(max_workers=3) as pool,
+        ):
+            probes = [
+                pool.submit(listed_model_ids, local_url),
+                pool.submit(listed_model_ids, remote_url),
+                pool.submit(listed_model_ids, local_url, timeout=7.5),
+            ]
+            assert [probe.result(timeout=15) for probe in probes] == [
+                {GEMMA},
+                {TEACHER_GEMMA},
+                {GEMMA},
+            ]
+        assert sorted(calls) == sorted(
+            [
+                (f"{local_url}/v1/models", 2.0),
+                (f"{remote_url}/v1/models", 90.0),
+                (f"{local_url}/v1/models", 7.5),
+            ]
+        )
+        assert local_attempts == ["/v1/models", "/v1/models"]
+        assert remote_attempts == ["/v1/models"]
 
 
 class TestTransientProbeFailuresAreRetried:
