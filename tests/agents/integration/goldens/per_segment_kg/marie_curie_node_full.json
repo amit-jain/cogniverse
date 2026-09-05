@@ -1,0 +1,20 @@
+{
+  "degree": 0,
+  "description": "Person mentioned in marie_curie_30s",
+  "doc_id": "kg_node_test_marie_curie",
+  "doc_type": "node",
+  "kind": "concept",
+  "label": "Person",
+  "mentions": [
+    {
+      "evidence_span": "Marie Curie discovered radium. Marie Curie discovered it in 1898 while working at the Sorbonne.",
+      "modality": "transcript",
+      "segment_id": "seg_3",
+      "source_doc_id": "marie_curie_30s",
+      "ts_end": 18.5,
+      "ts_start": 12.0
+    }
+  ],
+  "name": "Marie Curie",
+  "tenant_id": "test"
+}

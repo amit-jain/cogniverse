@@ -14,9 +14,12 @@ Every node carries structured ``Mention`` provenance; every edge carries
 No co-occurrence "mentioned_with" edges remain.
 
 Locks the KG state after ingestion to byte-equal goldens under
-``tests/agents/integration/goldens/``. Re-record with ``RECORD_GOLDEN=1``
-when the compiled DSPy artifact (or the schema, or the extractor wiring)
-intentionally changes.
+``tests/agents/integration/goldens/per_segment_kg/``. Those goldens are
+committed; ``tests/agents/unit/test_per_segment_kg_goldens.py`` pins their
+shape against the production schema and their grounding against the fixture
+text without any service. Re-record with ``RECORD_GOLDEN=1`` when the
+fixture text, the compiled DSPy artifact, the schema, or the extractor
+wiring intentionally changes, and commit the re-recorded files.
 """
 
 from __future__ import annotations
@@ -86,7 +89,7 @@ def _configure_dspy_lm(ensure_host_ollama):
 # Golden-file machinery                                                       #
 # --------------------------------------------------------------------------- #
 
-GOLDEN_DIR = Path(__file__).parent / "goldens"
+GOLDEN_DIR = Path(__file__).parent / "goldens" / "per_segment_kg"
 RECORD_GOLDEN = os.environ.get("RECORD_GOLDEN") == "1"
 
 
@@ -482,7 +485,7 @@ class TestPerSegmentKGProvenance:
     @pytest.mark.asyncio
     async def test_marie_curie_mentions(self, graph_manager):
         """Marie Curie's mentions list is byte-equal to the locked golden
-        (two mentions: seg_3 transcript + seg_4 transcript)."""
+        (one mention: seg_3 transcript; seg_4 names her only as ``She``)."""
         manager, _, config_manager = graph_manager
         await _run_extraction(
             manager, config_manager, _marie_curie_processing_results()
@@ -675,9 +678,9 @@ class TestPerSegmentKGProvenance:
 
     @pytest.mark.asyncio
     async def test_reingest_additive_mentions(self, graph_manager):
-        """Re-ingesting with seg_3 replaced grows Marie Curie's
-        mentions to 3 (seg_3 original, seg_3 new, seg_4). New mention
-        byte-equal to golden; original two byte-equal to the locked golden."""
+        """Re-ingesting with seg_3 replaced leaves Marie Curie with the
+        mentions list locked in the golden: the new seg_3 mention shares
+        the original's anchor, so the merge keeps one seg_3 entry."""
         manager, _, config_manager = graph_manager
 
         # Original ingest.

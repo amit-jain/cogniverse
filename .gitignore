@@ -100,6 +100,13 @@ tests/**/goldens/
 !tests/core/integration/goldens/*.npy
 !tests/core/integration/goldens/*.json
 
+# ...and the per-segment KG provenance recording, pinned by
+# tests/agents/unit/test_per_segment_kg_goldens.py so a fresh checkout replays
+# it and a fixture or schema change goes red without any service.
+!tests/agents/integration/goldens/
+tests/agents/integration/goldens/*
+!tests/agents/integration/goldens/per_segment_kg/
+
 # Temporary files
 *.tmp
 *.temp

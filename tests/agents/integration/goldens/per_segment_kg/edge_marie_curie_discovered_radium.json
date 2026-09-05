@@ -1,0 +1,16 @@
+{
+  "confidence": 0.99,
+  "doc_id": "kg_edge_test_5f82d6d970bb07c6",
+  "doc_type": "edge",
+  "evidence_span": "Marie Curie discovered radium.",
+  "modality": "transcript",
+  "provenance": "EXTRACTED",
+  "relation": "discovered",
+  "segment_id": "seg_3",
+  "source_doc_id": "marie_curie_30s",
+  "source_node_id": "marie_curie",
+  "target_node_id": "radium",
+  "tenant_id": "test",
+  "ts_end": 18.5,
+  "ts_start": 12.0
+}
