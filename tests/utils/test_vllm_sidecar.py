@@ -3354,3 +3354,35 @@ class TestExternallyServedEndpointsAreDiscovered:
 
     def test_a_workload_publishing_nothing_external_yields_nothing(self):
         assert _external_endpoints_from_workload({"kind": "Deployment"}) == ()
+
+
+class TestClusterQueryFailureIsNotSilentlyNoEndpoints:
+    """A failed cluster query must not read as 'nothing is served remotely'."""
+
+    def test_unreachable_context_is_reported_rather_than_returning_quietly(
+        self, caplog
+    ):
+        import tests.utils.vllm_sidecar as sidecar_module
+
+        with caplog.at_level("WARNING", logger="tests.utils.vllm_sidecar"):
+            result = sidecar_module._discover_external_model_urls(
+                context="cogniverse-no-such-kube-context"
+            )
+        assert result == ()
+        message = caplog.records[-1].getMessage()
+        assert "cogniverse-no-such-kube-context" in message
+        assert "failed" in message.lower()
+
+    def test_a_reachable_cluster_with_no_external_endpoints_is_silent(
+        self, caplog, monkeypatch
+    ):
+        import tests.utils.vllm_sidecar as sidecar_module
+
+        monkeypatch.setattr(
+            sidecar_module,
+            "_command_json",
+            lambda command: {"items": []},
+        )
+        with caplog.at_level("WARNING", logger="tests.utils.vllm_sidecar"):
+            assert sidecar_module._discover_external_model_urls(context="any") == ()
+        assert [r.getMessage() for r in caplog.records] == []
