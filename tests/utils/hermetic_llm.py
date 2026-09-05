@@ -49,6 +49,55 @@ _SIDECARS = {
     TEACHER_MODEL: (TEACHER_CONTAINER, TEACHER_HOST_PORT),
 }
 
+_LOCAL_SPAWN_MIN_AVAILABLE_GB = {
+    MODEL: 16.0,
+    TEACHER_MODEL: 52.0,
+}
+
+
+class LocalSpawnRefused(RuntimeError):
+    """Raised instead of starting a local sidecar."""
+
+
+class LocalModelWontFitError(LocalSpawnRefused):
+    """Raised instead of spawning a model the host cannot hold."""
+
+
+def available_ram_gb() -> float:
+    """Return the kernel's MemAvailable in GiB."""
+    with open("/proc/meminfo", encoding="utf-8") as handle:
+        for line in handle:
+            if line.startswith("MemAvailable:"):
+                return int(line.split()[1]) / (1024 * 1024)
+    raise RuntimeError("/proc/meminfo does not report MemAvailable")
+
+
+def _guard_local_spawn(model: str) -> None:
+    assert_local_spawn_fits(model, available_ram_gb())
+
+
+def assert_local_spawn_fits(model: str, available_gb: float) -> None:
+    """Refuse a local spawn that would exhaust host memory."""
+    required = _LOCAL_SPAWN_MIN_AVAILABLE_GB.get(model)
+    if required is None:
+        raise LocalModelWontFitError(
+            f"Refusing to spawn {model!r} locally: no memory requirement is "
+            f"declared for it in _LOCAL_SPAWN_MIN_AVAILABLE_GB. Declare one, or "
+            f"serve the model remotely."
+        )
+    if available_gb < required:
+        raise LocalModelWontFitError(
+            f"Refusing to spawn {model!r} locally: it needs {required:.1f} GiB "
+            f"and this host has {available_gb:.1f} GiB available. Nothing was "
+            f"started.\n"
+            f"This happens when the model has no reachable remote endpoint. To "
+            f"serve it remotely instead, export COGNIVERSE_LLM_SERVING=modal and "
+            f"the Modal credentials from .env/MODAL_TOKEN_ID.env and "
+            f".env/MODAL_TOKEN_SECRET.env (scripts/run_e2e_batched.sh loads these "
+            f"for you). To run it locally, free {required - available_gb:.1f} GiB."
+        )
+
+
 _IMAGES = {
     "rocm": "vllm/vllm-openai-rocm:v0.23.0",
     "cpu": "vllm/vllm-openai-cpu:v0.23.0",
@@ -332,7 +381,8 @@ def ensure_llm(model: str = MODEL, deadline_s: float = 900.0) -> str:
         raise ValueError(f"No exact local sidecar is configured for {model!r}") from exc
 
     with _ensure_lock():
-        configured = find_exact_model_endpoint(model, _configured_model_urls(model))
+        candidate_urls = _configured_model_urls(model)
+        configured = find_exact_model_endpoint(model, candidate_urls)
         if configured is not None:
             return f"{configured}/v1"
 
@@ -396,6 +446,7 @@ def ensure_llm(model: str = MODEL, deadline_s: float = 900.0) -> str:
                     return _local_endpoint()
                 _remove_container(container)
 
+            _guard_local_spawn(model)
             device = _detect_device()
             attempts = (
                 [("rocm", 0.25), ("rocm", 0.12), ("cpu", 0.0)]
