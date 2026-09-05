@@ -968,4 +968,8 @@ def _install_signal_handlers(stop: asyncio.Event) -> None:
 
 
 if __name__ == "__main__":
-    asyncio.run(run())
+    # ``-m`` runs this file a second time as ``__main__``; drive the imported
+    # module so the reaper and the processor share one ``GraphStageIncomplete``.
+    from cogniverse_runtime.ingestion_worker.worker import run as _run
+
+    asyncio.run(_run())
