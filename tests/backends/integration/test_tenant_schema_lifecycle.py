@@ -180,7 +180,7 @@ def wipe_non_protected_schemas(get_backend):
 class TestSchemaRegistryDeployment:
     """Test schema deployment via SchemaRegistry"""
 
-    def test_deploy_single_schema(self, get_backend):
+    def test_deploy_single_schema(self, get_backend, vespa_instance):
         """Test deploying a single schema for a tenant"""
         backend = get_backend("acme")
 
@@ -194,6 +194,42 @@ class TestSchemaRegistryDeployment:
         assert (
             schemas[0].full_schema_name == f"{_SHIPPED_ACTIVE_VIDEO_PROFILE}_acme_acme"
         )
+
+        from vespa.application import Vespa
+
+        schema_name = f"{_SHIPPED_ACTIVE_VIDEO_PROFILE}_acme_acme"
+        app = Vespa(url=vespa_instance["base_url"])
+        documents = [
+            {"id": f"first_feed_{i}", "fields": {"video_id": f"video_{i}"}}
+            for i in range(5)
+        ]
+        responses = []
+        app.feed_iterable(
+            documents,
+            schema=schema_name,
+            namespace=schema_name,
+            callback=lambda response, doc_id: responses.append(
+                (doc_id, response.status_code)
+            ),
+        )
+        assert sorted(responses) == [
+            ("first_feed_0", 200),
+            ("first_feed_1", 200),
+            ("first_feed_2", 200),
+            ("first_feed_3", 200),
+            ("first_feed_4", 200),
+        ]
+        for document in documents:
+            stored = app.get_data(
+                schema=schema_name,
+                namespace=schema_name,
+                data_id=document["id"],
+            )
+            assert stored.status_code == 200
+            assert stored.json["id"] == (
+                f"id:{schema_name}:{schema_name}::{document['id']}"
+            )
+            assert stored.json["fields"]["video_id"] == document["fields"]["video_id"]
 
     def test_deploy_multiple_schemas_same_tenant(self, get_backend):
         """Test deploying multiple schemas for the same tenant"""
