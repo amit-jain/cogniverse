@@ -39,6 +39,7 @@ from dataclasses import dataclass, field
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Optional
+from urllib.parse import urlparse
 
 import requests
 from huggingface_hub import snapshot_download
@@ -47,6 +48,22 @@ from huggingface_hub.errors import HfHubHTTPError, LocalEntryNotFoundError
 from cogniverse_runtime.inference_services import parse_inference_service_urls
 
 logger = logging.getLogger(__name__)
+
+_LOOPBACK_HOSTS = frozenset({"127.0.0.1", "localhost", "::1"})
+_LOOPBACK_PROBE_TIMEOUT_S = 2.0
+_MEASURED_REMOTE_SCALE_UP_S = 48.87
+_REMOTE_PROBE_TIMEOUT_S = 90.0
+_PROBE_ATTEMPTS = 3
+_PROBE_RETRY_PAUSE_S = 1.0
+
+
+def _probe_timeout(base_url: str) -> float:
+    """Return the model-list budget for an endpoint's locality."""
+    host = urlparse(base_url).hostname or ""
+    if host in _LOOPBACK_HOSTS:
+        return _LOOPBACK_PROBE_TIMEOUT_S
+    return _REMOTE_PROBE_TIMEOUT_S
+
 
 DEFAULT_IMAGE = "vllm/vllm-openai-cpu:v0.23.0"
 DEFAULT_HEALTH_DEADLINE_SECONDS = 600
@@ -356,18 +373,48 @@ def _server_base(url: str) -> str:
     return base
 
 
-def listed_model_ids(base_url: str, timeout: float = 2.0) -> set[str] | None:
+def listed_model_ids(base_url: str, timeout: float | None = None) -> set[str] | None:
     """Return exact model IDs from a valid OpenAI model-list response."""
+    if timeout is None:
+        timeout = _probe_timeout(base_url)
     api_key = os.environ.get("COGNIVERSE_INFERENCE_API_KEY")
     headers = {"Authorization": f"Bearer {api_key}"} if api_key else None
-    try:
-        response = requests.get(
-            f"{_server_base(base_url)}/v1/models", timeout=timeout, headers=headers
-        )
-        if response.status_code != 200:
+    url = f"{_server_base(base_url)}/v1/models"
+    payload = None
+    for attempt in range(1, _PROBE_ATTEMPTS + 1):
+        transient = False
+        try:
+            response = requests.get(url, timeout=timeout, headers=headers)
+            if response.status_code == 200:
+                payload = response.json()
+                break
+            transient = response.status_code >= 500
+            logger.warning(
+                "Model listing at %s refused the probe: HTTP %s (attempt %s/%s, "
+                "timeout=%ss, api key %s)",
+                base_url,
+                response.status_code,
+                attempt,
+                _PROBE_ATTEMPTS,
+                timeout,
+                "present" if api_key else "absent",
+            )
+        except (requests.RequestException, ValueError) as exc:
+            transient = True
+            logger.warning(
+                "Model listing at %s failed after %ss (attempt %s/%s): %s: %s",
+                base_url,
+                timeout,
+                attempt,
+                _PROBE_ATTEMPTS,
+                type(exc).__name__,
+                exc,
+            )
+        if not transient:
             return None
-        payload = response.json()
-    except (requests.RequestException, ValueError):
+        if attempt < _PROBE_ATTEMPTS:
+            time.sleep(_PROBE_RETRY_PAUSE_S)
+    if payload is None:
         return None
     if not isinstance(payload, dict) or payload.get("object") != "list":
         return None
@@ -382,7 +429,7 @@ def listed_model_ids(base_url: str, timeout: float = 2.0) -> set[str] | None:
     return {row["id"] for row in rows}
 
 
-def serves_exact_model(base_url: str, model: str, timeout: float = 2.0) -> bool:
+def serves_exact_model(base_url: str, model: str, timeout: float | None = None) -> bool:
     """Return whether an OpenAI-compatible endpoint lists ``model`` exactly."""
     model_ids = listed_model_ids(base_url, timeout)
     return model_ids is not None and model in model_ids
