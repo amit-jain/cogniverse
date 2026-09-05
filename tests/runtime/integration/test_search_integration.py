@@ -88,6 +88,26 @@ def tomoro_search_url(config_manager, vllm_colpali_url):
     QueryEncoderFactory._encoder_cache.clear()
 
 
+@pytest.fixture
+def tomoro_service_configured(config_manager):
+    """Register a URL for the ``tomoro_embedding`` service without serving it.
+
+    ``GET /search/profiles`` advertises a profile when its embedding service
+    resolves to a URL; it never encodes, so no model server is required.
+    """
+    sys_cfg = config_manager.get_system_config()
+    previous = dict(sys_cfg.inference_service_urls)
+    sys_cfg.inference_service_urls = dict(previous)
+    sys_cfg.inference_service_urls["tomoro_embedding"] = "http://tomoro.invalid:8000"
+    config_manager.set_system_config(sys_cfg)
+    QueryEncoderFactory._encoder_cache.clear()
+    yield
+    sys_cfg = config_manager.get_system_config()
+    sys_cfg.inference_service_urls = previous
+    config_manager.set_system_config(sys_cfg)
+    QueryEncoderFactory._encoder_cache.clear()
+
+
 @pytest.fixture(scope="module")
 def seeded_documents(vespa_instance, colpali_client):
     """Feed real ColPali-embedded documents into Vespa for search tests."""
@@ -165,21 +185,26 @@ def seeded_documents(vespa_instance, colpali_client):
 @pytest.mark.ci_fast
 @pytest.mark.requires_vespa
 class TestListProfilesIntegration:
-    def test_list_profiles_from_vespa_config(self, search_client, tomoro_search_url):
+    def test_list_profiles_from_vespa_config(
+        self, search_client, tomoro_service_configured
+    ):
         """GET /search/profiles returns the tenant profiles it can serve.
 
-        ``test_colpali`` is advertised only while ``tomoro_search_url`` has
-        configured the ``tomoro_embedding`` service its profile references.
+        ``test_colpali`` is advertised only while its ``tomoro_embedding``
+        service has a configured URL.
         """
         resp = search_client.get("/search/profiles?tenant_id=test:unit")
 
         assert resp.status_code == 200
         data = resp.json()
         assert data["tenant_id"] == "test:unit"
-        # Count includes system profiles merged with seeded test profiles
-        assert data["count"] >= 2
 
         profile_names = {p["name"] for p in data["profiles"]}
+        assert data["count"] == len(data["profiles"])
+        assert {n for n in profile_names if n.startswith("test_")} == {
+            "test_colpali",
+            "test_xclip",
+        }
 
         assert "test_colpali" in profile_names
         assert "test_xclip" in profile_names
