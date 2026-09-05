@@ -25,6 +25,7 @@ from __future__ import annotations
 
 import fcntl
 import json
+import logging
 import os
 import shlex
 import socket
@@ -44,6 +45,8 @@ from huggingface_hub import snapshot_download
 from huggingface_hub.errors import HfHubHTTPError, LocalEntryNotFoundError
 
 from cogniverse_runtime.inference_services import parse_inference_service_urls
+
+logger = logging.getLogger(__name__)
 
 DEFAULT_IMAGE = "vllm/vllm-openai-cpu:v0.23.0"
 DEFAULT_HEALTH_DEADLINE_SECONDS = 600
@@ -676,19 +679,27 @@ def _external_endpoints_from_workload(workload: object) -> tuple[str, ...]:
 
 def _discover_external_model_urls(*, context: str) -> tuple[str, ...]:
     """Collect externally served endpoints published by cluster workloads."""
-    resources = _command_json(
-        [
-            "kubectl",
-            "--context",
-            context,
-            "get",
-            "deployments",
-            "--all-namespaces",
-            "-o",
-            "json",
-        ]
-    )
+    command = [
+        "kubectl",
+        "--context",
+        context,
+        "get",
+        "deployments",
+        "--all-namespaces",
+        "-o",
+        "json",
+    ]
+    resources = _command_json(command)
+    if resources is None:
+        time.sleep(2)
+        resources = _command_json(command)
     if not isinstance(resources, dict) or not isinstance(resources.get("items"), list):
+        logger.warning(
+            "Cluster query for externally served endpoints failed (context=%s). "
+            "Treating the deployment as serving nothing remotely, which builds a "
+            "local sidecar instead of using the remote model.",
+            context,
+        )
         return ()
     urls: list[str] = []
     for item in resources["items"]:

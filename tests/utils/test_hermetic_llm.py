@@ -111,3 +111,43 @@ class TestRoleModelsDeriveFromShippedConfig:
 
     def test_the_two_roles_are_distinct_models(self) -> None:
         assert MODEL != TEACHER_MODEL
+
+
+class TestResolutionDecisionIsReported:
+    """Which endpoint a role resolved to, or why it fell through, is logged."""
+
+    def test_resolved_endpoint_is_logged_with_model_and_url(self, caplog) -> None:
+        from tests.utils import hermetic_llm
+
+        with caplog.at_level("INFO", logger="tests.utils.hermetic_llm"):
+            hermetic_llm._report_resolution(MODEL, "https://example.invalid", ())
+        assert [r.getMessage() for r in caplog.records] == [
+            f"LM role model {MODEL!r} resolved to https://example.invalid"
+        ]
+
+    def test_fallthrough_names_every_candidate_that_was_tried(self, caplog) -> None:
+        from tests.utils import hermetic_llm
+
+        tried = ("https://a.invalid", "https://b.invalid")
+        with caplog.at_level("WARNING", logger="tests.utils.hermetic_llm"):
+            hermetic_llm._report_resolution(TEACHER_MODEL, None, tried)
+        message = caplog.records[-1].getMessage()
+        assert TEACHER_MODEL in message
+        assert "https://a.invalid" in message
+        assert "https://b.invalid" in message
+        assert "local sidecar" in message
+
+    def test_fallthrough_with_no_candidates_says_so(self, caplog) -> None:
+        from tests.utils import hermetic_llm
+
+        with caplog.at_level("WARNING", logger="tests.utils.hermetic_llm"):
+            hermetic_llm._report_resolution(MODEL, None, ())
+        assert "no candidate endpoint was configured" in caplog.records[-1].getMessage()
+
+    def test_ensure_llm_reports_before_it_spawns(self) -> None:
+        import inspect
+
+        from tests.utils import hermetic_llm
+
+        source = inspect.getsource(hermetic_llm.ensure_llm)
+        assert source.index("_report_resolution(") < source.index("_guard_local_spawn(")

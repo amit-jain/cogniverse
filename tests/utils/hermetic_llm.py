@@ -15,6 +15,7 @@ sidecar runs GPU-accelerated; elsewhere it falls back to CPU vLLM.
 from __future__ import annotations
 
 import json
+import logging
 import os
 import subprocess
 import threading
@@ -32,6 +33,8 @@ from tests.utils.vllm_sidecar import (
     listed_model_ids,
     serves_exact_model,
 )
+
+logger = logging.getLogger(__name__)
 
 REPO_ROOT = Path(__file__).resolve().parents[2]
 SOURCE_CONFIG = REPO_ROOT / "configs" / "config.json"
@@ -78,6 +81,22 @@ def available_ram_gb() -> float:
             if line.startswith("MemAvailable:"):
                 return int(line.split()[1]) / (1024 * 1024)
     raise RuntimeError("/proc/meminfo does not report MemAvailable")
+
+
+def _report_resolution(
+    model: str, resolved: str | None, tried: tuple[str, ...]
+) -> None:
+    """Record which endpoint served a role, or why a sidecar is being built."""
+    if resolved is not None:
+        logger.info("LM role model %r resolved to %s", model, resolved)
+        return
+    where = "; ".join(tried) if tried else "no candidate endpoint was configured"
+    logger.warning(
+        "No endpoint serves %r exactly, so a local sidecar will be built. "
+        "Candidates tried: %s",
+        model,
+        where,
+    )
 
 
 def _guard_local_spawn(model: str) -> None:
@@ -391,6 +410,7 @@ def ensure_llm(model: str = MODEL, deadline_s: float = 900.0) -> str:
     with _ensure_lock():
         candidate_urls = _configured_model_urls(model)
         configured = find_exact_model_endpoint(model, candidate_urls)
+        _report_resolution(model, configured, candidate_urls)
         if configured is not None:
             return f"{configured}/v1"
 
