@@ -68,6 +68,9 @@ def _models_server(
     malformed: bool = False,
     invalid_rows: bool = False,
     require_bearer: str | None = None,
+    fail_first: int = 0,
+    fail_status: int = 500,
+    attempts: list | None = None,
 ):
     if malformed:
         payload = {"models": list(model_ids)}
@@ -84,6 +87,16 @@ def _models_server(
 
     class Handler(BaseHTTPRequestHandler):
         def do_GET(self):
+            if attempts is not None:
+                attempts.append(self.path)
+            if (
+                self.path == "/v1/models"
+                and fail_first
+                and len(attempts or []) <= fail_first
+            ):
+                self.send_response(fail_status)
+                self.end_headers()
+                return
             if self.path != "/v1/models":
                 self.send_response(404)
                 self.end_headers()
@@ -3386,3 +3399,91 @@ class TestClusterQueryFailureIsNotSilentlyNoEndpoints:
         with caplog.at_level("WARNING", logger="tests.utils.vllm_sidecar"):
             assert sidecar_module._discover_external_model_urls(context="any") == ()
         assert [r.getMessage() for r in caplog.records] == []
+
+
+class TestProbeFailureNamesItsCause:
+    """A probe that rejects an endpoint must say why it rejected it."""
+
+    def test_http_status_rejection_is_reported_with_the_status(self, caplog):
+        with _models_server(GEMMA, require_bearer="s3cr3t") as base_url:
+            with caplog.at_level("WARNING", logger="tests.utils.vllm_sidecar"):
+                assert listed_model_ids(base_url) is None
+        message = caplog.records[-1].getMessage()
+        assert base_url in message
+        assert "401" in message
+
+    def test_transport_failure_is_reported_with_the_exception(self, caplog):
+        with caplog.at_level("WARNING", logger="tests.utils.vllm_sidecar"):
+            assert listed_model_ids("http://127.0.0.1:29071") is None
+        message = caplog.records[-1].getMessage()
+        assert "http://127.0.0.1:29071" in message
+        assert "ConnectionError" in message or "Connection" in message
+
+    def test_a_successful_probe_is_silent(self, caplog):
+        with _models_server(GEMMA) as base_url:
+            with caplog.at_level("WARNING", logger="tests.utils.vllm_sidecar"):
+                assert listed_model_ids(base_url) == {GEMMA}
+        assert [r.getMessage() for r in caplog.records] == []
+
+
+class TestProbeBudgetMatchesEndpointLocality:
+    """A remote endpoint's budget must cover its measured scale-up latency."""
+
+    def test_loopback_endpoints_keep_the_fast_budget(self):
+        import tests.utils.vllm_sidecar as sidecar_module
+
+        for url in ("http://127.0.0.1:29110", "http://localhost:8000"):
+            assert sidecar_module._probe_timeout(url) == 2.0
+
+    def test_remote_endpoints_get_the_measured_budget(self):
+        import tests.utils.vllm_sidecar as sidecar_module
+
+        assert (
+            sidecar_module._probe_timeout("https://example.modal.run")
+            == sidecar_module._REMOTE_PROBE_TIMEOUT_S
+        )
+
+    def test_the_remote_budget_exceeds_the_measured_scale_up_latency(self):
+        import tests.utils.vllm_sidecar as sidecar_module
+
+        assert (
+            sidecar_module._REMOTE_PROBE_TIMEOUT_S
+            > sidecar_module._MEASURED_REMOTE_SCALE_UP_S
+        )
+
+    def test_the_derived_budget_is_the_one_actually_used(self, caplog):
+        with caplog.at_level("WARNING", logger="tests.utils.vllm_sidecar"):
+            assert listed_model_ids("http://127.0.0.1:29071") is None
+        assert "after 2.0s" in caplog.records[-1].getMessage()
+
+
+class TestTransientProbeFailuresAreRetried:
+    """A transient remote fault must not cost a local model spawn."""
+
+    def test_a_transient_500_is_retried_and_then_succeeds(self):
+        attempts: list = []
+        with _models_server(GEMMA, fail_first=2, attempts=attempts) as base_url:
+            assert listed_model_ids(base_url) == {GEMMA}
+        assert len(attempts) == 3
+
+    def test_a_permanent_401_is_not_retried(self):
+        attempts: list = []
+        with _models_server(
+            GEMMA, fail_first=99, fail_status=401, attempts=attempts
+        ) as base_url:
+            assert listed_model_ids(base_url) is None
+        assert len(attempts) == 1
+
+    def test_a_success_costs_exactly_one_request(self):
+        attempts: list = []
+        with _models_server(GEMMA, attempts=attempts) as base_url:
+            assert listed_model_ids(base_url) == {GEMMA}
+        assert len(attempts) == 1
+
+    def test_persistent_500s_give_up_after_the_bounded_attempts(self):
+        import tests.utils.vllm_sidecar as sidecar_module
+
+        attempts: list = []
+        with _models_server(GEMMA, fail_first=99, attempts=attempts) as base_url:
+            assert listed_model_ids(base_url) is None
+        assert len(attempts) == sidecar_module._PROBE_ATTEMPTS
