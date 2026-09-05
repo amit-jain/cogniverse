@@ -13,6 +13,7 @@ without being short-circuited.
 Requires: docker, k3d, kubectl, helm installed.
 """
 
+import json
 import os
 import subprocess
 import sys
@@ -505,6 +506,27 @@ def _refuse_release_larger_than_the_node(documents: list[dict]) -> None:
         )
 
 
+def deployed_llm_serving_mode(
+    release: str = "cogniverse", namespace: str = "cogniverse"
+) -> str | None:
+    """Return the serving mode the installed release already uses, if any."""
+    from cogniverse_cli.config import llm_serving_mode_from_values
+
+    result = subprocess.run(
+        ["helm", "get", "values", release, "-n", namespace, "-o", "json"],
+        capture_output=True,
+        text=True,
+        timeout=60,
+        check=False,
+    )
+    if result.returncode != 0:
+        return None
+    try:
+        return llm_serving_mode_from_values(json.loads(result.stdout))
+    except json.JSONDecodeError:
+        return None
+
+
 def deployment_helm_inputs(
     project_root,
     *,
@@ -535,7 +557,9 @@ def deployment_helm_inputs(
     if device_values_file:
         helm_values.append(device_values_file)
     serving_values_file = get_llm_serving_values_file(
-        os.environ.get("COGNIVERSE_LLM_SERVING", LLM_SERVING_LOCAL),
+        os.environ.get("COGNIVERSE_LLM_SERVING")
+        or deployed_llm_serving_mode()
+        or LLM_SERVING_LOCAL,
         project_root=project_root,
     )
     if serving_values_file:
