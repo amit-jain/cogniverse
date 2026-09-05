@@ -255,7 +255,18 @@ class TestPartialUpdateRoundTrip:
         }
         assert 0 < len(persisted) < len(ids)
         assert result["success_count"] == len(persisted)
-        assert set(result["failed_documents"]) == set(ids) - persisted
+        failures = result["failed_documents"]
+        assert {f["id"] for f in failures} == set(ids) - persisted
+        assert {f["schema"] for f in failures} == {client.schema_name}
+        assert all(
+            set(f) == {"id", "state", "schema", "status_code", "attempts", "error"}
+            for f in failures
+        )
+        assert {f["state"] for f in failures} == {"unresolved"}
+        assert all(
+            "connection lost before remaining submissions" in f["error"]
+            for f in failures
+        )
 
     def test_full_feed_replaces_and_drops_omitted_embedding(self, memory_client):
         c = memory_client
@@ -275,3 +286,58 @@ class TestPartialUpdateRoundTrip:
         assert after["text"] == "replaced"
         # A full PUT-replace dropped the embedding the new payload omitted.
         assert _embedding_values(after.get("embedding")) == []
+
+
+class TestFeedFailureContract:
+    """A refused document and an unreachable backend are different outcomes."""
+
+    def test_rejected_document_carries_the_backend_reason(self, shared_vespa):
+        """A document the schema refuses names the cause, not "unknown"."""
+        backend = _build_backend(shared_vespa)
+        client = backend._get_or_create_ingestion_client("agent_memories")
+
+        doc_id = "reject-001"
+        prepared = client.process(_memory_doc(doc_id, "body", with_embedding=True))
+        prepared["fields"]["not_a_declared_field"] = "x"
+
+        success, failures = client._feed_prepared_batch([prepared])
+
+        assert success == 0
+        assert len(failures) == 1
+        failure = failures[0]
+        assert set(failure) == {
+            "id",
+            "state",
+            "schema",
+            "status_code",
+            "attempts",
+            "error",
+        }
+        assert failure["id"] == doc_id
+        assert failure["state"] == "rejected"
+        assert failure["schema"] == client.schema_name
+        # pyvespa surfaces a feed-time refusal as 599 with the backend body --
+        # the same shape a schema whose handler is not yet live produces.
+        assert failure["status_code"] == 599
+        assert failure["error"].startswith("HTTP 599: ")
+        assert "not_a_declared_field" in failure["error"]
+        assert client.schema_name in failure["error"]
+
+    def test_unreachable_backend_raises_instead_of_reporting_rejections(
+        self, shared_vespa
+    ):
+        """An outage must not read as "the backend refused every document"."""
+        backend = _build_backend(shared_vespa)
+        client = backend._get_or_create_ingestion_client("agent_memories")
+        prepared = client.process(
+            _memory_doc("outage-001", "body", with_embedding=True)
+        )
+
+        # The deployed client, with its endpoint gone -- the backend the feed
+        # already resolved has stopped answering.
+        client._connected = False
+        client.backend_port = 29071
+
+        with pytest.raises(Exception) as excinfo:
+            client._feed_prepared_batch([prepared])
+        assert "29071" in str(excinfo.value)
