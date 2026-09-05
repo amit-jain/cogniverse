@@ -1,0 +1,16 @@
+{
+  "confidence": 0.95,
+  "doc_id": "kg_edge_test_8bfc1e7434ec50d6",
+  "doc_type": "edge",
+  "evidence_span": "Marie Curie discovered it in 1898 while working at the Sorbonne.",
+  "modality": "transcript",
+  "provenance": "EXTRACTED",
+  "relation": "worked_at",
+  "segment_id": "seg_3",
+  "source_doc_id": "marie_curie_30s",
+  "source_node_id": "marie_curie",
+  "target_node_id": "sorbonne",
+  "tenant_id": "test",
+  "ts_end": 18.5,
+  "ts_start": 12.0
+}
