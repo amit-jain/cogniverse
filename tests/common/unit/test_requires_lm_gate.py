@@ -1,6 +1,9 @@
 """Tests for the runtime gate on LM-backed integration cases."""
 
 import json
+import threading
+from contextlib import contextmanager
+from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 
 import pytest
 
@@ -108,3 +111,92 @@ def test_gate_fails_with_exact_endpoint_after_unsuccessful_provision(monkeypatch
         ),
     ):
         root_conftest.pytest_runtest_setup(_MarkedItem())
+
+
+@contextmanager
+def _authenticated_lm_server(*model_ids: str, require_bearer: str | None = None):
+    """A real OpenAI-compatible endpoint that may demand a bearer token."""
+    payload = {
+        "object": "list",
+        "data": [{"id": m, "object": "model"} for m in model_ids],
+    }
+
+    class Handler(BaseHTTPRequestHandler):
+        def do_GET(self):
+            if (
+                require_bearer is not None
+                and self.headers.get("Authorization") != f"Bearer {require_bearer}"
+            ):
+                self.send_response(401)
+                self.end_headers()
+                return
+            if self.path != "/v1/models":
+                self.send_response(404)
+                self.end_headers()
+                return
+            body = json.dumps(payload).encode()
+            self.send_response(200)
+            self.send_header("Content-Type", "application/json")
+            self.send_header("Content-Length", str(len(body)))
+            self.end_headers()
+            self.wfile.write(body)
+
+        def log_message(self, *args):
+            pass
+
+    server = ThreadingHTTPServer(("127.0.0.1", 0), Handler)
+    thread = threading.Thread(target=server.serve_forever, daemon=True)
+    thread.start()
+    try:
+        yield f"http://127.0.0.1:{server.server_port}"
+    finally:
+        server.shutdown()
+        server.server_close()
+        thread.join(timeout=5)
+
+
+class TestApiKeyFollowsTheEndpoint:
+    """An authenticated endpoint must be given the inference API key."""
+
+    def test_explicit_test_key_wins(self, monkeypatch):
+        monkeypatch.setenv("TEST_LLM_API_KEY", "explicit")
+        monkeypatch.setenv("COGNIVERSE_INFERENCE_API_KEY", "inference")
+        assert llm_fixtures.resolve_api_key() == "explicit"
+
+    def test_inference_key_is_used_when_no_test_key_is_set(self, monkeypatch):
+        monkeypatch.delenv("TEST_LLM_API_KEY", raising=False)
+        monkeypatch.setenv("COGNIVERSE_INFERENCE_API_KEY", "inference")
+        assert llm_fixtures.resolve_api_key() == "inference"
+
+    def test_unauthenticated_endpoints_still_get_the_sentinel(self, monkeypatch):
+        monkeypatch.delenv("TEST_LLM_API_KEY", raising=False)
+        monkeypatch.delenv("COGNIVERSE_INFERENCE_API_KEY", raising=False)
+        assert llm_fixtures.resolve_api_key() == "not-required"
+
+
+class TestReachabilityProbeAuthenticates:
+    """The requires_lm gate must not read 401 as 'endpoint unreachable'."""
+
+    def test_authenticated_endpoint_is_reachable_with_the_key(self, monkeypatch):
+        monkeypatch.delenv("TEST_LLM_API_KEY", raising=False)
+        monkeypatch.setenv("COGNIVERSE_INFERENCE_API_KEY", "s3cr3t")
+        with _authenticated_lm_server("m", require_bearer="s3cr3t") as base_url:
+            monkeypatch.setenv("TEST_LLM_API_BASE", f"{base_url}/v1")
+            monkeypatch.setenv("TEST_LLM_MODEL", "m")
+            assert llm_fixtures.is_test_lm_available() is True
+
+    def test_wrong_key_reports_unreachable(self, monkeypatch):
+        monkeypatch.delenv("TEST_LLM_API_KEY", raising=False)
+        monkeypatch.setenv("COGNIVERSE_INFERENCE_API_KEY", "wrong")
+        with _authenticated_lm_server("m", require_bearer="s3cr3t") as base_url:
+            monkeypatch.setenv("TEST_LLM_API_BASE", f"{base_url}/v1")
+            monkeypatch.setenv("TEST_LLM_MODEL", "m")
+            assert llm_fixtures.is_test_lm_available() is False
+
+    def test_unauthenticated_endpoint_still_works(self, monkeypatch):
+        monkeypatch.delenv("TEST_LLM_API_KEY", raising=False)
+        monkeypatch.delenv("COGNIVERSE_INFERENCE_API_KEY", raising=False)
+        with _authenticated_lm_server("m") as base_url:
+            monkeypatch.setenv("TEST_LLM_API_BASE", f"{base_url}/v1")
+            monkeypatch.setenv("TEST_LLM_MODEL", "m")
+            assert llm_fixtures.is_test_lm_available() is True

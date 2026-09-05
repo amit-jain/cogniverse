@@ -140,7 +140,11 @@ def resolve_prefixed_model() -> str:
 
 
 def resolve_api_key() -> str:
-    return os.environ.get("TEST_LLM_API_KEY") or "not-required"
+    return (
+        os.environ.get("TEST_LLM_API_KEY")
+        or os.environ.get("COGNIVERSE_INFERENCE_API_KEY")
+        or "not-required"
+    )
 
 
 def is_test_lm_available() -> bool:
@@ -158,9 +162,16 @@ def is_test_lm_available() -> bool:
     base = resolve_base_url().rstrip("/")
     if base.endswith("/v1"):
         base = base[: -len("/v1")]
+    from tests.utils.vllm_sidecar import _probe_timeout
+
+    api_key = resolve_api_key()
+    headers = (
+        {"Authorization": f"Bearer {api_key}"} if api_key != "not-required" else None
+    )
+    timeout = _probe_timeout(base)
     for path in ("/api/tags", "/v1/models"):
         try:
-            r = httpx.get(f"{base}{path}", timeout=5.0)
+            r = httpx.get(f"{base}{path}", timeout=timeout, headers=headers)
             if r.status_code == 200:
                 return True
         except httpx.HTTPError:
