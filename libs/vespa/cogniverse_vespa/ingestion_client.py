@@ -134,6 +134,12 @@ def _validate_s_timestamp(ts: float, field: str) -> None:
         )
 
 
+def _feed_reason(status: Any, error_msg: Any) -> str:
+    """A one-line cause for a document the backend refused."""
+    body = error_msg if error_msg is not None else "no response body"
+    return f"HTTP {status if status is not None else 'unknown'}: {body}"
+
+
 class VespaPyClient:
     """
     Vespa client implementation using official pyvespa library.
@@ -496,7 +502,7 @@ class VespaPyClient:
         documents: List[Dict[str, Any]],
         batch_size: int = 100,
         operation_type: str = "feed",
-    ) -> Tuple[int, List[str]]:
+    ) -> Tuple[int, List[Dict[str, Any]]]:
         """Feed prepared documents in batches using pyvespa's batch feeding
 
         Production-ready configuration with proper retry and timeout handling.
@@ -510,17 +516,30 @@ class VespaPyClient:
                 metadata-only updates so embeddings are not wiped.
 
         Returns:
-            Tuple of (success_count, list of failed doc IDs)
+            ``(success_count, failures)``. Each failure carries ``id``,
+            ``schema``, ``error`` and a ``state`` of ``"rejected"`` (the
+            backend answered and refused it, with ``status_code``) or
+            ``"unresolved"`` (the feed ended before the backend answered).
+
+        Raises:
+            ConnectionError: the backend is unreachable, or the feed aborted
+                without resolving a single document.
         """
         if not self._connected:
             if not self.connect():
-                return 0, [d["put"].split("::")[-1] for d in documents]
+                raise ConnectionError(
+                    f"Cannot feed {len(documents)} documents to "
+                    f"{self.namespace}/{self.schema_name}: Vespa at "
+                    f"{self.backend_url}:{self.backend_port} is unavailable"
+                )
 
         # A feeder may invoke callbacks in any completion order and may raise
         # after only a subset completed.  Keep terminal state by document id;
         # a positional ``documents[success_count:]`` tail cannot identify the
         # unresolved documents under concurrent feeding.
         document_status = {doc["put"].split("::")[-1]: None for doc in documents}
+        document_failures: Dict[str, Dict[str, Any]] = {}
+        batch_error: Optional[str] = None
         status_lock = threading.Lock()
 
         try:
@@ -576,20 +595,25 @@ class VespaPyClient:
                             document_status[doc_id] = False
                             attempt = batch_retries[doc_id]
 
-                        # Log detailed error
                         try:
                             error_msg = response.get_json()
                             status = response.get_status_code()
-                            self.logger.error(
-                                f"Failed to feed {doc_id} to schema '{self.schema_name}' "
-                                f"(attempt {attempt}): HTTP {status} - {error_msg}"
-                            )
                         except Exception:
-                            status = getattr(response, "status_code", "unknown")
-                            self.logger.error(
-                                f"Failed to feed {doc_id} to schema '{self.schema_name}' "
-                                f"(attempt {attempt}): HTTP {status}"
-                            )
+                            error_msg = None
+                            status = getattr(response, "status_code", None)
+                        self.logger.error(
+                            f"Failed to feed {doc_id} to schema '{self.schema_name}' "
+                            f"(attempt {attempt}): HTTP {status} - {error_msg}"
+                        )
+                        with status_lock:
+                            document_failures[doc_id] = {
+                                "id": doc_id,
+                                "state": "rejected",
+                                "schema": self.schema_name,
+                                "status_code": status,
+                                "attempts": attempt,
+                                "error": _feed_reason(status, error_msg),
+                            }
 
                 # Feed with production-ready configuration. feed_async_iterable
                 # is pyvespa's HTTP/2 async feeder (I/O-bound throughput) and
@@ -640,17 +664,51 @@ class VespaPyClient:
                     )
 
         except Exception as e:
+            batch_error = f"{type(e).__name__}: {e}"
             self.logger.error(f"Batch feeding failed: {e}")
 
         with status_lock:
             success_count = sum(
                 document_status[doc["put"].split("::")[-1]] is True for doc in documents
             )
-            failed_docs = [
-                doc["put"].split("::")[-1]
-                for doc in documents
-                if document_status[doc["put"].split("::")[-1]] is not True
-            ]
+            failed_docs: List[Dict[str, Any]] = []
+            unresolved = 0
+            for doc in documents:
+                doc_id = doc["put"].split("::")[-1]
+                state = document_status[doc_id]
+                if state is True:
+                    continue
+                if state is False:
+                    failed_docs.append(
+                        document_failures.get(doc_id)
+                        or {
+                            "id": doc_id,
+                            "state": "rejected",
+                            "schema": self.schema_name,
+                            "status_code": None,
+                            "attempts": 1,
+                            "error": "rejected by the backend without a response body",
+                        }
+                    )
+                    continue
+                unresolved += 1
+                failed_docs.append(
+                    {
+                        "id": doc_id,
+                        "state": "unresolved",
+                        "schema": self.schema_name,
+                        "status_code": None,
+                        "attempts": 0,
+                        "error": batch_error
+                        or "the feeder returned no response for this document",
+                    }
+                )
+
+        if batch_error and success_count == 0 and unresolved == len(documents):
+            raise ConnectionError(
+                f"Feed to {self.namespace}/{self.schema_name} did not complete for any "
+                f"of {len(documents)} documents: {batch_error}"
+            )
         return success_count, failed_docs
 
     def check_document_exists(self, doc_id: str) -> bool:
