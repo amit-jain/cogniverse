@@ -79,7 +79,12 @@ def image_backend(shared_memory_vespa):
 
     from cogniverse_foundation.config.manager import ConfigManager
     from cogniverse_foundation.config.unified_config import SystemConfig
+    from cogniverse_runtime.admin import tenant_manager
     from cogniverse_vespa.config.config_store import VespaConfigStore
+
+    # deploy_schema resolves the management backend through the module-level
+    # loader the app sets at startup.
+    tenant_manager.set_schema_loader(FilesystemSchemaLoader(Path("configs/schemas")))
 
     http_port = shared_memory_vespa["http_port"]
     config_port = shared_memory_vespa["config_port"]
