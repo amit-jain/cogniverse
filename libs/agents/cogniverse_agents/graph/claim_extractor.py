@@ -30,12 +30,14 @@ logger = logging.getLogger(__name__)
 # transcript-segment sizes; long PDF / code chunks trip this.
 RLM_PROMOTION_TOKENS = 3000
 
-# Claim output budget: 4 claims * 80 tokens/claim + 192 reasoning = 512
-# tokens. 512 / 11 tok/s ≈ 46.5s, which leaves margin inside the 120s
-# request timeout while still failing fast on runaway completions.
+# Claim output budget: 4 claims * 128 tokens/claim + 256 reasoning = 768
+# tokens. A claim carrying the 200-char evidence span the signature allows
+# costs ~110 tokens in the adapter's pretty-printed JSON; the reasoning term
+# also covers the adapter's section markers. 768 / 11 tok/s ≈ 70s, inside
+# the 120s request timeout while still failing fast on runaway completions.
 CLAIM_EXTRACTION_MAX_CLAIMS = 4
-CLAIM_EXTRACTION_TOKENS_PER_CLAIM = 80
-CLAIM_EXTRACTION_REASONING_TOKENS = 192
+CLAIM_EXTRACTION_TOKENS_PER_CLAIM = 128
+CLAIM_EXTRACTION_REASONING_TOKENS = 256
 CLAIM_EXTRACTION_MAX_OUTPUT_TOKENS = (
     CLAIM_EXTRACTION_MAX_CLAIMS * CLAIM_EXTRACTION_TOKENS_PER_CLAIM
     + CLAIM_EXTRACTION_REASONING_TOKENS
@@ -189,8 +191,8 @@ class ClaimExtractor:
         # bound from this config. None means the call falls through to the
         # ambient ``dspy.settings.lm`` (the worker-startup default).
         # The signature emits reasoning + claims JSON, with claims as the final
-        # output field. The derived 512-token cap keeps the response short
-        # enough to fit inside the 120s timeout at the measured ~11 tok/s.
+        # output field. The derived cap keeps the response short enough to fit
+        # inside the 120s timeout at the measured ~11 tok/s.
         if llm_config is not None and dataclasses.is_dataclass(llm_config):
             llm_config = dataclasses.replace(
                 llm_config, max_tokens=CLAIM_EXTRACTION_MAX_OUTPUT_TOKENS
