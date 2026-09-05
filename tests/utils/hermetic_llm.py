@@ -293,6 +293,7 @@ def _spawn(
     device: str,
     gpu_utilization: float = 0.25,
 ) -> None:
+    _guard_local_spawn(model)
     cmd = [
         "docker",
         "run",
@@ -463,6 +464,7 @@ def ensure_llm(model: str = MODEL, deadline_s: float = 900.0) -> str:
                 _remove_container(container)
                 state = None
             if state is not None:
+                _guard_local_spawn(model)
                 subprocess.run(
                     ["docker", "start", container],
                     check=True,
@@ -519,6 +521,8 @@ def ensure_llm(model: str = MODEL, deadline_s: float = 900.0) -> str:
                 f"No configured endpoint or local vLLM sidecar served exact model "
                 f"{model!r}: {detail}"
             )
+        except LocalSpawnRefused:
+            raise
         except Exception as exc:
             logs = _container_logs(container)
             cleanup = _cleanup_container(container)
