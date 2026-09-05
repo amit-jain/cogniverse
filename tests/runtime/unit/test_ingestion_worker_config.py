@@ -175,3 +175,36 @@ def test_worker_rejects_malformed_inference_urls_before_graph_setup(
         worker.WorkerConfig()
 
     assert context_calls == []
+
+
+def test_module_entrypoint_runs_the_imported_worker_module(monkeypatch):
+    """``python -m cogniverse_runtime.ingestion_worker.worker`` executes the
+    file a second time as ``__main__`` while the reaper imports the same file
+    under its package name. The entrypoint must drive the imported module's
+    ``run`` so the processor it builds raises the same ``GraphStageIncomplete``
+    class the reaper's ``_process_job`` catches; a ``__main__`` copy turns a
+    graph-stage retry into a terminal failure on every reaper re-drive."""
+    import asyncio
+    import runpy
+
+    handed_over: list[tuple] = []
+
+    def _capture(coro):
+        handed_over.append((coro.cr_code, coro.cr_frame.f_globals))
+        coro.close()
+
+    monkeypatch.setattr(asyncio, "run", _capture)
+
+    main_globals = runpy.run_module(
+        "cogniverse_runtime.ingestion_worker.worker",
+        run_name="__main__",
+        alter_sys=False,
+    )
+
+    assert main_globals["__name__"] == "__main__"
+    assert main_globals["GraphStageIncomplete"] is not worker.GraphStageIncomplete
+    assert len(handed_over) == 1
+    code, run_globals = handed_over[0]
+    assert code is worker.run.__code__
+    assert run_globals is vars(worker)
+    assert run_globals["GraphStageIncomplete"] is worker.GraphStageIncomplete
