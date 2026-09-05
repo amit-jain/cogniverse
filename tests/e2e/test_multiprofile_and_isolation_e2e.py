@@ -145,6 +145,34 @@ def _upload_file(
     return resp.json()
 
 
+# Every key a terminal ``/ingestion/upload?wait=true`` response carries. A
+# failed run adds ``error`` and ``error_type``; pinning the set on the success
+# path proves the run completed AND nothing else leaked onto the response.
+_TERMINAL_UPLOAD_KEYS = frozenset(
+    {
+        "ingest_id",
+        "sha",
+        "state",
+        "existing",
+        "filename",
+        "source_url",
+        "video_id",
+        "chunks_created",
+        "documents_fed",
+        "status",
+        "graph_nodes",
+        "graph_edges",
+    }
+)
+
+
+def _assert_upload_completed(data: dict) -> None:
+    """Pin the terminal success shape; on a failed run the message carries the
+    worker's ``error`` and ``error_type`` instead of a bare status diff."""
+    assert (data["status"], data["state"]) == ("success", "complete"), data
+    assert set(data) == _TERMINAL_UPLOAD_KEYS, data
+
+
 def _expected_hits(top_k: int, sources_fed: int) -> int:
     """Search collapses to one hit per source video, so a tenant holding
     ``sources_fed`` videos returns that many hits (bounded by ``top_k``)."""
@@ -249,6 +277,7 @@ class TestMultiProfileIngestion:
             _deploy_schema(client, PROFILE, TENANT_ID)
 
             data = _upload_file(client, real_video_path, PROFILE, TENANT_ID, force=True)
+            _assert_upload_completed(data)
             assert data["status"] == "success"
             assert data["existing"] is False, data
             assert data["chunks_created"] == expected_documents_fed
@@ -276,12 +305,14 @@ class TestMultiProfileIngestion:
             data1 = _upload_file(
                 client, real_video_path, PROFILE, TENANT_ID, force=True
             )
+            _assert_upload_completed(data1)
             assert data1["status"] == "success"
             assert data1["existing"] is False, data1
             assert data1["chunks_created"] == expected_documents_fed
             assert data1["documents_fed"] == expected_documents_fed
 
             data2 = _upload_file(client, real_video_path, PROFILE, TENANT_ID)
+            _assert_upload_completed(data2)
             assert data2["status"] == "success"
             assert data2["existing"] is True, data2
             assert data2["state"] == "complete"
@@ -304,6 +335,7 @@ class TestMultiProfileIngestion:
                 mime_type="text/markdown",
                 force=True,
             )
+            _assert_upload_completed(data)
             assert data["status"] == "success"
             assert data["existing"] is False, data
             assert data["chunks_created"] == 1
@@ -322,6 +354,7 @@ class TestMultiProfileIngestion:
                 mime_type="audio/wav",
                 force=True,
             )
+            _assert_upload_completed(data)
             assert data["status"] == "success"
             assert data["existing"] is False, data
             assert data["chunks_created"] == 1
@@ -445,6 +478,7 @@ class TestCrossTenantIsolation:
                     PROFILE,
                     tenant_a,
                 )
+                _assert_upload_completed(data)
                 assert data["status"] == "success"
                 assert data["chunks_created"] == expected_documents_fed
                 assert data["documents_fed"] == expected_documents_fed
@@ -539,6 +573,7 @@ class TestCrossTenantIsolation:
                     PROFILE,
                     tenant_b,
                 )
+                _assert_upload_completed(data)
                 assert data["status"] == "success"
                 assert data["chunks_created"] == expected_documents_fed
                 assert data["documents_fed"] == expected_documents_fed
@@ -674,6 +709,7 @@ class TestCrossTenantIsolation:
                     PROFILE,
                     tenant_id,
                 )
+                _assert_upload_completed(data)
                 assert data["status"] == "success"
                 assert data["chunks_created"] == expected_documents_fed
                 assert data["documents_fed"] == expected_documents_fed

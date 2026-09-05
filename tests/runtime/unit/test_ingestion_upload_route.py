@@ -142,9 +142,62 @@ def test_wait_and_force_query_params_drive_synchronous_success(upload_client):
     assert body["documents_fed"] == 5
     assert body["graph_nodes"] == 2
     assert body["graph_edges"] == 1
+    assert body == {
+        "ingest_id": "ing-2",
+        "sha": "sha-xyz",
+        "state": "complete",
+        "existing": False,
+        "filename": "v.mp4",
+        "source_url": _SOURCE_URL,
+        "video_id": "vid-9",
+        "chunks_created": 3,
+        "documents_fed": 5,
+        "status": "success",
+        "graph_nodes": 2,
+        "graph_edges": 1,
+    }
     # The query params were honored, not the defaults.
     assert captured["wait"] is True
     assert captured["force"] is True
+
+
+def test_wait_surfaces_the_terminal_error_of_a_failed_run(upload_client):
+    """A failed terminal event names its cause on the response: the worker's
+    ``error`` and ``error_type`` ride along with ``status == "failed"`` so a
+    caller never has to reconstruct the reason from pod logs."""
+    client, _, state = upload_client
+    state["result"] = SimpleNamespace(
+        ingest_id="ing-3",
+        sha="sha-fail",
+        state="failed",
+        existing=False,
+        final_event={
+            "state": "failed",
+            "ingest_id": "ing-3",
+            "error": "graph extraction failed for ingest ing-3",
+            "error_type": "GraphStageIncomplete",
+        },
+    )
+
+    resp = _post(client, query="?wait=true&force=true")
+
+    assert resp.status_code == 200, resp.text
+    assert resp.json() == {
+        "ingest_id": "ing-3",
+        "sha": "sha-fail",
+        "state": "failed",
+        "existing": False,
+        "filename": "v.mp4",
+        "source_url": _SOURCE_URL,
+        "video_id": None,
+        "chunks_created": 0,
+        "documents_fed": 0,
+        "status": "failed",
+        "graph_nodes": 0,
+        "graph_edges": 0,
+        "error": "graph extraction failed for ingest ing-3",
+        "error_type": "GraphStageIncomplete",
+    }
 
 
 def test_wait_and_force_as_form_fields_are_ignored(upload_client):
