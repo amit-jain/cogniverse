@@ -91,9 +91,11 @@ def _raise_if_pipeline_failed(result: object) -> None:
         status = result.get("status")
         if status in ("failed", "cancelled"):
             error = result.get("error") or f"pipeline reported status={status!r}"
-            reasons = result.get("errors") or []
+            reasons = [
+                str(r) for r in (result.get("errors") or []) if str(r) != str(error)
+            ]
             if reasons:
-                error = f"{error} [" + "; ".join(str(r) for r in reasons) + "]"
+                error = f"{error} [" + "; ".join(reasons) + "]"
             raise IngestPipelineError(str(error))
 
 

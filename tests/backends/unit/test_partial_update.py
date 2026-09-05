@@ -461,4 +461,6 @@ class TestFeedCallbackTallyThreadSafety:
         success_count, failed = client._feed_prepared_batch(docs, batch_size=200)
 
         assert success_count == 197
-        assert set(failed) == fail_ids
+        assert {f["id"] for f in failed} == fail_ids
+        assert {f["state"] for f in failed} == {"rejected"}
+        assert all(f["schema"] == client.schema_name for f in failed)
