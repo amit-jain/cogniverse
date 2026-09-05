@@ -20,12 +20,13 @@ from tests.utils.hermetic_llm import (
 class TestSpawnIsRefusedWhenItWouldNotFit:
     def test_teacher_refused_and_names_model_numbers_and_remedy(self) -> None:
         required = _LOCAL_SPAWN_MIN_AVAILABLE_GB[TEACHER_MODEL]
+        starved = required / 2
         with pytest.raises(LocalModelWontFitError) as excinfo:
-            assert_local_spawn_fits(TEACHER_MODEL, available_gb=27.0)
+            assert_local_spawn_fits(TEACHER_MODEL, available_gb=starved)
         message = str(excinfo.value)
         assert TEACHER_MODEL in message
         assert f"{required:.1f} GiB" in message
-        assert "27.0 GiB" in message
+        assert f"{starved:.1f} GiB" in message
         assert ".env/MODAL_TOKEN_ID.env" in message
         assert "COGNIVERSE_LLM_SERVING=modal" in message
 
@@ -88,3 +89,25 @@ class TestEnsureLlmConsultsTheGuardBeforeSpawning:
         guard_at = source.index("_guard_local_spawn(")
         spawn_at = source.index("_detect_device()")
         assert guard_at < spawn_at
+
+
+class TestRoleModelsDeriveFromShippedConfig:
+    """The LM roles the tests provision are whatever configs/config.json serves."""
+
+    @staticmethod
+    def _shipped(role: str) -> str:
+        import json
+
+        from tests.utils.hermetic_llm import SOURCE_CONFIG
+
+        model = json.loads(SOURCE_CONFIG.read_text())["llm_config"][role]["model"]
+        return model[len("openai/") :] if model.startswith("openai/") else model
+
+    def test_primary_role_model_is_not_restated(self) -> None:
+        assert MODEL == self._shipped("primary")
+
+    def test_teacher_role_model_is_not_restated(self) -> None:
+        assert TEACHER_MODEL == self._shipped("teacher")
+
+    def test_the_two_roles_are_distinct_models(self) -> None:
+        assert MODEL != TEACHER_MODEL

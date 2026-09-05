@@ -355,8 +355,12 @@ def _server_base(url: str) -> str:
 
 def listed_model_ids(base_url: str, timeout: float = 2.0) -> set[str] | None:
     """Return exact model IDs from a valid OpenAI model-list response."""
+    api_key = os.environ.get("COGNIVERSE_INFERENCE_API_KEY")
+    headers = {"Authorization": f"Bearer {api_key}"} if api_key else None
     try:
-        response = requests.get(f"{_server_base(base_url)}/v1/models", timeout=timeout)
+        response = requests.get(
+            f"{_server_base(base_url)}/v1/models", timeout=timeout, headers=headers
+        )
         if response.status_code != 200:
             return None
         payload = response.json()
@@ -642,6 +646,56 @@ def _discover_dev_model_urls(
     )
 
 
+def _external_endpoints_from_workload(workload: object) -> tuple[str, ...]:
+    """Return the non-cluster endpoints a workload publishes."""
+    if not isinstance(workload, dict):
+        return ()
+    spec = workload.get("spec")
+    template = spec.get("template") if isinstance(spec, dict) else None
+    pod_spec = template.get("spec") if isinstance(template, dict) else None
+    containers = pod_spec.get("containers") if isinstance(pod_spec, dict) else None
+    if not isinstance(containers, list):
+        return ()
+
+    urls: list[str] = []
+    for container in containers:
+        if not isinstance(container, dict):
+            continue
+        for entry in container.get("env") or []:
+            if not isinstance(entry, dict) or not isinstance(entry.get("value"), str):
+                continue
+            name, value = entry.get("name"), entry["value"]
+            if name == "LLM_ENDPOINT":
+                urls.append(value)
+            elif name == "INFERENCE_SERVICE_URLS":
+                urls.extend((parse_inference_service_urls(value) or {}).values())
+    return tuple(
+        dict.fromkeys(_server_base(url) for url in urls if url.startswith("https://"))
+    )
+
+
+def _discover_external_model_urls(*, context: str) -> tuple[str, ...]:
+    """Collect externally served endpoints published by cluster workloads."""
+    resources = _command_json(
+        [
+            "kubectl",
+            "--context",
+            context,
+            "get",
+            "deployments",
+            "--all-namespaces",
+            "-o",
+            "json",
+        ]
+    )
+    if not isinstance(resources, dict) or not isinstance(resources.get("items"), list):
+        return ()
+    urls: list[str] = []
+    for item in resources["items"]:
+        urls.extend(_external_endpoints_from_workload(item))
+    return tuple(dict.fromkeys(urls))
+
+
 def _configured_model_urls(model: str) -> tuple[str, ...]:
     """Collect explicit, e2e-cluster, then dev-cluster candidates."""
     candidates: list[str] = []
@@ -659,6 +713,7 @@ def _configured_model_urls(model: str) -> tuple[str, ...]:
         candidates.append(candidate.base_url)
     for candidate in _discover_dev_model_urls(model):
         candidates.append(candidate.base_url)
+    candidates.extend(_discover_external_model_urls(context=E2E_CONTEXT))
 
     return tuple(dict.fromkeys(_server_base(url) for url in candidates if url))
 
