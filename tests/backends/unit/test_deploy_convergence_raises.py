@@ -15,7 +15,8 @@ import logging
 import socket
 import threading
 import time
-from unittest.mock import MagicMock, patch
+from collections import Counter
+from unittest.mock import call, patch
 
 import pytest
 import requests
@@ -26,10 +27,9 @@ from cogniverse_vespa.backend import VespaBackend
 from cogniverse_vespa.vespa_schema_manager import VespaSchemaManager
 
 
-def _probe_response(errors: list) -> MagicMock:
-    response = MagicMock()
-    response.status_code = 200
-    response.json.return_value = {"root": {"errors": errors, "children": []}}
+def _probe_response(status_code: int) -> requests.Response:
+    response = requests.Response()
+    response.status_code = status_code
     return response
 
 
@@ -40,48 +40,104 @@ def _make_backend() -> VespaBackend:
     return backend
 
 
-def test_convergence_timeout_raises():
-    """A schema that never becomes query-visible must raise, naming it."""
-    backend = _make_backend()
-    not_found = _probe_response(
-        [{"code": 8, "summary": "Schema 'video_x_acme' not found"}]
-    )
+@pytest.fixture
+def probe_clock(monkeypatch):
+    elapsed = [0.0]
 
-    with patch("requests.post", return_value=not_found), patch("time.sleep"):
+    def sleep(seconds):
+        elapsed[0] += seconds
+
+    monkeypatch.setattr(time, "monotonic", lambda: elapsed[0])
+    monkeypatch.setattr(time, "sleep", sleep)
+    return elapsed
+
+
+@pytest.mark.parametrize("status", [200, 400, 404, 429, 503, 504, 599])
+def test_convergence_timeout_raises(status, probe_clock):
+    """Only a condition failure proves the conditional feed reached storage."""
+    backend = _make_backend()
+    with patch("requests.Session.post", return_value=_probe_response(status)):
         with pytest.raises(RuntimeError) as exc_info:
             backend._wait_for_schema_convergence(["video_x_acme"], timeout=2)
 
-    assert "video_x_acme" in str(exc_info.value)
+    assert str(exc_info.value) == (
+        "Schema convergence not confirmed after 2s — deploy was "
+        "accepted by the config server but these schemas never became "
+        "feed-ready: ['video_x_acme']"
+    )
+    assert probe_clock == [2.0]
 
 
-def test_convergence_success_returns():
-    """Pin the happy path: a clean probe converges without raising."""
+def test_convergence_success_returns(probe_clock):
     backend = _make_backend()
-    converged = _probe_response([])
+    with patch("requests.Session.post", return_value=_probe_response(412)) as post:
+        result = backend._wait_for_schema_convergence(["video_ok_acme"], timeout=2)
 
-    with patch("requests.post", return_value=converged), patch("time.sleep"):
-        backend._wait_for_schema_convergence(["video_ok_acme"], timeout=2)
+    assert result is None
+    assert probe_clock == [0.0]
+    assert post.call_args_list == [
+        call(
+            "http://localhost:8080/document/v1/video_ok_acme/video_ok_acme/"
+            "docid/convergence_probe",
+            params={"condition": "false", "timeout": "2000ms"},
+            json={"fields": {}},
+            timeout=2.0,
+        )
+    ]
 
 
-def test_convergence_partial_raises_and_names_only_missing():
-    """Only the schemas that failed to converge appear in the error."""
+def test_convergence_partial_raises_and_names_only_missing(probe_clock):
     backend = _make_backend()
+    calls = []
 
-    def probe(_url, json=None, timeout=None):
-        name = json["yql"]
-        if "video_ok_acme" in name:
-            return _probe_response([])
-        return _probe_response([{"code": 8, "summary": "not found"}])
+    def probe(url, **kwargs):
+        name = url.split("/")[5]
+        calls.append(name)
+        return _probe_response(412 if name == "video_ok_acme" else 400)
 
-    with patch("requests.post", side_effect=probe), patch("time.sleep"):
+    with patch("requests.Session.post", side_effect=probe):
         with pytest.raises(RuntimeError) as exc_info:
             backend._wait_for_schema_convergence(
                 ["video_ok_acme", "video_missing_acme"], timeout=2
             )
 
-    message = str(exc_info.value)
-    assert "video_missing_acme" in message
-    assert "video_ok_acme" not in message
+    assert str(exc_info.value) == (
+        "Schema convergence not confirmed after 2s — deploy was "
+        "accepted by the config server but these schemas never became "
+        "feed-ready: ['video_missing_acme']"
+    )
+    assert calls == ["video_missing_acme", "video_ok_acme", "video_missing_acme"]
+
+
+def test_convergence_retries_only_pending_schemas(probe_clock):
+    backend = _make_backend()
+    ready = [f"video_{i:03d}_acme" for i in range(130)]
+    calls = Counter()
+
+    def probe(url, **kwargs):
+        name = url.split("/")[5]
+        calls[name] += 1
+        return _probe_response(599 if name == "video_late_acme" else 412)
+
+    with patch("requests.Session.post", side_effect=probe):
+        with pytest.raises(RuntimeError) as exc_info:
+            backend._wait_for_schema_convergence(
+                [*ready, "video_late_acme", *ready], timeout=3
+            )
+    assert str(exc_info.value) == (
+        "Schema convergence not confirmed after 3s — deploy was "
+        "accepted by the config server but these schemas never became "
+        "feed-ready: ['video_late_acme']"
+    )
+    assert calls == Counter({**dict.fromkeys(ready, 1), "video_late_acme": 3})
+
+
+def test_convergence_empty_schema_list_does_not_probe(probe_clock):
+    with patch("requests.Session.post") as post:
+        result = _make_backend()._wait_for_schema_convergence([])
+    assert result is None
+    assert post.call_args_list == []
+    assert probe_clock == [0.0]
 
 
 @pytest.fixture()
@@ -163,4 +219,17 @@ def test_schema_manager_deploy_post_times_out_instead_of_hanging(
 
     _assert_deploy_times_out(
         lambda: manager._deploy_package(ApplicationPackage(name="testapp"))
+    )
+
+
+def test_convergence_hung_http_raises_with_schema_names(stalled_server):
+    backend = _make_backend()
+    backend._url = "http://127.0.0.1"
+    backend._port = stalled_server
+    with pytest.raises(RuntimeError) as exc_info:
+        backend._wait_for_schema_convergence(["video_hung_acme"], timeout=1)
+    assert str(exc_info.value) == (
+        "Schema convergence not confirmed after 1s — deploy was "
+        "accepted by the config server but these schemas never became "
+        "feed-ready: ['video_hung_acme']"
     )
