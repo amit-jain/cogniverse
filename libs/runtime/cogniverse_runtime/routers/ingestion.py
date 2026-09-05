@@ -1351,10 +1351,12 @@ async def run_ingestion(
             if not isinstance(video_result, dict):
                 continue
             if video_result.get("status") == "failed" or video_result.get("error"):
-                job.errors.append(
-                    f"{video_result.get('video_path', '<unknown>')}: "
-                    f"{video_result.get('error', 'unknown error')}"
-                )
+                detail = video_result.get("error", "unknown error")
+                reasons = video_result.get("errors") or []
+                message = f"{video_result.get('video_path', '<unknown>')}: {detail}"
+                if reasons:
+                    message += " [" + "; ".join(str(r) for r in reasons) + "]"
+                job.errors.append(message)
         job.status = result.get("status", "completed")
 
     except Exception as e:
