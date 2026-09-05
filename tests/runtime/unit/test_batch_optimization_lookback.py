@@ -151,7 +151,7 @@ class TestOptimizerCaptureSampleCaps:
             "cogniverse.query_enhancement": 120,
             "cogniverse.profile_selection": 24,
             "cogniverse.entity_extraction": 36,
-            "cogniverse.gateway": 126,
+            "cogniverse.gateway": 66,
             "cogniverse.orchestration": 26,
         }
 
@@ -193,8 +193,8 @@ class TestOptimizerCaptureSampleCaps:
             )
 
         assert measured == {
-            "simba_query_enhancement": (120, 100, 114, 3),
-            "profile_selection": (24, 20, 23, 6),
+            "simba_query_enhancement": (120, 100, 91, 3),
+            "profile_selection": (24, 20, 24, 6),
             "entity_extraction": (36, 30, 36, 15),
         }
 
@@ -203,7 +203,7 @@ class TestOptimizerCaptureSampleCaps:
             "cogniverse.query_enhancement": 120,
             "cogniverse.profile_selection": 24,
             "cogniverse.entity_extraction": 36,
-            "cogniverse.gateway": 126,
+            "cogniverse.gateway": 66,
             "cogniverse.orchestration": 26,
         }
 
@@ -213,12 +213,12 @@ class TestOptimizerCaptureSampleCaps:
         archive = load_capture_json(_MOD.OPTIMIZER_SPAN_CAPTURE_PATH)
         sampled = sample_capture_by_name(archive, _MOD._optimizer_capture_sample_caps())
 
-        assert (len(archive), len(sampled)) == (588, 332)
+        assert (len(archive), len(sampled)) == (371, 272)
 
     def test_replayed_workflow_templates_match_the_committed_capture(self):
-        """The committed replay corpus currently yields 15 workflow templates."""
+        """The committed replay corpus yields 17 workflow templates."""
 
-        assert _MOD._replayed_optimizer_template_count() == 15
+        assert _MOD._replayed_optimizer_template_count() == 17
 
     def test_replayed_workflow_result_matches_the_committed_capture(self):
         """The replay-only workflow golden is derived from the shipped capture."""
@@ -232,7 +232,7 @@ class TestOptimizerCaptureSampleCaps:
             "workflows_extracted": orchestration_count,
             "execution_demos_saved": orchestration_count,
             "agent_profiles_saved": 10,
-            "workflow_templates_saved": 15,
+            "workflow_templates_saved": 17,
         }
 
 
@@ -630,10 +630,10 @@ class TestCommittedCaptureEnhancementPathMarker:
             _MOD.load_capture_json(_MOD.OPTIMIZER_SPAN_CAPTURE_PATH)
         )
         assert (total, dict(paths)) == (
-            165,
+            121,
             {
-                QUERY_ENHANCEMENT_PATH_HEURISTIC_FALLBACK: 127,
-                QUERY_ENHANCEMENT_PATH_LM: 38,
+                QUERY_ENHANCEMENT_PATH_HEURISTIC_FALLBACK: 87,
+                QUERY_ENHANCEMENT_PATH_LM: 34,
             },
         )
 
@@ -652,8 +652,8 @@ class TestCommittedCaptureEnhancementPathMarker:
         assert (total, dict(paths)) == (
             120,
             {
-                QUERY_ENHANCEMENT_PATH_HEURISTIC_FALLBACK: 94,
-                QUERY_ENHANCEMENT_PATH_LM: 26,
+                QUERY_ENHANCEMENT_PATH_HEURISTIC_FALLBACK: 87,
+                QUERY_ENHANCEMENT_PATH_LM: 33,
             },
         )
 
@@ -674,3 +674,111 @@ class TestCommittedCaptureEnhancementPathMarker:
         del victim["attributes"][QUERY_ENHANCEMENT_PATH_ATTRIBUTE]
         _total, paths = self._qe_path_counts(records)
         assert paths[None] == 1
+
+
+@pytest.mark.parametrize(
+    ("test_class", "test_name", "mutation"),
+    [
+        (
+            TestOptimizerCaptureSampleCaps,
+            "test_sampled_corpus_counts_are_exactly_the_caps",
+            "drop_gateway",
+        ),
+        (
+            TestOptimizerCaptureSampleCaps,
+            "test_sampled_corpus_clears_every_shipped_floor_and_unique_minimum",
+            "duplicate_query_enhancement_input",
+        ),
+        (
+            TestOptimizerCaptureSampleCaps,
+            "test_sampled_corpus_clears_every_shipped_floor_and_unique_minimum",
+            "duplicate_profile_selection_input",
+        ),
+        (
+            TestOptimizerCaptureSampleCaps,
+            "test_replayed_orchestration_counts_match_the_committed_capture",
+            "drop_gateway",
+        ),
+        (
+            TestOptimizerCaptureSampleCaps,
+            "test_sampling_reduces_the_replayed_corpus_below_the_recording",
+            "drop_gateway",
+        ),
+        (
+            TestOptimizerCaptureSampleCaps,
+            "test_replayed_workflow_templates_match_the_committed_capture",
+            "drop_workflow",
+        ),
+        (
+            TestOptimizerCaptureSampleCaps,
+            "test_replayed_workflow_result_matches_the_committed_capture",
+            "drop_workflow",
+        ),
+        (
+            TestCommittedCaptureEnhancementPathMarker,
+            "test_every_archived_record_carries_a_production_path_value",
+            "change_path_marker",
+        ),
+        (
+            TestCommittedCaptureEnhancementPathMarker,
+            "test_replayed_subset_keeps_lm_path_rows",
+            "change_path_marker",
+        ),
+    ],
+)
+def test_capture_golden_rejects_corrupted_recording(
+    test_class, test_name, mutation, tmp_path, monkeypatch
+):
+    from collections import Counter
+
+    from cogniverse_foundation.telemetry.config import (
+        SPAN_NAME_GATEWAY,
+        SPAN_NAME_QUERY_ENHANCEMENT,
+    )
+    from cogniverse_foundation.telemetry.span_contract import (
+        QUERY_ENHANCEMENT_PATH_ATTRIBUTE,
+        QUERY_ENHANCEMENT_PATH_HEURISTIC_FALLBACK,
+        QUERY_ENHANCEMENT_PATH_LM,
+    )
+    from tests.e2e.span_capture import (
+        load_capture_json,
+        sample_capture_by_name,
+        write_capture_json,
+    )
+
+    records = load_capture_json(_MOD.OPTIMIZER_SPAN_CAPTURE_PATH)
+    sampled = sample_capture_by_name(records, _MOD._optimizer_capture_sample_caps())
+    if mutation == "drop_gateway":
+        records.remove(next(r for r in records if r["name"] == SPAN_NAME_GATEWAY))
+    elif mutation == "drop_workflow":
+        records.remove(
+            next(r for r in records if r["context"]["span_id"] == "7bcf46b43b0cddd3")
+        )
+    elif mutation == "change_path_marker":
+        victim = next(r for r in sampled if r["name"] == SPAN_NAME_QUERY_ENHANCEMENT)
+        current = victim["attributes"][QUERY_ENHANCEMENT_PATH_ATTRIBUTE]
+        victim["attributes"][QUERY_ENHANCEMENT_PATH_ATTRIBUTE] = (
+            QUERY_ENHANCEMENT_PATH_LM
+            if current == QUERY_ENHANCEMENT_PATH_HEURISTIC_FALLBACK
+            else QUERY_ENHANCEMENT_PATH_HEURISTIC_FALLBACK
+        )
+    else:
+        span_name = "cogniverse." + mutation.removeprefix("duplicate_").removesuffix(
+            "_input"
+        )
+        cohort = [r for r in sampled if r["name"] == span_name]
+        inputs = Counter(r["attributes"]["input.value"] for r in cohort)
+        victim = next(r for r in cohort if inputs[r["attributes"]["input.value"]] == 1)
+        donor = next(
+            r
+            for r in cohort
+            if r["attributes"]["input.value"] != victim["attributes"]["input.value"]
+        )
+        victim["attributes"]["input.value"] = donor["attributes"]["input.value"]
+
+    corrupted_path = tmp_path / "corrupted-capture.json"
+    write_capture_json(corrupted_path, records)
+    monkeypatch.setattr(_MOD, "OPTIMIZER_SPAN_CAPTURE_PATH", corrupted_path)
+    with pytest.raises(AssertionError) as error:
+        getattr(test_class(), test_name)()
+    assert error.traceback[-1].name == test_name
