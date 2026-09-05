@@ -2,10 +2,17 @@
 
 from __future__ import annotations
 
+import os
 import re
+import subprocess
+import threading
+import uuid
+from concurrent.futures import ThreadPoolExecutor
+from urllib.parse import urlparse
 
 import pytest
 
+from tests.utils import hermetic_llm
 from tests.utils.hermetic_llm import (
     _LOCAL_SPAWN_MIN_AVAILABLE_GB,
     _SIDECARS,
@@ -15,6 +22,7 @@ from tests.utils.hermetic_llm import (
     assert_local_spawn_fits,
     available_ram_gb,
 )
+from tests.utils.test_vllm_sidecar import _isolated_exact_model_state, _models_server
 
 
 class TestSpawnIsRefusedWhenItWouldNotFit:
@@ -80,15 +88,94 @@ class TestEnsureLlmConsultsTheGuardBeforeSpawning:
             hermetic_llm._LOCAL_SPAWN_MIN_AVAILABLE_GB[MODEL] = original
         assert "1000000.0 GiB" in str(excinfo.value)
 
-    def test_guard_runs_before_any_docker_spawn(self) -> None:
-        import inspect
+    @pytest.mark.integration
+    @pytest.mark.requires_docker
+    @pytest.mark.parametrize("existing", [False, True], ids=["fresh", "restart"])
+    @pytest.mark.parametrize("workers", [1, 4], ids=["single", "concurrent"])
+    def test_capacity_refusal_preserves_container_state(
+        self, monkeypatch, tmp_path, existing, workers
+    ) -> None:
+        sidecar_module = _isolated_exact_model_state(monkeypatch, tmp_path)
+        container = f"capacity-refusal-{uuid.uuid4().hex[:10]}"
+        marker = f"capacity-model-{uuid.uuid4().hex[:10]}"
+        monkeypatch.setattr(hermetic_llm, "EXACT_MODEL_LABEL", marker)
+        monkeypatch.setitem(
+            hermetic_llm._LOCAL_SPAWN_MIN_AVAILABLE_GB, TEACHER_MODEL, 10**6
+        )
+        starts = tmp_path / "starts"
+        try:
+            if existing:
+                created = subprocess.run(
+                    [
+                        "docker",
+                        "run",
+                        "-d",
+                        "--name",
+                        container,
+                        "--label",
+                        f"{marker}={TEACHER_MODEL}",
+                        "--label",
+                        f"{sidecar_module.OWNER_LABEL}={os.getpid()}",
+                        "-v",
+                        f"{tmp_path}:/events",
+                        "busybox:1.36",
+                        "sh",
+                        "-c",
+                        "echo started >> /events/starts",
+                    ],
+                    capture_output=True,
+                    text=True,
+                    timeout=30,
+                    check=True,
+                )
+                assert created.returncode == 0
+                waited = subprocess.run(
+                    ["docker", "wait", container],
+                    capture_output=True,
+                    text=True,
+                    timeout=30,
+                    check=True,
+                )
+                assert waited.stdout == "0\n"
+                assert hermetic_llm._container_state(container) == "exited"
+                assert starts.read_text() == "started\n"
 
-        from tests.utils import hermetic_llm
+            attempts = []
+            with _models_server("unrelated-model", attempts=attempts) as url:
+                monkeypatch.setattr(
+                    hermetic_llm, "_configured_model_urls", lambda model: (url,)
+                )
+                monkeypatch.setitem(
+                    hermetic_llm._SIDECARS,
+                    TEACHER_MODEL,
+                    (container, urlparse(url).port),
+                )
+                start = threading.Barrier(workers, timeout=10)
 
-        source = inspect.getsource(hermetic_llm.ensure_llm)
-        guard_at = source.index("_guard_local_spawn(")
-        spawn_at = source.index("_detect_device()")
-        assert guard_at < spawn_at
+                def resolve(_):
+                    start.wait()
+                    with pytest.raises(LocalModelWontFitError) as excinfo:
+                        hermetic_llm.ensure_llm(TEACHER_MODEL, deadline_s=0)
+                    return str(excinfo.value).split(" and this host has ")[0]
+
+                with ThreadPoolExecutor(max_workers=workers) as pool:
+                    refusals = list(pool.map(resolve, range(workers)))
+
+            assert (
+                refusals
+                == [
+                    f"Refusing to spawn {TEACHER_MODEL!r} locally: it needs 1000000.0 GiB"
+                ]
+                * workers
+            )
+            assert attempts == ["/v1/models"] * workers
+            if existing:
+                assert starts.read_text() == "started\n"
+            assert hermetic_llm._container_state(container) == (
+                "exited" if existing else None
+            )
+        finally:
+            hermetic_llm._remove_container(container)
 
 
 class TestRoleModelsDeriveFromShippedConfig:
