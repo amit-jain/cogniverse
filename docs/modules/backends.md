@@ -2438,8 +2438,22 @@ of input order, so a raised feed marks as failed every id that did not receive
 a successful callback (explicit failure or unresolved), while preserving ids
 that already succeeded. The returned `(success_count, failed_documents)` is
 therefore an id-set result, never a positional tail of the submitted batch.
-`test_partial_update_roundtrip.py` fault-injects a real mid-batch transport
-failure and checks the reported ids against Document v1 state.
+
+Each failed document carries a `state`: `"rejected"` when the backend inspected
+the document and refused it (a schema/field validation failure), with the
+refusal's `status_code`; `"unresolved"` when the backend never gave the
+document a verdict — the feed ended before it answered, or it stopped answering
+mid-feed and the transport failed. PyVespa collapses both a schema rejection
+and a mid-feed connection loss into the same synthetic HTTP 599, so the two are
+told apart by the wrapped exception, not the status code: a `"rejected"` reason
+reads `HTTP 599: {...backend message...}` while an `"unresolved"` transport
+reason reads `the backend stopped answering during this batch: ...`. When no
+document reaches a verdict because the backend was unreachable for the whole
+batch, the feed raises `ConnectionError` naming the endpoint rather than
+returning a `(0, [...])` that reads as a completed feed with rejections.
+`test_partial_update_roundtrip.py` fault-injects a real mid-feed backend death
+(via `vespa-sentinel-cmd stop`) and checks both the reported states and the
+reported ids against Document v1 state.
 
 ```python
 import pytest

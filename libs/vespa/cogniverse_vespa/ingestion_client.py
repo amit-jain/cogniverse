@@ -140,6 +140,44 @@ def _feed_reason(status: Any, error_msg: Any) -> str:
     return f"HTTP {status if status is not None else 'unknown'}: {body}"
 
 
+# httpr wraps every client-side transport failure (connect refused, connection
+# reset, read/write timeout) as an error whose message begins "error sending
+# request for url (...)"; the socket-level phrases cover a bare OS error that
+# reaches the feeder unwrapped. A Vespa document-validation refusal ("No field
+# ...", "Document type ... does not exist") contains none of these.
+_TRANSPORT_599_MARKERS = (
+    "error sending request",
+    "connection reset",
+    "connection refused",
+    "connection aborted",
+)
+
+
+def _is_transport_599(status: Any, error_msg: Any) -> bool:
+    """True when a pyvespa 599 is a transport death, not a backend refusal.
+
+    pyvespa collapses BOTH a schema-level rejection and a mid-feed connection
+    loss into a synthetic HTTP 599 whose body is ``{"Exception": <str>, "id":
+    ..., "message": "Exception during feed_data_point"}``. The status code
+    alone cannot tell them apart; the wrapped exception string can -- a
+    transport failure carries an httpr/socket connection marker, a refusal
+    carries the backend's validation message.
+    """
+    if status != 599 or not isinstance(error_msg, dict):
+        return False
+    exception = str(error_msg.get("Exception", "")).lower()
+    return any(marker in exception for marker in _TRANSPORT_599_MARKERS)
+
+
+def _transport_feed_reason(error_msg: Any) -> str:
+    """A one-line cause for a document the backend stopped answering."""
+    if isinstance(error_msg, dict):
+        exception = error_msg.get("Exception", "the connection was lost")
+    else:
+        exception = error_msg if error_msg is not None else "the connection was lost"
+    return f"the backend stopped answering during this batch: {exception}"
+
+
 class VespaPyClient:
     """
     Vespa client implementation using official pyvespa library.
@@ -518,12 +556,17 @@ class VespaPyClient:
         Returns:
             ``(success_count, failures)``. Each failure carries ``id``,
             ``schema``, ``error`` and a ``state`` of ``"rejected"`` (the
-            backend answered and refused it, with ``status_code``) or
-            ``"unresolved"`` (the feed ended before the backend answered).
+            backend answered and refused the document, with its ``status_code``)
+            or ``"unresolved"`` (the backend never gave this document a verdict:
+            the feed ended before it answered, or it stopped answering mid-feed
+            and the transport failed). A transport death surfaces through
+            pyvespa as a synthetic HTTP 599 that a schema rejection shares, so
+            the two are told apart by the wrapped exception, not the code.
 
         Raises:
-            ConnectionError: the backend is unreachable, or the feed aborted
-                without resolving a single document.
+            ConnectionError: the backend is unreachable, or no document reached
+                a verdict because the backend stopped answering for the whole
+                batch.
         """
         if not self._connected:
             if not self.connect():
@@ -605,8 +648,22 @@ class VespaPyClient:
                             f"Failed to feed {doc_id} to schema '{self.schema_name}' "
                             f"(attempt {attempt}): HTTP {status} - {error_msg}"
                         )
-                        with status_lock:
-                            document_failures[doc_id] = {
+                        # A 599 whose wrapped exception is a transport failure
+                        # is the backend going away mid-feed, NOT a document the
+                        # backend inspected and refused. Reporting it as
+                        # "rejected" sends an operator hunting for bad data;
+                        # record it as "unresolved" naming the transport cause.
+                        if _is_transport_599(status, error_msg):
+                            failure = {
+                                "id": doc_id,
+                                "state": "unresolved",
+                                "schema": self.schema_name,
+                                "status_code": None,
+                                "attempts": attempt,
+                                "error": _transport_feed_reason(error_msg),
+                            }
+                        else:
+                            failure = {
                                 "id": doc_id,
                                 "state": "rejected",
                                 "schema": self.schema_name,
@@ -614,6 +671,8 @@ class VespaPyClient:
                                 "attempts": attempt,
                                 "error": _feed_reason(status, error_msg),
                             }
+                        with status_lock:
+                            document_failures[doc_id] = failure
 
                 # Feed with production-ready configuration. feed_async_iterable
                 # is pyvespa's HTTP/2 async feeder (I/O-bound throughput) and
@@ -672,24 +731,29 @@ class VespaPyClient:
                 document_status[doc["put"].split("::")[-1]] is True for doc in documents
             )
             failed_docs: List[Dict[str, Any]] = []
+            rejected = 0
             unresolved = 0
+            transport = 0
             for doc in documents:
                 doc_id = doc["put"].split("::")[-1]
                 state = document_status[doc_id]
                 if state is True:
                     continue
                 if state is False:
-                    failed_docs.append(
-                        document_failures.get(doc_id)
-                        or {
-                            "id": doc_id,
-                            "state": "rejected",
-                            "schema": self.schema_name,
-                            "status_code": None,
-                            "attempts": 1,
-                            "error": "rejected by the backend without a response body",
-                        }
-                    )
+                    failure = document_failures.get(doc_id) or {
+                        "id": doc_id,
+                        "state": "rejected",
+                        "schema": self.schema_name,
+                        "status_code": None,
+                        "attempts": 1,
+                        "error": "rejected by the backend without a response body",
+                    }
+                    failed_docs.append(failure)
+                    if failure["state"] == "unresolved":
+                        unresolved += 1
+                        transport += 1
+                    else:
+                        rejected += 1
                     continue
                 unresolved += 1
                 failed_docs.append(
@@ -704,10 +768,26 @@ class VespaPyClient:
                     }
                 )
 
-        if batch_error and success_count == 0 and unresolved == len(documents):
+        # No document reached a backend verdict, none was refused, and the whole
+        # batch failed on the transport: the backend was unreachable for the
+        # entire feed. Raise rather than return a (0, [...]) that reads as a
+        # completed feed with failures. The transport signal is either the
+        # feeder raising (batch_error) or every document coming back a transport
+        # 599; a feeder that silently resolves nothing still returns explicit
+        # unresolved failures, not a raise.
+        if (
+            success_count == 0
+            and rejected == 0
+            and unresolved == len(documents)
+            and (batch_error or transport)
+        ):
+            cause = batch_error or (
+                f"the backend at {self.backend_url}:{self.backend_port} "
+                "stopped answering during the feed"
+            )
             raise ConnectionError(
                 f"Feed to {self.namespace}/{self.schema_name} did not complete for any "
-                f"of {len(documents)} documents: {batch_error}"
+                f"of {len(documents)} documents: {cause}"
             )
         return success_count, failed_docs
 
