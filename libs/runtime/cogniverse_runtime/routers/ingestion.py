@@ -407,6 +407,9 @@ async def upload_video(
         # a second pass always found 0 and redundantly redeployed the graph.
         response["graph_nodes"] = pipeline_result.get("graph_nodes", 0)
         response["graph_edges"] = pipeline_result.get("graph_edges", 0)
+        if result.final_event.get("state") == "failed":
+            response["error"] = result.final_event["error"]
+            response["error_type"] = result.final_event["error_type"]
     else:
         response["status"] = "queued"
     return response
@@ -682,7 +685,7 @@ async def _extract_graph_per_segment(
             "kg.source_doc_id": source_doc_id,
         },
     ) as kg_span:
-        result: Dict[str, Any] = {}
+        result: Dict[str, Any] = empty
         try:
             result = await _extract_graph_per_segment_inner(
                 processing_results=processing_results,

@@ -267,9 +267,9 @@ def test_signature_contract_is_reasoning_plus_claims_only() -> None:
         "claims",
     ]
     assert CLAIM_EXTRACTION_MAX_CLAIMS == 4
-    assert CLAIM_EXTRACTION_TOKENS_PER_CLAIM == 80
-    assert CLAIM_EXTRACTION_REASONING_TOKENS == 192
-    assert CLAIM_EXTRACTION_MAX_OUTPUT_TOKENS == 512
+    assert CLAIM_EXTRACTION_TOKENS_PER_CLAIM == 128
+    assert CLAIM_EXTRACTION_REASONING_TOKENS == 256
+    assert CLAIM_EXTRACTION_MAX_OUTPUT_TOKENS == 768
     assert (
         "Return at most four claims."
         in ClaimExtractionSignature.output_fields["claims"].json_schema_extra["desc"]
@@ -309,7 +309,10 @@ def test_extraction_decodes_greedily_regardless_of_tenant_temperature() -> None:
     model at 0.1 swaps the SPO subject on real transcript segments), so the
     extractor pins its decoding temperature to 0.0 while carrying every other
     endpoint field through unchanged."""
-    from cogniverse_agents.graph.claim_extractor import ClaimExtractor
+    from cogniverse_agents.graph.claim_extractor import (
+        CLAIM_EXTRACTION_MAX_OUTPUT_TOKENS,
+        ClaimExtractor,
+    )
     from cogniverse_foundation.config.unified_config import LLMEndpointConfig
 
     sampled = LLMEndpointConfig(
@@ -322,12 +325,12 @@ def test_extraction_decodes_greedily_regardless_of_tenant_temperature() -> None:
     assert extractor._llm_config.temperature == 0.0
     assert extractor._llm_config.model == "openai/auto"
     assert extractor._llm_config.api_base == "http://llm.test:8000/v1"
-    assert extractor._llm_config.max_tokens == 512
+    assert extractor._llm_config.max_tokens == CLAIM_EXTRACTION_MAX_OUTPUT_TOKENS
 
     greedy = LLMEndpointConfig(model="openai/auto", temperature=0.0, max_tokens=8000)
     greedy_extractor = ClaimExtractor(llm_config=greedy)
     assert greedy_extractor._llm_config.temperature == 0.0
-    assert greedy_extractor._llm_config.max_tokens == 512
+    assert greedy_extractor._llm_config.max_tokens == CLAIM_EXTRACTION_MAX_OUTPUT_TOKENS
 
 
 def test_length_capped_completion_raises_with_source_and_segment() -> None:
