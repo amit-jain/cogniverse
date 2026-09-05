@@ -429,7 +429,7 @@ COMMITTED_CAPTURE = _committed_capture_path()
 # corpus must be re-captured rather than silently feeding the old shape.
 _EXPECTED_CAPTURE = {
     "cogniverse.gateway": (
-        126,
+        66,
         {
             "environment",
             "input.value",
@@ -451,7 +451,7 @@ _EXPECTED_CAPTURE = {
         },
     ),
     "cogniverse.entity_extraction": (
-        171,
+        118,
         {
             "environment",
             "input.value",
@@ -462,7 +462,7 @@ _EXPECTED_CAPTURE = {
         },
     ),
     "cogniverse.profile_selection": (
-        100,
+        40,
         {
             "available_profiles",
             "environment",
@@ -474,7 +474,7 @@ _EXPECTED_CAPTURE = {
         },
     ),
     "cogniverse.query_enhancement": (
-        165,
+        121,
         {
             "enhancement.path",
             "environment",
@@ -818,3 +818,42 @@ class TestSampleCaptureByName:
 
         assert "cogniverse.query_enhancement" in str(excinfo.value)
         assert "0" in str(excinfo.value)
+
+
+@pytest.mark.parametrize(
+    "span_name",
+    [
+        "cogniverse.gateway",
+        "cogniverse.entity_extraction",
+        "cogniverse.profile_selection",
+        "cogniverse.query_enhancement",
+    ],
+)
+def test_committed_capture_count_pin_rejects_a_dropped_record(
+    span_name, tmp_path, monkeypatch
+):
+    records = load_capture_json(COMMITTED_CAPTURE)
+    records.remove(next(r for r in records if r["name"] == span_name))
+    path = tmp_path / "missing-record.json"
+    write_capture_json(path, records)
+    monkeypatch.setattr(__name__ + ".COMMITTED_CAPTURE", path)
+
+    with pytest.raises(AssertionError) as error:
+        test_committed_capture_holds_the_exact_recorded_counts_and_attributes()
+    assert error.traceback[-1].name == (
+        "test_committed_capture_holds_the_exact_recorded_counts_and_attributes"
+    )
+
+
+def test_committed_capture_attribute_pin_rejects_an_added_field(tmp_path, monkeypatch):
+    records = load_capture_json(COMMITTED_CAPTURE)
+    records[0]["attributes"]["unexpected.field"] = "corrupted"
+    path = tmp_path / "extra-attribute.json"
+    write_capture_json(path, records)
+    monkeypatch.setattr(__name__ + ".COMMITTED_CAPTURE", path)
+
+    with pytest.raises(AssertionError) as error:
+        test_committed_capture_holds_the_exact_recorded_counts_and_attributes()
+    assert error.traceback[-1].name == (
+        "test_committed_capture_holds_the_exact_recorded_counts_and_attributes"
+    )
