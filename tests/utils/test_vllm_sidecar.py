@@ -22,6 +22,7 @@ from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 import pytest
 from cogniverse_cli.inference_endpoints import ResolvedInferenceEndpoint
 
+import tests.utils.hermetic_llm as hermetic_llm
 from cogniverse_foundation.inference_specs import get_inference_service_spec
 from tests.fixtures.inference import (
     InferenceSessionResolver,
@@ -31,13 +32,19 @@ from tests.fixtures.inference import (
 from tests.fixtures.inference import (
     pytest_configure as configure_inference_plugin,
 )
-from tests.utils.vllm_sidecar import VllmSidecarFactory, _merge_serve_args
+from tests.utils.vllm_sidecar import (
+    VllmSidecarFactory,
+    _external_endpoints_from_workload,
+    _merge_serve_args,
+    listed_model_ids,
+    serves_exact_model,
+)
 
 TOMORO = "TomoroAI/tomoro-colqwen3-embed-4b"
 LATEON = "lightonai/LateOn"
 DENSEON = "lightonai/DenseOn"
-GEMMA = "google/gemma-4-e4b-it"
-TEACHER_GEMMA = "google/gemma-4-26b-a4b-it"
+GEMMA = hermetic_llm.MODEL
+TEACHER_GEMMA = hermetic_llm.TEACHER_MODEL
 QWEN_TEACHER = "cyankiwi/Qwen3.6-27B-AWQ-INT4"
 ASR = get_inference_service_spec("vllm_asr")
 COLPALI = get_inference_service_spec("vllm_colpali")
@@ -60,6 +67,7 @@ def _models_server(
     *model_ids: str,
     malformed: bool = False,
     invalid_rows: bool = False,
+    require_bearer: str | None = None,
 ):
     if malformed:
         payload = {"models": list(model_ids)}
@@ -78,6 +86,13 @@ def _models_server(
         def do_GET(self):
             if self.path != "/v1/models":
                 self.send_response(404)
+                self.end_headers()
+                return
+            if (
+                require_bearer is not None
+                and self.headers.get("Authorization") != f"Bearer {require_bearer}"
+            ):
+                self.send_response(401)
                 self.end_headers()
                 return
             body = json.dumps(payload).encode()
@@ -221,6 +236,12 @@ def test_default_candidates_ignore_dev_config_and_chart(monkeypatch, tmp_path):
         sidecar_module,
         "_discover_dev_model_urls",
         lambda model: (),
+        raising=False,
+    )
+    monkeypatch.setattr(
+        sidecar_module,
+        "_discover_external_model_urls",
+        lambda *, context: (),
         raising=False,
     )
 
@@ -3267,3 +3288,69 @@ def test_non_qwen3_model_gets_no_mm_limit():
 def test_model_name_match_is_case_insensitive():
     out = _merge_serve_args("TomoroAI/Tomoro-ColQwen3-Embed-4B", [])
     assert out[out.index("--limit-mm-per-prompt") + 1] == '{"video":0,"image":1}'
+
+
+class TestAuthenticatedModelListing:
+    """Externally served endpoints require the inference API key."""
+
+    def test_unauthenticated_probe_of_a_protected_endpoint_finds_nothing(
+        self, monkeypatch
+    ):
+        monkeypatch.delenv("COGNIVERSE_INFERENCE_API_KEY", raising=False)
+        with _models_server(GEMMA, require_bearer="s3cr3t") as base_url:
+            assert listed_model_ids(base_url) is None
+
+    def test_key_from_the_environment_unlocks_the_exact_model(self, monkeypatch):
+        monkeypatch.setenv("COGNIVERSE_INFERENCE_API_KEY", "s3cr3t")
+        with _models_server(GEMMA, require_bearer="s3cr3t") as base_url:
+            assert listed_model_ids(base_url) == {GEMMA}
+            assert serves_exact_model(base_url, GEMMA) is True
+
+    def test_wrong_key_is_refused_rather_than_treated_as_serving(self, monkeypatch):
+        monkeypatch.setenv("COGNIVERSE_INFERENCE_API_KEY", "wrong")
+        with _models_server(GEMMA, require_bearer="s3cr3t") as base_url:
+            assert serves_exact_model(base_url, GEMMA) is False
+
+
+class TestExternallyServedEndpointsAreDiscovered:
+    """Models the cluster does not run are published on the runtime workload."""
+
+    WORKLOAD = {
+        "kind": "Deployment",
+        "metadata": {"name": "cogniverse-runtime", "namespace": "cogniverse"},
+        "spec": {
+            "template": {
+                "spec": {
+                    "containers": [
+                        {
+                            "name": "runtime",
+                            "env": [
+                                {
+                                    "name": "LLM_ENDPOINT",
+                                    "value": "https://student.modal.run/v1",
+                                },
+                                {
+                                    "name": "INFERENCE_SERVICE_URLS",
+                                    "value": json.dumps(
+                                        {
+                                            "gliner": "http://cogniverse-gliner:8080",
+                                            "vllm_llm_teacher": "https://teacher.modal.run",
+                                        }
+                                    ),
+                                },
+                            ],
+                        }
+                    ]
+                }
+            }
+        },
+    }
+
+    def test_external_urls_are_returned_and_cluster_local_ones_are_not(self):
+        assert _external_endpoints_from_workload(self.WORKLOAD) == (
+            "https://student.modal.run",
+            "https://teacher.modal.run",
+        )
+
+    def test_a_workload_publishing_nothing_external_yields_nothing(self):
+        assert _external_endpoints_from_workload({"kind": "Deployment"}) == ()

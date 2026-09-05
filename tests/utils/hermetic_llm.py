@@ -36,11 +36,19 @@ from tests.utils.vllm_sidecar import (
 REPO_ROOT = Path(__file__).resolve().parents[2]
 SOURCE_CONFIG = REPO_ROOT / "configs" / "config.json"
 CONTAINER = "cogniverse-test-llm"
-MODEL = "google/gemma-4-e4b-it"
 HOST_PORT = 29110
 TEACHER_CONTAINER = "cogniverse-test-llm-teacher"
-TEACHER_MODEL = "google/gemma-4-26b-a4b-it"
 TEACHER_HOST_PORT = 29111
+
+
+def _role_model(role: str) -> str:
+    """Return the exact model the shipped config serves for ``role``."""
+    model = json.loads(SOURCE_CONFIG.read_text())["llm_config"][role]["model"]
+    return model[len("openai/") :] if model.startswith("openai/") else model
+
+
+MODEL = _role_model("primary")
+TEACHER_MODEL = _role_model("teacher")
 HERMETIC_CONFIG_DIR = REPO_ROOT / "outputs" / ".hermetic"
 _HF_CACHE = str(Path.home() / ".cache" / "huggingface")
 _ENSURE_LOCK = threading.Lock()
@@ -51,7 +59,7 @@ _SIDECARS = {
 
 _LOCAL_SPAWN_MIN_AVAILABLE_GB = {
     MODEL: 16.0,
-    TEACHER_MODEL: 52.0,
+    TEACHER_MODEL: 20.0,
 }
 
 
