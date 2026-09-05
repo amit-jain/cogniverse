@@ -153,6 +153,12 @@ def shared_denseon(vllm_sidecar):
     )
 
 
+# Credentials for remote inference. Without these, ensure_llm finds no
+# configured endpoint and builds a model container on this host instead.
+from tests.env_secrets import load_env_secrets  # noqa: E402
+
+load_env_secrets()
+
 # Configure torch and tokenizers to avoid threading issues in pytest
 os.environ["TOKENIZERS_PARALLELISM"] = "false"
 os.environ["OMP_NUM_THREADS"] = "1"
