@@ -98,7 +98,7 @@ class TestEmbeddingRunStatus:
         )
         assert status == "failed"
         assert error == "embedding stage failed: Embedding generator not initialized"
-        assert errors == ["Embedding generator not initialized"]
+        assert errors == []
 
     @pytest.mark.parametrize(
         "missing_field",

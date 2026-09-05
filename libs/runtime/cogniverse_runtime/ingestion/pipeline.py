@@ -846,7 +846,7 @@ class VideoIngestionPipeline:
             stage_error = embed["error"]
             if type(stage_error) is not str or not stage_error.strip():
                 return malformed("field 'error' must be a non-empty string")
-            return "failed", f"embedding stage failed: {stage_error}", [stage_error]
+            return "failed", f"embedding stage failed: {stage_error}", []
 
         required_fields = (
             "total_documents",
