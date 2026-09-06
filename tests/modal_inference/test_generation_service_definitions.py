@@ -280,6 +280,7 @@ def test_live_modal_selection_requires_an_explicit_opt_in(monkeypatch):
 
 def test_modal_requirement_rejects_local_endpoint_before_stateful_stack(monkeypatch):
     from tests.e2e import conftest as e2e_conftest
+    from tests.e2e import run_lock
 
     spec = get_inference_service_spec("vllm_llm_student")
 
@@ -302,11 +303,11 @@ def test_modal_requirement_rejects_local_endpoint_before_stateful_stack(monkeypa
     request = SimpleNamespace(session=SimpleNamespace(items=[Item()]))
     stateful_calls = []
 
-    def deploy_sha():
-        stateful_calls.append("deploy_sha")
-        return "ffffffffffffffffffffffffffffffffffffffff"
+    def acquire_run_lock(path):
+        stateful_calls.append("run_lock.acquire")
+        return True
 
-    monkeypatch.setattr(e2e_conftest, "_current_e2e_deploy_sha", deploy_sha)
+    monkeypatch.setattr(run_lock, "acquire", acquire_run_lock)
     fixture = e2e_conftest.e2e_stack.__wrapped__(
         request,
         {spec.name: endpoint},
