@@ -203,14 +203,18 @@ def test_deploy_waits_for_generation_then_feeds_only_the_new_schema(
 
 @pytest.mark.parametrize("process", ["vespa-distribut", "vespa-proton-bi"])
 def test_deploy_rejects_a_service_that_never_runs_the_generation(
-    backend, vespa_instance, monkeypatch, process
+    backend, vespa_instance, monkeypatch, process, http_trace
 ):
     """A frozen service keeps its old generation; the deploy must not
     report the schema live while a feed would be refused."""
+    import cogniverse_core.registries.schema_deployment_intents as intent_module
+
+    backend._wait_for_schema_convergence(_active_generation(vespa_instance), [])
     monkeypatch.setattr(backend_module, "SCHEMA_CONVERGENCE_TIMEOUT_S", 12)
     container = vespa_instance["container_name"]
     full = backend.get_tenant_schema_name(TENANT, "wiki_pages")
-    activate = backend._deploy_package
+    deployment_owner = backend.schema_registry._backend
+    activate = deployment_owner._deploy_package
     activated = []
 
     def activate_then_freeze(*args, **kwargs):
@@ -219,14 +223,14 @@ def test_deploy_rejects_a_service_that_never_runs_the_generation(
         _signal(container, process, "STOP")
         return generation
 
-    monkeypatch.setattr(backend, "_deploy_package", activate_then_freeze)
+    monkeypatch.setattr(deployment_owner, "_deploy_package", activate_then_freeze)
     try:
         with pytest.raises(BackendDeploymentError) as exc_info:
             backend.schema_registry.deploy_schema(TENANT, "wiki_pages")
     finally:
         if activated:
             _signal(container, process, "CONT")
-    monkeypatch.setattr(backend, "_deploy_package", activate)
+    monkeypatch.setattr(deployment_owner, "_deploy_package", activate)
 
     [generation] = activated
     prefix = (
@@ -237,18 +241,23 @@ def test_deploy_rejects_a_service_that_never_runs_the_generation(
     )
     message = str(exc_info.value)
     assert message.startswith(prefix), message
-    lagging = json.loads(message[len(prefix) :].replace("'", '"'))
+    suffix = ". The durable definition is retained for late activation."
+    assert message.endswith(suffix), message
+    lagging = json.loads(message[len(prefix) : -len(suffix)].replace("'", '"'))
     frozen = {"vespa-distribut": "distributor", "vespa-proton-bi": "searchnode"}[
         process
     ]
     by_type = {entry.split("@")[0]: entry.rsplit("=", 1)[1] for entry in lagging}
     assert by_type[frozen] == "-1"
-    assert set(by_type) <= {frozen, "storagenode", "container"}
-    assert set(by_type.values()) <= {"-1", str(generation - 1)}
+    last_convergence = json.loads(_converge_calls(http_trace)[-1]["body"])
+    assert lagging == sorted(
+        f"{service['type']}@{service['host']}:{service['port']}"
+        f"={service['currentGeneration']}"
+        for service in last_convergence["services"]
+        if service["currentGeneration"] < generation
+    )
 
-    # The activation happened before the gate refused: Vespa holds the
-    # schema, the registry does not. Remove it, then prove the same deploy
-    # succeeds once the service runs the generation.
+    # The live schema's intent completes before deletion starts a new generation.
     _wait_for_registry_to_see(
         backend,
         {
@@ -256,6 +265,17 @@ def test_deploy_rejects_a_service_that_never_runs_the_generation(
             backend.get_tenant_schema_name(TENANT, "provenance"),
         },
     )
+    journal_now = intent_module._now
+    monkeypatch.setattr(intent_module, "_now", lambda: journal_now() + 91)
+    backend.deploy_schemas([])
+    assert {
+        schema.full_schema_name
+        for schema in backend.schema_registry.get_tenant_schemas(TENANT)
+    } == {
+        "agent_memories_conv_gate_conv_gate",
+        "provenance_conv_gate_conv_gate",
+        "wiki_pages_conv_gate_conv_gate",
+    }
     backend.schema_manager.delete_schema(TENANT, "wiki_pages")
     assert full not in backend.schema_manager.list_deployed_document_types()
     assert backend.schema_registry.deploy_schema(TENANT, "wiki_pages") == full

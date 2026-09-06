@@ -6,6 +6,7 @@ any external backend (Vespa, SQLite, etc.).
 """
 
 from datetime import datetime, timezone
+from threading import RLock
 from typing import Any, Dict, List, Optional
 
 from cogniverse_sdk.interfaces.config_store import (
@@ -27,6 +28,7 @@ class InMemoryConfigStore(ConfigStore):
         # Storage: {config_id: {version: ConfigEntry}}
         self._storage: Dict[str, Dict[int, ConfigEntry]] = {}
         self._initialized = False
+        self._lock = RLock()
 
     def initialize(self) -> None:
         """Initialize the in-memory store."""
@@ -41,32 +43,52 @@ class InMemoryConfigStore(ConfigStore):
         config_value: Dict[str, Any],
     ) -> ConfigEntry:
         """Store or update a configuration entry."""
-        config_id = f"{tenant_id}:{scope.value}:{service}:{config_key}"
-        now = datetime.now(timezone.utc)
+        with self._lock:
+            config_id = f"{tenant_id}:{scope.value}:{service}:{config_key}"
+            now = datetime.now(timezone.utc)
 
-        # Get next version number
-        if config_id in self._storage:
-            versions = self._storage[config_id]
-            next_version = max(versions.keys()) + 1
-            created_at = min(v.created_at for v in versions.values())
-        else:
-            self._storage[config_id] = {}
-            next_version = 1
-            created_at = now
+            if config_id in self._storage:
+                versions = self._storage[config_id]
+                next_version = max(versions.keys()) + 1
+                created_at = min(v.created_at for v in versions.values())
+            else:
+                self._storage[config_id] = {}
+                next_version = 1
+                created_at = now
 
-        entry = ConfigEntry(
-            tenant_id=tenant_id,
-            scope=scope,
-            service=service,
-            config_key=config_key,
-            config_value=config_value,
-            version=next_version,
-            created_at=created_at,
-            updated_at=now,
-        )
+            entry = ConfigEntry(
+                tenant_id=tenant_id,
+                scope=scope,
+                service=service,
+                config_key=config_key,
+                config_value=config_value,
+                version=next_version,
+                created_at=created_at,
+                updated_at=now,
+            )
 
-        self._storage[config_id][next_version] = entry
-        return entry
+            self._storage[config_id][next_version] = entry
+            return entry
+
+    def compare_and_set_config(
+        self,
+        tenant_id: str,
+        scope: ConfigScope,
+        service: str,
+        config_key: str,
+        config_value: Dict[str, Any],
+        *,
+        expected_version: int,
+    ) -> Optional[ConfigEntry]:
+        """Append one revision while excluding competing writers."""
+        if expected_version < 0:
+            raise ValueError("expected_version must be nonnegative")
+        with self._lock:
+            current = self.get_config(tenant_id, scope, service, config_key)
+            actual_version = 0 if current is None else current.version
+            if actual_version != expected_version:
+                return None
+            return self.set_config(tenant_id, scope, service, config_key, config_value)
 
     def get_config(
         self,
@@ -186,10 +208,11 @@ class InMemoryConfigStore(ConfigStore):
         """Delete all versions of a configuration entry."""
         config_id = f"{tenant_id}:{scope.value}:{service}:{config_key}"
 
-        if config_id in self._storage:
-            del self._storage[config_id]
-            return True
-        return False
+        with self._lock:
+            if config_id in self._storage:
+                del self._storage[config_id]
+                return True
+            return False
 
     def export_configs(
         self,
@@ -223,18 +246,19 @@ class InMemoryConfigStore(ConfigStore):
         configs: Dict[str, Any],
     ) -> int:
         """Import configurations for a tenant."""
-        count = 0
-        for config_data in configs.get("configs", []):
-            entry = ConfigEntry.from_dict(config_data)
-            config_id = entry.get_config_id()
+        with self._lock:
+            count = 0
+            for config_data in configs.get("configs", []):
+                entry = ConfigEntry.from_dict(config_data)
+                config_id = entry.get_config_id()
 
-            if config_id not in self._storage:
-                self._storage[config_id] = {}
+                if config_id not in self._storage:
+                    self._storage[config_id] = {}
 
-            self._storage[config_id][entry.version] = entry
-            count += 1
+                self._storage[config_id][entry.version] = entry
+                count += 1
 
-        return count
+            return count
 
     def get_stats(self) -> Dict[str, Any]:
         """Get storage statistics."""

@@ -16,8 +16,11 @@ from cogniverse_core.registries.exceptions import (
     SchemaLoadError,
     SchemaRegistryInitializationError,
 )
+from cogniverse_core.registries.schema_deployment_intents import SchemaDeploymentIntents
 
 logger = logging.getLogger(__name__)
+
+_SCHEMA_INTENT_GRACE_S = 90
 
 
 @dataclass
@@ -99,6 +102,7 @@ class SchemaRegistry:
         self._config_manager = config_manager
         self._backend = backend
         self._schema_loader = schema_loader
+        self._deployment_intents = SchemaDeploymentIntents(config_manager.store)
 
         # In-memory registry of all deployed schemas
         # Key: (tenant_id, base_schema_name), Value: SchemaInfo
@@ -170,6 +174,8 @@ class SchemaRegistry:
         full_schema_name: str,
         schema_definition: str,
         config: Optional[Dict[str, Any]] = None,
+        deployment_time: Optional[str] = None,
+        expected_version: Optional[int] = None,
     ) -> None:
         """
         Register a newly deployed schema.
@@ -180,6 +186,8 @@ class SchemaRegistry:
             full_schema_name: Tenant-scoped schema name (e.g., 'video_colpali_smol500_mv_frame_test_tenant')
             schema_definition: Full .sd file content as string
             config: Optional schema configuration
+            deployment_time: Original intent timestamp when completing a deployment
+            expected_version: Conditional registration version; zero requires absence
 
         Example:
             registry.register_schema(
@@ -206,7 +214,8 @@ class SchemaRegistry:
 
         # Store schema metadata using generic ConfigManager storage
         config_key = f"schema_{base_schema_name}"
-        deployment_time = datetime.now(timezone.utc).isoformat()
+        if deployment_time is None:
+            deployment_time = datetime.now(timezone.utc).isoformat()
 
         value = {
             "tenant_id": tenant_id,
@@ -217,13 +226,24 @@ class SchemaRegistry:
             "deployment_time": deployment_time,
         }
 
-        self._config_manager.store.set_config(
-            tenant_id=tenant_id,
-            scope=ConfigScope.SCHEMA,
-            service="schema_registry",
-            config_key=config_key,
-            config_value=value,
-        )
+        coordinates = {
+            "tenant_id": tenant_id,
+            "scope": ConfigScope.SCHEMA,
+            "service": "schema_registry",
+            "config_key": config_key,
+        }
+        if expected_version is None:
+            self._config_manager.store.set_config(**coordinates, config_value=value)
+        else:
+            saved = self._config_manager.store.compare_and_set_config(
+                **coordinates, config_value=value, expected_version=expected_version
+            )
+            if saved is None:
+                current = self._config_manager.store.get_config(**coordinates)
+                if current is None or current.config_value != value:
+                    raise RegistryStorageError(
+                        f"Registration of {full_schema_name!r} conflicted with a newer registry revision"
+                    )
 
         # Add to in-memory registry
         key = (tenant_id, base_schema_name)
@@ -344,8 +364,8 @@ class SchemaRegistry:
         3. Loads base schema definition
         4. Transforms to tenant-specific schema
         5. Collects ALL existing schemas (cross-tenant)
-        6. Calls backend.deploy_schemas() with complete list
-        7. Registers the newly deployed schema
+        6. Persists the exact registration intent, then deploys the complete list
+        7. Registers the newly deployed schema and clears the active intent
 
         Args:
             tenant_id: Tenant identifier
@@ -460,7 +480,41 @@ class SchemaRegistry:
                 }
             )
 
-            # Deploy to backend first (atomic operation)
+            from datetime import datetime, timezone
+
+            registration = {
+                "tenant_id": tenant_id,
+                "base_schema_name": base_schema_name,
+                "full_schema_name": tenant_schema_name,
+                "schema_definition": json.dumps(base_schema_json),
+                "config": config or {},
+                "deployment_time": datetime.now(timezone.utc).isoformat(),
+            }
+            from cogniverse_sdk.interfaces.config_store import ConfigScope
+
+            for existing in existing_schemas:
+                if existing.full_schema_name == tenant_schema_name and (
+                    existing.tenant_id,
+                    existing.base_schema_name,
+                ) != (tenant_id, base_schema_name):
+                    raise RegistryStorageError(
+                        f"Schema name {tenant_schema_name!r} belongs to another tenant"
+                    )
+            stored = self._config_manager.store.get_config(
+                tenant_id=tenant_id,
+                scope=ConfigScope.SCHEMA,
+                service="schema_registry",
+                config_key=f"schema_{base_schema_name}",
+            )
+            intent = None
+            if stored is None or stored.config_value.get("deleted", False):
+                intent = self._deployment_intents.prepare(
+                    registration,
+                    grace_s=_SCHEMA_INTENT_GRACE_S,
+                    registry_version=0 if stored is None else stored.version,
+                )
+
+            # The durable definition survives a lost activation acknowledgement.
             try:
                 success = self._backend.deploy_schemas(all_schemas)
                 if not success:
@@ -468,42 +522,70 @@ class SchemaRegistry:
                         f"Backend failed to deploy schema '{tenant_schema_name}'"
                     )
             except Exception as e:
-                # Backend deployment failed - no rollback needed (nothing changed)
+                retirement_failure = None
+                if intent:
+                    try:
+                        self._deployment_intents.retire(intent)
+                    except Exception as retirement_exc:
+                        retirement_failure = (
+                            f"Intent retirement failed: {retirement_exc}. "
+                            "The durable record is retained for recovery."
+                        )
+                        logger.error(retirement_failure)
                 logger.error(f"Backend deployment failed: {e}")
-                raise BackendDeploymentError(
-                    f"Backend deployment failed for schema '{tenant_schema_name}': {e}"
+                deployment_error = BackendDeploymentError(
+                    f"Backend deployment failed for schema '{tenant_schema_name}': {e}. "
+                    "The durable definition is retained for late activation."
                 )
+                if retirement_failure:
+                    deployment_error.add_note(retirement_failure)
+                raise deployment_error from e
 
             # Then register in ConfigStore (critical section)
             try:
                 logger.info(f"Registering schema {tenant_schema_name} in database")
-                self.register_schema(
-                    tenant_id=tenant_id,
-                    base_schema_name=base_schema_name,
-                    full_schema_name=tenant_schema_name,
-                    schema_definition=json.dumps(base_schema_json),
-                    config=config,
-                )
+                if intent:
+                    self.register_schema(
+                        **intent["registration"],
+                        expected_version=intent["registry_version"],
+                    )
+                    self._deployment_intents.complete(intent)
+                else:
+                    self.register_schema(**registration)
             except Exception as e:
-                # ConfigStore registration failed AFTER backend succeeded
-                # ROLLBACK: Re-deploy previous schemas to remove new one
-                logger.error(
-                    f"ConfigStore registration failed: {e}. "
-                    f"Rolling back backend deployment..."
-                )
-                self._rollback_deployment(previous_schemas, tenant_schema_name)
-
-                # Raise with clear error type
+                if intent:
+                    detail = "Durable registration recovery is pending; the schema is preserved."
+                else:
+                    self._rollback_deployment(previous_schemas, tenant_schema_name)
+                    detail = "Existing-schema deployment rollback was requested."
                 raise RegistryStorageError(
-                    f"Failed to register schema '{tenant_schema_name}' in ConfigStore: {e}. "
-                    f"Backend deployment has been rolled back."
-                )
+                    f"Failed to register schema '{tenant_schema_name}' in ConfigStore: {e}. {detail}"
+                ) from e
 
         logger.info(
             f"Successfully deployed and registered schema '{tenant_schema_name}' "
             f"for tenant '{tenant_id}'"
         )
         return tenant_schema_name
+
+    def reconcile_deployment_intents(self, live_names: set[str]) -> List[SchemaInfo]:
+        """Complete due intents for schemas confirmed live by the config server.
+
+        Recovery writes the owner's exact registry payload and never deletes or
+        deploys schemas. Fresh intents wait 90 seconds for normal registration.
+        """
+        from dataclasses import asdict
+
+        self._load_schemas_from_storage()
+        registered = {
+            info.full_schema_name: asdict(info) for info in self._schemas.values()
+        }
+        recovered = self._deployment_intents.reconcile(
+            live_names,
+            registered,
+            lambda row, version: self.register_schema(**row, expected_version=version),
+        )
+        return [SchemaInfo(**row) for row in recovered]
 
     def get_tenant_schemas(self, tenant_id: str) -> List[SchemaInfo]:
         """
@@ -662,18 +744,24 @@ class SchemaRegistry:
             config_key=config_key,
         )
 
-        if entry:
-            schema_info = entry.config_value
-            schema_info["deleted"] = True
-            schema_info["deleted_at"] = datetime.now(timezone.utc).isoformat()
-
-            self._config_manager.store.set_config(
-                tenant_id=tenant_id,
-                scope=ConfigScope.SCHEMA,
-                service="schema_registry",
-                config_key=config_key,
-                config_value=schema_info,
-            )
+        schema_info = (
+            dict(entry.config_value)
+            if entry
+            else {
+                "tenant_id": tenant_id,
+                "base_schema_name": base_schema_name,
+                "full_schema_name": f"{base_schema_name}_{tenant_id.replace(':', '_')}",
+            }
+        )
+        schema_info["deleted"] = True
+        schema_info["deleted_at"] = datetime.now(timezone.utc).isoformat()
+        self._config_manager.store.set_config(
+            tenant_id=tenant_id,
+            scope=ConfigScope.SCHEMA,
+            service="schema_registry",
+            config_key=config_key,
+            config_value=schema_info,
+        )
 
         # Remove from in-memory registry
         key = (tenant_id, base_schema_name)

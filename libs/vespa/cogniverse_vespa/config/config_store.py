@@ -407,6 +407,61 @@ class VespaConfigStore(ConfigStore):
             f"{_MAX_VERSION_ALLOCATION_ATTEMPTS} conditional writes"
         )
 
+    def compare_and_set_config(
+        self,
+        tenant_id: str,
+        scope: ConfigScope,
+        service: str,
+        config_key: str,
+        config_value: Dict[str, Any],
+        *,
+        expected_version: int,
+    ) -> Optional[ConfigEntry]:
+        """Append exactly the next version, or return None on contention.
+
+        Version zero requires an absent key. The immutable version document
+        is the conditional-write boundary. Strong reads also reject a stale
+        writer whose version slot has already been pruned from history.
+        """
+        if expected_version < 0:
+            raise ValueError("expected_version must be nonnegative")
+        current = self.get_config(tenant_id, scope, service, config_key)
+        actual_version = 0 if current is None else current.version
+        if actual_version != expected_version:
+            return None
+        now = datetime.now(timezone.utc)
+        entry = ConfigEntry(
+            tenant_id=tenant_id,
+            scope=scope,
+            service=service,
+            config_key=config_key,
+            config_value=config_value,
+            version=expected_version + 1,
+            created_at=now,
+            updated_at=now,
+        )
+        config_id = entry.get_config_id()
+        fields = entry.to_dict()
+        fields["config_id"] = config_id
+        fields["config_value"] = json.dumps(config_value)
+        try:
+            self.vespa_app.feed_data_point(
+                schema=self.schema_name,
+                data_id=f"{self.schema_name}::{config_id}::{entry.version}",
+                fields=fields,
+                condition=f"{self.schema_name}.version < {entry.version}",
+                create=True,
+            )
+        except Exception as exc:
+            if _is_condition_miss(exc):
+                return None
+            raise
+        latest = self.get_config(tenant_id, scope, service, config_key)
+        self._prune_old_versions(config_id, keep=self.keep_versions)
+        if latest is None or latest.version != entry.version:
+            return None
+        return entry
+
     def _prune_old_versions(self, config_id: str, *, keep: int) -> int:
         """Delete every version of ``config_id`` older than the latest ``keep``.
 
