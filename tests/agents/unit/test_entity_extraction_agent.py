@@ -28,7 +28,7 @@ from tests.agents.unit._recording_telemetry import (
 pytestmark = [pytest.mark.unit, pytest.mark.ci_fast]
 
 
-EXPECTED_ENTITY_EXTRACTION_SIGNATURE_INSTRUCTIONS = """Extract named entities from the query.
+EXPECTED_ENTITY_EXTRACTION_SIGNATURE_INSTRUCTIONS = """Extract named and unnamed entities by scanning the query from left to right.
 
 Allowed types: CONCEPT, EVENT, ORGANIZATION, PERSON, PLACE, TECHNOLOGY. Only emit these labels.
 
@@ -40,9 +40,31 @@ Rules:
 - Use PLACE for settings such as dirt field, kitchen, and pool area.
 - Use TECHNOLOGY for camera and screen.
 - Use EVENT for crash.
-- Actions are never entities.
+- Always include teaching sessions such as lessons, lectures, and workshops as EVENT, even when unnamed.
+- Always include informational resources such as guides, manuals, and reference material as CONCEPT, even when unnamed.
+- Copy the complete noun phrase for each teaching session or informational resource, including all descriptive adjectives and compound-noun modifiers. Exclude leading articles and following prepositional phrases; never shorten a modified phrase to its head noun.
+- Extract named software libraries and frameworks separately as TECHNOLOGY.
+- Emit each entity once at its first occurrence in the left-to-right scan. Never group entities by type or put proper names before earlier unnamed entities.
+- Before responding, verify that every session/resource phrase retains all its modifiers and that no later source span precedes an earlier one.
+- Action verbs are never entities.
 - "the video" is never an entity.
-- Keep each entity on its own line in text|type|confidence format."""
+- Keep each entity on its own line in text|type|confidence format.
+
+Examples:
+
+Query: Find a recorded lecture on Matplotlib and a concise manual for Matplotlib
+Reasoning: The first entity is the whole phrase recorded lecture, an EVENT. Matplotlib first appears next and is TECHNOLOGY. The final new entity is the whole phrase concise manual, a CONCEPT. The later Matplotlib mention is a repeat.
+Entities:
+recorded lecture|EVENT|0.9
+Matplotlib|TECHNOLOGY|0.9
+concise manual|CONCEPT|0.9
+
+Query: Find a detailed guide to FastAPI and an evening workshop on FastAPI
+Reasoning: The first entity is the whole phrase detailed guide, a CONCEPT. FastAPI first appears next and is TECHNOLOGY. The final new entity is the whole phrase evening workshop, an EVENT. The later FastAPI mention is a repeat.
+Entities:
+detailed guide|CONCEPT|0.9
+FastAPI|TECHNOLOGY|0.9
+evening workshop|EVENT|0.9"""
 
 
 def _make_extraction_agent():
@@ -256,6 +278,19 @@ class TestEntityExtractionModule:
         assert (
             module.extractor.predict.signature.instructions
             == EXPECTED_ENTITY_EXTRACTION_SIGNATURE_INSTRUCTIONS
+        )
+
+    def test_reasoning_preserves_complete_source_spans(self):
+        module = EntityExtractionModule()
+
+        assert module.extractor.predict.signature.output_fields[
+            "reasoning"
+        ].json_schema_extra["desc"] == (
+            "Identify complete entity spans before assigning types. Keep each "
+            "noun phrase's modifiers attached to its head, never as separate "
+            "entities. Walk these spans in order of first appearance and copy "
+            "that sequence into entities. Ignore later occurrences of an already "
+            "listed entity."
         )
 
     def test_module_initialization(self):
