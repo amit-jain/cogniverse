@@ -1,0 +1,16 @@
+{
+  "confidence": 0.9,
+  "doc_id": "kg_edge_test_2922d1f749edca56",
+  "doc_type": "edge",
+  "evidence_span": "She later won the Nobel Prize in Physics.",
+  "modality": "transcript",
+  "provenance": "EXTRACTED",
+  "relation": "won",
+  "segment_id": "seg_4",
+  "source_doc_id": "marie_curie_30s",
+  "source_node_id": "marie_curie",
+  "target_node_id": "nobel_prize_in_physics",
+  "tenant_id": "test",
+  "ts_end": 25.0,
+  "ts_start": 18.5
+}
