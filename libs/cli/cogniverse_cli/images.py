@@ -37,7 +37,7 @@ DASHBOARD_REPOS_BY_BACKEND = {
 # the pod ErrImageNeverPulls on a fresh deploy. One image, all backends.
 GLINER_REPO = "cogniverse/gliner"
 # Optional embedder sidecars — each backs a real opt-in feature (acoustic
-# search, face re-ID). Built only when their
+# search, face re-ID, text-to-video retrieval). Built only when their
 # inference.<svc>.enabled resolves true in the deploy values, so a default
 # build stays fast but flipping one on "just works". Their canonical servers
 # live in the CLI modal-inference package, so every sidecar build uses the
@@ -45,6 +45,7 @@ GLINER_REPO = "cogniverse/gliner"
 SIDECAR_BUILDS = {
     "clap_embed": ("cogniverse/clap-embed", "deploy/clap_embed/Dockerfile", "."),
     "face_embed": ("cogniverse/face-embed", "deploy/face_embed/Dockerfile", "."),
+    "video_embed": ("cogniverse/video-embed", "deploy/video_embed/Dockerfile", "."),
     # Both LateOn services run the same PyLate image — LateOn retrieval
     # needs PyLate's exact encode (query expansion over masked padding),
     # which stock vLLM cannot reproduce. build_images dedupes the shared
@@ -87,6 +88,7 @@ IMAGE_DOCKERFILES = {
     "gliner": "deploy/gliner/Dockerfile",
     "clap_embed": "deploy/clap_embed/Dockerfile",
     "face_embed": "deploy/face_embed/Dockerfile",
+    "video_embed": "deploy/video_embed/Dockerfile",
 }
 
 # Host-side inputs read by each Docker build. Every set includes the Dockerfile
@@ -129,6 +131,12 @@ IMAGE_INPUT_PATHS = {
         IMAGE_DOCKERFILES["face_embed"],
         "deploy/face_embed/requirements.txt",
         "libs/cli/cogniverse_cli/modal_inference/servers/face.py",
+        ".dockerignore",
+    ),
+    "video_embed": (
+        IMAGE_DOCKERFILES["video_embed"],
+        "deploy/video_embed/requirements.txt",
+        "libs/cli/cogniverse_cli/modal_inference/servers/video_embed.py",
         ".dockerignore",
     ),
 }

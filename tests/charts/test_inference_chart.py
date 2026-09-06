@@ -22,8 +22,12 @@ from pathlib import Path
 
 import pytest
 import yaml
+from cogniverse_cli.images import SIDECAR_BUILDS
 
-from cogniverse_foundation.inference_specs import INFERENCE_SERVICE_SPECS
+from cogniverse_foundation.inference_specs import (
+    INFERENCE_SERVICE_SPECS,
+    get_inference_service_spec,
+)
 
 REPO_ROOT = Path(__file__).resolve().parents[2]
 CHART_PATH = REPO_ROOT / "charts" / "cogniverse"
@@ -49,6 +53,10 @@ def _render(*set_args: str, values: str | tuple[str, ...] | None = None) -> list
             f"helm template failed (exit {result.returncode}):\n{result.stderr}"
         )
     return [d for d in yaml.safe_load_all(result.stdout) if d is not None]
+
+
+def _values(name: str) -> dict:
+    return yaml.safe_load((CHART_PATH / name).read_text())
 
 
 def _inference_deployments(docs: list[dict]) -> dict[str, dict]:
@@ -164,13 +172,70 @@ def test_video_embed_sidecar_env_matches_the_shipped_spec():
     assert env["VIDEO_EMBED_NUM_FRAMES"] == "8"
 
     container = deps["video_embed"]["spec"]["template"]["spec"]["containers"][0]
-    assert container["image"] == "cogniverse/video-embed:0.1.0"
+    base = _values("values.yaml")["inference"]["video_embed"]
+    assert container["image"] == (
+        f"{SIDECAR_BUILDS['video_embed'][0]}:{base['image']['tag']}"
+    )
     # Model weights live in RAM for the pod's life; a request below the limit
     # makes the pod Burstable and evictable out of the shared pool.
     assert (
         container["resources"]["requests"]["memory"]
         == (container["resources"]["limits"]["memory"])
     )
+
+
+def test_k3s_overlay_serves_video_embed_from_the_locally_built_image():
+    """The local stack's text-to-video retrieval runs through the X-CLIP
+    sidecar the deploy builds itself: the overlay enables the pod on the image
+    family ``cogniverse up`` produces, serves the spec's checkpoint at the
+    spec's width, exposes the fixed NodePort, and hands the runtime the
+    in-cluster URL. Memory request equals the limit so the pod holding the
+    weights cannot be evicted out of the shared pool."""
+    spec = get_inference_service_spec("video_embed")
+    base = _values("values.yaml")["inference"]["video_embed"]
+    overlay = _values("values.k3s.yaml")["inference"]["video_embed"]
+    docs = _render(values="values.k3s.yaml")
+    deps = _inference_deployments(docs)
+    container = deps["video_embed"]["spec"]["template"]["spec"]["containers"][0]
+
+    assert container["image"] == (
+        f"{SIDECAR_BUILDS['video_embed'][0]}:{overlay['image']['tag']}"
+    )
+    assert container["imagePullPolicy"] == "Never"
+
+    env = _inference_env(deps, "video_embed")
+    assert env["VIDEO_EMBED_MODEL"] == spec.model_id
+    assert env["VIDEO_EMBED_MODEL_REVISION"] == spec.model_revision
+    assert env["VIDEO_EMBED_DIM"] == str(spec.output_dimension)
+    assert env["VIDEO_EMBED_DIM"] == base["env"]["VIDEO_EMBED_DIM"]
+    assert env["VIDEO_EMBED_NUM_FRAMES"] == base["env"]["VIDEO_EMBED_NUM_FRAMES"]
+    assert env["PORT"] == str(base["service"]["port"])
+
+    services = _inference_services(docs)
+    assert services["video_embed"]["spec"]["type"] == "NodePort"
+    assert services["video_embed"]["spec"]["ports"] == [
+        {
+            "name": "http",
+            "nodePort": base["service"]["nodePort"],
+            "port": base["service"]["port"],
+            "protocol": "TCP",
+            "targetPort": "http",
+        }
+    ]
+    node_ports = {
+        key: service["spec"]["ports"][0]["nodePort"]
+        for key, service in services.items()
+        if service["spec"]["type"] == "NodePort"
+    }
+    assert node_ports["video_embed"] == base["service"]["nodePort"]
+    assert len(set(node_ports.values())) == len(node_ports)
+
+    assert _service_urls(docs)["video_embed"] == (
+        f"http://cogniverse-video-embed:{base['service']['port']}"
+    )
+
+    resources = container["resources"]
+    assert resources["requests"]["memory"] == resources["limits"]["memory"]
 
 
 def test_gliner_and_face_nodeports_are_distinct_when_both_are_exposed():

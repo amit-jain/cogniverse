@@ -217,22 +217,27 @@ a CPU-only `cogniverse up` does not allocate a ColPali/ColQwen pod. On ROCm
 official vLLM pooling runner serves the `vllm_token_embed` multi-vector
 contract.
 
-### X-CLIP (chunk-level video embeddings)
+### X-CLIP (chunk-level video embeddings, `video_embed` sidecar)
 
 | Field | Value |
 |---|---|
 | Chart key | `inference.video_embed` |
-| Model | `microsoft/xclip-large-patch14` |
-| Image | **`cogniverse/xclip:0.1.0-dev` (CUSTOM, `deploy/xclip/Dockerfile`)** |
-| Engine | `video_embed` |
-| NodePort | 29003 |
-| Default state | disabled |
+| Model | `microsoft/xclip-large-patch14` (~1.7 GiB, 768-dim) |
+| Revision | `a9dd1429a16cf305df2aaea232d5e8dceba1c675` |
+| Image | `cogniverse/video-embed` (CUSTOM, `deploy/video_embed/Dockerfile`, module `cogniverse_cli.modal_inference.servers.video_embed`) |
+| Engine | `fastapi` (CPU only) |
+| Endpoints | `POST /embed/video`, `POST /embed/text` (one joint space) |
+| Health | `GET /health` loads the pinned model, then returns `{"status": "ready", "model": "microsoft/xclip-large-patch14", "model_revision": "a9dd1429a16cf305df2aaea232d5e8dceba1c675"}`; a load failure returns HTTP 503 |
+| Kubernetes probes | HTTP `GET /health` readiness on port 8000; TCP liveness on port 8000 |
+| NodePort | 29012 |
+| Default state | disabled in `values.yaml`; enabled in the local k3d overlay (`values.k3s.yaml`) |
 
-Custom JAX sidecar — no upstream vLLM equivalent. Used by the
-`video_xclip_*` family of profiles. Build with
-`docker build -f deploy/xclip/Dockerfile -t cogniverse/xclip:0.1.0-dev .`; see
-[`deploy/xclip/README.md`](../../deploy/xclip/README.md) for the
-endpoint, supported models, and the video-only scope.
+Used by the `video_xclip_sv_chunk_6s` profile, which embeds 6-second clips
+and text queries into the same space so a text query retrieves clips
+directly. The runtime image ships no torch, so text-to-video search works
+only through this sidecar (`inference_service_urls["video_embed"]`).
+`cogniverse up` builds and imports the image from the repository root like
+the other custom sidecars (see the image table below).
 
 ---
 
@@ -459,7 +464,7 @@ and are overridden via `runtime.primaryLLM.apiBase`/`model`/`apiKey` instead.
 ## Device selection (`device:` per service)
 
 Each vLLM-backed `inference.<svc>` block has a `device:` key (the FastAPI
-sidecars that are always CPU-only — `clap_embed`, `face_embed` — omit it
+sidecars that are always CPU-only — `clap_embed`, `face_embed`, `video_embed` — omit it
 entirely; `gliner` sets `device: cpu` for documentation even though nothing
 reads it for GPU scheduling). Values:
 
