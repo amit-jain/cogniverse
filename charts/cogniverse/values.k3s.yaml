@@ -65,6 +65,16 @@ inference:
       pullPolicy: Never
     service:
       type: NodePort
+  # video_xclip_sv_chunk_6s embeds clips and text queries through X-CLIP and
+  # the runtime image ships no torch, so text-to-video search works only via
+  # this sidecar.
+  video_embed:
+    enabled: true
+    image:
+      tag: "0.1.0-dev"
+      pullPolicy: Never
+    service:
+      type: NodePort
   # vLLM-served ASR ships enabled in base values.yaml (the default
   # video-ingestion profiles hard-require transcription), so the
   # deployment-lifecycle e2e already exercises the full chart wiring.
