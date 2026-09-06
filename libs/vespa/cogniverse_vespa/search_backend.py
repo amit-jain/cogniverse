@@ -1987,7 +1987,7 @@ class VespaSearchBackend(SearchBackend):
 
     def export_embeddings(
         self,
-        schema: str = "video_frame",
+        schema: Optional[str] = None,
         max_documents: Optional[int] = None,
         filters: Optional[Dict[str, Any]] = None,
         include_embeddings: bool = True,
@@ -1996,7 +1996,7 @@ class VespaSearchBackend(SearchBackend):
         Export documents with embeddings from Vespa.
 
         Args:
-            schema: Schema to export from (overrides default)
+            schema: Schema to export from; defaults to the backend schema
             max_documents: Maximum number of documents to export
             filters: Optional filters (e.g., {'source_id': 'xyz'})
             include_embeddings: Whether to include embedding vectors

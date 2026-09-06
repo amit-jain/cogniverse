@@ -141,7 +141,7 @@ def _resolve_verified_local_endpoint(
 
 @pytest.hookimpl(trylast=True)
 def pytest_collection_modifyitems(items):
-    """Avoid local Gemma provisioning when its Modal endpoint is configured."""
+    """Use configured Modal Gemma where its fixture is available to the test."""
 
     gemma_url = _configured_inference_service_urls().get("vllm_llm_student")
     gemma_host = httpx.URL(gemma_url).host if gemma_url is not None else None
@@ -152,6 +152,9 @@ def pytest_collection_modifyitems(items):
         if (
             roles == frozenset({"primary"})
             and "ensure_host_ollama" in item.fixturenames
+            and item.session._fixturemanager.getfixturedefs(
+                "gemma_inference_endpoint", item
+            )
         ):
             item.fixturenames.remove("ensure_host_ollama")
             if "gemma_inference_endpoint" not in item.fixturenames:

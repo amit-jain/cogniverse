@@ -28,14 +28,17 @@ from starlette.testclient import TestClient as StarletteTestClient
 
 from cogniverse_core.common.agent_models import AgentEndpoint
 from cogniverse_core.registries.agent_registry import AgentRegistry
+from cogniverse_core.registries.backend_registry import get_backend_registry
 from cogniverse_runtime.a2a_executor import CogniverseAgentExecutor
 from cogniverse_runtime.agent_dispatcher import AgentDispatcher
 from tests.agents.unit._recording_telemetry import RecordingTelemetryManager
 from tests.runtime.integration.conftest import skip_if_no_lm
 from tests.utils.vespa_test_helpers import (
     deploy_tenant_schema,
+    load_raw_schema_json,
     schema_full_name,
     schema_tensor_dim,
+    shipped_profile,
 )
 
 logger = logging.getLogger(__name__)
@@ -66,7 +69,7 @@ _DOC_VEC_BIN = [-1] * schema_tensor_dim("document_visual", "colpali_embedding_bi
 
 
 @pytest.fixture(scope="module")
-def content_schemas(vespa_instance, config_manager):
+def content_schemas(vespa_instance, config_manager, schema_loader):
     """Deploy and populate the image, audio and document schemas the content
     agents query for tenant ``test:unit``.
 
@@ -164,10 +167,29 @@ def content_schemas(vespa_instance, config_manager):
         },
     )
 
+    backend = get_backend_registry().get_ingestion_backend(
+        "vespa",
+        tenant_id=STREAM_TENANT,
+        config={
+            "backend": {
+                "url": "http://localhost",
+                "port": http_port,
+                "config_port": vespa_instance["config_port"],
+            }
+        },
+        config_manager=config_manager,
+        schema_loader=schema_loader,
+    )
+    image_schema_exists = backend.schema_exists(
+        "image_colpali_mv", tenant_id=STREAM_TENANT
+    )
+    assert image_schema_exists is True
+
     time.sleep(2)
     yield {
         "http_port": http_port,
         "image_schema": image_schema,
+        "image_schema_exists": image_schema_exists,
         "audio_schema": audio_schema,
         "document_schema": document_schema,
     }
@@ -548,7 +570,7 @@ class TestOrchestratorAgentStreaming:
 class TestQueryEnhancementAgentStreaming:
     """QueryEnhancementAgent streaming against the configured LM."""
 
-    def test_stream_phases_and_enhanced_query(self, dspy_lm):
+    def test_stream_phases_and_enhanced_query(self, dspy_lm, real_telemetry):
         from cogniverse_agents.query_enhancement_agent import (
             QueryEnhancementAgent,
             QueryEnhancementDeps,
@@ -556,6 +578,7 @@ class TestQueryEnhancementAgentStreaming:
         )
 
         agent = QueryEnhancementAgent(deps=QueryEnhancementDeps())
+        agent.set_telemetry_manager(real_telemetry)
 
         events = _collect_stream_events(
             agent,
@@ -639,26 +662,36 @@ class TestEntityExtractionAgentStreaming:
 class TestProfileSelectionAgentStreaming:
     """ProfileSelectionAgent streaming against the configured LM."""
 
-    def test_stream_phases_and_selected_profile(self, dspy_lm, config_manager):
+    def test_stream_phases_and_selected_profile(
+        self, dspy_lm, config_manager, real_telemetry
+    ):
         from cogniverse_agents.profile_selection_agent import (
             ProfileSelectionAgent,
             ProfileSelectionDeps,
             ProfileSelectionInput,
         )
 
-        # Offer only profiles configured for STREAM_TENANT: the agent resolves
-        # the selected profile's modality through the config manager and
-        # rejects unconfigured profiles.
+        expected_profile = "video_colpali_smol500_mv_frame"
+        configured_profile = config_manager.get_backend_profile(
+            expected_profile, STREAM_TENANT
+        )
+        assert configured_profile.profile_name == expected_profile
+        assert load_raw_schema_json(configured_profile.schema_name)["name"] == (
+            configured_profile.schema_name
+        )
         agent = ProfileSelectionAgent(
-            deps=ProfileSelectionDeps(
-                available_profiles=["video_colpali_smol500_mv_frame"]
-            )
+            deps=ProfileSelectionDeps(available_profiles=[expected_profile])
         )
         agent._config_manager = config_manager
+        agent.set_telemetry_manager(real_telemetry)
 
         events = _collect_stream_events(
             agent,
-            ProfileSelectionInput(query="find cat videos", tenant_id="test:unit"),
+            ProfileSelectionInput(
+                query="find cat videos",
+                tenant_id=STREAM_TENANT,
+                available_profiles=[expected_profile],
+            ),
         )
 
         _assert_no_errors(events, "ProfileSelectionAgent")
@@ -670,15 +703,9 @@ class TestProfileSelectionAgentStreaming:
         profile = final_data["selected_profile"]
         assert isinstance(profile, str)
         assert len(profile) > 0, "Should select a profile"
-        # Profile should be one of the known available profiles
-        known_profiles = {
-            "video_colpali_smol500_mv_frame",
-            "video_colqwen_omni_mv_chunk_30s",
-            "video_xclip_base_mv_chunk_30s",
-            "video_xclip_large_mv_chunk_30s",
-        }
-        assert profile in known_profiles, (
-            f"Selected profile '{profile}' not in known profiles: {known_profiles}"
+        assert profile == expected_profile, (
+            f"Selected profile {profile!r} differs from the offered profile "
+            f"{expected_profile!r}"
         )
         assert "reasoning" in final_data
         reasoning_lower = final_data["reasoning"].lower()
@@ -868,7 +895,10 @@ class TestImageSearchAgentStreaming:
                 vespa_endpoint=f"http://localhost:{vespa_instance['http_port']}",
                 tenant_id=STREAM_TENANT,
                 encoder_config=get_config(STREAM_TENANT, config_manager),
-                image_profile="test_colpali",
+                image_profile=shipped_profile(
+                    profile_type="image", embedding_type="multi_vector"
+                ).profile_name,
+                deployed_image_schema=content_schemas["image_schema_exists"],
             )
         )
 
@@ -895,14 +925,17 @@ class TestImageSearchAgentStreaming:
 @pytest.mark.integration
 @skip_if_no_lm
 class TestAudioAnalysisAgentStreaming:
-    """AudioAnalysisAgent streaming with real Vespa."""
+    """AudioAnalysisAgent transcript streaming with real Vespa."""
 
-    def test_stream_phases_and_output(self, vespa_instance, dspy_lm, content_schemas):
+    def test_transcript_stream_phases_and_output(
+        self, vespa_instance, config_manager, schema_loader, dspy_lm, content_schemas
+    ):
         from cogniverse_agents.audio_analysis_agent import (
             AudioAnalysisAgent,
             AudioAnalysisDeps,
             AudioSearchInput,
         )
+        from cogniverse_foundation.config.utils import get_config
 
         assert content_schemas["audio_schema"] == schema_full_name(
             "audio_content", STREAM_TENANT
@@ -912,6 +945,14 @@ class TestAudioAnalysisAgentStreaming:
             deps=AudioAnalysisDeps(
                 vespa_endpoint=f"http://localhost:{vespa_instance['http_port']}",
                 tenant_id=STREAM_TENANT,
+                config_manager=config_manager,
+                schema_loader=schema_loader,
+                backend_config={
+                    "url": "http://localhost",
+                    "port": vespa_instance["http_port"],
+                    "config_port": vespa_instance["config_port"],
+                    "backend": get_config(STREAM_TENANT, config_manager).get("backend"),
+                },
             )
         )
 
@@ -919,7 +960,7 @@ class TestAudioAnalysisAgentStreaming:
             agent,
             AudioSearchInput(
                 query="person speaking about technology",
-                search_mode="semantic",
+                search_mode="transcript",
                 limit=5,
             ),
         )

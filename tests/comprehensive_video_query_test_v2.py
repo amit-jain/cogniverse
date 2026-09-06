@@ -42,6 +42,7 @@ from tabulate import tabulate
 
 # Add project to path
 sys.path.append(str(Path(__file__).parent.parent))
+from cogniverse_agents.profile_selection_agent import servable_tenant_profiles
 from cogniverse_agents.search.service import SearchService
 from cogniverse_foundation.config.utils import create_default_config_manager, get_config
 
@@ -493,7 +494,7 @@ def calculate_metrics(
     return metrics
 
 
-def test_profile_with_queries(
+def evaluate_profile_with_queries(
     profile: str, queries: List[Dict], test_multiple_strategies: bool = False
 ) -> Dict:
     """Test a profile with all queries and return detailed results"""
@@ -509,7 +510,7 @@ def test_profile_with_queries(
 
     try:
         search_service = SearchService(
-            config, profile, config_manager=config_manager, schema_loader=schema_loader
+            config, config_manager=config_manager, schema_loader=schema_loader
         )
     except Exception as e:
         print(f"❌ Failed to create search service for {profile}: {e}")
@@ -570,9 +571,12 @@ def test_profile_with_queries(
 
             try:
                 # Execute search using SearchService with optional ranking strategy and tenant_id
-                tenant_id = f"test-tenant-{datetime.now().strftime('%Y%m%d')}"
                 search_results = search_service.search(
-                    query, top_k=10, ranking_strategy=strategy, tenant_id=tenant_id
+                    query,
+                    profile=profile,
+                    tenant_id="test:unit",
+                    top_k=10,
+                    ranking_strategy=strategy,
                 )
 
                 # Convert SearchResult objects to dicts and extract video IDs
@@ -671,18 +675,6 @@ def test_profile_with_queries(
         profile_results["aggregate_metrics"] = first_strategy["aggregate_metrics"]
 
     return profile_results
-
-
-def get_best_strategy_for_profile(profile: str) -> str:
-    """Get the best ranking strategy for a profile based on previous results"""
-    best_strategies = {
-        "video_colpali_smol500_mv_frame": "binary_binary",  # Changed to visual-only for fair comparison
-        "video_colqwen_omni_sv_chunk": "hybrid_binary_bm25",
-        "video_xclip_lvt_base_sv_global": "binary_binary",
-        "video_xclip_lvt_large_sv_global": "binary_binary",
-        "single__video_xclip_large_6s": "default",  # Use default for video_chunks
-    }
-    return best_strategies.get(profile, "float_float")
 
 
 def needs_text_for_strategy(strategy: str) -> bool:
@@ -814,13 +806,7 @@ def main():
     parser.add_argument(
         "--profiles",
         nargs="+",
-        default=[
-            "video_colpali_smol500_mv_frame",
-            "video_colqwen_omni_sv_chunk",
-            "video_xclip_lvt_base_sv_global",
-            "video_xclip_lvt_large_sv_global",
-            "single__video_xclip_large_6s",
-        ],
+        default=None,
         help="Profiles to test",
     )
     parser.add_argument(
@@ -841,6 +827,17 @@ def main():
     )
 
     args = parser.parse_args()
+    if args.profiles is None:
+        config_manager = create_default_config_manager()
+        args.profiles = [
+            name
+            for name, profile in servable_tenant_profiles(config_manager, "test:unit")
+            if profile.type == "video"
+        ]
+        if not args.profiles:
+            raise ValueError(
+                "No servable video profiles configured for tenant 'test:unit'"
+            )
 
     if args.test_multiple_strategies:
         print("📊 Testing multiple ranking strategies for each profile...")
@@ -872,7 +869,7 @@ def main():
         print(f"\n🔍 Testing profile: {profile}")
 
         try:
-            results = test_profile_with_queries(
+            results = evaluate_profile_with_queries(
                 profile,
                 ALL_TEST_QUERIES,
                 test_multiple_strategies=args.test_multiple_strategies,

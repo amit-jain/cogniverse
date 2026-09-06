@@ -15,6 +15,7 @@ import numpy as np
 import pytest
 
 from cogniverse_vespa.embedding_processor import VespaEmbeddingProcessor
+from tests.utils.vespa_test_helpers import load_raw_schema_json, shipped_profile
 
 
 @pytest.fixture
@@ -152,25 +153,57 @@ class TestSchemaNameAuthority:
     heuristic produced a bare list / hex string which Vespa rejects as the
     wrong tensor shape."""
 
-    def test_single_row_mv_float_returns_mapped_dict(self):
-        mv = VespaEmbeddingProcessor(schema_name="video_xclip_base_mv_chunk_30s")
-        out = mv._convert_to_float_dict(np.random.rand(1, 768).astype(np.float32))
-        assert isinstance(out, dict)
-        assert list(out.keys()) == ["0"]
-        assert isinstance(out["0"], str)  # hex-encoded bfloat16
+    @pytest.fixture
+    def mv_profile(self):
+        profile = shipped_profile(
+            profile_type="video",
+            embedding_type="multi_vector",
+            process_type="video_chunks",
+        )
+        schema = load_raw_schema_json(profile.schema_name)
+        fields = {
+            field["name"]: field["type"] for field in schema["document"]["fields"]
+        }
+        assert schema["name"] == profile.schema_name
+        assert fields["embedding"] == "tensor<bfloat16>(patch{}, v[320])"
+        assert fields["embedding_binary"] == "tensor<int8>(patch{}, v[40])"
+        return profile
 
-    def test_single_row_mv_binary_returns_mapped_dict(self):
-        mv = VespaEmbeddingProcessor(schema_name="video_xclip_base_mv_chunk_30s")
-        out = mv._convert_to_binary_dict(np.random.rand(1, 768).astype(np.float32))
+    def test_single_row_mv_float_returns_mapped_dict(self, mv_profile):
+        mv = VespaEmbeddingProcessor(schema_name=mv_profile.schema_name)
+        embeddings = np.random.default_rng(7).random(
+            (1, mv_profile.schema_config["embedding_dim"]), dtype=np.float32
+        )
+        out = mv._convert_to_float_dict(embeddings)
         assert isinstance(out, dict)
         assert list(out.keys()) == ["0"]
-        assert isinstance(out["0"], str)  # hex-encoded int8
+        assert out["0"] == _scalar_bfloat16_hex(embeddings[0])
+
+    def test_single_row_mv_binary_returns_mapped_dict(self, mv_profile):
+        mv = VespaEmbeddingProcessor(schema_name=mv_profile.schema_name)
+        embeddings = np.random.default_rng(7).standard_normal(
+            (1, mv_profile.schema_config["embedding_dim"]), dtype=np.float32
+        )
+        out = mv._convert_to_binary_dict(embeddings)
+        assert isinstance(out, dict)
+        assert list(out.keys()) == ["0"]
+        assert out["0"] == np.packbits(embeddings[0] > 0).tobytes().hex()
 
     def test_sv_schema_returns_flat_list(self):
-        # Real sv schema names have ``_sv_`` (both underscores).
-        sv = VespaEmbeddingProcessor(schema_name="video_xclip_lvt_base_sv_chunk_6s")
-        out = sv._convert_to_float_dict(np.random.rand(1, 768).astype(np.float32))
-        assert isinstance(out, list)
+        profile = shipped_profile(profile_type="video", embedding_type="single_vector")
+        schema = load_raw_schema_json(profile.schema_name)
+        fields = {
+            field["name"]: field["type"] for field in schema["document"]["fields"]
+        }
+        assert schema["name"] == profile.schema_name
+        assert fields["embedding"] == "tensor<float>(v[768])"
+        assert fields["embedding_binary"] == "tensor<int8>(v[96])"
+        sv = VespaEmbeddingProcessor(schema_name=profile.schema_name)
+        embeddings = np.random.default_rng(7).random(
+            (1, profile.schema_config["embedding_dim"]), dtype=np.float32
+        )
+        out = sv._convert_to_float_dict(embeddings)
+        assert out == embeddings[0].tolist()
         assert len(out) == 768
 
 
