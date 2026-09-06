@@ -302,6 +302,48 @@ async def times_delivered(redis: aioredis.Redis, group: str, message_id: str) ->
     return int(detail[0]["times_delivered"])
 
 
+# Consumer names are one per pod incarnation and Redis remembers every one
+# forever; the reaper drops the dead ones. The snapshot, the idle and pending
+# checks and the delete run in one script: deleting a consumer discards its
+# pending entries, so a name that claimed an entry between a snapshot and the
+# delete would otherwise lose that entry from the PEL for good, and two
+# concurrent sweeps must each report only the names they dropped themselves.
+# KEYS: stream. ARGV: group, own consumer name, min idle ms.
+_PRUNE_CONSUMERS_LUA = """
+local removed = {}
+for _, entry in ipairs(redis.call('XINFO', 'CONSUMERS', KEYS[1], ARGV[1])) do
+  local name, pending, idle
+  for i = 1, #entry, 2 do
+    if entry[i] == 'name' then name = entry[i + 1]
+    elseif entry[i] == 'pending' then pending = entry[i + 1]
+    elseif entry[i] == 'idle' then idle = entry[i + 1]
+    end
+  end
+  if name ~= ARGV[2] and pending == 0 and idle > tonumber(ARGV[3]) then
+    redis.call('XGROUP', 'DELCONSUMER', KEYS[1], ARGV[1], name)
+    removed[#removed + 1] = name
+  end
+end
+return removed
+"""
+
+
+async def prune_consumers(
+    redis: aioredis.Redis, group: str, *, keep: str, min_idle_ms: int
+) -> List[str]:
+    """Drop consumers idle longer than ``min_idle_ms`` that own no pending
+    entry. ``keep`` (the caller's own name) is never dropped. A live worker
+    re-issues XREADGROUP every claim block and heartbeats every claimed
+    entry, so a name idle past the reaper threshold with nothing pending is
+    a pod that is gone; if one is somehow alive its next XREADGROUP simply
+    re-creates it. Returns the names dropped, in group order.
+    """
+    removed = await redis.eval(
+        _PRUNE_CONSUMERS_LUA, 1, QUEUE_STREAM, group, keep, min_idle_ms
+    )
+    return [name.decode() if isinstance(name, bytes) else name for name in removed]
+
+
 async def ack(redis: aioredis.Redis, group: str, message_id: str) -> int:
     """XACK then XDEL the message so a terminal job leaves the stream.
 

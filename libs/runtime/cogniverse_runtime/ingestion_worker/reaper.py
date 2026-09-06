@@ -236,6 +236,10 @@ async def run_reaper_once(
     with its idle clock running: past ``min_idle_ms`` another replica's
     reaper reclaims the tail entry and both re-drive it concurrently —
     duplicate ingestion and a double-decremented tenant counter.
+
+    After recovery, consumer names idle past ``min_idle_ms`` that own
+    nothing are dropped from the group: every pod incarnation leaves one
+    behind, and a reclaimed orphan's dead owner owns nothing once re-driven.
     """
     if processor is None:
         processor = partial(
@@ -295,7 +299,17 @@ async def run_reaper_once(
                     await _process_job(redis, job, config, processor=processor)
             recovered += 1
         if cursor == "0-0" or not jobs:
-            return recovered
+            break
+    pruned = await queue.prune_consumers(
+        redis, config.consumer_group, keep=config.consumer_id, min_idle_ms=min_idle_ms
+    )
+    if pruned:
+        logger.info(
+            "Reaper dropped %d idle consumer name(s) owning nothing: %s",
+            len(pruned),
+            pruned,
+        )
+    return recovered
 
 
 async def reaper_loop(
