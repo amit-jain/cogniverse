@@ -634,6 +634,30 @@ class TestGraphExtractorE2E:
         assert "alpha" in out_targets or "beta" in out_targets
 
 
+@pytest.fixture
+def graph_query_backend(graph_vespa, shared_memory_vespa):
+    from cogniverse_core.factories.backend_factory import BackendFactory
+    from cogniverse_foundation.config.unified_config import BackendConfig
+    from cogniverse_vespa.backend import VespaBackend
+
+    backend = BackendFactory.create_backend_with_dependencies(
+        backend_class=VespaBackend,
+        backend_config=BackendConfig(
+            backend_type="vespa",
+            url="http://localhost",
+            port=graph_vespa["http_port"],
+            tenant_id=TENANT_ID,
+        ),
+        config_manager=shared_memory_vespa["config_manager"],
+        schema_loader=shared_memory_vespa["schema_loader"],
+        backend_init_config={"config_port": graph_vespa["config_port"]},
+    )
+    try:
+        yield backend
+    finally:
+        backend.close()
+
+
 @pytest.mark.integration
 class TestSearchNodesRealVespa:
     """search_nodes runs its real /search/ MaxSim+bm25 query and returns the
@@ -655,10 +679,8 @@ class TestSearchNodesRealVespa:
         assert r.status_code in (200, 201), r.text[:300]
 
     def test_search_nodes_uses_real_query_not_substring_fallback(
-        self, graph_vespa, monkeypatch
+        self, graph_vespa, graph_query_backend, monkeypatch
     ):
-        from types import SimpleNamespace
-
         port = graph_vespa["http_port"]
         self._feed_node(
             port,
@@ -677,7 +699,7 @@ class TestSearchNodesRealVespa:
         mgr = GraphManager.__new__(GraphManager)
         mgr._schema_name = GRAPH_SCHEMA
         mgr._tenant_id = TENANT_ID
-        mgr._backend = SimpleNamespace(_url="http://localhost", _port=port)
+        mgr._backend = graph_query_backend
         # __new__ skips __init__; the /search/ query path needs the session.
         mgr._http = requests.Session()
 
@@ -704,35 +726,27 @@ class TestSearchNodesRealVespa:
 
         results = mgr.search_nodes("radioactivity polonium", top_k=10)
 
-        assert not visit_calls, (
+        assert visit_calls == [], (
             "search_nodes fell back to substring _visit instead of running the "
             "real /search/ query"
         )
         names = [r.get("name") for r in results]
-        assert "Marie Curie" in names, names
+        assert names == ["Marie Curie"]
 
-    def test_search_nodes_survives_conflicting_qt_schema(
-        self, graph_vespa, shared_memory_vespa, monkeypatch
+    def test_search_nodes_survives_conflicting_query_tensor_schema(
+        self, graph_vespa, shared_memory_vespa, graph_query_backend, monkeypatch
     ):
-        """Other schemas in the shared content cluster declare
-        hybrid_binary_bm25 with different query(qt) dims (xclip
-        ``v[768]`` vs the graph's ``v[128]``). Without ``model.restrict``
-        the query 400s on the conflicting input declarations and silently
-        falls back to substring _visit. Deploys the conflicting schema
-        explicitly so the conflict exists even in isolation.
-        """
-        from types import SimpleNamespace
-
+        """Restrict rank inputs to graph qtb[16] despite X-CLIP qtb[96]."""
         from tests.utils.vespa_test_helpers import deploy_tenant_schema
 
         deploy_tenant_schema(
             shared_memory_vespa,
             tenant_id=TENANT_ID,
-            base_schema_name="video_xclip_base_mv_chunk_30s",
+            base_schema_name="video_xclip_sv_chunk_6s",
             config_manager=shared_memory_vespa["config_manager"],
         )
         port = graph_vespa["http_port"]
-        conflicting = schema_full_name("video_xclip_base_mv_chunk_30s", TENANT_ID)
+        conflicting = schema_full_name("video_xclip_sv_chunk_6s", TENANT_ID)
         # The graph probe document doesn't fit the xclip schema, so
         # poll doc-type liveness via GET: 404 = type known + doc absent.
         probe_url = (
@@ -759,7 +773,7 @@ class TestSearchNodesRealVespa:
         mgr = GraphManager.__new__(GraphManager)
         mgr._schema_name = GRAPH_SCHEMA
         mgr._tenant_id = TENANT_ID
-        mgr._backend = SimpleNamespace(_url="http://localhost", _port=port)
+        mgr._backend = graph_query_backend
         # __new__ skips __init__; the /search/ query path needs the session.
         mgr._http = requests.Session()
         monkeypatch.setattr(
@@ -779,9 +793,9 @@ class TestSearchNodesRealVespa:
 
         results = mgr.search_nodes("analytical engine program", top_k=10)
 
-        assert not visit_calls, (
-            "search_nodes fell back to _visit — the conflicting query(qt) "
+        assert visit_calls == [], (
+            "search_nodes fell back to _visit — the conflicting query(qtb) "
             "declaration leaked into the graph query (model.restrict missing)"
         )
         names = [r.get("name") for r in results]
-        assert "Ada Lovelace" in names, names
+        assert names == ["Ada Lovelace"]
