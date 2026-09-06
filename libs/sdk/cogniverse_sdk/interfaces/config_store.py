@@ -198,6 +198,33 @@ class ConfigStore(ABC):
         pass
 
     @abstractmethod
+    def compare_and_set_config(
+        self,
+        tenant_id: str,
+        scope: ConfigScope,
+        service: str,
+        config_key: str,
+        config_value: Dict[str, Any],
+        *,
+        expected_version: int,
+    ) -> Optional[ConfigEntry]:
+        """Conditionally append version ``expected_version + 1``.
+
+        Version zero requires an absent key; positive versions must match
+        the latest stored revision, including when older history is pruned.
+        Competing writers for the same revision cannot both append it.
+
+        Returns the new entry when confirmed current, or None on contention.
+        None can also mean a successful write was superseded before its
+        confirmation read; callers must reread before retrying. Successful
+        writes obey the implementation's history retention policy.
+
+        Raises ValueError for a negative expected_version. Storage failures
+        propagate to the caller rather than returning None.
+        """
+        pass
+
+    @abstractmethod
     def get_config(
         self,
         tenant_id: str,

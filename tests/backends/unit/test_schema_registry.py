@@ -19,8 +19,9 @@ from cogniverse_vespa.config.config_store import VespaConfigStore
 
 
 class _StoredEntry:
-    def __init__(self, config_value):
+    def __init__(self, config_value, version=1):
         self.config_value = config_value
+        self.version = version
 
 
 class _FakeClock:
@@ -64,9 +65,13 @@ def mock_config_manager():
     backing dict that list_all_configs/get_config read back, so the
     register/deploy → reload round-trip behaves like the real store."""
     backing: dict = {}
+    versions: dict = {}
+    write_lock = threading.Lock()
 
     def _set(*, tenant_id, scope, service, config_key, config_value):
-        backing[(tenant_id, scope, service, config_key)] = config_value
+        key = (tenant_id, scope, service, config_key)
+        backing[key] = config_value
+        versions[key] = versions.get(key, 0) + 1
 
     def _list(*, scope, service):
         return [
@@ -77,9 +82,25 @@ def mock_config_manager():
 
     def _get(*, tenant_id, scope, service, config_key):
         v = backing.get((tenant_id, scope, service, config_key))
-        return _StoredEntry(v) if v is not None else None
+        if v is None:
+            return None
+        return _StoredEntry(v, versions[(tenant_id, scope, service, config_key)])
+
+    def _compare(*, expected_version, **kwargs):
+        with write_lock:
+            key = (
+                kwargs["tenant_id"],
+                kwargs["scope"],
+                kwargs["service"],
+                kwargs["config_key"],
+            )
+            if versions.get(key, 0) != expected_version:
+                return None
+            _set(**kwargs)
+            return _StoredEntry(kwargs["config_value"], versions[key])
 
     store = MagicMock()
+    store.compare_and_set_config.side_effect = _compare
     store.set_config.side_effect = _set
     store.list_all_configs.side_effect = _list
     store.get_config.side_effect = _get
@@ -215,8 +236,18 @@ class TestSchemaRegistryDeployment:
         assert call_args[0]["tenant_id"] == "acme:acme"
         assert call_args[0]["base_schema_name"] == "test_schema"
 
-        # Should register in ConfigManager store
-        mock_config_manager.store.set_config.assert_called_once()
+        writes = mock_config_manager.store.compare_and_set_config.call_args_list
+        assert [call.kwargs["service"] for call in writes] == [
+            "schema_deployment_intents",
+            "schema_registry",
+            "schema_deployment_intents",
+        ]
+        prepared = writes[0].kwargs["config_value"]
+        registered = writes[1].kwargs["config_value"]
+        completed = writes[2].kwargs["config_value"]
+        assert prepared["registration"] == registered
+        assert completed == {**prepared, "state": "complete"}
+        assert prepared["state"] == "pending"
 
     def test_deploy_schema_includes_existing_schemas(
         self, mock_config_manager, mock_backend, mock_schema_loader

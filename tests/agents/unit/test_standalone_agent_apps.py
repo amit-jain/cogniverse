@@ -455,75 +455,11 @@ def _in_memory_config_manager():
     """Real ConfigManager over an in-memory store, seeded with a default
     SystemConfig — enough for the agents' __init__ (DSPy LM is lazy, no
     network) without depending on BACKEND_URL / a live config store."""
-    from datetime import datetime, timezone
-
     from cogniverse_foundation.config.manager import ConfigManager
     from cogniverse_foundation.config.unified_config import SystemConfig
-    from cogniverse_sdk.interfaces.config_store import ConfigEntry, ConfigStore
+    from tests.utils.memory_store import InMemoryConfigStore
 
-    class _Store(ConfigStore):
-        def __init__(self):
-            self._d = {}
-
-        def _k(self, t, s, svc, k):
-            return f"{t}:{s.value}:{svc}:{k}"
-
-        def initialize(self):
-            pass
-
-        def set_config(self, tenant_id, scope, service, config_key, config_value):
-            now = datetime.now(timezone.utc)
-            e = ConfigEntry(
-                tenant_id=tenant_id,
-                scope=scope,
-                service=service,
-                config_key=config_key,
-                config_value=config_value,
-                version=1,
-                created_at=now,
-                updated_at=now,
-            )
-            self._d[self._k(tenant_id, scope, service, config_key)] = e
-            return e
-
-        def get_config(self, tenant_id, scope, service, config_key, version=None):
-            return self._d.get(self._k(tenant_id, scope, service, config_key))
-
-        def get_config_history(self, tenant_id, scope, service, config_key, limit=10):
-            e = self.get_config(tenant_id, scope, service, config_key)
-            return [e] if e else []
-
-        def list_configs(self, tenant_id, scope=None, service=None):
-            return [
-                e
-                for e in self._d.values()
-                if e.tenant_id == tenant_id
-                and (scope is None or e.scope == scope)
-                and (service is None or e.service == service)
-            ]
-
-        def list_all_configs(self):
-            return list(self._d.values())
-
-        def delete_config(self, tenant_id, scope, service, config_key):
-            return (
-                self._d.pop(self._k(tenant_id, scope, service, config_key), None)
-                is not None
-            )
-
-        def export_configs(self, tenant_id, include_history=False):
-            return {"configs": []}
-
-        def import_configs(self, tenant_id, configs):
-            return 0
-
-        def get_stats(self):
-            return {"total": len(self._d)}
-
-        def health_check(self):
-            return True
-
-    cm = ConfigManager(store=_Store())
+    cm = ConfigManager(store=InMemoryConfigStore())
     cm.set_system_config(SystemConfig())
     return cm
 

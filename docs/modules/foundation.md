@@ -503,6 +503,19 @@ Configurations are organized by scope for isolation:
 | `SCHEMA` | Deployed Vespa schema tracking (used by `cogniverse_core.registries.schema_registry`) | schema_name, deployment status |
 | `BACKEND` | Backend profiles | embedding_model, schema_name, pipeline_config |
 
+`VespaConfigStore.compare_and_set_config(tenant_id, scope, service, config_key,
+config_value, expected_version=...)` conditionally creates the immutable
+`expected_version + 1` version slot. The required keyword `expected_version`
+must be nonnegative: zero requires an absent key, and negative values raise
+`ValueError`. It returns the committed `ConfigEntry` after confirming it is
+the latest version, or `None` on a version mismatch or conditional-write
+conflict. Strong Document API reads before and after the write reject stale
+writers whose old version slots have been pruned. Every successful version
+write applies the same `keep_versions` history retention as `set_config`,
+including a stale candidate that loses the final read; pruning is best-effort.
+Read/write failures raise. Schema deployment journals and registration
+completion use this operation to fence stale writers and deletion tombstones.
+
 ```python
 from cogniverse_sdk.interfaces.config_store import ConfigScope
 

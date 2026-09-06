@@ -1389,7 +1389,14 @@ scalars, or milliseconds.
 
 The `ConfigStore` interface defines the contract for configuration persistence. The default implementation uses Vespa via `VespaConfigStore`.
 
-**Interface (cogniverse_sdk):**
+`compare_and_set_config(..., expected_version=n)` conditionally appends revision
+`n + 1`; zero requires an absent key. Concurrent writers cannot both append the
+same revision. It returns the new `ConfigEntry` when confirmed current, or
+`None` on contention, including a write superseded before confirmation. Callers
+reread before retrying. Successful writes follow the store's history retention
+policy. Negative expected versions raise `ValueError`; storage failures propagate.
+
+**Selected interface methods (cogniverse_sdk):**
 ```python
 from cogniverse_sdk.interfaces.config_store import ConfigStore, ConfigScope, ConfigEntry
 from abc import ABC, abstractmethod
@@ -1413,6 +1420,20 @@ class ConfigStore(ABC):
         config_value: Dict[str, Any],
     ) -> ConfigEntry:
         """Store configuration with versioning."""
+        pass
+
+    @abstractmethod
+    def compare_and_set_config(
+        self,
+        tenant_id: str,
+        scope: ConfigScope,
+        service: str,
+        config_key: str,
+        config_value: Dict[str, Any],
+        *,
+        expected_version: int,
+    ) -> Optional[ConfigEntry]:
+        """Append the next revision, returning None on contention."""
         pass
 
     @abstractmethod
@@ -1445,8 +1466,8 @@ class ConfigStore(ABC):
 from cogniverse_vespa.config.config_store import VespaConfigStore
 
 # VespaConfigStore implements ConfigStore using Vespa's config_metadata schema.
-# keep_versions bounds per-config row count — every set_config call
-# prunes versions older than the latest N (default 10).
+# keep_versions bounds per-config history through best-effort pruning
+# after set_config and compare_and_set_config writes (default 10).
 store = VespaConfigStore(
     backend_url="http://localhost",
     backend_port=8080,
