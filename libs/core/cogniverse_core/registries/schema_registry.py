@@ -587,6 +587,16 @@ class SchemaRegistry:
         )
         return [SchemaInfo(**row) for row in recovered]
 
+    def reserved_schemas(self, live_names: set[str]) -> Dict[str, Dict[str, Any]]:
+        """Full schema names owned by an activation in flight, with their
+        exact registration payloads (see ``SchemaDeploymentIntents.reserved``).
+
+        Any process rebuilding the application package must keep these as
+        survivors: they are registrations in progress in another process,
+        not orphans, and their registry record does not exist yet.
+        """
+        return self._deployment_intents.reserved(live_names)
+
     def get_tenant_schemas(self, tenant_id: str) -> List[SchemaInfo]:
         """
         Get all schemas deployed for a specific tenant.

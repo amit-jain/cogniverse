@@ -164,6 +164,24 @@ class SchemaDeploymentIntents:
         """Return active intents; absent, complete and failed records are retired."""
         return [record for record in self.records() if record["state"] == "pending"]
 
+    def reserved(self, live_names: set[str]) -> dict[str, dict[str, Any]]:
+        """Full schema names an in-flight activation owns, with their exact registration.
+
+        A pending intent whose schema is live in Vespa is a registration in
+        progress or awaiting recovery, never an orphan. A pending intent whose
+        schema is not live yet counts only inside its grace: its activation is
+        imminent, and a package built without it drops the schema the moment
+        that activation lands. A pending intent past its grace with no live
+        schema is an abandoned activation that recovery retires.
+        """
+        now = _now()
+        return {
+            record["registration"]["full_schema_name"]: record["registration"]
+            for record in self.pending()
+            if record["registration"]["full_schema_name"] in live_names
+            or now < record["recover_after"]
+        }
+
     def _transition(self, record: dict[str, Any], state: str) -> dict[str, Any] | None:
         current = record
         for _ in range(_MAX_ATTEMPTS):

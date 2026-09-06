@@ -334,3 +334,57 @@ def test_stale_registry_version_cannot_replace_completed_newer_generation(
     ):
         journal.prepare(registration, grace_s=0, registry_version=0)
     assert journal.records() == [completed]
+
+
+def _peer(registration, tenant):
+    name = f"wiki_pages_{tenant.replace(':', '_')}"
+    return {
+        **registration,
+        "tenant_id": tenant,
+        "full_schema_name": name,
+        "schema_definition": '{"name": "' + name + '", "document": {"fields": []}}',
+    }
+
+
+def test_reserved_names_pending_intents_live_or_within_grace(journal, registration):
+    live_stale = _peer(registration, "acme:live-stale")
+    imminent = _peer(registration, "acme:imminent")
+    abandoned = _peer(registration, "acme:abandoned")
+    journal.prepare(live_stale, grace_s=0)
+    journal.prepare(imminent, grace_s=90)
+    journal.prepare(abandoned, grace_s=0)
+    assert journal.reserved({live_stale["full_schema_name"]}) == {
+        live_stale["full_schema_name"]: live_stale,
+        imminent["full_schema_name"]: imminent,
+    }
+
+
+def test_reserved_excludes_every_retired_state(journal, registration):
+    absent = _peer(registration, "acme:absent")
+    complete = _peer(registration, "acme:complete")
+    failed = _peer(registration, "acme:failed")
+    journal.retire(journal.prepare(absent, grace_s=0))
+    journal.complete(journal.prepare(complete, grace_s=0))
+    journal._transition(journal.prepare(failed, grace_s=0), "failed")
+    live = {row["full_schema_name"] for row in (absent, complete, failed)}
+    assert [record["state"] for record in journal.records()] == [
+        "absent",
+        "complete",
+        "failed",
+    ]
+    assert journal.reserved(live) == {}
+
+
+def test_reserved_read_failure_raises_with_context(journal, registration):
+    journal.prepare(registration, grace_s=0)
+
+    def down(**kwargs):
+        raise ConnectionError("journal unavailable")
+
+    journal._store.list_all_configs = down
+    with pytest.raises(
+        RegistryStorageError,
+        match="Cannot read deployment intents: journal unavailable",
+    ) as failure:
+        journal.reserved({registration["full_schema_name"]})
+    assert str(failure.value.__cause__) == "journal unavailable"
