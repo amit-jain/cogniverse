@@ -109,6 +109,7 @@ def test_real_vespa_config_outage_recovers_to_exact_manager(config_manager):
         TelemetryManager,
         get_telemetry_manager,
     )
+    from cogniverse_sdk.interfaces.config_store import ConfigStoreUnavailableError
     from cogniverse_vespa.config.config_store import VespaConfigStore
 
     with socket.socket() as reserved:
@@ -130,7 +131,7 @@ def test_real_vespa_config_outage_recovers_to_exact_manager(config_manager):
         active_manager = unavailable_manager if attempts < 3 else config_manager
         try:
             return get_telemetry_manager(active_manager)
-        except requests.ConnectionError as error:
+        except ConfigStoreUnavailableError as error:
             boundary_errors.append(error)
             raise
 
@@ -144,9 +145,9 @@ def test_real_vespa_config_outage_recovers_to_exact_manager(config_manager):
         )
 
         assert attempts == 3
-        assert [type(error) for error in boundary_errors] == [
-            requests.ConnectionError,
-            requests.ConnectionError,
+        assert [(type(error), type(error.__cause__)) for error in boundary_errors] == [
+            (ConfigStoreUnavailableError, requests.ConnectionError),
+            (ConfigStoreUnavailableError, requests.ConnectionError),
         ]
         assert manager.config == expected_config
         assert get_telemetry_manager(config_manager) is manager

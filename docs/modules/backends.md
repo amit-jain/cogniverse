@@ -2629,7 +2629,7 @@ for doc in documents:
 
 **Location:** `libs/vespa/cogniverse_vespa/config/config_store.py`
 
-Vespa-based configuration storage with multi-tenant support, implementing the `ConfigStore` interface.
+Vespa-based configuration storage with multi-tenant support, implementing the `ConfigStore` interface. Reads retry transient Vespa failures (connection refused, timeouts, 5xx) with backoff and raise `ConfigStoreUnavailableError` (from `cogniverse_sdk.interfaces.config_store`) once the budget is spent; a clean absence returns `None`. The quality-monitor startup wait retries on that error rather than exiting the sidecar.
 
 ### Document Structure
 

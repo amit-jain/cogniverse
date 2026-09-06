@@ -45,6 +45,8 @@ def _wait_for_telemetry_manager(
     import httpr
     import requests
 
+    from cogniverse_sdk.interfaces.config_store import ConfigStoreUnavailableError
+
     if get_manager is None:
         from cogniverse_foundation.telemetry.manager import get_telemetry_manager
 
@@ -59,7 +61,11 @@ def _wait_for_telemetry_manager(
         attempts += 1
         try:
             return get_manager()
-        except (httpr.TransportError, requests.RequestException) as error:
+        except (
+            httpr.TransportError,
+            requests.RequestException,
+            ConfigStoreUnavailableError,
+        ) as error:
             last_error = error
 
         remaining = deadline - time.monotonic()

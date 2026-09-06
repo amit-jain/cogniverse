@@ -18,6 +18,7 @@ from cogniverse_sdk.interfaces.config_store import (
     ConfigEntry,
     ConfigScope,
     ConfigStore,
+    ConfigStoreUnavailableError,
 )
 from cogniverse_vespa._vespa_factory import (
     make_persistent_vespa_ops,
@@ -28,6 +29,7 @@ from cogniverse_vespa._yql import yql_quote
 logger = logging.getLogger(__name__)
 
 _MAX_VERSION_ALLOCATION_ATTEMPTS = 64
+
 _CONFIG_STORE_READ_MAX_ATTEMPTS = 5
 _CONFIG_STORE_READ_INITIAL_BACKOFF_SECONDS = 0.25
 _CONFIG_STORE_READ_BACKOFF_MULTIPLIER = 2.0
@@ -108,7 +110,7 @@ def _config_store_visit_payload(
                     f"{type(exc).__name__}: {exc}"
                 )
                 logger.error(message)
-                raise RuntimeError(message) from exc
+                raise ConfigStoreUnavailableError(message) from exc
 
             delay = _config_store_visit_backoff_seconds(attempt)
             logger.warning(
