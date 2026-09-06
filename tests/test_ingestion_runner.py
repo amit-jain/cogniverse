@@ -52,8 +52,8 @@ def test_command_builder_does_not_read_model_specific_marker_fields():
         "-m",
         "unit",
         "-v",
-        "--tb=short",
-        "--cov=src/app/ingestion/processors",
+        "--tb=long",
+        "--cov=libs/runtime/cogniverse_runtime/ingestion/processors",
         "--cov-report=term-missing",
         "--cov-fail-under=80",
     ]
