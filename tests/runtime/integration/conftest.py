@@ -43,6 +43,7 @@ from cogniverse_vespa.config.config_store import VespaConfigStore
 # Re-export the canonical session-scoped Vespa from the project root.
 from tests.conftest import shared_vespa  # noqa: F401, E402
 from tests.utils.llm_config import get_llm_base_url, get_llm_model
+from tests.utils.vespa_test_helpers import shipped_profile
 
 logger = logging.getLogger(__name__)
 
@@ -173,12 +174,15 @@ def config_manager(vespa_instance):
         ),
         tenant_id="test:unit",
     )
+    single_vector_video = shipped_profile(
+        profile_type="video", embedding_type="single_vector"
+    )
     cm.add_backend_profile(
         BackendProfileConfig(
             profile_name="test_xclip",
-            type="video",
-            schema_name="video_xclip_base_mv_chunk_30s",
-            embedding_model="microsoft/xclip-large-patch14",
+            type=single_vector_video.type,
+            schema_name=single_vector_video.schema_name,
+            embedding_model=single_vector_video.embedding_model,
         ),
         tenant_id="test:unit",
     )

@@ -258,7 +258,7 @@ class VespaBackend(Backend):
 
         Note:
             If tenant_id is set, this method will:
-            1. Transform base schema name to tenant-scoped name (e.g., video_colpali_smol500_mv_frame_test_tenant)
+            1. Append the canonical tenant identifier to the base schema name
             2. Ensure the tenant-scoped schema exists in Vespa (auto-deploy if needed)
             3. Create a client that ingests to the tenant-scoped schema
         """

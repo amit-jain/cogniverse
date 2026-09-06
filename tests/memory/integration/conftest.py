@@ -10,7 +10,9 @@ under ``tests/agents/integration/``.
 
 from __future__ import annotations
 
+import json
 import logging
+from pathlib import Path
 
 import pytest
 
@@ -27,18 +29,10 @@ from tests.agents.integration.conftest import (  # noqa: F401
 logger = logging.getLogger(__name__)
 
 
-# Map base-schema-name → schema-definition JSON file. Used by the
-# reconciler below to load real definitions for orphan schemas; with a
-# real definition the deploy safety check can reconstruct + retain
-# them. An empty stub would still cause the redeploy parser to fail.
+_SCHEMAS_DIR = Path(__file__).resolve().parents[3] / "configs" / "schemas"
 _BASE_SCHEMA_FILES = {
-    "agent_memories": "agent_memories_schema.json",
-    "wiki_pages": "wiki_pages_schema.json",
-    "provenance": "provenance_schema.json",
-    "knowledge_graph": "knowledge_graph_schema.json",
-    "video_colpali_smol500_mv_frame": "video_colpali_smol500_mv_frame_schema.json",
-    "video_xclip_base_mv_chunk_30s": "video_xclip_base_mv_chunk_30s_schema.json",
-    "video_colqwen_omni_mv_chunk_30s": "video_colqwen_omni_mv_chunk_30s_schema.json",
+    json.loads(path.read_text())["name"]: path
+    for path in sorted(_SCHEMAS_DIR.glob("*_schema.json"))
 }
 
 
@@ -51,21 +45,17 @@ def _load_schema_definition(base_schema_name: str, full_schema_name: str) -> str
     to let the deploy refuse than register a stub the parser will choke
     on).
     """
-    import json as _json
-    from pathlib import Path as _Path
-
-    file_name = _BASE_SCHEMA_FILES.get(base_schema_name)
-    if file_name is None:
+    schema_path = _BASE_SCHEMA_FILES.get(base_schema_name)
+    if schema_path is None:
         return None
-    schema_path = _Path("configs/schemas") / file_name
     if not schema_path.exists():
         return None
     try:
-        schema_json = _json.loads(schema_path.read_text())
+        schema_json = json.loads(schema_path.read_text())
         schema_json["name"] = full_schema_name
         if "document" in schema_json and isinstance(schema_json["document"], dict):
             schema_json["document"]["name"] = full_schema_name
-        return _json.dumps(schema_json)
+        return json.dumps(schema_json)
     except Exception as exc:
         logger.warning(
             f"Failed to load schema definition for {base_schema_name}: {exc}"

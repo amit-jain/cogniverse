@@ -23,11 +23,13 @@ from cogniverse_agents.profile_selection_agent import (
 from cogniverse_foundation.config.unified_config import (
     BackendProfileConfig,
     SystemConfig,
+    profile_embedding_service,
 )
 from tests.agents.unit._recording_telemetry import (
     FailingTelemetryManager,
     RecordingTelemetryManager,
 )
+from tests.utils.vespa_test_helpers import shipped_profile
 
 
 def _messages(caplog, logger_name: str) -> list[str]:
@@ -380,47 +382,43 @@ class TestProfileSelectionAgent:
     @pytest.mark.asyncio
     async def test_process_derives_exact_tenant_usable_profiles(self, profile_agent):
         """Profiles missing services or missing from tenant config stay hidden."""
+        frame_profile = shipped_profile(
+            profile_type="video", embedding_type="multi_vector", extract_keyframes=True
+        )
+        image_profile = shipped_profile(
+            profile_type="image", embedding_type="multi_vector"
+        )
+        absent_profile = shipped_profile(
+            profile_type="video",
+            embedding_type="multi_vector",
+            process_type="video_chunks",
+        )
+        unavailable_profile = BackendProfileConfig.from_dict(
+            "unavailable_video_profile",
+            shipped_profile(
+                profile_type="video", embedding_type="single_vector"
+            ).to_dict(),
+        )
         profile_agent.deps.available_profiles = [
-            "video_xclip_base_mv_chunk_30s",
-            "video_colqwen_omni_mv_chunk_30s",
-            "video_colpali_smol500_mv_frame",
-            "image_colpali_mv",
+            unavailable_profile.profile_name,
+            absent_profile.profile_name,
+            frame_profile.profile_name,
+            image_profile.profile_name,
         ]
 
         tenant_profiles = {
-            "video_colpali_smol500_mv_frame": BackendProfileConfig.from_dict(
-                "video_colpali_smol500_mv_frame",
-                {
-                    "type": "video",
-                    "schema_name": "video_colpali_smol500_mv_frame",
-                    "embedding_model": "TomoroAI/tomoro-colqwen3-embed-4b",
-                    "inference_services": {"embedding": "vllm_colpali"},
-                },
-            ),
-            "image_colpali_mv": BackendProfileConfig.from_dict(
-                "image_colpali_mv",
-                {
-                    "type": "image",
-                    "schema_name": "image_colpali_mv",
-                    "embedding_model": "TomoroAI/tomoro-colqwen3-embed-4b",
-                    "inference_services": {"embedding": "vllm_colpali"},
-                },
-            ),
-            "video_xclip_base_mv_chunk_30s": BackendProfileConfig.from_dict(
-                "video_xclip_base_mv_chunk_30s",
-                {
-                    "type": "video",
-                    "schema_name": "video_xclip_base_mv_chunk_30s",
-                    "embedding_model": "microsoft/xclip-large-patch14",
-                    "inference_services": {"embedding": "video_embed"},
-                },
-            ),
+            profile.profile_name: profile
+            for profile in (frame_profile, image_profile, unavailable_profile)
         }
         profile_agent._config_manager.list_backend_profiles.return_value = (
             tenant_profiles
         )
         profile_agent._config_manager.get_system_config.return_value = SystemConfig(
-            inference_service_urls={"vllm_colpali": "http://localhost:8000"}
+            inference_service_urls={
+                profile_embedding_service(
+                    frame_profile.to_dict()
+                ): "http://localhost:8000"
+            }
         )
         profile_agent._config_manager.get_backend_profile.side_effect = (
             lambda profile_name, tenant_id: tenant_profiles.get(profile_name)
@@ -431,7 +429,7 @@ class TestProfileSelectionAgent:
         async def capture_dspy(*_args, **kwargs):
             captured["available_profiles"] = kwargs["available_profiles"]
             return dspy.Prediction(
-                selected_profile="video_colpali_smol500_mv_frame",
+                selected_profile=frame_profile.profile_name,
                 confidence="0.9",
                 reasoning="Derived candidate set",
                 query_intent="video_search",
@@ -450,12 +448,12 @@ class TestProfileSelectionAgent:
         )
 
         assert captured["available_profiles"].split(", ") == [
-            "video_colpali_smol500_mv_frame",
-            "image_colpali_mv",
+            frame_profile.profile_name,
+            image_profile.profile_name,
         ]
-        assert "video_xclip_base_mv_chunk_30s" not in captured["available_profiles"]
-        assert "video_colqwen_omni_mv_chunk_30s" not in captured["available_profiles"]
-        assert result.selected_profile == "video_colpali_smol500_mv_frame"
+        assert unavailable_profile.profile_name not in captured["available_profiles"]
+        assert absent_profile.profile_name not in captured["available_profiles"]
+        assert result.selected_profile == frame_profile.profile_name
 
     @pytest.mark.asyncio
     async def test_process_raises_when_tenant_has_no_usable_profiles(

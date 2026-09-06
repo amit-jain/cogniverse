@@ -18,6 +18,7 @@ from cogniverse_agents.profile_selection_agent import (
 from cogniverse_core.approval.training_schema import PROFILE_TRAINING_MODALITIES
 from cogniverse_synthetic.schemas import ProfileSelectionExampleSchema
 from tests.agents.unit._recording_telemetry import RecordingTelemetryManager
+from tests.utils.vespa_test_helpers import shipped_profile
 
 EXPECTED_PROFILE_QUERY_INTENTS = (
     "multi_modal_search",
@@ -33,7 +34,7 @@ EXPECTED_PROFILE_QUERY_INTENTS = (
 )
 
 
-def _base_profile_selection_available_profiles() -> str:
+def _profile_selection_example_profiles() -> dict[str, str]:
     from cogniverse_agents.profile_selection_agent import (
         tenant_usable_profile_names,
     )
@@ -41,63 +42,43 @@ def _base_profile_selection_available_profiles() -> str:
     from cogniverse_foundation.config.unified_config import (
         BackendProfileConfig,
         SystemConfig,
+        profile_embedding_service,
     )
     from tests.utils.memory_store import InMemoryConfigStore
 
-    store = InMemoryConfigStore()
-    config_manager = ConfigManager(store=store)
+    frame_profile = shipped_profile(
+        profile_type="video", embedding_type="multi_vector", extract_keyframes=True
+    )
+    chunk_profile = shipped_profile(
+        profile_type="video", embedding_type="multi_vector", process_type="video_chunks"
+    )
+    unavailable_profile = BackendProfileConfig.from_dict(
+        "unavailable_video_profile",
+        shipped_profile(profile_type="video", embedding_type="single_vector").to_dict(),
+    )
+    config_manager = ConfigManager(store=InMemoryConfigStore())
     config_manager.set_system_config(
         SystemConfig(
             inference_service_urls={
-                "vllm_colpali": "http://localhost:8000",
-                "vllm_colqwen": "http://localhost:8001",
+                profile_embedding_service(profile.to_dict()): "http://localhost:8000"
+                for profile in (frame_profile, chunk_profile)
             }
         )
     )
-    config_manager.add_backend_profile(
-        BackendProfileConfig.from_dict(
-            "video_colpali_smol500_mv_frame",
-            {
-                "type": "video",
-                "schema_name": "video_colpali_smol500_mv_frame",
-                "embedding_model": "TomoroAI/tomoro-colqwen3-embed-4b",
-                "inference_services": {"embedding": "vllm_colpali"},
-            },
-        ),
-        tenant_id="acme:docs",
-    )
-    config_manager.add_backend_profile(
-        BackendProfileConfig.from_dict(
-            "video_colqwen_omni_mv_chunk_30s",
-            {
-                "type": "video",
-                "schema_name": "video_colqwen_omni_mv_chunk_30s",
-                "embedding_model": "TomoroAI/tomoro-colqwen3-embed-4b",
-                "inference_services": {"embedding": "vllm_colqwen"},
-            },
-        ),
-        tenant_id="acme:docs",
-    )
-    config_manager.add_backend_profile(
-        BackendProfileConfig.from_dict(
-            "video_xclip_base_mv_chunk_30s",
-            {
-                "type": "video",
-                "schema_name": "video_xclip_base_mv_chunk_30s",
-                "embedding_model": "microsoft/xclip-large-patch14",
-                "inference_services": {"embedding": "video_embed"},
-            },
-        ),
-        tenant_id="acme:docs",
-    )
+    for profile in (frame_profile, chunk_profile, unavailable_profile):
+        config_manager.add_backend_profile(profile, tenant_id="acme:docs")
 
-    return ", ".join(tenant_usable_profile_names(config_manager, "acme:docs"))
+    usable = tenant_usable_profile_names(config_manager, "acme:docs")
+    assert usable == [frame_profile.profile_name, chunk_profile.profile_name]
+    return {
+        "available_profiles": ", ".join(usable),
+        "selected_profile": chunk_profile.profile_name,
+    }
 
 
 BASE_PROFILE_SELECTION_EXAMPLE = {
     "query": "find a clip about transformer architecture",
-    "available_profiles": _base_profile_selection_available_profiles(),
-    "selected_profile": "video_colqwen_omni_mv_chunk_30s",
+    **_profile_selection_example_profiles(),
     "reasoning": "Selected chunk-based profile for medium-complexity video search.",
     "modality": "video",
     "complexity": "medium",

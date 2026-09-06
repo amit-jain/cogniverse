@@ -1327,18 +1327,24 @@ class TestDispatcherArtifactWiring:
 
     @pytest.mark.asyncio
     @skip_if_no_lm
-    async def test_dispatcher_gateway_path_loads_artifact(self, real_provider):
+    async def test_dispatcher_gateway_path_loads_artifact(
+        self, real_provider, shared_memory_vespa, tomoro_inference_url, monkeypatch
+    ):
         """Gateway dispatch path should save/load threshold artifact via _load_artifact."""
         import json
-        from pathlib import Path
 
         import dspy
+        import httpx
+        from fastapi import FastAPI
 
         from cogniverse_core.common.agent_models import AgentEndpoint
         from cogniverse_core.registries.agent_registry import AgentRegistry
-        from cogniverse_core.schemas.filesystem_loader import FilesystemSchemaLoader
-        from cogniverse_foundation.config.utils import create_default_config_manager
+        from cogniverse_foundation.config.unified_config import BackendConfig
+        from cogniverse_foundation.config.utils import get_config
         from cogniverse_runtime.agent_dispatcher import AgentDispatcher
+        from cogniverse_runtime.routers import agents as agents_router
+        from tests.agents.integration.conftest import inject_tomoro_url
+        from tests.utils.vespa_test_helpers import deploy_tenant_schema, shipped_profile
 
         # dispatch() canonicalizes tenant_id via require_tenant_id before it
         # reaches _get_or_build_gateway_agent, so a simple (no-colon) id here
@@ -1363,18 +1369,51 @@ class TestDispatcherArtifactWiring:
         # Use dspy.context instead of dspy.configure to avoid cross-task conflicts.
         lm = make_dspy_lm()
 
-        # Set up dispatcher with real dependencies
-        config_manager = create_default_config_manager()
-        schema_loader = FilesystemSchemaLoader(Path("configs/schemas"))
-        registry = AgentRegistry(tenant_id="test:unit", config_manager=config_manager)
-
-        registry.register_agent(
-            AgentEndpoint(
-                name="gateway_agent",
-                url="http://localhost:8000",
-                capabilities=["gateway", "routing"],
-            )
+        config_manager = shared_memory_vespa["config_manager"]
+        schema_loader = shared_memory_vespa["schema_loader"]
+        inject_tomoro_url(config_manager, tomoro_inference_url)
+        profile = shipped_profile(
+            profile_type="video",
+            embedding_type="multi_vector",
+            extract_keyframes=True,
         )
+        backend_config = BackendConfig.from_dict(
+            get_config(tenant_id, config_manager).get("backend")
+        )
+        backend_config.url = "http://localhost"
+        backend_config.port = shared_memory_vespa["http_port"]
+        backend_config.profiles = {profile.profile_name: profile}
+        config_manager.set_backend_config(backend_config)
+        assert (
+            config_manager.get_backend_profile(
+                profile.profile_name, tenant_id
+            ).to_dict()
+            == profile.to_dict()
+        )
+        deploy_tenant_schema(
+            shared_memory_vespa,
+            tenant_id=tenant_id,
+            base_schema_name=profile.schema_name,
+            config_manager=config_manager,
+        )
+
+        registry = AgentRegistry(tenant_id=tenant_id, config_manager=config_manager)
+        agents_config = get_config(tenant_id, config_manager).get("agents")
+        for name in (
+            "gateway_agent",
+            "entity_extraction_agent",
+            "query_enhancement_agent",
+            "profile_selection_agent",
+            "search_agent",
+        ):
+            registry.register_agent(
+                AgentEndpoint(
+                    name=name,
+                    url="http://artifact-runtime.test",
+                    capabilities=agents_config[name]["capabilities"],
+                    process_endpoint=f"/agents/{name}/process",
+                )
+            )
 
         dispatcher = AgentDispatcher(
             agent_registry=registry,
@@ -1382,13 +1421,24 @@ class TestDispatcherArtifactWiring:
             schema_loader=schema_loader,
         )
 
-        # Dispatch — gateway path creates agent, injects telemetry + artifact
-        with dspy.context(lm=lm):
-            result = await dispatcher.dispatch(
-                agent_name="gateway_agent",
-                query="find cooking videos",
-                context={"tenant_id": tenant_id},
-            )
+        app = FastAPI()
+        app.include_router(agents_router.router, prefix="/agents")
+        monkeypatch.setattr(agents_router, "_dispatcher", dispatcher)
+        orchestrator = await dispatcher._get_or_build_orchestrator(tenant_id)
+        async with httpx.AsyncClient(
+            transport=httpx.ASGITransport(app=app),
+            base_url="http://artifact-runtime.test",
+        ) as client:
+            orchestrator._http_client_override = client
+            try:
+                with dspy.context(lm=lm):
+                    result = await dispatcher.dispatch(
+                        agent_name="gateway_agent",
+                        query="find cooking videos",
+                        context={"tenant_id": tenant_id},
+                    )
+            finally:
+                orchestrator._http_client_override = None
 
         assert result["status"] == "success", f"Gateway dispatch failed: {result}"
 
@@ -1613,7 +1663,9 @@ class TestArtifactAffectsBehavior:
         )
 
     @pytest.mark.asyncio
-    async def test_profile_selection_output_reflects_loaded_demos(self, real_provider):
+    async def test_profile_selection_output_reflects_loaded_demos(
+        self, real_provider, shared_memory_vespa, tomoro_inference_url, dspy_lm
+    ):
         """Profile selection agent with demos should select a known profile."""
         import json
 
@@ -1624,8 +1676,47 @@ class TestArtifactAffectsBehavior:
             ProfileSelectionDeps,
             ProfileSelectionInput,
             ProfileSelectionModule,
+            servable_tenant_profiles,
         )
+        from cogniverse_foundation.config.unified_config import BackendConfig
+        from cogniverse_foundation.config.utils import get_config
         from cogniverse_foundation.telemetry.manager import get_telemetry_manager
+        from tests.agents.integration.conftest import inject_tomoro_url
+        from tests.utils.vespa_test_helpers import (
+            load_raw_schema_json,
+            shipped_profile,
+        )
+
+        request_tenant = "test:unit"
+        config_manager = shared_memory_vespa["config_manager"]
+        inject_tomoro_url(config_manager, tomoro_inference_url)
+        backend_config = BackendConfig.from_dict(
+            get_config(request_tenant, config_manager).get("backend")
+        )
+        config_manager.set_backend_config(backend_config)
+        assert config_manager.get_backend_config(request_tenant).to_dict() == (
+            backend_config.to_dict()
+        )
+        available_profiles = [
+            name
+            for name, profile in servable_tenant_profiles(
+                config_manager, request_tenant
+            )
+            if profile.type == "video"
+        ]
+        demo_profile = shipped_profile(
+            profile_type="video",
+            embedding_type="multi_vector",
+            extract_keyframes=True,
+        ).profile_name
+        configured_profile = config_manager.get_backend_profile(
+            demo_profile, request_tenant
+        )
+        assert configured_profile.profile_name == demo_profile
+        assert load_raw_schema_json(configured_profile.schema_name)["name"] == (
+            configured_profile.schema_name
+        )
+        assert demo_profile in available_profiles
 
         tenant_id = "behavior-profile-test"
         mgr = ArtifactManager(real_provider, tenant_id)
@@ -1636,8 +1727,8 @@ class TestArtifactAffectsBehavior:
         state["selector.predict"]["demos"] = [
             {
                 "query": "find basketball highlights",
-                "available_profiles": "video_colpali_smol500_mv_frame,video_colqwen_omni_mv_chunk_30s",
-                "selected_profile": "video_colpali_smol500_mv_frame",
+                "available_profiles": ", ".join(available_profiles),
+                "selected_profile": demo_profile,
                 "confidence": "0.9",
                 "reasoning": "Short clip search works best with frame-level ColPali",
                 "query_intent": "video_search",
@@ -1650,15 +1741,9 @@ class TestArtifactAffectsBehavior:
         )
 
         # Create agent with available profiles, load artifact
-        deps = ProfileSelectionDeps(
-            available_profiles=[
-                "video_colpali_smol500_mv_frame",
-                "video_colqwen_omni_mv_chunk_30s",
-                "video_xclip_base_mv_chunk_30s",
-                "video_xclip_large_mv_chunk_30s",
-            ],
-        )
+        deps = ProfileSelectionDeps(available_profiles=available_profiles)
         agent = ProfileSelectionAgent(deps=deps)
+        agent._config_manager = config_manager
         tm = get_telemetry_manager()
         agent.telemetry_manager = tm
         agent._artifact_tenant_id = tenant_id
@@ -1667,29 +1752,20 @@ class TestArtifactAffectsBehavior:
         # Verify demos loaded
         loaded_demos = agent.dspy_module.dump_state()["selector.predict"]["demos"]
         assert len(loaded_demos) == 1
+        assert loaded_demos == state["selector.predict"]["demos"]
 
-        # Configure DSPy LM via context (not dspy.configure which pollutes
-        # global state and causes cross-task conflicts in test suite)
-        lm = make_dspy_lm()
-
-        # Process with real LLM
-        with dspy.context(lm=lm):
+        with dspy.context(lm=dspy_lm):
             result = await agent._process_impl(
                 ProfileSelectionInput(
-                    query="find cooking videos", tenant_id="test:unit"
+                    query="find cooking videos",
+                    tenant_id=request_tenant,
+                    available_profiles=available_profiles,
                 )
             )
 
-        # The demo teaches: video queries → video_colpali_smol500_mv_frame
-        # The LLM should follow the demo pattern for "find cooking videos".
-        known_profiles = {
-            "video_colpali_smol500_mv_frame",
-            "video_colqwen_omni_mv_chunk_30s",
-            "video_xclip_base_mv_chunk_30s",
-            "video_xclip_large_mv_chunk_30s",
-        }
-        assert result.selected_profile in known_profiles, (
-            f"selected_profile '{result.selected_profile}' not in known profiles. "
+        assert result.selected_profile in available_profiles, (
+            f"Selected profile {result.selected_profile!r} is not in the "
+            f"tenant's offered video profiles: {available_profiles}. "
             f"Reasoning: {result.reasoning}"
         )
         assert result.confidence > 0.0, (
