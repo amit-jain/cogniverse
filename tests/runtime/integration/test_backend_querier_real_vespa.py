@@ -25,6 +25,7 @@ from cogniverse_agents.profile_selection_agent import (
     ProfileSelectionDeps,
     ProfileSelectionInput,
 )
+from cogniverse_core.factories.backend_factory import BackendFactory
 from cogniverse_core.registries.schema_registry import SchemaRegistry
 from cogniverse_foundation.config.unified_config import (
     AgentMappingRule,
@@ -39,6 +40,7 @@ from cogniverse_synthetic.service import SyntheticDataService
 from cogniverse_synthetic.utils import AgentInferrer
 from cogniverse_vespa._vespa_factory import make_vespa_app
 from cogniverse_vespa.backend import VespaBackend
+from tests.utils.async_polling import wait_for_http_ready
 from tests.utils.synthetic_config import video_synthetic_generator_config
 from tests.utils.vespa_test_helpers import deploy_tenant_schema
 
@@ -110,6 +112,14 @@ async def test_query_profile_returns_real_vespa_content(
         },
     }
     for current_tenant, fields in documents.items():
+        schema = schemas[current_tenant]
+        document_id = f"{fields['video_id']}_seg_0"
+        await asyncio.to_thread(
+            wait_for_http_ready,
+            f"{shared_vespa['base_url']}/document/v1/{schema}/{schema}/docid/{document_id}",
+            expected_status=404,
+            description=f"document type {schema}",
+        )
         feed = vespa_app.feed_data_point(
             schema=schemas[current_tenant],
             data_id=f"{fields['video_id']}_seg_0",
@@ -125,12 +135,16 @@ async def test_query_profile_returns_real_vespa_content(
         "multi_vector",
         {"extract_keyframes": True},
     )
-    backend = VespaBackend(
+    backend = BackendFactory.create_backend_with_dependencies(
+        backend_class=VespaBackend,
         backend_config=backend_config,
         schema_loader=schema_loader,
         config_manager=config_manager,
+        backend_init_config={
+            "tenant_id": tenant,
+            "config_port": shared_vespa["config_port"],
+        },
     )
-    backend.initialize({"tenant_id": tenant})
 
     querier = BackendQuerier(
         backend=backend,
@@ -206,12 +220,16 @@ async def test_diverse_sampling_with_overfetch_past_default_limit(
         "multi_vector",
         {"extract_keyframes": True},
     )
-    backend = VespaBackend(
+    backend = BackendFactory.create_backend_with_dependencies(
+        backend_class=VespaBackend,
         backend_config=backend_config,
         schema_loader=schema_loader,
         config_manager=config_manager,
+        backend_init_config={
+            "tenant_id": tenant,
+            "config_port": shared_vespa["config_port"],
+        },
     )
-    backend.initialize({"tenant_id": tenant})
 
     visible_documents = []
     for _ in range(20):
@@ -243,7 +261,10 @@ async def test_diverse_sampling_with_overfetch_past_default_limit(
         tenant_id=tenant,
     )
 
-    assert len(samples) == min(sample_size, corpus_count)
+    assert len(samples) == 90
+    assert {sample["source_id"] for sample in samples} == {
+        f"vid-{index:03d}" for index in range(90)
+    }
 
 
 @pytest.mark.asyncio
@@ -287,19 +308,17 @@ async def test_service_samples_deployed_configured_profile_from_real_vespa(
         "multi_vector",
         {"extract_keyframes": True},
     )
-    backend = _RecordingVespaBackend(
+    backend = BackendFactory.create_backend_with_dependencies(
+        backend_class=_RecordingVespaBackend,
         backend_config=backend_config,
         schema_loader=schema_loader,
         config_manager=config_manager,
+        backend_init_config={
+            "tenant_id": tenant,
+            "config_port": shared_vespa["config_port"],
+        },
     )
-    backend.initialize({"tenant_id": tenant})
-    registry = SchemaRegistry(
-        config_manager=config_manager,
-        backend=backend,
-        schema_loader=schema_loader,
-    )
-    backend.schema_registry = registry
-    backend.schema_manager._schema_registry = registry
+    registry = backend.schema_registry
     schema = registry.deploy_schema(
         tenant_id=tenant,
         base_schema_name=base_schema,
@@ -404,7 +423,7 @@ async def test_service_samples_deployed_configured_profile_from_real_vespa(
         SyntheticDataRequest(
             tenant_id=tenant,
             optimizer="profile",
-            count=1,
+            count=2,
             vespa_sample_size=2,
             strategy="diverse",
             max_profiles=1,
@@ -413,22 +432,28 @@ async def test_service_samples_deployed_configured_profile_from_real_vespa(
 
     assert response.selected_profiles == [base_schema]
     assert response.metadata["sampled_content_count"] == 2
-    assert len(response.data) == 1
-    assert response.data[0]["query"] in {
-        "find a video frame showing Robots playing soccer",
+    assert len(response.data) == 2
+    expected_queries = [
         "find a video frame showing Cats playing chess",
-    }
-    expected_query = response.data[0]["query"]
-    assert response.data[0] == {
-        "query": expected_query,
-        "available_profiles": base_schema,
-        "selected_profile": base_schema,
-        "modality": "video",
-        "complexity": "medium",
-        "query_intent": "video_search",
-        "reasoning": "The production selector chose the indexed video profile.",
-    }
-    assert backend.schema_checks == [(base_schema, tenant, True)]
+        "find a video frame showing Robots playing soccer",
+    ]
+    assert sorted(item["query"] for item in response.data) == expected_queries
+    assert sorted(response.data, key=lambda item: item["query"]) == [
+        {
+            "query": query,
+            "available_profiles": base_schema,
+            "selected_profile": base_schema,
+            "modality": "video",
+            "complexity": "medium",
+            "query_intent": "video_search",
+            "reasoning": "The production selector chose the indexed video profile.",
+        }
+        for query in expected_queries
+    ]
+    assert backend.schema_checks == [
+        (base_schema, tenant, True),
+        (base_schema, tenant, True),
+    ]
     assert backend.query_calls == [
         (
             base_schema,
@@ -858,12 +883,16 @@ async def test_default_field_mappings_read_real_non_video_content(
         modality,
         embedding_type,
     )
-    backend = VespaBackend(
+    backend = BackendFactory.create_backend_with_dependencies(
+        backend_class=VespaBackend,
         backend_config=backend_config,
         schema_loader=schema_loader,
         config_manager=config_manager,
+        backend_init_config={
+            "tenant_id": tenant,
+            "config_port": shared_vespa["config_port"],
+        },
     )
-    backend.initialize({"tenant_id": tenant})
     querier = BackendQuerier(
         backend=backend,
         backend_config=backend_config,
@@ -887,8 +916,14 @@ async def test_default_field_mappings_read_real_non_video_content(
 
     assert len(samples) == 2
     topics = [sample["topic"] for sample in samples]
-    assert expected_topic in topics
-    assert len({topic for topic in topics if topic}) == 2
+    expected_duplicate_topic = {
+        "image_colpali_mv": "Falcon V landing",
+        "document_text": "Gemini 11 flight report",
+        "code_lateon_mv": "load_runtime_metadata",
+        "wiki_pages": "Postgres lease management",
+    }[base_schema]
+    assert set(topics) == {expected_topic, expected_duplicate_topic}
+    assert len(set(topics)) == 2
     assert {sample["description"] for sample in samples} == {expected_description}
     primary_sample = next(
         sample for sample in samples if sample["topic"] == expected_topic
@@ -923,11 +958,6 @@ async def test_default_field_mappings_read_real_non_video_content(
         *[sample for sample in samples if sample is not primary_sample],
     ]
     workflow_samples = [{**sample, "description": ""} for sample in ordered_samples]
-    workflow_expected_topic = (
-        expected_topic.replace("_", " ")
-        if base_schema == "code_lateon_mv"
-        else expected_topic
-    )
     example = (
         await WorkflowGenerator(agent_inferrer=inferrer).generate(
             workflow_samples,
@@ -935,7 +965,7 @@ async def test_default_field_mappings_read_real_non_video_content(
         )
     )[0]
 
-    assert example.query == f"find {workflow_expected_topic}"
+    assert example.query == f"find {expected_topic}"
     assert example.query_type == expected_modality
     assert example.agent_sequence == [expected_agent]
     assert example.task_count == 1
@@ -1015,12 +1045,16 @@ async def test_entity_rich_audio_query_uses_real_schema_fields(
         "single_vector",
         {"transcribe_audio": True},
     )
-    backend = _RecordingVespaBackend(
+    backend = BackendFactory.create_backend_with_dependencies(
+        backend_class=_RecordingVespaBackend,
         backend_config=backend_config,
         schema_loader=schema_loader,
         config_manager=config_manager,
+        backend_init_config={
+            "tenant_id": tenant,
+            "config_port": shared_vespa["config_port"],
+        },
     )
-    backend.initialize({"tenant_id": tenant})
     visible_ids = set()
     for _ in range(20):
         visible = await asyncio.to_thread(
@@ -1216,12 +1250,16 @@ async def test_temporal_recent_returns_newest_real_vespa_documents_first(
         "single_vector",
         {"transcribe_audio": True},
     )
-    backend = VespaBackend(
+    backend = BackendFactory.create_backend_with_dependencies(
+        backend_class=VespaBackend,
         backend_config=backend_config,
         schema_loader=schema_loader,
         config_manager=config_manager,
+        backend_init_config={
+            "tenant_id": tenant,
+            "config_port": shared_vespa["config_port"],
+        },
     )
-    backend.initialize({"tenant_id": tenant})
 
     expected_documents = timestamps
     visible_documents = {}
