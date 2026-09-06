@@ -183,7 +183,9 @@ def test_xclip_boundary():
 ```
 
 ColPali and ColQwen use the same `vllm_colpali` HTTP service. The collector
-also requests `vllm_asr` for either `vllm_colpali` or `video_embed`. Use
+also requests every service a shipped profile using the named embedding service
+resolves at pipeline init, derived from `configs/config.json` (`vllm_asr` for
+`vllm_colpali`, `video_embed` and `colbert_pylate`). Use
 `@pytest.mark.requires_modal_inference("vllm_llm_student")` only when the test
 explicitly requires that exact service through paid Modal provisioning.
 

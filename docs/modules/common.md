@@ -1686,8 +1686,10 @@ memory, and verifies that the other tenant cannot retrieve that exact record.
 
 Integration tests name each production inference dependency with
 `@pytest.mark.requires_inference("<service>")`. Collection resolves the named
-services plus their declared dependencies: `vllm_colpali` and
-`video_embed` each expand to include `vllm_asr`. The registered automatic
+services plus every service a shipped profile using that embedding service
+resolves at pipeline init, derived from `configs/config.json` through the
+production `StrategyFactory`: `vllm_colpali`, `video_embed` and
+`colbert_pylate` each expand to include `vllm_asr`. The registered automatic
 provider order is:
 
 1. the `cogniverse-e2e` k3d workload;

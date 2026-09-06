@@ -272,7 +272,10 @@ rejects any unregistered marker) plus a per-package override in
   infrastructure/model dependencies
 - `requires_inference("vllm_colpali")` — exact ColPali/ColQwen HTTP embedding
   service; `requires_inference("video_embed")` — exact X-CLIP service.
-  Both also request their `vllm_asr` dependency during collection. Cluster
+  Collection also requests every service a shipped profile using the named
+  embedding service resolves at pipeline init, derived from
+  `configs/config.json` (`vllm_asr` for `vllm_colpali`, `video_embed` and
+  `colbert_pylate`). Cluster
   discovery reads `--revision` from rendered workload args: a pinned workload
   is tagged `identity_evidence=DEPLOYMENT`, and an unpinned one stays
   `ENDPOINT` and must report the exact revision from `/v1/models`.
