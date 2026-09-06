@@ -1945,13 +1945,6 @@ def _require_git_success(
     )
 
 
-def _current_e2e_deploy_sha(repo_root: Path | None = None) -> str:
-    repo_root = repo_root or _e2e_repo_root()
-    result = _git_e2e(repo_root, "rev-parse", "HEAD")
-    _require_git_success(result, _git_e2e_command(repo_root, "rev-parse", "HEAD"))
-    return result.stdout.strip()
-
-
 def _normalize_e2e_deployment_identity(
     identity: dict[str, object],
 ) -> dict[str, object]:
@@ -1961,6 +1954,38 @@ def _normalize_e2e_deployment_identity(
         if isinstance(value, list):
             normalized[key] = tuple(value)
     return normalized
+
+
+def _e2e_deployment_identity_drift(
+    started: dict[str, object], finished: dict[str, object]
+) -> str:
+    """Name every identity field that differs, with its old and new value.
+
+    Empty when the two identities are equal.
+    """
+    started = _normalize_e2e_deployment_identity(started)
+    finished = _normalize_e2e_deployment_identity(finished)
+    drift: list[str] = []
+    for key in sorted(set(started) | set(finished)):
+        before, after = started.get(key), finished.get(key)
+        if before == after:
+            continue
+        if isinstance(before, tuple) and isinstance(after, tuple):
+            removed = tuple(item for item in before if item not in after)
+            added = tuple(item for item in after if item not in before)
+            if removed or added:
+                drift.append(f"{key}: removed {removed!r}, added {added!r}")
+                continue
+        elif isinstance(before, dict) and isinstance(after, dict):
+            changed = ", ".join(
+                f"{name}={before.get(name)!r} -> {after.get(name)!r}"
+                for name in sorted(set(before) | set(after))
+                if before.get(name) != after.get(name)
+            )
+            drift.append(f"{key}: {changed}")
+            continue
+        drift.append(f"{key}: {before!r} -> {after!r}")
+    return "; ".join(drift)
 
 
 def _effective_e2e_deployment_identity(repo_root: Path) -> dict:
@@ -1986,11 +2011,16 @@ def _current_e2e_deploy_state(repo_root: Path | None = None) -> dict:
     return _effective_e2e_deployment_identity(repo_root)
 
 
-def _require_clean_e2e_worktree(repo_root: Path | None = None) -> None:
-    repo_root = repo_root or _e2e_repo_root()
+def _e2e_worktree_changes(repo_root: Path) -> str:
+    """``git status --porcelain`` output; empty for a clean tree."""
     result = _git_e2e(repo_root, "status", "--porcelain")
     _require_git_success(result, _git_e2e_command(repo_root, "status", "--porcelain"))
-    if result.stdout.strip():
+    return result.stdout.strip("\n")
+
+
+def _require_clean_e2e_worktree(repo_root: Path | None = None) -> None:
+    repo_root = repo_root or _e2e_repo_root()
+    if _e2e_worktree_changes(repo_root):
         raise RuntimeError(
             "refusing to deploy from a dirty git tree; commit first "
             "(a WIP commit is fine, amend it later), then rerun"
@@ -2425,7 +2455,6 @@ def e2e_stack(request, resolved_inference_endpoints):
     )
 
     repo_root = _e2e_repo_root()
-    deploy_sha = _current_e2e_deploy_sha(repo_root)
     force_fresh = os.environ.get("E2E_FRESH", "").lower() in ("1", "true", "yes")
     _ensure_host_sandbox_gateway()
     cluster_state, state_detail = _e2e_cluster_state()
@@ -2530,14 +2559,25 @@ def e2e_stack(request, resolved_inference_endpoints):
                 "e2e stack required model identity did not converge after deploy: "
                 f"{model_detail}"
             )
-        finished_sha = _current_e2e_deploy_sha(repo_root)
-        if finished_sha != deploy_sha:
+        # The images were built from the tree as it stood during the build.
+        # Two things can make the stamp lie about them: a commit to a
+        # deployment input (moves the identity) and an uncommitted edit
+        # (invisible to the git-derived identity), so both are re-checked.
+        drift = _e2e_deployment_identity_drift(
+            deploy_identity, _effective_e2e_deployment_identity(repo_root)
+        )
+        if drift:
             pytest.fail(
-                "working-tree deployment inputs changed while the e2e stack was "
-                f"being built: started with {deploy_sha!r}, finished with "
-                f"{finished_sha!r}; rerun against a stable tree"
+                "deployment identity changed while the e2e stack was being "
+                f"built: {drift}; rerun against a stable tree"
             )
-        # Stamp the deployed identity.
+        changes = _e2e_worktree_changes(repo_root)
+        if changes:
+            pytest.fail(
+                "uncommitted working-tree changes appeared while the e2e stack "
+                f"was being built:\n{changes}\nthe built images may not match "
+                "HEAD; commit or discard them, then rerun"
+            )
         _stamp_e2e_deploy_state(deploy_identity)
 
     cron_restore: list[str] = []
