@@ -16,6 +16,7 @@ from fastapi import (
     Query,
     UploadFile,
 )
+from fastapi.responses import JSONResponse
 from pydantic import BaseModel
 
 from cogniverse_agents.graph.doc_extractor import ClaimExtractionResult
@@ -250,8 +251,11 @@ async def upload_video(
 ) -> Dict[str, Any]:
     """Upload a file to MinIO and enqueue ingestion via Redis.
 
-    Returns 202 + ingest_id by default. ``wait=true`` polls until terminal
-    state and returns a synchronous result. ``force=true`` bypasses idempotency.
+    Returns 200 + ingest_id with ``status: queued`` by default. ``wait=true``
+    long-polls the status stream: a terminal event returns the synchronous
+    result (200); a wait that lapses first returns 202 with
+    ``status: wait_timeout`` and the state the stream last showed.
+    ``force=true`` bypasses idempotency.
     """
     # A client may send org_id separately with a simple tenant_id; combine them
     # into the canonical org:tenant form (matching the admin tenant route).
@@ -329,6 +333,7 @@ async def upload_video(
     from cogniverse_runtime.ingestion_worker.redis_client import get_redis
     from cogniverse_runtime.ingestion_worker.submit_api import (
         BackpressureError,
+        StatusStreamUnavailable,
         enqueue_ingestion,
     )
 
@@ -383,6 +388,10 @@ async def upload_video(
         raise HTTPException(
             status_code=503, detail={"message": f"ingest queue unavailable: {exc}"}
         )
+    except StatusStreamUnavailable as exc:
+        # The job may be running, but its status stream is gone: the state is
+        # unknown and must not be rendered as one.
+        raise HTTPException(status_code=503, detail={"message": str(exc)})
 
     response: Dict[str, Any] = {
         "ingest_id": result.ingest_id,
@@ -392,6 +401,16 @@ async def upload_video(
         "filename": file.filename,
         "source_url": source_url,
     }
+    if result.wait_timed_out:
+        # No terminal event inside wait_timeout. ``state`` is what the stream
+        # last showed (running, retrying, ...); a retrying job carries the
+        # error the worker will retry on. 202: accepted, not finished.
+        response["status"] = "wait_timeout"
+        response["wait_timed_out"] = True
+        for key in ("error", "error_type"):
+            if key in result.last_event:
+                response[key] = result.last_event[key]
+        return JSONResponse(status_code=202, content=response)
     if result.final_event is not None:
         pipeline_result = result.final_event.get("result", {}) or {}
         response["video_id"] = pipeline_result.get("video_id")
@@ -400,6 +419,7 @@ async def upload_video(
         )
         response["documents_fed"] = pipeline_result.get("documents_fed", 0)
         response["status"] = "success" if result.state == "complete" else result.state
+        response["wait_timed_out"] = False
 
         # The worker already ran per-segment KG extraction on the full results
         # and stamped the counts on the terminal payload — surface those. The
@@ -412,6 +432,7 @@ async def upload_video(
             response["error_type"] = result.final_event["error_type"]
     else:
         response["status"] = "queued"
+        response["wait_timed_out"] = False
     return response
 
 

@@ -160,6 +160,7 @@ _TERMINAL_UPLOAD_KEYS = frozenset(
         "chunks_created",
         "documents_fed",
         "status",
+        "wait_timed_out",
         "graph_nodes",
         "graph_edges",
     }
