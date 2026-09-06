@@ -204,9 +204,14 @@ def _run_loader(repo_root: Path) -> str:
         + _e2e_env_loader_block()
         + '\nprintf "%s|%s" "${TELEGRAM_BOT_TOKEN:-}" "${TELEGRAM_TEST_CHAT_ID:-}"\n'
     )
+    ambient = {
+        name: value
+        for name, value in os.environ.items()
+        if name not in {"TELEGRAM_BOT_TOKEN", "TELEGRAM_TEST_CHAT_ID"}
+    }
     done = subprocess.run(
         ["bash", "-c", script],
-        env={**os.environ, "REPO_ROOT": str(repo_root)},
+        env={**ambient, "REPO_ROOT": str(repo_root)},
         capture_output=True,
         text=True,
     )
