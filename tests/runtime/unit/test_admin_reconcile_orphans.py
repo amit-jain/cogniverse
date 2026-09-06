@@ -43,6 +43,7 @@ def admin_client():
     schema_registry = MagicMock()
     backend.schema_manager = schema_manager
     schema_manager._schema_registry = schema_registry
+    schema_registry.reserved_schemas.return_value = {}
     schema_manager._PROTECTED_SCHEMAS = frozenset(
         {
             "tenant_metadata",
@@ -364,4 +365,80 @@ class TestReconcileOrphansSafetyGuard:
         resp = client.post("/admin/reconcile-orphans?dry_run=false")
         assert resp.status_code == 503
         # And crucially, nothing was deleted.
+        schema_manager.delete_orphan_schemas.assert_not_called()
+
+
+@pytest.mark.unit
+@pytest.mark.ci_fast
+class TestReconcileOrphansInFlightDeploys:
+    def test_reserved_schema_is_not_an_orphan(self, admin_client):
+        """A schema another process activated and has not registered yet is
+        mid-deploy, not an orphan: the reconciler must leave it out of the diff
+        and out of the bulk delete."""
+        client, _, schema_manager, schema_registry = admin_client
+
+        schema_manager.list_deployed_document_types.return_value = [
+            "tenant_metadata",
+            "organization_metadata",
+            "config_metadata",
+            "adapter_registry",
+            "knowledge_graph_alpha",
+            "knowledge_graph_inflight",
+            "knowledge_graph_legit",
+        ]
+        legit = MagicMock()
+        legit.full_schema_name = "knowledge_graph_legit"
+        schema_registry._get_all_schemas.return_value = [legit]
+        schema_registry.reserved_schemas.return_value = {
+            "knowledge_graph_inflight": {"full_schema_name": "knowledge_graph_inflight"}
+        }
+        schema_manager.delete_orphan_schemas.return_value = ["knowledge_graph_alpha"]
+
+        preview = client.post("/admin/reconcile-orphans?dry_run=true").json()
+        assert preview["orphan_schemas"] == ["knowledge_graph_alpha"]
+        assert preview["orphan_tenants"] == ["alpha"]
+        schema_registry.reserved_schemas.assert_called_with(
+            set(schema_manager.list_deployed_document_types.return_value)
+        )
+
+        confirmed = client.post("/admin/reconcile-orphans?dry_run=false").json()
+        assert confirmed["deleted"] == ["knowledge_graph_alpha"]
+        schema_manager.delete_orphan_schemas.assert_called_once_with(
+            ["knowledge_graph_alpha"]
+        )
+
+    def test_intent_journal_outage_refuses_to_reconcile(self, admin_client):
+        """When the deployment-intent journal cannot be read, the reconciler
+        cannot tell an orphan from a mid-deploy schema; it must refuse with the
+        journal's error, never treat "no intents readable" as "no deploys in
+        flight" and proceed to delete."""
+        from cogniverse_core.registries.exceptions import RegistryStorageError
+
+        client, _, schema_manager, schema_registry = admin_client
+
+        schema_manager.list_deployed_document_types.return_value = [
+            "tenant_metadata",
+            "organization_metadata",
+            "config_metadata",
+            "adapter_registry",
+            "knowledge_graph_alpha",
+            "knowledge_graph_legit",
+        ]
+        legit = MagicMock()
+        legit.full_schema_name = "knowledge_graph_legit"
+        schema_registry._get_all_schemas.return_value = [legit]
+        schema_registry.reserved_schemas.side_effect = RegistryStorageError(
+            "Cannot read deployment intents: journal unavailable"
+        )
+
+        resp = client.post("/admin/reconcile-orphans?dry_run=false")
+        assert resp.status_code == 503
+        assert resp.json() == {
+            "detail": (
+                "Cannot read schema deployment intents; refusing to reconcile "
+                "orphans because a mid-deploy schema would be indistinguishable "
+                "from an orphan: Cannot read deployment intents: journal "
+                "unavailable"
+            )
+        }
         schema_manager.delete_orphan_schemas.assert_not_called()

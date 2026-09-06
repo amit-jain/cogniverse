@@ -833,10 +833,11 @@ class VespaSchemaManager:
 
         Enumerates every Vespa-deployed schema, excludes the deletion targets
         and metadata schemas, reconstructs each remaining survivor from the
-        registry by full name, and raises ``BackendDeploymentError`` if any
-        survivor is unreconstructable — a schema we cannot confirm is an orphan
-        may be a peer tenant's live data, so we refuse rather than drop it.
-        Returns the sorted list of names dropped from the running package.
+        registry by full name or from its pending deployment intent, and
+        raises ``BackendDeploymentError`` if any survivor is unreconstructable
+        — a schema we cannot confirm is an orphan may be a peer tenant's live
+        data, so we refuse rather than drop it. Returns the sorted list of
+        names dropped from the running package.
 
         Used by both the single-tenant and bulk-tenant delete paths so the
         peer-orphan safeguard is shared.
@@ -866,11 +867,25 @@ class VespaSchemaManager:
         if not deleted_schemas:
             return deleted_schemas
 
+        # A peer process's schema is live-but-unregistered for its whole
+        # convergence wait (activation precedes registration), and its
+        # activation may land between this enumeration and our redeploy. Its
+        # pending deployment intent carries the exact definition; rebuild it
+        # from there and ship it, so the package we activate never drops a
+        # schema another process is in the middle of deploying.
+        reserved = self._schema_registry.reserved_schemas(set(deployed))
         survivor_names = [
             name
             for name in deployed
             if name not in deletion_targets and name not in self._PROTECTED_SCHEMAS
         ]
+        survivor_names.extend(
+            sorted(
+                name
+                for name in reserved
+                if name not in deployed and name not in deletion_targets
+            )
+        )
 
         registry_by_full_name: Dict[str, object] = {}
         for info in self._schema_registry._get_all_schemas() or []:
@@ -881,11 +896,14 @@ class VespaSchemaManager:
         unresolved: list[str] = []
         for full_name in survivor_names:
             info = registry_by_full_name.get(full_name)
-            if info is None:
+            if info is not None:
+                schema_def = info.schema_definition
+            elif full_name in reserved:
+                schema_def = reserved[full_name]["schema_definition"]
+            else:
                 unresolved.append(full_name)
                 continue
             try:
-                schema_def = info.schema_definition
                 if isinstance(schema_def, str):
                     schema_def = json.loads(schema_def)
                 survivors.append(parser.parse_schema(schema_def))
@@ -1111,6 +1129,12 @@ class VespaSchemaManager:
         if active:
             raise ValueError(
                 f"Refusing to delete registered schema(s): {sorted(active)}"
+            )
+        in_flight = targets & set(self._schema_registry.reserved_schemas(deployed))
+        if in_flight:
+            raise ValueError(
+                "Refusing to delete schema(s) whose activation is in flight in "
+                f"another process: {sorted(in_flight)}"
             )
 
         return self._redeploy_dropping(targets)

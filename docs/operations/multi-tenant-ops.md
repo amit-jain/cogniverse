@@ -435,6 +435,11 @@ Response body:
 }
 ```
 
+A schema another process is deploying right now (activated in Vespa, its
+registry record not yet written — the state every new schema is in during
+its convergence wait) is not an orphan: it never appears in
+`orphan_schemas`, is refused as a delete target, and survives the redeploy.
+
 Why one endpoint instead of iterating per-tenant DELETEs: the single-
 tenant delete path *refuses* (raises `BackendDeploymentError`) rather
 than dropping a peer tenant's unresolved orphan, so iterating per

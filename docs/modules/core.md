@@ -616,7 +616,14 @@ the registry version. A fresh generation requires a strictly advanced registry
 version and a completed prior intent; older snapshots are rejected.
 
 `prepare(registration, grace_s=..., registry_version=0)` writes the reservation
-conditionally; `grace_s` is a required keyword-only argument. Vespa calls
+conditionally; `grace_s` is a required keyword-only argument.
+`reserved(live_names)` (exposed as `SchemaRegistry.reserved_schemas`) maps each
+full schema name an in-flight activation owns to its exact registration: every
+pending intent whose schema is live, plus pending intents still inside their
+grace whose activation is imminent. Any process that rebuilds the application
+package (the orphan reconciler's redeploy) keeps these as survivors, since the
+schema is live-but-unregistered for the whole convergence wait and its
+registration lives in another process. Vespa calls
 `reconcile_deployment_intents(live_names)` during
 package construction after a successful config-server enumeration. Records
 wait 90 seconds for normal registration. Recovery only completes schemas in

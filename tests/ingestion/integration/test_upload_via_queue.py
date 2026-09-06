@@ -979,10 +979,12 @@ class TestUploadRealStack:
             "chunks_created",
             "documents_fed",
             "status",
+            "wait_timed_out",
             "graph_nodes",
             "graph_edges",
         }
         assert body["state"] == "complete"
+        assert body["wait_timed_out"] is False
         assert body["existing"] is False
         assert body["status"] == "success"
         assert body["filename"] == UPLOAD_FILENAME
@@ -1129,6 +1131,7 @@ class TestUploadRealStack:
             "chunks_created": EXPECTED_CHUNKS,
             "documents_fed": EXPECTED_CHUNKS,
             "status": "success",
+            "wait_timed_out": False,
             # The echo surfaces the first run's terminal record verbatim.
             "graph_nodes": body["graph_nodes"],
             "graph_edges": body["graph_edges"],
