@@ -76,6 +76,11 @@ SECOND_SAMPLE_VIDEO_PATH = (
     / "v_-D1gdv_gQyw.mp4"
 )
 CONFIG_PATH = Path(__file__).resolve().parents[2] / "configs" / "config.json"
+TENANT_DEPLOY_TIMEOUT_S = 180.0
+"""Tenant create and profile deploy recompile the whole Vespa application
+package, so they scale with the cluster's schema count. Measured here:
+33.3 s, 35.9 s, 43.3 s idle and 86.7 s under sweep load.
+"""
 
 
 def _default_video_profile_name() -> str:
@@ -162,14 +167,14 @@ def _deploy_profile_for_tenant(
             "model_specific": profile_def.get("model_specific"),
             "deploy_schema": True,
         },
-        timeout=60,
+        timeout=TENANT_DEPLOY_TIMEOUT_S,
     )
     assert resp.status_code in (200, 201, 409), resp.text
 
     resp = client.post(
         f"/admin/profiles/{profile_name}/deploy",
         json={"tenant_id": tenant_id, "force": False},
-        timeout=60,
+        timeout=TENANT_DEPLOY_TIMEOUT_S,
     )
     assert resp.status_code == 200, resp.text
 
@@ -2370,7 +2375,7 @@ class TestVideoIngestionAndSearch:
             resp = client.post(
                 "/admin/tenants",
                 json={"tenant_id": tenant_id, "created_by": "e2e-test"},
-                timeout=30,
+                timeout=TENANT_DEPLOY_TIMEOUT_S,
             )
             assert resp.status_code in (200, 201, 409), resp.text
             _deploy_profile_for_tenant(client, PROFILE, tenant_id)
@@ -2852,11 +2857,11 @@ class TestBatchVideoIngestion:
     def test_batch_ingestion_start(self):
         """Start batch ingestion → poll to completion → the clip is retrievable."""
         tenant_id = unique_id("batch_e2e")
-        with httpx.Client(base_url=RUNTIME, timeout=60.0) as client:
+        with httpx.Client(base_url=RUNTIME, timeout=TENANT_DEPLOY_TIMEOUT_S) as client:
             resp = client.post(
                 "/admin/tenants",
                 json={"tenant_id": tenant_id, "created_by": "e2e-test"},
-                timeout=30,
+                timeout=TENANT_DEPLOY_TIMEOUT_S,
             )
             assert resp.status_code in (200, 201), resp.text
             _deploy_profile_for_tenant(client, PROFILE, tenant_id)
