@@ -505,7 +505,7 @@ async def real_stack(
     redis_container,
     minio_container,
     vespa_backend,
-    resolved_inference_endpoints,
+    inference_endpoints,
     phoenix_container,
     monkeypatch,
 ):
@@ -607,11 +607,11 @@ async def real_stack(
             # The embedding factory and the worker's GraphManager factory
             # both resolve endpoints from this dict (vllm_colpali at
             # embedding-generator build time; gliner/colbert_pylate at graph
-            # extraction). Seed every marker-resolved endpoint so KG-enabled
-            # profiles reach the real sidecars.
+            # extraction). Seed every endpoint this test declared so
+            # KG-enabled profiles reach the real sidecars.
             inference_service_urls={
                 service: endpoint.base_url
-                for service, endpoint in resolved_inference_endpoints.items()
+                for service, endpoint in inference_endpoints.items()
             },
         )
     )

@@ -5,9 +5,11 @@ import os
 import re
 import subprocess
 import time
+import traceback
 from concurrent.futures import ThreadPoolExecutor
 from contextlib import contextmanager
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
+from pathlib import Path
 from threading import Barrier, Event, Lock, Thread
 from types import MappingProxyType
 
@@ -28,19 +30,25 @@ from tests.fixtures.inference import (
     TEST_INFERENCE_API_KEY,
     DiscoveredEndpointProvider,
     EndpointValidator,
+    InferenceEndpointEnvironment,
     InferenceSessionResolver,
     LocalEndpointProvider,
     ModalEndpointProvider,
     ProviderUnavailable,
+    SessionInferenceEndpoints,
     collect_required_inference_services,
     explicit_endpoints_from_environment,
     publish_inference_endpoints,
 )
 
+pytest_plugins = ["pytester"]
+
 COLPALI = get_inference_service_spec("vllm_colpali")
 DENSEON = get_inference_service_spec("denseon")
 CLAP = get_inference_service_spec("clap_embed")
+VIDEO_EMBED = get_inference_service_spec("video_embed")
 API_KEY = "shared-inference-secret"
+REPO_ROOT = Path(__file__).resolve().parents[2]
 
 
 @contextmanager
@@ -1807,3 +1815,386 @@ def test_validate_maps_a_refused_connection_to_provider_unavailable():
     assert str(caught.value) == "vllm_colpali: e2e refused a connection"
     assert isinstance(caught.value.__cause__, httpx.ConnectError)
     validator.close()
+
+
+VIDEO_EMBED_REASON = (
+    "video_embed: no exact endpoint in provider order e2e -> dev -> local: "
+    "video_embed: no exact test-owned local service is defined"
+)
+
+_SCOPED_SESSION_CONFTEST = """
+import json
+import os
+from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
+from pathlib import Path
+from threading import Thread
+
+import pytest
+
+from cogniverse_foundation.inference_specs import get_inference_service_spec
+from tests.utils import vllm_sidecar
+
+CLAP = get_inference_service_spec("clap_embed")
+DISCOVERY_LOG = Path(__file__).with_name("discovery.log")
+
+
+def _no_cluster(provider):
+    def discover(model):
+        with DISCOVERY_LOG.open("a") as log:
+            log.write(f"{provider} {model}\\n")
+        return ()
+
+    return discover
+
+
+vllm_sidecar._discover_e2e_model_urls = _no_cluster("e2e")
+vllm_sidecar._discover_dev_model_urls = _no_cluster("dev")
+
+
+class Handler(BaseHTTPRequestHandler):
+    def do_GET(self):
+        body = json.dumps(
+            {
+                "status": "ready",
+                "model": CLAP.model_id,
+                "model_revision": CLAP.model_revision,
+            }
+        ).encode()
+        self.send_response(200)
+        self.send_header("Content-Type", "application/json")
+        self.send_header("Content-Length", str(len(body)))
+        self.end_headers()
+        self.wfile.write(body)
+
+    def log_message(self, format, *args):
+        return
+
+
+_server = ThreadingHTTPServer(("127.0.0.1", 0), Handler)
+Thread(target=_server.serve_forever, daemon=True).start()
+CLAP_URL = f"http://127.0.0.1:{_server.server_address[1]}"
+os.environ["INFERENCE_SERVICE_URLS"] = json.dumps({"clap_embed": CLAP_URL})
+
+
+@pytest.fixture
+def clap_url():
+    return CLAP_URL
+"""
+
+_SCOPED_SESSION_TESTS = """
+import json
+import os
+from pathlib import Path
+
+import pytest
+
+MODULE_FIXTURE_LOG = Path(__file__).with_name("module_fixture.log")
+
+
+@pytest.fixture(scope="module")
+def module_setup_without_video_embed():
+    MODULE_FIXTURE_LOG.write_text("ran")
+
+
+@pytest.fixture(scope="module")
+def environment_at_module_setup():
+    return (
+        json.loads(os.environ["INFERENCE_SERVICE_URLS"]),
+        os.environ["COGNIVERSE_INFERENCE_API_KEY"],
+    )
+
+
+@pytest.mark.requires_inference("video_embed")
+def test_missing_first(module_setup_without_video_embed):
+    raise AssertionError("must not run without video_embed")
+
+
+def test_no_requirement(inference_endpoints):
+    assert dict(inference_endpoints) == {}
+    assert "COGNIVERSE_INFERENCE_API_KEY" not in os.environ
+
+
+@pytest.mark.requires_inference("clap_embed")
+def test_available(
+    environment_at_module_setup,
+    resolved_inference_endpoints,
+    inference_endpoints,
+    clap_url,
+):
+    endpoint = resolved_inference_endpoints["clap_embed"]
+    assert endpoint.base_url == clap_url
+    assert endpoint.provider == "local"
+    assert list(inference_endpoints) == ["clap_embed"]
+    assert inference_endpoints["clap_embed"] is endpoint
+    assert environment_at_module_setup == (
+        {"clap_embed": clap_url},
+        "cogniverse-test-inference",
+    )
+    assert json.loads(os.environ["INFERENCE_SERVICE_URLS"]) == {"clap_embed": clap_url}
+    assert os.environ["COGNIVERSE_INFERENCE_API_KEY"] == "cogniverse-test-inference"
+
+
+@pytest.mark.requires_inference("video_embed")
+def test_missing_again(module_setup_without_video_embed):
+    raise AssertionError("must not run without video_embed")
+"""
+
+
+@pytest.mark.unit
+def test_unresolvable_service_errors_only_the_tests_that_declared_it(
+    pytester, monkeypatch
+):
+    monkeypatch.setenv("PYTHONPATH", str(REPO_ROOT))
+    monkeypatch.setenv("COLUMNS", "200")
+    monkeypatch.delenv("INFERENCE_SERVICE_URLS", raising=False)
+    monkeypatch.delenv("COGNIVERSE_INFERENCE_API_KEY", raising=False)
+    pytester.makeconftest(_SCOPED_SESSION_CONFTEST)
+    pytester.makepyfile(test_scope=_SCOPED_SESSION_TESTS)
+
+    result = pytester.runpytest_subprocess(
+        "-p",
+        "tests.fixtures.inference",
+        "-p",
+        "no:cacheprovider",
+        "-rA",
+        "-vv",
+        "--tb=long",
+        timeout=240,
+    )
+
+    result.assert_outcomes(passed=2, errors=2)
+    assert [line for line in result.outlines if line.startswith("PASSED ")] == [
+        "PASSED test_scope.py::test_no_requirement",
+        "PASSED test_scope.py::test_available",
+    ]
+    error_prefix = "tests.fixtures.inference.ProviderUnavailable: "
+    assert [line for line in result.outlines if line.startswith("ERROR ")] == [
+        f"ERROR test_scope.py::test_missing_first - {error_prefix}{VIDEO_EMBED_REASON}",
+        f"ERROR test_scope.py::test_missing_again - {error_prefix}{VIDEO_EMBED_REASON}",
+    ]
+    assert result.outlines.count(f"E       {error_prefix}{VIDEO_EMBED_REASON}") == 2
+    assert (pytester.path / "discovery.log").read_text().splitlines() == [
+        f"e2e {VIDEO_EMBED.model_id}",
+        f"dev {VIDEO_EMBED.model_id}",
+    ]
+    assert not (pytester.path / "module_fixture.log").exists()
+
+
+LOCAL_VIDEO_EMBED_REASON = (
+    "video_embed: no exact endpoint in provider order local: "
+    "video_embed: no exact test-owned local service is defined"
+)
+
+
+class _ServiceProvider(_Provider):
+    """Resolves the services in ``endpoints``; every other service is
+    unavailable with the local provider's reason."""
+
+    def __init__(self, name: str, endpoints: dict[str, ResolvedInferenceEndpoint]):
+        super().__init__(name)
+        self.endpoints = endpoints
+        self.release = Event()
+        self.started = Event()
+
+    def resolve(self, spec):
+        self.calls.append(spec.name)
+        self.started.set()
+        assert self.release.wait(timeout=3)
+        try:
+            return self.endpoints[spec.name]
+        except KeyError:
+            raise ProviderUnavailable(
+                f"{spec.name}: no exact test-owned local service is defined"
+            ) from None
+
+
+@pytest.mark.unit
+def test_concurrent_failed_resolution_consults_the_provider_once():
+    provider = _ServiceProvider("local", {})
+    resolver = InferenceSessionResolver(providers=(provider,))
+    simultaneous = Barrier(12)
+
+    def attempt() -> str:
+        simultaneous.wait(timeout=3)
+        with pytest.raises(ProviderUnavailable) as caught:
+            resolver.resolve("video_embed")
+        return str(caught.value)
+
+    with ThreadPoolExecutor(max_workers=12) as pool:
+        attempts = [pool.submit(attempt) for _ in range(12)]
+        assert provider.started.wait(timeout=3)
+        deadline = time.monotonic() + 3
+        while not all(attempt.running() for attempt in attempts):
+            assert time.monotonic() < deadline
+            time.sleep(0.001)
+        provider.release.set()
+        messages = [attempt.result(timeout=3) for attempt in attempts]
+
+    assert not simultaneous.broken
+    assert messages == [LOCAL_VIDEO_EMBED_REASON] * 12
+    assert provider.calls == ["video_embed"]
+
+    with pytest.raises(ProviderUnavailable) as later:
+        resolver.resolve("video_embed")
+    assert str(later.value) == LOCAL_VIDEO_EMBED_REASON
+    assert provider.calls == ["video_embed"]
+    resolver.close()
+    assert provider.close_calls == 1
+
+
+@pytest.mark.unit
+def test_cached_failure_is_reraised_without_growing_its_traceback():
+    provider = _ServiceProvider("local", {})
+    provider.release.set()
+    resolver = InferenceSessionResolver(providers=(provider,))
+    depths: list[int] = []
+    for _ in range(3):
+        with pytest.raises(ProviderUnavailable) as caught:
+            resolver.resolve("video_embed")
+        depths.append(len(traceback.extract_tb(caught.value.__traceback__)))
+
+    assert provider.calls == ["video_embed"]
+    assert depths[1] == depths[2]
+
+
+def _session_endpoints(
+    provider: _Provider,
+    required: set[str],
+    builds: list[int],
+) -> SessionInferenceEndpoints:
+    def build(required_services, *, modal_services=()):
+        builds.append(len(builds) + 1)
+        assert frozenset(required_services) == frozenset(required)
+        assert frozenset(modal_services) == frozenset()
+        return InferenceSessionResolver(providers=(provider,))
+
+    return SessionInferenceEndpoints(
+        required,
+        environment=InferenceEndpointEnvironment(),
+        build_resolver=build,
+    )
+
+
+@pytest.mark.unit
+def test_session_endpoints_build_and_resolve_once_under_concurrent_first_touch(
+    monkeypatch,
+):
+    monkeypatch.delenv("INFERENCE_SERVICE_URLS", raising=False)
+    monkeypatch.delenv("COGNIVERSE_INFERENCE_API_KEY", raising=False)
+    colpali = _resolved("vllm_colpali", "local", "http://127.0.0.1:34140", API_KEY)
+    provider = _ServiceProvider("local", {"vllm_colpali": colpali})
+    builds: list[int] = []
+    endpoints = _session_endpoints(provider, {"vllm_colpali"}, builds)
+    simultaneous = Barrier(12)
+
+    def first_touch():
+        simultaneous.wait(timeout=3)
+        return endpoints["vllm_colpali"]
+
+    with ThreadPoolExecutor(max_workers=12) as pool:
+        touches = [pool.submit(first_touch) for _ in range(12)]
+        assert provider.started.wait(timeout=3)
+        deadline = time.monotonic() + 3
+        while not all(touch.running() for touch in touches):
+            assert time.monotonic() < deadline
+            time.sleep(0.001)
+        provider.release.set()
+        resolved = [touch.result(timeout=3) for touch in touches]
+
+    assert not simultaneous.broken
+    assert builds == [1]
+    assert provider.calls == ["vllm_colpali"]
+    assert [endpoint is colpali for endpoint in resolved] == [True] * 12
+    assert json.loads(os.environ["INFERENCE_SERVICE_URLS"]) == {
+        "vllm_colpali": "http://127.0.0.1:34140"
+    }
+    assert os.environ["COGNIVERSE_INFERENCE_API_KEY"] == API_KEY
+
+    endpoints.close()
+    endpoints.close()
+    assert provider.close_calls == 1
+    assert "INFERENCE_SERVICE_URLS" not in os.environ
+    assert "COGNIVERSE_INFERENCE_API_KEY" not in os.environ
+
+
+@pytest.mark.unit
+def test_session_endpoints_scope_each_outcome_to_the_service_that_asked(
+    monkeypatch,
+):
+    monkeypatch.delenv("INFERENCE_SERVICE_URLS", raising=False)
+    monkeypatch.delenv("COGNIVERSE_INFERENCE_API_KEY", raising=False)
+    clap = _resolved("clap_embed", "local", "http://127.0.0.1:34141", API_KEY)
+    provider = _ServiceProvider("local", {"clap_embed": clap})
+    provider.release.set()
+    builds: list[int] = []
+    endpoints = _session_endpoints(provider, {"clap_embed", "video_embed"}, builds)
+    assert endpoints.required == frozenset({"clap_embed", "video_embed"})
+    assert builds == []
+
+    assert dict(endpoints.require(())) == {}
+    assert builds == []
+    assert dict(endpoints.require({"clap_embed"})) == {"clap_embed": clap}
+    with pytest.raises(ProviderUnavailable) as first:
+        endpoints.require({"video_embed"})
+    assert str(first.value) == LOCAL_VIDEO_EMBED_REASON
+    with pytest.raises(ProviderUnavailable) as both:
+        endpoints.require({"video_embed", "clap_embed"})
+    assert str(both.value) == LOCAL_VIDEO_EMBED_REASON
+    assert endpoints.get("clap_embed") is clap
+    with pytest.raises(ProviderUnavailable) as via_get:
+        endpoints.get("video_embed")
+    assert str(via_get.value) == LOCAL_VIDEO_EMBED_REASON
+    with pytest.raises(KeyError, match="'gliner'"):
+        endpoints["gliner"]
+    assert endpoints.get("gliner") is None
+    assert endpoints.get("gliner", clap) is clap
+
+    assert builds == [1]
+    assert provider.calls == ["clap_embed", "video_embed"]
+    assert json.loads(os.environ["INFERENCE_SERVICE_URLS"]) == {
+        "clap_embed": "http://127.0.0.1:34141"
+    }
+
+    endpoints.close()
+    with pytest.raises(RuntimeError, match="session inference endpoints are closed"):
+        endpoints["clap_embed"]
+    assert provider.close_calls == 1
+    assert "INFERENCE_SERVICE_URLS" not in os.environ
+
+
+@pytest.mark.unit
+def test_session_endpoints_never_build_a_resolver_nobody_asked_for():
+    builds: list[int] = []
+    endpoints = _session_endpoints(_Provider("local"), {"vllm_colpali"}, builds)
+    endpoints.close()
+    assert builds == []
+
+
+@pytest.mark.unit
+def test_session_endpoints_reject_a_second_credential_without_recording_it(
+    monkeypatch,
+):
+    monkeypatch.delenv("INFERENCE_SERVICE_URLS", raising=False)
+    monkeypatch.delenv("COGNIVERSE_INFERENCE_API_KEY", raising=False)
+    colpali = _resolved("vllm_colpali", "local", "http://127.0.0.1:34142", API_KEY)
+    denseon = _resolved("denseon", "local", "http://127.0.0.1:34143", "other-secret")
+    provider = _ServiceProvider("local", {"vllm_colpali": colpali, "denseon": denseon})
+    provider.release.set()
+    builds: list[int] = []
+    endpoints = _session_endpoints(provider, {"vllm_colpali", "denseon"}, builds)
+
+    assert endpoints["vllm_colpali"] is colpali
+    for _ in range(2):
+        with pytest.raises(
+            RuntimeError,
+            match="resolved inference endpoints must share one bearer credential",
+        ):
+            endpoints["denseon"]
+        assert json.loads(os.environ["INFERENCE_SERVICE_URLS"]) == {
+            "vllm_colpali": "http://127.0.0.1:34142"
+        }
+        assert os.environ["COGNIVERSE_INFERENCE_API_KEY"] == API_KEY
+
+    assert provider.calls == ["vllm_colpali", "denseon"]
+    endpoints.close()
+    assert "INFERENCE_SERVICE_URLS" not in os.environ
