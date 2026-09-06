@@ -315,11 +315,13 @@ class TestBackendRegistry(unittest.TestCase):
         self._saved_search = BackendRegistry._search_backends.copy()
         self._saved_full = BackendRegistry._full_backends.copy()
         self._saved_instances = BackendRegistry._backend_instances.copy()
+        self._saved_shared_registry = BackendRegistry._shared_schema_registry
         # Clear class-level registrations
         BackendRegistry._ingestion_backends.clear()
         BackendRegistry._search_backends.clear()
         BackendRegistry._full_backends.clear()
         BackendRegistry._backend_instances.clear()
+        BackendRegistry._shared_schema_registry = None
 
     def tearDown(self):
         """Restore registry state after test."""
@@ -328,6 +330,7 @@ class TestBackendRegistry(unittest.TestCase):
         BackendRegistry._search_backends = self._saved_search
         BackendRegistry._full_backends = self._saved_full
         BackendRegistry._backend_instances = self._saved_instances
+        BackendRegistry._shared_schema_registry = self._saved_shared_registry
         # Cleanup temp directory
         import shutil
 
@@ -598,6 +601,8 @@ class TestBackendIntegration(unittest.TestCase):
 
     def setUp(self):
         """Set up test fixtures."""
+        self._saved_shared_registry = BackendRegistry._shared_schema_registry
+        BackendRegistry._shared_schema_registry = None
         import tempfile
         from unittest.mock import MagicMock
 
@@ -616,6 +621,7 @@ class TestBackendIntegration(unittest.TestCase):
 
     def tearDown(self):
         """Clean up test fixtures."""
+        BackendRegistry._shared_schema_registry = self._saved_shared_registry
         import shutil
 
         shutil.rmtree(self.temp_dir, ignore_errors=True)

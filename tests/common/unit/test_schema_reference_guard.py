@@ -158,6 +158,10 @@ SCHEMA_REFERENCE_FIXTURES = {
         "Synthetic detector source and expected locations",
         "image_future_mv video_another_mv_frame video_future_sv_chunk_9s video_future_sv_chunk_9s_org_tenant video_future_sv_chunk_9s_unexplained video_typo_mv_frame available replacement",
     ),
+    "tests/core/unit/test_schema_deployment_intents.py": (
+        "Forged full name rejected because it does not match the intent owner",
+        "wiki_pages_someone_else",
+    ),
     "tests/core/unit/test_schema_registry_errors.py": (
         "Missing schema error propagation",
         "video_missing",

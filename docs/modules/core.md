@@ -584,7 +584,7 @@ registry = SchemaRegistry(
 registry.register_schema(
     tenant_id="acme",
     base_schema_name="video_content",
-    full_schema_name="video_content_acme",
+    full_schema_name="video_content_acme_acme",
     schema_definition=schema_definition_str,
     config={"profile": "video_content"}
 )
@@ -596,10 +596,53 @@ exists = registry.schema_exists("acme", "video_content")
 schemas = registry.get_tenant_schemas("acme")
 ```
 
-SchemaRegistry reads persisted schemas on construction, delegates retry and
-backoff to `VespaConfigStore`, and wraps any storage failure once with
-registry context. Empty storage and store-normalized HTTP 404 results both
+SchemaRegistry reads persisted schemas on construction, leaves retry and
+backoff to its `ConfigStore` implementation, and wraps storage read failures
+once with registry context. Empty storage and store-normalized HTTP 404 results both
 load an empty registry.
+
+`deploy_schema()` persists the complete registration payload before activating
+an unregistered schema. `SchemaDeploymentIntents(store)` in
+`cogniverse_core/registries/schema_deployment_intents.py` reserves the full
+schema name under the system tenant's `SCHEMA` scope and
+`schema_deployment_intents` service. One key per full schema name holds the exact
+schema JSON, canonical tenant, base and full names, configuration, original
+timestamp, and pre-activation registry version. Colliding tenant names cannot
+reserve each other's schema. An unresolved definition stays immutable until
+its generation completes, including when activation was reported absent.
+A stale creator reuses the completed payload for the same registry version;
+an unresolved generation cannot be replaced merely because deletion advanced
+the registry version. A fresh generation requires a strictly advanced registry
+version and a completed prior intent; older snapshots are rejected.
+
+`prepare(registration, grace_s=..., registry_version=0)` writes the reservation
+conditionally; `grace_s` is a required keyword-only argument. Vespa calls
+`reconcile_deployment_intents(live_names)` during
+package construction after a successful config-server enumeration. Records
+wait 90 seconds for normal registration. Recovery only completes schemas in
+that live set and supplies their definitions to the existing reconstruction
+path. Recovery never deploys or deletes a schema and requires no owner-death
+inference. Live schemas without a reconstructable definition still block deploy.
+Existing registered schema updates do not use name-only recovery: their live
+name cannot prove which definition was activated.
+
+`register_schema(..., deployment_time=..., expected_version=...)` preserves
+the original payload and conditionally writes its canonical registry key.
+Identical concurrent completion is accepted; a tombstone or different newer
+row rejects the write. `unregister_schema()` persists a tombstone even for an
+unregistered schema, fencing pending registration writes.
+
+`complete(record)` clears the active intent with revision checks and cannot
+replace a newer generation. An absent schema retires the intent without
+registering anything; the inactive record retains its definition for late
+activation. `retire(record)` applies the same rule to a reported deploy
+failure. If retirement also fails, the deployment error keeps its original
+cause and adds the retirement failure as an exception note; the durable record
+remains available for recovery. `records()` reads current journal entries;
+`pending()` lists active ones. `reconcile(live_names, registered, write_registration)` atomically claims
+at most one attempt per record per invocation. Each failed recovery raises
+`RegistryStorageError` with schema context; a fourth attempt is refused.
+There is no background retry loop. Journal history uses ConfigStore retention.
 
 ### AdapterStoreRegistry / WorkflowStoreRegistry
 
