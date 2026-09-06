@@ -268,7 +268,7 @@ def test_real_sidecar_reports_pinned_model_revision(face_embed_container):
 
     assert response.status_code == 200
     assert response.json() == {
-        "status": "ok",
+        "status": "ready",
         "model": FACE_MODEL_NAME,
         "model_revision": FACE_MODEL_REVISION,
     }

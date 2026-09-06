@@ -110,7 +110,7 @@ ENTITY_TYPES = frozenset(
 def _build_entity_extraction_signature_instructions() -> str:
     allowed_types = ", ".join(sorted(ENTITY_TYPES))
     return (
-        "Extract named entities from the query.\n\n"
+        "Extract named and unnamed entities by scanning the query from left to right.\n\n"
         f"Allowed types: {allowed_types}. Only emit these labels.\n\n"
         "Rules:\n"
         "- text must be a verbatim span copied from the query.\n"
@@ -120,9 +120,47 @@ def _build_entity_extraction_signature_instructions() -> str:
         "- Use PLACE for settings such as dirt field, kitchen, and pool area.\n"
         "- Use TECHNOLOGY for camera and screen.\n"
         "- Use EVENT for crash.\n"
-        "- Actions are never entities.\n"
+        "- Always include teaching sessions such as lessons, lectures, and "
+        "workshops as EVENT, even when unnamed.\n"
+        "- Always include informational resources such as guides, manuals, and "
+        "reference material as CONCEPT, even when unnamed.\n"
+        "- Copy the complete noun phrase for each teaching session or informational "
+        "resource, including all descriptive adjectives and compound-noun modifiers. "
+        "Exclude leading articles and following prepositional phrases; never "
+        "shorten a modified phrase to its head noun.\n"
+        "- Extract named software libraries and frameworks separately as TECHNOLOGY.\n"
+        "- Emit each entity once at its first occurrence in the left-to-right scan. "
+        "Never group entities by type or put proper names before earlier "
+        "unnamed entities.\n"
+        "- Before responding, verify that every session/resource phrase retains "
+        "all its modifiers and that no later source span precedes an earlier one.\n"
+        "- Action verbs are never entities.\n"
         '- "the video" is never an entity.\n'
-        "- Keep each entity on its own line in text|type|confidence format."
+        "- Keep each entity on its own line in text|type|confidence format.\n"
+        "\n"
+        "Examples:\n"
+        "\n"
+        "Query: Find a recorded lecture on Matplotlib and a concise manual for "
+        "Matplotlib\n"
+        "Reasoning: The first entity is the whole phrase recorded lecture, an "
+        "EVENT. Matplotlib first appears next and is TECHNOLOGY. The final new "
+        "entity is the whole phrase concise manual, a CONCEPT. The later "
+        "Matplotlib mention is a repeat.\n"
+        "Entities:\n"
+        "recorded lecture|EVENT|0.9\n"
+        "Matplotlib|TECHNOLOGY|0.9\n"
+        "concise manual|CONCEPT|0.9\n"
+        "\n"
+        "Query: Find a detailed guide to FastAPI and an evening workshop on "
+        "FastAPI\n"
+        "Reasoning: The first entity is the whole phrase detailed guide, a "
+        "CONCEPT. FastAPI first appears next and is TECHNOLOGY. The final new "
+        "entity is the whole phrase evening workshop, an EVENT. The later "
+        "FastAPI mention is a repeat.\n"
+        "Entities:\n"
+        "detailed guide|CONCEPT|0.9\n"
+        "FastAPI|TECHNOLOGY|0.9\n"
+        "evening workshop|EVENT|0.9"
     )
 
 
@@ -161,7 +199,18 @@ class EntityExtractionModule(dspy.Module):
 
     def __init__(self):
         super().__init__()
-        self.extractor = dspy.ChainOfThought(EntityExtractionSignature)
+        self.extractor = dspy.ChainOfThought(
+            EntityExtractionSignature,
+            rationale_field=dspy.OutputField(
+                desc=(
+                    "Identify complete entity spans before assigning types. Keep each "
+                    "noun phrase's modifiers attached to its head, never as separate "
+                    "entities. Walk these spans in order of first appearance and copy "
+                    "that sequence into entities. Ignore later occurrences of an already "
+                    "listed entity."
+                )
+            ),
+        )
 
     def forward(self, query: str) -> dspy.Prediction:
         """Extract entities from query"""

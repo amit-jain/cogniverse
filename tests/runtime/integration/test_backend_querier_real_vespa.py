@@ -724,6 +724,51 @@ async def test_routing_service_keeps_real_vespa_sources_and_agents_aligned(
         }
 
 
+@pytest.mark.requires_lm
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    ("query", "expected_entities"),
+    [
+        (
+            "Find an advanced seminar on JAX",
+            [
+                {"text": "advanced seminar", "type": "EVENT"},
+                {"text": "JAX", "type": "TECHNOLOGY"},
+            ],
+        ),
+        (
+            "Find an installation handbook for NumPy",
+            [
+                {"text": "installation handbook", "type": "CONCEPT"},
+                {"text": "NumPy", "type": "TECHNOLOGY"},
+            ],
+        ),
+        (
+            "Find an advanced seminar on JAX and an installation handbook for JAX",
+            [
+                {"text": "advanced seminar", "type": "EVENT"},
+                {"text": "JAX", "type": "TECHNOLOGY"},
+                {"text": "installation handbook", "type": "CONCEPT"},
+            ],
+        ),
+    ],
+    ids=["teaching-session", "informational-resource", "repeated-subject"],
+)
+async def test_entity_extraction_retains_unnamed_learning_sources(
+    query, expected_entities, dspy_test_lm, real_telemetry
+):
+    agent = EntityExtractionAgent(deps=EntityExtractionDeps())
+    agent.set_telemetry_manager(real_telemetry)
+
+    response = await agent.process(
+        EntityExtractionInput(query=query, tenant_id="test:unit")
+    )
+
+    assert [
+        {"text": entity.text, "type": entity.type} for entity in response.entities
+    ] == expected_entities
+
+
 @pytest.mark.parametrize(
     (
         "base_schema",
