@@ -279,8 +279,12 @@ graph boundary, it writes `ingest:graph-pending:<message_id>` in Redis. A graph
 exception, partial write, cancellation, or
 `INGEST_GRAPH_DEADLINE_SECONDS` timeout publishes a nonterminal `retrying`
 event while retaining the in-flight marker, tenant concurrency slot, and Redis
-Streams pending entry. The reaper always re-drives a marked entry, even when
-its delivery count exceeds the ordinary poison-message limit. Stable content
+Streams pending entry, and records the failure time and cause in
+`ingest:graph-redrive:<message_id>`. The reaper never dead-letters a marked
+entry, whatever its delivery count; it re-drives once the hold since the last
+recorded failure has elapsed — `INGEST_REAPER_MIN_IDLE_MS` doubled per re-drive
+so far, clamped at `reaper.GRAPH_REDRIVE_HOLD_CAP_MS` (6h) — and each re-drive
+logs its number, the last cause and the next hold. Stable content
 and graph document ids make the replay idempotent. Only a run that completes
 the graph stage clears the graph marker, marks the ingest done, releases the
 tenant slot, and acknowledges the queue entry.

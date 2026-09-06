@@ -44,6 +44,7 @@ from cogniverse_runtime.ingestion_worker.redis_client import close_redis, get_re
 logger = logging.getLogger(__name__)
 
 GRAPH_PENDING_KEY_PREFIX = "ingest:graph-pending:"
+GRAPH_REDRIVE_KEY_PREFIX = "ingest:graph-redrive:"
 
 
 class JobDeadlineExceeded(Exception):
@@ -77,11 +78,30 @@ async def _mark_graph_pending(redis: aioredis.Redis, job: IngestJob) -> None:
 
 
 async def _clear_graph_pending(redis: aioredis.Redis, message_id: str) -> None:
-    await redis.delete(f"{GRAPH_PENDING_KEY_PREFIX}{message_id}")
+    await redis.delete(
+        f"{GRAPH_PENDING_KEY_PREFIX}{message_id}",
+        f"{GRAPH_REDRIVE_KEY_PREFIX}{message_id}",
+    )
 
 
 async def _is_graph_pending(redis: aioredis.Redis, message_id: str) -> bool:
     return bool(await redis.exists(f"{GRAPH_PENDING_KEY_PREFIX}{message_id}"))
+
+
+async def _server_time_ms(redis: aioredis.Redis) -> int:
+    seconds, micros = await redis.time()
+    return int(seconds) * 1000 + int(micros) // 1000
+
+
+async def _note_graph_failure(
+    redis: aioredis.Redis, job: IngestJob, cause: str
+) -> None:
+    """Record when and why the graph stage failed; the reaper schedules the
+    next re-drive from this and clears it with the pending marker."""
+    await redis.hset(
+        f"{GRAPH_REDRIVE_KEY_PREFIX}{job.message_id}",
+        mapping={"at_ms": await _server_time_ms(redis), "cause": cause},
+    )
 
 
 def _raise_if_pipeline_failed(result: object) -> None:
@@ -754,6 +774,7 @@ async def _process_job(
         # Repeating it here makes injected processors obey the same state
         # machine and closes the exception-to-status-publish crash window.
         await _mark_graph_pending(redis, job)
+        await _note_graph_failure(redis, job, terminal_event["error"])
         await queue.publish_status(redis, job.ingest_id, terminal_event)
         return
 
