@@ -1574,9 +1574,10 @@ inference:
       VIDEO_EMBED_MODEL_REVISION: a9dd1429a16cf305df2aaea232d5e8dceba1c675
       VIDEO_EMBED_NUM_FRAMES: "8"
       VIDEO_EMBED_DIM: "768"
-    # Guaranteed QoS: xclip-large at fp32 is ~1.7 GiB of weights, and the
-    # 8-frame stack plus activations roughly doubles peak. Requests equal
-    # limits so the pod cannot be evicted out of the shared pool.
+    # xclip-large at fp32 is ~1.7 GiB of weights, and the 8-frame stack plus
+    # activations roughly doubles peak. Memory request equals the limit so
+    # the pod holding the weights cannot be evicted out of the shared pool;
+    # cpu stays burstable because exceeding it throttles.
     resources:
       limits:
         cpu: "2"

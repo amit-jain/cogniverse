@@ -47,6 +47,7 @@ COLPALI = get_inference_service_spec("vllm_colpali")
 DENSEON = get_inference_service_spec("denseon")
 CLAP = get_inference_service_spec("clap_embed")
 VIDEO_EMBED = get_inference_service_spec("video_embed")
+TEACHER = get_inference_service_spec("vllm_llm_teacher")
 API_KEY = "shared-inference-secret"
 REPO_ROOT = Path(__file__).resolve().parents[2]
 
@@ -1078,6 +1079,7 @@ def test_local_llm_provisioning_failure_preserves_error_and_retries_release(
         ("gliner", "deploy/gliner/Dockerfile", "."),
         ("clap_embed", "deploy/clap_embed/Dockerfile", "."),
         ("face_embed", "deploy/face_embed/Dockerfile", "."),
+        ("video_embed", "deploy/video_embed/Dockerfile", "."),
         ("colbert_pylate", "deploy/pylate/Dockerfile", "."),
         ("code_colbert_pylate", "deploy/pylate/Dockerfile", "."),
     ],
@@ -1124,6 +1126,48 @@ def test_local_container_rebuilds_its_declared_docker_context(
         inference_fixture._CONTAINER_SPECS[service].image,
         str((repo / relative_context).resolve()),
     ]
+
+
+def _exposed_port(dockerfile: Path) -> int:
+    exposed = [
+        int(line.split()[1])
+        for line in dockerfile.read_text().splitlines()
+        if line.startswith("EXPOSE ")
+    ]
+    assert len(exposed) == 1, f"{dockerfile}: expected one EXPOSE, got {exposed}"
+    return exposed[0]
+
+
+@pytest.mark.unit
+def test_local_container_specs_run_the_images_the_deploy_builds():
+    """Every test-owned sidecar runs the image family `cogniverse up` builds:
+    same repository, same Dockerfile, same repository-root context, on the
+    port the Dockerfile exposes. video_embed pins the spec's checkpoint and
+    revision so the container serves exactly what the validator demands."""
+    from cogniverse_cli.images import LOCAL_IMAGE_BUILDS
+
+    from tests.fixtures import inference as inference_fixture
+
+    specs = inference_fixture._CONTAINER_SPECS
+    assert set(specs) == {
+        "gliner",
+        "clap_embed",
+        "face_embed",
+        "video_embed",
+        "colbert_pylate",
+        "code_colbert_pylate",
+    }
+    for service, container in specs.items():
+        repo, dockerfile, context = LOCAL_IMAGE_BUILDS[service]
+        assert container.image == f"{repo}:0.1.0-dev", service
+        assert container.dockerfile == dockerfile, service
+        assert container.build_context == context, service
+        assert container.port == _exposed_port(REPO_ROOT / dockerfile), service
+
+    assert dict(specs["video_embed"].environment) == {
+        "VIDEO_EMBED_MODEL": VIDEO_EMBED.model_id,
+        "VIDEO_EMBED_MODEL_REVISION": VIDEO_EMBED.model_revision,
+    }
 
 
 @pytest.mark.unit
@@ -1817,9 +1861,9 @@ def test_validate_maps_a_refused_connection_to_provider_unavailable():
     validator.close()
 
 
-VIDEO_EMBED_REASON = (
-    "video_embed: no exact endpoint in provider order e2e -> dev -> local: "
-    "video_embed: no exact test-owned local service is defined"
+TEACHER_REASON = (
+    "vllm_llm_teacher: no exact endpoint in provider order e2e -> dev -> local: "
+    "vllm_llm_teacher: no exact test-owned local service is defined"
 )
 
 _SCOPED_SESSION_CONFTEST = """
@@ -1892,7 +1936,7 @@ MODULE_FIXTURE_LOG = Path(__file__).with_name("module_fixture.log")
 
 
 @pytest.fixture(scope="module")
-def module_setup_without_video_embed():
+def module_setup_without_teacher():
     MODULE_FIXTURE_LOG.write_text("ran")
 
 
@@ -1904,9 +1948,9 @@ def environment_at_module_setup():
     )
 
 
-@pytest.mark.requires_inference("video_embed")
-def test_missing_first(module_setup_without_video_embed):
-    raise AssertionError("must not run without video_embed")
+@pytest.mark.requires_inference("vllm_llm_teacher")
+def test_missing_first(module_setup_without_teacher):
+    raise AssertionError("must not run without vllm_llm_teacher")
 
 
 def test_no_requirement(inference_endpoints):
@@ -1934,9 +1978,9 @@ def test_available(
     assert os.environ["COGNIVERSE_INFERENCE_API_KEY"] == "cogniverse-test-inference"
 
 
-@pytest.mark.requires_inference("video_embed")
-def test_missing_again(module_setup_without_video_embed):
-    raise AssertionError("must not run without video_embed")
+@pytest.mark.requires_inference("vllm_llm_teacher")
+def test_missing_again(module_setup_without_teacher):
+    raise AssertionError("must not run without vllm_llm_teacher")
 """
 
 
@@ -1969,13 +2013,13 @@ def test_unresolvable_service_errors_only_the_tests_that_declared_it(
     ]
     error_prefix = "tests.fixtures.inference.ProviderUnavailable: "
     assert [line for line in result.outlines if line.startswith("ERROR ")] == [
-        f"ERROR test_scope.py::test_missing_first - {error_prefix}{VIDEO_EMBED_REASON}",
-        f"ERROR test_scope.py::test_missing_again - {error_prefix}{VIDEO_EMBED_REASON}",
+        f"ERROR test_scope.py::test_missing_first - {error_prefix}{TEACHER_REASON}",
+        f"ERROR test_scope.py::test_missing_again - {error_prefix}{TEACHER_REASON}",
     ]
-    assert result.outlines.count(f"E       {error_prefix}{VIDEO_EMBED_REASON}") == 2
+    assert result.outlines.count(f"E       {error_prefix}{TEACHER_REASON}") == 2
     assert (pytester.path / "discovery.log").read_text().splitlines() == [
-        f"e2e {VIDEO_EMBED.model_id}",
-        f"dev {VIDEO_EMBED.model_id}",
+        f"e2e {TEACHER.model_id}",
+        f"dev {TEACHER.model_id}",
     ]
     assert not (pytester.path / "module_fixture.log").exists()
 

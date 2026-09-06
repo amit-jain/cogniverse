@@ -426,6 +426,20 @@ _CONTAINER_SPECS = {
             {"FACE_EMBED_MODEL": INFERENCE_SERVICE_SPECS["face_embed"].model_id}
         ),
     ),
+    "video_embed": _ContainerSpec(
+        "cogniverse/video-embed:0.1.0-dev",
+        "deploy/video_embed/Dockerfile",
+        ".",
+        8080,
+        MappingProxyType(
+            {
+                "VIDEO_EMBED_MODEL": INFERENCE_SERVICE_SPECS["video_embed"].model_id,
+                "VIDEO_EMBED_MODEL_REVISION": (
+                    INFERENCE_SERVICE_SPECS["video_embed"].model_revision
+                ),
+            }
+        ),
+    ),
     # Both LateOn services run the same PyLate image with their own pinned
     # model; the server performs PyLate's exact query expansion, which the
     # vLLM /pooling path cannot reproduce (no attention-mask input).
