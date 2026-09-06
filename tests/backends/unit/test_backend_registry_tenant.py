@@ -138,7 +138,9 @@ class TestBackendRegistrySearchShared:
         self._saved_search = registry._search_backends.copy()
         self._saved_full = registry._full_backends.copy()
         # Clear instances but keep backend registrations
+        self._saved_shared_registry = BackendRegistry._shared_schema_registry
         registry.clear_instances()
+        BackendRegistry._shared_schema_registry = None
 
     def teardown_method(self):
         """Restore original backends and clear instances after each test"""
@@ -148,6 +150,7 @@ class TestBackendRegistrySearchShared:
         registry._ingestion_backends = self._saved_ingestion
         registry._search_backends = self._saved_search
         registry._full_backends = self._saved_full
+        BackendRegistry._shared_schema_registry = self._saved_shared_registry
 
     def test_search_backend_shared_instance(self, config_manager, schema_loader):
         """Test that get_search_backend returns the same shared instance"""
@@ -276,7 +279,9 @@ class TestBackendRegistryIngestionTenantIsolation:
         self._saved_ingestion = registry._ingestion_backends.copy()
         self._saved_search = registry._search_backends.copy()
         self._saved_full = registry._full_backends.copy()
+        self._saved_shared_registry = BackendRegistry._shared_schema_registry
         registry.clear_instances()
+        BackendRegistry._shared_schema_registry = None
 
     def teardown_method(self):
         """Restore original backends and clear instances after each test"""
@@ -285,6 +290,7 @@ class TestBackendRegistryIngestionTenantIsolation:
         registry._ingestion_backends = self._saved_ingestion
         registry._search_backends = self._saved_search
         registry._full_backends = self._saved_full
+        BackendRegistry._shared_schema_registry = self._saved_shared_registry
 
     def test_tenant_id_required_for_ingestion_backend(self):
         """Test that tenant_id is required for get_ingestion_backend"""
@@ -424,7 +430,9 @@ class TestBackendRegistrySingleton:
         self._saved_ingestion = registry._ingestion_backends.copy()
         self._saved_search = registry._search_backends.copy()
         self._saved_full = registry._full_backends.copy()
+        self._saved_shared_registry = BackendRegistry._shared_schema_registry
         registry.clear_instances()
+        BackendRegistry._shared_schema_registry = None
 
     def teardown_method(self):
         """Restore original backends and clear instances after each test"""
@@ -433,6 +441,7 @@ class TestBackendRegistrySingleton:
         registry._ingestion_backends = self._saved_ingestion
         registry._search_backends = self._saved_search
         registry._full_backends = self._saved_full
+        BackendRegistry._shared_schema_registry = self._saved_shared_registry
 
     def test_get_backend_registry_returns_singleton(self):
         """Test that get_backend_registry always returns same instance"""

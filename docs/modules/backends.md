@@ -1869,7 +1869,9 @@ schema = parser.load_schema_from_json_file(
 # Deploy a tenant-scoped schema — primary entry point.
 # deploy_schema() loads the base JSON definition, transforms it to a
 # tenant-specific schema, and deploys it via the backend.
-registry = SchemaRegistry(...)  # constructed with backend + schema_loader
+registry = SchemaRegistry(
+    config_manager=config_manager, backend=backend, schema_loader=schema_loader
+)
 tenant_schema_name = registry.deploy_schema(
     tenant_id="acme:production",
     base_schema_name="video_colpali_smol500_mv_frame",
@@ -1877,6 +1879,15 @@ tenant_schema_name = registry.deploy_schema(
 # Returns the deployed tenant schema name, e.g.
 # "video_colpali_smol500_mv_frame_acme_production"
 ```
+
+For new-schema deployments, `SchemaRegistry` persists the exact registration
+payload before activation. Vespa package construction probes live document types
+before calling `SchemaRegistry.reconcile_deployment_intents(live_names)`. After a
+90-second grace period, recovery conditionally registers schemas confirmed live
+using that stored payload, with at most three recovery attempts per intent.
+Recovered definitions are included in the package. Recovery never removes
+schemas, deletes documents, or enables schema-removal overrides. Live schemas
+without a valid reconstruction still trigger the deployment refusal guard.
 
 ---
 
@@ -2649,6 +2660,10 @@ Document v1 visit API. Connection errors, timeouts, and 5xx responses retry;
 `404` or a genuinely empty visit returns `None` or an empty collection; other
 failures raise. A completed `set_config` is therefore immediately visible to
 those readers without sleeps or search-index convergence retries.
+
+`compare_and_set_config(..., expected_version=n)` conditionally writes revision
+`n + 1` and returns `None` on contention. Its version checks and history retention
+are described in [Configuration Scopes](foundation.md#configuration-scopes).
 
 ### Key Methods
 

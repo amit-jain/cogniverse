@@ -961,6 +961,18 @@ class VespaBackend(Backend):
                 "adapter_registry",
             }
 
+            if self.schema_registry:
+                try:
+                    registry_schemas.extend(
+                        self.schema_registry.reconcile_deployment_intents(
+                            set(vespa_deployed)
+                        )
+                    )
+                except Exception as recovery_exc:
+                    raise BackendDeploymentError(
+                        f"Cannot reconcile schema deployment intents: {recovery_exc}"
+                    ) from recovery_exc
+
             unknown_in_vespa = [
                 name
                 for name in vespa_deployed
