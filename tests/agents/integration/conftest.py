@@ -757,6 +757,13 @@ def _test_owned_telemetry():
 OPENSHELL_GATEWAY_START_TIMEOUT_S = 300
 
 
+from tests.utils.host_limits import (
+    inotify_cap,
+    inotify_in_use,
+    inotify_preflight_message,
+)
+
+
 def _docker(*args: str) -> subprocess.CompletedProcess[str]:
     return subprocess.run(
         ["docker", *args], capture_output=True, text=True, timeout=60, check=False
@@ -788,6 +795,11 @@ class OpenShellTestGateway:
         return self.config_home / "openshell" / "gateways" / self.name / "metadata.json"
 
     def start(self) -> None:
+        shortfall = inotify_preflight_message(
+            cap=inotify_cap(), in_use=inotify_in_use()
+        )
+        if shortfall is not None:
+            pytest.fail(shortfall, pytrace=False)
         self._remove_docker_state()
         result = None
         for _ in range(3):
