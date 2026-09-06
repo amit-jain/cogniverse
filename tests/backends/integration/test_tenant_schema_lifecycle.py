@@ -14,7 +14,6 @@ import pytest
 import requests
 
 from cogniverse_core.registries.backend_registry import BackendRegistry
-from cogniverse_core.schemas.filesystem_loader import FilesystemSchemaLoader
 
 logger = logging.getLogger(__name__)
 
@@ -36,64 +35,6 @@ def _dead_port() -> int:
     port = sock.getsockname()[1]
     sock.close()
     return port
-
-
-@pytest.fixture(scope="module")
-def temp_config_manager(vespa_instance, tmp_path_factory):
-    """
-    Provide a temporary ConfigManager with real VespaConfigStore.
-
-    Uses VespaConfigStore connected to the test Vespa instance.
-    The config_metadata schema is automatically deployed as part of
-    VespaSchemaManager.upload_metadata_schemas() during backend initialization.
-    """
-    from cogniverse_foundation.config.manager import ConfigManager
-    from cogniverse_vespa.config.config_store import VespaConfigStore
-
-    http_port = vespa_instance["http_port"]
-    logger.info(f"Creating VespaConfigStore with http_port={http_port}")
-
-    store = VespaConfigStore(
-        backend_url="http://localhost",
-        backend_port=http_port,
-    )
-    logger.info(f"VespaConfigStore created, vespa_app URL: {store.vespa_app.url}")
-
-    return ConfigManager(store=store)
-
-
-@pytest.fixture(scope="module")
-def schema_loader():
-    """Provide FilesystemSchemaLoader for tests (module-scoped for reuse)."""
-    return FilesystemSchemaLoader(Path("configs/schemas"))
-
-
-@pytest.fixture(scope="module")
-def get_backend(vespa_instance, temp_config_manager, schema_loader):
-    """
-    Factory function to get backend for a tenant.
-
-    Returns a function that creates backend instances for different tenants.
-    Module-scoped to reuse backend instances across tests.
-    """
-
-    def _get_backend(tenant_id: str):
-        registry = BackendRegistry.get_instance()
-        config = {
-            "backend": {
-                "url": "http://localhost",
-                "config_port": vespa_instance["config_port"],
-                "port": vespa_instance["http_port"],
-            }
-        }
-        return registry.get_search_backend(
-            name="vespa",
-            config=config,
-            config_manager=temp_config_manager,
-            schema_loader=schema_loader,
-        )
-
-    return _get_backend
 
 
 _KNOWN_BASE_SCHEMAS = _SHIPPED_VIDEO_BASE_SCHEMAS + (

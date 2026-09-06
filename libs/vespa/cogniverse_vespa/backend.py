@@ -23,6 +23,11 @@ from .vespa_schema_manager import DEPLOY_REQUEST_TIMEOUT_S, VespaSchemaManager
 # feeder callable from sync code) — no separate adapter module is needed.
 logger = logging.getLogger(__name__)
 
+# Budget for every service to run an activated generation and for each new
+# schema to accept a feed. Measured: 6 s for a 138-schema package on an idle
+# cluster, 17 s with three schema-removal generations queued ahead of it.
+SCHEMA_CONVERGENCE_TIMEOUT_S = 60
+
 
 def _http_status_of(exc: BaseException) -> Optional[int]:
     """Best-effort HTTP status from a pyvespa client exception.
@@ -1029,13 +1034,26 @@ class VespaBackend(Backend):
             # explicitly asked for it. The merge above + live Vespa discovery
             # should make the override unnecessary; if something still slips
             # through, failing loudly beats silently dropping a schema.
-            self._deploy_package(app_package, allow_schema_removal=allow_schema_removal)
+            generation = self._deploy_package(
+                app_package, allow_schema_removal=allow_schema_removal
+            )
 
-            # Wait for content nodes to converge with the new schema
-            # Vespa config server accepts the package immediately but content/distributor
-            # nodes need time to pick up new document types.
-            schema_names = [s.name for s in schemas_to_deploy]
-            self._wait_for_schema_convergence(schema_names)
+            # The config server activates the package immediately; every
+            # service picks the generation up on its own, and the content
+            # node registers each new document type only after its
+            # DocumentDB is online. Feeding before that is refused.
+            already_in_vespa = set(vespa_deployed)
+            schemas_new_to_vespa = [
+                s.name for s in schemas_to_deploy if s.name not in already_in_vespa
+            ]
+            try:
+                self._wait_for_schema_convergence(
+                    generation,
+                    schemas_new_to_vespa,
+                    timeout=SCHEMA_CONVERGENCE_TIMEOUT_S,
+                )
+            except RuntimeError as convergence_exc:
+                raise BackendDeploymentError(str(convergence_exc)) from convergence_exc
 
             logger.info(f"Successfully deployed {len(schemas_to_deploy)} schemas")
             return True
@@ -1055,7 +1073,7 @@ class VespaBackend(Backend):
         app_package,
         allow_field_type_change: bool = False,
         allow_schema_removal: bool = False,
-    ) -> None:
+    ) -> int:
         """
         Deploy an application package to Vespa.
 
@@ -1067,6 +1085,9 @@ class VespaBackend(Backend):
                 cluster currently has — without this, partial deploys (e.g., adding a
                 single tenant schema) get rejected because Vespa interprets the missing
                 schemas as a destructive removal.
+
+        Returns:
+            The config generation the config server activated (its session id).
 
         Raises:
             RuntimeError: If deployment fails
@@ -1169,77 +1190,185 @@ class VespaBackend(Backend):
                 import time as _t
 
                 _t.sleep(wait)
-            if response is not None and response.status_code == 200:
-                logger.info("Successfully deployed application package")
+            assert response is not None and response.status_code == 200
+            try:
+                generation = int(json.loads(response.content)["session-id"])
+            except (ValueError, KeyError, TypeError) as parse_exc:
+                raise RuntimeError(
+                    "Deployment succeeded but the config server response "
+                    f"carries no session-id: {response.content[:300]!r}"
+                ) from parse_exc
+            logger.info(
+                "Successfully deployed application package (generation %d)",
+                generation,
+            )
+            return generation
 
         except Exception as e:
             logger.error(f"Failed to deploy package: {str(e)}")
             raise
 
     def _wait_for_schema_convergence(
-        self, schema_names: List[str], timeout: int = 60
+        self, generation: int, new_schema_names: List[str], timeout: int = 60
     ) -> None:
-        """Wait for conditional feeds to reach every requested document type.
+        """Block until ``generation`` is live on every service and each new
+        schema accepts a real feed.
 
-        A POST with a false condition must return 412 from the feed path
-        without creating or replacing a document. Only unresolved schemas
-        are retried, using one HTTP session and a shared wall-clock deadline.
+        The config server's ``serviceconverge`` report lists the generation
+        every service (container, distributor, searchnode, ...) currently
+        runs; the content node reports a generation only after every
+        DocumentDB it adds is online. Each schema new to the cluster is then
+        proven feed-ready by writing and removing one probe document over
+        the same document/v1 path production feeds use.
 
         Raises:
-            RuntimeError: If any schema is not feed-ready before the deadline.
+            RuntimeError: If any service or schema is not ready by the deadline.
         """
         import time
 
         import requests
 
-        if not schema_names:
-            logger.debug("Skipping convergence probe: no schemas in deployment package")
-            return
-
         base_url = re.sub(r":\d+$", "", self._url)
-        document_url = f"{base_url}:{self._port}/document/v1"
-        logger.info(f"Waiting for feed convergence (schemas: {schema_names})...")
-        remaining = set(schema_names)
+        logger.info(
+            "Waiting for generation %d to converge (new schemas: %s)...",
+            generation,
+            new_schema_names,
+        )
         started = time.monotonic()
         deadline = started + timeout
         with requests.Session() as session:
-            while remaining:
-                for name in sorted(remaining):
-                    request_timeout = min(5.0, deadline - time.monotonic())
-                    if request_timeout <= 0:
-                        break
-                    try:
-                        response = session.post(
-                            f"{document_url}/{name}/{name}/docid/convergence_probe",
-                            params={
-                                "condition": "false",
-                                "timeout": f"{max(1, int(request_timeout * 1000))}ms",
-                            },
-                            json={"fields": {}},
-                            timeout=request_timeout,
-                        )
-                        if response.status_code == 412:
-                            remaining.remove(name)
-                    except requests.RequestException:
-                        pass
-
-                if not remaining:
-                    logger.info(
-                        "Feed paths converged after %.1fs (schemas=%s)",
-                        time.monotonic() - started,
-                        schema_names,
-                    )
-                    return
-                delay = min(1.0, deadline - time.monotonic())
-                if delay <= 0:
-                    break
-                time.sleep(delay)
-
-        raise RuntimeError(
-            f"Schema convergence not confirmed after {timeout}s — deploy was "
-            f"accepted by the config server but these schemas never became "
-            f"feed-ready: {sorted(remaining)}"
+            failure = self._wait_for_generation(
+                session,
+                f"{base_url}:{self._config_port}/application/v2/tenant/default/"
+                "application/default/environment/prod/region/default/instance/"
+                "default/serviceconverge",
+                generation,
+                deadline,
+            )
+            if failure:
+                raise RuntimeError(
+                    f"Schema convergence not confirmed after {timeout}s — "
+                    f"generation {generation} was activated by the config server "
+                    f"but is not live on every service: {failure}"
+                )
+            feed_errors = self._feed_probe(
+                session,
+                f"{base_url}:{self._port}/document/v1",
+                new_schema_names,
+                deadline,
+            )
+        if feed_errors:
+            raise RuntimeError(
+                f"Schema convergence not confirmed after {timeout}s — generation "
+                f"{generation} is live on every service but these schemas never "
+                f"accepted a feed: {feed_errors}"
+            )
+        logger.info(
+            "Generation %d converged after %.1fs (schemas fed: %s)",
+            generation,
+            time.monotonic() - started,
+            sorted(new_schema_names),
         )
+
+    @staticmethod
+    def _wait_for_generation(
+        session, converge_url: str, generation: int, deadline: float
+    ) -> str:
+        """Poll ``serviceconverge`` until every listed service runs at least
+        ``generation``. Returns "" on success, else the last failure seen."""
+        import time
+
+        import requests
+
+        failure = "serviceconverge was never queried"
+        while True:
+            budget = min(5.0, deadline - time.monotonic())
+            if budget <= 0:
+                return failure
+            try:
+                response = session.get(
+                    converge_url,
+                    params={"timeout": str(max(1, int(budget)))},
+                    timeout=budget + 5,
+                )
+            except requests.RequestException as exc:
+                failure = f"serviceconverge request failed: {exc}"
+            else:
+                if response.status_code != 200:
+                    failure = (
+                        f"serviceconverge returned HTTP {response.status_code}: "
+                        f"{response.text[:300]}"
+                    )
+                else:
+                    services = response.json().get("services", [])
+                    lagging = sorted(
+                        f"{s.get('type')}@{s.get('host')}:{s.get('port')}"
+                        f"={s.get('currentGeneration')}"
+                        for s in services
+                        if not isinstance(s.get("currentGeneration"), int)
+                        or s["currentGeneration"] < generation
+                    )
+                    if services and not lagging:
+                        return ""
+                    failure = (
+                        f"services behind generation {generation}: {lagging}"
+                        if services
+                        else "serviceconverge listed no services"
+                    )
+            delay = min(1.0, deadline - time.monotonic())
+            if delay <= 0:
+                return failure
+            time.sleep(delay)
+
+    @staticmethod
+    def _feed_probe(
+        session, document_url: str, schema_names: List[str], deadline: float
+    ) -> Dict[str, str]:
+        """Write and remove one probe document per schema over document/v1.
+        Returns the last error per schema that never completed the round trip."""
+        import time
+
+        import requests
+
+        remaining = set(schema_names)
+        errors: Dict[str, str] = {name: "not probed" for name in remaining}
+        while remaining:
+            for name in sorted(remaining):
+                request_timeout = min(5.0, deadline - time.monotonic())
+                if request_timeout <= 0:
+                    return {name: errors[name] for name in sorted(remaining)}
+                probe_url = f"{document_url}/{name}/{name}/docid/convergence_probe"
+                params = {"timeout": f"{max(1, int(request_timeout * 1000))}ms"}
+                try:
+                    put = session.post(
+                        probe_url,
+                        params=params,
+                        json={"fields": {}},
+                        timeout=request_timeout,
+                    )
+                    if put.status_code != 200:
+                        errors[name] = f"feed HTTP {put.status_code}: {put.text[:300]}"
+                        continue
+                    delete = session.delete(
+                        probe_url, params=params, timeout=request_timeout
+                    )
+                    if delete.status_code != 200:
+                        errors[name] = (
+                            f"probe document removal HTTP {delete.status_code}: "
+                            f"{delete.text[:300]}"
+                        )
+                        continue
+                except requests.RequestException as exc:
+                    errors[name] = f"feed request failed: {exc}"
+                    continue
+                remaining.remove(name)
+            if not remaining:
+                return {}
+            delay = min(1.0, deadline - time.monotonic())
+            if delay <= 0:
+                return {name: errors[name] for name in sorted(remaining)}
+            time.sleep(delay)
+        return {}
 
     def delete_schema(
         self, schema_name: str, tenant_id: Optional[str] = None
