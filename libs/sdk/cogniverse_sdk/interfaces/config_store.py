@@ -154,6 +154,15 @@ class ConfigEntry:
             raise ValueError(f"ConfigEntry.from_dict: {e}") from None
 
 
+class ConfigStoreUnavailableError(RuntimeError):
+    """The backing store did not answer a read within the implementation's
+    retry budget. Raised only for transient failures (connection refused,
+    timeouts, 5xx) that persisted across every attempt; a clean absence
+    returns None and a non-transient response propagates as itself. Callers
+    that wait for the store at startup retry on this; nothing else should
+    catch it silently."""
+
+
 class ConfigStore(ABC):
     """
     Abstract interface for configuration storage

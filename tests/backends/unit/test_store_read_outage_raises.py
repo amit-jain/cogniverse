@@ -16,7 +16,11 @@ import pytest
 import requests
 
 import cogniverse_vespa.config.config_store as config_store_module
-from cogniverse_sdk.interfaces.config_store import ConfigEntry, ConfigScope
+from cogniverse_sdk.interfaces.config_store import (
+    ConfigEntry,
+    ConfigScope,
+    ConfigStoreUnavailableError,
+)
 from cogniverse_vespa.config.config_store import VespaConfigStore
 from cogniverse_vespa.registry.adapter_store import VespaAdapterStore
 
@@ -155,7 +159,7 @@ def test_visit_reads_retry_connection_errors_until_budget_exhausted(monkeypatch)
     ):
         scripted_get.calls = 0
         clock.current = 1000.0
-        with pytest.raises(RuntimeError) as exc_info:
+        with pytest.raises(ConfigStoreUnavailableError) as exc_info:
             getattr(store, method_name)(**kwargs)
 
         assert scripted_get.calls == attempts
@@ -308,7 +312,7 @@ def test_list_all_configs_raises_after_retry_budget_exhausted(monkeypatch):
     monkeypatch.setattr(requests, "get", scripted_get)
 
     store = _config_store(_boom)
-    with pytest.raises(RuntimeError) as exc_info:
+    with pytest.raises(ConfigStoreUnavailableError) as exc_info:
         store.list_all_configs()
 
     assert scripted_get.calls == attempts
@@ -393,7 +397,7 @@ def test_list_all_configs_backend_error_raises(monkeypatch):
     monkeypatch.setattr(requests, "get", scripted_get)
 
     store = _config_store(_boom)
-    with pytest.raises(RuntimeError) as exc_info:
+    with pytest.raises(ConfigStoreUnavailableError) as exc_info:
         store.list_all_configs()
 
     assert scripted_get.calls == attempts

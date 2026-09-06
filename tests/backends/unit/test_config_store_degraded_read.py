@@ -12,7 +12,11 @@ import pytest
 import requests
 
 import cogniverse_vespa.config.config_store as config_store_module
-from cogniverse_sdk.interfaces.config_store import ConfigEntry, ConfigScope
+from cogniverse_sdk.interfaces.config_store import (
+    ConfigEntry,
+    ConfigScope,
+    ConfigStoreUnavailableError,
+)
 from cogniverse_vespa.config.config_store import VespaConfigStore
 
 pytestmark = [pytest.mark.unit, pytest.mark.ci_fast]
@@ -160,7 +164,7 @@ def test_get_config_raises_on_visit_timeout(monkeypatch):
     monkeypatch.setattr(requests, "get", timeout)
     store = _store_with(_clean_absent_response())
 
-    with pytest.raises(RuntimeError) as exc_info:
+    with pytest.raises(ConfigStoreUnavailableError) as exc_info:
         store.get_config("acme", ConfigScope.SYSTEM, "system", "poll_state")
 
     assert calls["count"] == attempts
@@ -237,7 +241,7 @@ def test_get_config_history_raises_on_visit_timeout(monkeypatch):
     monkeypatch.setattr(requests, "get", timeout)
     store = _store_with(_clean_absent_response())
 
-    with pytest.raises(RuntimeError) as exc_info:
+    with pytest.raises(ConfigStoreUnavailableError) as exc_info:
         store.get_config_history("acme", ConfigScope.SYSTEM, "system", "poll_state")
 
     assert calls["count"] == attempts
@@ -273,7 +277,7 @@ def test_list_configs_raises_on_visit_timeout(monkeypatch):
     monkeypatch.setattr(requests, "get", timeout)
     store = _store_with(_clean_absent_response())
 
-    with pytest.raises(RuntimeError) as exc_info:
+    with pytest.raises(ConfigStoreUnavailableError) as exc_info:
         store.list_configs("acme")
 
     assert calls["count"] == attempts

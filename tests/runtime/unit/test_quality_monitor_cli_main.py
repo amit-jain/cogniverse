@@ -288,6 +288,36 @@ def test_startup_dependency_retry_isolated_across_concurrent_waiters():
     assert attempt_count == waiter_count * 2
 
 
+def test_startup_dependency_retries_through_config_store_outage():
+    """The config store retries a transient Vespa failure itself and raises
+    ConfigStoreUnavailableError once its budget is spent; the startup wait
+    must keep polling through that, exactly as it does for a raw transport
+    error, instead of crashing the sidecar into a restart loop."""
+    from cogniverse_sdk.interfaces.config_store import ConfigStoreUnavailableError
+
+    expected_manager = object()
+    attempts = 0
+
+    def get_manager():
+        nonlocal attempts
+        attempts += 1
+        if attempts < 3:
+            raise ConfigStoreUnavailableError(
+                "Failed to read Vespa config visit after 5 attempts over 3.756s: "
+                "ConnectionError: [Errno 111] Connection refused"
+            )
+        return expected_manager
+
+    manager = qm._wait_for_telemetry_manager(
+        get_manager=get_manager,
+        timeout_seconds=1,
+        poll_interval_seconds=0,
+    )
+
+    assert manager is expected_manager
+    assert attempts == 3
+
+
 def test_startup_dependency_retries_past_timeout_and_logs_exact_failure_once(
     caplog,
 ):
