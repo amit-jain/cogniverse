@@ -13,7 +13,7 @@ from contextlib import contextmanager
 from dataclasses import dataclass
 from pathlib import Path
 from threading import Condition, Lock
-from types import MappingProxyType
+from types import MappingProxyType, TracebackType
 from typing import Callable, Iterable, Mapping, Sequence
 
 import httpx
@@ -725,7 +725,8 @@ class LocalEndpointProvider:
 
 
 class InferenceSessionResolver:
-    """Resolve each service once and close every provider once."""
+    """Resolve each service once — endpoint or failure — and close every
+    provider once."""
 
     def __init__(
         self,
@@ -740,6 +741,7 @@ class InferenceSessionResolver:
         self._lock = Lock()
         self._condition = Condition(self._lock)
         self._resolved: dict[str, ResolvedInferenceEndpoint] = {}
+        self._failed: dict[str, tuple[Exception, TracebackType | None]] = {}
         self._inflight: dict[str, Future[ResolvedInferenceEndpoint]] = {}
         self._closed = False
         self._closing = False
@@ -756,6 +758,10 @@ class InferenceSessionResolver:
             cached = self._resolved.get(service)
             if cached is not None:
                 return cached
+            failure = self._failed.get(service)
+            if failure is not None:
+                error, traceback = failure
+                raise error.with_traceback(traceback)
             future = self._inflight.get(service)
             owner = future is None
             if future is None:
@@ -766,6 +772,9 @@ class InferenceSessionResolver:
         try:
             endpoint = self._resolve_once(spec)
         except BaseException as exc:
+            if isinstance(exc, Exception):
+                with self._condition:
+                    self._failed[service] = (exc, exc.__traceback__)
             future.set_exception(exc)
             raise
         else:
@@ -908,9 +917,7 @@ def explicit_endpoints_from_environment(
 def collect_required_inference_services(items) -> frozenset[str]:
     required: set[str] = set()
     for item in items:
-        item_required = set(
-            getattr(item, "_cogniverse_required_inference_services", ())
-        )
+        item_required = set(getattr(item, _REQUIRED_SERVICES_ATTR, ()))
         for marker in item.iter_markers_with_node(name="requires_inference"):
             _, requirement = marker
             if len(requirement.args) != 1 or not isinstance(requirement.args[0], str):
@@ -932,7 +939,7 @@ def collect_required_inference_services(items) -> frozenset[str]:
             raise pytest.UsageError(f"unknown inference service {unknown[0]!r}")
         for service in tuple(item_required):
             item_required.update(_SERVICE_DEPENDENCIES.get(service, ()))
-        item._cogniverse_required_inference_services = frozenset(item_required)
+        setattr(item, _REQUIRED_SERVICES_ATTR, frozenset(item_required))
         setattr(item, _MODAL_SERVICES_ATTR, frozenset(modal_services))
         required.update(item_required)
     return frozenset(required)
@@ -1002,65 +1009,191 @@ def _build_resolver(
     )
 
 
+class InferenceEndpointEnvironment:
+    """Publish resolved endpoints as INFERENCE_SERVICE_URLS and
+    COGNIVERSE_INFERENCE_API_KEY; ``restore`` reinstates the values captured
+    at construction."""
+
+    def __init__(self) -> None:
+        self._original_urls = os.environ.get("INFERENCE_SERVICE_URLS")
+        self._original_key = os.environ.get("COGNIVERSE_INFERENCE_API_KEY")
+
+    def publish(self, endpoints: Mapping[str, ResolvedInferenceEndpoint]) -> None:
+        authorizations = {
+            endpoint.headers.get("Authorization") for endpoint in endpoints.values()
+        }
+        if len(authorizations) != 1:
+            raise RuntimeError(
+                "resolved inference endpoints must share one bearer credential"
+            )
+        authorization = authorizations.pop()
+        if not isinstance(authorization, str) or not authorization.startswith(
+            "Bearer "
+        ):
+            raise RuntimeError(
+                "resolved inference endpoints require bearer authentication"
+            )
+        os.environ["INFERENCE_SERVICE_URLS"] = json.dumps(
+            {service: endpoint.base_url for service, endpoint in endpoints.items()},
+            separators=(",", ":"),
+            sort_keys=True,
+        )
+        os.environ["COGNIVERSE_INFERENCE_API_KEY"] = authorization.removeprefix(
+            "Bearer "
+        )
+
+    def restore(self) -> None:
+        for name, original in (
+            ("INFERENCE_SERVICE_URLS", self._original_urls),
+            ("COGNIVERSE_INFERENCE_API_KEY", self._original_key),
+        ):
+            if original is None:
+                os.environ.pop(name, None)
+            else:
+                os.environ[name] = original
+
+
 @contextmanager
 def publish_inference_endpoints(
     endpoints: Mapping[str, ResolvedInferenceEndpoint],
 ):
-    original_urls = os.environ.get("INFERENCE_SERVICE_URLS")
-    original_key = os.environ.get("COGNIVERSE_INFERENCE_API_KEY")
-    authorizations = {
-        endpoint.headers.get("Authorization") for endpoint in endpoints.values()
-    }
-    if len(authorizations) != 1:
-        raise RuntimeError(
-            "resolved inference endpoints must share one bearer credential"
-        )
-    authorization = authorizations.pop()
-    if not isinstance(authorization, str) or not authorization.startswith("Bearer "):
-        raise RuntimeError("resolved inference endpoints require bearer authentication")
-    os.environ["INFERENCE_SERVICE_URLS"] = json.dumps(
-        {service: endpoint.base_url for service, endpoint in sorted(endpoints.items())},
-        separators=(",", ":"),
-        sort_keys=True,
-    )
-    os.environ["COGNIVERSE_INFERENCE_API_KEY"] = authorization.removeprefix("Bearer ")
+    environment = InferenceEndpointEnvironment()
     try:
+        environment.publish(endpoints)
         yield endpoints
     finally:
-        if original_urls is None:
-            os.environ.pop("INFERENCE_SERVICE_URLS", None)
-        else:
-            os.environ["INFERENCE_SERVICE_URLS"] = original_urls
-        if original_key is None:
-            os.environ.pop("COGNIVERSE_INFERENCE_API_KEY", None)
-        else:
-            os.environ["COGNIVERSE_INFERENCE_API_KEY"] = original_key
+        environment.restore()
 
 
-@pytest.fixture(scope="session", autouse=True)
-def requested_inference_services(request):
-    required = frozenset(
-        service
-        for item in request.session.items
-        for service in getattr(
-            item,
-            "_cogniverse_required_inference_services",
-            (),
+class SessionInferenceEndpoints:
+    """Endpoints for the services the session's items declared, resolved on
+    first request. A service's outcome — endpoint or failure — is fixed for
+    the session and reaches only the callers that ask for that service; each
+    endpoint is published to the process environment as it resolves, and
+    ``close`` releases every provider and restores the environment."""
+
+    def __init__(
+        self,
+        required: Iterable[str],
+        *,
+        modal_services: Iterable[str] = (),
+        environment: InferenceEndpointEnvironment,
+        build_resolver: Callable[..., InferenceSessionResolver],
+    ) -> None:
+        self._required = frozenset(required)
+        self._modal_services = frozenset(modal_services)
+        self._environment = environment
+        self._build_resolver = build_resolver
+        self._lock = Lock()
+        self._resolver: InferenceSessionResolver | None = None
+        self._endpoints: dict[str, ResolvedInferenceEndpoint] = {}
+        self._closed = False
+
+    @property
+    def required(self) -> frozenset[str]:
+        return self._required
+
+    def __getitem__(self, service: str) -> ResolvedInferenceEndpoint:
+        if service not in self._required:
+            raise KeyError(service)
+        return self._resolve(service)
+
+    def get(
+        self,
+        service: str,
+        default: ResolvedInferenceEndpoint | None = None,
+    ) -> ResolvedInferenceEndpoint | None:
+        if service not in self._required:
+            return default
+        return self._resolve(service)
+
+    def require(
+        self,
+        services: Iterable[str],
+    ) -> Mapping[str, ResolvedInferenceEndpoint]:
+        return MappingProxyType(
+            {service: self[service] for service in sorted(services)}
         )
+
+    def _resolve(self, service: str) -> ResolvedInferenceEndpoint:
+        with self._lock:
+            if self._closed:
+                raise RuntimeError("session inference endpoints are closed")
+            if self._resolver is None:
+                self._resolver = self._build_resolver(
+                    self._required,
+                    modal_services=self._modal_services,
+                )
+            resolver = self._resolver
+        endpoint = resolver.resolve(service)
+        with self._lock:
+            if service not in self._endpoints:
+                published = {**self._endpoints, service: endpoint}
+                self._environment.publish(published)
+                self._endpoints = published
+        return endpoint
+
+    def close(self) -> None:
+        with self._lock:
+            self._closed = True
+            resolver = self._resolver
+        try:
+            if resolver is not None:
+                resolver.close()
+        finally:
+            self._environment.restore()
+
+
+_SESSION_ENDPOINTS_KEY = pytest.StashKey[SessionInferenceEndpoints]()
+
+
+def _session_endpoints(session) -> SessionInferenceEndpoints:
+    endpoints = session.stash.get(_SESSION_ENDPOINTS_KEY, None)
+    if endpoints is None:
+        endpoints = SessionInferenceEndpoints(
+            frozenset(
+                service
+                for item in session.items
+                for service in getattr(item, _REQUIRED_SERVICES_ATTR, ())
+            ),
+            modal_services=frozenset(
+                service
+                for item in session.items
+                for service in getattr(item, _MODAL_SERVICES_ATTR, ())
+            ),
+            environment=InferenceEndpointEnvironment(),
+            build_resolver=_build_resolver,
+        )
+        session.stash[_SESSION_ENDPOINTS_KEY] = endpoints
+    return endpoints
+
+
+@pytest.hookimpl(tryfirst=True)
+def pytest_runtest_setup(item) -> None:
+    """Resolve the item's declared services before any of its fixtures run,
+    so a module- or class-scoped fixture never builds infrastructure for a
+    test whose service is unavailable, and the published endpoints are
+    visible to every fixture of the item."""
+    _session_endpoints(item.session).require(getattr(item, _REQUIRED_SERVICES_ATTR, ()))
+
+
+def pytest_sessionfinish(session) -> None:
+    endpoints = session.stash.get(_SESSION_ENDPOINTS_KEY, None)
+    if endpoints is not None:
+        endpoints.close()
+
+
+@pytest.fixture(scope="session")
+def requested_inference_services(request):
+    return _session_endpoints(request.session)
+
+
+@pytest.fixture
+def inference_endpoints(request, requested_inference_services):
+    """The endpoints this test declared with ``requires_inference``."""
+    return requested_inference_services.require(
+        getattr(request.node, _REQUIRED_SERVICES_ATTR, ())
     )
-    if not required:
-        yield MappingProxyType({})
-        return
-    modal_services = frozenset(
-        service
-        for item in request.session.items
-        for service in getattr(item, _MODAL_SERVICES_ATTR, ())
-    )
-    resolver = _build_resolver(required, modal_services=modal_services)
-    endpoints = resolver.resolve_required(sorted(required))
-    request.addfinalizer(resolver.close)
-    with publish_inference_endpoints(endpoints):
-        yield endpoints
 
 
 @pytest.fixture(scope="session")
