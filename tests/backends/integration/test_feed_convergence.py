@@ -1,50 +1,53 @@
-"""Schema convergence must reach the content node through the feed path."""
+"""A deploy returns only when its generation runs on every Vespa service and
+each schema new to the cluster has accepted a real feed."""
 
+import json
 import re
 import subprocess
 import threading
+import time
 from concurrent.futures import ThreadPoolExecutor
 from urllib.parse import parse_qs, urlsplit
 
 import pytest
 import requests
 
+from cogniverse_core.registries.exceptions import BackendDeploymentError
+from cogniverse_vespa import backend as backend_module
 from cogniverse_vespa.backend import VespaBackend
 
 pytestmark = pytest.mark.ci_fast
 
-
-@pytest.fixture
-def convergence_backend(vespa_instance):
-    backend = object.__new__(VespaBackend)
-    backend._url = "http://localhost"
-    backend._port = vespa_instance["http_port"]
-    return backend
-
-
-@pytest.fixture
-def feed_responses(monkeypatch):
-    responses = []
-    send = requests.Session.send
-
-    def record(session, request, **kwargs):
-        response = send(session, request, **kwargs)
-        url = urlsplit(request.url)
-        responses.append(
-            (request.method, url.path, parse_qs(url.query), response.status_code)
-        )
-        return response
-
-    monkeypatch.setattr(requests.Session, "send", record)
-    return responses
+TENANT = "conv_gate"
+CONVERGE_PATH = (
+    "/application/v2/tenant/default/application/default/environment/prod/"
+    "region/default/instance/default/serviceconverge"
+)
+SERVICE_TYPES = {
+    "container",
+    "container-clustercontroller",
+    "distributor",
+    "logserver-container",
+    "metricsproxy-container",
+    "searchnode",
+    "storagenode",
+}
 
 
-@pytest.mark.parametrize("process", ["vespa-distribut", "vespa-proton-bi"])
-def test_convergence_rejects_unresponsive_content_node(
-    convergence_backend, vespa_instance, process
-):
-    """Container search visibility cannot satisfy a gate for stalled feeds."""
-    container = vespa_instance["container_name"]
+def _probe_path(schema: str) -> str:
+    return f"/document/v1/{schema}/{schema}/docid/convergence_probe"
+
+
+def _active_generation(vespa_instance) -> int:
+    response = requests.get(
+        f"http://localhost:{vespa_instance['config_port']}{CONVERGE_PATH}",
+        timeout=30,
+    )
+    assert response.status_code == 200, response.text
+    return response.json()["currentGeneration"]
+
+
+def _signal(container: str, process: str, signal: str) -> None:
     pid = subprocess.run(
         ["docker", "exec", container, "pgrep", "-x", process],
         check=True,
@@ -54,151 +57,305 @@ def test_convergence_rejects_unresponsive_content_node(
     ).stdout.strip()
     assert pid.isdecimal() is True
     subprocess.run(
-        ["docker", "exec", container, "kill", "-STOP", pid],
+        ["docker", "exec", container, "kill", f"-{signal}", pid],
         check=True,
         timeout=10,
     )
-    try:
-        url = (
-            f"{vespa_instance['base_url']}/document/v1/config_metadata/"
-            "config_metadata/docid/convergence_probe"
-        )
-        ignored_update = requests.put(
-            url,
-            params={
-                "condition": 'config_metadata.nonexistent_field=="never"',
-                "timeout": "1s",
-            },
-            json={"fields": {}},
-            timeout=5,
-        )
-        assert ignored_update.status_code == 200
-        stalled_feed = requests.post(
-            url,
-            params={"condition": "false", "timeout": "1s"},
-            json={"fields": {}},
-            timeout=5,
-        )
-        assert stalled_feed.status_code == 504
-        error = stalled_feed.json()
-        if "id" in error:
-            error["message"] = re.sub(
-                r"tcp/[^:]+:\d+", "tcp/<host>:<port>", error["message"]
-            )
-            error["message"] = re.sub(
-                r"\([\d.]+ seconds expired\)",
-                "(<elapsed> seconds expired)",
-                error["message"],
-            )
-            assert error == {
-                "pathId": "/document/v1/config_metadata/config_metadata/docid/convergence_probe",
-                "id": "id:config_metadata:config_metadata::convergence_probe",
-                "message": (
-                    "[TIMEOUT @ tcp/<host>:<port>/default]: ReturnCode(TIMEOUT, "
-                    "A timeout occurred while waiting for "
-                    "'storage/cluster.cogniverse_content/storage/0' "
-                    "(<elapsed> seconds expired); (RPC) Invocation timed out) "
-                ),
-            }
-        else:
-            assert error == {
-                "pathId": "/document/v1/config_metadata/config_metadata/docid/convergence_probe",
-                "message": "Timeout after 1000ms",
-            }
-        with pytest.raises(RuntimeError) as exc_info:
-            convergence_backend._wait_for_schema_convergence(
-                ["config_metadata"], timeout=2
-            )
-        assert str(exc_info.value) == (
-            "Schema convergence not confirmed after 2s — deploy was "
-            "accepted by the config server but these schemas never became "
-            "feed-ready: ['config_metadata']"
-        )
-    finally:
-        subprocess.run(
-            ["docker", "exec", container, "kill", "-CONT", pid],
-            check=True,
-            timeout=10,
-        )
 
 
-def test_convergence_rejects_unknown_document_type(convergence_backend, feed_responses):
-    with pytest.raises(RuntimeError) as exc_info:
-        convergence_backend._wait_for_schema_convergence(
-            ["convergence_missing"], timeout=2
-        )
-    assert str(exc_info.value) == (
-        "Schema convergence not confirmed after 2s — deploy was "
-        "accepted by the config server but these schemas never became "
-        "feed-ready: ['convergence_missing']"
+def _wait_for_registry_to_see(
+    backend, full_names: set[str], timeout: float = 90
+) -> None:
+    """Block until the registry's storage read lists every schema in
+    ``full_names``. A content node that was frozen is marked down by the
+    cluster controller; until it is back up and its buckets are re-reported,
+    the config-store visit answers with fewer documents than exist."""
+    deadline = time.monotonic() + timeout
+    seen: set[str] = set()
+    while time.monotonic() < deadline:
+        seen = {
+            info.full_schema_name for info in backend.schema_registry._get_all_schemas()
+        }
+        if full_names <= seen:
+            return
+        time.sleep(1)
+    raise AssertionError(
+        f"registry never listed {sorted(full_names - seen)} within {timeout}s; saw {sorted(seen)}"
     )
-    assert {(method, path, status) for method, path, _, status in feed_responses} == {
-        (
-            "POST",
-            "/document/v1/convergence_missing/convergence_missing/docid/convergence_probe",
-            400,
-        )
-    }
 
 
-def test_convergence_does_not_create_probe_document(
-    convergence_backend, vespa_instance, feed_responses
-):
-    convergence_backend._wait_for_schema_convergence(["config_metadata"])
-    assert [(method, path, status) for method, path, _, status in feed_responses] == [
-        (
-            "POST",
-            "/document/v1/config_metadata/config_metadata/docid/convergence_probe",
-            412,
-        )
-    ]
-    assert feed_responses[0][2]["condition"] == ["false"]
-    response = requests.get(
-        f"{vespa_instance['base_url']}/document/v1/config_metadata/"
-        "config_metadata/docid/convergence_probe",
-        timeout=5,
-    )
-    assert response.status_code == 404
-    assert response.json() == {
-        "pathId": "/document/v1/config_metadata/config_metadata/docid/convergence_probe",
-        "id": "id:config_metadata:config_metadata::convergence_probe",
-    }
+def _wipe_tenant(backend) -> None:
+    for base in ("agent_memories", "provenance", "wiki_pages"):
+        full = backend.get_tenant_schema_name(TENANT, base)
+        if full in backend.schema_manager.list_deployed_document_types():
+            backend.schema_manager.delete_schema(TENANT, base)
 
 
-def test_concurrent_convergence_keeps_probes_independent(
-    convergence_backend, vespa_instance, monkeypatch
-):
-    barrier = threading.Barrier(2)
+@pytest.fixture(scope="module")
+def backend(get_backend):
+    backend = get_backend(TENANT)
+    _wipe_tenant(backend)
+    yield backend
+    _wipe_tenant(backend)
+
+
+@pytest.fixture
+def http_trace(monkeypatch):
+    """Every request the gate sends, in order, with its response."""
+    trace = []
     send = requests.Session.send
-    responses = []
 
-    def simultaneous_send(session, request, **kwargs):
-        barrier.wait(timeout=10)
+    def record(session, request, **kwargs):
         response = send(session, request, **kwargs)
-        responses.append((request.method, response.status_code))
+        url = urlsplit(request.url)
+        trace.append(
+            {
+                "method": request.method,
+                "path": url.path,
+                "query": parse_qs(url.query),
+                "status": response.status_code,
+                "body": response.text,
+            }
+        )
         return response
 
-    with monkeypatch.context() as patch:
+    monkeypatch.setattr(requests.Session, "send", record)
+    return trace
+
+
+def _probes(trace):
+    return [
+        (entry["method"], entry["path"], entry["status"])
+        for entry in trace
+        if entry["path"].endswith("/docid/convergence_probe")
+    ]
+
+
+def _converge_calls(trace):
+    return [entry for entry in trace if entry["path"] == CONVERGE_PATH]
+
+
+def test_deploy_waits_for_generation_then_feeds_only_the_new_schema(
+    backend, http_trace, vespa_instance
+):
+    full = backend.schema_registry.deploy_schema(TENANT, "agent_memories")
+    assert full == "agent_memories_conv_gate_conv_gate"
+
+    activations = [
+        entry
+        for entry in http_trace
+        if entry["path"] == "/application/v2/tenant/default/prepareandactivate"
+    ]
+    assert [entry["status"] for entry in activations] == [200]
+    generation = int(json.loads(activations[0]["body"])["session-id"])
+
+    converge = _converge_calls(http_trace)
+    assert {entry["status"] for entry in converge} == {200}
+    last = json.loads(converge[-1]["body"])
+    assert {service["type"] for service in last["services"]} == SERVICE_TYPES
+    assert {
+        service["type"]
+        for service in last["services"]
+        if service["currentGeneration"] < generation
+    } == set()
+
+    assert _probes(http_trace) == [
+        ("POST", _probe_path(full), 200),
+        ("DELETE", _probe_path(full), 200),
+    ]
+    order = [id(entry) for entry in http_trace]
+    first_probe = next(
+        entry for entry in http_trace if entry["path"] == _probe_path(full)
+    )
+    assert order.index(id(converge[-1])) < order.index(id(first_probe))
+
+    base_url = vespa_instance["base_url"]
+    leftover = requests.get(f"{base_url}{_probe_path(full)}", timeout=10)
+    assert leftover.status_code == 404
+    assert leftover.json() == {
+        "pathId": _probe_path(full),
+        "id": f"id:{full}:{full}::convergence_probe",
+    }
+
+    fed = requests.post(
+        f"{base_url}/document/v1/{full}/{full}/docid/after_gate",
+        json={"fields": {}},
+        timeout=10,
+    )
+    assert fed.status_code == 200
+    assert fed.json() == {
+        "pathId": f"/document/v1/{full}/{full}/docid/after_gate",
+        "id": f"id:{full}:{full}::after_gate",
+    }
+    removed = requests.delete(
+        f"{base_url}/document/v1/{full}/{full}/docid/after_gate", timeout=10
+    )
+    assert removed.status_code == 200
+
+    http_trace.clear()
+    second = backend.schema_registry.deploy_schema(TENANT, "provenance")
+    assert second == "provenance_conv_gate_conv_gate"
+    assert _probes(http_trace) == [
+        ("POST", _probe_path(second), 200),
+        ("DELETE", _probe_path(second), 200),
+    ]
+
+
+@pytest.mark.parametrize("process", ["vespa-distribut", "vespa-proton-bi"])
+def test_deploy_rejects_a_service_that_never_runs_the_generation(
+    backend, vespa_instance, monkeypatch, process
+):
+    """A frozen service keeps its old generation; the deploy must not
+    report the schema live while a feed would be refused."""
+    monkeypatch.setattr(backend_module, "SCHEMA_CONVERGENCE_TIMEOUT_S", 12)
+    container = vespa_instance["container_name"]
+    full = backend.get_tenant_schema_name(TENANT, "wiki_pages")
+    activate = backend._deploy_package
+    activated = []
+
+    def activate_then_freeze(*args, **kwargs):
+        generation = activate(*args, **kwargs)
+        activated.append(generation)
+        _signal(container, process, "STOP")
+        return generation
+
+    monkeypatch.setattr(backend, "_deploy_package", activate_then_freeze)
+    try:
+        with pytest.raises(BackendDeploymentError) as exc_info:
+            backend.schema_registry.deploy_schema(TENANT, "wiki_pages")
+    finally:
+        if activated:
+            _signal(container, process, "CONT")
+    monkeypatch.setattr(backend, "_deploy_package", activate)
+
+    [generation] = activated
+    prefix = (
+        f"Backend deployment failed for schema '{full}': Schema convergence "
+        f"not confirmed after 12s — generation {generation} was activated by "
+        "the config server but is not live on every service: services behind "
+        f"generation {generation}: "
+    )
+    message = str(exc_info.value)
+    assert message.startswith(prefix), message
+    lagging = json.loads(message[len(prefix) :].replace("'", '"'))
+    frozen = {"vespa-distribut": "distributor", "vespa-proton-bi": "searchnode"}[
+        process
+    ]
+    by_type = {entry.split("@")[0]: entry.rsplit("=", 1)[1] for entry in lagging}
+    assert by_type[frozen] == "-1"
+    assert set(by_type) <= {frozen, "storagenode", "container"}
+    assert set(by_type.values()) <= {"-1", str(generation - 1)}
+
+    # The activation happened before the gate refused: Vespa holds the
+    # schema, the registry does not. Remove it, then prove the same deploy
+    # succeeds once the service runs the generation.
+    _wait_for_registry_to_see(
+        backend,
+        {
+            backend.get_tenant_schema_name(TENANT, "agent_memories"),
+            backend.get_tenant_schema_name(TENANT, "provenance"),
+        },
+    )
+    backend.schema_manager.delete_schema(TENANT, "wiki_pages")
+    assert full not in backend.schema_manager.list_deployed_document_types()
+    assert backend.schema_registry.deploy_schema(TENANT, "wiki_pages") == full
+    fed = requests.post(
+        f"{vespa_instance['base_url']}/document/v1/{full}/{full}/docid/after_thaw",
+        json={"fields": {}},
+        timeout=10,
+    )
+    assert fed.status_code == 200, fed.text
+    requests.delete(
+        f"{vespa_instance['base_url']}/document/v1/{full}/{full}/docid/after_thaw",
+        timeout=10,
+    )
+    backend.schema_manager.delete_schema(TENANT, "wiki_pages")
+
+
+@pytest.fixture
+def gate_backend(vespa_instance):
+    backend = object.__new__(VespaBackend)
+    backend._url = "http://localhost"
+    backend._port = vespa_instance["http_port"]
+    backend._config_port = vespa_instance["config_port"]
+    return backend
+
+
+def test_gate_rejects_a_schema_the_feed_path_does_not_know(
+    gate_backend, vespa_instance, http_trace
+):
+    generation = _active_generation(vespa_instance)
+    with pytest.raises(RuntimeError) as exc_info:
+        gate_backend._wait_for_schema_convergence(
+            generation, ["convergence_missing"], timeout=3
+        )
+    assert str(exc_info.value) == (
+        f"Schema convergence not confirmed after 3s — generation {generation} "
+        "is live on every service but these schemas never accepted a feed: "
+        "{'convergence_missing': 'feed HTTP 400: {\"pathId\":\"/document/v1/"
+        'convergence_missing/convergence_missing/docid/convergence_probe",'
+        '"message":"Document type convergence_missing does not exist"}\'}'
+    )
+    assert set(_probes(http_trace)) == {
+        ("POST", _probe_path("convergence_missing"), 400)
+    }
+
+
+def test_gate_reports_an_unreachable_config_server(gate_backend):
+    sock = __import__("socket").socket()
+    sock.bind(("127.0.0.1", 0))
+    dead_port = sock.getsockname()[1]
+    sock.close()
+    gate_backend._config_port = dead_port
+    with pytest.raises(RuntimeError) as exc_info:
+        gate_backend._wait_for_schema_convergence(7, ["never_probed"], timeout=2)
+    message = str(exc_info.value)
+    assert re.fullmatch(
+        "Schema convergence not confirmed after 2s — generation 7 was activated "
+        "by the config server but is not live on every service: serviceconverge "
+        f"request failed: HTTPConnectionPool\\(host='localhost', port={dead_port}\\): "
+        "Max retries exceeded with url: " + re.escape(CONVERGE_PATH) + r"\?timeout=1 "
+        r"\(Caused by NewConnectionError\(.*Connection refused.*\)\)",
+        message,
+        re.DOTALL,
+    ), message
+
+
+def test_concurrent_gates_share_one_probe_document(gate_backend, vespa_instance):
+    generation = _active_generation(vespa_instance)
+    barrier = threading.Barrier(2)
+    send = requests.Session.send
+    statuses = []
+
+    def simultaneous_send(session, request, **kwargs):
+        is_probe = urlsplit(request.url).path == _probe_path("config_metadata")
+        if is_probe:
+            barrier.wait(timeout=15)
+        response = send(session, request, **kwargs)
+        if is_probe:
+            statuses.append((request.method, response.status_code))
+        return response
+
+    with pytest.MonkeyPatch.context() as patch:
         patch.setattr(requests.Session, "send", simultaneous_send)
         with ThreadPoolExecutor(max_workers=2) as pool:
             waits = [
                 pool.submit(
-                    convergence_backend._wait_for_schema_convergence,
+                    gate_backend._wait_for_schema_convergence,
+                    generation,
                     ["config_metadata"],
                 )
                 for _ in range(2)
             ]
-            assert [wait.result(timeout=15) for wait in waits] == [None, None]
+            assert [wait.result(timeout=60) for wait in waits] == [None, None]
 
-    assert responses == [("POST", 412), ("POST", 412)]
-
-    response = requests.get(
-        f"{vespa_instance['base_url']}/document/v1/config_metadata/"
-        "config_metadata/docid/convergence_probe",
-        timeout=5,
+    assert sorted(statuses) == [
+        ("DELETE", 200),
+        ("DELETE", 200),
+        ("POST", 200),
+        ("POST", 200),
+    ]
+    leftover = requests.get(
+        f"{vespa_instance['base_url']}{_probe_path('config_metadata')}", timeout=10
     )
-    assert response.status_code == 404
-    assert response.json() == {
-        "pathId": "/document/v1/config_metadata/config_metadata/docid/convergence_probe",
-        "id": "id:config_metadata:config_metadata::convergence_probe",
-    }
+    assert leftover.status_code == 404
