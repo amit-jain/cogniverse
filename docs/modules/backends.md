@@ -1510,9 +1510,10 @@ on source-granularity results. Each matched segment row includes
 `document_id`, `score`, and any temporal keys present in the schema; segment
 granularity omits both fields.
 
-`export_embeddings()` walks Vespa's Document v1 continuation pages. Every page
-must return HTTP 200; an initial or continuation failure raises with the visit
-route instead of returning an empty or partial export.
+`export_embeddings()` defaults to the backend's configured schema; an explicit
+`schema` argument overrides it for that call. It walks Vespa's Document v1
+continuation pages. Every page must return HTTP 200; an initial or continuation
+failure raises with the visit route instead of returning an empty or partial export.
 
 Search retries use the `RetryConfig` supplied to the constructor, including
 after `initialize()` is called. Reconstructed results retain the query content

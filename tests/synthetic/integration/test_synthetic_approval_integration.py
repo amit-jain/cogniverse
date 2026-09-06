@@ -300,7 +300,7 @@ def synthetic_service(shared_vespa):
                 embedding_type="multi_vector",
                 model_loader="colpali",
                 schema_config={
-                    "schema_name": "video_colpali",
+                    "schema_name": base_schema,
                     "model_name": "TomoroAI/tomoro-colqwen3-embed-4b",
                     "num_patches": 1024,
                     "embedding_dim": 320,

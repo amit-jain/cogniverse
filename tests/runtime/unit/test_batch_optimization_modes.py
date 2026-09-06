@@ -22,6 +22,7 @@ import pytest
 
 from cogniverse_runtime.optimization_cli import build_parser
 from cogniverse_sdk.interfaces.workflow_store import WorkflowLearningState
+from tests.utils.vespa_test_helpers import shipped_profile
 
 # Patch targets: these are imported locally inside each function,
 # so we patch at the source module.
@@ -1371,61 +1372,41 @@ class TestProfileSelectionTrainingExamples:
         from cogniverse_foundation.config.unified_config import (
             BackendProfileConfig,
             SystemConfig,
+            profile_embedding_service,
         )
         from cogniverse_runtime.optimization_cli import _profile_selection_pairs
         from tests.utils.memory_store import InMemoryConfigStore
 
-        store = InMemoryConfigStore()
-        config_manager = ConfigManager(store=store)
+        frame_profile = shipped_profile(
+            profile_type="video", embedding_type="multi_vector", extract_keyframes=True
+        )
+        chunk_profile = shipped_profile(
+            profile_type="video",
+            embedding_type="multi_vector",
+            process_type="video_chunks",
+        )
+        unavailable_profile = BackendProfileConfig.from_dict(
+            "unavailable_video_profile",
+            shipped_profile(
+                profile_type="video", embedding_type="single_vector"
+            ).to_dict(),
+        )
+        config_manager = ConfigManager(store=InMemoryConfigStore())
         config_manager.set_system_config(
             SystemConfig(
                 inference_service_urls={
-                    "vllm_colpali": "http://localhost:8000",
-                    "vllm_colqwen": "http://localhost:8001",
+                    profile_embedding_service(
+                        profile.to_dict()
+                    ): "http://localhost:8000"
+                    for profile in (frame_profile, chunk_profile)
                 }
             )
         )
-        config_manager.add_backend_profile(
-            BackendProfileConfig.from_dict(
-                "video_colpali_smol500_mv_frame",
-                {
-                    "type": "video",
-                    "schema_name": "video_colpali_smol500_mv_frame",
-                    "embedding_model": "TomoroAI/tomoro-colqwen3-embed-4b",
-                    "inference_services": {"embedding": "vllm_colpali"},
-                },
-            ),
-            tenant_id="acme:docs",
-        )
-        config_manager.add_backend_profile(
-            BackendProfileConfig.from_dict(
-                "video_colqwen_omni_mv_chunk_30s",
-                {
-                    "type": "video",
-                    "schema_name": "video_colqwen_omni_mv_chunk_30s",
-                    "embedding_model": "TomoroAI/tomoro-colqwen3-embed-4b",
-                    "inference_services": {"embedding": "vllm_colqwen"},
-                },
-            ),
-            tenant_id="acme:docs",
-        )
-        config_manager.add_backend_profile(
-            BackendProfileConfig.from_dict(
-                "video_xclip_base_mv_chunk_30s",
-                {
-                    "type": "video",
-                    "schema_name": "video_xclip_base_mv_chunk_30s",
-                    "embedding_model": "microsoft/xclip-large-patch14",
-                    "inference_services": {"embedding": "video_embed"},
-                },
-            ),
-            tenant_id="acme:docs",
-        )
+        for profile in (frame_profile, chunk_profile, unavailable_profile):
+            config_manager.add_backend_profile(profile, tenant_id="acme:docs")
 
-        expected_live = [
-            "video_colpali_smol500_mv_frame",
-            "video_colqwen_omni_mv_chunk_30s",
-        ]
+        expected_live = [frame_profile.profile_name, chunk_profile.profile_name]
+        recorded_pool = ", ".join(reversed(expected_live))
         assert tenant_usable_profile_names(config_manager, "acme:docs") == (
             expected_live
         )
@@ -1438,24 +1419,21 @@ class TestProfileSelectionTrainingExamples:
                     "attributes.input.value": "find a clip about transformer architecture",
                     "attributes.output.value": json.dumps(
                         {
-                            "selected_profile": "video_colqwen_omni_mv_chunk_30s",
+                            "selected_profile": chunk_profile.profile_name,
                             "modality": "video",
                             "complexity": "medium",
                             "intent": "video_search",
                             "confidence": 0.9,
                         }
                     ),
-                    "attributes.available_profiles": (
-                        "video_colqwen_omni_mv_chunk_30s, "
-                        "video_colpali_smol500_mv_frame"
-                    ),
+                    "attributes.available_profiles": recorded_pool,
                 },
                 {
                     "context.span_id": "ps-2",
                     "attributes.input.value": "find a clip about transformer architecture",
                     "attributes.output.value": json.dumps(
                         {
-                            "selected_profile": "video_colpali_smol500_mv_frame",
+                            "selected_profile": frame_profile.profile_name,
                             "modality": "video",
                             "complexity": "medium",
                             "intent": "video_search",
@@ -1473,10 +1451,8 @@ class TestProfileSelectionTrainingExamples:
         assert pairs == [
             {
                 "query": "find a clip about transformer architecture",
-                "available_profiles": (
-                    "video_colqwen_omni_mv_chunk_30s, video_colpali_smol500_mv_frame"
-                ),
-                "selected_profile": "video_colqwen_omni_mv_chunk_30s",
+                "available_profiles": recorded_pool,
+                "selected_profile": chunk_profile.profile_name,
                 "modality": "video",
                 "complexity": "medium",
                 "intent": "video_search",
@@ -1486,7 +1462,7 @@ class TestProfileSelectionTrainingExamples:
             {
                 "query": "find a clip about transformer architecture",
                 "available_profiles": ", ".join(expected_live),
-                "selected_profile": "video_colpali_smol500_mv_frame",
+                "selected_profile": frame_profile.profile_name,
                 "modality": "video",
                 "complexity": "medium",
                 "intent": "video_search",

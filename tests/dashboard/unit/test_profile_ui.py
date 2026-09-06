@@ -551,7 +551,7 @@ def test_create_form_offers_only_valid_embedding_types(monkeypatch):
         if label == "Schema Config (JSON)":
             schema_value = call.kwargs["value"]
     assert json.loads(schema_value) == {
-        "schema_name": "video_colpali",
+        "schema_name": "video_colpali_smol500_mv_frame",
         "model_name": "TomoroAI/tomoro-colqwen3-embed-4b",
         "embedding_dim": 320,
         "binary_dim": 40,

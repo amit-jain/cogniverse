@@ -34,7 +34,7 @@ import requests
 
 from cogniverse_agents.graph.graph_manager import GraphManager
 from cogniverse_agents.graph.graph_schema import Edge, normalize_name
-from tests.utils.vespa_test_helpers import schema_full_name
+from tests.utils.vespa_test_helpers import schema_full_name, shipped_profile
 
 logger = logging.getLogger(__name__)
 
@@ -311,13 +311,15 @@ class _DeterministicClaimExtractor:
 
 
 @pytest.fixture(scope="module")
-def colbert_endpoint(pylate_server):
+def colbert_endpoint(request):
     """LateOn ``/pooling`` endpoint, served by the session-scoped PyLate
     sidecar ``pylate_server`` fixture. An explicit ``INFERENCE_SERVICE_URLS``
     colbert_pylate URL takes precedence when set so CI can point at a
     pre-deployed pod."""
     env_url = _colbert_endpoint_from_env()
-    return env_url if env_url is not None else pylate_server
+    if env_url:
+        return env_url
+    return request.getfixturevalue("pylate_server")
 
 
 # --------------------------------------------------------------------- #
@@ -357,9 +359,9 @@ def content_backref_env(shared_memory_vespa, colbert_endpoint):
     prior_vespa_url = os.environ.get("VESPA_URL")
     prior_inference_urls = os.environ.get("INFERENCE_SERVICE_URLS")
     os.environ["VESPA_URL"] = base_url
-    os.environ["INFERENCE_SERVICE_URLS"] = json.dumps(
-        {"colbert_pylate": colbert_endpoint}
-    )
+    inference_urls = json.loads(prior_inference_urls or "{}")
+    inference_urls["colbert_pylate"] = colbert_endpoint
+    os.environ["INFERENCE_SERVICE_URLS"] = json.dumps(inference_urls)
 
     # Wire a GraphManager factory into the graph router so the ingestion
     # path can resolve a per-tenant manager.
@@ -389,6 +391,7 @@ def content_backref_env(shared_memory_vespa, colbert_endpoint):
             backend_port=http_port,
             telemetry_url="",
             telemetry_collector_endpoint="",
+            inference_service_urls=inference_urls,
         )
     )
     schema_loader = FilesystemSchemaLoader(Path("configs/schemas"))
@@ -417,11 +420,7 @@ def content_backref_env(shared_memory_vespa, colbert_endpoint):
     prior_factory = graph_router._graph_manager_factory
     graph_router.set_graph_manager_factory(_factory)
 
-    # Point the ConfigManager singleton (which DocExtractor consults for the
-    # GLiNER endpoint) at this fixture's config_manager. Its empty
-    # inference_service_urls make _discover_gliner_url return None so GLiNER
-    # loads locally instead of hitting the unresolvable in-cluster sidecar
-    # URL — otherwise entity extraction silently degrades and entity_ids drift.
+    # DocExtractor resolves the configured GLiNER endpoint through this manager.
     import cogniverse_foundation.config.utils as _cfg_utils
 
     _prev_singleton = _cfg_utils._config_manager_singleton
@@ -707,7 +706,9 @@ class TestContentBackrefsClaimIdsEqualRelationIds:
 _MODALITY_FIXTURES = [
     pytest.param(
         "video_chunk",
-        "video_xclip_base_mv_chunk_30s",
+        shipped_profile(
+            profile_type="video", embedding_type="single_vector"
+        ).schema_name,
         "content_backrefs_video_chunk.json",
         id="video_chunk",
     ),

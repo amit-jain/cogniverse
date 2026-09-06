@@ -26,10 +26,59 @@ from typing import Any, Dict
 from cogniverse_core.registries.backend_registry import BackendRegistry
 from cogniverse_core.schemas.filesystem_loader import FilesystemSchemaLoader
 from cogniverse_foundation.config.manager import ConfigManager
-from cogniverse_foundation.config.unified_config import SystemConfig
+from cogniverse_foundation.config.unified_config import (
+    BackendProfileConfig,
+    SystemConfig,
+)
 from cogniverse_vespa.config.config_store import VespaConfigStore
 
-_SCHEMAS_DIR = Path("configs/schemas")
+_PROFILES_PATH = Path(__file__).resolve().parents[2] / "configs" / "config.json"
+_SCHEMAS_DIR = _PROFILES_PATH.parent / "schemas"
+
+
+def shipped_profile(
+    *,
+    profile_type: str,
+    embedding_type: str,
+    process_type: str | None = None,
+    extract_keyframes: bool | None = None,
+) -> BackendProfileConfig:
+    """Select one shipped profile by capabilities and resolve its base schema."""
+    profiles = {
+        name: BackendProfileConfig.from_dict(name, data)
+        for name, data in json.loads(_PROFILES_PATH.read_text())["backend"][
+            "profiles"
+        ].items()
+    }
+    matches = {
+        name: profile
+        for name, profile in profiles.items()
+        if profile.type == profile_type
+        and profile.embedding_type == embedding_type
+        and (process_type is None or profile.process_type == process_type)
+        and (
+            extract_keyframes is None
+            or profile.pipeline_config.get("extract_keyframes") == extract_keyframes
+        )
+    }
+    if len(matches) != 1:
+        criteria = {
+            "profile_type": profile_type,
+            "embedding_type": embedding_type,
+            "process_type": process_type,
+            "extract_keyframes": extract_keyframes,
+        }
+        raise ValueError(
+            f"Expected exactly one shipped profile for {criteria}; "
+            f"matched {sorted(matches)!r}"
+        )
+    profile = next(iter(matches.values()))
+    schema = load_raw_schema_json(profile.schema_name)
+    if schema["name"] != profile.schema_name:
+        raise ValueError(
+            f"Schema file for {profile.schema_name!r} declares {schema['name']!r}"
+        )
+    return profile
 
 
 def make_config_manager(shared_vespa: Dict[str, Any]) -> ConfigManager:

@@ -568,6 +568,8 @@ module = DSPyModuleRegistry.create_module(
 
 ### SchemaRegistry
 
+Source: [cogniverse_core/registries/schema_registry.py](../../libs/core/cogniverse_core/registries/schema_registry.py).
+
 ```python
 from cogniverse_core.registries import SchemaRegistry
 
@@ -1868,6 +1870,8 @@ errors = validator.validate_profile(profile, tenant_id="acme", is_update=False)
 the only values accepted for the corresponding profile fields.
 
 ### FilesystemSchemaLoader (schemas/filesystem_loader.py)
+
+Source: [cogniverse_core/schemas/filesystem_loader.py](../../libs/core/cogniverse_core/schemas/filesystem_loader.py).
 
 Loads Vespa schema template files (`.sd` content + JSON metadata) from disk
 for `SchemaRegistry` and `BackendFactory` to deploy; implements the
