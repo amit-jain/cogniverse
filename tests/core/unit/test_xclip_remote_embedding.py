@@ -22,13 +22,13 @@ from pathlib import Path
 
 import numpy as np
 import pytest
-
 from cogniverse_cli.modal_inference.servers.video_embed import (
     EmbedResponse,
     TextEmbedRequest,
     VideoEmbedConfig,
     VideoEmbedRequest,
 )
+
 from cogniverse_core.common.models.model_loaders import RemoteInferenceClient
 from cogniverse_core.query.encoders import QueryEncoderFactory, XClipQueryEncoder
 
