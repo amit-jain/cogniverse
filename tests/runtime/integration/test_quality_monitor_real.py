@@ -4,21 +4,28 @@ Integration tests for QualityMonitor with real Vespa search + real Phoenix.
 Full round-trip: golden query → real /search → real Vespa with real data
 → real MRR/nDCG scoring → store baseline in real Phoenix → detect degradation.
 
-Uses shared vespa_instance + search_client + real_telemetry from conftest.
+Uses fixture-owned Vespa and Phoenix with a separate tenant per evaluation.
 ColPali model generates real embeddings for test documents.
 """
 
 import json
 import logging
+import socket
 import time
+import uuid
 from datetime import datetime
 
 import httpx
 import numpy as np
 import pytest
-import requests
+from fastapi import FastAPI
 from PIL import Image
+from vespa.application import Vespa
 
+from cogniverse_agents.optimizer.artifact_manager import ArtifactManager
+from cogniverse_agents.optimizer.golden_set_ground_truth import (
+    GoldenSetGroundTruthStoreUnavailableError,
+)
 from cogniverse_core.common.models.model_loaders import RemoteColPaliLoader
 from cogniverse_core.query.encoders import QueryEncoderFactory
 from cogniverse_evaluation.quality_monitor import (
@@ -35,11 +42,30 @@ from tests.utils.llm_config import get_llm_base_url, get_llm_model
 logger = logging.getLogger(__name__)
 
 COLPALI_MODEL_NAME = "TomoroAI/tomoro-colqwen3-embed-4b"
-# Schema name follows the canonicalize-then-replace-colons rule the
-# ``SchemaRegistry.deploy_schema`` path uses: ``qm_real_test`` →
-# canonical ``qm_real_test:qm_real_test`` → schema-safe
-# ``qm_real_test_qm_real_test``.
-TENANT_SCHEMA_NAME = "video_colpali_smol500_mv_frame_qm_real_test_qm_real_test"
+SEARCH_PROFILE = "video_colpali_smol500_mv_frame"
+GOLDEN_QUERIES = [
+    {
+        "query": "a solid red square",
+        "expected_videos": ["v_red"],
+        "ground_truth": "A solid red square",
+        "query_type": "question",
+        "source": "test",
+    },
+    {
+        "query": "a solid blue square",
+        "expected_videos": ["v_blue"],
+        "ground_truth": "A solid blue square",
+        "query_type": "question",
+        "source": "test",
+    },
+    {
+        "query": "cat sleeping on sofa",
+        "expected_videos": ["v_nonexistent"],
+        "ground_truth": "Cat sleeping",
+        "query_type": "question",
+        "source": "test",
+    },
+]
 
 
 def _embeddings_to_vespa_tensors(embeddings: np.ndarray):
@@ -96,221 +122,251 @@ def colpali_client(vllm_colpali_url):
     QueryEncoderFactory._encoder_cache.clear()
 
 
+@pytest.fixture
+def qm_tenant():
+    return f"qm:{uuid.uuid4().hex}"
+
+
 @pytest.fixture(scope="module")
-def seeded_vespa(vespa_instance, colpali_client, config_manager, schema_loader):
-    """Feed test documents into Vespa with real ColPali embeddings.
+def embedded_documents(colpali_client):
+    """Embed the three color images once; each test feeds its own tenant."""
+    documents = []
+    for name, color in [
+        ("red", (255, 0, 0)),
+        ("blue", (0, 0, 255)),
+        ("green", (0, 128, 0)),
+    ]:
+        result = colpali_client.process_images(
+            [Image.new("RGB", (224, 224), color=color)],
+            model_name=COLPALI_MODEL_NAME,
+        )
+        embeddings = np.asarray(
+            result.get("embeddings") if isinstance(result, dict) else result
+        ).astype(np.float32)
+        float_dict, binary_dict = _embeddings_to_vespa_tensors(embeddings)
+        documents.append(
+            {
+                "id": name,
+                "fields": {
+                    "video_id": f"v_{name}",
+                    "video_title": f"A solid {name} square",
+                    "segment_id": 0,
+                    "start_time": 0.0,
+                    "end_time": 5.0,
+                    "segment_description": f"A solid {name} square",
+                    "audio_transcript": "",
+                    "embedding": float_dict,
+                    "embedding_binary": binary_dict,
+                },
+            }
+        )
+    return documents
 
-    Deploys the tenant-scoped schema for the ``qm_real_test`` tenant via
-    SchemaRegistry — same code path production uses. The registry's
-    deploy_schemas call merges schemas already present in the live Vespa
-    cluster (e.g. the ``_test_unit`` baseline from the module conftest),
-    so the redeploy preserves them instead of treating them as removals.
 
-    Keeping a distinct ``qm_real_test`` tenant (rather than reusing
-    ``test:unit``) isolates Phoenix baselines — the golden-eval baseline
-    tests read back what they write, so a shared tenant would collide
-    with neighbouring tests under the same TestGoldenEvalRealVespa run.
-    """
+@pytest.fixture
+def seeded_vespa(
+    vespa_instance, embedded_documents, config_manager, schema_loader, qm_tenant
+):
+    """Own the search profile, tenant metadata, schema and indexed documents."""
     from cogniverse_core.registries.schema_registry import SchemaRegistry
-    from cogniverse_foundation.config.unified_config import BackendConfig
+    from cogniverse_foundation.config.unified_config import (
+        BackendConfig,
+        BackendProfileConfig,
+    )
     from cogniverse_vespa.backend import VespaBackend
+    from tests.utils.async_polling import wait_for_condition_sync
 
-    # Build a dedicated backend for the qm_real_test tenant. Going through
-    # BackendRegistry would cache the instance across tests; a local
-    # instance keeps teardown simple and the schema deploy isolated.
-    qm_tenant = "qm_real_test"
-    backend_config = BackendConfig(
-        backend_type="vespa",
-        url="http://localhost",
-        port=vespa_instance["http_port"],
+    config_manager.add_backend_profile(
+        BackendProfileConfig(
+            profile_name=SEARCH_PROFILE,
+            type="video",
+            schema_name=SEARCH_PROFILE,
+            embedding_model=COLPALI_MODEL_NAME,
+            model_loader="colpali",
+            extra_config={"inference_services": {"embedding": "vllm_colpali"}},
+        ),
         tenant_id=qm_tenant,
     )
     backend = VespaBackend(
-        backend_config=backend_config,
+        backend_config=BackendConfig(
+            backend_type="vespa",
+            url="http://localhost",
+            port=vespa_instance["http_port"],
+            tenant_id=qm_tenant,
+        ),
         schema_loader=schema_loader,
         config_manager=config_manager,
     )
     backend.initialize({"tenant_id": qm_tenant})
-
     registry = SchemaRegistry(
-        config_manager=config_manager,
-        backend=backend,
-        schema_loader=schema_loader,
+        config_manager=config_manager, backend=backend, schema_loader=schema_loader
     )
     backend.schema_registry = registry
     backend.schema_manager._schema_registry = registry
-
-    # deploy_schema() triggers backend.deploy_schemas(), which in turn
-    # (per the fix in this session) discovers deployed document types
-    # from Vespa and merges them with the new qm_real_test schema.
-    registry.deploy_schema(
-        tenant_id=qm_tenant,
-        base_schema_name="video_colpali_smol500_mv_frame",
+    schema_name = registry.deploy_schema(
+        tenant_id=qm_tenant, base_schema_name=SEARCH_PROFILE
+    )
+    tenant_name = qm_tenant.split(":")[1]
+    backend.create_metadata_document(
+        schema="tenant_metadata",
+        doc_id=qm_tenant,
+        fields={
+            "tenant_full_id": qm_tenant,
+            "org_id": "qm",
+            "tenant_name": tenant_name,
+            "created_at": 1700000000000,
+            "created_by": "quality-monitor-test",
+            "status": "active",
+            "schemas_deployed": [SEARCH_PROFILE],
+        },
     )
 
-    # Wait for the new schema to be addressable for feeds. GET on the
-    # document API returns 404 for any URL — even bogus schemas — so
-    # it can't tell us when the content distributor has converged.
-    # /search/ with model.restrict exposes the real state: Vespa errors
-    # out listing the set of valid source refs, and we proceed once our
-    # schema is in that set.
-    probe_url = f"http://localhost:{vespa_instance['http_port']}/search/"
-    last_state = None
-    for attempt in range(120):
-        probe = requests.post(
-            probe_url,
-            json={
-                "yql": "select documentid from sources * where true limit 0",
-                "hits": 0,
-                "model.restrict": TENANT_SCHEMA_NAME,
-            },
-            timeout=5,
+    statuses = {}
+    app = Vespa(url=f"http://localhost:{vespa_instance['http_port']}")
+    app.feed_iterable(
+        iter=embedded_documents,
+        schema=schema_name,
+        namespace="video",
+        callback=lambda response, doc_id: statuses.update(
+            {doc_id: response.status_code}
+        ),
+    )
+    assert statuses == {"red": 200, "blue": 200, "green": 200}
+
+    def indexed_ids():
+        response = app.query(
+            yql=f"select video_id from {schema_name} where true",
+            hits=10,
         )
-        if probe.status_code == 200:
-            body = probe.json()
-            errors = body.get("root", {}).get("errors", [])
-            msg = " ".join(e.get("message", "") for e in errors)
-            last_state = msg or "ok"
-            if TENANT_SCHEMA_NAME in msg or not errors:
-                logger.info(
-                    f"{TENANT_SCHEMA_NAME} visible to /search/ after {attempt + 1}s"
-                )
-                break
-        time.sleep(1)
-    else:
-        raise RuntimeError(
-            f"Schema {TENANT_SCHEMA_NAME!r} not visible to /search/ after "
-            f"120s — last state: {last_state}"
-        )
+        return {hit["fields"]["video_id"] for hit in response.hits}
 
-    # Document API (feed path) converges a few seconds after /search/ can
-    # see the schema; a small post-search buffer avoids a racy first feed.
-    time.sleep(5)
+    wait_for_condition_sync(
+        lambda: indexed_ids() == {"v_red", "v_blue", "v_green"},
+        timeout=60,
+        description=f"indexed color documents for {qm_tenant}",
+    )
+    return backend
 
-    http_port = vespa_instance["http_port"]
 
-    test_docs = [
-        {
-            "color": (255, 0, 0),
-            "title": "Man lifting heavy barbell in gym",
-            "video_id": "v_-HpCLXdtcas",
-        },
-        {
-            "color": (0, 0, 255),
-            "title": "Ocean waves crashing on rocky coast",
-            "video_id": "v_ocean_test",
-        },
-        {
-            "color": (0, 128, 0),
-            "title": "Person running through forest trail",
-            "video_id": "v_forest_test",
-        },
-    ]
-
-    for i, doc_info in enumerate(test_docs):
-        img = Image.new("RGB", (224, 224), color=doc_info["color"])
-        result = colpali_client.process_images([img], model_name=COLPALI_MODEL_NAME)
-        embeddings_np = np.asarray(
-            result.get("embeddings") if isinstance(result, dict) else result
-        ).astype(np.float32)
-        float_dict, binary_dict = _embeddings_to_vespa_tensors(embeddings_np)
-
-        doc_id = f"qm_test_doc_{i}"
-        vespa_doc = {
-            "fields": {
-                "video_id": doc_info["video_id"],
-                "video_title": doc_info["title"],
-                "segment_id": 0,
-                "start_time": 0.0,
-                "end_time": 5.0,
-                "segment_description": doc_info["title"],
-                "audio_transcript": "",
-                "embedding": float_dict,
-                "embedding_binary": binary_dict,
-            }
-        }
-
-        resp = requests.post(
-            f"http://localhost:{http_port}/document/v1/video/{TENANT_SCHEMA_NAME}/docid/{doc_id}",
-            json=vespa_doc,
-            timeout=10,
-        )
-        assert resp.status_code in [200, 201], (
-            f"Failed to feed doc {doc_id}: {resp.status_code}: {resp.text[:200]}"
-        )
-
-    time.sleep(5)  # Wait for indexing
-
-    yield test_docs
-
-    for i in range(len(test_docs)):
-        doc_id = f"qm_test_doc_{i}"
-        try:
-            requests.delete(
-                f"http://localhost:{http_port}/document/v1/video/{TENANT_SCHEMA_NAME}/docid/{doc_id}",
-                timeout=5,
-            )
-        except Exception:
-            pass
+async def _seed_golden_rows(provider, tenant_id, rows):
+    manager = ArtifactManager(telemetry_provider=provider, tenant_id=tenant_id)
+    content = json.dumps(rows)
+    if await manager.load_blob("config", "golden_set_ground_truth") == content:
+        return
+    _, version = await manager.save_blob_versioned(
+        "config",
+        "golden_set_ground_truth",
+        content,
+        consumed_example_ids=["quality_monitor_test:golden_rows"],
+        decision="promote",
+        scored=False,
+        score=None,
+        base_score=None,
+        candidate_score=None,
+    )
+    await manager.activate_version("config", "golden_set_ground_truth", version)
 
 
 @pytest.fixture
-def monitor_with_real_search(
-    search_client, real_telemetry, phoenix_container, tmp_path
+async def monitor_with_real_search(
+    real_telemetry,
+    phoenix_container,
+    config_manager,
+    schema_loader,
+    seeded_vespa,
+    qm_tenant,
 ):
-    """QualityMonitor wired to real search via TestClient bridge."""
-    golden_queries = [
-        {
-            "query": "man lifting barbell",
-            "expected_videos": ["v_-HpCLXdtcas"],
-            "ground_truth": "Man lifting a barbell in gym",
-            "query_type": "answer_phrase",
-            "source": "test",
-        },
-        {
-            "query": "ocean waves coast",
-            "expected_videos": ["v_ocean_test"],
-            "ground_truth": "Ocean waves on coast",
-            "query_type": "question",
-            "source": "test",
-        },
-        {
-            "query": "cat sleeping on sofa",
-            "expected_videos": ["v_nonexistent"],
-            "ground_truth": "Cat sleeping",
-            "query_type": "question",
-            "source": "test",
-        },
-    ]
-    golden_path = tmp_path / "golden.json"
-    golden_path.write_text(json.dumps(golden_queries))
+    """Load tenant-owned Phoenix ground truth and call the real search router."""
+    from cogniverse_runtime.admin import tenant_manager
+    from cogniverse_runtime.routers import search
 
-    m = QualityMonitor(
-        tenant_id="qm_real_test",
+    provider = real_telemetry.get_provider(tenant_id=qm_tenant)
+    await _seed_golden_rows(provider, qm_tenant, GOLDEN_QUERIES)
+    await _seed_golden_rows(provider, qm_tenant, GOLDEN_QUERIES)
+    manager = ArtifactManager(telemetry_provider=provider, tenant_id=qm_tenant)
+    assert await manager.list_versions("config", "golden_set_ground_truth") == [
+        {"version": 1, "name": f"dspy-config-{qm_tenant}-golden_set_ground_truth-v1"}
+    ]
+    frame = await provider.datasets.get_dataset(
+        f"dspy-config-{qm_tenant}-golden_set_ground_truth"
+    )
+    assert frame.to_dict("records") == [
+        {"input": {"content": json.dumps(GOLDEN_QUERIES)}, "output": {}, "metadata": {}}
+    ]
+    app = FastAPI()
+    app.include_router(search.router, prefix="/search")
+    app.dependency_overrides[search.get_config_manager_dependency] = lambda: (
+        config_manager
+    )
+    app.dependency_overrides[search.get_schema_loader_dependency] = lambda: (
+        schema_loader
+    )
+    monitor = QualityMonitor(
+        tenant_id=qm_tenant,
         runtime_url="http://testserver",
         phoenix_http_endpoint=phoenix_container["http_endpoint"],
         llm_base_url=get_llm_base_url(),
         llm_model=get_llm_model(),
-        golden_dataset_path=str(golden_path),
+        golden_dataset_path="",
+        telemetry_provider=provider,
     )
-
-    # Bridge to TestClient
-    m._http_client = httpx.AsyncClient(
-        transport=httpx.MockTransport(
-            lambda req: _testclient_transport(search_client, req)
-        ),
-        base_url="http://testserver",
+    monitor._http_client = httpx.AsyncClient(
+        transport=httpx.ASGITransport(app=app), base_url="http://testserver"
     )
-
-    yield m
-
-    import asyncio
-
+    previous_backend = tenant_manager.backend
+    tenant_manager.backend = seeded_vespa
     try:
-        loop = asyncio.get_running_loop()
-        loop.run_until_complete(m.close())
-    except RuntimeError:
-        asyncio.run(m.close())
+        yield monitor
+    finally:
+        tenant_manager.backend = previous_backend
+        await monitor.close()
+
+
+async def _dataset_names(monitor, prefix):
+    from phoenix.client import AsyncClient
+
+    async with httpx.AsyncClient(base_url=monitor.phoenix_http_endpoint) as client:
+        datasets = await AsyncClient(http_client=client).datasets.list()
+    return [
+        row["name"]
+        for row in datasets
+        if row["name"].startswith(f"{prefix}-{monitor.tenant_id}-")
+    ]
+
+
+def _assert_golden_result(result):
+    assert result.query_count == 3
+    assert result.failed_query_count == 0
+    assert result.failed_queries == []
+    assert result.mean_mrr == pytest.approx(2 / 3)
+    assert result.mean_ndcg == pytest.approx(2 / 3)
+    assert result.mean_precision_at_5 == pytest.approx(2 / 9)
+    assert [entry["query"] for entry in result.per_query_scores] == [
+        "a solid red square",
+        "a solid blue square",
+        "cat sleeping on sofa",
+    ]
+    assert [entry["expected_videos"] for entry in result.per_query_scores] == [
+        ["v_red"],
+        ["v_blue"],
+        ["v_nonexistent"],
+    ]
+    assert [entry["mrr"] for entry in result.per_query_scores] == [1.0, 1.0, 0.0]
+    assert [entry["ndcg"] for entry in result.per_query_scores] == [1.0, 1.0, 0.0]
+    assert [entry["retrieved_videos"][0] for entry in result.per_query_scores[:2]] == [
+        "v_red",
+        "v_blue",
+    ]
+    for entry in result.per_query_scores:
+        assert len(entry["retrieved_videos"]) == 3
+        assert set(entry["retrieved_videos"]) == {"v_red", "v_blue", "v_green"}
+    assert [entry["query"] for entry in result.low_scoring_queries] == [
+        "cat sleeping on sofa"
+    ]
+    assert [entry["query"] for entry in result.high_scoring_queries] == [
+        "a solid red square",
+        "a solid blue square",
+    ]
 
 
 @pytest.mark.integration
@@ -318,216 +374,320 @@ class TestGoldenEvalRealVespa:
     """Golden eval against real Vespa with real ingested data."""
 
     @pytest.mark.asyncio
-    async def test_golden_eval_with_real_data(
-        self, monitor_with_real_search, seeded_vespa
-    ):
-        """Run golden eval against Vespa with real ColPali-embedded documents.
+    async def test_golden_eval_with_real_data(self, monitor_with_real_search):
+        monitor = monitor_with_real_search
+        result = await monitor.evaluate_golden_set()
 
-        Expected: "man lifting barbell" should match v_-HpCLXdtcas (MRR > 0).
-        "cat sleeping" should NOT match anything (MRR = 0).
-        """
-        result = await monitor_with_real_search.evaluate_golden_set()
-
-        assert result.query_count == 3
-        assert 0.0 <= result.mean_mrr <= 1.0
-        assert 0.0 <= result.mean_ndcg <= 1.0
-
-        scores_by_query = {s["query"]: s for s in result.per_query_scores}
-
-        # "cat sleeping on sofa" — no matching doc in Vespa
-        cat = scores_by_query.get("cat sleeping on sofa")
-        if cat:
-            assert cat["mrr"] == 0.0, (
-                f"'cat sleeping' should score MRR=0 (no matching doc), got {cat['mrr']}"
-            )
-
-        # At least one query should have MRR > 0 (barbell or ocean should match)
-        has_positive_mrr = any(s["mrr"] > 0 for s in result.per_query_scores)
-        assert has_positive_mrr, (
-            f"At least one golden query should match real Vespa data. "
-            f"Scores: {[(s['query'], s['mrr']) for s in result.per_query_scores]}"
-        )
+        assert await monitor._load_golden_queries_async() == GOLDEN_QUERIES
+        assert result.tenant_id == monitor.tenant_id
+        _assert_golden_result(result)
 
     @pytest.mark.asyncio
     async def test_golden_eval_stores_baseline_in_phoenix(
-        self, monitor_with_real_search, seeded_vespa
+        self, monitor_with_real_search
     ):
-        """Golden eval result persists in real Phoenix dataset.
+        monitor = monitor_with_real_search
+        result = await monitor.evaluate_golden_set()
 
-        After the run is stored, the baseline reader returns THIS run's MRR
-        (the newest complete row); the prior baseline captured on the result
-        itself predates the store (None on a first run).
-        """
-        result = await monitor_with_real_search.evaluate_golden_set()
-
-        assert result.failed_query_count == 0
-        baseline = await monitor_with_real_search._read_baseline_metric("mean_mrr")
-        assert baseline is not None
-        assert baseline == pytest.approx(result.mean_mrr, abs=0.01)
+        _assert_golden_result(result)
+        assert result.baseline_mrr is None
+        assert result.baseline_ndcg is None
+        assert await monitor._read_baseline_metric("mean_mrr") == pytest.approx(2 / 3)
+        frame = await monitor._get_dataset_store().get_dataset(
+            f"quality-baseline-{monitor.tenant_id}"
+        )
+        assert len(frame) == 1
+        assert json.loads(_roundtrip_value(frame, "payload")) == {
+            "timestamp": result.timestamp.isoformat(),
+            "mean_mrr": pytest.approx(2 / 3),
+            "mean_ndcg": pytest.approx(2 / 3),
+            "mean_precision_at_5": pytest.approx(2 / 9),
+            "query_count": 3,
+            "failed_query_count": 0,
+        }
 
     @pytest.mark.asyncio
     async def test_degradation_detection_with_real_baseline(
-        self, monitor_with_real_search, seeded_vespa
+        self, monitor_with_real_search, caplog
     ):
-        """A prior baseline higher than the current eval yields OPTIMIZE.
-
-        The drop must be measured against the baseline captured BEFORE the
-        run stored its own result — so the inflated baseline is seeded first,
-        then a fresh eval captures it as its prior.
-        """
-        result1 = await monitor_with_real_search.evaluate_golden_set()
-        real_mrr = result1.mean_mrr
-
-        inflated_mrr = min(real_mrr + 0.30, 1.0)
-        await monitor_with_real_search._store_golden_eval_result(
+        monitor = monitor_with_real_search
+        result1 = await monitor.evaluate_golden_set()
+        _assert_golden_result(result1)
+        assert result1.baseline_mrr is None
+        await monitor._store_golden_eval_result(
             GoldenEvalResult(
                 timestamp=datetime.utcnow(),
-                tenant_id="qm_real_test",
-                mean_mrr=inflated_mrr,
-                mean_ndcg=0.90,
-                mean_precision_at_5=0.80,
-                query_count=20,
+                tenant_id=monitor.tenant_id,
+                mean_mrr=0.95,
+                mean_ndcg=0.95,
+                mean_precision_at_5=0.8,
+                query_count=3,
             )
         )
 
-        # Fresh eval captures the inflated value as its prior baseline.
-        result2 = await monitor_with_real_search.evaluate_golden_set()
-        assert result2.baseline_mrr == pytest.approx(inflated_mrr, abs=0.01)
-
-        verdicts = monitor_with_real_search.check_thresholds(result2, None)
-        assert verdicts[AgentType.SEARCH] == Verdict.OPTIMIZE, (
-            f"Expected OPTIMIZE: current MRR={result2.mean_mrr:.3f}, "
-            f"baseline={inflated_mrr:.3f}, "
-            f"drop={((inflated_mrr - result2.mean_mrr) / inflated_mrr):.1%}"
-        )
-
-
-def _testclient_transport(test_client, request):
-    """Bridge httpx.AsyncClient to FastAPI TestClient."""
-    path = request.url.path
-    if request.url.query:
-        path = f"{path}?{request.url.query}"
-
-    response = test_client.request(
-        method=request.method,
-        url=path,
-        content=request.content,
-        headers=dict(request.headers),
-    )
-
-    return httpx.Response(
-        status_code=response.status_code,
-        headers=dict(response.headers),
-        content=response.content,
-    )
+        result2 = await monitor.evaluate_golden_set()
+        _assert_golden_result(result2)
+        assert result2.baseline_mrr == 0.95
+        assert result2.baseline_ndcg == 0.95
+        with caplog.at_level(
+            logging.INFO, logger="cogniverse_evaluation.quality_monitor"
+        ):
+            verdicts = monitor.check_thresholds(result2, None)
+        assert verdicts == {AgentType.SEARCH: Verdict.SKIP}
+        assert [
+            record.message
+            for record in caplog.records
+            if record.name == "cogniverse_evaluation.quality_monitor"
+        ] == [
+            "Golden MRR dropped 29.8% (0.950 → 0.667)",
+            "Golden nDCG dropped 29.8% (0.950 → 0.667)",
+            "XGBoost overrides search OPTIMIZE → SKIP (expected improvement 0.000 too low)",
+        ]
 
 
 @pytest.mark.integration
 class TestForceOptimizationCycle:
-    """QualityMonitor.force_optimization_cycle() runs a full
-    eval+trigger+store cycle without a threshold check, used by CronWorkflows.
-    Before fix #7 there was no --once CLI path, so scheduled distillation was
-    impossible when quality was stable."""
+    """Configured cycles persist golden results and trigger examples."""
 
     @pytest.mark.asyncio
-    async def test_force_cycle_returns_status_dict(self, real_telemetry):
-        """force_optimization_cycle() must return a dict with a 'status' key.
-
-        Even with no live spans in Phoenix, the function must complete without
-        raising and return a recognizable result dict — the 'no_data' path is
-        still a valid outcome that callers can log/alert on."""
-        from tests.utils.llm_config import get_llm_base_url, get_llm_model
-
-        phoenix_url = real_telemetry.config.provider_config["http_endpoint"]
-
-        monitor = QualityMonitor(
-            tenant_id="force_cycle_test",
-            runtime_url="http://localhost:99999",  # unreachable, both evals will fail
-            phoenix_http_endpoint=phoenix_url,
-            llm_base_url=get_llm_base_url(),
-            llm_model=get_llm_model(),
-            golden_dataset_path="/tmp/nonexistent_golden.csv",
-        )
-
+    async def test_force_cycle_returns_status_dict(self, monitor_with_real_search):
+        monitor = monitor_with_real_search
         result = await monitor.force_optimization_cycle()
 
-        assert isinstance(result, dict), (
-            f"force_optimization_cycle must return a dict, got: {result!r}"
-        )
-        assert "status" in result, f"Result dict missing 'status' key: {result}"
-        # no_trigger_examples: evals ran but produced zero triggerable
-        # examples, so no dataset was stored and nothing was submitted.
-        assert result["status"] in ("ok", "no_data", "no_trigger_examples"), (
-            f"Unexpected status value: {result['status']!r}"
-        )
-        await monitor.close()
+        assert result == {
+            "status": "ok",
+            "agents_triggered": [
+                "search",
+                "summary",
+                "report",
+                "gateway",
+                "routing",
+                "query_enhancement",
+                "entity_extraction",
+                "profile_selection",
+            ],
+            "submitted_to_argo": False,
+        }
+        assert await monitor._load_golden_queries_async() == GOLDEN_QUERIES
+        assert await monitor._read_baseline_metric("mean_mrr") == pytest.approx(2 / 3)
+        live = await monitor.evaluate_live_traffic()
+        assert live.agent_results == {}
+        trigger_names = await _dataset_names(monitor, "optimization-trigger")
+        assert len(trigger_names) == 1
+        frame = await monitor._get_dataset_store().get_dataset(trigger_names[0])
+        assert len(frame) == 3
+        assert sorted(
+            tuple(
+                _roundtrip_value(frame.iloc[[i]], col)
+                for col in ["agent", "category", "query"]
+            )
+            for i in range(len(frame))
+        ) == [
+            ("search", "high_scoring", "a solid blue square"),
+            ("search", "high_scoring", "a solid red square"),
+            ("search", "low_scoring", "cat sleeping on sofa"),
+        ]
 
     @pytest.mark.requires_lm
     @pytest.mark.local_only
     @pytest.mark.asyncio
     async def test_force_cycle_with_live_spans_returns_ok(
-        self, real_telemetry, vespa_instance
+        self, monitor_with_real_search, real_telemetry
     ):
-        """When Phoenix has at least one live span, force_optimization_cycle
-        must return status='ok' and list triggered agents.
-
-        The live eval scores the emitted span with the LLM judge, so this
-        test owns the test LM via the requires_lm marker."""
-        import asyncio
-
-        from cogniverse_core.agents.base import (
-            AgentBase,
-            AgentDeps,
-            AgentInput,
-            AgentOutput,
+        monitor = monitor_with_real_search
+        query = "force cycle live seed"
+        real_telemetry.register_project(
+            tenant_id=monitor.tenant_id,
+            project_name=None,
+            otlp_endpoint=real_telemetry.config.provider_config["grpc_endpoint"],
+            http_endpoint=real_telemetry.config.provider_config["http_endpoint"],
+            use_sync_export=True,
         )
-
-        class _PingInput(AgentInput):
-            query: str
-            tenant_id: str = "force_cycle_live_test"
-
-        class _PingOutput(AgentOutput):
-            result: str
-
-        class _PingDeps(AgentDeps):
-            pass
-
-        class SearchAgent(AgentBase[_PingInput, _PingOutput, _PingDeps]):
-            async def _process_impl(self, input):
-                return _PingOutput(result="pong")
-
-        agent = SearchAgent(deps=_PingDeps())
-        agent.set_telemetry_manager(real_telemetry)
-        await agent.process(
-            _PingInput(query="force cycle live seed", tenant_id="force_cycle_live_test")
+        _emit_agent_span(
+            real_telemetry,
+            monitor.tenant_id,
+            "SearchAgent.process",
+            query,
+            json.dumps([{"video_id": "v_red", "score": 1.0}]),
         )
-
-        await asyncio.sleep(3)
-
-        from tests.utils.llm_config import get_llm_base_url, get_llm_model
-
-        phoenix_url = real_telemetry.config.provider_config["http_endpoint"]
-
-        monitor = QualityMonitor(
-            tenant_id="force_cycle_live_test",
-            runtime_url="http://localhost:99999",
-            phoenix_http_endpoint=phoenix_url,
-            llm_base_url=get_llm_base_url(),
-            llm_model=get_llm_model(),
-            golden_dataset_path="/tmp/nonexistent_golden.csv",
+        real_telemetry.force_flush(timeout_millis=10000)
+        spans = await _wait_for_span(
+            monitor._make_span_evaluator(), "SearchAgent.process"
         )
+        assert spans["attributes"].map(lambda attrs: attrs["query"]).tolist() == [query]
 
         result = await monitor.force_optimization_cycle()
 
-        assert isinstance(result, dict)
-        assert result["status"] in ("ok", "no_data", "no_trigger_examples"), (
-            f"Unexpected: {result}"
-        )
-        if result["status"] == "ok":
-            assert "agents_triggered" in result, (
-                f"status='ok' but missing 'agents_triggered': {result}"
-            )
+        assert result == {
+            "status": "ok",
+            "agents_triggered": [
+                "search",
+                "summary",
+                "report",
+                "gateway",
+                "routing",
+                "query_enhancement",
+                "entity_extraction",
+                "profile_selection",
+            ],
+            "submitted_to_argo": False,
+        }
+        assert await monitor._load_golden_queries_async() == GOLDEN_QUERIES
+        assert await monitor._read_baseline_metric("mean_mrr") == pytest.approx(2 / 3)
+        live_names = await _dataset_names(monitor, "quality-live")
+        assert len(live_names) == 1
+        frame = await monitor._get_dataset_store().get_dataset(live_names[0])
+        assert len(frame) == 1
+        assert _roundtrip_value(frame, "agent") == "search"
+        assert _roundtrip_value(frame, "sample_count") == "1"
+
+
+def _live_result(tenant_id, sample_count):
+    return LiveEvalResult(
+        timestamp=datetime(2024, 1, 1),
+        tenant_id=tenant_id,
+        agent_results={
+            AgentType.SEARCH: AgentEvalResult(
+                agent=AgentType.SEARCH,
+                score=0.75,
+                baseline_score=0.9,
+                degradation_pct=0.1,
+                sample_count=sample_count,
+            ),
+        },
+    )
+
+
+@pytest.fixture
+async def phoenix_monitor(phoenix_container, real_telemetry, qm_tenant):
+    monitor = QualityMonitor(
+        tenant_id=qm_tenant,
+        runtime_url="http://testserver",
+        phoenix_http_endpoint=phoenix_container["http_endpoint"],
+        llm_base_url=get_llm_base_url(),
+        llm_model=get_llm_model(),
+        golden_dataset_path="",
+        telemetry_provider=real_telemetry.get_provider(tenant_id=qm_tenant),
+    )
+    try:
+        yield monitor
+    finally:
         await monitor.close()
+
+
+@pytest.mark.integration
+class TestQualityMonitorTenantOwnership:
+    @pytest.mark.asyncio
+    async def test_concurrent_monitors_load_only_their_tenant_rows(
+        self, phoenix_monitor, real_telemetry
+    ):
+        import asyncio
+
+        first = phoenix_monitor
+        await _seed_golden_rows(
+            first._telemetry_provider, first.tenant_id, GOLDEN_QUERIES
+        )
+        second_tenant = f"qm:{uuid.uuid4().hex}"
+        second_provider = real_telemetry.get_provider(tenant_id=second_tenant)
+        second_rows = [{"query": "tenant two only", "expected_videos": ["v_second"]}]
+        await _seed_golden_rows(second_provider, second_tenant, second_rows)
+        second = QualityMonitor(
+            tenant_id=second_tenant,
+            runtime_url="http://unused",
+            phoenix_http_endpoint=first.phoenix_http_endpoint,
+            llm_base_url=first.llm_base_url,
+            llm_model=first.llm_model,
+            golden_dataset_path="",
+            telemetry_provider=second_provider,
+        )
+        barrier = asyncio.Barrier(2)
+        counts = {first.tenant_id: 2, second_tenant: 5}
+
+        async def load(monitor):
+            await barrier.wait()
+            await monitor._store_live_eval_result(
+                _live_result(monitor.tenant_id, counts[monitor.tenant_id])
+            )
+            return await monitor._load_golden_queries_async()
+
+        try:
+            rows = await asyncio.wait_for(
+                asyncio.gather(load(first), load(second)), timeout=30
+            )
+            assert rows == [GOLDEN_QUERIES, second_rows]
+            assert first._golden_queries == GOLDEN_QUERIES
+            assert second._golden_queries == second_rows
+            for monitor, count in [(first, 2), (second, 5)]:
+                frame = await monitor._get_dataset_store().get_dataset(
+                    f"quality-live-{monitor.tenant_id}-20240101_000000"
+                )
+                assert frame.to_dict("records") == [
+                    {
+                        "input": {"agent": "search"},
+                        "output": {
+                            "score": "0.75",
+                            "baseline_score": "0.9",
+                            "degradation_pct": "0.1",
+                            "sample_count": str(count),
+                        },
+                        "metadata": {},
+                    }
+                ]
+        finally:
+            await second.close()
+
+    @pytest.mark.asyncio
+    async def test_golden_set_store_failure_raises_with_context(
+        self, phoenix_monitor, phoenix_container
+    ):
+        from cogniverse_telemetry_phoenix.provider import PhoenixProvider
+
+        healthy = phoenix_monitor
+        await _seed_golden_rows(
+            healthy._telemetry_provider, healthy.tenant_id, GOLDEN_QUERIES
+        )
+        assert await healthy._load_golden_queries_async() == GOLDEN_QUERIES
+        with socket.socket() as reserved:
+            reserved.bind(("127.0.0.1", 0))
+            unavailable_url = f"http://127.0.0.1:{reserved.getsockname()[1]}"
+            provider = PhoenixProvider()
+            provider.initialize(
+                {
+                    "tenant_id": healthy.tenant_id,
+                    "http_endpoint": unavailable_url,
+                    "grpc_endpoint": phoenix_container["grpc_endpoint"],
+                }
+            )
+            monitor = QualityMonitor(
+                tenant_id=healthy.tenant_id,
+                runtime_url=healthy.runtime_url,
+                phoenix_http_endpoint=unavailable_url,
+                llm_base_url=healthy.llm_base_url,
+                llm_model=healthy.llm_model,
+                golden_dataset_path="",
+                telemetry_provider=provider,
+            )
+            try:
+                with pytest.raises(GoldenSetGroundTruthStoreUnavailableError) as caught:
+                    await monitor.force_optimization_cycle()
+                assert type(caught.value.__cause__) is httpx.ConnectError
+                assert str(caught.value.__cause__) == "[Errno 111] Connection refused"
+                assert caught.value.to_result() == {
+                    "status": "golden_set_store_unavailable",
+                    "retryable": True,
+                    "error": "golden_set_ground_truth store unavailable",
+                    "cause": {
+                        "type": "ConnectError",
+                        "message": str(caught.value.__cause__),
+                    },
+                }
+                with pytest.raises(httpx.ConnectError) as write_error:
+                    await monitor._store_live_eval_result(
+                        _live_result(monitor.tenant_id, 1)
+                    )
+                assert str(write_error.value) == "[Errno 111] Connection refused"
+            finally:
+                await monitor.close()
 
 
 @pytest.mark.integration
@@ -734,20 +894,6 @@ class TestStoreOperationsRealPhoenix:
     values exactly.
     """
 
-    @pytest.fixture
-    def phoenix_monitor(self, phoenix_container, tmp_path):
-        golden_path = tmp_path / "golden.json"
-        golden_path.write_text(json.dumps([{"query": "q", "expected_videos": ["v"]}]))
-        m = QualityMonitor(
-            tenant_id="qm_store_rt",
-            runtime_url="http://testserver",
-            phoenix_http_endpoint=phoenix_container["http_endpoint"],
-            llm_base_url=get_llm_base_url(),
-            llm_model=get_llm_model(),
-            golden_dataset_path=str(golden_path),
-        )
-        yield m
-
     @pytest.mark.asyncio
     async def test_store_golden_persists_metrics(self, phoenix_monitor):
         m = phoenix_monitor
@@ -816,6 +962,28 @@ class TestStoreOperationsRealPhoenix:
         assert float(
             _roundtrip_value(by_agent["summary"], "degradation_pct")
         ) == pytest.approx(0.57, abs=1e-6)
+        assert sorted(df.to_dict("records"), key=lambda row: row["input"]["agent"]) == [
+            {
+                "input": {"agent": "search"},
+                "output": {
+                    "score": "0.8",
+                    "baseline_score": "0.85",
+                    "degradation_pct": "0.06",
+                    "sample_count": "20",
+                },
+                "metadata": {},
+            },
+            {
+                "input": {"agent": "summary"},
+                "output": {
+                    "score": "0.3",
+                    "baseline_score": "0.7",
+                    "degradation_pct": "0.57",
+                    "sample_count": "15",
+                },
+                "metadata": {},
+            },
+        ]
 
     @pytest.mark.asyncio
     async def test_store_trigger_persists_examples(self, phoenix_monitor):
