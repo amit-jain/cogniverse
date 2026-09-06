@@ -299,7 +299,7 @@ def render_create_profile_form(manager, tenant_id: str):
             "Schema Config (JSON)",
             value=json.dumps(
                 {
-                    "schema_name": "video_colpali",
+                    "schema_name": "video_colpali_smol500_mv_frame",
                     "model_name": "TomoroAI/tomoro-colqwen3-embed-4b",
                     "embedding_dim": 320,
                     "binary_dim": 40,

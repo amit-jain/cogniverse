@@ -51,6 +51,7 @@ from cogniverse_agents.profile_selection_agent import (
     ProfileSelectionAgent,
     ProfileSelectionDeps,
     ProfileSelectionInput,
+    servable_tenant_profiles,
 )
 from cogniverse_agents.query_enhancement_agent import (
     QueryEnhancementAgent,
@@ -61,7 +62,8 @@ from cogniverse_agents.search_agent import SearchAgent, SearchAgentDeps, SearchI
 from cogniverse_core.registries.agent_registry import AgentRegistry
 from cogniverse_core.schemas.filesystem_loader import FilesystemSchemaLoader
 from cogniverse_foundation.config.llm_factory import create_dspy_lm
-from cogniverse_foundation.config.unified_config import LLMEndpointConfig
+from cogniverse_foundation.config.unified_config import BackendConfig, LLMEndpointConfig
+from cogniverse_foundation.config.utils import get_config
 from tests.agents.integration.conftest import skip_if_no_lm
 from tests.fixtures.llm import resolve_api_key, resolve_base_url, resolve_prefixed_model
 
@@ -106,13 +108,27 @@ def agent_instances(vespa_with_schema, dspy_lm, tomoro_inference_url, real_telem
     vespa_config_port = vespa_with_schema["config_port"]
     default_schema = vespa_with_schema["default_schema"]
 
-    schema_loader = FilesystemSchemaLoader(
-        base_path=Path("tests/system/resources/schemas")
-    )
+    schema_loader = FilesystemSchemaLoader(base_path=Path("configs/schemas"))
+
+    for tenant_id in ("test:unit", "test_tenant"):
+        backend_config = BackendConfig.from_dict(
+            get_config(tenant_id, config_manager).get("backend")
+        )
+        backend_config.url = "http://localhost"
+        backend_config.port = vespa_http_port
+        backend_config.profiles = {
+            default_schema: backend_config.profiles[default_schema]
+        }
+        config_manager.set_backend_config(backend_config)
+        assert (
+            config_manager.get_backend_profile(default_schema, tenant_id).to_dict()
+            == backend_config.profiles[default_schema].to_dict()
+        )
 
     # Create real agent instances
     entity_agent = EntityExtractionAgent(deps=EntityExtractionDeps())
     profile_agent = ProfileSelectionAgent(deps=ProfileSelectionDeps())
+    profile_agent._config_manager = config_manager
     query_agent = QueryEnhancementAgent(deps=QueryEnhancementDeps())
     search_agent = SearchAgent(
         deps=SearchAgentDeps(
@@ -160,9 +176,7 @@ def orchestrator_with_agents(
     from cogniverse_runtime.routers import agents as agents_router
 
     config_manager = vespa_with_schema["manager"].config_manager
-    schema_loader = FilesystemSchemaLoader(
-        base_path=Path("tests/system/resources/schemas")
-    )
+    schema_loader = FilesystemSchemaLoader(base_path=Path("configs/schemas"))
     registry = AgentRegistry(tenant_id="test:unit", config_manager=config_manager)
 
     # All four sub-agents live at a single in-process ASGI host. Path routing
@@ -353,11 +367,19 @@ class TestOrchestratorWithRealAgents:
         Profile selection picks a valid profile for a video search query.
         """
         profile_agent = agent_instances["http://localhost:8011"]
+        available_profiles = [
+            name
+            for name, profile in servable_tenant_profiles(
+                profile_agent._config_manager, "test:unit"
+            )
+            if profile.type == "video"
+        ]
         with dspy.context(lm=dspy_lm):
             result = await profile_agent._process_impl(
                 ProfileSelectionInput(
                     query="find tutorial videos about deep learning",
                     tenant_id="test:unit",
+                    available_profiles=available_profiles,
                 )
             )
 
@@ -365,20 +387,11 @@ class TestOrchestratorWithRealAgents:
         assert isinstance(result.selected_profile, str)
         assert len(result.selected_profile) > 0, "Must select a profile"
 
-        # Small LLMs sometimes return profile names with extra quotes
-        selected = result.selected_profile.strip('"').strip("'")
-
-        # Selected profile should be from the available profiles list
-        valid_profiles = [
-            "video_colpali_smol500_mv_frame",
-            "video_colqwen_omni_mv_chunk_30s",
-            "video_xclip_base_mv_chunk_30s",
-            "video_xclip_large_mv_chunk_30s",
-        ]
-        assert selected in valid_profiles, (
-            f"Selected profile '{selected}' (raw: '{result.selected_profile}') "
-            f"not in valid profiles: {valid_profiles}"
+        assert result.selected_profile in available_profiles, (
+            f"Selected profile {result.selected_profile!r} is not in the "
+            f"tenant's offered video profiles: {available_profiles}"
         )
+        assert result.modality == "video"
 
         # Should have reasoning for the selection
         assert isinstance(result.reasoning, str)

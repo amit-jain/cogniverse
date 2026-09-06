@@ -38,7 +38,7 @@ def test_profile_create_example_uses_deployed_visual_encoder_contract():
 
     assert example["embedding_model"] == "TomoroAI/tomoro-colqwen3-embed-4b"
     assert example["schema_config"] == {
-        "schema_name": "video_colpali",
+        "schema_name": "video_colpali_smol500_mv_frame",
         "model_name": "TomoroAI/tomoro-colqwen3-embed-4b",
         "num_patches": 1024,
         "embedding_dim": 320,

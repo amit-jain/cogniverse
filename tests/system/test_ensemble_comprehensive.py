@@ -11,6 +11,7 @@ This test validates the ensemble search pipeline with:
 Uses REAL profiles from the system, not artificial test profiles.
 """
 
+import asyncio
 import json
 import logging
 import time
@@ -18,35 +19,25 @@ from pathlib import Path
 
 import pytest
 
+from cogniverse_agents.profile_selection_agent import tenant_usable_profile_names
+from cogniverse_foundation.config.unified_config import BackendConfig
+from tests.utils.vespa_test_helpers import load_raw_schema_json, shipped_profile
+
 logger = logging.getLogger(__name__)
 
 
-# Ingestion embeds through the profile's inference_services.embedding
-# service; the tomoro model these profiles pin cannot load in-process
-# (pylate caps transformers below the 4.57 it needs), so the endpoint
-# must be provisioned or every document fails to embed.
-pytestmark = [
-    pytest.mark.requires_inference("vllm_colpali"),
-    pytest.mark.requires_inference("video_embed"),
-]
-
-# Real profile definitions from the system
+FRAME_PROFILE = shipped_profile(
+    profile_type="video", embedding_type="multi_vector", extract_keyframes=True
+)
+CHUNK_PROFILE = shipped_profile(
+    profile_type="video", embedding_type="multi_vector", process_type="video_chunks"
+)
+SINGLE_VECTOR_PROFILE = shipped_profile(
+    profile_type="video", embedding_type="single_vector"
+)
 REAL_PROFILES = {
-    "video_colpali_smol500_mv_frame": {
-        "model": "TomoroAI/tomoro-colqwen3-embed-4b",
-        "embedding_dim": 320,
-        "binary_dim": 40,
-    },
-    "video_xclip_base_mv_chunk_30s": {
-        "model": "microsoft/xclip-large-patch14",
-        "embedding_dim": 768,
-        "binary_dim": 96,
-    },
-    "video_colqwen_omni_mv_chunk_30s": {
-        "model": "TomoroAI/tomoro-colqwen3-embed-4b",
-        "embedding_dim": 320,
-        "binary_dim": 40,
-    },
+    profile.profile_name: profile
+    for profile in (FRAME_PROFILE, CHUNK_PROFILE, SINGLE_VECTOR_PROFILE)
 }
 
 
@@ -54,16 +45,24 @@ def test_visual_profiles_use_the_deployed_encoder_contract():
     profile_file = Path("configs/profiles/colqwen_chunks_profile.json")
     standalone_profile = json.loads(profile_file.read_text())
 
-    assert REAL_PROFILES["video_colpali_smol500_mv_frame"] == {
-        "model": "TomoroAI/tomoro-colqwen3-embed-4b",
-        "embedding_dim": 320,
-        "binary_dim": 40,
-    }
-    assert REAL_PROFILES["video_colqwen_omni_mv_chunk_30s"] == {
-        "model": "TomoroAI/tomoro-colqwen3-embed-4b",
-        "embedding_dim": 320,
-        "binary_dim": 40,
-    }
+    assert (
+        FRAME_PROFILE.embedding_model,
+        FRAME_PROFILE.schema_config["embedding_dim"],
+        FRAME_PROFILE.schema_config["binary_dim"],
+    ) == ("TomoroAI/tomoro-colqwen3-embed-4b", 320, 40)
+    assert (
+        CHUNK_PROFILE.embedding_model,
+        CHUNK_PROFILE.schema_config["embedding_dim"],
+        CHUNK_PROFILE.schema_config["binary_dim"],
+    ) == ("TomoroAI/tomoro-colqwen3-embed-4b", 320, 40)
+    assert (
+        SINGLE_VECTOR_PROFILE.embedding_model,
+        SINGLE_VECTOR_PROFILE.schema_config["embedding_dim"],
+        SINGLE_VECTOR_PROFILE.schema_config["binary_dim"],
+    ) == ("microsoft/xclip-large-patch14", 768, 96)
+    for profile in REAL_PROFILES.values():
+        schema = load_raw_schema_json(profile.schema_name)
+        assert schema["name"] == profile.schema_name
     assert standalone_profile["embedding_model"] == (
         "TomoroAI/tomoro-colqwen3-embed-4b"
     )
@@ -76,8 +75,14 @@ def comprehensive_ensemble_setup():
     Module-scoped setup for comprehensive ensemble test with REAL profiles.
     """
     from cogniverse_core.registries.backend_registry import get_backend_registry
+    from cogniverse_core.schemas.filesystem_loader import FilesystemSchemaLoader
     from cogniverse_foundation.config.manager import ConfigManager
+    from cogniverse_runtime.ingestion.pipeline_builder import (
+        create_config,
+        create_pipeline,
+    )
     from tests.system.vespa_test_manager import VespaTestManager
+    from tests.utils.async_polling import wait_for_vespa_indexing
     from tests.utils.docker_utils import generate_unique_ports
 
     # Generate unique ports
@@ -110,9 +115,61 @@ def comprehensive_ensemble_setup():
 
         logger.info(f"✅ Vespa ready at http://localhost:{http_port}")
 
-        # The fixture already ingested REAL video data via full_setup()
-        # No need to ingest more - use the real videos from VespaTestManager
-        logger.info("✅ Using REAL video data from VespaTestManager.full_setup()")
+        backend_config = BackendConfig(
+            tenant_id="test_tenant",
+            backend_type="vespa",
+            url="http://localhost",
+            port=http_port,
+            profiles=REAL_PROFILES,
+        )
+        manager.config_manager.set_backend_config(backend_config)
+        assert tenant_usable_profile_names(
+            manager.config_manager, "test_tenant"
+        ) == sorted(REAL_PROFILES)
+        schema_loader = FilesystemSchemaLoader(base_path=Path("configs/schemas"))
+        app_config = {
+            "backend": {**backend_config.to_dict(), "config_port": config_port},
+        }
+        video_files = sorted(manager.test_videos_dir.glob("*.mp4"))
+        assert len(video_files) == manager.ingested_videos
+        for profile in REAL_PROFILES.values():
+            if profile.profile_name == manager.default_test_schema:
+                continue
+            pipeline_config = (
+                create_config()
+                .video_dir(manager.test_videos_dir)
+                .max_frames_per_video(1)
+                .generate_descriptions(profile.pipeline_config["generate_descriptions"])
+                .backend("vespa")
+                .build()
+            )
+            pipeline = (
+                create_pipeline()
+                .with_config(pipeline_config)
+                .with_config_manager(manager.config_manager)
+                .with_schema_loader(schema_loader)
+                .with_app_config(app_config)
+                .with_schema(profile.profile_name)
+                .with_tenant_id("test_tenant")
+                .build()
+            )
+            try:
+                ingestion = asyncio.run(
+                    pipeline.process_videos_concurrent(video_files, max_concurrent=1)
+                )
+                assert ingestion["status"] == "completed"
+                assert ingestion["successful"] == len(video_files)
+                assert ingestion["failed"] == 0
+                assert [result["status"] for result in ingestion["results"]] == [
+                    "completed"
+                ] * len(video_files)
+            finally:
+                pipeline.processor_manager.cleanup()
+        wait_for_vespa_indexing(
+            backend_url=f"http://localhost:{http_port}",
+            delay=5.0,
+            description="Vespa document indexing for every ensemble profile",
+        )
 
         yield {
             "http_port": http_port,
@@ -121,6 +178,7 @@ def comprehensive_ensemble_setup():
             "manager": manager,
             "profiles": REAL_PROFILES,
             "config_manager": manager.config_manager,
+            "schema_loader": schema_loader,
         }
 
     except Exception as e:
@@ -159,6 +217,9 @@ def _create_test_documents_with_embeddings():
     return docs
 
 
+@pytest.mark.requires_inference("vllm_colpali")
+@pytest.mark.requires_inference("video_embed")
+@pytest.mark.requires_inference("vllm_asr")
 @pytest.mark.system
 @pytest.mark.slow
 @pytest.mark.e2e
@@ -173,9 +234,8 @@ class TestComprehensiveEnsembleSearch:
         COMPREHENSIVE TEST: Validate ensemble works with profiles using different embedding dimensions.
 
         Real profiles:
-        - video_colpali_smol500_mv_frame: 320-dim → 40 bytes
-        - video_xclip_base_mv_chunk_30s: 768-dim → 96 bytes
-        - video_colqwen_omni_mv_chunk_30s: 320-dim → 40 bytes
+        - Frame and chunk multi-vector embeddings: 320-dim → 40 bytes
+        - Chunk single-vector embeddings: 768-dim → 96 bytes
 
         Validates:
         - Different profiles with different schemas work together
@@ -188,11 +248,6 @@ class TestComprehensiveEnsembleSearch:
             SearchAgentDeps,
             SearchInput,
         )
-        from cogniverse_core.schemas.filesystem_loader import FilesystemSchemaLoader
-        from cogniverse_foundation.config.unified_config import (
-            BackendConfig,
-            BackendProfileConfig,
-        )
 
         vespa_http_port = comprehensive_ensemble_setup["http_port"]
         vespa_config_port = comprehensive_ensemble_setup["config_port"]
@@ -200,27 +255,7 @@ class TestComprehensiveEnsembleSearch:
         config_manager = comprehensive_ensemble_setup["config_manager"]
         profiles = comprehensive_ensemble_setup["profiles"]
 
-        schema_loader = FilesystemSchemaLoader(
-            base_path=Path("tests/system/resources/schemas")
-        )
-
-        # Register all real profiles in config_manager
-        backend_profiles = {}
-        for profile_name, profile_data in profiles.items():
-            backend_profiles[profile_name] = BackendProfileConfig(
-                profile_name=profile_name,
-                schema_name=profile_name,  # Each profile uses its own schema
-                embedding_model=profile_data["model"],
-            )
-
-        backend_config = BackendConfig(
-            tenant_id="test_tenant",
-            backend_type="vespa",
-            url=vespa_url,
-            port=vespa_http_port,
-            profiles=backend_profiles,
-        )
-        config_manager.set_backend_config(backend_config)
+        schema_loader = comprehensive_ensemble_setup["schema_loader"]
 
         # Create SearchAgent
         search_deps = SearchAgentDeps(
@@ -318,11 +353,6 @@ class TestComprehensiveEnsembleSearch:
             SearchAgentDeps,
             SearchInput,
         )
-        from cogniverse_core.schemas.filesystem_loader import FilesystemSchemaLoader
-        from cogniverse_foundation.config.unified_config import (
-            BackendConfig,
-            BackendProfileConfig,
-        )
 
         vespa_http_port = comprehensive_ensemble_setup["http_port"]
         vespa_config_port = comprehensive_ensemble_setup["config_port"]
@@ -330,27 +360,7 @@ class TestComprehensiveEnsembleSearch:
         config_manager = comprehensive_ensemble_setup["config_manager"]
         profiles = comprehensive_ensemble_setup["profiles"]
 
-        schema_loader = FilesystemSchemaLoader(
-            base_path=Path("tests/system/resources/schemas")
-        )
-
-        # Register profiles
-        backend_profiles = {}
-        for profile_name, profile_data in profiles.items():
-            backend_profiles[profile_name] = BackendProfileConfig(
-                profile_name=profile_name,
-                schema_name=profile_name,
-                embedding_model=profile_data["model"],
-            )
-
-        backend_config = BackendConfig(
-            tenant_id="test_tenant",
-            backend_type="vespa",
-            url=vespa_url,
-            port=vespa_http_port,
-            profiles=backend_profiles,
-        )
-        config_manager.set_backend_config(backend_config)
+        schema_loader = comprehensive_ensemble_setup["schema_loader"]
 
         search_deps = SearchAgentDeps(
             backend_url=vespa_url,

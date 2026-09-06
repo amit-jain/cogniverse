@@ -354,8 +354,7 @@ class SchemaRegistry:
             force: Force redeployment even if schema exists (default: False)
 
         Returns:
-            Tenant-specific schema name (e.g., 'video_colpali_smol500_mv_frame_acme' or
-            'video_colpali_smol500_mv_frame_acme_prod' for 'acme:prod')
+            Base schema name with the canonical tenant identifier appended.
 
         Raises:
             ValueError: If backend or schema_loader not configured, or invalid inputs
