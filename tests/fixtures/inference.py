@@ -14,7 +14,7 @@ from dataclasses import dataclass
 from pathlib import Path
 from threading import Condition, Lock
 from types import MappingProxyType, TracebackType
-from typing import Callable, Iterable, Mapping, Sequence
+from typing import Any, Callable, Iterable, Mapping, Sequence
 
 import httpx
 import pytest
@@ -30,10 +30,15 @@ from cogniverse_cli.inference_endpoints import (
     ResolvedInferenceEndpoint,
 )
 
+from cogniverse_foundation.config.unified_config import profile_embedding_service
 from cogniverse_foundation.inference_specs import (
     INFERENCE_SERVICE_SPECS,
     InferenceServiceSpec,
     get_inference_service_spec,
+)
+from cogniverse_runtime.ingestion.strategy_factory import (
+    INFERENCE_SERVICE_PARAM,
+    StrategyFactory,
 )
 from tests.utils.vllm_sidecar import _DiscoveredClusterEndpoint
 
@@ -41,9 +46,41 @@ _PROVIDER_ORDER = ("e2e", "dev", "modal", "local")
 _REQUIRED_SERVICES_ATTR = "_cogniverse_required_inference_services"
 _MODAL_SERVICES_ATTR = "_cogniverse_modal_inference_services"
 TEST_INFERENCE_API_KEY = "cogniverse-test-inference"
-_SERVICE_DEPENDENCIES = {
-    "vllm_colpali": frozenset({"vllm_asr"}),
-}
+_SHIPPED_CONFIG = Path(__file__).resolve().parents[2] / "configs" / "config.json"
+
+
+def profile_inference_services(profile: Mapping[str, Any]) -> frozenset[str]:
+    """Every inference service the profile's strategies resolve at pipeline init."""
+    strategy_set = StrategyFactory.create_from_profile_config(dict(profile))
+    return frozenset(
+        service
+        for strategy in strategy_set.get_all_strategies()
+        for processor_config in strategy.get_required_processors().values()
+        if (service := processor_config.get(INFERENCE_SERVICE_PARAM))
+    )
+
+
+def derive_service_dependencies(
+    profiles: Mapping[str, Mapping[str, Any]],
+) -> Mapping[str, frozenset[str]]:
+    """Map each profile's embedding service to the other services its pipeline
+    resolves at init, unioned across every profile that names that service."""
+    dependencies: dict[str, set[str]] = {}
+    for profile in profiles.values():
+        embedding = profile_embedding_service(profile)
+        if not embedding:
+            continue
+        others = profile_inference_services(profile) - {embedding}
+        if others:
+            dependencies.setdefault(embedding, set()).update(others)
+    return MappingProxyType(
+        {service: frozenset(deps) for service, deps in dependencies.items()}
+    )
+
+
+_SERVICE_DEPENDENCIES = derive_service_dependencies(
+    json.loads(_SHIPPED_CONFIG.read_text(encoding="utf-8"))["backend"]["profiles"]
+)
 _VLLM_ARGS: Mapping[str, tuple[str, ...]] = MappingProxyType(
     {
         "vllm_colpali": (
