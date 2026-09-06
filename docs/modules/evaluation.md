@@ -1730,6 +1730,8 @@ evaluation reads the tenant-only user-ops project
 The `quality-baseline-*` dataset stores one JSON `payload` column for golden
 summaries and live per-agent baselines, and the monitor decodes that payload on
 read so Phoenix's dataframe round-trip cannot stringify metric values.
+Live evaluation datasets (`quality-live-*`) use `agent` as input and retain
+`score`, `baseline_score`, `degradation_pct`, and `sample_count` as outputs.
 
 **`QualityThresholds` dataclass (defaults):**
 
