@@ -1444,7 +1444,15 @@ class TestSharedClusterOwnership:
         assert e2e_conftest._effective_e2e_deployment_identity(repo_root) == (
             baseline_identity
         )
-        assert len(build_calls) == 8
+        # One build round plus one identity read, before and after the commit:
+        # the identity resolves the installed release's LLM serving mode.
+        assert [call[:4] for call in build_calls] == [
+            ["docker", "image", "ls", "--format"],
+            ["docker", "build", "-f", "libs/runtime/Dockerfile"],
+            ["docker", "build", "-f", "libs/dashboard/Dockerfile"],
+            ["docker", "build", "-f", "deploy/gliner/Dockerfile"],
+            ["helm", "get", "values", "cogniverse"],
+        ] * 2
 
     @pytest.mark.parametrize(
         (
@@ -1969,30 +1977,39 @@ class TestSharedClusterOwnership:
         *,
         cluster_states,
         force_fresh,
-        deploy_shas=("current-build", "current-build"),
+        repo_root: Path | None = None,
+        mid_build=None,
+        calls: dict[str, list] | None = None,
     ):
+        """Drive ``e2e_stack`` with every cluster boundary stubbed.
+
+        With ``repo_root`` the deployment identity is the REAL one read from
+        that git repo (git runs for real, everything else is stubbed) and
+        ``mid_build`` runs inside the stubbed ``deploy_stack`` — the window in
+        which the working tree can change under a build.
+        """
         import cogniverse_cli.cluster as cluster_cli
 
         from tests.e2e.deployment import conftest as deployment_conftest
 
-        calls = {
-            "sha": [],
-            "identity": [],
-            "start": [],
-            "stop_dev": [],
-            "create": [],
-            "deploy": [],
-            "healthy": [],
-            "models": [],
-            "stamp": [],
-            "delete": [],
-            "sandbox": [],
-        }
+        calls = calls if calls is not None else {}
+        for key in (
+            "identity",
+            "start",
+            "stop_dev",
+            "create",
+            "deploy",
+            "healthy",
+            "models",
+            "stamp",
+            "delete",
+            "sandbox",
+        ):
+            calls.setdefault(key, [])
         if force_fresh:
             monkeypatch.setenv("E2E_FRESH", "1")
         else:
             monkeypatch.delenv("E2E_FRESH", raising=False)
-        sha_values = iter(deploy_shas)
         if cluster_states:
             cluster_state_values = iter(
                 [
@@ -2016,11 +2033,6 @@ class TestSharedClusterOwnership:
             "image_tags": _expected_e2e_image_tags(),
             "chart_digest": _expected_e2e_chart_digest(),
         }
-        monkeypatch.setattr(
-            e2e_conftest,
-            "_current_e2e_deploy_sha",
-            lambda repo_root=None: calls["sha"].append(None) or next(sha_values),
-        )
         monkeypatch.setattr(cluster_cli, "list_cluster_states", lambda: cluster_states)
         monkeypatch.setattr(
             cluster_cli, "start_cluster", lambda name: calls["start"].append(name)
@@ -2036,11 +2048,27 @@ class TestSharedClusterOwnership:
             "_required_e2e_models_ready",
             lambda: calls["models"].append(None) or (True, ""),
         )
-        monkeypatch.setattr(
-            e2e_conftest,
-            "_effective_e2e_deployment_identity",
-            lambda repo_root: calls["identity"].append(None) or deployment_identity,
-        )
+        if repo_root is None:
+            monkeypatch.setattr(
+                e2e_conftest,
+                "_effective_e2e_deployment_identity",
+                lambda repo_root: (
+                    calls["identity"].append(deployment_identity) or deployment_identity
+                ),
+            )
+        else:
+            real_identity = e2e_conftest._effective_e2e_deployment_identity
+
+            def record_identity(root):
+                identity = real_identity(root)
+                calls["identity"].append(identity)
+                return identity
+
+            monkeypatch.setattr(e2e_conftest, "_e2e_repo_root", lambda: repo_root)
+            monkeypatch.setattr(
+                e2e_conftest, "_effective_e2e_deployment_identity", record_identity
+            )
+            monkeypatch.setattr(images_mod, "detect_torch_backend", lambda: "rocm")
         monkeypatch.setattr(
             e2e_conftest,
             "_e2e_deployment_overrides",
@@ -2056,14 +2084,14 @@ class TestSharedClusterOwnership:
             "create_test_cluster",
             lambda name, **kwargs: calls["create"].append((name, kwargs)),
         )
-        monkeypatch.setattr(
-            deployment_conftest,
-            "deploy_stack",
-            lambda *args, **kwargs: (
-                calls["deploy"].append((args, kwargs)),
-                calls["sandbox"].append("deploy"),
-            ),
-        )
+
+        def deploy(*args, **kwargs):
+            calls["deploy"].append((args, kwargs))
+            calls["sandbox"].append("deploy")
+            if mid_build is not None:
+                mid_build()
+
+        monkeypatch.setattr(deployment_conftest, "deploy_stack", deploy)
         monkeypatch.setattr(
             e2e_conftest,
             "_ensure_stack_running",
@@ -2079,13 +2107,14 @@ class TestSharedClusterOwnership:
             "delete_test_cluster",
             lambda name: calls["delete"].append(name),
         )
-        monkeypatch.setattr(
-            e2e_conftest.subprocess,
-            "run",
-            lambda *args, **kwargs: type(
-                "Result", (), {"returncode": 0, "stdout": "", "stderr": ""}
-            )(),
-        )
+        real_run = subprocess.run
+
+        def run(cmd, *args, **kwargs):
+            if repo_root is not None and cmd and cmd[0] == "git":
+                return real_run(cmd, *args, **kwargs)
+            return subprocess.CompletedProcess(cmd, 0, stdout="", stderr="")
+
+        monkeypatch.setattr(e2e_conftest.subprocess, "run", run)
         monkeypatch.setattr(e2e_conftest, "_restore_stale_cronworkflows", lambda: None)
         monkeypatch.setattr(e2e_conftest, "_suspend_cronworkflows_for_session", list)
         monkeypatch.setattr(e2e_conftest, "_bootstrap_tenant_and_schemas", lambda: None)
@@ -2151,8 +2180,19 @@ class TestSharedClusterOwnership:
         ]
         assert calls["healthy"] == [None]
         assert calls["models"] == [None]
-        assert calls["sha"] == [None, None]
-        assert calls["identity"] == [None]
+        expected_identity = {
+            "backend": "rocm",
+            "values_files": (
+                "charts/cogniverse/values.k3s.yaml",
+                "charts/cogniverse/values.rocm.yaml",
+            ),
+            "set_overrides": _expected_e2e_deployment_set_overrides(),
+            "image_tags": _expected_e2e_image_tags(),
+            "chart_digest": _expected_e2e_chart_digest(),
+        }
+        # Read once before the build and once after: the two reads are what
+        # the mid-build drift guard compares.
+        assert calls["identity"] == [expected_identity, expected_identity]
         # Host gateway first (its port feeds the deploy identity), then the
         # cluster sync, then Helm — the runtime's subPath mounts need the
         # secret/configmaps at pod start.
@@ -2175,19 +2215,250 @@ class TestSharedClusterOwnership:
         ]
         stack.close()
 
-    def test_deploy_rejects_working_tree_changes_during_image_build(self, monkeypatch):
-        with pytest.raises(BaseException) as raised:
+    @staticmethod
+    def _seeded_repo_identity(versions: dict[str, str]) -> dict[str, object]:
+        """Exact deployment identity of ``_seed_git_repo`` when each image
+        family's newest input commit resolves to ``versions[family]``."""
+        return {
+            "backend": "rocm",
+            "values_files": (
+                "charts/cogniverse/values.k3s.yaml",
+                "charts/cogniverse/values.rocm.yaml",
+            ),
+            "set_overrides": {
+                **_expected_e2e_deployment_set_overrides(),
+                "runtime.imagesByBackend.rocm.tag": versions["runtime"],
+                "dashboard.imagesByBackend.rocm.tag": versions["dashboard"],
+                "inference.gliner.image.tag": versions["gliner"],
+            },
+            "image_tags": (
+                f"cogniverse/runtime-rocm:{versions['runtime']}",
+                f"cogniverse/dashboard-rocm:{versions['dashboard']}",
+                f"cogniverse/gliner:{versions['gliner']}",
+            ),
+            "chart_digest": _expected_e2e_chart_digest(),
+        }
+
+    def test_tests_only_commit_during_image_build_does_not_fail_the_run(
+        self, monkeypatch, tmp_path
+    ):
+        """HEAD moving on a commit that touches no deployment input is not
+        a changed deployment: the identity read after the build equals the
+        one read before it, the guard stays quiet, and that identity is
+        stamped."""
+        repo_root, base_sha = self._seed_git_repo(tmp_path)
+        committed: list[str] = []
+
+        stack, calls = self._start_stack(
+            monkeypatch,
+            cluster_states=[],
+            force_fresh=False,
+            repo_root=repo_root,
+            mid_build=lambda: committed.append(
+                self._commit_change(
+                    repo_root,
+                    "tests/e2e/new_check.py",
+                    "VALUE = 'tests-only'\n",
+                    "tests-only",
+                )
+            ),
+        )
+        stack.close()
+
+        base_version = f"0.1.dev1-g{base_sha[:9]}"
+        identity = self._seeded_repo_identity(
+            {
+                "runtime": base_version,
+                "dashboard": base_version,
+                "gliner": base_version,
+            }
+        )
+        assert self._git(repo_root, "rev-parse", "HEAD") == committed[0]
+        assert committed[0] != base_sha
+        assert calls["identity"] == [identity, identity]
+        assert calls["stamp"] == [identity]
+
+    def test_deploy_input_commit_during_image_build_fails_naming_the_fields(
+        self, monkeypatch, tmp_path
+    ):
+        """A ``libs/runtime`` commit landing mid-build moves the runtime image
+        tag and the Helm override that points at it. The run fails before
+        stamping, and the message names exactly those two fields with the
+        old and new values."""
+        repo_root, base_sha = self._seed_git_repo(tmp_path)
+        committed: list[str] = []
+        calls: dict[str, list] = {}
+
+        with pytest.raises(pytest.fail.Exception) as raised:
             self._start_stack(
                 monkeypatch,
                 cluster_states=[],
                 force_fresh=False,
-                deploy_shas=("before-build", "after-build"),
+                repo_root=repo_root,
+                mid_build=lambda: committed.append(
+                    self._commit_change(
+                        repo_root,
+                        "libs/runtime/module.py",
+                        "value = 'libs-change'\n",
+                        "libs-change",
+                    )
+                ),
+                calls=calls,
+            )
+
+        base_version = f"0.1.dev1-g{base_sha[:9]}"
+        runtime_version = f"0.1.dev2-g{committed[0][:9]}"
+        assert str(raised.value) == (
+            "deployment identity changed while the e2e stack was being built: "
+            f"image_tags: removed ('cogniverse/runtime-rocm:{base_version}',), "
+            f"added ('cogniverse/runtime-rocm:{runtime_version}',); "
+            "set_overrides: runtime.imagesByBackend.rocm.tag="
+            f"'{base_version}' -> '{runtime_version}'; "
+            "rerun against a stable tree"
+        )
+        assert calls["identity"] == [
+            self._seeded_repo_identity(
+                {
+                    "runtime": base_version,
+                    "dashboard": base_version,
+                    "gliner": base_version,
+                }
+            ),
+            self._seeded_repo_identity(
+                {
+                    "runtime": runtime_version,
+                    "dashboard": base_version,
+                    "gliner": base_version,
+                }
+            ),
+        ]
+        assert calls["stamp"] == []
+
+    def test_chart_commit_during_image_build_fails_naming_the_chart_digest(
+        self, monkeypatch, tmp_path
+    ):
+        """``charts/`` is outside every image's input set, so a chart commit
+        moves only the chart digest — and that alone fails the run."""
+        repo_root, base_sha = self._seed_git_repo(tmp_path)
+        calls: dict[str, list] = {}
+
+        with pytest.raises(pytest.fail.Exception) as raised:
+            self._start_stack(
+                monkeypatch,
+                cluster_states=[],
+                force_fresh=False,
+                repo_root=repo_root,
+                mid_build=lambda: self._commit_change(
+                    repo_root,
+                    "charts/cogniverse/values.yaml",
+                    "replicaCount: 2\n",
+                    "chart-change",
+                ),
+                calls=calls,
+            )
+
+        changed_digest = (
+            "sha256:11c57e91bd40eb3cc02142e4ae9b02141380a713dff417e2246d551758aceeea"
+        )
+        assert str(raised.value) == (
+            "deployment identity changed while the e2e stack was being built: "
+            f"chart_digest: '{_expected_e2e_chart_digest()}' -> "
+            f"'{changed_digest}'; rerun against a stable tree"
+        )
+        base_version = f"0.1.dev1-g{base_sha[:9]}"
+        identity = self._seeded_repo_identity(
+            {
+                "runtime": base_version,
+                "dashboard": base_version,
+                "gliner": base_version,
+            }
+        )
+        assert calls["identity"] == [
+            identity,
+            {**identity, "chart_digest": changed_digest},
+        ]
+        assert calls["stamp"] == []
+
+    def test_uncommitted_deploy_input_edit_during_image_build_fails_the_run(
+        self, monkeypatch, tmp_path
+    ):
+        """An uncommitted edit is invisible to the git-derived identity, so
+        cleanliness is checked again after the build as its own axis: the
+        tree was clean going in, went dirty under the build, and the run
+        fails naming the dirty path without stamping."""
+        repo_root, base_sha = self._seed_git_repo(tmp_path)
+        calls: dict[str, list] = {}
+
+        with pytest.raises(pytest.fail.Exception) as raised:
+            self._start_stack(
+                monkeypatch,
+                cluster_states=[],
+                force_fresh=False,
+                repo_root=repo_root,
+                mid_build=lambda: (repo_root / "libs/runtime/module.py").write_text(
+                    "value = 'uncommitted'\n"
+                ),
+                calls=calls,
             )
 
         assert str(raised.value) == (
-            "working-tree deployment inputs changed while the e2e stack was "
-            "being built: started with 'before-build', finished with "
-            "'after-build'; rerun against a stable tree"
+            "uncommitted working-tree changes appeared while the e2e stack was "
+            "being built:\n M libs/runtime/module.py\n"
+            "the built images may not match HEAD; commit or discard them, "
+            "then rerun"
+        )
+        base_version = f"0.1.dev1-g{base_sha[:9]}"
+        identity = self._seeded_repo_identity(
+            {
+                "runtime": base_version,
+                "dashboard": base_version,
+                "gliner": base_version,
+            }
+        )
+        assert calls["identity"] == [identity, identity]
+        assert calls["stamp"] == []
+
+    @pytest.mark.parametrize(
+        ("started", "finished", "expected"),
+        [
+            (
+                {"backend": "rocm", "chart_digest": "sha256:a"},
+                {"backend": "rocm", "chart_digest": "sha256:a"},
+                "",
+            ),
+            (
+                {"backend": "rocm", "chart_digest": "sha256:a"},
+                {"backend": "cuda", "chart_digest": "sha256:a"},
+                "backend: 'rocm' -> 'cuda'",
+            ),
+            (
+                {"image_tags": ("r:1", "d:1", "g:1")},
+                {"image_tags": ["r:2", "d:1", "g:1"]},
+                "image_tags: removed ('r:1',), added ('r:2',)",
+            ),
+            (
+                {"image_tags": ("r:1", "d:1")},
+                {"image_tags": ("d:1", "r:1")},
+                "image_tags: ('r:1', 'd:1') -> ('d:1', 'r:1')",
+            ),
+            (
+                {"set_overrides": {"a": "1", "b": "2"}},
+                {"set_overrides": {"a": "1", "b": "3", "c": "4"}},
+                "set_overrides: b='2' -> '3', c=None -> '4'",
+            ),
+            (
+                {"backend": "rocm", "chart_digest": "sha256:a", "values_files": ("x",)},
+                {"backend": "cuda", "chart_digest": "sha256:b", "values_files": ("y",)},
+                "backend: 'rocm' -> 'cuda'; chart_digest: 'sha256:a' -> 'sha256:b'; "
+                "values_files: removed ('x',), added ('y',)",
+            ),
+        ],
+    )
+    def test_deployment_identity_drift_names_every_changed_field(
+        self, started, finished, expected
+    ):
+        assert (
+            e2e_conftest._e2e_deployment_identity_drift(started, finished) == expected
         )
 
     def test_reusable_shared_cluster_has_no_lifecycle_mutations(self, monkeypatch):
@@ -2264,11 +2535,6 @@ class TestSharedClusterOwnership:
                     "servers_count": 1,
                 }
             ],
-        )
-        monkeypatch.setattr(
-            e2e_conftest,
-            "_current_e2e_deploy_sha",
-            lambda repo_root=None: "current-build",
         )
         monkeypatch.setattr(
             e2e_conftest,
@@ -2369,35 +2635,21 @@ class TestSharedClusterOwnership:
             "banana": "fail",
         }
 
-    def test_stale_shared_cluster_refuses_to_deploy_from_a_dirty_tree(
-        self, monkeypatch
-    ):
-        """Tree cleanliness is an explicit input, not a side effect of a stub.
+    def test_deploy_refuses_a_dirty_tree_before_building(self, tmp_path):
+        """The pre-build cleanliness gate reads the real ``git status`` of
+        the repo it is handed: clean passes, an uncommitted edit refuses."""
+        repo_root, _ = self._seed_git_repo(tmp_path)
 
-        The deploy path a stale cluster now takes calls
-        _require_clean_e2e_worktree, which shells out to `git status
-        --porcelain`. A test that stubs subprocess broadly for kubectl would
-        otherwise decide git cleanliness by accident.
-        """
-        calls: list[str] = []
-        monkeypatch.setattr(
-            e2e_conftest,
-            "_require_clean_e2e_worktree",
-            lambda repo_root=None: (_ for _ in ()).throw(
-                RuntimeError("refusing to deploy from a dirty git tree")
-            ),
-        )
-        monkeypatch.setattr(
-            e2e_conftest,
-            "_git_e2e",
-            lambda *args, **kwargs: calls.append("git") or None,
-        )
+        assert e2e_conftest._require_clean_e2e_worktree(repo_root) is None
 
+        (repo_root / "libs/runtime/module.py").write_text("value = 'dirty'\n")
         with pytest.raises(RuntimeError) as raised:
-            e2e_conftest._require_clean_e2e_worktree()
+            e2e_conftest._require_clean_e2e_worktree(repo_root)
 
-        assert str(raised.value) == "refusing to deploy from a dirty git tree"
-        assert calls == []
+        assert str(raised.value) == (
+            "refusing to deploy from a dirty git tree; commit first "
+            "(a WIP commit is fine, amend it later), then rerun"
+        )
 
     def test_stopped_shared_cluster_is_started_then_reused(self, monkeypatch):
         """A stopped shared cluster resumes through the supported lifecycle."""
@@ -2416,11 +2668,6 @@ class TestSharedClusterOwnership:
             return next(states)
 
         monkeypatch.delenv("E2E_FRESH", raising=False)
-        monkeypatch.setattr(
-            e2e_conftest,
-            "_current_e2e_deploy_sha",
-            lambda repo_root=None: "current-build",
-        )
         monkeypatch.setattr(
             cluster_cli, "start_cluster", lambda name: started.append(name)
         )
