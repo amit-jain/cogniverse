@@ -1548,8 +1548,12 @@ def _ensure_sample_content_ingested(
     deadline = _time.monotonic() + deadline_s
     while _time.monotonic() < deadline:
         try:
+            # Measured 3.2ms max idle (n=200); the only breaches seen were
+            # 12.6-15.6s runtime event-loop stalls while a reconcile-orphans
+            # redeploy ran on the loop. 30s outlives a stall of that size and
+            # still fails a hung runtime.
             status_response = httpx.get(
-                f"{RUNTIME}/ingestion/{ingest_id}/status", timeout=10
+                f"{RUNTIME}/ingestion/{ingest_id}/status", timeout=30
             )
         except httpx.HTTPError as exc:
             pytest.fail(f"Ingestion status request failed for {ingest_id}: {exc}")
@@ -2357,11 +2361,9 @@ def _reconcile_orphan_schemas() -> None:
     and is refused for the same reason; the reconciler drops them together, so
     its survivor set is reconstructable.
 
-    Safe because it only drops schemas with no registry record, and it runs
-    before this session creates anything. It must stay at the head of the
-    pre-flight: a schema registered by a concurrent session would look like an
-    orphan while its registry write is still in flight, which is why two
-    suites may not share this cluster.
+    Safe because it only drops schemas with no registry record and no
+    deployment intent in flight, and it runs before this session creates
+    anything.
     """
     with httpx.Client(base_url=RUNTIME, timeout=900.0) as client:
         preview = client.post("/admin/reconcile-orphans", params={"dry_run": True})

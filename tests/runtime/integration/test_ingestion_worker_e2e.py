@@ -595,3 +595,132 @@ class TestStatusApiRedisOutage:
             response = await client.get("/ingestion/job-1/events")
         assert response.status_code == 503
         assert "status store unavailable" in response.json()["detail"]
+
+
+async def _graph_incomplete_processor(job: IngestJob) -> dict:
+    from cogniverse_runtime.ingestion_worker.worker import GraphStageIncomplete
+
+    await asyncio.sleep(0.05)
+    raise GraphStageIncomplete(
+        f"graph extraction left 46 failed writes for ingest {job.ingest_id}"
+    )
+
+
+class TestWaitTimeoutRendering:
+    """``wait=true`` that lapses before a terminal event must report the state
+    the stream last showed, flagged as a lapsed wait — never a synthetic
+    ``queued`` that reads as "nobody has picked this up yet" while the worker
+    is retrying or running it."""
+
+    @pytest.mark.asyncio
+    async def test_lapsed_wait_reports_the_retrying_state_and_its_error(
+        self, env_redis, redis_container
+    ):
+        worker_task, stop = await _spawn_worker(
+            redis_container, _graph_incomplete_processor
+        )
+        try:
+            result = await enqueue_ingestion(
+                env_redis,
+                source_url="s3://bucket/graph-stalls.mp4",
+                profile="video_colpali_smol500_mv_frame",
+                tenant_id="acme",
+                wait=True,
+                wait_timeout=2,
+            )
+            assert result.wait_timed_out is True
+            assert result.final_event is None
+            assert result.state == "retrying"
+            assert result.last_event == {
+                "state": "retrying",
+                "ingest_id": result.ingest_id,
+                "error": (
+                    "graph extraction left 46 failed writes for ingest "
+                    f"{result.ingest_id}"
+                ),
+                "error_type": "GraphStageIncomplete",
+            }
+            states = [
+                event["state"]
+                for _, event in await queue.read_status_since(
+                    env_redis, result.ingest_id
+                )
+            ]
+            assert states == ["queued", "running", "retrying"]
+        finally:
+            stop.set()
+            await asyncio.wait_for(worker_task, timeout=30)
+
+    @pytest.mark.asyncio
+    async def test_lapsed_wait_on_a_running_job_reports_running(
+        self, env_redis, redis_container, monkeypatch
+    ):
+        monkeypatch.setenv("INGEST_CONSUMER_ID", "worker-under-test")
+        release = asyncio.Event()
+
+        async def stalled_processor(job: IngestJob) -> dict:
+            await release.wait()
+            return await _stub_processor(job)
+
+        worker_task, stop = await _spawn_worker(redis_container, stalled_processor)
+        try:
+            result = await enqueue_ingestion(
+                env_redis,
+                source_url="s3://bucket/slow.mp4",
+                profile="video_colpali_smol500_mv_frame",
+                tenant_id="acme",
+                wait=True,
+                wait_timeout=2,
+            )
+            assert (result.wait_timed_out, result.final_event, result.state) == (
+                True,
+                None,
+                "running",
+            )
+            assert result.last_event == {
+                "state": "running",
+                "ingest_id": result.ingest_id,
+                "consumer_id": "worker-under-test",
+            }
+        finally:
+            release.set()
+            stop.set()
+            await asyncio.wait_for(worker_task, timeout=30)
+
+    @pytest.mark.asyncio
+    async def test_terminal_within_the_wait_is_not_flagged(
+        self, env_redis, redis_container
+    ):
+        worker_task, stop = await _spawn_worker(redis_container, _stub_processor)
+        try:
+            result = await enqueue_ingestion(
+                env_redis,
+                source_url="s3://bucket/fast.mp4",
+                profile="video_colpali_smol500_mv_frame",
+                tenant_id="acme",
+                wait=True,
+                wait_timeout=10,
+            )
+            assert (result.wait_timed_out, result.state) == (False, "complete")
+            assert result.last_event == result.final_event
+            assert result.final_event["result"]["keyframes"] == 2
+        finally:
+            stop.set()
+            await asyncio.wait_for(worker_task, timeout=30)
+
+    @pytest.mark.asyncio
+    async def test_wait_on_a_missing_status_stream_raises(self, env_redis):
+        from cogniverse_runtime.ingestion_worker.submit_api import (
+            StatusStreamUnavailable,
+            _wait_for_terminal,
+        )
+
+        ingest_id = f"ingest_{uuid.uuid4().hex}"
+        with pytest.raises(
+            StatusStreamUnavailable,
+            match=(
+                f"No status events for ingest {ingest_id} within 1s: the status "
+                "stream is missing or expired, so its state cannot be reported"
+            ),
+        ):
+            await _wait_for_terminal(env_redis, ingest_id, 1)

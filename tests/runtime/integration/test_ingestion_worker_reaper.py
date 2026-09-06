@@ -579,7 +579,11 @@ class TestReaperRecovery:
             f"source={source}): re-drive 2, last outcome: {cause}; another failure "
             "holds re-drive 3 for 0s",
         ]
-        assert _reaper_lines(caplog, logging.INFO) == []
+        # The first sweep moved the entry onto the live consumer, so the dead
+        # owner owns nothing and is dropped once; the second finds no name idle.
+        assert _reaper_lines(caplog, logging.INFO) == [
+            "Reaper dropped 1 idle consumer name(s) owning nothing: ['dead-1']"
+        ]
         state = await redis.hgetall(redrive_key)
         assert set(state) == {"redrives", "at_ms", "cause"}
         assert state["redrives"] == "2"
@@ -1093,3 +1097,176 @@ class TestReaperWiredIntoWorkerRun:
         assert pending["pending"] == 0
         assert await queue.queue_depth(client) == 0
         assert await queue.get_active(client, tenant) == 0
+
+
+async def _consumer_names(redis, group: str) -> dict:
+    return {
+        entry["name"]: entry
+        for entry in await redis.xinfo_consumers(queue.QUEUE_STREAM, group)
+    }
+
+
+async def _dead_pods(redis, group: str, count: int) -> list[str]:
+    """Consumer names that issued one claim and vanished, one per pod
+    incarnation: the group remembers every one of them forever."""
+    names = [f"cogniverse-ingestor-{i:02d}" for i in range(count)]
+    for name in names:
+        await queue.claim(redis, group, name, block_ms=1)
+    return names
+
+
+class TestConsumerGroupHygiene:
+    @pytest.mark.asyncio
+    async def test_prune_removes_idle_consumers_that_own_nothing(self, redis):
+        config = worker.WorkerConfig()
+        config.consumer_id = "live-self"
+        group = config.consumer_group
+        await queue.ensure_consumer_group(redis, group)
+        dead = await _dead_pods(redis, group, 65)
+        await _orphan_job(
+            redis, config, ingest_id="ing_held", sha="sha_held", tenant="acme"
+        )
+        await queue.claim(redis, group, config.consumer_id, block_ms=1)
+        assert len(await _consumer_names(redis, group)) == 67
+        await asyncio.sleep(0.3)
+
+        removed = await queue.prune_consumers(
+            redis, group, keep=config.consumer_id, min_idle_ms=200
+        )
+
+        assert sorted(removed) == dead
+        remaining = await _consumer_names(redis, group)
+        assert set(remaining) == {"live-self", "dead-1"}
+        assert remaining["dead-1"]["pending"] == 1
+        pending = await redis.xpending_range(queue.QUEUE_STREAM, group, "-", "+", 10)
+        assert [(entry["consumer"], entry["times_delivered"]) for entry in pending] == [
+            ("dead-1", 1)
+        ]
+
+    @pytest.mark.asyncio
+    async def test_prune_leaves_recently_seen_consumers_alone(self, redis):
+        config = worker.WorkerConfig()
+        config.consumer_id = "live-self"
+        group = config.consumer_group
+        await queue.ensure_consumer_group(redis, group)
+        await _dead_pods(redis, group, 3)
+        await queue.claim(redis, group, config.consumer_id, block_ms=1)
+
+        removed = await queue.prune_consumers(
+            redis, group, keep=config.consumer_id, min_idle_ms=60_000
+        )
+
+        assert removed == []
+        assert set(await _consumer_names(redis, group)) == {
+            "cogniverse-ingestor-00",
+            "cogniverse-ingestor-01",
+            "cogniverse-ingestor-02",
+            "live-self",
+        }
+
+    @pytest.mark.asyncio
+    async def test_sweep_reclaims_then_forgets_the_dead_owner(self, redis):
+        """One sweep: the dead owner's entry is re-driven onto the live
+        consumer, and once it owns nothing the dead name is dropped from the
+        group along with every other idle empty consumer."""
+        config = worker.WorkerConfig()
+        config.consumer_id = "live-self"
+        group = config.consumer_group
+        await queue.ensure_consumer_group(redis, group)
+        await _dead_pods(redis, group, 65)
+        await _orphan_job(
+            redis, config, ingest_id="ing_dead", sha="sha_dead", tenant="acme"
+        )
+        await asyncio.sleep(0.3)
+        processed: list = []
+
+        async def _proc(job):
+            processed.append(job.ingest_id)
+            return {"status": "success", "video_id": "v1", "results": {}}
+
+        recovered = await reaper.run_reaper_once(
+            redis, config, min_idle_ms=200, processor=_proc
+        )
+
+        assert (recovered, processed) == (1, ["ing_dead"])
+        assert set(await _consumer_names(redis, group)) == {"live-self"}
+        assert await redis.xpending(queue.QUEUE_STREAM, group) == {
+            "pending": 0,
+            "min": None,
+            "max": None,
+            "consumers": [],
+        }
+
+    @pytest.mark.asyncio
+    async def test_concurrent_prunes_remove_each_dead_consumer_exactly_once(
+        self, redis
+    ):
+        config = worker.WorkerConfig()
+        group = config.consumer_group
+        await queue.ensure_consumer_group(redis, group)
+        dead = await _dead_pods(redis, group, 65)
+        await asyncio.sleep(0.3)
+        barrier = asyncio.Barrier(2)
+
+        async def prune(keep: str) -> list[str]:
+            # Each replica's own name was seen just now: idle well under the
+            # threshold, so neither replica drops the other.
+            await queue.claim(redis, group, keep, block_ms=1)
+            await barrier.wait()
+            return await queue.prune_consumers(redis, group, keep=keep, min_idle_ms=200)
+
+        removed_a, removed_b = await asyncio.gather(
+            prune("reaper-a"), prune("reaper-b")
+        )
+
+        assert sorted(removed_a + removed_b) == dead
+        assert set(await _consumer_names(redis, group)) == {"reaper-a", "reaper-b"}
+
+    @pytest.mark.asyncio
+    async def test_prune_against_a_dead_redis_raises(self):
+        import redis.asyncio as aioredis
+        from redis.exceptions import ConnectionError as RedisConnectionError
+
+        client = aioredis.from_url(
+            "redis://127.0.0.1:29071/0", socket_connect_timeout=1
+        )
+        try:
+            with pytest.raises(RedisConnectionError):
+                await queue.prune_consumers(
+                    client, "ingestors", keep="live-self", min_idle_ms=0
+                )
+        finally:
+            await client.aclose()
+
+    @pytest.mark.asyncio
+    async def test_autoclaim_cost_is_independent_of_dead_consumer_count(
+        self, redis, capsys
+    ):
+        """XAUTOCLAIM scans the PEL, not the consumer list; measured here so the
+        pruning is justified by group hygiene, not by a claim-latency claim."""
+        config = worker.WorkerConfig()
+        group = config.consumer_group
+        await queue.ensure_consumer_group(redis, group)
+        await _dead_pods(redis, group, 65)
+        await queue.claim(redis, group, "live-self", block_ms=1)
+
+        async def measure(iterations: int) -> float:
+            started = time.perf_counter()
+            for _ in range(iterations):
+                await queue.autoclaim(
+                    redis, group, "live-self", min_idle_ms=60_000, count=10
+                )
+            return (time.perf_counter() - started) * 1000 / iterations
+
+        with_dead = await measure(200)
+        await asyncio.sleep(0.3)
+        removed = await queue.prune_consumers(
+            redis, group, keep="live-self", min_idle_ms=200
+        )
+        after = await measure(200)
+        print(
+            f"xautoclaim per call: {with_dead:.3f}ms with 66 consumers, "
+            f"{after:.3f}ms with 1 (pruned {len(removed)})"
+        )
+        assert len(removed) == 65
+        assert set(await _consumer_names(redis, group)) == {"live-self"}

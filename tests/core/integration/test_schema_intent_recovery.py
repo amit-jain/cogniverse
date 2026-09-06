@@ -853,3 +853,105 @@ def test_intent_retention_bounds_history_and_retired_scans_do_not_write(
         for record in journal.records()
         if record["registration"]["full_schema_name"] == schema
     ] == [{**completed.config_value, "_revision": 16}]
+
+
+def test_reconciler_keeps_peer_schema_activated_but_not_yet_registered(
+    recovery_backend, monkeypatch
+):
+    """Two processes write the one application package. The owner activates
+    its schema and spends the convergence wait live-but-unregistered (a
+    pending deployment intent); the reconciler, dropping a genuine orphan,
+    rebuilds the package meanwhile. The owner's schema and its documents must
+    survive, the orphan must go, and the reconciler must not block the event
+    loop it is served from while Vespa redeploys."""
+    import threading
+    from concurrent.futures import ThreadPoolExecutor
+
+    connect, store = recovery_backend
+    owner, reconciler = connect(), connect()
+    tenant = f"orphan_{uuid4().hex[:12]}:inflight"
+    schema = f"wiki_pages_{tenant.replace(':', '_')}"
+    dead_tenant = f"orphan_{uuid4().hex[:12]}:dead"
+    orphan = owner.schema_registry.deploy_schema(dead_tenant, "wiki_pages")
+    bystander = owner.schema_registry.deploy_schema(
+        f"orphan_{uuid4().hex[:12]}:bystander", "wiki_pages"
+    )
+    barrier = threading.Barrier(2, timeout=120)
+    activated = threading.Event()
+    writes = []
+    write = store.compare_and_set_config
+
+    def gated_write(**kwargs):
+        if kwargs["service"] == "schema_registry" and kwargs["tenant_id"] == tenant:
+            writes.append(copy.deepcopy(kwargs["config_value"]))
+            activated.set()
+            barrier.wait()
+        return write(**kwargs)
+
+    previous_loader = tenant_manager._schema_loader
+    tenant_manager.set_schema_loader(FilesystemSchemaLoader(Path("configs/schemas")))
+    monkeypatch.setattr(tenant_manager, "get_backend", lambda: reconciler)
+    monkeypatch.setattr(store, "compare_and_set_config", gated_write)
+
+    async def reconcile_with_loop_probe():
+        order = []
+
+        async def probe():
+            await asyncio.sleep(0.2)
+            order.append("probe")
+
+        async def reconcile():
+            result = await tenant_manager.reconcile_orphans(dry_run=False)
+            order.append("reconcile")
+            return result
+
+        result, _ = await asyncio.gather(reconcile(), probe())
+        return order, result
+
+    with ThreadPoolExecutor(1) as pool:
+        task = pool.submit(owner.schema_registry.deploy_schema, tenant, "wiki_pages")
+        try:
+            assert activated.wait(120) is True
+            assert _entry(store, tenant) is None
+            assert (
+                _entry(store, tenant, "schema_deployment_intents").config_value["state"]
+                == "pending"
+            )
+            app, fields = _feed_sentinel(owner, schema, tenant)
+            # The registry forgets the dead tenant while Vespa still serves its
+            # schema: a genuine orphan for the reconciler to drop.
+            owner.schema_registry.unregister_schema(dead_tenant, "wiki_pages")
+
+            preview = asyncio.run(tenant_manager.reconcile_orphans(dry_run=True))
+            assert set(preview["orphan_schemas"]) & {schema, orphan} == {orphan}
+
+            order, confirmed = asyncio.run(reconcile_with_loop_probe())
+            assert order == ["probe", "reconcile"]
+            assert set(confirmed["deleted"]) & {schema, orphan} == {orphan}
+            assert set(reconciler.schema_manager.list_deployed_document_types()) & {
+                schema,
+                orphan,
+                bystander,
+            } == {schema, bystander}
+            _assert_sentinel(app, schema, fields)
+
+            barrier.wait()
+            assert task.result(timeout=120) == schema
+            assert _entry(store, tenant).config_value == writes[0]
+            assert (
+                _entry(store, tenant, "schema_deployment_intents").config_value["state"]
+                == "complete"
+            )
+            _assert_sentinel(app, schema, fields)
+        finally:
+            barrier.abort()
+            monkeypatch.setattr(store, "compare_and_set_config", write)
+            tenant_manager.set_schema_loader(previous_loader)
+            if writes and _entry(store, tenant) is None:
+                store.set_config(
+                    tenant_id=tenant,
+                    scope=ConfigScope.SCHEMA,
+                    service="schema_registry",
+                    config_key="schema_wiki_pages",
+                    config_value=writes[0],
+                )

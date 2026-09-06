@@ -248,7 +248,7 @@ SCHEMA_REFERENCE_FIXTURES = {
     ),
     "tests/runtime/unit/test_admin_reconcile_orphans.py": (
         "Injected deployed schema list for tenant recovery",
-        "knowledge_graph_legit video_brand_new_sv_acme video_colpali_smol500_mv_frame_beta",
+        "knowledge_graph_inflight knowledge_graph_legit video_brand_new_sv_acme video_colpali_smol500_mv_frame_beta",
     ),
     "tests/runtime/unit/test_audio_profile_inference_services.py": (
         "Injected audio inference service configuration",
