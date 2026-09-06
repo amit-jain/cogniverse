@@ -1085,6 +1085,91 @@ CAP8_QUERY_ENHANCEMENT_QUERIES = (
     ),
 )
 
+# Seeded after CAP8_QUERY_ENHANCEMENT_QUERIES, in order, until the tenant's
+# served rows carry enough trainable enhancements for the cap-8 pool to cross
+# the cap after the holdout is removed. Trainability is the model's call per
+# row, so how many of these are needed varies run to run.
+CAP8_QUERY_ENHANCEMENT_EXTENSION_QUERIES = (
+    _grounded_query(
+        "find lecture videos explaining convolutional neural networks for image "
+        "recognition",
+        "convolutional neural networks",
+    ),
+    _grounded_query(
+        "search podcasts discussing large language model alignment techniques",
+        "large language model alignment",
+    ),
+    _grounded_query(
+        "find documents comparing gradient boosting and random forests on tabular data",
+        "gradient boosting",
+        "random forests",
+    ),
+    _grounded_query(
+        "search video tutorials on fine-tuning transformers with PyTorch",
+        "transformers",
+        "PyTorch",
+    ),
+    _grounded_query(
+        "find research papers about diffusion models for image generation",
+        "diffusion models",
+    ),
+    _grounded_query(
+        "search audio interviews about autonomous vehicle perception systems",
+        "autonomous vehicle perception",
+    ),
+    _grounded_query(
+        "find videos demonstrating robot arm manipulation trained with "
+        "reinforcement learning",
+        "robot arm manipulation",
+        "reinforcement learning",
+    ),
+    _grounded_query(
+        "search documents on federated learning for medical imaging",
+        "federated learning",
+        "medical imaging",
+    ),
+    _grounded_query(
+        "find conference talks explaining retrieval augmented generation pipelines",
+        "retrieval augmented generation",
+    ),
+    _grounded_query(
+        "search image datasets used for object detection benchmarks",
+        "object detection",
+    ),
+    _grounded_query(
+        "find videos covering graph neural networks for molecular property prediction",
+        "graph neural networks",
+        "molecular property prediction",
+    ),
+    _grounded_query(
+        "search lecture transcripts about Bayesian optimization for hyperparameter "
+        "tuning",
+        "Bayesian optimization",
+        "hyperparameter tuning",
+    ),
+    _grounded_query(
+        "find documents describing speech synthesis with neural vocoders",
+        "speech synthesis",
+        "neural vocoders",
+    ),
+    _grounded_query(
+        "search videos about time series forecasting with recurrent networks",
+        "time series forecasting",
+        "recurrent networks",
+    ),
+    _grounded_query(
+        "find audio lectures on contrastive learning for multimodal embeddings",
+        "contrastive learning",
+        "multimodal embeddings",
+    ),
+    _grounded_query(
+        "search documents and videos comparing knowledge distillation and model "
+        "pruning",
+        "knowledge distillation",
+        "model pruning",
+    ),
+)
+
 
 def _call_agent(
     agent_name: str,
@@ -1494,6 +1579,92 @@ def _wait_for_served_scoreable_span_floor_in_pod(
     )
 
 
+def _served_query_enhancement_trainability_in_pod(
+    tenant_id: str,
+    lookback_hours: float | None = None,
+) -> tuple[int, int]:
+    """(served, trainable) query-enhancement records for ``tenant_id``.
+
+    ``trainable`` is the SIMBA job's own verdict: ``_query_enhancement_pairs``
+    run in the runtime pod on the tenant's live spans, so a fixture premise
+    about the trainable pool is measured by the predicate the job applies.
+    """
+    if lookback_hours is None:
+        lookback_hours = _module_lookback_hours()
+    script = IN_POD_TELEMETRY_PRELUDE + (
+        "import asyncio, json; "
+        "from cogniverse_foundation.telemetry.config import SPAN_NAME_QUERY_ENHANCEMENT; "
+        "from cogniverse_foundation.telemetry.manager import get_telemetry_manager; "
+        "from cogniverse_runtime.optimization_cli import _query_enhancement_pairs, _query_spans_by_name; "
+        "tm = get_telemetry_manager(); "
+        f"tp = tm.get_provider(tenant_id={tenant_id!r}); "
+        f"df = asyncio.run(_query_spans_by_name(tm, tp, {tenant_id!r}, SPAN_NAME_QUERY_ENHANCEMENT, {lookback_hours!r})); "
+        "records = _query_enhancement_pairs(df); "
+        "print('__TRAINABLE__' + json.dumps({'served': len(records), "
+        "'trainable': sum(1 for r in records if r['trainable'])}))"
+    )
+    result = subprocess.run(
+        [
+            "kubectl",
+            "--context",
+            KUBECTL_CONTEXT,
+            "exec",
+            "-n",
+            NAMESPACE,
+            DEPLOYMENT,
+            "-c",
+            CONTAINER,
+            "--",
+            "python3",
+            "-c",
+            script,
+        ],
+        capture_output=True,
+        text=True,
+        timeout=600,
+    )
+    if result.returncode != 0:
+        raise RuntimeError(
+            _subprocess_failure_message(
+                "served_query_enhancement_trainability",
+                result,
+                operation=(
+                    f"served query-enhancement trainability for tenant_id={tenant_id!r}"
+                ),
+            )
+        )
+    line = result.stdout.strip().splitlines()[-1]
+    assert line.startswith("__TRAINABLE__"), result.stdout[-500:]
+    counts = json.loads(line[len("__TRAINABLE__") :])
+    return int(counts["served"]), int(counts["trainable"])
+
+
+def _wait_for_served_query_enhancement_rows_in_pod(
+    tenant_id: str,
+    expected_served: int,
+    timeout_s: float = 240.0,
+) -> tuple[int, int]:
+    """Wait until exactly ``expected_served`` seeded rows are queryable.
+
+    Returns ``(served, trainable)``. The tenant is created for one module and
+    nothing else writes to it, so once the batch export lands the served count
+    is pinned exactly: fewer rows is an export still in flight, more is
+    another writer.
+    """
+    deadline = time.monotonic() + timeout_s
+    served, trainable = -1, -1
+    while time.monotonic() < deadline:
+        served, trainable = _served_query_enhancement_trainability_in_pod(tenant_id)
+        if served >= expected_served:
+            break
+        time.sleep(5.0)
+    assert served == expected_served, (
+        f"tenant {tenant_id!r} shows {served} served query-enhancement rows; "
+        f"expected exactly {expected_served} within {timeout_s:.0f}s"
+    )
+    return served, trainable
+
+
 def _wait_for_seeded_span_lower_bound_in_pod(
     tenant_id: str,
     span_name_symbol: str,
@@ -1636,9 +1807,41 @@ def gateway_threshold_tenant(_kubectl_cluster_ready) -> GatewayThresholdTenant:
                 pass
 
 
+SIMBA_SELECTION_TRAINSET_CAP = 8
+
+
+def _seed_query_enhancement_rows(
+    client: httpx.Client,
+    tenant_id: str,
+    rows: list[tuple[str, list[dict], list[dict]]],
+) -> None:
+    for query, entities, relationships in rows:
+        resp = client.post(
+            "/agents/query_enhancement_agent/process",
+            json={
+                "agent_name": "query_enhancement_agent",
+                "query": query,
+                "context": {
+                    "tenant_id": tenant_id,
+                    "entities": entities,
+                    "relationships": relationships,
+                },
+                "top_k": 3,
+            },
+        )
+        assert resp.status_code == 200, resp.text[:500]
+
+
 @pytest.fixture(scope="module")
 def simba_selection_tenant(_kubectl_cluster_ready) -> SimbaSelectionTenant:
-    """Create a fresh tenant whose QE pool crosses the cap-8 selection floor."""
+    """Create a fresh tenant whose trainable QE pool crosses its cap-8 selection.
+
+    The pool the job selects from is the served rows minus the holdout minus
+    whatever the model left unenhanced, and the last term is the model's call
+    per row. The fixture therefore seeds the fixed cap-8 list, measures the
+    trainable count with the job's own predicate, and tops up from the
+    extension list until the trainable rows exceed cap + holdout minimum.
+    """
     suffix = uuid.uuid4().hex[:8]
     org_id = f"opt_simba_select_{suffix}"
     tenant_id = f"{org_id}:t1"
@@ -1656,10 +1859,9 @@ def simba_selection_tenant(_kubectl_cluster_ready) -> SimbaSelectionTenant:
 
     register_tenant_and_wait(tenant_id, created_by="e2e", timeout_s=600.0)
 
-    # Controller ruling: use the product's per-tenant optimizer_floors path
-    # here, not a test-only floor shim. The dedicated 9/3 floor lets the 11
-    # served records clear insufficient_population and leave 9 train records
-    # after the 2-row served holdout.
+    # The tenant's own optimizer_floors keep the seeded population above the
+    # insufficient_population floor; training_selection sets the cap the test
+    # pins.
     script = IN_POD_TELEMETRY_PRELUDE + (
         "from cogniverse_foundation.config.unified_config import RoutingConfigUnified; "
         "from cogniverse_foundation.config.utils import create_default_config_manager; "
@@ -1668,7 +1870,8 @@ def simba_selection_tenant(_kubectl_cluster_ready) -> SimbaSelectionTenant:
         "optimizer_floors={"
         "'simba_query_enhancement': {'min_samples_for_optimization': 9, 'min_unique_queries': 3}"
         "}, training_selection={"
-        "'simba_query_enhancement': {'trainset_cap': 8, 'mmr_lambda': 0.7}"
+        "'simba_query_enhancement': {"
+        f"'trainset_cap': {SIMBA_SELECTION_TRAINSET_CAP}, 'mmr_lambda': 0.7}}"
         "})); "
         "print('__CONFIG__ok')"
     )
@@ -1702,46 +1905,60 @@ def simba_selection_tenant(_kubectl_cluster_ready) -> SimbaSelectionTenant:
         )
 
     seeded_queries = list(CAP8_QUERY_ENHANCEMENT_QUERIES)
-    with httpx.Client(base_url=RUNTIME, timeout=GATEWAY_PROCESS_TIMEOUT_S) as client:
-        for query, entities, relationships in seeded_queries:
-            resp = client.post(
-                "/agents/query_enhancement_agent/process",
-                json={
-                    "agent_name": "query_enhancement_agent",
-                    "query": query,
-                    "context": {
-                        "tenant_id": tenant_id,
-                        "entities": entities,
-                        "relationships": relationships,
-                    },
-                    "top_k": 3,
-                },
-            )
-            assert resp.status_code == 200, resp.text[:500]
+    extension_queries = list(CAP8_QUERY_ENHANCEMENT_EXTENSION_QUERIES)
+    # The test pins distinct_queries to the seeded count and deduped to the
+    # pool, so every candidate row must be a distinct query key.
+    candidate_keys = [
+        query.strip().casefold() for query, _, _ in seeded_queries + extension_queries
+    ]
+    assert len(set(candidate_keys)) == len(candidate_keys), [
+        key for key, count in collections.Counter(candidate_keys).items() if count > 1
+    ]
+    holdout_minimum = _served_holdout_minimum_in_pod("query_enhancement")
+    target_trainable = SIMBA_SELECTION_TRAINSET_CAP + holdout_minimum + 1
 
-    lookback_hours = _module_lookback_hours()
-    _wait_for_seeded_span_lower_bound_in_pod(
-        tenant_id,
-        "SPAN_NAME_QUERY_ENHANCEMENT",
-        len(seeded_queries),
-        lookback_hours,
+    with httpx.Client(base_url=RUNTIME, timeout=GATEWAY_PROCESS_TIMEOUT_S) as client:
+        _seed_query_enhancement_rows(client, tenant_id, seeded_queries)
+        served, trainable = _wait_for_served_query_enhancement_rows_in_pod(
+            tenant_id, len(seeded_queries)
+        )
+        while trainable < target_trainable:
+            batch = extension_queries[: target_trainable - trainable]
+            if not batch:
+                raise AssertionError(
+                    f"cap-{SIMBA_SELECTION_TRAINSET_CAP} tenant {tenant_id!r} cannot "
+                    f"reach its trainable target: served={served} "
+                    f"trainable={trainable} target_trainable={target_trainable} "
+                    f"(cap {SIMBA_SELECTION_TRAINSET_CAP} + served holdout minimum "
+                    f"{holdout_minimum} + 1); the extension list is exhausted "
+                    f"after {len(seeded_queries) - len(CAP8_QUERY_ENHANCEMENT_QUERIES)} "
+                    f"extra rows and the model left {served - trainable} served "
+                    "rows untrainable"
+                )
+            del extension_queries[: len(batch)]
+            _seed_query_enhancement_rows(client, tenant_id, batch)
+            seeded_queries.extend(batch)
+            served, trainable = _wait_for_served_query_enhancement_rows_in_pod(
+                tenant_id, len(seeded_queries)
+            )
+    print(
+        f"__CAP8_TRAINABLE_POOL__ tenant={tenant_id} served={served} "
+        f"trainable={trainable} target_trainable={target_trainable} "
+        f"extension_rows={len(seeded_queries) - len(CAP8_QUERY_ENHANCEMENT_QUERIES)}",
+        flush=True,
     )
+
     # This tenant is created fresh for this module and nothing else writes to
-    # it, so the seeded spans are the whole population: pin it exactly rather
-    # than trusting the lower-bound wait above.
+    # it, so the seeded spans are the whole population: pin it exactly by span
+    # name as well as by served record.
     seeded_span_count = _count_spans_by_name_in_pod(
         tenant_id,
         "SPAN_NAME_QUERY_ENHANCEMENT",
-        lookback_hours,
+        _module_lookback_hours(),
     )
     assert seeded_span_count == len(seeded_queries), seeded_span_count
 
     approved_synthetic_count = 0
-    # optimizer_floors sets min_samples=9 and min_unique=3, so
-    # min_holdout=max(1, 9//10)=1. With 11 grounded spans,
-    # _split_served_holdout holds out max(1, 11//4)=2, leaving 9 train rows;
-    # deduped 9 > cap 8, so MMR fires and training_examples=8 while the ledger
-    # still records all 11 consumed examples.
 
     try:
         yield SimbaSelectionTenant(tenant_id, seeded_queries, approved_synthetic_count)
@@ -3940,7 +4157,10 @@ class TestSimbaSelectionCap:
         assert selection["decayed_count"] == 0, selection
         _assert_holdout_query_contract(result, "simba_query_enhancement")
         assert result["distinct_queries"] == len(
-            {query.strip().casefold() for query, _, _ in CAP8_QUERY_ENHANCEMENT_QUERIES}
+            {
+                query.strip().casefold()
+                for query, _, _ in simba_selection_tenant.seeded_queries
+            }
         ), result
         assert result["training_examples"] == selection["cap"], result
         assert (
