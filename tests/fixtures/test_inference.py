@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import logging
 import os
 import re
 import subprocess
@@ -26,6 +27,8 @@ from cogniverse_cli.inference_endpoints import (
 )
 
 from cogniverse_foundation.inference_specs import get_inference_service_spec
+from cogniverse_runtime.ingestion.processor_manager import ProcessorManager
+from cogniverse_runtime.ingestion.strategy_factory import StrategyFactory
 from tests.fixtures.inference import (
     TEST_INFERENCE_API_KEY,
     DiscoveredEndpointProvider,
@@ -37,6 +40,7 @@ from tests.fixtures.inference import (
     ProviderUnavailable,
     SessionInferenceEndpoints,
     collect_required_inference_services,
+    derive_service_dependencies,
     explicit_endpoints_from_environment,
     publish_inference_endpoints,
 )
@@ -47,6 +51,7 @@ COLPALI = get_inference_service_spec("vllm_colpali")
 DENSEON = get_inference_service_spec("denseon")
 CLAP = get_inference_service_spec("clap_embed")
 VIDEO_EMBED = get_inference_service_spec("video_embed")
+ASR = get_inference_service_spec("vllm_asr")
 TEACHER = get_inference_service_spec("vllm_llm_teacher")
 API_KEY = "shared-inference-secret"
 REPO_ROOT = Path(__file__).resolve().parents[2]
@@ -1623,6 +1628,126 @@ def test_unknown_named_service_fails_collection_instead_of_skipping():
         collect_required_inference_services(
             [_Item(markers=(_Marker("requires_inference", "missing"),))]
         )
+
+
+_SHIPPED_PROFILES = json.loads(
+    (REPO_ROOT / "configs" / "config.json").read_text(encoding="utf-8")
+)["backend"]["profiles"]
+
+
+def _declared_transcription_dependencies(profiles) -> dict[str, frozenset[str]]:
+    """Read each profile's raw declarations: an embedding service depends on
+    the transcription service when the profile enables transcription."""
+    expected: dict[str, set[str]] = {}
+    for profile in profiles.values():
+        services = profile.get("inference_services") or {}
+        if "embedding" not in services or "transcription" not in services:
+            continue
+        if profile["pipeline_config"]["transcribe_audio"] is not True:
+            continue
+        expected.setdefault(services["embedding"], set()).add(services["transcription"])
+    return {service: frozenset(deps) for service, deps in expected.items()}
+
+
+@pytest.mark.unit
+def test_service_dependencies_are_derived_from_shipped_profiles():
+    expected = _declared_transcription_dependencies(_SHIPPED_PROFILES)
+
+    assert dict(derive_service_dependencies(_SHIPPED_PROFILES)) == expected
+    for service, dependencies in expected.items():
+        item = _Item(markers=(_Marker("requires_inference", service),))
+        assert collect_required_inference_services([item]) == frozenset(
+            {service, *dependencies}
+        )
+
+
+def _profile(
+    *,
+    embedding: str,
+    transcription: str | None,
+    transcription_class: str,
+    transcribe_audio: bool,
+) -> dict:
+    services = {"embedding": embedding}
+    if transcription is not None:
+        services["transcription"] = transcription
+    return {
+        "inference_services": services,
+        "pipeline_config": {"transcribe_audio": transcribe_audio},
+        "strategies": {
+            "transcription": {"class": transcription_class, "params": {}},
+        },
+    }
+
+
+@pytest.mark.unit
+def test_profile_enabling_transcription_adds_dependency_to_its_embedding_service():
+    enabled = _profile(
+        embedding=VIDEO_EMBED.name,
+        transcription=ASR.name,
+        transcription_class="AudioTranscriptionStrategy",
+        transcribe_audio=True,
+    )
+
+    assert dict(derive_service_dependencies({"enabled": enabled})) == {
+        VIDEO_EMBED.name: frozenset({ASR.name})
+    }
+
+
+@pytest.mark.unit
+def test_profile_disabling_transcription_adds_no_dependency():
+    disabled = _profile(
+        embedding=VIDEO_EMBED.name,
+        transcription=None,
+        transcription_class="NoTranscriptionStrategy",
+        transcribe_audio=False,
+    )
+
+    assert dict(derive_service_dependencies({"disabled": disabled})) == {}
+
+
+@pytest.mark.unit
+def test_declared_transcription_service_without_a_strategy_that_uses_it_is_not_a_dependency():
+    """Only services the strategy set resolves at init count; a binding left
+    in inference_services that no strategy consumes is never provisioned."""
+    unused_binding = _profile(
+        embedding=VIDEO_EMBED.name,
+        transcription=ASR.name,
+        transcription_class="NoTranscriptionStrategy",
+        transcribe_audio=False,
+    )
+
+    assert dict(derive_service_dependencies({"unused": unused_binding})) == {}
+
+
+@pytest.mark.unit
+def test_dependency_follows_pipeline_init_not_the_runtime_toggle():
+    """ProcessorManager resolves every service a strategy declares before
+    any video is processed, so the dependency holds with transcribe_audio
+    off."""
+    profile = _profile(
+        embedding=VIDEO_EMBED.name,
+        transcription=ASR.name,
+        transcription_class="AudioTranscriptionStrategy",
+        transcribe_audio=False,
+    )
+
+    assert dict(derive_service_dependencies({"toggled_off": profile})) == {
+        VIDEO_EMBED.name: frozenset({ASR.name})
+    }
+
+    manager = ProcessorManager(
+        logging.getLogger("test_dependency_follows_pipeline_init"),
+        plugin_dir=Path("/does/not/exist"),
+    )
+    with pytest.raises(ValueError) as excinfo:
+        manager.initialize_from_strategies(
+            StrategyFactory.create_from_profile_config(profile), service_urls={}
+        )
+    assert str(excinfo.value) == (
+        f"Processor 'audio' requests inference_service={ASR.name!r} but no URL "
+        "is configured. Deployed services: []."
+    )
 
 
 @pytest.mark.unit
