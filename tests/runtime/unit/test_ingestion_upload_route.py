@@ -23,6 +23,10 @@ from fastapi.testclient import TestClient
 
 from cogniverse_runtime.ingestion_worker import minio_client, submit_api
 from cogniverse_runtime.ingestion_worker import redis_client as redis_client_mod
+from cogniverse_runtime.ingestion_worker.submit_api import (
+    EnqueueResult,
+    StatusStreamUnavailable,
+)
 from cogniverse_runtime.routers import ingestion as ingestion_router
 
 pytestmark = [pytest.mark.unit, pytest.mark.ci_fast]
@@ -67,7 +71,7 @@ def upload_client(monkeypatch):
 
     captured: dict = {}
     state = {
-        "result": SimpleNamespace(
+        "result": EnqueueResult(
             ingest_id="ing-1",
             sha="sha-abc",
             state="queued",
@@ -106,6 +110,7 @@ def test_async_default_returns_queued_envelope(upload_client):
     assert body["state"] == "queued"
     assert body["existing"] is False
     assert body["status"] == "queued"
+    assert body["wait_timed_out"] is False
     assert body["source_url"] == _SOURCE_URL
     assert body["filename"] == "v.mp4"
     # Defaults reached the queue: not a synchronous wait, no idempotency bypass.
@@ -116,7 +121,7 @@ def test_async_default_returns_queued_envelope(upload_client):
 
 def test_wait_and_force_query_params_drive_synchronous_success(upload_client):
     client, captured, state = upload_client
-    state["result"] = SimpleNamespace(
+    state["result"] = EnqueueResult(
         ingest_id="ing-2",
         sha="sha-xyz",
         state="complete",
@@ -153,6 +158,7 @@ def test_wait_and_force_query_params_drive_synchronous_success(upload_client):
         "chunks_created": 3,
         "documents_fed": 5,
         "status": "success",
+        "wait_timed_out": False,
         "graph_nodes": 2,
         "graph_edges": 1,
     }
@@ -166,7 +172,7 @@ def test_wait_surfaces_the_terminal_error_of_a_failed_run(upload_client):
     ``error`` and ``error_type`` ride along with ``status == "failed"`` so a
     caller never has to reconstruct the reason from pod logs."""
     client, _, state = upload_client
-    state["result"] = SimpleNamespace(
+    state["result"] = EnqueueResult(
         ingest_id="ing-3",
         sha="sha-fail",
         state="failed",
@@ -193,10 +199,73 @@ def test_wait_surfaces_the_terminal_error_of_a_failed_run(upload_client):
         "chunks_created": 0,
         "documents_fed": 0,
         "status": "failed",
+        "wait_timed_out": False,
         "graph_nodes": 0,
         "graph_edges": 0,
         "error": "graph extraction failed for ingest ing-3",
         "error_type": "GraphStageIncomplete",
+    }
+
+
+def test_lapsed_wait_returns_202_with_the_last_observed_state(upload_client):
+    """A wait that lapses before a terminal event is not a queued job: the
+    envelope carries the state the status stream last showed, says the wait
+    lapsed, and surfaces the retrying error so the caller can decide whether
+    to keep polling."""
+    client, _, state = upload_client
+    state["result"] = EnqueueResult(
+        ingest_id="ing-4",
+        sha="sha-lapsed",
+        state="retrying",
+        existing=False,
+        final_event=None,
+        wait_timed_out=True,
+        last_event={
+            "state": "retrying",
+            "ingest_id": "ing-4",
+            "error": "graph extraction left 46 failed writes for ingest ing-4",
+            "error_type": "GraphStageIncomplete",
+        },
+    )
+
+    resp = _post(client, query="?wait=true&wait_timeout=60")
+
+    assert resp.status_code == 202, resp.text
+    assert resp.json() == {
+        "ingest_id": "ing-4",
+        "sha": "sha-lapsed",
+        "state": "retrying",
+        "existing": False,
+        "filename": "v.mp4",
+        "source_url": _SOURCE_URL,
+        "status": "wait_timeout",
+        "wait_timed_out": True,
+        "error": "graph extraction left 46 failed writes for ingest ing-4",
+        "error_type": "GraphStageIncomplete",
+    }
+
+
+def test_lost_status_stream_during_wait_returns_503(upload_client, monkeypatch):
+    client, _, _ = upload_client
+
+    async def _enqueue(redis, **kwargs):
+        raise StatusStreamUnavailable(
+            "No status events for ingest ing-5 within 60s: the status stream is "
+            "missing or expired, so its state cannot be reported"
+        )
+
+    monkeypatch.setattr(submit_api, "enqueue_ingestion", _enqueue, raising=True)
+
+    resp = _post(client, query="?wait=true&wait_timeout=60")
+
+    assert resp.status_code == 503, resp.text
+    assert resp.json() == {
+        "detail": {
+            "message": (
+                "No status events for ingest ing-5 within 60s: the status stream "
+                "is missing or expired, so its state cannot be reported"
+            )
+        }
     }
 
 

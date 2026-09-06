@@ -40,13 +40,38 @@ class BackpressureError(Exception):
         self.rejection = rejection
 
 
+class StatusStreamUnavailable(Exception):
+    """A wait observed no status event at all for the ingest.
+
+    The submit path writes the first event before it starts waiting, so an
+    empty read means the stream was lost (expired or flushed), not that the
+    job is queued. The state is unknown and must not be rendered as one.
+    """
+
+
 @dataclass(frozen=True)
 class EnqueueResult:
     ingest_id: str
     sha: str
-    state: str  # "queued" | "in_flight" | "complete" | "failed"
+    # The state the status stream last showed: "queued" | "in_flight" |
+    # "running" | "retrying" | "complete" | "failed".
+    state: str
     existing: bool  # True iff this is an idempotency hit
-    final_event: Optional[dict] = None  # populated only when wait=True
+    final_event: Optional[dict] = None  # the terminal event, when wait observed one
+    # wait=True only: the wait lapsed before a terminal event; ``state`` and
+    # ``last_event`` are the newest non-terminal event the stream held.
+    wait_timed_out: bool = False
+    last_event: Optional[dict] = None
+
+
+@dataclass(frozen=True)
+class WaitOutcome:
+    terminal: Optional[dict]
+    last_event: dict
+
+    @property
+    def timed_out(self) -> bool:
+        return self.terminal is None
 
 
 def _backpressure_limits() -> tuple[int, int]:
@@ -127,11 +152,18 @@ async def _submit_committed(redis: aioredis.Redis, sha: str) -> bool:
 
 async def _wait_for_terminal(
     redis: aioredis.Redis, ingest_id: str, deadline_seconds: float
-) -> Optional[dict]:
-    """Long-poll the status stream until a terminal event is observed
-    or ``deadline_seconds`` elapses. Terminal = ``state in {complete,
-    failed}``. Returns None on timeout."""
+) -> WaitOutcome:
+    """Long-poll the status stream until a terminal event is observed or
+    ``deadline_seconds`` elapses. Terminal = ``state in {complete, failed}``.
+
+    On timeout the outcome carries the newest event the stream held, so the
+    caller reports what the worker was actually doing. Raises
+    ``StatusStreamUnavailable`` when the stream yielded nothing at all: the
+    caller wrote the first event before waiting, so an empty stream is a
+    lost stream, not a queued job.
+    """
     last_id = "0-0"
+    last_event: Optional[dict] = None
     deadline = asyncio.get_event_loop().time() + deadline_seconds
     while asyncio.get_event_loop().time() < deadline:
         remaining_ms = max(
@@ -142,9 +174,16 @@ async def _wait_for_terminal(
         )
         for message_id, event in events:
             last_id = message_id
+            last_event = event
             if event.get("state") in ("complete", "failed"):
-                return event
-    return None
+                return WaitOutcome(terminal=event, last_event=event)
+    if last_event is None:
+        raise StatusStreamUnavailable(
+            f"No status events for ingest {ingest_id} within "
+            f"{deadline_seconds:g}s: the status stream is missing or expired, "
+            "so its state cannot be reported"
+        )
+    return WaitOutcome(terminal=None, last_event=last_event)
 
 
 async def _restore_status_trail(
@@ -213,19 +252,19 @@ async def enqueue_ingestion(
             # fresh enqueue: a completed run resolves immediately from the
             # status stream (or the snapshot _restore_status_trail seeded),
             # an in-flight run long-polls to terminal within wait_timeout.
-            final = (
-                await _wait_for_terminal(redis, existing_id, wait_timeout)
-                if wait
-                else None
-            )
-            if final is not None:
-                state = final.get("state", state)
+            if not wait:
+                return EnqueueResult(
+                    ingest_id=existing_id, sha=sha, state=state, existing=True
+                )
+            outcome = await _wait_for_terminal(redis, existing_id, wait_timeout)
             return EnqueueResult(
                 ingest_id=existing_id,
                 sha=sha,
-                state=state,
+                state=outcome.last_event["state"],
                 existing=True,
-                final_event=final,
+                final_event=outcome.terminal,
+                wait_timed_out=outcome.timed_out,
+                last_event=outcome.last_event,
             )
         if existing_id:
             # The inflight marker exists but the run never reached the work
@@ -358,19 +397,13 @@ async def enqueue_ingestion(
             ingest_id=ingest_id, sha=sha, state="queued", existing=False
         )
 
-    final = await _wait_for_terminal(redis, ingest_id, wait_timeout)
-    if final is None:
-        return EnqueueResult(
-            ingest_id=ingest_id,
-            sha=sha,
-            state="queued",
-            existing=False,
-            final_event=None,
-        )
+    outcome = await _wait_for_terminal(redis, ingest_id, wait_timeout)
     return EnqueueResult(
         ingest_id=ingest_id,
         sha=sha,
-        state=final.get("state", "complete"),
+        state=outcome.last_event["state"],
         existing=False,
-        final_event=final,
+        final_event=outcome.terminal,
+        wait_timed_out=outcome.timed_out,
+        last_event=outcome.last_event,
     )
