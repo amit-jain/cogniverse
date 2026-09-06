@@ -38,6 +38,7 @@ from fastapi import APIRouter, FastAPI, HTTPException, Query
 from requests import exceptions as requests_exceptions
 
 from cogniverse_core.common.tenant_utils import SYSTEM_TENANT_ID, parse_tenant_id
+from cogniverse_core.registries.exceptions import RegistryStorageError
 from cogniverse_foundation.config.utils import get_config
 from cogniverse_runtime.admin.models import (
     CreateOrganizationRequest,
@@ -997,7 +998,10 @@ def _list_orphan_schemas() -> Dict[str, list]:
     Returns a dict with two lists: ``orphan_schemas`` (Vespa-only full
     schema names) and ``orphan_tenants`` (tenants implied by stripping
     known base prefixes from those names). Names whose base is not a
-    shipped schema are reported in ``unrecovered_schemas``.
+    shipped schema are reported in ``unrecovered_schemas``. A schema whose
+    activation is in flight in another process (a pending deployment intent)
+    is live-but-unregistered for the whole convergence wait and is never an
+    orphan.
     """
     backend = get_backend()
     schema_manager = backend.schema_manager
@@ -1026,7 +1030,21 @@ def _list_orphan_schemas() -> Dict[str, list]:
             ),
         )
 
-    orphans = sorted(deployed - registered - schema_manager._PROTECTED_SCHEMAS)
+    try:
+        reserved = set(schema_registry.reserved_schemas(deployed))
+    except RegistryStorageError as exc:
+        raise HTTPException(
+            status_code=503,
+            detail=(
+                "Cannot read schema deployment intents; refusing to reconcile "
+                "orphans because a mid-deploy schema would be indistinguishable "
+                f"from an orphan: {exc}"
+            ),
+        ) from exc
+
+    orphans = sorted(
+        deployed - registered - reserved - schema_manager._PROTECTED_SCHEMAS
+    )
 
     orphan_tenants: set = set()
     unrecovered: list = []
@@ -1066,12 +1084,13 @@ async def reconcile_orphans(
     implied tenant_id by stripping known base prefixes.
 
     With ``dry_run=true`` returns the diff for operator review. With
-    ``dry_run=false`` calls ``delete_tenant_schemas_bulk`` so all
-    orphan tenants are dropped atomically (single redeploy) — required
-    because individual tenant deletes refuse when a peer-tenant
-    unreconstructable orphan exists.
+    ``dry_run=false`` calls ``delete_orphan_schemas`` so every orphan is
+    dropped atomically (single redeploy) — required because individual
+    tenant deletes refuse when a peer-tenant unreconstructable orphan
+    exists. Both the enumeration and the redeploy block for seconds on
+    Vespa, so they run off the event loop.
     """
-    diff = _list_orphan_schemas()
+    diff = await asyncio.to_thread(_list_orphan_schemas)
     if dry_run or not diff["orphan_tenants"]:
         return {
             "dry_run": dry_run,
@@ -1080,7 +1099,9 @@ async def reconcile_orphans(
         }
 
     backend = get_backend()
-    deleted = backend.schema_manager.delete_orphan_schemas(diff["orphan_schemas"])
+    deleted = await asyncio.to_thread(
+        backend.schema_manager.delete_orphan_schemas, diff["orphan_schemas"]
+    )
     return {
         "dry_run": False,
         "deleted": deleted,

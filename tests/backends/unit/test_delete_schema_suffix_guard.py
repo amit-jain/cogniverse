@@ -189,10 +189,21 @@ class _BulkRegistry:
     """Registry stub for delete_tenant_schemas_bulk: exposes the registered
     full-name set (``_get_all_schemas``) and per-tenant bases."""
 
-    def __init__(self, registered_full_names: list, tenant_bases: dict):
+    def __init__(
+        self,
+        registered_full_names: list,
+        tenant_bases: dict,
+        reserved: dict | None = None,
+    ):
         self._registered = registered_full_names
         self._tenant_bases = tenant_bases
+        self._reserved = reserved or {}
         self.unregistered: list = []
+        self.reserved_queries: list = []
+
+    def reserved_schemas(self, live_names: set) -> dict:
+        self.reserved_queries.append(set(live_names))
+        return dict(self._reserved)
 
     def _get_all_schemas(self):
         return [
@@ -276,6 +287,109 @@ class TestBulkDeleteSuffixAndRefuseGuards:
 
         # Refused before any redeploy — nothing was deployed.
         assert deployed_packages == []
+
+
+def _shipped_definition(full_name: str) -> str:
+    import json
+    from pathlib import Path
+
+    from cogniverse_core.schemas.filesystem_loader import FilesystemSchemaLoader
+
+    definition = FilesystemSchemaLoader(Path("configs/schemas")).load_schema(
+        "wiki_pages"
+    )
+    definition["name"] = full_name
+    return json.dumps(definition)
+
+
+def _registration(full_name: str) -> dict:
+    return {
+        "tenant_id": "globex:globex",
+        "base_schema_name": "wiki_pages",
+        "full_schema_name": full_name,
+        "schema_definition": _shipped_definition(full_name),
+        "config": {},
+        "deployment_time": "2026-09-06T00:00:00+00:00",
+    }
+
+
+class TestBulkDeleteKeepsInFlightDeploys:
+    """A peer process's schema is live-but-unregistered for its whole
+    convergence wait (activation precedes registration). The bulk redeploy
+    must rebuild it from its pending deployment intent, never treat it as an
+    unconfirmable survivor, and never as a deletion target."""
+
+    def _manager(self, registered, deployed, reserved):
+        mgr = object.__new__(VespaSchemaManager)
+        mgr._PROTECTED_SCHEMAS = frozenset(METADATA_SCHEMAS)
+        mgr._schema_registry = _BulkRegistry(
+            registered, tenant_bases={"acme": []}, reserved=reserved
+        )
+        mgr._logger = logging.getLogger("test_bulk_inflight")
+        mgr.list_deployed_document_types = lambda **_: list(deployed)
+        mgr.get_tenant_schema_name = lambda tid, base: f"{base}_{tid.replace(':', '_')}"
+        packages: list = []
+        mgr._deploy_package = lambda pkg, allow_schema_removal=False: packages.append(
+            pkg
+        )
+        return mgr, packages
+
+    def test_live_reserved_survivor_is_rebuilt_from_its_intent(self):
+        in_flight = "wiki_pages_globex_globex"
+        deployed = ["knowledge_graph_acme_acme", in_flight, *METADATA_SCHEMAS]
+        mgr, packages = self._manager(
+            registered=[*METADATA_SCHEMAS],
+            deployed=deployed,
+            reserved={in_flight: _registration(in_flight)},
+        )
+
+        assert mgr.delete_tenant_schemas_bulk(["acme"]) == ["knowledge_graph_acme_acme"]
+
+        assert [schema.name for schema in packages[0].schemas] == [
+            "organization_metadata",
+            "tenant_metadata",
+            "config_metadata",
+            "adapter_registry",
+            in_flight,
+        ]
+        assert mgr._schema_registry.reserved_queries == [set(deployed)]
+
+    def test_imminent_reserved_schema_is_kept_before_it_is_live(self):
+        imminent = "wiki_pages_globex_globex"
+        deployed = ["knowledge_graph_acme_acme", *METADATA_SCHEMAS]
+        mgr, packages = self._manager(
+            registered=[*METADATA_SCHEMAS],
+            deployed=deployed,
+            reserved={imminent: _registration(imminent)},
+        )
+
+        assert mgr.delete_tenant_schemas_bulk(["acme"]) == ["knowledge_graph_acme_acme"]
+
+        assert [schema.name for schema in packages[0].schemas] == [
+            "organization_metadata",
+            "tenant_metadata",
+            "config_metadata",
+            "adapter_registry",
+            imminent,
+        ]
+
+    def test_delete_orphan_schemas_refuses_reserved_target(self):
+        in_flight = "wiki_pages_globex_globex"
+        mgr, packages = self._manager(
+            registered=[*METADATA_SCHEMAS],
+            deployed=[in_flight, *METADATA_SCHEMAS],
+            reserved={in_flight: _registration(in_flight)},
+        )
+
+        with pytest.raises(
+            ValueError,
+            match=(
+                r"Refusing to delete schema\(s\) whose activation is in flight "
+                r"in another process: \['wiki_pages_globex_globex'\]"
+            ),
+        ):
+            mgr.delete_orphan_schemas([in_flight])
+        assert packages == []
 
 
 def test_single_tenant_delete_uses_canonical_suffix_only():
