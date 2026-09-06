@@ -202,17 +202,12 @@ runtime:
   resources:
     requests:
       cpu: "4"
-      # All inference now lives in dedicated pods (vllm_asr, vllm_colpali,
-      # vllm_llm_student, vllm_llm_teacher, colbert_pylate, denseon), so
-      # runtime no longer loads ColPali in-process. Observed actual
-      # working set on a warmed runtime is ~12 GiB (FastAPI + DSPy +
-      # agent registry + Phoenix span batchers + mem0 LRU). 18 GiB =
-      # ~50% headroom; the freed 10 GiB lets the teacher pod coexist
-      # with the rest of the inference sidecars.
-      memory: "18Gi"
+      # Inference runs in dedicated pods, so runtime holds only FastAPI,
+      # DSPy, the agent registry, Phoenix span batchers and the mem0 LRU.
+      memory: "12Gi"
     limits:
       cpu: "16"
-      memory: "18Gi"
+      memory: "12Gi"
   # Turn on POST /admin/debug/memsnap for the dev cluster. Off in prod.
   env:
     COGNIVERSE_DEBUG_MEM: "1"
