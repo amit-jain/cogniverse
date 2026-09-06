@@ -202,7 +202,7 @@ def test_concurrent_cold_load_initializes_one_exact_model(monkeypatch, server_mo
 @pytest.mark.unit
 @pytest.mark.ci_fast
 def test_model_load_failure_propagates_exact_context(
-    monkeypatch, client, server_module
+    monkeypatch, client, server_module, caplog
 ):
     class Broken:
         @staticmethod
@@ -217,11 +217,16 @@ def test_model_load_failure_propagates_exact_context(
     server_module._MODEL = None
     server_module._PROCESSOR = None
 
-    resp = client.get("/health")
+    detail = f"video_embed: model {MODEL} load failed (OSError): checkpoint unavailable"
+    with caplog.at_level("ERROR", logger=server_module.logger.name):
+        resp = client.get("/health")
     assert resp.status_code == 503
-    assert resp.json()["detail"] == (
-        f"video_embed: model {MODEL} load failed (OSError): checkpoint unavailable"
-    )
+    assert resp.json()["detail"] == detail
+    # The readiness probe is the only caller; without this record a pod that
+    # never becomes Ready leaves no trace of why in its log.
+    assert [(r.levelname, r.getMessage()) for r in caplog.records] == [
+        ("ERROR", detail)
+    ]
 
 
 @pytest.mark.unit
