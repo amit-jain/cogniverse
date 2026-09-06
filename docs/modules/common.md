@@ -1715,10 +1715,21 @@ fails setup at that endpoint; explicit configuration never falls through to a
 different provider. An explicitly configured `*.modal.run` URL requires HTTPS
 and `COGNIVERSE_INFERENCE_API_KEY`.
 
-The session fixture `resolved_inference_endpoints` returns an immutable mapping
-of service names to `ResolvedInferenceEndpoint`. Each record contains the exact
-URL, provider, pinned model and revision, plus immutable bearer headers that
-must be passed to the production Cogniverse client:
+Resolution is session-scoped and lazy: a service is resolved the first time a
+test that declared it runs, and that outcome — endpoint or failure — is the
+service's outcome for the rest of the session. A service that cannot resolve
+errors only the tests that declared it, with the resolver's reason naming the
+service and the provider order it tried; tests that never asked for it run
+normally. Each resolved endpoint is published to `INFERENCE_SERVICE_URLS` and
+`COGNIVERSE_INFERENCE_API_KEY` as it resolves.
+
+The autouse function fixture `inference_endpoints` is an immutable mapping of
+exactly the services the current test declared to their
+`ResolvedInferenceEndpoint`. The session fixture `resolved_inference_endpoints`
+looks up any service declared anywhere in the session by name (`[...]`,
+`.get(...)`), resolving it on first access. Each record contains the exact URL,
+provider, pinned model and revision, plus immutable bearer headers that must be
+passed to the production Cogniverse client:
 
 ```python
 import pytest
