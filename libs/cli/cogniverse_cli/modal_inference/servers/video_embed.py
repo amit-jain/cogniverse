@@ -203,13 +203,12 @@ def _model_error(
     status_code: int,
     exc: Exception,
 ) -> HTTPException:
-    return HTTPException(
-        status_code=status_code,
-        detail=(
-            f"video_embed: model {cfg.model_name} {operation} failed "
-            f"({type(exc).__name__}): {exc}"
-        ),
+    detail = (
+        f"video_embed: model {cfg.model_name} {operation} failed "
+        f"({type(exc).__name__}): {exc}"
     )
+    logger.error(detail)
+    return HTTPException(status_code=status_code, detail=detail)
 
 
 def build_app(cfg: VideoEmbedConfig) -> FastAPI:

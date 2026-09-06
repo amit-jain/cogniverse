@@ -11,3 +11,6 @@ opencv-python-headless==4.10.0.84
 # from the pytorch index keep the image GPU-free.
 transformers==4.56.2
 torch==2.8.0
+# The X-CLIP processor (VideoMAEImageProcessor) requires PIL even when frames
+# arrive as numpy arrays; transformers checks the backend at construction.
+pillow==11.3.0
