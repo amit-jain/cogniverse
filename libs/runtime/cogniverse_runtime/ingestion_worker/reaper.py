@@ -13,9 +13,13 @@ idempotently:
     re-running the pipeline or touching the active counter (the finished
     run already decremented it; a second decrement would free a slot a
     DIFFERENT still-running job of the same tenant holds).
-  - graph stage marked pending — always re-drive, regardless of delivery
-    count, because dead-lettering would acknowledge content whose graph
-    transaction has not completed.
+  - graph stage marked pending — never dead-lettered, whatever the
+    delivery count, because acking would strand content whose graph
+    transaction has not completed. Re-driven once the hold since its last
+    recorded failure has elapsed: ``min_idle_ms`` doubled per re-drive so
+    far, clamped at ``GRAPH_REDRIVE_HOLD_CAP_MS``, so a deterministic
+    failure stops costing a full pipeline run every sweep while a
+    transient one still recovers on the first re-drive.
   - anything else — re-drive through ``_process_job`` exactly like a
     fresh claim: the run publishes status, marks done, decrements the
     active counter the dead run never released, and acks.
@@ -40,12 +44,14 @@ import redis.asyncio as aioredis
 
 from cogniverse_runtime.ingestion_worker import idempotency, queue
 from cogniverse_runtime.ingestion_worker.worker import (
+    GRAPH_REDRIVE_KEY_PREFIX,
     WorkerConfig,
     _clear_graph_pending,
     _default_processor,
     _is_graph_pending,
     _mark_graph_pending,
     _process_job,
+    _server_time_ms,
 )
 
 logger = logging.getLogger(__name__)
@@ -56,6 +62,7 @@ DEAD_MARKER_PREFIX = "ingest:dead:"
 # the done-marker's 7-day default) — at 6h, an entry that idled past the
 # marker's expiry re-ran the settle and wrote a duplicate dead-stream row.
 DEAD_MARKER_TTL_SECONDS = 7 * 24 * 60 * 60
+GRAPH_REDRIVE_HOLD_CAP_MS = 6 * 60 * 60 * 1000
 
 # Atomic exactly-once dead-letter settle. The three side effects (dead-stream
 # xadd, inflight clear, floored active decrement) are not individually
@@ -79,6 +86,83 @@ local v = redis.call('DECR', KEYS[4])
 if v < 0 then redis.call('SET', KEYS[4], '0') end
 return 1
 """
+
+
+def graph_redrive_hold_ms(redrives: int, *, base_ms: int) -> int:
+    """Wait after a graph-stage failure before the next re-drive: ``base_ms``
+    doubled for each re-drive already made, clamped at
+    ``GRAPH_REDRIVE_HOLD_CAP_MS``."""
+    if redrives < 0:
+        raise ValueError(f"redrives must be >= 0, got {redrives}")
+    hold = base_ms
+    for _ in range(redrives):
+        if hold >= GRAPH_REDRIVE_HOLD_CAP_MS:
+            break
+        hold *= 2
+    return min(hold, GRAPH_REDRIVE_HOLD_CAP_MS)
+
+
+def _seconds(ms: int) -> str:
+    return f"{ms / 1000:g}s"
+
+
+async def _redrive_graph_pending(
+    redis: aioredis.Redis,
+    config: WorkerConfig,
+    job,
+    *,
+    min_idle_ms: int,
+    processor,
+) -> bool:
+    """Re-drive a graph-pending entry once its hold has elapsed. Returns
+    False when the entry is still inside the hold; it stays claimed and
+    unprocessed for the next sweep. The re-drive count and start time are
+    recorded before the pipeline runs, so a run that dies without reporting
+    still lengthens the next hold."""
+    key = f"{GRAPH_REDRIVE_KEY_PREFIX}{job.message_id}"
+    state = await redis.hgetall(key)
+    redrives = int(state.get("redrives", 0))
+    cause = state.get("cause", "none recorded")
+    now_ms = await _server_time_ms(redis)
+    if state:
+        due_ms = int(state["at_ms"]) + graph_redrive_hold_ms(
+            redrives, base_ms=min_idle_ms
+        )
+        if due_ms > now_ms:
+            logger.info(
+                "Reaper holding graph-pending ingest %s (tenant=%s, source=%s): "
+                "%d re-drives so far, last outcome: %s; re-drive %d due in %s",
+                job.ingest_id,
+                job.tenant_id,
+                job.source_url,
+                redrives,
+                cause,
+                redrives + 1,
+                _seconds(due_ms - now_ms),
+            )
+            return False
+    redrive = redrives + 1
+    logger.warning(
+        "Reaper re-driving graph-pending ingest %s (tenant=%s, source=%s): "
+        "re-drive %d, last outcome: %s; another failure holds re-drive %d for %s",
+        job.ingest_id,
+        job.tenant_id,
+        job.source_url,
+        redrive,
+        cause,
+        redrive + 1,
+        _seconds(graph_redrive_hold_ms(redrive, base_ms=min_idle_ms)),
+    )
+    await redis.hset(
+        key,
+        mapping={
+            "redrives": redrive,
+            "at_ms": now_ms,
+            "cause": f"re-drive {redrive} did not report an outcome",
+        },
+    )
+    await _process_job(redis, job, config, processor=processor)
+    return True
 
 
 async def _dead_letter(
@@ -186,19 +270,27 @@ async def run_reaper_once(
                 delivered = await queue.times_delivered(
                     redis, config.consumer_group, job.message_id
                 )
-                graph_pending = await _is_graph_pending(redis, job.message_id)
-                if delivered > config.reaper_max_deliveries and not graph_pending:
+                if await _is_graph_pending(redis, job.message_id):
+                    redriven = await _redrive_graph_pending(
+                        redis,
+                        config,
+                        job,
+                        min_idle_ms=min_idle_ms,
+                        processor=processor,
+                    )
+                    if not redriven:
+                        continue
+                elif delivered > config.reaper_max_deliveries:
                     await _dead_letter(redis, config, job, delivered)
                 else:
                     logger.warning(
                         "Reaper re-driving orphaned ingest %s (tenant=%s, "
-                        "source=%s, delivery %d/%d, graph_pending=%s)",
+                        "source=%s, delivery %d/%d)",
                         job.ingest_id,
                         job.tenant_id,
                         job.source_url,
                         delivered,
                         config.reaper_max_deliveries,
-                        graph_pending,
                     )
                     await _process_job(redis, job, config, processor=processor)
             recovered += 1

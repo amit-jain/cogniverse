@@ -13,6 +13,7 @@ caller).
 from __future__ import annotations
 
 import asyncio
+import logging
 import os
 import platform
 import socket
@@ -137,6 +138,17 @@ async def _orphan_job(redis, config, *, ingest_id: str, sha: str, tenant: str):
     jobs = await queue.claim(redis, config.consumer_group, "dead-1", block_ms=1000)
     assert [j.ingest_id for j in jobs] == [ingest_id]
     return jobs[0]
+
+
+REAPER_LOGGER = "cogniverse_runtime.ingestion_worker.reaper"
+
+
+def _reaper_lines(caplog, level: int) -> list[str]:
+    return [
+        r.getMessage()
+        for r in caplog.records
+        if r.name == REAPER_LOGGER and r.levelno == level
+    ]
 
 
 class TestReaperRecovery:
@@ -524,6 +536,365 @@ class TestReaperRecovery:
         assert await redis.get(f"{idempotency.INFLIGHT_KEY_PREFIX}{sha}") == ingest_id
         assert await idempotency.get_done_ingest_id(redis, sha) is None
         assert await redis.xrange(reaper.DEAD_STREAM) == []
+
+    @pytest.mark.asyncio
+    async def test_graph_pending_redrive_is_held_until_its_backoff_elapses(
+        self, redis, caplog
+    ):
+        """Each graph-stage failure is recorded with its cause; the reaper
+        then waits ``graph_redrive_hold_ms(redrives, base_ms=min_idle_ms)``
+        from that failure before re-running the pipeline. Inside the hold
+        the entry is claimed but not processed and keeps every nonterminal
+        invariant; the first sweep past the hold re-drives it and names
+        the re-drive number, the last cause and the next hold."""
+        config = worker.WorkerConfig()
+        config.consumer_id = "live-graph-hold"
+        tenant, sha, ingest_id = "acme:graph", "sha_graph_hold", "ing_graph_hold"
+        source = f"s3://b/{ingest_id}.mp4"
+        cause = f"graph extraction failed for ingest {ingest_id}"
+        job = await _orphan_job(
+            redis, config, ingest_id=ingest_id, sha=sha, tenant=tenant
+        )
+        await worker._mark_graph_pending(redis, job)
+        marker_key = f"{worker.GRAPH_PENDING_KEY_PREFIX}{job.message_id}"
+        redrive_key = f"{worker.GRAPH_REDRIVE_KEY_PREFIX}{job.message_id}"
+        processed: list[str] = []
+
+        async def _graph_fails(j):
+            processed.append(j.ingest_id)
+            raise worker.GraphStageIncomplete(cause)
+
+        with caplog.at_level(logging.INFO, logger=REAPER_LOGGER):
+            for _ in range(2):
+                recovered = await reaper.run_reaper_once(
+                    redis, config, min_idle_ms=0, processor=_graph_fails
+                )
+                assert recovered == 1
+        assert processed == [ingest_id, ingest_id]
+        assert _reaper_lines(caplog, logging.WARNING) == [
+            f"Reaper re-driving graph-pending ingest {ingest_id} (tenant={tenant}, "
+            f"source={source}): re-drive 1, last outcome: none recorded; another "
+            "failure holds re-drive 2 for 0s",
+            f"Reaper re-driving graph-pending ingest {ingest_id} (tenant={tenant}, "
+            f"source={source}): re-drive 2, last outcome: {cause}; another failure "
+            "holds re-drive 3 for 0s",
+        ]
+        assert _reaper_lines(caplog, logging.INFO) == []
+        state = await redis.hgetall(redrive_key)
+        assert set(state) == {"redrives", "at_ms", "cause"}
+        assert state["redrives"] == "2"
+        assert state["cause"] == cause
+        failed_at_ms = int(state["at_ms"])
+
+        # Hold before re-drive 3 is 200ms << 2 = 800ms from that failure. The
+        # entry is claimable once idle 200ms but must not be processed.
+        await asyncio.sleep(0.25)
+        caplog.clear()
+        with caplog.at_level(logging.INFO, logger=REAPER_LOGGER):
+            held = await reaper.run_reaper_once(
+                redis, config, min_idle_ms=200, processor=_graph_fails
+            )
+        assert held == 0
+        assert processed == [ingest_id, ingest_id]
+        assert _reaper_lines(caplog, logging.WARNING) == []
+        [hold_line] = _reaper_lines(caplog, logging.INFO)
+        hold_prefix = (
+            f"Reaper holding graph-pending ingest {ingest_id} (tenant={tenant}, "
+            f"source={source}): 2 re-drives so far, last outcome: {cause}; "
+            "re-drive 3 due in "
+        )
+        assert hold_line.startswith(hold_prefix), hold_line
+        remaining_s = float(hold_line.removeprefix(hold_prefix).removesuffix("s"))
+        assert 0 < remaining_s <= 0.8
+        assert await redis.hgetall(redrive_key) == {
+            "redrives": "2",
+            "at_ms": str(failed_at_ms),
+            "cause": cause,
+        }
+        events = [e for _, e in await queue.read_status_since(redis, ingest_id)]
+        assert [e["state"] for e in events] == ["running", "retrying"] * 2
+        pending = await redis.xpending(queue.QUEUE_STREAM, config.consumer_group)
+        assert pending["pending"] == 1
+        assert await redis.get(marker_key) == ingest_id
+        assert await redis.xrange(reaper.DEAD_STREAM) == []
+        assert await queue.get_active(redis, tenant) == 1
+        assert await redis.get(f"{idempotency.INFLIGHT_KEY_PREFIX}{sha}") == ingest_id
+
+        # Past the hold: re-driven, outcome recorded as re-drive 3.
+        await asyncio.sleep(0.7)
+        caplog.clear()
+        with caplog.at_level(logging.INFO, logger=REAPER_LOGGER):
+            recovered = await reaper.run_reaper_once(
+                redis, config, min_idle_ms=200, processor=_graph_fails
+            )
+        assert recovered == 1
+        assert processed == [ingest_id] * 3
+        assert _reaper_lines(caplog, logging.INFO) == []
+        assert _reaper_lines(caplog, logging.WARNING) == [
+            f"Reaper re-driving graph-pending ingest {ingest_id} (tenant={tenant}, "
+            f"source={source}): re-drive 3, last outcome: {cause}; another failure "
+            "holds re-drive 4 for 1.6s",
+        ]
+        state = await redis.hgetall(redrive_key)
+        assert state["redrives"] == "3"
+        assert state["cause"] == cause
+        assert int(state["at_ms"]) > failed_at_ms
+        events = [e for _, e in await queue.read_status_since(redis, ingest_id)]
+        assert [e["state"] for e in events] == ["running", "retrying"] * 3
+        pending = await redis.xpending(queue.QUEUE_STREAM, config.consumer_group)
+        assert pending["pending"] == 1
+        assert await redis.get(marker_key) == ingest_id
+        assert await redis.xrange(reaper.DEAD_STREAM) == []
+
+    @pytest.mark.asyncio
+    async def test_graph_pending_entry_is_never_acked_or_dead_lettered(self, redis):
+        """The delivery cap never reaches a graph-pending entry. With the PEL
+        delivery count already past ``reaper_max_deliveries``, re-drive 1,
+        re-drive 5 and re-drive 40 (far past where the hold clamps at its
+        cap) each re-run the pipeline and leave the entry pending, un-acked,
+        off the dead stream, with its marker, tenant slot and in-flight
+        record intact and no done marker."""
+        config = worker.WorkerConfig()
+        config.consumer_id = "live-graph-forever"
+        config.reaper_max_deliveries = 3
+        tenant, sha, ingest_id = (
+            "acme:graph",
+            "sha_graph_forever",
+            "ing_graph_forever",
+        )
+        cause = f"graph extraction failed for ingest {ingest_id}"
+        job = await _orphan_job(
+            redis, config, ingest_id=ingest_id, sha=sha, tenant=tenant
+        )
+        await worker._mark_graph_pending(redis, job)
+        # dead-1's claim was delivery 1; three crash-redeliveries make it 4,
+        # past the cap before the reaper's own claim bumps it further.
+        for consumer in ("dead-2", "dead-3", "dead-4"):
+            await redis.xclaim(
+                queue.QUEUE_STREAM,
+                config.consumer_group,
+                consumer,
+                min_idle_time=0,
+                message_ids=[job.message_id],
+            )
+        marker_key = f"{worker.GRAPH_PENDING_KEY_PREFIX}{job.message_id}"
+        redrive_key = f"{worker.GRAPH_REDRIVE_KEY_PREFIX}{job.message_id}"
+        processed: list[str] = []
+
+        async def _graph_fails(j):
+            processed.append(j.ingest_id)
+            raise worker.GraphStageIncomplete(cause)
+
+        async def _assert_still_pending(redrives: int) -> None:
+            assert await redis.xrange(reaper.DEAD_STREAM) == []
+            pending = await redis.xpending(queue.QUEUE_STREAM, config.consumer_group)
+            assert pending["pending"] == 1
+            assert await queue.queue_depth(redis) == 1
+            assert (
+                await queue.times_delivered(
+                    redis, config.consumer_group, job.message_id
+                )
+                == 4 + redrives
+            )
+            assert await redis.get(marker_key) == ingest_id
+            assert (await redis.hgetall(redrive_key))["redrives"] == str(redrives)
+            assert await queue.get_active(redis, tenant) == 1
+            assert (
+                await redis.get(f"{idempotency.INFLIGHT_KEY_PREFIX}{sha}") == ingest_id
+            )
+            assert await idempotency.get_done_ingest_id(redis, sha) is None
+            events = [e for _, e in await queue.read_status_since(redis, ingest_id)]
+            assert [e["state"] for e in events] == ["running", "retrying"] * redrives
+            assert events[-1] == {
+                "state": "retrying",
+                "ingest_id": ingest_id,
+                "error": cause,
+                "error_type": "GraphStageIncomplete",
+            }
+
+        for redrive in range(1, 41):
+            recovered = await reaper.run_reaper_once(
+                redis, config, min_idle_ms=0, processor=_graph_fails
+            )
+            assert recovered == 1
+            if redrive in (1, 5, 40):
+                await _assert_still_pending(redrive)
+        assert processed == [ingest_id] * 40
+
+    @pytest.mark.asyncio
+    async def test_graph_redrive_record_fault_raises_before_the_pipeline_runs(
+        self, redis, monkeypatch
+    ):
+        """Redis failing the re-drive record write raises out of the sweep —
+        never a silent hold or an unrecorded run: the pipeline does not run,
+        the entry stays pending with its marker, and the next sweep re-drives
+        it as re-drive 1 and settles it."""
+        config = worker.WorkerConfig()
+        config.consumer_id = "live-graph-fault"
+        tenant, sha, ingest_id = "acme:graph", "sha_graph_fault", "ing_graph_fault"
+        job = await _orphan_job(
+            redis, config, ingest_id=ingest_id, sha=sha, tenant=tenant
+        )
+        await worker._mark_graph_pending(redis, job)
+        marker_key = f"{worker.GRAPH_PENDING_KEY_PREFIX}{job.message_id}"
+        redrive_key = f"{worker.GRAPH_REDRIVE_KEY_PREFIX}{job.message_id}"
+        processed: list[str] = []
+
+        async def _complete(j):
+            processed.append(j.ingest_id)
+            return {"status": "success", "video_id": "v-graph-fault", "results": {}}
+
+        with monkeypatch.context() as m:
+
+            async def _down(*args, **kwargs):
+                raise ConnectionError("redis reset on hset")
+
+            m.setattr(redis, "hset", _down)
+            with pytest.raises(ConnectionError, match="reset on hset"):
+                await reaper.run_reaper_once(
+                    redis, config, min_idle_ms=0, processor=_complete
+                )
+
+        assert processed == []
+        assert await redis.hgetall(redrive_key) == {}
+        assert await redis.get(marker_key) == ingest_id
+        assert await redis.xrange(reaper.DEAD_STREAM) == []
+        pending = await redis.xpending(queue.QUEUE_STREAM, config.consumer_group)
+        assert pending["pending"] == 1
+        assert await queue.get_active(redis, tenant) == 1
+        assert await redis.get(f"{idempotency.INFLIGHT_KEY_PREFIX}{sha}") == ingest_id
+
+        recovered = await reaper.run_reaper_once(
+            redis, config, min_idle_ms=0, processor=_complete
+        )
+        assert recovered == 1
+        assert processed == [ingest_id]
+        assert await idempotency.get_done_ingest_id(redis, sha) == ingest_id
+        assert await redis.get(marker_key) is None
+        assert await redis.hgetall(redrive_key) == {}
+        pending = await redis.xpending(queue.QUEUE_STREAM, config.consumer_group)
+        assert pending["pending"] == 0
+
+    @pytest.mark.asyncio
+    async def test_graph_failure_note_fault_raises_and_keeps_the_entry_pending(
+        self, redis, monkeypatch
+    ):
+        """Redis failing the failure-note write raises out of ``_process_job``
+        with the marker already set and nothing acked or published as
+        terminal, so the reaper's next sweep re-drives the entry."""
+        config = worker.WorkerConfig()
+        config.consumer_id = "live-graph-note-fault"
+        tenant, sha, ingest_id = (
+            "acme:graph",
+            "sha_graph_note_fault",
+            "ing_graph_note_fault",
+        )
+        job = await _orphan_job(
+            redis, config, ingest_id=ingest_id, sha=sha, tenant=tenant
+        )
+        marker_key = f"{worker.GRAPH_PENDING_KEY_PREFIX}{job.message_id}"
+        redrive_key = f"{worker.GRAPH_REDRIVE_KEY_PREFIX}{job.message_id}"
+
+        async def _graph_fails(j):
+            raise worker.GraphStageIncomplete(
+                f"graph extraction failed for ingest {j.ingest_id}"
+            )
+
+        with monkeypatch.context() as m:
+
+            async def _down(*args, **kwargs):
+                raise ConnectionError("redis reset on hset")
+
+            m.setattr(redis, "hset", _down)
+            with pytest.raises(ConnectionError, match="reset on hset"):
+                await worker._process_job(redis, job, config, processor=_graph_fails)
+
+        assert await redis.get(marker_key) == ingest_id
+        assert await redis.hgetall(redrive_key) == {}
+        events = [e for _, e in await queue.read_status_since(redis, ingest_id)]
+        assert [e["state"] for e in events] == ["running"]
+        pending = await redis.xpending(queue.QUEUE_STREAM, config.consumer_group)
+        assert pending["pending"] == 1
+        assert await queue.get_active(redis, tenant) == 1
+        assert await redis.get(f"{idempotency.INFLIGHT_KEY_PREFIX}{sha}") == ingest_id
+        assert await idempotency.get_done_ingest_id(redis, sha) is None
+        assert await redis.xrange(reaper.DEAD_STREAM) == []
+
+        processed: list[str] = []
+
+        async def _complete(j):
+            processed.append(j.ingest_id)
+            return {"status": "success", "video_id": "v-note-fault", "results": {}}
+
+        recovered = await reaper.run_reaper_once(
+            redis, config, min_idle_ms=0, processor=_complete
+        )
+        assert recovered == 1
+        assert processed == [ingest_id]
+        assert await idempotency.get_done_ingest_id(redis, sha) == ingest_id
+        assert await redis.get(marker_key) is None
+        assert await redis.hgetall(redrive_key) == {}
+
+    @pytest.mark.asyncio
+    async def test_concurrent_reapers_redrive_each_graph_pending_entry_once(
+        self, redis
+    ):
+        """Two sweeps over two graph-pending orphans: each entry is re-driven
+        by exactly one caller and its record counts exactly one re-drive."""
+        config_a = worker.WorkerConfig()
+        config_a.consumer_id = "live-graph-a"
+        config_b = worker.WorkerConfig()
+        config_b.consumer_id = "live-graph-b"
+        tenant = "acme:graph"
+        jobs = []
+        for i in (1, 2):
+            job = await _orphan_job(
+                redis,
+                config_a,
+                ingest_id=f"ing_gc{i}",
+                sha=f"sha_gc{i}",
+                tenant=tenant,
+            )
+            await worker._mark_graph_pending(redis, job)
+            jobs.append(job)
+        await asyncio.sleep(0.3)
+
+        processed: list[str] = []
+        lock = asyncio.Lock()
+
+        async def _graph_fails(j):
+            async with lock:
+                processed.append(j.ingest_id)
+            await asyncio.sleep(0.02)
+            raise worker.GraphStageIncomplete(
+                f"graph extraction failed for ingest {j.ingest_id}"
+            )
+
+        recovered = await asyncio.gather(
+            reaper.run_reaper_once(
+                redis, config_a, min_idle_ms=150, processor=_graph_fails, count=1
+            ),
+            reaper.run_reaper_once(
+                redis, config_b, min_idle_ms=150, processor=_graph_fails, count=1
+            ),
+        )
+
+        assert sum(recovered) == 2
+        assert sorted(processed) == ["ing_gc1", "ing_gc2"], (
+            f"graph-pending entries processed {processed} — one ran twice or was lost"
+        )
+        for job in jobs:
+            state = await redis.hgetall(
+                f"{worker.GRAPH_REDRIVE_KEY_PREFIX}{job.message_id}"
+            )
+            assert state["redrives"] == "1"
+            assert state["cause"] == (
+                f"graph extraction failed for ingest {job.ingest_id}"
+            )
+        pending = await redis.xpending(queue.QUEUE_STREAM, config_a.consumer_group)
+        assert pending["pending"] == 2
+        assert await redis.xrange(reaper.DEAD_STREAM) == []
+        assert await queue.get_active(redis, tenant) == 2
 
     @pytest.mark.asyncio
     async def test_dead_letter_crash_before_ack_never_double_settles(
