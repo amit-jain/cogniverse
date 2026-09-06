@@ -8,7 +8,9 @@ OpenShell sandbox (started/destroyed per test module).
 Requires: the configured LM endpoint, openshell CLI, Docker.
 """
 
+import json
 import logging
+from pathlib import Path
 
 import pytest
 
@@ -150,42 +152,62 @@ class TestCodingAgentDispatchWiring:
         assert profile["schema_config"]["num_patches"] == 2048
 
 
-def _openshell_cli_available() -> bool:
-    import subprocess as _sp
-
-    try:
-        return (
-            _sp.run(
-                ["openshell", "--version"], capture_output=True, timeout=5
-            ).returncode
-            == 0
-        )
-    except (FileNotFoundError, _sp.TimeoutExpired):
-        return False
-
-
 CODING_GW_NAME = "cogniverse-coding-test-gw"
 CODING_GW_PORT = 19091
+INGESTED_SEGMENTS = 15
+SEARCH_HITS = 5
 
 
 @pytest.fixture(scope="module")
-def code_search_infra(vespa_with_schema):
-    """Deploy code_lateon_mv schema into the existing test Vespa, ingest real code,
-    start OpenShell gateway.
+def coding_test_gateway(tmp_path_factory):
+    """Start this module's OpenShell gateway in a private config root.
+
+    ``XDG_CONFIG_HOME`` is pointed at that root for the module so the SDK
+    resolves ``CODING_GW_NAME`` there; the host's own registrations and
+    active-gateway pointer stay byte-identical across the module.
+    """
+    from tests.agents.integration.conftest import OpenShellTestGateway
+
+    host_active = Path.home() / ".config" / "openshell" / "active_gateway"
+    host_active_before = host_active.read_bytes() if host_active.exists() else None
+    config_home = tmp_path_factory.mktemp("openshell-config")
+    gateway = OpenShellTestGateway(CODING_GW_NAME, CODING_GW_PORT, config_home)
+    with pytest.MonkeyPatch.context() as mp:
+        mp.setenv("XDG_CONFIG_HOME", str(config_home))
+        mp.delenv("OPENSHELL_GATEWAY", raising=False)
+        mp.delenv("OPENSHELL_GATEWAY_ENDPOINT", raising=False)
+        gateway.start()
+        try:
+            assert json.loads(gateway.metadata_path.read_text()) == {
+                "name": CODING_GW_NAME,
+                "gateway_endpoint": f"https://127.0.0.1:{CODING_GW_PORT}",
+                "is_remote": False,
+                "gateway_port": CODING_GW_PORT,
+            }
+            host_active_after = (
+                host_active.read_bytes() if host_active.exists() else None
+            )
+            assert host_active_after == host_active_before
+            yield gateway
+        finally:
+            gateway.destroy()
+    host_active_final = host_active.read_bytes() if host_active.exists() else None
+    assert host_active_final == host_active_before
+
+
+@pytest.fixture(scope="module")
+def code_search_infra(coding_test_gateway, vespa_with_schema):
+    """Deploy code_lateon_mv into the test Vespa, ingest real code, connect the
+    sandbox manager to this module's gateway.
 
     Uses vespa_with_schema for the Vespa container, deploys the native 48-dim
     code schema alongside the existing video schema, feeds real code segments
     with LateOn-Code-edge embeddings.
     """
-    import subprocess
     import time
-    from pathlib import Path
 
     import numpy as np
     import requests
-
-    if not _openshell_cli_available():
-        pytest.skip("openshell CLI not installed")
 
     base_url = vespa_with_schema["base_url"]
     manager = vespa_with_schema["manager"]
@@ -240,7 +262,8 @@ def code_search_infra(vespa_with_schema):
         if f.exists():
             all_segments.extend(strategy.parse_file(f))
 
-    segments_to_ingest = all_segments[:15]
+    segments_to_ingest = all_segments[:INGESTED_SEGMENTS]
+    assert len(segments_to_ingest) == INGESTED_SEGMENTS
     texts = [seg["content"][:8192] for seg in segments_to_ingest]
     doc_embeddings = colbert_model.encode(texts, is_query=False)
 
@@ -284,57 +307,29 @@ def code_search_infra(vespa_with_schema):
     logger.info(f"Ingested {len(segments_to_ingest)} code segments into Vespa")
     time.sleep(3)
 
-    # --- 3. Start OpenShell gateway ---
-    subprocess.run(
-        ["openshell", "gateway", "destroy", "--name", CODING_GW_NAME],
-        capture_output=True,
-        timeout=30,
-        check=False,
-    )
-    result = subprocess.run(
-        [
-            "openshell",
-            "gateway",
-            "start",
-            "--name",
-            CODING_GW_NAME,
-            "--port",
-            str(CODING_GW_PORT),
-        ],
-        capture_output=True,
-        text=True,
-        timeout=180,
-    )
-    if result.returncode != 0:
-        pytest.skip(f"Failed to start OpenShell gateway: {result.stderr}")
-
-    subprocess.run(
-        ["openshell", "gateway", "select", CODING_GW_NAME],
-        capture_output=True,
-        timeout=10,
-        check=False,
-    )
-
     sandbox = SandboxManager(
-        policy_dir="configs/agent_policies", policy=SandboxPolicy.OPTIONAL
+        policy_dir="configs/agent_policies",
+        cluster=CODING_GW_NAME,
+        policy=SandboxPolicy.REQUIRED,
     )
-    if not sandbox.available:
-        pytest.skip("SandboxManager could not connect to gateway")
+    canary = sandbox.exec_in_sandbox(
+        agent_type="coding_agent",
+        command=["echo", "gateway-ready"],
+        timeout_seconds=60,
+    )
+    assert canary["exit_code"] == 0, f"sandbox canary failed: {canary}"
+    assert canary["stderr"] == ""
+    assert canary["stdout"].strip() == "gateway-ready"
 
     yield {
         "sandbox": sandbox,
         "vespa_url": base_url,
         "schema_name": schema_name,
         "colbert_model": colbert_model,
+        "ingested_ids": [f"seg_{idx}" for idx in range(len(segments_to_ingest))],
     }
 
     sandbox.close()
-    subprocess.run(
-        ["openshell", "gateway", "destroy", "--name", CODING_GW_NAME],
-        capture_output=True,
-        timeout=60,
-        check=False,
-    )
 
 
 def _build_vespa_search_fn(vespa_url, schema_name, colbert_model):
@@ -361,24 +356,26 @@ def _build_vespa_search_fn(vespa_url, schema_name, colbert_model):
             f"{vespa_url}/search/",
             json={
                 "yql": f"select * from {schema_name} where true",
-                "hits": 5,
+                "hits": SEARCH_HITS,
                 "ranking.profile": "float_float",
                 "input.query(qt)": {"cells": qt_cells},
             },
             timeout=10,
         )
         if resp.status_code != 200:
-            return []
+            raise RuntimeError(
+                f"Vespa code search failed: {resp.status_code} - {resp.text}"
+            )
 
         hits = resp.json().get("root", {}).get("children", [])
         return [
             {
-                "document_id": h["fields"].get("code_id", ""),
-                "score": h.get("relevance", 0),
+                "document_id": h["fields"]["code_id"],
+                "score": h["relevance"],
                 "metadata": {
-                    "file": h["fields"].get("file_path", ""),
-                    "chunk_name": h["fields"].get("chunk_name", ""),
-                    "extracted_text": h["fields"].get("source_code", ""),
+                    "file": h["fields"]["file_path"],
+                    "chunk_name": h["fields"]["chunk_name"],
+                    "extracted_text": h["fields"]["source_code"],
                 },
             }
             for h in hits
@@ -387,13 +384,35 @@ def _build_vespa_search_fn(vespa_url, schema_name, colbert_model):
     return search_fn
 
 
+def _assert_single_solution(result, max_iterations: int) -> dict:
+    """Pin the shape CodingAgent persists for a task that ends in a passing run."""
+    assert result.iterations_used in range(1, max_iterations + 1)
+    assert len(result.execution_results) == result.iterations_used
+    final = result.execution_results[-1]
+    assert set(final) == {"stdout", "stderr", "exit_code", "command", "success"}
+    assert final["exit_code"] == 0, f"final run failed: {final}"
+    assert final["success"] is True
+    assert result.summary == (
+        f"Completed coding task in {result.iterations_used} iteration(s). "
+        "Generated 1 file(s). Final execution: exit_code=0"
+    )
+    (change,) = result.code_changes
+    assert set(change) == {"file_path", "content", "change_type"}
+    assert change["change_type"] == "create"
+    assert change["file_path"].endswith("/solution.py")
+    assert final["command"] == f"python {change['file_path']}"
+    assert result.files_modified == [change["file_path"]]
+    return change
+
+
 @skip_if_no_lm
 class TestCodingAgentWithRealLM:
     """Full integration: configured LM + real Vespa code search + real OpenShell sandbox.
 
     code_search_infra deploys code_lateon_mv into the test Vespa, ingests real
-    source with LateOn-Code-edge, starts OpenShell. The agent's search_fn hits
-    real Vespa with real embeddings. Generated code runs in the sandbox.
+    source with LateOn-Code-edge, connects to this module's OpenShell gateway.
+    The agent's search_fn hits real Vespa with real embeddings. Generated code
+    runs in the sandbox.
     """
 
     @pytest.fixture
@@ -418,8 +437,8 @@ class TestCodingAgentWithRealLM:
     async def test_coding_agent_generates_working_code(
         self, dspy_configured, code_search_infra
     ):
-        """LLM generates add(2,3) with real code search context,
-        executes in OpenShell sandbox, stdout contains '5'."""
+        """LLM generates add(2,3) with real code search context, the agent's
+        sandbox run and an independent re-run both print exactly 5."""
         from cogniverse_agents.coding_agent import (
             CodingAgent,
             CodingDeps,
@@ -436,7 +455,11 @@ class TestCodingAgentWithRealLM:
         agent = CodingAgent(deps=deps, search_fn=search_fn, sandbox_manager=sandbox)
 
         input_data = CodingInput(
-            task="Write a Python function called 'add' that takes two numbers and returns their sum. Print add(2, 3).",
+            task=(
+                "Write a Python function called 'add' that takes two numbers "
+                "and returns their sum. Print only the result of add(2, 3), "
+                "nothing else."
+            ),
             language="python",
             max_iterations=3,
             tenant_id="test:unit",
@@ -444,30 +467,25 @@ class TestCodingAgentWithRealLM:
 
         result = await agent.process(input_data)
 
-        assert result.plan, "Plan should be non-empty"
-        assert result.iterations_used >= 1
-        assert len(result.code_changes) > 0, "No code was generated"
+        change = _assert_single_solution(result, input_data.max_iterations)
+        assert result.execution_results[-1]["stdout"].strip() == "5"
 
-        generated_code = result.code_changes[0]["content"]
-        assert len(generated_code) > 10, f"Code too short: {generated_code!r}"
-
+        generated_code = change["content"]
         verify = sandbox.exec_in_sandbox(
             agent_type="coding_agent",
             command=["python3", "-c", generated_code],
             timeout_seconds=30,
         )
-        assert verify is not None, "Sandbox exec returned None"
-        stdout = verify["stdout"].strip()
-
-        logger.info(f"Sandbox run: exit={verify['exit_code']}, stdout={stdout!r}")
+        logger.info(f"Sandbox run: {verify}")
         logger.info(f"Generated code:\n{generated_code}")
 
         assert verify["exit_code"] == 0, (
             f"Generated code failed in sandbox with exit {verify['exit_code']}.\n"
             f"stderr: {verify['stderr']}\ncode:\n{generated_code}"
         )
-        assert "5" in stdout, (
-            f"Expected '5' in stdout from add(2,3), got: {stdout!r}\n"
+        assert verify["stderr"] == ""
+        assert verify["stdout"].strip() == "5", (
+            f"Expected stdout '5' from add(2,3), got: {verify['stdout']!r}\n"
             f"code:\n{generated_code}"
         )
 
@@ -475,8 +493,9 @@ class TestCodingAgentWithRealLM:
     async def test_coding_agent_with_real_code_search(
         self, dspy_configured, code_search_infra
     ):
-        """Agent searches real Vespa code index with LateOn-Code-edge,
-        generates email validation, executes in OpenShell sandbox."""
+        """Agent searches the real Vespa code index exactly once with the task
+        text, generates email validation, and the validator accepts
+        test@example.com inside the OpenShell sandbox."""
         from cogniverse_agents.coding_agent import (
             CodingAgent,
             CodingDeps,
@@ -486,15 +505,17 @@ class TestCodingAgentWithRealLM:
         infra = code_search_infra
         sandbox = infra["sandbox"]
 
-        search_called = False
+        search_calls: list[tuple[str, str]] = []
+        search_results: list[list[dict]] = []
         raw_search_fn = _build_vespa_search_fn(
             infra["vespa_url"], infra["schema_name"], infra["colbert_model"]
         )
 
         async def tracked_search_fn(query: str, tenant_id: str):
-            nonlocal search_called
-            search_called = True
-            return await raw_search_fn(query, tenant_id)
+            search_calls.append((query, tenant_id))
+            hits = await raw_search_fn(query, tenant_id)
+            search_results.append(hits)
+            return hits
 
         deps = CodingDeps(tenant_id="test", sandbox_manager=sandbox)
         agent = CodingAgent(
@@ -502,7 +523,11 @@ class TestCodingAgentWithRealLM:
         )
 
         input_data = CodingInput(
-            task="Write a function that validates email addresses using regex. Print whether 'test@example.com' is valid.",
+            task=(
+                "Write a function that validates email addresses using regex "
+                "and returns True or False. Print whether 'test@example.com' "
+                "is valid."
+            ),
             language="python",
             max_iterations=3,
             tenant_id="test:unit",
@@ -510,41 +535,42 @@ class TestCodingAgentWithRealLM:
 
         result = await agent.process(input_data)
 
-        assert search_called, "search_fn was never called"
-        assert result.plan
-        assert result.iterations_used >= 1
-        assert len(result.code_changes) > 0, "No code generated"
+        assert search_calls == [(input_data.task, "test:unit")]
+        (hits,) = search_results
+        assert len(hits) == SEARCH_HITS
+        assert set(h["document_id"] for h in hits) <= set(infra["ingested_ids"])
+        assert len({h["document_id"] for h in hits}) == SEARCH_HITS
+        scores = [h["score"] for h in hits]
+        assert scores == sorted(scores, reverse=True)
 
-        generated_code = result.code_changes[0]["content"]
-        assert len(generated_code) > 10
+        change = _assert_single_solution(result, input_data.max_iterations)
+        generated_code = change["content"]
 
-        # Find the function name the LLM chose (it may not be "validate_email")
         import re as _re
 
         fn_match = _re.search(r"def\s+(\w+)\s*\(", generated_code)
-        fn_name = fn_match.group(1) if fn_match else "validate_email"
+        assert fn_match, f"no function definition in generated code:\n{generated_code}"
+        fn_name = fn_match.group(1)
 
         test_harness = (
             generated_code + "\n\n"
             f"result = {fn_name}('test@example.com')\n"
-            "assert result, f'Expected True for test@example.com, got {result}'\n"
-            "print('PASS:', result)\n"
+            "print('PASS:', bool(result))\n"
         )
         verify = sandbox.exec_in_sandbox(
             agent_type="coding_agent",
             command=["python3", "-c", test_harness],
             timeout_seconds=30,
         )
-        assert verify is not None, "Sandbox exec returned None"
-        stdout = verify["stdout"].strip().lower()
-
-        logger.info(f"Sandbox run: exit={verify['exit_code']}, stdout={stdout!r}")
+        logger.info(f"Sandbox run: {verify}")
         logger.info(f"Generated code:\n{generated_code}")
 
         assert verify["exit_code"] == 0, (
             f"Code + harness failed in sandbox: exit {verify['exit_code']}\n"
             f"stderr: {verify['stderr']}\nharness:\n{test_harness}"
         )
-        assert "pass" in stdout, (
-            f"Expected 'PASS' in output, got: {stdout!r}\nharness:\n{test_harness}"
+        assert verify["stderr"] == ""
+        assert verify["stdout"].strip().splitlines()[-1] == "PASS: True", (
+            f"Expected final line 'PASS: True', got: {verify['stdout']!r}\n"
+            f"harness:\n{test_harness}"
         )

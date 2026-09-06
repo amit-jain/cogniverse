@@ -11,9 +11,13 @@ import json
 import logging
 import os
 import platform
+import re
 import shutil
 import stat
+import subprocess
 import tempfile
+import threading
+import time
 import urllib.request
 import zipfile
 from pathlib import Path
@@ -743,3 +747,123 @@ def _test_owned_telemetry():
         and telemetry_manager_module._telemetry_manager is installed
     ):
         telemetry_manager_module._telemetry_manager = None
+
+
+# The 0.0.13 CLI's own give-up path (K3s namespace wait, teardown, image
+# cleanup) took 159s on this host; the budget covers a cold image pull too.
+OPENSHELL_GATEWAY_START_TIMEOUT_S = 300
+
+
+def _docker(*args: str) -> subprocess.CompletedProcess[str]:
+    return subprocess.run(
+        ["docker", *args], capture_output=True, text=True, timeout=60, check=False
+    )
+
+
+class OpenShellTestGateway:
+    """An OpenShell gateway one test module starts, uses by name, and destroys.
+
+    ``openshell gateway start`` registers the gateway under
+    ``$XDG_CONFIG_HOME/openshell`` and makes it the active gateway;
+    ``destroy`` clears that pointer. Running the CLI against a private
+    ``config_home`` leaves ``~/.config/openshell`` -- the tree host processes
+    and the e2e cluster resolve their gateway from -- untouched. Callers set
+    ``XDG_CONFIG_HOME`` to the same root so the SDK resolves ``name`` there.
+    """
+
+    def __init__(self, name: str, port: int, config_home: Path) -> None:
+        self.name = name
+        self.port = port
+        self.config_home = config_home
+
+    @property
+    def container(self) -> str:
+        return f"openshell-cluster-{self.name}"
+
+    @property
+    def metadata_path(self) -> Path:
+        return self.config_home / "openshell" / "gateways" / self.name / "metadata.json"
+
+    def start(self) -> None:
+        self._remove_docker_state()
+        result = None
+        for _ in range(3):
+            k3s_log = _ContainerLogCapture(self.container)
+            k3s_log.start()
+            try:
+                result = self._cli(
+                    "gateway",
+                    "start",
+                    "--name",
+                    self.name,
+                    "--port",
+                    str(self.port),
+                    timeout=OPENSHELL_GATEWAY_START_TIMEOUT_S,
+                )
+            finally:
+                k3s_log.stop()
+            if result.returncode == 0:
+                return
+            if "Corrupted cluster state" not in result.stderr:
+                break
+            time.sleep(5)
+        pytest.fail(
+            f"openshell gateway start --name {self.name} --port {self.port} "
+            f"exited {result.returncode}\n--- stdout ---\n{result.stdout}\n"
+            f"--- stderr ---\n{result.stderr}\n"
+            f"--- {self.container} error lines ---\n{k3s_log.error_lines()}",
+            pytrace=False,
+        )
+
+    def destroy(self) -> None:
+        self._cli("gateway", "destroy", "--name", self.name, timeout=120)
+        self._remove_docker_state()
+
+    def _cli(self, *args: str, timeout: int) -> subprocess.CompletedProcess[str]:
+        return subprocess.run(
+            ["openshell", *args],
+            capture_output=True,
+            text=True,
+            timeout=timeout,
+            check=False,
+            env={**os.environ, "XDG_CONFIG_HOME": str(self.config_home)},
+        )
+
+    def _remove_docker_state(self) -> None:
+        port_holders = _docker("ps", "-aq", "--filter", f"publish={self.port}")
+        for cid in port_holders.stdout.split():
+            _docker("rm", "-f", cid)
+        _docker("rm", "-f", self.container)
+        _docker("volume", "rm", "-f", self.container)
+        _docker("network", "rm", self.container)
+
+
+_K3S_ERROR_LINE = re.compile(r"level=(error|fatal)|^E\d{4} |Shutdown request")
+
+
+class _ContainerLogCapture(threading.Thread):
+    """Keep the latest full ``docker logs`` of a container that its creator
+    deletes on failure, so the failure report can quote why K3s died."""
+
+    def __init__(self, container: str) -> None:
+        super().__init__(daemon=True)
+        self._container = container
+        self._halt = threading.Event()
+        self._log = ""
+
+    def run(self) -> None:
+        while not self._halt.is_set():
+            logs = _docker("logs", self._container)
+            if logs.returncode == 0:
+                self._log = logs.stdout + logs.stderr
+            self._halt.wait(1.0)
+
+    def stop(self) -> None:
+        self._halt.set()
+        self.join(timeout=90)
+
+    def error_lines(self, limit: int = 40) -> str:
+        lines = [
+            line for line in self._log.splitlines() if _K3S_ERROR_LINE.search(line)
+        ]
+        return "\n".join(lines[-limit:]) if lines else "(no container log captured)"

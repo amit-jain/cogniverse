@@ -386,8 +386,11 @@ The runtime pod's env var `OPENSHELL_GATEWAY_ENDPOINT` is auto-set to `openshell
 - `cogniverse up` must have already provisioned the stack (host mode) or the production Helm release must have `runtime.sandbox.enabled=true` (in-cluster mode).
 - The `openshell==0.0.13` Python package is pinned in `cogniverse-runtime` and installed automatically — no manual setup.
 - Host mode requires Docker (for the gateway container) and downloads the `openshell` CLI binary to `~/.local/bin` on first `cogniverse up`.
+- Host mode needs `fs.inotify.max_user_instances` of at least 512 (`sysctl -w fs.inotify.max_user_instances=512`, persisted under `/etc/sysctl.d/`). Every K3s on the host — each k3d node and each `openshell/cluster` gateway — holds about 35 inotify instances from root's per-user budget, so the Linux default of 128 is exhausted by one k3d node plus one gateway.
 
 ## Troubleshooting
+
+**`openshell gateway start` fails with `K8s namespace not ready` and the gateway container exits 0** — the gateway's K3s logged `failed to create image import watcher ... too many open files`: root's inotify instance budget is exhausted. Raise `fs.inotify.max_user_instances` (see Requirements).
 
 **`Cannot connect to runtime. Run 'cogniverse up' first.`** — The REPL can't reach `http://localhost:28000`. Verify the runtime is healthy: `cogniverse status`.
 
