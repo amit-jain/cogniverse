@@ -117,12 +117,15 @@ class TestDynamicDSPyMixin:
             assert call_args[0][0] == "openai/gpt-4"
             assert call_args[1]["api_base"] == "http://localhost:11434"
 
-    def test_bare_ollama_model_gains_provider_prefix(self, agent_config):
+    def test_bare_ollama_model_gains_provider_prefix(self, agent_config, monkeypatch):
         """A bare ollama tag like ``gemma3:4b`` must reach dspy.LM as
         ``openai/gemma3:4b`` — litellm rejects the bare id with "LLM
         Provider NOT provided", which is the live e2e agent-500 bug."""
         agent_config.llm_model = "gemma3:4b"
         agent_config.llm_api_key = None
+        # Own the no-key state: with a key in the environment the agent
+        # correctly uses it, and this assertion would read that instead.
+        monkeypatch.delenv("COGNIVERSE_INFERENCE_API_KEY", raising=False)
         with patch("dspy.LM") as mock_lm:
             _MixinAgent(agent_config)
 
