@@ -2906,9 +2906,14 @@ async def run_cleanup(
     """Daily-cleanup workflow body: memory + logs + temp + config vacuum.
 
     Per-tenant Mem0 cleanup is schema-driven (per-kind TTLs in the
-    KnowledgeRegistry). The other three steps absorbed the
-    standalone ``daily-cleanup`` CronWorkflow that the chart didn't
-    previously cover:
+    KnowledgeRegistry) and touches only tenants whose memory schema is
+    already deployed: a tenant without one is reported as skipped and
+    nothing is ever deployed on its behalf. Every per-tenant entry is
+    ``{"status": "completed", "deleted_by_kind": {...}}``,
+    ``{"status": "skipped", "reason": ...}`` or
+    ``{"status": "failed", "error": ...}``; ``memory_cleanup_summary``
+    carries the three counts and a non-zero ``failed`` fails the run.
+    The other three steps:
 
       * Log rotation under ``LOG_DIR`` (default ``/logs``) — files
         older than ``log_retention_days`` are removed.
@@ -2928,7 +2933,7 @@ async def run_cleanup(
     from cogniverse_core.schemas.filesystem_loader import FilesystemSchemaLoader
     from cogniverse_foundation.config.utils import create_default_config_manager
     from cogniverse_runtime.admin import tenant_manager
-    from cogniverse_runtime.memory_init import lazy_init_memory
+    from cogniverse_runtime.memory_init import MEMORY_BASE_SCHEMA, lazy_init_memory
 
     # tenant_manager.get_backend() refuses to initialise without a
     # SchemaLoader injected up-front. The daily-cleanup CronWorkflow
@@ -2948,26 +2953,29 @@ async def run_cleanup(
     # every tenant in the sweep.
     config_manager = create_default_config_manager()
     registry = build_default_registry()
+    backend = tenant_manager.get_backend()
 
     results: Dict[str, Any] = {
         "log_retention_days": log_retention_days,
         "memory_retention_days": memory_retention_days,
     }
 
-    def _cleanup_one(tid: str) -> str:
+    def _cleanup_one(tid: str) -> Dict[str, Any]:
         try:
+            if not backend.schema_exists(MEMORY_BASE_SCHEMA, tenant_id=tid):
+                return {"status": "skipped", "reason": "no memory schema deployed"}
             mm = Mem0MemoryManager(tenant_id=tid)
-            lazy_init_memory(mm, tid, config_manager)
+            lazy_init_memory(mm, tid, config_manager, auto_create_schema=False)
             deleted_by_kind = mm.cleanup_with_schema(registry)
-            return f"completed: {dict(deleted_by_kind)}"
+            return {"status": "completed", "deleted_by_kind": dict(deleted_by_kind)}
         except Exception as e:
-            return f"failed: {e}"
+            return {"status": "failed", "error": f"{type(e).__name__}: {e}"}
 
     # --- Memory cleanup (per tenant) ---
+    per_tenant: Dict[str, Dict[str, Any]] = {}
     if tenant_id is not None:
-        results["memory_cleanup"] = {tenant_id: _cleanup_one(tenant_id)}
+        per_tenant[tenant_id] = _cleanup_one(tenant_id)
     else:
-        per_tenant: Dict[str, str] = {}
         org_ids = await tenant_manager.list_organizations_internal()
         for org_id in org_ids:
             for tenant in await tenant_manager.list_tenants_for_org_internal(org_id):
@@ -2975,8 +2983,12 @@ async def run_cleanup(
                 if not tid:
                     continue
                 per_tenant[tid] = _cleanup_one(tid)
-        results["memory_cleanup"] = per_tenant
-        results["tenants_processed"] = len(per_tenant)
+    results["memory_cleanup"] = per_tenant
+    results["memory_cleanup_summary"] = {
+        status: sum(1 for entry in per_tenant.values() if entry["status"] == status)
+        for status in ("completed", "skipped", "failed")
+    }
+    results["tenants_processed"] = len(per_tenant)
 
     # --- Log rotation ---
     log_dir = os.environ.get("LOG_DIR", "/logs")
