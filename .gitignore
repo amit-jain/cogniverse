@@ -71,8 +71,6 @@ video_rag_agent/
 # Debug files
 debug_*.py
 check_*.py
-test_vespa_*.py
-test_float_*.py
 
 # Model files
 *.bin
