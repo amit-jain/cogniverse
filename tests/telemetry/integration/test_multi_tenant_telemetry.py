@@ -1071,8 +1071,15 @@ class TestRequiredSpanRealBoundary:
 
             client = Client(base_url=phoenix_container["http_endpoint"])
 
+            expected_names = {
+                f"required_record_{run_id}",
+                f"required_thread_control_{run_id}",
+            }
+
             async def load_record():
                 project_names = set()
+                partial_project = None
+                partial_matches = None
                 for _ in range(120):
                     projects = await asyncio.to_thread(client.projects.list)
                     project_names = {item["name"] for item in projects}
@@ -1083,15 +1090,14 @@ class TestRequiredSpanRealBoundary:
                         )
                         if frame.empty or "name" not in frame.columns:
                             continue
-                        expected_names = {
-                            f"required_record_{run_id}",
-                            f"required_thread_control_{run_id}",
-                        }
                         matches = frame[frame["name"].isin(expected_names)]
-                        if not matches.empty:
+                        if set(matches["name"]) == expected_names:
                             return observed_project, matches, project_names
+                        if not matches.empty:
+                            partial_project = observed_project
+                            partial_matches = matches
                     await asyncio.sleep(0.1)
-                return None, None, project_names
+                return partial_project, partial_matches, project_names
 
             observed_project, matches, project_names = await load_record()
             assert observed_project == project, project_names
