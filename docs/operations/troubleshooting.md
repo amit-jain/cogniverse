@@ -559,10 +559,19 @@ kubectl exec -n cogniverse statefulset/cogniverse-vespa -- sh -c \
 After the flush bound has taken effect the second command prints the
 number of DocumentDBs (one `config-<serial>` per DocumentDB).
 
+**Pod stop budget:**
+`vespa-stop-services` runs each service's pre-shutdown command from the
+sentinel config: the container drains with `prepareStop d:360` under a 370 s
+RPC timeout, and the searchnode runs `vespa-proton-cmd prepareRestart` under
+a 600 s budget, which flushes every DocumentDB and prunes the log so the next
+start replays nothing. `vespa.terminationGracePeriodSeconds` is 1200 (970 s for both commands run in sequence plus process exit) so the
+kubelet does not kill proton mid-flush.
+
 **Prevention:**
 
 - `tests/backends/unit/test_services_config_flush_tuning.py` pins the rendered `services.xml`
 - `tests/backends/integration/test_proton_flush_maxage_effective.py` reads the effective proton config and observes the prune on a real Vespa
+- `tests/charts/test_termination_grace_period.py` pins the grace period
 
 ---
 
