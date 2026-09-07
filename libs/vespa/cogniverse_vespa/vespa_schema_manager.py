@@ -3,7 +3,21 @@ import re
 import threading
 from typing import Any, Dict, List, Optional
 
-from vespa.package import ApplicationPackage
+from vespa.configuration.services import (
+    container,
+    content,
+    document,
+    document_api,
+    document_processing,
+    documents,
+    node,
+    nodes,
+    redundancy,
+    search,
+    services,
+)
+from vespa.configuration.vt import VT
+from vespa.package import ApplicationPackage, ServicesConfiguration
 
 # Intra-process lock serialising prepare+activate so threads in the
 # same Python process don't race each other's deploys. Cross-process /
@@ -18,6 +32,81 @@ _DEPLOY_LOCK = threading.Lock()
 # timeout a stalled config server blocks the call forever — inside
 # _DEPLOY_LOCK that wedges every deploy in the process.
 DEPLOY_REQUEST_TIMEOUT_S = (10, 300)
+
+# Age bound on unflushed proton data, hence on every DocumentDB's retained
+# transaction log (Vespa default 111600s).
+FLUSH_COMPONENT_MAXAGE_S = 1800
+
+
+_FLUSH_MAXAGE_PATH = (
+    "engine",
+    "proton",
+    "tuning",
+    "searchnode",
+    "flushstrategy",
+    "native",
+    "component",
+    "maxage",
+)
+
+
+def _child(parent: VT, tag: str) -> VT:
+    for child in parent.children:
+        if isinstance(child, VT) and child.tag == tag:
+            return child
+    child = VT(tag, ())
+    parent.children = parent.children + (child,)
+    return child
+
+
+def build_services_config(app_package: ApplicationPackage) -> ServicesConfiguration:
+    """services.xml for ``app_package`` with the proton flush bound set.
+
+    A package without ``services_config`` gets pyvespa's default layout; one
+    that already carries a services tree keeps it and gains the bound.
+    """
+    if app_package.services_config is None:
+        root = services(
+            container(
+                search(),
+                document_api(),
+                document_processing(),
+                id=f"{app_package.name}_container",
+                version="1.0",
+            ),
+            content(
+                redundancy("1"),
+                documents(
+                    *[
+                        document(type=schema.name, mode="index")
+                        for schema in app_package.schemas
+                    ]
+                ),
+                nodes(node(distribution_key="0", hostalias="node1")),
+                id=f"{app_package.name}_content",
+                version="1.0",
+            ),
+            version="1.0",
+        )
+    else:
+        root = app_package.services_config.services_config
+    content_tags = [
+        child
+        for child in root.children
+        if isinstance(child, VT) and child.tag == "content"
+    ]
+    if len(content_tags) != 1:
+        raise ValueError(
+            f"services.xml for {app_package.name} must declare exactly one "
+            f"content cluster, found {len(content_tags)}"
+        )
+    maxage_tag = content_tags[0]
+    for tag in _FLUSH_MAXAGE_PATH:
+        maxage_tag = _child(maxage_tag, tag)
+    maxage_tag.children = (str(FLUSH_COMPONENT_MAXAGE_S),)
+    return ServicesConfiguration(
+        application_name=app_package.name, services_config=root
+    )
 
 
 class VespaSchemaManager:
@@ -479,6 +568,7 @@ class VespaSchemaManager:
         deploy_url = f"{base_url}:{self.backend_port}/application/v2/tenant/default/prepareandactivate"
 
         try:
+            app_package.services_config = build_services_config(app_package)
             # Materialise the zip as bytes: to_zip() returns a BytesIO that
             # requests reads to EOF, so a retry would post an empty body.
             app_zip = app_package.to_zip().getvalue()

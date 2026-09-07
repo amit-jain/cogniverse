@@ -17,7 +17,11 @@ from ._vespa_factory import make_persistent_vespa_ops
 from .config_utils import calculate_config_port
 from .ingestion_client import VespaPyClient, document_namespace
 from .search_backend import VespaSearchBackend
-from .vespa_schema_manager import DEPLOY_REQUEST_TIMEOUT_S, VespaSchemaManager
+from .vespa_schema_manager import (
+    DEPLOY_REQUEST_TIMEOUT_S,
+    VespaSchemaManager,
+    build_services_config,
+)
 
 # Async ingestion uses pyvespa's built-in feed_async_iterable (an HTTP/2 async
 # feeder callable from sync code) — no separate adapter module is needed.
@@ -1100,6 +1104,7 @@ class VespaBackend(Backend):
         deploy_url = f"{base_url}:{self._config_port}/application/v2/tenant/default/prepareandactivate"
 
         try:
+            app_package.services_config = build_services_config(app_package)
             # Materialise the zip as bytes: to_zip() returns a BytesIO that
             # requests reads to EOF, so a retry would post an empty body.
             app_zip = app_package.to_zip().getvalue()

@@ -319,7 +319,7 @@ cat configs/schemas/video_colpali_smol500_mv_frame_schema.json | grep -A2 '"embe
 **Solution:**
 ```bash
 # Check tenant_id matches (content cluster id is "cogniverse_content",
-# defined in configs/services.xml)
+# rendered by build_services_config in cogniverse_vespa.vespa_schema_manager)
 curl http://localhost:8080/document/v1/?cluster=cogniverse_content
 
 # List schemas
