@@ -6,6 +6,7 @@ on:
     paths:
       - 'libs/agents/**'
       - 'libs/core/**'
+      - 'configs/schemas/**'
       - 'tests/agents/**'
       - 'tests/conftest.py'
       - 'tests/fixtures/**'
@@ -18,6 +19,7 @@ on:
     paths:
       - 'libs/agents/**'
       - 'libs/core/**'
+      - 'configs/schemas/**'
       - 'tests/agents/**'
       - 'tests/conftest.py'
       - 'tests/fixtures/**'

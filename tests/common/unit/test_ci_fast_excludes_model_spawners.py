@@ -7,13 +7,14 @@ The fast CI runner has 7 GB of RAM; a vLLM sidecar's weights do not fit, so a
 from __future__ import annotations
 
 import json
-import re
 import subprocess
 import sys
 from collections import defaultdict
 from pathlib import Path
 
 import pytest
+
+from tests.fixtures.ci_workflows import gating_selections, load_workflows
 
 REPO_ROOT = Path(__file__).resolve().parents[3]
 WORKFLOWS = REPO_ROOT / ".github" / "workflows"
@@ -37,11 +38,6 @@ def pytest_collection_modifyitems(session, config, items):
     print("CI_FAST_OFFENDERS:" + json.dumps(offenders))
 """
 
-_PYTEST_INVOCATION = re.compile(
-    r"python -m pytest(?P<body>(?:[^\n]*\\\n)*[^\n]*)", re.MULTILINE
-)
-_MARKER_EXPR = re.compile(r'-m\s+(?:"(?P<quoted>[^"]+)"|(?P<bare>[A-Za-z_][\w]*))')
-
 
 def ci_fast_selections() -> dict[str, list[str]]:
     """Map each CI marker expression naming ``ci_fast`` to the paths it runs.
@@ -50,19 +46,9 @@ def ci_fast_selections() -> dict[str, list[str]]:
     editing this test.
     """
     by_expr: dict[str, set[str]] = defaultdict(set)
-    for workflow in sorted(WORKFLOWS.glob("*.yml")):
-        text = workflow.read_text()
-        for match in _PYTEST_INVOCATION.finditer(text):
-            body = match.group("body").replace("\\\n", " ")
-            marker = _MARKER_EXPR.search(body)
-            if marker is None:
-                continue
-            expr = marker.group("quoted") or marker.group("bare")
-            if "ci_fast" not in expr:
-                continue
-            paths = [tok for tok in body.split() if tok.startswith("tests/")]
-            if paths:
-                by_expr[expr].update(paths)
+    for selection in gating_selections(load_workflows(WORKFLOWS)):
+        if selection.marker_expr and "ci_fast" in selection.marker_expr:
+            by_expr[selection.marker_expr].update(selection.paths)
     return {expr: sorted(paths) for expr, paths in by_expr.items()}
 
 
@@ -113,7 +99,7 @@ def test_ci_fast_selections_are_derived_from_the_workflows() -> None:
         "unit and ci_fast",
         "integration and ci_fast and not requires_lm",
     }
-    assert selections["ci_fast"] == ["tests/agents/integration/"]
+    assert selections["ci_fast"] == ["tests/agents/integration"]
     assert selections["unit and ci_fast"] == ["tests/memory/unit"]
 
 

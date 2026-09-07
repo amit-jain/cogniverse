@@ -5,12 +5,13 @@ MISSING one: a file whose markers don't satisfy the ``-m`` expression its CI
 job uses collects cleanly yet is silently deselected, so its coverage stops
 running without anyone noticing.
 
-The selections are parsed from ``.github/workflows/*.yml`` directly — a
-hardcoded directory map goes stale the moment a workflow adds or changes a
-``-m`` expression, which is exactly how whole directories fell out of CI.
-For each ``pytest <dir> -m "<expr>"`` job line, every ``test_*.py`` under
-``<dir>`` must carry markers satisfying at least one of the directory's
-BASE expressions, or declare its exclusion explicitly with ``local_only``.
+The selections come from ``tests/fixtures/ci_workflows.py``, which parses
+``.github/workflows/*.yml`` — a hardcoded directory map goes stale the moment a
+workflow adds or changes a ``-m`` expression, which is exactly how whole
+directories fell out of CI. For each ``pytest <path> -m "<expr>"`` job line,
+every ``test_*.py`` under ``<path>`` must carry markers satisfying at least one
+of that path's BASE expressions, or declare its exclusion explicitly with
+``local_only``.
 
 The base expression is the CI expression with ``ci_fast`` treated as
 satisfied: ``ci_fast`` is the documented per-file speed judgment (CI runs a
@@ -29,6 +30,8 @@ from pathlib import Path
 
 import pytest
 
+from tests.fixtures.ci_workflows import gating_selections, load_workflows
+
 pytestmark = [pytest.mark.unit, pytest.mark.ci_fast]
 
 REPO_ROOT = Path(__file__).resolve().parents[3]
@@ -43,47 +46,14 @@ _ALLOWED_EXPR_WORDS = {"and", "or", "not"}
 LOCAL_ONLY_MARKER = "local_only"
 
 
-def _joined_run_lines(workflow_text: str) -> list[str]:
-    """Physical command lines with backslash continuations joined."""
-    joined: list[str] = []
-    pending = ""
-    for raw in workflow_text.splitlines():
-        line = pending + raw.strip()
-        if line.endswith("\\"):
-            pending = line[:-1] + " "
-            continue
-        pending = ""
-        joined.append(line)
-    if pending:
-        joined.append(pending)
-    return joined
-
-
 def parse_ci_selections() -> list[tuple[str, str | None]]:
-    """(test dir, -m expression or None) for every pytest job line.
-
-    Skips ``echo``-ed hint lines — only real invocations gate CI.
-    """
-    selections: list[tuple[str, str | None]] = []
-    for workflow in sorted(WORKFLOWS_DIR.glob("*.yml")):
-        for line in _joined_run_lines(workflow.read_text()):
-            if "python -m pytest" not in line:
-                continue
-            prefix = line[: line.index("python -m pytest")]
-            if "echo" in prefix:
-                continue
-            # Arguments AFTER the pytest invocation — the leading
-            # ``python -m pytest`` must be stripped first or its own ``-m``
-            # is mistaken for the marker expression.
-            args = line[line.index("python -m pytest") + len("python -m pytest") :]
-            paths = [t for t in args.split() if t.startswith("tests/")]
-            expr_match = re.search(r"-m\s+(?:\"([^\"]+)\"|'([^']+)'|(\S+))", args)
-            expr: str | None = None
-            if expr_match:
-                expr = expr_match.group(1) or expr_match.group(2) or expr_match.group(3)
-            for path in paths:
-                selections.append((path.rstrip("/"), expr))
-    return selections
+    """(test path, -m expression or None) for every commit-gating pytest line."""
+    workflows = load_workflows(WORKFLOWS_DIR)
+    return [
+        (path, selection.marker_expr)
+        for selection in gating_selections(workflows)
+        for path in selection.paths
+    ]
 
 
 def file_markers(test_file: Path) -> set[str]:
@@ -128,24 +98,31 @@ def test_every_test_file_is_visible_to_its_ci_selection():
 
     invisible: list[str] = []
     for rel in sorted({path for path, _ in selections}):
-        if not (REPO_ROOT / rel).is_dir():
+        if not (REPO_ROOT / rel).exists():
             invisible.append(f"{rel}: selected in CI but does not exist")
 
-    # A file is visible if ANY selection covering it (its own dir OR a parent
-    # dir — e.g. ``tests/finetuning/`` covers ``tests/finetuning/integration``)
-    # picks it up; an unfiltered selection picks up everything under its dir.
+    # A file is visible if ANY selection covering it (itself, its own dir, OR a
+    # parent dir — e.g. ``tests/finetuning/`` covers
+    # ``tests/finetuning/integration``) picks it up; an unfiltered selection
+    # picks up everything under its dir.
     checked: set[Path] = set()
     for rel, _ in selections:
-        directory = REPO_ROOT / rel
-        if not directory.is_dir():
+        target = REPO_ROOT / rel
+        if target.is_dir():
+            candidates = sorted(target.rglob("test_*.py"))
+        elif target.is_file():
+            candidates = [target]
+        else:
             continue
-        for test_file in sorted(directory.rglob("test_*.py")):
+        for test_file in candidates:
             if test_file in checked:
                 continue
             checked.add(test_file)
             file_rel = test_file.relative_to(REPO_ROOT).as_posix()
             exprs = [
-                expr for path, expr in selections if file_rel.startswith(path + "/")
+                expr
+                for path, expr in selections
+                if file_rel == path or file_rel.startswith(path + "/")
             ]
             if any(expr is None for expr in exprs):
                 continue
