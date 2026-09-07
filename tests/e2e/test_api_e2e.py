@@ -36,6 +36,10 @@ from cogniverse_foundation.config.unified_config import (
     SyntheticGeneratorConfig,
 )
 from cogniverse_foundation.config.utils import create_default_config_manager
+from cogniverse_synthetic.generators.base import (
+    CONTENT_DROP_CATEGORIES,
+    UNEXPECTED_DROP_CATEGORY,
+)
 from cogniverse_synthetic.generators.workflow import WorkflowGenerator
 from cogniverse_synthetic.schemas import ProfileSelectionExampleSchema
 from cogniverse_synthetic.topics import (
@@ -1233,15 +1237,11 @@ class TestSyntheticDataAPI:
         assert data["count"] == len(data["data"]) == generation["returned_count"]
         assert generation["returned_count"] + generation["shortfall_count"] == 5
         assert generation["surplus_exhausted"] is (generation["shortfall_count"] > 0)
-        content_drop_prefixes = (
-            "RoutingGenerator generated duplicate canonical label (",
-            "Failed to generate valid entity query after ",
-            "EntityExtractionGenerator generated 0 unique grounded examples",
-        )
         assert [
-            drop["reason"].startswith(content_drop_prefixes)
+            drop["category"] in CONTENT_DROP_CATEGORIES
             for drop in generation["dropped_examples"]
         ] == [True] * generation["dropped_count"]
+        assert UNEXPECTED_DROP_CATEGORY not in CONTENT_DROP_CATEGORIES
         assert generation["returned_count"] == len(
             {(example["query"], example["chosen_agent"]) for example in data["data"]}
         )
@@ -2243,8 +2243,9 @@ def _assert_synthetic_metadata_fields(
     assert generation["floor_count"] == 1
     assert generation["dropped_count"] == len(generation["dropped_examples"])
     for drop in generation["dropped_examples"]:
-        assert set(drop) == {"candidate", "reason"}
+        assert set(drop) == {"candidate", "reason", "category"}
         assert drop["reason"].strip() != ""
+        assert drop["category"] in CONTENT_DROP_CATEGORIES
     return generation
 
 

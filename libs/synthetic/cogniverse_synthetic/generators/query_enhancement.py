@@ -18,11 +18,13 @@ from pydantic import BaseModel, ValidationError
 from cogniverse_synthetic.generators.base import (
     DEFAULT_SYNTHETIC_GENERATION_FLOOR_COUNT,
     BaseGenerator,
+    ContentRejection,
     GenerationTracker,
     entity_candidate_text_fields,
     is_identifier_topic,
     is_non_speech_annotation,
     normalize_text,
+    rejection_category,
 )
 from cogniverse_synthetic.grounding import source_term_keys, term_is_grounded
 from cogniverse_synthetic.schemas import QueryEnhancementExampleSchema
@@ -102,7 +104,9 @@ class QueryEnhancementGenerator(BaseGenerator):
             except (ValueError, ValidationError) as exc:
                 last_validation_error = exc
                 if isinstance(generation_tracker, GenerationTracker):
-                    generation_tracker.record_drop(query, exc)
+                    generation_tracker.record_drop(
+                        query, exc, category=rejection_category(exc)
+                    )
                 continue
             examples.append(example)
 
@@ -130,10 +134,13 @@ class QueryEnhancementGenerator(BaseGenerator):
         if isinstance(result, BaseModel):
             result = result.model_dump()
         if not isinstance(result, dict):
-            raise ValueError("query enhancement result must be an object")
+            raise ContentRejection(
+                "invalid_label", "query enhancement result must be an object"
+            )
         if result.get("original_query") != query:
-            raise ValueError(
-                "query enhancement original_query must match generated query"
+            raise ContentRejection(
+                "invalid_label",
+                "query enhancement original_query must match generated query",
             )
         enhanced_query = result.get("enhanced_query")
         if (
@@ -141,8 +148,9 @@ class QueryEnhancementGenerator(BaseGenerator):
             or not enhanced_query.strip()
             or enhanced_query.strip() == query
         ):
-            raise ValueError(
-                "query enhancement enhanced_query must be non-empty and changed"
+            raise ContentRejection(
+                "invalid_label",
+                "query enhancement enhanced_query must be non-empty and changed",
             )
         expansion_terms = self._output_terms(
             result.get("expansion_terms"), "expansion_terms"
@@ -152,15 +160,19 @@ class QueryEnhancementGenerator(BaseGenerator):
             term for term in expansion_terms if not term_is_grounded(term, keys)
         ]
         if unrelated_terms:
-            raise ValueError(
+            raise ContentRejection(
+                "ungrounded_output",
                 "query_enhancement optimizer callback query_enhancer returned "
                 "expansion_terms absent from sampled source for "
-                f"tenant={tenant_id!r} query={query!r}: {unrelated_terms!r}"
+                f"tenant={tenant_id!r} query={query!r}: {unrelated_terms!r}",
             )
         synonyms = self._output_terms(result.get("synonyms", []), "synonyms")
         reasoning = result.get("reasoning")
         if not isinstance(reasoning, str) or not reasoning.strip():
-            raise ValueError("query enhancement reasoning must be a non-empty string")
+            raise ContentRejection(
+                "invalid_label",
+                "query enhancement reasoning must be a non-empty string",
+            )
 
         return QueryEnhancementExampleSchema(
             query=query,
@@ -200,8 +212,9 @@ class QueryEnhancementGenerator(BaseGenerator):
         if not isinstance(value, list) or any(
             not isinstance(term, str) or not term.strip() for term in value
         ):
-            raise ValueError(
-                f"query enhancement {field_name} must be a list of non-empty strings"
+            raise ContentRejection(
+                "invalid_label",
+                f"query enhancement {field_name} must be a list of non-empty strings",
             )
         return [term.strip() for term in value]
 

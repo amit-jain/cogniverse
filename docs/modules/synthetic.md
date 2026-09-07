@@ -151,6 +151,25 @@ the configured floor count when the candidate pool is exhausted.
 with source context. `get_generator_info()` reports the concrete generator name
 and whether pattern extraction or agent inference helpers were supplied.
 
+Each entry in `dropped_examples` carries `candidate`, `reason`, and `category`.
+`category` comes from the bound `DropCategory` vocabulary in
+`cogniverse_synthetic.generators.base`:
+
+| Category | Meaning |
+|----------|---------|
+| `ungrounded_source` | The sampled text supported no grounded example |
+| `ungrounded_output` | The model's output was not grounded in the source topic |
+| `invalid_label` | The model's label failed a shape or vocabulary rule |
+| `duplicate_label` | The candidate repeats a label already accepted |
+| `unexpected_error` | An exception the generator did not anticipate |
+
+A generator declares the category at the point it refuses a candidate, by
+raising `ContentRejection(category, message)`. `rejection_category()` maps any
+other exception reaching a drop handler to `unexpected_error`, so a masked
+failure is never recorded as a deliberate rejection. `CONTENT_DROP_CATEGORIES`
+holds the four deliberate categories; `ContentRejection` refuses
+`unexpected_error`.
+
 `SyntheticDataService.generate()` also surfaces `metadata.sampled_content`, a
 trace of the sampled backend rows. Each trace item carries `profile_name`,
 `schema_name`, `source_id`, `segment_id`, and `description`, so callers can

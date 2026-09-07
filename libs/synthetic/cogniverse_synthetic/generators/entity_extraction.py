@@ -12,11 +12,13 @@ from pydantic import BaseModel, ValidationError
 from cogniverse_synthetic.generators.base import (
     DEFAULT_SYNTHETIC_GENERATION_FLOOR_COUNT,
     BaseGenerator,
+    ContentRejection,
     GenerationTracker,
     entity_candidate_text_fields,
     is_identifier_topic,
     is_non_speech_annotation,
     normalize_text,
+    rejection_category,
 )
 from cogniverse_synthetic.schemas import EntityExtractionExampleSchema
 
@@ -84,7 +86,9 @@ class EntityExtractionGenerator(BaseGenerator):
             except (ValueError, ValidationError) as exc:
                 last_validation_error = exc
                 if isinstance(generation_tracker, GenerationTracker):
-                    generation_tracker.record_drop(text, exc)
+                    generation_tracker.record_drop(
+                        text, exc, category=rejection_category(exc)
+                    )
                 continue
 
             if example is not None:
@@ -93,7 +97,9 @@ class EntityExtractionGenerator(BaseGenerator):
                 skipped_without_entities += 1
                 if isinstance(generation_tracker, GenerationTracker):
                     generation_tracker.record_drop(
-                        text, "entity extractor returned no entities"
+                        text,
+                        "entity extractor returned no entities",
+                        category="ungrounded_source",
                     )
 
         self.require_exact_target_count(
@@ -139,7 +145,9 @@ class EntityExtractionGenerator(BaseGenerator):
             return value.model_dump()
         if isinstance(value, dict):
             return value
-        raise ValueError(f"entity extractor {field} must be an object")
+        raise ContentRejection(
+            "invalid_label", f"entity extractor {field} must be an object"
+        )
 
     @classmethod
     def _to_example(
@@ -147,11 +155,16 @@ class EntityExtractionGenerator(BaseGenerator):
     ) -> Optional[EntityExtractionExampleSchema]:
         payload = cls._to_mapping(extraction, field="result")
         if payload.get("query") != text:
-            raise ValueError("entity extractor result query must match the source text")
+            raise ContentRejection(
+                "invalid_label",
+                "entity extractor result query must match the source text",
+            )
 
         raw_entities = payload.get("entities")
         if not isinstance(raw_entities, list):
-            raise ValueError("entity extractor result entities must be a list")
+            raise ContentRejection(
+                "invalid_label", "entity extractor result entities must be a list"
+            )
         if not raw_entities:
             return None
 
@@ -162,22 +175,26 @@ class EntityExtractionGenerator(BaseGenerator):
             entity_text = entity.get("text")
             entity_type = entity.get("type")
             if not isinstance(entity_text, str) or not entity_text.strip():
-                raise ValueError(
-                    f"entity extractor entities[{index}].text must be non-empty"
+                raise ContentRejection(
+                    "invalid_label",
+                    f"entity extractor entities[{index}].text must be non-empty",
                 )
             if not isinstance(entity_type, str) or not entity_type.strip():
-                raise ValueError(
-                    f"entity extractor entities[{index}].type must be non-empty"
+                raise ContentRejection(
+                    "invalid_label",
+                    f"entity extractor entities[{index}].type must be non-empty",
                 )
             if entity_text != entity_text.strip():
-                raise ValueError(
+                raise ContentRejection(
+                    "invalid_label",
                     f"entity extractor entities[{index}].text contains "
-                    "surrounding whitespace"
+                    "surrounding whitespace",
                 )
             if entity_type != entity_type.strip():
-                raise ValueError(
+                raise ContentRejection(
+                    "invalid_label",
                     f"entity extractor entities[{index}].type contains "
-                    "surrounding whitespace"
+                    "surrounding whitespace",
                 )
             if (
                 re.search(
@@ -186,25 +203,29 @@ class EntityExtractionGenerator(BaseGenerator):
                 )
                 is None
             ):
-                raise ValueError(
+                raise ContentRejection(
+                    "ungrounded_output",
                     f"entity extractor entities[{index}].text must be an exact "
-                    "complete source span"
+                    "complete source span",
                 )
             prior_type = entity_types_by_text.get(entity_text)
             if prior_type == entity_type:
                 continue
             if prior_type is not None:
-                raise ValueError(
+                raise ContentRejection(
+                    "invalid_label",
                     "entity extractor result contains conflicting types for "
                     f"duplicate entity text {entity_text!r}: {prior_type!r} and "
-                    f"{entity_type!r}"
+                    f"{entity_type!r}",
                 )
             entity_types_by_text[entity_text] = entity_type
             entities.append({"text": entity_text, "type": entity_type})
 
         raw_relationships = payload.get("relationships")
         if not isinstance(raw_relationships, list):
-            raise ValueError("entity extractor result relationships must be a list")
+            raise ContentRejection(
+                "invalid_label", "entity extractor result relationships must be a list"
+            )
         relationships: List[Dict[str, str]] = []
         seen_relationships: set[tuple[str, str, str]] = set()
         entity_texts = {entity["text"] for entity in entities}
@@ -219,9 +240,10 @@ class EntityExtractionGenerator(BaseGenerator):
                 isinstance(value, str) and value.strip()
                 for value in (subject, relation, object_)
             ):
-                raise ValueError(
+                raise ContentRejection(
+                    "invalid_label",
                     "entity extractor relationships"
-                    f"[{index}] requires subject, relation, and object"
+                    f"[{index}] requires subject, relation, and object",
                 )
             for field_name, value in (
                 ("subject", subject),
@@ -229,14 +251,16 @@ class EntityExtractionGenerator(BaseGenerator):
                 ("object", object_),
             ):
                 if value != value.strip():
-                    raise ValueError(
+                    raise ContentRejection(
+                        "invalid_label",
                         f"entity extractor relationships[{index}].{field_name} "
-                        "contains surrounding whitespace"
+                        "contains surrounding whitespace",
                     )
             if subject not in entity_texts or object_ not in entity_texts:
-                raise ValueError(
+                raise ContentRejection(
+                    "invalid_label",
                     f"entity extractor relationships[{index}] references "
-                    "an entity absent from the result"
+                    "an entity absent from the result",
                 )
             identity = (subject, object_, relation)
             if identity in seen_relationships:

@@ -21,7 +21,13 @@ from cogniverse_synthetic.dspy_modules import (
     EntityQueryValidationError,
     ValidatedEntityQueryGenerator,
 )
-from cogniverse_synthetic.generators.base import GenerationTracker
+from cogniverse_synthetic.generators.base import (
+    CONTENT_DROP_CATEGORIES,
+    DROP_CATEGORIES,
+    UNEXPECTED_DROP_CATEGORY,
+    ContentRejection,
+    GenerationTracker,
+)
 from cogniverse_synthetic.generators.entity_extraction import (
     EntityExtractionGenerator,
 )
@@ -742,7 +748,12 @@ async def test_generation_drops_repeated_canonical_routing_label() -> None:
     assert tracker.returned_count == 1
     assert tracker.surplus_exhausted is True
     # Find the duplicate-related dropped example (not the no-entity ones)
-    duplicate_drops = [d for d in tracker.dropped_examples if "duplicate" in d.reason]
+    duplicate_drops = [
+        d for d in tracker.dropped_examples if d.category == "duplicate_label"
+    ]
+    assert [d.category for d in duplicate_drops] == ["duplicate_label"] * len(
+        duplicate_drops
+    )
     assert duplicate_drops[0].candidate == (
         "find TensorFlow machine learning framework tutorial"
     )
@@ -830,7 +841,12 @@ async def test_generation_fills_quota_after_one_duplicate() -> None:
     assert query_generator.calls == 6
     assert tracker.returned_count == 5
     assert tracker.surplus_exhausted is False
-    duplicate_drops = [d for d in tracker.dropped_examples if "duplicate" in d.reason]
+    duplicate_drops = [
+        d for d in tracker.dropped_examples if d.category == "duplicate_label"
+    ]
+    assert [d.category for d in duplicate_drops] == ["duplicate_label"] * len(
+        duplicate_drops
+    )
     assert [drop.candidate for drop in duplicate_drops] == [
         "find TensorFlow machine learning framework tutorial"
     ]
@@ -907,7 +923,12 @@ async def test_generation_stops_after_duplicate_streak_is_exhausted() -> None:
     assert routing_calls == ["find TensorFlow machine learning framework tutorial"] * 6
     assert tracker.returned_count == 1
     assert tracker.surplus_exhausted is True
-    duplicate_drops = [d for d in tracker.dropped_examples if "duplicate" in d.reason]
+    duplicate_drops = [
+        d for d in tracker.dropped_examples if d.category == "duplicate_label"
+    ]
+    assert [d.category for d in duplicate_drops] == ["duplicate_label"] * len(
+        duplicate_drops
+    )
     assert [drop.candidate for drop in duplicate_drops] == [
         "find TensorFlow machine learning framework tutorial"
     ] * 5
@@ -1172,14 +1193,35 @@ async def test_generation_drops_query_missing_topic_content_words() -> None:
         )
 
     assert query_generator.calls == 5
-    assert type(error.value.__cause__) is ValueError
+    assert type(error.value.__cause__) is ContentRejection
+    assert error.value.__cause__.category == "ungrounded_output"
     assert str(error.value.__cause__) == expected_reason
     assert [drop.to_dict() for drop in tracker.dropped_examples] == [
-        {"candidate": "TensorFlow machine learning", "reason": expected_reason},
-        {"candidate": "TensorFlow machine learning", "reason": expected_reason},
-        {"candidate": "TensorFlow machine learning", "reason": expected_reason},
-        {"candidate": "TensorFlow machine learning", "reason": expected_reason},
-        {"candidate": "TensorFlow machine learning", "reason": expected_reason},
+        {
+            "candidate": "TensorFlow machine learning",
+            "reason": expected_reason,
+            "category": "ungrounded_output",
+        },
+        {
+            "candidate": "TensorFlow machine learning",
+            "reason": expected_reason,
+            "category": "ungrounded_output",
+        },
+        {
+            "candidate": "TensorFlow machine learning",
+            "reason": expected_reason,
+            "category": "ungrounded_output",
+        },
+        {
+            "candidate": "TensorFlow machine learning",
+            "reason": expected_reason,
+            "category": "ungrounded_output",
+        },
+        {
+            "candidate": "TensorFlow machine learning",
+            "reason": expected_reason,
+            "category": "ungrounded_output",
+        },
     ]
     assert tracker.to_metadata() == {
         "requested_count": 1,
@@ -1192,22 +1234,27 @@ async def test_generation_drops_query_missing_topic_content_words() -> None:
             {
                 "candidate": "TensorFlow machine learning",
                 "reason": expected_reason,
+                "category": "ungrounded_output",
             },
             {
                 "candidate": "TensorFlow machine learning",
                 "reason": expected_reason,
+                "category": "ungrounded_output",
             },
             {
                 "candidate": "TensorFlow machine learning",
                 "reason": expected_reason,
+                "category": "ungrounded_output",
             },
             {
                 "candidate": "TensorFlow machine learning",
                 "reason": expected_reason,
+                "category": "ungrounded_output",
             },
             {
                 "candidate": "TensorFlow machine learning",
                 "reason": expected_reason,
+                "category": "ungrounded_output",
             },
         ],
     }
@@ -1599,6 +1646,7 @@ async def test_generation_drops_candidate_when_query_validation_is_exhausted() -
         "Failed to generate valid entity query after 3 retries: Entity query "
         "validation failed after 3 attempts for entities: TensorFlow"
     )
+    assert tracker.dropped_examples[0].category == "ungrounded_output"
 
 
 async def test_generation_drops_candidate_when_labeler_yields_no_example() -> None:
@@ -1608,11 +1656,6 @@ async def test_generation_drops_candidate_when_labeler_yields_no_example() -> No
 
     async def label_entities(sampled_content, target_count, tenant_id):
         labeler_inputs.append(sampled_content)
-        if sampled_content == [{"topic": "blank frame"}]:
-            raise ValueError(
-                "EntityExtractionGenerator generated 0 unique grounded examples "
-                "but target_count=1"
-            )
         return await real_generate(
             sampled_content=sampled_content,
             target_count=target_count,
@@ -1646,11 +1689,16 @@ async def test_generation_drops_candidate_when_labeler_yields_no_example() -> No
     assert labeler_inputs == [[{"topic": "blank frame"}], [{"topic": "TensorFlow"}]]
     assert [example.query for example in examples] == ["find TensorFlow"]
     assert tracker.returned_count == 1
-    assert [(drop.candidate, drop.reason) for drop in tracker.dropped_examples] == [
+    assert [
+        (drop.candidate, drop.reason, drop.category)
+        for drop in tracker.dropped_examples
+    ] == [
         (
             "blank frame",
             "EntityExtractionGenerator generated 0 unique grounded examples "
-            "but target_count=1",
+            "but target_count=1; source_context=1 unique source texts, "
+            "1 without entities",
+            "ungrounded_source",
         )
     ]
 
@@ -1833,4 +1881,132 @@ def test_canonicalized_relationships_reject_an_unknown_endpoint() -> None:
 
     assert str(error.value) == (
         "relationships[0].target 'Sorbonne' is absent from the canonical entities"
+    )
+
+
+async def test_drop_categories_name_the_deliberate_content_rejection() -> None:
+    """A query the model leaves ungrounded is recorded under its own category."""
+
+    class _MissingTopicContentWordGenerator:
+        max_retries = 3
+
+        def __call__(self, **kwargs):
+            return SimpleNamespace(
+                query="find TensorFlow machine",
+                reasoning="Kept the visible entity and one topic word.",
+                _retry_count=0,
+                _max_retries=3,
+            )
+
+    generator = _routing_generator()
+    generator.query_generator = _MissingTopicContentWordGenerator()
+    generator._extract_topic = lambda content, *, saliency: (
+        "TensorFlow machine learning"
+    )
+    tracker = GenerationTracker(optimizer="routing", target_count=1, floor_count=1)
+
+    with pytest.raises(ContentRejection) as error:
+        await generator.generate(
+            sampled_content=[
+                {"description": "ignored"},
+                {"description": "ignored again"},
+            ],
+            target_count=1,
+            tenant_id="acme:routing",
+            generation_tracker=tracker,
+            generation_floor_count=1,
+        )
+
+    assert error.value.category == "ungrounded_source"
+    assert type(error.value.__cause__) is ContentRejection
+    assert error.value.__cause__.category == "ungrounded_output"
+    assert [drop.category for drop in tracker.dropped_examples] == [
+        "ungrounded_output"
+    ] * 5
+    assert [drop["category"] for drop in tracker.to_metadata()["dropped_examples"]] == [
+        "ungrounded_output"
+    ] * 5
+
+
+async def test_unanticipated_exception_is_recorded_as_unexpected_error() -> None:
+    """An exception the generator never declared is never a content rejection."""
+
+    class _SourceQueryGeneratorForCategory:
+        max_retries = 3
+
+        def __call__(self, **kwargs):
+            return SimpleNamespace(
+                query="find TensorFlow in the sampled clip",
+                reasoning="Grounded in the sampled entity.",
+                _retry_count=0,
+                _max_retries=3,
+            )
+
+    def _defective_canonicalize(relationships, entities):
+        raise ValueError("canonicalization defect")
+
+    generator = _routing_generator()
+    generator.query_generator = _SourceQueryGeneratorForCategory()
+    generator._extract_topic = lambda content, *, saliency: "TensorFlow"
+    generator._canonicalize_relationships = _defective_canonicalize
+    tracker = GenerationTracker(optimizer="routing", target_count=1, floor_count=1)
+
+    with pytest.raises(ContentRejection) as error:
+        await generator.generate(
+            sampled_content=[
+                {"description": "ignored"},
+                {"description": "ignored again"},
+            ],
+            target_count=1,
+            tenant_id="acme:routing",
+            generation_tracker=tracker,
+            generation_floor_count=1,
+        )
+
+    assert type(error.value.__cause__) is ValueError
+    assert str(error.value.__cause__) == "canonicalization defect"
+    assert [
+        (drop.candidate, drop.reason, drop.category)
+        for drop in tracker.dropped_examples
+    ] == [("TensorFlow", "canonicalization defect", "unexpected_error")] * 5
+
+
+def test_content_drop_categories_exclude_the_unexpected_category() -> None:
+    """The vocabulary a consumer may treat as a deliberate rejection is bound."""
+    assert CONTENT_DROP_CATEGORIES == frozenset(
+        {
+            "duplicate_label",
+            "invalid_label",
+            "ungrounded_output",
+            "ungrounded_source",
+        }
+    )
+    assert UNEXPECTED_DROP_CATEGORY == "unexpected_error"
+    assert DROP_CATEGORIES == CONTENT_DROP_CATEGORIES | {UNEXPECTED_DROP_CATEGORY}
+
+
+def test_record_drop_refuses_a_category_outside_the_vocabulary() -> None:
+    """A typo is refused at the recording site, not stored as a new value."""
+    tracker = GenerationTracker(optimizer="routing", target_count=1, floor_count=1)
+
+    with pytest.raises(ValueError) as error:
+        tracker.record_drop("candidate", "reason", category="ungrounded_ouput")
+
+    assert str(error.value) == (
+        "drop category must be one of ['duplicate_label', 'invalid_label', "
+        "'unexpected_error', 'ungrounded_output', 'ungrounded_source']; "
+        "got 'ungrounded_ouput'"
+    )
+    assert tracker.dropped_examples == []
+
+
+def test_content_rejection_refuses_the_unexpected_category() -> None:
+    """A rejection cannot declare itself the category reserved for failures."""
+    with pytest.raises(ValueError) as error:
+        ContentRejection("unexpected_error", "not a deliberate rejection")
+
+    assert str(error.value) == (
+        "ContentRejection category must be one of ['duplicate_label', "
+        "'invalid_label', 'ungrounded_output', 'ungrounded_source']; "
+        "got 'unexpected_error'"
     )
