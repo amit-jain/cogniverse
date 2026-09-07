@@ -12,13 +12,17 @@ from __future__ import annotations
 
 import os
 import time
+import uuid
+from collections import Counter
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
 import pytest
 
 from cogniverse_core.memory.manager import Mem0MemoryManager
-from cogniverse_runtime.optimization_cli import run_cleanup
+from cogniverse_core.schemas.filesystem_loader import FilesystemSchemaLoader
+from cogniverse_runtime.admin import tenant_manager
+from cogniverse_runtime.optimization_cli import _run_failed, run_cleanup
 
 pytestmark = pytest.mark.integration
 
@@ -57,6 +61,69 @@ def _resolve(mm: Mem0MemoryManager, mid: str) -> dict | None:
         return mm.memory.get(memory_id=mid)
     except Exception:
         return None
+
+
+def _metadata_backend(config_manager):
+    """The tenant_manager backend ``run_cleanup`` enumerates tenants through."""
+    tenant_manager.set_config_manager(config_manager)
+    tenant_manager.set_schema_loader(FilesystemSchemaLoader(Path("configs/schemas")))
+    return tenant_manager.get_backend()
+
+
+def _seed_org_and_tenant_rows(backend, org_id: str, tenant_full_id: str) -> None:
+    """Real organization + tenant rows so the global sweep enumerates the tenant."""
+    now_ms = int(time.time() * 1000)
+    backend.create_metadata_document(
+        schema="organization_metadata",
+        doc_id=org_id,
+        fields={
+            "org_id": org_id,
+            "org_name": "cleanup-integration",
+            "created_at": now_ms,
+            "created_by": "integration-test",
+            "status": "active",
+            "tenant_count": 1,
+        },
+    )
+    backend.create_metadata_document(
+        schema="tenant_metadata",
+        doc_id=tenant_full_id,
+        fields={
+            "tenant_full_id": tenant_full_id,
+            "org_id": org_id,
+            "tenant_name": tenant_full_id.split(":", 1)[1],
+            "created_at": now_ms,
+            "created_by": "integration-test",
+            "status": "active",
+            "schemas_deployed": [],
+        },
+    )
+
+
+def _delete_org_and_tenant_rows(backend, org_id: str, tenant_full_id: str) -> None:
+    for schema, doc_id in (
+        ("tenant_metadata", tenant_full_id),
+        ("organization_metadata", org_id),
+    ):
+        try:
+            backend.delete_metadata_document(schema=schema, doc_id=doc_id)
+        except Exception:
+            pass
+
+
+def _deployed_document_types(backend) -> list[str]:
+    """The live Vespa application's schema set, read from the config server."""
+    return backend.schema_manager.list_deployed_document_types(raise_on_failure=True)
+
+
+def _summary_matches(result: dict, *, failed: int) -> None:
+    statuses = Counter(entry["status"] for entry in result["memory_cleanup"].values())
+    assert result["memory_cleanup_summary"] == {
+        "completed": statuses["completed"],
+        "skipped": statuses["skipped"],
+        "failed": failed,
+    }, result["memory_cleanup_summary"]
+    assert result["tenants_processed"] == len(result["memory_cleanup"])
 
 
 class TestRunCleanupEnforcesSchemaRetention:
@@ -104,9 +171,8 @@ class TestRunCleanupEnforcesSchemaRetention:
             f"per-tenant cleanup must report this tenant; got {result['memory_cleanup']!r}"
         )
         outcome = result["memory_cleanup"][tenant_id]
-        assert outcome.startswith("completed:"), (
-            f"per-tenant cleanup must succeed; got {outcome!r}"
-        )
+        assert outcome["status"] == "completed", outcome
+        assert set(outcome) == {"status", "deleted_by_kind"}, outcome
 
         # Outcome: exact survivor set + soft-delete state.
         fresh_doc = _resolve(memory_manager, fresh_id)
@@ -151,42 +217,10 @@ class TestRunCleanupEnforcesSchemaRetention:
         outcome, not wiring. Pre-fix the daily-cleanup workflow never
         reached this branch (exited 2 in argparse).
         """
-        import time as _time
-
-        from cogniverse_core.schemas.filesystem_loader import FilesystemSchemaLoader
-        from cogniverse_runtime.admin import tenant_manager as tm
-
-        tm.set_config_manager(config_manager)
-        tm.set_schema_loader(FilesystemSchemaLoader(Path("configs/schemas")))
-        backend = tm.get_backend()
-
+        backend = _metadata_backend(config_manager)
         org_id = "cli_cleanup_org"
         seeded_full_id = f"{org_id}:cli_cleanup_t"
-        backend.create_metadata_document(
-            schema="organization_metadata",
-            doc_id=org_id,
-            fields={
-                "org_id": org_id,
-                "org_name": "cleanup-integration",
-                "created_at": int(_time.time() * 1000),
-                "created_by": "integration-test",
-                "status": "active",
-                "tenant_count": 1,
-            },
-        )
-        backend.create_metadata_document(
-            schema="tenant_metadata",
-            doc_id=seeded_full_id,
-            fields={
-                "tenant_full_id": seeded_full_id,
-                "org_id": org_id,
-                "tenant_name": "cli_cleanup_t",
-                "created_at": int(_time.time() * 1000),
-                "created_by": "integration-test",
-                "status": "active",
-                "schemas_deployed": [],
-            },
-        )
+        _seed_org_and_tenant_rows(backend, org_id, seeded_full_id)
 
         # Plant a hard-deletable memory under the seeded tenant via a
         # live Mem0 instance — the module-scoped ``memory_manager``
@@ -226,15 +260,12 @@ class TestRunCleanupEnforcesSchemaRetention:
                 memory_retention_days=1,
             )
 
-            assert result["tenants_processed"] == len(result["memory_cleanup"])
-            assert seeded_full_id in result["memory_cleanup"], (
-                f"global cleanup must include the seeded tenant "
-                f"({seeded_full_id!r}); got {sorted(result['memory_cleanup'])!r}"
-            )
-            assert result["memory_cleanup"][seeded_full_id].startswith("completed:"), (
-                "global cleanup must succeed on the seeded tenant; "
-                f"got {result['memory_cleanup'][seeded_full_id]!r}"
-            )
+            assert result["memory_cleanup"][seeded_full_id] == {
+                "status": "completed",
+                "deleted_by_kind": {"conversation_turn": 1},
+            }, result["memory_cleanup"]
+            _summary_matches(result, failed=0)
+            assert _run_failed(result) is False
 
             # Real outcome: the hard-delete-window memory is gone.
             assert _resolve(seeded_mm, hard_id) is None, (
@@ -242,18 +273,79 @@ class TestRunCleanupEnforcesSchemaRetention:
                 "conversation_turn under the seeded tenant"
             )
         finally:
-            try:
-                backend.delete_metadata_document(
-                    schema="tenant_metadata", doc_id=seeded_full_id
-                )
-            except Exception:
-                pass
-            try:
-                backend.delete_metadata_document(
-                    schema="organization_metadata", doc_id=org_id
-                )
-            except Exception:
-                pass
+            _delete_org_and_tenant_rows(backend, org_id, seeded_full_id)
+
+
+class TestRunCleanupOnlyTouchesTenantsWithMemorySchemas:
+    """A cleanup pass never creates anything and never flattens a failure."""
+
+    @pytest.mark.asyncio
+    async def test_tenant_without_memory_schema_is_skipped_and_nothing_is_deployed(
+        self, memory_manager, config_manager
+    ):
+        backend = _metadata_backend(config_manager)
+        org_id = f"cli_cleanup_bare_{uuid.uuid4().hex[:8]}"
+        tenant_full_id = f"{org_id}:t1"
+        memory_schema = backend.get_tenant_schema_name(tenant_full_id, "agent_memories")
+        provenance_schema = backend.get_tenant_schema_name(tenant_full_id, "provenance")
+
+        _seed_org_and_tenant_rows(backend, org_id, tenant_full_id)
+        try:
+            before = _deployed_document_types(backend)
+            assert memory_schema not in before, before
+            assert provenance_schema not in before, before
+
+            result = await run_cleanup(
+                tenant_id=None, log_retention_days=1, memory_retention_days=1
+            )
+
+            after = _deployed_document_types(backend)
+            assert after == before, (
+                f"cleanup must not change the deployed schema set; "
+                f"added={sorted(set(after) - set(before))} "
+                f"removed={sorted(set(before) - set(after))}"
+            )
+            assert result["memory_cleanup"][tenant_full_id] == {
+                "status": "skipped",
+                "reason": "no memory schema deployed",
+            }, result["memory_cleanup"]
+            _summary_matches(result, failed=0)
+            assert _run_failed(result) is False
+        finally:
+            _delete_org_and_tenant_rows(backend, org_id, tenant_full_id)
+
+    @pytest.mark.asyncio
+    async def test_tenant_whose_cleanup_raises_is_reported_failed_and_fails_the_run(
+        self, memory_manager, config_manager, monkeypatch
+    ):
+        backend = _metadata_backend(config_manager)
+        org_id = f"cli_cleanup_outage_{uuid.uuid4().hex[:8]}"
+        tenant_full_id = f"{org_id}:t1"
+        real_schema_exists = backend.schema_exists
+
+        def _schema_exists_with_outage(schema_name, tenant_id=None):
+            if tenant_id == tenant_full_id:
+                raise ConnectionError("injected: schema registry unreachable")
+            return real_schema_exists(schema_name, tenant_id=tenant_id)
+
+        monkeypatch.setattr(backend, "schema_exists", _schema_exists_with_outage)
+        _seed_org_and_tenant_rows(backend, org_id, tenant_full_id)
+        try:
+            before = _deployed_document_types(backend)
+
+            result = await run_cleanup(
+                tenant_id=None, log_retention_days=1, memory_retention_days=1
+            )
+
+            assert _deployed_document_types(backend) == before
+            assert result["memory_cleanup"][tenant_full_id] == {
+                "status": "failed",
+                "error": "ConnectionError: injected: schema registry unreachable",
+            }, result["memory_cleanup"]
+            _summary_matches(result, failed=1)
+            assert _run_failed(result) is True
+        finally:
+            _delete_org_and_tenant_rows(backend, org_id, tenant_full_id)
 
 
 class TestRunCleanupCoversLogsTempAndConfigVacuum:

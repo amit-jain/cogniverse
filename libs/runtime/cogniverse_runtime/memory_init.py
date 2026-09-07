@@ -33,6 +33,8 @@ from cogniverse_foundation.config.utils import get_config
 
 logger = logging.getLogger(__name__)
 
+MEMORY_BASE_SCHEMA = "agent_memories"
+
 
 def lazy_init_memory(
     mgr: Mem0MemoryManager,
@@ -95,7 +97,7 @@ def lazy_init_memory(
             backend_host=sc.backend_url,
             backend_port=sc.backend_port,
             backend_config_port=int(os.environ.get("VESPA_CONFIG_PORT", "19071")),
-            base_schema_name="agent_memories",
+            base_schema_name=MEMORY_BASE_SCHEMA,
             llm_model=model,
             embedding_model="lightonai/DenseOn",
             llm_base_url=llm_base_url,

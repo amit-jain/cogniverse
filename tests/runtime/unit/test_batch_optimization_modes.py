@@ -9860,35 +9860,48 @@ class TestRunFailed:
         # A zero failed-count is not a failure.
         assert _run_failed({"failed": 0, "succeeded": 5}) is False
 
-    def test_cleanup_total_outage_shape_fails(self):
-        """The exact run_cleanup result under a total mem0/Vespa outage: the
-        per-tenant memory_cleanup entry is a 'failed: ...' string and
-        config_vacuum is {'failed': ...}, neither carrying a top-level status.
-        The old .get('status')-only check returned False here → exit 0 =
-        SUCCESS while the cron did nothing."""
+    def test_cleanup_one_failed_tenant_fails(self):
+        """The exact run_cleanup result when one tenant's cleanup raised:
+        its entry is {"status": "failed", ...} and the summary carries
+        failed=1 while every other section is healthy."""
         from cogniverse_runtime.optimization_cli import _run_failed
 
         outage_result = {
             "log_retention_days": 7,
             "memory_retention_days": 30,
-            "memory_cleanup": {"acme:acme": "failed: Vespa connection refused"},
-            "tenants_processed": 1,
+            "memory_cleanup": {
+                "acme:acme": {"status": "completed", "deleted_by_kind": {"fact": 3}},
+                "acme:staging": {
+                    "status": "failed",
+                    "error": "ConnectionError: Vespa connection refused",
+                },
+            },
+            "memory_cleanup_summary": {"completed": 1, "skipped": 0, "failed": 1},
+            "tenants_processed": 2,
             "log_cleanup": {"path": "/logs", "scanned": 0, "deleted": 0, "errors": []},
             "temp_cleanup": {"path": "/tmp", "scanned": 0, "deleted": 0, "errors": []},
-            "config_vacuum": {"failed": "Vespa connection refused"},
+            "config_vacuum": {"dropped": 0, "keep_versions": 10},
         }
         assert _run_failed(outage_result) is True
 
     def test_cleanup_healthy_shape_ok(self):
-        """The happy run_cleanup result — completed per-tenant strings, a
-        dropped-count vacuum, empty prune errors — must NOT trip the exit."""
+        """The happy run_cleanup result — a completed tenant, a tenant skipped
+        for having no memory schema, a dropped-count vacuum, empty prune
+        errors — must NOT trip the exit."""
         from cogniverse_runtime.optimization_cli import _run_failed
 
         healthy_result = {
             "log_retention_days": 7,
             "memory_retention_days": 30,
-            "memory_cleanup": {"acme:acme": "completed: {'fact': 3}"},
-            "tenants_processed": 1,
+            "memory_cleanup": {
+                "acme:acme": {"status": "completed", "deleted_by_kind": {"fact": 3}},
+                "acme:bare": {
+                    "status": "skipped",
+                    "reason": "no memory schema deployed",
+                },
+            },
+            "memory_cleanup_summary": {"completed": 1, "skipped": 1, "failed": 0},
+            "tenants_processed": 2,
             "log_cleanup": {"path": "/logs", "scanned": 5, "deleted": 2, "errors": []},
             "temp_cleanup": {"path": "/tmp", "scanned": 0, "deleted": 0, "errors": []},
             "config_vacuum": {"dropped": 4, "keep_versions": 10},

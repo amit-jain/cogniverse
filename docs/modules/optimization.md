@@ -851,7 +851,7 @@ Daily-cleanup workflow body (per-tenant when `--tenant-id` is set, global sweep 
 
 | Section | Source | Knob |
 |---|---|---|
-| `memory_cleanup` | `Mem0MemoryManager.cleanup_with_schema(build_default_registry())` per tenant | per-kind TTLs in `KnowledgeRegistry` |
+| `memory_cleanup` | `Mem0MemoryManager.cleanup_with_schema(build_default_registry())` per tenant whose `agent_memories` schema is deployed (`backend.schema_exists`); the manager is initialised with `auto_create_schema=False`, so the sweep never deploys a schema | per-kind TTLs in `KnowledgeRegistry` |
 | `log_cleanup` | `_prune_aged_files(LOG_DIR, older_than_days=log_retention_days)` | `LOG_DIR` env (default `/logs`), `--log-retention-days` (default 7) |
 | `temp_cleanup` | `_prune_aged_files(TEMP_DIR, older_than_days=TEMP_RETENTION_DAYS)` | `TEMP_DIR` env (default `/tmp`), `TEMP_RETENTION_DAYS` env (default 1) |
 | `config_vacuum` | `VespaConfigStore.prune_all_configs(keep=CONFIG_KEEP_VERSIONS)` | `CONFIG_KEEP_VERSIONS` env (default 10) |
@@ -867,7 +867,7 @@ uv run python -m cogniverse_runtime.optimization_cli \
   --mode cleanup --tenant-id acme:production --log-retention-days 7
 ```
 
-Result dict shape: `{log_retention_days, memory_retention_days, memory_cleanup: {tid: "completed: {...}"} | per_tenant_dict, tenants_processed?, log_cleanup, temp_cleanup, config_vacuum}`.
+Result dict shape: `{log_retention_days, memory_retention_days, memory_cleanup: {tid: entry}, memory_cleanup_summary: {completed, skipped, failed}, tenants_processed, log_cleanup, temp_cleanup, config_vacuum}`. Each per-tenant `entry` is one of `{"status": "completed", "deleted_by_kind": {kind: count}}`, `{"status": "skipped", "reason": "no memory schema deployed"}`, or `{"status": "failed", "error": "<ExcType>: <message>"}`. A `failed` entry makes the CLI exit 1 (`_run_failed`), so a per-tenant outage fails the workflow instead of reading as a completed run.
 
 ---
 
