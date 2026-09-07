@@ -1,16 +1,13 @@
 name: Test Integrity
 
+# No path filter: the guards below read whole trees (libs/, scripts/, tests/,
+# .github/workflows/), so any filter would skip them on the commits that break
+# them. tests/common/unit/test_ci_coverage_guard.py enforces that.
 on:
   push:
     branches: [ main, develop, 'feature/*' ]
-    paths:
-      - 'tests/**'
-      - '.github/workflows/test-integrity.yml'
   pull_request:
     branches: [ main, develop ]
-    paths:
-      - 'tests/**'
-      - '.github/workflows/test-integrity.yml'
 
 jobs:
   assertion-strength:
@@ -58,4 +55,42 @@ jobs:
         ASSERTION_GUARD_BASE: ${{ steps.base.outputs.sha }}
       run: |
         uv run pytest tests/common/unit/test_assertion_strength_guard.py \
+          --tb=long -v
+
+  repo-wide-tests:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+
+    steps:
+    - uses: actions/checkout@v4
+
+    - name: Set up Python 3.12
+      uses: actions/setup-python@v4
+      with:
+        python-version: '3.12'
+
+    - name: Install uv
+      uses: astral-sh/setup-uv@v4
+      with:
+        version: "latest"
+
+    - name: Install dependencies
+      run: uv sync --all-packages --all-extras --no-extra cuda --no-extra rocm
+
+    - name: Tests that read a tree outside their own package
+      run: |
+        JAX_PLATFORM_NAME=cpu uv run --no-sync python -m pytest \
+          tests/backends/unit/test_docv1_confined_to_vespa.py \
+          tests/backends/unit/test_ranking_strategy_extractor.py \
+          tests/cli/unit/test_e2e_contracts.py \
+          tests/common/unit/test_ci_coverage_guard.py \
+          tests/common/unit/test_ci_fast_excludes_model_spawners.py \
+          tests/common/unit/test_config_keys_have_readers.py \
+          tests/common/unit/test_inpod_telemetry_prelude_guard.py \
+          tests/common/unit/test_kubectl_context_contract_e2e.py \
+          tests/common/unit/test_package_layering.py \
+          tests/common/unit/test_schema_reference_guard.py \
+          tests/common/unit/test_tenant_create_budget_guard.py \
+          tests/common/unit/test_tenant_create_teardown_guard.py \
+          tests/runtime/unit/test_marker_coverage.py \
           --tb=long -v
