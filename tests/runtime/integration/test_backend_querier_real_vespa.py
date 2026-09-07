@@ -33,6 +33,7 @@ from cogniverse_foundation.config.unified_config import (
     BackendProfileConfig,
     FieldMappingConfig,
 )
+from cogniverse_foundation.dspy import LenientJSONAdapter
 from cogniverse_synthetic.backend_querier import BackendQuerier
 from cogniverse_synthetic.generators import WorkflowGenerator
 from cogniverse_synthetic.schemas import SyntheticDataRequest
@@ -764,6 +765,51 @@ async def test_entity_extraction_retains_unnamed_learning_sources(
         EntityExtractionInput(query=query, tenant_id="test:unit")
     )
 
+    assert [
+        {"text": entity.text, "type": entity.type} for entity in response.entities
+    ] == expected_entities
+
+
+@pytest.mark.requires_lm
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    "adapter",
+    [dspy.ChatAdapter(), LenientJSONAdapter()],
+    ids=["chat-adapter", "served-json-adapter"],
+)
+@pytest.mark.parametrize(
+    ("query", "expected_entities"),
+    [
+        (
+            "Python programming with TensorFlow for deep learning",
+            [
+                {"text": "Python", "type": "TECHNOLOGY"},
+                {"text": "TensorFlow", "type": "TECHNOLOGY"},
+                {"text": "deep learning", "type": "CONCEPT"},
+            ],
+        ),
+        (
+            "Find an evening workshop on Kotlin programming",
+            [
+                {"text": "evening workshop", "type": "EVENT"},
+                {"text": "Kotlin", "type": "TECHNOLOGY"},
+            ],
+        ),
+    ],
+    ids=["subject-without-session", "session-on-subject"],
+)
+async def test_entity_extraction_types_subject_of_study_as_technology(
+    query, expected_entities, adapter, dspy_test_lm, real_telemetry
+):
+    agent = EntityExtractionAgent(deps=EntityExtractionDeps())
+    agent.set_telemetry_manager(real_telemetry)
+
+    with dspy.context(adapter=adapter):
+        response = await agent.process(
+            EntityExtractionInput(query=query, tenant_id="test:unit")
+        )
+
+    assert response.path_used == "dspy"
     assert [
         {"text": entity.text, "type": entity.type} for entity in response.entities
     ] == expected_entities

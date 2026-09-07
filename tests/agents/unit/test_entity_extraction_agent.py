@@ -40,10 +40,16 @@ Rules:
 - Use PLACE for settings such as dirt field, kitchen, and pool area.
 - Use TECHNOLOGY for camera and screen.
 - Use EVENT for crash.
+- Use TECHNOLOGY for named programming languages, software libraries, frameworks, and tools such as Rust and Matplotlib. Emit the bare name: activity words such as programming, coding, development, and training that follow a name are never part of the entity.
+- Use CONCEPT for fields of study and topics such as async networking and computer vision.
+- A language, library, framework, tool, or field named as a subject of study is never an EVENT. Only a phrase whose head noun is a session noun such as lesson, lecture, workshop, seminar, or course is a teaching session; programming or learning next to a subject does not make one.
 - Always include teaching sessions such as lessons, lectures, and workshops as EVENT, even when unnamed.
 - Always include informational resources such as guides, manuals, and reference material as CONCEPT, even when unnamed.
+- Type each session or resource phrase by its head noun: notes, guide, manual, and handbook are CONCEPT resources even when lecture or workshop modifies them.
+- A query with no session noun and no resource noun has no EVENT entity and no resource entity.
 - Copy the complete noun phrase for each teaching session or informational resource, including all descriptive adjectives and compound-noun modifiers. Exclude leading articles and following prepositional phrases; never shorten a modified phrase to its head noun.
-- Extract named software libraries and frameworks separately as TECHNOLOGY.
+- A session or resource noun with no modifiers is the entity by itself: copy the bare noun without its article or the phrase after it.
+- Extract named languages, libraries, and frameworks separately as TECHNOLOGY, even when a session or resource phrase mentions them. When the name modifies such a phrase, emit the whole phrase first and the name separately after it.
 - Emit each entity once at its first occurrence in the left-to-right scan. Never group entities by type or put proper names before earlier unnamed entities.
 - Before responding, verify that every session/resource phrase retains all its modifiers and that no later source span precedes an earlier one.
 - Action verbs are never entities.
@@ -64,7 +70,30 @@ Reasoning: The first entity is the whole phrase detailed guide, a CONCEPT. FastA
 Entities:
 detailed guide|CONCEPT|0.9
 FastAPI|TECHNOLOGY|0.9
-evening workshop|EVENT|0.9"""
+evening workshop|EVENT|0.9
+
+Query: Rust programming with Tokio for async networking
+Reasoning: There is no session noun and no resource noun, so there is no EVENT and no resource. Rust is a programming language, TECHNOLOGY; programming is an activity word and not part of the entity. Tokio is a library, TECHNOLOGY. async networking is a topic, CONCEPT.
+Entities:
+Rust|TECHNOLOGY|0.9
+Tokio|TECHNOLOGY|0.9
+async networking|CONCEPT|0.9
+
+Query: Find a hands-on workshop on Rust programming and a setup manual for Tokio
+Reasoning: The first entity is the whole phrase hands-on workshop, an EVENT. Rust first appears next and is TECHNOLOGY; programming is an activity word and not part of the entity. The next new entity is the whole phrase setup manual, a CONCEPT. Tokio appears last and is TECHNOLOGY.
+Entities:
+hands-on workshop|EVENT|0.9
+Rust|TECHNOLOGY|0.9
+setup manual|CONCEPT|0.9
+Tokio|TECHNOLOGY|0.9
+
+Query: a manual for Tokio and Rust lecture notes
+Reasoning: manual has no modifiers, so the entity is the bare noun manual, a CONCEPT, without its article or the phrase after it. Tokio is TECHNOLOGY. Rust lecture notes is a resource phrase whose head noun is notes, so it is a CONCEPT even though lecture modifies it; the whole phrase comes first and Rust follows separately as TECHNOLOGY.
+Entities:
+manual|CONCEPT|0.9
+Tokio|TECHNOLOGY|0.9
+Rust lecture notes|CONCEPT|0.9
+Rust|TECHNOLOGY|0.9"""
 
 
 def _make_extraction_agent():
