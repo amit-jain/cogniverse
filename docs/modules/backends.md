@@ -1433,6 +1433,21 @@ deleted = schema_manager.delete_tenant_schemas(tenant_id="old_tenant")
 3. **Deploy**: Create Vespa application package and deploy
 4. **Cache**: Store deployment in memory for fast lookups
 
+#### Application services.xml
+
+`build_services_config(app_package)` renders the `services.xml` deployed
+with every application package. Both deploy funnels
+(`VespaSchemaManager._deploy_package` and `VespaBackend._deploy_package`)
+assign its result to `app_package.services_config` before zipping. A package
+without a services tree gets pyvespa's default layout (one container
+cluster, one `cogniverse_content` content cluster with every schema in
+`index` mode); a package that already carries one keeps it. Either way the
+content cluster's `engine/proton/tuning/searchnode/flushstrategy/native/component/maxage`
+is `FLUSH_COMPONENT_MAXAGE_S` (1800 s), which bounds how long a
+document-less DocumentDB retains config operations in its transaction log
+(see [Vespa Restart Cost](../operations/troubleshooting.md#vespa-restart-cost)).
+`configs/services.xml` is not read by the deploy path.
+
 ---
 
 ## Search Backend

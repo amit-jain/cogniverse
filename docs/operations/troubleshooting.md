@@ -481,6 +481,64 @@ kubectl exec -n cogniverse statefulset/cogniverse-vespa -- sh -c \
 
 ---
 
+### Vespa Restart Cost
+
+**Symptoms:**
+The vespa pod reads `Ready` within a minute of a restart, but queries and
+feeds fail for far longer while `/opt/vespa/logs/vespa/vespa.log` fills with
+`transactionlog.replay.start` events and
+`DocumentDB(<schema>): Replayed config … serialNum=<n>` lines, one per
+retained config operation, at roughly 20 ms each.
+
+**Cause:**
+Every application activation appends a config operation and a config
+snapshot (`documents/<schema>/config/config-<serial>`) to every DocumentDB.
+Proton prunes a DocumentDB's transaction log only after all of its flush
+targets have flushed; a DocumentDB that holds no documents never flushes on
+memory pressure, so the retained operations are bounded only by
+`flush.memory.maxage.time`. On restart proton replays the retained
+operations sequentially across all DocumentDBs.
+
+The readiness probe targets the config server (`:19071/state/v1/health`),
+which is up before proton has finished replaying.
+
+**What the deploy funnel sets:**
+`build_services_config` (`libs/vespa/cogniverse_vespa/vespa_schema_manager.py`)
+renders `services.xml` for every package that passes through
+`VespaSchemaManager._deploy_package` or `VespaBackend._deploy_package`, with
+`<flushstrategy><native><component><maxage>1800</maxage>`. Proton applies
+it live on activation (no restart); once unflushed data is older than 1800 s
+the flush engine flushes it, prunes the transaction log and removes the
+superseded config snapshots, so a restart replays at most the operations of
+the last 30 minutes. `configs/services.xml` is not read by anything.
+
+**Reading replay progress on a live pod:**
+```bash
+kubectl exec -n cogniverse statefulset/cogniverse-vespa -- sh -c \
+  'vespa-logfmt -l all -s time,message | grep -cE "transactionlog.replay.(start|complete)"'
+```
+`replay.start` events carry `"serialnum":{"first":F,"last":L}` per domain;
+`L - F` is the number of operations still to replay for that DocumentDB. The
+last `Replayed config … serialNum=<n>` line per DocumentDB against that
+domain's `last` shows how far replay has come.
+
+**Confirming the log was pruned:**
+```bash
+kubectl exec -n cogniverse statefulset/cogniverse-vespa -- sh -c \
+  'vespa-logfmt -l all -s time,message | grep "transactionlog.prune.complete" | tail'
+kubectl exec -n cogniverse statefulset/cogniverse-vespa -- sh -c \
+  'ls /opt/vespa/var/db/vespa/search/cluster.cogniverse_content/n0/documents/*/config | grep -c config-'
+```
+After the flush bound has taken effect the second command prints the
+number of DocumentDBs (one `config-<serial>` per DocumentDB).
+
+**Prevention:**
+
+- `tests/backends/unit/test_services_config_flush_tuning.py` pins the rendered `services.xml`
+- `tests/backends/integration/test_proton_flush_maxage_effective.py` reads the effective proton config and observes the prune on a real Vespa
+
+---
+
 ### Backend Profile Not Found
 
 **Symptoms:**
