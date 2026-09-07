@@ -16,6 +16,8 @@ on:
       - 'pytest.ini'
       - 'pyproject.toml'
       - '.github/workflows/ingestion-tests.yml'
+      # test_audio_processor.py reads the shipped config.
+      - 'configs/config.json'
   pull_request:
     branches: [ main, develop ]
     paths:
@@ -30,6 +32,8 @@ on:
       - 'tests/utils/**'
       - 'pytest.ini'
       - 'pyproject.toml'
+      # test_audio_processor.py reads the shipped config.
+      - 'configs/config.json'
 
 env:
   CARGO_NET_RETRY: "10"

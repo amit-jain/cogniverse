@@ -10,10 +10,11 @@ Two independent ways CI reports green for a test it never executed:
    declares it must not. A test carrying neither is out of scope by its own
    markers, so an unmarked file is not a finding here.
 
-2. **The workflow never fires.** A guard that reads a tree wider than its own
-   module only runs when the commit touches paths in its workflow's filter. A
-   repo-wide scan inside a narrowly-filtered workflow misses every violation
-   introduced outside that filter.
+2. **The workflow never fires.** A guard that reads a tree, or a single file,
+   outside its own package only runs when the commit touches paths in its
+   workflow's filter. A repo-wide scan inside a narrowly-filtered workflow
+   misses every violation introduced outside that filter, and so does a filter
+   that omits the one script a guard parses.
 
 Both detectors are driven by synthetic input below, because a repo-wide "no
 offenders remain" assertion cannot protect its own detector: once the last
@@ -118,6 +119,9 @@ def unreachable_ci_tests(
 
 _SCAN_METHODS = frozenset({"rglob", "glob", "iterdir"})
 
+# Calls that read one whole file rather than walking a tree.
+_READ_METHODS = frozenset({"read_text", "read_bytes", "open"})
+
 # Calls that take a path without reading the tree under it.
 _PATH_PASSTHROUGH = frozenset({"Path", "len", "print", "repr", "str"})
 
@@ -129,6 +133,10 @@ def _ancestor(relative_path: str, levels: int) -> str:
 
 def _join(base: str, extra: str) -> str:
     return f"{base}/{extra}".strip("/") if base else extra.strip("/")
+
+
+def _under(path: str, root: str) -> bool:
+    return root == "" or path == root or path.startswith(root + "/")
 
 
 def _resolve(
@@ -266,6 +274,57 @@ def foreign_trees(
     )
 
 
+def read_files(
+    module_rel: str, source: str, repo_root: Path = REPO_ROOT
+) -> tuple[str, ...]:
+    """Repo-relative single files a test module reads whole.
+
+    Either directly (``(root / "run.sh").read_text()``) or by handing the file
+    to a helper that opens it. Resolution is the same repo-rooted ``/``-join
+    the tree scan uses, so both ``root / "scripts" / "run.sh"`` and
+    ``root / "scripts/run.sh"`` land on the same path; a candidate counts when
+    it names a file in the tree.
+    """
+    tree = ast.parse(source)
+    env = _bind_paths(tree, module_rel)
+    files: set[str] = set()
+    for node in ast.walk(tree):
+        if not isinstance(node, ast.Call):
+            continue
+        function = node.func
+        if isinstance(function, ast.Attribute) and function.attr in _READ_METHODS:
+            candidates = _resolve(function.value, env, module_rel)
+        elif isinstance(function, ast.Name) and function.id not in _PATH_PASSTHROUGH:
+            arguments = [*node.args, *(keyword.value for keyword in node.keywords)]
+            candidates = tuple(
+                candidate
+                for argument in arguments
+                for candidate in _resolve(argument, env, module_rel)
+            )
+        else:
+            continue
+        files.update(c for c in candidates if (repo_root / c).is_file())
+    return tuple(sorted(files))
+
+
+def foreign_files(
+    module_rel: str, source: str, repo_root: Path = REPO_ROOT
+) -> tuple[str, ...]:
+    """Read files outside the module's own package and outside every tree it scans.
+
+    A file under a scanned tree is the tree finding's business, and a filter
+    covering that tree already covers the file.
+    """
+    own_package = "/".join(module_rel.split("/")[:2])
+    trees = scanned_trees(module_rel, source, repo_root)
+    return tuple(
+        path
+        for path in read_files(module_rel, source, repo_root)
+        if not _under(path, own_package)
+        and not any(_under(path, root) for root in trees)
+    )
+
+
 def unwatched_scans(
     workflows: Sequence[Workflow], modules: Mapping[str, str]
 ) -> list[str]:
@@ -283,6 +342,24 @@ def unwatched_scans(
             if not any(workflow.watches(root) for workflow in running):
                 findings.append(
                     f"{module_rel}: reads {root or '<repo root>'}/ but "
+                    f"{[w.name for w in running]} does not fire on changes there"
+                )
+    return findings
+
+
+def unwatched_file_reads(
+    workflows: Sequence[Workflow], modules: Mapping[str, str]
+) -> list[str]:
+    """``module: file`` pairs whose read no workflow running the module watches."""
+    findings = []
+    for module_rel, source in sorted(modules.items()):
+        running = workflows_running(workflows, module_rel)
+        if not running:
+            continue
+        for path in foreign_files(module_rel, source):
+            if not any(workflow.watches_file(path) for workflow in running):
+                findings.append(
+                    f"{module_rel}: reads {path} but "
                     f"{[w.name for w in running]} does not fire on changes there"
                 )
     return findings
@@ -640,6 +717,121 @@ def test_scan_detector_finds_the_shipped_repo_wide_guards(guard_modules) -> None
     ) == (("libs", "scripts"), (".github/workflows",), ("",))
 
 
+_SPLIT_JOIN_READ_SOURCE = (
+    "from pathlib import Path\n"
+    "def loader():\n"
+    "    root = Path(__file__).resolve().parents[3]\n"
+    '    return (root / "scripts" / "run_e2e_batched.sh").read_text()\n'
+)
+_ONE_SEGMENT_READ_SOURCE = (
+    "from pathlib import Path\n"
+    "def loader():\n"
+    '    workflow = Path(__file__).parents[3] / ".github/workflows/release-images.yml"\n'
+    "    return workflow.read_text()\n"
+)
+_OWN_PACKAGE_READ_SOURCE = (
+    "from pathlib import Path\n"
+    "def loader():\n"
+    "    root = Path(__file__).resolve().parents[3]\n"
+    '    return (root / "tests" / "backends" / "conftest.py").read_text()\n'
+)
+_SCAN_AND_READ_SOURCE = (
+    "from pathlib import Path\n"
+    '_SCRIPTS = Path(__file__).resolve().parents[3] / "scripts"\n'
+    "def loader():\n"
+    '    return [p.read_text() for p in _SCRIPTS.rglob("*.sh")] + [\n'
+    '        (_SCRIPTS / "run_e2e_batched.sh").read_text()\n'
+    "    ]\n"
+)
+_FILE_WATCHING_WORKFLOW = Workflow(
+    "watching.yml",
+    commit_gating=True,
+    trigger_filters=(
+        ("tests/backends/**", "scripts/**", ".github/workflows/release-images.yml"),
+    ),
+    selections=(Selection("watching.yml", "unit", ("tests/backends/unit",), None),),
+)
+
+
+def test_read_detector_resolves_both_repo_rooted_join_forms() -> None:
+    """``/ "a" / "b.sh"`` and ``/ "a/b.sh"`` must land on the same file."""
+    assert (
+        foreign_files(_OFFENDER, _SPLIT_JOIN_READ_SOURCE),
+        foreign_files(_OFFENDER, _ONE_SEGMENT_READ_SOURCE),
+    ) == (
+        ("scripts/run_e2e_batched.sh",),
+        (".github/workflows/release-images.yml",),
+    )
+
+
+def test_read_detector_reports_a_file_outside_the_filter() -> None:
+    findings = unwatched_file_reads(
+        [_NARROW_WORKFLOW],
+        {
+            _OFFENDER: _SPLIT_JOIN_READ_SOURCE,
+            "tests/backends/unit/test_synthetic_images.py": _ONE_SEGMENT_READ_SOURCE,
+        },
+    )
+    assert findings == [
+        f"{_OFFENDER}: reads scripts/run_e2e_batched.sh but ['narrow.yml'] "
+        "does not fire on changes there",
+        "tests/backends/unit/test_synthetic_images.py: reads "
+        ".github/workflows/release-images.yml but ['narrow.yml'] does not fire "
+        "on changes there",
+    ]
+
+
+def test_read_detector_accepts_a_filter_that_covers_each_read_file() -> None:
+    """``scripts/**`` covers the script; the literal filename covers the workflow."""
+    assert (
+        unwatched_file_reads(
+            [_FILE_WATCHING_WORKFLOW], {_OFFENDER: _SPLIT_JOIN_READ_SOURCE}
+        ),
+        unwatched_file_reads(
+            [_FILE_WATCHING_WORKFLOW], {_OFFENDER: _ONE_SEGMENT_READ_SOURCE}
+        ),
+    ) == ([], [])
+
+
+def test_read_detector_leaves_a_file_under_a_scanned_tree_to_the_tree_finding() -> None:
+    """One finding per blind spot: the tree already names the whole subtree."""
+    assert (
+        foreign_files(_OFFENDER, _SCAN_AND_READ_SOURCE),
+        unwatched_file_reads([_NARROW_WORKFLOW], {_OFFENDER: _SCAN_AND_READ_SOURCE}),
+        unwatched_scans([_NARROW_WORKFLOW], {_OFFENDER: _SCAN_AND_READ_SOURCE}),
+    ) == (
+        (),
+        [],
+        [
+            f"{_OFFENDER}: reads scripts/ but ['narrow.yml'] does not fire on "
+            "changes there"
+        ],
+    )
+
+
+def test_read_detector_ignores_a_file_in_the_modules_own_package() -> None:
+    assert (
+        read_files(_OFFENDER, _OWN_PACKAGE_READ_SOURCE),
+        foreign_files(_OFFENDER, _OWN_PACKAGE_READ_SOURCE),
+    ) == (("tests/backends/conftest.py",), ())
+
+
+def test_file_filters_match_with_github_glob_semantics() -> None:
+    """``*`` stops at ``/`` while ``**`` crosses it, as GitHub matches ``paths``."""
+    workflow = Workflow(
+        "globs.yml",
+        commit_gating=True,
+        trigger_filters=((".github/workflows/release-images.yml", "scripts/*.sh"),),
+        selections=(),
+    )
+    assert (
+        workflow.watches_file(".github/workflows/release-images.yml"),
+        workflow.watches_file("scripts/run_e2e_batched.sh"),
+        workflow.watches_file("scripts/nested/run.sh"),
+        workflow.watches_file(".github/workflows/cli-tests.yml"),
+    ) == (True, True, False, False)
+
+
 # --------------------------------------------------------------------------
 # The repo-wide assertions
 # --------------------------------------------------------------------------
@@ -664,6 +856,14 @@ def test_every_repo_wide_guard_runs_on_the_tree_it_reads(
     assert findings == [], (
         "a guard is skipped on exactly the commits that break it when its "
         "workflow does not fire on the tree it reads:\n" + "\n".join(findings)
+    )
+
+
+def test_every_guard_runs_on_the_files_it_reads(workflows, guard_modules) -> None:
+    findings = unwatched_file_reads(workflows, guard_modules)
+    assert findings == [], (
+        "a guard is skipped on exactly the commits that break it when its "
+        "workflow does not fire on the file it reads:\n" + "\n".join(findings)
     )
 
 

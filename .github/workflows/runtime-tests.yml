@@ -20,6 +20,15 @@ on:
       - 'pytest.ini'
       - 'pyproject.toml'
       - '.github/workflows/runtime-tests.yml'
+      # Several unit modules read the shipped config; test_wiki_router.py also
+      # the chart config; test_batch_optimization_lookback.py and
+      # test_entity_extraction_ground_truth_fixture.py read e2e sources and
+      # fixtures, the latter also the retrieval-query corpus.
+      - 'configs/config.json'
+      - 'charts/cogniverse/files/config.json'
+      - 'tests/e2e/test_batch_optimization_e2e.py'
+      - 'tests/e2e/data/entity_extraction_ground_truth.json'
+      - 'data/testset/evaluation/sample_videos_retrieval_queries.json'
   pull_request:
     branches: [ main, develop ]
     paths:
@@ -38,6 +47,15 @@ on:
       - 'tests/utils/**'
       - 'pytest.ini'
       - 'pyproject.toml'
+      # Several unit modules read the shipped config; test_wiki_router.py also
+      # the chart config; test_batch_optimization_lookback.py and
+      # test_entity_extraction_ground_truth_fixture.py read e2e sources and
+      # fixtures, the latter also the retrieval-query corpus.
+      - 'configs/config.json'
+      - 'charts/cogniverse/files/config.json'
+      - 'tests/e2e/test_batch_optimization_e2e.py'
+      - 'tests/e2e/data/entity_extraction_ground_truth.json'
+      - 'data/testset/evaluation/sample_videos_retrieval_queries.json'
 
 env:
   CARGO_NET_RETRY: "10"

@@ -19,6 +19,11 @@ on:
       - 'pytest.ini'
       - 'pyproject.toml'
       - '.github/workflows/synthetic-tests.yml'
+      # test_profile_selector.py reads the shipped and chart configs;
+      # test_topic_saliency_golden.py the description corpus.
+      - 'configs/config.json'
+      - 'charts/cogniverse/files/config.json'
+      - 'data/testset/evaluation/processed/descriptions/big_buck_bunny_clip.json'
   pull_request:
     branches: [ main, develop ]
     paths:
@@ -33,6 +38,11 @@ on:
       - 'pytest.ini'
       - 'pyproject.toml'
       - '.github/workflows/synthetic-tests.yml'
+      # test_profile_selector.py reads the shipped and chart configs;
+      # test_topic_saliency_golden.py the description corpus.
+      - 'configs/config.json'
+      - 'charts/cogniverse/files/config.json'
+      - 'data/testset/evaluation/processed/descriptions/big_buck_bunny_clip.json'
 
 env:
   CARGO_NET_RETRY: "10"

@@ -19,7 +19,7 @@ from __future__ import annotations
 import dataclasses
 import re
 import shlex
-from collections.abc import Iterable, Sequence
+from collections.abc import Callable, Iterable, Sequence
 from pathlib import Path
 
 import yaml
@@ -56,10 +56,21 @@ class Workflow:
         ``paths`` filter fires on everything; otherwise some pattern must cover
         the whole subtree, since a guard reads every file under it.
         """
+        return self._fires_when(lambda pattern: _pattern_covers(pattern, root))
+
+    def watches_file(self, path: str) -> bool:
+        """Whether every commit touching the single file ``path`` fires this.
+
+        One pattern matching that one path is enough, so a literal filename and
+        an enclosing ``dir/**`` both qualify.
+        """
+        return self._fires_when(lambda pattern: _pattern_matches(pattern, path))
+
+    def _fires_when(self, covered: Callable[[str], bool]) -> bool:
         if not self.commit_gating:
             return False
         return all(
-            filters is None or any(_pattern_covers(p, root) for p in filters)
+            filters is None or any(covered(pattern) for pattern in filters)
             for filters in self.trigger_filters
         )
 
@@ -72,6 +83,30 @@ def _pattern_covers(pattern: str, root: str) -> bool:
         return False
     base = pattern[: -len("/**")]
     return root == base or root.startswith(base + "/")
+
+
+def _pattern_matches(pattern: str, path: str) -> bool:
+    """Whether a GitHub ``paths`` pattern matches the single file ``path``."""
+    return re.fullmatch(_glob_regex(pattern), path) is not None
+
+
+def _glob_regex(pattern: str) -> str:
+    """GitHub filter-pattern glob: ``**`` crosses ``/``, ``*`` and ``?`` do not."""
+    parts: list[str] = []
+    index = 0
+    while index < len(pattern):
+        character = pattern[index]
+        if character == "*":
+            doubled = pattern[index + 1 : index + 2] == "*"
+            parts.append(".*" if doubled else "[^/]*")
+            index += 2 if doubled else 1
+        elif character == "?":
+            parts.append("[^/]")
+            index += 1
+        else:
+            parts.append(re.escape(character))
+            index += 1
+    return "".join(parts)
 
 
 def _logical_lines(script: str) -> list[str]:
