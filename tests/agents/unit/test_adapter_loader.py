@@ -9,11 +9,20 @@ resolves to its path, and a cloud URI downloads under the cache dir.
 
 from __future__ import annotations
 
+import time
 from unittest.mock import Mock, patch
 
 import pytest
 
 from cogniverse_agents.adapter_loader import get_active_adapter_path
+
+
+def _interval_elapsed_at() -> float:
+    """A monotonic timestamp old enough that the adapter recheck interval has
+    elapsed on any host, however recently it booted."""
+    from cogniverse_agents.text_analysis_agent import TextAnalysisAgent
+
+    return time.monotonic() - TextAnalysisAgent._ADAPTER_RECHECK_INTERVAL_S - 1.0
 
 
 def _adapter(effective_uri: str, adapter_path: str = "/stale/unused/path"):
@@ -478,7 +487,7 @@ def test_text_analysis_picks_up_adapter_activated_after_construction(monkeypatch
 
     agent._configure_dspy_lm = fake_configure
     agent._active_adapter_model_name = None  # what construction resolved
-    agent._adapter_checked_at = 0.0  # interval elapsed
+    agent._adapter_checked_at = _interval_elapsed_at()
 
     # No change → no rebuild.
     agent._refresh_adapter_lm_if_changed()
@@ -486,7 +495,7 @@ def test_text_analysis_picks_up_adapter_activated_after_construction(monkeypatch
 
     # Operator activates an adapter; interval elapsed → LM rebuilt to it.
     active["name"] = "entity_sft_v9"
-    agent._adapter_checked_at = 0.0
+    agent._adapter_checked_at = _interval_elapsed_at()
     agent._refresh_adapter_lm_if_changed()
     assert rebuilt == ["entity_sft_v9"]
 
@@ -506,7 +515,7 @@ def test_adapter_refresh_does_not_double_query_the_registry(monkeypatch):
     agent.tenant_id = "acme:acme"
     agent.config = Mock()
     agent._active_adapter_model_name = None  # what construction resolved
-    agent._adapter_checked_at = 0.0  # interval elapsed
+    agent._adapter_checked_at = _interval_elapsed_at()
 
     lookups = []
 
