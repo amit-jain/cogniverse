@@ -601,8 +601,14 @@ backoff to its `ConfigStore` implementation, and wraps storage read failures
 once with registry context. Empty storage and store-normalized HTTP 404 results both
 load an empty registry.
 
-`deploy_schema()` persists the complete registration payload before activating
-an unregistered schema. `SchemaDeploymentIntents(store)` in
+`deploy_schemas(tenant_id, base_schema_names, config=None, force=False)` writes
+all new schema intents, deploys one application package, waits once for backend
+convergence, and registers every schema. It returns full names in request order;
+already registered schemas require no activation unless `force=True`. Empty and
+duplicate name lists are rejected. Intents become complete only after every
+registration succeeds, so a partial registration leaves the whole new batch
+reserved for recovery. `deploy_schema()` delegates to this path with one name.
+`SchemaDeploymentIntents(store)` in
 `cogniverse_core/registries/schema_deployment_intents.py` reserves the full
 schema name under the system tenant's `SCHEMA` scope and
 `schema_deployment_intents` service. One key per full schema name holds the exact

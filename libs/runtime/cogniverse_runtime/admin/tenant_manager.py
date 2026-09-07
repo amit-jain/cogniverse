@@ -184,10 +184,17 @@ def _tenant_schema_deploy_retryable(exc: Exception) -> bool:
     The schema registry flattens config-server failures before they reach this
     helper, so message sniffing would just paper over a backend contract gap.
     """
+    from cogniverse_core.registries.exceptions import (
+        RegistryStorageError,
+        SchemaConvergenceError,
+    )
+
     node: BaseException | None = exc
     for _ in range(4):
         if node is None:
             break
+        if isinstance(node, (RegistryStorageError, SchemaConvergenceError)):
+            return False
         if isinstance(
             node,
             (
@@ -200,17 +207,17 @@ def _tenant_schema_deploy_retryable(exc: Exception) -> bool:
     return False
 
 
-async def _deploy_tenant_schema_with_retry(
-    backend: Backend, tenant_full_id: str, base_schema_name: str
+async def _deploy_tenant_schemas_with_retry(
+    backend: Backend, tenant_full_id: str, base_schema_names: list[str]
 ) -> None:
-    """Deploy one tenant schema with a short retry for transient Vespa errors."""
+    """Deploy one tenant package with a short retry for transport failures."""
     backoff_s = _TENANT_SCHEMA_DEPLOY_INITIAL_BACKOFF_S
     for attempt in range(1, _TENANT_SCHEMA_DEPLOY_MAX_ATTEMPTS + 1):
         try:
             await asyncio.to_thread(
-                backend.schema_registry.deploy_schema,
+                backend.schema_registry.deploy_schemas,
                 tenant_id=tenant_full_id,
-                base_schema_name=base_schema_name,
+                base_schema_names=base_schema_names,
             )
             return
         except Exception as exc:
@@ -220,10 +227,10 @@ async def _deploy_tenant_schema_with_retry(
             ):
                 raise
             logger.warning(
-                "Retrying schema deploy for tenant %s base_schema %s after %s: %s "
+                "Retrying schema deploy for tenant %s base_schemas %s after %s: %s "
                 "(attempt %d/%d)",
                 tenant_full_id,
-                base_schema_name,
+                base_schema_names,
                 type(exc).__name__,
                 exc,
                 attempt,
@@ -565,11 +572,10 @@ async def create_tenant(request: CreateTenantRequest) -> Tenant:
 
         deployed_schemas: list[str] = []
         try:
-            for base_schema in base_schemas:
-                await _deploy_tenant_schema_with_retry(
-                    backend, tenant_full_id, base_schema
-                )
-                deployed_schemas.append(base_schema)
+            await _deploy_tenant_schemas_with_retry(
+                backend, tenant_full_id, base_schemas
+            )
+            deployed_schemas.extend(base_schemas)
 
             # Create tenant only after the schemas are live.
             tenant = Tenant(

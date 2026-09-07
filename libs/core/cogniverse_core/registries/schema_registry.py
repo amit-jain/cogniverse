@@ -356,228 +356,182 @@ class SchemaRegistry:
         config: Optional[Dict[str, Any]] = None,
         force: bool = False,
     ) -> str:
+        """Deploy and register one tenant schema through the batch path."""
+        return self.deploy_schemas(tenant_id, [base_schema_name], config, force)[0]
+
+    def deploy_schemas(
+        self,
+        tenant_id: str,
+        base_schema_names: List[str],
+        config: Optional[Dict[str, Any]] = None,
+        force: bool = False,
+    ) -> List[str]:
+        """Journal every new schema, activate once, then register the batch.
+
+        Returns full names in request order, including already registered names.
+        All intents stay pending until every registration succeeds. The backend
+        owns package reconstruction and the single convergence wait.
         """
-        Deploy schema for a tenant - MAIN ORCHESTRATION METHOD.
-
-        This is the primary entry point for schema deployment. It:
-        1. Validates inputs
-        2. Checks if schema already deployed (unless force=True)
-        3. Loads base schema definition
-        4. Transforms to tenant-specific schema
-        5. Collects ALL existing schemas (cross-tenant)
-        6. Persists the exact registration intent, then deploys the complete list
-        7. Registers the newly deployed schema and clears the active intent
-
-        Args:
-            tenant_id: Tenant identifier
-            base_schema_name: Base schema name (e.g., 'video_colpali_smol500_mv_frame')
-            config: Optional schema configuration
-            force: Force redeployment even if schema exists (default: False)
-
-        Returns:
-            Base schema name with the canonical tenant identifier appended.
-
-        Raises:
-            ValueError: If backend or schema_loader not configured, or invalid inputs
-            TypeError: If tenant_id or base_schema_name are not strings
-            Exception: If schema deployment fails
-
-        Example:
-            registry = SchemaRegistry(backend=vespa_backend, schema_loader=loader)
-            schema_name = registry.deploy_schema(
-                tenant_id="acme:prod",
-                base_schema_name="video_colpali_smol500_mv_frame"
-            )
-            # Returns: "video_colpali_smol500_mv_frame_acme_prod" (colon replaced with underscore)
-        """
-        # Validate inputs
-        self._validate_tenant_id(tenant_id)
-        self._validate_schema_name(base_schema_name)
-
-        # Canonicalize so deploy and search paths converge on the same
-        # tenant-suffixed schema name. ``require_tenant_id`` at request
-        # boundaries canonicalizes (``acme`` → ``acme:acme``); without
-        # matching that here, an admin / fixture that constructs the
-        # registry with the bare form would deploy ``..._acme`` while
-        # search (going through canonicalization) probes ``..._acme_acme``.
-        from cogniverse_core.common.tenant_utils import canonical_tenant_id
-
-        tenant_id = canonical_tenant_id(tenant_id)
-
-        # No need to check backend/schema_loader - guaranteed to exist (checked at construction)
-
-        # Generate tenant-specific schema name
-        # Replace colons with underscores since Vespa schema names cannot contain colons
-        safe_tenant_id = tenant_id.replace(":", "_")
-        tenant_schema_name = f"{base_schema_name}_{safe_tenant_id}"
-
-        # Check if already deployed (unless force=True). A tracking record
-        # alone is not proof the CURRENT name is live: records written
-        # before tenant-id canonicalization carry the single-suffix
-        # name, and skipping here would return a name Vespa never deployed.
-        if not force and self.schema_exists(tenant_id, base_schema_name):
-            tracked = self._schemas[(tenant_id, base_schema_name)]
-            if tracked.full_schema_name == tenant_schema_name:
-                logger.debug(
-                    f"Schema '{tenant_schema_name}' already deployed for "
-                    f"tenant '{tenant_id}'"
-                )
-                return tenant_schema_name
-            logger.info(
-                f"Schema tracking for tenant '{tenant_id}' carries an outdated "
-                f"name '{tracked.full_schema_name}'; redeploying as "
-                f"'{tenant_schema_name}'"
-            )
-
-        # Load base schema from schema loader
-        try:
-            base_schema_json = self._schema_loader.load_schema(base_schema_name)
-        except Exception as e:
-            raise SchemaLoadError(
-                f"Failed to load base schema '{base_schema_name}': {e}"
-            ) from e
-
-        # Transform schema name to tenant-specific
-        base_schema_json["name"] = tenant_schema_name
-
         import json
+        from collections import Counter
+        from datetime import datetime, timezone
 
-        # Deploy to Vespa and record in the ConfigStore as one atomic step:
-        # a concurrent deploy must not observe this schema live-but-unregistered
-        # (see _deploy_lock).
-        with SchemaRegistry._deploy_lock:
-            # Re-check under the lock: the loser of a concurrent first-deploy
-            # race returns the winner's registration instead of running a
-            # second global redeploy.
-            if not force and self.schema_exists(tenant_id, base_schema_name):
-                tracked = self._schemas[(tenant_id, base_schema_name)]
-                if tracked.full_schema_name == tenant_schema_name:
-                    return tenant_schema_name
+        from cogniverse_core.common.tenant_utils import canonical_tenant_id
+        from cogniverse_sdk.interfaces.config_store import ConfigScope
 
-            # Collect ALL existing schemas (including other tenants') INSIDE
-            # the lock. deploy_schemas ships the complete list, so a snapshot
-            # taken before a concurrent deploy registered its schema would
-            # redeploy without it and drop it from the backend.
-            existing_schemas = self._get_all_schemas()
-            previous_schemas = []
-            for schema_info in existing_schemas:
-                previous_schemas.append(
-                    {
-                        "name": schema_info.full_schema_name,
-                        "definition": schema_info.schema_definition,
-                        "tenant_id": schema_info.tenant_id,
-                        "base_schema_name": schema_info.base_schema_name,
-                    }
-                )
+        self._validate_tenant_id(tenant_id)
+        if not base_schema_names:
+            raise ValueError("base_schema_names is required")
+        for base in base_schema_names:
+            self._validate_schema_name(base)
+        duplicates = sorted(
+            base for base, count in Counter(base_schema_names).items() if count != 1
+        )
+        if duplicates:
+            raise ValueError(f"Duplicate base schema names: {duplicates}")
+        tenant_id = canonical_tenant_id(tenant_id)
+        names = [f"{base}_{tenant_id.replace(':', '_')}" for base in base_schema_names]
 
-            # Build new schema list (existing + new)
-            all_schemas = list(previous_schemas)  # Copy for deployment
-            all_schemas.append(
-                {
-                    "name": tenant_schema_name,
-                    "definition": json.dumps(base_schema_json),
-                    "tenant_id": tenant_id,
-                    "base_schema_name": base_schema_name,
-                }
+        def registered(base, name):
+            return (
+                not force
+                and self.schema_exists(tenant_id, base)
+                and self._schemas[(tenant_id, base)].full_schema_name == name
             )
 
-            from datetime import datetime, timezone
-
-            registration = {
-                "tenant_id": tenant_id,
-                "base_schema_name": base_schema_name,
-                "full_schema_name": tenant_schema_name,
-                "schema_definition": json.dumps(base_schema_json),
-                "config": config or {},
-                "deployment_time": datetime.now(timezone.utc).isoformat(),
-            }
-            from cogniverse_sdk.interfaces.config_store import ConfigScope
-
-            for existing in existing_schemas:
-                if existing.full_schema_name == tenant_schema_name and (
-                    existing.tenant_id,
-                    existing.base_schema_name,
-                ) != (tenant_id, base_schema_name):
-                    raise RegistryStorageError(
-                        f"Schema name {tenant_schema_name!r} belongs to another tenant"
-                    )
-            stored = self._config_manager.store.get_config(
-                tenant_id=tenant_id,
-                scope=ConfigScope.SCHEMA,
-                service="schema_registry",
-                config_key=f"schema_{base_schema_name}",
-            )
-            intent = None
-            if stored is None or stored.config_value.get("deleted", False):
-                intent = self._deployment_intents.prepare(
-                    registration,
-                    grace_s=_SCHEMA_INTENT_GRACE_S,
-                    registry_version=0 if stored is None else stored.version,
-                )
-
-            # The durable definition survives a lost activation acknowledgement.
+        def load_definition(base, name):
             try:
-                success = self._backend.deploy_schemas(all_schemas)
-                if not success:
-                    raise BackendDeploymentError(
-                        f"Backend failed to deploy schema '{tenant_schema_name}'"
-                    )
-            except Exception as e:
-                # After activation the schema is live and its registration is
-                # owed: the intent stays pending so every package built
-                # meanwhile carries the schema and recovery registers it once
-                # the grace elapses. Before activation nothing is live, so the
-                # intent retires.
-                activated = isinstance(e, SchemaConvergenceError)
-                retirement_failure = None
-                if intent and not activated:
-                    try:
-                        self._deployment_intents.retire(intent)
-                    except Exception as retirement_exc:
-                        retirement_failure = (
-                            f"Intent retirement failed: {retirement_exc}. "
-                            "The durable record is retained for recovery."
+                definition = self._schema_loader.load_schema(base)
+            except Exception as exc:
+                raise SchemaLoadError(
+                    f"Failed to load base schema '{base}': {exc}"
+                ) from exc
+            definition["name"] = name
+            return json.dumps(definition)
+
+        definitions = {
+            base: load_definition(base, name)
+            for base, name in zip(base_schema_names, names)
+            if not registered(base, name)
+        }
+        with SchemaRegistry._deploy_lock:
+            existing_schemas = self._get_all_schemas()
+            requested = [
+                (base, name)
+                for base, name in zip(base_schema_names, names)
+                if not registered(base, name)
+            ]
+            if not requested:
+                return names
+            previous_schemas = [
+                {
+                    "name": info.full_schema_name,
+                    "definition": info.schema_definition,
+                    "tenant_id": info.tenant_id,
+                    "base_schema_name": info.base_schema_name,
+                }
+                for info in existing_schemas
+            ]
+            registrations = []
+            intents = {}
+            for base, name in requested:
+                if base not in definitions:
+                    definitions[base] = load_definition(base, name)
+                for existing in existing_schemas:
+                    if existing.full_schema_name == name and (
+                        existing.tenant_id,
+                        existing.base_schema_name,
+                    ) != (tenant_id, base):
+                        raise RegistryStorageError(
+                            f"Schema name {name!r} belongs to another tenant"
                         )
-                        logger.error(retirement_failure)
-                logger.error(f"Backend deployment failed: {e}")
+                registration = {
+                    "tenant_id": tenant_id,
+                    "base_schema_name": base,
+                    "full_schema_name": name,
+                    "schema_definition": definitions[base],
+                    "config": config or {},
+                    "deployment_time": datetime.now(timezone.utc).isoformat(),
+                }
+                stored = self._config_manager.store.get_config(
+                    tenant_id=tenant_id,
+                    scope=ConfigScope.SCHEMA,
+                    service="schema_registry",
+                    config_key=f"schema_{base}",
+                )
+                if stored is None or stored.config_value.get("deleted", False):
+                    intent = self._deployment_intents.prepare(
+                        registration,
+                        grace_s=_SCHEMA_INTENT_GRACE_S,
+                        registry_version=0 if stored is None else stored.version,
+                    )
+                    intents[name] = intent
+                    registration = intent["registration"]
+                registrations.append(registration)
+
+            replacing = {row["full_schema_name"] for row in registrations}
+            all_schemas = [
+                schema for schema in previous_schemas if schema["name"] not in replacing
+            ]
+            all_schemas.extend(
+                {
+                    "name": row["full_schema_name"],
+                    "definition": row["schema_definition"],
+                    "tenant_id": tenant_id,
+                    "base_schema_name": row["base_schema_name"],
+                }
+                for row in registrations
+            )
+            subject = (
+                f"schema '{names[0]}'"
+                if len(names) == 1
+                else f"tenant '{tenant_id}' schemas {base_schema_names}"
+            )
+            try:
+                if not self._backend.deploy_schemas(all_schemas):
+                    raise BackendDeploymentError(f"Backend failed to deploy {subject}")
+            except Exception as exc:
+                activated = isinstance(exc, SchemaConvergenceError)
                 deployment_error = BackendDeploymentError(
-                    f"Backend deployment failed for schema '{tenant_schema_name}': {e}. "
+                    f"Backend deployment failed for {subject}: {exc}. "
                     + (
                         "The schema is live; its registration completes by recovery."
-                        if activated and intent
+                        if activated and intents
                         else "The durable definition is retained for late activation."
                     )
                 )
-                if retirement_failure:
-                    deployment_error.add_note(retirement_failure)
-                raise deployment_error from e
+                if not activated:
+                    for intent in intents.values():
+                        try:
+                            self._deployment_intents.retire(intent)
+                        except Exception as retirement_exc:
+                            detail = f"Intent retirement failed: {retirement_exc}. The durable record is retained for recovery."
+                            deployment_error.add_note(detail)
+                            logger.error(detail)
+                raise deployment_error from exc
 
-            # Then register in ConfigStore (critical section)
-            try:
-                logger.info(f"Registering schema {tenant_schema_name} in database")
-                if intent:
-                    self.register_schema(
-                        **intent["registration"],
-                        expected_version=intent["registry_version"],
-                    )
-                    self._deployment_intents.complete(intent)
-                else:
-                    self.register_schema(**registration)
-            except Exception as e:
-                if intent:
-                    detail = "Durable registration recovery is pending; the schema is preserved."
-                else:
-                    self._rollback_deployment(previous_schemas, tenant_schema_name)
-                    detail = "Existing-schema deployment rollback was requested."
-                raise RegistryStorageError(
-                    f"Failed to register schema '{tenant_schema_name}' in ConfigStore: {e}. {detail}"
-                ) from e
-
-        logger.info(
-            f"Successfully deployed and registered schema '{tenant_schema_name}' "
-            f"for tenant '{tenant_id}'"
-        )
-        return tenant_schema_name
+            for registration in registrations:
+                name = registration["full_schema_name"]
+                intent = intents.get(name)
+                try:
+                    if intent:
+                        self.register_schema(
+                            **registration, expected_version=intent["registry_version"]
+                        )
+                    else:
+                        self.register_schema(**registration)
+                except Exception as exc:
+                    if intents:
+                        detail = "Durable registration recovery is pending; the schema is preserved."
+                    else:
+                        self._rollback_deployment(previous_schemas, name)
+                        detail = "Existing-schema deployment rollback was requested."
+                    raise RegistryStorageError(
+                        f"Failed to register schema '{name}' in ConfigStore: {exc}. {detail}"
+                    ) from exc
+            for intent in intents.values():
+                self._deployment_intents.complete(intent)
+        return names
 
     def reconcile_deployment_intents(self, live_names: set[str]) -> List[SchemaInfo]:
         """Complete due intents for schemas confirmed live by the config server.
