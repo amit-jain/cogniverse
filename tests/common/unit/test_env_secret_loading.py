@@ -7,9 +7,8 @@ provisions a model container on the host instead of using the remote one.
 from __future__ import annotations
 
 import os
+import subprocess
 from pathlib import Path
-
-import pytest
 
 from tests.env_secrets import env_secret_dirs, load_env_secrets
 
@@ -56,19 +55,59 @@ def test_a_missing_directory_is_not_an_error(tmp_path):
     assert load_env_secrets(tmp_path / "nothing-here") == {}
 
 
-@pytest.mark.parametrize(
-    "name",
-    ["MODAL_TOKEN_ID", "MODAL_TOKEN_SECRET", "COGNIVERSE_INFERENCE_API_KEY"],
+REMOTE_INFERENCE_CREDENTIALS = (
+    "MODAL_TOKEN_ID",
+    "MODAL_TOKEN_SECRET",
+    "COGNIVERSE_INFERENCE_API_KEY",
 )
-def test_the_running_session_has_the_remote_inference_credentials(name):
-    """conftest loads these at import, so a spawn decision sees the endpoints.
 
-    Missing any one of these makes the model-list probe fail and ``ensure_llm``
+
+def test_remote_inference_credentials_reach_the_environment(tmp_path, monkeypatch):
+    """The three names a spawn decision needs are set from ``.env/`` exactly.
+
+    Missing any one of them makes the model-list probe fail and ``ensure_llm``
     fall through to building a local sidecar.
     """
-    if not any((d / f"{name}.env").is_file() for d in env_secret_dirs()):
-        pytest.fail(
-            f"{name}.env is absent from {[str(d) for d in env_secret_dirs()]}; "
-            "every run falls back to a local spawn"
-        )
-    assert os.environ[name] != ""
+    expected = {
+        name: f"value-for-{name.lower()}" for name in REMOTE_INFERENCE_CREDENTIALS
+    }
+    for name, value in expected.items():
+        _write(tmp_path / ".env", name, f"{value}\n")
+        monkeypatch.delenv(name, raising=False)
+    assert load_env_secrets(tmp_path) == expected
+    assert {name: os.environ[name] for name in REMOTE_INFERENCE_CREDENTIALS} == expected
+
+
+def test_a_worktree_resolves_the_owning_checkouts_secrets(tmp_path, monkeypatch):
+    """``.env`` is untracked and lives only in the main checkout; a worktree
+    must find it through the common git dir rather than read nothing."""
+    main = tmp_path / "main"
+    main.mkdir()
+    subprocess.run(["git", "init", "-q", "-b", "main", str(main)], check=True)
+    subprocess.run(
+        [
+            "git",
+            "-C",
+            str(main),
+            "-c",
+            "user.email=t@t",
+            "-c",
+            "user.name=t",
+            "commit",
+            "-q",
+            "--allow-empty",
+            "-m",
+            "root",
+        ],
+        check=True,
+    )
+    worktree = tmp_path / "wt"
+    subprocess.run(
+        ["git", "-C", str(main), "worktree", "add", "-q", str(worktree)], check=True
+    )
+    _write(main / ".env", "MODAL_TOKEN_ID", "from-main-checkout\n")
+    monkeypatch.delenv("MODAL_TOKEN_ID", raising=False)
+
+    assert env_secret_dirs(worktree) == [worktree / ".env", main / ".env"]
+    assert load_env_secrets(worktree) == {"MODAL_TOKEN_ID": "from-main-checkout"}
+    assert os.environ["MODAL_TOKEN_ID"] == "from-main-checkout"
