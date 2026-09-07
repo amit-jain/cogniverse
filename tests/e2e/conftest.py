@@ -329,6 +329,11 @@ def pytest_collection_modifyitems(config, items):
 
 # k3d NodePort URLs — defined in charts/cogniverse/values.yaml
 RUNTIME = "http://localhost:33000"  # runtime.service.nodePort
+TENANT_DEPLOY_TIMEOUT_S = 180.0
+"""Budget for one tenant create or profile deploy. Both recompile the whole
+Vespa application package and wait for convergence, so they scale with the
+cluster's schema count. Measured: 33.3 s, 35.9 s, 43.3 s idle; 86.7 s under
+sweep load; the convergence gate alone may hold up to 120 s."""
 DASHBOARD = "http://localhost:33501"  # dashboard.service.nodePort
 PHOENIX_URL = "http://localhost:33006"  # phoenix.service.nodePort
 GLINER_URL = "http://localhost:33907"  # gliner NodePort 29007 via E2E_HOST_PORTS

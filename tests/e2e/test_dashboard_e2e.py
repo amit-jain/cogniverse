@@ -22,6 +22,7 @@ from playwright.sync_api import expect
 from tests.e2e.conftest import (
     DASHBOARD,
     RUNTIME,
+    TENANT_DEPLOY_TIMEOUT_S,
     TENANT_ID,
     active_sub_tab_panel,
     active_tab_panel,
@@ -2149,7 +2150,7 @@ def optimization_tenant():
     has to take it away.
     """
     tenant_id = unique_id("opt")
-    with httpx.Client(base_url=RUNTIME, timeout=30.0) as client:
+    with httpx.Client(base_url=RUNTIME, timeout=TENANT_DEPLOY_TIMEOUT_S) as client:
         created = client.post(
             "/admin/tenants",
             json={"tenant_id": tenant_id, "created_by": "e2e-test"},
