@@ -403,20 +403,20 @@ runtime:
     targetMemoryUtilizationPercentage: 80
 
   # Startup: gates liveness/readiness during cold start. uvicorn runs the
-  # FastAPI lifespan (wait-for-Vespa up to 5 min, then on a fresh backend a
-  # metadata-schema bootstrap: config-server wait + application-exists probe +
-  # deploy convergence + a 12-attempt config re-probe) BEFORE it binds port
-  # 8000, so the TCP socket does not answer until that finishes. Worst case is
-  # ~810s; the old liveness budget (60 + 24*30 = 780s) killed a legitimately
-  # converging pod into a crash-loop. This startup budget (30 + 80*15 = 1230s)
-  # covers it, and liveness below only begins once startup succeeds.
+  # FastAPI lifespan BEFORE it binds port 8000: it waits for Vespa for up to
+  # BACKEND_STARTUP_WAIT_BUDGET_S (64 min, 2x the longest observed restart of
+  # an unpruned Vespa) and on a fresh backend adds the config-server wait and
+  # the config re-probe (~420s). This window (30 + 300*15 = 4530s) exceeds
+  # that whole cold start; tests/charts/test_runtime_startup_probe.py pins the
+  # relationship to the runtime's constants. Liveness below only begins once
+  # startup succeeds.
   startupProbe:
     tcpSocket:
       port: 8000
     initialDelaySeconds: 30
     periodSeconds: 15
     timeoutSeconds: 5
-    failureThreshold: 80
+    failureThreshold: 300
 
   # Liveness: TCP socket only. HTTP /health endpoints queue behind uvicorn
   # workers and can stall under concurrent DSPy/CPU-LLM load. TCP checks the

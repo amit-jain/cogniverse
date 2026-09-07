@@ -113,7 +113,7 @@ async def test_wait_for_backend_startup_against_real_vespa(vespa_instance):
     state = await _wait_for_backend_startup(
         vespa_base,
         f"http://localhost:{vespa_instance['config_port']}",
-        max_attempts=12,
+        budget_s=24.0,
         retry_interval=2.0,
         timeout=5.0,
     )
@@ -127,7 +127,7 @@ async def test_wait_for_backend_startup_detects_fresh_config_server_immediately(
         state = await _wait_for_backend_startup(
             "http://127.0.0.1:1",
             f"http://127.0.0.1:{config_port}",
-            max_attempts=60,
+            budget_s=300.0,
             retry_interval=5.0,
             timeout=0.5,
         )
@@ -141,11 +141,75 @@ async def test_wait_for_backend_startup_returns_unavailable_when_both_planes_are
     state = await _wait_for_backend_startup(
         "http://127.0.0.1:1",
         "http://127.0.0.1:2",
-        max_attempts=3,
+        budget_s=0.15,
         retry_interval=0.05,
         timeout=0.5,
     )
     assert state is BackendStartupState.UNAVAILABLE
+
+
+@pytest.mark.no_shared_vespa
+async def test_wait_for_backend_startup_spends_its_whole_wall_clock_budget(caplog):
+    """Both planes refuse connections instantly, so attempt count cannot bound
+    the wait: only the wall-clock budget does. The loop must keep polling
+    until the budget elapses and report progress against that budget."""
+    loop = asyncio.get_running_loop()
+    started = loop.time()
+    with caplog.at_level("INFO", logger="cogniverse_runtime.main"):
+        state = await _wait_for_backend_startup(
+            "http://127.0.0.1:1",
+            "http://127.0.0.1:2",
+            budget_s=1.0,
+            retry_interval=0.1,
+            timeout=0.5,
+        )
+    elapsed = loop.time() - started
+
+    assert state is BackendStartupState.UNAVAILABLE
+    assert 1.0 <= elapsed < 1.5
+    retry_lines = [
+        r.message for r in caplog.records if r.message.startswith("Backend not ready")
+    ]
+    assert 8 <= len(retry_lines) <= 11
+    assert (
+        retry_lines[0] == "Backend not ready, retrying (attempt 1, 0s of 1s budget)..."
+    )
+    assert retry_lines[-1].startswith("Backend not ready, retrying (attempt ")
+    assert retry_lines[-1].endswith("s of 1s budget)...")
+
+
+@contextmanager
+def _hung_tcp_listener():
+    """Accept connections and never answer: the shape of a paused backend."""
+    server = socket.socket()
+    server.bind(("127.0.0.1", 0))
+    server.listen(16)
+    try:
+        yield server.getsockname()[1]
+    finally:
+        server.close()
+
+
+@pytest.mark.no_shared_vespa
+async def test_wait_for_backend_startup_overruns_budget_by_at_most_two_probe_timeouts():
+    """A hung backend makes every probe take its full timeout; the last
+    attempt may start just before the deadline, so the wall-clock overrun is
+    bounded by the two per-attempt probes (data plane + config server). The
+    chart's startupProbe window is sized from exactly this bound."""
+    loop = asyncio.get_running_loop()
+    with _hung_tcp_listener() as data_port, _hung_tcp_listener() as config_port:
+        started = loop.time()
+        state = await _wait_for_backend_startup(
+            f"http://127.0.0.1:{data_port}",
+            f"http://127.0.0.1:{config_port}",
+            budget_s=0.5,
+            retry_interval=0.05,
+            timeout=0.4,
+        )
+        elapsed = loop.time() - started
+
+    assert state is BackendStartupState.UNAVAILABLE
+    assert 0.5 <= elapsed <= 0.5 + 2 * 0.4 + 0.1
 
 
 @pytest.mark.no_shared_vespa
@@ -163,7 +227,7 @@ async def test_wait_for_backend_startup_does_not_block_event_loop():
     state = await _wait_for_backend_startup(
         "http://127.0.0.1:1",
         "http://127.0.0.1:2",
-        max_attempts=3,
+        budget_s=0.15,
         retry_interval=0.05,
         timeout=0.5,
     )

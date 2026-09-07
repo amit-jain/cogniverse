@@ -1,13 +1,15 @@
-"""The runtime Deployment must carry a startupProbe that outlasts cold start.
+"""The runtime Deployment's startupProbe must outlast the lifespan's backend wait.
 
-uvicorn runs the FastAPI lifespan (wait-for-Vespa, then on a fresh backend a
-metadata-schema bootstrap + deploy convergence + config re-probe) BEFORE it
-binds port 8000. That cold start can take ~810s worst case; the liveness budget
-alone (60 + 24*30 = 780s) killed a legitimately converging pod into a
-crash-loop. A startupProbe gates liveness/readiness until the socket answers, so
-its budget must comfortably exceed the worst-case cold start.
+uvicorn runs the FastAPI lifespan BEFORE it binds port 8000, and the lifespan
+waits for Vespa for up to ``BACKEND_STARTUP_WAIT_BUDGET_S`` (plus, on a fresh
+backend, the config-server wait and the config re-probe). While it waits the
+TCP socket does not answer, so the startupProbe is the only thing standing
+between a legitimately waiting pod and a kubelet kill; liveness is disabled
+until the startupProbe succeeds. These tests derive the floor from the
+production constants so the chart cannot drift below the code's own budget.
 """
 
+import inspect
 import shutil
 import subprocess
 from pathlib import Path
@@ -15,13 +17,23 @@ from pathlib import Path
 import pytest
 import yaml
 
+from cogniverse_runtime import main as runtime_main
+
 REPO_ROOT = Path(__file__).resolve().parents[2]
 CHART_PATH = REPO_ROOT / "charts" / "cogniverse"
 
-# Worst-case cold start the startup budget must cover (see main.py lifespan:
-# _wait_for_backend_ready ~300s + fresh-backend bootstrap ~330s + deploy
-# convergence + 12-attempt re-probe ~110s). Pin the floor the probe must clear.
-WORST_CASE_COLD_START_S = 810
+# Every values stack a deployment ships with; the e2e cluster deploys the last
+# one. An overlay may override the base probe, so each is rendered.
+OVERLAY_STACKS = {
+    "base": (),
+    "k3s": ("values.k3s.yaml",),
+    "k3s+rocm": ("values.k3s.yaml", "values.rocm.yaml"),
+    "k3s+rocm+modal-llm": (
+        "values.k3s.yaml",
+        "values.rocm.yaml",
+        "values.modal-llm.yaml",
+    ),
+}
 
 pytestmark = [
     pytest.mark.unit,
@@ -33,15 +45,11 @@ pytestmark = [
 ]
 
 
-def _render_chart(*set_args: str) -> list:
-    args = [
-        "helm",
-        "template",
-        "cogniverse",
-        str(CHART_PATH),
-        "--set",
-        "runtime.qualityMonitor.tenantId=test-tenant",
-    ]
+def _render_chart(*set_args: str, overlays: tuple[str, ...] = ()) -> list:
+    args = ["helm", "template", "cogniverse", str(CHART_PATH)]
+    for overlay in overlays:
+        args += ["-f", str(CHART_PATH / overlay)]
+    args += ["--set", "runtime.qualityMonitor.tenantId=test-tenant"]
     for s in set_args:
         args += ["--set", s]
     result = subprocess.run(args, capture_output=True, text=True, check=False)
@@ -69,53 +77,103 @@ def _runtime_container(manifests: list) -> dict:
     return runtime[0]
 
 
-def _budget_seconds(probe: dict) -> int:
+def _window_seconds(probe: dict) -> int:
+    """Seconds from container start until this probe can fail the container."""
     return (
         probe.get("initialDelaySeconds", 0)
         + probe["failureThreshold"] * probe["periodSeconds"]
     )
 
 
-def test_runtime_has_startup_probe():
-    probe = _runtime_container(_render_chart()).get("startupProbe")
-    assert probe is not None, (
-        "runtime container has no startupProbe — without it the liveness probe "
-        "counts down during the ~810s cold start and crash-loops the pod while "
-        "Vespa converges"
+def _backend_wait_worst_case_s() -> float:
+    """Wall-clock ceiling of one ``_wait_for_backend_startup`` call: the
+    budget plus the last attempt's two probe timeouts (the overrun bound is
+    pinned in tests/runtime/integration/test_backend_readiness_probe.py)."""
+    return (
+        runtime_main.BACKEND_STARTUP_WAIT_BUDGET_S
+        + 2 * runtime_main.BACKEND_STARTUP_PROBE_TIMEOUT_S
     )
 
 
-def test_startup_probe_targets_the_same_tcp_socket_as_liveness():
+def _fresh_install_stages_s() -> float:
+    """Nominal cost of the stages a fresh backend adds before the socket
+    binds: the config-server TCP wait and the post-bootstrap config re-probe,
+    both derived from their production defaults."""
+    config_server_wait = inspect.signature(
+        runtime_main._wait_for_config_server
+    ).parameters
+    return (
+        config_server_wait["max_attempts"].default
+        * config_server_wait["interval"].default
+        + runtime_main.CONFIG_STORE_REPROBE_ATTEMPTS
+        * runtime_main.CONFIG_STORE_REPROBE_INTERVAL_S
+    )
+
+
+def _worst_case_cold_start_s() -> float:
+    return _backend_wait_worst_case_s() + _fresh_install_stages_s()
+
+
+def test_backend_wait_budget_carries_double_the_longest_observed_recovery():
+    """The wait must outlast the longest Vespa restart the code records, with
+    a 2x margin for a cluster that has not pruned since an upgrade."""
+    assert (
+        runtime_main.BACKEND_STARTUP_WAIT_BUDGET_S
+        == 2 * runtime_main.BACKEND_RECOVERY_WORST_CASE_S
+    )
+    assert runtime_main.BACKEND_RECOVERY_WORST_CASE_S == 32 * 60
+
+
+@pytest.mark.parametrize("stack", sorted(OVERLAY_STACKS))
+def test_runtime_has_startup_probe_in_every_shipped_stack(stack):
+    container = _runtime_container(_render_chart(overlays=OVERLAY_STACKS[stack]))
+    assert "startupProbe" in container, (
+        f"{stack}: runtime container has no startupProbe — liveness then counts "
+        f"down during the backend wait and kills a pod that is correctly waiting"
+    )
+
+
+@pytest.mark.parametrize("stack", sorted(OVERLAY_STACKS))
+def test_startup_probe_targets_the_same_tcp_socket_as_liveness(stack):
     """It must probe the port that binds late (8000) over TCP — an HTTP probe
     stalls behind uvicorn workers exactly as the liveness comment describes."""
-    container = _runtime_container(_render_chart())
+    container = _runtime_container(_render_chart(overlays=OVERLAY_STACKS[stack]))
     startup = container["startupProbe"]
     liveness = container["livenessProbe"]
     assert startup["tcpSocket"]["port"] == 8000
     assert startup["tcpSocket"]["port"] == liveness["tcpSocket"]["port"]
 
 
-def test_startup_budget_exceeds_worst_case_cold_start():
-    """The startup budget must clear the worst-case cold start with margin — a
-    budget below it reintroduces the crash-loop the probe exists to prevent."""
-    container = _runtime_container(_render_chart())
-    startup_budget = _budget_seconds(container["startupProbe"])
-    assert startup_budget > WORST_CASE_COLD_START_S, (
-        f"startupProbe budget {startup_budget}s does not exceed the worst-case "
-        f"cold start {WORST_CASE_COLD_START_S}s — the pod crash-loops before "
-        f"the socket binds"
+@pytest.mark.parametrize("stack", sorted(OVERLAY_STACKS))
+def test_startup_window_exceeds_the_lifespans_backend_wait(stack):
+    """The rendered startup window must exceed the worst-case cold start the
+    code can legitimately spend before binding: the whole backend wait budget
+    (with its probe overrun) plus the fresh-install stages."""
+    container = _runtime_container(_render_chart(overlays=OVERLAY_STACKS[stack]))
+    window = _window_seconds(container["startupProbe"])
+    assert window > _worst_case_cold_start_s(), (
+        f"{stack}: startupProbe window {window}s does not exceed the worst-case "
+        f"cold start {_worst_case_cold_start_s():.0f}s "
+        f"(backend wait {_backend_wait_worst_case_s():.0f}s + fresh-install "
+        f"stages {_fresh_install_stages_s():.0f}s) — the kubelet kills the pod "
+        f"while the lifespan is still inside its own wait budget"
     )
 
 
-def test_liveness_budget_alone_would_not_cover_cold_start():
-    """Pins WHY the startupProbe is required: liveness on its own is shorter
-    than the cold start, so removing the startupProbe brings the bug back."""
-    container = _runtime_container(_render_chart())
-    liveness_budget = _budget_seconds(container["livenessProbe"])
-    assert liveness_budget < WORST_CASE_COLD_START_S, (
-        "liveness budget now covers cold start on its own — re-derive whether "
-        "the startupProbe is still load-bearing before relaxing this test"
+@pytest.mark.parametrize("stack", sorted(OVERLAY_STACKS))
+def test_liveness_cannot_fire_before_the_backend_wait_ends(stack):
+    """Liveness is disabled until the startupProbe succeeds, so its own window
+    only matters if the startupProbe is removed — pin that it would then kill
+    inside the backend wait (why the startupProbe is load-bearing), and that
+    the startupProbe gating it is present on the same container."""
+    container = _runtime_container(_render_chart(overlays=OVERLAY_STACKS[stack]))
+    liveness_window = _window_seconds(container["livenessProbe"])
+    assert liveness_window < _backend_wait_worst_case_s(), (
+        f"{stack}: liveness window {liveness_window}s now covers the backend "
+        f"wait on its own — re-derive whether the startupProbe is still "
+        f"load-bearing before relaxing this test"
     )
+    assert "startupProbe" in container
 
 
 def test_startup_probe_can_be_disabled_by_operator():
@@ -130,8 +188,6 @@ def test_termination_grace_covers_the_blob_write_drain():
     """Shutdown drains accepted admin blob writes before teardown; the pod's
     grace period must cover that drain plus the rest of teardown, or SIGKILL
     lands mid-drain and the accepted write is lost."""
-    import inspect
-
     from cogniverse_runtime.routers.admin import drain_blob_writes
 
     deployments = [

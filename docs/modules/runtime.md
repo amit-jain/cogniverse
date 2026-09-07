@@ -307,7 +307,7 @@ uvicorn.run(app, host="0.0.0.0", port=8000)
 
 **Startup Sequence:**
 
-1. Poll the Vespa data plane and config server together. A fresh config server with no application package is detected immediately, receives the metadata schemas, and must then expose the feed endpoint; an existing application waits for its feed endpoint to converge. Startup fails if neither plane becomes usable within the retry budget.
+1. Poll the Vespa data plane and config server together for up to `BACKEND_STARTUP_WAIT_BUDGET_S` of wall clock (64 min: twice `BACKEND_RECOVERY_WORST_CASE_S`, the longest observed restart of an unpruned Vespa), one attempt every `BACKEND_STARTUP_RETRY_INTERVAL_S` with `BACKEND_STARTUP_PROBE_TIMEOUT_S` per probe. A fresh config server with no application package is detected immediately, receives the metadata schemas, and must then expose the feed endpoint; an existing application waits for its feed endpoint to converge. Startup fails if neither plane becomes usable within the budget. The chart's runtime `startupProbe` window is pinned above this budget plus the fresh-install stages (`tests/charts/test_runtime_startup_probe.py`), because uvicorn binds port 8000 only after the lifespan finishes and the kubelet would otherwise kill a pod that is still inside its own wait.
 2. Load configuration via `ConfigManager`; wire `BackendRegistry` profile add/remove into a `config_manager` profile-change listener
 3. Initialize `SchemaLoader` for Vespa schemas; wire `admin`/`tenant` routers and `ingestion`/`search`/`knowledge` FastAPI dependency overrides
 4. Initialize `BackendRegistry` (singleton via `get_instance()`) and `AgentRegistry`
