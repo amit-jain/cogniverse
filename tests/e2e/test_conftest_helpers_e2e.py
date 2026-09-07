@@ -65,6 +65,8 @@ _NEW_PREFIXES = (
     "canontest_",
     "smk_",
     "smk2_",
+    "mschema_",
+    "teardown_",
 )
 
 # The pre-existing prefixes the conftest had before this change. Recorded
