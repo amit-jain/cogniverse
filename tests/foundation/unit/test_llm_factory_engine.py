@@ -13,6 +13,7 @@ from __future__ import annotations
 
 import pytest
 
+from cogniverse_foundation.config.bootstrap import INFERENCE_API_KEY_ENV
 from cogniverse_foundation.config.llm_factory import create_dspy_lm
 from cogniverse_foundation.config.unified_config import LLMConfig, LLMEndpointConfig
 
@@ -103,11 +104,14 @@ class TestModelPassthrough:
         lm = create_dspy_lm(endpoint)
         assert "extra_headers" not in lm.kwargs
 
-    def test_keyless_api_base_gets_placeholder_key(self):
+    def test_keyless_api_base_gets_placeholder_key(self, monkeypatch):
         # Self-hosted OAI-compat endpoints ignore the key, but the OpenAI
         # client refuses to construct without one — the factory must fill
         # a placeholder or every keyless vLLM/Ollama config fails at the
-        # first call with a client-side AuthenticationError.
+        # first call with a client-side AuthenticationError. With a bearer in
+        # the environment the factory sends that instead (pinned in
+        # test_llm_factory_external_auth), so this test owns its absence.
+        monkeypatch.delenv(INFERENCE_API_KEY_ENV, raising=False)
         endpoint = LLMEndpointConfig(
             model="openai/google/gemma-4-e4b-it",
             api_base="http://127.0.0.1:29110/v1",
