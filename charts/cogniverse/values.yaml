@@ -293,6 +293,9 @@ vespa:
   env:
     VESPA_CONFIGSERVERS: "vespa"
     VESPA_MEMORY_OPTIONS: "-Xms4g -Xmx16g"
+    # Config proxy heap. Vespa's default is 128m; the proxy caches every
+    # config it serves, so the heap must scale with the schema population.
+    VESPA_CONFIGPROXY_JVMARGS: "-Xmx512m"
 
   # Health checks
   livenessProbe:

@@ -155,6 +155,28 @@ def test_cluster_service_limits_stay_within_the_gpu_budget_reservation():
     )
 
 
+def test_vespa_config_proxy_heap_is_sized_for_the_schema_population():
+    """The config proxy JVM runs on the chart's heap, not Vespa's 128 MiB default.
+
+    The proxy caches every config it has served, so its live set scales with
+    the schema population: 76 MiB after a full GC at 180 schemas, and the
+    allocation burst of one activation on top of that exceeds 128 MiB. The
+    JVM exits on heap OOM and every service loses its config source until
+    the sentinel restarts it.
+    """
+    documents = _render()
+    statefulset = next(
+        document
+        for document in documents
+        if document.get("kind") == "StatefulSet"
+        and document["metadata"]["name"] == "cogniverse-vespa"
+    )
+    (vespa,) = statefulset["spec"]["template"]["spec"]["containers"]
+    env = {entry["name"]: entry["value"] for entry in vespa["env"]}
+
+    assert env["VESPA_CONFIGPROXY_JVMARGS"] == "-Xmx512m"
+
+
 def test_every_container_reading_the_config_can_authenticate_to_inference():
     """A container that mounts the config must be able to call what it names.
 
