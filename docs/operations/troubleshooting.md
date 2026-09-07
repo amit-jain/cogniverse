@@ -440,6 +440,33 @@ curl http://localhost:19071/application/v2/tenant/default/application/default
 
 ---
 
+### Vespa JVM Heaps
+
+The vespa pod runs seven JVMs. The chart sets two of them through
+`vespa.env`; the launchers in `vespaengine/vespa` read exactly these names,
+and nothing in the image reads any other.
+
+| JVM | Heap | Set by |
+|---|---|---|
+| config server | `-Xms128m -Xmx2g` | `VESPA_CONFIGSERVER_JVMARGS` (`just-start-configserver`) |
+| config proxy | `-Xms32m -Xmx512m` | `VESPA_CONFIGPROXY_JVMARGS` (`just-run-configproxy`) |
+| container | `-Xms1536m -Xmx1536m` | Vespa default; `<container><nodes><jvm options>` in the rendered `services.xml` |
+| logserver, metrics proxy | `-Xms32m -Xmx256m` | Vespa default |
+| logserver container, cluster controller | `-Xms32m -Xmx128m` | Vespa default |
+
+The config server holds the active application model: 93 MiB live after a
+full GC at 180 schemas (generation 3340), 0 full GCs across a 21-activation
+sweep on the 2 GiB ceiling. Measure before changing it:
+```bash
+kubectl exec -n cogniverse statefulset/cogniverse-vespa -- sh -c \
+  'PID=$(pgrep -f "^java.*jdisc.logger.tag=configserver"); jcmd $PID GC.run >/dev/null; jcmd $PID GC.heap_info'
+```
+
+`tests/charts/test_memory_qos_budget.py` pins the vespa container's env to
+exactly the variables above.
+
+---
+
 ### Config Proxy Heap Exhaustion
 
 **Symptoms:**
