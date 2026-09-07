@@ -24,7 +24,9 @@ from cogniverse_synthetic.dspy_modules import EntityQueryValidationError
 from cogniverse_synthetic.generators.base import (
     DEFAULT_SYNTHETIC_GENERATION_FLOOR_COUNT,
     BaseGenerator,
+    ContentRejection,
     GenerationTracker,
+    rejection_category,
 )
 from cogniverse_synthetic.generators.entity_extraction import (
     DEFAULT_ENTITY_EXTRACTION_TIMEOUT_SECONDS,
@@ -299,16 +301,19 @@ class RoutingGenerator(BaseGenerator):
                 )
                 missing_topic_words = _missing_topic_content_words(query, topic)
                 if missing_topic_words:
-                    raise ValueError(
+                    raise ContentRejection(
+                        "ungrounded_output",
                         "routing query must contain every topic content word "
                         "longer than 3 chars; "
                         f"missing={missing_topic_words!r}; topic={topic!r}; "
-                        f"query={query!r}"
+                        f"query={query!r}",
                     )
             except (ValueError, ValidationError) as exc:
                 last_validation_error = exc
                 if isinstance(generation_tracker, GenerationTracker):
-                    generation_tracker.record_drop(topic, exc)
+                    generation_tracker.record_drop(
+                        topic, exc, category=rejection_category(exc)
+                    )
                 continue
 
             # Create enhanced query with entity annotations
@@ -345,12 +350,16 @@ class RoutingGenerator(BaseGenerator):
             if decision == "stop":
                 last_validation_error = dup_error
                 if isinstance(generation_tracker, GenerationTracker):
-                    generation_tracker.record_drop(query, dup_error)
+                    generation_tracker.record_drop(
+                        query, dup_error, category="duplicate_label"
+                    )
                 break
             if decision == "drop":
                 last_validation_error = dup_error
                 if isinstance(generation_tracker, GenerationTracker):
-                    generation_tracker.record_drop(query, dup_error)
+                    generation_tracker.record_drop(
+                        query, dup_error, category="duplicate_label"
+                    )
                 continue
 
             metadata = {
@@ -525,9 +534,10 @@ class RoutingGenerator(BaseGenerator):
         except _QueryGeneratorBoundaryError as exc:
             cause = exc.__cause__
             if isinstance(cause, EntityQueryValidationError):
-                raise ValueError(
+                raise ContentRejection(
+                    "ungrounded_output",
                     "Failed to generate valid entity query after "
-                    f"{query_generator.max_retries} retries: {cause}"
+                    f"{query_generator.max_retries} retries: {cause}",
                 ) from cause
             raise RuntimeError(
                 "entity query generation failed for entities: "

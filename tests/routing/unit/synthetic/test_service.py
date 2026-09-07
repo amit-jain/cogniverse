@@ -1250,6 +1250,7 @@ class TestSyntheticDataService:
                         "entity extractor relationships[0] references an "
                         "entity absent from the result"
                     ),
+                    "category": "invalid_label",
                 }
             ],
         }
@@ -1276,6 +1277,7 @@ class TestSyntheticDataService:
                         "entity extractor relationships[0] references an "
                         "entity absent from the result"
                     ),
+                    "category": "invalid_label",
                 }
             ],
         )

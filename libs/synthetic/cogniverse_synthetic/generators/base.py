@@ -13,7 +13,7 @@ from collections.abc import Mapping, Sequence
 from dataclasses import dataclass, field
 from functools import lru_cache
 from pathlib import Path
-from typing import Any, Dict, List, Optional
+from typing import Any, Dict, List, Literal, Optional
 
 from pydantic import BaseModel
 
@@ -142,15 +142,65 @@ def canonical_topic_fields() -> tuple[str, ...]:
 CANONICAL_TOPIC_FIELDS = canonical_topic_fields()
 
 
+DropCategory = Literal[
+    "duplicate_label",
+    "invalid_label",
+    "ungrounded_output",
+    "ungrounded_source",
+    "unexpected_error",
+]
+
+UNEXPECTED_DROP_CATEGORY: DropCategory = "unexpected_error"
+CONTENT_DROP_CATEGORIES: frozenset[str] = frozenset(
+    {
+        "duplicate_label",
+        "invalid_label",
+        "ungrounded_output",
+        "ungrounded_source",
+    }
+)
+DROP_CATEGORIES: frozenset[str] = CONTENT_DROP_CATEGORIES | {UNEXPECTED_DROP_CATEGORY}
+
+
+class ContentRejection(ValueError):
+    """A candidate the generator refuses, categorised at the raise site.
+
+    ``category`` is one of ``CONTENT_DROP_CATEGORIES``. The category reserved
+    for exceptions no generator anticipated cannot be claimed by a rejection,
+    so a masked failure can never present itself as deliberate.
+    """
+
+    def __init__(self, category: DropCategory, message: str) -> None:
+        if category not in CONTENT_DROP_CATEGORIES:
+            raise ValueError(
+                "ContentRejection category must be one of "
+                f"{sorted(CONTENT_DROP_CATEGORIES)}; got {category!r}"
+            )
+        super().__init__(message)
+        self.category: DropCategory = category
+
+
+def rejection_category(exc: BaseException) -> DropCategory:
+    """Return the category the raise site declared, else the unexpected one."""
+    if isinstance(exc, ContentRejection):
+        return exc.category
+    return UNEXPECTED_DROP_CATEGORY
+
+
 @dataclass(slots=True)
 class GenerationDrop:
     """One candidate that failed validation during synthetic generation."""
 
     candidate: str
     reason: str
+    category: DropCategory
 
     def to_dict(self) -> Dict[str, str]:
-        return {"candidate": self.candidate, "reason": self.reason}
+        return {
+            "candidate": self.candidate,
+            "reason": self.reason,
+            "category": self.category,
+        }
 
 
 @dataclass(slots=True)
@@ -165,9 +215,20 @@ class GenerationTracker:
     returned_count: int = 0
     surplus_exhausted: bool = False
 
-    def record_drop(self, candidate: str, reason: Exception | str) -> None:
+    def record_drop(
+        self,
+        candidate: str,
+        reason: Exception | str,
+        *,
+        category: DropCategory,
+    ) -> None:
+        if category not in DROP_CATEGORIES:
+            raise ValueError(
+                f"drop category must be one of {sorted(DROP_CATEGORIES)}; "
+                f"got {category!r}"
+            )
         self.dropped_examples.append(
-            GenerationDrop(candidate=candidate, reason=str(reason))
+            GenerationDrop(candidate=candidate, reason=str(reason), category=category)
         )
 
     def dropped_examples_summary(self) -> str:
@@ -367,9 +428,10 @@ class BaseGenerator(ABC):
                 f"but target_count={target_count}; source_context={source_context}"
             )
             message += dropped_examples_summary
+            rejection = ContentRejection("ungrounded_source", message)
             if cause is not None:
-                raise ValueError(message) from cause
-            raise ValueError(message)
+                raise rejection from cause
+            raise rejection
 
         if len(examples) < floor_count:
             message = (
@@ -378,9 +440,10 @@ class BaseGenerator(ABC):
                 f"floor_count={floor_count}; source_context={source_context}"
             )
             message += dropped_examples_summary
+            rejection = ContentRejection("ungrounded_source", message)
             if cause is not None:
-                raise ValueError(message) from cause
-            raise ValueError(message)
+                raise rejection from cause
+            raise rejection
 
     @staticmethod
     def _generation_floor_count(raw_floor_count: Any) -> int:

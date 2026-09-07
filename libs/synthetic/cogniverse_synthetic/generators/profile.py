@@ -24,7 +24,9 @@ from cogniverse_core.approval.training_schema import (
 from cogniverse_synthetic.generators.base import (
     DEFAULT_SYNTHETIC_GENERATION_FLOOR_COUNT,
     BaseGenerator,
+    ContentRejection,
     GenerationTracker,
+    rejection_category,
 )
 from cogniverse_synthetic.schemas import ProfileSelectionExampleSchema
 from cogniverse_synthetic.topics import TopicSaliency, extract_topic
@@ -163,7 +165,9 @@ class ProfileGenerator(BaseGenerator):
             except (ValueError, ValidationError) as exc:
                 last_validation_error = exc
                 if isinstance(generation_tracker, GenerationTracker):
-                    generation_tracker.record_drop(query, exc)
+                    generation_tracker.record_drop(
+                        query, exc, category=rejection_category(exc)
+                    )
                 continue
 
         self.require_exact_target_count(
@@ -293,26 +297,32 @@ class ProfileGenerator(BaseGenerator):
         if isinstance(selection, BaseModel):
             selection = selection.model_dump()
         if not isinstance(selection, dict):
-            raise ValueError("profile selection result must be an object")
+            raise ContentRejection(
+                "invalid_label", "profile selection result must be an object"
+            )
         if selection.get("query") != query:
-            raise ValueError(
-                "profile selection query must match the source-grounded query"
+            raise ContentRejection(
+                "invalid_label",
+                "profile selection query must match the source-grounded query",
             )
         selected_profile = selection.get("selected_profile")
         if selected_profile not in choice_profiles:
             if allowed_profiles is not None:
-                raise ValueError(
+                raise ContentRejection(
+                    "invalid_label",
                     "profile selection selected_profile must be one of the "
-                    "selected profiles offered to the labeler"
+                    "selected profiles offered to the labeler",
                 )
-            raise ValueError(
+            raise ContentRejection(
+                "invalid_label",
                 "profile selection selected_profile must be one of the "
-                "available profiles"
+                "available profiles",
             )
         if selected_profile not in profile_configs:
-            raise ValueError(
+            raise ContentRejection(
+                "invalid_label",
                 "profile selection selected_profile must be one of the "
-                "sampleable profiles"
+                "sampleable profiles",
             )
         output_fields = {}
         for field_name in (
@@ -323,8 +333,9 @@ class ProfileGenerator(BaseGenerator):
         ):
             value = selection.get(field_name)
             if not isinstance(value, str) or not value.strip():
-                raise ValueError(
-                    f"profile selection {field_name} must be a non-empty string"
+                raise ContentRejection(
+                    "invalid_label",
+                    f"profile selection {field_name} must be a non-empty string",
                 )
             output_fields[field_name] = value
 
@@ -334,17 +345,21 @@ class ProfileGenerator(BaseGenerator):
             "selected_profile": selected_profile,
             **output_fields,
         }
-        validate_approved_training_values(
-            example_data,
-            "profile_selection",
-            context=(f"profile selection tenant={tenant_id!r} query={query!r}"),
-        )
+        try:
+            validate_approved_training_values(
+                example_data,
+                "profile_selection",
+                context=(f"profile selection tenant={tenant_id!r} query={query!r}"),
+            )
+        except ValueError as exc:
+            raise ContentRejection("invalid_label", str(exc)) from exc
         example = ProfileSelectionExampleSchema(**example_data)
         configured_modality = profile_configs[selected_profile]["type"]
         if example.modality != configured_modality:
-            raise ValueError(
+            raise ContentRejection(
+                "invalid_label",
                 "profile selection modality must match selected profile "
-                f"{selected_profile!r} configured type {configured_modality!r}"
+                f"{selected_profile!r} configured type {configured_modality!r}",
             )
         return example
 
@@ -491,7 +506,9 @@ class ProfileGenerator(BaseGenerator):
             except (ValueError, ValidationError) as exc:
                 last_validation_error = exc
                 if generation_tracker is not None:
-                    generation_tracker.record_drop(query, exc)
+                    generation_tracker.record_drop(
+                        query, exc, category=rejection_category(exc)
+                    )
                 continue
 
         self.require_exact_target_count(

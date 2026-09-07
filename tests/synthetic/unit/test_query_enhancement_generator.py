@@ -628,3 +628,4 @@ async def test_generator_replaces_ungrounded_example_from_surplus():
         == "livestock competition agricultural fair spectator viewing"
     )
     assert "quantum physics" in metadata["dropped_examples"][0]["reason"]
+    assert metadata["dropped_examples"][0]["category"] == "ungrounded_output"
