@@ -236,6 +236,7 @@ async def test_ingestion_worker_resolves_before_telemetry(monkeypatch):
         reaper_min_idle_ms = 300000
         reaper_max_deliveries = 5
         job_deadline_s = 7200
+        startup_grace_s = 300.0
         graph_deadline_s = 1800.0
 
     async def _fake_get_redis(url):
@@ -378,7 +379,7 @@ async def test_worker_bootstrap_sets_exact_s3_defaults(monkeypatch):
     monkeypatch.setattr(
         worker,
         "WorkerConfig",
-        lambda: SimpleNamespace(redis_url="redis://stub"),
+        lambda: SimpleNamespace(redis_url="redis://stub", startup_grace_s=300.0),
     )
 
     async def _fake_get_redis(url):

@@ -72,7 +72,7 @@ cogniverse_runtime/
 ├── sandbox_pool.py                  # Pool of warm sandbox instances
 ├── inference_health_check.py        # Startup inference-service probes
 ├── inference_services.py            # Validated external inference endpoints
-├── startup_wait.py                  # Dependency-readiness command
+├── startup_wait.py                  # Dependency-readiness command + in-process startup wait
 ├── synthetic_config.py              # Synthetic-service runtime configuration
 ├── routers/                         # FastAPI routers (one per API surface)
 │   ├── health.py                    # Health + readiness endpoints
@@ -270,6 +270,18 @@ also leaves it untouched and fails with a diagnostic. Inspect it first, then set
 `E2E_FRESH=1` on the next focused run to authorize replacement.
 
 `SearchResult` and `SearchBackend` are imported from `cogniverse_sdk.document` / `cogniverse_sdk.interfaces.backend` — the runtime has no local search ABC any more (the dead duplicates were removed).
+
+### Worker startup through a config-store outage
+
+The worker's first config read (`_wait_for_startup_config`, before it touches
+Redis) runs through `startup_wait.wait_for_startup_dependency`, the helper the
+quality monitor's `_wait_for_telemetry_manager` also uses. Transport errors and
+`ConfigStoreUnavailableError` are retried every 2s: a WARNING per failed attempt
+inside the `INGEST_STARTUP_GRACE_SECONDS` window (default 300), one ERROR at
+the boundary, then a WARNING per retry until the store answers. A SIGTERM
+during the wait raises `DependencyWaitAborted` on the next retry and the worker
+exits cleanly. The store's own read budget (five 30s visits) bounds each
+attempt, so a paused Vespa costs ~154s per attempt, never a restart.
 
 ### Queued ingestion transaction
 
@@ -1243,6 +1255,16 @@ status lists, or a missing child command fail during argument parsing. After
 every dependency is ready, the wrapper replaces itself with the command after
 `--`; a timeout exits nonzero without starting that command.
 
+The same module's `wait_for_startup_dependency(build, *, dependency, process,
+timeout_seconds, poll_interval_seconds, retry_forever, abort=None, log=None)`
+is the in-process wait: it calls `build` until it returns, retrying
+`httpr.TransportError`, `requests.RequestException` and
+`ConfigStoreUnavailableError`. `timeout_seconds` is a grace window — WARNING
+per failure inside it; at its end a `retry_forever` process logs one ERROR
+("…; keeping the {process} alive and retrying") and keeps going, while a
+one-shot caller raises `RuntimeError` chained to the last error. `abort` is
+polled after each failure and raises `DependencyWaitAborted`.
+
 Workflow settings are read once at startup via `get_workflow_settings()` (returns a cached `WorkflowSettings` dataclass). The tenant router uses these to submit cron and optimization jobs via Argo `workflowTemplateRef`; no pod spec or image is owned by the runtime.
 
 Host/port for `uvicorn` itself (`RUNTIME_HOST`/`RUNTIME_PORT`-style vars) are **not** read by the runtime — they're passed as `uvicorn` CLI flags (`--host`, `--port`), see [Deployment](#deployment) below.
@@ -1832,7 +1854,7 @@ python -m cogniverse_runtime.quality_monitor_cli \
 
 `--tenant-id` and `--llm-model` are required; `--argo-url` defaults to `None`, which disables auto-submission of optimization workflows (the monitor still evaluates and logs, it just won't trigger retraining). `--once` runs a single forced optimization cycle and exits (bypassing the quality-threshold check), for Argo CronWorkflows doing scheduled distillation, instead of looping.
 
-Startup blocks until its dependencies are ready instead of crash-looping on boot ordering: it retries the telemetry configuration store while it raises transport errors (`httpr.TransportError` / `requests.RequestException`), and, for the monitor loop and `--once` (not the annotation modes), posts the first golden-dataset query to the runtime's `/search/` route until it returns HTTP 200 with a results list. The serving loop itself also retries forever if `monitor.run()` raises or returns unexpectedly, so a broken monitor stays observable in logs without taking the pod out of service. `--startup-timeout` and `--startup-poll-interval` act as grace-window logging for both waits; once that window elapses, each helper keeps retrying until the dependency is ready.
+Startup blocks until its dependencies are ready instead of crash-looping on boot ordering: it retries the telemetry configuration store through `startup_wait.wait_for_startup_dependency` while it raises transport errors (`httpr.TransportError` / `requests.RequestException`) or `ConfigStoreUnavailableError`, and, for the monitor loop and `--once` (not the annotation modes), posts the first golden-dataset query to the runtime's `/search/` route until it returns HTTP 200 with a results list. The serving loop itself also retries forever if `monitor.run()` raises or returns unexpectedly, so a broken monitor stays observable in logs without taking the pod out of service. `--startup-timeout` and `--startup-poll-interval` act as grace-window logging for both waits; once that window elapses, each helper keeps retrying until the dependency is ready.
 
 ---
 

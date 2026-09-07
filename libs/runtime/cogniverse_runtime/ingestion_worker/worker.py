@@ -40,6 +40,7 @@ from cogniverse_runtime.inference_services import parse_inference_service_urls
 from cogniverse_runtime.ingestion_worker import idempotency, queue
 from cogniverse_runtime.ingestion_worker.queue import IngestJob
 from cogniverse_runtime.ingestion_worker.redis_client import close_redis, get_redis
+from cogniverse_runtime.startup_wait import DependencyWaitAborted
 
 logger = logging.getLogger(__name__)
 
@@ -159,6 +160,11 @@ class WorkerConfig:
         # longest legitimate pipeline (long-video KG extraction runs ~40min
         # here); 0 disables.
         self.job_deadline_s = int(os.environ.get("INGEST_JOB_DEADLINE_SECONDS", "7200"))
+        # Grace window for the first config-store read; after it the worker
+        # logs one ERROR and keeps waiting rather than crash-looping.
+        self.startup_grace_s = float(
+            os.environ.get("INGEST_STARTUP_GRACE_SECONDS", "300")
+        )
         self.graph_deadline_s = float(
             os.environ.get("INGEST_GRAPH_DEADLINE_SECONDS", "1800")
         )
@@ -196,6 +202,35 @@ def _validate_pipeline_cache_defaults() -> None:
     if not cache_config_dict.get("enabled", False):
         return
     require_s3_cache_backend_defaults(cache_config_dict.get("backends", []))
+
+
+_STARTUP_POLL_INTERVAL_S = 2.0
+
+
+def _wait_for_startup_config(
+    *,
+    grace_s: float,
+    retry_forever: bool = True,
+    abort: Callable[[], bool] | None,
+) -> None:
+    """The worker's first config read, held open through a store outage.
+
+    Same contract as the quality monitor's startup wait: WARNING per failed
+    attempt inside ``grace_s``, one ERROR at the boundary, then keep
+    retrying. ``abort`` is the shutdown flag, so SIGTERM ends the wait.
+    """
+    from cogniverse_runtime.startup_wait import wait_for_startup_dependency
+
+    wait_for_startup_dependency(
+        _validate_pipeline_cache_defaults,
+        dependency="Ingestion worker configuration dependency",
+        process="worker",
+        timeout_seconds=grace_s,
+        poll_interval_seconds=_STARTUP_POLL_INTERVAL_S,
+        retry_forever=retry_forever,
+        abort=abort,
+        log=logger,
+    )
 
 
 _GRAPH_FACTORY_INSTALLED = False
@@ -933,10 +968,20 @@ async def run(
     telemetry_otlp_endpoint = runtime_defaults["telemetry_otlp_endpoint"]
     media_config = _media_config_from_defaults(runtime_defaults)
     config = WorkerConfig()
-    await asyncio.to_thread(_validate_pipeline_cache_defaults)
     if stop is None:
         stop = asyncio.Event()
         _install_signal_handlers(stop)
+    try:
+        await asyncio.to_thread(
+            _wait_for_startup_config,
+            grace_s=config.startup_grace_s,
+            abort=stop.is_set,
+        )
+    except DependencyWaitAborted as aborted:
+        logger.info(
+            "Worker %s stopping before startup: %s", config.consumer_id, aborted
+        )
+        return
 
     redis = await get_redis(config.redis_url)
     if processor is None:
