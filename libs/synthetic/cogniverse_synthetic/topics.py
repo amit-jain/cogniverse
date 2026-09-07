@@ -20,6 +20,52 @@ MIN_SALIENCY_CORPUS_RECORDS = 2
 _WORD_RE = re.compile(r"[A-Za-z0-9']+")
 _SENTENCE_RE = re.compile(r"(?<=[.!?])\s+")
 
+# Characters that bind two word matches into one token.
+_WORD_JOINERS = frozenset("-‐‑’'/_")
+_GROUP_OPENERS = {"(": ")", "[": "]", "{": "}", "“": "”"}
+_GROUP_CLOSERS = {close: opener for opener, close in _GROUP_OPENERS.items()}
+_TOGGLE_DELIMITERS = frozenset('"')
+
+
+def _advance_groups(open_groups: list[str], char: str) -> bool:
+    """Apply ``char`` to the open-group stack; False when it closes nothing."""
+    if char in _TOGGLE_DELIMITERS:
+        if open_groups and open_groups[-1] == char:
+            open_groups.pop()
+        else:
+            open_groups.append(char)
+        return True
+    if char in _GROUP_OPENERS:
+        open_groups.append(char)
+        return True
+    if char in _GROUP_CLOSERS:
+        if open_groups and open_groups[-1] == _GROUP_CLOSERS[char]:
+            open_groups.pop()
+            return True
+        return False
+    return True
+
+
+def _is_self_contained(sentence: str, start: int, end: int) -> bool:
+    """True when ``sentence[start:end]`` is cut at token and group boundaries.
+
+    Both edges must fall between tokens, and the span must open every group it
+    closes and close every group it opens.
+    """
+    if start > 0 and sentence[start - 1] in _WORD_JOINERS:
+        return False
+    if end < len(sentence) and sentence[end] in _WORD_JOINERS:
+        return False
+    open_groups: list[str] = []
+    for char in sentence[:start]:
+        _advance_groups(open_groups, char)
+    if open_groups:
+        return False
+    for char in sentence[start:end]:
+        if not _advance_groups(open_groups, char):
+            return False
+    return not open_groups
+
 
 def topic_source_text(
     item: Mapping[str, Any],
@@ -98,8 +144,11 @@ class TopicSaliency:
                     high -= 1
                 if low == high or score <= best_score:
                     continue
+                span_start, span_end = spans[low][0], spans[high - 1][1]
+                if not _is_self_contained(sentence, span_start, span_end):
+                    continue
                 best_score = score
-                best_span = sentence[spans[low][0] : spans[high - 1][1]]
+                best_span = sentence[span_start:span_end]
         return best_span
 
 

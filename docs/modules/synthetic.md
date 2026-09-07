@@ -791,6 +791,15 @@ rejected rather than being treated as UTC. A supplied timestamp that cannot be
 parsed raises `ValueError` with the rejected value instead of silently
 producing default temporal patterns.
 
+`TopicSaliency.salient_span(...)` in `cogniverse_synthetic.topics` scores every
+contiguous word window of a sentence by inverse document frequency over the
+sampled batch and keeps only self-contained windows. A window is self-contained
+when neither edge abuts a word-joining character (`-`, `‐`, `‑`, `’`, `'`, `/`,
+`_`) and the span closes every group it opens and opens every group it closes
+across `()`, `[]`, `{}`, `“”`, and `"`. A window that would cut a hyphenated
+compound or a parenthesized or quoted aside is skipped for the next-best
+window, so a topic is always a complete phrase of its source text.
+
 `BackendQuerier.query_by_modality()` accepts only `VIDEO`, `DOCUMENT`, `IMAGE`,
 or `AUDIO`, requires an explicit tenant ID, canonicalizes simple IDs, and
 queries only configured profiles of that type from the live backend.
