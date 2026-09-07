@@ -27,11 +27,14 @@ from datetime import datetime, timedelta, timezone
 import httpx
 import pytest
 
+from cogniverse_foundation.common.tenant_utils import canonical_tenant_id
 from tests.e2e.conftest import (
     GATEWAY_VIDEO_QUERIES,
     IN_POD_TELEMETRY_PRELUDE,
     KUBECTL_CONTEXT,
     expected_gateway_calibration,
+    register_tenant_and_wait,
+    unique_id,
 )
 from tests.e2e.test_api_e2e import PROFILE, _deploy_profile_for_tenant
 
@@ -278,31 +281,32 @@ def _submit_and_wait_succeeded(
 # ---------------------------------------------------------------------------
 
 
-def _seed_org_and_tenant(unique_suffix: str) -> str:
+def _seed_org_and_tenant() -> str:
     """Create real org + tenant via the runtime's admin API.
 
     Returns the tenant_full_id. The daily-cleanup workflow enumerates
     every tenant in every org via the live tenant_manager helpers, so
     the seeded tenant becomes a real participant in the sweep.
     """
-    org_id = f"cron_e2e_org_{unique_suffix}"
+    org_id = unique_id("cron_e2e_org")
     tenant_id = f"{org_id}:t1"
     with httpx.Client(timeout=60.0) as client:
         r = client.post(
             f"{RUNTIME}/admin/organizations",
             json={
                 "org_id": org_id,
-                "org_name": f"cron-e2e-{unique_suffix}",
+                "org_name": f"cron-e2e-{org_id.rsplit('_', 1)[1]}",
                 "created_by": "e2e",
             },
         )
-        # 409 = already exists from a prior aborted run — acceptable.
-        assert r.status_code in (200, 409), r.text
-        r = client.post(
-            f"{RUNTIME}/admin/tenants",
-            json={"tenant_id": tenant_id, "created_by": "e2e"},
-        )
-        assert r.status_code in (200, 409), r.text
+        assert r.status_code == 200, r.text
+    tenant_row = register_tenant_and_wait(tenant_id, created_by="e2e")
+    assert (tenant_row["tenant_full_id"], tenant_row["status"], tenant_row["created_by"]) == (
+        canonical_tenant_id(tenant_id),
+        "active",
+        "e2e",
+    )
+    with httpx.Client(timeout=60.0) as client:
         # The first memory access on a fresh tenant deploys its memory and
         # provenance schemas to Vespa; that first touch was measured at 37s
         # idle and exceeded a 60s client budget under sweep load. Own the cost
@@ -311,19 +315,6 @@ def _seed_org_and_tenant(unique_suffix: str) -> str:
         assert r.status_code == 200, r.text
         assert r.json() == {"memories": [], "count": 0}, r.json()
     return tenant_id
-
-
-def _delete_tenant_and_org(tenant_full_id: str) -> None:
-    org_id = tenant_full_id.split(":", 1)[0]
-    with httpx.Client(timeout=120.0) as client:
-        try:
-            client.delete(f"{RUNTIME}/admin/tenants/{tenant_full_id}")
-        except httpx.HTTPError:
-            pass
-        try:
-            client.delete(f"{RUNTIME}/admin/organizations/{org_id}")
-        except httpx.HTTPError:
-            pass
 
 
 def _add_aged_memory(
@@ -489,44 +480,37 @@ class TestDailyCleanupWorkflow:
     def test_workflow_hard_deletes_stale_memory_for_seeded_tenant(self):
         _require_cronworkflow("cogniverse-daily-cleanup")
 
-        suffix = uuid.uuid4().hex[:8]
-        tenant_id = _seed_org_and_tenant(suffix)
-        try:
-            # Plant one hard-deletable (40d > 28d) and one permanent control.
-            stale_id = _add_aged_memory(
-                tenant_id, "conversation_turn", 40.0, "stale-victim"
-            )
-            permanent_id = _add_aged_memory(
-                tenant_id, "tenant_instruction", 999.0, "rule-stays-forever"
-            )
+        tenant_id = _seed_org_and_tenant()
+        # Plant one hard-deletable (40d > 28d) and one permanent control.
+        stale_id = _add_aged_memory(
+            tenant_id, "conversation_turn", 40.0, "stale-victim"
+        )
+        permanent_id = _add_aged_memory(
+            tenant_id, "tenant_instruction", 999.0, "rule-stays-forever"
+        )
 
-            # Pre-state: both visible. Poll the list endpoint — Mem0 +
-            # Vespa /search/ is eventually consistent after POST.
-            assert (
-                _poll_resolve(tenant_id, stale_id, expect_present=True) is not None
-            ), "precondition: stale memory must be queryable before cleanup runs"
-            assert (
-                _poll_resolve(tenant_id, permanent_id, expect_present=True) is not None
-            )
+        # Pre-state: both visible. Poll the list endpoint — Mem0 +
+        # Vespa /search/ is eventually consistent after POST.
+        assert _poll_resolve(tenant_id, stale_id, expect_present=True) is not None, (
+            "precondition: stale memory must be queryable before cleanup runs"
+        )
+        assert _poll_resolve(tenant_id, permanent_id, expect_present=True) is not None
 
-            _submit_and_wait_succeeded(
-                "cogniverse-daily-cleanup", timeout_s=SUBMISSION_TIMEOUT_S
-            )
+        _submit_and_wait_succeeded(
+            "cogniverse-daily-cleanup", timeout_s=SUBMISSION_TIMEOUT_S
+        )
 
-            # Functional outcome: the 40d ephemeral memory is GONE.
-            # Same eventual-consistency caveat for the delete side.
-            assert _poll_resolve(tenant_id, stale_id, expect_present=False) is None, (
-                f"daily-cleanup workflow Succeeded but the 40d-old "
-                f"conversation_turn ({stale_id}) is still resolvable — "
-                f"workflow ran but its functional intent did not land"
-            )
-            # And the PERMANENT memory survives.
-            assert _resolve_memory(tenant_id, permanent_id) is not None, (
-                "daily-cleanup must not touch PERMANENT kinds; "
-                "tenant_instruction was wiped"
-            )
-        finally:
-            _delete_tenant_and_org(tenant_id)
+        # Functional outcome: the 40d ephemeral memory is GONE.
+        # Same eventual-consistency caveat for the delete side.
+        assert _poll_resolve(tenant_id, stale_id, expect_present=False) is None, (
+            f"daily-cleanup workflow Succeeded but the 40d-old "
+            f"conversation_turn ({stale_id}) is still resolvable — "
+            f"workflow ran but its functional intent did not land"
+        )
+        # And the PERMANENT memory survives.
+        assert _resolve_memory(tenant_id, permanent_id) is not None, (
+            "daily-cleanup must not touch PERMANENT kinds; tenant_instruction was wiped"
+        )
 
 
 def _run_gateway_traffic(tenant_id: str) -> list[tuple[str, float]]:
@@ -657,32 +641,29 @@ class TestDailyGatewayWorkflow:
     def test_workflow_calibrates_and_persists_the_tenant_thresholds(self):
         _require_cronworkflow("cogniverse-daily-gateway")
 
-        tenant_id = _seed_org_and_tenant(uuid.uuid4().hex[:8])
-        try:
-            # A new tenant registers no profiles; register + deploy the video
-            # profile so cued queries reach search_agent and answer with zero
-            # hits instead of a profile-not-found error.
-            with httpx.Client(base_url=RUNTIME, timeout=300.0) as client:
-                _deploy_profile_for_tenant(client, PROFILE, tenant_id)
-            assert _gateway_thresholds_blob(tenant_id) is None
+        tenant_id = _seed_org_and_tenant()
+        # A new tenant registers no profiles; register + deploy the video
+        # profile so cued queries reach search_agent and answer with zero
+        # hits instead of a profile-not-found error.
+        with httpx.Client(base_url=RUNTIME, timeout=300.0) as client:
+            _deploy_profile_for_tenant(client, PROFILE, tenant_id)
+        assert _gateway_thresholds_blob(tenant_id) is None
 
-            decisions = _run_gateway_traffic(tenant_id)
-            _wait_for_gateway_spans(tenant_id, len(GATEWAY_VIDEO_QUERIES))
+        decisions = _run_gateway_traffic(tenant_id)
+        _wait_for_gateway_spans(tenant_id, len(GATEWAY_VIDEO_QUERIES))
 
-            _submit_and_wait_succeeded(
-                "cogniverse-daily-gateway",
-                timeout_s=SUBMISSION_TIMEOUT_S,
-                parameters={"tenant-id": tenant_id},
-            )
+        _submit_and_wait_succeeded(
+            "cogniverse-daily-gateway",
+            timeout_s=SUBMISSION_TIMEOUT_S,
+            parameters={"tenant-id": tenant_id},
+        )
 
-            blob = _gateway_thresholds_blob(tenant_id)
-            assert blob is not None, (
-                f"daily-gateway Succeeded but wrote no gateway_thresholds "
-                f"artifact for tenant {tenant_id!r}"
-            )
-            assert json.loads(blob) == expected_gateway_calibration(decisions)
-        finally:
-            _delete_tenant_and_org(tenant_id)
+        blob = _gateway_thresholds_blob(tenant_id)
+        assert blob is not None, (
+            f"daily-gateway Succeeded but wrote no gateway_thresholds "
+            f"artifact for tenant {tenant_id!r}"
+        )
+        assert json.loads(blob) == expected_gateway_calibration(decisions)
 
 
 @pytest.mark.e2e

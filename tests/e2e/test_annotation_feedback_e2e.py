@@ -207,13 +207,15 @@ def _provision_run_tenant() -> None:
     """
     import httpx
 
-    created = httpx.post(
-        f"{RUNTIME_URL}/admin/tenants",
-        json={"tenant_id": CANONICAL_TENANT, "created_by": "annotation-feedback-e2e"},
-        timeout=120.0,
+    from tests.e2e.conftest import register_tenant_and_wait
+
+    tenant_row = register_tenant_and_wait(
+        CANONICAL_TENANT, created_by="annotation-feedback-e2e"
     )
-    assert created.status_code in (200, 201, 409), (
-        f"tenant creation failed: {created.status_code} {created.text[:300]}"
+    assert (tenant_row["tenant_full_id"], tenant_row["status"], tenant_row["created_by"]) == (
+        CANONICAL_TENANT,
+        "active",
+        "annotation-feedback-e2e",
     )
 
     profile_name = PROFILE_NAME
@@ -643,10 +645,5 @@ async def test_feedback_workflow_runs_and_spawns_real_recompile(cluster_telemetr
             httpx.delete(
                 f"{RUNTIME_URL}/admin/profiles/{PROFILE_NAME}",
                 params={"tenant_id": CANONICAL_TENANT, "delete_schema": "true"},
-                timeout=180.0,
-            )
-        with contextlib.suppress(Exception):
-            httpx.delete(
-                f"{RUNTIME_URL}/admin/tenants/{CANONICAL_TENANT}",
                 timeout=180.0,
             )
