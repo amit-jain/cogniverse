@@ -449,7 +449,6 @@ flowchart TB
             config_profiles["<span style='color:#000'>profiles/</span>"]
             config_examples["<span style='color:#000'>examples/</span>"]
             config_policies["<span style='color:#000'>agent_policies/</span>"]
-            config_services["<span style='color:#000'>services.xml</span>"]
         end
 
         subgraph DOCS["<span style='color:#000'><b>docs/</b><br/>Documentation</span>"]

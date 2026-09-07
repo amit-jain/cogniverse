@@ -1446,7 +1446,6 @@ content cluster's `engine/proton/tuning/searchnode/flushstrategy/native/componen
 is `FLUSH_COMPONENT_MAXAGE_S` (1800 s), which bounds how long a
 document-less DocumentDB retains config operations in its transaction log
 (see [Vespa Restart Cost](../operations/troubleshooting.md#vespa-restart-cost)).
-`configs/services.xml` is not read by the deploy path.
 
 ---
 

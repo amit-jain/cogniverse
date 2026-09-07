@@ -537,7 +537,7 @@ renders `services.xml` for every package that passes through
 it live on activation (no restart); once unflushed data is older than 1800 s
 the flush engine flushes it, prunes the transaction log and removes the
 superseded config snapshots, so a restart replays at most the operations of
-the last 30 minutes. `configs/services.xml` is not read by anything.
+the last 30 minutes.
 
 **Reading replay progress on a live pod:**
 ```bash
