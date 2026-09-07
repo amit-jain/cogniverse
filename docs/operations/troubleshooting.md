@@ -440,6 +440,47 @@ curl http://localhost:19071/application/v2/tenant/default/application/default
 
 ---
 
+### Config Proxy Heap Exhaustion
+
+**Symptoms:**
+```text
+configproxy  stdout  Terminating due to java.lang.OutOfMemoryError: Java heap space
+runserver    event   stopped/1 name="libexec/vespa/vespa-wrapper just-run-configproxy" exitcode=3
+```
+in `/opt/vespa/logs/vespa/vespa.log` on the vespa pod, one second after a
+`Session activated` line. The deploy that triggered it converges in ~80s
+instead of ~6s while the sentinel restarts the proxy, and every Vespa
+service is without a config source for that window.
+
+**Cause:**
+The config proxy caches every config it has served, so its live heap grows
+with the schema population (76 MiB after a full GC at 180 schemas). Vespa's
+default proxy heap is 128 MiB, and the JVM runs with
+`-XX:+ExitOnOutOfMemoryError`: one activation's allocation burst on top of
+the live set exceeds the ceiling and the process exits.
+
+**Solution:**
+The chart sets the proxy heap through `vespa.env.VESPA_CONFIGPROXY_JVMARGS`
+(`-Xmx512m`; `just-run-configproxy` reads this variable). Sized for up to
+roughly twice the current schema population; raise it in the values overlay
+beyond that:
+```yaml
+vespa:
+  env:
+    VESPA_CONFIGPROXY_JVMARGS: "-Xmx1g"
+```
+Measure the live set before choosing a value:
+```bash
+kubectl exec -n cogniverse statefulset/cogniverse-vespa -- sh -c \
+  'PID=$(pgrep -f config.proxy.ProxyServer); jcmd $PID GC.run >/dev/null; jcmd $PID GC.heap_info'
+```
+
+**Prevention:**
+
+- `tests/charts/test_memory_qos_budget.py` pins the rendered value
+
+---
+
 ### Backend Profile Not Found
 
 **Symptoms:**
