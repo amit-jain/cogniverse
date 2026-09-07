@@ -619,7 +619,7 @@ operations:
 | `update_document(document_id, document, schema_name)` | Partial or full document update; raises on backend failure or id mismatch (False means the write was rejected, never that the backend was unreachable) |
 | `delete_document(document_id, schema_name)` | Delete a single document. A genuine 404 is an idempotent success; connection failures and every other rejected status raise with the document route. |
 | `get_document(document_id, schema_name)` / `batch_get_documents(document_ids, schema_name)` | Point lookups that reconstruct stored Vespa tensors through `Document.add_embedding`, so `Document.get_embedding(name)` returns the embedding data rather than a storage envelope. When a shared search backend handles a batch read, the unified backend resolves the matching Document v1 namespace and passes both schema and namespace explicitly. |
-| `deploy_schemas(schema_definitions, allow_schema_removal=False)` | Low-level deploy of one or more schema definitions in a single Vespa application package. Registry or config-server enumeration failures abort before the package is sent. Returns only once the activated config generation runs on every Vespa service (`serviceconverge`) and each schema new to the cluster has accepted a probe feed over `document/v1`; a service that never reaches the generation or a schema whose feed is refused raises `BackendDeploymentError`. |
+| `deploy_schemas(schema_definitions, allow_schema_removal=False)` | Low-level deploy of one or more schema definitions in a single Vespa application package. Registry or config-server enumeration failures abort before the package is sent. Every live schema the package does not carry is rebuilt from its registry row or, for an activation another process has not registered yet, from its deployment intent (`VespaSchemaManager.reconstruct_unknown_schemas`); one neither can rebuild refuses the deploy. Returns only once the activated config generation runs on every Vespa service (`serviceconverge`) and each schema new to the cluster has accepted a probe feed over `document/v1`, within `SCHEMA_CONVERGENCE_TIMEOUT_S` (120s, sized to outlast a configproxy restart); a service that never reaches the generation or a schema whose feed is refused raises `SchemaConvergenceError` carrying the activated generation. |
 | `delete_schema(schema_name, tenant_id=None)` / `schema_exists(schema_name, tenant_id=None)` | Schema lifecycle. Tenant deletion uses the canonical tenant suffix only. Registry tombstone failures surface after Vespa removal so a retry can finish durable cleanup. `schema_exists` (and `validate_schema`) raise on an enumeration/registry outage rather than returning `False`. |
 | `get_tenant_schema_name(tenant_id, base_schema_name)` | Delegates to `self.schema_manager` |
 | `create_metadata_document` / `get_metadata_document` / `query_metadata_documents` / `delete_metadata_document` | Organization/tenant/config metadata CRUD; writes raise on a backend outage (a bool False is a rejected write, not an unreachable backend). Passing `tenant_id` to `query_metadata_documents` resolves the base schema to the canonical tenant schema and rewrites a direct YQL source only when it names that base schema exactly. |
@@ -1885,9 +1885,14 @@ payload before activation. Vespa package construction probes live document types
 before calling `SchemaRegistry.reconcile_deployment_intents(live_names)`. After a
 90-second grace period, recovery conditionally registers schemas confirmed live
 using that stored payload, with at most three recovery attempts per intent.
-Recovered definitions are included in the package. Recovery never removes
-schemas, deletes documents, or enables schema-removal overrides. Live schemas
-without a valid reconstruction still trigger the deployment refusal guard.
+Recovered definitions are included in the package, as is every schema still
+reserved by a pending intent (`SchemaRegistry.reserved_schemas`), rebuilt from
+the intent's definition. Recovery never removes schemas, deletes documents, or
+enables schema-removal overrides. Live schemas without a valid reconstruction
+still trigger the deployment refusal guard. `upload_metadata_schemas` (the
+runtime's startup deploy) builds its package the same way when a registry is
+injected: registry rows plus reserved intents, refusing on any live schema it
+cannot rebuild.
 
 ---
 

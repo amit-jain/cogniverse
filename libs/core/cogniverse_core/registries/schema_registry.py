@@ -13,6 +13,7 @@ from typing import Any, Dict, List, Optional
 from cogniverse_core.registries.exceptions import (
     BackendDeploymentError,
     RegistryStorageError,
+    SchemaConvergenceError,
     SchemaLoadError,
     SchemaRegistryInitializationError,
 )
@@ -522,8 +523,14 @@ class SchemaRegistry:
                         f"Backend failed to deploy schema '{tenant_schema_name}'"
                     )
             except Exception as e:
+                # After activation the schema is live and its registration is
+                # owed: the intent stays pending so every package built
+                # meanwhile carries the schema and recovery registers it once
+                # the grace elapses. Before activation nothing is live, so the
+                # intent retires.
+                activated = isinstance(e, SchemaConvergenceError)
                 retirement_failure = None
-                if intent:
+                if intent and not activated:
                     try:
                         self._deployment_intents.retire(intent)
                     except Exception as retirement_exc:
@@ -535,7 +542,11 @@ class SchemaRegistry:
                 logger.error(f"Backend deployment failed: {e}")
                 deployment_error = BackendDeploymentError(
                     f"Backend deployment failed for schema '{tenant_schema_name}': {e}. "
-                    "The durable definition is retained for late activation."
+                    + (
+                        "The schema is live; its registration completes by recovery."
+                        if activated and intent
+                        else "The durable definition is retained for late activation."
+                    )
                 )
                 if retirement_failure:
                     deployment_error.add_note(retirement_failure)

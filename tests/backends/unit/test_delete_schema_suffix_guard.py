@@ -47,18 +47,26 @@ def test_cross_tenant_target_rejected_by_canonical_suffix():
 
 
 class _RecordingRegistry:
-    def __init__(self):
+    def __init__(self, reserved: dict | None = None):
         self.unregistered: list = []
+        self.reserved_queries: list = []
+        self._reserved = reserved or {}
+
+    def reserved_schemas(self, live_names: set) -> dict:
+        self.reserved_queries.append(set(live_names))
+        return dict(self._reserved)
 
     def unregister_schema(self, tenant_id: str, base_schema_name: str) -> None:
         self.unregistered.append((tenant_id, base_schema_name))
 
 
-def _guard_manager(survivor_names: list, deployed_names: list) -> VespaSchemaManager:
+def _guard_manager(
+    survivor_names: list, deployed_names: list, reserved: dict | None = None
+) -> VespaSchemaManager:
     from vespa.package import Document, Schema
 
     mgr = object.__new__(VespaSchemaManager)
-    mgr._schema_registry = _RecordingRegistry()
+    mgr._schema_registry = _RecordingRegistry(reserved)
     mgr._logger = logging.getLogger("test_delete_schema_guard")
     mgr._get_existing_tenant_schemas = lambda: [
         Schema(name=n, document=Document()) for n in survivor_names
@@ -107,6 +115,27 @@ class TestDeleteSchemaLiveGuard:
         assert len(mgr.deployed_packages) == 1
         deployed = {s.name for s in mgr.deployed_packages[0].schemas}
         assert deployed == {*METADATA_SCHEMAS, "video_other_acme_acme"}
+        assert mgr._schema_registry.unregistered == [("acme", "video_colpali")]
+
+    def test_live_peer_awaiting_registration_survives_rebuilt_from_its_intent(self):
+        in_flight = "wiki_pages_globex_globex"
+        deployed = [*METADATA_SCHEMAS, "video_colpali_acme_acme", in_flight]
+        mgr = _guard_manager(
+            survivor_names=[],
+            deployed_names=deployed,
+            reserved={in_flight: _registration(in_flight)},
+        )
+
+        assert mgr.delete_schema("acme", "video_colpali") == "video_colpali_acme_acme"
+
+        assert [schema.name for schema in mgr.deployed_packages[0].schemas] == [
+            "organization_metadata",
+            "tenant_metadata",
+            "config_metadata",
+            "adapter_registry",
+            in_flight,
+        ]
+        assert mgr._schema_registry.reserved_queries == [set(deployed)]
         assert mgr._schema_registry.unregistered == [("acme", "video_colpali")]
 
     def test_live_listing_failure_propagates_without_deploy(self):

@@ -339,7 +339,9 @@ def test_intent_storage_down_prevents_activation_with_context(
                 match=f"Cannot persist deployment intent for '{schema}':",
             ) as failure:
                 backend.schema_registry.deploy_schema(tenant, "wiki_pages")
-            assert type(failure.value.__cause__).__name__ == "RuntimeError"
+            assert (
+                type(failure.value.__cause__).__name__ == "ConfigStoreUnavailableError"
+            )
             assert type(failure.value.__cause__.__cause__).__name__ == "ConnectionError"
         finally:
             dead_store.close()
@@ -351,8 +353,6 @@ def test_intent_storage_down_prevents_activation_with_context(
 
 
 def _create_in_process(port, config_port, tenant, connection, pause):
-    from fastapi import HTTPException
-
     backend = _connect(port, config_port)
     tenant_manager.backend = backend
     registry = backend.schema_registry
@@ -367,26 +367,16 @@ def _create_in_process(port, config_port, tenant, connection, pause):
 
         registry.register_schema = gated_register
     try:
-        for attempt in range(120):
-            try:
-                result = asyncio.run(
-                    tenant_manager.create_tenant(
-                        tenant_manager.CreateTenantRequest(
-                            tenant_id=tenant,
-                            created_by="transient-test",
-                            base_schemas=["wiki_pages"],
-                        )
-                    )
+        result = asyncio.run(
+            tenant_manager.create_tenant(
+                tenant_manager.CreateTenantRequest(
+                    tenant_id=tenant,
+                    created_by="concurrent-test",
+                    base_schemas=["wiki_pages"],
                 )
-                connection.send(("created", asdict(result)))
-                return
-            except HTTPException as exc:
-                if "Refusing to deploy:" not in str(exc.detail):
-                    raise
-                connection.send(("refused", str(exc.detail)))
-                if attempt == 119:
-                    raise
-                time.sleep(1)
+            )
+        )
+        connection.send(("created", asdict(result)))
     except BaseException as exc:
         connection.send(("error", repr(exc)))
         raise
@@ -395,9 +385,14 @@ def _create_in_process(port, config_port, tenant, connection, pause):
         connection.close()
 
 
-def test_two_process_tenant_creations_retry_transient_without_recovery(
+def test_two_process_tenant_creations_keep_each_others_schema_without_recovery(
     recovery_backend,
 ):
+    """The first creator activates its schema and stalls before registering
+    it. A second creator meanwhile builds and activates its own package: that
+    package must carry the first schema, rebuilt from the pending intent, so
+    the first creator's documents survive and nothing is refused. Each
+    creator then completes exactly its own registration."""
     connect, store = recovery_backend
     backend = connect()
     tenants = [f"orphan_{uuid4().hex[:12]}:{suffix}" for suffix in ("first", "second")]
@@ -416,56 +411,40 @@ def test_two_process_tenant_creations_retry_transient_without_recovery(
     expected = {}
     first.start()
     try:
-        deadline = time.monotonic() + 120
-        while time.monotonic() < deadline:
-            assert parent_a.poll(120) is True
-            message, expected = parent_a.recv()
-            if message != "refused":
-                break
+        assert parent_a.poll(120) is True
+        message, expected = parent_a.recv()
         assert message == "activated"
         schema_a = expected["full_schema_name"]
         app, fields = _feed_sentinel(backend, schema_a, tenants[0])
         second.start()
         assert parent_b.poll(120) is True
-        message, detail = parent_b.recv()
-        assert message == "refused"
-        refused = re.search(
-            r"cannot be reconstructed \((\[.*?\])\); proceeding would remove them and destroy their documents\.",
-            detail,
+        message, result_b = parent_b.recv()
+        assert message == "created"
+        schema_b = f"wiki_pages_{tenants[1].replace(':', '_')}"
+        assert result_b["tenant_full_id"] == tenants[1]
+        assert result_b["schemas_deployed"] == ["wiki_pages"]
+        assert (
+            set(backend.schema_manager.list_deployed_document_types()) & schemas
+            == schemas
         )
-        assert set(ast.literal_eval(refused.group(1))) & schemas == {schema_a}
+        _assert_sentinel(app, schema_a, fields)
         assert _entry(store, tenants[0]) is None
         intent = _entry(store, tenants[0], "schema_deployment_intents").config_value
         assert (intent["state"], intent["attempts"]) == ("pending", 0)
-        schema_b = f"wiki_pages_{tenants[1].replace(':', '_')}"
-        assert _entry(store, tenants[1]) is None
+        assert _entry(store, tenants[1]).config_value["full_schema_name"] == schema_b
         assert (
-            set(backend.schema_manager.list_deployed_document_types()) & {schema_b}
-            == set()
+            _entry(store, tenants[1], "schema_deployment_intents").config_value["state"]
+            == "complete"
         )
-        refused_intent = _entry(
-            store, tenants[1], "schema_deployment_intents"
-        ).config_value
-        assert (refused_intent["state"], refused_intent["attempts"]) == ("absent", 0)
         parent_a.send("register")
         assert parent_a.poll(120) is True
         message, result_a = parent_a.recv()
         assert message == "created"
-        deadline = time.monotonic() + 120
-        while time.monotonic() < deadline:
-            assert parent_b.poll(120) is True
-            message, result_b = parent_b.recv()
-            if message != "refused":
-                break
-        assert message == "created"
-        assert [result_a["tenant_full_id"], result_b["tenant_full_id"]] == tenants
-        assert [result_a["schemas_deployed"], result_b["schemas_deployed"]] == [
-            ["wiki_pages"],
-            ["wiki_pages"],
-        ]
-        assert {
-            _entry(store, tenant).config_value["full_schema_name"] for tenant in tenants
-        } == schemas
+        assert result_a["tenant_full_id"] == tenants[0]
+        assert result_a["schemas_deployed"] == ["wiki_pages"]
+        assert _entry(store, tenants[0]).config_value == {
+            key: value for key, value in expected.items() if key != "expected_version"
+        }
         assert (
             set(backend.schema_manager.list_deployed_document_types()) & schemas
             == schemas
@@ -675,7 +654,9 @@ def test_registration_outage_after_activation_preserves_recoverable_state(
                 match=f"Failed to register schema '{schema}' in ConfigStore:.*Durable registration recovery is pending; the schema is preserved.",
             ) as failure:
                 owner.schema_registry.deploy_schema(tenant, "wiki_pages")
-            assert type(failure.value.__cause__).__name__ == "RuntimeError"
+            assert (
+                type(failure.value.__cause__).__name__ == "ConfigStoreUnavailableError"
+            )
             assert type(failure.value.__cause__.__cause__).__name__ == "ConnectionError"
             assert _entry(store, tenant) is None
             assert (
@@ -955,3 +936,173 @@ def test_reconciler_keeps_peer_schema_activated_but_not_yet_registered(
                     config_key="schema_wiki_pages",
                     config_value=writes[0],
                 )
+
+
+def _activate_then_die(owner, store, monkeypatch, tenant):
+    """Activate ``tenant``'s wiki_pages schema and kill the owner before its
+    registry write, leaving a live schema with a pending intent inside its
+    grace. Returns the registration the owner was about to write."""
+    expected = {}
+    write = store.compare_and_set_config
+
+    def die_before_registry_write(**kwargs):
+        if kwargs["service"] == "schema_registry" and kwargs["tenant_id"] == tenant:
+            expected.update(copy.deepcopy(kwargs["config_value"]))
+            raise ProcessDeath("process killed after activation, before registration")
+        return write(**kwargs)
+
+    monkeypatch.setattr(store, "compare_and_set_config", die_before_registry_write)
+    try:
+        with pytest.raises(
+            ProcessDeath, match="killed after activation, before registration"
+        ):
+            owner.schema_registry.deploy_schema(tenant, "wiki_pages")
+    finally:
+        monkeypatch.setattr(store, "compare_and_set_config", write)
+    assert _entry(store, tenant) is None
+    intent = _entry(store, tenant, "schema_deployment_intents").config_value
+    assert (intent["state"], intent["attempts"]) == ("pending", 0)
+    return expected
+
+
+def _restore_registration(store, tenant, registration):
+    if registration and _entry(store, tenant) is None:
+        store.set_config(
+            tenant_id=tenant,
+            scope=ConfigScope.SCHEMA,
+            service="schema_registry",
+            config_key="schema_wiki_pages",
+            config_value=registration,
+        )
+
+
+def test_peer_deploy_inside_the_grace_keeps_a_live_schema_awaiting_registration(
+    recovery_backend, monkeypatch
+):
+    """An owner activates its schema and dies before registering it. Inside
+    the intent's grace a second process deploys another tenant: the package it
+    activates must carry the owner's schema, rebuilt from the pending intent,
+    and the owner's documents must survive. Once the grace elapses the next
+    package build completes the owner's exact registration."""
+    import cogniverse_core.registries.schema_deployment_intents as intent_module
+    import cogniverse_core.registries.schema_registry as registry_module
+
+    connect, store = recovery_backend
+    owner, peer = connect(), connect()
+    tenant = f"orphan_{uuid4().hex[:12]}:ingrace"
+    schema = f"wiki_pages_{tenant.replace(':', '_')}"
+    peer_tenant = f"orphan_{uuid4().hex[:12]}:peer"
+    peer_schema = f"wiki_pages_{peer_tenant.replace(':', '_')}"
+    monkeypatch.setattr(registry_module, "_SCHEMA_INTENT_GRACE_S", 600)
+    expected = _activate_then_die(owner, store, monkeypatch, tenant)
+    try:
+        app, fields = _feed_sentinel(owner, schema, tenant)
+
+        assert peer.schema_registry.deploy_schema(peer_tenant, "wiki_pages") == (
+            peer_schema
+        )
+        assert set(peer.schema_manager.list_deployed_document_types()) & {
+            schema,
+            peer_schema,
+        } == {schema, peer_schema}
+        _assert_sentinel(app, schema, fields)
+        assert _entry(store, tenant) is None
+        intent = _entry(store, tenant, "schema_deployment_intents").config_value
+        assert (intent["state"], intent["attempts"]) == ("pending", 0)
+
+        journal_now = intent_module._now
+        monkeypatch.setattr(intent_module, "_now", lambda: journal_now() + 601)
+        assert peer.deploy_schemas([]) is True
+        assert _entry(store, tenant).config_value == expected
+        assert (
+            _entry(store, tenant, "schema_deployment_intents").config_value["state"]
+            == "complete"
+        )
+        _assert_sentinel(app, schema, fields)
+    finally:
+        _restore_registration(store, tenant, expected)
+
+
+def test_startup_metadata_deploy_keeps_a_live_schema_awaiting_registration(
+    recovery_backend, monkeypatch
+):
+    """The runtime's startup metadata deploy rebuilds the whole package with
+    schema removal allowed. A schema whose owner died between activation and
+    registration is not in the registry; the package must still carry it,
+    rebuilt from its pending intent, and its documents must survive."""
+    import cogniverse_core.registries.schema_registry as registry_module
+
+    connect, store = recovery_backend
+    owner, restarted = connect(), connect()
+    tenant = f"orphan_{uuid4().hex[:12]}:startup"
+    schema = f"wiki_pages_{tenant.replace(':', '_')}"
+    monkeypatch.setattr(registry_module, "_SCHEMA_INTENT_GRACE_S", 600)
+    expected = _activate_then_die(owner, store, monkeypatch, tenant)
+    try:
+        app, fields = _feed_sentinel(owner, schema, tenant)
+        restarted.schema_manager.upload_metadata_schemas(
+            app_name="cogniverse", allow_schema_removal=True
+        )
+        assert set(restarted.schema_manager.list_deployed_document_types()) & {
+            schema
+        } == {schema}
+        _assert_sentinel(app, schema, fields)
+        intent = _entry(store, tenant, "schema_deployment_intents").config_value
+        assert (intent["state"], intent["attempts"]) == ("pending", 0)
+    finally:
+        _restore_registration(store, tenant, expected)
+
+
+def test_startup_metadata_deploy_refuses_to_drop_a_live_schema_it_cannot_rebuild(
+    recovery_backend,
+):
+    """A live schema with neither a registry row nor a deployment intent
+    cannot be rebuilt into the package. The startup deploy must refuse,
+    naming it, rather than activate a package that destroys its documents."""
+    import json
+
+    from vespa.package import ApplicationPackage
+
+    from cogniverse_core.registries.exceptions import BackendDeploymentError
+    from cogniverse_vespa.json_schema_parser import JsonSchemaParser
+    from cogniverse_vespa.metadata_schemas import add_metadata_schemas_to_package
+
+    connect, store = recovery_backend
+    backend = connect()
+    tenant = f"orphan_{uuid4().hex[:12]}:foreign"
+    schema = f"wiki_pages_{tenant.replace(':', '_')}"
+    definition = FilesystemSchemaLoader(Path("configs/schemas")).load_schema(
+        "wiki_pages"
+    )
+    definition["name"] = schema
+    package = ApplicationPackage(
+        name="cogniverse",
+        schema=backend.schema_manager._get_existing_tenant_schemas()
+        + [JsonSchemaParser().parse_schema(json.loads(json.dumps(definition)))],
+    )
+    add_metadata_schemas_to_package(package)
+    generation = backend._deploy_package(package)
+    backend._wait_for_schema_convergence(generation, [schema])
+    try:
+        app, fields = _feed_sentinel(backend, schema, tenant)
+        with pytest.raises(BackendDeploymentError) as refusal:
+            backend.schema_manager.upload_metadata_schemas(
+                app_name="cogniverse", allow_schema_removal=True
+            )
+        assert str(refusal.value) == (
+            "Refusing to deploy: 1 schema(s) live in Vespa have no registry "
+            f"entry and cannot be reconstructed (['{schema}']); proceeding "
+            "would remove them and destroy their documents. Clear them with "
+            "POST /admin/reconcile-orphans?dry_run=false, which drops every "
+            "orphan together; deleting one tenant at a time is refused here "
+            "for as long as any orphan remains."
+        )
+        assert set(backend.schema_manager.list_deployed_document_types()) & {
+            schema
+        } == {schema}
+        _assert_sentinel(app, schema, fields)
+    finally:
+        backend.schema_manager.delete_orphan_schemas([schema])
+    assert set(backend.schema_manager.list_deployed_document_types()) & {schema} == (
+        set()
+    )
