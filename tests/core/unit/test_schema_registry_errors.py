@@ -72,3 +72,91 @@ def test_failed_intent_retirement_preserves_deployment_error_and_pending_record(
         (record["state"], record["registration"]["full_schema_name"])
         for record in registry._deployment_intents.pending()
     ] == [("pending", "wiki_pages_acme_prod")]
+
+
+@pytest.mark.parametrize(
+    "names, message",
+    [
+        ([], "base_schema_names is required"),
+        (["wiki_pages", "wiki_pages"], "Duplicate base schema names: ['wiki_pages']"),
+    ],
+)
+def test_batch_rejects_invalid_names_before_activation(names, message):
+    import re
+    from types import SimpleNamespace
+
+    from tests.core.unit.test_schema_deployment_intents import Store
+
+    packages = []
+    registry = SchemaRegistry(
+        config_manager=SimpleNamespace(store=Store()),
+        backend=SimpleNamespace(
+            deploy_schemas=lambda schemas: packages.append(schemas)
+        ),
+        schema_loader=SimpleNamespace(load_schema=lambda base: {"name": base}),
+    )
+    with pytest.raises(ValueError, match=re.escape(message)):
+        registry.deploy_schemas("acme:prod", names)
+    assert packages == []
+
+
+def test_single_schema_uses_batch_registration():
+    from types import SimpleNamespace
+
+    from tests.core.unit.test_schema_deployment_intents import Store
+
+    registry = SchemaRegistry(
+        config_manager=SimpleNamespace(store=Store()),
+        backend=SimpleNamespace(),
+        schema_loader=SimpleNamespace(),
+    )
+    calls = []
+
+    def batch(tenant_id, base_schema_names, config=None, force=False):
+        calls.append((tenant_id, base_schema_names, config, force))
+        return ["wiki_pages_acme_prod"]
+
+    registry.deploy_schemas = batch
+    assert (
+        registry.deploy_schema("acme:prod", "wiki_pages", {"a": 1}, True)
+        == "wiki_pages_acme_prod"
+    )
+    assert calls == [("acme:prod", ["wiki_pages"], {"a": 1}, True)]
+
+
+def test_batch_reloads_definition_when_peer_deletes_cached_schema():
+    from types import SimpleNamespace
+
+    from tests.utils.memory_store import InMemoryConfigStore
+
+    store = InMemoryConfigStore()
+    packages = []
+
+    def deploy(schemas):
+        packages.append(schemas)
+        return True
+
+    registry = SchemaRegistry(
+        config_manager=SimpleNamespace(store=store),
+        backend=SimpleNamespace(deploy_schemas=deploy),
+        schema_loader=SimpleNamespace(load_schema=lambda base: {"name": base}),
+    )
+    assert registry.deploy_schema("acme:prod", "wiki_pages") == "wiki_pages_acme_prod"
+    refresh = registry._get_all_schemas
+
+    def peer_deletes_before_refresh():
+        registry.unregister_schema("acme:prod", "wiki_pages")
+        return refresh()
+
+    registry._get_all_schemas = peer_deletes_before_refresh
+    assert registry.deploy_schemas("acme:prod", ["wiki_pages", "provenance"]) == [
+        "wiki_pages_acme_prod",
+        "provenance_acme_prod",
+    ]
+    assert [[row["name"] for row in package] for package in packages] == [
+        ["wiki_pages_acme_prod"],
+        ["wiki_pages_acme_prod", "provenance_acme_prod"],
+    ]
+    assert {
+        info.full_schema_name for info in registry.get_tenant_schemas("acme:prod")
+    } == {"wiki_pages_acme_prod", "provenance_acme_prod"}

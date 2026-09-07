@@ -1,12 +1,4 @@
-"""create_tenant must roll back every partial write.
-
-A tenant create that fails after schemas deploy leaves live state behind unless
-the deployed tenant schemas and the auto-created org metadata are removed too.
-The contract here is:
-- transport timeouts are retried without rolling back;
-- schema-deploy and tenant-write failures roll back the tenant schemas and org;
-- missing schema_manager during rollback is logged loudly.
-"""
+"""Tenant creation retains pending schemas and rolls back completed deployments."""
 
 from __future__ import annotations
 
@@ -23,13 +15,13 @@ _MISSING = object()
 
 class _RecordingSchemaRegistry:
     def __init__(self, outcomes):
-        self.calls: list[tuple[str, str]] = []
+        self.calls: list[tuple[str, list[str]]] = []
         self._outcomes = list(outcomes)
 
-    def deploy_schema(self, tenant_id, base_schema_name):
-        self.calls.append((tenant_id, base_schema_name))
+    def deploy_schemas(self, tenant_id, base_schema_names):
+        self.calls.append((tenant_id, base_schema_names))
         if not self._outcomes:
-            raise AssertionError("deploy_schema called more times than expected")
+            raise AssertionError("deploy_schemas called more times than expected")
 
         outcome = self._outcomes.pop(0)
         if isinstance(outcome, BaseException):
@@ -123,8 +115,8 @@ async def test_create_tenant_retries_transport_timeout_without_rollback(monkeypa
         schemas_deployed=["video_colpali_smol500_mv_frame"],
     )
     assert backend.schema_registry.calls == [
-        ("acme:prod", "video_colpali_smol500_mv_frame"),
-        ("acme:prod", "video_colpali_smol500_mv_frame"),
+        ("acme:prod", ["video_colpali_smol500_mv_frame"]),
+        ("acme:prod", ["video_colpali_smol500_mv_frame"]),
     ]
     assert backend.schema_manager.calls == []
     assert backend.create_metadata_calls == [
@@ -158,16 +150,13 @@ async def test_create_tenant_retries_transport_timeout_without_rollback(monkeypa
 
 
 @pytest.mark.asyncio
-async def test_create_tenant_rolls_back_schema_and_org_after_deploy_failure(
+async def test_create_tenant_preserves_pending_schemas_after_deploy_failure(
     monkeypatch,
 ):
     from cogniverse_runtime.admin import tenant_manager as tenant_manager_mod
 
     backend = _RecordingBackend(
-        deploy_outcomes=[
-            None,
-            RuntimeError("schema validation failed"),
-        ],
+        deploy_outcomes=[RuntimeError("schema validation failed")],
         create_outcomes=[True],
     )
     tenant_manager = _prepare_create_tenant(monkeypatch, backend)
@@ -187,10 +176,9 @@ async def test_create_tenant_rolls_back_schema_and_org_after_deploy_failure(
     assert exc.value.status_code == 500
     assert exc.value.detail == "schema validation failed"
     assert backend.schema_registry.calls == [
-        ("acme:prod", "video_colpali_smol500_mv_frame"),
-        ("acme:prod", "document_visual"),
+        ("acme:prod", ["video_colpali_smol500_mv_frame", "document_visual"]),
     ]
-    assert backend.schema_manager.calls == ["acme:prod"]
+    assert backend.schema_manager.calls == []
     assert backend.create_metadata_calls == [
         (
             "organization_metadata",
@@ -230,7 +218,7 @@ async def test_create_tenant_rolls_back_schema_and_org_after_metadata_failure(
     assert exc.value.status_code == 500
     assert exc.value.detail == "Failed to create tenant acme:prod in backend"
     assert backend.schema_registry.calls == [
-        ("acme:prod", "video_colpali_smol500_mv_frame"),
+        ("acme:prod", ["video_colpali_smol500_mv_frame"]),
     ]
     assert backend.schema_manager.calls == ["acme:prod"]
     assert backend.create_metadata_calls == [
@@ -271,11 +259,8 @@ async def test_create_tenant_logs_when_schema_manager_missing_during_rollback(
     from cogniverse_runtime.admin import tenant_manager as tenant_manager_mod
 
     backend = _RecordingBackend(
-        deploy_outcomes=[
-            None,
-            RuntimeError("schema validation failed"),
-        ],
-        create_outcomes=[True],
+        deploy_outcomes=[None],
+        create_outcomes=[True, False],
         schema_manager=None,
     )
     tenant_manager = _prepare_create_tenant(monkeypatch, backend)
@@ -293,9 +278,9 @@ async def test_create_tenant_logs_when_schema_manager_missing_during_rollback(
         with pytest.raises(HTTPException) as exc:
             await tenant_manager.create_tenant(request)
 
-    assert exc.value.detail == "schema validation failed"
+    assert exc.value.detail == "Failed to create tenant acme:prod in backend"
     assert backend.delete_metadata_calls == [("organization_metadata", "acme")]
-    assert (
-        "backend.schema_manager is unavailable after deploying 1 schema(s)"
-        in caplog.text
-    )
+    assert [record.getMessage() for record in caplog.records] == [
+        "Cannot roll back tenant schemas for acme:prod: backend.schema_manager "
+        "is unavailable after deploying 2 schema(s)"
+    ]

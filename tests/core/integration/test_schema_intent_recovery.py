@@ -2,6 +2,7 @@
 
 import ast
 import asyncio
+import contextlib
 import copy
 import multiprocessing
 import re
@@ -1106,3 +1107,284 @@ def test_startup_metadata_deploy_refuses_to_drop_a_live_schema_it_cannot_rebuild
     assert set(backend.schema_manager.list_deployed_document_types()) & {schema} == (
         set()
     )
+
+
+_BATCH_BASES = ["wiki_pages", "provenance", "agent_memories"]
+
+
+@contextlib.contextmanager
+def _activations(monkeypatch):
+    """Record the activations a block causes, at the seam that performs them.
+
+    The config server's generation counter is cluster-wide and shared with every
+    peer test in this session, several of which deliberately leave pending
+    intents and unregistered live schemas behind, so a delta on it cannot
+    attribute an activation to the call under test.
+
+    An entry is recorded when the activation is attempted, so one that raised
+    is still counted, and it carries the schema names the package held.
+    """
+    activations: list[frozenset[str]] = []
+    deploy_package = VespaBackend._deploy_package
+
+    def counted(self, app_package, *args, **kwargs):
+        activations.append(frozenset(schema.name for schema in app_package.schemas))
+        return deploy_package(self, app_package, *args, **kwargs)
+
+    monkeypatch.setattr(VespaBackend, "_deploy_package", counted)
+    try:
+        yield activations
+    finally:
+        monkeypatch.setattr(VespaBackend, "_deploy_package", deploy_package)
+
+
+def _mine(activations, names):
+    """The recorded activations that carried any of ``names``, intersected to them.
+
+    Peer activations carry none of this test's schemas, so this attributes an
+    activation to the call under test regardless of session order. A per-schema
+    deploy loop yields one entry per schema; a batch yields exactly one entry
+    holding every name.
+    """
+    return [carried & names for carried in activations if carried & names]
+
+
+def _pending_for(registry, tenant):
+    """Pending deployment intents for one tenant.
+
+    Peer tests in this session leave pending intents behind by design, so the
+    unscoped journal cannot be compared against what this test seeded.
+    """
+    return [
+        record
+        for record in registry._deployment_intents.pending()
+        if record["registration"]["tenant_id"] == tenant
+    ]
+
+
+def _reserved_for(registry, live, tenant):
+    """Reserved schemas for one tenant, for the same reason as ``_pending_for``."""
+    return {
+        name: registration
+        for name, registration in registry.reserved_schemas(live).items()
+        if registration["tenant_id"] == tenant
+    }
+
+
+def _create_batch(backend, monkeypatch, tenant, bases):
+    from fastapi import FastAPI
+    from fastapi.testclient import TestClient
+
+    app = FastAPI()
+    app.include_router(tenant_manager.router, prefix="/admin")
+    monkeypatch.setattr(tenant_manager, "get_backend", lambda: backend)
+    with TestClient(app) as client:
+        return client.post(
+            "/admin/tenants",
+            json={
+                "tenant_id": tenant,
+                "created_by": "batch-test",
+                "base_schemas": bases,
+            },
+        )
+
+
+def test_three_schema_tenant_activates_exactly_once(recovery_backend, monkeypatch):
+    connect, _store = recovery_backend
+    backend = connect()
+    names = {f"{base}_tenantbatch_three" for base in _BATCH_BASES}
+    started = time.monotonic()
+    with _activations(monkeypatch) as activations:
+        response = _create_batch(
+            backend, monkeypatch, "tenantbatch:three", _BATCH_BASES
+        )
+    elapsed = time.monotonic() - started
+    print(
+        f"TENANTBATCH activations={len(activations)} elapsed_s={elapsed:.3f}",
+        flush=True,
+    )
+    assert response.status_code == 200, response.text
+    assert _mine(activations, names) == [names], activations
+    assert response.json()["schemas_deployed"] == _BATCH_BASES
+    assert {
+        info.full_schema_name
+        for info in backend.schema_registry.get_tenant_schemas("tenantbatch:three")
+    } == {f"{base}_tenantbatch_three" for base in _BATCH_BASES}
+
+
+def test_batch_registration_failure_reserves_every_definition(
+    recovery_backend, monkeypatch
+):
+    import io
+    import zipfile
+
+    import requests
+
+    import cogniverse_core.registries.schema_deployment_intents as intent_module
+    import cogniverse_core.registries.schema_registry as registry_module
+
+    connect, store = recovery_backend
+    backend = connect()
+    tenant = "tenantbatch:failure"
+    names = {f"{base}_tenantbatch_failure" for base in _BATCH_BASES}
+    monkeypatch.setattr(registry_module, "_SCHEMA_INTENT_GRACE_S", 600)
+    write = store.compare_and_set_config
+    send = requests.Session.send
+    packages = []
+
+    def capture(session, request, **kwargs):
+        if request.url.endswith("/prepareandactivate"):
+            with zipfile.ZipFile(io.BytesIO(request.body)) as package:
+                members = set(package.namelist())
+                if all(f"schemas/{name}.sd" in members for name in names):
+                    if not packages:
+                        assert {
+                            record["registration"]["full_schema_name"]
+                            for record in _pending_for(backend.schema_registry, tenant)
+                        } == names
+                    packages.append(
+                        {name: package.read(f"schemas/{name}.sd") for name in names}
+                    )
+        return send(session, request, **kwargs)
+
+    def fail_second_registration(**kwargs):
+        if (
+            kwargs["service"] == "schema_registry"
+            and kwargs["tenant_id"] == tenant
+            and kwargs["config_key"] == "schema_provenance"
+        ):
+            raise requests.exceptions.ConnectionError("second registration interrupted")
+        return write(**kwargs)
+
+    monkeypatch.setattr(requests.Session, "send", capture)
+    monkeypatch.setattr(store, "compare_and_set_config", fail_second_registration)
+    with _activations(monkeypatch) as activations:
+        response = _create_batch(backend, monkeypatch, tenant, _BATCH_BASES)
+    assert response.status_code == 500, response.text
+    assert _mine(activations, names) == [names], (activations, response.text)
+    records = _pending_for(backend.schema_registry, tenant)
+    assert {record["registration"]["full_schema_name"] for record in records} == names
+    assert {(record["state"], record["attempts"]) for record in records} == {
+        ("pending", 0)
+    }
+    expected = {
+        record["registration"]["full_schema_name"]: record["registration"]
+        for record in records
+    }
+    live = set(backend.schema_manager.list_deployed_document_types())
+    assert _reserved_for(backend.schema_registry, live, tenant) == expected
+    assert {
+        info.full_schema_name
+        for info in backend.schema_registry.get_tenant_schemas(tenant)
+    } == {"wiki_pages_tenantbatch_failure"}
+    monkeypatch.setattr(store, "compare_and_set_config", write)
+    peer = connect()
+    assert peer.deploy_schemas([]) is True
+    assert len(packages) == 2
+    assert packages[1] == packages[0]
+    assert (
+        _reserved_for(
+            peer.schema_registry,
+            set(peer.schema_manager.list_deployed_document_types()),
+            tenant,
+        )
+        == expected
+    )
+    now = intent_module._now
+    monkeypatch.setattr(intent_module, "_now", lambda: now() + 601)
+    assert peer.deploy_schemas([]) is True
+    assert {
+        info.full_schema_name: asdict(info)
+        for info in peer.schema_registry.get_tenant_schemas(tenant)
+    } == expected
+    assert _pending_for(peer.schema_registry, tenant) == []
+
+
+def test_single_schema_tenant_preserves_definition_bytes(recovery_backend, monkeypatch):
+    import hashlib
+    import io
+    import json
+    import zipfile
+
+    import requests
+
+    connect, _store = recovery_backend
+    backend = connect()
+    name = "wiki_pages_tenantbatch_single"
+    packages = []
+    send = requests.Session.send
+
+    def capture(session, request, **kwargs):
+        if request.url.endswith("/prepareandactivate"):
+            with zipfile.ZipFile(io.BytesIO(request.body)) as package:
+                packages.append(package.read(f"schemas/{name}.sd"))
+        return send(session, request, **kwargs)
+
+    monkeypatch.setattr(requests.Session, "send", capture)
+    with _activations(monkeypatch) as activations:
+        response = _create_batch(
+            backend, monkeypatch, "tenantbatch:single", ["wiki_pages"]
+        )
+    assert response.status_code == 200, response.text
+    assert _mine(activations, {"wiki_pages_tenantbatch_single"}) == [
+        {"wiki_pages_tenantbatch_single"}
+    ], activations
+    assert len(packages) == 1
+    digest = hashlib.sha256(packages[0]).hexdigest()
+    print(f"TENANTBATCH single_schema_sha256={digest}", flush=True)
+    assert digest == "4d1dc576778cecf8f72ba83f196820dc28a059f477a92287244fd065f8231e65"
+    [info] = backend.schema_registry.get_tenant_schemas("tenantbatch:single")
+    definition = backend.schema_registry._schema_loader.load_schema("wiki_pages")
+    definition["name"] = name
+    assert info.schema_definition == json.dumps(definition)
+    assert (
+        info.tenant_id,
+        info.base_schema_name,
+        info.full_schema_name,
+        info.config,
+    ) == ("tenantbatch:single", "wiki_pages", name, {})
+
+
+def test_concurrent_batches_share_one_activation(recovery_backend, monkeypatch):
+    import threading
+    from concurrent.futures import ThreadPoolExecutor
+
+    connect, _store = recovery_backend
+    owners = [connect(), connect()]
+    barrier = threading.Barrier(2)
+    for owner in owners:
+        loader = owner.schema_registry._schema_loader
+        load = loader.load_schema
+
+        def simultaneous_load(base, load=load):
+            definition = load(base)
+            if base == _BATCH_BASES[-1]:
+                barrier.wait(timeout=30)
+            return definition
+
+        monkeypatch.setattr(loader, "load_schema", simultaneous_load)
+    expected = [f"{base}_tenantbatch_concurrent" for base in _BATCH_BASES]
+    with _activations(monkeypatch) as activations:
+        with ThreadPoolExecutor(max_workers=2) as pool:
+            futures = [
+                pool.submit(
+                    owner.schema_registry.deploy_schemas,
+                    "tenantbatch:concurrent",
+                    _BATCH_BASES,
+                )
+                for owner in owners
+            ]
+            assert [future.result(timeout=180) for future in futures] == [
+                expected,
+                expected,
+            ]
+    assert _mine(activations, set(expected)) == [set(expected)], activations
+    assert [
+        {
+            info.full_schema_name
+            for info in owner.schema_registry.get_tenant_schemas(
+                "tenantbatch:concurrent"
+            )
+        }
+        for owner in owners
+    ] == [set(expected), set(expected)]
