@@ -18,6 +18,7 @@ import pytest
 from cogniverse_core.registries.exceptions import BackendDeploymentError
 from cogniverse_vespa import json_schema_parser
 from cogniverse_vespa.backend import VespaBackend
+from cogniverse_vespa.vespa_schema_manager import VespaSchemaManager
 
 pytestmark = [pytest.mark.unit, pytest.mark.ci_fast]
 
@@ -34,14 +35,21 @@ def backend_with_orphan(monkeypatch):
     backend = VespaBackend.__new__(VespaBackend)
     registry = MagicMock()
     registry._get_all_schemas.return_value = []  # nothing to merge/reconstruct
+    registry.reconcile_deployment_intents.return_value = []
+    registry.reserved_schemas.return_value = {}
     backend.schema_registry = registry
 
-    manager = MagicMock()
-    # An orphan lives in Vespa that the registry does not know and cannot
-    # reconstruct — a peer tenant's schema mid-registration, say.
-    manager.list_deployed_document_types.return_value = [
-        "knowledge_graph_globex_globex"
-    ]
+    # The real manager resolves live schemas against the registry and the
+    # intent journal; only its config-server probe is stubbed. An orphan lives
+    # in Vespa that neither source can rebuild.
+    manager = VespaSchemaManager(
+        backend_endpoint="http://localhost",
+        backend_port=19071,
+        schema_registry=registry,
+    )
+    manager.list_deployed_document_types = MagicMock(
+        return_value=["knowledge_graph_globex_globex"]
+    )
     backend.schema_manager = manager
 
     backend._deploy_package = MagicMock()

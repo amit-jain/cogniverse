@@ -26,7 +26,7 @@ logger = logging.getLogger(__name__)
 # Budget for every service to run an activated generation and for each new
 # schema to accept a feed. Measured: 6 s for a 138-schema package on an idle
 # cluster, 17 s with three schema-removal generations queued ahead of it.
-SCHEMA_CONVERGENCE_TIMEOUT_S = 60
+SCHEMA_CONVERGENCE_TIMEOUT_S = 120
 
 
 def _http_status_of(exc: BaseException) -> Optional[int]:
@@ -844,7 +844,10 @@ class VespaBackend(Backend):
 
             from vespa.package import ApplicationPackage
 
-            from cogniverse_core.registries.exceptions import BackendDeploymentError
+            from cogniverse_core.registries.exceptions import (
+                BackendDeploymentError,
+                SchemaConvergenceError,
+            )
             from cogniverse_vespa.json_schema_parser import JsonSchemaParser
 
             parser = JsonSchemaParser()
@@ -951,16 +954,6 @@ class VespaBackend(Backend):
                 f"{len(merged_schemas) - len(schemas_to_deploy)} schemas)"
             )
 
-            # Skip Vespa-managed metadata schemas — they're re-added below via
-            # add_metadata_schemas_to_package and shouldn't round-trip through
-            # JsonSchemaParser (their definitions aren't in the registry).
-            metadata_names = {
-                "tenant_metadata",
-                "organization_metadata",
-                "config_metadata",
-                "adapter_registry",
-            }
-
             if self.schema_registry:
                 try:
                     registry_schemas.extend(
@@ -973,60 +966,17 @@ class VespaBackend(Backend):
                         f"Cannot reconcile schema deployment intents: {recovery_exc}"
                     ) from recovery_exc
 
-            unknown_in_vespa = [
-                name
-                for name in vespa_deployed
-                if name not in merged_schema_names and name not in metadata_names
-            ]
-            if unknown_in_vespa:
-                # Try to reconstruct from registry-keyed-by-full-name (a
-                # cross-instance registry may have the definition even if
-                # the (tenant, base) lookup missed it).
-                registry_by_full_name: Dict[str, Any] = {}
-                for schema_info in registry_schemas:
-                    registry_by_full_name[schema_info.full_schema_name] = schema_info
-
-                unresolved = []
-                for full_name in unknown_in_vespa:
-                    schema_info = registry_by_full_name.get(full_name)
-                    if schema_info is None:
-                        unresolved.append(full_name)
-                        continue
-                    try:
-                        existing_def = schema_info.schema_definition
-                        if isinstance(existing_def, str):
-                            existing_def = json.loads(existing_def)
-                        merged_schemas.append(
-                            parser_for_existing.parse_schema(existing_def)
-                        )
-                        merged_schema_names.add(full_name)
-                    except Exception as reconstruct_exc:
-                        logger.error(
-                            f"Schema {full_name} exists in Vespa but can't be "
-                            f"reconstructed: {reconstruct_exc}"
-                        )
-                        unresolved.append(full_name)
-
-                if unresolved:
-                    # Live-in-Vespa but unregistered and not reconstructable.
-                    # Deploying a package without them tells Vespa to remove the
-                    # document types and destroy every document they hold — and
-                    # when the orphan is a peer tenant's schema mid-registration
-                    # that is silent cross-tenant data loss. Refuse: a transient
-                    # orphan clears on retry once the peer registers; a
-                    # persistent one is cleared by the reconciler, which drops
-                    # every orphan in one redeploy and so has a reconstructable
-                    # survivor set; a per-tenant delete cannot, because it
-                    # leaves the other orphans in that set and refuses here.
-                    raise BackendDeploymentError(
-                        f"Refusing to deploy: {len(unresolved)} schema(s) live in "
-                        f"Vespa have no registry entry and cannot be reconstructed "
-                        f"({sorted(unresolved)}); proceeding would remove them and "
-                        f"destroy their documents. Clear them with "
-                        f"POST /admin/reconcile-orphans?dry_run=false, which drops "
-                        f"every orphan together; deleting one tenant at a time is "
-                        f"refused here for as long as any orphan remains."
-                    )
+            # A live schema the package does not carry is rebuilt from the
+            # registry, including registrations recovery just completed, or
+            # from the intent of an activation still in flight; anything else
+            # refuses the deploy.
+            merged_schemas.extend(
+                self.schema_manager.reconstruct_unknown_schemas(
+                    vespa_deployed,
+                    known=merged_schema_names,
+                    registry_schemas=registry_schemas,
+                )
+            )
 
             # Get application name from system config
             system_config = self._config_manager_instance.get_system_config()
@@ -1065,7 +1015,9 @@ class VespaBackend(Backend):
                     timeout=SCHEMA_CONVERGENCE_TIMEOUT_S,
                 )
             except RuntimeError as convergence_exc:
-                raise BackendDeploymentError(str(convergence_exc)) from convergence_exc
+                raise SchemaConvergenceError(
+                    str(convergence_exc), generation=generation
+                ) from convergence_exc
 
             logger.info(f"Successfully deployed {len(schemas_to_deploy)} schemas")
             return True

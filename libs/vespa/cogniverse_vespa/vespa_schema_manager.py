@@ -1,7 +1,7 @@
 import logging
 import re
 import threading
-from typing import Dict, List
+from typing import Any, Dict, List, Optional
 
 from vespa.package import ApplicationPackage
 
@@ -619,6 +619,89 @@ class VespaSchemaManager:
                 f"proceeding would wipe all existing tenant schemas from Vespa."
             ) from e
 
+    @staticmethod
+    def _parse_definition(definition):
+        import json
+
+        from cogniverse_vespa.json_schema_parser import JsonSchemaParser
+
+        if isinstance(definition, str):
+            definition = json.loads(definition)
+        return JsonSchemaParser().parse_schema(definition)
+
+    def reconstruct_unknown_schemas(
+        self,
+        deployed: List[str],
+        *,
+        known: set,
+        registry_schemas: Optional[List[Any]] = None,
+    ) -> List[Any]:
+        """Rebuild every live schema outside ``known`` so a package can carry it.
+
+        A live schema is rebuilt from its registry row (``registry_schemas``,
+        which may include registrations recovery just completed) or, for an
+        activation another process has not registered yet, from its
+        deployment intent. Intents inside their grace whose schema is not live
+        yet are rebuilt too: their activation is imminent and a package built
+        without them drops the schema the moment it lands. A live schema
+        neither source can rebuild raises ``BackendDeploymentError``: the
+        package would remove it and destroy its documents.
+        """
+        from cogniverse_core.registries.exceptions import BackendDeploymentError
+
+        by_full_name: Dict[str, object] = {}
+        for info in registry_schemas or []:
+            by_full_name[info.full_schema_name] = info
+        reserved: Dict[str, Dict[str, Any]] = {}
+        if self._schema_registry is not None:
+            reserved = self._schema_registry.reserved_schemas(set(deployed))
+
+        candidates = [
+            name
+            for name in deployed
+            if name not in known and name not in self._PROTECTED_SCHEMAS
+        ]
+        candidates.extend(
+            sorted(
+                name for name in reserved if name not in deployed and name not in known
+            )
+        )
+        rebuilt: List[Any] = []
+        unresolved: List[str] = []
+        for full_name in candidates:
+            info = by_full_name.get(full_name)
+            if info is not None:
+                definition = info.schema_definition
+            elif full_name in reserved:
+                definition = reserved[full_name]["schema_definition"]
+            else:
+                unresolved.append(full_name)
+                continue
+            try:
+                rebuilt.append(self._parse_definition(definition))
+            except Exception as exc:
+                self._logger.error(
+                    f"Schema {full_name} exists in Vespa but can't be "
+                    f"reconstructed: {exc}"
+                )
+                unresolved.append(full_name)
+        if unresolved:
+            # A transient orphan clears on retry once its owner registers; a
+            # persistent one is cleared by the reconciler, which drops every
+            # orphan in one redeploy and so has a reconstructable survivor
+            # set. A per-tenant delete cannot, because it leaves the other
+            # orphans in that set and refuses here.
+            raise BackendDeploymentError(
+                f"Refusing to deploy: {len(unresolved)} schema(s) live in "
+                f"Vespa have no registry entry and cannot be reconstructed "
+                f"({sorted(unresolved)}); proceeding would remove them and "
+                f"destroy their documents. Clear them with "
+                f"POST /admin/reconcile-orphans?dry_run=false, which drops "
+                f"every orphan together; deleting one tenant at a time is "
+                f"refused here for as long as any orphan remains."
+            )
+        return rebuilt
+
     def upload_metadata_schemas(
         self, app_name: str = "cogniverse", allow_schema_removal: bool = False
     ) -> None:
@@ -659,8 +742,16 @@ class VespaSchemaManager:
                 create_adapter_registry_schema(),
             ]
             existing_schemas = self._get_existing_tenant_schemas()
-            # Merge metadata + tenant schemas to prevent Vespa schema-removal errors
-            # when tenant schemas already exist in the deployment.
+            if self._schema_registry is not None:
+                # The registry misses every schema whose activation another
+                # process has not registered yet; the package must carry
+                # those too, or activating it destroys their documents.
+                deployed = self.list_deployed_document_types(raise_on_failure=True)
+                existing_schemas.extend(
+                    self.reconstruct_unknown_schemas(
+                        deployed, known={schema.name for schema in existing_schemas}
+                    )
+                )
             all_schemas = metadata_schemas + existing_schemas
 
             # Deploy metadata + the registry's known tenant schemas together.
@@ -780,6 +871,15 @@ class VespaSchemaManager:
                 f"'{target}': {e}"
             ) from e
         survivor_names = {s.name for s in survivors}
+        # A peer's activation the registry has not seen yet survives too,
+        # rebuilt from its deployment intent.
+        for name, registration in self._schema_registry.reserved_schemas(
+            set(deployed)
+        ).items():
+            if name == target or name in survivor_names:
+                continue
+            survivors.append(self._parse_definition(registration["schema_definition"]))
+            survivor_names.add(name)
         would_drop = set(deployed) - self._PROTECTED_SCHEMAS - survivor_names - {target}
         if would_drop:
             raise ValueError(

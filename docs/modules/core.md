@@ -620,10 +620,11 @@ conditionally; `grace_s` is a required keyword-only argument.
 `reserved(live_names)` (exposed as `SchemaRegistry.reserved_schemas`) maps each
 full schema name an in-flight activation owns to its exact registration: every
 pending intent whose schema is live, plus pending intents still inside their
-grace whose activation is imminent. Any process that rebuilds the application
-package (the orphan reconciler's redeploy) keeps these as survivors, since the
-schema is live-but-unregistered for the whole convergence wait and its
-registration lives in another process. Vespa calls
+grace whose activation is imminent. Every process that rebuilds the application
+package — a schema deploy, the orphan reconciler's redeploy, tenant deletion,
+the runtime's startup metadata deploy — keeps these as survivors, rebuilt from
+the intent's definition, since the schema is live-but-unregistered for the whole
+convergence wait and its registration lives in another process. Vespa calls
 `reconcile_deployment_intents(live_names)` during
 package construction after a successful config-server enumeration. Records
 wait 90 seconds for normal registration. Recovery only completes schemas in
@@ -642,10 +643,14 @@ unregistered schema, fencing pending registration writes.
 `complete(record)` clears the active intent with revision checks and cannot
 replace a newer generation. An absent schema retires the intent without
 registering anything; the inactive record retains its definition for late
-activation. `retire(record)` applies the same rule to a reported deploy
-failure. If retirement also fails, the deployment error keeps its original
-cause and adds the retirement failure as an exception note; the durable record
-remains available for recovery. `records()` reads current journal entries;
+activation. `retire(record)` applies the same rule to a deploy that failed
+before activation. A deploy that failed after activation
+(`SchemaConvergenceError`: the generation did not reach every service, or the
+new schema refused a feed, inside the budget) leaves the intent pending: the
+schema is live, every package built meanwhile carries it, and recovery
+registers it once the grace elapses. If retirement fails, the deployment error
+keeps its original cause and adds the retirement failure as an exception note;
+the durable record remains available for recovery. `records()` reads current journal entries;
 `pending()` lists active ones. `reconcile(live_names, registered, write_registration)` atomically claims
 at most one attempt per record per invocation. Each failed recovery raises
 `RegistryStorageError` with schema context; a fourth attempt is refused.

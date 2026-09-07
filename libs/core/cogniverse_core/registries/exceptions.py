@@ -39,6 +39,18 @@ class BackendDeploymentError(SchemaDeploymentError):
     pass
 
 
+class SchemaConvergenceError(BackendDeploymentError):
+    """The config server activated the package, but the generation did not
+    reach every service, or a new schema refused a feed, inside the budget.
+
+    The schema is live in Vespa; only its registration is still owed.
+    """
+
+    def __init__(self, message: str, *, generation: int) -> None:
+        super().__init__(message)
+        self.generation = generation
+
+
 class RegistryStorageError(SchemaDeploymentError):
     """
     ConfigStore failed to register schema.
