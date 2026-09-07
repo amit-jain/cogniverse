@@ -74,9 +74,6 @@ async def test_lifespan_wires_admin_phoenix_endpoints_from_telemetry_env(
     def _fake_loader():
         return _FakeConfigLoader()
 
-    async def _fake_wait_for_backend_startup(*args, **kwargs):
-        return runtime_main.BackendStartupState.FEED_READY
-
     def _spy_get_system_config(self):
         config = original_get_system_config(self)
         captured["system_config"] = config
@@ -95,9 +92,6 @@ async def test_lifespan_wires_admin_phoenix_endpoints_from_telemetry_env(
     monkeypatch.setattr(ConfigManager, "get_system_config", _spy_get_system_config)
     monkeypatch.setattr(admin, "set_phoenix_endpoints", _spy_set_phoenix_endpoints)
     monkeypatch.setattr(PhoenixProvider, "initialize", lambda self, config: None)
-    monkeypatch.setattr(
-        runtime_main, "_wait_for_backend_startup", _fake_wait_for_backend_startup
-    )
 
     try:
         with pytest.raises(_AbortStartup, match="stop after endpoint wiring"):

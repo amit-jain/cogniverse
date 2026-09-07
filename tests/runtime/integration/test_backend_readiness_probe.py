@@ -1,7 +1,6 @@
-"""Backend-readiness probe and first-install bootstrap in the runtime lifespan.
+"""Backend-readiness probes and first-install bootstrap.
 
-``_wait_for_backend_startup`` runs inside the async lifespan, so it must use
-async HTTP + ``asyncio.sleep``. These tests prove it distinguishes a deployed
+``_wait_for_backend_startup`` uses async HTTP + ``asyncio.sleep``. These tests prove it distinguishes a deployed
 feed from a fresh config server, detects the fresh state without consuming the
 retry budget, and keeps the event loop responsive while both planes are down.
 
@@ -24,7 +23,7 @@ from types import SimpleNamespace
 
 import pytest
 
-from cogniverse_runtime.main import (
+from cogniverse_runtime.backend_startup import (
     BackendStartupState,
     _bootstrap_metadata_schemas,
     _wait_for_backend_startup,
@@ -155,7 +154,7 @@ async def test_wait_for_backend_startup_spends_its_whole_wall_clock_budget(caplo
     until the budget elapses and report progress against that budget."""
     loop = asyncio.get_running_loop()
     started = loop.time()
-    with caplog.at_level("INFO", logger="cogniverse_runtime.main"):
+    with caplog.at_level("INFO", logger="cogniverse_runtime.backend_startup"):
         state = await _wait_for_backend_startup(
             "http://127.0.0.1:1",
             "http://127.0.0.1:2",
@@ -243,7 +242,7 @@ async def test_wait_for_backend_startup_does_not_block_event_loop():
 def test_application_exists_false_when_backend_fresh():
     """A fresh config server answers 404 for the application resource — the
     only state in which the metadata bootstrap may deploy."""
-    from cogniverse_runtime.main import _application_exists
+    from cogniverse_runtime.backend_startup import _application_exists
 
     with _http_stub(404) as port:
         assert (
@@ -255,7 +254,7 @@ def test_application_exists_false_when_backend_fresh():
 def test_application_exists_true_against_deployed_backend(vespa_instance):
     """The shared Vespa has the metadata application deployed, so the config
     server reports it and the bootstrap must treat the backend as populated."""
-    from cogniverse_runtime.main import _application_exists
+    from cogniverse_runtime.backend_startup import _application_exists
 
     assert (
         _application_exists(
@@ -268,7 +267,7 @@ def test_application_exists_true_against_deployed_backend(vespa_instance):
 def test_application_exists_raises_when_indeterminate():
     """A config server that answers neither 200 nor 404 leaves fresh-vs-populated
     unknown; deploying blind risks dropping live schemas, so it must raise."""
-    from cogniverse_runtime.main import _application_exists
+    from cogniverse_runtime.backend_startup import _application_exists
 
     with _http_stub(503) as port:
         with pytest.raises(RuntimeError, match="refusing to bootstrap"):
