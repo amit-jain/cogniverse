@@ -155,14 +155,18 @@ def test_cluster_service_limits_stay_within_the_gpu_budget_reservation():
     )
 
 
-def test_vespa_config_proxy_heap_is_sized_for_the_schema_population():
-    """The config proxy JVM runs on the chart's heap, not Vespa's 128 MiB default.
+def test_vespa_container_env_sets_only_the_jvm_heaps_the_launchers_read():
+    """The vespa container's env is exactly the variables its launchers read.
 
-    The proxy caches every config it has served, so its live set scales with
-    the schema population: 76 MiB after a full GC at 180 schemas, and the
-    allocation burst of one activation on top of that exceeds 128 MiB. The
-    JVM exits on heap OOM and every service loses its config source until
-    the sentinel restarts it.
+    ``just-run-configproxy`` reads ``VESPA_CONFIGPROXY_JVMARGS`` and
+    ``just-start-configserver`` reads ``VESPA_CONFIGSERVER_JVMARGS``; the
+    template derives ``VESPA_CONFIGSERVERS``. Nothing in the image reads any
+    other name, so an extra entry is a heap setting that never takes effect.
+
+    The proxy caches every config it has served (76 MiB live after a full GC
+    at 180 schemas) and Vespa's 128 MiB default exits on one activation's
+    burst. The config server holds the active model (93 MiB live at 180
+    schemas) and its 2 GiB ceiling ran the full sweep without a full GC.
     """
     documents = _render()
     statefulset = next(
@@ -174,7 +178,13 @@ def test_vespa_config_proxy_heap_is_sized_for_the_schema_population():
     (vespa,) = statefulset["spec"]["template"]["spec"]["containers"]
     env = {entry["name"]: entry["value"] for entry in vespa["env"]}
 
-    assert env["VESPA_CONFIGPROXY_JVMARGS"] == "-Xmx512m"
+    assert env == {
+        "VESPA_CONFIGSERVERS": (
+            "cogniverse-vespa-0.cogniverse-vespa.default.svc.cluster.local"
+        ),
+        "VESPA_CONFIGPROXY_JVMARGS": "-Xmx512m",
+        "VESPA_CONFIGSERVER_JVMARGS": "-Xmx2g",
+    }
 
 
 def test_every_container_reading_the_config_can_authenticate_to_inference():
