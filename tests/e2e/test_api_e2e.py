@@ -47,6 +47,7 @@ from tests.e2e.conftest import (
     KUBECTL_CONTEXT,
     RUNTIME,
     SAMPLE_VIDEO_PATH,
+    TENANT_DEPLOY_TIMEOUT_S,
     TENANT_ID,
     _content_sha256,
     _ensure_sample_content_ingested,
@@ -76,11 +77,6 @@ SECOND_SAMPLE_VIDEO_PATH = (
     / "v_-D1gdv_gQyw.mp4"
 )
 CONFIG_PATH = Path(__file__).resolve().parents[2] / "configs" / "config.json"
-TENANT_DEPLOY_TIMEOUT_S = 180.0
-"""Tenant create and profile deploy recompile the whole Vespa application
-package, so they scale with the cluster's schema count. Measured here:
-33.3 s, 35.9 s, 43.3 s idle and 86.7 s under sweep load.
-"""
 
 
 def _default_video_profile_name() -> str:
@@ -1699,7 +1695,7 @@ class TestTenantCRUD:
         # schemas it routinely takes 60-90 s; the original 60 s timeout
         # produced a flaky ReadTimeout. 180 s covers the worst case
         # observed without weakening the assertions.
-        with httpx.Client(base_url=RUNTIME, timeout=180.0) as client:
+        with httpx.Client(base_url=RUNTIME, timeout=TENANT_DEPLOY_TIMEOUT_S) as client:
             try:
                 resp = client.post(
                     "/admin/organizations",
@@ -1765,7 +1761,7 @@ class TestTenantCRUD:
 
         tid_simple = unique_id("apinorm")
         tid_canonical = f"{tid_simple}:{tid_simple}"
-        with httpx.Client(base_url=RUNTIME, timeout=180.0) as client:
+        with httpx.Client(base_url=RUNTIME, timeout=TENANT_DEPLOY_TIMEOUT_S) as client:
             try:
                 resp = client.post(
                     "/admin/tenants",
