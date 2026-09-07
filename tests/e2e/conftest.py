@@ -29,7 +29,7 @@ import uuid
 from datetime import datetime, timezone
 from math import ceil
 from pathlib import Path
-from typing import Iterator
+from typing import Callable, Iterator
 
 import httpx
 import pytest
@@ -397,23 +397,64 @@ def _ensure_stack_running() -> bool:
     return False
 
 
-_MINTED_TENANTS_THIS_TEST: list[str] = []
+_TENANT_OWNERS: list[tuple[str, Callable[[Callable[[], object]], None]]] = []
+"""Stack of (label, addfinalizer) for the fixture or test body now executing.
+
+The top entry owns every tenant minted or created while it runs: its
+finalizer runs when that fixture's scope (or the test) ends, so a
+module-scoped fixture's tenant lives until module teardown and a test
+body's tenant is gone before the next test starts. pytest schedules the
+fixture's finalizers even when its setup fails.
+"""
+
+
+@pytest.hookimpl(wrapper=True)
+def pytest_fixture_setup(fixturedef, request):
+    label = f"{fixturedef.scope}:{fixturedef.argname}"
+    _TENANT_OWNERS.append((label, request.addfinalizer))
+    try:
+        return (yield)
+    finally:
+        _TENANT_OWNERS.pop()
+
+
+@pytest.hookimpl(wrapper=True)
+def pytest_runtest_call(item):
+    _TENANT_OWNERS.append((f"function:{item.nodeid}", item.addfinalizer))
+    try:
+        return (yield)
+    finally:
+        _TENANT_OWNERS.pop()
+
+
+def own_tenant(tenant_id: str) -> str:
+    """Register ``tenant_id`` for deletion when the executing fixture or test ends.
+
+    ``tenant_id`` is a minted org id (``opt_ab12cd34``), a simple-form id
+    (canonical ``opt_ab12cd34:opt_ab12cd34``) or a full ``org:tenant`` id;
+    teardown deletes every tenant the org holds by then, the org record,
+    and waits until Vespa deploys none of their schemas. The shared seeded
+    tenant is never owned.
+    """
+    org_id = tenant_id.split(":", 1)[0]
+    if org_id == TENANT_ID.split(":", 1)[0]:
+        raise ValueError(
+            f"{tenant_id!r} belongs to the shared seeded tenant {TENANT_ID!r}, "
+            "which the session keeps; mint a test tenant with unique_id()"
+        )
+    if not _TENANT_OWNERS:
+        raise RuntimeError(
+            f"own_tenant({tenant_id!r}) called outside fixture setup or a test "
+            "body: no scope can tear it down"
+        )
+    _, addfinalizer = _TENANT_OWNERS[-1]
+    addfinalizer(functools.partial(delete_minted_tenant_and_wait, tenant_id))
+    return tenant_id
 
 
 def unique_id(prefix: str = "e2e") -> str:
-    """Mint a per-test tenant id and register it for end-of-test cleanup.
-
-    The session-end ``_cleanup_test_tenants`` sweep can't keep up with
-    the per-test churn — Vespa accumulates 200+ tenant schemas mid-run
-    and new deploys time out. Recording every mint here lets the
-    autouse ``_drain_test_tenants_after_each_test`` fixture DELETE
-    each tenant as soon as the test finishes, keeping the cluster
-    schema count flat through the whole sweep.
-    """
-    tid = f"{prefix}_{uuid.uuid4().hex[:8]}"
-    if any(tid.startswith(p) for p in _TEST_TENANT_PREFIXES):
-        _MINTED_TENANTS_THIS_TEST.append(tid)
-    return tid
+    """Mint a test tenant/org id owned by the executing fixture or test."""
+    return own_tenant(f"{prefix}_{uuid.uuid4().hex[:8]}")
 
 
 # Vespa config-server URL. The e2e suite ASSUMES a k3d cluster with the
@@ -457,6 +498,17 @@ def _vespa_deployed_schema_names() -> set[str]:
         if tail.endswith(".sd"):
             names.add(tail[: -len(".sd")])
     return names
+
+
+def _deployed_schema_names_strict() -> set[str]:
+    """Deployed schema base names; raises when the config-server cannot answer."""
+    resp = httpx.get(_VESPA_SCHEMAS_LIST_URL, timeout=10.0)
+    resp.raise_for_status()
+    return {
+        entry.rsplit("/", 1)[-1][: -len(".sd")]
+        for entry in resp.json()
+        if entry.endswith(".sd")
+    }
 
 
 def _tenant_schema_names_in_vespa(tenant_id: str, deployed: set[str]) -> set[str]:
@@ -588,83 +640,84 @@ def _reset_event_loop_state_before_each_test(request):
         asyncio.events._set_running_loop(parked)
 
 
-@pytest.fixture(autouse=True)
-def _drain_test_tenants_after_each_test():
-    """Delete every test tenant minted via ``unique_id`` after each test
-    AND wait for Vespa to actually drop the tenant's schemas.
-
-    Cleanup contract: every schema MUST be created via the
-    SchemaRegistry deploy path AND removed via the tenant-delete path.
-    A timed-out HTTP DELETE that left the runtime mid-redeploy
-    silently produced the registry-vs-Vespa drift the deploy guard
-    keeps tripping over. Replace the blind 30 s timeout with: send
-    the DELETE (60 s for the runtime to ACK), then poll Vespa's
-    schemas list every 2 s until none of the tenant's schemas remain.
-    Hard cap at 10 minutes per tenant so a hung Vespa can't wedge the
-    suite indefinitely.
-    """
-    _MINTED_TENANTS_THIS_TEST.clear()
-    yield
-    minted = list(_MINTED_TENANTS_THIS_TEST)
-    _MINTED_TENANTS_THIS_TEST.clear()
-    if not minted:
-        return
-    # Vespa config-server polling is part of the cleanup contract — the
-    # only safe completion signal that the runtime DELETE actually
-    # removed the schemas. Outside k3d (or a topology that exposes the
-    # config-server at $VESPA_CONFIG_URL) we can't poll, so fail loudly
-    # rather than silently leak schemas across the suite.
-    if not _vespa_config_server_reachable():
+def _tenants_under_org(org_id: str) -> set[str]:
+    """Tenants the runtime lists for ``org_id`` plus those implied by Vespa
+    schemas carrying it (schema-only tenants have no metadata row)."""
+    tenants: set[str] = set()
+    with httpx.Client(timeout=30.0) as client:
+        resp = client.get(f"{RUNTIME}/admin/organizations/{org_id}/tenants")
+    if resp.status_code == 200:
+        tenants.update(t["tenant_full_id"] for t in resp.json()["tenants"])
+    elif resp.status_code != 404:
         raise RuntimeError(
-            f"_drain_test_tenants_after_each_test cannot reach Vespa "
-            f"config-server at {_VESPA_SCHEMAS_LIST_URL!r}. The e2e suite "
-            f"is k3d-only — start it with `cogniverse up`, or set "
-            f"VESPA_CONFIG_URL to the config-server base URL of your "
-            f"deployed cluster."
+            f"GET /admin/organizations/{org_id}/tenants returned "
+            f"{resp.status_code}: {resp.text[:400]}"
         )
-    # Tests that mint via unique_id("<base>") may construct derived
-    # tenants like f"{base}:t1". Cover the common shapes so we delete
-    # the actual tenant the test wrote under. ``:_org_trunk`` is the
-    # federation promotion target (org_trunk_tenant_id maps "<org>:x" to
-    # "<org>:_org_trunk"): the promote route creates it as a side effect,
-    # the test never mints it, so without reaping it here every
-    # promotion test leaks one org-trunk schema set forever.
-    targets: set[str] = set()
-    for tid in minted:
-        targets.add(tid)
-        for suf in (":t1", ":t2", ":t3", ":production", ":org_admin", ":_org_trunk"):
-            targets.add(tid + suf)
-    for full_tid in targets:
-        # Skip tenants that aren't actually in Vespa — most derived
-        # suffixes (`:t2`, `:t3`, etc.) won't apply to a given test, so
-        # the DELETE would 404 and we'd waste a 60 s timeout + poll
-        # window per non-existent tenant.
-        deployed = _vespa_deployed_schema_names()
-        if not _tenant_schema_names_in_vespa(full_tid, deployed):
-            continue
-        try:
-            with httpx.Client(timeout=60.0) as client:
-                client.delete(f"{RUNTIME}/admin/tenants/{full_tid}")
-        except (httpx.HTTPError, OSError):
-            # Server may have started the redeploy anyway. The poll
-            # below is the actual completion signal.
-            pass
-        # Poll Vespa until the tenant's schemas are gone from the
-        # deployed app package. 10 min cap, 2 s interval.
-        deadline = _time.monotonic() + 600.0
-        last_remaining: set[str] = set()
-        while _time.monotonic() < deadline:
-            deployed = _vespa_deployed_schema_names()
-            remaining = _tenant_schema_names_in_vespa(full_tid, deployed)
-            if not remaining:
-                break
-            last_remaining = remaining
-            _time.sleep(2.0)
-        else:
-            print(
-                f"_drain_test_tenants_after_each_test: gave up waiting on "
-                f"{full_tid!r} — Vespa still shows {sorted(last_remaining)} "
-                f"after 600 s"
+    marker = f"_{org_id}_"
+    for name in _deployed_schema_names_strict():
+        if marker in name:
+            tenants.add(f"{org_id}:{name.split(marker, 1)[1]}")
+    return tenants
+
+
+def delete_minted_tenant_and_wait(minted: str) -> None:
+    """Delete every tenant under the org ``minted`` names, then the org, and
+    prove it: Vespa deploys none of their schemas, ``GET /admin/tenants/{id}``
+    and ``GET /admin/organizations/{org}`` answer 404. Each delete is one
+    application activation, so each runs under ``TENANT_DEPLOY_TIMEOUT_S``.
+    """
+    org_id = minted.split(":", 1)[0]
+    deadline = _time.monotonic() + TENANT_DEPLOY_TIMEOUT_S
+    while not runtime_available():
+        if _time.monotonic() >= deadline:
+            raise RuntimeError(
+                f"teardown of {minted!r}: runtime at {RUNTIME} not reachable "
+                f"within {TENANT_DEPLOY_TIMEOUT_S:.0f} s"
+            )
+        _time.sleep(3.0)
+
+    targets = sorted(_tenants_under_org(org_id))
+    with httpx.Client(timeout=TENANT_DEPLOY_TIMEOUT_S) as client:
+        for tid in targets:
+            resp = client.delete(f"{RUNTIME}/admin/tenants/{tid}")
+            if resp.status_code not in (200, 404):
+                raise RuntimeError(
+                    f"teardown of {minted!r}: DELETE /admin/tenants/{tid} "
+                    f"returned {resp.status_code}: {resp.text[:400]}"
+                )
+        resp = client.delete(f"{RUNTIME}/admin/organizations/{org_id}")
+        if resp.status_code not in (200, 404):
+            raise RuntimeError(
+                f"teardown of {minted!r}: DELETE /admin/organizations/{org_id} "
+                f"returned {resp.status_code}: {resp.text[:400]}"
+            )
+
+    marker = f"_{org_id}_"
+    deadline = _time.monotonic() + TENANT_DEPLOY_TIMEOUT_S
+    while True:
+        remaining = {n for n in _deployed_schema_names_strict() if marker in n}
+        if not remaining:
+            break
+        if _time.monotonic() >= deadline:
+            raise RuntimeError(
+                f"teardown of {minted!r}: Vespa still deploys "
+                f"{sorted(remaining)} {TENANT_DEPLOY_TIMEOUT_S:.0f} s after delete"
+            )
+        _time.sleep(2.0)
+
+    with httpx.Client(timeout=30.0) as client:
+        for tid in targets:
+            resp = client.get(f"{RUNTIME}/admin/tenants/{tid}")
+            if resp.status_code != 404:
+                raise RuntimeError(
+                    f"teardown of {minted!r}: GET /admin/tenants/{tid} returned "
+                    f"{resp.status_code} after delete: {resp.text[:400]}"
+                )
+        resp = client.get(f"{RUNTIME}/admin/organizations/{org_id}")
+        if resp.status_code != 404:
+            raise RuntimeError(
+                f"teardown of {minted!r}: GET /admin/organizations/{org_id} "
+                f"returned {resp.status_code} after delete: {resp.text[:400]}"
             )
 
 
@@ -673,11 +726,12 @@ def register_tenant_and_wait(
     *,
     created_by: str = "e2e",
     timeout_s: float = 600.0,
-) -> None:
-    """POST /admin/tenants and poll until the tenant is fully visible.
+) -> dict:
+    """POST /admin/tenants, own the tenant for teardown, and poll until it is
+    fully visible; returns the persisted ``GET /admin/tenants/{id}`` row.
 
     Mirrors the deletion-side contract in
-    ``_drain_test_tenants_after_each_test``: send the create, then poll
+    ``delete_minted_tenant_and_wait``: send the create, then poll
     Vespa's config-server schemas list every 2 s until the tenant's
     per-tenant schemas appear (read-after-write consistent with
     prepareandactivate), AND poll ``GET /admin/tenants/{tid}`` until the
@@ -698,12 +752,13 @@ def register_tenant_and_wait(
             f"the config-server base URL of your deployed cluster."
         )
 
+    own_tenant(tenant_id)
     # Send the create; the runtime rolls back on failure, so a transient 502
     # can be retried safely here without leaving a torn tenant behind. The
     # readiness signal is still the poll below, not the response code.
     deadline = _time.monotonic() + timeout_s
     last_failure = ""
-    with httpx.Client(timeout=300.0) as client:
+    with httpx.Client(timeout=TENANT_DEPLOY_TIMEOUT_S) as client:
         while True:
             try:
                 resp = client.post(
@@ -743,6 +798,7 @@ def register_tenant_and_wait(
     deadline = _time.monotonic() + timeout_s
     saw_schema = False
     saw_metadata = False
+    row: dict = {}
     while _time.monotonic() < deadline:
         if not saw_schema:
             deployed = _vespa_deployed_schema_names()
@@ -754,10 +810,11 @@ def register_tenant_and_wait(
                     r = client.get(f"{RUNTIME}/admin/tenants/{tenant_id}")
                     if r.status_code == 200:
                         saw_metadata = True
+                        row = r.json()
             except (httpx.HTTPError, OSError):
                 pass
         if saw_schema and saw_metadata:
-            return
+            return row
         _time.sleep(2.0)
     raise RuntimeError(
         f"register_tenant_and_wait: tenant {tenant_id!r} not ready after "

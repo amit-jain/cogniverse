@@ -31,6 +31,7 @@ import httpx
 import pytest
 
 from cogniverse_agents.profile_selection_agent import tenant_usable_profile_names
+from cogniverse_foundation.common.tenant_utils import canonical_tenant_id
 from cogniverse_foundation.config.unified_config import (
     SyntheticGeneratorConfig,
 )
@@ -1715,15 +1716,9 @@ class TestTenantCRUD:
                 org_ids = [o["org_id"] for o in orgs["organizations"]]
                 assert org_id in org_ids
 
-                resp = client.post(
-                    "/admin/tenants",
-                    json={
-                        "tenant_id": tenant_full_id,
-                        "created_by": "e2e_test",
-                    },
+                tenant_data = register_tenant_and_wait(
+                    tenant_full_id, created_by="e2e_test"
                 )
-                assert resp.status_code == 200, f"Create tenant failed: {resp.text}"
-                tenant_data = resp.json()
                 assert tenant_data["tenant_full_id"] == tenant_full_id
 
                 resp = client.get(f"/admin/organizations/{org_id}/tenants")
@@ -1736,8 +1731,11 @@ class TestTenantCRUD:
                 assert resp.status_code == 200
                 assert resp.json()["tenant_full_id"] == tenant_full_id
 
+                resp = client.delete(f"/admin/tenants/{tenant_full_id}")
+                assert resp.status_code == 200, resp.text
+                assert resp.json()["tenant_full_id"] == tenant_full_id
+                assert client.get(f"/admin/tenants/{tenant_full_id}").status_code == 404
             finally:
-                client.delete(f"/admin/tenants/{tenant_full_id}")
                 client.delete(f"/admin/organizations/{org_id}")
 
     def test_org_not_found_returns_404(self):
@@ -1763,12 +1761,7 @@ class TestTenantCRUD:
         tid_canonical = f"{tid_simple}:{tid_simple}"
         with httpx.Client(base_url=RUNTIME, timeout=TENANT_DEPLOY_TIMEOUT_S) as client:
             try:
-                resp = client.post(
-                    "/admin/tenants",
-                    json={"tenant_id": tid_simple, "created_by": "e2e_norm"},
-                )
-                assert resp.status_code == 200, resp.text
-                created = resp.json()
+                created = register_tenant_and_wait(tid_simple, created_by="e2e_norm")
                 # Runtime normalized to colon form on storage.
                 assert created["tenant_full_id"] == tid_canonical, created
 
@@ -2367,13 +2360,12 @@ class TestVideoIngestionAndSearch:
         assert real_video_path.stat().st_size == 5_524_837
         tenant_id = unique_id("ingest_e2e")
         expected_source_url = _expected_artifact_source_url(real_video_path, tenant_id)
+        tenant_row = register_tenant_and_wait(tenant_id, created_by="e2e-test")
+        assert (tenant_row["tenant_full_id"], tenant_row["status"]) == (
+            canonical_tenant_id(tenant_id),
+            "active",
+        )
         with httpx.Client(base_url=RUNTIME, timeout=1800.0) as client:
-            resp = client.post(
-                "/admin/tenants",
-                json={"tenant_id": tenant_id, "created_by": "e2e-test"},
-                timeout=TENANT_DEPLOY_TIMEOUT_S,
-            )
-            assert resp.status_code in (200, 201, 409), resp.text
             _deploy_profile_for_tenant(client, PROFILE, tenant_id)
             with open(real_video_path, "rb") as f:
                 # wait=true keeps the synchronous response shape
@@ -2853,13 +2845,12 @@ class TestBatchVideoIngestion:
     def test_batch_ingestion_start(self):
         """Start batch ingestion → poll to completion → the clip is retrievable."""
         tenant_id = unique_id("batch_e2e")
+        tenant_row = register_tenant_and_wait(tenant_id, created_by="e2e-test")
+        assert (tenant_row["tenant_full_id"], tenant_row["status"]) == (
+            canonical_tenant_id(tenant_id),
+            "active",
+        )
         with httpx.Client(base_url=RUNTIME, timeout=TENANT_DEPLOY_TIMEOUT_S) as client:
-            resp = client.post(
-                "/admin/tenants",
-                json={"tenant_id": tenant_id, "created_by": "e2e-test"},
-                timeout=TENANT_DEPLOY_TIMEOUT_S,
-            )
-            assert resp.status_code in (200, 201), resp.text
             _deploy_profile_for_tenant(client, PROFILE, tenant_id)
             pod_dir = self._copy_video_into_pod(tenant_id)
 

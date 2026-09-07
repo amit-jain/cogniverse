@@ -26,7 +26,6 @@ import os
 import subprocess
 import textwrap
 import time
-import uuid
 from pathlib import Path
 
 import httpx
@@ -1743,8 +1742,8 @@ def gateway_threshold_tenant(_kubectl_cluster_ready) -> GatewayThresholdTenant:
     """Create a dedicated tenant for gateway-threshold optimization runs and
     drive exactly BATCH_SPAN_COUNT (default 20) simple video decisions
     through its gateway, recording each one so the calibration is exact."""
-    suffix = uuid.uuid4().hex[:8]
-    org_id = f"opt_gw_{suffix}"
+    org_id = unique_id("opt_gw")
+    suffix = org_id.rsplit("_", 1)[1]
     tenant_id = f"{org_id}:t1"
 
     with httpx.Client(timeout=60.0) as client:
@@ -1793,18 +1792,7 @@ def gateway_threshold_tenant(_kubectl_cluster_ready) -> GatewayThresholdTenant:
             assert body["downstream_result"]["status"] == "success", body
             decisions.append((gw["complexity"], gw["confidence"]))
     _wait_for_gateway_spans_in_pod(tenant_id, span_count)
-    try:
-        yield GatewayThresholdTenant(tenant_id, decisions)
-    finally:
-        with httpx.Client(timeout=60.0) as client:
-            try:
-                client.delete(f"{RUNTIME}/admin/tenants/{tenant_id}")
-            except httpx.HTTPError:
-                pass
-            try:
-                client.delete(f"{RUNTIME}/admin/organizations/{org_id}")
-            except httpx.HTTPError:
-                pass
+    yield GatewayThresholdTenant(tenant_id, decisions)
 
 
 SIMBA_SELECTION_TRAINSET_CAP = 8
@@ -1842,8 +1830,8 @@ def simba_selection_tenant(_kubectl_cluster_ready) -> SimbaSelectionTenant:
     trainable count with the job's own predicate, and tops up from the
     extension list until the trainable rows exceed cap + holdout minimum.
     """
-    suffix = uuid.uuid4().hex[:8]
-    org_id = f"opt_simba_select_{suffix}"
+    org_id = unique_id("opt_simba_select")
+    suffix = org_id.rsplit("_", 1)[1]
     tenant_id = f"{org_id}:t1"
 
     with httpx.Client(timeout=60.0) as client:
@@ -1960,18 +1948,7 @@ def simba_selection_tenant(_kubectl_cluster_ready) -> SimbaSelectionTenant:
 
     approved_synthetic_count = 0
 
-    try:
-        yield SimbaSelectionTenant(tenant_id, seeded_queries, approved_synthetic_count)
-    finally:
-        with httpx.Client(timeout=60.0) as client:
-            try:
-                client.delete(f"{RUNTIME}/admin/tenants/{tenant_id}")
-            except httpx.HTTPError:
-                pass
-            try:
-                client.delete(f"{RUNTIME}/admin/organizations/{org_id}")
-            except httpx.HTTPError:
-                pass
+    yield SimbaSelectionTenant(tenant_id, seeded_queries, approved_synthetic_count)
 
 
 @pytest.fixture(scope="module", autouse=True)
@@ -3990,32 +3967,21 @@ class TestSimbaOptimization:
 @pytest.fixture(scope="function")
 def simba_floor_tenant() -> str:
     """A fresh tenant for the below-floor SIMBA contract."""
-    suffix = uuid.uuid4().hex[:8]
-    org_id = f"opt_simba_floor_{suffix}"
+    org_id = unique_id("opt_simba_floor")
+    suffix = org_id.rsplit("_", 1)[1]
     tenant_id = f"{org_id}:t1"
-    try:
-        with httpx.Client(timeout=60.0) as client:
-            resp = client.post(
-                f"{RUNTIME}/admin/organizations",
-                json={
-                    "org_id": org_id,
-                    "org_name": f"opt-simba-floor-{suffix}",
-                    "created_by": "e2e",
-                },
-            )
-            assert resp.status_code in (200, 201, 409), resp.text
-        register_tenant_and_wait(tenant_id, created_by="e2e", timeout_s=600.0)
-        yield tenant_id
-    finally:
-        with httpx.Client(timeout=60.0) as client:
-            try:
-                client.delete(f"{RUNTIME}/admin/tenants/{tenant_id}")
-            except httpx.HTTPError:
-                pass
-            try:
-                client.delete(f"{RUNTIME}/admin/organizations/{org_id}")
-            except httpx.HTTPError:
-                pass
+    with httpx.Client(timeout=60.0) as client:
+        resp = client.post(
+            f"{RUNTIME}/admin/organizations",
+            json={
+                "org_id": org_id,
+                "org_name": f"opt-simba-floor-{suffix}",
+                "created_by": "e2e",
+            },
+        )
+        assert resp.status_code in (200, 201, 409), resp.text
+    register_tenant_and_wait(tenant_id, created_by="e2e", timeout_s=600.0)
+    yield tenant_id
 
 
 @pytest.mark.e2e
@@ -5839,8 +5805,8 @@ def _seed_approved_training_examples_in_pod(
 
 @pytest.fixture(scope="function")
 def decay_selection_tenant(_kubectl_cluster_ready) -> str:
-    suffix = uuid.uuid4().hex[:8]
-    org_id = f"opt_decay_{suffix}"
+    org_id = unique_id("opt_decay")
+    suffix = org_id.rsplit("_", 1)[1]
     tenant_id = f"{org_id}:t1"
 
     with httpx.Client(timeout=60.0) as client:
@@ -5857,18 +5823,7 @@ def decay_selection_tenant(_kubectl_cluster_ready) -> str:
     register_tenant_and_wait(tenant_id, created_by="e2e", timeout_s=600.0)
     _set_entity_extraction_floor_in_pod(tenant_id)
 
-    try:
-        yield tenant_id
-    finally:
-        with httpx.Client(timeout=60.0) as client:
-            try:
-                client.delete(f"{RUNTIME}/admin/tenants/{tenant_id}")
-            except httpx.HTTPError:
-                pass
-            try:
-                client.delete(f"{RUNTIME}/admin/organizations/{org_id}")
-            except httpx.HTTPError:
-                pass
+    yield tenant_id
 
 
 @pytest.mark.e2e

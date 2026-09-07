@@ -19,10 +19,10 @@ import httpx
 import pytest
 from playwright.sync_api import expect
 
+from cogniverse_foundation.common.tenant_utils import canonical_tenant_id
 from tests.e2e.conftest import (
     DASHBOARD,
     RUNTIME,
-    TENANT_DEPLOY_TIMEOUT_S,
     TENANT_ID,
     active_sub_tab_panel,
     active_tab_panel,
@@ -32,6 +32,7 @@ from tests.e2e.conftest import (
     fill_input,
     fill_textarea,
     panel_widget,
+    register_tenant_and_wait,
     set_tenant,
     unique_id,
     wait_for_script_idle,
@@ -2150,17 +2151,13 @@ def optimization_tenant():
     has to take it away.
     """
     tenant_id = unique_id("opt")
-    with httpx.Client(base_url=RUNTIME, timeout=TENANT_DEPLOY_TIMEOUT_S) as client:
-        created = client.post(
-            "/admin/tenants",
-            json={"tenant_id": tenant_id, "created_by": "e2e-test"},
-        )
-    assert created.status_code in (200, 201, 409), created.text
-    try:
-        yield tenant_id
-    finally:
-        with httpx.Client(base_url=RUNTIME, timeout=120.0) as client:
-            client.delete(f"/admin/tenants/{tenant_id}")
+    tenant_row = register_tenant_and_wait(tenant_id, created_by="e2e-test")
+    assert (tenant_row["tenant_full_id"], tenant_row["status"], tenant_row["created_by"]) == (
+        canonical_tenant_id(tenant_id),
+        "active",
+        "e2e-test",
+    )
+    yield tenant_id
 
 
 class TestManualOptimizationTrigger:

@@ -17,7 +17,6 @@ and the test waits for phase transitions.
 import json
 import subprocess
 import time
-import uuid
 from pathlib import Path
 
 import httpx
@@ -30,6 +29,7 @@ from tests.e2e.conftest import (
     argo_workflow_controller_probe_command,
     argo_workflow_controller_probe_failure_message,
     register_tenant_and_wait,
+    unique_id,
 )
 from tests.e2e.test_api_e2e import _deploy_profile_for_tenant
 
@@ -162,8 +162,8 @@ def _kubectl_get_workflow(name: str) -> dict | None:
 @pytest.fixture(scope="module")
 def gateway_threshold_tenant() -> str:
     """Create a dedicated tenant for gateway-threshold optimization runs."""
-    suffix = uuid.uuid4().hex[:8]
-    org_id = f"opt_gw_{suffix}"
+    org_id = unique_id("opt_gw")
+    suffix = org_id.rsplit("_", 1)[1]
     tenant_id = f"{org_id}:t1"
 
     with httpx.Client(timeout=60.0) as client:
@@ -200,18 +200,7 @@ def gateway_threshold_tenant() -> str:
             )
 
     time.sleep(15)
-    try:
-        yield tenant_id
-    finally:
-        with httpx.Client(timeout=60.0) as client:
-            try:
-                client.delete(f"{RUNTIME}/admin/tenants/{tenant_id}")
-            except httpx.HTTPError:
-                pass
-            try:
-                client.delete(f"{RUNTIME}/admin/organizations/{org_id}")
-            except httpx.HTTPError:
-                pass
+    yield tenant_id
 
 
 @pytest.mark.e2e

@@ -8,7 +8,6 @@ Tests against the live k3d runtime at localhost:33000:
 
 import tempfile
 import time
-import uuid
 from pathlib import Path
 
 import httpx
@@ -18,6 +17,7 @@ from tests.e2e.conftest import (
     GLINER_URL,
     RUNTIME,
     register_tenant_and_wait,
+    unique_id,
 )
 from tests.e2e.test_api_e2e import PROFILE
 
@@ -74,10 +74,7 @@ def _unique_tenant() -> str:
     tenant_metadata polling alone overruns under sweep load because
     per-tenant deploy is O(N) in the cluster's existing schema count.
     """
-    from tests.e2e.conftest import _MINTED_TENANTS_THIS_TEST
-
-    tid = f"graph_e2e_{uuid.uuid4().hex[:8]}"
-    _MINTED_TENANTS_THIS_TEST.append(tid)
+    tid = unique_id("graph_e2e")
     register_tenant_and_wait(tid, created_by="graph_e2e_test")
     return tid
 
