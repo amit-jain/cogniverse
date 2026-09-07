@@ -347,13 +347,24 @@ class BackendStartupState(StrEnum):
     UNAVAILABLE = "unavailable"
 
 
+# Longest observed Vespa restart (unpruned data): 32 minutes. The wait budget
+# carries a 2x margin for a cluster that has not pruned since an upgrade; the
+# chart's runtime startupProbe window is pinned above it (tests/charts).
+BACKEND_RECOVERY_WORST_CASE_S = 32 * 60
+BACKEND_STARTUP_WAIT_BUDGET_S = 2 * BACKEND_RECOVERY_WORST_CASE_S
+BACKEND_STARTUP_RETRY_INTERVAL_S = 5.0
+BACKEND_STARTUP_PROBE_TIMEOUT_S = 5.0
+CONFIG_STORE_REPROBE_ATTEMPTS = 12
+CONFIG_STORE_REPROBE_INTERVAL_S = 10.0
+
+
 async def _wait_for_backend_startup(
     vespa_base: str,
     config_server_base: str,
     *,
-    max_attempts: int = 60,
-    retry_interval: float = 5.0,
-    timeout: float = 5.0,
+    budget_s: float = BACKEND_STARTUP_WAIT_BUDGET_S,
+    retry_interval: float = BACKEND_STARTUP_RETRY_INTERVAL_S,
+    timeout: float = BACKEND_STARTUP_PROBE_TIMEOUT_S,
 ) -> BackendStartupState:
     """Distinguish a ready data plane from a fresh Vespa installation.
 
@@ -362,6 +373,12 @@ async def _wait_for_backend_startup(
     those endpoints therefore creates a startup cycle. The config-server
     application resource returns 404 only for that fresh state; 200 means an
     application exists and its data plane still needs to converge.
+
+    The wait is bounded by wall clock, not attempts: a refused connection
+    fails instantly and a paused backend takes the full probe timeout, so an
+    attempt count would bound the wait anywhere between the two. The last
+    attempt may start just before the deadline, so the wall-clock ceiling is
+    ``budget_s + 2 * timeout``.
     """
     import httpx
 
@@ -371,8 +388,13 @@ async def _wait_for_backend_startup(
     application_resource = (
         f"{config_server_base}/application/v2/tenant/default/application/default"
     )
+    loop = asyncio.get_running_loop()
+    started = loop.time()
+    deadline = started + budget_s
+    attempt = 0
     async with httpx.AsyncClient() as client:
-        for attempt in range(max_attempts):
+        while True:
+            attempt += 1
             try:
                 resp = await client.get(
                     f"{vespa_base}/ApplicationStatus", timeout=timeout
@@ -390,12 +412,16 @@ async def _wait_for_backend_startup(
                     return BackendStartupState.FRESH_INSTALL
             except (httpx.HTTPError, OSError):
                 pass
+            now = loop.time()
             logger.info(
-                f"Backend not ready, retrying ({attempt + 1}/{max_attempts})..."
+                "Backend not ready, retrying (attempt %d, %.0fs of %.0fs budget)...",
+                attempt,
+                now - started,
+                budget_s,
             )
-            if attempt < max_attempts - 1:
-                await asyncio.sleep(retry_interval)
-    return BackendStartupState.UNAVAILABLE
+            if now >= deadline:
+                return BackendStartupState.UNAVAILABLE
+            await asyncio.sleep(min(retry_interval, deadline - now))
 
 
 def _wait_for_config_server(
@@ -836,15 +862,15 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
             bootstrap,
             SystemConfig().application_name,
         )
-        for attempt in range(12):
+        for attempt in range(CONFIG_STORE_REPROBE_ATTEMPTS):
             try:
                 await asyncio.to_thread(config_manager.get_system_config)
                 logger.info("Config store queryable after metadata bootstrap")
                 break
             except Exception:
-                if attempt == 11:
+                if attempt == CONFIG_STORE_REPROBE_ATTEMPTS - 1:
                     raise
-                await asyncio.sleep(10)
+                await asyncio.sleep(CONFIG_STORE_REPROBE_INTERVAL_S)
 
     # Wire profile-change propagation: when /admin/profiles adds or removes
     # a backend profile, push the update into live search-backend instances
