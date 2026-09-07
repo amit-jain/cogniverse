@@ -14,6 +14,14 @@ on:
       - 'pytest.ini'
       - 'pyproject.toml'
       - '.github/workflows/agents-tests.yml'
+      # test_example_selection.py and the integration modules read the shipped
+      # config; test_claim_extractor_dspy.py the testset summary;
+      # test_face_pipeline_real_video.py the sample video;
+      # test_training_data_span_contracts.py optimization_cli.py.
+      - 'configs/config.json'
+      - 'data/testset/dataset_summary.md'
+      - 'tests/system/resources/**'
+      - 'libs/runtime/cogniverse_runtime/optimization_cli.py'
   pull_request:
     branches: [ main, develop ]
     paths:
@@ -26,6 +34,14 @@ on:
       - 'tests/utils/**'
       - 'pytest.ini'
       - 'pyproject.toml'
+      # test_example_selection.py and the integration modules read the shipped
+      # config; test_claim_extractor_dspy.py the testset summary;
+      # test_face_pipeline_real_video.py the sample video;
+      # test_training_data_span_contracts.py optimization_cli.py.
+      - 'configs/config.json'
+      - 'data/testset/dataset_summary.md'
+      - 'tests/system/resources/**'
+      - 'libs/runtime/cogniverse_runtime/optimization_cli.py'
 
 env:
   CARGO_NET_RETRY: "10"
