@@ -511,6 +511,11 @@ def _deployed_schema_names_strict() -> set[str]:
     }
 
 
+def _tenant_schema_name(base: str, tenant_id: str) -> str:
+    """Vespa's deployed name for base schema ``base`` under ``tenant_id``."""
+    return f"{base}_{tenant_id.replace(':', '_')}"
+
+
 def _tenant_schema_names_in_vespa(tenant_id: str, deployed: set[str]) -> set[str]:
     """Subset of ``deployed`` whose name carries the tenant's suffix.
 
@@ -725,6 +730,7 @@ def register_tenant_and_wait(
     tenant_id: str,
     *,
     created_by: str = "e2e",
+    base_schemas: list[str] | None = None,
     timeout_s: float = 600.0,
 ) -> dict:
     """POST /admin/tenants, own the tenant for teardown, and poll until it is
@@ -737,6 +743,10 @@ def register_tenant_and_wait(
     prepareandactivate), AND poll ``GET /admin/tenants/{tid}`` until the
     tenant_metadata search-side row is queryable. Hard cap at 10 minutes
     so a hung Vespa can't wedge the suite.
+
+    ``base_schemas`` names the base schemas to deploy; the schemas poll then
+    waits for every one of them. Without it the runtime picks its own default
+    base and the poll waits for any schema carrying the tenant suffix.
 
     Why: the bare 60 s tenant_metadata poll in the older test helpers
     was overrun by the cluster-wide schema-count growth (per-tenant
@@ -761,10 +771,13 @@ def register_tenant_and_wait(
     with httpx.Client(timeout=TENANT_DEPLOY_TIMEOUT_S) as client:
         while True:
             try:
-                resp = client.post(
-                    f"{RUNTIME}/admin/tenants",
-                    json={"tenant_id": tenant_id, "created_by": created_by},
-                )
+                payload: dict[str, object] = {
+                    "tenant_id": tenant_id,
+                    "created_by": created_by,
+                }
+                if base_schemas is not None:
+                    payload["base_schemas"] = list(base_schemas)
+                resp = client.post(f"{RUNTIME}/admin/tenants", json=payload)
             except (httpx.HTTPError, OSError) as exc:
                 last_failure = f"raised {exc!r}"
                 if _time.monotonic() >= deadline:
@@ -795,15 +808,21 @@ def register_tenant_and_wait(
                 f"{tenant_id!r} {last_failure}"
             )
 
+    expected_schemas = (
+        {_tenant_schema_name(base, tenant_id) for base in base_schemas}
+        if base_schemas is not None
+        else set()
+    )
     deadline = _time.monotonic() + timeout_s
     saw_schema = False
     saw_metadata = False
     row: dict = {}
     while _time.monotonic() < deadline:
         if not saw_schema:
-            deployed = _vespa_deployed_schema_names()
-            if _tenant_schema_names_in_vespa(tenant_id, deployed):
-                saw_schema = True
+            found = _tenant_schema_names_in_vespa(
+                tenant_id, _vespa_deployed_schema_names()
+            )
+            saw_schema = expected_schemas <= found if expected_schemas else bool(found)
         if not saw_metadata:
             try:
                 with httpx.Client(timeout=10.0) as client:
@@ -2720,6 +2739,10 @@ _TEST_TENANT_PREFIXES = (
     "canontest_",
     "smk_",
     "smk2_",
+    # Tenant schema lifecycle e2e: the multi-schema tenant and the tenant a
+    # deliberately failing fixture mints.
+    "mschema_",
+    "teardown_",
 )
 
 
