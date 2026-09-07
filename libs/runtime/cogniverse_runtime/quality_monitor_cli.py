@@ -42,10 +42,7 @@ def _wait_for_telemetry_manager(
     ``retry_forever=False`` so the grace window is a real deadline and the
     job reports failure instead of holding its reservation forever.
     """
-    import httpr
-    import requests
-
-    from cogniverse_sdk.interfaces.config_store import ConfigStoreUnavailableError
+    from cogniverse_runtime.startup_wait import wait_for_startup_dependency
 
     if get_manager is None:
         from cogniverse_foundation.telemetry.manager import get_telemetry_manager
@@ -53,59 +50,15 @@ def _wait_for_telemetry_manager(
         def get_manager():
             return get_telemetry_manager(otlp_endpoint=telemetry_otlp_endpoint)
 
-    deadline = time.monotonic() + timeout_seconds
-    timed_out = False
-    attempts = 0
-    last_error: Exception | None = None
-    while True:
-        attempts += 1
-        try:
-            return get_manager()
-        except (
-            httpr.TransportError,
-            requests.RequestException,
-            ConfigStoreUnavailableError,
-        ) as error:
-            last_error = error
-
-        remaining = deadline - time.monotonic()
-        if remaining <= 0:
-            attempt_word = "attempt" if attempts == 1 else "attempts"
-            if not retry_forever:
-                raise RuntimeError(
-                    "Telemetry configuration dependency was not ready after "
-                    f"{attempts} {attempt_word} within {timeout_seconds:.1f}s: "
-                    f"{type(last_error).__name__}: {last_error}"
-                ) from last_error
-            if not timed_out:
-                logger.error(
-                    "Telemetry configuration dependency was not ready after "
-                    f"{attempts} {attempt_word} within {timeout_seconds:.1f}s: "
-                    f"{type(last_error).__name__}: {last_error}; "
-                    "keeping the sidecar alive and retrying"
-                )
-                timed_out = True
-            else:
-                logger.warning(
-                    "Telemetry configuration dependency is still not ready "
-                    "(attempt %d, retrying in %.1fs): %s: %s",
-                    attempts,
-                    poll_interval_seconds,
-                    type(last_error).__name__,
-                    last_error,
-                )
-            sleep_for = poll_interval_seconds
-        else:
-            sleep_for = min(poll_interval_seconds, remaining)
-            logger.warning(
-                "Telemetry configuration dependency is not ready "
-                "(attempt %d, retrying in %.1fs): %s: %s",
-                attempts,
-                sleep_for,
-                type(last_error).__name__,
-                last_error,
-            )
-        time.sleep(max(sleep_for, 0))
+    return wait_for_startup_dependency(
+        get_manager,
+        dependency="Telemetry configuration dependency",
+        process="sidecar",
+        timeout_seconds=timeout_seconds,
+        poll_interval_seconds=poll_interval_seconds,
+        retry_forever=retry_forever,
+        log=logger,
+    )
 
 
 def _wait_for_runtime_search(
