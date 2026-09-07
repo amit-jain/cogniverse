@@ -54,7 +54,9 @@ The runtime entry surfaces are `cogniverse_runtime/main.py`,
 
 ```text
 cogniverse_runtime/
-├── main.py                          # FastAPI app entry point + lifespan setup
+├── main.py                          # FastAPI app + lifespan setup
+├── backend_startup.py               # Backend probes and metadata bootstrap
+├── runtime_cli.py                   # Backend wait before uvicorn
 ├── config_loader.py                 # Dynamic backend/agent loading
 ├── agent_dispatcher.py              # Dispatch agent invocations + egress allow-list
 ├── job_executor.py                  # Background-job executor
@@ -319,7 +321,7 @@ uvicorn.run(app, host="0.0.0.0", port=8000)
 
 **Startup Sequence:**
 
-1. Poll the Vespa data plane and config server together for up to `BACKEND_STARTUP_WAIT_BUDGET_S` of wall clock (64 min: twice `BACKEND_RECOVERY_WORST_CASE_S`, the longest observed restart of an unpruned Vespa), one attempt every `BACKEND_STARTUP_RETRY_INTERVAL_S` with `BACKEND_STARTUP_PROBE_TIMEOUT_S` per probe. A fresh config server with no application package is detected immediately, receives the metadata schemas, and must then expose the feed endpoint; an existing application waits for its feed endpoint to converge. Startup fails if neither plane becomes usable within the budget. The chart's runtime `startupProbe` window is pinned above this budget plus the fresh-install stages (`tests/charts/test_runtime_startup_probe.py`), because uvicorn binds port 8000 only after the lifespan finishes and the kubelet would otherwise kill a pod that is still inside its own wait.
+1. Before uvicorn starts, `python -m cogniverse_runtime.runtime_cli` polls the Vespa data plane and config server through `startup_wait.wait_for_startup_dependency`. `BACKEND_STARTUP_WAIT_BUDGET_S` is a logging grace (64 minutes by default, overridable with `RUNTIME_STARTUP_GRACE_SECONDS`): expiry logs one ERROR and the process keeps retrying. SIGTERM sets the helper's abort flag and exits with code 0 and a named abort log. Each attempt probes with `BACKEND_STARTUP_PROBE_TIMEOUT_S`; failed attempts sleep for `BACKEND_STARTUP_RETRY_INTERVAL_S`. A fresh backend receives metadata schemas and then waits for its feed endpoint. The chart's startupProbe owns restart timing and exceeds the grace plus probe and fresh-install allowances. Uvicorn starts once the feed endpoint is ready; lifespan initializes the application.
 2. Load configuration via `ConfigManager`; wire `BackendRegistry` profile add/remove into a `config_manager` profile-change listener
 3. Initialize `SchemaLoader` for Vespa schemas; wire `admin`/`tenant` routers and `ingestion`/`search`/`knowledge` FastAPI dependency overrides
 4. Initialize `BackendRegistry` (singleton via `get_instance()`) and `AgentRegistry`
@@ -362,15 +364,6 @@ text and stops generation.
 @asynccontextmanager
 async def lifespan(app: FastAPI) -> AsyncIterator[None]:
     """Lifecycle manager for FastAPI app."""
-
-    # 1. Distinguish an existing application from a fresh backend
-    bootstrap = BootstrapConfig.from_environment()
-    state = await _wait_for_backend_startup(vespa_base, config_server_base)
-    if state is BackendStartupState.FRESH_INSTALL:
-        await asyncio.to_thread(_bootstrap_metadata_schemas, bootstrap, application_name)
-        state = await _wait_for_backend_startup(vespa_base, config_server_base)
-    if state is not BackendStartupState.FEED_READY:
-        raise RuntimeError("backend startup did not converge")
 
     # 2. Load configuration
     config_manager = create_default_config_manager()
@@ -1277,7 +1270,7 @@ Host/port for `uvicorn` itself (`RUNTIME_HOST`/`RUNTIME_PORT`-style vars) are **
 
 ```bash
 # Start with auto-reload
-uv run uvicorn cogniverse_runtime.main:app --reload --port 8000
+uv run python -m cogniverse_runtime.runtime_cli --reload --port 8000
 
 # Access API docs
 open http://localhost:8000/docs
@@ -1287,7 +1280,7 @@ open http://localhost:8000/docs
 
 ```bash
 # Multiple workers
-uv run uvicorn cogniverse_runtime.main:app \
+uv run python -m cogniverse_runtime.runtime_cli \
     --host 0.0.0.0 \
     --port 8000 \
     --workers 4 \
@@ -1310,7 +1303,7 @@ COPY . /app
 WORKDIR /app
 RUN uv sync
 
-CMD ["uv", "run", "uvicorn", "cogniverse_runtime.main:app", \
+CMD ["python", "-m", "cogniverse_runtime.runtime_cli", \
      "--host", "0.0.0.0", "--port", "8000"]
 ```
 

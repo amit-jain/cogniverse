@@ -74,9 +74,6 @@ async def test_lifespan_passes_config_manager_to_synthetic_service(
         captured["kwargs"] = kwargs
         raise _AbortStartup("stop after synthetic wiring")
 
-    async def _fake_wait_for_backend_startup(*args, **kwargs):
-        return runtime_main.BackendStartupState.FEED_READY
-
     monkeypatch.setattr(
         "cogniverse_foundation.config.utils.create_default_config_manager",
         lambda: config_manager,
@@ -86,9 +83,6 @@ async def test_lifespan_passes_config_manager_to_synthetic_service(
     )
     monkeypatch.setattr(runtime_main, "get_config_loader", lambda: _FakeConfigLoader())
     monkeypatch.setattr(PhoenixProvider, "initialize", lambda self, config: None)
-    monkeypatch.setattr(
-        runtime_main, "_wait_for_backend_startup", _fake_wait_for_backend_startup
-    )
     monkeypatch.setattr(
         "cogniverse_synthetic.api.configure_service", _spy_configure_synthetic
     )

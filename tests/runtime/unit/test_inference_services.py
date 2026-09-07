@@ -103,13 +103,13 @@ async def test_runtime_rejects_invalid_configuration_before_startup(
 
     import cogniverse_runtime.main as runtime_main
 
-    async def fail_if_backend_is_consulted(*args, **kwargs):
+    def fail_if_backend_is_consulted(*args, **kwargs):
         raise AssertionError("backend startup was consulted")
 
     monkeypatch.setenv("INFERENCE_SERVICE_URLS", "not-json")
     monkeypatch.setattr(
         runtime_main,
-        "_wait_for_backend_startup",
+        "_bootstrap_metadata_schemas",
         fail_if_backend_is_consulted,
     )
 

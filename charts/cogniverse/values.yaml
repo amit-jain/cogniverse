@@ -402,14 +402,11 @@ runtime:
     targetCPUUtilizationPercentage: 70
     targetMemoryUtilizationPercentage: 80
 
-  # Startup: gates liveness/readiness during cold start. uvicorn runs the
-  # FastAPI lifespan BEFORE it binds port 8000: it waits for Vespa for up to
-  # BACKEND_STARTUP_WAIT_BUDGET_S (64 min, 2x the longest observed restart of
-  # an unpruned Vespa) and on a fresh backend adds the config-server wait and
-  # the config re-probe (~420s). This window (30 + 300*15 = 4530s) exceeds
-  # that whole cold start; tests/charts/test_runtime_startup_probe.py pins the
-  # relationship to the runtime's constants. Liveness below only begins once
-  # startup succeeds.
+  # Startup gates liveness/readiness while the entrypoint waits for Vespa.
+  # Its 64-minute grace (2x the longest observed recovery) logs one ERROR;
+  # the process keeps waiting until ready or stopped. This 4530s probe window
+  # covers that grace plus the probe and fresh-install allowances, derived
+  # from production constants in tests/charts/test_runtime_startup_probe.py.
   startupProbe:
     tcpSocket:
       port: 8000

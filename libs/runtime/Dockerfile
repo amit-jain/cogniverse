@@ -109,4 +109,4 @@ ENV RUNTIME_HOST=0.0.0.0
 ENV RUNTIME_PORT=8000
 
 # Run the application
-CMD ["python", "-m", "uvicorn", "cogniverse_runtime.main:app", "--host", "0.0.0.0", "--port", "8000"]
+CMD ["python", "-m", "cogniverse_runtime.runtime_cli", "--host", "0.0.0.0", "--port", "8000"]

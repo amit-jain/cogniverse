@@ -1,12 +1,8 @@
-"""The runtime Deployment's startupProbe must outlast the lifespan's backend wait.
+"""The startupProbe protects the entrypoint's backend grace and startup stages.
 
-uvicorn runs the FastAPI lifespan BEFORE it binds port 8000, and the lifespan
-waits for Vespa for up to ``BACKEND_STARTUP_WAIT_BUDGET_S`` (plus, on a fresh
-backend, the config-server wait and the config re-probe). While it waits the
-TCP socket does not answer, so the startupProbe is the only thing standing
-between a legitimately waiting pod and a kubelet kill; liveness is disabled
-until the startupProbe succeeds. These tests derive the floor from the
-production constants so the chart cannot drift below the code's own budget.
+The backend wait retries forever. Its grace window determines when the runtime
+logs an ERROR; kubelet owns the eventual restart. Derive the minimum probe
+window from production constants across every shipped values stack.
 """
 
 import inspect
@@ -17,6 +13,7 @@ from pathlib import Path
 import pytest
 import yaml
 
+from cogniverse_runtime import backend_startup
 from cogniverse_runtime import main as runtime_main
 
 REPO_ROOT = Path(__file__).resolve().parents[2]
@@ -86,12 +83,10 @@ def _window_seconds(probe: dict) -> int:
 
 
 def _backend_wait_worst_case_s() -> float:
-    """Wall-clock ceiling of one ``_wait_for_backend_startup`` call: the
-    budget plus the last attempt's two probe timeouts (the overrun bound is
-    pinned in tests/runtime/integration/test_backend_readiness_probe.py)."""
+    """Grace plus an attempt's status, feed, and config-server probes."""
     return (
-        runtime_main.BACKEND_STARTUP_WAIT_BUDGET_S
-        + 2 * runtime_main.BACKEND_STARTUP_PROBE_TIMEOUT_S
+        backend_startup.BACKEND_STARTUP_WAIT_BUDGET_S
+        + 3 * backend_startup.BACKEND_STARTUP_PROBE_TIMEOUT_S
     )
 
 
@@ -100,13 +95,14 @@ def _fresh_install_stages_s() -> float:
     binds: the config-server TCP wait and the post-bootstrap config re-probe,
     both derived from their production defaults."""
     config_server_wait = inspect.signature(
-        runtime_main._wait_for_config_server
+        backend_startup._wait_for_config_server
     ).parameters
     return (
         config_server_wait["max_attempts"].default
         * config_server_wait["interval"].default
         + runtime_main.CONFIG_STORE_REPROBE_ATTEMPTS
         * runtime_main.CONFIG_STORE_REPROBE_INTERVAL_S
+        + backend_startup.BACKEND_STARTUP_RETRY_INTERVAL_S
     )
 
 
@@ -118,10 +114,10 @@ def test_backend_wait_budget_carries_double_the_longest_observed_recovery():
     """The wait must outlast the longest Vespa restart the code records, with
     a 2x margin for a cluster that has not pruned since an upgrade."""
     assert (
-        runtime_main.BACKEND_STARTUP_WAIT_BUDGET_S
-        == 2 * runtime_main.BACKEND_RECOVERY_WORST_CASE_S
+        backend_startup.BACKEND_STARTUP_WAIT_BUDGET_S
+        == 2 * backend_startup.BACKEND_RECOVERY_WORST_CASE_S
     )
-    assert runtime_main.BACKEND_RECOVERY_WORST_CASE_S == 32 * 60
+    assert backend_startup.BACKEND_RECOVERY_WORST_CASE_S == 32 * 60
 
 
 @pytest.mark.parametrize("stack", sorted(OVERLAY_STACKS))
@@ -145,18 +141,16 @@ def test_startup_probe_targets_the_same_tcp_socket_as_liveness(stack):
 
 
 @pytest.mark.parametrize("stack", sorted(OVERLAY_STACKS))
-def test_startup_window_exceeds_the_lifespans_backend_wait(stack):
-    """The rendered startup window must exceed the worst-case cold start the
-    code can legitimately spend before binding: the whole backend wait budget
-    (with its probe overrun) plus the fresh-install stages."""
+def test_startup_window_exceeds_the_entrypoints_backend_grace(stack):
+    """The probe allows the grace window and fresh-install stages to finish."""
     container = _runtime_container(_render_chart(overlays=OVERLAY_STACKS[stack]))
     window = _window_seconds(container["startupProbe"])
     assert window > _worst_case_cold_start_s(), (
-        f"{stack}: startupProbe window {window}s does not exceed the worst-case "
-        f"cold start {_worst_case_cold_start_s():.0f}s "
+        f"{stack}: startupProbe window {window}s does not exceed the protected "
+        f"startup allowance {_worst_case_cold_start_s():.0f}s "
         f"(backend wait {_backend_wait_worst_case_s():.0f}s + fresh-install "
         f"stages {_fresh_install_stages_s():.0f}s) — the kubelet kills the pod "
-        f"while the lifespan is still inside its own wait budget"
+        f"while the entrypoint is still inside its backend grace"
     )
 
 
