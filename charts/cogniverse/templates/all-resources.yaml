@@ -112,6 +112,7 @@ spec:
       serviceAccountName: {{ include "cogniverse.serviceAccountName" . }}
       securityContext:
         runAsUser: 0
+      terminationGracePeriodSeconds: {{ .Values.vespa.terminationGracePeriodSeconds }}
       containers:
       - name: vespa
         image: "{{ .Values.vespa.image.repository }}:{{ .Values.vespa.image.tag }}"

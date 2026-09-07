@@ -265,6 +265,10 @@ vespa:
 
   replicaCount: 1
 
+  # Covers the sentinel's sequential pre-shutdown commands: container prepareStop
+  # (370s RPC timeout) then searchnode prepareRestart (600s).
+  terminationGracePeriodSeconds: 1200
+
   resources:
     limits:
       cpu: "8"
