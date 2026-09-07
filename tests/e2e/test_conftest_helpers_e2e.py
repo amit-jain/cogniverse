@@ -27,6 +27,12 @@ from types import SimpleNamespace
 
 import cogniverse_cli.images as images_mod
 import pytest
+import yaml
+from cogniverse_cli.config import (
+    LLM_SERVING_LOCAL,
+    LLM_SERVING_MODAL,
+    get_llm_serving_values_file,
+)
 from PIL import Image
 
 import tests.e2e.conftest as e2e_conftest
@@ -329,6 +335,56 @@ def _expected_e2e_chart_digest() -> str:
     return "sha256:4e803bfbbc1fca29d55c61abe0e1d722b4ddbbd9e0df645abbd5c57a5d96f5c4"
 
 
+def _seeded_values_files(llm_serving: str) -> tuple[str, ...]:
+    """Overlays the seeded repo deploys with, per LLM serving mode."""
+    return {
+        LLM_SERVING_LOCAL: (
+            "charts/cogniverse/values.k3s.yaml",
+            "charts/cogniverse/values.rocm.yaml",
+        ),
+        LLM_SERVING_MODAL: (
+            "charts/cogniverse/values.k3s.yaml",
+            "charts/cogniverse/values.rocm.yaml",
+            "charts/cogniverse/values.modal-llm.yaml",
+        ),
+    }[llm_serving]
+
+
+def _modal_release_values_json() -> str:
+    """``helm get values -o json`` of an installed release serving from Modal."""
+    overlay = yaml.safe_load(get_llm_serving_values_file(LLM_SERVING_MODAL).read_text())
+    api_base = overlay["runtime"]["primaryLLM"]["apiBase"]
+    return json.dumps({"runtime": {"primaryLLM": {"apiBase": api_base}}})
+
+
+_HELM_GET_VALUES = [
+    "helm",
+    "get",
+    "values",
+    "cogniverse",
+    "-n",
+    "cogniverse",
+    "-o",
+    "json",
+]
+
+# (COGNIVERSE_LLM_SERVING, resolved mode, helm reads per identity). The
+# stubbed release always serves from Modal, so env=local can only resolve
+# modal by consulting it.
+_LLM_SERVING_CASES = [
+    pytest.param(None, LLM_SERVING_MODAL, 1, id="derived-from-release"),
+    pytest.param(LLM_SERVING_MODAL, LLM_SERVING_MODAL, 0, id="env-modal"),
+    pytest.param(LLM_SERVING_LOCAL, LLM_SERVING_LOCAL, 0, id="env-local"),
+]
+
+
+def _set_llm_serving_env(monkeypatch, llm_serving: str | None) -> None:
+    if llm_serving is None:
+        monkeypatch.delenv("COGNIVERSE_LLM_SERVING", raising=False)
+    else:
+        monkeypatch.setenv("COGNIVERSE_LLM_SERVING", llm_serving)
+
+
 def test_event_loop_reset_does_not_warn_when_no_loop_is_attached():
     previous_policy = asyncio.get_event_loop_policy()
     asyncio.set_event_loop_policy(asyncio.DefaultEventLoopPolicy())
@@ -623,6 +679,12 @@ class TestSharedClusterOwnership:
     def e2e_stack(self):
         """Do not start a real cluster while testing the stack fixture itself."""
         yield
+
+    @pytest.fixture(autouse=True)
+    def _own_llm_serving_mode(self, monkeypatch):
+        """Serve the chat LLMs locally unless a test picks its own mode: an
+        unset variable would read the mode from the installed release."""
+        _set_llm_serving_env(monkeypatch, LLM_SERVING_LOCAL)
 
     def test_tracked_video_content_identity_matches_fixture_bytes(self):
         assert e2e_conftest._content_sha256(e2e_conftest.SAMPLE_VIDEO_PATH) == (
@@ -1401,10 +1463,19 @@ class TestSharedClusterOwnership:
             repo_root, deployed_stamp, current_identity=current_identity
         ) == ("stale", "deployment identity changed")
 
+    @pytest.mark.parametrize(
+        ("llm_serving_env", "llm_serving", "helm_reads_per_identity"),
+        _LLM_SERVING_CASES,
+    )
     def test_tests_only_commit_keeps_build_tags_and_identity(
-        self, tmp_path, monkeypatch
+        self,
+        tmp_path,
+        monkeypatch,
+        llm_serving_env,
+        llm_serving,
+        helm_reads_per_identity,
     ):
-        repo_root, _ = self._seed_git_repo(tmp_path)
+        repo_root, base_sha = self._seed_git_repo(tmp_path)
         build_calls: list[list[str]] = []
         real_run = subprocess.run
 
@@ -1412,8 +1483,10 @@ class TestSharedClusterOwnership:
             if cmd and cmd[0] == "git":
                 return real_run(cmd, **kwargs)
             build_calls.append(cmd)
-            return subprocess.CompletedProcess(cmd, 0, stdout="", stderr="")
+            stdout = _modal_release_values_json() if cmd[0] == "helm" else ""
+            return subprocess.CompletedProcess(cmd, 0, stdout=stdout, stderr="")
 
+        _set_llm_serving_env(monkeypatch, llm_serving_env)
         monkeypatch.setattr(images_mod.subprocess, "run", dispatch)
         monkeypatch.setattr(images_mod, "detect_torch_backend", lambda: "rocm")
         monkeypatch.setattr(
@@ -1441,18 +1514,31 @@ class TestSharedClusterOwnership:
             f"{baseline_versions['dashboard'].replace('+', '-')}",
             f"cogniverse/gliner:{baseline_versions['gliner'].replace('+', '-')}",
         ]
+        base_version = f"0.1.dev1-g{base_sha[:9]}"
+        assert baseline_identity == self._seeded_repo_identity(
+            {
+                "runtime": base_version,
+                "dashboard": base_version,
+                "gliner": base_version,
+            },
+            llm_serving=llm_serving,
+        )
         assert e2e_conftest._effective_e2e_deployment_identity(repo_root) == (
             baseline_identity
         )
-        # One build round plus one identity read, before and after the commit:
-        # the identity resolves the installed release's LLM serving mode.
+        # One build round plus one identity read, before and after the commit;
+        # the identity consults the installed release only when the mode is
+        # not given.
         assert [call[:4] for call in build_calls] == [
             ["docker", "image", "ls", "--format"],
             ["docker", "build", "-f", "libs/runtime/Dockerfile"],
             ["docker", "build", "-f", "libs/dashboard/Dockerfile"],
             ["docker", "build", "-f", "deploy/gliner/Dockerfile"],
-            ["helm", "get", "values", "cogniverse"],
+            *[_HELM_GET_VALUES[:4]] * helm_reads_per_identity,
         ] * 2
+        assert [call for call in build_calls if call[0] == "helm"] == (
+            [_HELM_GET_VALUES] * (2 * helm_reads_per_identity)
+        )
 
     @pytest.mark.parametrize(
         (
@@ -1980,13 +2066,16 @@ class TestSharedClusterOwnership:
         repo_root: Path | None = None,
         mid_build=None,
         calls: dict[str, list] | None = None,
+        llm_serving_env: str | None = LLM_SERVING_LOCAL,
     ):
         """Drive ``e2e_stack`` with every cluster boundary stubbed.
 
         With ``repo_root`` the deployment identity is the REAL one read from
         that git repo (git runs for real, everything else is stubbed) and
         ``mid_build`` runs inside the stubbed ``deploy_stack`` — the window in
-        which the working tree can change under a build.
+        which the working tree can change under a build. ``llm_serving_env``
+        is what ``COGNIVERSE_LLM_SERVING`` holds (``None`` unsets it); the
+        installed release ``helm get values`` reports serves from Modal.
         """
         import cogniverse_cli.cluster as cluster_cli
 
@@ -2004,12 +2093,14 @@ class TestSharedClusterOwnership:
             "stamp",
             "delete",
             "sandbox",
+            "helm",
         ):
             calls.setdefault(key, [])
         if force_fresh:
             monkeypatch.setenv("E2E_FRESH", "1")
         else:
             monkeypatch.delenv("E2E_FRESH", raising=False)
+        _set_llm_serving_env(monkeypatch, llm_serving_env)
         if cluster_states:
             cluster_state_values = iter(
                 [
@@ -2112,6 +2203,11 @@ class TestSharedClusterOwnership:
         def run(cmd, *args, **kwargs):
             if repo_root is not None and cmd and cmd[0] == "git":
                 return real_run(cmd, *args, **kwargs)
+            if cmd and cmd[0] == "helm":
+                calls["helm"].append(list(cmd))
+                return subprocess.CompletedProcess(
+                    cmd, 0, stdout=_modal_release_values_json(), stderr=""
+                )
             return subprocess.CompletedProcess(cmd, 0, stdout="", stderr="")
 
         monkeypatch.setattr(e2e_conftest.subprocess, "run", run)
@@ -2216,15 +2312,15 @@ class TestSharedClusterOwnership:
         stack.close()
 
     @staticmethod
-    def _seeded_repo_identity(versions: dict[str, str]) -> dict[str, object]:
+    def _seeded_repo_identity(
+        versions: dict[str, str], *, llm_serving: str = LLM_SERVING_LOCAL
+    ) -> dict[str, object]:
         """Exact deployment identity of ``_seed_git_repo`` when each image
-        family's newest input commit resolves to ``versions[family]``."""
+        family's newest input commit resolves to ``versions[family]`` and the
+        chat LLMs are served in ``llm_serving`` mode."""
         return {
             "backend": "rocm",
-            "values_files": (
-                "charts/cogniverse/values.k3s.yaml",
-                "charts/cogniverse/values.rocm.yaml",
-            ),
+            "values_files": _seeded_values_files(llm_serving),
             "set_overrides": {
                 **_expected_e2e_deployment_set_overrides(),
                 "runtime.imagesByBackend.rocm.tag": versions["runtime"],
@@ -2239,8 +2335,17 @@ class TestSharedClusterOwnership:
             "chart_digest": _expected_e2e_chart_digest(),
         }
 
+    @pytest.mark.parametrize(
+        ("llm_serving_env", "llm_serving", "helm_reads_per_identity"),
+        _LLM_SERVING_CASES,
+    )
     def test_tests_only_commit_during_image_build_does_not_fail_the_run(
-        self, monkeypatch, tmp_path
+        self,
+        monkeypatch,
+        tmp_path,
+        llm_serving_env,
+        llm_serving,
+        helm_reads_per_identity,
     ):
         """HEAD moving on a commit that touches no deployment input is not
         a changed deployment: the identity read after the build equals the
@@ -2262,6 +2367,7 @@ class TestSharedClusterOwnership:
                     "tests-only",
                 )
             ),
+            llm_serving_env=llm_serving_env,
         )
         stack.close()
 
@@ -2271,15 +2377,26 @@ class TestSharedClusterOwnership:
                 "runtime": base_version,
                 "dashboard": base_version,
                 "gliner": base_version,
-            }
+            },
+            llm_serving=llm_serving,
         )
         assert self._git(repo_root, "rev-parse", "HEAD") == committed[0]
         assert committed[0] != base_sha
         assert calls["identity"] == [identity, identity]
+        assert calls["helm"] == [_HELM_GET_VALUES] * (2 * helm_reads_per_identity)
         assert calls["stamp"] == [identity]
 
+    @pytest.mark.parametrize(
+        ("llm_serving_env", "llm_serving", "helm_reads_per_identity"),
+        _LLM_SERVING_CASES,
+    )
     def test_deploy_input_commit_during_image_build_fails_naming_the_fields(
-        self, monkeypatch, tmp_path
+        self,
+        monkeypatch,
+        tmp_path,
+        llm_serving_env,
+        llm_serving,
+        helm_reads_per_identity,
     ):
         """A ``libs/runtime`` commit landing mid-build moves the runtime image
         tag and the Helm override that points at it. The run fails before
@@ -2304,6 +2421,7 @@ class TestSharedClusterOwnership:
                     )
                 ),
                 calls=calls,
+                llm_serving_env=llm_serving_env,
             )
 
         base_version = f"0.1.dev1-g{base_sha[:9]}"
@@ -2322,20 +2440,32 @@ class TestSharedClusterOwnership:
                     "runtime": base_version,
                     "dashboard": base_version,
                     "gliner": base_version,
-                }
+                },
+                llm_serving=llm_serving,
             ),
             self._seeded_repo_identity(
                 {
                     "runtime": runtime_version,
                     "dashboard": base_version,
                     "gliner": base_version,
-                }
+                },
+                llm_serving=llm_serving,
             ),
         ]
+        assert calls["helm"] == [_HELM_GET_VALUES] * (2 * helm_reads_per_identity)
         assert calls["stamp"] == []
 
+    @pytest.mark.parametrize(
+        ("llm_serving_env", "llm_serving", "helm_reads_per_identity"),
+        _LLM_SERVING_CASES,
+    )
     def test_chart_commit_during_image_build_fails_naming_the_chart_digest(
-        self, monkeypatch, tmp_path
+        self,
+        monkeypatch,
+        tmp_path,
+        llm_serving_env,
+        llm_serving,
+        helm_reads_per_identity,
     ):
         """``charts/`` is outside every image's input set, so a chart commit
         moves only the chart digest — and that alone fails the run."""
@@ -2355,6 +2485,7 @@ class TestSharedClusterOwnership:
                     "chart-change",
                 ),
                 calls=calls,
+                llm_serving_env=llm_serving_env,
             )
 
         changed_digest = (
@@ -2371,16 +2502,27 @@ class TestSharedClusterOwnership:
                 "runtime": base_version,
                 "dashboard": base_version,
                 "gliner": base_version,
-            }
+            },
+            llm_serving=llm_serving,
         )
         assert calls["identity"] == [
             identity,
             {**identity, "chart_digest": changed_digest},
         ]
+        assert calls["helm"] == [_HELM_GET_VALUES] * (2 * helm_reads_per_identity)
         assert calls["stamp"] == []
 
+    @pytest.mark.parametrize(
+        ("llm_serving_env", "llm_serving", "helm_reads_per_identity"),
+        _LLM_SERVING_CASES,
+    )
     def test_uncommitted_deploy_input_edit_during_image_build_fails_the_run(
-        self, monkeypatch, tmp_path
+        self,
+        monkeypatch,
+        tmp_path,
+        llm_serving_env,
+        llm_serving,
+        helm_reads_per_identity,
     ):
         """An uncommitted edit is invisible to the git-derived identity, so
         cleanliness is checked again after the build as its own axis: the
@@ -2399,6 +2541,7 @@ class TestSharedClusterOwnership:
                     "value = 'uncommitted'\n"
                 ),
                 calls=calls,
+                llm_serving_env=llm_serving_env,
             )
 
         assert str(raised.value) == (
@@ -2413,9 +2556,11 @@ class TestSharedClusterOwnership:
                 "runtime": base_version,
                 "dashboard": base_version,
                 "gliner": base_version,
-            }
+            },
+            llm_serving=llm_serving,
         )
         assert calls["identity"] == [identity, identity]
+        assert calls["helm"] == [_HELM_GET_VALUES] * (2 * helm_reads_per_identity)
         assert calls["stamp"] == []
 
     @pytest.mark.parametrize(
