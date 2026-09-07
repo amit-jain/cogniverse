@@ -16,6 +16,10 @@ on:
       - 'pytest.ini'
       - 'pyproject.toml'
       - '.github/workflows/cli-tests.yml'
+      # test_e2e_contracts.py reads run_e2e_batched.sh; test_images.py
+      # reads release-images.yml.
+      - 'scripts/**'
+      - '.github/workflows/release-images.yml'
   pull_request:
     branches: [ main, develop ]
     paths:
@@ -30,6 +34,10 @@ on:
       - 'pytest.ini'
       - 'pyproject.toml'
       - '.github/workflows/cli-tests.yml'
+      # test_e2e_contracts.py reads run_e2e_batched.sh; test_images.py
+      # reads release-images.yml.
+      - 'scripts/**'
+      - '.github/workflows/release-images.yml'
 
 jobs:
   unit-tests:
