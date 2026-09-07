@@ -7,7 +7,11 @@ on:
       - 'libs/core/**'
       - 'libs/sdk/**'
       - 'libs/foundation/**'
+      - 'configs/schemas/**'
+      - 'data/testset/**'
       - 'tests/common/**'
+      - 'tests/core/**'
+      - 'tests/memory/**'
       - 'tests/conftest.py'
       - 'tests/fixtures/**'
       - 'tests/utils/**'
@@ -20,7 +24,11 @@ on:
       - 'libs/core/**'
       - 'libs/sdk/**'
       - 'libs/foundation/**'
+      - 'configs/schemas/**'
+      - 'data/testset/**'
       - 'tests/common/**'
+      - 'tests/core/**'
+      - 'tests/memory/**'
       - 'tests/conftest.py'
       - 'tests/fixtures/**'
       - 'tests/utils/**'
@@ -102,7 +110,10 @@ jobs:
 
     - name: Run core unit tests
       run: |
-        JAX_PLATFORM_NAME=cpu uv run python -m pytest tests/core/unit tests/memory/unit -m unit \
+        JAX_PLATFORM_NAME=cpu uv run python -m pytest \
+          tests/core/unit tests/memory/unit \
+          tests/utils/test_kg_lookup.py tests/utils/test_memory_store.py \
+          -m unit \
           -v --tb=short \
           --cov=libs/core/cogniverse_core \
           --cov-append \
@@ -222,5 +233,8 @@ jobs:
       run: |
         JAX_PLATFORM_NAME=cpu uv run --no-sync python -m pytest \
           tests/common/integration/ \
+          tests/core/integration/test_schema_intent_recovery.py \
+          tests/memory/integration/test_dispatcher_conversation_history_real_mem0.py \
+          tests/memory/integration/test_soft_delete_lifecycle.py \
           -m "integration and ci_fast and not requires_lm" \
           -v --tb=short

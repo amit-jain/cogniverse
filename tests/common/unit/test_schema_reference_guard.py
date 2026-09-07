@@ -82,6 +82,10 @@ SCHEMA_REFERENCE_FIXTURES = {
         "Backend double profile mutation fixtures",
         "document_chunk video_frame",
     ),
+    "tests/backends/unit/test_docv1_confined_to_vespa.py": (
+        "Synthetic document/v1 URLs fed to the confinement detector",
+        "wiki x",
+    ),
     "tests/backends/unit/test_build_query_inputs.py": (
         "Injected query strategy and tenant identities",
         "agent_memories_acme_acme video_colpali video_frame",

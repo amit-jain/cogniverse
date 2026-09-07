@@ -6,7 +6,9 @@ on:
     paths:
       - 'libs/runtime/cogniverse_runtime/ingestion/**'
       - 'libs/core/**'
+      - 'configs/schemas/**'
       - 'tests/ingestion/**'
+      - 'tests/system/resources/**'
       - 'scripts/run_ingestion.py'
       - 'tests/conftest.py'
       - 'tests/fixtures/**'
@@ -19,7 +21,9 @@ on:
     paths:
       - 'libs/runtime/cogniverse_runtime/ingestion/**'
       - 'libs/core/**'
+      - 'configs/schemas/**'
       - 'tests/ingestion/**'
+      - 'tests/system/resources/**'
       - 'scripts/run_ingestion.py'
       - 'tests/conftest.py'
       - 'tests/fixtures/**'

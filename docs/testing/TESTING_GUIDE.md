@@ -859,23 +859,26 @@ build below any specific percentage.
 
 ### GitHub Actions Workflows
 
-The project has **16 GitHub workflow files**: 12 per-module test workflows plus
-`chart-validation.yml`, `docs.yml`, `publish-packages.yml`, and two manual/release
-workflows not tied to a single module:
+The project has **19 GitHub workflow files**: 14 per-module test workflows plus
+`chart-validation.yml`, `test-integrity.yml`, `docs.yml`, `publish-packages.yml`,
+and two manual/release workflows not tied to a single module:
 
 | Workflow | Module | Tests | Docker Services |
 |----------|--------|-------|-----------------|
 | `agents-tests.yml` | cogniverse-agents | unit + integration | Vespa (ci_fast subset) |
 | `chart-validation.yml` | Helm chart (`charts/cogniverse`) | lint + template + kubeconform | None |
-| `core-tests.yml` | cogniverse-core (incl. `tests/memory/unit`; memory integration is local-tier — it needs the vLLM DenseOn sidecar) | unit + integration | Vespa |
+| `cli-tests.yml` | cogniverse-cli | unit + integration | None |
+| `core-tests.yml` | cogniverse-core (incl. `tests/core/*`, `tests/memory/*` and the `ci_fast` files under `tests/utils/`; the rest of memory integration is local-tier — it needs the vLLM DenseOn sidecar) | unit + integration | Vespa |
 | `dashboard-tests.yml` | cogniverse-dashboard | unit + integration | None (TestClient) |
 | `evaluation-tests.yml` | cogniverse-evaluation | unit + integration | Phoenix |
 | `finetuning-tests.yml` | cogniverse-finetuning | unit + integration | Vespa |
 | `ingestion-tests.yml` | cogniverse-runtime (ingestion) | unit + integration | Vespa |
+| `messaging-tests.yml` | cogniverse-messaging | unit + integration | None |
 | `routing-tests.yml` | cogniverse-agents (routing) | unit + integration | Vespa |
 | `runtime-tests.yml` | cogniverse-runtime, cogniverse-foundation, cogniverse-cli, events, cogniverse-messaging (unit for all; integration for runtime + the small events/foundation/messaging suites) | unit + integration | Vespa |
 | `synthetic-tests.yml` | cogniverse-synthetic | unit + integration | Phoenix |
 | `telemetry-tests.yml` | cogniverse-telemetry-phoenix | unit + integration | Phoenix |
+| `test-integrity.yml` | Whole-repo test guards (no `paths` filter) | assertion strength + CI coverage | None |
 | `vespa-tests.yml` | cogniverse-vespa | unit + integration | Vespa |
 | `docs.yml` | Documentation | mkdocs build + deploy to GitHub Pages | None |
 | `publish-packages.yml` | Package publishing (PyPI/TestPyPI) | N/A | None |
@@ -895,6 +898,27 @@ Each test workflow typically has these jobs:
 5. **coverage-report** - Combined coverage (if applicable)
 
 Note: Workflows don't have separate "fast-integration-tests" jobs. Instead, integration-tests jobs use `-m ci_fast` to run essential tests quickly.
+
+### Guards on CI coverage itself
+
+A test CI never runs reports as absence, which reads like success. Three guards
+close that:
+
+- `tests/runtime/unit/test_marker_coverage.py` — every file under a selected
+  path carries markers its selection's `-m` expression keeps.
+- `tests/common/unit/test_ci_coverage_guard.py` — every `ci_fast` test that is
+  not `local_only` is named by some commit-gating selection whose expression
+  keeps it; every selection's own paths are inside its workflow's `paths`
+  filter; and every test that walks a tree outside its own package runs in a
+  workflow that fires on changes to that tree.
+- `tests/common/unit/test_ci_fast_excludes_model_spawners.py` — no `ci_fast`
+  selection reaches a fixture that starts a model server.
+
+All three read the selections from `tests/fixtures/ci_workflows.py`, which
+parses `.github/workflows/*.yml`; a tag-only workflow gates no commit and its
+selections do not count. `test-integrity.yml` runs the whole-tree guards with
+no `paths` filter, since any filter would skip them on the commits they exist
+to catch.
 
 ### CI Fast Integration Tests
 
