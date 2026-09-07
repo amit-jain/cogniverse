@@ -5,7 +5,7 @@ from __future__ import annotations
 import ast
 from pathlib import Path
 
-EXPECTED_TELEMETRY_SCRIPT_COUNT = 20
+EXPECTED_TELEMETRY_SCRIPT_COUNT = 21
 E2E_DIR = Path(__file__).resolve().parents[2] / "e2e"
 PRELUDE_MARKERS = (
     "IN_POD_TELEMETRY_PRELUDE",
