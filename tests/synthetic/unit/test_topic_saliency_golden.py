@@ -4,7 +4,9 @@ The input is the shipped human-written caption corpus, read verbatim. The
 expected output is written out in full so the exact selected span stays fixed.
 """
 
+import hashlib
 import json
+import re
 from pathlib import Path
 
 import pytest
@@ -14,10 +16,12 @@ from cogniverse_agents.entity_extraction_agent import (
     EntityExtractionDeps,
     EntityExtractionInput,
 )
+from cogniverse_synthetic.generators.base import normalize_text
 from cogniverse_synthetic.topics import (
     MIN_SALIENCY_CORPUS_RECORDS,
     TopicSaliency,
     extract_topic,
+    topic_source_text,
 )
 from tests.agents.unit._recording_telemetry import RecordingTelemetryManager
 
@@ -40,6 +44,39 @@ SAMPLE_VIDEO_CORPUS_DIR = (
     / "descriptions"
 )
 SAMPLE_VIDEO_CORPUS_IDS = ("v_-6dz6tBH77I", "v_-D1gdv_gQyw")
+INGESTED_SEGMENT_CORPUS = (
+    Path(__file__).resolve().parent
+    / "data"
+    / "ingested_segment_captions"
+    / "v_-D1gdv_gQyw.json"
+)
+INGESTED_SEGMENT_VIDEO = (
+    Path(__file__).resolve().parents[2]
+    / "system"
+    / "resources"
+    / "videos"
+    / "v_-D1gdv_gQyw.mp4"
+)
+INGESTED_SEGMENT_CONTENT_ID = (
+    "7a3f548576b6e9070d4604e883c6a98c78e22c2862a21af70d57e887457f047d"
+)
+GENERATION_SAMPLE_SEGMENTS = ("seg_2", "seg_5", "seg_6", "seg_7", "seg_8")
+
+INGESTED_SEGMENT_TOPICS = {
+    "seg_0": "suggesting a wilderness or rural environment",
+    "seg_1": "shaved or closely cropped hairstyle",
+    "seg_2": "thick branch, is positioned vertically among",
+    "seg_3": "cross-sections showing the rings",
+    "seg_4": "prominent, lighter-colored, vertical log stands",
+    "seg_5": "vary in size, with some being",
+    "seg_6": "twigs surround the central fire area",
+    "seg_7": "stacked, including two prominent, rough-cut",
+    "seg_8": "campfire being built or maintained",
+    "seg_9": "extending their right arm out",
+}
+
+_TOKEN_JOINERS = "-‐‑’'/_"
+_GROUP_PAIRS = (("(", ")"), ("[", "]"), ("{", "}"), ("“", "”"))
 
 GOLDEN_TOPICS = {
     "v_-6dz6tBH77I.txt": "also several people sitting on bleachers",
@@ -223,6 +260,157 @@ async def test_big_buck_bunny_corpus_pins_zero_and_rich_entity_outputs():
         for relationship in rich_result.relationships
     ] == [("atmospheric conditions", "as", "wildfires")]
     assert rich_result.path_used == "fast"
+
+
+def _ingested_segment_records() -> list[dict[str, str]]:
+    """Records shaped exactly as ``metadata.sampled_content`` carries them."""
+    captions = json.loads(INGESTED_SEGMENT_CORPUS.read_text())
+    return [
+        {
+            "topic": f"seg_{segment_id}",
+            "description": captions[segment_id],
+            "schema_name": "video_colpali_smol500_mv_frame",
+            "profile_name": "video_colpali_smol500_mv_frame",
+        }
+        for segment_id in sorted(captions, key=int)
+    ]
+
+
+def _corpus_records(video_id: str) -> list[dict[str, str]]:
+    captions = json.loads((SAMPLE_VIDEO_CORPUS_DIR / f"{video_id}.json").read_text())
+    return [
+        {"topic": f"{video_id}:{key}", "description": text}
+        for key, text in sorted(captions.items(), key=lambda item: int(item[0]))
+        if text.strip()
+    ]
+
+
+def _spans_a_complete_phrase(sentence: str, start: int, end: int) -> bool:
+    """True when ``sentence[start:end]`` cuts no token and no delimited group."""
+    if start > 0 and sentence[start - 1] in _TOKEN_JOINERS:
+        return False
+    if end < len(sentence) and sentence[end] in _TOKEN_JOINERS:
+        return False
+    before, span = sentence[:start], sentence[start:end]
+    for opener, closer in _GROUP_PAIRS:
+        if before.count(opener) != before.count(closer):
+            return False
+        if span.count(opener) != span.count(closer):
+            return False
+    return not (before.count('"') % 2 or span.count('"') % 2)
+
+
+def _is_complete_phrase_of(topic: str, source: str) -> bool:
+    for sentence in re.split(r"(?<=[.!?])\s+", normalize_text(source)):
+        start = sentence.find(topic)
+        while start != -1:
+            if _spans_a_complete_phrase(sentence, start, start + len(topic)):
+                return True
+            start = sentence.find(topic, start + 1)
+    return False
+
+
+def test_ingested_segment_recording_belongs_to_its_shipped_video():
+    captions = json.loads(INGESTED_SEGMENT_CORPUS.read_text())
+    records = _ingested_segment_records()
+
+    assert sorted(captions, key=int) == [str(index) for index in range(10)]
+    assert INGESTED_SEGMENT_CORPUS.stem == INGESTED_SEGMENT_VIDEO.stem
+    assert (
+        hashlib.sha256(INGESTED_SEGMENT_VIDEO.read_bytes()).hexdigest()
+        == INGESTED_SEGMENT_CONTENT_ID
+    )
+    assert [set(record) for record in records] == [
+        {"topic", "description", "schema_name", "profile_name"}
+    ] * 10
+    # The recorded field is the one production reads for topic text.
+    assert [topic_source_text(record) for record in records] == [
+        normalize_text(record["description"]) for record in records
+    ]
+
+
+def test_ingested_segment_captions_pin_the_complete_topic_set():
+    records = _ingested_segment_records()
+    saliency = TopicSaliency.from_records(records)
+
+    topics = {
+        record["topic"]: extract_topic(record, saliency=saliency) for record in records
+    }
+
+    assert topics == INGESTED_SEGMENT_TOPICS
+
+
+def test_generation_sample_topics_pin_the_complete_list():
+    records = [
+        record
+        for record in _ingested_segment_records()
+        if record["topic"] in GENERATION_SAMPLE_SEGMENTS
+    ]
+    assert [record["topic"] for record in records] == list(GENERATION_SAMPLE_SEGMENTS)
+    saliency = TopicSaliency.from_records(records)
+
+    topics = [extract_topic(record, saliency=saliency) for record in records]
+
+    assert topics == [
+        "wearing a bright yellow t-shirt",
+        "vary in size, with some being",
+        "twigs surround the central fire area",
+        "firewood are stacked, including two prominent",
+        "high-angle, outdoor shot",
+    ]
+
+
+def test_hyphenated_compound_and_quoted_text_are_never_cut():
+    night_records = _corpus_records("v_-uJnucdW6DY")
+    label_records = _corpus_records("v_-MbZ-W0AbN0")
+    night_record = next(
+        record for record in night_records if record["topic"] == "v_-uJnucdW6DY:327"
+    )
+    label_record = next(
+        record for record in label_records if record["topic"] == "v_-MbZ-W0AbN0:337"
+    )
+
+    night_topic = extract_topic(
+        night_record, saliency=TopicSaliency.from_records(night_records)
+    )
+    label_topic = extract_topic(
+        label_record, saliency=TopicSaliency.from_records(label_records)
+    )
+
+    assert night_topic == "well-lit arena despite the night's"
+    assert label_topic == "leftmost section, a cardboard box"
+
+
+def test_every_corpus_topic_is_a_complete_phrase_of_its_source():
+    corpora = (_records(), _sample_video_records(), _ingested_segment_records())
+    examined: list[tuple[str, str]] = []
+    cut: list[tuple[str, str | None]] = []
+
+    for records in corpora:
+        saliency = TopicSaliency.from_records(records)
+        for record in records:
+            topic = extract_topic(record, saliency=saliency)
+            if topic is None or not _is_complete_phrase_of(
+                topic, record["description"]
+            ):
+                cut.append((record["topic"], topic))
+                continue
+            examined.append((record["topic"], topic))
+
+    assert cut == []
+    assert len(examined) == 28
+
+
+def test_the_complete_phrase_oracle_rejects_a_cut_span():
+    sentence = 'Some white debris (possibly trash or paper) reads "STOP" here.'
+    fragment = "debris (possibly trash or paper"
+    start = sentence.index(fragment)
+
+    assert _spans_a_complete_phrase(sentence, start, start + len(fragment)) is False
+    assert _is_complete_phrase_of(fragment, sentence) is False
+    assert _is_complete_phrase_of("debris (possibly trash or paper)", sentence) is True
+    assert _is_complete_phrase_of('reads "STOP" here', sentence) is True
+    assert _is_complete_phrase_of('reads "STOP', sentence) is False
 
 
 def test_sample_video_corpus_pins_exact_topics():
