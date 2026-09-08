@@ -323,7 +323,10 @@ class TestCodingAgentDispatch:
             f"Coding agent failed: {resp.status_code}: {resp.text[:300]}"
         )
         data = resp.json()
-        assert set(data) == {"status", "agent", "message", "result"}, data
+        assert set(data) == {"status", "agent", "message", "result", "answer"}, data
+        # The dispatch envelope carries the canonical answer text; for this
+        # agent it is the output's summary field.
+        assert data["answer"] == data["result"]["summary"]
         assert data["status"] == "success"
         assert data["agent"] == "coding_agent"
         assert data["message"] == f"Coding task complete for '{query}'"

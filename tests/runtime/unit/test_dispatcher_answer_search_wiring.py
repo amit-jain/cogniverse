@@ -197,7 +197,7 @@ class TestSearchUsesActiveVideoProfile:
 
         dispatcher._get_search_agent = _capture
         dispatcher.consult_egress_policy = lambda *a, **k: None
-        dispatcher._verify_search_egress = lambda *a, **k: None
+        dispatcher._verify_egress = lambda *a, **k: None
         dispatcher._apply_artefact_overlay = lambda *a, **k: None
 
         await dispatcher._execute_search_task("robots", "acme:acme", top_k=5)
@@ -238,7 +238,7 @@ class TestAnswerTasksFeedSearchedResults:
         dispatcher._execute_search_task = _search
         dispatcher._init_agent_memory = lambda *a, **k: None
         dispatcher.consult_egress_policy = lambda *a, **k: None
-        dispatcher._verify_summarizer_egress = lambda *a, **k: None
+        dispatcher._verify_egress = lambda *a, **k: None
         dispatcher._apply_artefact_overlay = lambda *a, **k: None
         _CaptureAgent.captured = {}
         monkeypatch.setattr(
@@ -508,7 +508,7 @@ class TestGatewayTopKForwarding:
         d._registry.get_agent.return_value = gateway_agent
 
         d.consult_egress_policy = lambda *a, **k: None
-        d._verify_routing_egress = lambda *a, **k: None
+        d._verify_egress = lambda *a, **k: None
         d._get_rail_chains = lambda tenant_id: None
         d._spawn_background = lambda coro: coro.close()
 
@@ -701,7 +701,7 @@ class TestDownstreamDispatchThreadsRequestContext:
         stub = _SearchAgentStub("video_colpali_smol500_mv_frame")
         dispatcher._get_search_agent = lambda profile: stub
         dispatcher.consult_egress_policy = lambda *a, **k: None
-        dispatcher._verify_search_egress = lambda *a, **k: None
+        dispatcher._verify_egress = lambda *a, **k: None
         dispatcher._registry.get_agent = lambda name: SimpleNamespace(
             capabilities=["search"]
         )
@@ -938,7 +938,7 @@ class TestRlmThreadsIntoTypedInputs:
 
         dispatcher._get_search_agent = lambda profile: _CapturingSearchStub(profile)
         dispatcher.consult_egress_policy = lambda *a, **k: None
-        dispatcher._verify_search_egress = lambda *a, **k: None
+        dispatcher._verify_egress = lambda *a, **k: None
 
         await dispatcher._execute_search_task(
             "robots", "acme:acme", 5, context={"rlm": dict(self._RLM)}
@@ -1210,7 +1210,7 @@ class TestSummaryTypeReachableFromContext:
         dispatcher._execute_search_task = _search
         dispatcher._init_agent_memory = lambda *a, **k: None
         dispatcher.consult_egress_policy = lambda *a, **k: None
-        dispatcher._verify_summarizer_egress = lambda *a, **k: None
+        dispatcher._verify_egress = lambda *a, **k: None
         dispatcher._apply_artefact_overlay = lambda *a, **k: None
         _CaptureAgent.captured = {}
         monkeypatch.setattr(
@@ -1230,7 +1230,7 @@ class TestSummaryTypeReachableFromContext:
         dispatcher._execute_search_task = _search
         dispatcher._init_agent_memory = lambda *a, **k: None
         dispatcher.consult_egress_policy = lambda *a, **k: None
-        dispatcher._verify_summarizer_egress = lambda *a, **k: None
+        dispatcher._verify_egress = lambda *a, **k: None
         dispatcher._apply_artefact_overlay = lambda *a, **k: None
         _CaptureAgent.captured = {}
         monkeypatch.setattr(

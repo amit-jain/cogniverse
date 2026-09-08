@@ -53,7 +53,7 @@ async def test_gateway_load_artifact_runs_off_the_event_loop(monkeypatch):
     d = object.__new__(AgentDispatcher)
     d._gateway_agent = None
     d.consult_egress_policy = lambda *a, **k: None
-    d._verify_routing_egress = lambda *a, **k: None
+    d._verify_egress = lambda *a, **k: None
     d._get_rail_chains = lambda *a, **k: None
     d._resolve_gliner_url = lambda *a, **k: None
     # The gateway build seeds GLiNER deps from the tenant routing config.
