@@ -6662,6 +6662,7 @@ class TestEntityExtractionOptimization:
         from dspy.utils.dummies import DummyLM
 
         import cogniverse_runtime.optimization_cli as optimization_cli
+        from cogniverse_foundation.config.unified_config import LLMEndpointConfig
         from cogniverse_runtime.optimization_cli import (
             run_entity_extraction_optimization,
         )
@@ -6705,15 +6706,18 @@ class TestEntityExtractionOptimization:
 
         class FakeLLMConfig:
             def resolve(self, purpose):
-                return SimpleNamespace(
+                return LLMEndpointConfig(
+                    model="openai/student-model",
                     api_base="http://student:8000/v1",
-                    model="student-model",
+                    api_key="placeholder-no-auth-needed",
                 )
 
             def resolve_teacher(self):
-                return SimpleNamespace(
+                return LLMEndpointConfig(
+                    model=f"openai/{_TEACHER_SERVED_MODEL}",
                     api_base="http://teacher:8000/v1",
-                    model="test/teacher-model",
+                    api_key="placeholder-no-auth-needed",
+                    max_tokens=2048,
                 )
 
         class FakeConfig:
@@ -6819,6 +6823,10 @@ class TestEntityExtractionOptimization:
             ),
             patch(
                 "cogniverse_foundation.config.llm_factory.create_dspy_lm",
+                side_effect=fake_create_dspy_lm,
+            ),
+            patch(
+                "cogniverse_foundation.config.llm_factory.create_budgeted_dspy_lm",
                 side_effect=fake_create_dspy_lm,
             ),
             patch(
@@ -10049,7 +10057,7 @@ class TestTeacherEndpointReachability:
         )
 
         with patch(
-            "cogniverse_foundation.config.llm_factory.create_dspy_lm",
+            "cogniverse_foundation.config.llm_factory.create_budgeted_dspy_lm",
             return_value="TEACHER_LM",
         ):
             built = teacher_lm_or_raise(
@@ -10104,7 +10112,7 @@ class TestTeacherEndpointReachability:
             return next(responses)
 
         with patch(
-            "cogniverse_foundation.config.llm_factory.create_dspy_lm",
+            "cogniverse_foundation.config.llm_factory.create_budgeted_dspy_lm",
             return_value="TEACHER_LM",
         ):
             built = teacher_lm_or_raise(
@@ -10171,3 +10179,54 @@ class TestTeacherEndpointReachability:
             "'openai/cyankiwi/Qwen3.6-27B-AWQ-INT4'; requests for an unserved "
             "model id are rejected"
         )
+
+    def test_the_teacher_lm_budgets_against_the_window_the_endpoint_serves(self):
+        import json as _json
+        import threading
+        from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
+
+        from cogniverse_foundation.config.budgeted_lm import BudgetedLM
+        from cogniverse_foundation.config.unified_config import LLMEndpointConfig
+        from cogniverse_runtime.optimization_cli import teacher_lm_or_raise
+
+        class Models(BaseHTTPRequestHandler):
+            def do_GET(self):  # noqa: N802 - BaseHTTPRequestHandler contract
+                payload = _json.dumps(
+                    {
+                        "object": "list",
+                        "data": [{"id": "Qwen/Qwen3-14B-AWQ", "max_model_len": 4096}],
+                    }
+                ).encode()
+                self.send_response(200)
+                self.send_header("Content-Type", "application/json")
+                self.send_header("Content-Length", str(len(payload)))
+                self.end_headers()
+                self.wfile.write(payload)
+
+            def log_message(self, *args):
+                return
+
+        server = ThreadingHTTPServer(("127.0.0.1", 0), Models)
+        threading.Thread(target=server.serve_forever, daemon=True).start()
+        api_base = f"http://127.0.0.1:{server.server_address[1]}/v1"
+        cfg = SimpleNamespace(
+            resolve_teacher=lambda: LLMEndpointConfig(
+                model="openai/Qwen/Qwen3-14B-AWQ",
+                api_base=api_base,
+                api_key="placeholder-no-auth-needed",
+                max_tokens=2048,
+            )
+        )
+
+        try:
+            lm = teacher_lm_or_raise(cfg, probe=lambda url: "Qwen/Qwen3-14B-AWQ")
+            budget = lm.budget
+        finally:
+            server.shutdown()
+
+        assert isinstance(lm, BudgetedLM)
+        assert lm.model == "openai/Qwen/Qwen3-14B-AWQ"
+        assert lm.kwargs["max_tokens"] == 2048
+        assert budget.context_window == 4096
+        assert budget.reserved_output == 2048
+        assert budget.input_budget == 2048

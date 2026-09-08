@@ -472,8 +472,13 @@ def teacher_lm_or_raise(
     to a fallback: the job walks the whole trainset, collects no demos and
     hits its timeout with no indication of why. Probe first and refuse,
     naming the endpoint and the model mismatch when there is one.
+
+    Bootstrapping grows the prompt demonstration by demonstration, so the LM
+    is budgeted against the window the teacher actually serves: the endpoint's
+    ``max_tokens`` is the reserved completion and the remainder bounds the
+    prompt.
     """
-    from cogniverse_foundation.config.llm_factory import create_dspy_lm
+    from cogniverse_foundation.config.llm_factory import create_budgeted_dspy_lm
 
     endpoint = resolve_teacher_endpoint(llm_config)
     probe_teacher_endpoint(
@@ -483,7 +488,7 @@ def teacher_lm_or_raise(
         now=now,
         sleep=sleep,
     )
-    return create_dspy_lm(endpoint)
+    return create_budgeted_dspy_lm(endpoint)
 
 
 def _query_enhancement_metric(example, prediction, trace=None) -> bool:
