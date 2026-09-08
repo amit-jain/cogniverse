@@ -11,7 +11,7 @@ Usage:
     python -m cogniverse_runtime.optimization_cli --mode online-routing-eval --tenant-id acme:production
     python -m cogniverse_runtime.optimization_cli --mode profile --tenant-id acme:production
     python -m cogniverse_runtime.optimization_cli --mode entity-extraction --tenant-id acme:production
-    python -m cogniverse_runtime.optimization_cli --mode cleanup --log-retention-days 7
+    LOG_DIR=/logs TEMP_DIR=/tmp/cogniverse-cleanup python -m cogniverse_runtime.optimization_cli --mode cleanup --log-retention-days 7
     python -m cogniverse_runtime.optimization_cli --mode triggered \
         --tenant-id acme:production --agents search,summary \
         --trigger-dataset optimization-trigger-acme-production-20260403_040000
@@ -2903,10 +2903,50 @@ def _vacuum_config_metadata(*, keep_versions: int) -> dict:
     return {"dropped": dropped, "keep_versions": keep_versions}
 
 
+class CleanupRootError(ValueError):
+    """A cleanup root is missing or unsafe to sweep."""
+
+    def __init__(self, parameter: str, reason: str):
+        self.parameter = parameter
+        super().__init__(f"{parameter}: {reason}")
+
+
+def _validate_cleanup_root(parameter: str, value: str | Path | None) -> str:
+    if value is None or not str(value).strip():
+        raise CleanupRootError(parameter, "an explicit directory is required")
+    root = Path(value).resolve()
+    if root in {Path("/"), Path("/tmp"), Path("/var/tmp"), Path.home().resolve()}:
+        raise CleanupRootError(parameter, f"forbidden cleanup root: {root}")
+    if not root.is_dir():
+        raise CleanupRootError(parameter, f"not an existing directory: {root}")
+    executable = Path(sys.executable).absolute()
+    if (
+        executable.is_relative_to(root)
+        or executable.parent.resolve().is_relative_to(root)
+        or executable.resolve().is_relative_to(root)
+    ):
+        raise CleanupRootError(parameter, f"contains the running interpreter: {root}")
+    for origin in (Path(__file__).resolve(), Path.cwd().resolve()):
+        for candidate in (origin, *origin.parents):
+            if (candidate / ".git").exists():
+                if candidate.is_relative_to(root):
+                    raise CleanupRootError(
+                        parameter, f"contains the repository checkout: {root}"
+                    )
+                break
+    return str(root)
+
+
 async def run_cleanup(
     tenant_id: Optional[str],
     log_retention_days: int,
     memory_retention_days: int,
+    *,
+    log_dir: str | Path | None,
+    temp_dir: str | Path | None,
+    temp_retention_days: float,
+    schemas_dir: str | Path,
+    config_keep_versions: int,
 ) -> dict:
     """Daily-cleanup workflow body: memory + logs + temp + config vacuum.
 
@@ -2920,18 +2960,21 @@ async def run_cleanup(
     carries the three counts and a non-zero ``failed`` fails the run.
     The other three steps:
 
-      * Log rotation under ``LOG_DIR`` (default ``/logs``) — files
-        older than ``log_retention_days`` are removed.
-      * Temp file cleanup under ``TEMP_DIR`` (default ``/tmp``) —
-        files older than 1 day are removed.
-      * config_metadata version vacuum — each config_id is pruned to
-        the latest ``CONFIG_KEEP_VERSIONS`` (default 10).
+      * Log rotation under the explicit ``log_dir`` removes files older
+        than ``log_retention_days``.
+      * Temp cleanup under the explicit ``temp_dir`` removes files older
+        than ``temp_retention_days``.
+      * Config metadata retains the latest ``config_keep_versions`` versions.
+
+    Both roots must be existing dedicated directories. ``CleanupRootError``
+    names an invalid parameter before any backend or filesystem cleanup.
 
     Each section reports exact counts in the result dict so the
     workflow run log proves the work landed — bare "Succeeded" is too
     weak a signal for a maintenance cron.
     """
-    from pathlib import Path
+    log_dir = _validate_cleanup_root("log_dir", log_dir)
+    temp_dir = _validate_cleanup_root("temp_dir", temp_dir)
 
     from cogniverse_core.memory.manager import Mem0MemoryManager
     from cogniverse_core.memory.schema import build_default_registry
@@ -2946,8 +2989,7 @@ async def run_cleanup(
     # so it has no app-startup lifespan to call set_schema_loader for
     # it. Wire it here using the same FilesystemSchemaLoader pattern
     # the synthetic mode uses.
-    schemas_dir = Path(os.environ.get("COGNIVERSE_SCHEMAS_DIR", "configs/schemas"))
-    tenant_manager.set_schema_loader(FilesystemSchemaLoader(schemas_dir))
+    tenant_manager.set_schema_loader(FilesystemSchemaLoader(Path(schemas_dir)))
 
     # cleanup_with_schema requires a fully-initialised Mem0 instance
     # (it touches mgr.memory.get_all). The Mem0MemoryManager singleton
@@ -2976,7 +3018,6 @@ async def run_cleanup(
         except Exception as e:
             return {"status": "failed", "error": f"{type(e).__name__}: {e}"}
 
-    # --- Memory cleanup (per tenant) ---
     per_tenant: Dict[str, Dict[str, Any]] = {}
     if tenant_id is not None:
         per_tenant[tenant_id] = _cleanup_one(tenant_id)
@@ -2995,21 +3036,18 @@ async def run_cleanup(
     }
     results["tenants_processed"] = len(per_tenant)
 
-    # --- Log rotation ---
-    log_dir = os.environ.get("LOG_DIR", "/logs")
     results["log_cleanup"] = _prune_aged_files(
         log_dir, older_than_days=float(log_retention_days)
     )
 
-    # --- Temp file cleanup ---
-    temp_dir = os.environ.get("TEMP_DIR", "/tmp")
-    temp_age_days = float(os.environ.get("TEMP_RETENTION_DAYS", "1"))
-    results["temp_cleanup"] = _prune_aged_files(temp_dir, older_than_days=temp_age_days)
+    results["temp_cleanup"] = _prune_aged_files(
+        temp_dir, older_than_days=temp_retention_days
+    )
 
-    # --- Config metadata vacuum ---
-    keep_versions = int(os.environ.get("CONFIG_KEEP_VERSIONS", "10"))
     try:
-        results["config_vacuum"] = _vacuum_config_metadata(keep_versions=keep_versions)
+        results["config_vacuum"] = _vacuum_config_metadata(
+            keep_versions=config_keep_versions
+        )
     except Exception as exc:  # noqa: BLE001 — best-effort vacuum
         results["config_vacuum"] = {"failed": str(exc)}
 
@@ -6244,8 +6282,8 @@ def build_parser() -> argparse.ArgumentParser:
         "--trigger-dataset",
         help="Phoenix dataset name containing trigger payload",
     )
-    parser.add_argument("--log-retention-days", type=int, default=7)
-    parser.add_argument("--memory-retention-days", type=int, default=30)
+    parser.add_argument("--log-retention-days", type=int)
+    parser.add_argument("--memory-retention-days", type=int)
     # rollback mode args. Operators run e.g.
     #   cogniverse-optim --mode rollback --tenant-id acme \
     #       --agent search_agent --prompts-version 3
@@ -6429,9 +6467,27 @@ def main():
     # Keep stdout reserved for the final JSON document.
     with _redirect_stdout_to_stderr():
         if args.mode == "cleanup":
+            log_dir = os.environ.get("LOG_DIR")
+            temp_dir = os.environ.get("TEMP_DIR")
+            log_retention_days = int(os.environ.get("LOG_RETENTION_DAYS", "7"))
+            memory_retention_days = int(os.environ.get("MEMORY_RETENTION_DAYS", "30"))
+            temp_retention_days = float(os.environ.get("TEMP_RETENTION_DAYS", "1"))
+            schemas_dir = os.environ.get("COGNIVERSE_SCHEMAS_DIR", "configs/schemas")
+            config_keep_versions = int(os.environ.get("CONFIG_KEEP_VERSIONS", "10"))
             result = asyncio.run(
                 run_cleanup(
-                    args.tenant_id, args.log_retention_days, args.memory_retention_days
+                    args.tenant_id,
+                    args.log_retention_days
+                    if args.log_retention_days is not None
+                    else log_retention_days,
+                    args.memory_retention_days
+                    if args.memory_retention_days is not None
+                    else memory_retention_days,
+                    log_dir=log_dir,
+                    temp_dir=temp_dir,
+                    temp_retention_days=temp_retention_days,
+                    schemas_dir=schemas_dir,
+                    config_keep_versions=config_keep_versions,
                 )
             )
         elif args.mode == "monthly-reports":

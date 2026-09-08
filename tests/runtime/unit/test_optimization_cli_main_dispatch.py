@@ -166,7 +166,14 @@ def test_lookback_mode_failure_result_exits_1(monkeypatch, mode, worker_attr):
     assert rec.kwargs["tenant_id"] == "acme:acme"
 
 
-def test_cleanup_success_dispatch(monkeypatch):
+def test_cleanup_success_dispatch(monkeypatch, tmp_path):
+    monkeypatch.setenv("LOG_DIR", str(tmp_path / "logs"))
+    monkeypatch.setenv("TEMP_DIR", str(tmp_path / "temp"))
+    monkeypatch.setenv("LOG_RETENTION_DAYS", "12")
+    monkeypatch.setenv("MEMORY_RETENTION_DAYS", "45")
+    monkeypatch.setenv("TEMP_RETENTION_DAYS", "2")
+    monkeypatch.setenv("CONFIG_KEEP_VERSIONS", "8")
+    monkeypatch.setenv("COGNIVERSE_SCHEMAS_DIR", "configs/schemas")
     rec = _Recorder(_OK)
     monkeypatch.setattr(oc, "run_cleanup", rec)
     code = _run_main(
@@ -184,9 +191,14 @@ def test_cleanup_success_dispatch(monkeypatch):
     )
     assert code == 0
     assert rec.calls == 1
-    # run_cleanup(tenant_id, log_retention_days, memory_retention_days) positional
     assert rec.args == ("acme:acme", 5, 15)
-    assert rec.kwargs == {}
+    assert rec.kwargs == {
+        "log_dir": str(tmp_path / "logs"),
+        "temp_dir": str(tmp_path / "temp"),
+        "temp_retention_days": 2,
+        "schemas_dir": "configs/schemas",
+        "config_keep_versions": 8,
+    }
 
 
 def test_cleanup_failure_result_exits_1(monkeypatch):
@@ -604,3 +616,41 @@ def test_inference_service_urls_without_denseon_leaves_embedder_url_unset(
     assert code == 0
     assert rec.calls == 1
     assert rec.kwargs == _expected_lookback_kwargs(worker_attr, None)
+
+
+def test_cleanup_resolves_environment_once(monkeypatch, tmp_path):
+    import os
+    from collections import Counter
+
+    values = {
+        "LOG_DIR": str(tmp_path / "logs"),
+        "TEMP_DIR": str(tmp_path / "temp"),
+        "LOG_RETENTION_DAYS": "9",
+        "MEMORY_RETENTION_DAYS": "42",
+        "TEMP_RETENTION_DAYS": "3",
+        "COGNIVERSE_SCHEMAS_DIR": "configs/schemas",
+        "CONFIG_KEEP_VERSIONS": "6",
+    }
+    for key, value in values.items():
+        monkeypatch.setenv(key, value)
+    reads = Counter()
+    original_get = os.environ.get
+
+    def counted_get(key, *args):
+        if key in values:
+            reads[key] += 1
+        return original_get(key, *args)
+
+    rec = _Recorder(_OK)
+    monkeypatch.setattr(os.environ, "get", counted_get)
+    monkeypatch.setattr(oc, "run_cleanup", rec)
+    assert _run_main(monkeypatch, ["--mode", "cleanup"]) == 0
+    assert rec.args == (None, 9, 42)
+    assert rec.kwargs == {
+        "log_dir": values["LOG_DIR"],
+        "temp_dir": values["TEMP_DIR"],
+        "temp_retention_days": 3,
+        "schemas_dir": "configs/schemas",
+        "config_keep_versions": 6,
+    }
+    assert reads == dict.fromkeys(values, 1)

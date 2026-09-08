@@ -22,18 +22,28 @@ import pytest
 from cogniverse_core.memory.manager import Mem0MemoryManager
 from cogniverse_core.schemas.filesystem_loader import FilesystemSchemaLoader
 from cogniverse_runtime.admin import tenant_manager
-from cogniverse_runtime.optimization_cli import _run_failed, run_cleanup
+from cogniverse_runtime.optimization_cli import (
+    CleanupRootError,
+    _run_failed,
+    run_cleanup,
+)
 
 pytestmark = pytest.mark.integration
 
 
-@pytest.fixture(autouse=True)
-def _sweep_roots_this_test_owns(tmp_path, monkeypatch):
-    """``run_cleanup`` deletes aged files under LOG_DIR and TEMP_DIR, whose
-    defaults are ``/logs`` and the host's ``/tmp``. Both point at paths this
-    test owns unless it sets its own."""
-    monkeypatch.setenv("LOG_DIR", str(tmp_path / "sweep_logs"))
-    monkeypatch.setenv("TEMP_DIR", str(tmp_path / "sweep_temp"))
+@pytest.fixture
+def cleanup_settings(tmp_path):
+    log_dir = tmp_path / "sweep_logs"
+    temp_dir = tmp_path / "sweep_temp"
+    log_dir.mkdir()
+    temp_dir.mkdir()
+    return {
+        "log_dir": log_dir,
+        "temp_dir": temp_dir,
+        "temp_retention_days": 1,
+        "schemas_dir": "configs/schemas",
+        "config_keep_versions": 10,
+    }
 
 
 def _seed(
@@ -140,7 +150,7 @@ class TestRunCleanupEnforcesSchemaRetention:
 
     @pytest.mark.asyncio
     async def test_per_tenant_cleanup_keeps_fresh_archives_aging_hard_deletes_stale(
-        self, memory_manager
+        self, memory_manager, cleanup_settings
     ):
         """Real Mem0: fresh / soft-delete-window / hard-delete-window /
         PERMANENT each verified by exact post-state — no wiring-only checks.
@@ -170,6 +180,7 @@ class TestRunCleanupEnforcesSchemaRetention:
         )
 
         result = await run_cleanup(
+            **cleanup_settings,
             tenant_id=tenant_id,
             log_retention_days=7,
             memory_retention_days=30,
@@ -215,7 +226,7 @@ class TestRunCleanupEnforcesSchemaRetention:
 
     @pytest.mark.asyncio
     async def test_global_cleanup_enforces_schema_retention_for_all_real_tenants(
-        self, memory_manager, vespa_instance, config_manager
+        self, memory_manager, vespa_instance, config_manager, cleanup_settings
     ):
         """tenant_id=None: real backend enumeration via tenant_manager
         helpers; cleanup applied per discovered tenant.
@@ -264,6 +275,7 @@ class TestRunCleanupEnforcesSchemaRetention:
 
         try:
             result = await run_cleanup(
+                **cleanup_settings,
                 tenant_id=None,
                 log_retention_days=1,
                 memory_retention_days=1,
@@ -290,7 +302,7 @@ class TestRunCleanupOnlyTouchesTenantsWithMemorySchemas:
 
     @pytest.mark.asyncio
     async def test_tenant_without_memory_schema_is_skipped_and_nothing_is_deployed(
-        self, memory_manager, config_manager
+        self, memory_manager, config_manager, cleanup_settings
     ):
         backend = _metadata_backend(config_manager)
         org_id = f"cli_cleanup_bare_{uuid.uuid4().hex[:8]}"
@@ -305,7 +317,10 @@ class TestRunCleanupOnlyTouchesTenantsWithMemorySchemas:
             assert provenance_schema not in before, before
 
             result = await run_cleanup(
-                tenant_id=None, log_retention_days=1, memory_retention_days=1
+                **cleanup_settings,
+                tenant_id=None,
+                log_retention_days=1,
+                memory_retention_days=1,
             )
 
             after = _deployed_document_types(backend)
@@ -325,7 +340,7 @@ class TestRunCleanupOnlyTouchesTenantsWithMemorySchemas:
 
     @pytest.mark.asyncio
     async def test_tenant_whose_cleanup_raises_is_reported_failed_and_fails_the_run(
-        self, memory_manager, config_manager, monkeypatch
+        self, memory_manager, config_manager, monkeypatch, cleanup_settings
     ):
         backend = _metadata_backend(config_manager)
         org_id = f"cli_cleanup_outage_{uuid.uuid4().hex[:8]}"
@@ -343,7 +358,10 @@ class TestRunCleanupOnlyTouchesTenantsWithMemorySchemas:
             before = _deployed_document_types(backend)
 
             result = await run_cleanup(
-                tenant_id=None, log_retention_days=1, memory_retention_days=1
+                **cleanup_settings,
+                tenant_id=None,
+                log_retention_days=1,
+                memory_retention_days=1,
             )
 
             assert _deployed_document_types(backend) == before
@@ -365,7 +383,7 @@ class TestRunCleanupCoversLogsTempAndConfigVacuum:
 
     @pytest.mark.asyncio
     async def test_log_cleanup_deletes_files_older_than_retention(
-        self, memory_manager, tmp_path, monkeypatch
+        self, memory_manager, tmp_path, cleanup_settings
     ):
         """Files older than ``log_retention_days`` are removed; fresh files survive.
 
@@ -384,12 +402,10 @@ class TestRunCleanupCoversLogsTempAndConfigVacuum:
         ten_days_ago = time.time() - 10 * 86400
         os.utime(stale, (ten_days_ago, ten_days_ago))
 
-        monkeypatch.setenv("LOG_DIR", str(log_dir))
-        # Disable temp/vacuum so this test only asserts log behaviour.
-        monkeypatch.setenv("TEMP_DIR", str(tmp_path / "nonexistent_temp"))
-        monkeypatch.setenv("CONFIG_KEEP_VERSIONS", "10")
+        cleanup_settings["log_dir"] = log_dir
 
         result = await run_cleanup(
+            **cleanup_settings,
             tenant_id=memory_manager.tenant_id,
             log_retention_days=7,
             memory_retention_days=30,
@@ -403,30 +419,32 @@ class TestRunCleanupCoversLogsTempAndConfigVacuum:
         assert fresh.exists(), "fresh.log must survive"
 
     @pytest.mark.asyncio
-    async def test_log_cleanup_skips_missing_directory(
-        self, memory_manager, tmp_path, monkeypatch
+    async def test_log_cleanup_rejects_missing_directory(
+        self, memory_manager, tmp_path, cleanup_settings
     ):
-        """LOG_DIR pointing at a non-existent path is a logged skip, not a failure."""
+        """A missing log directory raises before any filesystem cleanup."""
         missing = tmp_path / "no_logs_here"
-        monkeypatch.setenv("LOG_DIR", str(missing))
-        monkeypatch.setenv("TEMP_DIR", str(tmp_path / "no_tmp_here"))
+        marker = cleanup_settings["temp_dir"] / "old.tmp"
+        marker.write_text("preserved")
+        old = time.time() - 2 * 86400
+        os.utime(marker, (old, old))
+        cleanup_settings["log_dir"] = missing
 
-        result = await run_cleanup(
-            tenant_id=memory_manager.tenant_id,
-            log_retention_days=7,
-            memory_retention_days=30,
-        )
+        with pytest.raises(CleanupRootError) as exc:
+            await run_cleanup(
+                **cleanup_settings,
+                tenant_id=memory_manager.tenant_id,
+                log_retention_days=7,
+                memory_retention_days=30,
+            )
 
-        assert "skipped" in result["log_cleanup"], (
-            f"missing log dir must report skipped, not crash; "
-            f"got {result['log_cleanup']!r}"
-        )
-        assert result["log_cleanup"]["scanned"] == 0
-        assert result["log_cleanup"]["deleted"] == 0
+        assert exc.value.parameter == "log_dir"
+        assert str(exc.value) == f"log_dir: not an existing directory: {missing}"
+        assert marker.read_text() == "preserved"
 
     @pytest.mark.asyncio
     async def test_temp_cleanup_deletes_old_temp_files(
-        self, memory_manager, tmp_path, monkeypatch
+        self, memory_manager, tmp_path, cleanup_settings
     ):
         """TEMP_DIR sweep removes files older than TEMP_RETENTION_DAYS."""
         temp_dir = tmp_path / "tmp"
@@ -438,11 +456,10 @@ class TestRunCleanupCoversLogsTempAndConfigVacuum:
         two_days_ago = time.time() - 2 * 86400
         os.utime(old_tmp, (two_days_ago, two_days_ago))
 
-        monkeypatch.setenv("LOG_DIR", str(tmp_path / "no_logs"))
-        monkeypatch.setenv("TEMP_DIR", str(temp_dir))
-        monkeypatch.setenv("TEMP_RETENTION_DAYS", "1")
+        cleanup_settings["temp_dir"] = temp_dir
 
         result = await run_cleanup(
+            **cleanup_settings,
             tenant_id=memory_manager.tenant_id,
             log_retention_days=7,
             memory_retention_days=30,
@@ -456,7 +473,7 @@ class TestRunCleanupCoversLogsTempAndConfigVacuum:
 
     @pytest.mark.asyncio
     async def test_config_vacuum_prunes_excess_versions(
-        self, memory_manager, vespa_instance, monkeypatch
+        self, memory_manager, vespa_instance, cleanup_settings
     ):
         """The config_vacuum section drives ``VespaConfigStore.prune_all_configs``.
 
@@ -497,12 +514,11 @@ class TestRunCleanupCoversLogsTempAndConfigVacuum:
             f"setup precondition: expected 15 versions seeded, found {pre_count}"
         )
 
-        monkeypatch.setenv("LOG_DIR", "/no_logs_here_either")
-        monkeypatch.setenv("TEMP_DIR", "/no_tmp_here_either")
-        monkeypatch.setenv("CONFIG_KEEP_VERSIONS", "5")
+        cleanup_settings["config_keep_versions"] = 5
 
         try:
             result = await run_cleanup(
+                **cleanup_settings,
                 tenant_id=memory_manager.tenant_id,
                 log_retention_days=7,
                 memory_retention_days=30,
@@ -534,3 +550,53 @@ class TestRunCleanupCoversLogsTempAndConfigVacuum:
                 service="vacuum_probe",
                 config_key="kv",
             )
+
+
+def test_cleanup_cli_environment_round_trip(config_manager, tmp_path):
+    import json
+    import subprocess
+    import sys
+
+    roots = {name: tmp_path / name for name in ("logs", "scratch")}
+    for root in roots.values():
+        root.mkdir()
+        for name, age_days in (("old", 10), ("retained", 2), ("fresh", 0)):
+            path = root / name
+            path.write_text(name)
+            timestamp = time.time() - age_days * 86400
+            os.utime(path, (timestamp, timestamp))
+    env = dict(os.environ)
+    env.update(
+        LOG_DIR=str(roots["logs"]),
+        TEMP_DIR=str(roots["scratch"]),
+        LOG_RETENTION_DAYS="5",
+        MEMORY_RETENTION_DAYS="42",
+        TEMP_RETENTION_DAYS="3",
+    )
+    result = subprocess.run(
+        [
+            sys.executable,
+            "-m",
+            "cogniverse_runtime.optimization_cli",
+            "--mode",
+            "cleanup",
+            "--tenant-id",
+            "cleanup:absent",
+        ],
+        env=env,
+        capture_output=True,
+        text=True,
+        timeout=120,
+    )
+    assert result.returncode == 0, result.stderr
+    report = json.loads(result.stdout)
+    assert report["log_retention_days"] == 5
+    assert report["memory_retention_days"] == 42
+    for section, name in (("log_cleanup", "logs"), ("temp_cleanup", "scratch")):
+        assert report[section] == {
+            "path": str(roots[name]),
+            "scanned": 3,
+            "deleted": 1,
+            "errors": [],
+        }
+        assert sorted(p.name for p in roots[name].iterdir()) == ["fresh", "retained"]

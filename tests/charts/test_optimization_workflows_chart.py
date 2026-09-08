@@ -156,6 +156,34 @@ def _container_env(workload: dict) -> dict[str, str]:
     return {entry["name"]: entry.get("value") for entry in container.get("env", [])}
 
 
+@pytest.mark.parametrize(
+    ("name", "value"),
+    [
+        ("LOG_DIR", "/logs"),
+        ("TEMP_DIR", "/tmp/cogniverse-cleanup"),
+        ("TMPDIR", "/tmp/cogniverse-cleanup"),
+    ],
+)
+def test_cleanup_environment_names_owned_directories(name: str, value: str):
+    cron = _find_cron_workflow(_render(), "-daily-cleanup")
+    assert _container_env(cron).get(name) == value
+
+
+def test_cleanup_temp_directory_is_mounted_scratch():
+    cron = _find_cron_workflow(_render(), "-daily-cleanup")
+    template = cron["spec"]["workflowSpec"]["templates"][0]
+    mounts = {mount["name"]: mount for mount in template["container"]["volumeMounts"]}
+    volumes = {volume["name"]: volume for volume in template["volumes"]}
+    assert mounts.get("cleanup-scratch") == {
+        "name": "cleanup-scratch",
+        "mountPath": "/tmp/cogniverse-cleanup",
+    }
+    assert volumes.get("cleanup-scratch") == {
+        "name": "cleanup-scratch",
+        "emptyDir": {},
+    }
+
+
 def _workflow_template_files() -> list[Path]:
     template_dir = CHART_PATH / "templates"
     workflow_files = []

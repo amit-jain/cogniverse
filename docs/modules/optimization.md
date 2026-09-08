@@ -846,24 +846,31 @@ can toggle it.
 ### 17. **`--mode cleanup` (memory + logs + temp + config vacuum)**
 
 Daily-cleanup workflow body (per-tenant when `--tenant-id` is set, global sweep when omitted).
+The CLI resolves cleanup environment values once and passes explicit data to
+`run_cleanup`. Both roots are validated before any work; unset, empty, missing,
+broad system/home directories, and roots containing the interpreter or checkout
+raise `CleanupRootError` naming the parameter. The chart sets `LOG_DIR=/logs`
+and `TEMP_DIR=/tmp/cogniverse-cleanup`; its scratch `emptyDir` is also `TMPDIR`.
 
 **File:** `libs/runtime/cogniverse_runtime/optimization_cli.py::run_cleanup`
 
 | Section | Source | Knob |
 |---|---|---|
 | `memory_cleanup` | `Mem0MemoryManager.cleanup_with_schema(build_default_registry())` per tenant whose `agent_memories` schema is deployed (`backend.schema_exists`); the manager is initialised with `auto_create_schema=False`, so the sweep never deploys a schema | per-kind TTLs in `KnowledgeRegistry` |
-| `log_cleanup` | `_prune_aged_files(LOG_DIR, older_than_days=log_retention_days)` | `LOG_DIR` env (default `/logs`), `--log-retention-days` (default 7) |
-| `temp_cleanup` | `_prune_aged_files(TEMP_DIR, older_than_days=TEMP_RETENTION_DAYS)` | `TEMP_DIR` env (default `/tmp`), `TEMP_RETENTION_DAYS` env (default 1) |
+| `log_cleanup` | `_prune_aged_files(LOG_DIR, older_than_days=log_retention_days)` | `LOG_DIR` required existing directory; `--log-retention-days` overrides `LOG_RETENTION_DAYS` (7) |
+| `temp_cleanup` | `_prune_aged_files(TEMP_DIR, older_than_days=TEMP_RETENTION_DAYS)` | `TEMP_DIR` required existing directory; `TEMP_RETENTION_DAYS` (1) |
 | `config_vacuum` | `VespaConfigStore.prune_all_configs(keep=CONFIG_KEEP_VERSIONS)` | `CONFIG_KEEP_VERSIONS` env (default 10) |
 
-`_prune_aged_files` is a silent no-op when the path is not a directory (the cron pod may not mount `/logs` in every topology); it returns `{"skipped": "<reason>"}` so the workflow log records the skip. `_vacuum_config_metadata` is similarly safe when the backing store is not `VespaConfigStore`. Each section reports exact counts (`scanned`, `deleted`, `dropped`) so the workflow log proves the work landed.
+Both roots must exist before cleanup starts. `_vacuum_config_metadata` reports a skip when the backing store is not `VespaConfigStore`. File reports include the resolved root, `scanned`, `deleted`, and `errors`; config vacuum reports `dropped`.
 
 ```bash
 # Global sweep (every org / every tenant)
-uv run python -m cogniverse_runtime.optimization_cli --mode cleanup --log-retention-days 7
+LOG_DIR=/logs TEMP_DIR=/tmp/cogniverse-cleanup \
+  uv run python -m cogniverse_runtime.optimization_cli --mode cleanup --log-retention-days 7
 
 # Per-tenant sweep
-uv run python -m cogniverse_runtime.optimization_cli \
+LOG_DIR=/logs TEMP_DIR=/tmp/cogniverse-cleanup \
+  uv run python -m cogniverse_runtime.optimization_cli \
   --mode cleanup --tenant-id acme:production --log-retention-days 7
 ```
 
@@ -1160,7 +1167,8 @@ uv run python -m cogniverse_runtime.optimization_cli \
   --tenant-id default
 
 # Clean up old optimization logs
-uv run python -m cogniverse_runtime.optimization_cli \
+LOG_DIR=/logs TEMP_DIR=/tmp/cogniverse-cleanup \
+  uv run python -m cogniverse_runtime.optimization_cli \
   --mode cleanup \
   --log-retention-days 7
 ```
@@ -1173,7 +1181,7 @@ uv run python -m cogniverse_runtime.optimization_cli \
 
 - `--lookback-hours`: hours of span history to analyze (default 24.0, accepts fractions)
 
-- `--log-retention-days` / `--memory-retention-days`: cleanup mode (defaults 7 / 30)
+- `--log-retention-days` / `--memory-retention-days`: cleanup mode; override `LOG_RETENTION_DAYS` / `MEMORY_RETENTION_DAYS` (7 / 30). Cleanup requires existing dedicated `LOG_DIR` and `TEMP_DIR` roots; `TEMP_RETENTION_DAYS` defaults to 1. Unsafe roots raise `CleanupRootError` before cleanup.
 
 **DSPy Optimizer Selection (actual behavior):**
 The `simba`, `profile`, and `entity-extraction` modes use

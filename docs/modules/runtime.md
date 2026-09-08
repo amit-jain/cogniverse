@@ -1801,6 +1801,20 @@ approves that replacement. A missing dataset means that no synthetic examples
 have been approved yet. Phoenix read failures stop optimization with tenant and
 optimizer context instead of being treated as an empty dataset.
 
+Cleanup requires `LOG_DIR` and `TEMP_DIR` to name existing dedicated directories.
+`CleanupRootError` names `log_dir` or `temp_dir` when a root is unset, empty,
+`/`, `/tmp`, `/var/tmp`, the user's home, missing, or contains the running
+interpreter or repository checkout. Validation resolves symlinks and checks both
+roots before any cleanup. Omitted required Python arguments raise `TypeError`.
+The CLI resolves cleanup environment values once: `LOG_RETENTION_DAYS` (7),
+`MEMORY_RETENTION_DAYS` (30), `TEMP_RETENTION_DAYS` (1),
+`COGNIVERSE_SCHEMAS_DIR` (`configs/schemas`), and `CONFIG_KEEP_VERSIONS` (10).
+`--log-retention-days` and `--memory-retention-days` override their environment
+values. `run_cleanup` receives the roots, all three retention ages, schema path,
+and config version count explicitly; its file reports include the resolved root,
+scanned and deleted counts, and deletion errors. Memory retention follows each
+registered kind's schema TTL.
+
 **Modes:** the full `--mode` choice set is `cleanup`, `triggered`, `simba`, `workflow`, `gateway-thresholds`, `online-routing-eval`, `online-eval`, `profile`, `entity-extraction`, `synthetic`, `rollback`, `ab-compare`, `egress-netpol`, `monthly-reports`. `--tenant-id` is required for every mode except `cleanup`, `egress-netpol`, and `monthly-reports`, which run globally.
 
 ```bash
@@ -1809,7 +1823,8 @@ python -m cogniverse_runtime.optimization_cli --mode workflow --tenant-id acme:p
 python -m cogniverse_runtime.optimization_cli --mode gateway-thresholds --tenant-id acme:production
 python -m cogniverse_runtime.optimization_cli --mode profile --tenant-id acme:production
 python -m cogniverse_runtime.optimization_cli --mode entity-extraction --tenant-id acme:production
-python -m cogniverse_runtime.optimization_cli --mode cleanup --log-retention-days 7
+LOG_DIR=/logs TEMP_DIR=/tmp/cogniverse-cleanup \
+    python -m cogniverse_runtime.optimization_cli --mode cleanup --log-retention-days 7
 python -m cogniverse_runtime.optimization_cli --mode triggered \
     --tenant-id acme:production --agents search,summary \
     --trigger-dataset optimization-trigger-acme-production-20260403_040000
