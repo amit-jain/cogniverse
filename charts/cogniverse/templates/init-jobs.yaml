@@ -61,7 +61,7 @@ spec:
         resources:
           {{- toYaml .Values.initJobs.schemaDeployment.resources | nindent 10 }}
 {{- end }}
-{{- if and .Values.initJobs.modelPulling.enabled (eq (.Values.llm.engine | default "ollama") "ollama") -}}
+{{- if and .Values.initJobs.modelPulling.enabled (eq (.Values.llm.engine | default "ollama") "ollama") }}
 ---
 # Model Pulling Job
 # Only runs when builtin LLM is deployed. Pulls configured models.
