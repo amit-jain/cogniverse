@@ -116,27 +116,24 @@ def _scan_module_for_generic_classes(module: Any, class_name: str) -> tuple:
     ``AgentDeps``/``AgentInput`` bases). Either may be None if absent."""
     agent_cls = getattr(module, class_name)
 
-    deps_cls = None
-    for attr_name in dir(module):
-        attr = getattr(module, attr_name)
-        if (
-            isinstance(attr, type)
-            and attr_name.endswith("Deps")
-            and attr_name != "AgentDeps"
-        ):
-            deps_cls = attr
-            break
+    stem = class_name.removesuffix("Agent")
 
-    input_cls = None
-    for attr_name in dir(module):
-        attr = getattr(module, attr_name)
-        if (
-            isinstance(attr, type)
-            and attr_name.endswith("Input")
-            and attr_name != "AgentInput"
-        ):
-            input_cls = attr
-            break
+    def resolve(suffix: str):
+        preferred = getattr(module, f"{stem}{suffix}", None)
+        if isinstance(preferred, type):
+            return preferred
+        for attr_name in dir(module):
+            attr = getattr(module, attr_name)
+            if (
+                isinstance(attr, type)
+                and attr_name.endswith(suffix)
+                and attr_name != f"Agent{suffix}"
+            ):
+                return attr
+        return None
+
+    deps_cls = resolve("Deps")
+    input_cls = resolve("Input")
 
     return agent_cls, deps_cls, input_cls
 
@@ -1127,6 +1124,45 @@ class AgentDispatcher:
             # survive into a later caller on the same context.
             clear_request_tenant()
 
+    def supports_token_stream(self, agent_name: str) -> bool:
+        """Return the registered answer-token streaming declaration."""
+        agent = self._registry.get_agent(agent_name)
+        return bool(agent and agent.streams_answer_tokens)
+
+    async def dispatch_stream(
+        self,
+        agent_name: str,
+        query: str,
+        context: Optional[Dict[str, Any]] = None,
+    ):
+        """Yield agent events after checking the declared outbound endpoints."""
+        from contextlib import aclosing
+
+        from cogniverse_agents.memory_aware_mixin import clear_request_tenant
+        from cogniverse_runtime.a2a_executor import stream_agent_events
+
+        context = dict(context or {})
+        if self._registry.get_agent(agent_name) is None:
+            raise ValueError(f"Agent '{agent_name}' not found in registry")
+        tenant_id = require_tenant_id(
+            context.get("tenant_id"), source="AgentTask.context"
+        )
+        try:
+            await asyncio.to_thread(self.consult_egress_policy, agent_name)
+            await asyncio.to_thread(self._verify_egress, agent_name, tenant_id)
+            request_seed = str(
+                context.get("request_id") or context.get("request_seed") or ""
+            )
+            async with aclosing(
+                stream_agent_events(
+                    self, agent_name, query, tenant_id, context, request_seed
+                )
+            ) as events:
+                async for event in events:
+                    yield event
+        finally:
+            clear_request_tenant()
+
     async def _dispatch_for_tenant(
         self,
         agent: Any,
@@ -1235,6 +1271,9 @@ class AgentDispatcher:
             result = await self._execute_generic_agent(
                 agent_name, query, context, tenant_id
             )
+
+        if result.get("pending_tool_calls"):
+            return result
 
         if manage_history:
             await self._save_conversation_turns(
@@ -1794,8 +1833,8 @@ class AgentDispatcher:
         # extraction, query enhancement, profile selection, …) streams via the
         # base framework. Construct it exactly as the non-streaming generic
         # path does so streaming and non-streaming stay in lockstep.
-        agent_input = self._build_generic_streaming_agent(
-            agent_name, query, tenant_id, context
+        agent_input = await asyncio.to_thread(
+            self._build_generic_streaming_agent, agent_name, query, tenant_id, context
         )
         if agent_input is not None:
             return agent_input
@@ -1827,21 +1866,9 @@ class AgentDispatcher:
 
         module_path, class_name = class_path.split(":")
         module = importlib.import_module(module_path)
-        agent_cls = getattr(module, class_name)
-
-        def _by_suffix(suffix: str, exclude: str):
-            for attr_name in dir(module):
-                attr = getattr(module, attr_name)
-                if (
-                    isinstance(attr, type)
-                    and attr_name.endswith(suffix)
-                    and attr_name != exclude
-                ):
-                    return attr
-            return None
-
-        deps_cls = _by_suffix("Deps", "AgentDeps")
-        input_cls = _by_suffix("Input", "AgentInput")
+        agent_cls, deps_cls, input_cls = _resolve_generic_agent_classes(
+            class_path, module, class_name
+        )
         if deps_cls is None or input_cls is None:
             return None
 
@@ -1860,16 +1887,32 @@ class AgentDispatcher:
             or deps_cls.model_config.get("extra") == "allow"
         ):
             deps_kwargs["tenant_id"] = tenant_id
-        agent = agent_cls(deps=deps_cls(**deps_kwargs))
+        behavior = self._agent_behavior_kwargs(tenant_id, agent_name)
+        for name, value in behavior.items():
+            if name in deps_cls.model_fields:
+                deps_kwargs[name] = value
+        if "multimodal_generation_enabled" in deps_cls.model_fields:
+            deps_kwargs["multimodal_generation_enabled"] = behavior.get(
+                "visual_analysis_enabled", True
+            )
 
-        input_kwargs: Dict[str, Any] = {"query": query}
-        if "tenant_id" in input_cls.model_fields:
-            input_kwargs["tenant_id"] = tenant_id
-        if "source_text" in input_cls.model_fields:
-            source_text = (context or {}).get("source_text")
-            if source_text is not None:
-                input_kwargs["source_text"] = source_text
-        return agent, input_cls(**input_kwargs)
+        import inspect
+
+        constructor = inspect.signature(agent_cls.__init__).parameters
+        collaborators: Dict[str, Any] = {}
+        if "search_fn" in constructor:
+
+            async def search_fn(query: str, tenant_id: str):
+                result = await self._execute_search_task(query, tenant_id, top_k=10)
+                return result.get("results", [])
+
+            collaborators["search_fn"] = search_fn
+        if "config_manager" in constructor:
+            collaborators["config_manager"] = self._config_manager
+        agent = agent_cls(deps=deps_cls(**deps_kwargs), **collaborators)
+        return agent, typed_input_from_context(
+            input_cls, query=query, tenant_id=tenant_id, context=context
+        )
 
     async def _execute_search_task(
         self,
@@ -2520,7 +2563,7 @@ class AgentDispatcher:
         # DSPy module(s) for canary/variant prompts.
         self._apply_artefact_overlay(agent, context)
 
-        request_kwargs = {}
+        request_kwargs = {"attachments": (context or {}).get("attachments", [])}
         summary_type = (context or {}).get("summary_type")
         if summary_type is not None:
             request_kwargs["summary_type"] = summary_type
@@ -2806,7 +2849,13 @@ class AgentDispatcher:
             DeepResearchInput,
         )
 
-        deps = DeepResearchDeps(tenant_id=tenant_id)
+        behavior = await asyncio.to_thread(
+            self._agent_behavior_kwargs, tenant_id, "deep_research_agent"
+        )
+        deps = DeepResearchDeps(
+            tenant_id=tenant_id,
+            multimodal_generation_enabled=behavior.get("visual_analysis_enabled", True),
+        )
 
         async def search_fn(query: str, tenant_id: str):
             result = await self._execute_search_task(query, tenant_id, top_k=10)
@@ -2819,13 +2868,9 @@ class AgentDispatcher:
             self._init_agent_memory, agent, "deep_research_agent", tenant_id
         )
 
-        ctx = context or {}
-        input_kwargs: Dict[str, Any] = {"query": query, "tenant_id": tenant_id}
-        if "max_iterations" in ctx:
-            input_kwargs["max_iterations"] = ctx["max_iterations"]
-        if ctx.get("rlm") is not None:
-            input_kwargs["rlm"] = ctx["rlm"]
-        input_data = DeepResearchInput(**input_kwargs)
+        input_data = typed_input_from_context(
+            DeepResearchInput, query=query, tenant_id=tenant_id, context=context
+        )
         result = await agent.process(input_data)
 
         return {
@@ -2885,21 +2930,33 @@ class AgentDispatcher:
             self._init_agent_memory, agent, "coding_agent", tenant_id
         )
 
-        ctx = context or {}
-        input_data = CodingInput(
-            task=query,
-            codebase_path=ctx.get("codebase_path", ""),
-            tenant_id=tenant_id,
-            max_iterations=ctx.get("max_iterations", 5),
-            language=ctx.get("language", "python"),
-            rlm=ctx.get("rlm"),
+        input_data = typed_input_from_context(
+            CodingInput, query=query, tenant_id=tenant_id, context=context, task=query
         )
         with dspy.context(lm=coding_lm):
             result = await agent.process(input_data)
+
+        payload = result.model_dump()
+        if result.error:
+            return {
+                "status": "error",
+                "agent": "coding_agent",
+                "error": result.error,
+                "result": payload,
+            }
+        if result.pending_tool_calls:
+            return {
+                "status": "input_required",
+                "agent": "coding_agent",
+                "message": "Workspace tool execution required",
+                "pending_tool_calls": result.pending_tool_calls,
+                "continuation_state": result.continuation_state,
+                "result": payload,
+            }
 
         return {
             "status": "success",
             "agent": "coding_agent",
             "message": f"Coding task complete for '{query}'",
-            "result": result.model_dump(),
+            "result": payload,
         }
