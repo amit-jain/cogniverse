@@ -1,4 +1,16 @@
 {
+  "harness": {
+    "api_keys": {
+      "$COGNIVERSE_HARNESS_API_KEY": "default"
+    },
+    "models": {
+      "cogniverse": "gateway_agent",
+      "cogniverse/search": "search_agent",
+      "cogniverse/summarizer": "summarizer_agent",
+      "cogniverse/deep-research": "deep_research_agent",
+      "cogniverse/coding": "coding_agent"
+    }
+  },
   "active_video_profile": "video_colpali_smol500_mv_frame",
   "agents": {
     "search_agent": {
