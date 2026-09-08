@@ -626,7 +626,10 @@ class TestWaitTimeoutRendering:
                 profile="video_colpali_smol500_mv_frame",
                 tenant_id="acme",
                 wait=True,
-                wait_timeout=2,
+                # The wait always lapses here: retrying is not terminal, so no
+                # budget ends it early. 10s clears the 0.7s enqueue-to-retrying
+                # path measured on this host with margin for a loaded one.
+                wait_timeout=10,
             )
             assert result.wait_timed_out is True
             assert result.final_event is None
