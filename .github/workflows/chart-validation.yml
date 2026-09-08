@@ -2,6 +2,17 @@ name: Chart Validation
 
 on:
   workflow_dispatch:
+  # Both push and pull_request: work lands on main by direct push, so a
+  # pull_request-only trigger left this suite dormant from 2026-07-06.
+  push:
+    branches: [main]
+    paths:
+      - 'charts/**'
+      - 'workflows/**'
+      - 'tests/charts/**'
+      - '.github/workflows/chart-validation.yml'
+      - 'configs/config.json'
+      - 'configs/examples/config.example.json'
   pull_request:
     branches: [main]
     paths:
@@ -17,7 +28,7 @@ on:
 jobs:
   chart-validation:
     runs-on: ubuntu-latest
-    timeout-minutes: 10
+    timeout-minutes: 20
 
     steps:
       - uses: actions/checkout@v4
@@ -53,18 +64,22 @@ jobs:
       - name: helm dependency build
         run: helm dependency build charts/cogniverse
 
-      # The pytest chart suite renders the chart itself (helm + pyyaml only,
-      # no workspace sync) and asserts on the manifests — image tag scheme,
-      # config-profile drift, no floating :latest, semantic-router wiring, etc.
-      - name: Set up Python
-        uses: actions/setup-python@v5
+      # The pytest chart suite renders the chart itself and asserts on the
+      # manifests — image tag scheme, config-profile drift, no floating
+      # :latest, semantic-router wiring, workflow pod parity. It needs the
+      # workspace: tests/conftest.py loads tests/fixtures/llm.py, and
+      # test_optimization_workflows_chart.py and test_annotation_cronworkflows.py
+      # read production constants from cogniverse_synthetic and cogniverse_agents.
+      - name: Install uv
+        uses: astral-sh/setup-uv@v5
         with:
-          python-version: '3.12'
+          enable-cache: true
+
+      - name: Install dependencies
+        run: uv sync --all-packages --all-extras --no-extra cuda --no-extra rocm
 
       - name: Run chart render tests
-        run: |
-          pip install --quiet pytest pyyaml
-          python -m pytest tests/charts -q --tb=short
+        run: uv run --no-sync python -m pytest tests/charts -q --tb=short
 
       # Render the full chart (k3s values profile — same manifests the
       # deployment-lifecycle flow would apply) and validate each manifest
