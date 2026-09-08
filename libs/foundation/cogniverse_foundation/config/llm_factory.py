@@ -96,24 +96,17 @@ def resolve_inference_api_key(api_base: str | None, api_key: str | None) -> str 
     return "not-required"
 
 
-def create_dspy_lm(config: LLMEndpointConfig) -> dspy.LM:
-    """
-    Create a dspy.LM instance from an LLMEndpointConfig.
+def dspy_lm_kwargs(config: LLMEndpointConfig) -> dict:
+    """The keyword arguments an ``LLMEndpointConfig`` contributes to a dspy.LM.
 
-    Args:
-        config: LLM endpoint configuration. ``config.model`` is passed
-            through to dspy.LM verbatim.
-
-    Returns:
-        Configured dspy.LM instance.
+    Shared by every constructor so a budgeted LM and a plain one address the
+    same endpoint with the same sampling, auth and headers.
 
     Raises:
         ValueError: If config.model is empty or None.
     """
     if not config.model:
         raise ValueError("LLMEndpointConfig.model is required and must be non-empty")
-
-    import dspy
 
     kwargs: dict = {
         "temperature": config.temperature,
@@ -154,4 +147,26 @@ def create_dspy_lm(config: LLMEndpointConfig) -> dspy.LM:
         config.seed,
     )
 
-    return dspy.LM(config.model, **kwargs)
+    return kwargs
+
+
+def create_dspy_lm(config: LLMEndpointConfig) -> dspy.LM:
+    """Create a dspy.LM instance from an LLMEndpointConfig."""
+
+    import dspy
+
+    return dspy.LM(config.model, **dspy_lm_kwargs(config))
+
+
+def create_budgeted_dspy_lm(config: LLMEndpointConfig) -> dspy.LM:
+    """Create an LM that fits each request inside the window its endpoint serves.
+
+    ``config.max_tokens`` is the completion reservation; the input allowance
+    is what the served ``max_model_len`` leaves after it. Few-shot
+    demonstrations are shed to stay inside that allowance, and a prompt that
+    cannot fit without them raises ``PromptBudgetExceededError``.
+    """
+
+    from cogniverse_foundation.config.budgeted_lm import BudgetedLM
+
+    return BudgetedLM(config.model, **dspy_lm_kwargs(config))

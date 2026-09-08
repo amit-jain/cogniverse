@@ -2,6 +2,7 @@
 
 from cogniverse_foundation.config.bootstrap import BootstrapConfig
 from cogniverse_foundation.config.llm_factory import (
+    create_budgeted_dspy_lm,
     create_dspy_lm,
     resolve_inference_api_key,
 )
@@ -11,6 +12,7 @@ __all__ = [
     "BootstrapConfig",
     "LLMConfig",
     "LLMEndpointConfig",
+    "create_budgeted_dspy_lm",
     "create_dspy_lm",
     "resolve_inference_api_key",
 ]

@@ -21,7 +21,10 @@ from cogniverse_agents.optimizer.artifact_manager import (
     ArtifactManager,
     ExperimentMetrics,
 )
-from cogniverse_foundation.config.llm_factory import create_dspy_lm
+from cogniverse_foundation.config.llm_factory import (
+    create_budgeted_dspy_lm,
+    create_dspy_lm,
+)
 from cogniverse_foundation.config.unified_config import LLMEndpointConfig
 from cogniverse_foundation.telemetry.providers.base import TelemetryProvider
 
@@ -82,7 +85,7 @@ class DSPyAgentPromptOptimizer:
                 f"at {endpoint_config.api_base}"
             )
             if teacher_endpoint_config is not None:
-                self.teacher_lm = create_dspy_lm(teacher_endpoint_config)
+                self.teacher_lm = create_budgeted_dspy_lm(teacher_endpoint_config)
                 self.optimization_settings["teacher_settings"] = {"lm": self.teacher_lm}
                 logger.info(
                     f"Initialized DSPy teacher model: "
