@@ -200,7 +200,7 @@ def require_tenant_id(tenant_id: Optional[str], *, source: str) -> str:
             error message to help debugging.
 
     Returns:
-        The validated tenant_id (unchanged, for convenient inline use).
+        The tenant_id in canonical ``org:tenant`` form, for inline use.
 
     Raises:
         ValueError: If tenant_id is None, empty, or not a string.

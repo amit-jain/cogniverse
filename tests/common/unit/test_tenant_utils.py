@@ -217,10 +217,22 @@ class TestRequireTenantId:
 
     @pytest.mark.ci_fast
     def test_returns_valid_tenant_id(self):
-        """On valid input, returns the value unchanged for inline use."""
+        """A canonical id passes through as itself."""
         assert (
             require_tenant_id("acme:production", source="TestSource")
             == "acme:production"
+        )
+
+    @pytest.mark.ci_fast
+    def test_returns_the_canonical_form_of_a_simple_id(self):
+        """A simple id comes back in the ``org:tenant`` storage form the
+        downstream lookups address, not as the caller wrote it."""
+        assert require_tenant_id("acme", source="TestSource") == "acme:acme"
+
+    @pytest.mark.ci_fast
+    def test_system_tenant_is_returned_as_is(self):
+        assert (
+            require_tenant_id(SYSTEM_TENANT_ID, source="TestSource") == SYSTEM_TENANT_ID
         )
 
     @pytest.mark.ci_fast
