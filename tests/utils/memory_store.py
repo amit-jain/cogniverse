@@ -12,11 +12,11 @@ from typing import Any, Dict, List, Optional
 from cogniverse_sdk.interfaces.config_store import (
     ConfigEntry,
     ConfigScope,
-    ConfigStore,
+    ImmutableConfigStore,
 )
 
 
-class InMemoryConfigStore(ConfigStore):
+class InMemoryConfigStore(ImmutableConfigStore):
     """
     In-memory ConfigStore implementation for unit tests.
 
@@ -29,6 +29,71 @@ class InMemoryConfigStore(ConfigStore):
         self._storage: Dict[str, Dict[int, ConfigEntry]] = {}
         self._initialized = False
         self._lock = RLock()
+        self._immutable: Dict[tuple, ConfigEntry] = {}
+        self._immutable_order: List[tuple] = []
+
+    def put_immutable_config(
+        self,
+        tenant_id: str,
+        scope: ConfigScope,
+        service: str,
+        config_key: str,
+        config_value: Dict[str, Any],
+    ) -> ConfigEntry:
+        """Write version one once; an identical value is idempotent."""
+        with self._lock:
+            existing = self._immutable.get((tenant_id, scope, service, config_key))
+            if existing is not None:
+                if existing.config_value != config_value:
+                    raise ValueError(
+                        f"Immutable config {config_key} already holds a different value"
+                    )
+                return existing
+            now = datetime.now(timezone.utc)
+            entry = ConfigEntry(
+                tenant_id=tenant_id,
+                scope=scope,
+                service=service,
+                config_key=config_key,
+                config_value=dict(config_value),
+                version=1,
+                created_at=now,
+                updated_at=now,
+            )
+            self._immutable[(tenant_id, scope, service, config_key)] = entry
+            self._immutable_order.append((tenant_id, scope, service, config_key))
+            return entry
+
+    def get_immutable_config(
+        self,
+        tenant_id: str,
+        scope: ConfigScope,
+        service: str,
+        config_key: str,
+    ) -> Optional[ConfigEntry]:
+        with self._lock:
+            return self._immutable.get((tenant_id, scope, service, config_key))
+
+    def list_immutable_configs(
+        self,
+        tenant_id: str,
+        scope: ConfigScope,
+        service: str,
+        *,
+        page_size: int = 100,
+        continuation: Optional[str] = None,
+    ) -> tuple[List[ConfigEntry], Optional[str]]:
+        """One bounded page in insertion order; the cursor is the offset."""
+        with self._lock:
+            matching = [
+                self._immutable[key]
+                for key in self._immutable_order
+                if key[0] == tenant_id and key[1] == scope and key[2] == service
+            ]
+        start = int(continuation) if continuation is not None else 0
+        page = matching[start : start + page_size]
+        next_offset = start + len(page)
+        return page, (str(next_offset) if next_offset < len(matching) else None)
 
     def initialize(self) -> None:
         """Initialize the in-memory store."""
