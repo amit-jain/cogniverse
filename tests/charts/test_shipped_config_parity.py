@@ -94,6 +94,28 @@ def test_shared_agents_declare_identical_modalities_across_shipped_configs():
 
 
 @pytest.mark.unit
+def test_shared_agents_declare_identical_token_streaming_across_shipped_configs():
+    """The chart config is what a pod runs, so a streaming declaration made in
+    the repo copy alone leaves the deployed agent answering in whole chunks."""
+    shipped_agents = _rendered(SHIPPED)["agents"]
+    chart_agents = _rendered(CHART)["agents"]
+    declared = {
+        name: (
+            shipped_agents[name].get("streams_answer_tokens", False),
+            chart_agents[name].get("streams_answer_tokens", False),
+        )
+        for name in sorted(set(shipped_agents) & set(chart_agents))
+    }
+
+    assert {name: pair for name, pair in declared.items() if pair[0] != pair[1]} == {}
+    assert {name for name, pair in declared.items() if pair[0]} == {
+        "deep_research_agent",
+        "detailed_report_agent",
+        "summarizer_agent",
+    }
+
+
+@pytest.mark.unit
 def test_shipped_configs_declare_identical_agent_mappings():
     assert _mappings(_rendered(SHIPPED)) == _mappings(_rendered(CHART))
 

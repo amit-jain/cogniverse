@@ -1185,6 +1185,17 @@ backend:
             model_name: microsoft/xclip-large-patch14
 ```
 
+### Agent Configuration
+
+Each `agents.<name>` entry declares `url`, `enabled` and `capabilities`, and
+optionally `modalities`, `timeout` and `streams_answer_tokens`. `ConfigLoader`
+copies them onto the registered `AgentEndpoint`. `streams_answer_tokens: true`
+marks an agent whose answer is produced token by token, so a streaming consumer
+forwards tokens instead of one final chunk; `summarizer_agent`,
+`detailed_report_agent` and `deep_research_agent` declare it. The strict
+synthetic parser rejects any other key and a non-boolean
+`streams_answer_tokens`.
+
 ### Environment Variables
 
 ```bash

@@ -110,3 +110,32 @@ def test_deployable_field_mappings_cover_code_and_wiki_content() -> None:
         "content",
         "description",
     ]
+
+
+def test_agent_streams_answer_tokens_survives_validation() -> None:
+    parsed = parse_synthetic_runtime_config(
+        _deployable_config(), tenant_id="acme:strict"
+    )
+
+    assert {
+        name: entry.get("streams_answer_tokens", False)
+        for name, entry in parsed.agents_config.items()
+    } == {
+        name: entry.get("streams_answer_tokens", False)
+        for name, entry in _deployable_config()["agents"].items()
+        if entry["enabled"]
+    }
+
+
+@pytest.mark.parametrize("declared", ["true", 1, None], ids=["string", "int", "null"])
+def test_agent_streams_answer_tokens_rejects_non_boolean(declared: object) -> None:
+    config = _deployable_config()
+    config["agents"]["search_agent"]["streams_answer_tokens"] = declared
+
+    with pytest.raises(ValueError) as error:
+        parse_synthetic_runtime_config(config, tenant_id="acme:strict")
+
+    assert str(error.value) == (
+        "Invalid synthetic runtime configuration for tenant='acme:strict': "
+        "agents.search_agent.streams_answer_tokens must be a boolean"
+    )

@@ -18,6 +18,10 @@ class AgentEndpoint:
     name: str
     url: str
     capabilities: List[str]
+    # True when the agent emits its answer as real per-token output, so a
+    # streaming consumer can forward tokens instead of falling back to
+    # whole-chunk delivery. Declared in the agent's config entry.
+    streams_answer_tokens: bool = False
     health_endpoint: str = "/health"
     process_endpoint: str = "/process"
     timeout: int = DEFAULT_AGENT_CALL_TIMEOUT_SECONDS
