@@ -44,6 +44,12 @@ spec:
           - "--memory-retention-days"
           - "{{ .Values.argo.maintenance.cleanup.memoryRetentionDays }}"
         env:
+        - name: LOG_DIR
+          value: /logs
+        - name: TEMP_DIR
+          value: /tmp/cogniverse-cleanup
+        - name: TMPDIR
+          value: /tmp/cogniverse-cleanup
         - name: BACKEND_URL
           value: "http://{{ $fullName }}-vespa"
         - name: BACKEND_PORT
@@ -61,6 +67,8 @@ spec:
             cpu: "1"
             memory: "2Gi"
         volumeMounts:
+        - name: cleanup-scratch
+          mountPath: /tmp/cogniverse-cleanup
         - name: config
           mountPath: /app/configs/config.json
           subPath: config.json
@@ -72,6 +80,8 @@ spec:
           mountPath: /app/scripts
         {{- end }}
       volumes:
+      - name: cleanup-scratch
+        emptyDir: {}
       - name: config
         configMap:
           name: {{ $fullName }}-config

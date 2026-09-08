@@ -465,11 +465,13 @@ argo submit --from cronwf/cogniverse-scheduled-distillation -n cogniverse
 Chart `CronWorkflow` (`argo.maintenance.cleanup`, schedule `0 4 * * *`) running `python -m cogniverse_runtime.optimization_cli --mode cleanup`. Four sections run in one pod:
 
 - **Memory cleanup** — per-tenant `Mem0MemoryManager.cleanup_with_schema(build_default_registry())` (schema-driven TTLs from `KnowledgeRegistry`); sweeps every org / tenant from `organization_metadata` + `tenant_metadata`.
-- **Log rotation** — `LOG_DIR` (default `/logs`), files older than `--log-retention-days` (chart `argo.maintenance.cleanup.logRetentionDays`, default 7) removed.
-- **Temp file cleanup** — `TEMP_DIR` (default `/tmp`), files older than `TEMP_RETENTION_DAYS` env (default 1) removed.
+- **Log rotation** — required `LOG_DIR=/logs`, the container image's writable log directory; files older than `--log-retention-days` (chart `argo.maintenance.cleanup.logRetentionDays`, default 7) are removed.
+- **Temp file cleanup** — required `TEMP_DIR=/tmp/cogniverse-cleanup`, an `emptyDir` mounted in the cleanup pod; files older than `TEMP_RETENTION_DAYS` (default 1) are removed. `TMPDIR` points to the same directory for Python temporary files.
 - **Config metadata vacuum** — `VespaConfigStore.prune_all_configs(keep=CONFIG_KEEP_VERSIONS)` (default 10) — drains legacy `config_metadata` row bloat down to the latest N per `config_id`.
 
 Each section reports exact counts in the result dict — see [optimization.md `--mode cleanup`](../modules/optimization.md#17-mode-cleanup-memory-logs-temp-config-vacuum).
+
+The CLI resolves cleanup roots and retention environment variables at startup. Both roots must be existing directories; empty paths, `/`, `/tmp`, `/var/tmp`, the user's home, and directories containing the interpreter or checkout are rejected. The pod's filesystem cleanup covers its own files; shared services retain their separate storage lifecycle.
 
 ```bash
 # View workflow
