@@ -131,7 +131,6 @@ CONFIG_EXTRA_RATCHET_KEYS = {
     "max_frames_per_chunk",
     "min_frames",
     "enable_reflective_recompile",
-    "key_prefix",
     "lifecycle_expiration_days",
     "min_reflective_failures",
     "reflective_max_metric_calls",
@@ -143,7 +142,6 @@ CHART_EXTRA_RATCHET_KEYS = {
     "inference_config",
     "max_frames_per_chunk",
     "min_frames",
-    "key_prefix",
     "lifecycle_expiration_days",
 }
 
