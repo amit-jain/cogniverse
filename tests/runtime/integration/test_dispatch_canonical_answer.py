@@ -25,7 +25,11 @@ from cogniverse_core.registries.agent_registry import AgentRegistry
 from cogniverse_foundation.config.utils import create_default_config_manager, get_config
 from cogniverse_runtime.agent_dispatcher import AgentDispatcher
 
-pytestmark = [pytest.mark.integration, pytest.mark.no_shared_vespa]
+pytestmark = [
+    pytest.mark.integration,
+    pytest.mark.ci_fast,
+    pytest.mark.no_shared_vespa,
+]
 
 TENANT = "acme:acme"
 ANSWER = "The clip shows a cyclist crossing a bridge at dusk."
