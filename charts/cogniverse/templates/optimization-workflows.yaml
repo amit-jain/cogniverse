@@ -455,14 +455,7 @@ spec:
           value: "{{ $fullName }}-phoenix:4317"
         - name: COGNIVERSE_INFERENCE_API_KEY
 {{ include "cogniverse.inferenceApiKeyEnv" . | nindent 10 }}
-        - name: OPTIMIZATION_WORKFLOW_IMAGE
-          value: "{{ $workflowImage.repository }}:{{ $workflowImage.tag }}"
-        - name: OPTIMIZATION_CONFIG_MAP
-          value: {{ $fullName }}-config
-        {{- if .Values.devMode.enabled }}
-        - name: OPTIMIZATION_DEV_HOSTPATH
-          value: {{ .Values.devMode.hostPath | quote }}
-        {{- end }}
+{{ include "cogniverse.optimizationWorkflowEnv" . | nindent 8 }}
         resources:
           requests:
             cpu: "1"
@@ -646,17 +639,7 @@ spec:
           value: "{{ $fullName }}-phoenix:4317"
         - name: COGNIVERSE_INFERENCE_API_KEY
 {{ include "cogniverse.inferenceApiKeyEnv" . | nindent 10 }}
-        # Wiring the CLI mirrors onto the compile workflows it spawns —
-        # without it the spawned pod runs the bare fallback manifest
-        # (default image, no backend endpoints, no config mount).
-        - name: OPTIMIZATION_WORKFLOW_IMAGE
-          value: "{{ $workflowImage.repository }}:{{ $workflowImage.tag }}"
-        - name: OPTIMIZATION_CONFIG_MAP
-          value: {{ $fullName }}-config
-        {{- if .Values.devMode.enabled }}
-        - name: OPTIMIZATION_DEV_HOSTPATH
-          value: {{ .Values.devMode.hostPath | quote }}
-        {{- end }}
+{{ include "cogniverse.optimizationWorkflowEnv" . | nindent 8 }}
         resources:
           requests:
             cpu: "500m"

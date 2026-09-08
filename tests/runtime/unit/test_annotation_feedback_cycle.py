@@ -512,6 +512,8 @@ def test_workflow_pod_spec_from_env(monkeypatch):
     monkeypatch.setenv("BACKEND_PORT", "8080")
     monkeypatch.delenv("TELEMETRY_HTTP_ENDPOINT", raising=False)
     monkeypatch.delenv("TELEMETRY_OTLP_ENDPOINT", raising=False)
+    monkeypatch.delenv("OPTIMIZATION_INFERENCE_API_KEY_SECRET", raising=False)
+    monkeypatch.delenv("COGNIVERSE_INFERENCE_API_KEY", raising=False)
 
     spec = _workflow_pod_spec_from_env()
     assert spec.image == "cogniverse/runtime-rocm:dev"
@@ -521,6 +523,88 @@ def test_workflow_pod_spec_from_env(monkeypatch):
         "BACKEND_URL": "http://cogniverse-vespa",
         "BACKEND_PORT": "8080",
     }
+    assert spec.inference_api_key_env is None
+
+
+def test_workflow_pod_spec_references_the_bearer_secret(monkeypatch):
+    """Chart-wired against an external inference endpoint, the spawned pod
+    reads the bearer from the Secret the submitter names. The value must not
+    appear anywhere in the spec: the Workflow manifest is stored in etcd and
+    served by the Argo API to anyone who can list workflows."""
+    from cogniverse_runtime.quality_monitor_cli import _workflow_pod_spec_from_env
+
+    monkeypatch.setenv("OPTIMIZATION_WORKFLOW_IMAGE", "cogniverse/runtime-rocm:dev")
+    monkeypatch.setenv(
+        "OPTIMIZATION_INFERENCE_API_KEY_SECRET", "cogniverse-inference-api-key"
+    )
+    monkeypatch.setenv("COGNIVERSE_INFERENCE_API_KEY", "sk-real-modal-bearer")
+    for name in (
+        "BACKEND_URL",
+        "BACKEND_PORT",
+        "TELEMETRY_HTTP_ENDPOINT",
+        "TELEMETRY_OTLP_ENDPOINT",
+        "OPTIMIZATION_CONFIG_MAP",
+        "OPTIMIZATION_DEV_HOSTPATH",
+    ):
+        monkeypatch.delenv(name, raising=False)
+
+    spec = _workflow_pod_spec_from_env()
+    assert spec.inference_api_key_env == {
+        "valueFrom": {
+            "secretKeyRef": {
+                "name": "cogniverse-inference-api-key",
+                "key": "COGNIVERSE_INFERENCE_API_KEY",
+                "optional": False,
+            }
+        }
+    }
+    assert spec.env == {}
+
+
+def test_workflow_pod_spec_forwards_the_no_auth_placeholder(monkeypatch):
+    """A fully in-cluster render has no Secret to reference, so the submitter
+    hands on its own placeholder — without it the spawned pod aborts every
+    optimizer step on a missing bearer."""
+    from cogniverse_runtime.quality_monitor_cli import _workflow_pod_spec_from_env
+
+    monkeypatch.setenv("OPTIMIZATION_WORKFLOW_IMAGE", "cogniverse/runtime-rocm:dev")
+    monkeypatch.delenv("OPTIMIZATION_INFERENCE_API_KEY_SECRET", raising=False)
+    monkeypatch.setenv("COGNIVERSE_INFERENCE_API_KEY", "placeholder-no-auth-needed")
+
+    spec = _workflow_pod_spec_from_env()
+    assert spec.inference_api_key_env == {"value": "placeholder-no-auth-needed"}
+
+
+@pytest.mark.asyncio
+async def test_secret_reference_reaches_the_spawned_manifest():
+    """The whole path: what the chart wires onto a submitter is what the Argo
+    API receives for the pod it spawns."""
+    from cogniverse_evaluation.quality_monitor import OptimizationWorkflowPodSpec
+
+    key_env = {
+        "valueFrom": {
+            "secretKeyRef": {
+                "name": "cogniverse-inference-api-key",
+                "key": "COGNIVERSE_INFERENCE_API_KEY",
+                "optional": False,
+            }
+        }
+    }
+    pod_spec = OptimizationWorkflowPodSpec(
+        image="cogniverse/runtime-rocm:dev",
+        env={"BACKEND_URL": "http://cogniverse-vespa"},
+        config_map="cogniverse-config",
+        inference_api_key_env=key_env,
+    )
+    _, argo, _ = await _run(
+        _rules(), {"routing": _annotated_rows(12)}, pod_spec=pod_spec
+    )
+
+    template = argo.posts[0][1]["workflow"]["spec"]["templates"][0]
+    assert template["container"]["env"] == [
+        {"name": "BACKEND_URL", "value": "http://cogniverse-vespa"},
+        {"name": "COGNIVERSE_INFERENCE_API_KEY", **key_env},
+    ]
 
 
 class _ArgoDown:

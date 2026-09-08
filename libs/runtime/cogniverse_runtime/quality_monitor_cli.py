@@ -444,6 +444,33 @@ def _save_loop_state(config_manager, tenant_id: str, state: dict) -> None:
     )
 
 
+def _inference_api_key_env():
+    """The spawned optimization pod's inference-bearer env entry body.
+
+    ``OPTIMIZATION_INFERENCE_API_KEY_SECRET`` names the Secret the chart
+    resolves the bearer from whenever an inference service is external; the
+    spawned pod gets a ``secretKeyRef`` to that same Secret, so the reference
+    travels and the value never lands in the Workflow manifest. A fully
+    in-cluster render has no Secret and forwards this pod's own no-auth
+    placeholder. None when neither is set.
+    """
+    from cogniverse_foundation.config.bootstrap import INFERENCE_API_KEY_ENV
+
+    secret = os.environ.get("OPTIMIZATION_INFERENCE_API_KEY_SECRET")
+    if secret:
+        return {
+            "valueFrom": {
+                "secretKeyRef": {
+                    "name": secret,
+                    "key": INFERENCE_API_KEY_ENV,
+                    "optional": False,
+                }
+            }
+        }
+    value = os.environ.get(INFERENCE_API_KEY_ENV)
+    return {"value": value} if value else None
+
+
 def _workflow_pod_spec_from_env():
     """Wiring for spawned optimization pods, from this pod's chart-set env.
 
@@ -466,6 +493,7 @@ def _workflow_pod_spec_from_env():
         env={name: os.environ[name] for name in passthrough if name in os.environ},
         config_map=os.environ.get("OPTIMIZATION_CONFIG_MAP"),
         dev_source_hostpath=os.environ.get("OPTIMIZATION_DEV_HOSTPATH"),
+        inference_api_key_env=_inference_api_key_env(),
     )
 
 

@@ -730,17 +730,7 @@ spec:
           value: {{ .Values.llm.engine | quote }}
         - name: LLM_MODEL
           value: {{ .Values.llm.model | quote }}
-        # Wiring the monitor mirrors onto the compile workflows it spawns —
-        # without it the spawned pod runs the bare fallback manifest
-        # (default image, no backend endpoints, no config mount).
-        - name: OPTIMIZATION_WORKFLOW_IMAGE
-          value: "{{ $runtimeImage.repository }}:{{ $runtimeImage.tag }}"
-        - name: OPTIMIZATION_CONFIG_MAP
-          value: {{ $fullName }}-config
-        {{- if .Values.devMode.enabled }}
-        - name: OPTIMIZATION_DEV_HOSTPATH
-          value: {{ .Values.devMode.hostPath | quote }}
-        {{- end }}
+{{ include "cogniverse.optimizationWorkflowEnv" . | nindent 8 }}
         resources:
           {{- toYaml .Values.runtime.qualityMonitor.resources | nindent 10 }}
         volumeMounts:

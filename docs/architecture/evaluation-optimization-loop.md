@@ -767,8 +767,9 @@ that wiring into the manifest; without it the spawned pod runs a bare fallback
 (`cogniverse-runtime:latest`, no env, no config) that can start but never reach
 Vespa or Phoenix.
 
-The chart sets the contract on every submitting pod (the annotation-feedback
-CronWorkflow and the quality-monitor Deployment), and
+The chart's `cogniverse.optimizationWorkflowEnv` helper sets the contract on
+every submitting pod (the annotation-feedback and scheduled-distillation
+CronWorkflows, the quality-monitor Deployment), and
 `quality_monitor_cli._workflow_pod_spec_from_env` reads it once at the
 entrypoint:
 
@@ -777,7 +778,13 @@ entrypoint:
 | `OPTIMIZATION_WORKFLOW_IMAGE` | the submitter's own image | spawned container image |
 | `OPTIMIZATION_CONFIG_MAP` | `{release}-config` | `config.json` mount |
 | `OPTIMIZATION_DEV_HOSTPATH` | `devMode.hostPath` (devMode only) | `src-libs`/`src-scripts` hostPath mounts |
-| `BACKEND_URL`, `BACKEND_PORT`, `TELEMETRY_HTTP_ENDPOINT`, `TELEMETRY_OTLP_ENDPOINT` | already on both submitting pods | forwarded verbatim to the spawned pod |
+| `OPTIMIZATION_INFERENCE_API_KEY_SECRET` | the Secret `cogniverse.inferenceApiKeySecret` resolves, set only when an inference service is external | `COGNIVERSE_INFERENCE_API_KEY` as a `secretKeyRef` on the spawned pod |
+| `BACKEND_URL`, `BACKEND_PORT`, `TELEMETRY_HTTP_ENDPOINT`, `TELEMETRY_OTLP_ENDPOINT` | already on every submitting pod | forwarded verbatim to the spawned pod |
+
+With no external inference service there is no Secret, and the submitter's own
+`COGNIVERSE_INFERENCE_API_KEY` (the no-auth placeholder) is forwarded as a
+plain value. Either way the spawned pod resolves the bearer the same way the
+runtime does, and a real key never enters the Workflow manifest.
 
 The spec flows explicitly: CLI entrypoint → `run_annotation_feedback_cycle(pod_spec=…)`
 / `QualityMonitor(workflow_pod_spec=…)` → `submit_argo_optimization_workflow(pod_spec=…)`.

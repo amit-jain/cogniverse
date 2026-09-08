@@ -31,6 +31,7 @@ from cogniverse_foundation.common.tenant_utils import (
     canonical_tenant_id,
     sanitize_k8s_label_value,
 )
+from cogniverse_foundation.config.bootstrap import INFERENCE_API_KEY_ENV
 from cogniverse_foundation.telemetry.providers.base import DatasetNotFoundError
 
 logger = logging.getLogger(__name__)
@@ -160,12 +161,20 @@ class OptimizationWorkflowPodSpec:
     endpoints and no config mount — it can start, but never reach Vespa or
     Phoenix. The submitting pod's chart-rendered values (image, env, config
     map, devMode source mounts) are the source of truth.
+
+    ``inference_api_key_env`` is the body of the spawned pod's
+    ``COGNIVERSE_INFERENCE_API_KEY`` entry — the same ``valueFrom`` /
+    ``value`` shape the chart's ``inferenceApiKeyEnv`` helper renders for the
+    submitter. Against an external inference endpoint it carries a
+    ``secretKeyRef``, so the spawned pod reads the bearer from the Secret
+    rather than receiving a copy of it in its manifest.
     """
 
     image: str = "cogniverse-runtime:latest"
     env: Dict[str, str] = field(default_factory=dict)
     config_map: Optional[str] = None
     dev_source_hostpath: Optional[str] = None
+    inference_api_key_env: Optional[Dict[str, Any]] = None
 
 
 async def submit_argo_optimization_workflow(
@@ -203,10 +212,15 @@ async def submit_argo_optimization_workflow(
         ],
         "args": container_args,
     }
-    if pod_spec.env:
-        container["env"] = [
-            {"name": name, "value": value} for name, value in pod_spec.env.items()
-        ]
+    env_entries: List[Dict[str, Any]] = [
+        {"name": name, "value": value} for name, value in pod_spec.env.items()
+    ]
+    if pod_spec.inference_api_key_env:
+        env_entries.append(
+            {"name": INFERENCE_API_KEY_ENV, **pod_spec.inference_api_key_env}
+        )
+    if env_entries:
+        container["env"] = env_entries
     volume_mounts: List[Dict[str, Any]] = []
     volumes: List[Dict[str, Any]] = []
     if pod_spec.config_map:

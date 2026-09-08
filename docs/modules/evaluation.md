@@ -1766,11 +1766,16 @@ propagates instead of reading as "no traffic".
 
 **`OptimizationWorkflowPodSpec` dataclass (defaults):** `image: str =
 "cogniverse-runtime:latest"`, `env: Dict[str, str] = {}`, `config_map:
-Optional[str] = None`, `dev_source_hostpath: Optional[str] = None`. Passed as
+Optional[str] = None`, `dev_source_hostpath: Optional[str] = None`,
+`inference_api_key_env: Optional[Dict[str, Any]] = None`. Passed as
 `workflow_pod_spec`, it carries the submitting pod's own runtime wiring
 (image, backend/telemetry endpoints, config mount, devMode source mounts)
 into the Argo manifest for the `optimization_cli` pod it spawns; without it
-the spawned pod runs the fallback image with no env and no config mount. See
+the spawned pod runs the fallback image with no env and no config mount.
+`inference_api_key_env` is the `value` / `valueFrom` body of the spawned
+pod's `COGNIVERSE_INFERENCE_API_KEY` entry — a `secretKeyRef` against an
+external inference endpoint, so the manifest names the Secret rather than
+carrying the bearer. See
 [Spawned-Workflow Pod Wiring](../architecture/evaluation-optimization-loop.md#spawned-workflow-pod-wiring)
 for the chart-rendered env vars that populate it.
 
