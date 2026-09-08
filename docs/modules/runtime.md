@@ -60,6 +60,7 @@ cogniverse_runtime/
 ├── config_loader.py                 # Dynamic backend/agent loading
 ├── agent_dispatcher.py              # Dispatch agent invocations + egress allow-list
 ├── harness_turn.py                  # Answer text, request seed, tool-call shape for a turn
+├── harness_keys.py                  # Hashed harness credentials and revocations
 ├── job_executor.py                  # Background-job executor
 ├── a2a_executor.py                  # Agent-to-agent protocol executor
 ├── memory_init.py                   # Mem0 client + per-tenant memory setup
@@ -87,6 +88,7 @@ cogniverse_runtime/
 │   ├── debug.py                     # Debug + diagnostic endpoints
 │   ├── graph.py                     # Graph traversal API
 │   ├── knowledge.py                 # Knowledge-graph query API
+│   ├── openai_compat.py             # OpenAI-dialect /v1 surface for harness clients
 │   ├── tenant.py                    # Per-tenant admin endpoints
 │   └── wiki.py                      # Wiki API endpoints
 ├── admin/                           # Admin domain models + tenant tooling
@@ -457,6 +459,7 @@ app.include_router(synthetic_router, tags=["synthetic-data"])
 app.include_router(wiki.router, prefix="/wiki", tags=["wiki"])
 app.include_router(graph.router, prefix="/graph", tags=["graph"])
 app.include_router(tenant.router, prefix="/admin/tenant", tags=["tenant-extensibility"])
+app.include_router(openai_compat.router, prefix="/v1", tags=["openai-compat"])
 app.include_router(debug.router, prefix="/admin/debug", tags=["debug"])
 ```
 
@@ -1115,6 +1118,34 @@ Runtime diagnostics gated behind `COGNIVERSE_DEBUG_MEM` (`libs/runtime/cognivers
 **GET /health** - Health check. 503 `unhealthy` when the system status cannot be assembled OR the configured backend is unreachable (pings `/ApplicationStatus`); 200 `healthy` otherwise.
 **GET /health/ready** - Readiness probe. 503 `not_ready` until a backend is registered AND its container node answers `/ApplicationStatus` — registration alone is not enough because the Vespa backend class self-registers at import. Gates k8s traffic on real backend connectivity. The backend probe result is cached for a short TTL (one upstream ping serves every `/health*` hit in the window), and after a successful probe readiness keeps reporting ready (with `backend_degraded: true`) through a 30s grace window — a backend tail-latency blip must not fail readiness on every replica at once and empty the Service; a genuine outage outlasts the grace and flips the pod not-ready. Cold starts get no grace, and `/health` stays strict (goes red immediately) for monitoring.
 **GET /health/live** - Liveness probe. Always 200 while the process runs; never pings the backend, so a backend outage does not trigger a pod restart.
+
+### OpenAI-Compatible Endpoints (`/v1`)
+
+`routers/openai_compat.py` serves the OpenAI chat dialect so any client
+speaking it — Pi's `openai-completions` provider — drives cogniverse agents as
+its "model". `configs/config.json` `harness.models` maps model names to agent
+names and `harness.api_keys` maps bearer keys to tenants, a `"$VAR"` key
+resolving from the environment in `main.py`'s lifespan; runtime-minted
+`HarnessKeyStore` credentials are the second key source.
+
+**POST /v1/chat/completions** — one self-contained turn. The last user message
+is the query, everything before it is `conversation_history`, and an assistant
+`tool_calls` message plus its `role: "tool"` results after it resume a
+suspended turn. `temperature`, `max_tokens` and `max_completion_tokens` travel
+on the dispatch context. `stream: true` returns the finished answer as SSE
+deltas whose concatenation is the answer.
+
+**GET /v1/models** — the configured model map in OpenAI list form.
+
+Status contract: an unknown or revoked key is 401; a key-store outage is 503
+carrying the cause; an unknown model is 404; a malformed transcript is 400
+naming the message and part index, the unmatched tool-call ids, or the
+out-of-range sampling parameter; an unwired or failing dispatcher provider is
+503; a client that hangs up mid-turn is 499 and the turn is cancelled with it.
+
+The bearer key resolves to a canonical `org:tenant` id once, at the router, and
+the suspended-turn store is keyed by that tenant, the agent, the conversation
+seed and the round's tool-call ids.
 
 ### Events Endpoints (SSE Streaming)
 

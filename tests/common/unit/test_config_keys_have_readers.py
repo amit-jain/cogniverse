@@ -158,8 +158,8 @@ EXPECTED_RATCHET_KEYS = {
 }
 
 EXPECTED_KEY_COUNTS = {
-    CONFIG_PATHS[0]: 316,
-    CONFIG_PATHS[1]: 301,
+    CONFIG_PATHS[0]: 319,
+    CONFIG_PATHS[1]: 304,
     CONFIG_PATHS[2]: 274,
 }
 
@@ -184,7 +184,11 @@ def _load_json(path: Path) -> dict:
 # them and never reads an entry by literal name, so demanding a literal reader
 # would only reward hardcoding the names into libs/. Their values are still
 # walked, so the keys INSIDE each entry are checked as usual.
-DYNAMIC_MAPPING_PATHS = {("backend", "profiles")}
+DYNAMIC_MAPPING_PATHS = {
+    ("backend", "profiles"),
+    ("harness", "api_keys"),
+    ("harness", "models"),
+}
 
 
 def _all_keys(node, seen: set[str], path: tuple[str, ...] = ()) -> set[str]:

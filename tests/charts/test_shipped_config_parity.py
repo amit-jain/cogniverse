@@ -116,6 +116,40 @@ def test_shared_agents_declare_identical_token_streaming_across_shipped_configs(
 
 
 @pytest.mark.unit
+def test_shipped_configs_declare_identical_harness_surface():
+    """The /v1 model map and key sources render the same in both configs.
+
+    A model name that resolves to an agent locally and to nothing in the pod
+    is a 404 only in production.
+    """
+    shipped = _rendered(SHIPPED)["harness"]
+    chart = _rendered(CHART)["harness"]
+
+    assert shipped == chart
+    assert shipped == {
+        "api_keys": {"$COGNIVERSE_HARNESS_API_KEY": "default"},
+        "models": {
+            "cogniverse": "gateway_agent",
+            "cogniverse/search": "search_agent",
+            "cogniverse/summarizer": "summarizer_agent",
+            "cogniverse/deep-research": "deep_research_agent",
+            "cogniverse/coding": "coding_agent",
+        },
+    }
+
+
+@pytest.mark.unit
+@pytest.mark.parametrize("path", CONFIGS, ids=lambda p: p.parent.name)
+def test_every_harness_model_names_a_declared_agent(path: Path):
+    config = _rendered(path)
+    declared = set(config["agents"])
+
+    mapped = set(config["harness"]["models"].values())
+
+    assert mapped - declared == set()
+
+
+@pytest.mark.unit
 def test_shipped_configs_declare_identical_agent_mappings():
     assert _mappings(_rendered(SHIPPED)) == _mappings(_rendered(CHART))
 

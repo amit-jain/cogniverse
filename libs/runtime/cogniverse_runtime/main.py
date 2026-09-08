@@ -57,6 +57,7 @@ from cogniverse_runtime.entrypoint_env import (
 from cogniverse_runtime.entrypoint_env import (
     resolve_library_env_defaults as _resolve_library_env_defaults_from_entrypoint,
 )
+from cogniverse_runtime.harness_keys import HarnessKeyStore
 from cogniverse_runtime.inference_services import parse_inference_service_urls
 from cogniverse_runtime.routers import (
     admin,
@@ -67,6 +68,7 @@ from cogniverse_runtime.routers import (
     health,
     ingestion,
     knowledge,
+    openai_compat,
     search,
     tenant,
     wiki,
@@ -321,6 +323,28 @@ def reaffirm_wiki_profile(config_manager, config: dict) -> None:
         tenant_id=SYSTEM_TENANT_ID,
         service="backend",
     )
+
+
+def resolve_harness_api_keys(
+    raw_keys: Mapping[str, str] | None, env: Mapping[str, str]
+) -> dict[str, str]:
+    """Resolve ``config["harness"]["api_keys"]`` into literal key -> tenant.
+
+    A ``"$VAR"`` key resolves from ``env`` at the entrypoint so no bearer key
+    ships in config.json; unset or empty variables and empty keys are dropped.
+    The static map is one of two key sources — runtime-minted HarnessKeyStore
+    keys are the other — and the /v1 surface rejects every request only when
+    both are empty.
+    """
+    resolved: dict[str, str] = {}
+    for key, key_tenant in (raw_keys or {}).items():
+        if isinstance(key, str) and key.startswith("$"):
+            literal = env.get(key[1:], "")
+            if literal:
+                resolved[literal] = key_tenant
+        elif key:
+            resolved[key] = key_tenant
+    return resolved
 
 
 def _log_workflow_submission_status() -> None:
@@ -733,6 +757,24 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
     agents.set_agent_dependencies(config_manager, schema_loader)
     agents.set_sandbox_manager(sandbox_manager)
     logger.info("AgentRegistry and dependencies wired to agents router")
+
+    # 5a-bis. Wire the OpenAI-compatible harness surface (/v1). Bearer keys
+    # come from the static env-resolved map and from the runtime key store;
+    # model names map to agent names.
+    harness_config = config.get("harness", {}) or {}
+    static_keys = resolve_harness_api_keys(
+        harness_config.get("api_keys", {}), os.environ
+    )
+    harness_models = harness_config.get("models", {}) or {}
+    openai_compat.set_api_keys(static_keys)
+    openai_compat.set_model_map(harness_models)
+    openai_compat.set_dispatcher_provider(agents.get_dispatcher)
+    openai_compat.set_key_resolver(HarnessKeyStore(config_manager.store).resolve)
+    logger.info(
+        "Harness /v1 surface wired with %d static api key(s) and %d model(s)",
+        len(static_keys),
+        len(harness_models),
+    )
 
     # 6. Use config loader to dynamically load backends and agents
     config_loader = get_config_loader()
@@ -1384,6 +1426,7 @@ app.include_router(wiki.router, prefix="/wiki", tags=["wiki"])
 app.include_router(graph.router, prefix="/graph", tags=["graph"])
 app.include_router(tenant.router, prefix="/admin/tenant", tags=["tenant-extensibility"])
 app.include_router(debug.router, prefix="/admin/debug", tags=["debug"])
+app.include_router(openai_compat.router, prefix="/v1", tags=["openai-compat"])
 
 # Queue-driven ingestion. When REDIS_URL is set, /ingestion/upload
 # streams uploaded bytes to MinIO and submits to the redis queue, and
