@@ -31,8 +31,6 @@ _VLLM_VERSION = "0.23.0"
 
 _SERVICE_ARGUMENTS: dict[str, tuple[str, ...]] = {
     "vllm_colpali": (
-        "--max-model-len",
-        "4096",
         "--runner",
         "pooling",
         "--convert",
@@ -52,16 +50,11 @@ _SERVICE_ARGUMENTS: dict[str, tuple[str, ...]] = {
     # gfx1151 APU constraints (no CUDA graphs, no room to batch in the unified
     # pool) and cost 2-4x at batch-1 decode while stranding the KV cache here.
     "vllm_llm_student": (
-        "--max-model-len",
-        "8192",
         "--limit-mm-per-prompt",
         '{"video":0,"image":4}',
     ),
-    "vllm_llm_teacher": (
-        "--max-model-len",
-        "4096",
-    ),
-    "vllm_asr": ("--runner", "generate", "--max-model-len", "448"),
+    "vllm_llm_teacher": (),
+    "vllm_asr": ("--runner", "generate"),
 }
 
 _KV_CACHE_GIB = {
@@ -81,6 +74,11 @@ def _vllm_command(
         engine_arguments = _SERVICE_ARGUMENTS[spec.name]
     except KeyError:
         raise ValueError(f"{spec.name}: no canonical vLLM launch contract") from None
+    window = (
+        ("--max-model-len", str(spec.context_window))
+        if spec.context_window is not None
+        else ()
+    )
     return (
         "vllm",
         "serve",
@@ -93,6 +91,7 @@ def _vllm_command(
         "127.0.0.1",
         "--port",
         str(port),
+        *window,
         *engine_arguments,
     )
 
@@ -394,6 +393,7 @@ def build_vllm_app(spec: InferenceServiceSpec) -> modal.App:
             _build_process_proxy_app(process),
             model_id=spec.model_id,
             model_revision=spec.model_revision,
+            context_window=spec.context_window,
         )
 
     return app

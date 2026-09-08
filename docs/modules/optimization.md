@@ -1191,7 +1191,8 @@ with `metric_threshold=_entity_bootstrap_threshold(...)`.
 All three pass `teacher_settings={"lm": teacher_lm_or_raise(llm_config)}`, so the
 bootstrap teacher runs on the centralized `llm_config.teacher` endpoint. That helper probes the
 endpoint and then builds the LM through `create_budgeted_dspy_lm`, so the teacher's prompt is
-bounded by the window it actually serves: `max_model_len` read from the endpoint minus the
+bounded by the window it actually serves: `max_model_len` read from the endpoint, or the
+endpoint's declared `context_window` when the listing carries none, minus the
 endpoint's `max_tokens` reservation. Bootstrapping appends a demonstration per accepted trace, so
 requests over the allowance shed whole demonstrations, oldest first, and one that cannot fit
 without them raises `PromptBudgetExceededError` naming the window, the reservation, the input size

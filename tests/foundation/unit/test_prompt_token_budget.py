@@ -17,11 +17,13 @@ import pytest
 from cogniverse_foundation.config.token_budget import (
     ContextWindowUnavailableError,
     PromptBudgetExceededError,
+    ResolvedContextWindow,
     TokenBudget,
     extract_context_window,
     fetch_context_window,
     fit_messages,
     litellm_message_counter,
+    resolve_context_window,
     split_demonstrations,
 )
 
@@ -30,6 +32,38 @@ from cogniverse_foundation.config.token_budget import (
 TEACHER_MODEL = "openai/Qwen/Qwen3-14B-AWQ"
 TEACHER_CONTEXT_WINDOW = 4096
 TEACHER_RESERVED_OUTPUT = 2048
+
+# The Modal teacher's live /v1/models, recorded verbatim. The wrapper answers
+# discovery itself so it never wakes the scale-to-zero GPU, and its listing
+# carries no max_model_len.
+MODAL_TEACHER_LISTING = {
+    "data": [
+        {
+            "created": 0,
+            "id": "Qwen/Qwen3-14B-AWQ",
+            "object": "model",
+            "owned_by": "cogniverse",
+            "revision": "31c69efc29464b6bb0aee1398b5a7b50a99340c3",
+        }
+    ],
+    "object": "list",
+}
+
+# The same model served by an engine that does publish its window, and with a
+# different one: the window belongs to the deployment, not to the model.
+SERVED_LISTING = {
+    "data": [
+        {
+            "created": 0,
+            "id": "Qwen/Qwen3-14B-AWQ",
+            "object": "model",
+            "owned_by": "cogniverse",
+            "revision": "31c69efc29464b6bb0aee1398b5a7b50a99340c3",
+            "max_model_len": 8192,
+        }
+    ],
+    "object": "list",
+}
 
 
 def _words(count: int) -> str:
@@ -232,6 +266,65 @@ class TestServedContextWindowDiscovery:
 
 
 @pytest.mark.unit
+class TestContextWindowPrecedence:
+    """What the endpoint serves wins; what it is configured with is the fallback.
+
+    The Modal wrapper shadows the engine's listing to keep discovery off the
+    GPU, so the teacher endpoint publishes no window at all. Refusing to budget
+    there kills the optimizer outright, and guessing a window for an endpoint
+    that publishes one would silently ignore the deployment it is talking to.
+    """
+
+    def test_a_listing_without_a_window_falls_back_to_the_declared_one(self):
+        server, base_url = _serve(MODAL_TEACHER_LISTING)
+        try:
+            resolved = resolve_context_window(
+                f"{base_url}/v1",
+                declared=TEACHER_CONTEXT_WINDOW,
+                model=TEACHER_MODEL,
+            )
+        finally:
+            server.shutdown()
+
+        assert resolved == ResolvedContextWindow(tokens=4096, source="declared")
+        assert extract_context_window(MODAL_TEACHER_LISTING) is None
+
+    def test_a_published_window_overrides_the_declared_one(self):
+        server, base_url = _serve(SERVED_LISTING)
+        try:
+            resolved = resolve_context_window(
+                f"{base_url}/v1",
+                declared=TEACHER_CONTEXT_WINDOW,
+                model=TEACHER_MODEL,
+            )
+        finally:
+            server.shutdown()
+
+        assert resolved == ResolvedContextWindow(tokens=8192, source="served")
+
+    def test_neither_a_published_nor_a_declared_window_names_both_ends(self):
+        server, base_url = _serve(MODAL_TEACHER_LISTING)
+        try:
+            with pytest.raises(ContextWindowUnavailableError) as exc:
+                resolve_context_window(
+                    f"{base_url}/v1",
+                    declared=None,
+                    model=TEACHER_MODEL,
+                )
+        finally:
+            server.shutdown()
+
+        assert str(exc.value) == (
+            f"openai/Qwen/Qwen3-14B-AWQ at {base_url}/v1 publishes no context "
+            f"window and declares none, so no request budget can be derived"
+        )
+        assert str(exc.value.__cause__) == (
+            f"{base_url}/v1/models reports no max_model_len, so the served "
+            f"context window is unknown and no request budget can be derived"
+        )
+
+
+@pytest.mark.unit
 class TestBudgetedLMOverTheWire:
     """The served window is read from the endpoint and bounds the real request."""
 
@@ -329,6 +422,69 @@ class TestBudgetResolutionUnderConcurrency:
 
 
 @pytest.mark.unit
+class TestDeclaredWindowBoundsTheModalTeacher:
+    """The teacher's window is configuration, because its listing carries none."""
+
+    def _lm(self, base_url: str):
+        from cogniverse_foundation.config.budgeted_lm import BudgetedLM
+
+        return BudgetedLM(
+            TEACHER_MODEL,
+            declared_context_window=TEACHER_CONTEXT_WINDOW,
+            api_base=f"{base_url}/v1",
+            api_key="not-required",
+            max_tokens=TEACHER_RESERVED_OUTPUT,
+            temperature=0.7,
+            cache=False,
+            num_retries=0,
+        )
+
+    def test_the_request_sheds_its_demo_against_a_listing_without_a_window(self):
+        server, base_url, received = _serve_openai(MODAL_TEACHER_LISTING)
+        lm = self._lm(base_url)
+        demo_body = " ".join(["entity"] * 997)
+        messages = [
+            {"role": "system", "content": "Extract entities from the query."},
+            {"role": "user", "content": f"first {demo_body}"},
+            {"role": "assistant", "content": "first|CONCEPT|1.0"},
+            {"role": "user", "content": f"second {demo_body}"},
+            {"role": "assistant", "content": "second|CONCEPT|1.0"},
+            {"role": "user", "content": "who founded Anthropic"},
+        ]
+        try:
+            outputs = lm(messages=messages)
+        finally:
+            server.shutdown()
+
+        assert outputs == ["entities: anthropic|ORGANIZATION|1.0"]
+        assert lm.budget.context_window == 4096
+        assert lm.budget.input_budget == 2048
+        assert received["paths"] == ["/v1/models", "/v1/chat/completions"]
+        assert received["body"]["messages"] == [
+            {"role": "system", "content": "Extract entities from the query."},
+            {"role": "user", "content": f"second {demo_body}"},
+            {"role": "assistant", "content": "second|CONCEPT|1.0"},
+            {"role": "user", "content": "who founded Anthropic"},
+        ]
+        assert "declared_context_window" not in received["body"]
+
+    def test_a_copied_lm_still_carries_the_declared_window(self):
+        server, base_url, received = _serve_openai(MODAL_TEACHER_LISTING)
+        duplicate = self._lm(base_url).copy()
+        try:
+            budget = duplicate.budget
+        finally:
+            server.shutdown()
+
+        assert duplicate.declared_context_window == 4096
+        assert "declared_context_window" not in duplicate.kwargs
+        assert budget.context_window == 4096
+        assert budget.reserved_output == 2048
+        assert budget.input_budget == 2048
+        assert received["paths"] == ["/v1/models"]
+
+
+@pytest.mark.unit
 class TestBudgetFaultContract:
     def test_an_unreachable_endpoint_refuses_to_be_budgeted(self):
         from cogniverse_foundation.config.budgeted_lm import BudgetedLM
@@ -347,6 +503,10 @@ class TestBudgetFaultContract:
             lm.budget
 
         assert str(exc.value) == (
+            f"openai/Qwen/Qwen3-14B-AWQ at {base_url}/v1 publishes no context "
+            f"window and declares none, so no request budget can be derived"
+        )
+        assert str(exc.value.__cause__) == (
             f"{base_url}/v1/models is unreachable, so the served context window "
             f"is unknown and no request budget can be derived"
         )

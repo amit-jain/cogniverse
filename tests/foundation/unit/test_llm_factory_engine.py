@@ -187,6 +187,45 @@ class TestLLMEndpointConfigSerialization:
         assert "extra_headers" not in cfg.to_dict()
         assert LLMEndpointConfig.from_dict(cfg.to_dict()).extra_headers is None
 
+    def test_context_window_survives_round_trip(self):
+        cfg = LLMEndpointConfig(model="openai/m", context_window=4096)
+        assert cfg.to_dict()["context_window"] == 4096
+        assert LLMEndpointConfig.from_dict(cfg.to_dict()).context_window == 4096
+
+    def test_context_window_omitted_from_dict_when_none(self):
+        cfg = LLMEndpointConfig(model="openai/m")
+        assert "context_window" not in cfg.to_dict()
+        assert LLMEndpointConfig.from_dict(cfg.to_dict()).context_window is None
+
+
+class TestBudgetedFactoryCarriesTheDeclaredWindow:
+    """The declared window is an attribute, never a litellm request parameter."""
+
+    def test_the_configured_window_reaches_the_lm_outside_its_request_kwargs(self):
+        from cogniverse_foundation.config.llm_factory import create_budgeted_dspy_lm
+
+        lm = create_budgeted_dspy_lm(
+            LLMEndpointConfig(
+                model="openai/Qwen/Qwen3-14B-AWQ",
+                api_base="http://x:1/v1",
+                max_tokens=2048,
+                context_window=4096,
+            )
+        )
+
+        assert lm.declared_context_window == 4096
+        assert "context_window" not in lm.kwargs
+        assert "declared_context_window" not in lm.kwargs
+
+    def test_an_endpoint_declaring_no_window_carries_none(self):
+        from cogniverse_foundation.config.llm_factory import create_budgeted_dspy_lm
+
+        lm = create_budgeted_dspy_lm(
+            LLMEndpointConfig(model="openai/m", api_base="http://x:1/v1")
+        )
+
+        assert lm.declared_context_window is None
+
 
 class TestFastFailTimeout:
     """A down/unreachable endpoint must fail fast, not hang on litellm's

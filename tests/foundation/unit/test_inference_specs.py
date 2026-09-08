@@ -96,6 +96,7 @@ def test_teacher_definition_pins_the_production_chat_contract():
         output_dimension=None,
         gpu_candidates=("H100", "A100-80GB", "L40S"),
         requires_hf_token=True,
+        context_window=4096,
         scaledown_window=900,
     )
     assert spec.boot_deadline_seconds == 600.0
@@ -145,6 +146,23 @@ def test_mutable_or_missing_model_revisions_are_rejected():
 def test_unknown_service_is_an_error():
     with pytest.raises(KeyError, match="unknown inference service 'missing'"):
         get_inference_service_spec("missing")
+
+
+@pytest.mark.parametrize("window", (0, -1))
+def test_a_non_positive_context_window_is_refused_at_construction(window: int):
+    with pytest.raises(ValueError) as exc:
+        InferenceServiceSpec(
+            name="vllm_llm_teacher",
+            model_id="Qwen/Qwen3-14B-AWQ",
+            model_revision="31c69efc29464b6bb0aee1398b5a7b50a99340c3",
+            output_dimension=None,
+            gpu_candidates=("H100",),
+            context_window=window,
+        )
+
+    assert str(exc.value) == (
+        f"vllm_llm_teacher: context_window must be a positive token count, got {window}"
+    )
 
 
 # Decode is memory-bandwidth bound, so the chat models' throughput tracks GPU

@@ -50,8 +50,18 @@ def require_bearer_key(
         )
 
 
-def models_response(model_id: str, model_revision: str) -> dict[str, object]:
-    """Build the single-model identity contract used during discovery."""
+def models_response(
+    model_id: str,
+    model_revision: str,
+    *,
+    context_window: int | None = None,
+) -> dict[str, object]:
+    """Build the single-model identity contract used during discovery.
+
+    This listing shadows the upstream engine's own ``/v1/models`` so discovery
+    answers without waking a scale-to-zero GPU, which means the window the
+    engine serves is only visible here when it is carried through.
+    """
 
     if not model_id or model_id != model_id.strip():
         raise ValueError("model_id must be a non-empty canonical identifier")
@@ -61,18 +71,20 @@ def models_response(model_id: str, model_revision: str) -> dict[str, object]:
         or model_revision in {"latest", "main", "master"}
     ):
         raise ValueError("model_revision must identify an immutable artifact")
-    return {
-        "data": [
-            {
-                "created": 0,
-                "id": model_id,
-                "object": "model",
-                "owned_by": "cogniverse",
-                "revision": model_revision,
-            }
-        ],
-        "object": "list",
+    if context_window is not None and context_window <= 0:
+        raise ValueError(
+            f"context_window must be a positive token count, got {context_window}"
+        )
+    model: dict[str, object] = {
+        "created": 0,
+        "id": model_id,
+        "object": "model",
+        "owned_by": "cogniverse",
+        "revision": model_revision,
     }
+    if context_window is not None:
+        model["max_model_len"] = context_window
+    return {"data": [model], "object": "list"}
 
 
 def build_authenticated_asgi_app(
@@ -80,6 +92,7 @@ def build_authenticated_asgi_app(
     *,
     model_id: str,
     model_revision: str,
+    context_window: int | None = None,
     api_key_env: str = DEFAULT_API_KEY_ENV,
 ) -> FastAPI:
     """Wrap a production app with bearer authentication and pinned identity."""
@@ -89,7 +102,11 @@ def build_authenticated_asgi_app(
         raise RuntimeError(
             f"Inference authentication is not configured in {api_key_env}"
         )
-    identity = models_response(model_id, model_revision)
+    identity = models_response(
+        model_id,
+        model_revision,
+        context_window=context_window,
+    )
 
     @asynccontextmanager
     async def lifespan(_: FastAPI) -> AsyncIterator[None]:

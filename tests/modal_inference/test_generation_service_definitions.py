@@ -87,10 +87,10 @@ def test_whisper_service_pins_the_production_transcription_contract():
         "127.0.0.1",
         "--port",
         "8001",
-        "--runner",
-        "generate",
         "--max-model-len",
         "448",
+        "--runner",
+        "generate",
     )
     assert _vllm_environment(spec) == {
         "HF_HOME": "/root/.cache/huggingface",
@@ -522,6 +522,7 @@ def test_real_gemma_factory_preserves_concurrent_exact_answers():
     from tests.fixtures.llm import resolve_api_key
     from tests.utils.hermetic_llm import ensure_llm
 
+    spec = get_inference_service_spec("vllm_llm_student")
     endpoint = agents_conftest._resolve_verified_local_endpoint(
         "vllm_llm_student",
         base_url=ensure_llm(model="google/gemma-4-e4b-it"),
@@ -532,7 +533,11 @@ def test_real_gemma_factory_preserves_concurrent_exact_answers():
         temperature=0.0,
         max_tokens=20,
         seed=0,
-        request_timeout=30,
+        # The endpoint scales to zero, so the first of these four requests pays
+        # the container's boot. The deployment's own cold-start deadline is the
+        # budget; anything shorter times out on a cold app and passes only on
+        # one that happens to be warm.
+        request_timeout=spec.boot_deadline_seconds,
         num_retries=0,
     )
     lm = create_dspy_lm(config)

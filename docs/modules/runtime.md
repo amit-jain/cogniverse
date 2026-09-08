@@ -199,7 +199,10 @@ existing production FastAPI application without changing its request or
 response schemas. Every route requires
 `Authorization: Bearer <COGNIVERSE_INFERENCE_API_KEY>`; the wrapper removes the
 credential before delegation and owns `/v1/models`, which reports exactly one
-pinned model identifier and immutable revision.
+pinned model identifier and immutable revision. Owning that route keeps
+discovery off a scale-to-zero GPU, so it also carries the service's
+`context_window` as `max_model_len` — the only place a client can read the
+window the container was launched with.
 
 `vllm.py` builds the OpenAI-compatible vLLM services from the canonical service
 definitions. It mounts a persistent `cogniverse-huggingface-cache` Volume,
