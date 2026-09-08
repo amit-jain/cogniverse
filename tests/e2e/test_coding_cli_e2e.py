@@ -28,6 +28,27 @@ SEARCH_AGENT_URL = f"{RUNTIME}/agents/search_agent/process"
 CODING_AGENT_URL = f"{RUNTIME}/agents/coding_agent/process"
 
 
+def _assert_coding_output_shape(result):
+    assert set(result) == {
+        "plan",
+        "code_changes",
+        "execution_results",
+        "summary",
+        "iterations_used",
+        "files_modified",
+        "rlm_synthesis",
+        "rlm_telemetry",
+        "pending_tool_calls",
+        "continuation_state",
+        "success",
+        "error",
+    }, result
+    assert result["pending_tool_calls"] == []
+    assert result["continuation_state"] == {}
+    assert result["success"] is True
+    assert result["error"] is None
+
+
 def _run_prerequisite_command(
     command: list[str], *, timeout: int
 ) -> subprocess.CompletedProcess:
@@ -335,16 +356,7 @@ class TestCodingAgentDispatch:
         # text; everything else is fixed by max_iterations=1 and the sandbox
         # exec contract, so it is pinned exactly.
         result = data["result"]
-        assert set(result) == {
-            "plan",
-            "code_changes",
-            "execution_results",
-            "summary",
-            "iterations_used",
-            "files_modified",
-            "rlm_synthesis",
-            "rlm_telemetry",
-        }, result
+        _assert_coding_output_shape(result)
         assert result["plan"], "Plan should not be empty"
         assert result["iterations_used"] == 1, result
         assert len(result["code_changes"]) == 1, result["code_changes"]

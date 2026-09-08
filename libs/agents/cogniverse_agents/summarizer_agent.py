@@ -7,7 +7,7 @@ import asyncio
 import logging
 import time
 from contextlib import asynccontextmanager
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from typing import Any, Dict, List, Optional
 
 import dspy
@@ -16,7 +16,7 @@ from fastapi import FastAPI, HTTPException, Request
 from pydantic import Field
 
 from cogniverse_agents.memory_aware_mixin import MemoryAwareMixin
-from cogniverse_agents.multimodal import KeyframeImageResolver
+from cogniverse_agents.multimodal import KeyframeImageResolver, attachments_to_images
 from cogniverse_core.agents.a2a_agent import A2AAgent, A2AAgentConfig
 from cogniverse_core.agents.base import AgentDeps, AgentInput, AgentOutput
 from cogniverse_core.common.media import MediaConfig, MediaLocator
@@ -35,6 +35,9 @@ class SummarizerInput(AgentInput):
 
     tenant_id: Optional[str] = Field(None, description="Tenant identifier")
     query: str = Field(..., description="Query for summarization")
+    attachments: List[str] = Field(
+        default_factory=list, description="Image attachment URIs"
+    )
     search_results: List[Dict[str, Any]] = Field(
         default_factory=list, description="Results to summarize"
     )
@@ -156,6 +159,7 @@ class SummaryRequest:
     summary_type: str = "comprehensive"  # comprehensive, brief, bullet_points
     include_visual_analysis: bool = True
     max_results_to_analyze: int = 10
+    attachments: List[str] = field(default_factory=list)
 
 
 @dataclass
@@ -173,6 +177,7 @@ class EnhancedSummaryRequest:
     summary_type: str = "comprehensive"
     include_visual_analysis: bool = True
     max_results_to_analyze: int = 10
+    attachments: List[str] = field(default_factory=list)
     focus_on_relationships: bool = True
 
 
@@ -327,6 +332,8 @@ class SummarizerAgent(
         logger.info(f"Starting summarization for query: '{request.query}'")
         logger.info(f"Analyzing {len(request.search_results)} search results")
         _summarize_start = time.monotonic()
+        self.validate_attachments(request)
+        attachment_failures: List[str] = []
 
         with routed_lm_context_for(
             self._config_manager,
@@ -365,7 +372,7 @@ class SummarizerAgent(
 
                 self.emit_progress("summarization", "Generating summary...")
                 summary, lm_key_points = await self._generate_summary(
-                    request, thinking_phase, visual_insights
+                    request, thinking_phase, visual_insights, attachment_failures
                 )
                 summary = self._enforce_max_length(summary, self.max_summary_length)
                 self.emit_progress(
@@ -388,6 +395,8 @@ class SummarizerAgent(
                     confidence_score=confidence_score,
                     thinking_phase=thinking_phase,
                     metadata={
+                        "attachments_degraded": bool(attachment_failures),
+                        "attachment_failures": attachment_failures,
                         "results_analyzed": len(request.search_results),
                         "summary_type": request.summary_type,
                         "visual_analysis_enabled": request.include_visual_analysis,
@@ -646,20 +655,37 @@ and structure summary based on identified themes and content categories.
             logger.error(f"Visual analysis failed: {e}")
             raise
 
+    def validate_attachments(self, request: SummaryRequest | SummarizerInput) -> None:
+        if request.attachments and not (
+            self.multimodal_generation_enabled
+            and self.visual_analysis_enabled
+            and request.include_visual_analysis
+        ):
+            raise ValueError(
+                "attachments_disabled: visual inputs are disabled for this request"
+            )
+
     def _collect_keyframes(
-        self, request: "SummaryRequest", results: List[Dict[str, Any]]
-    ) -> list:
-        """Top-K keyframes for the answer LLM, or [] when injection is off or
-        the request opted out of visual analysis."""
+        self,
+        request: SummaryRequest,
+        results: List[Dict[str, Any]],
+        attachment_failures: Optional[List[str]] = None,
+    ) -> List[dspy.Image]:
+        """Prepare attachments before retrieved frames, under one image cap."""
+        self.validate_attachments(request)
         if not (
             self.multimodal_generation_enabled
             and self.visual_analysis_enabled
             and request.include_visual_analysis
         ):
             return []
-        return self._keyframe_resolver.collect(
+        prepared = attachments_to_images(request.attachments)
+        if attachment_failures is not None:
+            attachment_failures.extend(prepared.failures)
+        retrieved = self._keyframe_resolver.collect(
             results, max_images=self.max_keyframes_to_llm
         )
+        return (prepared.images + retrieved)[: self.max_keyframes_to_llm]
 
     async def _run_summarization(
         self,
@@ -708,6 +734,7 @@ and structure summary based on identified themes and content categories.
         request: SummaryRequest,
         thinking_phase: ThinkingPhase,
         visual_insights: List[str],
+        attachment_failures: Optional[List[str]] = None,
     ) -> tuple[str, List[str]]:
         """Generate the main summary text and the LM's key points (empty for the
         deterministic bullet/no-result paths, which have no LM key points)."""
@@ -726,8 +753,23 @@ and structure summary based on identified themes and content categories.
         top_results = sorted_results[: request.max_results_to_analyze]
         # Frame collection downloads from object storage — off the loop.
         keyframe_images = await asyncio.to_thread(
-            self._collect_keyframes, request, top_results
+            self._collect_keyframes, request, top_results, attachment_failures
         )
+
+        if not top_results and (request.query.strip() or keyframe_images):
+            return await self._run_summarization(
+                request.query,
+                request.query,
+                request.summary_type,
+                keyframes=keyframe_images,
+            )
+        if request.summary_type == "bullet_points" and request.attachments:
+            return await self._run_summarization(
+                "\n".join(str(result) for result in top_results),
+                request.query,
+                request.summary_type,
+                keyframes=keyframe_images,
+            )
 
         if request.summary_type == "brief":
             return await self._generate_brief_summary(
@@ -905,6 +947,7 @@ and structure summary based on identified themes and content categories.
         basic_request = SummaryRequest(
             query=request.enhanced_query or request.original_query,
             search_results=request.search_results,
+            attachments=request.attachments,
             context=request.context,
             summary_type=request.summary_type,
             include_visual_analysis=request.include_visual_analysis,
@@ -955,6 +998,7 @@ and structure summary based on identified themes and content categories.
                 original_query=input.query,
                 enhanced_query=input.enhanced_query,
                 search_results=input.search_results,
+                attachments=input.attachments,
                 entities=input.entities,
                 relationships=input.relationships,
                 routing_metadata=input.context or {},
@@ -968,6 +1012,7 @@ and structure summary based on identified themes and content categories.
             request = SummaryRequest(
                 query=summary_query,
                 search_results=input.search_results,
+                attachments=input.attachments,
                 context=input.context or {},
                 summary_type=input.summary_type,
                 include_visual_analysis=input.include_visual_analysis,
@@ -1077,6 +1122,7 @@ async def process_task(task: dict, request: Request):
             request_model = SummaryRequest(
                 query=data.get("query", ""),
                 search_results=data.get("search_results", []),
+                attachments=data.get("attachments", []),
                 context=data.get("context", {}),
                 summary_type=data.get("summary_type", "comprehensive"),
                 include_visual_analysis=data.get("include_visual_analysis", True),

@@ -7,7 +7,7 @@ import asyncio
 import contextvars
 import logging
 from contextlib import asynccontextmanager
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from typing import Any, Dict, List, Optional
 
 import dspy
@@ -19,7 +19,7 @@ from cogniverse_agents.memory_aware_mixin import MemoryAwareMixin
 
 # Enhanced routing support
 from cogniverse_agents.mixins.rlm_aware_mixin import RLMAwareMixin
-from cogniverse_agents.multimodal import KeyframeImageResolver
+from cogniverse_agents.multimodal import KeyframeImageResolver, attachments_to_images
 from cogniverse_core.agents.a2a_agent import A2AAgent, A2AAgentConfig
 from cogniverse_core.agents.base import AgentDeps, AgentInput, AgentOutput
 from cogniverse_core.agents.rlm_options import RLMOptions
@@ -48,6 +48,9 @@ class DetailedReportInput(AgentInput):
 
     tenant_id: Optional[str] = Field(None, description="Tenant identifier")
     query: str = Field(..., description="Query for report")
+    attachments: List[str] = Field(
+        default_factory=list, description="Image attachment URIs"
+    )
     search_results: List[Dict[str, Any]] = Field(
         default_factory=list, description="Results to analyze"
     )
@@ -199,6 +202,7 @@ class ReportRequest:
     include_technical_details: bool = True
     include_recommendations: bool = True
     max_results_to_analyze: int = 20
+    attachments: List[str] = field(default_factory=list)
     context: Optional[Dict[str, Any]] = None
 
 
@@ -351,6 +355,7 @@ class DetailedReportAgent(
             Detailed report result with thinking phase
         """
         logger.info(f"Generating detailed report for: '{request.query}'")
+        self.validate_attachments(request)
 
         with routed_lm_context_for(
             self._config_manager,
@@ -774,6 +779,18 @@ technical accuracy, and actionable insights. Visual analysis {"included" if requ
                 items.append(cleaned)
         return items
 
+    def validate_attachments(
+        self, request: ReportRequest | DetailedReportInput
+    ) -> None:
+        if request.attachments and not (
+            self.multimodal_generation_enabled
+            and self.visual_analysis_enabled
+            and request.include_visual_analysis
+        ):
+            raise ValueError(
+                "attachments_disabled: visual inputs are disabled for this request"
+            )
+
     async def _generate_executive_summary(
         self, request: ReportRequest, thinking_phase: ThinkingPhase
     ) -> tuple[str, List[str]]:
@@ -794,26 +811,36 @@ technical accuracy, and actionable insights. Visual analysis {"included" if requ
 
         content_text = "\n".join(content_parts)
 
+        self.validate_attachments(request)
         keyframe_images = []
+        attachment_failures: List[str] = []
         if (
             self.multimodal_generation_enabled
             and self.visual_analysis_enabled
             and request.include_visual_analysis
         ):
-            # collect() downloads frames from object storage — off the loop,
-            # like the call_dspy below, or every concurrent request stalls.
-            keyframe_images = await asyncio.to_thread(
-                self._keyframe_resolver.collect,
-                request.search_results[: request.max_results_to_analyze],
-                max_images=self.max_keyframes_to_llm,
+
+            def collect_images():
+                prepared = attachments_to_images(request.attachments)
+                retrieved = self._keyframe_resolver.collect(
+                    request.search_results[: request.max_results_to_analyze],
+                    max_images=self.max_keyframes_to_llm,
+                )
+                return (
+                    (prepared.images + retrieved)[: self.max_keyframes_to_llm],
+                    prepared.failures,
+                )
+
+            keyframe_images, attachment_failures = await asyncio.to_thread(
+                collect_images
             )
         # Observable count of frames actually attached to the LLM call — surfaced
         # in the report metadata so callers (and e2e tests) can confirm the
         # retrieved keyframes reached the answer model.
         call_state = {
             "keyframes_attached": len(keyframe_images),
-            "report_degraded": False,
-            "report_degraded_reason": "",
+            "report_degraded": bool(attachment_failures),
+            "report_degraded_reason": "; ".join(attachment_failures),
         }
         _REPORT_CALL_STATE.set(call_state)
         try:
@@ -835,7 +862,9 @@ technical accuracy, and actionable insights. Visual analysis {"included" if requ
             # from a real grounded report.
             logger.error(f"DSPy summary generation failed: {e}")
             call_state["report_degraded"] = True
-            call_state["report_degraded_reason"] = f"{type(e).__name__}: {e}"
+            call_state["report_degraded_reason"] = "; ".join(
+                [*attachment_failures, f"{type(e).__name__}: {e}"]
+            )
             return (
                 f"Analysis of {len(request.search_results)} results for "
                 f"'{request.query}' with average relevance of "
@@ -1032,6 +1061,7 @@ technical accuracy, and actionable insights. Visual analysis {"included" if requ
         request = ReportRequest(
             query=report_query,
             search_results=input.search_results,
+            attachments=input.attachments,
             context=merged_context,
             report_type=input.report_type,
             include_visual_analysis=input.include_visual_analysis,
@@ -1192,6 +1222,7 @@ async def process_task(task: dict, request: Request):
             request_model = ReportRequest(
                 query=data.get("query", ""),
                 search_results=data.get("search_results", []),
+                attachments=data.get("attachments", []),
                 context=data.get("context", {}),
                 report_type=data.get("report_type", "comprehensive"),
                 include_visual_analysis=data.get("include_visual_analysis", True),

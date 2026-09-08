@@ -798,9 +798,23 @@ class TestEmitProgressStreaming:
         agent = SummarizerAgent(deps=SummarizerDeps(), config_manager=Mock())
         agent._llm_config = _GATEWAY_TEST_ENDPOINT
 
-        mock_prediction = Mock()
-        mock_prediction.summary = "Test summary."
-        agent.summarization_module.forward = Mock(return_value=mock_prediction)
+        import dspy
+        from dspy.streaming import StreamResponse
+
+        from tests.agents.unit.test_stream_progress_isolation import _streamify_yielding
+
+        prediction = dspy.Prediction(summary="Test summary.", key_points="Exact point")
+        streamify = _streamify_yielding(
+            [
+                StreamResponse(
+                    predict_name="summary",
+                    signature_field_name="summary",
+                    chunk="Test summary.",
+                    is_last_chunk=True,
+                ),
+                prediction,
+            ]
+        )
 
         typed_input = SummarizerInput(
             query="test query",
@@ -810,7 +824,10 @@ class TestEmitProgressStreaming:
         )
 
         events = []
-        with patch("cogniverse_agents.summarizer_agent.dspy.context"):
+        with (
+            patch("cogniverse_agents.summarizer_agent.dspy.context"),
+            patch("dspy.streamify", streamify),
+        ):
             async for event in await agent.process(typed_input, stream=True):
                 events.append(event)
 
@@ -822,6 +839,8 @@ class TestEmitProgressStreaming:
         assert "summary" in final_event["data"]
         assert "key_points" in final_event["data"]
         assert "confidence_score" in final_event["data"]
+        assert final_event["data"]["summary"] == "Test summary."
+        assert final_event["data"]["key_points"] == ["Exact point"]
 
     @patch("cogniverse_agents.summarizer_agent.VLMInterface")
     @patch.object(SummarizerAgent, "_initialize_vlm_client")
