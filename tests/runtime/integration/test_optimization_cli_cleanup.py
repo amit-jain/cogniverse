@@ -27,6 +27,15 @@ from cogniverse_runtime.optimization_cli import _run_failed, run_cleanup
 pytestmark = pytest.mark.integration
 
 
+@pytest.fixture(autouse=True)
+def _sweep_roots_this_test_owns(tmp_path, monkeypatch):
+    """``run_cleanup`` deletes aged files under LOG_DIR and TEMP_DIR, whose
+    defaults are ``/logs`` and the host's ``/tmp``. Both point at paths this
+    test owns unless it sets its own."""
+    monkeypatch.setenv("LOG_DIR", str(tmp_path / "sweep_logs"))
+    monkeypatch.setenv("TEMP_DIR", str(tmp_path / "sweep_temp"))
+
+
 def _seed(
     mm: Mem0MemoryManager,
     *,
