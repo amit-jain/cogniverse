@@ -32,8 +32,19 @@ pytestmark = [pytest.mark.integration, pytest.mark.requires_docker]
 @pytest.fixture(autouse=True)
 def _use_test_owned_cluster(ephemeral_k8s_cluster, monkeypatch):
     """Point kubectl — ours and the suspend/restore helpers' — at the
-    session's own API server, never a developer's cluster."""
-    monkeypatch.setenv("KUBECONFIG", ephemeral_k8s_cluster["kubeconfig"])
+    session's own API server, never a developer's cluster. The helpers name
+    a context explicitly, so the kubeconfig alone does not redirect them."""
+    from tests.e2e import conftest as e2e_conftest
+
+    kubeconfig = str(ephemeral_k8s_cluster["kubeconfig"])
+    monkeypatch.setenv("KUBECONFIG", kubeconfig)
+    context = subprocess.run(
+        ["kubectl", "--kubeconfig", kubeconfig, "config", "current-context"],
+        capture_output=True,
+        text=True,
+        check=True,
+    ).stdout.strip()
+    monkeypatch.setattr(e2e_conftest, "KUBECTL_CONTEXT", context)
 
 
 def _apply_cronworkflow(name: str, suspend: bool) -> None:
@@ -120,7 +131,9 @@ class TestSuspendRestoreAgainstLiveCluster:
         # Run the real suspend helper — patches every un-suspended cron
         # across the namespace, not just ours, so filter the result to
         # our test name when asserting we were toggled.
-        toggled = _suspend_cronworkflows_for_session()
+        suspended = _suspend_cronworkflows_for_session()
+        assert suspended.failures == (), suspended
+        toggled = suspended.restore_names
         try:
             assert name in toggled, (
                 f"suspend helper must report our test cron as toggled; "
@@ -131,7 +144,9 @@ class TestSuspendRestoreAgainstLiveCluster:
                 "object — the cluster still sees suspend=false"
             )
         finally:
-            _restore_cronworkflows(toggled)
+            restored = _restore_cronworkflows(list(toggled))
+        assert sorted(restored.restored_names) == sorted(toggled), restored
+        assert restored.failures == (), restored
 
         assert _read_suspend(name) is False, (
             "restore helper did not flip spec.suspend back — leaving the "
@@ -154,13 +169,16 @@ class TestSuspendRestoreAgainstLiveCluster:
 
         assert _read_suspend(name) is True, "precondition: starts suspended"
 
-        toggled = _suspend_cronworkflows_for_session()
+        suspended = _suspend_cronworkflows_for_session()
+        assert suspended.failures == (), suspended
+        toggled = suspended.restore_names
         assert name not in toggled, (
             f"suspend helper must not re-patch an already-suspended cron; "
             f"got toggled={sorted(toggled)}"
         )
 
-        _restore_cronworkflows(toggled)
+        restored = _restore_cronworkflows(list(toggled))
+        assert restored.failures == (), restored
 
         assert _read_suspend(name) is True, (
             "restore helper re-enabled a cron it had not suspended — the "
