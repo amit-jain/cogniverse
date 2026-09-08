@@ -212,7 +212,11 @@ def _provision_run_tenant() -> None:
     tenant_row = register_tenant_and_wait(
         CANONICAL_TENANT, created_by="annotation-feedback-e2e"
     )
-    assert (tenant_row["tenant_full_id"], tenant_row["status"], tenant_row["created_by"]) == (
+    assert (
+        tenant_row["tenant_full_id"],
+        tenant_row["status"],
+        tenant_row["created_by"],
+    ) == (
         CANONICAL_TENANT,
         "active",
         "annotation-feedback-e2e",
@@ -503,21 +507,47 @@ async def test_feedback_workflow_runs_and_spawns_real_recompile(cluster_telemetr
         spawned_wf = new_spawned.pop()
         assert spawned_wf.startswith("annotation-feedback-routing-")
 
-        # The spawned pod inherited the submitter's wiring end to end
-        # (chart env -> CLI -> manifest -> Argo): same image as the deployed
-        # runtime, plus the config mount it needs to reach the backends.
+        # The spawned Workflow delegates its whole pod spec to the chart's
+        # shared WorkflowTemplate (chart env -> CLI -> manifest -> Argo), so
+        # it inherits that template's image, config mount, resource requests
+        # and the per-tenant mutex instead of a hand-built copy.
         dev_hostpath, deployed_image = _deployed_runtime_settings()
         spawned = json.loads(
             _kubectl(
                 "get", "workflow", spawned_wf, "-n", NAMESPACE, "-o", "json"
             ).stdout
         )
-        spawned_template = spawned["spec"]["templates"][0]
-        assert spawned_template["container"]["image"] == deployed_image
-        spawned_volumes = {v["name"] for v in spawned_template["volumes"]}
-        assert "config" in spawned_volumes
+        assert set(spawned["spec"]) == {"workflowTemplateRef", "arguments"}
+        spawned_params = {
+            p["name"]: p["value"] for p in spawned["spec"]["arguments"]["parameters"]
+        }
+        assert spawned_params["mode"] == "gateway-thresholds"
+        assert spawned_params["tenant-id"] == CANONICAL_TENANT
+
+        template_name = spawned["spec"]["workflowTemplateRef"]["name"]
+        workflow_template = json.loads(
+            _kubectl(
+                "get", "workflowtemplate", template_name, "-n", NAMESPACE, "-o", "json"
+            ).stdout
+        )
+        runner = next(
+            t
+            for t in workflow_template["spec"]["templates"]
+            if t["name"] == "run-optimizer"
+        )
+        assert runner["container"]["image"] == deployed_image
+        assert runner["container"]["resources"] == {
+            "requests": {"cpu": "2", "memory": "4Gi"},
+            "limits": {"cpu": "4", "memory": "8Gi"},
+        }
+        assert workflow_template["spec"]["synchronization"]["mutex"]["name"] == (
+            "optimize-{{workflow.parameters.tenant-id}}"
+        )
+        template_volumes = {v["name"] for v in workflow_template["spec"]["volumes"]}
+        expected_volumes = {"config"}
         if dev_hostpath:
-            assert {"src-libs", "src-scripts"} <= spawned_volumes
+            expected_volumes |= {"src-libs", "src-scripts"}
+        assert template_volumes == expected_volumes
 
         # And that recompile (gateway-thresholds — no LM needed) runs to
         # completion against the in-cluster Vespa + Phoenix.

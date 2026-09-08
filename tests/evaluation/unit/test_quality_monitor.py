@@ -27,6 +27,10 @@ pytestmark = pytest.mark.unit
 # canonical_tenant_id("test_tenant") — the form every derived name uses
 CANON = "test_tenant:test_tenant"
 
+# The chart's shared optimization WorkflowTemplate. A submitted Workflow
+# references it and carries no container spec of its own.
+TEMPLATE = "cogniverse-optimization-runner"
+
 
 GOLDEN_ROWS = [
     {
@@ -73,6 +77,7 @@ def monitor(golden_dataset):
         golden_dataset_path="unused-by-the-monitor",
         argo_api_url="http://localhost:2746",
         argo_namespace="test-ns",
+        workflow_template=TEMPLATE,
     )
     m._dataset_store = InMemoryDatasetStore()
     return m
@@ -440,11 +445,12 @@ class TestArgoSubmission:
         assert params["trigger-dataset"] == "opt-trigger-ds"
 
     @pytest.mark.asyncio
-    async def test_submit_optimization_carries_pod_spec(self):
-        from cogniverse_evaluation.quality_monitor import (
-            OptimizationWorkflowPodSpec,
-            QualityMonitor,
-        )
+    async def test_submit_optimization_delegates_the_whole_pod_spec(self):
+        """The monitor submits a reference and arguments. A container spec
+        here would be a second definition of the optimizer pod, silently
+        without the per-tenant mutex, the cpu/memory requests and limits, and
+        the backend/inference/LLM env the shared template declares."""
+        from cogniverse_evaluation.quality_monitor import QualityMonitor
 
         monitor = QualityMonitor(
             tenant_id="acme",
@@ -455,10 +461,7 @@ class TestArgoSubmission:
             golden_dataset_path="/nonexistent.csv",
             argo_api_url="https://argo:2746",
             argo_namespace="test-ns",
-            workflow_pod_spec=OptimizationWorkflowPodSpec(
-                image="cogniverse/runtime-rocm:dev",
-                env={"BACKEND_URL": "http://vespa"},
-            ),
+            workflow_template=TEMPLATE,
         )
         mock_response = MagicMock()
         mock_response.status_code = 201
@@ -468,7 +471,7 @@ class TestArgoSubmission:
         monitor._argo_client = mock_client
 
         trigger = OptimizationTrigger(
-            timestamp=datetime.utcnow(),
+            timestamp=datetime(2026, 9, 8, 3, 0),
             tenant_id="acme",
             agents_to_optimize=[AgentType.SEARCH],
             golden_eval=None,
@@ -477,23 +480,39 @@ class TestArgoSubmission:
             high_scoring_examples={},
             misrouted_queries=[],
         )
-        await monitor.submit_optimization(trigger, trigger_dataset="opt-ds")
+        assert await monitor.submit_optimization(trigger, trigger_dataset="opt-ds")
 
-        template = mock_client.post.call_args[1]["json"]["workflow"]["spec"][
-            "templates"
-        ][0]
-        assert template["container"]["image"] == "cogniverse/runtime-rocm:dev"
-        assert template["container"]["env"] == [
-            {"name": "BACKEND_URL", "value": "http://vespa"}
-        ]
+        workflow = mock_client.post.call_args[1]["json"]["workflow"]
+        assert workflow["spec"] == {
+            "workflowTemplateRef": {"name": TEMPLATE},
+            "arguments": {
+                "parameters": [
+                    {"name": "mode", "value": "triggered"},
+                    {"name": "tenant-id", "value": "acme:acme"},
+                    {"name": "lookback-hours", "value": "4.0"},
+                    {"name": "agents", "value": "search"},
+                    {"name": "trigger-dataset", "value": "opt-ds"},
+                ]
+            },
+        }
+        assert workflow["metadata"] == {
+            "generateName": "quality-triggered-optimization-20260908-030000-",
+            "namespace": "test-ns",
+            "labels": {
+                "app": "cogniverse",
+                "trigger": "quality-monitor",
+                "tenant": "acme-acme",
+            },
+        }
 
 
-class TestWorkflowPodSpec:
-    """Spawned optimization pods must carry the submitter's runtime wiring.
+class TestOptimizationWorkflowSubmission:
+    """A submitted Workflow references the chart's shared WorkflowTemplate.
 
-    A bare manifest (default image, no env, no config mount) leaves the
-    spawned pod pointed at nothing: it runs a possibly stale baked image
-    and retries default backend addresses forever instead of completing.
+    The template owns the container: image, command, env, resources, config
+    mount, and the workflow-level ``optimize-<tenant>`` mutex that serialises
+    one tenant's optimizations. Anything the submitter builds itself is a
+    second definition that drifts from it.
     """
 
     def _submit_kwargs(self, mock_client):
@@ -504,8 +523,9 @@ class TestWorkflowPodSpec:
             tenant_id="acme",
             name_prefix="annotation-feedback-routing",
             trigger_label="annotation-feedback",
-            parameters=[{"name": "tenant-id", "value": "acme"}],
-            container_args=["--mode", "gateway-thresholds"],
+            workflow_template=TEMPLATE,
+            mode="gateway-thresholds",
+            lookback_hours="24.0",
         )
 
     def _mock_client(self):
@@ -520,7 +540,7 @@ class TestWorkflowPodSpec:
     async def test_canonical_tenant_label_is_sanitized(self):
         """Kubernetes label values reject ':' — the canonical tenant form
         must be sanitized in labels while the tenant-id parameter keeps the
-        exact canonical value."""
+        exact value Argo interpolates into the per-tenant mutex."""
         from cogniverse_evaluation.quality_monitor import (
             submit_argo_optimization_workflow,
         )
@@ -528,7 +548,6 @@ class TestWorkflowPodSpec:
         mock_client = self._mock_client()
         kwargs = self._submit_kwargs(mock_client)
         kwargs["tenant_id"] = "acme:acme"
-        kwargs["parameters"] = [{"name": "tenant-id", "value": "acme:acme"}]
         ok = await submit_argo_optimization_workflow(**kwargs)
         assert ok is True
         workflow = mock_client.post.call_args[1]["json"]["workflow"]
@@ -540,102 +559,106 @@ class TestWorkflowPodSpec:
         assert params["tenant-id"] == "acme:acme"
 
     @pytest.mark.asyncio
-    async def test_pod_spec_flows_into_manifest(self):
+    async def test_workflow_carries_only_a_reference_and_arguments(self):
         from cogniverse_evaluation.quality_monitor import (
-            OptimizationWorkflowPodSpec,
-            submit_argo_optimization_workflow,
-        )
-
-        mock_client = self._mock_client()
-        pod_spec = OptimizationWorkflowPodSpec(
-            image="cogniverse/runtime-cpu:dev",
-            env={"BACKEND_URL": "http://cogniverse-vespa", "BACKEND_PORT": "8080"},
-            config_map="cogniverse-config",
-            dev_source_hostpath="/cogniverse-src",
-        )
-        ok = await submit_argo_optimization_workflow(
-            **self._submit_kwargs(mock_client), pod_spec=pod_spec
-        )
-        assert ok is True
-        template = mock_client.post.call_args[1]["json"]["workflow"]["spec"][
-            "templates"
-        ][0]
-        assert template["container"]["image"] == "cogniverse/runtime-cpu:dev"
-        assert template["container"]["env"] == [
-            {"name": "BACKEND_URL", "value": "http://cogniverse-vespa"},
-            {"name": "BACKEND_PORT", "value": "8080"},
-        ]
-        assert template["container"]["volumeMounts"] == [
-            {
-                "name": "config",
-                "mountPath": "/app/configs/config.json",
-                "subPath": "config.json",
-                "readOnly": True,
-            },
-            {"name": "src-libs", "mountPath": "/app/libs"},
-            {"name": "src-scripts", "mountPath": "/app/scripts"},
-        ]
-        assert template["volumes"] == [
-            {"name": "config", "configMap": {"name": "cogniverse-config"}},
-            {
-                "name": "src-libs",
-                "hostPath": {"path": "/cogniverse-src/libs", "type": "Directory"},
-            },
-            {
-                "name": "src-scripts",
-                "hostPath": {"path": "/cogniverse-src/scripts", "type": "Directory"},
-            },
-        ]
-
-    @pytest.mark.asyncio
-    async def test_default_pod_spec_keeps_bare_manifest(self):
-        from cogniverse_evaluation.quality_monitor import (
+            OPTIMIZATION_WORKFLOW_PARAMETER_NAMES,
             submit_argo_optimization_workflow,
         )
 
         mock_client = self._mock_client()
         ok = await submit_argo_optimization_workflow(**self._submit_kwargs(mock_client))
         assert ok is True
-        template = mock_client.post.call_args[1]["json"]["workflow"]["spec"][
-            "templates"
-        ][0]
-        assert template["container"]["image"] == "cogniverse-runtime:latest"
-        assert "env" not in template["container"]
-        assert "volumeMounts" not in template["container"]
-        assert "volumes" not in template
+        workflow = mock_client.post.call_args[1]["json"]["workflow"]
+        assert workflow["spec"] == {
+            "workflowTemplateRef": {"name": TEMPLATE},
+            "arguments": {
+                "parameters": [
+                    {"name": "mode", "value": "gateway-thresholds"},
+                    {"name": "tenant-id", "value": "acme"},
+                    {"name": "lookback-hours", "value": "24.0"},
+                    {"name": "agents", "value": ""},
+                    {"name": "trigger-dataset", "value": ""},
+                ]
+            },
+        }
+        assert [p["name"] for p in workflow["spec"]["arguments"]["parameters"]] == list(
+            OPTIMIZATION_WORKFLOW_PARAMETER_NAMES
+        )
+        assert workflow["metadata"] == {
+            "generateName": "annotation-feedback-routing-",
+            "namespace": "test-ns",
+            "labels": {
+                "app": "cogniverse",
+                "trigger": "annotation-feedback",
+                "tenant": "acme",
+            },
+        }
+        assert workflow["kind"] == "Workflow"
+        assert workflow["apiVersion"] == "argoproj.io/v1alpha1"
+        assert mock_client.post.call_args[0][0] == (
+            "https://argo:2746/api/v1/workflows/test-ns"
+        )
 
     @pytest.mark.asyncio
-    async def test_pod_spec_config_only(self):
+    async def test_triggered_mode_passes_the_agent_set_and_dataset(self):
         from cogniverse_evaluation.quality_monitor import (
-            OptimizationWorkflowPodSpec,
             submit_argo_optimization_workflow,
         )
 
         mock_client = self._mock_client()
-        pod_spec = OptimizationWorkflowPodSpec(
-            image="cogniverse/runtime-cuda:0.1.0",
-            config_map="cogniverse-config",
+        kwargs = self._submit_kwargs(mock_client)
+        kwargs.update(
+            mode="triggered", agents="search,summary", trigger_dataset="opt-ds"
         )
-        ok = await submit_argo_optimization_workflow(
-            **self._submit_kwargs(mock_client), pod_spec=pod_spec
+        assert await submit_argo_optimization_workflow(**kwargs) is True
+        spec = mock_client.post.call_args[1]["json"]["workflow"]["spec"]
+        assert set(spec) == {"workflowTemplateRef", "arguments"}
+        assert spec["workflowTemplateRef"] == {"name": TEMPLATE}
+        params = spec["arguments"]["parameters"]
+        assert params == [
+            {"name": "mode", "value": "triggered"},
+            {"name": "tenant-id", "value": "acme"},
+            {"name": "lookback-hours", "value": "24.0"},
+            {"name": "agents", "value": "search,summary"},
+            {"name": "trigger-dataset", "value": "opt-ds"},
+        ]
+
+    @pytest.mark.asyncio
+    async def test_no_template_refuses_to_submit(self):
+        """Fault contract: submitting without a template spawns a pod with no
+        mutex, no resources and no endpoints, and Argo reports it accepted."""
+        from cogniverse_evaluation.quality_monitor import (
+            submit_argo_optimization_workflow,
         )
-        assert ok is True
-        template = mock_client.post.call_args[1]["json"]["workflow"]["spec"][
-            "templates"
-        ][0]
-        assert template["container"]["image"] == "cogniverse/runtime-cuda:0.1.0"
-        assert "env" not in template["container"]
-        assert template["container"]["volumeMounts"] == [
-            {
-                "name": "config",
-                "mountPath": "/app/configs/config.json",
-                "subPath": "config.json",
-                "readOnly": True,
-            }
-        ]
-        assert template["volumes"] == [
-            {"name": "config", "configMap": {"name": "cogniverse-config"}}
-        ]
+
+        mock_client = self._mock_client()
+        kwargs = self._submit_kwargs(mock_client)
+        kwargs["workflow_template"] = ""
+        with pytest.raises(ValueError) as exc:
+            await submit_argo_optimization_workflow(**kwargs)
+        assert "OPTIMIZATION_WORKFLOW_TEMPLATE" in str(exc.value)
+        assert mock_client.post.await_count == 0
+
+    @pytest.mark.asyncio
+    async def test_argo_rejection_is_reported_as_failure(self):
+        """A non-2xx from the Argo API means no pod was created; the caller
+        must see False rather than a clean return that reads as submitted."""
+        from cogniverse_evaluation.quality_monitor import (
+            submit_argo_optimization_workflow,
+        )
+
+        mock_response = MagicMock()
+        mock_response.status_code = 403
+        mock_response.text = "workflows.argoproj.io is forbidden"
+        mock_client = AsyncMock()
+        mock_client.post = AsyncMock(return_value=mock_response)
+
+        ok = await submit_argo_optimization_workflow(**self._submit_kwargs(mock_client))
+        assert ok is False
+        assert mock_client.post.await_count == 1
+        assert mock_client.post.call_args[0][0] == (
+            "https://argo:2746/api/v1/workflows/test-ns"
+        )
 
 
 class TestGoldenEvaluation:

@@ -396,7 +396,7 @@ spec:
         - name: JOB_WORKFLOW_TEMPLATE
           value: {{ include "cogniverse.fullname" . }}-job-runner
         - name: OPTIMIZATION_WORKFLOW_TEMPLATE
-          value: {{ include "cogniverse.fullname" . }}-optimization-runner
+          value: {{ include "cogniverse.optimizationWorkflowTemplateName" . }}
         {{- end }}
         # Generic inference-service URL map. Profiles pick a service by key
         # via their ``inference_service`` field; the runtime resolves the URL

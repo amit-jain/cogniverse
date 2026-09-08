@@ -12,6 +12,11 @@ from typing import Optional
 
 INFERENCE_API_KEY_ENV = "COGNIVERSE_INFERENCE_API_KEY"
 
+# Names the chart's shared optimization WorkflowTemplate. Every pod that
+# submits an optimization Workflow references that template instead of
+# building a container spec of its own.
+OPTIMIZATION_WORKFLOW_TEMPLATE_ENV = "OPTIMIZATION_WORKFLOW_TEMPLATE"
+
 
 def inference_api_key_from_environment() -> str:
     """Read the canonical inference bearer key at a startup boundary."""

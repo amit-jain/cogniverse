@@ -23,6 +23,8 @@ from datetime import datetime, timedelta, timezone
 from typing import Optional
 from urllib.parse import urlparse
 
+from cogniverse_foundation.config.bootstrap import OPTIMIZATION_WORKFLOW_TEMPLATE_ENV
+
 logger = logging.getLogger(__name__)
 
 
@@ -444,57 +446,14 @@ def _save_loop_state(config_manager, tenant_id: str, state: dict) -> None:
     )
 
 
-def _inference_api_key_env():
-    """The spawned optimization pod's inference-bearer env entry body.
+def _workflow_template_from_env() -> Optional[str]:
+    """Name of the shared optimization WorkflowTemplate this pod submits at.
 
-    ``OPTIMIZATION_INFERENCE_API_KEY_SECRET`` names the Secret the chart
-    resolves the bearer from whenever an inference service is external; the
-    spawned pod gets a ``secretKeyRef`` to that same Secret, so the reference
-    travels and the value never lands in the Workflow manifest. A fully
-    in-cluster render has no Secret and forwards this pod's own no-auth
-    placeholder. None when neither is set.
+    The chart sets it on every workflow-submitting pod. Read once at the
+    entrypoint; the name is passed down explicitly. None when unset, which
+    ``main`` refuses rather than submitting Workflows that carry no pod spec.
     """
-    from cogniverse_foundation.config.bootstrap import INFERENCE_API_KEY_ENV
-
-    secret = os.environ.get("OPTIMIZATION_INFERENCE_API_KEY_SECRET")
-    if secret:
-        return {
-            "valueFrom": {
-                "secretKeyRef": {
-                    "name": secret,
-                    "key": INFERENCE_API_KEY_ENV,
-                    "optional": False,
-                }
-            }
-        }
-    value = os.environ.get(INFERENCE_API_KEY_ENV)
-    return {"value": value} if value else None
-
-
-def _workflow_pod_spec_from_env():
-    """Wiring for spawned optimization pods, from this pod's chart-set env.
-
-    Returns None when OPTIMIZATION_WORKFLOW_IMAGE is unset (bare-manifest
-    fallback). Read once at entrypoint; the spec is passed down explicitly.
-    """
-    from cogniverse_evaluation.quality_monitor import OptimizationWorkflowPodSpec
-
-    image = os.environ.get("OPTIMIZATION_WORKFLOW_IMAGE")
-    if not image:
-        return None
-    passthrough = (
-        "BACKEND_URL",
-        "BACKEND_PORT",
-        "TELEMETRY_HTTP_ENDPOINT",
-        "TELEMETRY_OTLP_ENDPOINT",
-    )
-    return OptimizationWorkflowPodSpec(
-        image=image,
-        env={name: os.environ[name] for name in passthrough if name in os.environ},
-        config_map=os.environ.get("OPTIMIZATION_CONFIG_MAP"),
-        dev_source_hostpath=os.environ.get("OPTIMIZATION_DEV_HOSTPATH"),
-        inference_api_key_env=_inference_api_key_env(),
-    )
+    return os.environ.get(OPTIMIZATION_WORKFLOW_TEMPLATE_ENV) or None
 
 
 async def run_annotation_feedback_cycle(
@@ -507,7 +466,7 @@ async def run_annotation_feedback_cycle(
     dataset_store=None,
     now=None,
     force: bool = False,
-    pod_spec=None,
+    workflow_template: str | None = None,
     telemetry_otlp_endpoint: str | None = None,
 ) -> dict:
     """Turn accumulated human annotations into optimization submissions.
@@ -627,15 +586,9 @@ async def run_annotation_feedback_cycle(
                     last_optimization[agent_type] = now.isoformat()
                     continue
 
-                parameters = [{"name": "tenant-id", "value": tenant_id}]
-                container_args = [
-                    "--mode",
-                    mode,
-                    "--tenant-id",
-                    "{{workflow.parameters.tenant-id}}",
-                    "--lookback-hours",
-                    str(float(triggers.annotation_lookback_hours)),
-                ]
+                lookback_hours = str(float(triggers.annotation_lookback_hours))
+                agents = ""
+                trigger_dataset = ""
 
                 if mode == "triggered":
                     records = []
@@ -681,20 +634,8 @@ async def run_annotation_feedback_cycle(
                             "output_keys": ["score", "output"],
                         },
                     )
-                    parameters.append({"name": "agents", "value": agent_type})
-                    parameters.append(
-                        {"name": "trigger-dataset", "value": dataset_name}
-                    )
-                    container_args = [
-                        "--mode",
-                        "triggered",
-                        "--tenant-id",
-                        "{{workflow.parameters.tenant-id}}",
-                        "--agents",
-                        "{{workflow.parameters.agents}}",
-                        "--trigger-dataset",
-                        "{{workflow.parameters.trigger-dataset}}",
-                    ]
+                    agents = agent_type
+                    trigger_dataset = dataset_name
 
                 submitted = await submit_argo_optimization_workflow(
                     http_client=client,
@@ -706,9 +647,11 @@ async def run_annotation_feedback_cycle(
                         f"{now.strftime('%Y%m%d-%H%M%S')}"
                     ),
                     trigger_label="annotation-feedback",
-                    parameters=parameters,
-                    container_args=container_args,
-                    pod_spec=pod_spec,
+                    workflow_template=workflow_template,
+                    mode=mode,
+                    lookback_hours=lookback_hours,
+                    agents=agents,
+                    trigger_dataset=trigger_dataset,
                 )
                 if submitted:
                     outcome["action"] = (
@@ -1006,7 +949,16 @@ def main():
                 GOLDEN_SET_UPLOAD_ROUTE,
             )
 
-    workflow_pod_spec = _workflow_pod_spec_from_env()
+    workflow_template = _workflow_template_from_env()
+    if args.argo_url and not workflow_template:
+        logger.error(
+            "%s is unset: an optimization Workflow submitted without it "
+            "spawns a pod with no per-tenant mutex, no cpu/memory requests or "
+            "limits and none of the backend, inference or LLM endpoints. Set "
+            "it to the release's optimization-runner WorkflowTemplate.",
+            OPTIMIZATION_WORKFLOW_TEMPLATE_ENV,
+        )
+        sys.exit(2)
     monitor_kwargs = dict(
         tenant_id=args.tenant_id,
         runtime_url=args.runtime_url,
@@ -1020,7 +972,7 @@ def main():
         live_eval_interval_seconds=args.live_interval,
         live_sample_count=args.live_sample_count,
         telemetry_provider=telemetry_provider,
-        workflow_pod_spec=workflow_pod_spec,
+        workflow_template=workflow_template,
     )
     monitor = QualityMonitor(**monitor_kwargs)
 
@@ -1046,7 +998,7 @@ def main():
                 tenant_id=args.tenant_id,
                 argo_url=args.argo_url,
                 argo_namespace=args.argo_namespace,
-                pod_spec=workflow_pod_spec,
+                workflow_template=workflow_template,
                 telemetry_otlp_endpoint=telemetry_otlp_endpoint,
             )
         )

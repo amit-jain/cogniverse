@@ -36,6 +36,10 @@ pytestmark = [pytest.mark.unit, pytest.mark.ci_fast]
 
 NOW = datetime(2026, 7, 17, 12, 0, tzinfo=timezone.utc)
 
+# The chart's shared optimization WorkflowTemplate; every submitted Workflow
+# references it instead of carrying a container spec of its own.
+TEMPLATE = "cogniverse-optimization-runner"
+
 
 def _rules(**triggers):
     return AutomationRulesConfig(
@@ -134,7 +138,7 @@ async def _run(
     config_manager=None,
     now=NOW,
     force=False,
-    pod_spec=None,
+    workflow_template=TEMPLATE,
     storage_cls=_StorageStub,
 ):
     storage_cls.rows_by_type = rows_by_type
@@ -154,7 +158,7 @@ async def _run(
             dataset_store=datasets,
             now=now,
             force=force,
-            pod_spec=pod_spec,
+            workflow_template=workflow_template,
         )
     return result, argo, datasets
 
@@ -184,12 +188,11 @@ async def test_search_volume_gate_builds_dataset_and_submits_triggered():
     assert len(argo.posts) == 1
     url, body = argo.posts[0]
     assert url == "http://argo:2746/api/v1/workflows/cogniverse"
-    args = body["workflow"]["spec"]["templates"][0]["container"]["args"]
-    assert "--mode" in args and "triggered" in args
     params = {
         p["name"]: p["value"]
         for p in body["workflow"]["spec"]["arguments"]["parameters"]
     }
+    assert params["mode"] == "triggered"
     assert params["agents"] == "search"
     assert params["trigger-dataset"] == name
 
@@ -201,8 +204,11 @@ async def test_routing_update_gate_submits_gateway_thresholds():
     assert result["agents"]["routing"]["action"] == "thresholds_refresh"
     assert datasets.created == []
     assert len(argo.posts) == 1
-    args = argo.posts[0][1]["workflow"]["spec"]["templates"][0]["container"]["args"]
-    assert "gateway-thresholds" in args
+    params = {
+        p["name"]: p["value"]
+        for p in argo.posts[0][1]["workflow"]["spec"]["arguments"]["parameters"]
+    }
+    assert params["mode"] == "gateway-thresholds"
 
 
 @pytest.mark.asyncio
@@ -213,8 +219,11 @@ async def test_dedicated_mode_for_profile_selection():
 
     assert result["agents"]["profile_selection"]["action"] == "recompile"
     assert datasets.created == []  # dedicated modes train from spans
-    args = argo.posts[0][1]["workflow"]["spec"]["templates"][0]["container"]["args"]
-    assert "profile" in args
+    params = {
+        p["name"]: p["value"]
+        for p in argo.posts[0][1]["workflow"]["spec"]["arguments"]["parameters"]
+    }
+    assert params["mode"] == "profile"
 
 
 @pytest.mark.asyncio
@@ -364,6 +373,7 @@ async def test_feedback_cycle_pulls_project_spans_once_across_all_agents():
             http_client=argo,
             dataset_store=_DatasetStoreStub(),
             now=NOW,
+            workflow_template=TEMPLATE,
         )
 
     assert result["status"] == "success"
@@ -460,6 +470,7 @@ async def test_bare_tenant_id_is_canonicalized():
             http_client=argo,
             dataset_store=_DatasetStoreStub(),
             now=NOW,
+            workflow_template=TEMPLATE,
         )
 
     assert result["agents"]["routing"]["action"] == "thresholds_refresh"
@@ -473,138 +484,98 @@ async def test_bare_tenant_id_is_canonicalized():
 
 
 @pytest.mark.asyncio
-async def test_pod_spec_reaches_spawned_manifest():
-    from cogniverse_evaluation.quality_monitor import OptimizationWorkflowPodSpec
-
-    pod_spec = OptimizationWorkflowPodSpec(
-        image="cogniverse/runtime-rocm:dev",
-        env={"BACKEND_URL": "http://cogniverse-vespa"},
-        config_map="cogniverse-config",
-        dev_source_hostpath="/cogniverse-src",
-    )
-    _, argo, _ = await _run(
-        _rules(), {"routing": _annotated_rows(12)}, pod_spec=pod_spec
-    )
+async def test_submitted_workflow_delegates_to_the_shared_template():
+    """The cycle submits a reference and arguments, nothing else. A container
+    spec here would be a second definition of the optimizer pod, missing
+    whatever it forgot: the per-tenant mutex, the cpu/memory requests and
+    limits, the backend/inference/LLM env the chart template declares."""
+    _, argo, _ = await _run(_rules(), {"routing": _annotated_rows(12)})
 
     assert len(argo.posts) == 1
-    template = argo.posts[0][1]["workflow"]["spec"]["templates"][0]
-    assert template["container"]["image"] == "cogniverse/runtime-rocm:dev"
-    assert template["container"]["env"] == [
-        {"name": "BACKEND_URL", "value": "http://cogniverse-vespa"}
-    ]
-    assert {v["name"] for v in template["volumes"]} == {
-        "config",
-        "src-libs",
-        "src-scripts",
-    }
-
-
-def test_workflow_pod_spec_from_env(monkeypatch):
-    from cogniverse_runtime.quality_monitor_cli import _workflow_pod_spec_from_env
-
-    monkeypatch.delenv("OPTIMIZATION_WORKFLOW_IMAGE", raising=False)
-    assert _workflow_pod_spec_from_env() is None
-
-    monkeypatch.setenv("OPTIMIZATION_WORKFLOW_IMAGE", "cogniverse/runtime-rocm:dev")
-    monkeypatch.setenv("OPTIMIZATION_CONFIG_MAP", "cogniverse-config")
-    monkeypatch.setenv("OPTIMIZATION_DEV_HOSTPATH", "/cogniverse-src")
-    monkeypatch.setenv("BACKEND_URL", "http://cogniverse-vespa")
-    monkeypatch.setenv("BACKEND_PORT", "8080")
-    monkeypatch.delenv("TELEMETRY_HTTP_ENDPOINT", raising=False)
-    monkeypatch.delenv("TELEMETRY_OTLP_ENDPOINT", raising=False)
-    monkeypatch.delenv("OPTIMIZATION_INFERENCE_API_KEY_SECRET", raising=False)
-    monkeypatch.delenv("COGNIVERSE_INFERENCE_API_KEY", raising=False)
-
-    spec = _workflow_pod_spec_from_env()
-    assert spec.image == "cogniverse/runtime-rocm:dev"
-    assert spec.config_map == "cogniverse-config"
-    assert spec.dev_source_hostpath == "/cogniverse-src"
-    assert spec.env == {
-        "BACKEND_URL": "http://cogniverse-vespa",
-        "BACKEND_PORT": "8080",
-    }
-    assert spec.inference_api_key_env is None
-
-
-def test_workflow_pod_spec_references_the_bearer_secret(monkeypatch):
-    """Chart-wired against an external inference endpoint, the spawned pod
-    reads the bearer from the Secret the submitter names. The value must not
-    appear anywhere in the spec: the Workflow manifest is stored in etcd and
-    served by the Argo API to anyone who can list workflows."""
-    from cogniverse_runtime.quality_monitor_cli import _workflow_pod_spec_from_env
-
-    monkeypatch.setenv("OPTIMIZATION_WORKFLOW_IMAGE", "cogniverse/runtime-rocm:dev")
-    monkeypatch.setenv(
-        "OPTIMIZATION_INFERENCE_API_KEY_SECRET", "cogniverse-inference-api-key"
-    )
-    monkeypatch.setenv("COGNIVERSE_INFERENCE_API_KEY", "sk-real-modal-bearer")
-    for name in (
-        "BACKEND_URL",
-        "BACKEND_PORT",
-        "TELEMETRY_HTTP_ENDPOINT",
-        "TELEMETRY_OTLP_ENDPOINT",
-        "OPTIMIZATION_CONFIG_MAP",
-        "OPTIMIZATION_DEV_HOSTPATH",
-    ):
-        monkeypatch.delenv(name, raising=False)
-
-    spec = _workflow_pod_spec_from_env()
-    assert spec.inference_api_key_env == {
-        "valueFrom": {
-            "secretKeyRef": {
-                "name": "cogniverse-inference-api-key",
-                "key": "COGNIVERSE_INFERENCE_API_KEY",
-                "optional": False,
-            }
+    url, body = argo.posts[0]
+    assert url == "http://argo:2746/api/v1/workflows/cogniverse"
+    assert body == {
+        "workflow": {
+            "apiVersion": "argoproj.io/v1alpha1",
+            "kind": "Workflow",
+            "metadata": {
+                "generateName": "annotation-feedback-routing-20260717-120000-",
+                "namespace": "cogniverse",
+                "labels": {
+                    "app": "cogniverse",
+                    "trigger": "annotation-feedback",
+                    "tenant": "acme-acme",
+                },
+            },
+            "spec": {
+                "workflowTemplateRef": {"name": TEMPLATE},
+                "arguments": {
+                    "parameters": [
+                        {"name": "mode", "value": "gateway-thresholds"},
+                        {"name": "tenant-id", "value": "acme:acme"},
+                        {"name": "lookback-hours", "value": "24.0"},
+                        {"name": "agents", "value": ""},
+                        {"name": "trigger-dataset", "value": ""},
+                    ]
+                },
+            },
         }
     }
-    assert spec.env == {}
-
-
-def test_workflow_pod_spec_forwards_the_no_auth_placeholder(monkeypatch):
-    """A fully in-cluster render has no Secret to reference, so the submitter
-    hands on its own placeholder — without it the spawned pod aborts every
-    optimizer step on a missing bearer."""
-    from cogniverse_runtime.quality_monitor_cli import _workflow_pod_spec_from_env
-
-    monkeypatch.setenv("OPTIMIZATION_WORKFLOW_IMAGE", "cogniverse/runtime-rocm:dev")
-    monkeypatch.delenv("OPTIMIZATION_INFERENCE_API_KEY_SECRET", raising=False)
-    monkeypatch.setenv("COGNIVERSE_INFERENCE_API_KEY", "placeholder-no-auth-needed")
-
-    spec = _workflow_pod_spec_from_env()
-    assert spec.inference_api_key_env == {"value": "placeholder-no-auth-needed"}
 
 
 @pytest.mark.asyncio
-async def test_secret_reference_reaches_the_spawned_manifest():
-    """The whole path: what the chart wires onto a submitter is what the Argo
-    API receives for the pod it spawns."""
-    from cogniverse_evaluation.quality_monitor import OptimizationWorkflowPodSpec
+async def test_triggered_submit_names_the_agent_and_the_stored_dataset():
+    """A triggered compile reads the dataset the cycle just wrote, so the
+    workflow arguments must name exactly that dataset and that agent."""
+    _, argo, datasets = await _run(_rules(), {"search": _annotated_rows(50)})
 
-    key_env = {
-        "valueFrom": {
-            "secretKeyRef": {
-                "name": "cogniverse-inference-api-key",
-                "key": "COGNIVERSE_INFERENCE_API_KEY",
-                "optional": False,
-            }
-        }
-    }
-    pod_spec = OptimizationWorkflowPodSpec(
-        image="cogniverse/runtime-rocm:dev",
-        env={"BACKEND_URL": "http://cogniverse-vespa"},
-        config_map="cogniverse-config",
-        inference_api_key_env=key_env,
-    )
-    _, argo, _ = await _run(
-        _rules(), {"routing": _annotated_rows(12)}, pod_spec=pod_spec
-    )
-
-    template = argo.posts[0][1]["workflow"]["spec"]["templates"][0]
-    assert template["container"]["env"] == [
-        {"name": "BACKEND_URL", "value": "http://cogniverse-vespa"},
-        {"name": "COGNIVERSE_INFERENCE_API_KEY", **key_env},
+    assert len(datasets.created) == 1
+    dataset_name = datasets.created[0][0]
+    assert dataset_name == "optimization-trigger-acme:acme-20260717_120000"
+    spec = argo.posts[0][1]["workflow"]["spec"]
+    assert spec["workflowTemplateRef"] == {"name": TEMPLATE}
+    assert spec["arguments"]["parameters"] == [
+        {"name": "mode", "value": "triggered"},
+        {"name": "tenant-id", "value": "acme:acme"},
+        {"name": "lookback-hours", "value": "24.0"},
+        {"name": "agents", "value": "search"},
+        {"name": "trigger-dataset", "value": dataset_name},
     ]
+
+
+def test_workflow_template_from_env(monkeypatch):
+    """Read once at the entrypoint from the name the chart sets."""
+    from cogniverse_foundation.config.bootstrap import (
+        OPTIMIZATION_WORKFLOW_TEMPLATE_ENV,
+    )
+    from cogniverse_runtime.quality_monitor_cli import _workflow_template_from_env
+
+    monkeypatch.delenv(OPTIMIZATION_WORKFLOW_TEMPLATE_ENV, raising=False)
+    assert _workflow_template_from_env() is None
+
+    monkeypatch.setenv(OPTIMIZATION_WORKFLOW_TEMPLATE_ENV, "")
+    assert _workflow_template_from_env() is None
+
+    monkeypatch.setenv(OPTIMIZATION_WORKFLOW_TEMPLATE_ENV, TEMPLATE)
+    assert _workflow_template_from_env() == TEMPLATE
+
+
+@pytest.mark.asyncio
+async def test_cycle_fails_the_agent_when_no_template_is_configured():
+    """Fault contract: with no template there is nothing to reference, and a
+    Workflow submitted anyway would spawn a pod with no mutex, no resources
+    and no endpoints. The agent errors and the cron exits non-zero."""
+    from cogniverse_runtime.quality_monitor_cli import _cycle_failed
+
+    result, argo, _ = await _run(
+        _rules(), {"routing": _annotated_rows(12)}, workflow_template=None
+    )
+
+    assert argo.posts == []
+    assert result["agents"]["routing"]["action"] == "error"
+    assert "OPTIMIZATION_WORKFLOW_TEMPLATE" in result["agents"]["routing"]["error"]
+    assert result["errored_agents"] == ["routing"]
+    assert _cycle_failed(result) is True
 
 
 class _ArgoDown:
@@ -655,6 +626,7 @@ async def test_argo_submit_failure_counts_as_cycle_failure():
             http_client=argo,
             dataset_store=datasets,
             now=NOW,
+            workflow_template=TEMPLATE,
         )
 
     assert argo.posts, "the gate should have attempted an Argo submit"
@@ -700,6 +672,7 @@ async def test_cooldown_persists_when_final_save_fails():
                 http_client=argo,
                 dataset_store=_DatasetStoreStub(),
                 now=NOW,
+                workflow_template=TEMPLATE,
             )
 
     assert argo.posts, "the gate should have submitted before the save failed"

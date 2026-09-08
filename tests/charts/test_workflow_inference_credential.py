@@ -4,10 +4,10 @@ The credential reaches an optimization pod two ways, and both are pinned here:
 
 * chart-rendered ``CronWorkflow`` / ``WorkflowTemplate`` containers carry the
   entry ``cogniverse.inferenceApiKeyEnv`` renders;
-* workflows a running pod submits to the Argo API get their container spec
-  from ``_workflow_pod_spec_from_env``, which turns
-  ``OPTIMIZATION_INFERENCE_API_KEY_SECRET`` into a ``secretKeyRef`` — so the
-  reference travels and the bearer itself never lands in a Workflow manifest.
+* workflows a running pod submits to the Argo API reference the shared
+  optimization ``WorkflowTemplate`` by name, so the pod they spawn gets that
+  template's credential entry and the bearer itself never lands in a Workflow
+  manifest.
 
 Expectations are read out of the same render (the runtime Deployment's own
 entry, the Secret that entry names), never restated, so a change to the values
@@ -47,18 +47,20 @@ EXPECTED_WORKFLOW_CONTAINERS = frozenset(
     }
 )
 
-# Pods that submit workflows of their own; each mirrors its wiring onto the
-# pod it spawns via the OPTIMIZATION_* contract.
+# Pods that submit workflows of their own; each names the shared
+# WorkflowTemplate whose container carries the credential.
 EXPECTED_SUBMITTERS = frozenset(
     {
         "cogniverse-annotation-feedback/annotation-feedback",
         "cogniverse-quality-monitor/quality-monitor",
+        "cogniverse-runtime/runtime",
         "cogniverse-scheduled-distillation/scheduled-distillation",
     }
 )
 
 CREDENTIAL = "COGNIVERSE_INFERENCE_API_KEY"
-SECRET_NAME_ENV = "OPTIMIZATION_INFERENCE_API_KEY_SECRET"
+TEMPLATE_NAME_ENV = "OPTIMIZATION_WORKFLOW_TEMPLATE"
+SPAWNED_POD = "cogniverse-optimization-runner/run-optimizer"
 
 # Backups are off by default; the two data-backup CronWorkflows run the same
 # runtime image and need the same credential, so every render here enables
@@ -107,12 +109,12 @@ def _credential_source(container: dict) -> dict:
     return {key: value for key, value in entry.items() if key != "name"}
 
 
-def _secret_name_handed_on(container: dict) -> str:
-    """The Secret a submitter names for the pods it spawns, "" when it names
-    none — so a submitter that lost the wiring shows up as a value difference
-    under its own key instead of a KeyError.
+def _template_named(container: dict) -> str:
+    """The WorkflowTemplate a submitter names, "" when it names none — so a
+    submitter that lost the wiring shows up as a value difference under its
+    own key instead of a KeyError.
     """
-    return _env_map(container).get(SECRET_NAME_ENV, {}).get("value", "")
+    return _env_map(container).get(TEMPLATE_NAME_ENV, {}).get("value", "")
 
 
 def _workflow_containers(manifests: list) -> dict:
@@ -152,7 +154,7 @@ def _submitter_containers(manifests: list) -> dict:
         for container in doc["spec"]["template"]["spec"]["containers"]:
             candidates[f"{doc['metadata']['name']}/{container['name']}"] = container
     for name, container in candidates.items():
-        if "OPTIMIZATION_WORKFLOW_IMAGE" in _env_map(container):
+        if TEMPLATE_NAME_ENV in _env_map(container):
             submitters[name] = container
     return submitters
 
@@ -192,42 +194,36 @@ def test_external_inference_workflows_share_the_runtime_secret_reference():
     assert found == dict.fromkeys(EXPECTED_WORKFLOW_CONTAINERS, runtime_source)
 
 
-def test_submitters_pass_the_runtime_secret_name_to_spawned_pods():
-    """A submitted Workflow's container spec is built in Python from this env
-    var. It names the Secret, never the bearer: the value stays out of the
-    Workflow object the Argo API stores and serves."""
+def test_submitters_reference_the_template_that_holds_the_secret():
+    """A submitted Workflow carries a template name, never a container spec:
+    the bearer stays out of the Workflow object the Argo API stores and serves,
+    and the pod reads it from the Secret the template names."""
     manifests = _render(BACKUPS_ON, EXTERNAL_INFERENCE)
-    secret_name = _credential_source(_runtime_container(manifests))["valueFrom"][
-        "secretKeyRef"
-    ]["name"]
+    runtime_source = _credential_source(_runtime_container(manifests))
 
     submitters = _submitter_containers(manifests)
     assert set(submitters) == EXPECTED_SUBMITTERS
 
-    named = {
-        name: _secret_name_handed_on(container)
-        for name, container in submitters.items()
-    }
-    assert named == dict.fromkeys(EXPECTED_SUBMITTERS, secret_name)
+    named = {name: _template_named(c) for name, c in submitters.items()}
+    assert named == dict.fromkeys(EXPECTED_SUBMITTERS, SPAWNED_POD.split("/")[0])
+
+    spawned = _workflow_containers(manifests)[SPAWNED_POD]
+    assert _credential_source(spawned) == runtime_source
+    assert set(runtime_source) == {"valueFrom"}
 
 
-def test_in_cluster_submitters_forward_their_own_placeholder():
-    """No Secret exists in a fully in-cluster render, so no submitter may name
-    one; the spawned pod inherits the submitter's own placeholder entry, which
-    is the runtime's."""
+def test_in_cluster_submitters_reference_the_same_template():
+    """No Secret exists in a fully in-cluster render, so the spawned pod gets
+    the template's placeholder entry, which is the runtime's."""
     manifests = _render(BACKUPS_ON)
     runtime_source = _credential_source(_runtime_container(manifests))
 
     submitters = _submitter_containers(manifests)
     assert set(submitters) == EXPECTED_SUBMITTERS
 
-    named = {
-        name: _secret_name_handed_on(container)
-        for name, container in submitters.items()
-    }
-    assert named == dict.fromkeys(EXPECTED_SUBMITTERS, "")
+    named = {name: _template_named(c) for name, c in submitters.items()}
+    assert named == dict.fromkeys(EXPECTED_SUBMITTERS, SPAWNED_POD.split("/")[0])
 
-    own = {
-        name: _credential_source(container) for name, container in submitters.items()
-    }
-    assert own == dict.fromkeys(EXPECTED_SUBMITTERS, runtime_source)
+    spawned = _workflow_containers(manifests)[SPAWNED_POD]
+    assert _credential_source(spawned) == runtime_source
+    assert set(runtime_source) == {"value"}
