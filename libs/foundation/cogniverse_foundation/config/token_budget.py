@@ -12,8 +12,9 @@ of demonstrations dropped.
 
 from __future__ import annotations
 
+import logging
 from dataclasses import dataclass
-from typing import Any, Callable, Sequence
+from typing import Any, Callable, Literal, Sequence
 
 import httpx
 
@@ -21,6 +22,8 @@ from cogniverse_foundation.config.inference_auth import (
     endpoint_root,
     inference_headers,
 )
+
+logger = logging.getLogger(__name__)
 
 Messages = list[dict[str, Any]]
 TokenCounter = Callable[[Messages], int]
@@ -247,3 +250,54 @@ def fetch_context_window(
             f"unknown and no request budget can be derived"
         )
     return window
+
+
+@dataclass(frozen=True, slots=True)
+class ResolvedContextWindow:
+    """A context window and which of the two sources supplied it."""
+
+    tokens: int
+    source: Literal["served", "declared"]
+
+
+def resolve_context_window(
+    api_base: str,
+    *,
+    declared: int | None,
+    model: str,
+) -> ResolvedContextWindow:
+    """The window to budget against: what the endpoint serves, else ``declared``.
+
+    An endpoint that publishes ``max_model_len`` is authoritative — the window
+    is a property of the deployment, not of the model, and only the endpoint
+    knows which one it launched with. A listing that carries no window (a
+    shadowed discovery route that answers without waking the engine) falls
+    back to the window the endpoint's configuration declares. With neither,
+    there is nothing to budget against and no guess is safe.
+    """
+
+    try:
+        served = fetch_context_window(api_base)
+    except ContextWindowUnavailableError as exc:
+        if declared is None:
+            raise ContextWindowUnavailableError(
+                f"{model} at {api_base} publishes no context window and declares "
+                f"none, so no request budget can be derived"
+            ) from exc
+        logger.warning(
+            "%s at %s publishes no context window; budgeting against the "
+            "declared %d tokens instead: %s",
+            model,
+            api_base,
+            declared,
+            exc,
+        )
+        return ResolvedContextWindow(tokens=declared, source="declared")
+
+    logger.info(
+        "%s at %s serves a %d-token context window",
+        model,
+        api_base,
+        served,
+    )
+    return ResolvedContextWindow(tokens=served, source="served")

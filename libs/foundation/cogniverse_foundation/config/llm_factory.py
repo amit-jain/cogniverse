@@ -162,11 +162,17 @@ def create_budgeted_dspy_lm(config: LLMEndpointConfig) -> dspy.LM:
     """Create an LM that fits each request inside the window its endpoint serves.
 
     ``config.max_tokens`` is the completion reservation; the input allowance
-    is what the served ``max_model_len`` leaves after it. Few-shot
-    demonstrations are shed to stay inside that allowance, and a prompt that
-    cannot fit without them raises ``PromptBudgetExceededError``.
+    is what the served ``max_model_len`` leaves after it, or what
+    ``config.context_window`` declares for an endpoint that publishes no
+    window. Few-shot demonstrations are shed to stay inside that allowance,
+    and a prompt that cannot fit without them raises
+    ``PromptBudgetExceededError``.
     """
 
     from cogniverse_foundation.config.budgeted_lm import BudgetedLM
 
-    return BudgetedLM(config.model, **dspy_lm_kwargs(config))
+    return BudgetedLM(
+        config.model,
+        declared_context_window=config.context_window,
+        **dspy_lm_kwargs(config),
+    )

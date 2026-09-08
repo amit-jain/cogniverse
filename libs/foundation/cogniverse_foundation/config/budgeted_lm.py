@@ -13,9 +13,9 @@ from cogniverse_foundation.config.token_budget import (
     FittedPrompt,
     PromptBudgetExceededError,
     TokenBudget,
-    fetch_context_window,
     fit_messages,
     litellm_message_counter,
+    resolve_context_window,
 )
 
 logger = logging.getLogger(__name__)
@@ -30,14 +30,27 @@ class BudgetedLM(dspy.LM):
     """Fit the assembled prompt to ``context_window - max_tokens`` before sending.
 
     The window is read from the endpoint's ``/v1/models`` on first use and
-    held for the life of the instance. Requests over the allowance shed whole
-    few-shot demonstrations, oldest first; one that still overflows with none
-    left raises ``PromptBudgetExceededError`` rather than reaching the
-    provider as an opaque context-window rejection.
+    held for the life of the instance, falling back to
+    ``declared_context_window`` when the listing carries none. Requests over
+    the allowance shed whole few-shot demonstrations, oldest first; one that
+    still overflows with none left raises ``PromptBudgetExceededError`` rather
+    than reaching the provider as an opaque context-window rejection.
     """
 
     _budget: TokenBudget | None = None
     _counter = None
+
+    def __init__(
+        self,
+        model: str,
+        *,
+        declared_context_window: int | None = None,
+        **kwargs: Any,
+    ) -> None:
+        super().__init__(model, **kwargs)
+        # A plain attribute, never a dspy kwarg: everything in self.kwargs is
+        # forwarded to litellm as a request parameter.
+        self.declared_context_window = declared_context_window
 
     @property
     def budget(self) -> TokenBudget:
@@ -62,9 +75,23 @@ class BudgetedLM(dspy.LM):
                     f"{self.model} reserves no completion tokens, so the input "
                     f"allowance of its context window is undefined"
                 )
+            resolved = resolve_context_window(
+                api_base,
+                declared=self.declared_context_window,
+                model=self.model,
+            )
+            logger.info(
+                "Budgeting %s against its %s context_window=%d with "
+                "reserved_output=%d at api_base=%s",
+                self.model,
+                resolved.source,
+                resolved.tokens,
+                int(reserved),
+                api_base,
+            )
             self._budget = TokenBudget(
                 model=self.model,
-                context_window=fetch_context_window(api_base),
+                context_window=resolved.tokens,
                 reserved_output=int(reserved),
             )
             return self._budget

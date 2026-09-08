@@ -76,7 +76,8 @@ holds the service apps, including the student and teacher vLLM Modal apps;
 `inference_endpoints.py` and `modal_inference_lifecycle.py` resolve endpoints
 and drive the Modal lifecycle. Each service's contract (immutable model
 revision, GPU candidates, secret requirements such as `requires_hf_token`)
-comes from `cogniverse_foundation.inference_specs`.
+comes from `cogniverse_foundation.inference_specs`, including the
+`context_window` a vLLM service launches with and publishes.
 
 ---
 
@@ -141,9 +142,11 @@ cogniverse inference modal undeploy vllm_colpali --confirm-service vllm_colpali
 `cogniverse inference modal` uses `ModalInferenceLifecycle` from `modal_inference_lifecycle.py`. `deploy`, `release`, and `status` operate on one or more canonical Modal services; `warm` fetches authenticated endpoints and live runner counts; `qualify` picks the earliest configured GPU from the supplied candidates; `undeploy` requires an exact `--confirm-service` match.
 
 `cogniverse_foundation.inference_specs` is the contract source for each
-service's immutable model revision, GPU candidates, secret requirements, and
-the pre-measurement `boot_deadline_seconds` that Modal serving and the runtime
-teacher probe share for scale-to-zero services.
+service's immutable model revision, GPU candidates, secret requirements, the
+`context_window` a vLLM service launches with (`--max-model-len`) and publishes
+(`max_model_len` on `/v1/models`), and the pre-measurement
+`boot_deadline_seconds` that Modal serving and the runtime teacher probe share
+for scale-to-zero services.
 
 ### Coding agent
 

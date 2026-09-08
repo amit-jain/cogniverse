@@ -151,6 +151,26 @@ def test_shipped_training_selection_matches_canonical_block():
 
 
 @pytest.mark.unit
+def test_shipped_configs_declare_identical_teacher_request_bounds():
+    """The teacher's model and endpoint are per-deployment, so the chart
+    templates them; what a request to it may cost is not, and a window declared
+    in one copy only leaves the other budgeting against nothing."""
+
+    def bounds(config: dict[str, Any]) -> dict[str, Any]:
+        teacher = config["llm_config"]["teacher"]
+        return {
+            key: teacher.get(key)
+            for key in ("temperature", "max_tokens", "context_window")
+        }
+
+    assert (
+        bounds(_rendered(SHIPPED))
+        == bounds(_rendered(CHART))
+        == {"temperature": 0.7, "max_tokens": 2048, "context_window": 4096}
+    )
+
+
+@pytest.mark.unit
 def test_chart_agents_are_a_subset_of_the_reference_config():
     shipped_agents = set(_rendered(SHIPPED)["agents"])
     chart_agents = set(_rendered(CHART)["agents"])

@@ -26,6 +26,7 @@ from cogniverse_cli.modal_inference.vllm import (
 from fastapi.testclient import TestClient
 from starlette.requests import Request
 
+from cogniverse_foundation.config.token_budget import extract_context_window
 from cogniverse_foundation.inference_specs import get_inference_service_spec
 
 API_KEY = "vllm-serving-key"
@@ -278,10 +279,12 @@ def test_registered_modal_function_builds_the_authenticated_asgi_app(monkeypatch
                 "object": "model",
                 "owned_by": "cogniverse",
                 "revision": spec.model_revision,
+                "max_model_len": spec.context_window,
             }
         ],
         "object": "list",
     }
+    assert extract_context_window(identity.json()) == spec.context_window
 
 
 def test_startup_timeout_terminates_unreachable_process_before_retry():

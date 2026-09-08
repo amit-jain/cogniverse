@@ -30,6 +30,10 @@ class InferenceServiceSpec:
     modal_object: str = "Inference"
     health_path: str = "/health"
     models_path: str = "/v1/models"
+    # Tokens the served engine accepts per request: launched as
+    # --max-model-len and published as max_model_len. None for services that
+    # serve the model default.
+    context_window: int | None = None
     scaledown_window: int = 300
     # Pre-measurement cold-start budget for the scale-to-zero Modal app.
     # This is the shared deadline the runtime teacher probe uses when the
@@ -48,6 +52,11 @@ class InferenceServiceSpec:
             )
         if not self.gpu_candidates:
             raise ValueError(f"{self.name}: at least one GPU candidate is required")
+        if self.context_window is not None and self.context_window <= 0:
+            raise ValueError(
+                f"{self.name}: context_window must be a positive token count, "
+                f"got {self.context_window}"
+            )
 
     @property
     def modal_app(self) -> str:
@@ -64,6 +73,7 @@ def _spec(
     *gpu_candidates: str,
     requires_hf_token: bool = False,
     source_revision: str | None = None,
+    context_window: int | None = None,
     scaledown_window: int = 300,
 ) -> InferenceServiceSpec:
     return InferenceServiceSpec(
@@ -74,6 +84,7 @@ def _spec(
         gpu_candidates=gpu_candidates,
         requires_hf_token=requires_hf_token,
         source_revision=source_revision,
+        context_window=context_window,
         scaledown_window=scaledown_window,
     )
 
@@ -88,6 +99,7 @@ INFERENCE_SERVICE_SPECS: Mapping[str, InferenceServiceSpec] = MappingProxyType(
             "L4",
             "A10",
             "L40S",
+            context_window=4096,
         ),
         "colbert_pylate": _spec(
             "colbert_pylate",
@@ -138,6 +150,7 @@ INFERENCE_SERVICE_SPECS: Mapping[str, InferenceServiceSpec] = MappingProxyType(
             "A100-80GB",
             "L40S",
             requires_hf_token=True,
+            context_window=8192,
             scaledown_window=900,
         ),
         "vllm_llm_teacher": _spec(
@@ -149,6 +162,7 @@ INFERENCE_SERVICE_SPECS: Mapping[str, InferenceServiceSpec] = MappingProxyType(
             "A100-80GB",
             "L40S",
             requires_hf_token=True,
+            context_window=4096,
             scaledown_window=900,
         ),
         "vllm_asr": _spec(
@@ -158,6 +172,7 @@ INFERENCE_SERVICE_SPECS: Mapping[str, InferenceServiceSpec] = MappingProxyType(
             None,
             "T4",
             "L4",
+            context_window=448,
         ),
         "clap_embed": _spec(
             "clap_embed",

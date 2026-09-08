@@ -151,6 +151,7 @@ llm_config = LLMConfig(primary=primary, teacher=teacher)
 | `api_base` | `None` | Endpoint URL. `None` = LiteLLM default routing. |
 | `temperature` | `0.1` | Sampling temperature. |
 | `max_tokens` | `1000` | Max completion tokens. |
+| `context_window` | `None` | Tokens the endpoint accepts per request. Read by `create_budgeted_dspy_lm()` only when the endpoint publishes no `max_model_len`. |
 | `request_timeout` | `120.0` | Seconds before litellm raises a timeout. Set low to fail fast on a down endpoint. |
 | `num_retries` | `1` | Total call attempts (1 = no retries). DSPy default is higher; this constrains it for fast-fail behavior. |
 | `seed` | `None` | vLLM sampling seed for deterministic output in tests. |

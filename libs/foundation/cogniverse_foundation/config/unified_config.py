@@ -72,6 +72,9 @@ class LLMEndpointConfig:
     api_key: Optional[str] = None
     temperature: float = 0.1
     max_tokens: int = 1000
+    # Tokens this endpoint accepts per request, used only when the endpoint
+    # itself publishes no ``max_model_len``. What it serves always wins.
+    context_window: Optional[int] = None
     # Records which LoRA/fine-tuned artifact this endpoint corresponds to.
     # Bookkeeping only: LM construction never reads it — vLLM serves adapters
     # server-side, selected via the model name.
@@ -103,6 +106,8 @@ class LLMEndpointConfig:
             result["api_key"] = "***"  # Never serialize real keys
         result["temperature"] = self.temperature
         result["max_tokens"] = self.max_tokens
+        if self.context_window is not None:
+            result["context_window"] = self.context_window
         if self.adapter_path is not None:
             result["adapter_path"] = self.adapter_path
         if self.extra_body is not None:
@@ -124,6 +129,7 @@ class LLMEndpointConfig:
             api_key=data.get("api_key"),
             temperature=data.get("temperature", 0.1),
             max_tokens=data.get("max_tokens", 1000),
+            context_window=data.get("context_window"),
             adapter_path=data.get("adapter_path"),
             extra_body=data.get("extra_body"),
             extra_headers=data.get("extra_headers"),
