@@ -83,3 +83,134 @@ async def test_concurrent_streams_do_not_cross_talk():
     # No raw sentinel (a bare object(), not a dict) ever leaked into a stream.
     for event in events_a + events_b:
         assert isinstance(event, dict)
+
+
+class _AnswerInput(AgentInput):
+    query: str = ""
+
+
+class _AnswerOutput(AgentOutput):
+    answer: str = ""
+
+
+class _Module:
+    """Stands in for a compiled DSPy program on the non-streaming path only;
+    the streaming path never calls it because streamify is replaced."""
+
+    def __init__(self, answer: str):
+        self._answer = answer
+
+    def __call__(self, **kwargs):
+        import dspy
+
+        return dspy.Prediction(answer=self._answer)
+
+
+def _streamify_yielding(chunks):
+    """A streamify replacement that yields exactly what dspy's yields: real
+    StreamResponse / StatusMessage objects, then the final Prediction."""
+
+    def fake_streamify(program, **_):
+        async def run(**kwargs):
+            for item in chunks:
+                yield item
+
+        return run
+
+    return fake_streamify
+
+
+class _StreamingAnswerAgent(AgentBase[_AnswerInput, _AnswerOutput, _Deps]):
+    def __init__(self, deps, module):
+        super().__init__(deps=deps)
+        self._module = module
+
+    async def _process_impl(self, input: _AnswerInput) -> _AnswerOutput:
+        prediction = await self.call_dspy(
+            self._module, output_field="answer", query=input.query
+        )
+        return _AnswerOutput(answer=prediction.answer)
+
+
+class _OuterAgent(AgentBase[_AnswerInput, _AnswerOutput, _Deps]):
+    """Streams its own answer and, mid-turn, awaits an inner agent's
+    non-streamed process() — the orchestrator → sub-agent shape."""
+
+    def __init__(self, deps, module, inner):
+        super().__init__(deps=deps)
+        self._module = module
+        self._inner = inner
+
+    async def _process_impl(self, input: _AnswerInput) -> _AnswerOutput:
+        inner_out = await self._inner.process(_AnswerInput(query="inner"))
+        prediction = await self.call_dspy(
+            self._module, output_field="answer", query=input.query
+        )
+        return _AnswerOutput(answer=f"{prediction.answer}|{inner_out.answer}")
+
+
+def _token_messages(events) -> list:
+    return [e["message"] for e in events if e.get("phase") == "token"]
+
+
+@pytest.mark.asyncio
+async def test_token_events_carry_the_chunk_text(monkeypatch):
+    import dspy
+    from dspy.streaming import StatusMessage, StreamResponse
+
+    monkeypatch.setattr(
+        dspy,
+        "streamify",
+        _streamify_yielding(
+            [
+                StreamResponse("p", "answer", "Hel", False),
+                StatusMessage("thinking"),
+                StreamResponse("p", "answer", "lo", True),
+                dspy.Prediction(answer="Hello"),
+            ]
+        ),
+    )
+    agent = _StreamingAnswerAgent(_Deps(), _Module("unused"))
+
+    events = await _drain_answer(agent)
+
+    assert _token_messages(events) == ["Hel", "lo"]
+    assert [e["data"]["accumulated"] for e in events if e.get("phase") == "token"] == [
+        "Hel",
+        "Hello",
+    ]
+    finals = [e for e in events if e.get("type") == "final"]
+    assert [f["data"]["answer"] for f in finals] == ["Hello"]
+
+
+@pytest.mark.asyncio
+async def test_nested_agent_does_not_stream_onto_the_outer_stream(monkeypatch):
+    import dspy
+    from dspy.streaming import StreamResponse
+
+    monkeypatch.setattr(
+        dspy,
+        "streamify",
+        _streamify_yielding(
+            [
+                StreamResponse("p", "answer", "OUTER", True),
+                dspy.Prediction(answer="OUTER"),
+            ]
+        ),
+    )
+    inner = _StreamingAnswerAgent(_Deps(), _Module("inner-full"))
+    outer = _OuterAgent(_Deps(), _Module("unused"), inner)
+
+    events = await _drain_answer(outer)
+
+    assert _token_messages(events) == ["OUTER"]
+    finals = [e for e in events if e.get("type") == "final"]
+    assert [f["data"]["answer"] for f in finals] == ["OUTER|inner-full"]
+
+
+async def _drain_answer(agent) -> list:
+    events = []
+    stream = await agent.process(_AnswerInput(query="q"), stream=True)
+    async for event in stream:
+        events.append(event)
+    return events
