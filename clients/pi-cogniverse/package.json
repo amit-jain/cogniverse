@@ -1,0 +1,21 @@
+{
+  "name": "pi-cogniverse",
+  "version": "0.1.0",
+  "description": "Pi coding-agent extension that drives cogniverse as the model: registers the cogniverse provider against the runtime's OpenAI-compatible /v1 surface, gates mutating workspace tools behind per-action approval, and adds /cogniverse-search for direct retrieval outside the model loop.",
+  "type": "module",
+  "license": "MIT",
+  "pi": {
+    "extensions": [
+      "./src/index.ts"
+    ]
+  },
+  "scripts": {
+    "test": "vitest run",
+    "typecheck": "tsc --noEmit"
+  },
+  "devDependencies": {
+    "@earendil-works/pi-coding-agent": "0.80.6",
+    "typescript": "5.9.3",
+    "vitest": "4.1.5"
+  }
+}
