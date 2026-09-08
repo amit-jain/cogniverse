@@ -25,6 +25,7 @@ from cogniverse_core.common.tenant_utils import (
     require_tenant_id,
 )
 from cogniverse_core.registries.agent_registry import AgentRegistry
+from cogniverse_runtime.harness_turn import NoAnswerError, extract_answer_text
 
 if TYPE_CHECKING:
     from cogniverse_runtime.sandbox_manager import SandboxManager
@@ -81,6 +82,24 @@ ORCHESTRATOR_AGENT_CACHE_CAPACITY = 64
 # short enough to recover quickly, long enough not to hammer a down store on
 # every subsequent request.
 RELOAD_RETRY_COOLDOWN_S = 10.0
+
+# Capabilities whose execution path reaches Vespa (retrieval, code context).
+# Every dispatch path reaches the LM, so "llm" needs no capability test.
+_VESPA_REACHING_CAPABILITIES = frozenset(
+    {
+        "search",
+        "video_search",
+        "retrieval",
+        "image_search",
+        "visual_analysis",
+        "audio_analysis",
+        "transcription",
+        "document_analysis",
+        "pdf_processing",
+        "deep_research",
+        "coding",
+    }
+)
 
 # Resolved (agent, deps, input) classes for generic A2A dispatch, keyed by the
 # ``module:Class`` path. Bounded by the fixed AGENT_CLASSES set — each dispatch
@@ -724,16 +743,23 @@ class AgentDispatcher:
 
         These are the destinations the dispatcher already knows the
         agents will reach (Vespa for retrieval, the LLM endpoint for
-        DSPy calls, denseon for embeddings). Used by the per-agent
-        ``_verify_*_egress`` helpers below to drift-check policies.
-        Best-effort: missing config keys return an empty dict and the
-        verification step is skipped silently.
+        DSPy calls, denseon for embeddings). Used by ``_verify_egress``
+        to drift-check policies. Best-effort and logged: an unreadable system
+        config, a missing config key, or an address that does not parse drops
+        that endpoint and the verification step skips it, so a drift check
+        never fails a dispatch.
         """
         from urllib.parse import urlparse
 
         try:
             sys_cfg = self._config_manager.get_system_config()
-        except Exception:
+        except Exception as exc:  # noqa: BLE001 — log + degrade
+            logger.warning(
+                "Egress pre-flight skipped for tenant %s: the system config "
+                "is unreadable (%s)",
+                tenant_id,
+                exc,
+            )
             return {}
 
         out: Dict[str, Dict[str, Any]] = {}
@@ -741,10 +767,19 @@ class AgentDispatcher:
         def _add(name: str, url: Optional[str], default_port: int) -> None:
             if not url:
                 return
-            parsed = urlparse(url if "://" in url else f"http://{url}")
-            host = parsed.hostname or "localhost"
-            port = parsed.port or default_port
-            out[name] = {"host": host, "port": int(port), "protocol": "tcp"}
+            try:
+                parsed = urlparse(url if "://" in url else f"http://{url}")
+                host = parsed.hostname or "localhost"
+                port = int(parsed.port or default_port)
+            except (ValueError, TypeError) as exc:
+                logger.warning(
+                    "Egress pre-flight skips %s: %r does not parse as an address (%s)",
+                    name,
+                    url,
+                    exc,
+                )
+                return
+            out[name] = {"host": host, "port": port, "protocol": "tcp"}
 
         _add(
             "vespa",
@@ -773,31 +808,36 @@ class AgentDispatcher:
             _add("denseon", denseon_url, 8000)
         return out
 
-    def _verify_search_egress(self, tenant_id: str) -> None:
-        sysep = self._system_endpoints(tenant_id)
-        # SearchAgent reaches Vespa for retrieval and (via DSPy) the LLM
-        # for query rewriting. Denseon embeddings are pulled by Mem0 in
-        # this runtime, not the agent itself, so they're not flagged here.
-        endpoints = [v for k, v in sysep.items() if k in {"vespa", "llm"}]
-        if endpoints:
-            self.validate_dispatch_endpoints("search_agent", endpoints)
+    def _egress_kinds_for(self, agent_name: str) -> frozenset:
+        """System endpoint kinds ``agent_name`` may reach, derived from the
+        capabilities it is registered with. A policy name with no registry
+        entry (the gateway path consults ``routing_agent``) still reaches the
+        LM, which every dispatch path calls through DSPy."""
+        agent = self._registry.get_agent(agent_name)
+        capabilities = set(getattr(agent, "capabilities", None) or ())
+        kinds = {"llm"}
+        if capabilities & _VESPA_REACHING_CAPABILITIES:
+            kinds.add("vespa")
+        return frozenset(kinds)
 
-    def _verify_summarizer_egress(self, tenant_id: str) -> None:
-        sysep = self._system_endpoints(tenant_id)
-        # SummarizerAgent reaches the LLM endpoint via DSPy.
-        endpoints = [v for k, v in sysep.items() if k == "llm"]
-        if endpoints:
-            self.validate_dispatch_endpoints("summarizer_agent", endpoints)
+    def egress_endpoint_kinds(self) -> Dict[str, frozenset]:
+        """Endpoint kinds per registered agent, for inspection and drift tests."""
+        return {
+            name: self._egress_kinds_for(name) for name in self._registry.list_agents()
+        }
 
-    def _verify_routing_egress(self, tenant_id: str) -> None:
+    def _verify_egress(self, agent_name: str, tenant_id: str) -> List[Dict[str, Any]]:
+        """Check the endpoints ``agent_name`` reaches against its egress policy.
+
+        Returns the violations; drift surfaces as a logged warning here and the
+        CNI NetworkPolicy is the kernel deny.
+        """
+        kinds = self._egress_kinds_for(agent_name)
         sysep = self._system_endpoints(tenant_id)
-        # RoutingAgent (gateway) classifies via the LLM and may dispatch
-        # to in-cluster agent peers; the in-cluster A2A endpoints aren't
-        # listed in agent policies (they're loopback within the unified
-        # runtime pod), so only the LLM hop is verified.
-        endpoints = [v for k, v in sysep.items() if k == "llm"]
-        if endpoints:
-            self.validate_dispatch_endpoints("routing_agent", endpoints)
+        endpoints = [v for k, v in sysep.items() if k in kinds]
+        if not endpoints:
+            return []
+        return self.validate_dispatch_endpoints(agent_name, endpoints)
 
     def validate_dispatch_endpoints(
         self,
@@ -1201,6 +1241,9 @@ class AgentDispatcher:
                 tenant_id, str(context_id), query, result
             )
 
+        if isinstance(result, dict):
+            self._stamp_answer(result)
+
         entities = result.get("entities", [])
         turn_count = len(conversation_history or []) // 2 + 1
         self._spawn_background(
@@ -1209,6 +1252,20 @@ class AgentDispatcher:
             )
         )
         return result
+
+    @staticmethod
+    def _stamp_answer(result: Dict[str, Any]) -> None:
+        """Attach the human-facing answer text every dispatch consumer reads.
+
+        An error envelope is left as it is: it has no answer, and rendering one
+        would present a failure as a reply.
+        """
+        try:
+            result["answer"] = extract_answer_text(result)
+        except NoAnswerError as exc:
+            logger.info(
+                "No answer text for %s: %s", result.get("agent", "unknown"), exc
+            )
 
     def _build_conversation_store(self, tenant_id: str):
         """Build a per-tenant ConversationStore, or None if Mem0 is unwired.
@@ -1336,7 +1393,15 @@ class AgentDispatcher:
             if not wm._should_auto_file(titles, agent_name, turn_count):
                 return
 
-            response_text = str(response.get("answer", response))
+            response_text = response.get("answer")
+            if not isinstance(response_text, str) or not response_text.strip():
+                logger.info(
+                    "Wiki auto-filing skipped for %s (tenant=%s): the dispatch "
+                    "carried no answer text",
+                    agent_name,
+                    tenant_id,
+                )
+                return
             await asyncio.get_running_loop().run_in_executor(
                 None,
                 lambda: wm.save_session(
@@ -1817,7 +1882,7 @@ class AgentDispatcher:
     ) -> Dict[str, Any]:
         # Drift surfaces as a logged warning here; CNI is the kernel deny.
         self.consult_egress_policy("search_agent")
-        self._verify_search_egress(tenant_id)
+        self._verify_egress("search_agent", tenant_id)
 
         from cogniverse_agents.search_agent import (
             SearchInput,
@@ -2100,7 +2165,7 @@ class AgentDispatcher:
         history_lines = []
         for turn in conversation_history[-5:]:
             role = turn.get("role", "user")
-            content = turn.get("content", "")[:200]
+            content = (turn.get("content") or "")[:200]
             history_lines.append(f"{role}: {content}")
         history_text = "\n".join(history_lines)
 
@@ -2163,7 +2228,7 @@ class AgentDispatcher:
         """
         # Consult + verify routing_agent egress policy at dispatch.
         self.consult_egress_policy("routing_agent")
-        self._verify_routing_egress(tenant_id)
+        self._verify_egress("routing_agent", tenant_id)
 
         from cogniverse_core.agents.rails import RailBlockedError
 
@@ -2286,6 +2351,9 @@ class AgentDispatcher:
         gateway_context: Optional[Dict[str, Any]] = None,
     ) -> Dict[str, Any]:
         """Execute full orchestration pipeline via OrchestratorAgent."""
+        self.consult_egress_policy("orchestrator_agent")
+        self._verify_egress("orchestrator_agent", tenant_id)
+
         from cogniverse_agents.orchestrator_agent import OrchestratorInput
 
         # Cached per tenant: the agent, its WorkflowIntelligence corpus, and its
@@ -2432,7 +2500,7 @@ class AgentDispatcher:
     ) -> Dict[str, Any]:
         # Consult + verifysummarizer_agent egress policy at dispatch.
         self.consult_egress_policy("summarizer_agent")
-        self._verify_summarizer_egress(tenant_id)
+        self._verify_egress("summarizer_agent", tenant_id)
 
         from cogniverse_agents.summarizer_agent import (
             SummarizerAgent,
@@ -2773,6 +2841,9 @@ class AgentDispatcher:
         tenant_id: str,
         context: Optional[Dict[str, Any]] = None,
     ) -> Dict[str, Any]:
+        self.consult_egress_policy("coding_agent")
+        self._verify_egress("coding_agent", tenant_id)
+
         import dspy
 
         from cogniverse_agents.coding_agent import (

@@ -220,7 +220,7 @@ async def test_search_dispatch_roots_process_and_children(monkeypatch):
     dispatcher._get_search_agent = _build_search_agent
     dispatcher._apply_artefact_overlay = lambda *a, **k: None
     dispatcher.consult_egress_policy = lambda *a, **k: None
-    dispatcher._verify_search_egress = lambda *a, **k: None
+    dispatcher._verify_egress = lambda *a, **k: None
 
     await dispatcher._execute_search_task("find cats", "acme:prod", top_k=5)
 
@@ -247,7 +247,7 @@ async def test_gateway_dispatch_stays_off_process_wrapper(monkeypatch):
         "acme:prod", _GatewayAgentEntry(agent=agent, loaded_at=0.0)
     )
     dispatcher.consult_egress_policy = lambda *a, **k: None
-    dispatcher._verify_routing_egress = lambda *a, **k: None
+    dispatcher._verify_egress = lambda *a, **k: None
     dispatcher._get_rail_chains = lambda tenant_id: None
 
     async def _execute_downstream_agent(*a, **k):
