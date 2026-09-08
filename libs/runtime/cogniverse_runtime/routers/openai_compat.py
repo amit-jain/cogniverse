@@ -32,6 +32,7 @@ import json
 import logging
 import time
 import uuid
+from contextlib import aclosing
 from typing import Any, AsyncIterator, Callable, Dict, List, Optional, Tuple
 
 from fastapi import APIRouter, Header, Request
@@ -44,6 +45,7 @@ from cogniverse_runtime.harness_turn import (
     NoAnswerError,
     derive_request_seed,
     extract_answer_text,
+    is_answer_field,
     to_openai_tool_calls,
 )
 from cogniverse_sdk.interfaces.config_store import ConfigStoreUnavailableError
@@ -71,6 +73,10 @@ _MAX_TEMPERATURE = 2.0
 
 class RequestShapeError(ValueError):
     """The request body violates the OpenAI chat-completions shape."""
+
+
+class ToolsForbiddenError(RuntimeError):
+    """The agent asked for a tool call on a turn that forbade tool calls."""
 
 
 def set_dispatcher_provider(provider: Optional[Callable[[], Any]]) -> None:
@@ -592,6 +598,7 @@ class ChatCompletionRequest(BaseModel):
     temperature: Optional[float] = None
     max_tokens: Optional[int] = None
     max_completion_tokens: Optional[int] = None
+    tool_choice: Optional[Any] = None
 
 
 def sampling_context(request: ChatCompletionRequest) -> Dict[str, Any]:
@@ -634,6 +641,32 @@ def sampling_context(request: ChatCompletionRequest) -> Dict[str, Any]:
     return forwarded
 
 
+def resolve_tool_policy(
+    request: ChatCompletionRequest,
+) -> Tuple[Optional[List[Dict[str, Any]]], bool]:
+    """The tools to forward, and whether the client forbade tool calls.
+
+    ``"none"`` withholds the definitions AND makes a tool request from the
+    agent an error, so a client that said "not this turn" can never be
+    answered with ``finish_reason: "tool_calls"``. Forcing a call
+    (``"required"``, a named function) is rejected: nothing on this surface
+    can compel an agent to call one, and accepting the field would report a
+    guarantee that does not exist.
+
+    Raises:
+        RequestShapeError: a tool_choice this surface cannot honour.
+    """
+    choice = request.tool_choice
+    if choice is None or choice == "auto":
+        return request.tools, False
+    if choice == "none":
+        return None, True
+    raise RequestShapeError(
+        f"tool_choice {choice!r} is not supported; this surface accepts "
+        '"auto" and "none"'
+    )
+
+
 def build_dispatch_context(
     dispatch_args: Dict[str, Any],
     tenant_id: str,
@@ -666,6 +699,7 @@ async def _run_turn(
     tenant_id: str,
     external_tools: Optional[List[Dict[str, Any]]] = None,
     sampling: Optional[Dict[str, Any]] = None,
+    tools_forbidden: bool = False,
 ) -> Dict[str, Any]:
     """Execute one dispatch turn.
 
@@ -700,6 +734,11 @@ async def _run_turn(
 
     pending = result.get("pending_tool_calls") if isinstance(result, dict) else None
     if pending:
+        if tools_forbidden:
+            raise ToolsForbiddenError(
+                f"Agent '{agent_name}' requested {len(pending)} tool call(s) on a "
+                'turn sent with tool_choice "none"'
+            )
         tool_calls = to_openai_tool_calls(pending)
         state = result.get("continuation_state")
         if isinstance(state, dict) and state:
@@ -749,6 +788,29 @@ def _error_frame(exc: BaseException) -> str:
     )
 
 
+_CANCELLED_FRAME = _sse(
+    {
+        "error": {
+            "message": "Stream cancelled before the turn completed.",
+            "type": "server_error",
+            "code": "stream_cancelled",
+        }
+    }
+)
+
+
+def _terminal_frames_on_cancel(agent_name: str) -> List[str]:
+    """The frames a cancelled stream owes its client.
+
+    A rolling restart cancels the response task at the generator's yield
+    point; the writes issued from the except block still reach the socket, so
+    the client ends on an error frame and ``[DONE]`` instead of a body that
+    simply stops. A client that already left never reads them.
+    """
+    logger.info("chat.completions stream for %s cancelled", agent_name)
+    return [_CANCELLED_FRAME, "data: [DONE]\n\n"]
+
+
 async def _stream_turn(
     dispatcher: Any,
     agent_name: str,
@@ -759,11 +821,18 @@ async def _stream_turn(
     model: str,
     external_tools: Optional[List[Dict[str, Any]]] = None,
     sampling: Optional[Dict[str, Any]] = None,
+    tools_forbidden: bool = False,
 ) -> AsyncIterator[str]:
     """Stream one turn as SSE by chunking the finished answer."""
     task = asyncio.create_task(
         _run_turn(
-            dispatcher, agent_name, dispatch_args, tenant_id, external_tools, sampling
+            dispatcher,
+            agent_name,
+            dispatch_args,
+            tenant_id,
+            external_tools,
+            sampling,
+            tools_forbidden,
         )
     )
     _in_flight.add(task)
@@ -818,10 +887,8 @@ async def _stream_turn(
         )
         yield "data: [DONE]\n\n"
     except asyncio.CancelledError:
-        logger.info(
-            "chat.completions stream for %s cancelled; cancelling the dispatch",
-            agent_name,
-        )
+        for frame in _terminal_frames_on_cancel(agent_name):
+            yield frame
         raise
     except Exception as exc:
         logger.exception("chat.completions turn failed mid-stream")
@@ -835,6 +902,185 @@ async def _stream_turn(
         except BaseException:
             pass
         _in_flight.discard(task)
+
+
+def use_token_stream(dispatcher: Any, agent_name: str, has_tool_results: bool) -> bool:
+    """Whether a streamed request takes the live-token path.
+
+    Only for an agent whose endpoint declares ``streams_answer_tokens`` and
+    only on a turn that is not resuming a tool exchange: a resume carries the
+    replayed results and the continuation state, which the dispatch path owns.
+    A first turn that merely *offers* tools still streams tokens — the agent
+    may answer without calling one, and if it does call one the final event
+    carries the pending calls.
+    """
+    if has_tool_results:
+        return False
+    return dispatcher.supports_token_stream(agent_name)
+
+
+async def _stream_tokens(
+    dispatcher: Any,
+    agent_name: str,
+    dispatch_args: Dict[str, Any],
+    tenant_id: str,
+    completion_id: str,
+    created: int,
+    model: str,
+    external_tools: Optional[List[Dict[str, Any]]] = None,
+    sampling: Optional[Dict[str, Any]] = None,
+    tools_forbidden: bool = False,
+) -> AsyncIterator[str]:
+    """Stream the agent's answer tokens as they are produced.
+
+    An agent emits a token event per streamed field, so the router forwards
+    only the field that carries the answer (``is_answer_field``) and locks
+    onto the first one it sees: a research agent's decomposition and gap list
+    travel on the same channel as its summary and are not the reply.
+
+    Whatever the agent streamed is reconciled against the answer of its final
+    payload, so the deltas of a streamed turn always concatenate to the body
+    of the same turn served non-streamed.
+    """
+    query = dispatch_args["query"]
+    history = dispatch_args["conversation_history"]
+    seed = derive_request_seed(query, history)
+    context = build_dispatch_context(
+        dispatch_args, tenant_id, seed, external_tools, sampling or {}
+    )
+    handle = object()
+    _in_flight.add(handle)
+    streamed = ""
+    answer_field: Optional[str] = None
+
+    def content(text: str) -> str:
+        return _chunk(
+            completion_id,
+            created,
+            model,
+            [{"index": 0, "delta": {"content": text}, "finish_reason": None}],
+        )
+
+    try:
+        yield _chunk(
+            completion_id,
+            created,
+            model,
+            [{"index": 0, "delta": {"role": "assistant"}, "finish_reason": None}],
+        )
+        async with aclosing(
+            dispatcher.dispatch_stream(agent_name, query, context)
+        ) as events:
+            async for event in events:
+                if event.get("type") == "error":
+                    yield _sse(
+                        {
+                            "error": {
+                                "message": str(event.get("message", "")),
+                                "type": "server_error",
+                                "code": "internal_error",
+                            }
+                        }
+                    )
+                    yield "data: [DONE]\n\n"
+                    return
+                if event.get("phase") == "token":
+                    field = (event.get("data") or {}).get("output_field")
+                    if not isinstance(field, str) or not is_answer_field(field):
+                        continue
+                    if answer_field is None:
+                        answer_field = field
+                    elif field != answer_field:
+                        continue
+                    delta = event.get("message") or ""
+                    if delta:
+                        streamed += delta
+                        yield content(delta)
+                    continue
+                if event.get("type") != "final":
+                    continue
+
+                payload = event.get("data") or {}
+                pending = payload.get("pending_tool_calls")
+                if pending:
+                    if tools_forbidden:
+                        raise ToolsForbiddenError(
+                            f"Agent '{agent_name}' requested {len(pending)} tool "
+                            'call(s) on a turn sent with tool_choice "none"'
+                        )
+                    tool_calls = to_openai_tool_calls(pending)
+                    state = payload.get("continuation_state")
+                    if isinstance(state, dict) and state:
+                        put_continuation(
+                            tenant_id,
+                            agent_name,
+                            seed,
+                            [call["id"] for call in tool_calls],
+                            state,
+                        )
+                    yield _chunk(
+                        completion_id,
+                        created,
+                        model,
+                        [
+                            {
+                                "index": 0,
+                                "delta": {
+                                    "tool_calls": [
+                                        {"index": position, **call}
+                                        for position, call in enumerate(tool_calls)
+                                    ]
+                                },
+                                "finish_reason": None,
+                            }
+                        ],
+                    )
+                    yield _chunk(
+                        completion_id,
+                        created,
+                        model,
+                        [{"index": 0, "delta": {}, "finish_reason": "tool_calls"}],
+                        usage=_finalize_usage(
+                            None, query, history, json.dumps(tool_calls)
+                        ),
+                    )
+                    yield "data: [DONE]\n\n"
+                    return
+
+                answer = extract_answer_text(payload)
+                if not streamed:
+                    if answer:
+                        streamed = answer
+                        yield content(answer)
+                elif answer != streamed:
+                    if not answer.startswith(streamed):
+                        raise ValueError(
+                            f"Agent '{agent_name}' streamed {len(streamed)} "
+                            f"characters of {answer_field!r} that its final "
+                            "answer does not begin with; the streamed reply "
+                            "cannot be completed"
+                        )
+                    remainder = answer[len(streamed) :]
+                    streamed = answer
+                    yield content(remainder)
+        yield _chunk(
+            completion_id,
+            created,
+            model,
+            [{"index": 0, "delta": {}, "finish_reason": "stop"}],
+            usage=_finalize_usage(None, query, history, streamed),
+        )
+        yield "data: [DONE]\n\n"
+    except asyncio.CancelledError:
+        for frame in _terminal_frames_on_cancel(agent_name):
+            yield frame
+        raise
+    except Exception as exc:
+        logger.exception("chat.completions token stream failed mid-stream")
+        yield _error_frame(exc)
+        yield "data: [DONE]\n\n"
+    finally:
+        _in_flight.discard(handle)
 
 
 async def _watch_disconnect(request: Request, stop: asyncio.Event) -> None:
@@ -946,6 +1192,7 @@ async def chat_completions(
     try:
         dispatch_args = build_dispatch_args(request.messages)
         sampling = sampling_context(request)
+        external_tools, tools_forbidden = resolve_tool_policy(request)
     except RequestShapeError as exc:
         return _error_response(400, str(exc), "invalid_request")
 
@@ -963,8 +1210,15 @@ async def chat_completions(
     created = int(time.time())
 
     if request.stream:
+        stream = (
+            _stream_tokens
+            if use_token_stream(
+                dispatcher, agent_name, bool(dispatch_args["tool_results"])
+            )
+            else _stream_turn
+        )
         return StreamingResponse(
-            _stream_turn(
+            stream(
                 dispatcher,
                 agent_name,
                 dispatch_args,
@@ -972,21 +1226,33 @@ async def chat_completions(
                 completion_id,
                 created,
                 request.model,
-                request.tools,
+                external_tools,
                 sampling,
+                tools_forbidden,
             ),
             media_type="text/event-stream",
         )
 
     task = asyncio.create_task(
         _run_turn(
-            dispatcher, agent_name, dispatch_args, tenant_id, request.tools, sampling
+            dispatcher,
+            agent_name,
+            dispatch_args,
+            tenant_id,
+            external_tools,
+            sampling,
+            tools_forbidden,
         )
     )
     _in_flight.add(task)
     task.add_done_callback(_in_flight.discard)
     try:
         outcome = await run_turn_until_disconnect(raw_request, task)
+    except ToolsForbiddenError as exc:
+        logger.warning("chat.completions turn ignored tool_choice none: %s", exc)
+        return _error_response(
+            502, str(exc), "tool_choice_violation", err_type="server_error"
+        )
     except NoAnswerError as exc:
         logger.warning("chat.completions turn produced no answer: %s", exc)
         return _error_response(

@@ -93,6 +93,17 @@ def answer_fields_for(field_names: Iterable[str]) -> Tuple[str, ...]:
     return ()
 
 
+def is_answer_field(field_name: str) -> bool:
+    """Whether tokens streamed for ``field_name`` are the turn's answer text.
+
+    A streaming transport sees one field name per token event and no payload,
+    so it decides from the same ordered rules ``answer_fields_for`` applies to
+    a finished payload: a field is answer text when it heads a rule. An
+    agent's working fields (a decomposition, a gap list, a plan) head none.
+    """
+    return answer_fields_for((field_name,)) == (field_name,)
+
+
 def derive_request_seed(query: str, history: List[Dict[str, Any]]) -> str:
     """Stable per-conversation seed for canary/variant bucketing.
 

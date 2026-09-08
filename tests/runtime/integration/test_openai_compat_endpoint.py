@@ -35,6 +35,15 @@ from cogniverse_runtime.config_loader import ConfigLoader
 from cogniverse_runtime.harness_keys import HarnessKeyStore
 from cogniverse_runtime.harness_turn import derive_request_seed
 from cogniverse_runtime.routers import openai_compat
+from cogniverse_vespa.config.config_store import (
+    _CONFIG_STORE_DOCUMENT_READ_TIMEOUT_SECONDS as CONFIG_STORE_DOCUMENT_TIMEOUT,
+)
+from cogniverse_vespa.config.config_store import (
+    _CONFIG_STORE_READ_MAX_ATTEMPTS as CONFIG_STORE_READ_MAX_ATTEMPTS,
+)
+from cogniverse_vespa.config.config_store import (
+    _config_store_visit_backoff_seconds as _read_backoff_seconds,
+)
 from tests.utils.memory_store import InMemoryConfigStore
 
 pytestmark = [
@@ -53,6 +62,15 @@ QUERY = "Summarize the Eiffel Tower article in one sentence."
 IMAGE_URI = "data:image/png;base64,iVBORw0KGgoAAAANSUhEUg=="
 TOOL_CALL_ID = "call_fixed_write_file"
 DEAD_BACKEND_PORT = 29071
+# What the config store's own retry structure allows a single-document
+# read to take: one per-attempt timeout per attempt, plus the capped
+# backoff between them.
+KEY_READ_BUDGET_SECONDS = CONFIG_STORE_READ_MAX_ATTEMPTS * (
+    CONFIG_STORE_DOCUMENT_TIMEOUT
+) + sum(
+    _read_backoff_seconds(attempt)
+    for attempt in range(1, CONFIG_STORE_READ_MAX_ATTEMPTS)
+)
 
 TOOL_DEFS = [
     {
@@ -398,8 +416,12 @@ class TestTenantBoundary:
         error = response.json()["error"]
         assert error["code"] == "service_unavailable"
         assert error["type"] == "server_error"
-        assert error["message"].startswith("Harness key store unavailable: ")
-        assert f"127.0.0.1:{DEAD_BACKEND_PORT}" in error["message"]
+        assert error["message"].startswith(
+            "Harness key store unavailable: Failed to read Vespa config document "
+            f"after {CONFIG_STORE_READ_MAX_ATTEMPTS} attempts over "
+        )
+        assert f"port={DEAD_BACKEND_PORT}" in error["message"]
+        assert "Connection refused" in error["message"]
 
     async def test_a_hung_key_store_is_503_not_a_hang(self, client):
         """A backend that accepts and never answers still ends as a 503.
@@ -446,6 +468,15 @@ class TestTenantBoundary:
             accepter.join(timeout=5)
 
         assert response.status_code == 503, f"after {elapsed:.1f}s"
+        assert (
+            KEY_READ_BUDGET_SECONDS
+            <= elapsed
+            < (KEY_READ_BUDGET_SECONDS + CONFIG_STORE_DOCUMENT_TIMEOUT)
+        ), (
+            f"hung key-store read took {elapsed:.1f}s; the store's retry "
+            f"structure spends {KEY_READ_BUDGET_SECONDS:.2f}s and must finish "
+            f"within one further {CONFIG_STORE_DOCUMENT_TIMEOUT}s attempt"
+        )
         error = response.json()["error"]
         assert error["code"] == "service_unavailable"
         assert error["message"].startswith("Harness key store unavailable: ")
