@@ -1053,6 +1053,14 @@ unfetchable). The answer-time reader is
 `cogniverse_agents.multimodal.KeyframeImageResolver`, which localizes each key
 via `MediaLocator` and returns `list[dspy.Image]`.
 
+Images a client attaches to its request take the same preparation through
+`cogniverse_agents.multimodal.attachments_to_images`, which reads a `data:`
+payload or fetches an `http(s)` URL under a bounded timeout and byte ceiling,
+refuses any other scheme, and returns `PreparedAttachments` — the prepared
+images in input order plus one reason per attachment it could not prepare, so
+the caller can report a degraded answer. It blocks on the fetch, so callers
+run it in a worker thread.
+
 ### Cache layout
 
 The cache is content-addressed by `sha256(uri || etag)`, tenant-scoped via

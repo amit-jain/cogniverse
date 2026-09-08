@@ -20,9 +20,13 @@ already flattened them.
 
 from __future__ import annotations
 
+import base64
+import io
 import logging
 import threading
+import urllib.request
 from collections import OrderedDict
+from dataclasses import dataclass, field
 from typing import Any, Iterable, Optional
 
 import dspy
@@ -41,17 +45,15 @@ _MAX_LLM_IMAGE_PX = 768
 _LLM_IMAGE_JPEG_QUALITY = 85
 
 
-def _downsampled_dspy_image(path: object) -> dspy.Image:
-    """Load a keyframe, downscale it so its long edge is at most
+def _downsampled_dspy_image(source: Any) -> dspy.Image:
+    """Load an image, downscale it so its long edge is at most
     ``_MAX_LLM_IMAGE_PX`` (aspect preserved, never upscaled), JPEG-encode it,
     and return a ``dspy.Image`` whose base64 payload is small enough for the
-    answer LM's request-size limit."""
-    import base64
-    import io
-
+    answer LM's request-size limit. ``source`` is anything PIL opens: a
+    filesystem path or a binary stream."""
     from PIL import Image as PILImage
 
-    with PILImage.open(str(path)) as im:
+    with PILImage.open(source) as im:
         im = im.convert("RGB")
         im.thumbnail((_MAX_LLM_IMAGE_PX, _MAX_LLM_IMAGE_PX))
         buf = io.BytesIO()
@@ -107,6 +109,80 @@ def hit_keyframe_uri(hit: dict[str, Any]) -> Optional[str]:
         return keyframe_uri(bucket, tenant_id, str(video_id), segment_id)
     except (ValueError, TypeError):
         return None
+
+
+# A client attachment is fetched inside the request, so bound both the wait
+# and the bytes accepted before anything is decoded.
+_ATTACHMENT_FETCH_TIMEOUT_S = 10.0
+_MAX_ATTACHMENT_BYTES = 8 * 1024 * 1024
+
+
+@dataclass(frozen=True)
+class PreparedAttachments:
+    """Attachments prepared for an answer LM.
+
+    ``failures`` holds one reason per attachment that could not be prepared,
+    in input order; its length is the number of attachments the answer will be
+    missing, which the caller reports as a degraded answer.
+    """
+
+    images: list[dspy.Image] = field(default_factory=list)
+    failures: list[str] = field(default_factory=list)
+
+
+def _attachment_bytes(uri: str) -> bytes:
+    """Read the bytes an OpenAI-style image URL points at: an inline ``data:``
+    payload or a bounded ``http(s)`` fetch. Any other scheme is refused — a
+    client attachment must not reach the local filesystem."""
+    if uri.startswith("data:"):
+        header, separator, payload = uri[len("data:") :].partition(",")
+        if not separator:
+            raise ValueError("data URI has no ',' separator")
+        if "base64" not in header.split(";")[1:]:
+            raise ValueError("data URI is not base64-encoded")
+        return base64.b64decode(payload, validate=True)
+    if uri.startswith(("http://", "https://")):
+        with urllib.request.urlopen(
+            uri, timeout=_ATTACHMENT_FETCH_TIMEOUT_S
+        ) as response:
+            data = response.read(_MAX_ATTACHMENT_BYTES + 1)
+        if len(data) > _MAX_ATTACHMENT_BYTES:
+            raise ValueError(f"attachment exceeds {_MAX_ATTACHMENT_BYTES} bytes")
+        return data
+    raise ValueError(
+        f"unsupported attachment URI scheme: {uri.split(':', 1)[0][:32]!r}"
+    )
+
+
+def attachments_to_images(uris: Iterable[Any]) -> PreparedAttachments:
+    """Prepare client-attached image URIs as answer-LM inputs.
+
+    Each attachment gets the same 768 px / JPEG preparation a keyframe gets,
+    so attachments cannot overflow the answer model's request-size limit, and
+    the images come back in input order. An attachment that cannot be read or
+    decoded is reported in ``failures`` rather than failing the turn — the
+    same degrade-don't-break contract the keyframe resolver uses for a missing
+    frame — so the caller can flag its answer degraded.
+
+    Blocking: an ``http(s)`` attachment is fetched inline, so call this from a
+    worker thread (``asyncio.to_thread``), never on the event loop.
+    """
+    images: list[dspy.Image] = []
+    failures: list[str] = []
+    for index, uri in enumerate(uris):
+        try:
+            if not isinstance(uri, str):
+                raise TypeError(f"expected a str URI, got {type(uri).__name__}")
+            if not uri:
+                raise ValueError("empty URI")
+            data = _attachment_bytes(uri)
+            if not data:
+                raise ValueError("empty image payload (0 bytes)")
+            images.append(_downsampled_dspy_image(io.BytesIO(data)))
+        except Exception as e:  # noqa: BLE001 - one attachment must not fail the turn
+            failures.append(f"attachment[{index}]: {type(e).__name__}: {e}")
+            logger.warning("attachment %d unusable: %r", index, e)
+    return PreparedAttachments(images=images, failures=failures)
 
 
 class KeyframeImageResolver:
