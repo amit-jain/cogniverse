@@ -108,6 +108,13 @@ logger = logging.getLogger(__name__)
 _PROGRESS_QUEUE: contextvars.ContextVar[Optional[asyncio.Queue]] = (
     contextvars.ContextVar("_agent_progress_queue", default=None)
 )
+# The agent whose _stream_with_progress set the queue. Token streaming in
+# call_dspy is gated on identity: an agent nested inside a streaming agent's
+# task (orchestrator → sub-agent) inherits the queue through the context, and
+# without this gate its own LM output would be streamed into the outer answer.
+_STREAM_OWNER: contextvars.ContextVar[Optional["AgentBase"]] = contextvars.ContextVar(
+    "_agent_stream_owner", default=None
+)
 
 
 def leaf_exceptions(exc: BaseException) -> list[BaseException]:
@@ -529,7 +536,7 @@ class AgentBase(ABC, Generic[InputT, OutputT, DepsT]):
             self._adapter_lm_context(),
             _dispatched_prompt_overlay(self, module) as call_module,
         ):
-            if _PROGRESS_QUEUE.get() is not None:
+            if _PROGRESS_QUEUE.get() is not None and _STREAM_OWNER.get() is self:
                 import dspy
 
                 listener = dspy.streaming.StreamListener(output_field)
@@ -556,10 +563,10 @@ class AgentBase(ABC, Generic[InputT, OutputT, DepsT]):
                 async for chunk in streaming_fn(**kwargs):
                     if isinstance(chunk, dspy.Prediction):
                         prediction = chunk
-                    else:
-                        accumulated += str(chunk)
+                    elif isinstance(chunk, dspy.streaming.StreamResponse):
+                        accumulated += chunk.chunk
                         self.emit_progress(
-                            "token", str(chunk), data={"accumulated": accumulated}
+                            "token", chunk.chunk, data={"accumulated": accumulated}
                         )
                 if prediction is None:
                     prediction = await _call_in_lm_executor(call_module, **kwargs)
@@ -694,6 +701,7 @@ class AgentBase(ABC, Generic[InputT, OutputT, DepsT]):
         # request's queue — not a concurrent request's that overwrote a shared
         # instance attribute.
         token = _PROGRESS_QUEUE.set(queue)
+        owner_token = _STREAM_OWNER.set(self)
 
         result_holder: list = []
         error_holder: list = []
@@ -757,6 +765,7 @@ class AgentBase(ABC, Generic[InputT, OutputT, DepsT]):
                 else:
                     yield {"type": "final", "data": payload}
         finally:
+            _STREAM_OWNER.reset(owner_token)
             _PROGRESS_QUEUE.reset(token)
             if not task.done():
                 task.cancel()
