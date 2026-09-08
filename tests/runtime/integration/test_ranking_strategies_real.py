@@ -555,14 +555,19 @@ class TestDefaultPhasedRanking:
                 "type": "video",
                 "profile": PROFILE_NAME,
                 "strategy": "default",
-                "top_k": 3,
+                "top_k": 50,
                 "tenant_id": TENANT_ID,
                 "query_embeddings": np.ones((1, 320), dtype=np.float32),
             }
         )
 
+        # The tenant also holds the corpora the other tests in this module
+        # seed, so pin the float-rerank order across this fixture's own docs.
+        owned = set(phased_default_ranking_corpus)
         assert [
-            r.document.metadata["source_id"] for r in results
+            r.document.metadata["source_id"]
+            for r in results
+            if r.document.metadata["source_id"] in owned
         ] == phased_default_ranking_corpus
 
 
