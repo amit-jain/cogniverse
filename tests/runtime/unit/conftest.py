@@ -27,3 +27,23 @@ def _default_telemetry_singleton():
     telemetry_manager_module._telemetry_manager = TelemetryManager(TelemetryConfig())
     yield
     TelemetryManager.reset()
+
+
+@pytest.fixture
+def harness_key_config_store(request, monkeypatch):
+    """Bind tenant retirement to the test-owned credential store."""
+    import subprocess
+
+    from cogniverse_foundation.config.manager import ConfigManager
+    from cogniverse_runtime.admin import tenant_manager
+    from cogniverse_vespa.config.config_store import VespaConfigStore
+
+    available = int(
+        subprocess.check_output(["free", "-g"], text=True).splitlines()[1].split()[-1]
+    )
+    assert available >= 30
+    vespa = request.getfixturevalue("shared_vespa")
+    store = VespaConfigStore(backend_port=vespa["http_port"])
+    monkeypatch.setattr(tenant_manager, "_config_manager", ConfigManager(store=store))
+    yield
+    store.close()

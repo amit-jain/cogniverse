@@ -1867,3 +1867,15 @@ Startup blocks until its dependencies are ready instead of crash-looping on boot
 ---
 
 **Summary:** The Runtime module provides the FastAPI application layer for Cogniverse. `VideoIngestionPipeline` handles video processing with a strategy pattern for flexible configuration. The search service provides multi-modal search with session tracking. `SandboxManager` enforces per-agent execution isolation via OpenShell with configurable `SandboxPolicy`. The optimization CLI drives batch DSPy recompilation from Argo CronWorkflows with hot-reload artifact promotion and rollback.
+
+
+`cogniverse_runtime/harness_keys.py` stores SHA-256 credential hashes and immutable
+revocations through `ImmutableConfigStore` in `cogniverse_sdk/interfaces`, implemented
+by `cogniverse_vespa/config`. The `cogniverse_runtime/routers` admin endpoints
+`POST /admin/harness/keys`, `GET /admin/harness/keys`, and
+`DELETE /admin/harness/keys/{key_hash}` create, page through, and revoke credentials.
+Only creation returns plaintext; listings include a 12-character hash prefix and
+revocation state. List pages accept `page_size` (1–1000) and an opaque `continuation`,
+which must be followed even on an empty page. Store outages return 503 with their
+cause. Tenant deletion in `cogniverse_runtime/admin` revokes credentials before
+removing tenant metadata.

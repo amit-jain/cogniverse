@@ -48,7 +48,9 @@ from cogniverse_runtime.admin.models import (
     Tenant,
     TenantListResponse,
 )
+from cogniverse_runtime.harness_keys import HarnessKeyStore
 from cogniverse_sdk.interfaces.backend import Backend
+from cogniverse_sdk.interfaces.config_store import ConfigStoreUnavailableError
 from cogniverse_sdk.interfaces.schema_loader import SchemaLoader
 
 logger = logging.getLogger(__name__)
@@ -868,6 +870,9 @@ async def delete_tenant_internal(tenant_full_id: str) -> Dict:
     """
     from cogniverse_core.common.tenant_utils import canonical_tenant_id
 
+    if _config_manager is None:
+        raise RuntimeError("Tenant ConfigManager is not configured")
+    config_manager = _config_manager
     canonical_tid = canonical_tenant_id(tenant_full_id)
     tenant = await get_tenant_internal(canonical_tid)
 
@@ -890,6 +895,13 @@ async def delete_tenant_internal(tenant_full_id: str) -> Dict:
     # tenant create, and accumulate every test run without this branch.
     if not tenant and not deleted_schemas:
         raise HTTPException(status_code=404, detail=f"Tenant {canonical_tid} not found")
+
+    try:
+        await asyncio.to_thread(
+            HarnessKeyStore(config_manager.store).revoke_tenant, canonical_tid
+        )
+    except ConfigStoreUnavailableError as exc:
+        raise HTTPException(status_code=503, detail=str(exc)) from exc
 
     if tenant:
         # delete_metadata_document reports a non-200 as False without raising.
@@ -1144,6 +1156,7 @@ if __name__ == "__main__":
     from cogniverse_foundation.config.utils import create_default_config_manager
 
     config_manager = create_default_config_manager()
+    set_config_manager(config_manager)
     config = get_config(tenant_id=SYSTEM_TENANT_ID, config_manager=config_manager)
     port = config.get("tenant_manager_port", 9000)
 

@@ -17,8 +17,8 @@ from vespa.exceptions import VespaError
 from cogniverse_sdk.interfaces.config_store import (
     ConfigEntry,
     ConfigScope,
-    ConfigStore,
     ConfigStoreUnavailableError,
+    ImmutableConfigStore,
 )
 from cogniverse_vespa._vespa_factory import (
     make_persistent_vespa_ops,
@@ -129,7 +129,7 @@ def _config_store_visit_payload(
     return None
 
 
-class VespaConfigStore(ConfigStore):
+class VespaConfigStore(ImmutableConfigStore):
     """
     Vespa-based configuration store with multi-tenant support.
 
@@ -298,6 +298,103 @@ class VespaConfigStore(ConfigStore):
             continuation = payload.get("continuation")
             if not continuation:
                 return entries
+
+    def get_immutable_config(
+        self,
+        tenant_id: str,
+        scope: ConfigScope,
+        service: str,
+        config_key: str,
+    ) -> Optional[ConfigEntry]:
+        config_id = self._create_document_id(tenant_id, scope, service, config_key)
+        try:
+            response = self.vespa_app.get_data(
+                schema=self.schema_name,
+                data_id=f"{self.schema_name}::{config_id}::1",
+            )
+            if response.status_code == 404:
+                return None
+            if response.status_code != 200:
+                raise RuntimeError(f"HTTP {response.status_code}: {response.json}")
+        except Exception as exc:
+            raise ConfigStoreUnavailableError(
+                f"Failed to read immutable config at {self.vespa_app.url}: {exc}"
+            ) from exc
+        return self._entry_from_fields(response.json["fields"])
+
+    def put_immutable_config(
+        self,
+        tenant_id: str,
+        scope: ConfigScope,
+        service: str,
+        config_key: str,
+        config_value: Dict[str, Any],
+    ) -> ConfigEntry:
+        now = datetime.now(timezone.utc)
+        entry = ConfigEntry(
+            tenant_id, scope, service, config_key, config_value, 1, now, now
+        )
+        config_id = entry.get_config_id()
+        fields = entry.to_dict()
+        fields["config_id"] = config_id
+        fields["config_value"] = json.dumps(config_value)
+        try:
+            response = self.vespa_app.feed_data_point(
+                schema=self.schema_name,
+                data_id=f"{self.schema_name}::{config_id}::1",
+                fields=fields,
+                condition=f"{self.schema_name}.version < 1",
+                create=True,
+            )
+            if response.status_code not in (200, 201, 412):
+                raise RuntimeError(f"HTTP {response.status_code}: {response.json}")
+        except Exception as exc:
+            if not _is_condition_miss(exc):
+                raise ConfigStoreUnavailableError(
+                    f"Failed to write immutable config at {self.vespa_app.url}: {exc}"
+                ) from exc
+        confirmed = self.get_immutable_config(tenant_id, scope, service, config_key)
+        if confirmed is None:
+            raise ConfigStoreUnavailableError(
+                f"Immutable config {config_id} was not confirmed"
+            )
+        if confirmed.config_value != config_value:
+            raise ValueError(f"immutable config {config_id} has a different value")
+        return confirmed
+
+    def list_immutable_configs(
+        self,
+        tenant_id: str,
+        scope: ConfigScope,
+        service: str,
+        *,
+        page_size: int = 100,
+        continuation: Optional[str] = None,
+    ) -> tuple[List[ConfigEntry], Optional[str]]:
+        if not 1 <= page_size <= 1000:
+            raise ValueError("page_size must be between 1 and 1000")
+        path = f"{self.vespa_app.url}/document/v1/{self.schema_name}/{self.schema_name}/docid/"
+        params = {
+            "wantedDocumentCount": page_size,
+            "concurrency": 1,
+            "selection": " and ".join(
+                [
+                    f"{self.schema_name}.tenant_id == {yql_quote(tenant_id)}",
+                    f"{self.schema_name}.scope == {yql_quote(scope.value)}",
+                    f"{self.schema_name}.service == {yql_quote(service)}",
+                    f"{self.schema_name}.version == 1",
+                ]
+            ),
+        }
+        if continuation is not None:
+            params["continuation"] = continuation
+        payload = _config_store_visit_payload(path, params=params, timeout=5)
+        if payload is None:
+            return [], None
+        return (
+            [self._entry_from_fields(doc["fields"]) for doc in payload["documents"]],
+            payload.get("continuation"),
+        )
 
     def _get_latest_version(
         self, tenant_id: str, scope: ConfigScope, service: str, config_key: str
