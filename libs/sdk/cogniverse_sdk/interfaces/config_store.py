@@ -396,3 +396,48 @@ class ConfigStore(ABC):
             True if healthy, False otherwise
         """
         pass
+
+
+class ImmutableConfigStore(ConfigStore):
+    """ConfigStore with immutable version-one records and bounded visits."""
+
+    @abstractmethod
+    def put_immutable_config(
+        self,
+        tenant_id: str,
+        scope: ConfigScope,
+        service: str,
+        config_key: str,
+        config_value: Dict[str, Any],
+    ) -> ConfigEntry:
+        """Write once and confirm; an identical existing value is idempotent.
+
+        A different existing value raises ValueError. A failed write or
+        confirmation raises ConfigStoreUnavailableError with the cause.
+        """
+
+    @abstractmethod
+    def get_immutable_config(
+        self,
+        tenant_id: str,
+        scope: ConfigScope,
+        service: str,
+        config_key: str,
+    ) -> Optional[ConfigEntry]:
+        """Read version one directly; absence is None, outages raise."""
+
+    @abstractmethod
+    def list_immutable_configs(
+        self,
+        tenant_id: str,
+        scope: ConfigScope,
+        service: str,
+        *,
+        page_size: int = 100,
+        continuation: Optional[str] = None,
+    ) -> tuple[List[ConfigEntry], Optional[str]]:
+        """Visit one bounded page of version-one records with an opaque cursor.
+
+        An empty page can have a continuation; callers must follow it to
+        exhaust the namespace. Concurrent insertions need a subsequent scan.
+        """

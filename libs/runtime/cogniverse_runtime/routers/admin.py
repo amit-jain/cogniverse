@@ -7,8 +7,8 @@ import time
 from datetime import datetime, timedelta, timezone
 from typing import Any, Dict, List, Mapping, Optional
 
-from fastapi import APIRouter, Depends, HTTPException, Query
-from pydantic import BaseModel
+from fastapi import APIRouter, Depends, HTTPException, Path, Query
+from pydantic import BaseModel, Field, field_validator
 
 from cogniverse_agents.optimizer.entity_extraction_ground_truth import (
     ENTITY_EXTRACTION_GROUND_TRUTH_BLOB_KEY,
@@ -46,6 +46,8 @@ from cogniverse_runtime.admin.profile_models import (
     SchemaDeploymentResponse,
 )
 from cogniverse_runtime.blob_write_queue import BlobWriteQueue
+from cogniverse_runtime.harness_keys import HarnessKeyStore
+from cogniverse_sdk.interfaces.config_store import ConfigStoreUnavailableError
 from cogniverse_sdk.interfaces.schema_loader import SchemaLoader
 
 logger = logging.getLogger(__name__)
@@ -2366,3 +2368,79 @@ def _reset_admin_overrides_for_tests() -> None:
     _signature_variant_cache_ts.clear()
     _signature_variant_write_locks.clear()
     _register_locks.clear()
+
+
+class HarnessKeyCreateRequest(BaseModel):
+    tenant_id: str = Field(min_length=1)
+    name: str = Field(min_length=1, max_length=200)
+
+    @field_validator("tenant_id", "name")
+    @classmethod
+    def reject_blank(cls, value: str) -> str:
+        if not value.strip():
+            raise ValueError("must not be blank")
+        return value
+
+    @field_validator("tenant_id")
+    @classmethod
+    def validate_tenant(cls, value: str) -> str:
+        from cogniverse_core.common.tenant_utils import validate_tenant_id
+
+        validate_tenant_id(value)
+        return value
+
+
+@router.post("/harness/keys")
+async def create_harness_key(
+    request: HarnessKeyCreateRequest,
+    config_manager: ConfigManager = Depends(get_config_manager_dependency),
+):
+    tenant_id = canonical_tenant_id(request.tenant_id)
+    try:
+        return await asyncio.to_thread(
+            HarnessKeyStore(config_manager.store).create,
+            tenant_id,
+            request.name,
+        )
+    except ConfigStoreUnavailableError as exc:
+        raise HTTPException(status_code=503, detail=str(exc)) from exc
+
+
+@router.get("/harness/keys")
+async def list_harness_keys(
+    tenant_id: str | None = Query(None, min_length=1),
+    page_size: int = Query(100, ge=1, le=1000),
+    continuation: str | None = Query(None, max_length=8192),
+    config_manager: ConfigManager = Depends(get_config_manager_dependency),
+):
+    try:
+        if tenant_id is not None:
+            from cogniverse_core.common.tenant_utils import validate_tenant_id
+
+            validate_tenant_id(tenant_id)
+            tenant_id = canonical_tenant_id(tenant_id)
+        return await asyncio.to_thread(
+            HarnessKeyStore(config_manager.store).list,
+            tenant_id,
+            page_size=page_size,
+            continuation=continuation,
+        )
+    except ValueError as exc:
+        raise HTTPException(status_code=422, detail=str(exc)) from exc
+    except ConfigStoreUnavailableError as exc:
+        raise HTTPException(status_code=503, detail=str(exc)) from exc
+
+
+@router.delete("/harness/keys/{key_hash}")
+async def revoke_harness_key(
+    key_hash: str = Path(pattern=r"^[0-9a-f]{64}$"),
+    config_manager: ConfigManager = Depends(get_config_manager_dependency),
+):
+    try:
+        revoked = await asyncio.to_thread(
+            HarnessKeyStore(config_manager.store).revoke,
+            key_hash,
+        )
+        return {"revoked": revoked, "key_hash": key_hash}
+    except ConfigStoreUnavailableError as exc:
+        raise HTTPException(status_code=503, detail=str(exc)) from exc
