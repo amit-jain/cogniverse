@@ -228,6 +228,9 @@ class ConfigLoader:
                             "name": agent_name,
                             "url": url,
                             "capabilities": capabilities,
+                            "streams_answer_tokens": agent_config.get(
+                                "streams_answer_tokens", False
+                            ),
                             "health_endpoint": "/health",
                             "process_endpoint": f"/agents/{agent_name}/process",
                             "timeout": agent_config.get(

@@ -28,6 +28,7 @@
     "summarizer_agent": {
       "url": "http://localhost:8004",
       "enabled": true,
+      "streams_answer_tokens": true,
       "capabilities": [
         "summarization",
         "text_generation"
@@ -41,6 +42,7 @@
     "detailed_report_agent": {
       "url": "http://localhost:8005",
       "enabled": true,
+      "streams_answer_tokens": true,
       "capabilities": [
         "detailed_report",
         "analysis",
@@ -88,6 +90,7 @@
     "deep_research_agent": {
       "url": "http://localhost:8009",
       "enabled": true,
+      "streams_answer_tokens": true,
       "capabilities": [
         "deep_research",
         "analysis"

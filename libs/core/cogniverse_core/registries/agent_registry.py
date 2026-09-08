@@ -426,6 +426,9 @@ class AgentRegistry:
                 name=registration_data.get("name"),
                 url=registration_data.get("url"),
                 capabilities=registration_data.get("capabilities", []),
+                streams_answer_tokens=registration_data.get(
+                    "streams_answer_tokens", False
+                ),
                 health_endpoint=registration_data.get("health_endpoint", "/health"),
                 process_endpoint=registration_data.get(
                     "process_endpoint", "/tasks/send"

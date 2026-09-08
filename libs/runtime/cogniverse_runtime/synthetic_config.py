@@ -32,7 +32,14 @@ _PROFILE_TYPED_FIELDS: dict[str, type] = {
     "strategies": dict,
     "type": str,
 }
-_AGENT_KEYS = {"capabilities", "enabled", "modalities", "timeout", "url"}
+_AGENT_KEYS = {
+    "capabilities",
+    "enabled",
+    "modalities",
+    "streams_answer_tokens",
+    "timeout",
+    "url",
+}
 
 
 @dataclass(frozen=True)
@@ -399,6 +406,10 @@ def _validate_agents(raw: dict[str, Any]) -> dict[str, dict[str, Any]]:
                 raise ValueError(
                     f"agents.{name}.timeout must be a finite positive number"
                 )
+        if "streams_answer_tokens" in agent and not isinstance(
+            agent["streams_answer_tokens"], bool
+        ):
+            raise ValueError(f"agents.{name}.streams_answer_tokens must be a boolean")
         enabled = agent.get("enabled", _MISSING)
         if not isinstance(enabled, bool):
             raise ValueError(f"agents.{name}.enabled must be a boolean")

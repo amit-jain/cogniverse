@@ -90,7 +90,7 @@ surface without repeating their implementation guides.
 
 | Module | Public API | Purpose |
 | --- | --- | --- |
-| `agent_models` | `DEFAULT_AGENT_CALL_TIMEOUT_SECONDS`, `AgentEndpoint` | Agent endpoint timeout and health-aware endpoint configuration. |
+| `agent_models` | `DEFAULT_AGENT_CALL_TIMEOUT_SECONDS`, `AgentEndpoint` | Agent endpoint timeout, health-aware endpoint configuration, and the endpoint's `streams_answer_tokens` declaration. |
 | `dynamic_dspy_mixin` | `DynamicDSPyMixin` | Runtime DSPy LM, signature, module, and optimizer configuration. |
 | `dspy_module_registry` | `DSPyModuleRegistry`, `DSPyOptimizerRegistry` | Re-exports of the Foundation registries used by the mixin. |
 | `health_mixin` | `HealthCheckMixin` | Standard component health-check behavior. |

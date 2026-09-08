@@ -507,6 +507,7 @@ agent = AgentEndpoint(
     name="search_agent",
     url="http://localhost:8002",
     capabilities=["video_search", "text_search"],
+    streams_answer_tokens=False,  # True when the agent answers token by token
     health_endpoint="/health",
     process_endpoint="/process"
 )
