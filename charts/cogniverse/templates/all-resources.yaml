@@ -1688,21 +1688,6 @@ spec:
         - name: {{ $key }}
           value: {{ $value | quote }}
         {{- end }}
-        {{- if $cfg.resources }}
-        resources:
-          {{- toYaml $cfg.resources | nindent 10 }}
-        {{- end }}
-        {{- if $cfg.livenessProbe }}
-        livenessProbe:
-          {{- toYaml $cfg.livenessProbe | nindent 10 }}
-        {{- end }}
-        {{- if $cfg.readinessProbe }}
-        readinessProbe:
-          {{- toYaml $cfg.readinessProbe | nindent 10 }}
-        {{- end }}
-        volumeMounts:
-        - name: model-cache
-          mountPath: /root/.cache/huggingface
       {{- else if eq $engine "vllm_transcription" }}
       # vLLM serving OpenAI-compatible /v1/audio/transcriptions for
       # Whisper. The container ``command`` overrides the upstream image's
