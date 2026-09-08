@@ -201,11 +201,12 @@ class TestRunMonthlyReportsWritesUsageAndPerformanceFiles:
             )
 
         class _Traces:
-            async def get_all_spans(self, **kwargs):
+            async def iter_spans(self, **kwargs):
                 project = kwargs["project"]
                 raise RuntimeError(
                     f"Failed to query every span from Phoenix project {project}"
                 ) from ConnectionError("phoenix unreachable")
+                yield
 
         class _Provider:
             traces = _Traces()
@@ -223,7 +224,7 @@ class TestRunMonthlyReportsWritesUsageAndPerformanceFiles:
 
         monkeypatch.setattr(
             "cogniverse_foundation.telemetry.manager.get_telemetry_manager",
-            lambda: _PhoenixDownManager(),
+            lambda otlp_endpoint=None: _PhoenixDownManager(),
         )
 
         try:
@@ -246,11 +247,12 @@ class TestRunMonthlyReportsWritesUsageAndPerformanceFiles:
                 f"got {result.get('failed')!r}"
             )
             for tid in tenant_ids:
-                entry = result["failed_details"][tid]
+                detail = result["failed_details"][tid]
                 assert (
-                    "Failed to query every span from Phoenix project" in entry["error"]
+                    f"Failed to query every span from Phoenix project proj-{tid}"
+                    in detail
                 )
-                assert "phoenix unreachable" in entry["error"], (
+                assert "phoenix unreachable" in detail, (
                     "monthly-reports must surface the chained Phoenix cause in "
                     "the workflow-visible error text"
                 )
