@@ -2,6 +2,23 @@
 
 Interactive coding agent accessible from the terminal. Plan, generate, and execute code changes against the cogniverse runtime with real-time streaming and multi-turn conversation.
 
+## Pi client
+
+The `clients/pi-cogniverse` extension connects Pi's terminal and local workspace
+tools to the Cogniverse runtime. It registers the `cogniverse` provider using
+models returned by `GET /v1/models` when the extension loads. Model discovery
+failures stop extension loading with an error identifying the endpoint.
+
+Set `COGNIVERSE_API_KEY` to the runtime's harness key and
+`COGNIVERSE_BASE_URL` to its OpenAI-compatible base URL (default:
+`http://localhost:8000/v1`). See the [client setup](../../clients/pi-cogniverse/README.md).
+
+The extension prompts before `bash`, `write`, and `edit`: allow once, always
+allow for the current session, or deny. A permission dialog resolved after
+switching sessions is discarded with a notification. The command
+`/cogniverse-search <query>` inserts retrieval results as visible custom context without
+starting a model turn.
+
 ## Commands
 
 ### `cogniverse code`

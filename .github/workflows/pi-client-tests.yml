@@ -1,0 +1,43 @@
+name: Pi Client Tests
+
+on:
+  push:
+    paths:
+      - 'clients/pi-cogniverse/**'
+      - '.github/workflows/pi-client-tests.yml'
+  pull_request:
+    paths:
+      - 'clients/pi-cogniverse/**'
+      - '.github/workflows/pi-client-tests.yml'
+
+permissions:
+  contents: read
+
+jobs:
+  pi-client-tests:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    defaults:
+      run:
+        working-directory: clients/pi-cogniverse
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Node.js 22
+        uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+          cache: npm
+          cache-dependency-path: clients/pi-cogniverse/package-lock.json
+
+      - name: Install dependencies
+        timeout-minutes: 7
+        run: npm ci
+
+      - name: Typecheck
+        timeout-minutes: 3
+        run: npm run typecheck
+
+      - name: Run tests
+        timeout-minutes: 5
+        run: npm test
