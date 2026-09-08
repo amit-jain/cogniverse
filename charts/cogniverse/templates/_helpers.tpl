@@ -183,6 +183,22 @@ or by injecting the real secret into the runtime pod's environment.
 {{- define "cogniverse.llmPlaceholderApiKey" -}}placeholder-no-auth-needed{{- end -}}
 
 {{/*
+Secret holding the inference bearer, or empty when every enabled inference
+service is in-cluster. The one place the Secret name and the
+externalUrl test live; both the env source below and the spawned-workflow
+wiring resolve the credential through it.
+*/}}
+{{- define "cogniverse.inferenceApiKeySecret" -}}
+{{- $needsExternalKey := false -}}
+{{- range $name, $cfg := .Values.inference -}}
+{{- if $cfg.externalUrl -}}
+{{- $needsExternalKey = true -}}
+{{- end -}}
+{{- end -}}
+{{- if $needsExternalKey -}}cogniverse-inference-api-key{{- end -}}
+{{- end -}}
+
+{{/*
 Runtime inference API key source. When any enabled inference service
 is rendered with a non-empty externalUrl, the runtime and ingestor
 consume the synced cogniverse-inference-api-key Secret. Fully in-cluster
@@ -190,21 +206,48 @@ renders keep the no-auth placeholder so local-only stacks do not need the
 Secret at all.
 */}}
 {{- define "cogniverse.inferenceApiKeyEnv" -}}
-{{- $needsExternalKey := false -}}
-{{- range $name, $cfg := .Values.inference -}}
-{{- if $cfg.externalUrl -}}
-{{- $needsExternalKey = true -}}
-{{- end -}}
-{{- end -}}
-{{- if $needsExternalKey -}}
+{{- $secret := include "cogniverse.inferenceApiKeySecret" . -}}
+{{- if $secret -}}
 valueFrom:
   secretKeyRef:
-    name: cogniverse-inference-api-key
+    name: {{ $secret }}
     key: COGNIVERSE_INFERENCE_API_KEY
     optional: false
 {{- else -}}
 value: {{ include "cogniverse.llmPlaceholderApiKey" . | quote }}
 {{- end -}}
+{{- end -}}
+
+{{/*
+Wiring a pod that submits optimization workflows mirrors onto the pods it
+spawns. ``_workflow_pod_spec_from_env`` in
+cogniverse_runtime.quality_monitor_cli reads exactly these names; without
+them the spawned pod runs the bare fallback manifest — default image, no
+backend endpoints, no config mount, and no inference bearer, which fails
+every optimizer step against an external endpoint.
+
+The spawned pod resolves the bearer from the same Secret the submitter
+does; only the reference travels, never the value.
+*/}}
+{{- define "cogniverse.optimizationWorkflowEnv" -}}
+{{- $backend := default "cuda" .Values.runtime.backend -}}
+{{- $image := .Values.runtime.image -}}
+{{- if .Values.runtime.imagesByBackend -}}
+{{- $image = (index .Values.runtime.imagesByBackend $backend) | default .Values.runtime.image -}}
+{{- end -}}
+{{- $secret := include "cogniverse.inferenceApiKeySecret" . -}}
+- name: OPTIMIZATION_WORKFLOW_IMAGE
+  value: "{{ $image.repository }}:{{ $image.tag }}"
+- name: OPTIMIZATION_CONFIG_MAP
+  value: {{ include "cogniverse.fullname" . }}-config
+{{- if $secret }}
+- name: OPTIMIZATION_INFERENCE_API_KEY_SECRET
+  value: {{ $secret }}
+{{- end }}
+{{- if .Values.devMode.enabled }}
+- name: OPTIMIZATION_DEV_HOSTPATH
+  value: {{ .Values.devMode.hostPath | quote }}
+{{- end }}
 {{- end -}}
 
 {{/*
