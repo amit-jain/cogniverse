@@ -24,7 +24,7 @@
 apiVersion: argoproj.io/v1alpha1
 kind: WorkflowTemplate
 metadata:
-  name: {{ $fullName }}-optimization-runner
+  name: {{ include "cogniverse.optimizationWorkflowTemplateName" . }}
   namespace: {{ .Release.Namespace }}
   labels:
     {{- include "cogniverse.labels" . | nindent 4 }}
@@ -44,6 +44,13 @@ spec:
     - name: tenant-id
     - name: lookback-hours
       value: "48"
+    # A triggered compile names its agent set and the stored dataset to
+    # compile from; every other mode leaves both empty and the CLI ignores
+    # them.
+    - name: agents
+      value: ""
+    - name: trigger-dataset
+      value: ""
   volumes:
   - name: config
     configMap:
@@ -72,6 +79,10 @@ spec:
       - name: mode
       - name: tenant-id
       - name: lookback-hours
+      - name: agents
+        value: ""
+      - name: trigger-dataset
+        value: ""
     container:
       image: "{{ $workflowImage.repository }}:{{ $workflowImage.tag }}"
       imagePullPolicy: {{ $workflowImage.pullPolicy }}
@@ -83,6 +94,10 @@ spec:
         - "{{`{{inputs.parameters.tenant-id}}`}}"
         - "--lookback-hours"
         - "{{`{{inputs.parameters.lookback-hours}}`}}"
+        - "--agents"
+        - "{{`{{inputs.parameters.agents}}`}}"
+        - "--trigger-dataset"
+        - "{{`{{inputs.parameters.trigger-dataset}}`}}"
       env:
       - name: BACKEND_URL
         value: "http://{{ $fullName }}-vespa"

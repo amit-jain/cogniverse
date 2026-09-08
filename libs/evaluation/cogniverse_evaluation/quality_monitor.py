@@ -31,7 +31,9 @@ from cogniverse_foundation.common.tenant_utils import (
     canonical_tenant_id,
     sanitize_k8s_label_value,
 )
-from cogniverse_foundation.config.bootstrap import INFERENCE_API_KEY_ENV
+from cogniverse_foundation.config.bootstrap import (
+    OPTIMIZATION_WORKFLOW_TEMPLATE_ENV,
+)
 from cogniverse_foundation.telemetry.providers.base import DatasetNotFoundError
 
 logger = logging.getLogger(__name__)
@@ -153,28 +155,16 @@ class QualityThresholds:
     min_samples_for_verdict: int = 10
 
 
-@dataclass
-class OptimizationWorkflowPodSpec:
-    """Runtime wiring the spawned optimization pod inherits from its submitter.
-
-    Without it the spawned pod runs the fallback image with no backend
-    endpoints and no config mount — it can start, but never reach Vespa or
-    Phoenix. The submitting pod's chart-rendered values (image, env, config
-    map, devMode source mounts) are the source of truth.
-
-    ``inference_api_key_env`` is the body of the spawned pod's
-    ``COGNIVERSE_INFERENCE_API_KEY`` entry — the same ``valueFrom`` /
-    ``value`` shape the chart's ``inferenceApiKeyEnv`` helper renders for the
-    submitter. Against an external inference endpoint it carries a
-    ``secretKeyRef``, so the spawned pod reads the bearer from the Secret
-    rather than receiving a copy of it in its manifest.
-    """
-
-    image: str = "cogniverse-runtime:latest"
-    env: Dict[str, str] = field(default_factory=dict)
-    config_map: Optional[str] = None
-    dev_source_hostpath: Optional[str] = None
-    inference_api_key_env: Optional[Dict[str, Any]] = None
+# The parameter set the chart's optimization WorkflowTemplate declares. Its
+# entrypoint binds every one of them, so a submitted Workflow supplies all
+# five or Argo rejects it at admission.
+OPTIMIZATION_WORKFLOW_PARAMETER_NAMES = (
+    "mode",
+    "tenant-id",
+    "lookback-hours",
+    "agents",
+    "trigger-dataset",
+)
 
 
 async def submit_argo_optimization_workflow(
@@ -184,72 +174,40 @@ async def submit_argo_optimization_workflow(
     tenant_id: str,
     name_prefix: str,
     trigger_label: str,
-    parameters: List[Dict[str, str]],
-    container_args: List[str],
-    pod_spec: Optional[OptimizationWorkflowPodSpec] = None,
+    workflow_template: str,
+    mode: str,
+    lookback_hours: str,
+    agents: str = "",
+    trigger_dataset: str = "",
 ) -> bool:
     """Submit one optimization workflow to Argo.
 
-    Shared by the quality-drop trigger (``--mode triggered``) and the
-    annotation-feedback trigger (per-agent dedicated modes) so both paths
-    produce the same workflow shape. Returns True when Argo accepted it.
+    Shared by the quality-drop trigger and the annotation-feedback trigger.
+    The Workflow carries a ``workflowTemplateRef`` and its arguments and
+    nothing else: the container spec, the Vespa/Phoenix/inference/LLM env, the
+    cpu+memory requests and limits, the config mount and the per-tenant
+    ``optimize-<tenant>`` mutex all come from ``workflow_template``, the same
+    WorkflowTemplate ``POST /admin/tenant/{id}/optimize`` references.
+
+    Returns True when Argo accepted it.
 
     When ``http_client`` is None a dedicated client is created with TLS
     verification disabled: argo-server runs secure mode with a self-signed
     in-cluster certificate by default, so a default-verifying client (and a
     plain-HTTP request — the server disconnects it) can never submit.
     """
+    if not workflow_template:
+        raise ValueError(
+            "No optimization WorkflowTemplate configured "
+            f"({OPTIMIZATION_WORKFLOW_TEMPLATE_ENV} is unset). A Workflow "
+            "submitted without one spawns a pod with no per-tenant mutex, no "
+            "cpu/memory requests or limits and none of the backend, inference "
+            "or LLM endpoints, and Argo would report it as accepted."
+        )
     owns_client = http_client is None
     if owns_client:
         http_client = build_argo_async_client(30.0)
-    pod_spec = pod_spec or OptimizationWorkflowPodSpec()
-    container: Dict[str, Any] = {
-        "image": pod_spec.image,
-        "command": [
-            "python",
-            "-m",
-            "cogniverse_runtime.optimization_cli",
-        ],
-        "args": container_args,
-    }
-    env_entries: List[Dict[str, Any]] = [
-        {"name": name, "value": value} for name, value in pod_spec.env.items()
-    ]
-    if pod_spec.inference_api_key_env:
-        env_entries.append(
-            {"name": INFERENCE_API_KEY_ENV, **pod_spec.inference_api_key_env}
-        )
-    if env_entries:
-        container["env"] = env_entries
-    volume_mounts: List[Dict[str, Any]] = []
-    volumes: List[Dict[str, Any]] = []
-    if pod_spec.config_map:
-        volume_mounts.append(
-            {
-                "name": "config",
-                "mountPath": "/app/configs/config.json",
-                "subPath": "config.json",
-                "readOnly": True,
-            }
-        )
-        volumes.append({"name": "config", "configMap": {"name": pod_spec.config_map}})
-    if pod_spec.dev_source_hostpath:
-        for name, subdir in (("src-libs", "libs"), ("src-scripts", "scripts")):
-            volume_mounts.append({"name": name, "mountPath": f"/app/{subdir}"})
-            volumes.append(
-                {
-                    "name": name,
-                    "hostPath": {
-                        "path": f"{pod_spec.dev_source_hostpath}/{subdir}",
-                        "type": "Directory",
-                    },
-                }
-            )
-    if volume_mounts:
-        container["volumeMounts"] = volume_mounts
-    template: Dict[str, Any] = {"name": "optimize", "container": container}
-    if volumes:
-        template["volumes"] = volumes
+    values = (mode, tenant_id, lookback_hours, agents, trigger_dataset)
     workflow_manifest = {
         "apiVersion": "argoproj.io/v1alpha1",
         "kind": "Workflow",
@@ -265,9 +223,15 @@ async def submit_argo_optimization_workflow(
             },
         },
         "spec": {
-            "entrypoint": "optimize",
-            "arguments": {"parameters": parameters},
-            "templates": [template],
+            "workflowTemplateRef": {"name": workflow_template},
+            "arguments": {
+                "parameters": [
+                    {"name": name, "value": value}
+                    for name, value in zip(
+                        OPTIMIZATION_WORKFLOW_PARAMETER_NAMES, values, strict=True
+                    )
+                ]
+            },
         },
     }
 
@@ -324,7 +288,7 @@ class QualityMonitor:
         thresholds: Optional[QualityThresholds] = None,
         telemetry_provider=None,
         search_profile: str = "video_colpali_smol500_mv_frame",
-        workflow_pod_spec: Optional[OptimizationWorkflowPodSpec] = None,
+        workflow_template: Optional[str] = None,
     ):
         # Canonical org:tenant form — span writers canonicalize at the request
         # boundary, so every project/dataset name derived here must match.
@@ -341,7 +305,7 @@ class QualityMonitor:
         self.live_sample_count = live_sample_count
         self.thresholds = thresholds or QualityThresholds()
         self.search_profile = search_profile
-        self.workflow_pod_spec = workflow_pod_spec
+        self.workflow_template = workflow_template
         self._telemetry_provider = telemetry_provider
         self._training_decision_model = None
         self._artifact_manager = None
@@ -1421,22 +1385,14 @@ class QualityMonitor:
             tenant_id=self.tenant_id,
             name_prefix=f"quality-triggered-optimization-{timestamp}",
             trigger_label="quality-monitor",
-            parameters=[
-                {"name": "tenant-id", "value": self.tenant_id},
-                {"name": "agents", "value": agents_csv},
-                {"name": "trigger-dataset", "value": trigger_dataset},
-            ],
-            container_args=[
-                "--mode",
-                "triggered",
-                "--tenant-id",
-                "{{workflow.parameters.tenant-id}}",
-                "--agents",
-                "{{workflow.parameters.agents}}",
-                "--trigger-dataset",
-                "{{workflow.parameters.trigger-dataset}}",
-            ],
-            pod_spec=self.workflow_pod_spec,
+            workflow_template=self.workflow_template,
+            mode="triggered",
+            # The window this trigger was scored over. ``triggered`` compiles
+            # from the stored dataset and ignores it, but the template binds
+            # the parameter for every mode.
+            lookback_hours=str(self.live_eval_interval / 3600.0),
+            agents=agents_csv,
+            trigger_dataset=trigger_dataset,
         )
 
     async def update_baseline(

@@ -219,35 +219,25 @@ value: {{ include "cogniverse.llmPlaceholderApiKey" . | quote }}
 {{- end -}}
 
 {{/*
-Wiring a pod that submits optimization workflows mirrors onto the pods it
-spawns. ``_workflow_pod_spec_from_env`` in
-cogniverse_runtime.quality_monitor_cli reads exactly these names; without
-them the spawned pod runs the bare fallback manifest — default image, no
-backend endpoints, no config mount, and no inference bearer, which fails
-every optimizer step against an external endpoint.
+Name of the shared optimization WorkflowTemplate. The runtime route, the
+quality monitor and the annotation-feedback cron all submit Workflows that
+reference it by this name, so it is resolved in one place.
+*/}}
+{{- define "cogniverse.optimizationWorkflowTemplateName" -}}
+{{ include "cogniverse.fullname" . }}-optimization-runner
+{{- end -}}
 
-The spawned pod resolves the bearer from the same Secret the submitter
-does; only the reference travels, never the value.
+{{/*
+Env for a pod that submits optimization Workflows: the name of the shared
+WorkflowTemplate the submitted Workflow references. That template owns the
+container spec, the backend/inference/LLM env, the resource requests and
+limits, the config mount and the per-tenant mutex.
 */}}
 {{- define "cogniverse.optimizationWorkflowEnv" -}}
-{{- $backend := default "cuda" .Values.runtime.backend -}}
-{{- $image := .Values.runtime.image -}}
-{{- if .Values.runtime.imagesByBackend -}}
-{{- $image = (index .Values.runtime.imagesByBackend $backend) | default .Values.runtime.image -}}
+{{- if .Values.argo.enabled -}}
+- name: OPTIMIZATION_WORKFLOW_TEMPLATE
+  value: {{ include "cogniverse.optimizationWorkflowTemplateName" . }}
 {{- end -}}
-{{- $secret := include "cogniverse.inferenceApiKeySecret" . -}}
-- name: OPTIMIZATION_WORKFLOW_IMAGE
-  value: "{{ $image.repository }}:{{ $image.tag }}"
-- name: OPTIMIZATION_CONFIG_MAP
-  value: {{ include "cogniverse.fullname" . }}-config
-{{- if $secret }}
-- name: OPTIMIZATION_INFERENCE_API_KEY_SECRET
-  value: {{ $secret }}
-{{- end }}
-{{- if .Values.devMode.enabled }}
-- name: OPTIMIZATION_DEV_HOSTPATH
-  value: {{ .Values.devMode.hostPath | quote }}
-{{- end }}
 {{- end -}}
 
 {{/*

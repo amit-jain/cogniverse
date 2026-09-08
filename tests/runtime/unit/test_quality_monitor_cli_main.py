@@ -67,11 +67,15 @@ class _BreakLoop(BaseException):
 # seed file; the fixture's readiness stub returns them.
 READINESS_ROWS = ({"query": "ready probe", "expected_videos": ["v1"]},)
 
+# The chart's shared optimization WorkflowTemplate, which every submitted
+# optimization Workflow references.
+TEMPLATE = "cogniverse-optimization-runner"
+
 
 @pytest.fixture
 def patched(monkeypatch):
     monkeypatch.setattr(qm, "_build_phoenix_provider", lambda **k: None)
-    monkeypatch.setattr(qm, "_workflow_pod_spec_from_env", lambda: None)
+    monkeypatch.setattr(qm, "_workflow_template_from_env", lambda: TEMPLATE)
     monkeypatch.setattr(
         qm,
         "_seed_golden_set_blob",
@@ -117,6 +121,33 @@ def _main_run(monkeypatch, argv):
 
 def test_annotation_feedback_without_argo_url_exits_2(patched):
     assert _main_exit(patched, [*_BASE, "--annotation-feedback"]) == 2
+
+
+def test_argo_configured_without_a_workflow_template_exits_2(patched):
+    """Fault contract: Argo is reachable but the chart never named the shared
+    WorkflowTemplate, so every Workflow this process submits would spawn a pod
+    with no per-tenant mutex, no cpu/memory requests or limits and none of the
+    backend, inference or LLM endpoints. Refuse at startup instead."""
+    patched.setattr(qm, "_workflow_template_from_env", lambda: None)
+    code = _main_exit(
+        patched, [*_BASE, "--annotation-feedback", "--argo-url", "http://argo"]
+    )
+    assert code == 2
+    assert _StubMonitor.instances == []
+
+
+def test_the_template_name_reaches_the_monitor(patched):
+    """The name read at the entrypoint is the one the monitor submits with."""
+
+    async def _ok(**kwargs):
+        assert kwargs["workflow_template"] == TEMPLATE
+        return {"submitted": ["routing"], "errored_agents": []}
+
+    patched.setattr(qm, "run_annotation_feedback_cycle", _ok)
+    code = _main_exit(
+        patched, [*_BASE, "--annotation-feedback", "--argo-url", "http://argo"]
+    )
+    assert code == 0
 
 
 def test_annotation_feedback_success_exits_0(patched):

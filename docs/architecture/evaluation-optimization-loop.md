@@ -759,35 +759,42 @@ canonical value.
 
 ### Spawned-Workflow Pod Wiring
 
-The workflows both triggers spawn run `optimization_cli` in their own pod, which
-needs the same runtime wiring as its submitter: the deployed image, the backend
-endpoints, the `config.json` mount, and (dev clusters) the devMode source mounts.
-`OptimizationWorkflowPodSpec` (`cogniverse_evaluation.quality_monitor`) carries
-that wiring into the manifest; without it the spawned pod runs a bare fallback
-(`cogniverse-runtime:latest`, no env, no config) that can start but never reach
-Vespa or Phoenix.
+The workflows both triggers spawn run `optimization_cli` in their own pod. That
+pod is defined once, by the chart's shared `WorkflowTemplate`
+`{release}-optimization-runner`
+(`charts/cogniverse/templates/optimization-workflow-template.yaml`): image and
+command, the `BACKEND_*` / `TELEMETRY_*` / `INFERENCE_SERVICE_URLS` /
+`COGNIVERSE_INFERENCE_API_KEY` / `LLM_*` env, cpu+memory requests and limits,
+the `config.json` mount, the devMode source mounts, and the workflow-level
+`optimize-{{workflow.parameters.tenant-id}}` mutex that queues a tenant's
+optimizations instead of stacking pods.
 
-The chart's `cogniverse.optimizationWorkflowEnv` helper sets the contract on
-every submitting pod (the annotation-feedback and scheduled-distillation
-CronWorkflows, the quality-monitor Deployment), and
-`quality_monitor_cli._workflow_pod_spec_from_env` reads it once at the
-entrypoint:
+Every path submits a `Workflow` whose spec is a `workflowTemplateRef` at that
+template plus its five arguments (`mode`, `tenant-id`, `lookback-hours`,
+`agents`, `trigger-dataset`); none of them builds a container spec:
 
-| Env var | Value (chart-rendered) | Manifest effect |
-|---|---|---|
-| `OPTIMIZATION_WORKFLOW_IMAGE` | the submitter's own image | spawned container image |
-| `OPTIMIZATION_CONFIG_MAP` | `{release}-config` | `config.json` mount |
-| `OPTIMIZATION_DEV_HOSTPATH` | `devMode.hostPath` (devMode only) | `src-libs`/`src-scripts` hostPath mounts |
-| `OPTIMIZATION_INFERENCE_API_KEY_SECRET` | the Secret `cogniverse.inferenceApiKeySecret` resolves, set only when an inference service is external | `COGNIVERSE_INFERENCE_API_KEY` as a `secretKeyRef` on the spawned pod |
-| `BACKEND_URL`, `BACKEND_PORT`, `TELEMETRY_HTTP_ENDPOINT`, `TELEMETRY_OTLP_ENDPOINT` | already on every submitting pod | forwarded verbatim to the spawned pod |
+| Path | Entry point |
+|---|---|
+| manual | `POST /admin/tenant/{id}/optimize` (`routers/tenant.py`) |
+| quality drop | `QualityMonitor.submit_optimization` |
+| annotation volume | `run_annotation_feedback_cycle` |
+| scheduled | the `agent-optimization` / `daily-gateway` CronWorkflow steps, via step-level `templateRef` |
 
-With no external inference service there is no Secret, and the submitter's own
-`COGNIVERSE_INFERENCE_API_KEY` (the no-auth placeholder) is forwarded as a
-plain value. Either way the spawned pod resolves the bearer the same way the
-runtime does, and a real key never enters the Workflow manifest.
+`agents` and `trigger-dataset` default to `""` and are read only by
+`--mode triggered` (and `--mode synthetic` for `agents`); the other modes
+ignore them.
 
-The spec flows explicitly: CLI entrypoint → `run_annotation_feedback_cycle(pod_spec=…)`
-/ `QualityMonitor(workflow_pod_spec=…)` → `submit_argo_optimization_workflow(pod_spec=…)`.
+The chart's `cogniverse.optimizationWorkflowEnv` helper puts
+`OPTIMIZATION_WORKFLOW_TEMPLATE` on every submitting pod (the runtime
+Deployment, the quality-monitor Deployment, the annotation-feedback and
+scheduled-distillation CronWorkflows).
+`quality_monitor_cli._workflow_template_from_env` reads it once at the
+entrypoint and passes the name down to
+`run_annotation_feedback_cycle(workflow_template=…)` /
+`QualityMonitor(workflow_template=…)` →
+`submit_argo_optimization_workflow(workflow_template=…)`. With it unset,
+`quality_monitor_cli.main` exits 2 rather than submitting Workflows that carry
+no pod spec, and `submit_argo_optimization_workflow` raises `ValueError`.
 
 ---
 

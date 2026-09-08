@@ -6,10 +6,9 @@ Renders the chart and pins:
 2. the cron schedules mirror the ``IntervalConfig`` defaults
    (``annotation_interval_minutes`` / ``feedback_interval_minutes``) — the
    config knob and the chart value must not drift apart silently;
-3. every pod that submits optimization workflows carries the OPTIMIZATION_*
-   env contract ``_workflow_pod_spec_from_env`` reads, so spawned pods run
-   the same image/config/source as their submitter instead of the bare
-   fallback manifest.
+3. every pod that submits optimization workflows is told the name of the
+   shared optimization WorkflowTemplate, which owns the spawned pod's
+   container spec, env, resources and per-tenant mutex.
 """
 
 import shutil
@@ -69,6 +68,27 @@ def _container_args(cron):
 
 def _env_map(container):
     return {e["name"]: e.get("value") for e in container.get("env", [])}
+
+
+# Env names that fed the hand-built pod spec the shared template replaces.
+RETIRED_POD_SPEC_ENV = frozenset(
+    {
+        "OPTIMIZATION_WORKFLOW_IMAGE",
+        "OPTIMIZATION_CONFIG_MAP",
+        "OPTIMIZATION_DEV_HOSTPATH",
+        "OPTIMIZATION_INFERENCE_API_KEY_SECRET",
+    }
+)
+
+
+def _workflow_template_name(manifests):
+    """The rendered WorkflowTemplate every submitter must name."""
+    for doc in manifests:
+        if doc.get("kind") == "WorkflowTemplate" and doc["metadata"]["name"].endswith(
+            "-optimization-runner"
+        ):
+            return doc["metadata"]["name"]
+    raise AssertionError("no optimization-runner WorkflowTemplate rendered")
 
 
 def _quality_monitor_container(manifests):
@@ -167,34 +187,81 @@ def test_schedules_mirror_interval_config_defaults():
     )
 
 
-def test_feedback_cron_carries_workflow_pod_env():
-    """The feedback cron submits per-agent compile workflows; the spawned pod
-    must inherit the submitter's image and config, not the bare fallback."""
-    cron = _cronworkflow(_render_chart(), "cogniverse-annotation-feedback")
+def test_feedback_cron_names_the_shared_workflow_template():
+    """The feedback cron submits per-agent compile workflows; each references
+    the shared template rather than carrying a container spec."""
+    manifests = _render_chart()
+    cron = _cronworkflow(manifests, "cogniverse-annotation-feedback")
     container = cron["spec"]["workflowSpec"]["templates"][0]["container"]
     env = _env_map(container)
 
-    assert env["OPTIMIZATION_WORKFLOW_IMAGE"] == container["image"]
-    assert env["OPTIMIZATION_CONFIG_MAP"] == "cogniverse-config"
-    assert "OPTIMIZATION_DEV_HOSTPATH" not in env
-    # All four passthrough vars _workflow_pod_spec_from_env forwards must be
-    # present, or the spawned pod silently loses that backend endpoint.
+    assert env["OPTIMIZATION_WORKFLOW_TEMPLATE"] == _workflow_template_name(manifests)
+    assert RETIRED_POD_SPEC_ENV & set(env) == set()
+    # Submitting a Workflow needs the RBAC the chart binds to this account.
+    assert cron["spec"]["workflowSpec"]["serviceAccountName"] == "cogniverse"
+    assert cron["spec"]["concurrencyPolicy"] == "Forbid"
+    # The cron pod's own wiring: quality_monitor_cli reads spans and writes
+    # trigger datasets before it submits anything.
     assert env["BACKEND_URL"] == "http://cogniverse-vespa"
     assert env["BACKEND_PORT"] == "8080"
     assert env["TELEMETRY_HTTP_ENDPOINT"] == "http://cogniverse-phoenix:6006"
     assert env["TELEMETRY_OTLP_ENDPOINT"] == "cogniverse-phoenix:4317"
 
 
-def test_feedback_cron_dev_hostpath_follows_devmode():
-    cron = _cronworkflow(
-        _render_chart(["devMode.enabled=true", "devMode.hostPath=/cogniverse-src"]),
-        "cogniverse-annotation-feedback",
+def test_devmode_does_not_change_what_a_submitter_hands_on():
+    """devMode source mounts belong to the shared template, so the submitter
+    still passes one name and nothing else."""
+    manifests = _render_chart(
+        ["devMode.enabled=true", "devMode.hostPath=/cogniverse-src"]
     )
+    cron = _cronworkflow(manifests, "cogniverse-annotation-feedback")
     env = _env_map(cron["spec"]["workflowSpec"]["templates"][0]["container"])
-    assert env["OPTIMIZATION_DEV_HOSTPATH"] == "/cogniverse-src"
+
+    assert env["OPTIMIZATION_WORKFLOW_TEMPLATE"] == _workflow_template_name(manifests)
+    assert RETIRED_POD_SPEC_ENV & set(env) == set()
+    # devMode mounts belong to the referenced template, so the name a
+    # submitter hands on is the same one it hands on without devMode.
+    assert _workflow_template_name(manifests) == _workflow_template_name(
+        _render_chart()
+    )
 
 
-def test_scheduled_distillation_carries_workflow_pod_env():
+def test_every_optimization_submitter_names_one_template():
+    """One template name across every submitting pod: a second name would be
+    a second pod definition."""
+    manifests = _render_chart()
+    named = {}
+    for doc in manifests:
+        kind = doc.get("kind")
+        if kind == "Deployment":
+            pods = [
+                (c["name"], c) for c in doc["spec"]["template"]["spec"]["containers"]
+            ]
+        elif kind == "CronWorkflow":
+            pods = [
+                (t["name"], t["container"])
+                for t in doc["spec"]["workflowSpec"]["templates"]
+                if "container" in t
+            ]
+        else:
+            continue
+        for name, container in pods:
+            env = _env_map(container)
+            if "OPTIMIZATION_WORKFLOW_TEMPLATE" in env:
+                named[f"{doc['metadata']['name']}/{name}"] = env[
+                    "OPTIMIZATION_WORKFLOW_TEMPLATE"
+                ]
+
+    assert set(named) == {
+        "cogniverse-annotation-feedback/annotation-feedback",
+        "cogniverse-quality-monitor/quality-monitor",
+        "cogniverse-runtime/runtime",
+        "cogniverse-scheduled-distillation/scheduled-distillation",
+    }
+    assert set(named.values()) == {_workflow_template_name(manifests)}
+
+
+def test_scheduled_distillation_names_the_shared_workflow_template():
     manifests = _render_chart(
         [
             "runtime.imagesByBackend.cuda.repository=registry.local/cogniverse-runtime",
@@ -208,9 +275,8 @@ def test_scheduled_distillation_carries_workflow_pod_env():
     env = _env_map(container)
 
     assert container["image"] == "registry.local/cogniverse-runtime:e2e-exact"
-    assert env["OPTIMIZATION_WORKFLOW_IMAGE"] == container["image"]
-    assert env["OPTIMIZATION_CONFIG_MAP"] == "cogniverse-config"
-    assert env["OPTIMIZATION_DEV_HOSTPATH"] == "/cogniverse-src"
+    assert env["OPTIMIZATION_WORKFLOW_TEMPLATE"] == _workflow_template_name(manifests)
+    assert RETIRED_POD_SPEC_ENV & set(env) == set()
     assert env["BACKEND_URL"] == "http://cogniverse-vespa"
     assert env["BACKEND_PORT"] == "8080"
     assert env["TELEMETRY_HTTP_ENDPOINT"] == "http://cogniverse-phoenix:6006"
@@ -234,17 +300,17 @@ def test_annotation_crons_fall_back_to_default_tenant():
         assert tenant == "default", f"{name}: --tenant-id {tenant!r}"
 
 
-def test_quality_monitor_carries_workflow_pod_env():
-    """The monitor's quality-drop trigger submits workflows too — same env
+def test_quality_monitor_names_the_shared_workflow_template():
+    """The monitor's quality-drop trigger submits workflows too — same
     contract as the feedback cron."""
-    container = _quality_monitor_container(
-        _render_chart(["devMode.enabled=true", "devMode.hostPath=/cogniverse-src"])
+    manifests = _render_chart(
+        ["devMode.enabled=true", "devMode.hostPath=/cogniverse-src"]
     )
+    container = _quality_monitor_container(manifests)
     env = _env_map(container)
 
-    assert env["OPTIMIZATION_WORKFLOW_IMAGE"] == container["image"]
-    assert env["OPTIMIZATION_CONFIG_MAP"] == "cogniverse-config"
-    assert env["OPTIMIZATION_DEV_HOSTPATH"] == "/cogniverse-src"
+    assert env["OPTIMIZATION_WORKFLOW_TEMPLATE"] == _workflow_template_name(manifests)
+    assert RETIRED_POD_SPEC_ENV & set(env) == set()
     assert env["BACKEND_URL"] == "http://cogniverse-vespa"
     assert env["BACKEND_PORT"] == "8080"
     assert env["TELEMETRY_HTTP_ENDPOINT"] == "http://cogniverse-phoenix:6006"

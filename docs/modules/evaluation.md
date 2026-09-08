@@ -1715,7 +1715,7 @@ QualityMonitor(
     thresholds: QualityThresholds | None = None,
     telemetry_provider=None,
     search_profile: str = "video_colpali_smol500_mv_frame",
-    workflow_pod_spec: OptimizationWorkflowPodSpec | None = None,
+    workflow_template: str | None = None,
 )
 ```
 
@@ -1764,20 +1764,16 @@ references exactly that name, so a workflow is never submitted pointing at a
 dataset that was not created; a span-read outage during `evaluate_live_traffic`
 propagates instead of reading as "no traffic".
 
-**`OptimizationWorkflowPodSpec` dataclass (defaults):** `image: str =
-"cogniverse-runtime:latest"`, `env: Dict[str, str] = {}`, `config_map:
-Optional[str] = None`, `dev_source_hostpath: Optional[str] = None`,
-`inference_api_key_env: Optional[Dict[str, Any]] = None`. Passed as
-`workflow_pod_spec`, it carries the submitting pod's own runtime wiring
-(image, backend/telemetry endpoints, config mount, devMode source mounts)
-into the Argo manifest for the `optimization_cli` pod it spawns; without it
-the spawned pod runs the fallback image with no env and no config mount.
-`inference_api_key_env` is the `value` / `valueFrom` body of the spawned
-pod's `COGNIVERSE_INFERENCE_API_KEY` entry — a `secretKeyRef` against an
-external inference endpoint, so the manifest names the Secret rather than
-carrying the bearer. See
-[Spawned-Workflow Pod Wiring](../architecture/evaluation-optimization-loop.md#spawned-workflow-pod-wiring)
-for the chart-rendered env vars that populate it.
+**Spawned workflow pod:** `workflow_template` is the name of the chart's
+shared optimization `WorkflowTemplate`. `submit_optimization` submits a
+`Workflow` whose spec is a `workflowTemplateRef` at it plus the five arguments
+`mode`, `tenant-id`, `lookback-hours`, `agents`, `trigger-dataset`
+(`OPTIMIZATION_WORKFLOW_PARAMETER_NAMES`); the template owns the container
+spec, env, resources, config mount and the per-tenant mutex, so this path and
+`POST /admin/tenant/{id}/optimize` spawn the same pod.
+`submit_argo_optimization_workflow` raises `ValueError` when the name is empty
+rather than submitting a Workflow with no pod spec. See
+[Spawned-Workflow Pod Wiring](../architecture/evaluation-optimization-loop.md#spawned-workflow-pod-wiring).
 
 **Key methods:** `check_thresholds(...)` decides the `Verdict` from golden/live
 results against `QualityThresholds`, then (when `telemetry_provider` was

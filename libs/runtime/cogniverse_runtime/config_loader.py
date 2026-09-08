@@ -13,6 +13,9 @@ from typing import Any, Dict, List, Optional
 from cogniverse_core.common.agent_models import DEFAULT_AGENT_CALL_TIMEOUT_SECONDS
 from cogniverse_core.registries.agent_registry import AgentRegistry
 from cogniverse_core.registries.backend_registry import BackendRegistry
+from cogniverse_foundation.config.bootstrap import (
+    OPTIMIZATION_WORKFLOW_TEMPLATE_ENV,
+)
 from cogniverse_foundation.config.utils import get_config
 
 logger = logging.getLogger(__name__)
@@ -43,7 +46,7 @@ class WorkflowSettings:
             namespace=os.environ.get("WORKFLOW_NAMESPACE", "cogniverse"),
             service_account=os.environ.get("RUNTIME_SERVICE_ACCOUNT") or "default",
             job_template=os.environ.get("JOB_WORKFLOW_TEMPLATE") or None,
-            optimization_template=os.environ.get("OPTIMIZATION_WORKFLOW_TEMPLATE")
+            optimization_template=os.environ.get(OPTIMIZATION_WORKFLOW_TEMPLATE_ENV)
             or None,
         )
 
