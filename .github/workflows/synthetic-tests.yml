@@ -24,6 +24,9 @@ on:
       - 'configs/config.json'
       - 'charts/cogniverse/files/config.json'
       - 'data/testset/evaluation/processed/descriptions/big_buck_bunny_clip.json'
+      # test_topic_saliency_golden.py pins its recorded corpus against
+      # this video's sha256.
+      - 'tests/system/resources/videos/v_-D1gdv_gQyw.mp4'
   pull_request:
     branches: [ main, develop ]
     paths:
@@ -43,6 +46,9 @@ on:
       - 'configs/config.json'
       - 'charts/cogniverse/files/config.json'
       - 'data/testset/evaluation/processed/descriptions/big_buck_bunny_clip.json'
+      # test_topic_saliency_golden.py pins its recorded corpus against
+      # this video's sha256.
+      - 'tests/system/resources/videos/v_-D1gdv_gQyw.mp4'
 
 env:
   CARGO_NET_RETRY: "10"
