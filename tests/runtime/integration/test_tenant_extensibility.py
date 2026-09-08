@@ -370,7 +370,11 @@ class TestJobExecutorRealLLM:
         with dspy.context(lm=lm):
             result = router.forward(
                 query="Find the latest AI research papers on transformers",
-                available_agents="search_agent, summarizer_agent, detailed_report_agent",
+                available_agents=[
+                    "search_agent",
+                    "summarizer_agent",
+                    "detailed_report_agent",
+                ],
             )
 
         assert result is not None
@@ -430,7 +434,11 @@ class TestJobExecutorRealLLM:
         with dspy.context(lm=lm):
             result = router.forward(
                 query="Write a comprehensive summary of all neural network architectures",
-                available_agents="search_agent, summarizer_agent, detailed_report_agent",
+                available_agents=[
+                    "search_agent",
+                    "summarizer_agent",
+                    "detailed_report_agent",
+                ],
             )
 
         assert result is not None
