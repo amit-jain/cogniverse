@@ -121,15 +121,16 @@ def _streamify_yielding(chunks):
 
 
 class _StreamingAnswerAgent(AgentBase[_AnswerInput, _AnswerOutput, _Deps]):
-    def __init__(self, deps, module):
+    def __init__(self, deps, module, output_field="answer"):
         super().__init__(deps=deps)
         self._module = module
+        self._output_field = output_field
 
     async def _process_impl(self, input: _AnswerInput) -> _AnswerOutput:
         prediction = await self.call_dspy(
-            self._module, output_field="answer", query=input.query
+            self._module, output_field=self._output_field, query=input.query
         )
-        return _AnswerOutput(answer=prediction.answer)
+        return _AnswerOutput(answer=getattr(prediction, self._output_field))
 
 
 class _OuterAgent(AgentBase[_AnswerInput, _AnswerOutput, _Deps]):
@@ -154,7 +155,8 @@ def _token_messages(events) -> list:
 
 
 @pytest.mark.asyncio
-async def test_token_events_carry_the_chunk_text(monkeypatch):
+@pytest.mark.parametrize("output_field", ["answer", "questions"])
+async def test_token_events_carry_the_chunk_text(monkeypatch, output_field):
     import dspy
     from dspy.streaming import StatusMessage, StreamResponse
 
@@ -163,14 +165,14 @@ async def test_token_events_carry_the_chunk_text(monkeypatch):
         "streamify",
         _streamify_yielding(
             [
-                StreamResponse("p", "answer", "Hel", False),
+                StreamResponse("p", output_field, "Hel", False),
                 StatusMessage("thinking"),
-                StreamResponse("p", "answer", "lo", True),
-                dspy.Prediction(answer="Hello"),
+                StreamResponse("p", output_field, "lo", True),
+                dspy.Prediction(**{output_field: "Hello"}),
             ]
         ),
     )
-    agent = _StreamingAnswerAgent(_Deps(), _Module("unused"))
+    agent = _StreamingAnswerAgent(_Deps(), _Module("unused"), output_field=output_field)
 
     events = await _drain_answer(agent)
 
@@ -178,6 +180,10 @@ async def test_token_events_carry_the_chunk_text(monkeypatch):
     assert [e["data"]["accumulated"] for e in events if e.get("phase") == "token"] == [
         "Hel",
         "Hello",
+    ]
+    assert [e["data"] for e in events if e.get("phase") == "token"] == [
+        {"accumulated": "Hel", "output_field": output_field},
+        {"accumulated": "Hello", "output_field": output_field},
     ]
     finals = [e for e in events if e.get("type") == "final"]
     assert [f["data"]["answer"] for f in finals] == ["Hello"]

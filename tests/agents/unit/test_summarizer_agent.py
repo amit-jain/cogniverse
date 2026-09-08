@@ -1199,7 +1199,7 @@ class TestA2AExecutorStreaming:
         mock_dispatcher._registry.get_agent.return_value = mock_agent_entry
 
         # Create a mock agent that streams events
-        mock_agent = AsyncMock()
+        mock_agent = Mock(spec=SummarizerAgent)
 
         async def fake_stream():
             yield {"type": "status", "phase": "thinking", "message": "Analyzing..."}
@@ -1232,6 +1232,7 @@ class TestA2AExecutorStreaming:
         a2a_queue = A2AEventQueue()
 
         await executor.execute(mock_context, a2a_queue)
+        mock_agent.validate_attachments.assert_called_once_with(mock_typed_input)
 
         # Dequeue events and verify
         events = []

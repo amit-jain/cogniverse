@@ -195,6 +195,11 @@ class MySearchAgent(AgentBase[MySearchInput, MySearchOutput, MySearchDeps]):
 | `get_output_schema() -> Dict` | Get JSON schema for output type |
 | `get_stats() -> Dict` | Get processing statistics |
 
+`call_dspy(..., output_field=...)` emits token events with the exact chunk in
+`message` and `data={"accumulated": ..., "output_field": ...}`. Token streaming
+belongs to the agent that owns the active stream; nested agents do not emit
+answer tokens into their caller's stream.
+
 ### AgentInput / AgentOutput / AgentDeps
 
 These are Pydantic BaseModel subclasses that define agent interfaces:

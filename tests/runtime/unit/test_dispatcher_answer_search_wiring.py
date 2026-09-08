@@ -947,6 +947,8 @@ class TestRlmThreadsIntoTypedInputs:
         assert captured["input"].rlm == self._expected_options()
 
     async def test_coding_task_threads_rlm_into_input(self, dispatcher, monkeypatch):
+        from cogniverse_agents.coding_agent import CodingOutput
+
         captured = {}
 
         class _StubCodingAgent:
@@ -955,7 +957,7 @@ class TestRlmThreadsIntoTypedInputs:
 
             async def process(self, input):
                 captured["input"] = input
-                return SimpleNamespace(model_dump=lambda: {"ok": True})
+                return CodingOutput(summary="Retry helper configured")
 
         monkeypatch.setattr(
             "cogniverse_agents.coding_agent.CodingAgent", _StubCodingAgent
@@ -974,11 +976,13 @@ class TestRlmThreadsIntoTypedInputs:
         )
         dispatcher._init_agent_memory = lambda *args, **kwargs: None
 
-        await dispatcher._execute_coding_task(
+        result = await dispatcher._execute_coding_task(
             "add a retry helper", "acme:acme", context={"rlm": dict(self._RLM)}
         )
 
         assert captured["input"].rlm == self._expected_options()
+        assert result["status"] == "success"
+        assert result["result"]["summary"] == "Retry helper configured"
 
     async def test_deep_research_task_threads_rlm_into_input(
         self, dispatcher, monkeypatch

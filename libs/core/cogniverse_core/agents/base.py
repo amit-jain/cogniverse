@@ -566,7 +566,12 @@ class AgentBase(ABC, Generic[InputT, OutputT, DepsT]):
                     elif isinstance(chunk, dspy.streaming.StreamResponse):
                         accumulated += chunk.chunk
                         self.emit_progress(
-                            "token", chunk.chunk, data={"accumulated": accumulated}
+                            "token",
+                            chunk.chunk,
+                            data={
+                                "accumulated": accumulated,
+                                "output_field": output_field,
+                            },
                         )
                 if prediction is None:
                     prediction = await _call_in_lm_executor(call_module, **kwargs)

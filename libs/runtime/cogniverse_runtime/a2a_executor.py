@@ -12,6 +12,7 @@ Multi-turn support: Extracts conversation history from Task.history
 it through the dispatcher so agents can reason over prior turns.
 """
 
+import contextlib
 import json
 import logging
 from collections import OrderedDict
@@ -31,6 +32,51 @@ from cogniverse_foundation.telemetry.context import request_trace_context
 from cogniverse_runtime.agent_dispatcher import AgentDispatcher
 
 logger = logging.getLogger(__name__)
+
+
+async def stream_agent_events(
+    dispatcher: AgentDispatcher,
+    agent_name: str,
+    query: str,
+    tenant_id: str,
+    context: Optional[Dict[str, Any]] = None,
+    request_seed: str = "",
+):
+    """Prepare memory, graph, prompt overlay and LM context for one agent stream."""
+    import asyncio
+
+    conversation_history = (context or {}).get("conversation_history") or []
+    if conversation_history:
+        query = await dispatcher._rewrite_query_with_history(
+            query, conversation_history
+        )
+    agent, typed_input = await dispatcher.create_streaming_agent(
+        agent_name, query, tenant_id, context=context
+    )
+    validate_attachments = getattr(agent, "validate_attachments", None)
+    if validate_attachments is not None:
+        validate_attachments(typed_input)
+    await asyncio.to_thread(dispatcher._init_agent_memory, agent, agent_name, tenant_id)
+    await asyncio.to_thread(dispatcher._bind_graph_manager, agent, tenant_id)
+    if request_seed:
+        overlay = await dispatcher.resolve_artefact_for_request(
+            agent_name, tenant_id, request_seed=request_seed
+        )
+        if overlay is not None:
+            dispatcher._apply_artefact_overlay(agent, {"_artefact_overlay": overlay})
+    agent_lm = getattr(agent, "_dspy_lm", None)
+    if agent_lm is not None:
+        import dspy
+
+        lm_ctx = dspy.context(lm=agent_lm)
+    else:
+        lm_ctx = contextlib.nullcontext()
+    with lm_ctx:
+        async with contextlib.aclosing(
+            await agent.process(typed_input, stream=True)
+        ) as events:
+            async for event in events:
+                yield event
 
 
 class BoundedInMemoryTaskStore(InMemoryTaskStore):
@@ -256,83 +302,39 @@ class CogniverseAgentExecutor(AgentExecutor):
         yielded event dict to a TaskStatusUpdateEvent on the A2A queue.
         """
         try:
-            import asyncio
-            import contextlib
-
-            # Mirror the non-streaming dispatch enrichment.
-            conversation_history = (task_context or {}).get(
-                "conversation_history"
-            ) or []
-            if conversation_history:
-                query = await self._dispatcher._rewrite_query_with_history(
-                    query, conversation_history
+            async with contextlib.aclosing(
+                stream_agent_events(
+                    self._dispatcher,
+                    agent_name,
+                    query,
+                    tenant_id,
+                    task_context,
+                    context_id or task_id,
                 )
+            ) as events:
+                async for event in events:
+                    event_type = event.get("type", "")
+                    # An error event is terminal: the dispatch name replaces the
+                    # class name the base layer recorded, and final=True closes
+                    # the SSE stream with the failure instead of dangling until
+                    # the queue tears down.
+                    if event_type == "error":
+                        event["agent"] = agent_name
+                    event_text = json.dumps(event, default=str)
 
-            agent, typed_input = await self._dispatcher.create_streaming_agent(
-                agent_name,
-                query,
-                tenant_id,
-                context=task_context,
-            )
+                    is_final = event_type in ("final", "error")
+                    state = TaskState.input_required if is_final else TaskState.working
 
-            await asyncio.to_thread(
-                self._dispatcher._init_agent_memory, agent, agent_name, tenant_id
-            )
-            await asyncio.to_thread(
-                self._dispatcher._bind_graph_manager, agent, tenant_id
-            )
-
-            # Streaming bypasses dispatch(), so resolve + inject the canary /
-            # variant artefact overlay here too — otherwise streaming traffic
-            # always serves active prompts, ignoring canary traffic-split and
-            # admin signature-variant selection. Seed is session-sticky:
-            # context_id, falling back to task_id.
-            request_seed = context_id or task_id
-            if request_seed:
-                overlay = await self._dispatcher.resolve_artefact_for_request(
-                    agent_name, tenant_id, request_seed=request_seed
-                )
-                if overlay is not None:
-                    self._dispatcher._apply_artefact_overlay(
-                        agent, {"_artefact_overlay": overlay}
+                    a2a_event = TaskStatusUpdateEvent(
+                        task_id=task_id,
+                        context_id=context_id,
+                        final=is_final,
+                        status=TaskStatus(
+                            state=state,
+                            message=new_agent_text_message(event_text),
+                        ),
                     )
-
-            agent_lm = getattr(agent, "_dspy_lm", None)
-            if agent_lm is not None:
-                import dspy
-
-                lm_ctx = dspy.context(lm=agent_lm)
-            else:
-                lm_ctx = contextlib.nullcontext()
-
-            async def _iterate_with_ctx():
-                with lm_ctx:
-                    async for ev in await agent.process(typed_input, stream=True):
-                        yield ev
-
-            async for event in _iterate_with_ctx():
-                event_type = event.get("type", "")
-                # An error event is terminal: the dispatch name replaces the
-                # class name the base layer recorded, and final=True closes
-                # the SSE stream with the failure instead of dangling until
-                # the queue tears down.
-                if event_type == "error":
-                    event["agent"] = agent_name
-                event_text = json.dumps(event, default=str)
-
-                is_final = event_type in ("final", "error")
-                state = TaskState.input_required if is_final else TaskState.working
-
-                a2a_event = TaskStatusUpdateEvent(
-                    task_id=task_id,
-                    context_id=context_id,
-                    final=is_final,
-                    status=TaskStatus(
-                        state=state,
-                        message=new_agent_text_message(event_text),
-                    ),
-                )
-                await event_queue.enqueue_event(a2a_event)
+                    await event_queue.enqueue_event(a2a_event)
 
         except Exception as e:
             logger.error(
