@@ -2672,10 +2672,14 @@ types the field as `string`, not a nested object:
 }
 ```
 
-The visit-based readers — `get_config`, `get_config_history`,
-`list_configs`, `list_all_configs`, `count_version_rows`, and
-`prune_all_configs` — share one bounded retry/backoff helper around the
-Document v1 visit API. Connection errors, timeouts, and 5xx responses retry;
+Every reader — the visit-based `get_config`, `get_config_history`,
+`list_configs`, `list_all_configs`, `count_version_rows` and
+`prune_all_configs`, and the single-document `get_immutable_config` —
+shares one bounded retry/backoff helper over the Document v1 API, so a
+backend that accepts a connection and never answers ends in
+`ConfigStoreUnavailableError` rather than holding its caller open. The
+per-attempt budget is 5s for a single document and for one bounded page,
+30s and 60s for the wider scans. Connection errors, timeouts, and 5xx responses retry;
 `404` or a genuinely empty visit returns `None` or an empty collection; other
 failures raise. A completed `set_config` is therefore immediately visible to
 those readers without sleeps or search-index convergence retries.

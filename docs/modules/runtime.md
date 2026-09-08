@@ -1137,6 +1137,28 @@ deltas whose concatenation is the answer.
 
 **GET /v1/models** — the configured model map in OpenAI list form.
 
+`stream: true` on an agent whose endpoint declares `streams_answer_tokens`
+streams live tokens through `dispatch_stream`. Agents emit one token event per
+output field; the router forwards only the field that carries answer text
+(`harness_turn.is_answer_field`) and locks onto the first such field, so a
+research agent's decomposition and gap list never reach the client. At the
+final event the streamed text is reconciled against `extract_answer_text` of
+the finished payload: a supporting field (a report's findings) arrives as one
+closing delta, and a stream the final answer does not begin with ends in an
+error frame rather than a mangled reply. The deltas of a streamed turn
+therefore concatenate to the body of the same turn served non-streamed. Every
+other agent, and any turn resuming a tool exchange, streams the finished
+answer in 256-character deltas.
+
+`tool_choice` accepts `"auto"` (the default) and `"none"`; `"none"` withholds
+the tool definitions and turns a tool request from the agent into 502
+`tool_choice_violation`. A forcing choice — `"required"` or a named function —
+is 400, since nothing here can compel an agent to call one.
+
+A cancelled stream — a client hang-up or a rolling restart — writes an error
+frame with code `stream_cancelled` and `[DONE]` before the connection goes,
+and the turn behind it is cancelled with it.
+
 Status contract: an unknown or revoked key is 401; a key-store outage is 503
 carrying the cause; an unknown model is 404; a malformed transcript is 400
 naming the message and part index, the unmatched tool-call ids, or the

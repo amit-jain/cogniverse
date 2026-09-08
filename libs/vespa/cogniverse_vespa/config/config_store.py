@@ -36,6 +36,9 @@ _CONFIG_STORE_READ_BACKOFF_MULTIPLIER = 2.0
 _CONFIG_STORE_READ_MAX_BACKOFF_SECONDS = 2.0
 _CONFIG_STORE_READ_RETRYABLE_HTTP_STATUS_MIN = 500
 _CONFIG_STORE_READ_MISSING_HTTP_STATUS = 404
+# Per-attempt budget for a single-document read; the same one
+# list_immutable_configs uses for its bounded page.
+_CONFIG_STORE_DOCUMENT_READ_TIMEOUT_SECONDS = 5
 
 
 def _raise_if_degraded(response: Any, config_id: str) -> None:
@@ -88,9 +91,16 @@ def _config_store_visit_backoff_seconds(attempt: int) -> float:
     return min(delay, _CONFIG_STORE_READ_MAX_BACKOFF_SECONDS)
 
 
-def _config_store_visit_payload(
-    path: str, *, params: Dict[str, Any], timeout: int
+def _config_store_read_json(
+    path: str, *, params: Dict[str, Any], timeout: int, operation: str = "visit"
 ) -> Optional[Dict[str, Any]]:
+    """One bounded document/v1 read: JSON, or None when the id is absent.
+
+    Worst case is ``timeout`` per attempt across
+    ``_CONFIG_STORE_READ_MAX_ATTEMPTS`` attempts plus the capped backoff
+    between them, so a hung backend ends in ConfigStoreUnavailableError
+    rather than holding the caller open.
+    """
     start = time.monotonic()
     for attempt in range(1, _CONFIG_STORE_READ_MAX_ATTEMPTS + 1):
         try:
@@ -105,7 +115,7 @@ def _config_store_visit_payload(
             if attempt == _CONFIG_STORE_READ_MAX_ATTEMPTS:
                 elapsed = time.monotonic() - start
                 message = (
-                    "Failed to read Vespa config visit after "
+                    f"Failed to read Vespa config {operation} after "
                     f"{attempt} attempts over {elapsed:.3f}s: "
                     f"{type(exc).__name__}: {exc}"
                 )
@@ -114,8 +124,9 @@ def _config_store_visit_payload(
 
             delay = _config_store_visit_backoff_seconds(attempt)
             logger.warning(
-                "Vespa config visit failed on attempt %s/%s with %s: %s; "
+                "Vespa config %s failed on attempt %s/%s with %s: %s; "
                 "retrying in %.3fs",
+                operation,
                 attempt,
                 _CONFIG_STORE_READ_MAX_ATTEMPTS,
                 type(exc).__name__,
@@ -274,7 +285,7 @@ class VespaConfigStore(ImmutableConfigStore):
         while True:
             if continuation:
                 params["continuation"] = continuation
-            payload = _config_store_visit_payload(path, params=params, timeout=30)
+            payload = _config_store_read_json(path, params=params, timeout=30)
             if payload is None:
                 return entries
             documents = payload["documents"]
@@ -307,20 +318,23 @@ class VespaConfigStore(ImmutableConfigStore):
         config_key: str,
     ) -> Optional[ConfigEntry]:
         config_id = self._create_document_id(tenant_id, scope, service, config_key)
-        try:
-            response = self.vespa_app.get_data(
-                schema=self.schema_name,
-                data_id=f"{self.schema_name}::{config_id}::1",
-            )
-            if response.status_code == 404:
-                return None
-            if response.status_code != 200:
-                raise RuntimeError(f"HTTP {response.status_code}: {response.json}")
-        except Exception as exc:
-            raise ConfigStoreUnavailableError(
-                f"Failed to read immutable config at {self.vespa_app.url}: {exc}"
-            ) from exc
-        return self._entry_from_fields(response.json["fields"])
+        # Same bounded reader as list_immutable_configs: this read sits on the
+        # request path (harness key resolution) and a backend that accepts and
+        # never answers must end as an outage, not as an open request.
+        path = self.vespa_app.url + self.vespa_app.get_document_v1_path(
+            id=f"{self.schema_name}::{config_id}::1",
+            schema=self.schema_name,
+            namespace=self.schema_name,
+        )
+        payload = _config_store_read_json(
+            path,
+            params={},
+            timeout=_CONFIG_STORE_DOCUMENT_READ_TIMEOUT_SECONDS,
+            operation="document",
+        )
+        if payload is None:
+            return None
+        return self._entry_from_fields(payload["fields"])
 
     def put_immutable_config(
         self,
@@ -388,7 +402,7 @@ class VespaConfigStore(ImmutableConfigStore):
         }
         if continuation is not None:
             params["continuation"] = continuation
-        payload = _config_store_visit_payload(path, params=params, timeout=5)
+        payload = _config_store_read_json(path, params=params, timeout=5)
         if payload is None:
             return [], None
         return (
@@ -615,7 +629,7 @@ class VespaConfigStore(ImmutableConfigStore):
         while True:
             if continuation:
                 params["continuation"] = continuation
-            payload = _config_store_visit_payload(path, params=params, timeout=60)
+            payload = _config_store_read_json(path, params=params, timeout=60)
             if payload is None:
                 return counts
             for doc in payload.get("documents") or []:
@@ -647,7 +661,7 @@ class VespaConfigStore(ImmutableConfigStore):
         while True:
             if continuation:
                 params["continuation"] = continuation
-            payload = _config_store_visit_payload(path, params=params, timeout=60)
+            payload = _config_store_read_json(path, params=params, timeout=60)
             if payload is None:
                 break
             for doc in payload.get("documents") or []:
