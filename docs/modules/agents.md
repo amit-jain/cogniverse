@@ -2084,7 +2084,7 @@ flowchart LR
 **Dependencies (`DetailedReportDeps`):**
 | Dep | Type | Default | Description |
 |-----|------|---------|-------------|
-| `multimodal_generation_enabled` | bool | `False` | Attach retrieved keyframes to the report LLM. Enable only once keyframes are in MinIO and the answer model accepts image inputs (an `image:0` student rejects them). |
+| `multimodal_generation_enabled` | bool | `True` | Attach available retrieved keyframes and request images to the report LLM. |
 | `max_keyframes_to_llm` | int | `4` | Cap on keyframes attached per report. |
 
 A keyframe not yet in object storage (or one that fails to fetch) is silently
@@ -2312,10 +2312,20 @@ keyframes to its answer LLM via the shared `KeyframeImageResolver` and a
 `keyframes: list[dspy.Image]` input on `SummaryGenerationSignature` (see
 [DetailedReportAgent](#7-detailedreportagent) for the shared mechanism and the
 keyframe-key contract). Gated behind `SummarizerDeps.multimodal_generation_enabled`
-(bool, default `False`) with `max_keyframes_to_llm` (int, default `4`); a
+(bool, default `True`) with `max_keyframes_to_llm` (int, default `4`); a
 keyframe not yet in object storage is silently skipped (text-only fallback).
 
 ---
+
+Summary, detailed-report, and deep-research inputs accept `attachments` as image
+URIs. Worker threads prepare them with `attachments_to_images`, retaining input
+order before retrieved keyframes and applying `max_keyframes_to_llm` to the
+combined list. `validate_attachments(input)` rejects disabled visual input before streaming
+with `attachments_disabled: visual inputs are disabled for this request`.
+Summaries answer supplied text or images even when retrieval returns no hits.
+Attachment failures appear in summary/research degradation metadata and in the
+report's `report_degraded_reason`. Summary key points and report recommendations
+remain paired with their generated text.
 
 ### 11. AudioAnalysisAgent
 
@@ -2558,6 +2568,15 @@ print(output.enhanced_query, output.expansion_terms)
 
 Iterative code generation agent: searches code semantically via the `code_lateon_mv` Vespa profile (LateOn-Code-edge multi-vector embeddings with tree-sitter AST chunking), plans an implementation with DSPy, generates code, executes it in a sandbox, evaluates the result, and iterates up to `max_iterations` times.
 
+Advertised client tools select workspace mode. The agent suspends with
+`pending_tool_calls` and `continuation_state`; replayed observations match calls
+by ID. `WORKSPACE_MAX_ROUNDS` is the shared workspace default and limit (8); an explicit
+`max_iterations` can lower it.
+`WORKSPACE_ACTION_MAX_ATTEMPTS` bounds malformed-action retries (3). Failed
+steps expose `success=False` and `error` with an empty summary. Context reads
+run in workers; sandbox staging directories are removed on success, failure,
+and cancellation.
+
 **Constructor:**
 ```text
 CodingAgent(
@@ -2623,7 +2642,7 @@ without it runs on the field default (3).
 via the shared `KeyframeImageResolver`, attaches the top-K retrieved keyframes
 to a `keyframes: list[dspy.Image]` input on `SynthesisSignature` (see
 [DetailedReportAgent](#7-detailedreportagent) for the shared mechanism). Gated
-behind `DeepResearchDeps.multimodal_generation_enabled` (bool, default `False`)
+behind `DeepResearchDeps.multimodal_generation_enabled` (bool, default `True`)
 with `max_keyframes_to_llm` (int, default `4`); an evidence hit lacking the
 `source_url`/`video_id`/`segment_id` fields (or whose keyframe isn't in object
 storage yet) is silently skipped.

@@ -18,7 +18,7 @@ from pydantic import Field
 from cogniverse_agents._confidence import parse_confidence
 from cogniverse_agents.memory_aware_mixin import MemoryAwareMixin
 from cogniverse_agents.mixins.rlm_aware_mixin import RLMAwareMixin
-from cogniverse_agents.multimodal import KeyframeImageResolver
+from cogniverse_agents.multimodal import KeyframeImageResolver, attachments_to_images
 from cogniverse_core.agents.a2a_agent import A2AAgent, A2AAgentConfig
 from cogniverse_core.agents.base import AgentDeps, AgentInput, AgentOutput
 from cogniverse_core.agents.rlm_options import RLMOptions
@@ -31,6 +31,9 @@ logger = logging.getLogger(__name__)
 
 class DeepResearchInput(AgentInput):
     query: str = Field(..., description="Research question")
+    attachments: List[str] = Field(
+        default_factory=list, description="Image attachment URIs"
+    )
     max_iterations: int = Field(3, description="Maximum research iterations")
     tenant_id: str = Field(..., description="Tenant identifier (required)")
     rlm: Optional[RLMOptions] = Field(
@@ -47,6 +50,13 @@ class Citation(AgentOutput):
 
 class DeepResearchOutput(AgentOutput):
     summary: str = Field(..., description="Synthesized research summary")
+    attachments_degraded: bool = Field(
+        False, description="An attachment could not be prepared"
+    )
+    attachment_failures: List[str] = Field(
+        default_factory=list,
+        description="Attachment preparation failures in input order",
+    )
     sub_questions: List[str] = Field(
         default_factory=list, description="Decomposed sub-questions"
     )
@@ -182,6 +192,7 @@ class DeepResearchAgent(
         )
 
     async def _process_impl(self, input: DeepResearchInput) -> DeepResearchOutput:
+        self.validate_attachments(input)
         # Every DSPy call in the run (decompose, evaluate, synthesize) binds
         # the REQUEST tenant's LM — semantic-routed when enabled, ambient
         # otherwise. Without this wrap the whole research run silently used
@@ -254,7 +265,10 @@ class DeepResearchAgent(
             )
 
         self.emit_progress("synthesize", "Synthesizing research report...")
-        summary = await self._synthesize(input.query, all_evidence)
+        attachment_failures: List[str] = []
+        summary = await self._synthesize(
+            input.query, all_evidence, input.attachments, attachment_failures
+        )
 
         # Build flat evidence text for optional RLM synthesis over accumulated evidence
         evidence_context = "\n\n".join(
@@ -292,6 +306,8 @@ class DeepResearchAgent(
 
         return DeepResearchOutput(
             summary=summary,
+            attachments_degraded=bool(attachment_failures),
+            attachment_failures=attachment_failures,
             sub_questions=sub_questions,
             evidence=all_evidence,
             citations=all_citations,
@@ -376,7 +392,22 @@ class DeepResearchAgent(
     # alongside the DSPy ChainOfThought template and chat envelope.
     _SYNTHESIS_EVIDENCE_CHAR_BUDGET = 6000
 
-    async def _synthesize(self, query: str, evidence: List[Dict[str, Any]]) -> str:
+    def validate_attachments(self, request: DeepResearchInput) -> None:
+        self._validate_attachments(request.attachments)
+
+    def _validate_attachments(self, attachments: List[str]) -> None:
+        if attachments and not self.multimodal_generation_enabled:
+            raise ValueError(
+                "attachments_disabled: visual inputs are disabled for this request"
+            )
+
+    async def _synthesize(
+        self,
+        query: str,
+        evidence: List[Dict[str, Any]],
+        attachments: Optional[List[str]] = None,
+        attachment_failures: Optional[List[str]] = None,
+    ) -> str:
         """Synthesize evidence into a research report. Per-question
         sections are truncated proportionally so every sub-question gets
         coverage instead of late questions being dropped.
@@ -407,6 +438,7 @@ class DeepResearchAgent(
         if len(evidence_text) > self._SYNTHESIS_EVIDENCE_CHAR_BUDGET:
             evidence_text = evidence_text[: self._SYNTHESIS_EVIDENCE_CHAR_BUDGET] + "…"
 
+        self._validate_attachments(attachments or [])
         keyframe_images = []
         if self.multimodal_generation_enabled:
             hits = [
@@ -415,12 +447,20 @@ class DeepResearchAgent(
                 for r in (e.get("results") or [])
                 if isinstance(r, dict)
             ]
-            # Frame collection downloads from object storage — off the loop.
-            keyframe_images = await asyncio.to_thread(
-                self._keyframe_resolver.collect,
-                hits,
-                max_images=self.max_keyframes_to_llm,
-            )
+
+            def collect_images():
+                prepared = attachments_to_images(attachments or [])
+                retrieved = self._keyframe_resolver.collect(
+                    hits, max_images=self.max_keyframes_to_llm
+                )
+                return (
+                    (prepared.images + retrieved)[: self.max_keyframes_to_llm],
+                    prepared.failures,
+                )
+
+            keyframe_images, failures = await asyncio.to_thread(collect_images)
+            if attachment_failures is not None:
+                attachment_failures.extend(failures)
 
         result = await self.call_dspy(
             self._synthesizer,
