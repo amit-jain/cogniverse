@@ -68,6 +68,107 @@ def test_stem_classes_win_over_imported_types():
     )
 
 
+def test_each_agent_in_a_module_binds_its_own_declared_classes():
+    """Two agents in one module keep their own Deps/Input.
+
+    Neither agent's classes carry its name stem, so a scan of ``dir(module)``
+    hands both of them the alphabetically first pair and the second agent
+    dispatches on the first agent's input shape.
+    """
+    module = ModuleType("two_parameterised_agents")
+
+    class AlphaDeps(AgentDeps):
+        pass
+
+    class AlphaInput(AgentInput):
+        pass
+
+    class AlphaOutput(AgentOutput):
+        pass
+
+    class BetaDeps(AgentDeps):
+        pass
+
+    class BetaInput(AgentInput):
+        pass
+
+    class BetaOutput(AgentOutput):
+        pass
+
+    class FirstTurnAgent(AgentBase[AlphaInput, AlphaOutput, AlphaDeps]):
+        async def _process_impl(self, input: AlphaInput) -> AlphaOutput:
+            return AlphaOutput()
+
+    class SecondTurnAgent(AgentBase[BetaInput, BetaOutput, BetaDeps]):
+        async def _process_impl(self, input: BetaInput) -> BetaOutput:
+            return BetaOutput()
+
+    for cls in (
+        AlphaDeps,
+        AlphaInput,
+        AlphaOutput,
+        BetaDeps,
+        BetaInput,
+        BetaOutput,
+        FirstTurnAgent,
+        SecondTurnAgent,
+    ):
+        setattr(module, cls.__name__, cls)
+
+    assert [
+        _scan_module_for_generic_classes(module, name)
+        for name in ("FirstTurnAgent", "SecondTurnAgent")
+    ] == [
+        (FirstTurnAgent, AlphaDeps, AlphaInput),
+        (SecondTurnAgent, BetaDeps, BetaInput),
+    ]
+
+
+def test_declared_parameters_win_over_a_stem_named_sibling():
+    """The agent's own type parameters decide, not a same-stem name.
+
+    A module can hold a class whose name matches the agent's stem without
+    being what the agent is parameterised on; binding by name would hand the
+    dispatcher an input the agent never declared.
+    """
+    module = ModuleType("stem_collision")
+
+    class DeclaredDeps(AgentDeps):
+        pass
+
+    class DeclaredInput(AgentInput):
+        pass
+
+    class DeclaredOutput(AgentOutput):
+        pass
+
+    class ReportDeps(AgentDeps):
+        pass
+
+    class ReportInput(AgentInput):
+        pass
+
+    class ReportAgent(AgentBase[DeclaredInput, DeclaredOutput, DeclaredDeps]):
+        async def _process_impl(self, input: DeclaredInput) -> DeclaredOutput:
+            return DeclaredOutput()
+
+    for cls in (
+        DeclaredDeps,
+        DeclaredInput,
+        DeclaredOutput,
+        ReportDeps,
+        ReportInput,
+        ReportAgent,
+    ):
+        setattr(module, cls.__name__, cls)
+
+    assert _scan_module_for_generic_classes(module, "ReportAgent") == (
+        ReportAgent,
+        DeclaredDeps,
+        DeclaredInput,
+    )
+
+
 def test_stream_declaration(stream_dispatcher):
     assert [
         stream_dispatcher.supports_token_stream(name)

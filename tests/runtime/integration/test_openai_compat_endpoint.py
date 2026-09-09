@@ -91,9 +91,9 @@ TOOL_DEFS = [
 class HarnessEchoDeps(BaseModel):
     """The one Deps shape for this module.
 
-    ``AgentDispatcher`` resolves the generic Deps/Input classes by scanning the
-    agent's module for the first name ending in ``Deps``/``Input``, so every
-    agent registered from one module shares them; each declares its own Output.
+    These agents declare no ``AgentBase`` type parameters, so
+    ``AgentDispatcher`` binds them by the module's naming convention and every
+    agent here shares them; each declares its own Output.
     """
 
 

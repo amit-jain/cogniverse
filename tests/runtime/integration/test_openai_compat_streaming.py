@@ -7,11 +7,6 @@ and no boundary mock: every token below is produced by the same code path a
 served agent uses, so the field filter, the reconciliation with the final
 payload, cancellation and the per-invocation queue scoping are all exercised
 for real.
-
-The agents live here rather than in ``test_openai_compat_endpoint`` because
-the dispatcher resolves an agent's Deps/Input classes by scanning its module
-for the first name ending in ``Deps``/``Input``: one module can host one
-input shape.
 """
 
 from __future__ import annotations
