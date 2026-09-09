@@ -1794,18 +1794,13 @@ model, _ = loader.load_model()
 
 ### RemoteColBERTLoader (model_loaders.py)
 
-Serves the same ColBERT contract from a vLLM `/pooling` endpoint instead of an
-in-process pylate model. `load_model()` returns a `ColBERTRemoteWrapper` whose
-`.encode(texts, is_query=...)` mirrors `pylate.models.ColBERT.encode()`:
-
-- The `[Q] `/`[D] ` marker is prepended client-side as literal text. Each marker
-  is a single token in the LateOn vocabulary, so this reproduces pylate's marker
-  insertion exactly (no extra subword tokens).
-- For documents (`is_query=False`) the wrapper drops the punctuation tokens
-  pylate removes via `ColBERT.skiplist_mask`. `/pooling` returns one embedding
-  per token in tokenizer order, so the wrapper re-tokenizes the prefixed text and
-  drops the rows whose token id is in the punctuation skiplist. Queries keep all
-  tokens.
+Serves the ColBERT contract from the PyLate service's `/pooling` endpoint
+(`cogniverse_cli/modal_inference/servers/pylate.py`) instead of an in-process
+pylate model. `load_model()` returns a `ColBERTRemoteWrapper` whose
+`.encode(texts, is_query=...)` mirrors `pylate.models.ColBERT.encode()`: the
+wrapper sends raw text plus `is_query`, and the service applies PyLate's own
+query expansion over masked padding positions and document punctuation
+skiplist, so the per-token matrices come back unchanged.
 
 ```python
 from cogniverse_core.common.models.model_loaders import RemoteColBERTLoader
