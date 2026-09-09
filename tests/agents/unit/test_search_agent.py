@@ -11,6 +11,7 @@ import pytest
 from cogniverse_agents.search_agent import (
     ContentProcessor,
     EncoderCapabilityError,
+    EnsembleOutcome,
     SearchAgent,
     SearchAgentDeps,
     SearchInput,
@@ -1225,7 +1226,11 @@ class TestSearchAgentEnsembleSearch:
 
         # Mock _search_ensemble to avoid actual search (must be AsyncMock)
         agent._search_ensemble = AsyncMock(
-            return_value=[{"id": "doc1", "rrf_score": 0.5}]
+            return_value=EnsembleOutcome(
+                results=[{"id": "doc1", "rrf_score": 0.5}],
+                searched=("profile1", "profile2"),
+                degraded=(),
+            )
         )
 
         # Call with multiple profiles
@@ -1241,6 +1246,7 @@ class TestSearchAgentEnsembleSearch:
         # Should detect ensemble mode
         assert result.search_mode == "ensemble"
         assert result.profiles == ["profile1", "profile2"]
+        assert result.degraded_profiles == []
         agent._search_ensemble.assert_called_once()
 
     @patch("cogniverse_agents.search_agent.QueryEncoderFactory")
@@ -2171,7 +2177,7 @@ class TestEnsembleEncodingConcurrency:
         agent._get_backend = lambda: SimpleNamespace(search=lambda _qd: [])
         agent._build_date_filter = lambda _s, _e: None
 
-        results = await asyncio.wait_for(
+        outcome = await asyncio.wait_for(
             agent._search_ensemble(
                 "q",
                 tenant_id="t:t",
@@ -2182,7 +2188,9 @@ class TestEnsembleEncodingConcurrency:
             timeout=8,
         )
 
-        assert results == []
+        assert outcome.results == []
+        assert outcome.searched == ("p_active", "p_other")
+        assert outcome.degraded == ()
 
 
 @pytest.mark.unit

@@ -1693,6 +1693,14 @@ SearchAgent was enhanced to support ensemble mode, allowing it to query multiple
 - Ensemble metadata tracking
 - Supports both single-profile and multi-profile (ensemble) mode
 
+`_search_ensemble` returns an `EnsembleOutcome`: the fused hits, `searched`
+(the profiles whose search ran) and `degraded` (`(profile, reason)` for a leg
+that could not encode its query or whose search raised, with `reason` in
+`encode_failed` / `search_failed`). Profiles sharing an embedding model share
+one encode. `SearchOutput.profiles` names the legs that ran and
+`SearchOutput.degraded_profiles` the ones that did not, so a caller reports a
+partial ensemble as partial. Every leg failing raises.
+
 #### Ensemble Architecture
 
 ```mermaid
