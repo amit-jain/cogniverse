@@ -20,6 +20,16 @@ from tests.agents.unit._recording_telemetry import RecordingTelemetryManager
 pytestmark = [pytest.mark.unit, pytest.mark.ci_fast]
 
 
+def _memory_config_manager():
+    """The ConfigManager the runtime binds into this agent, over an in-memory store."""
+    from cogniverse_foundation.config.manager import ConfigManager
+    from tests.utils.memory_store import InMemoryConfigStore
+
+    store = InMemoryConfigStore()
+    store.initialize()
+    return ConfigManager(store=store)
+
+
 @pytest.fixture
 def mock_dspy_lm():
     """Mock DSPy language model"""
@@ -41,6 +51,7 @@ def query_agent():
     with patch("dspy.ChainOfThought"):
         deps = QueryEnhancementDeps()
         agent = QueryEnhancementAgent(deps=deps, port=8012)
+        agent.bind_config_manager(_memory_config_manager())
         agent.telemetry_manager = RecordingTelemetryManager()
         return agent
 

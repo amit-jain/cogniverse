@@ -26,6 +26,16 @@ from cogniverse_foundation.config.unified_config import LLMEndpointConfig
 pytestmark = [pytest.mark.unit, pytest.mark.ci_fast]
 
 
+def _memory_config_manager():
+    """The ConfigManager the runtime binds into this agent, over an in-memory store."""
+    from cogniverse_foundation.config.manager import ConfigManager
+    from tests.utils.memory_store import InMemoryConfigStore
+
+    store = InMemoryConfigStore()
+    store.initialize()
+    return ConfigManager(store=store)
+
+
 class TestInstrumentedRLMBasics:
     """Basic tests for InstrumentedRLM initialization."""
 
@@ -259,6 +269,7 @@ class TestRLMAwareMixinWithEventQueue:
             tenant_id = "test_tenant"
 
         agent = TestAgent()
+        agent.bind_config_manager(_memory_config_manager())
         mock_queue = MagicMock()
         llm_config = LLMEndpointConfig(model="openai/gpt-4o")
 
@@ -286,6 +297,7 @@ class TestRLMAwareMixinWithEventQueue:
             tenant_id = "agent_tenant"
 
         agent = TestAgent()
+        agent.bind_config_manager(_memory_config_manager())
         mock_queue = MagicMock()
         llm_config = LLMEndpointConfig(model="openai/gpt-4o")
 

@@ -13,14 +13,27 @@ from unittest.mock import AsyncMock, patch
 
 import pytest
 
-from cogniverse_agents.coding_agent import CodingAgent, CodingInput
+from cogniverse_agents.coding_agent import CodingAgent, CodingDeps, CodingInput
 
 pytestmark = [pytest.mark.unit, pytest.mark.ci_fast]
 
 
+def _memory_config_manager():
+    """The injected ConfigManager the agent constructor requires."""
+    from cogniverse_foundation.config.manager import ConfigManager
+    from tests.utils.memory_store import InMemoryConfigStore
+
+    store = InMemoryConfigStore()
+    store.initialize()
+    return ConfigManager(store=store)
+
+
 @pytest.mark.asyncio
 async def test_workspace_removed_after_run():
-    agent = object.__new__(CodingAgent)
+    agent = CodingAgent(
+        CodingDeps(tenant_id="acme:acme"),
+        config_manager=_memory_config_manager(),
+    )
 
     created: list[str] = []
     real_mkdtemp = tempfile.mkdtemp

@@ -96,11 +96,22 @@ Rust lecture notes|CONCEPT|0.9
 Rust|TECHNOLOGY|0.9"""
 
 
+def _memory_config_manager():
+    """The ConfigManager the runtime binds into this agent, over an in-memory store."""
+    from cogniverse_foundation.config.manager import ConfigManager
+    from tests.utils.memory_store import InMemoryConfigStore
+
+    store = InMemoryConfigStore()
+    store.initialize()
+    return ConfigManager(store=store)
+
+
 def _make_extraction_agent():
     """Create EntityExtractionAgent with mocked DSPy for use in tests."""
     with patch("dspy.ChainOfThought"):
         deps = EntityExtractionDeps()
         agent = EntityExtractionAgent(deps=deps, port=8010)
+        agent.bind_config_manager(_memory_config_manager())
         agent.telemetry_manager = RecordingTelemetryManager()
         return agent
 
@@ -282,6 +293,7 @@ def entity_agent():
     with patch("dspy.ChainOfThought"):
         deps = EntityExtractionDeps()
         agent = EntityExtractionAgent(deps=deps, port=8010)
+        agent.bind_config_manager(_memory_config_manager())
         # Force DSPy fallback path for existing tests
         agent._gliner_extractor = None
         agent._spacy_analyzer = None
@@ -864,6 +876,7 @@ class TestGLiNERFastPath:
         with patch("dspy.ChainOfThought"):
             deps = EntityExtractionDeps()
             agent = EntityExtractionAgent(deps=deps, port=8010)
+            agent.bind_config_manager(_memory_config_manager())
             agent.telemetry_manager = RecordingTelemetryManager()
 
             mock_gliner = MagicMock()
@@ -1170,6 +1183,7 @@ class TestTelemetrySpanEmission:
         with patch("dspy.ChainOfThought"):
             deps = EntityExtractionDeps()
             agent = EntityExtractionAgent(deps=deps, port=8010)
+            agent.bind_config_manager(_memory_config_manager())
             agent._gliner_extractor = None
             agent._spacy_analyzer = None
 
