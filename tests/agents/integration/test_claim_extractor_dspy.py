@@ -26,7 +26,6 @@ from __future__ import annotations
 import json
 import os
 import threading
-import time
 from dataclasses import asdict
 from pathlib import Path
 from typing import Any, Dict, List
@@ -240,51 +239,6 @@ def configured_dspy_lm(hermetic_test_lm):
 # --------------------------------------------------------------------------- #
 
 
-def _collect_dspy_spans(span_name_prefix: str) -> List[Any]:
-    """Best-effort collection of in-memory OTel spans whose name starts
-    with ``span_name_prefix``. Used by the RLM-span tests when a live
-    Phoenix client is not available.
-
-    Returns the list of recorded ReadableSpan objects from the global
-    tracer provider's in-memory exporter, or an empty list when no
-    in-memory exporter is configured.
-    """
-    try:
-        from opentelemetry import trace
-        from opentelemetry.sdk.trace.export.in_memory_span_exporter import (
-            InMemorySpanExporter,
-        )
-    except ImportError:
-        return []
-
-    provider = trace.get_tracer_provider()
-    # Walk the provider's span processors for an InMemorySpanExporter.
-    exporters: List[InMemorySpanExporter] = []
-    for attr in ("_active_span_processor", "_span_processors"):
-        proc = getattr(provider, attr, None)
-        if proc is None:
-            continue
-        candidates = (
-            proc._span_processors  # BatchedTracerProvider style
-            if hasattr(proc, "_span_processors")
-            else [proc]
-        )
-        for c in candidates:
-            exp = getattr(c, "span_exporter", None) or getattr(c, "_exporter", None)
-            if isinstance(exp, InMemorySpanExporter):
-                exporters.append(exp)
-
-    if not exporters:
-        return []
-
-    spans: List[Any] = []
-    for exp in exporters:
-        for span in exp.get_finished_spans():
-            if span.name.startswith(span_name_prefix):
-                spans.append(span)
-    return spans
-
-
 # --------------------------------------------------------------------------- #
 # Tests                                                                       #
 # --------------------------------------------------------------------------- #
@@ -452,13 +406,8 @@ class TestClaimExtractorRLMPromotion:
 
     def test_long_input_promotes_to_rlm(self, configured_dspy_lm):
         """60 concatenated Marie Curie sentences route through the RLM
-        path, not ChainOfThought. Phoenix span
-        tree shows an ``InstrumentedRLM`` child span on the
-        ``ClaimExtractor.extract`` span with ``rlm_iterations`` recorded.
-
-        When Phoenix is unavailable, falls back to inspecting the in-memory
-        OTel span tree. When neither is configured, asserts on the
-        module-selection behaviour directly.
+        path, not ChainOfThought, and the extraction dedupes to the single
+        claim the repeated sentence states.
         """
         long_text = (SEG_3_TEXT + " ") * 60
         assert len(long_text) > 3000, "fixture must exceed RLM_PROMOTION_TOKENS"
@@ -491,43 +440,14 @@ class TestClaimExtractorRLMPromotion:
             "claim_extractor_long_doc_edge_summary.json",
         )
 
-        # Best-effort span check — try Phoenix client first, fall back to OTel.
-        try:
-            from phoenix.session.client import Client as PhoenixClient
+        # The promoted module is capped at the production transcript-turn
+        # count and is the one the extractor keeps for this output size.
+        assert selected.max_iterations == RLM_TRANSCRIPT_TURNS
+        assert extractor._select_module(text=long_text, tenant_id=TENANT_ID) is selected
 
-            phoenix_endpoint = os.environ.get("PHOENIX_HTTP_ENDPOINT")
-            if phoenix_endpoint:
-                client = PhoenixClient(endpoint=phoenix_endpoint)
-                # Give Phoenix a moment to ingest.
-                time.sleep(2)
-                spans = client.get_spans_dataframe()
-                rlm_rows = spans[
-                    spans["name"].astype(str).str.startswith("InstrumentedRLM")
-                ]
-                assert not rlm_rows.empty, (
-                    "Phoenix returned no InstrumentedRLM spans — RLM was selected "
-                    "but no span emission was observed"
-                )
-                return
-        except Exception:
-            pass
-
-        # Fall back to in-memory OTel span tree.
-        rlm_spans = _collect_dspy_spans("InstrumentedRLM")
-        # When no in-memory exporter is configured this returns []; treat
-        # that as "telemetry not wired", which is a separate failure mode.
-        # Only assert when at least one provider+exporter is configured.
-        if rlm_spans:
-            # The presence of *any* InstrumentedRLM span is enough — the
-            # extractor selected the RLM path and the runtime emitted at
-            # least one span. iteration count varies by LM, so we lock the
-            # set of unique span names to golden.
-            names_sorted = sorted({s.name for s in rlm_spans})
-            assert_golden(names_sorted, "claim_extractor_long_doc_rlm_span_names.json")
-
-    def test_short_input_no_rlm_spans(self, configured_dspy_lm):
-        """Short Marie Curie sentence (56 chars) emits zero
-        ``InstrumentedRLM`` spans — ChainOfThought path only."""
+    def test_short_input_stays_on_chain_of_thought(self, configured_dspy_lm):
+        """Short Marie Curie sentence (56 chars) routes to the cached
+        ChainOfThought module, never the recursive path."""
         extractor = ClaimExtractor()
         selected = extractor._select_module(text=SEG_3_TEXT, tenant_id=TENANT_ID)
         import dspy
@@ -539,6 +459,9 @@ class TestClaimExtractorRLMPromotion:
         assert isinstance(selected, dspy.ChainOfThought), (
             f"Short input should route to ChainOfThought, got {type(selected).__name__}"
         )
+        assert (
+            extractor._select_module(text=SEG_3_TEXT, tenant_id=TENANT_ID) is selected
+        )
 
         edges = extractor.extract(
             text=SEG_3_TEXT,
@@ -548,16 +471,9 @@ class TestClaimExtractorRLMPromotion:
             tenant_id=TENANT_ID,
             source_doc_id=VIDEO_ID,
         )
-        assert isinstance(edges, list)
-
-        # If any in-memory OTel span store is active, assert zero RLM spans
-        # *for this call*. Without an active span store, the assertion is
-        # vacuously true — caught by the long-input positive check.
-        rlm_spans = _collect_dspy_spans("InstrumentedRLM")
-        assert rlm_spans == [], (
-            f"Short input emitted {len(rlm_spans)} InstrumentedRLM spans: "
-            f"{[s.name for s in rlm_spans]}"
-        )
+        assert sorted({e.relation for e in edges}) == SEG_3_RELATIONS, [
+            (e.source_node_id, e.relation, e.target_node_id) for e in edges
+        ]
 
     def test_prompt_that_cannot_fit_raises_with_the_sizes(self, hermetic_test_lm):
         """A reservation that leaves no input allowance raises with the window,
