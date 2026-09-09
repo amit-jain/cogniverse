@@ -2479,7 +2479,23 @@ class AgentDispatcher:
             return AnswerGrounding(hits=[], state=GROUNDING_SEARCH_UNAVAILABLE)
         if not profiles:
             return AnswerGrounding(hits=[], state=state, modalities=tuple(modalities))
-        budget_s = await self._grounding_search_budget_s(tenant_id)
+        try:
+            budget_s = await self._grounding_search_budget_s(tenant_id)
+        except ValueError:
+            raise
+        except Exception as exc:
+            logger.warning(
+                "Answer-agent grounding for tenant %s could not read its search "
+                "budget; proceeding with an ungrounded answer: %r",
+                tenant_id,
+                exc,
+            )
+            return AnswerGrounding(
+                hits=[],
+                state=GROUNDING_SEARCH_UNAVAILABLE,
+                modalities=tuple(modalities),
+                profiles=tuple(profiles),
+            )
         try:
             search = await asyncio.wait_for(
                 self._execute_search_task(

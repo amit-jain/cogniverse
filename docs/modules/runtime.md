@@ -932,8 +932,10 @@ so an empty corpus never reads as a confident summary of nothing. A dependency
 outage stays distinct under `search_unavailable`.
 
 The grounding search is bounded by `answer_grounding_search_timeout_seconds`
-(seconds, `configs/config.json`). Exceeding it yields `search_unavailable` with
-no hits, so a leg whose encoder never answers cannot hold an answer open. The
+(seconds, `configs/config.json` and the chart's copy). Exceeding it yields
+`search_unavailable` with no hits, so a leg whose encoder never answers cannot
+hold an answer open. A config the budget cannot be read from degrades the same
+way; a config that does not declare it raises, rather than searching unbounded. The
 fan-out is paid in parallel: profiles sharing an embedding model share one
 encode, and every profile's query runs concurrently, so a stalled leg costs its
 own stall rather than the stall plus the healthy legs' work.
