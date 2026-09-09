@@ -6,6 +6,8 @@ on:
     paths:
       - 'libs/agents/**'
       - 'libs/core/**'
+      - 'libs/**'
+      - 'data/training/claim_extraction.jsonl'
       - 'configs/schemas/**'
       - 'tests/agents/**'
       - 'tests/conftest.py'
@@ -27,6 +29,8 @@ on:
     paths:
       - 'libs/agents/**'
       - 'libs/core/**'
+      - 'libs/**'
+      - 'data/training/claim_extraction.jsonl'
       - 'configs/schemas/**'
       - 'tests/agents/**'
       - 'tests/conftest.py'
