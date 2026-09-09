@@ -22,6 +22,8 @@ from types import SimpleNamespace
 import pytest
 from pydantic import BaseModel, ConfigDict
 
+from cogniverse_core.agents.base import ConfigManagerAware
+
 pytestmark = [pytest.mark.unit, pytest.mark.ci_fast]
 
 
@@ -56,7 +58,7 @@ class FakeOutput(BaseModel):
     tenant_id: str | None = None
 
 
-class _FakeAgentMixin:
+class _FakeAgentMixin(ConfigManagerAware):
     """Records construction + artifact-load counts on the concrete class."""
 
     load_delay = 0.0
@@ -65,7 +67,6 @@ class _FakeAgentMixin:
         type(self).build_count = getattr(type(self), "build_count", 0) + 1
         self.deps = deps
         self.telemetry_manager = None
-        self._config_manager = None
 
     def _load_artifact(self) -> None:
         type(self).load_count = getattr(type(self), "load_count", 0) + 1
