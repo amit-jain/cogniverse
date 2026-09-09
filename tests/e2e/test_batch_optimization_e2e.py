@@ -4958,6 +4958,7 @@ class TestEntityExtractionOptimization:
             "metric_threshold",
             "attempts",
             "errors",
+            "error_causes",
             "examples_walked",
             "accepted",
             "bootstrapped_demos",
@@ -5003,6 +5004,10 @@ class TestEntityExtractionOptimization:
                 <= bootstrap["examples_walked"] * bootstrap["max_rounds"]
             ), bootstrap
         assert bootstrap["errors"] == 0, bootstrap
+        # The count and the causes are the same record of the same failures:
+        # a run that drops an example carries why.
+        assert bootstrap["error_causes"] == [], bootstrap
+        assert len(bootstrap["error_causes"]) == bootstrap["errors"], bootstrap
         assert bootstrap["metric_values"] == sorted(bootstrap["metric_values"]), (
             bootstrap
         )
