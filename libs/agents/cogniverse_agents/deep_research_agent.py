@@ -169,7 +169,7 @@ class DeepResearchAgent(
         self._search_fn = search_fn
         # Enables the RLM path (RLMAwareMixin) to route its LM through the
         # gateway for this tenant.
-        self._config_manager = config_manager
+        self.bind_config_manager(config_manager)
         self._decomposer = dspy.ChainOfThought(TaskDecompositionSignature)
         self._evaluator = dspy.ChainOfThought(EvidenceEvaluationSignature)
         self._synthesizer = dspy.ChainOfThought(SynthesisSignature)
@@ -181,9 +181,7 @@ class DeepResearchAgent(
         # locator targets the object store so s3:// keyframes are fetchable at
         # answer time; the endpoint comes from SystemConfig (credentials from
         # AWS_* env mirrored at the runtime entrypoint).
-        minio_endpoint = None
-        if config_manager is not None:
-            minio_endpoint = config_manager.get_system_config().minio_endpoint
+        minio_endpoint = config_manager.get_system_config().minio_endpoint
         self._keyframe_resolver = KeyframeImageResolver(
             MediaLocator(
                 tenant_id=SYSTEM_TENANT_ID,

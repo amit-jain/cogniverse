@@ -29,6 +29,17 @@ from cogniverse_agents.audio_analysis_agent import (
 pytestmark = [pytest.mark.unit, pytest.mark.ci_fast]
 
 
+def _in_memory_config_manager():
+    """A real ConfigManager over an in-memory store — what the runtime injects
+    through ``AudioAnalysisDeps.config_manager``."""
+    from cogniverse_foundation.config.manager import ConfigManager
+    from tests.utils.memory_store import InMemoryConfigStore
+
+    store = InMemoryConfigStore()
+    store.initialize()
+    return ConfigManager(store=store)
+
+
 @contextmanager
 def _transcription_server(
     response: object | Callable[[bytes], object],
@@ -93,6 +104,7 @@ def _agent_for_remote_transcription(base_url: str, authorization: str):
             tenant_id="test_tenant",
             whisper_endpoint=base_url,
             whisper_headers={"Authorization": authorization},
+            config_manager=_in_memory_config_manager(),
         )
     )
 
@@ -140,6 +152,7 @@ class TestAudioAnalysisAgent:
                 tenant_id="test_tenant",
                 vespa_endpoint="http://localhost:8080",
                 whisper_model_size="base",
+                config_manager=_in_memory_config_manager(),
             ),
             port=8006,
         )
@@ -1203,7 +1216,7 @@ class TestAudioSearchEventLoop:
         agent._shared_backend_lock = threading.Lock()
         agent._backend_type = "vespa"
         agent._backend_config = {}
-        agent.config_manager = None
+        agent.bind_config_manager(_in_memory_config_manager())
         agent.schema_loader = None
         for k, v in attrs.items():
             setattr(agent, k, v)

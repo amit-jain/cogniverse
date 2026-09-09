@@ -94,12 +94,13 @@ class TextAnalysisAgent(
         """
         # Initialize tenant support via TenantAwareAgentMixin
         # This validates tenant_id and stores it (eliminates duplication)
-        TenantAwareAgentMixin.__init__(self, tenant_id=tenant_id)
+        TenantAwareAgentMixin.__init__(
+            self, tenant_id=tenant_id, config_manager=config_manager
+        )
         MemoryAwareMixin.__init__(self)
         self.set_tenant_for_context(tenant_id)
 
         logger.info(f"Initializing TextAnalysisAgent for tenant: {tenant_id}...")
-        self.config_manager = config_manager
         self.system_config = get_config(
             tenant_id=tenant_id, config_manager=config_manager
         )

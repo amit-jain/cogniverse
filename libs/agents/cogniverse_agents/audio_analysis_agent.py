@@ -419,7 +419,7 @@ class AudioAnalysisAgent(
         self._deployed_audio_schema = deps.deployed_audio_schema
         self._backend_type = deps.backend_type
         self._backend_config = dict(deps.backend_config or {})
-        self.config_manager = deps.config_manager
+        self.bind_config_manager(deps.config_manager)
         self.schema_loader = deps.schema_loader
 
         # Initialize components (lazy loading)

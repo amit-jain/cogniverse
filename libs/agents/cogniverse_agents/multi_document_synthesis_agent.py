@@ -199,8 +199,8 @@ class MultiDocumentSynthesisAgent(
 
         # Fall back to the system primary LM via config_manager when no
         # explicit llm_config was passed.
+        self.bind_config_manager(config_manager)
         self._llm_config = resolve_llm_config(llm_config, config_manager)
-        self._config_manager = config_manager
         self._dspy_module = dspy.ChainOfThought(_SynthesisSignature)
 
     def synthesize(self, query: str) -> Dict[str, List[Dict[str, Any]]]:
@@ -427,7 +427,7 @@ class MultiDocumentSynthesisAgent(
         rlm = build_rlm_from_options(
             self._llm_config,
             rlm_options,
-            config_manager=getattr(self, "_config_manager", None),
+            config_manager=self.config_manager,
             tenant_id=getattr(self, "_memory_tenant_id", None) or "",
         )
         result = await asyncio.to_thread(

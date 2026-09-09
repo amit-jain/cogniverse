@@ -222,7 +222,7 @@ class TemporalReasoningAgent(
 
         self._mm_factory = make_mm_factory(memory_manager_factory)
         self._llm_config = llm_config
-        self._config_manager = config_manager
+        self.bind_config_manager(config_manager)
 
     def compare_over_time(
         self, node_name: str, videos: Optional[List[str]] = None
@@ -441,7 +441,7 @@ class TemporalReasoningAgent(
         rlm = build_rlm_from_options(
             self._llm_config,
             rlm_options,
-            config_manager=getattr(self, "_config_manager", None),
+            config_manager=self.config_manager,
             tenant_id=getattr(self, "_memory_tenant_id", None) or "",
         )
         result = await asyncio.to_thread(
