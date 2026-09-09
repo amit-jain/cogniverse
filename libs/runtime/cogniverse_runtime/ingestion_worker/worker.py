@@ -384,12 +384,13 @@ def _build_worker_lm(llm_config):
 
     Falls back to ``LLM_ENDPOINT`` + ``LLM_MODEL`` env (the same env vars
     the runtime pod uses) when the store has no primary endpoint. Either
-    way the LM is built via ``create_dspy_lm`` — the mandatory chokepoint
-    for every dspy.LM construction. Returns ``None`` when neither source
+    way the LM is built via ``create_budgeted_dspy_lm`` — the mandatory
+    chokepoint for every dspy.LM construction, so every request is fitted to
+    the window the endpoint serves. Returns ``None`` when neither source
     names an endpoint, so the caller binds nothing at all rather than
     binding a null LM over whatever DSPy already has.
     """
-    from cogniverse_foundation.config.llm_factory import create_dspy_lm
+    from cogniverse_foundation.config.llm_factory import create_budgeted_dspy_lm
     from cogniverse_foundation.config.unified_config import LLMEndpointConfig
     from cogniverse_foundation.dspy.model_format import ensure_provider_prefix
 
@@ -409,7 +410,7 @@ def _build_worker_lm(llm_config):
             api_base=endpoint.rstrip("/"),
             temperature=0.0,
         )
-    lm = create_dspy_lm(llm_config)
+    lm = create_budgeted_dspy_lm(llm_config)
     logger.info(
         "DSPy LM built for worker: model=%s api_base=%s",
         llm_config.model,

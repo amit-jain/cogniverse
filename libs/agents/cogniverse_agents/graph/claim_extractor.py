@@ -14,7 +14,7 @@ import dataclasses
 import json
 import logging
 import threading
-from typing import Any, List, Optional
+from typing import Any, Dict, List, Optional
 
 import dspy
 
@@ -22,8 +22,30 @@ from cogniverse_agents._confidence import parse_confidence
 from cogniverse_agents.graph.dspy_signatures import ClaimExtractionSignature
 from cogniverse_agents.graph.graph_schema import Edge, Mention
 from cogniverse_core.common.utils.async_bridge import run_coro_blocking
+from cogniverse_foundation.config.budgeted_lm import BudgetedLM
+from cogniverse_foundation.config.token_budget import (
+    ContextWindowUnavailableError,
+    TokenBudget,
+)
 
 logger = logging.getLogger(__name__)
+
+
+class RecursiveClaimBudgetError(RuntimeError):
+    """The served window leaves no room for a recursive-claim transcript."""
+
+    def __init__(
+        self, *, model: str, context_window: int, reserved_output: int
+    ) -> None:
+        self.model = model
+        self.context_window = context_window
+        self.reserved_output = reserved_output
+        super().__init__(
+            f"{model} serves context_window={context_window} and reserves "
+            f"reserved_output={reserved_output}, leaving no transcript "
+            f"allowance for recursive claim extraction"
+        )
+
 
 # Threshold above which the input is routed through the recursive LM
 # path instead of a single ChainOfThought call. Tuned for typical
@@ -42,6 +64,22 @@ CLAIM_EXTRACTION_MAX_OUTPUT_TOKENS = (
     CLAIM_EXTRACTION_MAX_CLAIMS * CLAIM_EXTRACTION_TOKENS_PER_CLAIM
     + CLAIM_EXTRACTION_REASONING_TOKENS
 )
+
+# dspy.RLM binds the segment to a REPL variable, so its first prompt is a fixed
+# harness and every later prompt carries one more tool output. The whole
+# transcript has to fit the served window alongside that harness, which bounds
+# the turns as much as it bounds the per-turn output.
+RLM_TRANSCRIPT_TURNS = 4
+# Tokens the RLM harness occupies before any transcript. Measured at 1258 for
+# ClaimExtractionSignature against the served student model.
+RLM_HARNESS_TOKENS = 1400
+# REPL output is prose with JSON punctuation and tokenizes denser than plain
+# text; measured at 2.6 characters per token, rounded down.
+RLM_TRANSCRIPT_CHARS_PER_TOKEN = 2
+# The server tokenizes the assembled prompt with its own tokenizer and counts
+# more than the client's estimate of the same messages; measured at 5.9% on the
+# served student model, held at twice that.
+PROMPT_TOKENIZER_MARGIN_SHARE = 0.10
 
 # Hard cap on the verbatim evidence_span length stored on each Edge.
 _MAX_EVIDENCE_CHARS = 200
@@ -181,7 +219,10 @@ class ClaimExtractor:
         self._artifact_manager = artifact_manager
         self._rlm_promotion_chars = rlm_promotion_chars
         self._cot_module: Optional[dspy.ChainOfThought] = None
-        self._rlm_module: Optional[dspy.RLM] = None
+        # One module per distinct transcript cap: the cap is derived from the
+        # window the serving endpoint reports, and one extractor can be driven
+        # against endpoints with different windows.
+        self._rlm_modules: Dict[int, dspy.RLM] = {}
         # Guards the lazy module build below: the per-segment KG claim pass
         # invokes one shared extractor from several threads at once, so an
         # unguarded ``if self._cot_module is None`` would double-build the
@@ -261,7 +302,6 @@ class ClaimExtractor:
         source_doc_id: str,
         segment_anchor: Mention,
     ) -> dspy.Prediction:
-        module = self._select_module(text=text, tenant_id=tenant_id)
         # Substitute leading subject pronouns with the most plausible
         # prior entity. Small LMs (gemma, Llama-3-8B) don't reliably
         # resolve coreference even when given the entity list — but they
@@ -275,6 +315,7 @@ class ClaimExtractor:
             )
 
             with ingest_lm_context_for(self._llm_config):
+                module = self._select_module(text=text, tenant_id=tenant_id)
                 prediction = module(
                     text_segment=text_for_lm,
                     entity_hints=entity_hints,
@@ -286,6 +327,7 @@ class ClaimExtractor:
                     segment_anchor=segment_anchor,
                 )
                 return prediction
+        module = self._select_module(text=text, tenant_id=tenant_id)
         prediction = module(
             text_segment=text_for_lm,
             entity_hints=entity_hints,
@@ -298,6 +340,36 @@ class ClaimExtractor:
         )
         return prediction
 
+    def _serving_token_budget(self) -> TokenBudget:
+        """The input allowance of the window serving this extractor's calls."""
+        lm = dspy.settings.lm
+        if not isinstance(lm, BudgetedLM):
+            raise ContextWindowUnavailableError(
+                f"Claim extraction promoted to the recursive path but the "
+                f"serving LM is {type(lm).__name__}, which reads no context "
+                f"window; build it with create_budgeted_dspy_lm so the REPL "
+                f"transcript is sized against the window the endpoint serves"
+            )
+        return lm.budget
+
+    def _rlm_output_chars(self, budget: TokenBudget) -> int:
+        """Characters of REPL output per turn that fit inside ``budget``."""
+        transcript_tokens = (
+            budget.input_budget
+            - RLM_HARNESS_TOKENS
+            - int(budget.input_budget * PROMPT_TOKENIZER_MARGIN_SHARE)
+        )
+        chars = (
+            transcript_tokens // RLM_TRANSCRIPT_TURNS * RLM_TRANSCRIPT_CHARS_PER_TOKEN
+        )
+        if chars <= 0:
+            raise RecursiveClaimBudgetError(
+                model=budget.model,
+                context_window=budget.context_window,
+                reserved_output=budget.reserved_output,
+            )
+        return chars
+
     def _select_module(self, *, text: str, tenant_id: str):
         """Pick ChainOfThought for short text, RLM for long text.
 
@@ -306,21 +378,20 @@ class ClaimExtractor:
         and no thread ever sees a half-loaded module.
         """
         if len(text) > self._rlm_promotion_chars:
-            if self._rlm_module is None:
+            output_chars = self._rlm_output_chars(self._serving_token_budget())
+            module = self._rlm_modules.get(output_chars)
+            if module is None:
                 with self._module_lock:
-                    if self._rlm_module is None:
-                        # Bound the REPL output folded into follow-up prompts:
-                        # the dspy default (100k chars) packs the next request
-                        # to the serving window's boundary, which 400s on
-                        # smaller-window deployments (the server's tokenizer
-                        # counts a token or two more than the client's trim
-                        # math reserved).
+                    module = self._rlm_modules.get(output_chars)
+                    if module is None:
                         module = dspy.RLM(
-                            ClaimExtractionSignature, max_output_chars=16_000
+                            ClaimExtractionSignature,
+                            max_iterations=RLM_TRANSCRIPT_TURNS,
+                            max_output_chars=output_chars,
                         )
                         self._load_compiled_state(module, tenant_id)
-                        self._rlm_module = module
-            return self._rlm_module
+                        self._rlm_modules[output_chars] = module
+            return module
 
         if self._cot_module is None:
             with self._module_lock:

@@ -25,7 +25,10 @@ from __future__ import annotations
 import copy
 from typing import TYPE_CHECKING, Dict, Optional
 
-from cogniverse_foundation.config.llm_factory import create_dspy_lm
+from cogniverse_foundation.config.llm_factory import (
+    create_budgeted_dspy_lm,
+    create_dspy_lm,
+)
 from cogniverse_foundation.config.unified_config import (
     LLMEndpointConfig,
     SemanticRouterConfig,
@@ -138,10 +141,14 @@ def ingest_lm_context_for(endpoint: LLMEndpointConfig):
     Ingestion never routes through the semantic-router: a client that gives
     up on a long generation must reach vLLM directly so the request is
     aborted on disconnect instead of running to ``max_tokens``.
+
+    The LM is budgeted: an ingest segment long enough to overflow the served
+    window raises with the window and the measured input instead of reaching
+    the provider as a context-length rejection.
     """
     import dspy
 
-    return dspy.context(lm=create_dspy_lm(endpoint))
+    return dspy.context(lm=create_budgeted_dspy_lm(endpoint))
 
 
 def routed_lm_context_for(
