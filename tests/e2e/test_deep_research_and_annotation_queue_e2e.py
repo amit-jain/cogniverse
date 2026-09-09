@@ -65,7 +65,11 @@ class TestDeepResearchE2E:
             "confidence",
             "rlm_synthesis",
             "rlm_telemetry",
+            "attachment_failures",
+            "attachments_degraded",
         }, result
+        assert result["attachment_failures"] == []
+        assert result["attachments_degraded"] is False
         assert len(result["summary"]) > 50, (
             f"Summary too short ({len(result['summary'])} chars)"
         )
