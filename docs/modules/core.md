@@ -738,6 +738,20 @@ Search agents (document/image) resolve their encoders through this factory,
 passing the merged config, so they route through the deployed sidecar exactly
 as the `/search` path does.
 
+`encoders.py` also defines the two encoder fault types callers distinguish:
+
+- `EncoderNotConfiguredError` (a `ValueError`) — the profile declares no
+  usable encoder: no model name, an inference service with no configured URL,
+  or a missing `schema_config.embedding_dim`.
+- `EncoderUnavailableError` (a `RuntimeError`) — the encoder is configured but
+  its inference service did not serve the request. Carries `profile`,
+  `service` (the name the profile configures) and `endpoint` (the resolved
+  sidecar URL), and chains the underlying failure.
+
+`VespaSearchBackend.search` raises these when it builds or calls the encoder a
+profile declares, so a sidecar outage is never reported as a missing
+`query_embeddings` argument.
+
 ---
 
 ## Event System

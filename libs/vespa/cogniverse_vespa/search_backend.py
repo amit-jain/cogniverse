@@ -57,6 +57,25 @@ _TRANSIENT_SEARCH_ERRORS = (
     VespaError,
 )
 
+
+# An encoder failure that is a SERVICE outage rather than a config gap.
+# CircuitOpenError is included: a tripped per-endpoint breaker means the
+# service has been failing, which is an outage, not a missing setting.
+def _encoder_outage_errors():
+    from cogniverse_core.common.utils.circuit_breaker import CircuitOpenError
+    from cogniverse_foundation.config.inference_service import (
+        InferenceServiceUnavailableError,
+    )
+
+    return (
+        InferenceServiceUnavailableError,
+        CircuitOpenError,
+        requests.RequestException,
+        ConnectionError,
+        TimeoutError,
+    )
+
+
 _SEARCH_CONTENT_TYPES = {
     "audio": ContentType.AUDIO,
     "code": ContentType.DOCUMENT,
@@ -970,11 +989,44 @@ class VespaSearchBackend(SearchBackend):
             dict(backend_section.get("default_profiles", {}) or {}),
         )
 
+    def _encoder_service(self, profile_config):
+        return (profile_config.get("inference_services") or {}).get("embedding")
+
+    def _encoder_endpoint(self, profile_name, profile_config, tenant_id):
+        """The sidecar URL a profile's encoder targets, or None.
+
+        Best-effort: a profile whose named service has no configured URL is
+        reported by the configuration error, so a failure to resolve the
+        endpoint here must not mask the fault being described.
+        """
+        if self._config_manager is None:
+            return None
+        try:
+            from cogniverse_core.query.encoders import _resolve_inference_url
+            from cogniverse_foundation.config.utils import get_config
+
+            cfg = get_config(tenant_id=tenant_id, config_manager=self._config_manager)
+            return _resolve_inference_url(profile_name, profile_config, cfg)
+        except Exception:
+            return None
+
     def _resolve_encoder_for_profile(self, profile_name, profile_config, tenant_id):
         """Build the query encoder a profile declares so callers that delegate
         encoding to the backend need not thread one. Dense profiles resolve to
         the shared SemanticEmbedder; multi-vector profiles to the video encoder
-        factory. Returns None when no encoder is resolvable."""
+        factory.
+
+        Raises:
+            EncoderNotConfiguredError: the profile declares no usable encoder
+                or an incomplete one.
+            EncoderUnavailableError: the encoder is configured but its
+                inference service could not be reached.
+        """
+        from cogniverse_core.query.encoders import (
+            EncoderNotConfiguredError,
+            EncoderUnavailableError,
+        )
+
         embedding_type = str(profile_config.get("embedding_type") or "").lower()
         encoder_name = str(profile_config.get("encoder") or "").lower()
         try:
@@ -988,8 +1040,17 @@ class VespaSearchBackend(SearchBackend):
             model_name = profile_config.get("semantic_model") or profile_config.get(
                 "embedding_model"
             )
-            if not model_name or self._config_manager is None:
-                return None
+            if not model_name:
+                raise EncoderNotConfiguredError(
+                    f"Profile {profile_name!r} declares neither 'semantic_model' "
+                    f"nor 'embedding_model', so no query encoder can be built. "
+                    f"Add one to the profile or pass 'query_embeddings'."
+                )
+            if self._config_manager is None:
+                raise EncoderNotConfiguredError(
+                    f"Profile {profile_name!r} needs a config_manager to resolve "
+                    f"its query encoder, but this backend was built without one."
+                )
             from cogniverse_core.query.encoders import QueryEncoderFactory
             from cogniverse_foundation.config.utils import get_config
 
@@ -997,13 +1058,22 @@ class VespaSearchBackend(SearchBackend):
             return QueryEncoderFactory.create_encoder(
                 profile_name, model_name, config=cfg
             )
+        except (EncoderNotConfiguredError, EncoderUnavailableError):
+            raise
+        except _encoder_outage_errors() as exc:
+            raise EncoderUnavailableError(
+                profile=profile_name,
+                service=self._encoder_service(profile_config),
+                endpoint=self._encoder_endpoint(
+                    profile_name, profile_config, tenant_id
+                ),
+                detail=f"{type(exc).__name__}: {exc}",
+            ) from exc
         except Exception as exc:
-            logger.warning(
-                "Could not resolve an encoder for profile '%s': %r",
-                profile_name,
-                exc,
-            )
-            return None
+            raise EncoderNotConfiguredError(
+                f"Profile {profile_name!r} declares a query encoder that could "
+                f"not be built: {type(exc).__name__}: {exc}"
+            ) from exc
 
     def _search_retried(self, query_dict: Dict[str, Any]) -> List[SearchResult]:
         retry = retry_with_backoff(config=self.retry_config)(self._search_once)
@@ -1329,7 +1399,22 @@ class VespaSearchBackend(SearchBackend):
                         query_length=len(query_text),
                         query=query_text,
                     ) as encode_span_ctx:
-                        query_embeddings = request_encoder.encode(query_text)
+                        try:
+                            query_embeddings = request_encoder.encode(query_text)
+                        except _encoder_outage_errors() as exc:
+                            from cogniverse_core.query.encoders import (
+                                EncoderUnavailableError,
+                            )
+
+                            raise EncoderUnavailableError(
+                                profile=profile_name,
+                                service=self._encoder_service(profile_config)
+                                or getattr(exc, "service", None),
+                                endpoint=self._encoder_endpoint(
+                                    profile_name, profile_config, tenant_id
+                                ),
+                                detail=f"{type(exc).__name__}: {exc}",
+                            ) from exc
                         add_embedding_details_to_span(encode_span_ctx, query_embeddings)
                     if logger.isEnabledFor(logging.DEBUG):
                         logger.debug(
