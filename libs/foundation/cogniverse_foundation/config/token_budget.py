@@ -13,6 +13,7 @@ of demonstrations dropped.
 from __future__ import annotations
 
 import logging
+import threading
 from dataclasses import dataclass
 from typing import Any, Callable, Literal, Sequence
 
@@ -29,6 +30,20 @@ Messages = list[dict[str, Any]]
 TokenCounter = Callable[[Messages], int]
 
 CONTEXT_WINDOW_TIMEOUT_SECONDS = 5.0
+
+# A window is a property of a deployment, so it is read once per
+# (endpoint, model) and held for the process. Ingestion builds a fresh LM per
+# segment; without this every segment would pay a listing round-trip.
+_MAX_MEMOIZED_WINDOWS = 32
+_WINDOW_MEMO: "dict[tuple[str, str], ResolvedContextWindow]" = {}
+_WINDOW_MEMO_LOCK = threading.Lock()
+
+
+def clear_context_window_memo() -> None:
+    """Drop every memoized window so the next resolve re-reads its endpoint."""
+
+    with _WINDOW_MEMO_LOCK:
+        _WINDOW_MEMO.clear()
 
 
 class ContextWindowUnavailableError(RuntimeError):
@@ -275,6 +290,26 @@ def resolve_context_window(
     back to the window the endpoint's configuration declares. With neither,
     there is nothing to budget against and no guess is safe.
     """
+
+    key = (api_base.rstrip("/"), model)
+    with _WINDOW_MEMO_LOCK:
+        memoized = _WINDOW_MEMO.get(key)
+        if memoized is not None:
+            return memoized
+        resolved = _read_context_window(api_base, declared=declared, model=model)
+        if len(_WINDOW_MEMO) >= _MAX_MEMOIZED_WINDOWS:
+            _WINDOW_MEMO.pop(next(iter(_WINDOW_MEMO)))
+        _WINDOW_MEMO[key] = resolved
+        return resolved
+
+
+def _read_context_window(
+    api_base: str,
+    *,
+    declared: int | None,
+    model: str,
+) -> ResolvedContextWindow:
+    """Read the window from the endpoint, falling back to ``declared``."""
 
     try:
         served = fetch_context_window(api_base)

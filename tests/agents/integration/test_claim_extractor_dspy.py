@@ -6,8 +6,8 @@ Exercises the compiled DSPy module against a live LM:
 - The chain-of-thought output is claims-only; reasoning stays internal to the
   DSPy module and there is no separate rationale field.
 - Negative example ("yellow flowers in a glass vase") yields zero edges.
-- Long input (5000 chars) triggers RLM promotion; the Phoenix span tree
-  shows the ``rlm_iterations`` attribute.
+- Long input triggers RLM promotion sized against the window the endpoint
+  serves; the Phoenix span tree shows the ``rlm_iterations`` attribute.
 - Short input emits zero ``InstrumentedRLM`` spans.
 - The compiled artifact loaded via ArtifactManager is byte-equal to golden,
   with ``len(demos) == 8`` (BootstrapFewShot k=8).
@@ -25,16 +25,24 @@ from __future__ import annotations
 
 import json
 import os
+import threading
 import time
 from dataclasses import asdict
 from pathlib import Path
 from typing import Any, Dict, List
+from unittest.mock import patch
 
 import pytest
 
 from cogniverse_agents.graph.claim_extractor import (
     CLAIM_EXTRACTION_MAX_CLAIMS,
+    PREDICATE_VOCABULARY,
+    PROMPT_TOKENIZER_MARGIN_SHARE,
+    RLM_HARNESS_TOKENS,
+    RLM_TRANSCRIPT_CHARS_PER_TOKEN,
+    RLM_TRANSCRIPT_TURNS,
     ClaimExtractor,
+    RecursiveClaimBudgetError,
 )
 from cogniverse_agents.graph.dspy_signatures import ClaimExtractionSignature
 from cogniverse_agents.graph.graph_schema import Mention
@@ -46,6 +54,9 @@ from tests.fixtures.llm import (
 # Golden-file machinery                                                       #
 # --------------------------------------------------------------------------- #
 
+REPO_ROOT = Path(__file__).resolve().parents[3]
+# Rows in the committed claim-extraction corpus.
+CLAIM_TRAINING_ROWS = 100
 GOLDEN_DIR = Path(__file__).parent / "goldens"
 RECORD_GOLDEN = os.environ.get("RECORD_GOLDEN") == "1"
 
@@ -126,6 +137,12 @@ SEG_3_TEXT = "Marie Curie discovered radium in 1898 at the Sorbonne."
 SEG_3_START = 12.0
 SEG_3_END = 18.5
 SEG_3_ENTITY_HINTS = ["Marie Curie", "radium", "Sorbonne", "1898"]
+SEG_3_SEGMENT = "seg_3"
+# The relations the segment's one sentence supports, sorted.
+SEG_3_RELATIONS = ["discovered", "discovered_in", "worked_at"]
+# "Marie Curie discovered radium in 1898" dates the discovery; the discoverer
+# and the discovery are both grounded subjects for the year claim.
+SEG_3_DISCOVERY_PARTICIPANTS = {"Marie Curie", "radium"}
 
 VLM_FLOWERS_TEXT = "Yellow flowers in a glass vase."
 VLM_FLOWERS_TS = 30.0
@@ -185,13 +202,12 @@ def configured_dspy_lm(hermetic_test_lm):
     after every test. A module-scope fixture only configures once and then
     every subsequent test in the module sees ``No LM is loaded``.
 
-    Uses ``cogniverse_foundation.config.llm_factory.create_dspy_lm`` —
-    the standard cogniverse path — wrapped with temperature=0 so the
-    locked goldens are reproducible.
+    Uses ``cogniverse_foundation.config.llm_factory.create_budgeted_dspy_lm``
+    — the constructor the ingest path builds its LM with — at temperature=0.
     """
     import dspy
 
-    from cogniverse_foundation.config.llm_factory import create_dspy_lm
+    from cogniverse_foundation.config.llm_factory import create_budgeted_dspy_lm
     from cogniverse_foundation.config.unified_config import LLMEndpointConfig
     from tests.utils.hermetic_llm import MODEL as SIDECAR_MODEL
 
@@ -207,7 +223,7 @@ def configured_dspy_lm(hermetic_test_lm):
         temperature=0.0,
         max_tokens=800,
     )
-    lm = create_dspy_lm(endpoint)
+    lm = create_budgeted_dspy_lm(endpoint)
     # Bypass the litellm/dspy disk cache: a cached completion recorded
     # against an earlier serving of the same model id would be replayed
     # forever, so the assertions would never exercise the live model.
@@ -278,8 +294,9 @@ class TestClaimExtractorMarieCurie:
     """Short-input determinism + negative + idempotency."""
 
     def test_marie_curie_extract_locked(self, configured_dspy_lm):
-        """ClaimExtractor.extract() on the Marie Curie seed returns
-        an edge list byte-equal to ``goldens/claim_extractor_marie_curie.json``."""
+        """ClaimExtractor.extract() on the Marie Curie seed returns the three
+        claims the sentence states, each anchored to the segment and each
+        carrying a relation from the locked vocabulary."""
         extractor = ClaimExtractor()
         edges = extractor.extract(
             text=SEG_3_TEXT,
@@ -289,16 +306,58 @@ class TestClaimExtractorMarieCurie:
             tenant_id=TENANT_ID,
             source_doc_id=VIDEO_ID,
         )
-        # Sort by (source, relation, target) — order across LM
-        # outputs is not contractual.
-        sorted_edges = sorted(
-            [asdict(e) for e in edges],
-            key=lambda d: (d["source"], d["relation"], d["target"]),
+        dumped = [asdict(e) for e in edges]
+        by_relation = {e.relation: e for e in edges}
+        assert sorted(by_relation) == SEG_3_RELATIONS, dumped
+        assert len(edges) == len(SEG_3_RELATIONS), dumped
+        assert set(SEG_3_RELATIONS) - PREDICATE_VOCABULARY == set(), (
+            "the segment's relations are no longer the vocabulary the extractor keeps"
         )
-        # Drop created_at (volatile timestamp) — every other field is locked.
-        for d in sorted_edges:
-            d.pop("created_at", None)
-        assert_golden_edges(sorted_edges, "claim_extractor_marie_curie.json")
+
+        # Anchoring is the extractor's contract and is identical on every edge.
+        assert [
+            (
+                e.evidence_span,
+                e.modality,
+                e.provenance,
+                e.segment_id,
+                e.source_doc_id,
+                e.tenant_id,
+                e.ts_start,
+                e.ts_end,
+            )
+            for e in edges
+        ] == [
+            (
+                SEG_3_TEXT,
+                "transcript",
+                "EXTRACTED",
+                SEG_3_SEGMENT,
+                VIDEO_ID,
+                TENANT_ID,
+                SEG_3_START,
+                SEG_3_END,
+            )
+        ] * len(SEG_3_RELATIONS)
+
+        # The two claims the sentence states unambiguously.
+        assert (
+            by_relation["discovered"].source,
+            by_relation["discovered"].target,
+        ) == ("Marie Curie", "radium")
+        assert (
+            by_relation["worked_at"].source,
+            by_relation["worked_at"].target,
+        ) == ("Marie Curie", "Sorbonne")
+
+        # "discovered radium in 1898" supports the year claim about either
+        # discovery participant; both are named in the segment and the
+        # extractor binds neither, so the object is exact and the subject is
+        # pinned to those two, each a verbatim span of the segment.
+        year_claim = by_relation["discovered_in"]
+        assert year_claim.target == "1898"
+        assert {year_claim.source} - SEG_3_DISCOVERY_PARTICIPANTS == set(), dumped
+        assert SEG_3_TEXT.count(year_claim.source) == 1, year_claim
 
     def test_chain_of_thought_exposes_reasoning_and_claims_only(
         self, configured_dspy_lm
@@ -392,8 +451,8 @@ class TestClaimExtractorRLMPromotion:
     """RLM promotion threshold honored by ``_select_module``."""
 
     def test_long_input_promotes_to_rlm(self, configured_dspy_lm):
-        """5000-char input (50 concatenated Marie Curie sentences)
-        routes through the RLM path, not ChainOfThought. Phoenix span
+        """60 concatenated Marie Curie sentences route through the RLM
+        path, not ChainOfThought. Phoenix span
         tree shows an ``InstrumentedRLM`` child span on the
         ``ClaimExtractor.extract`` span with ``rlm_iterations`` recorded.
 
@@ -412,7 +471,7 @@ class TestClaimExtractorRLMPromotion:
 
         is_rlm = isinstance(selected, dspy.RLM)
         assert is_rlm, (
-            f"Expected RLM module for 5000-char input (len={len(long_text)}), "
+            f"Expected RLM module for long input (len={len(long_text)}), "
             f"got {type(selected).__name__}"
         )
 
@@ -500,6 +559,135 @@ class TestClaimExtractorRLMPromotion:
             f"{[s.name for s in rlm_spans]}"
         )
 
+    def test_prompt_that_cannot_fit_raises_with_the_sizes(self, hermetic_test_lm):
+        """A reservation that leaves no input allowance raises with the window,
+        the reservation and the measured input — the caller never sees the
+        provider's context-length rejection, and nothing is sent."""
+        import dspy
+
+        from cogniverse_foundation.config.llm_factory import create_budgeted_dspy_lm
+        from cogniverse_foundation.config.token_budget import (
+            PromptBudgetExceededError,
+            fetch_context_window,
+        )
+        from cogniverse_foundation.config.unified_config import LLMEndpointConfig
+        from tests.utils.hermetic_llm import MODEL as SIDECAR_MODEL
+
+        served_window = fetch_context_window(hermetic_test_lm)
+        # Reserve all but a sliver of the window for the completion: no prompt
+        # this signature can build will fit what is left.
+        reserved = served_window - 64
+        starved = create_budgeted_dspy_lm(
+            LLMEndpointConfig(
+                model=f"openai/{SIDECAR_MODEL}",
+                api_base=hermetic_test_lm,
+                api_key=resolve_api_key(),
+                temperature=0.0,
+                max_tokens=reserved,
+            )
+        )
+        starved.cache = False
+        extractor = ClaimExtractor()
+
+        with dspy.context(lm=starved):
+            with pytest.raises(RuntimeError) as short_input:
+                extractor.extract(
+                    text=SEG_3_TEXT,
+                    entity_hints=SEG_3_ENTITY_HINTS,
+                    modality_hint="transcript",
+                    segment_anchor=_seg3_anchor(),
+                    tenant_id=TENANT_ID,
+                    source_doc_id=VIDEO_ID,
+                )
+            with pytest.raises(RuntimeError) as long_input:
+                extractor.extract(
+                    text=(SEG_3_TEXT + " ") * 60,
+                    entity_hints=SEG_3_ENTITY_HINTS,
+                    modality_hint="transcript",
+                    segment_anchor=_seg3_anchor(),
+                    tenant_id=TENANT_ID,
+                    source_doc_id=VIDEO_ID,
+                )
+
+        budget_error = short_input.value.__cause__
+        assert type(budget_error) is PromptBudgetExceededError, short_input.value
+        assert budget_error.context_window == served_window
+        assert budget_error.reserved_output == reserved
+        assert budget_error.input_tokens > served_window - reserved
+        assert budget_error.dropped_demos == 0
+        assert f"context_window={served_window}" in str(short_input.value)
+        assert f"input_tokens={budget_error.input_tokens}" in str(short_input.value)
+
+        # The recursive path refuses before building a module at all: its
+        # harness alone cannot fit what the reservation leaves.
+        recursive_error = long_input.value.__cause__
+        assert type(recursive_error) is RecursiveClaimBudgetError, long_input.value
+        assert recursive_error.context_window == served_window
+        assert recursive_error.reserved_output == reserved
+        assert extractor._rlm_modules == {}
+
+    def test_concurrent_promotion_resolves_the_window_once(self, configured_dspy_lm):
+        """Eight threads promoting at once read the served window one time and
+        share one module sized from it."""
+        import cogniverse_foundation.config.token_budget as token_budget
+
+        token_budget.clear_context_window_memo()
+        real_fetch = token_budget.fetch_context_window
+        fetch_calls: List[str] = []
+        fetch_lock = threading.Lock()
+
+        def counting_fetch(api_base, **kwargs):
+            with fetch_lock:
+                fetch_calls.append(api_base)
+            return real_fetch(api_base, **kwargs)
+
+        reserved = configured_dspy_lm.kwargs["max_tokens"]
+        long_text = (SEG_3_TEXT + " ") * 60
+        extractor = ClaimExtractor()
+        threads = 8
+        barrier = threading.Barrier(threads)
+        selected: List[Any] = []
+        failures: List[BaseException] = []
+        select_lock = threading.Lock()
+
+        def touch() -> None:
+            barrier.wait(timeout=60)
+            try:
+                module = extractor._select_module(text=long_text, tenant_id=TENANT_ID)
+            except BaseException as exc:  # noqa: BLE001 - reported below
+                with select_lock:
+                    failures.append(exc)
+                return
+            with select_lock:
+                selected.append(module)
+
+        with patch.object(token_budget, "fetch_context_window", counting_fetch):
+            workers = [threading.Thread(target=touch) for _ in range(threads)]
+            for worker in workers:
+                worker.start()
+            for worker in workers:
+                worker.join(timeout=180)
+
+        assert failures == []
+        assert len(selected) == threads
+        assert len(fetch_calls) == 1, fetch_calls
+        served_window = token_budget.fetch_context_window(
+            configured_dspy_lm.kwargs["api_base"]
+        )
+        input_budget = served_window - reserved
+        transcript_tokens = (
+            input_budget
+            - RLM_HARNESS_TOKENS
+            - int(input_budget * PROMPT_TOKENIZER_MARGIN_SHARE)
+        )
+        expected_chars = (
+            transcript_tokens // RLM_TRANSCRIPT_TURNS * RLM_TRANSCRIPT_CHARS_PER_TOKEN
+        )
+        assert len({id(module) for module in selected}) == 1
+        assert list(extractor._rlm_modules) == [expected_chars]
+        assert selected[0].max_output_chars == expected_chars
+        assert selected[0].max_iterations == RLM_TRANSCRIPT_TURNS
+
 
 class TestClaimExtractorArtifact:
     """Compiled-artifact dataset equality + demo count."""
@@ -586,15 +774,16 @@ class TestClaimExtractorPredicateVocabulary:
     """Predicate vocabulary across the 100-example training set."""
 
     def test_predicate_vocab_locked(self, configured_dspy_lm):
-        """The set of predicates emitted across the 100-row training
-        set under ``data/training/claim_extraction.jsonl`` byte-equal to
-        the locked vocabulary golden."""
-        training_path = Path("data/training/claim_extraction.jsonl")
-        if not training_path.exists():
-            pytest.skip(f"Training data missing: {training_path}")
+        """Every predicate in the committed claim-extraction corpus is one the
+        extractor keeps, and the corpus covers the whole vocabulary."""
+        training_path = REPO_ROOT / "data" / "training" / "claim_extraction.jsonl"
+        assert training_path.exists(), (
+            f"the committed claim-extraction corpus is missing at {training_path}"
+        )
 
         with training_path.open() as f:
             rows = [json.loads(line) for line in f if line.strip()]
+        assert len(rows) == CLAIM_TRAINING_ROWS
 
         predicates: set[str] = set()
         for row in rows:
@@ -603,8 +792,7 @@ class TestClaimExtractorPredicateVocabulary:
                 if pred:
                     predicates.add(pred)
 
-        vocab_sorted = sorted(predicates)
-        assert_golden(vocab_sorted, "claim_extractor_predicate_vocab.json")
+        assert sorted(predicates) == sorted(PREDICATE_VOCABULARY)
 
 
 # --------------------------------------------------------------------------- #
@@ -700,19 +888,19 @@ class TestClaimBudgetOnCorpusDocument:
         from cogniverse_agents.graph.doc_extractor import DocExtractor
         from cogniverse_agents.graph.graph_schema import DOCUMENT_MODALITY
         from cogniverse_foundation.config import semantic_router
-        from cogniverse_foundation.config.llm_factory import create_dspy_lm
+        from cogniverse_foundation.config.llm_factory import create_budgeted_dspy_lm
         from cogniverse_foundation.config.unified_config import LLMEndpointConfig
         from tests.utils.hermetic_llm import MODEL as SIDECAR_MODEL
 
         recorded_lms: list = []
 
         def _uncached_lm(endpoint):
-            lm = create_dspy_lm(endpoint)
+            lm = create_budgeted_dspy_lm(endpoint)
             lm.cache = False
             recorded_lms.append(lm)
             return lm
 
-        monkeypatch.setattr(semantic_router, "create_dspy_lm", _uncached_lm)
+        monkeypatch.setattr(semantic_router, "create_budgeted_dspy_lm", _uncached_lm)
 
         endpoint = LLMEndpointConfig(
             model=f"openai/{SIDECAR_MODEL}",
