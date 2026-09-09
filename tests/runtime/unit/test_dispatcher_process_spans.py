@@ -28,7 +28,7 @@ from cogniverse_agents.orchestrator_agent import (
 )
 from cogniverse_agents.orchestrator_agent import OrchestratorInput
 from cogniverse_agents.search_agent import SearchAgent as RealSearchAgent
-from cogniverse_agents.search_agent import SearchInput
+from cogniverse_agents.search_agent import SearchInput, SearchOutput
 from cogniverse_foundation.telemetry.config import (
     BatchExportConfig,
     TelemetryConfig,
@@ -86,9 +86,9 @@ class SearchAgent(RealSearchAgent):
         ) as span:
             span.set_attribute("operation", "search")
             span.set_attribute("query", input_data.query)
-        return SimpleNamespace(
+        return SearchOutput(
+            query=input_data.query,
             results=[{"id": "doc-1", "score": 1.0}],
-            enhanced_query=None,
             profile="video_colpali_smol500_mv_frame",
             search_mode="single_profile",
         )

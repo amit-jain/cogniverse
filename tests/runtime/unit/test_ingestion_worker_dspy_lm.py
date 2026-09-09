@@ -42,7 +42,7 @@ def _fresh_worker_lm(monkeypatch):
 
 @pytest.fixture
 def factory_capture(monkeypatch):
-    """Capture the LLMEndpointConfig handed to create_dspy_lm, without
+    """Capture the LLMEndpointConfig handed to create_budgeted_dspy_lm, without
     constructing a real dspy.LM."""
     captured = {}
     fake_lm = MagicMock(name="fake_lm")
@@ -52,7 +52,7 @@ def factory_capture(monkeypatch):
         return fake_lm
 
     monkeypatch.setattr(
-        "cogniverse_foundation.config.llm_factory.create_dspy_lm", _create
+        "cogniverse_foundation.config.llm_factory.create_budgeted_dspy_lm", _create
     )
     captured["fake_lm"] = fake_lm
     return captured
