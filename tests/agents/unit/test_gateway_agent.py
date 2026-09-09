@@ -24,6 +24,17 @@ from tests.agents.unit._recording_telemetry import (
 
 pytestmark = [pytest.mark.unit, pytest.mark.ci_fast]
 
+
+def _memory_config_manager():
+    """The ConfigManager the runtime binds into this agent, over an in-memory store."""
+    from cogniverse_foundation.config.manager import ConfigManager
+    from tests.utils.memory_store import InMemoryConfigStore
+
+    store = InMemoryConfigStore()
+    store.initialize()
+    return ConfigManager(store=store)
+
+
 # ---------------------------------------------------------------------------
 # Fixtures
 # ---------------------------------------------------------------------------
@@ -44,7 +55,9 @@ def mock_gliner_model():
 
 def _make_gateway(**kwargs) -> GatewayAgent:
     deps = GatewayDeps(**kwargs)
-    return GatewayAgent(deps=deps)
+    agent = GatewayAgent(deps=deps)
+    agent.bind_config_manager(_memory_config_manager())
+    return agent
 
 
 def _span_attributes(telemetry: RecordingTelemetryManager, name: str) -> dict:
@@ -91,6 +104,7 @@ class TestGatewayAgentInit:
             fast_path_confidence_threshold=0.9,
         )
         agent = GatewayAgent(deps=deps)
+        agent.bind_config_manager(_memory_config_manager())
         assert agent.deps.gliner_model_name == "custom/model"
         assert agent.deps.gliner_threshold == 0.5
         assert agent.deps.fast_path_confidence_threshold == 0.9

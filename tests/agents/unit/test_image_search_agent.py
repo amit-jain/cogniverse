@@ -24,6 +24,17 @@ from cogniverse_core.query.encoders import QueryEncoderFactory
 
 pytestmark = [pytest.mark.unit, pytest.mark.ci_fast]
 
+
+def _memory_config_manager():
+    """The ConfigManager the runtime binds into this agent, over an in-memory store."""
+    from cogniverse_foundation.config.manager import ConfigManager
+    from tests.utils.memory_store import InMemoryConfigStore
+
+    store = InMemoryConfigStore()
+    store.initialize()
+    return ConfigManager(store=store)
+
+
 _CONFIG = json.loads(Path("configs/config.json").read_text())
 _COLPALI_URL = "http://sentinel-colpali:8000"
 
@@ -59,6 +70,7 @@ class TestImageSearchAgent:
             ),
             port=8005,
         )
+        self.agent.bind_config_manager(_memory_config_manager())
 
     def teardown_method(self):
         QueryEncoderFactory._encoder_cache.clear()

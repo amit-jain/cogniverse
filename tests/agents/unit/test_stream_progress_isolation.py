@@ -14,6 +14,17 @@ import pytest
 
 from cogniverse_core.agents.base import AgentBase, AgentDeps, AgentInput, AgentOutput
 
+
+def _memory_config_manager():
+    """The ConfigManager the runtime binds into this agent, over an in-memory store."""
+    from cogniverse_foundation.config.manager import ConfigManager
+    from tests.utils.memory_store import InMemoryConfigStore
+
+    store = InMemoryConfigStore()
+    store.initialize()
+    return ConfigManager(store=store)
+
+
 pytestmark = [pytest.mark.unit, pytest.mark.ci_fast]
 
 
@@ -35,6 +46,7 @@ class _StreamingAgent(AgentBase[_Input, _Output, _Deps]):
 
     def __init__(self, deps, gate: asyncio.Event):
         super().__init__(deps=deps)
+        self.bind_config_manager(_memory_config_manager())
         self._gate = gate
 
     async def _process_impl(self, input: _Input) -> _Output:
@@ -123,6 +135,7 @@ def _streamify_yielding(chunks):
 class _StreamingAnswerAgent(AgentBase[_AnswerInput, _AnswerOutput, _Deps]):
     def __init__(self, deps, module, output_field="answer"):
         super().__init__(deps=deps)
+        self.bind_config_manager(_memory_config_manager())
         self._module = module
         self._output_field = output_field
 
@@ -139,6 +152,7 @@ class _OuterAgent(AgentBase[_AnswerInput, _AnswerOutput, _Deps]):
 
     def __init__(self, deps, module, inner):
         super().__init__(deps=deps)
+        self.bind_config_manager(_memory_config_manager())
         self._module = module
         self._inner = inner
 

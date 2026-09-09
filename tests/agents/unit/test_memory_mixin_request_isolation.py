@@ -15,11 +15,24 @@ import pytest
 
 from cogniverse_agents.memory_aware_mixin import MemoryAwareMixin
 
+
+def _memory_config_manager():
+    """The ConfigManager the runtime binds into this agent, over an in-memory store."""
+    from cogniverse_foundation.config.manager import ConfigManager
+    from tests.utils.memory_store import InMemoryConfigStore
+
+    store = InMemoryConfigStore()
+    store.initialize()
+    return ConfigManager(store=store)
+
+
 pytestmark = [pytest.mark.unit, pytest.mark.ci_fast]
 
 
 class _Agent(MemoryAwareMixin):
-    pass
+    def __init__(self):
+        super().__init__()
+        self.bind_config_manager(_memory_config_manager())
 
 
 @pytest.mark.asyncio

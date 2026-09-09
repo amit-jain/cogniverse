@@ -18,6 +18,16 @@ from cogniverse_agents.document_agent import (
 pytestmark = [pytest.mark.unit, pytest.mark.ci_fast]
 
 
+def _memory_config_manager():
+    """The ConfigManager the runtime binds into this agent, over an in-memory store."""
+    from cogniverse_foundation.config.manager import ConfigManager
+    from tests.utils.memory_store import InMemoryConfigStore
+
+    store = InMemoryConfigStore()
+    store.initialize()
+    return ConfigManager(store=store)
+
+
 class TestDocumentAgent:
     """Unit tests for DocumentAgent"""
 
@@ -31,6 +41,7 @@ class TestDocumentAgent:
             ),
             port=8007,
         )
+        self.agent.bind_config_manager(_memory_config_manager())
 
     def test_initialization(self):
         """Test agent initialization"""
@@ -422,6 +433,7 @@ class TestSearchDocumentsEventLoop:
             ),
             port=8007,
         )
+        agent.bind_config_manager(_memory_config_manager())
         agent.is_memory_enabled = lambda: True
 
         def slow_recall(query, top_k=3):
@@ -493,7 +505,7 @@ class TestDeployedStrategy:
 
     @staticmethod
     def _agent(deployed):
-        return DocumentAgent(
+        agent = DocumentAgent(
             deps=DocumentAgentDeps(
                 tenant_id="test_tenant",
                 vespa_endpoint="http://localhost:8080",
@@ -501,6 +513,8 @@ class TestDeployedStrategy:
             ),
             port=8007,
         )
+        agent.bind_config_manager(_memory_config_manager())
+        return agent
 
     def test_hybrid_stays_hybrid_when_both_schemas_are_deployed(self):
         agent = self._agent(("document_text", "document_visual"))

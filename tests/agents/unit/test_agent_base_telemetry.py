@@ -21,6 +21,16 @@ from cogniverse_core.agents.base import (
 )
 
 
+def _memory_config_manager():
+    """The ConfigManager the runtime binds into this agent, over an in-memory store."""
+    from cogniverse_foundation.config.manager import ConfigManager
+    from tests.utils.memory_store import InMemoryConfigStore
+
+    store = InMemoryConfigStore()
+    store.initialize()
+    return ConfigManager(store=store)
+
+
 class _SpyTelemetryManager:
     """In-memory stand-in for TelemetryManager.
 
@@ -65,6 +75,10 @@ class _TelemetryDeps(AgentDeps):
 
 
 class _TelemetryAgent(AgentBase[_TelemetryInput, _TelemetryOutput, _TelemetryDeps]):
+    def __init__(self, deps: _TelemetryDeps) -> None:
+        super().__init__(deps=deps)
+        self.bind_config_manager(_memory_config_manager())
+
     async def _process_impl(self, input: _TelemetryInput) -> _TelemetryOutput:
         return _TelemetryOutput(result=f"processed: {input.query}")
 

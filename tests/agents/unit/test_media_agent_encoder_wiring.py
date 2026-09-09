@@ -21,6 +21,17 @@ from cogniverse_core.query.encoders import QueryEncoderFactory
 
 pytestmark = [pytest.mark.unit, pytest.mark.ci_fast]
 
+
+def _memory_config_manager():
+    """The ConfigManager the runtime binds into this agent, over an in-memory store."""
+    from cogniverse_foundation.config.manager import ConfigManager
+    from tests.utils.memory_store import InMemoryConfigStore
+
+    store = InMemoryConfigStore()
+    store.initialize()
+    return ConfigManager(store=store)
+
+
 _CONFIG = json.loads(Path("configs/config.json").read_text())
 _COLBERT_URL = "http://sentinel-colbert:8000"
 _COLPALI_URL = "http://sentinel-colpali:8000"
@@ -55,13 +66,15 @@ def wired():
 def _document_agent(encoder_config):
     from cogniverse_agents.document_agent import DocumentAgent, DocumentAgentDeps
 
-    return DocumentAgent(
+    agent = DocumentAgent(
         deps=DocumentAgentDeps(
             vespa_endpoint="http://localhost:8080",
             tenant_id="acme:acme",
             encoder_config=encoder_config,
         )
     )
+    agent.bind_config_manager(_memory_config_manager())
+    return agent
 
 
 def _image_agent(encoder_config):
@@ -70,13 +83,15 @@ def _image_agent(encoder_config):
         ImageSearchDeps,
     )
 
-    return ImageSearchAgent(
+    agent = ImageSearchAgent(
         deps=ImageSearchDeps(
             vespa_endpoint="http://localhost:8080",
             tenant_id="acme:acme",
             encoder_config=encoder_config,
         )
     )
+    agent.bind_config_manager(_memory_config_manager())
+    return agent
 
 
 class TestDocumentAgentEncoderWiring:
