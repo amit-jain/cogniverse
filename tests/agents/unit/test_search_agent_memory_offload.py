@@ -17,7 +17,7 @@ from types import SimpleNamespace
 import numpy as np
 import pytest
 
-from cogniverse_agents.search_agent import SearchAgent
+from cogniverse_agents.search_agent import EnsembleOutcome, SearchAgent
 
 pytestmark = [pytest.mark.unit, pytest.mark.ci_fast]
 
@@ -60,11 +60,13 @@ async def test_ensemble_remember_success_runs_off_the_event_loop():
     ]
 
     loop_thread = threading.get_ident()
-    results = await agent._search_ensemble(
+    outcome = await agent._search_ensemble(
         "robot dancing", tenant_id="acme:acme", profiles=["p1"], top_k=5
     )
 
-    assert results == [{"id": "d1", "score": 0.9}]
-    assert recorded.get("thread") is not None
+    assert outcome == EnsembleOutcome(
+        results=[{"id": "d1", "score": 0.9}], searched=("p1",), degraded=()
+    )
+    assert set(recorded) == {"thread"}
     # to_thread offload => the blocking Mem0 add ran on a worker thread.
     assert recorded["thread"] != loop_thread
