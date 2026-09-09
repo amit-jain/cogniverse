@@ -87,6 +87,17 @@ MODALITY_KEYWORDS: Dict[str, frozenset] = {
 # the simple fast path rather than spilling to the orchestrator.
 KEYWORD_MODALITY_CONFIDENCE = 0.5
 
+# Backend profile types that hold each modality's content. A caller with a
+# routed modality that needs the profiles carrying it (answer-agent grounding)
+# reads the mapping here instead of re-deriving one.
+MODALITY_PROFILE_TYPES: Dict[str, frozenset] = {
+    "video": frozenset({"video"}),
+    "image": frozenset({"image"}),
+    "audio": frozenset({"audio"}),
+    "document": frozenset({"document", "wiki"}),
+    "text": frozenset({"document", "wiki"}),
+}
+
 # ---------------------------------------------------------------------------
 # Simple route map: (modality, generation_type) -> agent name
 # ---------------------------------------------------------------------------
@@ -111,6 +122,45 @@ SIMPLE_ROUTE_MAP: Dict[Tuple[str, str], str] = {
     ("image", "detailed_report"): "detailed_report_agent",
     ("document", "detailed_report"): "detailed_report_agent",
 }
+
+# ---------------------------------------------------------------------------
+# Modality classification (pure: no model, no I/O)
+# ---------------------------------------------------------------------------
+
+
+def keyword_modalities(query: str) -> Tuple[str, ...]:
+    """Modalities named by literal keyword in the query (model-independent)."""
+    words = set(re.findall(r"[a-z]+", query.lower()))
+    return tuple(
+        modality for modality, keywords in MODALITY_KEYWORDS.items() if words & keywords
+    )
+
+
+def modality_scores(
+    entities: List[Dict[str, Any]], query: str = ""
+) -> Dict[str, float]:
+    """Score every modality the entities or the query's keywords name."""
+    scores: Dict[str, float] = {}
+    for entity in entities:
+        for modality, labels in MODALITY_LABELS.items():
+            if entity["label"] in labels:
+                scores[modality] = max(scores.get(modality, 0.0), entity["score"])
+
+    for modality in keyword_modalities(query):
+        scores.setdefault(modality, KEYWORD_MODALITY_CONFIDENCE)
+    return scores
+
+
+def detected_modalities(entities: List[Dict[str, Any]], query: str = "") -> List[str]:
+    """The full detected modality set, in ``MODALITY_LABELS`` order.
+
+    Empty means the query names no modality. Passing ``entities=[]`` runs the
+    keyword branch alone — the classification a caller without GLiNER output
+    (answer-agent grounding on a direct dispatch) gets from this same function.
+    """
+    scores = modality_scores(entities, query)
+    return [modality for modality in MODALITY_LABELS if modality in scores]
+
 
 # ---------------------------------------------------------------------------
 # Type definitions
@@ -435,35 +485,19 @@ class GatewayAgent(A2AAgent[GatewayInput, GatewayOutput, GatewayDeps]):
 
     def _keyword_modalities(self, query: str) -> Tuple[str, ...]:
         """Modalities named by literal keyword in the query (model-independent)."""
-        words = set(re.findall(r"[a-z]+", query.lower()))
-        return tuple(
-            modality
-            for modality, keywords in MODALITY_KEYWORDS.items()
-            if words & keywords
-        )
+        return keyword_modalities(query)
 
     def _modality_scores(
         self, entities: List[Dict[str, Any]], query: str = ""
     ) -> Dict[str, float]:
         """Return modality scores across every detected modality."""
-        modality_scores: Dict[str, float] = {}
-        for entity in entities:
-            for modality, labels in MODALITY_LABELS.items():
-                if entity["label"] in labels:
-                    modality_scores[modality] = max(
-                        modality_scores.get(modality, 0.0), entity["score"]
-                    )
-
-        for modality in self._keyword_modalities(query):
-            modality_scores.setdefault(modality, KEYWORD_MODALITY_CONFIDENCE)
-        return modality_scores
+        return modality_scores(entities, query)
 
     def _detected_modalities(
         self, entities: List[Dict[str, Any]], query: str = ""
     ) -> List[str]:
         """Return the full ordered detected modality set."""
-        modality_scores = self._modality_scores(entities, query)
-        return [modality for modality in MODALITY_LABELS if modality in modality_scores]
+        return detected_modalities(entities, query)
 
     def _classify_modality(
         self, entities: List[Dict[str, Any]], query: str = ""

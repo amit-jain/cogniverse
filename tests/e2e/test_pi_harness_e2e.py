@@ -253,10 +253,7 @@ def test_a_chat_completion_answers_from_the_seeded_documents(harness_tenant):
     assert set(seeded) == set(SAMPLE_DOCUMENT_TITLES)
 
     # "cogniverse" is the model that routes by modality, so a document query
-    # reaches the document route and the answer is the tenant's own hits. The
-    # per-agent models ground differently: cogniverse/summarizer and
-    # cogniverse/search search the tenant's active_video_profile
-    # (agent_dispatcher.py::_execute_search_task), which holds no documents.
+    # reaches the document route and the answer is the tenant's own hits.
     with httpx.Client(base_url=RUNTIME, timeout=300.0) as client:
         response = client.post(
             "/v1/chat/completions",
@@ -300,3 +297,32 @@ def test_a_chat_completion_answers_from_the_seeded_documents(harness_tenant):
     )
     scores = [float(part[1].split(": ", 1)[0]) for part in rendered]
     assert scores == sorted(scores, reverse=True)
+
+
+def test_the_summarizer_grounds_in_this_tenants_document_profile(harness_tenant):
+    """A summary dispatch grounds in the profiles this tenant serves.
+
+    The tenant deploys only the document profile, so the grounding search runs
+    there and the envelope names it. Grounding used to read the system-level
+    ``active_video_profile``, which this tenant never deployed: zero hits and a
+    summary reporting that no content was provided.
+    """
+    tenant_id, seeded, _key = harness_tenant
+
+    with httpx.Client(base_url=RUNTIME, timeout=300.0) as client:
+        response = client.post(
+            "/agents/summarizer_agent/process",
+            json={"query": DOCUMENT_QUERY, "tenant_id": tenant_id},
+        )
+
+    assert response.status_code == 200, response.text
+    body = response.json()
+    assert body["status"] == "success"
+    assert body["agent"] == "summarizer_agent"
+    assert body["grounding"] == {
+        "state": "searched_servable_profiles",
+        "modalities": ["document"],
+        "profiles": [DOCUMENT_PROFILE],
+        "result_count": len(EXPECTED_TITLE_ORDER),
+    }
+    assert body["result"]["metadata"]["results_analyzed"] == len(EXPECTED_TITLE_ORDER)

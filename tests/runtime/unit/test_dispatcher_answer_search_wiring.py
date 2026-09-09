@@ -9,7 +9,9 @@ when present, else in a fresh search, and that a threaded set skips the redundan
 search.
 """
 
+import json
 from dataclasses import dataclass
+from pathlib import Path
 from types import SimpleNamespace
 from unittest.mock import MagicMock
 
@@ -17,19 +19,85 @@ import pytest
 
 from cogniverse_agents.gateway_agent import GatewayAgent as RealGatewayAgent
 from cogniverse_agents.search_agent import SearchAgent as RealSearchAgent
-from cogniverse_runtime.agent_dispatcher import AgentDispatcher, _flatten_search_hit
+from cogniverse_foundation.config.unified_config import (
+    BackendProfileConfig,
+    SystemConfig,
+)
+from cogniverse_runtime.agent_dispatcher import (
+    GROUNDING_NO_PROFILE_FOR_MODALITY,
+    GROUNDING_NO_SERVABLE_PROFILE,
+    GROUNDING_SEARCH_UNAVAILABLE,
+    GROUNDING_SEARCHED,
+    GROUNDING_TENANT_DEFAULT_PROFILE,
+    GROUNDING_THREADED,
+    AgentDispatcher,
+    AnswerGrounding,
+    _flatten_search_hit,
+)
+
+_SHIPPED_CONFIG = json.loads(
+    (Path(__file__).resolve().parents[3] / "configs" / "config.json").read_text()
+)
+_SHIPPED_PROFILE_DATA = _SHIPPED_CONFIG["backend"]["profiles"]
+_SHIPPED_ACTIVE_PROFILE = _SHIPPED_CONFIG["active_video_profile"]
+_SHIPPED_PROFILES = {
+    name: BackendProfileConfig.from_dict(name, data)
+    for name, data in _SHIPPED_PROFILE_DATA.items()
+}
+_SHIPPED_SERVICE_URLS = {
+    service: "http://inference.test"
+    for data in _SHIPPED_PROFILE_DATA.values()
+    for service in [(data.get("inference_services") or {}).get("embedding")]
+    if service
+}
+
+
+def _profile_names_of_type(*types: str) -> list[str]:
+    """Shipped profile names of these declared types, in servable order."""
+    from cogniverse_agents.profile_selection_agent import _PROFILE_TYPE_ORDER
+
+    return [
+        name
+        for name, profile in sorted(
+            _SHIPPED_PROFILES.items(),
+            key=lambda item: (
+                _PROFILE_TYPE_ORDER.get(
+                    (item[1].type or "").lower(), len(_PROFILE_TYPE_ORDER)
+                ),
+                item[0],
+            ),
+        )
+        if (profile.type or "").lower() in types
+    ]
+
+
+def _config_manager(profiles=None, service_urls=None, active_profile=None):
+    """ConfigManager double shaped like the real one the dispatcher reads.
+
+    ``list_backend_profiles`` returns BackendProfileConfig values and
+    ``get_system_config`` a real SystemConfig, so servable-profile derivation
+    runs the production code path instead of a MagicMock that answers anything.
+    """
+    config_manager = MagicMock()
+    config_manager.get_system_config.return_value = SystemConfig(
+        backend_url="http://localhost",
+        backend_port=8080,
+        inference_service_urls=dict(
+            _SHIPPED_SERVICE_URLS if service_urls is None else service_urls
+        ),
+    )
+    config_manager.list_backend_profiles.return_value = dict(
+        _SHIPPED_PROFILES if profiles is None else profiles
+    )
+    config_manager.active_profile = active_profile
+    return config_manager
 
 
 @pytest.fixture
 def dispatcher():
-    sys_cfg = MagicMock()
-    sys_cfg.backend_url = "http://localhost"
-    sys_cfg.backend_port = 8080
-    config_manager = MagicMock()
-    config_manager.get_system_config.return_value = sys_cfg
     return AgentDispatcher(
         agent_registry=MagicMock(),
-        config_manager=config_manager,
+        config_manager=_config_manager(),
         schema_loader=MagicMock(),
     )
 
@@ -110,7 +178,9 @@ class TestResolveAnswerSearchResults:
         out = await dispatcher._resolve_answer_search_results(
             "q", "acme:acme", {"search_results": threaded}, top_k=20
         )
-        assert out == [_flatten_search_hit(h) for h in threaded]
+        assert out.hits == [_flatten_search_hit(h) for h in threaded]
+        assert out.state == GROUNDING_THREADED
+        assert out.profiles == ()
         assert searched == [], (
             "threaded results present — must not run a redundant search"
         )
@@ -126,7 +196,8 @@ class TestResolveAnswerSearchResults:
         out = await dispatcher._resolve_answer_search_results(
             "q", "acme:acme", None, top_k=20
         )
-        assert out == [_flatten_search_hit(h) for h in hits]
+        assert out.hits == [_flatten_search_hit(h) for h in hits]
+        assert out.state == GROUNDING_SEARCHED
 
     async def test_empty_threaded_list_falls_through_to_search(self, dispatcher):
         hits = [_s3_hit(4)]
@@ -138,7 +209,8 @@ class TestResolveAnswerSearchResults:
         out = await dispatcher._resolve_answer_search_results(
             "q", "acme:acme", {"search_results": []}, top_k=10
         )
-        assert out == [_flatten_search_hit(h) for h in hits]
+        assert out.hits == [_flatten_search_hit(h) for h in hits]
+        assert out.state == GROUNDING_SEARCHED
 
     async def test_non_dict_threaded_items_fall_through_to_search(self, dispatcher):
         """An external caller's context["search_results"] of non-dicts must not
@@ -152,7 +224,8 @@ class TestResolveAnswerSearchResults:
         out = await dispatcher._resolve_answer_search_results(
             "q", "acme:acme", {"search_results": ["foo", "bar", 1]}, top_k=10
         )
-        assert out == [_flatten_search_hit(h) for h in hits]
+        assert out.hits == [_flatten_search_hit(h) for h in hits]
+        assert out.state == GROUNDING_SEARCHED
 
     async def test_search_failure_degrades_to_empty(self, dispatcher):
         """A report/summary request is not inherently a video-search request —
@@ -167,7 +240,13 @@ class TestResolveAnswerSearchResults:
         out = await dispatcher._resolve_answer_search_results(
             "explain deep learning", "acme:acme", None, top_k=10
         )
-        assert out == []
+        assert out.hits == []
+        assert out.state == GROUNDING_SEARCH_UNAVAILABLE
+        assert out.profiles == tuple(
+            _profile_names_of_type(
+                "video", "image", "audio", "document", "wiki", "code"
+            )
+        )
 
 
 @pytest.mark.unit
@@ -478,7 +557,9 @@ class TestAgentBehaviorConfigWiring:
             _CapturingSummarizer,
         )
         monkeypatch.setattr(
-            dispatcher, "_resolve_answer_search_results", AsyncMock(return_value=[])
+            dispatcher,
+            "_resolve_answer_search_results",
+            AsyncMock(return_value=AnswerGrounding(hits=[], state=GROUNDING_SEARCHED)),
         )
 
         agent, typed_input = await dispatcher.create_streaming_agent(
@@ -693,12 +774,14 @@ class TestDownstreamDispatchThreadsRequestContext:
         self, dispatcher, monkeypatch
     ):
         fake_config = MagicMock()
-        fake_config.get = lambda key, default=None: default
+        fake_config.get = lambda key, default=None: (
+            _SHIPPED_ACTIVE_PROFILE if key == "active_video_profile" else default
+        )
         monkeypatch.setattr(
             "cogniverse_foundation.config.utils.get_config",
             lambda **kwargs: fake_config,
         )
-        stub = _SearchAgentStub("video_colpali_smol500_mv_frame")
+        stub = _SearchAgentStub(_SHIPPED_ACTIVE_PROFILE)
         dispatcher._get_search_agent = lambda profile: stub
         dispatcher.consult_egress_policy = lambda *a, **k: None
         dispatcher._verify_egress = lambda *a, **k: None
@@ -924,7 +1007,9 @@ class TestRlmThreadsIntoTypedInputs:
 
     async def test_search_task_threads_rlm_into_input(self, dispatcher, monkeypatch):
         fake_config = MagicMock()
-        fake_config.get = lambda key, default=None: default
+        fake_config.get = lambda key, default=None: (
+            _SHIPPED_ACTIVE_PROFILE if key == "active_video_profile" else default
+        )
         monkeypatch.setattr(
             "cogniverse_foundation.config.utils.get_config",
             lambda **kwargs: fake_config,
@@ -1310,3 +1395,355 @@ class TestStreamingInputsDeriveFromContext:
             "summarizer_agent", "sum it up", "acme:acme"
         )
         assert defaulted.summary_type == "comprehensive"
+
+
+def _document_profiles():
+    return {
+        name: _SHIPPED_PROFILES[name] for name in _profile_names_of_type("document")
+    }
+
+
+def _video_profiles():
+    return {name: _SHIPPED_PROFILES[name] for name in _profile_names_of_type("video")}
+
+
+@pytest.mark.unit
+@pytest.mark.asyncio
+class TestGroundingFollowsTenantServableProfiles:
+    """Grounding searches the profiles the tenant serves for the routed
+    modality. Reading the system-level ``active_video_profile`` grounded every
+    answer in a video profile, so a tenant that ingested only documents got
+    zero hits and the answer LLM replied that no content was provided."""
+
+    @staticmethod
+    def _dispatcher(profiles=None, service_urls=None):
+        return AgentDispatcher(
+            agent_registry=MagicMock(),
+            config_manager=_config_manager(
+                profiles=profiles, service_urls=service_urls
+            ),
+            schema_loader=MagicMock(),
+        )
+
+    @staticmethod
+    def _record_search(dispatcher, results):
+        captured = {}
+
+        async def _search(query, tenant_id, top_k, **kwargs):
+            captured["profiles"] = kwargs["enrichment"]["profiles"]
+            captured["top_k"] = top_k
+            return {"results": results}
+
+        dispatcher._execute_search_task = _search
+        return captured
+
+    async def test_document_only_tenant_searches_its_document_profiles(self):
+        dispatcher = self._dispatcher(profiles=_document_profiles())
+        captured = self._record_search(dispatcher, [_s3_hit(1)])
+
+        out = await dispatcher._resolve_answer_search_results(
+            "summarize the documents about robotics", "acme:acme", None, top_k=10
+        )
+
+        assert captured["profiles"] == _profile_names_of_type("document")
+        assert captured["top_k"] == 10
+        assert out.state == GROUNDING_SEARCHED
+        assert out.modalities == ("document",)
+        assert out.profiles == tuple(_profile_names_of_type("document"))
+        assert out.hits == [_flatten_search_hit(_s3_hit(1))]
+
+    async def test_document_only_tenant_reports_no_video_profile(self):
+        dispatcher = self._dispatcher(profiles=_document_profiles())
+        captured = self._record_search(dispatcher, [_s3_hit(1)])
+
+        out = await dispatcher._resolve_answer_search_results(
+            "summarize the videos about robotics", "acme:acme", None, top_k=10
+        )
+
+        assert captured == {}
+        assert out.state == GROUNDING_NO_PROFILE_FOR_MODALITY
+        assert out.nothing_to_search is True
+        assert out.modalities == ("video",)
+        assert out.profiles == ()
+        assert out.hits == []
+
+    async def test_video_tenant_searches_its_video_profiles(self):
+        dispatcher = self._dispatcher(profiles=_video_profiles())
+        captured = self._record_search(dispatcher, [_s3_hit(2)])
+
+        out = await dispatcher._resolve_answer_search_results(
+            "summarize the videos about robotics", "acme:acme", None, top_k=10
+        )
+
+        assert captured["profiles"] == _profile_names_of_type("video")
+        assert out.state == GROUNDING_SEARCHED
+        assert out.modalities == ("video",)
+        assert out.profiles == tuple(_profile_names_of_type("video"))
+        assert out.hits == [_flatten_search_hit(_s3_hit(2))]
+
+    async def test_router_modality_decision_wins_over_query_keywords(self):
+        dispatcher = self._dispatcher()
+        captured = self._record_search(dispatcher, [])
+
+        out = await dispatcher._resolve_answer_search_results(
+            "summarize the videos about robotics",
+            "acme:acme",
+            {"detected_modalities": ["document"]},
+            top_k=10,
+        )
+
+        assert captured["profiles"] == _profile_names_of_type("document", "wiki")
+        assert out.modalities == ("document",)
+        assert out.profiles == tuple(_profile_names_of_type("document", "wiki"))
+
+    async def test_profiles_whose_inference_service_is_undeployed_are_skipped(self):
+        dispatcher = self._dispatcher(service_urls={})
+        captured = self._record_search(dispatcher, [])
+
+        out = await dispatcher._resolve_answer_search_results(
+            "summarize the documents about robotics", "acme:acme", None, top_k=10
+        )
+
+        servable_without_service = [
+            name
+            for name in _profile_names_of_type("document", "wiki")
+            if not (_SHIPPED_PROFILE_DATA[name].get("inference_services") or {}).get(
+                "embedding"
+            )
+        ]
+        assert captured["profiles"] == servable_without_service
+        assert out.profiles == tuple(servable_without_service)
+
+    async def test_tenant_with_no_servable_profile_uses_the_configured_default(
+        self, monkeypatch
+    ):
+        dispatcher = self._dispatcher(profiles={})
+        fake_config = MagicMock()
+        fake_config.get = lambda key, default=None: (
+            _SHIPPED_ACTIVE_PROFILE if key == "active_video_profile" else default
+        )
+        monkeypatch.setattr(
+            "cogniverse_foundation.config.utils.get_config",
+            lambda **kwargs: fake_config,
+        )
+        captured = self._record_search(dispatcher, [])
+
+        out = await dispatcher._resolve_answer_search_results(
+            "summarize the documents about robotics", "acme:acme", None, top_k=10
+        )
+
+        assert captured["profiles"] == [_SHIPPED_ACTIVE_PROFILE]
+        assert out.state == GROUNDING_TENANT_DEFAULT_PROFILE
+        assert out.profiles == (_SHIPPED_ACTIVE_PROFILE,)
+        assert out.nothing_to_search is False
+
+    async def test_no_servable_profile_and_no_default_has_nothing_to_search(
+        self, monkeypatch
+    ):
+        dispatcher = self._dispatcher(profiles={})
+        fake_config = MagicMock()
+        fake_config.get = lambda key, default=None: default
+        monkeypatch.setattr(
+            "cogniverse_foundation.config.utils.get_config",
+            lambda **kwargs: fake_config,
+        )
+        captured = self._record_search(dispatcher, [])
+
+        out = await dispatcher._resolve_answer_search_results(
+            "summarize the documents about robotics", "acme:acme", None, top_k=10
+        )
+
+        assert captured == {}
+        assert out.state == GROUNDING_NO_SERVABLE_PROFILE
+        assert out.nothing_to_search is True
+        assert out.profiles == ()
+        assert out.hits == []
+
+    async def test_requested_profiles_override_the_servable_derivation(self):
+        dispatcher = self._dispatcher(profiles=_document_profiles())
+        captured = self._record_search(dispatcher, [])
+        requested = _profile_names_of_type("video")[:1]
+
+        out = await dispatcher._resolve_answer_search_results(
+            "summarize the documents about robotics",
+            "acme:acme",
+            {"profiles": requested},
+            top_k=10,
+        )
+
+        assert captured["profiles"] == requested
+        assert out.state == GROUNDING_SEARCHED
+        assert out.profiles == tuple(requested)
+
+    async def test_requested_profile_reaches_the_search_agent_build(
+        self, dispatcher, monkeypatch
+    ):
+        """The searched profile is the SearchAgent's own active_profile, so a
+        resolved grounding profile has to reach _get_search_agent."""
+        fake_config = MagicMock()
+        fake_config.get = lambda key, default=None: (
+            _SHIPPED_ACTIVE_PROFILE if key == "active_video_profile" else default
+        )
+        monkeypatch.setattr(
+            "cogniverse_foundation.config.utils.get_config",
+            lambda **kwargs: fake_config,
+        )
+        built = []
+        dispatcher._get_search_agent = lambda profile: (
+            built.append(profile) or _SearchAgentStub(profile)
+        )
+        dispatcher.consult_egress_policy = lambda *a, **k: None
+        dispatcher._verify_egress = lambda *a, **k: None
+        dispatcher._apply_artefact_overlay = lambda *a, **k: None
+
+        requested = _profile_names_of_type("document")
+        await dispatcher._execute_search_task(
+            "robots", "acme:acme", top_k=5, enrichment={"profiles": requested}
+        )
+
+        assert built == [requested[0]]
+
+
+@pytest.mark.unit
+@pytest.mark.asyncio
+class TestAnswerEnvelopeCarriesGroundingState:
+    """Every answer envelope states how it was grounded, so "this tenant serves
+    nothing to search" is never returned as a confident summary of nothing."""
+
+    @staticmethod
+    def _dispatcher(profiles):
+        dispatcher = AgentDispatcher(
+            agent_registry=MagicMock(),
+            config_manager=_config_manager(profiles=profiles),
+            schema_loader=MagicMock(),
+        )
+        dispatcher._init_agent_memory = lambda *a, **k: None
+        dispatcher.consult_egress_policy = lambda *a, **k: None
+        dispatcher._verify_egress = lambda *a, **k: None
+        dispatcher._apply_artefact_overlay = lambda *a, **k: None
+        return dispatcher
+
+    async def test_summary_envelope_names_the_document_profiles_searched(
+        self, monkeypatch
+    ):
+        dispatcher = self._dispatcher(_document_profiles())
+
+        async def _search(query, tenant_id, top_k, **kwargs):
+            return {"results": [_s3_hit(3)]}
+
+        dispatcher._execute_search_task = _search
+        _CaptureAgent.captured = {}
+        monkeypatch.setattr(
+            "cogniverse_agents.summarizer_agent.SummarizerAgent", _CaptureAgent
+        )
+
+        result = await dispatcher._execute_summarization_task(
+            "summarize the documents about robotics", "acme:acme"
+        )
+
+        assert result["grounding"] == {
+            "state": GROUNDING_SEARCHED,
+            "modalities": ["document"],
+            "profiles": _profile_names_of_type("document"),
+            "result_count": 1,
+        }
+        assert _CaptureAgent.captured["request"].search_results == [
+            _flatten_search_hit(_s3_hit(3))
+        ]
+
+    async def test_summary_with_nothing_to_search_states_it_without_the_agent(
+        self, monkeypatch
+    ):
+        dispatcher = self._dispatcher(_document_profiles())
+
+        class _MustNotBuild:
+            def __init__(self, *args, **kwargs):
+                raise AssertionError(
+                    "nothing to search — the summarizer must not be invoked"
+                )
+
+        monkeypatch.setattr(
+            "cogniverse_agents.summarizer_agent.SummarizerAgent", _MustNotBuild
+        )
+
+        result = await dispatcher._execute_summarization_task(
+            "summarize the videos about robotics", "acme:acme"
+        )
+
+        expected = (
+            "Tenant acme:acme serves no video content, so there is nothing to "
+            "search for this request."
+        )
+        assert result["status"] == "success"
+        assert result["agent"] == "summarizer_agent"
+        assert result["message"] == expected
+        assert result["result"]["summary"] == expected
+        assert result["result"]["key_points"] == []
+        assert result["result"]["confidence_score"] == 0.0
+        assert result["grounding"] == {
+            "state": GROUNDING_NO_PROFILE_FOR_MODALITY,
+            "modalities": ["video"],
+            "profiles": [],
+            "result_count": 0,
+        }
+        assert result["result"]["metadata"]["grounding"] == result["grounding"]
+
+    async def test_report_with_nothing_to_search_states_it_without_the_agent(
+        self, monkeypatch
+    ):
+        dispatcher = self._dispatcher(_document_profiles())
+
+        class _MustNotBuild:
+            def __init__(self, *args, **kwargs):
+                raise AssertionError(
+                    "nothing to search — the report agent must not be invoked"
+                )
+
+        monkeypatch.setattr(
+            "cogniverse_agents.detailed_report_agent.DetailedReportAgent", _MustNotBuild
+        )
+
+        result = await dispatcher._execute_detailed_report_task(
+            "write a detailed report on the videos about robotics", "acme:acme"
+        )
+
+        expected = (
+            "Tenant acme:acme serves no video content, so there is nothing to "
+            "search for this request."
+        )
+        assert result["agent"] == "detailed_report_agent"
+        assert result["message"] == expected
+        assert result["result"]["executive_summary"] == expected
+        assert result["result"]["detailed_findings"] == []
+        assert result["grounding"] == {
+            "state": GROUNDING_NO_PROFILE_FOR_MODALITY,
+            "modalities": ["video"],
+            "profiles": [],
+            "result_count": 0,
+        }
+
+    async def test_search_outage_is_distinguishable_from_nothing_to_search(
+        self, monkeypatch
+    ):
+        dispatcher = self._dispatcher(_document_profiles())
+
+        async def _boom(*args, **kwargs):
+            raise RuntimeError("vespa unreachable")
+
+        dispatcher._execute_search_task = _boom
+        _CaptureAgent.captured = {}
+        monkeypatch.setattr(
+            "cogniverse_agents.summarizer_agent.SummarizerAgent", _CaptureAgent
+        )
+
+        result = await dispatcher._execute_summarization_task(
+            "summarize the documents about robotics", "acme:acme"
+        )
+
+        assert result["grounding"] == {
+            "state": GROUNDING_SEARCH_UNAVAILABLE,
+            "modalities": ["document"],
+            "profiles": _profile_names_of_type("document"),
+            "result_count": 0,
+        }
+        assert _CaptureAgent.captured["request"].search_results == []
