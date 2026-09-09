@@ -77,6 +77,11 @@ jobs:
     - name: Install dependencies
       run: uv sync --all-packages --all-extras --no-extra cuda --no-extra rocm
 
+    - name: Lint and format check for every test module
+      run: |
+        uv run --no-sync ruff check tests/
+        uv run --no-sync ruff format --check tests/
+
     - name: Tests that read a tree outside their own package
       run: |
         JAX_PLATFORM_NAME=cpu uv run --no-sync python -m pytest \
