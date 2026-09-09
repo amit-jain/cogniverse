@@ -906,13 +906,14 @@ that same classifier. Several matching profiles are searched together and
 merged by the SearchAgent's RRF ensemble.
 
 Every answer envelope carries a `grounding` block — `state`, `modalities`,
-`profiles`, `degraded_profiles`, `result_count` — with one of these states:
+`profiles`, `degraded_profiles`, `degraded_query_rewrite`, `result_count` —
+with one of these states:
 
 | state | meaning |
 |---|---|
 | `threaded_results` | grounded in hits the caller supplied |
 | `searched_servable_profiles` | the listed profiles were searched |
-| `searched_servable_profiles_degraded` | some legs were searched, the rest are named under `degraded_profiles` |
+| `searched_servable_profiles_degraded` | some legs were searched and the rest are named under `degraded_profiles`, or the query rewrite degraded and is named under `degraded_query_rewrite` |
 | `tenant_default_profile` | the tenant has no servable profile; the configured `active_video_profile` was searched as a last resort |
 | `no_servable_profile_for_modality` | the tenant serves nothing for this modality |
 | `no_servable_profile` | the tenant has no servable profile and no configured default |
@@ -939,6 +940,16 @@ way; a config that does not declare it raises, rather than searching unbounded. 
 fan-out is paid in parallel: profiles sharing an embedding model share one
 encode, and every profile's query runs concurrently, so a stalled leg costs its
 own stall rather than the stall plus the healthy legs' work.
+
+The grounding search rewrites the query once, through the tenant's LM, inside
+that same budget: `GROUNDING_REWRITE_BUDGET_SHARE` (half) of the ceiling bounds
+the rewrite and leaves the retrieval it feeds the rest, so the rewrite runs for
+one profile and for a fan-out alike and a rewrite that never answers cannot
+consume the search's time. A rewrite that fails or overruns its share searches
+the original query; `degraded_query_rewrite` then names it
+(`query_rewrite_failed` / `query_rewrite_timed_out`) and the state becomes
+`searched_servable_profiles_degraded`, so a degraded rewrite still returns hits
+and is never reported as `search_unavailable`.
 
 Completed dispatch envelopes carry `answer`: the human-facing text of the turn, produced by `harness_turn.extract_answer_text` and read by the wiki auto-file hook and the harness transports. `harness_turn` derives that text from the agent's own output — nested under `result` / `orchestration_result`, or flat for the generic path — falling back to the envelope's message and hits. An error envelope raises `NoAnswerError` and is left without an `answer`, so a failure is never rendered as a reply. The module also holds `derive_request_seed` (the canary/variant bucket for a conversation, anchored on its first user message) and `to_openai_tool_calls`.
 

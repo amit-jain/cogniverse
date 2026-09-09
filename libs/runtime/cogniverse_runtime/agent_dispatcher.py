@@ -394,6 +394,14 @@ GROUNDING_SEARCH_UNAVAILABLE = "search_unavailable"
 # shipped config so a leg that never answers cannot hold the answer open.
 GROUNDING_SEARCH_TIMEOUT_KEY = "answer_grounding_search_timeout_seconds"
 
+# Seconds of that ceiling held back for the retrieval itself. The grounding
+# budget covers one LM round trip (the query rewrite) plus the search it feeds;
+# the rewrite gets the budget less this reserve, so a rewrite that never answers
+# degrades to the original query with time left to search. Measured on one host
+# against real Vespa and the served PyLate sidecar: the search alone runs
+# 0.04-0.13s over one to three profiles, 0.26s cold.
+GROUNDING_SEARCH_RESERVE_S = 2.0
+
 
 @dataclasses.dataclass(frozen=True)
 class AnswerGrounding:
@@ -404,6 +412,7 @@ class AnswerGrounding:
     modalities: Tuple[str, ...] = ()
     profiles: Tuple[str, ...] = ()
     degraded_profiles: Tuple[Tuple[str, str], ...] = ()
+    degraded_query_rewrite: Optional[str] = None
 
     @property
     def nothing_to_search(self) -> bool:
@@ -423,6 +432,7 @@ class AnswerGrounding:
                 {"profile": profile, "reason": reason}
                 for profile, reason in self.degraded_profiles
             ],
+            "degraded_query_rewrite": self.degraded_query_rewrite,
             "result_count": len(self.hits),
         }
 
@@ -2302,6 +2312,7 @@ class AgentDispatcher:
         conversation_history: Optional[List[Dict[str, str]]] = None,
         enrichment: Optional[Dict[str, Any]] = None,
         context: Optional[Dict[str, Any]] = None,
+        query_rewrite_timeout_s: Optional[float] = None,
     ) -> Dict[str, Any]:
         # Drift surfaces as a logged warning here; CNI is the kernel deny.
         self.consult_egress_policy("search_agent")
@@ -2367,6 +2378,7 @@ class AgentDispatcher:
             relationships=enrichment.get("relationships") or [],
             query_variants=enrichment.get("query_variants") or [],
             profiles=enrichment.get("profiles"),
+            query_rewrite_timeout_s=query_rewrite_timeout_s,
             rlm=(context or {}).get("rlm"),
         )
 
@@ -2400,6 +2412,8 @@ class AgentDispatcher:
             "profile": output.profile or profile,
             "profiles": list(output.profiles or []),
             "degraded_profiles": list(output.degraded_profiles),
+            "degraded_query_rewrite": output.degraded_query_rewrite,
+            "enhanced_query": output.enhanced_query,
             "search_mode": output.search_mode,
         }
 
@@ -2603,6 +2617,9 @@ class AgentDispatcher:
                     top_k=top_k,
                     enrichment={**enrichment, "profiles": profiles},
                     context=context,
+                    query_rewrite_timeout_s=max(
+                        budget_s - GROUNDING_SEARCH_RESERVE_S, 0.0
+                    ),
                 ),
                 timeout=budget_s,
             )
@@ -2643,16 +2660,20 @@ class AgentDispatcher:
             for name in (search.get("profiles") or profiles)
             if isinstance(name, str)
         ]
+        rewrite_degraded = search.get("degraded_query_rewrite") or None
         return AnswerGrounding(
             hits=[
                 _flatten_search_hit(h)
                 for h in search.get("results", [])
                 if isinstance(h, dict)
             ],
-            state=GROUNDING_SEARCHED_DEGRADED if degraded else state,
+            state=(
+                GROUNDING_SEARCHED_DEGRADED if degraded or rewrite_degraded else state
+            ),
             modalities=tuple(modalities),
             profiles=tuple(searched),
             degraded_profiles=degraded,
+            degraded_query_rewrite=rewrite_degraded,
         )
 
     async def _grounding_search_budget_s(self, tenant_id: str) -> float:
