@@ -23,9 +23,11 @@ skip individual tests inside an integration file for an infra dep.
 
 from __future__ import annotations
 
+import asyncio
 import json
 import os
 import threading
+import time
 from dataclasses import asdict
 from pathlib import Path
 from typing import Any, Dict, List
@@ -35,16 +37,40 @@ import pytest
 
 from cogniverse_agents.graph.claim_extractor import (
     CLAIM_EXTRACTION_MAX_CLAIMS,
+    CLAIM_RLM_SPAN_ATTRIBUTES,
+    CONTEXT_WINDOW_ATTRIBUTE,
+    INPUT_CHARS_ATTRIBUTE,
+    MAX_OUTPUT_CHARS_ATTRIBUTE,
     PREDICATE_VOCABULARY,
     PROMPT_TOKENIZER_MARGIN_SHARE,
     RLM_HARNESS_TOKENS,
     RLM_TRANSCRIPT_CHARS_PER_TOKEN,
     RLM_TRANSCRIPT_TURNS,
+    SEGMENT_ID_ATTRIBUTE,
+    SOURCE_DOC_ID_ATTRIBUTE,
     ClaimExtractor,
     RecursiveClaimBudgetError,
 )
 from cogniverse_agents.graph.dspy_signatures import ClaimExtractionSignature
 from cogniverse_agents.graph.graph_schema import Mention
+from cogniverse_agents.inference.instrumented_rlm import (
+    MAX_ITERATIONS_ATTRIBUTE,
+    RLM_ITERATIONS_ATTRIBUTE,
+    RLM_RUN_SPAN_ATTRIBUTES,
+    RLM_RUN_SPAN_NAME,
+    reported_rlm_iterations,
+    rlm_run_span,
+)
+from cogniverse_foundation.telemetry.manager import (
+    SPAN_ENVELOPE_ATTRIBUTES,
+    TENANT_ID_ATTRIBUTE,
+)
+from tests.agents.integration.test_agent_telemetry_spans_real_phoenix import (
+    _project_name,
+    _tenant_id,
+    await_phoenix_span_rows,
+    phoenix_span_rows,
+)
 from tests.fixtures.llm import (
     resolve_api_key,
 )
@@ -642,6 +668,411 @@ class TestClaimExtractorRLMPromotion:
         assert list(extractor._rlm_modules) == [expected_chars]
         assert selected[0].max_output_chars == expected_chars
         assert selected[0].max_iterations == RLM_TRANSCRIPT_TURNS
+
+
+# --------------------------------------------------------------------------- #
+# RLM run span                                                                #
+# --------------------------------------------------------------------------- #
+
+# 60 copies of the seed sentence clear RLM_PROMOTION_TOKENS.
+LONG_SEGMENT_TEXT = (SEG_3_TEXT + " ") * 60
+LONG_SEGMENT_ID = "seg_long"
+SHORT_SEGMENT_ID = "seg_short"
+# Seconds a span is given to reach Phoenix, and the window absence is proven
+# over. Batch-exported spans were readable within 2s on this host.
+SPAN_WINDOW_S = 30
+# A refused collector is never on the call path, so emitting spans against one
+# costs only the SDK's own bookkeeping and the batch worker's enqueue. Measured
+# at 0.02s for 5 emissions against 127.0.0.1:29071.
+DEAD_COLLECTOR_EMISSIONS = 5
+DEAD_COLLECTOR_SEAM_CEILING_S = 1.0
+DEAD_COLLECTOR_ENDPOINT = "http://127.0.0.1:29071"
+
+_ATTRIBUTE_COLUMN_PREFIX = "attributes."
+
+
+def _register_served_project(
+    real_telemetry, tenant_id: str, otlp_endpoint: str
+) -> None:
+    """Point one tenant's project at ``otlp_endpoint`` under the SHIPPED export
+    mode.
+
+    ``use_sync_export`` is read off ``BatchExportConfig`` rather than written
+    here, so these tests exercise whichever mode production ships. The claim
+    path must never block on the exporter; if the shipped default ever became
+    synchronous, the dead-collector timings below would say so instead of
+    passing against a mode the test picked for itself.
+    """
+    from cogniverse_foundation.telemetry.config import BatchExportConfig
+
+    real_telemetry.register_project(
+        tenant_id=tenant_id,
+        project_name=None,
+        otlp_endpoint=otlp_endpoint,
+        use_sync_export=BatchExportConfig().use_sync_export,
+    )
+
+
+def _anchor(segment_id: str, text: str) -> Mention:
+    return Mention(
+        source_doc_id=VIDEO_ID,
+        segment_id=segment_id,
+        ts_start=SEG_3_START,
+        ts_end=SEG_3_END,
+        modality="transcript",
+        evidence_span=text[:200],
+    )
+
+
+def _span_attributes(row) -> Dict[str, Any]:
+    """A Phoenix span row's own attributes, keyed as the writer wrote them.
+
+    Phoenix surfaces a dotted key either as a leaf column or as a nested dict
+    under its first segment (``attributes.tenant`` -> ``{"id": ...}``); both are
+    flattened back to the written key.
+    """
+    import pandas as pd
+
+    attributes: Dict[str, Any] = {}
+    for column in row.index:
+        if not column.startswith(_ATTRIBUTE_COLUMN_PREFIX):
+            continue
+        value = row[column]
+        try:
+            if pd.isna(value):
+                continue
+        except (TypeError, ValueError):
+            pass
+        name = column[len(_ATTRIBUTE_COLUMN_PREFIX) :]
+        if isinstance(value, dict):
+            for leaf, leaf_value in value.items():
+                attributes[f"{name}.{leaf}"] = leaf_value
+            continue
+        attributes[name] = value
+    return attributes
+
+
+def _observe_reported_iterations(module, sink: List[int]) -> None:
+    """Record what each call of the real module reports as its REPL turns.
+
+    Wraps the production module's own ``forward``; the module, its interpreter
+    and the LM behind it are untouched.
+    """
+    inner = module.forward
+
+    def forward(**kwargs):
+        prediction = inner(**kwargs)
+        sink.append(reported_rlm_iterations(prediction))
+        return prediction
+
+    module.forward = forward
+
+
+def _canonical_edges(edges) -> str:
+    """Edge list as stable JSON, without the fields that identify the run."""
+    dicts = []
+    for edge in edges:
+        d = asdict(edge)
+        d.pop("created_at", None)
+        d.pop("tenant_id", None)
+        d["edge_id"] = edge.edge_id
+        dicts.append(d)
+    return json.dumps(
+        sorted(dicts, key=lambda d: (d["source"], d["relation"], d["target"])),
+        sort_keys=True,
+        indent=2,
+    )
+
+
+def _expected_output_chars(lm) -> int:
+    """The per-turn REPL budget the production sizing derives from ``lm``."""
+    import cogniverse_foundation.config.token_budget as token_budget
+
+    served_window = token_budget.fetch_context_window(lm.kwargs["api_base"])
+    input_budget = served_window - lm.kwargs["max_tokens"]
+    transcript_tokens = (
+        input_budget
+        - RLM_HARNESS_TOKENS
+        - int(input_budget * PROMPT_TOKENIZER_MARGIN_SHARE)
+    )
+    return transcript_tokens // RLM_TRANSCRIPT_TURNS * RLM_TRANSCRIPT_CHARS_PER_TOKEN
+
+
+class TestClaimExtractorRLMSpan:
+    """The promoted claim path is observable in the tenant's Phoenix project.
+
+    Promotion is the expensive, multi-turn, budget-sensitive branch of claim
+    extraction; without a span its iteration count, the budget it was sized
+    against and its failures are invisible.
+    """
+
+    async def test_promoted_extraction_emits_a_child_run_span(
+        self, configured_dspy_lm, real_telemetry
+    ):
+        """One promoted extraction emits exactly one ``InstrumentedRLM.run``
+        span, carrying its budget and hanging off the KG pass that ran it; the
+        ChainOfThought path emits none, proven against the same project, the
+        same name and the same window.
+
+        The two extractions run the way the ingest path runs them — an
+        ``asyncio.gather`` of ``asyncio.to_thread`` calls inside the KG span
+        (``routers/ingestion.py::_extract_graph_per_segment_inner``) — so the
+        parent assertion covers the context hops production actually makes.
+        """
+        import cogniverse_foundation.config.token_budget as token_budget
+        from cogniverse_runtime.routers.ingestion import KG_EXTRACT_SPAN_NAME
+
+        tenant_id = _tenant_id("claim-rlm-span")
+        _register_served_project(
+            real_telemetry, tenant_id, real_telemetry.config.otlp_endpoint
+        )
+        project_name = _project_name(real_telemetry, tenant_id)
+        phoenix_url = real_telemetry.config.provider_config["http_endpoint"]
+
+        extractor = ClaimExtractor()
+        module = extractor._select_module(text=LONG_SEGMENT_TEXT, tenant_id=tenant_id)
+        reported: List[int] = []
+        _observe_reported_iterations(module, reported)
+
+        def _extract(text: str, segment_id: str):
+            return extractor.extract(
+                text=text,
+                entity_hints=SEG_3_ENTITY_HINTS,
+                modality_hint="transcript",
+                segment_anchor=_anchor(segment_id, text),
+                tenant_id=tenant_id,
+                source_doc_id=VIDEO_ID,
+            )
+
+        with real_telemetry.span(
+            KG_EXTRACT_SPAN_NAME,
+            tenant_id=tenant_id,
+            component="pipeline",
+            attributes={"kg.source_doc_id": VIDEO_ID},
+        ) as kg_span:
+            kg_context = kg_span.get_span_context()
+            long_edges, short_edges = await asyncio.gather(
+                asyncio.to_thread(_extract, LONG_SEGMENT_TEXT, LONG_SEGMENT_ID),
+                asyncio.to_thread(_extract, SEG_3_TEXT, SHORT_SEGMENT_ID),
+            )
+
+        # Both extractions produced their own segment's claims.
+        assert {(e.segment_id, e.source_doc_id, e.tenant_id) for e in long_edges} == {
+            (LONG_SEGMENT_ID, VIDEO_ID, tenant_id)
+        }
+        assert sorted({e.relation for e in short_edges}) == SEG_3_RELATIONS, [
+            (e.source, e.relation, e.target) for e in short_edges
+        ]
+
+        rows = await_phoenix_span_rows(
+            RLM_RUN_SPAN_NAME,
+            project_name,
+            phoenix_url,
+            expected=1,
+            attribute_filters={SEGMENT_ID_ATTRIBUTE: LONG_SEGMENT_ID},
+            max_wait=SPAN_WINDOW_S,
+        )
+        span = rows[0]
+        attributes = _span_attributes(span)
+
+        assert span["name"] == RLM_RUN_SPAN_NAME
+        assert set(attributes) == (
+            CLAIM_RLM_SPAN_ATTRIBUTES
+            | RLM_RUN_SPAN_ATTRIBUTES
+            | SPAN_ENVELOPE_ATTRIBUTES
+        ), sorted(attributes)
+
+        # A child of the KG pass, not a root: same trace, parent is that span.
+        assert span["context.trace_id"] == f"{kg_context.trace_id:032x}"
+        assert span["parent_id"] == f"{kg_context.span_id:016x}", (
+            f"{RLM_RUN_SPAN_NAME} hung off {span['parent_id']!r}, not the "
+            f"{KG_EXTRACT_SPAN_NAME} span that ran it"
+        )
+
+        served_window = token_budget.fetch_context_window(
+            configured_dspy_lm.kwargs["api_base"]
+        )
+        expected_output_chars = _expected_output_chars(configured_dspy_lm)
+        assert module.max_output_chars == expected_output_chars
+        assert reported == [int(attributes[RLM_ITERATIONS_ATTRIBUTE])], (
+            reported,
+            attributes,
+        )
+        assert int(attributes[MAX_ITERATIONS_ATTRIBUTE]) == RLM_TRANSCRIPT_TURNS
+        assert int(attributes[MAX_OUTPUT_CHARS_ATTRIBUTE]) == expected_output_chars
+        assert int(attributes[CONTEXT_WINDOW_ATTRIBUTE]) == served_window
+        assert int(attributes[INPUT_CHARS_ATTRIBUTE]) == len(LONG_SEGMENT_TEXT)
+        assert attributes[SEGMENT_ID_ATTRIBUTE] == LONG_SEGMENT_ID
+        assert attributes[SOURCE_DOC_ID_ATTRIBUTE] == VIDEO_ID
+        assert attributes[TENANT_ID_ATTRIBUTE] == tenant_id
+
+        # The short extraction emitted no run span: the project holds exactly
+        # the one the promoted call emitted.
+        assert (
+            await_phoenix_span_rows(
+                RLM_RUN_SPAN_NAME,
+                project_name,
+                phoenix_url,
+                expected=0,
+                attribute_filters={SEGMENT_ID_ATTRIBUTE: SHORT_SEGMENT_ID},
+                max_wait=SPAN_WINDOW_S,
+            )
+            == []
+        )
+        assert [
+            _span_attributes(row)[SEGMENT_ID_ATTRIBUTE]
+            for row in phoenix_span_rows(RLM_RUN_SPAN_NAME, project_name, phoenix_url)
+        ] == [LONG_SEGMENT_ID]
+
+    def test_concurrent_promoted_extractions_emit_one_span_per_segment(
+        self, configured_dspy_lm, real_telemetry
+    ):
+        """Three tenants promoting at once through one extractor each get their
+        own span; no tenant's project holds another's segment."""
+        threads = 3
+        tenants = [_tenant_id(f"claim-rlm-concurrent-{i}") for i in range(threads)]
+        segments = [f"seg_concurrent_{i}" for i in range(threads)]
+        phoenix_url = real_telemetry.config.provider_config["http_endpoint"]
+        for tenant in tenants:
+            _register_served_project(
+                real_telemetry, tenant, real_telemetry.config.otlp_endpoint
+            )
+
+        extractor = ClaimExtractor()
+        barrier = threading.Barrier(threads)
+        failures: List[BaseException] = []
+        extracted: List[tuple] = []
+        record_lock = threading.Lock()
+
+        def run(index: int) -> None:
+            barrier.wait(timeout=60)
+            try:
+                edges = extractor.extract(
+                    text=LONG_SEGMENT_TEXT,
+                    entity_hints=SEG_3_ENTITY_HINTS,
+                    modality_hint="transcript",
+                    segment_anchor=_anchor(segments[index], LONG_SEGMENT_TEXT),
+                    tenant_id=tenants[index],
+                    source_doc_id=VIDEO_ID,
+                )
+            except BaseException as exc:  # noqa: BLE001 - reported below
+                with record_lock:
+                    failures.append(exc)
+                return
+            with record_lock:
+                extracted.append(
+                    (
+                        tenants[index],
+                        tuple(sorted({(e.tenant_id, e.segment_id) for e in edges})),
+                    )
+                )
+
+        workers = [threading.Thread(target=run, args=(i,)) for i in range(threads)]
+        for worker in workers:
+            worker.start()
+        for worker in workers:
+            worker.join(timeout=900)
+
+        assert failures == []
+        assert sorted(extracted) == sorted(
+            (tenant, ((tenant, segment),)) for tenant, segment in zip(tenants, segments)
+        )
+
+        observed = []
+        for tenant, segment in zip(tenants, segments):
+            rows = await_phoenix_span_rows(
+                RLM_RUN_SPAN_NAME,
+                _project_name(real_telemetry, tenant),
+                phoenix_url,
+                expected=1,
+                max_wait=SPAN_WINDOW_S,
+            )
+            for row in rows:
+                attributes = _span_attributes(row)
+                observed.append(
+                    (
+                        attributes[TENANT_ID_ATTRIBUTE],
+                        attributes[SEGMENT_ID_ATTRIBUTE],
+                        int(attributes[MAX_ITERATIONS_ATTRIBUTE]),
+                        int(attributes[INPUT_CHARS_ATTRIBUTE]),
+                    )
+                )
+        assert sorted(observed) == sorted(
+            (tenant, segment, RLM_TRANSCRIPT_TURNS, len(LONG_SEGMENT_TEXT))
+            for tenant, segment in zip(tenants, segments)
+        )
+
+    def test_dead_collector_changes_neither_the_edges_nor_the_latency(
+        self, configured_dspy_lm, real_telemetry
+    ):
+        """A refused OTLP collector must be invisible to the ingest path.
+
+        Two measurements, because the end-to-end one is dominated by the LM:
+        the seam alone is pinned against a hard ceiling (that is the only cost
+        an exporter can add to the request path), and the whole claim call is
+        then required to land within the healthy runs' own spread of that
+        ceiling. Same edges out of both, and nothing raised.
+        """
+        healthy_tenant = _tenant_id("claim-rlm-healthy")
+        dead_tenant = _tenant_id("claim-rlm-dead")
+        _register_served_project(
+            real_telemetry, healthy_tenant, real_telemetry.config.otlp_endpoint
+        )
+        _register_served_project(real_telemetry, dead_tenant, DEAD_COLLECTOR_ENDPOINT)
+
+        extractor = ClaimExtractor()
+
+        def timed(tenant: str):
+            started = time.monotonic()
+            edges = extractor.extract(
+                text=LONG_SEGMENT_TEXT,
+                entity_hints=SEG_3_ENTITY_HINTS,
+                modality_hint="transcript",
+                segment_anchor=_anchor(LONG_SEGMENT_ID, LONG_SEGMENT_TEXT),
+                tenant_id=tenant,
+                source_doc_id=VIDEO_ID,
+            )
+            return time.monotonic() - started, edges
+
+        first_healthy_s, first_healthy_edges = timed(healthy_tenant)
+        second_healthy_s, second_healthy_edges = timed(healthy_tenant)
+        dead_s, dead_edges = timed(dead_tenant)
+
+        healthy_json = _canonical_edges(first_healthy_edges)
+        assert _canonical_edges(second_healthy_edges) == healthy_json
+        assert _canonical_edges(dead_edges) == healthy_json, (
+            f"--- healthy ---\n{healthy_json}\n"
+            f"--- dead collector ---\n{_canonical_edges(dead_edges)}"
+        )
+        assert {e.tenant_id for e in dead_edges} == {dead_tenant}
+        assert {e.tenant_id for e in first_healthy_edges} == {healthy_tenant}
+
+        emission_started = time.monotonic()
+        for index in range(DEAD_COLLECTOR_EMISSIONS):
+            with rlm_run_span(
+                real_telemetry,
+                tenant_id=dead_tenant,
+                max_iterations=RLM_TRANSCRIPT_TURNS,
+                attributes={SEGMENT_ID_ATTRIBUTE: f"seg_dead_{index}"},
+            ) as run_span:
+                run_span.record(None)
+        emission_s = time.monotonic() - emission_started
+        healthy_spread_s = abs(first_healthy_s - second_healthy_s)
+        slowest_healthy_s = max(first_healthy_s, second_healthy_s)
+        print(
+            "\nclaim extraction latency against a refused collector (seconds)\n"
+            f"  healthy run 1              {first_healthy_s:.3f}\n"
+            f"  healthy run 2              {second_healthy_s:.3f}\n"
+            f"  dead collector             {dead_s:.3f}\n"
+            f"  healthy spread             {healthy_spread_s:.3f}\n"
+            f"  dead - slowest healthy     {dead_s - slowest_healthy_s:.3f}\n"
+            f"  {DEAD_COLLECTOR_EMISSIONS} seam emissions, refused  {emission_s:.3f}\n"
+            f"  seam ceiling: {DEAD_COLLECTOR_SEAM_CEILING_S}s\n"
+        )
+        assert emission_s <= DEAD_COLLECTOR_SEAM_CEILING_S, emission_s
+        assert dead_s - slowest_healthy_s <= (
+            healthy_spread_s + DEAD_COLLECTOR_SEAM_CEILING_S
+        ), (first_healthy_s, second_healthy_s, dead_s)
 
 
 class TestClaimExtractorArtifact:

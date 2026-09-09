@@ -48,6 +48,10 @@ _UPLOAD_CHUNK = 8 * 1024 * 1024  # 8 MiB
 # segments don't flood the sidecar / LM with unbounded concurrent requests.
 _KG_EXTRACT_CONCURRENCY = 8
 
+# Wraps the whole per-segment KG pass. Every span the claim extractor emits
+# below it — including the promoted recursive-LM run — hangs off this one.
+KG_EXTRACT_SPAN_NAME = "pipeline.kg.extract_per_segment"
+
 
 async def _read_capped(file: UploadFile, max_bytes: int) -> bytes:
     """Read an upload into memory, aborting with 413 once it exceeds
@@ -699,7 +703,7 @@ async def _extract_graph_per_segment(
     tm = get_telemetry_manager()
     kg_started = _time.time()
     with tm.span(
-        "pipeline.kg.extract_per_segment",
+        KG_EXTRACT_SPAN_NAME,
         tenant_id=tenant_id,
         component="pipeline",
         attributes={

@@ -1,11 +1,12 @@
-"""Worker default-LM construction must go through create_dspy_lm.
+"""Worker default-LM construction must go through create_budgeted_dspy_lm.
 
 The worker previously built ``dspy.LM(...)`` raw from LLM_ENDPOINT/LLM_MODEL
 env, so the fallback LM (ClaimExtractor when no per-tenant config resolves)
 never got retries/timeout/seed/extra_headers and ignored the config store's
 ``llm_config.primary`` entirely. These tests pin the resolution order:
 config-store primary first, env fallback second, and both paths through the
-``create_dspy_lm`` factory — plus how the resolved LM reaches the job.
+``create_budgeted_dspy_lm`` factory — plus how the resolved LM reaches
+the job.
 """
 
 from __future__ import annotations

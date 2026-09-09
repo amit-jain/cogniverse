@@ -21,12 +21,17 @@ import dspy
 from cogniverse_agents._confidence import parse_confidence
 from cogniverse_agents.graph.dspy_signatures import ClaimExtractionSignature
 from cogniverse_agents.graph.graph_schema import Edge, Mention
+from cogniverse_agents.inference.instrumented_rlm import (
+    InstrumentedRLM,
+    rlm_run_span,
+)
 from cogniverse_core.common.utils.async_bridge import run_coro_blocking
 from cogniverse_foundation.config.budgeted_lm import BudgetedLM
 from cogniverse_foundation.config.token_budget import (
     ContextWindowUnavailableError,
     TokenBudget,
 )
+from cogniverse_foundation.telemetry.manager import get_telemetry_manager
 
 logger = logging.getLogger(__name__)
 
@@ -83,6 +88,23 @@ PROMPT_TOKENIZER_MARGIN_SHARE = 0.10
 
 # Hard cap on the verbatim evidence_span length stored on each Edge.
 _MAX_EVIDENCE_CHARS = 200
+
+# What the promoted claim pass adds to its ``InstrumentedRLM.run`` span: the
+# budget the module was sized against and the segment the call belongs to.
+MAX_OUTPUT_CHARS_ATTRIBUTE = "max_output_chars"
+CONTEXT_WINDOW_ATTRIBUTE = "context_window"
+INPUT_CHARS_ATTRIBUTE = "input_chars"
+SEGMENT_ID_ATTRIBUTE = "segment_id"
+SOURCE_DOC_ID_ATTRIBUTE = "source_doc_id"
+CLAIM_RLM_SPAN_ATTRIBUTES = frozenset(
+    {
+        MAX_OUTPUT_CHARS_ATTRIBUTE,
+        CONTEXT_WINDOW_ATTRIBUTE,
+        INPUT_CHARS_ATTRIBUTE,
+        SEGMENT_ID_ATTRIBUTE,
+        SOURCE_DOC_ID_ATTRIBUTE,
+    }
+)
 
 # The locked predicate vocabulary. Edges whose ``relation`` does not
 # fall into this set after normalization are dropped — the KG only
@@ -222,7 +244,7 @@ class ClaimExtractor:
         # One module per distinct transcript cap: the cap is derived from the
         # window the serving endpoint reports, and one extractor can be driven
         # against endpoints with different windows.
-        self._rlm_modules: Dict[int, dspy.RLM] = {}
+        self._rlm_modules: Dict[int, InstrumentedRLM] = {}
         # Guards the lazy module build below: the per-segment KG claim pass
         # invokes one shared extractor from several threads at once, so an
         # unguarded ``if self._cot_module is None`` would double-build the
@@ -315,24 +337,71 @@ class ClaimExtractor:
             )
 
             with ingest_lm_context_for(self._llm_config):
-                module = self._select_module(text=text, tenant_id=tenant_id)
+                return self._run_module(
+                    text=text,
+                    text_for_lm=text_for_lm,
+                    entity_hints=entity_hints,
+                    modality_hint=modality_hint,
+                    tenant_id=tenant_id,
+                    source_doc_id=source_doc_id,
+                    segment_anchor=segment_anchor,
+                )
+        return self._run_module(
+            text=text,
+            text_for_lm=text_for_lm,
+            entity_hints=entity_hints,
+            modality_hint=modality_hint,
+            tenant_id=tenant_id,
+            source_doc_id=source_doc_id,
+            segment_anchor=segment_anchor,
+        )
+
+    def _run_module(
+        self,
+        *,
+        text: str,
+        text_for_lm: str,
+        entity_hints: List[str],
+        modality_hint: str,
+        tenant_id: str,
+        source_doc_id: str,
+        segment_anchor: Mention,
+    ) -> dspy.Prediction:
+        """Call the selected module, under a run span when it is the recursive
+        one.
+
+        The recursive path is the expensive branch — several REPL turns against
+        the served window — so it carries the span that attributes its iteration
+        count and the budget it was sized against. The single-prompt path is
+        one completion and emits nothing.
+        """
+        module = self._select_module(text=text, tenant_id=tenant_id)
+        if isinstance(module, InstrumentedRLM):
+            budget = self._serving_token_budget()
+            with rlm_run_span(
+                get_telemetry_manager(),
+                tenant_id=tenant_id,
+                max_iterations=module.max_iterations,
+                attributes={
+                    MAX_OUTPUT_CHARS_ATTRIBUTE: int(module.max_output_chars),
+                    CONTEXT_WINDOW_ATTRIBUTE: int(budget.context_window),
+                    INPUT_CHARS_ATTRIBUTE: len(text),
+                    SEGMENT_ID_ATTRIBUTE: segment_anchor.segment_id,
+                    SOURCE_DOC_ID_ATTRIBUTE: source_doc_id,
+                },
+            ) as run_span:
                 prediction = module(
                     text_segment=text_for_lm,
                     entity_hints=entity_hints,
                     modality_hint=modality_hint,
                 )
-                self._raise_if_length_truncated(
-                    dspy.settings.lm,
-                    source_doc_id=source_doc_id,
-                    segment_anchor=segment_anchor,
-                )
-                return prediction
-        module = self._select_module(text=text, tenant_id=tenant_id)
-        prediction = module(
-            text_segment=text_for_lm,
-            entity_hints=entity_hints,
-            modality_hint=modality_hint,
-        )
+                run_span.record(prediction)
+        else:
+            prediction = module(
+                text_segment=text_for_lm,
+                entity_hints=entity_hints,
+                modality_hint=modality_hint,
+            )
         self._raise_if_length_truncated(
             dspy.settings.lm,
             source_doc_id=source_doc_id,
@@ -384,7 +453,7 @@ class ClaimExtractor:
                 with self._module_lock:
                     module = self._rlm_modules.get(output_chars)
                     if module is None:
-                        module = dspy.RLM(
+                        module = InstrumentedRLM(
                             ClaimExtractionSignature,
                             max_iterations=RLM_TRANSCRIPT_TURNS,
                             max_output_chars=output_chars,

@@ -2244,7 +2244,10 @@ class OrchestratorAgent(
         REPL iterations the RLM actually used, so callers can correlate
         the heavier substrate with its iteration cost.
         """
-        from cogniverse_agents.inference.instrumented_rlm import InstrumentedRLM
+        from cogniverse_agents.inference.instrumented_rlm import (
+            InstrumentedRLM,
+            rlm_run_span,
+        )
 
         evidence_chars = len(json.dumps(accumulated_evidence, default=str))
         module = self._build_gate_module(evidence_chars)
@@ -2260,49 +2263,26 @@ class OrchestratorAgent(
 
         prediction: Any = None
         gate_error: Optional[Exception] = None
-        if is_rlm and getattr(self, "telemetry_manager", None) is not None:
+        if is_rlm:
             tenant_id = (
                 _request_tenant_id.get()
                 or getattr(self.deps, "tenant_id", None)
                 or SYSTEM_TENANT_ID
             )
-            try:
-                with self.telemetry_manager.span(
-                    name="InstrumentedRLM.run",
-                    tenant_id=tenant_id,
-                    attributes={
-                        "iteration_idx": int(iteration_idx),
-                        "evidence_chars": int(evidence_chars),
-                        "max_iterations": int(getattr(module, "max_iterations", 0)),
-                    },
-                ) as rlm_span:
-                    try:
-                        prediction = await _invoke()
-                    except Exception as exc:
-                        gate_error = exc
-                    # Record the RLM's actual REPL iteration count from
-                    # the returned Prediction.trajectory (dspy.RLM populates
-                    # this with one entry per REPL step). Falls back to
-                    # max_iterations when trajectory isn't available
-                    # (e.g. early failure).
-                    rlm_iterations = 0
-                    if prediction is not None:
-                        traj = getattr(prediction, "trajectory", None)
-                        if isinstance(traj, list):
-                            rlm_iterations = len(traj)
-                    try:
-                        rlm_span.set_attribute("rlm_iterations", int(rlm_iterations))
-                    except Exception:
-                        logger.debug(
-                            "Failed to set rlm_iterations attribute on RLM span"
-                        )
-            except Exception as exc:  # pragma: no cover - telemetry best-effort
-                logger.debug("InstrumentedRLM.run span emission failed: %s", exc)
-                if prediction is None and gate_error is None:
-                    try:
-                        prediction = await _invoke()
-                    except Exception as exc2:
-                        gate_error = exc2
+            with rlm_run_span(
+                getattr(self, "telemetry_manager", None),
+                tenant_id=tenant_id,
+                max_iterations=int(getattr(module, "max_iterations", 0)),
+                attributes={
+                    "iteration_idx": int(iteration_idx),
+                    "evidence_chars": int(evidence_chars),
+                },
+            ) as run_span:
+                try:
+                    prediction = await _invoke()
+                except Exception as exc:
+                    gate_error = exc
+                run_span.record(prediction)
         else:
             try:
                 prediction = await _invoke()

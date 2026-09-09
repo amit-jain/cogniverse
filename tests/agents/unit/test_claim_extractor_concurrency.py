@@ -165,7 +165,11 @@ def test_rlm_module_builds_once_under_concurrent_first_touch(monkeypatch):
             builds.append(object())
         return object()
 
-    monkeypatch.setattr(dspy, "RLM", counting_factory)
+    # The extractor builds InstrumentedRLM, so that is the name to intercept:
+    # patching dspy.RLM counts nothing and the guard reads as untested.
+    monkeypatch.setattr(
+        "cogniverse_agents.graph.claim_extractor.InstrumentedRLM", counting_factory
+    )
 
     n = 16
     barrier = threading.Barrier(n)
