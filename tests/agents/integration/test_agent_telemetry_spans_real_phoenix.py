@@ -24,6 +24,7 @@ import asyncio
 import inspect
 import re
 import time
+from pathlib import Path
 from unittest.mock import MagicMock, patch
 from uuid import uuid4
 
@@ -139,6 +140,28 @@ def _query_phoenix_for_span(
         f"Phoenix span {span_name!r} was not found in project {project_name!r} "
         f"within {max_wait}s at {phoenix_http_url!r}"
     )
+
+
+class _FixedElapsedClock:
+    """Stand in for the ``time`` module inside one module's namespace.
+
+    The first ``monotonic()`` is the request start and every later call reads
+    the same later instant, so a span's recorded duration is exactly
+    ``elapsed`` however many times the code under test reads the clock. Every
+    other attribute falls through to the real module.
+    """
+
+    def __init__(self, start: float, elapsed: float) -> None:
+        self._start = start
+        self._later = start + elapsed
+        self._reads = 0
+
+    def monotonic(self) -> float:
+        self._reads += 1
+        return self._start if self._reads == 1 else self._later
+
+    def __getattr__(self, name):
+        return getattr(time, name)
 
 
 def _tenant_id(prefix: str) -> str:
@@ -259,6 +282,9 @@ class TestAgentTelemetrySpansRealPhoenix:
 # cogniverse.query_enhancement, cogniverse.profile_selection, cogniverse.orchestration
 
 
+# Wall-clock seconds the fake clock reports for the orchestration request.
+ORCHESTRATION_ELAPSED_SECONDS = 7.5
+
 # Map of custom span names to the A2A agents that emit them
 A2A_CUSTOM_SPANS = {
     SPAN_NAME_GATEWAY: "GatewayAgent",
@@ -267,6 +293,33 @@ A2A_CUSTOM_SPANS = {
     SPAN_NAME_PROFILE_SELECTION: "ProfileSelectionAgent",
     SPAN_NAME_ORCHESTRATION: "OrchestratorAgent",
 }
+
+
+# Span names this module covers outside the A2A custom-span class.
+SPANS_COVERED_OUTSIDE_A2A = {
+    SPAN_NAME_ROUTING: "test_routing_span_records_entity_extraction_failed",
+}
+
+
+def _emitted_span_names() -> set:
+    """Declared span names that some module under ``libs/`` emits."""
+    from cogniverse_foundation.telemetry import config as telemetry_config
+
+    declared = {
+        name: value
+        for name, value in vars(telemetry_config).items()
+        if name.startswith("SPAN_NAME_") and isinstance(value, str)
+    }
+    declaring_module = Path(telemetry_config.__file__).resolve()
+    emitted = set()
+    for path in (Path(__file__).resolve().parents[3] / "libs").rglob("*.py"):
+        if path.resolve() == declaring_module:
+            continue
+        source = path.read_text(errors="replace")
+        for name, value in declared.items():
+            if name in source or f'"{value}"' in source:
+                emitted.add(value)
+    return emitted
 
 
 @pytest.mark.integration
@@ -780,9 +833,9 @@ class TestA2ACustomTelemetrySpansRealPhoenix:
             patch.object(agent, "_create_plan", return_value=mock_plan),
             patch.object(agent, "_aggregate_results", return_value=final_output),
             patch.object(
-                orchestrator_mod.time,
-                "monotonic",
-                side_effect=[100.0, 101.0, 103.0, 107.5],
+                orchestrator_mod,
+                "time",
+                _FixedElapsedClock(100.0, ORCHESTRATION_ELAPSED_SECONDS),
             ),
             patch.object(
                 agent,
@@ -854,7 +907,7 @@ class TestA2ACustomTelemetrySpansRealPhoenix:
                 "agent_sequence": ["search_agent"],
                 "execution_order": ["search_agent"],
                 "pattern": "sequential",
-                "execution_time": 7.5,
+                "execution_time": ORCHESTRATION_ELAPSED_SECONDS,
                 "success": True,
                 "tasks_completed": 1,
             },
@@ -868,19 +921,15 @@ class TestA2ACustomTelemetrySpansRealPhoenix:
 
     @pytest.mark.asyncio
     async def test_all_a2a_custom_span_names_documented(self, real_telemetry):
-        """Verify our test covers all known A2A custom span names."""
-        # This is a meta-test: if someone adds a new A2A agent with a custom
-        # span but forgets to add a test case above, this will catch it.
-        expected_spans = {
-            SPAN_NAME_GATEWAY,
-            SPAN_NAME_ENTITY_EXTRACTION,
-            SPAN_NAME_QUERY_ENHANCEMENT,
-            SPAN_NAME_PROFILE_SELECTION,
-            SPAN_NAME_ORCHESTRATION,
-        }
-        tested_spans = set(A2A_CUSTOM_SPANS.keys())
-        assert tested_spans == expected_spans, (
-            f"A2A_CUSTOM_SPANS is out of date. "
-            f"Missing: {expected_spans - tested_spans}, "
-            f"Extra: {tested_spans - expected_spans}"
+        """Every custom span name a library emits is exercised by this module.
+
+        The expected set is read from the foundation's declarations and the
+        libraries that emit them, so a new agent span fails here until a case
+        above covers it.
+        """
+        emitted = _emitted_span_names()
+        covered = set(A2A_CUSTOM_SPANS) | set(SPANS_COVERED_OUTSIDE_A2A)
+        assert covered == emitted, (
+            f"span coverage drifted. Emitted but untested: {emitted - covered}, "
+            f"tested but no longer emitted: {covered - emitted}"
         )
