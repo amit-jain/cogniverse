@@ -38,7 +38,10 @@ from cogniverse_synthetic.schemas import (
     WorkflowExecutionSchema,
 )
 from cogniverse_synthetic.utils import AgentInferrer
-from tests.utils.memory_store import InMemoryConfigStore
+from tests.utils.memory_store import (
+    InMemoryConfigStore,
+    register_deployed_schema,
+)
 
 pytestmark = [pytest.mark.unit]
 
@@ -67,9 +70,11 @@ def _profile_generation_config_manager(
             embedding_service = inference_services.get("embedding")
             if isinstance(embedding_service, str) and embedding_service.strip():
                 service_urls[embedding_service] = f"http://{embedding_service}.invalid"
-        config_manager.add_backend_profile(
-            BackendProfileConfig.from_dict(profile_name, profile_config),
-            tenant_id=tenant_id,
+        profile = BackendProfileConfig.from_dict(profile_name, profile_config)
+        config_manager.add_backend_profile(profile, tenant_id=tenant_id)
+        # A profile is servable only once the tenant's schema for it is deployed.
+        register_deployed_schema(
+            config_manager, tenant_id, profile.schema_name or profile_name
         )
     config_manager.set_system_config(SystemConfig(inference_service_urls=service_urls))
     return config_manager

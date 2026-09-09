@@ -34,7 +34,10 @@ from cogniverse_synthetic.schemas import (
     WorkflowExecutionSchema,
 )
 from cogniverse_synthetic.service import SyntheticDataService
-from tests.utils.memory_store import InMemoryConfigStore
+from tests.utils.memory_store import (
+    InMemoryConfigStore,
+    register_deployed_schema,
+)
 
 pytestmark = [pytest.mark.unit]
 
@@ -186,6 +189,7 @@ def _profile_generation_config_manager(
     *,
     tenant_id: str = "test:unit",
     tenant_ids: tuple[str, ...] | None = None,
+    deployed_schemas: dict[str, set[str]] | None = None,
 ) -> ConfigManager:
     config_manager = ConfigManager(store=InMemoryConfigStore())
     service_urls: dict[str, str] = {}
@@ -202,6 +206,19 @@ def _profile_generation_config_manager(
                 profile,
                 tenant_id=seeded_tenant_id,
             )
+    # A profile is servable only once the tenant's schema for it is deployed, and
+    # the backend reads that from the registry rows a deploy writes.
+    for seeded_tenant_id in seeded_tenant_ids:
+        seeded_schemas = (
+            deployed_schemas[seeded_tenant_id]
+            if deployed_schemas is not None
+            else {
+                profile.schema_name or profile_name
+                for profile_name, profile in profiles.items()
+            }
+        )
+        for base_schema_name in sorted(seeded_schemas):
+            register_deployed_schema(config_manager, seeded_tenant_id, base_schema_name)
     config_manager.set_system_config(SystemConfig(inference_service_urls=service_urls))
     return config_manager
 
@@ -217,6 +234,7 @@ def _attach_profile_config_manager(
         profiles,
         tenant_id=tenant_id,
         tenant_ids=tenant_ids,
+        deployed_schemas=getattr(backend, "deployed_schemas", None),
     )
     return backend
 
@@ -1980,7 +1998,6 @@ async def test_generation_uses_only_each_tenants_deployed_profiles_concurrently(
         ]
     )
 
-    expected_available_profiles = "profile_b,profile_a"
     for tenant, response in zip(tenants, responses, strict=True):
         expected_profile = (
             "profile_a" if deployed[tenant] == {"audio_content"} else "profile_b"
@@ -1988,7 +2005,9 @@ async def test_generation_uses_only_each_tenants_deployed_profiles_concurrently(
         expected_modality = "audio" if expected_profile == "profile_a" else "document"
         expected_schema = next(iter(deployed[tenant]))
         assert response.selected_profiles == [expected_profile]
-        assert response.data[0]["available_profiles"] == expected_available_profiles
+        # The labeler is offered the tenant's servable profiles, and the profile
+        # whose schema this tenant never deployed is not one of them.
+        assert response.data[0]["available_profiles"] == expected_profile
         assert response.data[0]["selected_profile"] == expected_profile
         assert response.data[0]["modality"] == expected_modality
         assert response.data[0]["query_intent"] == f"{expected_modality}_search"
