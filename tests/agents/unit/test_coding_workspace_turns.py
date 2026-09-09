@@ -11,6 +11,17 @@ import pytest
 
 from cogniverse_agents import coding_agent as coding
 
+
+def _memory_config_manager():
+    """The injected ConfigManager the agent constructor requires."""
+    from cogniverse_foundation.config.manager import ConfigManager
+    from tests.utils.memory_store import InMemoryConfigStore
+
+    store = InMemoryConfigStore()
+    store.initialize()
+    return ConfigManager(store=store)
+
+
 pytestmark = [pytest.mark.unit, pytest.mark.ci_fast]
 
 TOOLS = [
@@ -58,7 +69,10 @@ def envelope(**kwargs):
 
 
 def controlled_agent(monkeypatch, decisions):
-    agent = coding.CodingAgent(coding.CodingDeps(tenant_id="workspace:workspace"))
+    agent = coding.CodingAgent(
+        coding.CodingDeps(tenant_id="workspace:workspace"),
+        config_manager=_memory_config_manager(),
+    )
     calls = []
 
     async def decide(module, **kwargs):
@@ -298,7 +312,10 @@ async def test_workspace_memory_reads_run_off_loop_with_tenant_isolation(monkeyp
 async def test_staging_directory_removed_when_generation_fails(
     monkeypatch, tmp_path, cancel
 ):
-    agent = coding.CodingAgent(coding.CodingDeps(tenant_id="workspace:workspace"))
+    agent = coding.CodingAgent(
+        coding.CodingDeps(tenant_id="workspace:workspace"),
+        config_manager=_memory_config_manager(),
+    )
     started = asyncio.Event()
     release = asyncio.Event()
     created = []
@@ -342,7 +359,10 @@ async def test_staging_directory_removed_when_generation_fails(
 
 @pytest.mark.asyncio
 async def test_workspace_lm_connection_failure_is_not_completion():
-    agent = coding.CodingAgent(coding.CodingDeps(tenant_id="workspace:workspace"))
+    agent = coding.CodingAgent(
+        coding.CodingDeps(tenant_id="workspace:workspace"),
+        config_manager=_memory_config_manager(),
+    )
     lm = dspy.LM(
         "openai/unavailable",
         api_base="http://127.0.0.1:29071/v1",
