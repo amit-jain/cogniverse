@@ -463,6 +463,15 @@ _ITER_RETRIEVAL_TOKEN_BUDGET: Optional[int] = None
 _ITER_RETRIEVAL_WALL_CLOCK_MS: Optional[int] = None
 
 
+# The keys every sufficient-context gate decision carries.
+SUFFICIENCY_GATE_FIELDS = (
+    "confidence",
+    "missing_aspects",
+    "rationale",
+    "sufficient",
+)
+
+
 @dataclass
 class AccumulatedEvidence:
     """Output of the orchestrator's iterative retrieval loop.
@@ -471,9 +480,8 @@ class AccumulatedEvidence:
     iterations. Each snippet is a dict with at least
     ``{source_doc_id, segment_id, ts_start, ts_end, text}`` plus optional
     ranking / modality fields. ``final_gate_output`` mirrors the last
-    sufficient-context gate decision (with keys ``sufficient``,
-    ``missing_aspects``, ``confidence``, ``rationale``) so callers can
-    surface why the loop stopped without re-running it.
+    sufficient-context gate decision, keyed by ``SUFFICIENCY_GATE_FIELDS``,
+    so callers can surface why the loop stopped without re-running it.
 
     ``trace_id`` is the OTEL trace id of the orchestration span; tests
     use it to fetch the ``retrieval_iteration`` child spans from Phoenix.

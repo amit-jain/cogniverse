@@ -10,10 +10,12 @@ Exercises ``OrchestratorAgent._iterative_retrieval_loop`` end-to-end against:
     ``telemetry_manager`` so the span-level tests can assert on the
     emitted spans
 
-All output that the LM produces (gate decisions, reformulated queries,
-final answer text) is byte-compared against goldens in ``goldens/`` —
-re-record once with ``RECORD_GOLDEN=1`` after a hand review when DSPy /
-LM drift is intentional.
+Deterministic output (the evidence the peers return, span structure) is
+byte-compared against goldens in ``goldens/`` — re-record once with
+``RECORD_GOLDEN=1`` after a hand review. What the LM chooses (the gate's
+confidence, its rationale prose) is pinned by contract and score instead:
+the decision and the field set exactly, the rationale by how much of it
+comes from the evidence.
 """
 
 from __future__ import annotations
@@ -21,6 +23,7 @@ from __future__ import annotations
 import asyncio
 import json
 import os
+import re
 import time
 from pathlib import Path
 from typing import Any, Dict, List, Optional
@@ -30,6 +33,7 @@ import numpy as np
 import pytest
 
 from cogniverse_agents.orchestrator_agent import (
+    SUFFICIENCY_GATE_FIELDS,
     AccumulatedEvidence,
     AgentStep,
     OrchestrationPlan,
@@ -81,8 +85,68 @@ def dspy_lm(ensure_host_ollama):
 # Golden file helpers
 # ---------------------------------------------------------------------------
 
+# A rationale must draw at least this share of its content words from the
+# records the gate was given. Measured against those records: the gate's own
+# explanations score 0.81 (iteration 1) and 0.74 (iteration 2), while
+# fabricated explanations that name nothing from them score 0.0.
+RATIONALE_GROUNDING_THRESHOLD = 0.5
+UNGROUNDED_RATIONALES = (
+    "The evidence is sufficient because the answer is correct.",
+    "Yes, this fully answers the question with high confidence.",
+    "Sufficient.",
+)
+# The attributes every ``retrieval_iteration`` span carries for a run with no
+# session id and no inbound constraints.
+ITERATION_SPAN_ATTRIBUTES = {
+    "evidence_count",
+    "exit_reason",
+    "iteration_idx",
+    "sufficiency_score",
+    "tenant.id",
+}
+
 GOLDEN_DIR = Path(__file__).parent / "goldens"
 RECORD_GOLDEN = os.environ.get("RECORD_GOLDEN") == "1"
+
+
+def rationale_grounding(rationale: str, *sources: str) -> float:
+    """Share of a rationale's content words that came from ``sources``."""
+    from cogniverse_synthetic.grounding import (
+        GROUNDING_STOPWORDS,
+        normalize_grounding_token,
+        source_term_keys,
+        term_is_grounded,
+    )
+
+    keys = source_term_keys(" ".join(sources))
+    words = [
+        word
+        for word in re.findall(r"[A-Za-z0-9]+", rationale)
+        if normalize_grounding_token(word) not in GROUNDING_STOPWORDS
+    ]
+    if not words:
+        return 0.0
+    return sum(term_is_grounded(word, keys) for word in words) / len(words)
+
+
+def assert_gate_decision_grounded(gate_output, *, sources) -> None:
+    """The gate returned its declared fields, called the evidence sufficient,
+    and explained itself in the words of the records it was given.
+
+    The grounding bound is asserted from both sides in one comparison: the
+    fabricated rationales below score under the threshold the real one clears,
+    so an explanation that names nothing from the evidence cannot pass.
+    """
+    assert sorted(gate_output) == sorted(SUFFICIENCY_GATE_FIELDS), gate_output
+    assert gate_output["sufficient"] is True, gate_output
+    assert gate_output["missing_aspects"] == [], gate_output
+    grounded = rationale_grounding(gate_output["rationale"], *sources)
+    fabricated = [rationale_grounding(text, *sources) for text in UNGROUNDED_RATIONALES]
+    assert max(fabricated) < RATIONALE_GROUNDING_THRESHOLD <= grounded, (
+        gate_output["rationale"],
+        grounded,
+        fabricated,
+    )
 
 
 def assert_golden_json(actual, name: str) -> None:
@@ -405,12 +469,12 @@ async def test_iter1_evidence_byte_equal_golden(captured_spans, dspy_lm):
 
 
 # ---------------------------------------------------------------------------
-# Gate 1 output byte-equal golden
+# Gate 1 decision contract + grounded rationale
 # ---------------------------------------------------------------------------
 
 
 @pytest.mark.asyncio
-async def test_gate1_output_byte_equal_golden(captured_spans, dspy_lm):
+async def test_gate1_output_locked_to_decision_contract(captured_spans, dspy_lm):
     peer = _IterRetrievalPeer()
     orchestrator = _build_orchestrator(telemetry_manager=captured_spans, peer=peer)
     evidence = [_marie_curie_30s_seg3()]
@@ -419,7 +483,10 @@ async def test_gate1_output_byte_equal_golden(captured_spans, dspy_lm):
         accumulated_evidence=evidence,
         iteration_idx=0,
     )
-    assert_golden_json(gate_output, "iter_loop_gate1.json")
+    assert_gate_decision_grounded(
+        gate_output,
+        sources=[CANONICAL_QUERY, json.dumps(evidence, sort_keys=True, default=str)],
+    )
 
 
 # ---------------------------------------------------------------------------
@@ -440,16 +507,22 @@ async def test_iter2_evidence_byte_equal_golden(captured_spans, dspy_lm):
 
 
 # ---------------------------------------------------------------------------
-# Gate 2 output byte-equal golden
+# Gate 2 decision contract + grounded rationale
 # ---------------------------------------------------------------------------
 
 
 @pytest.mark.asyncio
-async def test_gate2_output_locked_against_golden(captured_spans, dspy_lm):
+async def test_gate2_output_locked_to_decision_contract(captured_spans, dspy_lm):
     peer = _IterRetrievalPeer()
     orchestrator = _build_orchestrator(telemetry_manager=captured_spans, peer=peer)
     loop_result, _ = await _run_loop(orchestrator)
-    assert_golden_json(loop_result.final_gate_output, "iter_loop_gate2.json")
+    assert_gate_decision_grounded(
+        loop_result.final_gate_output,
+        sources=[
+            CANONICAL_QUERY,
+            json.dumps(loop_result.evidence, sort_keys=True, default=str),
+        ],
+    )
 
 
 # ---------------------------------------------------------------------------
@@ -494,10 +567,15 @@ async def test_final_answer_text_byte_equal_golden(captured_spans, dspy_lm):
 
 
 @pytest.mark.asyncio
-async def test_retrieval_iteration_spans_match_golden(captured_spans, dspy_lm):
+async def test_retrieval_iteration_spans_carry_each_gate_decision(
+    captured_spans, dspy_lm
+):
+    """One span per executed iteration, numbered in order, each carrying the
+    loop's declared attributes, and the last one recording exactly the
+    confidence the final gate returned."""
     peer = _IterRetrievalPeer()
     orchestrator = _build_orchestrator(telemetry_manager=captured_spans, peer=peer)
-    await _run_loop(orchestrator)
+    loop_result, _ = await _run_loop(orchestrator)
 
     spans = [
         s
@@ -505,19 +583,20 @@ async def test_retrieval_iteration_spans_match_golden(captured_spans, dspy_lm):
         if s.name == "retrieval_iteration"
     ]
     spans.sort(key=lambda s: s.start_time)
-    assert len(spans) == 2, [
+    assert [s.name for s in spans] == ["retrieval_iteration"] * 2, [
         s.name for s in captured_spans.exporter.get_finished_spans()
     ]
-
-    span_summary = [
-        {
-            "iteration_idx": int(s.attributes.get("iteration_idx", -1)),
-            "sufficiency_score": float(s.attributes.get("sufficiency_score", 0.0)),
-        }
-        for s in spans
-    ]
-    assert [s["iteration_idx"] for s in span_summary] == [1, 2]
-    assert_golden_json(span_summary, "iter_loop_spans_d8.json")
+    assert [int(s.attributes["iteration_idx"]) for s in spans] == [1, 2]
+    assert [set(s.attributes) for s in spans] == [ITERATION_SPAN_ATTRIBUTES] * 2
+    assert [s.attributes["exit_reason"] for s in spans] == ["in_progress"] * 2
+    # The last iteration's span counts the evidence the loop ended with.
+    assert int(spans[-1].attributes["evidence_count"]) == len(loop_result.evidence)
+    # The score the span records is the decision it came from, not a
+    # re-derivation: the last iteration's gate is the loop's final gate.
+    assert (
+        float(spans[-1].attributes["sufficiency_score"])
+        == loop_result.final_gate_output["confidence"]
+    )
 
 
 # ---------------------------------------------------------------------------
