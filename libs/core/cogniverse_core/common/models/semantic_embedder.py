@@ -23,6 +23,7 @@ from typing import List, Mapping, Optional, Union
 
 import numpy as np
 
+from cogniverse_core.common.models.model_loaders import QUERY_ENCODE_TIMEOUT_S
 from cogniverse_foundation.config.inference_auth import inference_headers
 from cogniverse_foundation.config.inference_service import (
     require_in_process_backend,
@@ -266,7 +267,7 @@ class RemoteOpenAIEmbedder(SemanticEmbedder):
     def _close(self) -> None:
         self._session.close()
 
-    def _post_embeddings(self, inputs: list[str]):
+    def _post_embeddings(self, inputs: list[str], *, timeout: float):
         import requests
 
         url = f"{self._base_url}/v1/embeddings"
@@ -275,12 +276,12 @@ class RemoteOpenAIEmbedder(SemanticEmbedder):
                 url,
                 json={"model": self._model, "input": inputs},
                 headers=self._headers or None,
-                timeout=self._timeout,
+                timeout=timeout,
             )
         except requests.Timeout as exc:
             raise type(exc)(
                 f"{self._model} request to {url} timed out after "
-                f"{self._timeout} seconds: {exc}"
+                f"{timeout} seconds: {exc}"
             ) from exc
         except requests.ConnectionError as exc:
             raise requests.ConnectionError(
@@ -316,7 +317,11 @@ class RemoteOpenAIEmbedder(SemanticEmbedder):
         prefixed = [f"{prompt}{text}" for text in items]
         url = f"{self._base_url}/v1/embeddings"
 
-        resp = self._post_embeddings(prefixed)
+        # A query is one short string on the search hot path and shares the
+        # ceiling every other query encoder uses; a document batch keeps the
+        # instance budget.
+        timeout = QUERY_ENCODE_TIMEOUT_S if is_query else self._timeout
+        resp = self._post_embeddings(prefixed, timeout=timeout)
         if self._model == _DENSEON_MODEL_NAME and _is_denseon_input_overflow_response(
             resp
         ):
@@ -342,7 +347,7 @@ class RemoteOpenAIEmbedder(SemanticEmbedder):
                     truncated_tokens,
                     limit,
                 )
-            resp = self._post_embeddings(truncated_inputs)
+            resp = self._post_embeddings(truncated_inputs, timeout=timeout)
         resp.raise_for_status()
         payload = resp.json()
 

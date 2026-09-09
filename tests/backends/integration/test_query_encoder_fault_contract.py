@@ -9,6 +9,7 @@ unreachable. Both surfaced as "no encoder is available. Pass
 from __future__ import annotations
 
 import json
+import socket
 import threading
 import time
 import uuid
@@ -33,10 +34,54 @@ from cogniverse_foundation.config.inference_service import (
 DEAD_ENCODER_URL = "http://127.0.0.1:29073"
 CONFIGURED_SERVICE = "pylate_dead"
 UNCONFIGURED_SERVICE = "pylate_missing"
+HUNG_SERVICE = "pylate_hung"
+DENSE_SERVICE = "denseon_dead"
 
 
 @pytest.fixture(scope="module")
-def encoder_fault_env(vespa_instance):
+def hung_encoder_service():
+    """A service that accepts the connection and then never answers.
+
+    A refused port fails at connect and never reaches the read budget, so it
+    cannot show which budget is in force. A paused sidecar looks like this
+    from the client's side: the TCP handshake completes and the response
+    never comes.
+    """
+    listener = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+    listener.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
+    listener.bind(("127.0.0.1", 0))
+    listener.listen(32)
+    # Bounded accept so the thread observes ``stop``; closing a socket does
+    # not interrupt a blocking accept() in another thread.
+    listener.settimeout(0.5)
+    held: list[socket.socket] = []
+    stop = threading.Event()
+
+    def accept_and_hold():
+        while not stop.is_set():
+            try:
+                connection, _ = listener.accept()
+            except TimeoutError:
+                continue
+            except OSError:
+                return
+            held.append(connection)
+
+    accepting = threading.Thread(target=accept_and_hold, daemon=True)
+    accepting.start()
+
+    yield f"http://127.0.0.1:{listener.getsockname()[1]}"
+
+    stop.set()
+    listener.close()
+    for connection in held:
+        connection.close()
+    accepting.join(timeout=10)
+    assert accepting.is_alive() is False
+
+
+@pytest.fixture(scope="module")
+def encoder_fault_env(vespa_instance, hung_encoder_service):
     """Real ConfigManager whose only inference service points at a dead port."""
     from cogniverse_foundation.config.manager import ConfigManager
     from cogniverse_foundation.config.unified_config import (
@@ -54,7 +99,11 @@ def encoder_fault_env(vespa_instance):
         SystemConfig(
             backend_url="http://localhost",
             backend_port=vespa_instance["http_port"],
-            inference_service_urls={CONFIGURED_SERVICE: DEAD_ENCODER_URL},
+            inference_service_urls={
+                CONFIGURED_SERVICE: DEAD_ENCODER_URL,
+                DENSE_SERVICE: DEAD_ENCODER_URL,
+                HUNG_SERVICE: hung_encoder_service,
+            },
         )
     )
 
@@ -127,29 +176,57 @@ def encoder_fault_env(vespa_instance):
     assert put_resp.status_code in (200, 201), put_resp.text[:300]
 
     profiles = {}
+    profile_configs = {}
     for label, service in (
         ("dead", CONFIGURED_SERVICE),
         ("missing", UNCONFIGURED_SERVICE),
+        ("hung", HUNG_SERVICE),
     ):
         profile_name = f"enc_{label}_{uuid.uuid4().hex[:8]}"
+        profile = BackendProfileConfig(
+            profile_name=profile_name,
+            type="document",
+            schema_name="agent_memories",
+            embedding_model="lightonai/LateOn",
+            embedding_type="multi_vector",
+            model_loader="colbert",
+            schema_config={"embedding_dim": 128, "embedding_dims": 768},
+            extra_config={
+                "semantic_model": "lightonai/LateOn",
+                "inference_services": {"embedding": service},
+            },
+        )
         config_manager.add_backend_profile(
-            BackendProfileConfig(
-                profile_name=profile_name,
-                type="document",
-                schema_name="agent_memories",
-                embedding_model="lightonai/LateOn",
-                embedding_type="multi_vector",
-                model_loader="colbert",
-                schema_config={"embedding_dim": 128, "embedding_dims": 768},
-                extra_config={
-                    "semantic_model": "lightonai/LateOn",
-                    "inference_services": {"embedding": service},
-                },
-            ),
-            tenant_id=tenant_id,
-            service="backend",
+            profile, tenant_id=tenant_id, service="backend"
         )
         profiles[label] = profile_name
+        profile_configs[label] = profile.to_dict()
+
+    # The dense branch resolves its embedder through SemanticEmbedder rather
+    # than the encoder factory, so it needs its own pair of profiles to prove
+    # the same two faults are told apart there too.
+    for label, service in (
+        ("dense_dead", DENSE_SERVICE),
+        ("dense_missing", UNCONFIGURED_SERVICE),
+    ):
+        profile_name = f"enc_{label}_{uuid.uuid4().hex[:8]}"
+        profile = BackendProfileConfig(
+            profile_name=profile_name,
+            type="document",
+            schema_name="agent_memories",
+            embedding_model="lightonai/DenseOn",
+            embedding_type="dense",
+            schema_config={"embedding_dims": 768},
+            extra_config={
+                "encoder": "denseon",
+                "inference_services": {"embedding": service},
+            },
+        )
+        config_manager.add_backend_profile(
+            profile, tenant_id=tenant_id, service="backend"
+        )
+        profiles[label] = profile_name
+        profile_configs[label] = profile.to_dict()
 
     search_backend = registry.get_search_backend(
         name="vespa",
@@ -162,8 +239,10 @@ def encoder_fault_env(vespa_instance):
         "backend": search_backend,
         "tenant_id": tenant_id,
         "profiles": profiles,
+        "profile_configs": profile_configs,
         "doc_id": doc_id,
         "vector": vector,
+        "hung_url": hung_encoder_service,
     }
 
 
@@ -273,3 +352,120 @@ class TestEncoderFaultContract:
         assert [w.is_alive() for w in workers] == [False] * threads_count
         assert outcomes == ["EncoderUnavailableError"] * threads_count
         assert [d < 120.0 for d in durations] == [True] * threads_count
+
+
+@pytest.mark.integration
+class TestDenseBranchFaultContract:
+    """The dense branch resolves an embedder through SemanticEmbedder instead
+    of the encoder factory, and must tell the same two faults apart there.
+    """
+
+    def test_dense_outage_raises_unavailable_naming_service_and_endpoint(
+        self, encoder_fault_env
+    ):
+        env = encoder_fault_env
+
+        with pytest.raises(EncoderUnavailableError) as excinfo:
+            env["backend"].search(_query(env, "dense_dead"))
+
+        error = excinfo.value
+        assert error.service == DENSE_SERVICE
+        assert error.endpoint == DEAD_ENCODER_URL
+        assert error.profile == env["profiles"]["dense_dead"]
+        assert isinstance(error.__cause__, requests.ConnectionError)
+
+    def test_dense_unconfigured_service_raises_a_configuration_error(
+        self, encoder_fault_env
+    ):
+        env = encoder_fault_env
+
+        with pytest.raises(EncoderNotConfiguredError) as excinfo:
+            env["backend"].search(_query(env, "dense_missing"))
+
+        message = str(excinfo.value)
+        assert UNCONFIGURED_SERVICE in message
+        assert "no URL is configured" in message
+        assert isinstance(excinfo.value.__cause__, ValueError)
+
+    def test_a_missing_in_process_backend_reads_as_configuration_not_outage(
+        self, encoder_fault_env
+    ):
+        """``require_in_process_backend`` raises the same exception class an
+        unreachable sidecar raises. It means "no URL and no local backend",
+        which no retry fixes, so it must not be reported as a service that
+        failed to serve. The real producer supplies the exception here.
+        """
+        from cogniverse_foundation.config.inference_service import (
+            require_in_process_backend,
+        )
+        from cogniverse_vespa.search_backend import VespaSearchBackend
+
+        env = encoder_fault_env
+        profile_name = env["profiles"]["dense_missing"]
+
+        # The registry hands out VespaBackend; the classifier under test lives
+        # on the VespaSearchBackend it delegates search to.
+        with pytest.raises(EncoderNotConfiguredError):
+            env["backend"].search(_query(env, "dense_missing"))
+        search_backend = env["backend"]._vespa_search_backend
+        assert type(search_backend) is VespaSearchBackend
+
+        with pytest.raises(InferenceServiceUnavailableError) as raised:
+            require_in_process_backend("denseon", module="cogniverse_absent_backend")
+
+        fault = search_backend._encoder_fault(
+            profile_name,
+            env["profile_configs"]["dense_missing"],
+            env["tenant_id"],
+            raised.value,
+        )
+
+        assert type(fault) is EncoderNotConfiguredError
+        assert str(fault) == (
+            f"Profile {profile_name!r} resolves to the 'denseon' inference "
+            f"service, which has no configured URL and no in-process "
+            f"'cogniverse_absent_backend' backend in this image: "
+            f"{raised.value}"
+        )
+
+
+@pytest.mark.integration
+class TestQueryEncodeBudget:
+    def test_a_hung_sidecar_fails_within_the_shared_query_encode_budget(
+        self, encoder_fault_env
+    ):
+        """A sidecar that accepts and never answers must fail the search on
+        the query budget, not on an ingest-sized one. The elapsed time is the
+        assertion: 120s (the document budget) or 600s (the video-segment
+        budget) would hold a user's search open for minutes.
+        """
+        from cogniverse_core.common.models.model_loaders import (
+            DOCUMENT_ENCODE_TIMEOUT_S,
+            QUERY_ENCODE_TIMEOUT_S,
+            SEGMENT_EMBED_TIMEOUT_S,
+            RemoteInferenceClient,
+        )
+
+        env = encoder_fault_env
+        started = time.monotonic()
+        with pytest.raises(EncoderUnavailableError) as excinfo:
+            env["backend"].search(_query(env, "hung"))
+        elapsed = time.monotonic() - started
+
+        assert QUERY_ENCODE_TIMEOUT_S <= elapsed < QUERY_ENCODE_TIMEOUT_S + 15
+        assert excinfo.value.service == HUNG_SERVICE
+        assert excinfo.value.endpoint == env["hung_url"]
+        assert isinstance(excinfo.value.__cause__, InferenceServiceUnavailableError)
+        assert isinstance(excinfo.value.__cause__.__cause__, requests.ReadTimeout)
+
+        # One budget, defined once: the encoders derive theirs from the same
+        # constant the inference client publishes.
+        assert (
+            RemoteInferenceClient(env["hung_url"]).query_encode_timeout_s
+            == QUERY_ENCODE_TIMEOUT_S
+        )
+        assert (
+            QUERY_ENCODE_TIMEOUT_S,
+            DOCUMENT_ENCODE_TIMEOUT_S,
+            SEGMENT_EMBED_TIMEOUT_S,
+        ) == (30.0, 120.0, 600.0)

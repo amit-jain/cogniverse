@@ -676,6 +676,15 @@ failures surface as distinct types (`cogniverse_core.query.encoders`):
   but its inference service did not serve the request. Carries `profile`,
   `service`, `endpoint`, and chains the underlying error.
 
+Both encoder branches classify the same way. Dense profiles
+(`embedding_type: "dense"` or `encoder: "denseon"`) resolve their embedder
+from the profile's own `inference_services.embedding`, so a profile's
+queries are answered from the space that indexed its documents; profiles
+naming no service use the runtime's configured embedder. An
+`InferenceServiceUnavailableError` that carries `module` means the service
+has no URL and no in-process backend, which is a configuration gap, and is
+reported as `EncoderNotConfiguredError`.
+
 ## Profile-Based Architecture
 
 ### What is a Profile?
