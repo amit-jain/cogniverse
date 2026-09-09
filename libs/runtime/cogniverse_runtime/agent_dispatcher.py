@@ -363,10 +363,15 @@ def _describe_entity_shape(entities: Any) -> str:
 # dependency is down" from "these profiles were searched and matched nothing".
 GROUNDING_THREADED = "threaded_results"
 GROUNDING_SEARCHED = "searched_servable_profiles"
+GROUNDING_SEARCHED_DEGRADED = "searched_servable_profiles_degraded"
 GROUNDING_NO_PROFILE_FOR_MODALITY = "no_servable_profile_for_modality"
 GROUNDING_TENANT_DEFAULT_PROFILE = "tenant_default_profile"
 GROUNDING_NO_SERVABLE_PROFILE = "no_servable_profile"
 GROUNDING_SEARCH_UNAVAILABLE = "search_unavailable"
+
+# Wall-clock ceiling on an answer agent's grounding search, read from the
+# shipped config so a leg that never answers cannot hold the answer open.
+GROUNDING_SEARCH_TIMEOUT_KEY = "answer_grounding_search_timeout_seconds"
 
 
 @dataclasses.dataclass(frozen=True)
@@ -377,6 +382,7 @@ class AnswerGrounding:
     state: str
     modalities: Tuple[str, ...] = ()
     profiles: Tuple[str, ...] = ()
+    degraded_profiles: Tuple[Tuple[str, str], ...] = ()
 
     @property
     def nothing_to_search(self) -> bool:
@@ -392,6 +398,10 @@ class AnswerGrounding:
             "state": self.state,
             "modalities": list(self.modalities),
             "profiles": list(self.profiles),
+            "degraded_profiles": [
+                {"profile": profile, "reason": reason}
+                for profile, reason in self.degraded_profiles
+            ],
             "result_count": len(self.hits),
         }
 
@@ -2289,6 +2299,8 @@ class AgentDispatcher:
             "results_count": result_count,
             "results": result_list,
             "profile": output.profile or profile,
+            "profiles": list(output.profiles or []),
+            "degraded_profiles": list(output.degraded_profiles),
             "search_mode": output.search_mode,
         }
 
@@ -2467,13 +2479,31 @@ class AgentDispatcher:
             return AnswerGrounding(hits=[], state=GROUNDING_SEARCH_UNAVAILABLE)
         if not profiles:
             return AnswerGrounding(hits=[], state=state, modalities=tuple(modalities))
+        budget_s = await self._grounding_search_budget_s(tenant_id)
         try:
-            search = await self._execute_search_task(
-                query,
+            search = await asyncio.wait_for(
+                self._execute_search_task(
+                    query,
+                    tenant_id,
+                    top_k=top_k,
+                    enrichment={**enrichment, "profiles": profiles},
+                    context=context,
+                ),
+                timeout=budget_s,
+            )
+        except asyncio.TimeoutError:
+            logger.warning(
+                "Answer-agent grounding search for tenant %s exceeded its %.1fs "
+                "budget over profiles %s; proceeding with an ungrounded answer",
                 tenant_id,
-                top_k=top_k,
-                enrichment={**enrichment, "profiles": profiles},
-                context=context,
+                budget_s,
+                profiles,
+            )
+            return AnswerGrounding(
+                hits=[],
+                state=GROUNDING_SEARCH_UNAVAILABLE,
+                modalities=tuple(modalities),
+                profiles=tuple(profiles),
             )
         except Exception as exc:
             logger.warning(
@@ -2488,16 +2518,47 @@ class AgentDispatcher:
                 modalities=tuple(modalities),
                 profiles=tuple(profiles),
             )
+        degraded = tuple(
+            (str(entry["profile"]), str(entry["reason"]))
+            for entry in search.get("degraded_profiles") or []
+            if isinstance(entry, dict)
+        )
+        searched = [
+            name
+            for name in (search.get("profiles") or profiles)
+            if isinstance(name, str)
+        ]
         return AnswerGrounding(
             hits=[
                 _flatten_search_hit(h)
                 for h in search.get("results", [])
                 if isinstance(h, dict)
             ],
-            state=state,
+            state=GROUNDING_SEARCHED_DEGRADED if degraded else state,
             modalities=tuple(modalities),
-            profiles=tuple(profiles),
+            profiles=tuple(searched),
+            degraded_profiles=degraded,
         )
+
+    async def _grounding_search_budget_s(self, tenant_id: str) -> float:
+        """Seconds an answer agent's grounding search may take.
+
+        Shipped configuration owns the value; a deployment whose config omits
+        it has no ceiling to enforce, which is a misconfiguration rather than a
+        reason to search unbounded.
+        """
+        from cogniverse_foundation.config.utils import get_config
+
+        config = await asyncio.to_thread(
+            get_config, tenant_id=tenant_id, config_manager=self._config_manager
+        )
+        budget = config.get(GROUNDING_SEARCH_TIMEOUT_KEY)
+        if budget is None:
+            raise ValueError(
+                f"{GROUNDING_SEARCH_TIMEOUT_KEY!r} is not configured; answer "
+                "grounding has no search budget to enforce."
+            )
+        return float(budget)
 
     def _get_search_agent(self, profile: str):
         """Return a per-profile cached SearchAgent instance. SearchAgent is

@@ -906,21 +906,37 @@ that same classifier. Several matching profiles are searched together and
 merged by the SearchAgent's RRF ensemble.
 
 Every answer envelope carries a `grounding` block — `state`, `modalities`,
-`profiles`, `result_count` — with one of these states:
+`profiles`, `degraded_profiles`, `result_count` — with one of these states:
 
 | state | meaning |
 |---|---|
 | `threaded_results` | grounded in hits the caller supplied |
 | `searched_servable_profiles` | the listed profiles were searched |
+| `searched_servable_profiles_degraded` | some legs were searched, the rest are named under `degraded_profiles` |
 | `tenant_default_profile` | the tenant has no servable profile; the configured `active_video_profile` was searched as a last resort |
 | `no_servable_profile_for_modality` | the tenant serves nothing for this modality |
 | `no_servable_profile` | the tenant has no servable profile and no configured default |
-| `search_unavailable` | a search dependency failed; the answer is ungrounded |
+| `search_unavailable` | a search dependency failed or the search exceeded its budget; the answer is ungrounded |
+
+`profiles` names the profiles whose search ran. A fan-out leg that could not
+encode its query or whose search raised is listed in `degraded_profiles` as
+`{"profile": ..., "reason": "encode_failed" | "search_failed"}` and the state
+becomes `searched_servable_profiles_degraded`, so a partial grounding is
+reported as partial rather than as a complete one. The same per-leg outcome is
+on `SearchOutput.degraded_profiles`, and `SearchOutput.profiles` likewise names
+only the legs that ran. Every leg failing is an outage and raises.
 
 The two nothing-to-search states short-circuit: the envelope states that the
 tenant serves no content of that modality and the answer model is not invoked,
 so an empty corpus never reads as a confident summary of nothing. A dependency
 outage stays distinct under `search_unavailable`.
+
+The grounding search is bounded by `answer_grounding_search_timeout_seconds`
+(seconds, `configs/config.json`). Exceeding it yields `search_unavailable` with
+no hits, so a leg whose encoder never answers cannot hold an answer open. The
+fan-out is paid in parallel: profiles sharing an embedding model share one
+encode, and every profile's query runs concurrently, so a stalled leg costs its
+own stall rather than the stall plus the healthy legs' work.
 
 Completed dispatch envelopes carry `answer`: the human-facing text of the turn, produced by `harness_turn.extract_answer_text` and read by the wiki auto-file hook and the harness transports. `harness_turn` derives that text from the agent's own output — nested under `result` / `orchestration_result`, or flat for the generic path — falling back to the envelope's message and hits. An error envelope raises `NoAnswerError` and is left without an `answer`, so a failure is never rendered as a reply. The module also holds `derive_request_seed` (the canary/variant bucket for a conversation, anchored on its first user message) and `to_openai_tool_calls`.
 

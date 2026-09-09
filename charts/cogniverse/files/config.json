@@ -12,6 +12,7 @@
     }
   },
   "active_video_profile": "video_colpali_smol500_mv_frame",
+  "answer_grounding_search_timeout_seconds": 12.0,
   "agents": {
     "search_agent": {
       "url": "{{ include "cogniverse.runtimeUrl" . }}",
