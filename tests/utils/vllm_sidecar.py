@@ -67,6 +67,9 @@ def _probe_timeout(base_url: str) -> float:
 
 DEFAULT_IMAGE = "vllm/vllm-openai-cpu:v0.23.0"
 DEFAULT_HEALTH_DEADLINE_SECONDS = 600
+DOCKER_IMAGE_INSPECT_TIMEOUT_SECONDS = 30
+DOCKER_IMAGE_PULL_TIMEOUT_SECONDS = 300
+DOCKER_LAUNCH_TIMEOUT_SECONDS = 60
 # Test-owned Hugging Face cache, deliberately separate from the user's
 # ~/.cache/huggingface: containers previously ran as root and wrote
 # root-owned entries into the personal cache, which breaks host-side
@@ -923,6 +926,45 @@ def _prepare_pinned_snapshot(
         )
 
 
+def _prepare_docker_image(image: str) -> None:
+    """Pull a missing image within its own provisioning budget."""
+    try:
+        inspected = subprocess.run(
+            ["docker", "image", "inspect", image],
+            check=False,
+            capture_output=True,
+            text=True,
+            timeout=DOCKER_IMAGE_INSPECT_TIMEOUT_SECONDS,
+        )
+    except (OSError, subprocess.SubprocessError) as exc:
+        raise RuntimeError(
+            f"Failed to inspect vLLM image {image!r} "
+            f"(budget {DOCKER_IMAGE_INSPECT_TIMEOUT_SECONDS}s): {exc}"
+        ) from exc
+    if inspected.returncode == 0:
+        return
+    if f"No such image: {image}" not in inspected.stderr:
+        raise RuntimeError(
+            f"Failed to inspect vLLM image {image!r}: "
+            f"exit {inspected.returncode}: {inspected.stderr}"
+        )
+    try:
+        subprocess.run(
+            ["docker", "pull", image],
+            check=True,
+            capture_output=True,
+            text=True,
+            timeout=DOCKER_IMAGE_PULL_TIMEOUT_SECONDS,
+        )
+    except (OSError, subprocess.SubprocessError) as exc:
+        stderr = getattr(exc, "stderr", None)
+        raise RuntimeError(
+            f"Failed to pull vLLM image {image!r} "
+            f"(budget {DOCKER_IMAGE_PULL_TIMEOUT_SECONDS}s): {exc}"
+            + (f"\nstderr:\n{stderr}" if stderr else "")
+        ) from exc
+
+
 @dataclass
 class VllmSidecarFactory:
     """Per-session manager for exact remote services and local sidecars."""
@@ -991,6 +1033,7 @@ class VllmSidecarFactory:
             # Reclaim RAM from sidecars whose owning session was SIGKILLed
             # before its teardown could run.
             reap_dead_owner_containers()
+            _prepare_docker_image(image)
 
             container = f"cogniverse-vllm-test-{uuid.uuid4().hex[:8]}"
             port = _free_port()
@@ -998,6 +1041,7 @@ class VllmSidecarFactory:
                 "docker",
                 "run",
                 "-d",
+                "--pull=never",
                 "--name",
                 container,
                 "--label",
@@ -1058,7 +1102,13 @@ class VllmSidecarFactory:
 
             base_url = f"http://127.0.0.1:{port}"
             try:
-                subprocess.run(cmd, check=True, timeout=60)
+                subprocess.run(
+                    cmd,
+                    check=True,
+                    timeout=DOCKER_LAUNCH_TIMEOUT_SECONDS,
+                    capture_output=True,
+                    text=True,
+                )
                 _wait_for_models(
                     base_url, model, self.health_deadline_seconds, container
                 )
@@ -1069,6 +1119,11 @@ class VllmSidecarFactory:
                     + (f"\nstderr:\n{stderr}" if stderr else "")
                     + f"\ncontainer logs:\n{_container_logs(container)}"
                 )
+                if isinstance(exc, subprocess.TimeoutExpired) and exc.cmd == cmd:
+                    details = (
+                        "docker run exceeded the launch budget of "
+                        f"{DOCKER_LAUNCH_TIMEOUT_SECONDS}s\n{details}"
+                    )
                 cleanup_error = _remove_sidecar_container(container)
                 if cleanup_error is not None:
                     details += f"\n{cleanup_error}"

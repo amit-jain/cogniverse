@@ -744,6 +744,197 @@ def test_failed_generic_launch_reports_logs_and_removes_container(monkeypatch):
     assert ["docker", "rm", "-f", container] in commands
 
 
+@pytest.fixture
+def image_provisioning_docker(monkeypatch, tmp_path):
+    import tests.utils.vllm_sidecar as sidecar_module
+
+    commands = []
+    state = {"present": False, "failure": None}
+
+    def run(command, **kwargs):
+        commands.append((list(command), kwargs))
+        operation = command[1:3]
+        if operation == ["image", "inspect"]:
+            if state["failure"] == "inspect-timeout":
+                raise subprocess.TimeoutExpired(command, kwargs["timeout"])
+            if state["failure"] == "inspect-error":
+                return subprocess.CompletedProcess(
+                    command, 1, stdout="", stderr="Cannot connect to the Docker daemon"
+                )
+            return subprocess.CompletedProcess(
+                command,
+                0 if state["present"] else 1,
+                stdout="[]",
+                stderr=""
+                if state["present"]
+                else f"Error: No such image: {command[-1]}",
+            )
+        if command[1] == "pull":
+            if state.get("pull_pause"):
+                time.sleep(0.05)
+            if state["failure"] == "pull-timeout":
+                raise subprocess.TimeoutExpired(
+                    command, kwargs["timeout"], stderr="registry transfer stalled"
+                )
+            if state["failure"] == "pull-error":
+                raise subprocess.CalledProcessError(
+                    1, command, stderr="registry rejected image manifest"
+                )
+            state["present"] = True
+        if command[1] == "run" and state["failure"] == "launch-timeout":
+            raise subprocess.TimeoutExpired(
+                command, kwargs["timeout"], stderr="container create stalled"
+            )
+        return subprocess.CompletedProcess(command, 0, stdout="", stderr="")
+
+    monkeypatch.setattr(sidecar_module, "reap_dead_owner_containers", lambda: None)
+    monkeypatch.setattr(sidecar_module, "_free_port", lambda: 30100)
+    monkeypatch.setattr(sidecar_module, "_wait_for_models", lambda *args: None)
+    monkeypatch.setattr(sidecar_module, "writable_test_hf_cache", lambda: str(tmp_path))
+    monkeypatch.setattr(sidecar_module.subprocess, "run", run)
+    return commands, state
+
+
+@pytest.mark.parametrize("present", [True, False])
+def test_image_provisioning_precedes_launch_without_implicit_pull(
+    image_provisioning_docker, present
+):
+    commands, state = image_provisioning_docker
+    state["present"] = present
+    image = "fixture/vllm:exact"
+    factory = VllmSidecarFactory(configured_urls=())
+
+    assert factory.spawn(model=DENSEON, image=image) == "http://127.0.0.1:30100"
+    assert [command[1] for command, _ in commands] == (
+        ["image", "run"] if present else ["image", "pull", "run"]
+    )
+    assert commands[0][0] == ["docker", "image", "inspect", image]
+    assert commands[0][1]["timeout"] == 30
+    if not present:
+        assert commands[1][0] == ["docker", "pull", image]
+        assert commands[1][1]["timeout"] == 300
+    launch, options = commands[-1]
+    assert launch[:4] == ["docker", "run", "-d", "--pull=never"]
+    assert launch[launch.index("--model") - 1] == image
+    assert options == {
+        "check": True,
+        "timeout": 60,
+        "capture_output": True,
+        "text": True,
+    }
+
+
+@pytest.mark.parametrize(
+    ("failure", "context", "operations"),
+    [
+        ("inspect-timeout", "30s", ["image"]),
+        ("inspect-error", "Cannot connect to the Docker daemon", ["image"]),
+        ("pull-timeout", "registry transfer stalled", ["image", "pull"]),
+        ("pull-error", "registry rejected image manifest", ["image", "pull"]),
+    ],
+)
+def test_image_provisioning_failure_prevents_launch_and_can_retry(
+    image_provisioning_docker, failure, context, operations
+):
+    commands, state = image_provisioning_docker
+    state["failure"] = failure
+    factory = VllmSidecarFactory(configured_urls=())
+
+    with pytest.raises(RuntimeError) as exc_info:
+        factory.spawn(model=DENSEON, image="fixture/vllm:exact")
+
+    message = str(exc_info.value)
+    assert "fixture/vllm:exact" in message
+    assert context in message
+    assert ("pull" if failure.startswith("pull") else "inspect") in message
+    assert [command[1] for command, _ in commands] == operations
+    assert factory._spawned == {}
+
+    state["failure"] = None
+    commands.clear()
+    assert factory.spawn(model=DENSEON, image="fixture/vllm:exact") == (
+        "http://127.0.0.1:30100"
+    )
+    assert [command[1] for command, _ in commands] == ["image", "pull", "run"]
+
+
+def test_concurrent_image_provisioning_pulls_and_launches_once(
+    image_provisioning_docker,
+):
+    commands, state = image_provisioning_docker
+    state["pull_pause"] = True
+    factory = VllmSidecarFactory(configured_urls=())
+    start = threading.Barrier(8)
+
+    def spawn():
+        start.wait(timeout=5)
+        return factory.spawn(model=DENSEON, image="fixture/vllm:exact")
+
+    with ThreadPoolExecutor(max_workers=8) as pool:
+        futures = [pool.submit(spawn) for _ in range(8)]
+        assert [future.result(timeout=10) for future in futures] == [
+            "http://127.0.0.1:30100"
+        ] * 8
+    assert [command[1] for command, _ in commands] == ["image", "pull", "run"]
+
+
+@pytest.mark.integration
+@pytest.mark.requires_docker
+def test_real_docker_absence_message_drives_provisioning():
+    """The absence branch reads the message real docker emits, and a pull that
+    cannot succeed stops provisioning with that failure quoted."""
+    import tests.utils.vllm_sidecar as sidecar_module
+
+    image = f"cogniverse-absent-{uuid.uuid4().hex[:10]}:404"
+    inspected = subprocess.run(
+        ["docker", "image", "inspect", image],
+        capture_output=True,
+        text=True,
+        timeout=sidecar_module.DOCKER_IMAGE_INSPECT_TIMEOUT_SECONDS,
+    )
+    assert inspected.returncode == 1
+    assert inspected.stdout.strip() == "[]"
+    assert inspected.stderr.strip() == (
+        f"Error response from daemon: No such image: {image}"
+    )
+
+    pulled = subprocess.run(
+        ["docker", "pull", image],
+        capture_output=True,
+        text=True,
+        timeout=sidecar_module.DOCKER_IMAGE_PULL_TIMEOUT_SECONDS,
+    )
+    assert pulled.returncode == 1
+
+    with pytest.raises(RuntimeError) as exc_info:
+        sidecar_module._prepare_docker_image(image)
+
+    assert str(exc_info.value) == (
+        f"Failed to pull vLLM image '{image}' (budget 300s): "
+        f"Command '['docker', 'pull', '{image}']' returned non-zero exit status 1."
+        f"\nstderr:\n{pulled.stderr}"
+    )
+
+
+def test_launch_timeout_names_launch_budget_and_cleans_up(image_provisioning_docker):
+    commands, state = image_provisioning_docker
+    state.update(present=True, failure="launch-timeout")
+    factory = VllmSidecarFactory(configured_urls=())
+
+    with pytest.raises(RuntimeError) as exc_info:
+        factory.spawn(model=DENSEON, image="fixture/vllm:exact")
+
+    message = str(exc_info.value)
+    assert "launch budget of 60s" in message
+    assert "container create stalled" in message
+    assert DENSEON in message
+    assert [command[1] for command, _ in commands] == ["image", "run", "logs", "rm"]
+    launch = commands[1][0]
+    container = launch[launch.index("--name") + 1]
+    assert commands[-1][0] == ["docker", "rm", "-f", container]
+    assert factory._spawned == {}
+
+
 def test_generic_launch_cleanup_failure_preserves_launch_context(monkeypatch):
     import tests.utils.vllm_sidecar as sidecar_module
 
