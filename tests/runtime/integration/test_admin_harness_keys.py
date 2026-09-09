@@ -3,6 +3,7 @@
 import asyncio
 import hashlib
 import importlib
+import os
 import subprocess
 import time
 import uuid
@@ -33,15 +34,23 @@ def key_vespa():
     )
     from cogniverse_vespa.vespa_schema_manager import VespaSchemaManager
     from tests.conftest import _shared_vespa_application_package
+    from tests.utils.vllm_sidecar import OWNER_LABEL
 
-    available = int(
-        subprocess.check_output(["free", "-g"], text=True).splitlines()[1].split()[-1]
-    )
-    assert available >= 30
     manager = VespaDockerManager()
     info = manager.start_container(f"harness-{uuid.uuid4().hex}")
     try:
         manager.wait_for_config_ready(info)
+        owner = subprocess.check_output(
+            [
+                "docker",
+                "inspect",
+                "-f",
+                '{{ index .Config.Labels "' + OWNER_LABEL + '" }}',
+                info["container_name"],
+            ],
+            text=True,
+        ).strip()
+        assert owner == str(os.getpid())
         package = _shared_vespa_application_package(
             [
                 create_config_metadata_schema(),
@@ -405,6 +414,11 @@ async def test_tenant_delete_revokes_before_metadata_removal(
 
 
 def test_revoke_uses_one_write_and_one_confirmation(store, monkeypatch):
+    """Revocation is one data-plane write followed by one confirming document
+    read; the read goes through the store's bounded reader, the write through
+    pyvespa."""
+    from cogniverse_vespa.config import config_store as store_module
+
     record = keys(store).create("bounded", "editor")
     calls = []
     for method in ("feed_data_point", "get_data", "query"):
@@ -415,8 +429,15 @@ def test_revoke_uses_one_write_and_one_confirmation(store, monkeypatch):
             return _original(*args, **kwargs)
 
         monkeypatch.setattr(store.vespa_app, method, tracked)
+    real_read = store_module._config_store_read_json
+
+    def tracked_read(*args, **kwargs):
+        calls.append(f"read:{kwargs.get('operation', 'visit')}")
+        return real_read(*args, **kwargs)
+
+    monkeypatch.setattr(store_module, "_config_store_read_json", tracked_read)
     assert keys(store).revoke(record["key_hash"]) is True
-    assert calls == ["feed_data_point", "get_data"]
+    assert calls == ["feed_data_point", "read:document"]
 
 
 def test_immutable_collision_preserves_original(store):
