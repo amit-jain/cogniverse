@@ -33,6 +33,7 @@ import numpy as np
 import pytest
 
 from cogniverse_agents.orchestrator_agent import (
+    _ITER_GATE_RLM_MAX_ITERATIONS,
     SUFFICIENCY_GATE_FIELDS,
     AccumulatedEvidence,
     AgentStep,
@@ -102,6 +103,14 @@ ITERATION_SPAN_ATTRIBUTES = {
     "exit_reason",
     "iteration_idx",
     "sufficiency_score",
+    "tenant.id",
+}
+# The attributes the gate's promoted-to-RLM span carries.
+RLM_SPAN_ATTRIBUTES = {
+    "evidence_chars",
+    "iteration_idx",
+    "max_iterations",
+    "rlm_iterations",
     "tenant.id",
 }
 
@@ -667,26 +676,28 @@ async def test_rlm_promotion_emits_instrumented_rlm_child_span(
     orchestrator = _build_orchestrator(telemetry_manager=captured_spans, peer=peer)
     await _run_loop(orchestrator)
 
-    rlm_spans = [
-        s
-        for s in captured_spans.exporter.get_finished_spans()
-        if s.name.startswith("InstrumentedRLM")
-    ]
-    assert rlm_spans, "expected at least one InstrumentedRLM.* child span"
-    rlm_iterations = [
-        s.attributes.get("rlm_iterations")
-        for s in rlm_spans
-        if s.attributes.get("rlm_iterations") is not None
-    ]
-    assert {
-        s.attributes.get("max_iterations")
-        for s in rlm_spans
-        if s.attributes.get("max_iterations") is not None
-    } == {3}
-    assert_golden_json(
-        {"rlm_iterations": rlm_iterations},
-        "iter_loop_rlm_promotion_d10.json",
+    rlm_spans = sorted(
+        (
+            s
+            for s in captured_spans.exporter.get_finished_spans()
+            if s.name.startswith("InstrumentedRLM")
+        ),
+        key=lambda s: s.start_time,
     )
+    # One promoted gate call per executed iteration, numbered in order.
+    assert [s.name for s in rlm_spans] == ["InstrumentedRLM.run"] * 2, [
+        s.name for s in captured_spans.exporter.get_finished_spans()
+    ]
+    assert [set(s.attributes) for s in rlm_spans] == [RLM_SPAN_ATTRIBUTES] * 2
+    assert [int(s.attributes["iteration_idx"]) for s in rlm_spans] == [0, 1]
+    assert [int(s.attributes["max_iterations"]) for s in rlm_spans] == [
+        _ITER_GATE_RLM_MAX_ITERATIONS
+    ] * 2
+    # The preload is 100 copies of one snippet: neither gate can settle the
+    # query from it, so both run the REPL to the production cap.
+    assert [int(s.attributes["rlm_iterations"]) for s in rlm_spans] == [
+        _ITER_GATE_RLM_MAX_ITERATIONS
+    ] * 2
 
 
 # ---------------------------------------------------------------------------

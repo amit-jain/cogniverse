@@ -1,0 +1,23 @@
+{
+  "conflict_set": {
+    "entries": [
+      {
+        "confidence": 0.89,
+        "segment_id": "seg_1",
+        "ts_end": 10.0,
+        "ts_start": 0.0,
+        "value": "paris",
+        "video_id": "curie_birth_v1"
+      },
+      {
+        "confidence": 0.91,
+        "segment_id": "seg_1",
+        "ts_end": 10.0,
+        "ts_start": 0.0,
+        "value": "warsaw",
+        "video_id": "curie_birth_v2"
+      }
+    ],
+    "policy": "PRESERVE_BOTH"
+  }
+}

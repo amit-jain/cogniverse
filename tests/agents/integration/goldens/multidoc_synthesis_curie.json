@@ -1,0 +1,44 @@
+{
+  "groups": [
+    {
+      "claims": [
+        "born_in:paris"
+      ],
+      "segment_ids": [
+        "seg_1"
+      ],
+      "video_id": "curie_birth_v1"
+    },
+    {
+      "claims": [
+        "born_in:warsaw"
+      ],
+      "segment_ids": [
+        "seg_1"
+      ],
+      "video_id": "curie_birth_v2"
+    },
+    {
+      "claims": [
+        "professor_at:sorbonne"
+      ],
+      "segment_ids": [
+        "seg_2"
+      ],
+      "video_id": "curie_sorbonne_60s"
+    },
+    {
+      "claims": [
+        "discovered:radium",
+        "discovered_in:1898",
+        "worked_at:sorbonne",
+        "won:nobel_prize"
+      ],
+      "segment_ids": [
+        "seg_3",
+        "seg_4"
+      ],
+      "video_id": "marie_curie_30s"
+    }
+  ]
+}

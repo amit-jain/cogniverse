@@ -1,0 +1,12 @@
+{
+  "results": [
+    {
+      "merged_mentions_count": 5,
+      "node_id": "marie_curie",
+      "sources": [
+        "acme",
+        "acme_corp"
+      ]
+    }
+  ]
+}

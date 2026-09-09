@@ -1,0 +1,15 @@
+{
+  "confidence": 1.0,
+  "created_at": "<<created_at>>",
+  "evidence_span": "video_subject_inference",
+  "modality": "vlm",
+  "provenance": "video_subject_inference",
+  "relation": "same_as",
+  "segment_id": "frame_14_0",
+  "source": "woman in lab coat",
+  "source_doc_id": "marie_curie_30s",
+  "target": "Marie Curie",
+  "tenant_id": "test",
+  "ts_end": 14.0,
+  "ts_start": 14.0
+}

@@ -1,0 +1,2 @@
+marie_curie [12.0s-18.5s]: discovered radium; discovered_in 1898; worked_at sorbonne
+marie_curie [18.5s-25.0s]: won nobel_prize

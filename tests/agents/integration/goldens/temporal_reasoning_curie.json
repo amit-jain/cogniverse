@@ -1,0 +1,52 @@
+{
+  "timeline": [
+    {
+      "claim": "born_in:paris",
+      "evidence_span": "Marie Curie was born in Paris.",
+      "segment_id": "seg_1",
+      "ts_end": 10.0,
+      "ts_start": 0.0,
+      "video_id": "curie_birth_v1"
+    },
+    {
+      "claim": "professor_at:sorbonne",
+      "evidence_span": "Marie Curie was a professor at the Sorbonne in Paris.",
+      "segment_id": "seg_2",
+      "ts_end": 20.0,
+      "ts_start": 10.0,
+      "video_id": "curie_sorbonne_60s"
+    },
+    {
+      "claim": "discovered:radium",
+      "evidence_span": "Marie Curie discovered radium in 1898 at the Sorbonne.",
+      "segment_id": "seg_3",
+      "ts_end": 18.5,
+      "ts_start": 12.0,
+      "video_id": "marie_curie_30s"
+    },
+    {
+      "claim": "discovered_in:1898",
+      "evidence_span": "Marie Curie discovered radium in 1898 at the Sorbonne.",
+      "segment_id": "seg_3",
+      "ts_end": 18.5,
+      "ts_start": 12.0,
+      "video_id": "marie_curie_30s"
+    },
+    {
+      "claim": "worked_at:sorbonne",
+      "evidence_span": "Marie Curie discovered radium in 1898 at the Sorbonne.",
+      "segment_id": "seg_3",
+      "ts_end": 18.5,
+      "ts_start": 12.0,
+      "video_id": "marie_curie_30s"
+    },
+    {
+      "claim": "won:nobel_prize",
+      "evidence_span": "She later won the Nobel Prize in Physics.",
+      "segment_id": "seg_4",
+      "ts_end": 25.0,
+      "ts_start": 18.5,
+      "video_id": "marie_curie_30s"
+    }
+  ]
+}

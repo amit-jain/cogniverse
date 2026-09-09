@@ -1,0 +1,10 @@
+[
+  {
+    "score": 0.94,
+    "segment_id": "seg_3",
+    "source_doc_id": "marie_curie_30s",
+    "text": "Marie Curie discovered radium in 1898 at the Sorbonne.",
+    "ts_end": 18.5,
+    "ts_start": 12.0
+  }
+]
