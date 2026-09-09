@@ -42,6 +42,16 @@ from cogniverse_foundation.config.inference_service import (
     InferenceServiceUnavailableError,
 )
 
+# Per-query text-encode budget on the search hot path. One text forward pass
+# is tens of milliseconds, so this ceiling fails a hung sidecar fast instead
+# of holding a search request open for an ingest-sized budget. Every query
+# encoder derives its POST timeout from this rather than restating one.
+QUERY_ENCODE_TIMEOUT_S = 30.0
+
+# Document-side budgets: a batch of texts, and one video segment.
+DOCUMENT_ENCODE_TIMEOUT_S = 120.0
+SEGMENT_EMBED_TIMEOUT_S = 600.0
+
 
 @runtime_checkable
 class _CacheResource(Protocol):
@@ -226,10 +236,7 @@ class RemoteInferenceClient:
         self.api_key = api_key
         self.logger = logger or logging.getLogger(self.__class__.__name__)
         self.session = requests.Session()
-        # Bounds the per-query text-encode POST on the search hot path. Image
-        # ingestion keeps its own 1800s budget; a single text forward pass is
-        # tens of ms, so 30s is a generous ceiling that fails fast under outage.
-        self.query_encode_timeout_s: float = 30.0
+        self.query_encode_timeout_s: float = QUERY_ENCODE_TIMEOUT_S
 
         if _resolved_headers is not None:
             if api_key is not None:
@@ -488,7 +495,9 @@ class RemoteInferenceClient:
             ),
         )
     )
-    def _embed_vector(self, route: str, payload: Dict[str, Any]) -> np.ndarray:
+    def _embed_vector(
+        self, route: str, payload: Dict[str, Any], *, timeout: float
+    ) -> np.ndarray:
         """POST to a video_embed route and return its vector.
 
         A missing or empty ``vec`` is raised, never returned as an empty
@@ -498,7 +507,7 @@ class RemoteInferenceClient:
         response = self.session.post(
             f"{self.endpoint_url}{route}",
             json=payload,
-            timeout=600,
+            timeout=timeout,
         )
         response.raise_for_status()
         vector = response.json().get("vec")
@@ -515,11 +524,14 @@ class RemoteInferenceClient:
         return self._embed_vector(
             "/embed/video",
             {"video_b64": _extract_segment_b64(video_path, start_time, end_time)},
+            timeout=SEGMENT_EMBED_TIMEOUT_S,
         )
 
     def embed_text(self, text: str) -> np.ndarray:
         """Embed query text into the same space the video vectors live in."""
-        return self._embed_vector("/embed/text", {"text": text})
+        return self._embed_vector(
+            "/embed/text", {"text": text}, timeout=self.query_encode_timeout_s
+        )
 
     def process_video_segment(
         self, video_path: Path, start_time: float, end_time: float, **kwargs
@@ -766,7 +778,11 @@ class RemoteColBERTLoader(ModelLoader):
                         resp = self.session.post(
                             f"{self.endpoint_url}/pooling",
                             json=payload,
-                            timeout=120,
+                            timeout=(
+                                QUERY_ENCODE_TIMEOUT_S
+                                if is_query
+                                else DOCUMENT_ENCODE_TIMEOUT_S
+                            ),
                         )
                         resp.raise_for_status()
                     except requests.HTTPError as exc:

@@ -992,23 +992,64 @@ class VespaSearchBackend(SearchBackend):
     def _encoder_service(self, profile_config):
         return (profile_config.get("inference_services") or {}).get("embedding")
 
+    def _profile_inference_url(self, profile_name, profile_config, tenant_id):
+        """The sidecar URL the profile's ``inference_services.embedding`` names.
+
+        ``None`` when the profile names no service, or when no config manager
+        is available to resolve one. A named service with no configured URL
+        raises rather than falling back to whatever the process was last
+        configured with: that fallback answers from a different embedding
+        space than the one that indexed the profile's documents.
+        """
+        if self._config_manager is None:
+            return None
+        from cogniverse_core.query.encoders import _resolve_inference_url
+        from cogniverse_foundation.config.utils import get_config
+
+        cfg = get_config(tenant_id=tenant_id, config_manager=self._config_manager)
+        return _resolve_inference_url(profile_name, profile_config, cfg)
+
     def _encoder_endpoint(self, profile_name, profile_config, tenant_id):
-        """The sidecar URL a profile's encoder targets, or None.
+        """The endpoint to name in an encoder fault, or None.
 
         Best-effort: a profile whose named service has no configured URL is
         reported by the configuration error, so a failure to resolve the
         endpoint here must not mask the fault being described.
         """
-        if self._config_manager is None:
-            return None
         try:
-            from cogniverse_core.query.encoders import _resolve_inference_url
-            from cogniverse_foundation.config.utils import get_config
-
-            cfg = get_config(tenant_id=tenant_id, config_manager=self._config_manager)
-            return _resolve_inference_url(profile_name, profile_config, cfg)
+            return self._profile_inference_url(profile_name, profile_config, tenant_id)
         except Exception:
             return None
+
+    def _encoder_fault(self, profile_name, profile_config, tenant_id, exc):
+        """Classify an encoder failure as a config gap or a service outage.
+
+        ``InferenceServiceUnavailableError`` covers both. It carries ``module``
+        only when the service has no configured URL and no in-process backend,
+        which is a setting no retry fixes; an unreachable sidecar leaves it
+        unset.
+        """
+        from cogniverse_core.query.encoders import (
+            EncoderNotConfiguredError,
+            EncoderUnavailableError,
+        )
+
+        module = getattr(exc, "module", None)
+        if module:
+            return EncoderNotConfiguredError(
+                f"Profile {profile_name!r} resolves to the "
+                f"{getattr(exc, 'service', 'embedding')!r} inference service, "
+                f"which has no configured URL and no in-process {module!r} "
+                f"backend in this image: {exc}"
+            )
+        return EncoderUnavailableError(
+            profile=profile_name,
+            service=(
+                self._encoder_service(profile_config) or getattr(exc, "service", None)
+            ),
+            endpoint=self._encoder_endpoint(profile_name, profile_config, tenant_id),
+            detail=f"{type(exc).__name__}: {exc}",
+        )
 
     def _resolve_encoder_for_profile(self, profile_name, profile_config, tenant_id):
         """Build the query encoder a profile declares so callers that delegate
@@ -1035,7 +1076,13 @@ class VespaSearchBackend(SearchBackend):
                     get_semantic_embedder,
                 )
 
-                return _DenseQueryEncoder(get_semantic_embedder())
+                return _DenseQueryEncoder(
+                    get_semantic_embedder(
+                        remote_url=self._profile_inference_url(
+                            profile_name, profile_config, tenant_id
+                        )
+                    )
+                )
 
             model_name = profile_config.get("semantic_model") or profile_config.get(
                 "embedding_model"
@@ -1061,13 +1108,8 @@ class VespaSearchBackend(SearchBackend):
         except (EncoderNotConfiguredError, EncoderUnavailableError):
             raise
         except _encoder_outage_errors() as exc:
-            raise EncoderUnavailableError(
-                profile=profile_name,
-                service=self._encoder_service(profile_config),
-                endpoint=self._encoder_endpoint(
-                    profile_name, profile_config, tenant_id
-                ),
-                detail=f"{type(exc).__name__}: {exc}",
+            raise self._encoder_fault(
+                profile_name, profile_config, tenant_id, exc
             ) from exc
         except Exception as exc:
             raise EncoderNotConfiguredError(
@@ -1402,18 +1444,8 @@ class VespaSearchBackend(SearchBackend):
                         try:
                             query_embeddings = request_encoder.encode(query_text)
                         except _encoder_outage_errors() as exc:
-                            from cogniverse_core.query.encoders import (
-                                EncoderUnavailableError,
-                            )
-
-                            raise EncoderUnavailableError(
-                                profile=profile_name,
-                                service=self._encoder_service(profile_config)
-                                or getattr(exc, "service", None),
-                                endpoint=self._encoder_endpoint(
-                                    profile_name, profile_config, tenant_id
-                                ),
-                                detail=f"{type(exc).__name__}: {exc}",
+                            raise self._encoder_fault(
+                                profile_name, profile_config, tenant_id, exc
                             ) from exc
                         add_embedding_details_to_span(encode_span_ctx, query_embeddings)
                     if logger.isEnabledFor(logging.DEBUG):

@@ -5,6 +5,7 @@ import builtins
 import numpy as np
 import pytest
 
+from cogniverse_core.common.models import model_loaders
 from cogniverse_core.common.models.model_loaders import (
     ColBERTModelLoader,
     ColPaliModelLoader,
@@ -1435,7 +1436,7 @@ def test_remote_lateon_queries_send_raw_text_with_is_query():
                 "model": "lightonai/LateOn",
                 "is_query": True,
             },
-            120,
+            model_loaders.QUERY_ENCODE_TIMEOUT_S,
         )
     ]
     assert result == [[[0.0] * 128] * 32, [[1.0] * 128] * 32]
@@ -1451,7 +1452,7 @@ def test_remote_lateon_documents_send_unprefixed_text_and_keep_all_rows():
 
     class Session:
         def post(self, url, *, json, timeout):
-            requests_seen.append(json)
+            requests_seen.append((json, timeout))
             return _PoolingResponse(
                 {
                     "object": "list",
@@ -1466,11 +1467,14 @@ def test_remote_lateon_documents_send_unprefixed_text_and_keep_all_rows():
     result = wrapper.encode(["Vespa stores token embeddings."], is_query=False)
 
     assert requests_seen == [
-        {
-            "input": ["Vespa stores token embeddings."],
-            "model": "lightonai/LateOn",
-            "is_query": False,
-        }
+        (
+            {
+                "input": ["Vespa stores token embeddings."],
+                "model": "lightonai/LateOn",
+                "is_query": False,
+            },
+            model_loaders.DOCUMENT_ENCODE_TIMEOUT_S,
+        )
     ]
     assert result == [[[0.25] * 128] * 7]
 

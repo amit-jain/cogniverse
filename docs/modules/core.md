@@ -752,6 +752,14 @@ as the `/search` path does.
 profile declares, so a sidecar outage is never reported as a missing
 `query_embeddings` argument.
 
+Every remote query encoder bounds its POST with
+`model_loaders.QUERY_ENCODE_TIMEOUT_S` (30s): the ColPali family through
+`RemoteInferenceClient.query_encode_timeout_s`, ColBERT on the `is_query`
+direction of `/pooling`, X-CLIP through `embed_text`, and DenseOn through
+`RemoteOpenAIEmbedder.encode(is_query=True)`. The document directions keep
+their own budgets, `DOCUMENT_ENCODE_TIMEOUT_S` (120s) for a text batch and
+`SEGMENT_EMBED_TIMEOUT_S` (600s) for a video segment.
+
 ---
 
 ## Event System
