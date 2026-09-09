@@ -61,6 +61,7 @@ def _fake_bootstrap_block(trainset: int) -> dict:
         "metric_threshold": 1.0,
         "attempts": 0,
         "errors": 0,
+        "error_causes": [],
         "examples_walked": 0,
         "accepted": 0,
         "bootstrapped_demos": 0,
@@ -6591,6 +6592,10 @@ class TestEntityExtractionOptimization:
                 return_value=object(),
             ),
             patch(
+                "cogniverse_foundation.config.llm_factory.create_budgeted_dspy_lm",
+                return_value=object(),
+            ),
+            patch(
                 "cogniverse_runtime.optimization_cli._load_approved_synthetic_data",
                 side_effect=lambda received_provider, tenant_id, optimizer_type: (
                     approved_rows
@@ -6893,6 +6898,7 @@ class TestEntityExtractionOptimization:
                 "metric_threshold": 1.0,
                 "attempts": 4,
                 "errors": 0,
+                "error_causes": [],
                 "examples_walked": 4,
                 "accepted": 4,
                 "bootstrapped_demos": 4,
@@ -7774,6 +7780,58 @@ class TestEntityBootstrapThreshold:
         ]
         return recorder, report, demos
 
+    def test_report_carries_the_cause_of_every_dropped_example(self):
+        """A walk that loses examples records why, not only how many."""
+        import dspy
+        from dspy.utils.dummies import DummyLM
+
+        from cogniverse_runtime.optimization_cli import (
+            BootstrapMetricRecorder,
+            _bootstrap_report,
+            _create_teleprompter,
+            _entity_extraction_quality,
+            bootstrap_error_log,
+        )
+
+        class _RefusingExtractor(dspy.Module):
+            def __init__(self):
+                super().__init__()
+                self.predict = dspy.Predict("query -> entities")
+
+            def forward(self, query):
+                raise RuntimeError(f"endpoint refused {query}")
+
+        trainset = self._trainset("boom")
+        recorder = BootstrapMetricRecorder(
+            _entity_extraction_quality,
+            tenant="test:unit",
+            threshold=1.0,
+        )
+        with dspy.context(lm=DummyLM([])):
+            teleprompter = _create_teleprompter(
+                len(trainset), metric=recorder, metric_threshold=1.0
+            )
+            with bootstrap_error_log() as error_log:
+                compiled = teleprompter.compile(_RefusingExtractor(), trainset=trainset)
+        report = _bootstrap_report(
+            recorder,
+            teleprompter,
+            compiled,
+            len(trainset),
+            error_causes=error_log.causes,
+        )
+
+        assert report["errors"] == len(trainset)
+        assert report["attempts"] == 0
+        assert len(report["error_causes"]) == report["errors"]
+        # Each cause names the example it lost and the error that lost it.
+        assert [
+            [
+                example.query in cause and f"endpoint refused {example.query}" in cause
+                for example, cause in zip(trainset, report["error_causes"], strict=True)
+            ]
+        ] == [[True] * len(trainset)]
+
     def test_exact_bar_keeps_only_exact_traces_and_records_every_attempt(self, caplog):
         caplog.set_level(logging.INFO, logger="cogniverse_runtime.optimization_cli")
 
@@ -7792,6 +7850,7 @@ class TestEntityBootstrapThreshold:
             "metric_threshold": 1.0,
             "attempts": 3,
             "errors": 0,
+            "error_causes": [],
             "examples_walked": 3,
             "accepted": 2,
             "bootstrapped_demos": 2,

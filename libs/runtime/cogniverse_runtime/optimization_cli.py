@@ -1332,8 +1332,42 @@ def _bootstrap_attempts_path() -> Path:
     return cache_root / "cogniverse" / "bootstrap_attempts.jsonl"
 
 
+class BootstrapErrorLog(logging.Handler):
+    """Keep the cause of every example the bootstrap walk drops.
+
+    ``BootstrapFewShot`` counts failures and logs their cause; the count alone
+    cannot say whether a run lost examples to a context overflow, a schema
+    rejection or a dead endpoint.
+    """
+
+    LOGGER_NAME = "dspy.teleprompt.bootstrap"
+
+    def __init__(self) -> None:
+        super().__init__(level=logging.ERROR)
+        self.causes: List[str] = []
+
+    def emit(self, record: logging.LogRecord) -> None:
+        self.causes.append(record.getMessage())
+
+
+@contextlib.contextmanager
+def bootstrap_error_log():
+    """Collect the bootstrap's error records for the duration of a compile."""
+    handler = BootstrapErrorLog()
+    dspy_logger = logging.getLogger(BootstrapErrorLog.LOGGER_NAME)
+    dspy_logger.addHandler(handler)
+    try:
+        yield handler
+    finally:
+        dspy_logger.removeHandler(handler)
+
+
 def _bootstrap_report(
-    recorder: BootstrapMetricRecorder, teleprompter, compiled, trainset_size: int
+    recorder: BootstrapMetricRecorder,
+    teleprompter,
+    compiled,
+    trainset_size: int,
+    error_causes: Optional[List[str]] = None,
 ) -> Dict[str, Any]:
     """What the bootstrap walk cost and what the compiled module carries."""
     scores = [score for _, score in recorder.attempts]
@@ -1349,6 +1383,9 @@ def _bootstrap_report(
         "metric_threshold": teleprompter.metric_threshold,
         "attempts": len(scores),
         "errors": teleprompter.error_count,
+        # The causes dspy logged for those errors, so a count is never the
+        # only record of what a run lost.
+        "error_causes": list(error_causes or []),
         "examples_walked": len({query for query, _ in recorder.attempts}),
         "accepted": sum(1 for score in scores if score >= recorder.threshold),
         "bootstrapped_demos": bootstrapped,
@@ -5136,14 +5173,14 @@ async def run_entity_extraction_optimization(
             **selection_summary,
         }
     from cogniverse_agents.entity_extraction_agent import EntityExtractionModule
-    from cogniverse_foundation.config.llm_factory import create_dspy_lm
+    from cogniverse_foundation.config.llm_factory import create_budgeted_dspy_lm
     from cogniverse_foundation.config.utils import get_config
 
     config = get_config(tenant_id=tenant_id, config_manager=config_manager)
     llm_config = config.get_llm_config()
     llm_endpoint = llm_config.resolve("optimization")
 
-    dspy.configure(lm=create_dspy_lm(llm_endpoint))
+    dspy.configure(lm=create_budgeted_dspy_lm(llm_endpoint))
 
     try:
         baseline_score = _entity_extraction_scores(EntityExtractionModule(), holdout)
@@ -5175,9 +5212,16 @@ async def run_entity_extraction_optimization(
                 metric=recorder,
                 metric_threshold=recorder.threshold,
             )
-            compiled = teleprompter.compile(EntityExtractionModule(), trainset=trainset)
+            with bootstrap_error_log() as error_log:
+                compiled = teleprompter.compile(
+                    EntityExtractionModule(), trainset=trainset
+                )
             bootstrap = _bootstrap_report(
-                recorder, teleprompter, compiled, len(trainset)
+                recorder,
+                teleprompter,
+                compiled,
+                len(trainset),
+                error_causes=error_log.causes,
             )
             logger.info("Entity extraction bootstrap for %s: %s", tenant_id, bootstrap)
 

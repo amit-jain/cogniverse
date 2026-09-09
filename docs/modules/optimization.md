@@ -436,6 +436,7 @@ Returns:
      "bootstrap": {"trainset": int, "max_bootstrapped_demos": int,
                    "max_labeled_demos": int, "max_rounds": int,
                    "metric_threshold": float, "attempts": int, "errors": int,
+                   "error_causes": list[str],
                    "examples_walked": int, "accepted": int,
                    "bootstrapped_demos": int, "labeled_demos": int,
                    "metric_values": list[float]} | None,
