@@ -318,6 +318,57 @@ def _describe_entity_shape(entities: Any) -> str:
     return shape
 
 
+# Named states an answer agent's envelope reports under "grounding", so a
+# caller can tell "this tenant serves nothing to search" from "the search
+# dependency is down" from "these profiles were searched and matched nothing".
+GROUNDING_THREADED = "threaded_results"
+GROUNDING_SEARCHED = "searched_servable_profiles"
+GROUNDING_NO_PROFILE_FOR_MODALITY = "no_servable_profile_for_modality"
+GROUNDING_TENANT_DEFAULT_PROFILE = "tenant_default_profile"
+GROUNDING_NO_SERVABLE_PROFILE = "no_servable_profile"
+GROUNDING_SEARCH_UNAVAILABLE = "search_unavailable"
+
+
+@dataclasses.dataclass(frozen=True)
+class AnswerGrounding:
+    """Hits an answer agent is grounded in, and how they were obtained."""
+
+    hits: List[Dict[str, Any]]
+    state: str
+    modalities: Tuple[str, ...] = ()
+    profiles: Tuple[str, ...] = ()
+
+    @property
+    def nothing_to_search(self) -> bool:
+        """True when the tenant serves no profile this request could search."""
+        return self.state in (
+            GROUNDING_NO_PROFILE_FOR_MODALITY,
+            GROUNDING_NO_SERVABLE_PROFILE,
+        )
+
+    def envelope(self) -> Dict[str, Any]:
+        """The ``grounding`` block an answer envelope carries."""
+        return {
+            "state": self.state,
+            "modalities": list(self.modalities),
+            "profiles": list(self.profiles),
+            "result_count": len(self.hits),
+        }
+
+    def unanswerable_text(self, tenant_id: str) -> str:
+        """The reply for a request with nothing to search."""
+        if self.state == GROUNDING_NO_PROFILE_FOR_MODALITY:
+            served = "/".join(self.modalities)
+            return (
+                f"Tenant {tenant_id} serves no {served} content, so there is "
+                "nothing to search for this request."
+            )
+        return (
+            f"Tenant {tenant_id} has no servable search profile, so there is "
+            "nothing to search for this request."
+        )
+
+
 class AgentDispatcher:
     """Routes agent tasks to the correct in-process agent implementation.
 
@@ -1745,9 +1796,11 @@ class AgentDispatcher:
                 query=query,
                 tenant_id=tenant_id,
                 context=context,
-                search_results=await self._resolve_answer_search_results(
-                    query, tenant_id, context, top_k=20
-                ),
+                search_results=(
+                    await self._resolve_answer_search_results(
+                        query, tenant_id, context, top_k=20
+                    )
+                ).hits,
             )
             return agent, typed_input
 
@@ -1768,9 +1821,11 @@ class AgentDispatcher:
                 query=query,
                 tenant_id=tenant_id,
                 context=context,
-                search_results=await self._resolve_answer_search_results(
-                    query, tenant_id, context, top_k=10
-                ),
+                search_results=(
+                    await self._resolve_answer_search_results(
+                        query, tenant_id, context, top_k=10
+                    )
+                ).hits,
             )
             return agent, typed_input
 
@@ -1938,8 +1993,10 @@ class AgentDispatcher:
         if "search_fn" in constructor:
 
             async def search_fn(query: str, tenant_id: str):
-                result = await self._execute_search_task(query, tenant_id, top_k=10)
-                return result.get("results", [])
+                grounding = await self._resolve_answer_search_results(
+                    query, tenant_id, None, top_k=10
+                )
+                return grounding.hits
 
             collaborators["search_fn"] = search_fn
         if "config_manager" in constructor:
@@ -1978,16 +2035,31 @@ class AgentDispatcher:
             if resolved_query != query:
                 logger.info(f"Query rewritten: '{query}' -> '{resolved_query}'")
 
+        enrichment = enrichment or {}
+        requested_profiles = [
+            name for name in (enrichment.get("profiles") or []) if isinstance(name, str)
+        ]
+
         # get_config runs the ConfigUtils ensure-chain (a Vespa read on a cold
         # or TTL-expired config) — offload it so it never stalls the API loop
         # (mirrors _build_encoder_config).
         config = await asyncio.to_thread(
             get_config, tenant_id=tenant_id, config_manager=self._config_manager
         )
-        # ``active_video_profile`` is the tenant's configured default video
-        # profile (config.json). A per-request ``profiles`` override still wins
-        # inside the SearchAgent via SearchInput.profiles.
-        profile = config.get("active_video_profile", "video_colpali_smol500_mv_frame")
+        # The searched profile is the SearchAgent's own ``active_profile``
+        # (deps.profile), so a requested profile has to reach _get_search_agent:
+        # SearchInput.profiles alone changes only the reported name. Extra
+        # requested profiles fan out from there as an ensemble.
+        profile = (
+            requested_profiles[0]
+            if requested_profiles
+            else config.get("active_video_profile")
+        )
+        if not profile:
+            raise ValueError(
+                f"No search profile for tenant {tenant_id!r}: the request named "
+                "none and no active_video_profile is configured."
+            )
 
         # _get_search_agent builds SearchAgent on a cache miss — a synchronous
         # get_system_config Vespa read + query-encoder init in __init__; offload
@@ -1998,7 +2070,6 @@ class AgentDispatcher:
         # this, the overlay sits in context unread.
         self._apply_artefact_overlay(search_agent, context)
 
-        enrichment = enrichment or {}
         input_data = SearchInput(
             query=resolved_query,
             tenant_id=tenant_id,
@@ -2084,35 +2155,113 @@ class AgentDispatcher:
             "visual_analysis_enabled": cfg.visual_analysis_enabled,
         }
 
+    @staticmethod
+    def _grounding_modalities(
+        query: str, context: Optional[Dict[str, Any]]
+    ) -> List[str]:
+        """The modalities this request grounds against.
+
+        The router's own decision when the request came through it, otherwise
+        the model-independent branch of that same classifier — so a directly
+        dispatched answer never applies a second heuristic, and the answer path
+        never loads GLiNER. Empty means the query names no modality, which
+        grounds on every servable profile.
+        """
+        from cogniverse_agents.gateway_agent import detected_modalities
+
+        routed = (context or {}).get("detected_modalities")
+        if isinstance(routed, (list, tuple)) and routed:
+            return [str(modality) for modality in routed]
+        return detected_modalities([], query)
+
+    def _servable_grounding_profiles(
+        self, tenant_id: str, modalities: List[str]
+    ) -> Tuple[List[str], List[str]]:
+        """``(profiles carrying these modalities, every servable profile)``.
+
+        The servable set ``GET /search/profiles`` advertises, so an answer is
+        grounded in exactly what this tenant can serve. No modality signal
+        means every servable profile qualifies. Blocking (config read) — the
+        caller offloads it.
+        """
+        from cogniverse_agents.gateway_agent import MODALITY_PROFILE_TYPES
+        from cogniverse_agents.profile_selection_agent import (
+            servable_tenant_profiles,
+        )
+
+        servable = servable_tenant_profiles(self._config_manager, tenant_id)
+        names = [name for name, _profile in servable]
+        if not modalities:
+            return names, names
+        wanted: set[str] = set()
+        for modality in modalities:
+            wanted |= MODALITY_PROFILE_TYPES.get(modality, frozenset())
+        matching = [
+            name for name, profile in servable if (profile.type or "").lower() in wanted
+        ]
+        return matching, names
+
+    async def _grounding_plan(
+        self,
+        query: str,
+        tenant_id: str,
+        enrichment: Dict[str, Any],
+        context: Optional[Dict[str, Any]],
+    ) -> Tuple[List[str], List[str], str]:
+        """``(modalities, profiles to search, grounding state)``."""
+        requested = [
+            name for name in (enrichment.get("profiles") or []) if isinstance(name, str)
+        ]
+        if requested:
+            return [], requested, GROUNDING_SEARCHED
+
+        modalities = self._grounding_modalities(query, context)
+        matching, servable = await asyncio.to_thread(
+            self._servable_grounding_profiles, tenant_id, modalities
+        )
+        if matching:
+            return modalities, matching, GROUNDING_SEARCHED
+        if servable:
+            return modalities, [], GROUNDING_NO_PROFILE_FOR_MODALITY
+
+        from cogniverse_foundation.config.utils import get_config
+
+        config = await asyncio.to_thread(
+            get_config, tenant_id=tenant_id, config_manager=self._config_manager
+        )
+        default_profile = config.get("active_video_profile")
+        if default_profile:
+            return modalities, [default_profile], GROUNDING_TENANT_DEFAULT_PROFILE
+        return modalities, [], GROUNDING_NO_SERVABLE_PROFILE
+
     async def _resolve_answer_search_results(
         self,
         query: str,
         tenant_id: str,
         context: Optional[Dict[str, Any]],
         top_k: int,
-    ) -> List[Dict[str, Any]]:
-        """Search results to ground an answer agent (detailed report / summary).
+    ) -> AnswerGrounding:
+        """Grounding for an answer agent (detailed report / summary).
 
-        Grounding these agents in real hits is what makes the report reflect the
-        corpus (and lets keyframes reach the answer LLM). Uses results the caller
-        already threaded through ``context["search_results"]`` (the orchestrator
-        hands a completed search step's hits to a dependent report/summary step)
-        when present; otherwise runs the tenant's default video search.
+        Grounding these agents in real hits is what makes the answer reflect
+        the corpus (and lets keyframes reach the answer LLM). Results the
+        caller already threaded through ``context["search_results"]`` win; the
+        fallback searches the tenant's servable profiles that carry the routed
+        modality, so a tenant serving only documents is grounded in its
+        documents rather than in a video profile it never deployed.
 
-        This fallback search is best-effort: a report/summary request is not
-        inherently a video-search request (a directly-dispatched summary may be
-        a plain conversational ask), so an unreachable search backend degrades to
-        an ungrounded answer over ``[]`` — logged, not raised — rather than
-        hard-failing the whole request on unrelated video-search infra. A genuine
-        zero-match likewise returns ``[]`` (the agent reports "no results").
+        The returned state distinguishes the outcomes an answer must not
+        conflate: profiles searched, no servable profile for this modality,
+        and a search dependency that is down (degrades to no hits, logged, so
+        an unrelated backend outage does not fail a plain conversational ask).
         """
         if context:
             threaded = context.get("search_results")
             if isinstance(threaded, list):
                 hits = [_flatten_search_hit(h) for h in threaded if isinstance(h, dict)]
                 if hits:
-                    return hits
-        enrichment = None
+                    return AnswerGrounding(hits=hits, state=GROUNDING_THREADED)
+        enrichment = {}
         if context:
             enrichment = {
                 k: context[k]
@@ -2126,11 +2275,25 @@ class AgentDispatcher:
                 if context.get(k)
             }
         try:
+            modalities, profiles, state = await self._grounding_plan(
+                query, tenant_id, enrichment, context
+            )
+        except Exception as exc:
+            logger.warning(
+                "Grounding profile resolution failed for tenant %s; proceeding "
+                "with an ungrounded answer: %r",
+                tenant_id,
+                exc,
+            )
+            return AnswerGrounding(hits=[], state=GROUNDING_SEARCH_UNAVAILABLE)
+        if not profiles:
+            return AnswerGrounding(hits=[], state=state, modalities=tuple(modalities))
+        try:
             search = await self._execute_search_task(
                 query,
                 tenant_id,
                 top_k=top_k,
-                enrichment=enrichment or None,
+                enrichment={**enrichment, "profiles": profiles},
                 context=context,
             )
         except Exception as exc:
@@ -2140,12 +2303,22 @@ class AgentDispatcher:
                 tenant_id,
                 exc,
             )
-            return []
-        return [
-            _flatten_search_hit(h)
-            for h in search.get("results", [])
-            if isinstance(h, dict)
-        ]
+            return AnswerGrounding(
+                hits=[],
+                state=GROUNDING_SEARCH_UNAVAILABLE,
+                modalities=tuple(modalities),
+                profiles=tuple(profiles),
+            )
+        return AnswerGrounding(
+            hits=[
+                _flatten_search_hit(h)
+                for h in search.get("results", [])
+                if isinstance(h, dict)
+            ],
+            state=state,
+            modalities=tuple(modalities),
+            profiles=tuple(profiles),
+        )
 
     def _get_search_agent(self, profile: str):
         """Return a per-profile cached SearchAgent instance. SearchAgent is
@@ -2370,6 +2543,11 @@ class AgentDispatcher:
                 )
                 if k in context
             }
+            routed_modalities = getattr(result, "detected_modalities", None)
+            if isinstance(routed_modalities, (list, tuple)) and routed_modalities:
+                # The routed agent's grounding search reads the router's own
+                # modality decision from here instead of re-classifying.
+                context["detected_modalities"] = list(routed_modalities)
             downstream = await self._execute_downstream_agent(
                 agent_name=result.routed_to,
                 query=query,
@@ -2586,6 +2764,17 @@ class AgentDispatcher:
             SummaryRequest,
         )
 
+        request_kwargs = {"attachments": (context or {}).get("attachments", [])}
+        summary_type = (context or {}).get("summary_type")
+        if summary_type is not None:
+            request_kwargs["summary_type"] = summary_type
+
+        grounding = await self._resolve_answer_search_results(
+            query, tenant_id, context, top_k=10
+        )
+        if grounding.nothing_to_search and not request_kwargs["attachments"]:
+            return self._nothing_to_search_summary(tenant_id, grounding)
+
         deps = SummarizerDeps(
             tenant_id=tenant_id,
             **self._agent_behavior_kwargs(tenant_id, "summarizer_agent"),
@@ -2598,15 +2787,9 @@ class AgentDispatcher:
         # DSPy module(s) for canary/variant prompts.
         self._apply_artefact_overlay(agent, context)
 
-        request_kwargs = {"attachments": (context or {}).get("attachments", [])}
-        summary_type = (context or {}).get("summary_type")
-        if summary_type is not None:
-            request_kwargs["summary_type"] = summary_type
         request = SummaryRequest(
             query=query,
-            search_results=await self._resolve_answer_search_results(
-                query, tenant_id, context, top_k=10
-            ),
+            search_results=grounding.hits,
             **request_kwargs,
         )
         result = await agent.summarize(request)
@@ -2615,6 +2798,40 @@ class AgentDispatcher:
             "status": "success",
             "agent": "summarizer_agent",
             "message": f"Generated summary for '{query}'",
+            "grounding": grounding.envelope(),
+            "result": dataclasses.asdict(result),
+        }
+
+    @staticmethod
+    def _nothing_to_search_summary(
+        tenant_id: str, grounding: AnswerGrounding
+    ) -> Dict[str, Any]:
+        """Summary envelope for a request this tenant has nothing to search for.
+
+        The answer states that instead of an LLM narrating an empty result set.
+        """
+        from cogniverse_agents.summarizer_agent import SummaryResult, ThinkingPhase
+
+        text = grounding.unanswerable_text(tenant_id)
+        result = SummaryResult(
+            summary=text,
+            key_points=[],
+            visual_insights=[],
+            confidence_score=0.0,
+            thinking_phase=ThinkingPhase(
+                key_themes=[],
+                content_categories=[],
+                relevance_scores={},
+                visual_elements=[],
+                reasoning=text,
+            ),
+            metadata={"grounding": grounding.envelope()},
+        )
+        return {
+            "status": "success",
+            "agent": "summarizer_agent",
+            "message": text,
+            "grounding": grounding.envelope(),
             "result": dataclasses.asdict(result),
         }
 
@@ -2650,6 +2867,12 @@ class AgentDispatcher:
             DetailedReportInput,
         )
 
+        grounding = await self._resolve_answer_search_results(
+            query, tenant_id, context, top_k=20
+        )
+        if grounding.nothing_to_search and not (context or {}).get("attachments"):
+            return self._nothing_to_search_report(tenant_id, grounding)
+
         deps = DetailedReportDeps(
             tenant_id=tenant_id,
             **self._agent_behavior_kwargs(tenant_id, "detailed_report_agent"),
@@ -2666,9 +2889,7 @@ class AgentDispatcher:
             query=query,
             tenant_id=tenant_id,
             context=context,
-            search_results=await self._resolve_answer_search_results(
-                query, tenant_id, context, top_k=20
-            ),
+            search_results=grounding.hits,
         )
         from cogniverse_foundation.config.semantic_router import (
             routed_lm_context_for,
@@ -2684,6 +2905,27 @@ class AgentDispatcher:
             "status": "success",
             "agent": "detailed_report_agent",
             "message": f"Generated detailed report for '{query}'",
+            "grounding": grounding.envelope(),
+            "result": result.model_dump(),
+        }
+
+    @staticmethod
+    def _nothing_to_search_report(
+        tenant_id: str, grounding: AnswerGrounding
+    ) -> Dict[str, Any]:
+        """Report envelope for a request this tenant has nothing to search for."""
+        from cogniverse_agents.detailed_report_agent import DetailedReportOutput
+
+        text = grounding.unanswerable_text(tenant_id)
+        result = DetailedReportOutput(
+            executive_summary=text,
+            metadata={"grounding": grounding.envelope()},
+        )
+        return {
+            "status": "success",
+            "agent": "detailed_report_agent",
+            "message": text,
+            "grounding": grounding.envelope(),
             "result": result.model_dump(),
         }
 
@@ -2893,8 +3135,10 @@ class AgentDispatcher:
         )
 
         async def search_fn(query: str, tenant_id: str):
-            result = await self._execute_search_task(query, tenant_id, top_k=10)
-            return result.get("results", [])
+            grounding = await self._resolve_answer_search_results(
+                query, tenant_id, None, top_k=10
+            )
+            return grounding.hits
 
         agent = DeepResearchAgent(
             deps=deps, search_fn=search_fn, config_manager=self._config_manager

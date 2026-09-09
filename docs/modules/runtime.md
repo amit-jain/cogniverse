@@ -891,6 +891,37 @@ curl "http://localhost:8000/agents/routing_agent/sessions/sess-123?tenant_id=acm
 
 `AgentDispatcher` (`agent_dispatcher.py`) is the class behind `/agents/{agent_name}/process` — it holds the per-capability dispatch logic described above. Before dispatching to `search_agent`, `routing_agent`, `summarizer_agent`, `coding_agent`, or `orchestrator_agent` it calls `consult_egress_policy(agent_name)` to look up that agent's OpenShell egress allow-list (from `configs/agent_policies/`), then `_verify_egress(agent_name, tenant_id)` to confirm every resolved endpoint (LLM, inference service, etc.) the agent is about to call is within that allow-list. Which endpoint kinds an agent may reach is derived from the capabilities it is registered with: every agent reaches the LM, and a retrieval or coding capability adds Vespa (`egress_endpoint_kinds()` returns the map). A resolved endpoint outside the allow-list logs an "egress policy DRIFT" warning rather than failing the request — the check is a drift detector for policy authors, not a hard block. An unreadable system config or an address that does not parse logs the skip and drops that endpoint from the check, so the pre-flight never turns a dispatch into an error. The runtime response's `gateway` block carries `complexity`, `modality`, `generation_type`, `routed_to`, `confidence`, `fast_path_confidence_threshold`, and `gliner_threshold`.
 
+#### Answer grounding
+
+A summary, detailed report or deep-research answer is grounded in search hits.
+The dispatcher uses the hits a caller threaded through
+`context["search_results"]` when present; otherwise it runs a grounding search
+over the tenant's own servable profiles — the set `GET /search/profiles`
+advertises — restricted to the profiles whose declared type carries the routed
+modality (`MODALITY_PROFILE_TYPES` in `gateway_agent.py`; `document` and `wiki`
+profiles both carry the document and text modalities). The modality is the
+router's own decision, read from `context["detected_modalities"]` when the
+request came through the gateway, otherwise the model-independent branch of
+that same classifier. Several matching profiles are searched together and
+merged by the SearchAgent's RRF ensemble.
+
+Every answer envelope carries a `grounding` block — `state`, `modalities`,
+`profiles`, `result_count` — with one of these states:
+
+| state | meaning |
+|---|---|
+| `threaded_results` | grounded in hits the caller supplied |
+| `searched_servable_profiles` | the listed profiles were searched |
+| `tenant_default_profile` | the tenant has no servable profile; the configured `active_video_profile` was searched as a last resort |
+| `no_servable_profile_for_modality` | the tenant serves nothing for this modality |
+| `no_servable_profile` | the tenant has no servable profile and no configured default |
+| `search_unavailable` | a search dependency failed; the answer is ungrounded |
+
+The two nothing-to-search states short-circuit: the envelope states that the
+tenant serves no content of that modality and the answer model is not invoked,
+so an empty corpus never reads as a confident summary of nothing. A dependency
+outage stays distinct under `search_unavailable`.
+
 Completed dispatch envelopes carry `answer`: the human-facing text of the turn, produced by `harness_turn.extract_answer_text` and read by the wiki auto-file hook and the harness transports. `harness_turn` derives that text from the agent's own output — nested under `result` / `orchestration_result`, or flat for the generic path — falling back to the envelope's message and hits. An error envelope raises `NoAnswerError` and is left without an `answer`, so a failure is never rendered as a reply. The module also holds `derive_request_seed` (the canary/variant bucket for a conversation, anchored on its first user message) and `to_openai_tool_calls`.
 
 `dispatch_stream(agent_name, query, context)` checks egress in a worker and
