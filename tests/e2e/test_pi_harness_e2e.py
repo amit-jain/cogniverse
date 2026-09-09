@@ -21,7 +21,9 @@ import httpx
 import pytest
 
 from tests.e2e.conftest import (
+    _CAPTION_CORPUS_DIR,
     RUNTIME,
+    SAMPLE_DOCUMENT_TITLES,
     TENANT_DEPLOY_TIMEOUT_S,
     _ingest_sample_documents,
     register_tenant_and_wait,
@@ -34,22 +36,46 @@ pytestmark = pytest.mark.e2e
 
 CONFIG_PATH = Path(__file__).resolve().parents[2] / "configs" / "config.json"
 
-# The captions the tenant is seeded with, in the order the document route
-# ranks them for this query (same corpus and query as
-# tests/e2e/test_a2a_gateway_e2e.py::TestGatewaySeededSearchContract).
+# The captions the tenant is seeded with, in the order the document route ranks
+# them for this query.
 DOCUMENT_QUERY = "find PDF documents about washing dishes"
-EXPECTED_TITLES = ["v_0BtHd6dvm78.txt", "v_-nl4G-00PtA.txt"]
+EXPECTED_TITLE_ORDER = ("v_0BtHd6dvm78.txt", "v_-nl4G-00PtA.txt")
 
-SUMMARY_QUERY = "what are the seeded documents about?"
+# The row and metadata shapes ``POST /search/`` serves for a document profile.
+DOCUMENT_ROW_KEYS = {"document_id", "score", "metadata", "highlights", "source_id"}
+DOCUMENT_METADATA_KEYS = {
+    "creation_timestamp",
+    "document_id",
+    "document_path",
+    "document_title",
+    "document_type",
+    "documentid",
+    "full_text",
+    "page_count",
+    "sddocname",
+    "source_id",
+}
+
 KEY_HASH = re.compile(r"[0-9a-f]{64}")
 COMPLETION_ID = re.compile(r"chatcmpl-[0-9a-f]{32}")
 
 
-def harness_models() -> dict[str, str]:
-    """The model -> agent map the runtime serves, from the shipped config."""
+def rendered_config() -> dict:
+    """The shipped config with its deployment placeholders filled in."""
     raw = CONFIG_PATH.read_text(encoding="utf-8")
     rendered = re.sub(r"\{\{[^}]*\}\}", "http://rendered.invalid", raw)
-    return json.loads(rendered)["harness"]["models"]
+    return json.loads(rendered)
+
+
+def harness_models() -> dict[str, str]:
+    """The model -> agent map the runtime serves, from the shipped config."""
+    return rendered_config()["harness"]["models"]
+
+
+def document_schema_for(tenant_id: str) -> str:
+    """The tenant-scoped Vespa schema the document profile writes into."""
+    base = rendered_config()["backend"]["profiles"][DOCUMENT_PROFILE]["schema_name"]
+    return f"{base}_{tenant_id.replace(':', '_')}"
 
 
 def require_runtime() -> None:
@@ -79,6 +105,8 @@ def harness_tenant():
 
         register_tenant_and_wait(tenant_id, created_by="e2e")
         _deploy_profile_for_tenant(client, DOCUMENT_PROFILE, tenant_id)
+        # Returns only once every seeded caption answers a search for its own
+        # content id, so nothing below races indexing.
         seeded = _ingest_sample_documents(tenant_id=tenant_id)
 
         minted = client.post(
@@ -138,6 +166,9 @@ def test_models_needs_a_key_and_lists_the_configured_catalogue(harness_tenant):
 
 def test_the_seeded_captions_are_the_documents_this_tenant_serves(harness_tenant):
     tenant_id, seeded, _ = harness_tenant
+    assert set(seeded) == set(SAMPLE_DOCUMENT_TITLES)
+    assert set(EXPECTED_TITLE_ORDER) == set(SAMPLE_DOCUMENT_TITLES)
+    org_id, tenant_name = tenant_id.split(":", 1)
 
     with httpx.Client(base_url=RUNTIME, timeout=120.0) as client:
         response = client.post(
@@ -152,26 +183,87 @@ def test_the_seeded_captions_are_the_documents_this_tenant_serves(harness_tenant
 
     assert response.status_code == 200, response.text
     body = response.json()
+    assert set(body) == {
+        "query",
+        "profile",
+        "strategy",
+        "results_count",
+        "results",
+        "session_id",
+    }
+    assert body["query"] == DOCUMENT_QUERY
+    assert body["profile"] == DOCUMENT_PROFILE
+    assert body["strategy"] == "default"
+    assert body["session_id"] is None
+
     results = body["results"]
-    assert body["results_count"] == len(results)
-    assert [result["title"] for result in results] == EXPECTED_TITLES
-    assert [result["document_id"] for result in results] == [
-        seeded[title] for title in EXPECTED_TITLES
+    assert body["results_count"] == len(EXPECTED_TITLE_ORDER)
+    assert len(results) == len(EXPECTED_TITLE_ORDER)
+    assert [set(result) for result in results] == [DOCUMENT_ROW_KEYS] * len(
+        EXPECTED_TITLE_ORDER
+    )
+    assert [set(result["metadata"]) for result in results] == [
+        DOCUMENT_METADATA_KEYS
+    ] * len(EXPECTED_TITLE_ORDER)
+
+    # A document row carries the seeded content id as source_id and one chunk
+    # per caption as document_id; the caption's own text and title ride in
+    # metadata. There is no top-level "title" — that shape belongs to the
+    # document agent's rows (tests/e2e/test_a2a_gateway_e2e.py), not to this
+    # route.
+    schema = document_schema_for(tenant_id)
+    assert [result["source_id"] for result in results] == [
+        seeded[title] for title in EXPECTED_TITLE_ORDER
     ]
-    scores = [result["relevance_score"] for result in results]
+    assert [result["document_id"] for result in results] == [
+        f"{seeded[title]}_{seeded[title]}" for title in EXPECTED_TITLE_ORDER
+    ]
+    assert [result["highlights"] for result in results] == [{}, {}]
+    assert [result["metadata"]["document_title"] for result in results] == list(
+        EXPECTED_TITLE_ORDER
+    )
+    assert [result["metadata"]["document_type"] for result in results] == ["txt", "txt"]
+    assert [result["metadata"]["page_count"] for result in results] == [1, 1]
+    assert [result["metadata"]["document_id"] for result in results] == [
+        seeded[title] for title in EXPECTED_TITLE_ORDER
+    ]
+    assert [result["metadata"]["source_id"] for result in results] == [
+        seeded[title] for title in EXPECTED_TITLE_ORDER
+    ]
+    assert [result["metadata"]["sddocname"] for result in results] == [schema, schema]
+    assert [result["metadata"]["documentid"] for result in results] == [
+        f"id:content:{schema}::{seeded[title]}_{seeded[title]}"
+        for title in EXPECTED_TITLE_ORDER
+    ]
+    assert [result["metadata"]["full_text"] for result in results] == [
+        (_CAPTION_CORPUS_DIR / title).read_text(encoding="utf-8")
+        for title in EXPECTED_TITLE_ORDER
+    ]
+    for result, title in zip(results, EXPECTED_TITLE_ORDER):
+        path = result["metadata"]["document_path"]
+        assert f"/{org_id}/{tenant_name}/media/" in path, path
+        assert path.endswith(f"/{seeded[title]}.txt"), path
+
+    scores = [result["score"] for result in results]
     assert scores == sorted(scores, reverse=True)
 
 
 def test_a_chat_completion_answers_from_the_seeded_documents(harness_tenant):
     tenant_id, seeded, key = harness_tenant
+    assert set(seeded) == set(SAMPLE_DOCUMENT_TITLES)
 
+    # "cogniverse" is the model that routes by modality, so a document query
+    # reaches the document route and the answer is the tenant's own hits. The
+    # per-agent models ground differently: cogniverse/summarizer and
+    # cogniverse/search search the tenant's active_video_profile
+    # (agent_dispatcher.py::_execute_search_task), which holds no documents.
     with httpx.Client(base_url=RUNTIME, timeout=300.0) as client:
         response = client.post(
             "/v1/chat/completions",
             headers={"Authorization": f"Bearer {key}"},
             json={
-                "model": "cogniverse/summarizer",
-                "messages": [{"role": "user", "content": SUMMARY_QUERY}],
+                "model": "cogniverse",
+                "messages": [{"role": "user", "content": DOCUMENT_QUERY}],
             },
         )
 
@@ -180,7 +272,7 @@ def test_a_chat_completion_answers_from_the_seeded_documents(harness_tenant):
     assert set(body) == {"id", "object", "created", "model", "choices", "usage"}
     assert COMPLETION_ID.fullmatch(body["id"])
     assert body["object"] == "chat.completion"
-    assert body["model"] == "cogniverse/summarizer"
+    assert body["model"] == "cogniverse"
     assert len(body["choices"]) == 1
     choice = body["choices"][0]
     assert set(choice) == {"index", "message", "finish_reason"}
@@ -191,9 +283,20 @@ def test_a_chat_completion_answers_from_the_seeded_documents(harness_tenant):
     assert set(usage) == {"prompt_tokens", "completion_tokens", "total_tokens"}
     assert usage["total_tokens"] == usage["prompt_tokens"] + usage["completion_tokens"]
 
-    # The summary is LM free text, so what is pinned is its grounding: the
-    # tenant owns only the two dish-washing captions, which is the single
-    # subject any faithful answer can name. The key resolved to this tenant,
-    # so a summary of anything else means the turn read another corpus.
-    assert "dish" in choice["message"]["content"].lower(), choice["message"]["content"]
-    assert set(seeded) == set(EXPECTED_TITLES)
+    # The answer is the rendered hit list, so grounding is pinned by identity:
+    # the tenant's own content ids and caption titles, in rank order, and
+    # nothing else.
+    lines = choice["message"]["content"].split("\n")
+    assert lines[0] == (
+        f"Found {len(EXPECTED_TITLE_ORDER)} documents for '{DOCUMENT_QUERY}'"
+    ), choice["message"]["content"]
+    assert len(lines) == len(EXPECTED_TITLE_ORDER) + 1, choice["message"]["content"]
+    rendered = [line.split(" · score ", 1) for line in lines[1:]]
+    assert [part[0] for part in rendered] == [
+        f"- {seeded[title]}" for title in EXPECTED_TITLE_ORDER
+    ]
+    assert [part[1].split(": ", 1)[1] for part in rendered] == list(
+        EXPECTED_TITLE_ORDER
+    )
+    scores = [float(part[1].split(": ", 1)[0]) for part in rendered]
+    assert scores == sorted(scores, reverse=True)
