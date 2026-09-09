@@ -1977,3 +1977,55 @@ revocation state. List pages accept `page_size` (1–1000) and an opaque `contin
 which must be followed even on an empty page. Store outages return 503 with their
 cause. Tenant deletion in `cogniverse_runtime/admin` revokes credentials before
 removing tenant metadata.
+
+## ACP stdio process
+
+The package lazily exports `ACPServer`, `ACPError`, `ClientConnection`,
+`handle_message` and `serve` from `server.py`. `ACPServer` handles initialization
+and session creation, prompts and cancellation; `ClientConnection` exchanges
+requests, replies and notifications with the editor. `handle_message` routes
+requests, `serve` owns the read loop, and `ACPError` carries protocol errors.
+`tools.py` provides `advertised_tools`, `tool_kind`, `permission_options`,
+`outcome_allows` and `execute_tool_call` for editor tools and permission handling.
+
+`cogniverse_runtime/acp` implements Agent Client Protocol version 1 as a separate
+process. Run `uv run python -m cogniverse_runtime.acp` with
+`COGNIVERSE_ACP_TENANT` set. Each stdin line carries a JSON-RPC 2.0 message;
+stdout carries protocol replies and `session/update` notifications. Application
+output and root logs go to stderr at `LOG_LEVEL` (default `INFO`).
+
+The entrypoint reads `COGNIVERSE_CONFIG` (default `configs/config.json`) and
+requires a valid `harness.models` map. Its `cogniverse` and `cogniverse/coding`
+entries select the answer and workspace agents; `COGNIVERSE_ACP_AGENT` and
+`COGNIVERSE_ACP_CODING_AGENT` override those selections. Invalid configuration
+exits with status 2. Dispatcher construction is lazy and locked across concurrent
+first prompts. The shared `entrypoint_env` resolver reads `MINIO_ENDPOINT`,
+`MINIO_ACCESS_KEY`, `MINIO_SECRET_KEY`, `TELEMETRY_OTLP_ENDPOINT`,
+`TELEMETRY_HTTP_ENDPOINT`, `COGNIVERSE_SEMANTIC_EMBED_URL`,
+`COGNIVERSE_SEMANTIC_EMBED_MODEL`, `COGNIVERSE_TENANT_CACHE_CAPACITY`,
+`COGNIVERSE_ORCH_RLM_PROMOTION`, `COGNIVERSE_ORCH_RLM_PROMOTION_FRACTION`,
+and `COGNIVERSE_RLM_SKIP_DENO_CHECK` once at startup.
+
+`initialize` advertises text, image and embedded text-resource prompts.
+`session/new` requires an existing absolute `cwd`, which roots file tools.
+An editor advertising filesystem or terminal tools selects the coding agent's
+workspace loop. File paths resolve inside `cwd`, including symlink resolution;
+outside paths fail. Mutating tools request permission using the exact offered
+option IDs. Terminal commands run in `cwd`; terminal release has a reported
+0.1-second deadline. The transport imports `WORKSPACE_MAX_ROUNDS` from
+`cogniverse_agents.coding_agent` and supplies that same eight-round budget to
+agent dispatch and the editor tool loop.
+
+Each session allows one active prompt. A concurrent prompt returns `session_busy`
+(code -32002); `session/cancel` cancels the running turn. Completed turns append
+ordered user/assistant history. Image blocks reach dispatch as data-URL attachments.
+Agents declaring answer-token streaming emit only their answer field; other
+agents emit chunks of the canonical final answer through the shared `/v1` helper.
+
+Non-object JSON lines, including batch arrays, receive Invalid Request (-32600)
+and leave the connection serving. Late and unknown editor replies are logged and
+ignored. Input lines may contain at most 67,108,864 bytes before the newline;
+an oversized line receives an error naming that limit and exits with status 1.
+
+EOF cancels and joins active handlers, closes pending editor calls, and aborts
+blocked stdout writes. A partial agent stream without a final answer is an error.
