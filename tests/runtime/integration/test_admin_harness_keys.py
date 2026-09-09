@@ -4,6 +4,7 @@ import asyncio
 import hashlib
 import importlib
 import os
+import re
 import subprocess
 import time
 import uuid
@@ -102,6 +103,9 @@ async def test_round_trip_canonical_hash_and_tombstone(store):
         )
         assert created.status_code == 200, created.text
         record = created.json()
+        # generate_key is f"cgv-{secrets.token_urlsafe(32)}" — 32 random
+        # bytes are exactly 43 base64url characters.
+        assert re.fullmatch(r"cgv-[A-Za-z0-9_-]{43}", record["key"]), record["key"]
         digest = hashlib.sha256(record["key"].encode()).hexdigest()
         assert record["key_hash"] == digest
         assert record["key_prefix"] == digest[:12]
