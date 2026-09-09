@@ -43,7 +43,11 @@ def _fresh_worker_lm(monkeypatch):
 @pytest.fixture
 def factory_capture(monkeypatch):
     """Capture the LLMEndpointConfig handed to create_budgeted_dspy_lm, without
-    constructing a real dspy.LM."""
+    constructing a real dspy.LM.
+
+    create_budgeted_dspy_lm is the chokepoint the worker builds through, so
+    every request is fitted to the window its endpoint serves; it builds a
+    BudgetedLM directly rather than through create_dspy_lm."""
     captured = {}
     fake_lm = MagicMock(name="fake_lm")
 
