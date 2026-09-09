@@ -2209,10 +2209,17 @@ async def lifespan(application):
         )
 
         from cogniverse_core.schemas.filesystem_loader import FilesystemSchemaLoader
+        from cogniverse_foundation.config.utils import create_default_config_manager
 
         schema_loader = FilesystemSchemaLoader(Path("configs/schemas"))
 
-        search_agent = SearchAgent(deps=deps, schema_loader=schema_loader)
+        # This process entrypoint has no manager to inject, so it builds the
+        # one the agent runs on.
+        search_agent = SearchAgent(
+            deps=deps,
+            schema_loader=schema_loader,
+            config_manager=create_default_config_manager(),
+        )
         logger.info("Generic search agent initialized (tenant-agnostic)")
     except Exception as e:
         logger.error(f"Failed to initialize search agent: {e}")
