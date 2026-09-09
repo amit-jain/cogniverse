@@ -20,7 +20,9 @@ import pytest
 from fastapi import FastAPI, HTTPException
 from fastapi.testclient import TestClient
 
+from cogniverse_core.agents.base import ConfigManagerAware
 from cogniverse_runtime.routers import knowledge as knowledge_router
+from cogniverse_runtime.routers import tenant as tenant_router
 
 TENANT = "acme:prod"
 
@@ -32,6 +34,9 @@ def harness(monkeypatch):
     app.include_router(knowledge_router.router, prefix="/admin")
     cm = MagicMock(name="config_manager")
     app.dependency_overrides[knowledge_router._get_config_manager] = lambda: cm
+    # The routes bind this same manager onto the agents they build; main.py
+    # installs it at startup via routers.tenant.set_config_manager.
+    monkeypatch.setattr(tenant_router, "_config_manager", cm)
 
     mm_sentinel = MagicMock(name="memory_manager")
     registry_sentinel = MagicMock(name="knowledge_registry")
@@ -71,7 +76,7 @@ def _install_recorder(monkeypatch, dotted_class, out_payload, raise_exc=None):
     ``_process_impl`` captures the (real) input model instance."""
     recorded: dict = {}
 
-    class _RecorderAgent:
+    class _RecorderAgent(ConfigManagerAware):
         def __init__(self, **kwargs):
             recorded["init"] = kwargs
             recorded["agent"] = self
@@ -153,7 +158,8 @@ class TestKGTraverse:
         assert not hasattr(inp, "relation_filter")
         assert not hasattr(inp, "max_nodes")
 
-        assert set(recorded["init"]) == {"deps"}
+        assert set(recorded["init"]) == {"deps", "config_manager"}
+        assert recorded["init"]["config_manager"] is harness.cm
         assert recorded["init"]["deps"].tenant_id == TENANT
         assert harness.calls["inject"] == [
             (recorded["agent"], TENANT, "kg_traversal_agent")
@@ -199,7 +205,13 @@ class TestFederatedQuery:
         assert inp.agent_name_filter == "_promoted"
         assert not hasattr(inp, "top_k")
 
-        assert set(recorded["init"]) == {"deps", "memory_manager_factory", "registry"}
+        assert set(recorded["init"]) == {
+            "deps",
+            "memory_manager_factory",
+            "registry",
+            "config_manager",
+        }
+        assert recorded["init"]["config_manager"] is harness.cm
         assert recorded["init"]["deps"].tenant_id == TENANT
         assert recorded["init"]["memory_manager_factory"] is harness.factory
         assert recorded["init"]["registry"] is harness.registry
@@ -265,7 +277,8 @@ class TestMultiDocSynthesize:
         ]
         assert inp.rlm is None
 
-        assert set(recorded["init"]) == {"deps", "llm_config"}
+        assert set(recorded["init"]) == {"deps", "llm_config", "config_manager"}
+        assert recorded["init"]["config_manager"] is harness.cm
         assert recorded["init"]["deps"].tenant_id == TENANT
         assert recorded["init"]["llm_config"] == LLMEndpointConfig(
             model="openai/test-model",
@@ -441,7 +454,12 @@ class TestTemporalReason:
         ]
         assert inp.agent_name_filter == "_promoted"
 
-        assert set(recorded["init"]) == {"deps", "memory_manager_factory"}
+        assert set(recorded["init"]) == {
+            "deps",
+            "memory_manager_factory",
+            "config_manager",
+        }
+        assert recorded["init"]["config_manager"] is harness.cm
         assert recorded["init"]["deps"].tenant_id == TENANT
         assert recorded["init"]["memory_manager_factory"] is harness.factory
         assert harness.calls["bind"] == [(recorded["agent"], TENANT)]
