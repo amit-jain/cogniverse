@@ -29,6 +29,10 @@ import threading
 
 import httpx
 
+from cogniverse_core.common.models.model_loaders import (
+    DOCUMENT_ENCODE_TIMEOUT_S,
+    QUERY_ENCODE_TIMEOUT_S,
+)
 from cogniverse_foundation.config.inference_auth import endpoint_root, inference_headers
 from cogniverse_foundation.telemetry.context import trace_headers
 
@@ -58,7 +62,7 @@ def _embed_text(text: str, denseon_url: str, *, is_query: bool) -> list:
         f"{denseon_url.rstrip('/')}/v1/embeddings",
         json={"model": "lightonai/DenseOn", "input": f"{prompt}{text}"},
         headers=dict(inference_headers(endpoint_root(denseon_url))),
-        timeout=30,
+        timeout=QUERY_ENCODE_TIMEOUT_S if is_query else DOCUMENT_ENCODE_TIMEOUT_S,
     )
     resp.raise_for_status()
     return resp.json()["data"][0]["embedding"]

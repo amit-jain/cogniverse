@@ -10,6 +10,10 @@ from __future__ import annotations
 import httpx
 import pytest
 
+from cogniverse_core.common.models.model_loaders import (
+    DOCUMENT_ENCODE_TIMEOUT_S,
+    QUERY_ENCODE_TIMEOUT_S,
+)
 from cogniverse_runtime import job_executor as je
 
 pytestmark = pytest.mark.unit
@@ -43,7 +47,7 @@ def test_modal_embed_call_carries_the_environment_bearer(monkeypatch):
             f"{MODAL}/v1/embeddings",
             {"model": "lightonai/DenseOn", "input": "query: save to wiki"},
             {"Authorization": "Bearer real-bearer"},
-            30,
+            QUERY_ENCODE_TIMEOUT_S,
         )
     ]
 
@@ -60,7 +64,7 @@ def test_in_cluster_embed_call_sends_no_credential(monkeypatch):
             f"{IN_CLUSTER}/v1/embeddings",
             {"model": "lightonai/DenseOn", "input": "document: wiki knowledge base"},
             {},
-            30,
+            DOCUMENT_ENCODE_TIMEOUT_S,
         )
     ]
 
