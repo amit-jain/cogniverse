@@ -12,6 +12,15 @@ from typing import Any, Dict, Iterator, List, Optional
 from cogniverse_sdk.document import Document, SearchResult
 
 
+class BackendClosedError(RuntimeError):
+    """A backend was used after its connections were released.
+
+    Backend instances are process-shared and released by the registry's
+    LRU eviction, so a caller holding a reference can outlive the pool.
+    Using one raises here instead of failing inside a closed HTTP client.
+    """
+
+
 class IngestionBackend(ABC):
     """Abstract base class for ingestion backends."""
 

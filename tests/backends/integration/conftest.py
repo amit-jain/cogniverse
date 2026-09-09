@@ -103,3 +103,79 @@ def get_backend(vespa_instance, temp_config_manager, schema_loader):
         )
 
     return _get_backend
+
+
+@pytest.fixture(scope="module")
+def second_vespa():
+    """A second, independent Vespa container.
+
+    Endpoint identity can only be proved against two clusters that hold
+    different documents: one cluster cannot show that a backend bound to
+    endpoint A stopped answering from endpoint B.
+    """
+    import os
+    import platform
+    import subprocess
+    import time
+
+    from tests.conftest import (
+        _shared_vespa_application_package,
+        _shared_vespa_run_args,
+        _vespa_wait_for_config_ready,
+        _vespa_wait_for_data_port_ready,
+        _vespa_wait_for_query_ready,
+    )
+    from tests.utils.docker_utils import start_docker_container_with_port_retry
+
+    machine = platform.machine().lower()
+    docker_platform = (
+        "linux/arm64" if machine in ("arm64", "aarch64") else "linux/amd64"
+    )
+    container_name, http_port, config_port = start_docker_container_with_port_retry(
+        "tests.backends.integration.second_vespa",
+        name_prefix="backend-tests-second",
+        image="vespaengine/vespa:8.668.5",
+        container_ports=(8080, 19071),
+        extra_run_args=_shared_vespa_run_args(
+            owner_pid=os.getpid(), docker_platform=docker_platform
+        ),
+        max_attempts=5,
+    )
+    try:
+        if not _vespa_wait_for_config_ready(config_port, timeout=180):
+            pytest.fail(f"second_vespa config server (port {config_port}) not ready")
+        time.sleep(10)
+
+        from cogniverse_vespa.metadata_schemas import (
+            create_adapter_registry_schema,
+            create_config_metadata_schema,
+            create_organization_metadata_schema,
+            create_tenant_metadata_schema,
+        )
+        from cogniverse_vespa.vespa_schema_manager import VespaSchemaManager
+
+        VespaSchemaManager(
+            backend_endpoint="http://localhost", backend_port=config_port
+        )._deploy_package(
+            _shared_vespa_application_package(
+                [
+                    create_organization_metadata_schema(),
+                    create_tenant_metadata_schema(),
+                    create_config_metadata_schema(),
+                    create_adapter_registry_schema(),
+                ]
+            )
+        )
+        if not _vespa_wait_for_data_port_ready(http_port, timeout=180):
+            pytest.fail(f"second_vespa data port {http_port} not ready")
+        if not _vespa_wait_for_query_ready(http_port, timeout=180):
+            pytest.fail(f"second_vespa content cluster (port {http_port}) not ready")
+
+        yield {
+            "http_port": http_port,
+            "config_port": config_port,
+            "base_url": f"http://localhost:{http_port}",
+            "container_name": container_name,
+        }
+    finally:
+        subprocess.run(["docker", "rm", "-f", container_name], capture_output=True)
