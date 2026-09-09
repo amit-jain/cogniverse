@@ -21,6 +21,16 @@ from cogniverse_agents.audit_explanation_agent import (
 pytestmark = [pytest.mark.unit, pytest.mark.ci_fast]
 
 
+def _memory_config_manager():
+    """The ConfigManager the runtime binds into this agent, over an in-memory store."""
+    from cogniverse_foundation.config.manager import ConfigManager
+    from tests.utils.memory_store import InMemoryConfigStore
+
+    store = InMemoryConfigStore()
+    store.initialize()
+    return ConfigManager(store=store)
+
+
 def _row(
     mid: str,
     content: str,
@@ -147,10 +157,12 @@ def _factory_for(rows_by_id: Dict[str, Dict[str, Any]]):
 
 
 def _build(rows_by_id: Dict[str, Dict[str, Any]]):
-    return AuditExplanationAgent(
+    agent = AuditExplanationAgent(
         deps=AuditExplanationDeps(tenant_id="acme"),
         memory_manager_factory=_factory_for(rows_by_id),
     )
+    agent.bind_config_manager(_memory_config_manager())
+    return agent
 
 
 @pytest.mark.asyncio
@@ -358,6 +370,7 @@ async def test_missing_tenant_raises():
         deps=AuditExplanationDeps(tenant_id=None),
         memory_manager_factory=_factory_for({}),
     )
+    agent.bind_config_manager(_memory_config_manager())
     with pytest.raises(ValueError, match="no tenant_id"):
         await agent._process_impl(
             AuditExplanationInput(
@@ -373,6 +386,7 @@ def test_input_requires_answer_memory_id():
 
 def test_agent_capabilities_advertised():
     agent = AuditExplanationAgent(deps=AuditExplanationDeps(tenant_id="acme"))
+    agent.bind_config_manager(_memory_config_manager())
     assert agent.agent_name == "audit_explanation_agent"
     assert "audit_explanation" in agent.capabilities
     assert agent.port == 8027
@@ -404,6 +418,7 @@ async def _fetch_counts(*, include_contradictions: bool):
         deps=AuditExplanationDeps(tenant_id="acme"),
         memory_manager_factory=factory,
     )
+    agent.bind_config_manager(_memory_config_manager())
     await agent._process_impl(
         AuditExplanationInput(
             tenant_id="acme",
@@ -451,6 +466,7 @@ async def test_provenance_walk_does_not_block_the_event_loop():
         deps=AuditExplanationDeps(tenant_id="acme"),
         memory_manager_factory=factory,
     )
+    agent.bind_config_manager(_memory_config_manager())
     unblock_timer = threading.Timer(1, release.set)
     unblock_timer.start()
     task = asyncio.create_task(
@@ -494,6 +510,7 @@ async def test_memory_backend_failure_is_not_reported_as_missing_memory():
         deps=AuditExplanationDeps(tenant_id="acme"),
         memory_manager_factory=factory,
     )
+    agent.bind_config_manager(_memory_config_manager())
 
     with pytest.raises(
         RuntimeError,

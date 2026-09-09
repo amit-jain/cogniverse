@@ -23,6 +23,17 @@ from cogniverse_core.agents.rails import (
     TopicBoundaryRail,
 )
 
+
+def _memory_config_manager():
+    """The ConfigManager the runtime binds into this agent, over an in-memory store."""
+    from cogniverse_foundation.config.manager import ConfigManager
+    from tests.utils.memory_store import InMemoryConfigStore
+
+    store = InMemoryConfigStore()
+    store.initialize()
+    return ConfigManager(store=store)
+
+
 pytestmark = [pytest.mark.unit, pytest.mark.ci_fast]
 
 
@@ -226,6 +237,10 @@ class _TestDeps(AgentDeps):
 
 
 class _TestAgent(AgentBase[_TestInput, _TestOutput, _TestDeps]):
+    def __init__(self, deps: _TestDeps) -> None:
+        super().__init__(deps=deps)
+        self.bind_config_manager(_memory_config_manager())
+
     async def _process_impl(self, input: _TestInput) -> _TestOutput:
         return _TestOutput(result=f"processed: {input.query}")
 

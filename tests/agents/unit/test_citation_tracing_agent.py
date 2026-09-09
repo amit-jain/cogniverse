@@ -23,6 +23,16 @@ from cogniverse_core.memory.provenance import (
 pytestmark = [pytest.mark.unit, pytest.mark.ci_fast]
 
 
+def _memory_config_manager():
+    """The ConfigManager the runtime binds into this agent, over an in-memory store."""
+    from cogniverse_foundation.config.manager import ConfigManager
+    from tests.utils.memory_store import InMemoryConfigStore
+
+    store = InMemoryConfigStore()
+    store.initialize()
+    return ConfigManager(store=store)
+
+
 def _node(memory_id: str, depth: int, with_prov: bool = True) -> CitationNode:
     prov = (
         Provenance(
@@ -46,6 +56,7 @@ def _node(memory_id: str, depth: int, with_prov: bool = True) -> CitationNode:
 @pytest.mark.asyncio
 async def test_returns_empty_chain_when_memory_disabled():
     agent = CitationTracingAgent(deps=CitationTracingDeps(tenant_id="acme"))
+    agent.bind_config_manager(_memory_config_manager())
     # No memory_manager wired → is_memory_enabled() → False.
     assert agent.is_memory_enabled() is False
 
@@ -62,6 +73,7 @@ async def test_returns_empty_chain_when_memory_disabled():
 @pytest.mark.asyncio
 async def test_walker_results_serialised_to_typed_output(monkeypatch):
     agent = CitationTracingAgent(deps=CitationTracingDeps(tenant_id="acme"))
+    agent.bind_config_manager(_memory_config_manager())
 
     # Force the mixin's enable check to True so the walker path runs.
     monkeypatch.setattr(agent, "is_memory_enabled", lambda: True)
@@ -125,6 +137,7 @@ async def test_walker_results_serialised_to_typed_output(monkeypatch):
 @pytest.mark.asyncio
 async def test_truncated_flag_propagated(monkeypatch):
     agent = CitationTracingAgent(deps=CitationTracingDeps(tenant_id="acme"))
+    agent.bind_config_manager(_memory_config_manager())
     monkeypatch.setattr(agent, "is_memory_enabled", lambda: True)
     agent.memory_manager = MagicMock()
     agent._memory_tenant_id = "acme"
@@ -169,6 +182,7 @@ def test_input_validation_bounds():
 
 def test_agent_capabilities_advertised():
     agent = CitationTracingAgent(deps=CitationTracingDeps(tenant_id="acme"))
+    agent.bind_config_manager(_memory_config_manager())
     assert agent.agent_name == "citation_tracing_agent"
     assert "citation_tracing" in agent.capabilities
     assert "provenance_walk" in agent.capabilities
@@ -181,6 +195,7 @@ async def test_kg_outage_raises_when_kg_is_sole_source(monkeypatch):
     outage must surface instead of returning "no provenance" as a success
     indistinguishable from a genuinely ungrounded claim."""
     agent = CitationTracingAgent(deps=CitationTracingDeps(tenant_id="acme"))
+    agent.bind_config_manager(_memory_config_manager())
     agent._graph_manager = MagicMock()
     monkeypatch.setattr(
         agent, "trace", MagicMock(side_effect=ConnectionError("vespa down"))
@@ -195,6 +210,7 @@ def test_kg_outage_degrades_to_empty_complement_when_memory_answers(monkeypatch)
     """Memory enabled → the KG is a complement; its outage degrades to an
     empty complement while the memory walk still answers."""
     agent = CitationTracingAgent(deps=CitationTracingDeps(tenant_id="acme"))
+    agent.bind_config_manager(_memory_config_manager())
     agent._graph_manager = MagicMock()
     monkeypatch.setattr(agent, "is_memory_enabled", lambda: True)
     agent.memory_manager = MagicMock()
@@ -214,6 +230,7 @@ async def test_kg_trace_runs_off_the_event_loop(monkeypatch):
     import threading
 
     agent = CitationTracingAgent(deps=CitationTracingDeps(tenant_id="acme"))
+    agent.bind_config_manager(_memory_config_manager())
     agent._graph_manager = MagicMock()
     threads: list = []
 

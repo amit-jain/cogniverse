@@ -26,6 +26,16 @@ from cogniverse_core.memory.trust import TrustRecord, attach_trust_to_metadata
 pytestmark = [pytest.mark.unit, pytest.mark.ci_fast]
 
 
+def _memory_config_manager():
+    """The ConfigManager the runtime binds into this agent, over an in-memory store."""
+    from cogniverse_foundation.config.manager import ConfigManager
+    from tests.utils.memory_store import InMemoryConfigStore
+
+    store = InMemoryConfigStore()
+    store.initialize()
+    return ConfigManager(store=store)
+
+
 def _now_iso() -> str:
     return datetime.now(timezone.utc).isoformat()
 
@@ -82,6 +92,7 @@ def _build_agent(
         deps=ContradictionReconciliationDeps(tenant_id="acme"),
         registry=registry,
     )
+    agent.bind_config_manager(_memory_config_manager())
     # Stub memory_manager.memory.get(mid) to return the seeded dicts.
     by_id = {m["id"]: m for m in memories}
     fake_mm = MagicMock()
@@ -303,6 +314,7 @@ class TestNoMemoryManager:
         agent = ContradictionReconciliationAgent(
             deps=ContradictionReconciliationDeps(tenant_id="acme")
         )
+        agent.bind_config_manager(_memory_config_manager())
         # is_memory_enabled defaults to False without a wired memory manager.
         out = await agent._process_impl(
             ContradictionReconciliationInput(
@@ -326,6 +338,7 @@ def test_agent_capabilities_advertised():
     agent = ContradictionReconciliationAgent(
         deps=ContradictionReconciliationDeps(tenant_id="acme")
     )
+    agent.bind_config_manager(_memory_config_manager())
     assert agent.agent_name == "contradiction_reconciliation_agent"
     assert "contradiction_reconciliation" in agent.capabilities
     assert agent.port == 8020
@@ -339,6 +352,7 @@ async def test_kg_outage_raises_when_kg_is_sole_source(monkeypatch):
     agent = ContradictionReconciliationAgent(
         deps=ContradictionReconciliationDeps(tenant_id="acme")
     )
+    agent.bind_config_manager(_memory_config_manager())
     agent._graph_manager = MagicMock()
     monkeypatch.setattr(
         agent, "detect", MagicMock(side_effect=ConnectionError("vespa down"))
@@ -361,6 +375,7 @@ def test_kg_outage_degrades_to_empty_complement_when_memory_answers(monkeypatch)
     agent = ContradictionReconciliationAgent(
         deps=ContradictionReconciliationDeps(tenant_id="acme")
     )
+    agent.bind_config_manager(_memory_config_manager())
     agent._graph_manager = MagicMock()
     monkeypatch.setattr(agent, "is_memory_enabled", lambda: True)
     agent.memory_manager = MagicMock()
@@ -387,6 +402,7 @@ async def test_kg_conflict_scan_runs_off_the_event_loop(monkeypatch):
     agent = ContradictionReconciliationAgent(
         deps=ContradictionReconciliationDeps(tenant_id="acme")
     )
+    agent.bind_config_manager(_memory_config_manager())
     agent._graph_manager = MagicMock()
     threads: list = []
 

@@ -20,6 +20,16 @@ from cogniverse_core.memory.schema import build_default_registry
 pytestmark = [pytest.mark.unit, pytest.mark.ci_fast]
 
 
+def _memory_config_manager():
+    """The ConfigManager the runtime binds into this agent, over an in-memory store."""
+    from cogniverse_foundation.config.manager import ConfigManager
+    from tests.utils.memory_store import InMemoryConfigStore
+
+    store = InMemoryConfigStore()
+    store.initialize()
+    return ConfigManager(store=store)
+
+
 def _row(mid: str, content: str, *, subject_key: str = "", kind: str = "external_doc"):
     meta: Dict[str, Any] = {"kind": kind}
     if subject_key:
@@ -47,6 +57,7 @@ def _build(per_tenant: Dict[str, List[Dict[str, Any]]]):
         memory_manager_factory=factory,
         registry=build_default_registry(),
     )
+    agent.bind_config_manager(_memory_config_manager())
     return agent
 
 
@@ -191,6 +202,7 @@ class TestACLs:
             memory_manager_factory=_factory,
             registry=build_default_registry(),
         )
+        agent.bind_config_manager(_memory_config_manager())
         with pytest.raises(ACLRejected, match="tenant_id is required"):
             await agent._process_impl(
                 CrossTenantComparisonInput(
@@ -246,6 +258,7 @@ def test_agent_capabilities_advertised():
     agent = CrossTenantComparisonAgent(
         deps=CrossTenantComparisonDeps(tenant_id="acme:production")
     )
+    agent.bind_config_manager(_memory_config_manager())
     assert agent.agent_name == "cross_tenant_comparison_agent"
     assert "cross_tenant_comparison" in agent.capabilities
     assert agent.port == 8023
@@ -277,6 +290,7 @@ async def test_federated_read_does_not_block_the_event_loop():
         memory_manager_factory=factory,
         registry=build_default_registry(),
     )
+    agent.bind_config_manager(_memory_config_manager())
     unblock_timer = threading.Timer(1, release.set)
     unblock_timer.start()
     task = asyncio.create_task(
@@ -319,6 +333,7 @@ async def test_federated_read_failure_propagates():
         memory_manager_factory=factory,
         registry=build_default_registry(),
     )
+    agent.bind_config_manager(_memory_config_manager())
 
     with pytest.raises(ConnectionError, match="mem0 unavailable for acme:alpha"):
         await agent._process_impl(
