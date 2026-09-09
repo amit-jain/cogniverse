@@ -11,11 +11,22 @@ from cogniverse_agents.memory_aware_mixin import MemoryAwareMixin
 pytestmark = [pytest.mark.unit, pytest.mark.ci_fast]
 
 
+def _memory_config_manager():
+    """The injected ConfigManager the mixin reads, over an in-memory store."""
+    from cogniverse_foundation.config.manager import ConfigManager
+    from tests.utils.memory_store import InMemoryConfigStore
+
+    store = InMemoryConfigStore()
+    store.initialize()
+    return ConfigManager(store=store)
+
+
 class MockAgentWithMemory(MemoryAwareMixin):
     """Mock agent class using memory mixin for testing"""
 
     def __init__(self):
         super().__init__()
+        self.bind_config_manager(_memory_config_manager())
 
 
 # Default memory init kwargs for tests (all required params)
