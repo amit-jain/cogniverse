@@ -3145,21 +3145,31 @@ def test_root_lm_fixture_uses_exact_gemma_provisioner(monkeypatch, tmp_path):
 
 def test_lm_runtime_gate_fails_instead_of_skipping(monkeypatch):
     import tests.conftest as root_conftest
-    import tests.fixtures.llm as llm_fixtures
+
+    class RequiresLmConfig:
+        @staticmethod
+        def getoption(name, default=None):
+            return False if name == "setupplan" else default
 
     class RequiresLmItem:
+        config = RequiresLmConfig()
+
         def get_closest_marker(self, name):
             return object() if name == "requires_lm" else None
 
-    monkeypatch.setattr(llm_fixtures, "is_test_lm_available", lambda: False)
-    monkeypatch.setattr(
-        llm_fixtures,
-        "resolve_base_url",
-        lambda: "http://127.0.0.1:29110/v1",
-    )
+    monkeypatch.setenv("TEST_LLM_API_BASE", "http://127.0.0.1:29110/v1")
+    monkeypatch.setenv("TEST_LLM_MODEL", GEMMA)
+    monkeypatch.delenv("TEST_LLM_API_KEY", raising=False)
+    monkeypatch.delenv("COGNIVERSE_INFERENCE_API_KEY", raising=False)
 
-    with pytest.raises(pytest.fail.Exception, match="Exact configured LLM"):
+    with pytest.raises(pytest.fail.Exception) as error:
         root_conftest.pytest_runtest_setup(RequiresLmItem())
+
+    assert str(error.value) == (
+        "Exact configured LLM endpoint not reachable. Probed "
+        "http://127.0.0.1:29110/api/tags, http://127.0.0.1:29110/v1/models "
+        "(endpoint from TEST_LLM_API_BASE)"
+    )
 
 
 def test_ingestion_configure_does_not_start_unrequested_services():
