@@ -18,8 +18,9 @@ import logging
 import threading
 import time
 from contextlib import contextmanager
-from typing import TYPE_CHECKING, Any, Dict, List, Optional, Tuple
+from typing import TYPE_CHECKING, Any, Dict, List, Optional, Tuple, get_args
 
+from cogniverse_core.agents.base import AgentDeps, AgentInput
 from cogniverse_core.common.tenant_utils import (
     canonical_tenant_id,
     require_tenant_id,
@@ -109,12 +110,46 @@ _VESPA_REACHING_CAPABILITIES = frozenset(
 _GENERIC_AGENT_CLASSES: Dict[str, tuple] = {}
 
 
+def _declared_generic_classes(agent_cls: Any) -> Tuple[Any, Any]:
+    """The (input, deps) classes ``agent_cls`` parameterises ``AgentBase`` with.
+
+    ``AgentBase[InputT, OutputT, DepsT]`` records the concrete arguments on
+    ``__orig_bases__``, so an agent that declares them says exactly which
+    input it processes. Walks the MRO so a subclass of an already-bound agent
+    inherits its parameters. ``(None, None)`` when nothing on the MRO binds
+    all three to concrete ``AgentInput``/``AgentDeps`` subclasses.
+    """
+    if not isinstance(agent_cls, type):
+        return None, None
+    for klass in agent_cls.__mro__:
+        for base in getattr(klass, "__orig_bases__", ()):
+            args = get_args(base)
+            if len(args) != 3:
+                continue
+            input_cls, _output_cls, deps_cls = args
+            if (
+                isinstance(input_cls, type)
+                and issubclass(input_cls, AgentInput)
+                and isinstance(deps_cls, type)
+                and issubclass(deps_cls, AgentDeps)
+            ):
+                return input_cls, deps_cls
+    return None, None
+
+
 def _scan_module_for_generic_classes(module: Any, class_name: str) -> tuple:
-    """Resolve the (agent, deps, input) classes from ``module`` by convention:
-    the agent class is ``class_name``; the Deps/Input classes are the module
-    attributes whose names end with ``Deps``/``Input`` (excluding the shared
-    ``AgentDeps``/``AgentInput`` bases). Either may be None if absent."""
+    """Resolve the (agent, deps, input) classes for ``class_name`` in ``module``.
+
+    The agent's own ``AgentBase`` type parameters decide, so two agents
+    sharing a module each dispatch on the input they declared. An agent that
+    parameterises nothing falls back to the module's naming convention: the
+    class named ``<stem>Deps``/``<stem>Input`` for the agent's name stem,
+    else the module attribute whose name ends with ``Deps``/``Input``
+    (excluding the shared ``AgentDeps``/``AgentInput`` bases). Either may be
+    None if absent.
+    """
     agent_cls = getattr(module, class_name)
+    declared_input, declared_deps = _declared_generic_classes(agent_cls)
 
     stem = class_name.removesuffix("Agent")
 
@@ -132,8 +167,8 @@ def _scan_module_for_generic_classes(module: Any, class_name: str) -> tuple:
                 return attr
         return None
 
-    deps_cls = resolve("Deps")
-    input_cls = resolve("Input")
+    deps_cls = declared_deps or resolve("Deps")
+    input_cls = declared_input or resolve("Input")
 
     return agent_cls, deps_cls, input_cls
 
