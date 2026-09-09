@@ -1683,6 +1683,7 @@ class TestArtifactAffectsBehavior:
         from cogniverse_foundation.telemetry.manager import get_telemetry_manager
         from tests.agents.integration.conftest import inject_tomoro_url
         from tests.utils.vespa_test_helpers import (
+            deploy_tenant_schema,
             load_raw_schema_json,
             shipped_profile,
         )
@@ -1697,13 +1698,6 @@ class TestArtifactAffectsBehavior:
         assert config_manager.get_backend_config(request_tenant).to_dict() == (
             backend_config.to_dict()
         )
-        available_profiles = [
-            name
-            for name, profile in servable_tenant_profiles(
-                config_manager, request_tenant
-            )
-            if profile.type == "video"
-        ]
         demo_profile = shipped_profile(
             profile_type="video",
             embedding_type="multi_vector",
@@ -1716,6 +1710,20 @@ class TestArtifactAffectsBehavior:
         assert load_raw_schema_json(configured_profile.schema_name)["name"] == (
             configured_profile.schema_name
         )
+        # A profile is servable only once this tenant's schema for it exists.
+        deploy_tenant_schema(
+            shared_memory_vespa,
+            tenant_id=request_tenant,
+            base_schema_name=configured_profile.schema_name,
+            config_manager=config_manager,
+        )
+        available_profiles = [
+            name
+            for name, profile in servable_tenant_profiles(
+                config_manager, request_tenant
+            )
+            if profile.type == "video"
+        ]
         assert demo_profile in available_profiles
 
         tenant_id = "behavior-profile-test"

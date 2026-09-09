@@ -239,16 +239,21 @@ def config_manager(vespa_instance):
     # what deploy_schema/register_schema write (both canonicalize their
     # tenant_id). The physical Vespa schema suffix is the sanitised canonical
     # form ("test:unit" -> "test_unit").
-    seed_tenant_id = "test:unit"
-    seed_suffix = canonical_tenant_id(seed_tenant_id).replace(":", "_")
+    # Every tenant above also needs the registry row for its profile's schema:
+    # a profile whose tenant schema is not deployed is not servable and the
+    # search router never advertises or searches it.
+    video_schema = "video_colpali_smol500_mv_frame"
     baseline_schemas = [
-        (
-            "video_colpali_smol500_mv_frame",
-            "video_colpali_smol500_mv_frame_schema.json",
-        ),
-        ("agent_memories", "agent_memories_schema.json"),
+        (seed_tenant, base_name, f"{base_name}_schema.json")
+        for seed_tenant, base_name in (
+            [("test:unit", video_schema), ("test:unit", "agent_memories")]
+            + [("test:unit", "video_xclip_sv_chunk_6s")]
+            + [(tenant, video_schema) for tenant in _per_test_tenants[1:]]
+            + [("tenant_b", video_schema)]
+        )
     ]
-    for base_name, schema_filename in baseline_schemas:
+    for seed_tenant_id, base_name, schema_filename in baseline_schemas:
+        seed_suffix = canonical_tenant_id(seed_tenant_id).replace(":", "_")
         schema_path = SCHEMAS_DIR / schema_filename
         with open(schema_path) as f:
             reg_schema_json = json.load(f)

@@ -388,6 +388,7 @@ GROUNDING_SEARCHED_DEGRADED = "searched_servable_profiles_degraded"
 GROUNDING_NO_PROFILE_FOR_MODALITY = "no_servable_profile_for_modality"
 GROUNDING_TENANT_DEFAULT_PROFILE = "tenant_default_profile"
 GROUNDING_NO_SERVABLE_PROFILE = "no_servable_profile"
+GROUNDING_NO_DEPLOYED_SCHEMA_FOR_PROFILE = "no_deployed_schema_for_profile"
 GROUNDING_SEARCH_UNAVAILABLE = "search_unavailable"
 
 # Wall-clock ceiling on an answer agent's grounding search, read from the
@@ -413,6 +414,7 @@ class AnswerGrounding:
     profiles: Tuple[str, ...] = ()
     degraded_profiles: Tuple[Tuple[str, str], ...] = ()
     degraded_query_rewrite: Optional[str] = None
+    undeployed_profiles: Tuple[str, ...] = ()
 
     @property
     def nothing_to_search(self) -> bool:
@@ -420,6 +422,7 @@ class AnswerGrounding:
         return self.state in (
             GROUNDING_NO_PROFILE_FOR_MODALITY,
             GROUNDING_NO_SERVABLE_PROFILE,
+            GROUNDING_NO_DEPLOYED_SCHEMA_FOR_PROFILE,
         )
 
     def envelope(self) -> Dict[str, Any]:
@@ -433,6 +436,7 @@ class AnswerGrounding:
                 for profile, reason in self.degraded_profiles
             ],
             "degraded_query_rewrite": self.degraded_query_rewrite,
+            "undeployed_profiles": list(self.undeployed_profiles),
             "result_count": len(self.hits),
         }
 
@@ -444,10 +448,37 @@ class AnswerGrounding:
                 f"Tenant {tenant_id} serves no {served} content, so there is "
                 "nothing to search for this request."
             )
+        if self.state == GROUNDING_NO_DEPLOYED_SCHEMA_FOR_PROFILE:
+            named = ", ".join(self.undeployed_profiles)
+            return (
+                f"Tenant {tenant_id} has no deployed search schema for its "
+                f"profiles ({named}), so there is nothing to search for this "
+                "request."
+            )
         return (
             f"Tenant {tenant_id} has no servable search profile, so there is "
             "nothing to search for this request."
         )
+
+
+@dataclasses.dataclass(frozen=True)
+class GroundingCandidates:
+    """A tenant's grounding profiles, split by modality and by servability."""
+
+    matching: List[str]
+    servable: List[str]
+    undeployed_of_modality: List[str]
+    undeployed: List[str]
+
+
+@dataclasses.dataclass(frozen=True)
+class GroundingPlan:
+    """What an answer's grounding search will read, and why."""
+
+    modalities: Tuple[str, ...]
+    profiles: Tuple[str, ...]
+    state: str
+    undeployed_profiles: Tuple[str, ...] = ()
 
 
 class AgentDispatcher:
@@ -2480,30 +2511,49 @@ class AgentDispatcher:
 
     def _servable_grounding_profiles(
         self, tenant_id: str, modalities: List[str]
-    ) -> Tuple[List[str], List[str]]:
-        """``(profiles carrying these modalities, every servable profile)``.
+    ) -> GroundingCandidates:
+        """The tenant's servable profiles, and the ones awaiting a schema.
 
         The servable set ``GET /search/profiles`` advertises, so an answer is
-        grounded in exactly what this tenant can serve. No modality signal
-        means every servable profile qualifies. Blocking (config read) — the
-        caller offloads it.
+        grounded in exactly what this tenant can serve. A profile whose
+        embedding service resolves but whose tenant schema is not deployed is
+        reported separately rather than searched: searching it reads an
+        application that does not carry its documents. No modality signal means
+        every profile qualifies. Blocking (config + schema registry reads) —
+        the caller offloads it.
         """
         from cogniverse_agents.gateway_agent import MODALITY_PROFILE_TYPES
         from cogniverse_agents.profile_selection_agent import (
-            servable_tenant_profiles,
+            tenant_profile_servability,
+        )
+        from cogniverse_foundation.config.unified_config import (
+            PROFILE_SCHEMA_NOT_DEPLOYED,
+            PROFILE_SERVABLE,
         )
 
-        servable = servable_tenant_profiles(self._config_manager, tenant_id)
-        names = [name for name, _profile in servable]
+        rows = tenant_profile_servability(self._config_manager, tenant_id)
+        servable = [row.name for row in rows if row.state == PROFILE_SERVABLE]
+        undeployed = [
+            row.name for row in rows if row.state == PROFILE_SCHEMA_NOT_DEPLOYED
+        ]
         if not modalities:
-            return names, names
+            return GroundingCandidates(servable, servable, undeployed, undeployed)
         wanted: set[str] = set()
         for modality in modalities:
             wanted |= MODALITY_PROFILE_TYPES.get(modality, frozenset())
-        matching = [
-            name for name, profile in servable if (profile.type or "").lower() in wanted
+        of_modality = [
+            row for row in rows if (row.profile.type or "").lower() in wanted
         ]
-        return matching, names
+        return GroundingCandidates(
+            [row.name for row in of_modality if row.state == PROFILE_SERVABLE],
+            servable,
+            [
+                row.name
+                for row in of_modality
+                if row.state == PROFILE_SCHEMA_NOT_DEPLOYED
+            ],
+            undeployed,
+        )
 
     async def _grounding_plan(
         self,
@@ -2511,22 +2561,44 @@ class AgentDispatcher:
         tenant_id: str,
         enrichment: Dict[str, Any],
         context: Optional[Dict[str, Any]],
-    ) -> Tuple[List[str], List[str], str]:
-        """``(modalities, profiles to search, grounding state)``."""
+    ) -> GroundingPlan:
+        """What this request grounds on, and the state that explains it."""
         requested = [
             name for name in (enrichment.get("profiles") or []) if isinstance(name, str)
         ]
         if requested:
-            return [], requested, GROUNDING_SEARCHED
+            return GroundingPlan((), tuple(requested), GROUNDING_SEARCHED)
 
-        modalities = self._grounding_modalities(query, context)
-        matching, servable = await asyncio.to_thread(
-            self._servable_grounding_profiles, tenant_id, modalities
+        modalities = tuple(self._grounding_modalities(query, context))
+        candidates = await asyncio.to_thread(
+            self._servable_grounding_profiles, tenant_id, list(modalities)
         )
-        if matching:
-            return modalities, matching, GROUNDING_SEARCHED
-        if servable:
-            return modalities, [], GROUNDING_NO_PROFILE_FOR_MODALITY
+        if candidates.matching:
+            return GroundingPlan(
+                modalities,
+                tuple(candidates.matching),
+                GROUNDING_SEARCHED,
+                tuple(candidates.undeployed_of_modality),
+            )
+        # A profile the tenant configured but never deployed is not "serves no
+        # such content": it is a deployment the operator still owes, and
+        # searching it would answer from an application without its documents.
+        if candidates.undeployed_of_modality:
+            return GroundingPlan(
+                modalities,
+                (),
+                GROUNDING_NO_DEPLOYED_SCHEMA_FOR_PROFILE,
+                tuple(candidates.undeployed_of_modality),
+            )
+        if candidates.servable:
+            return GroundingPlan(modalities, (), GROUNDING_NO_PROFILE_FOR_MODALITY)
+        if candidates.undeployed:
+            return GroundingPlan(
+                modalities,
+                (),
+                GROUNDING_NO_DEPLOYED_SCHEMA_FOR_PROFILE,
+                tuple(candidates.undeployed),
+            )
 
         from cogniverse_foundation.config.utils import get_config
 
@@ -2535,8 +2607,10 @@ class AgentDispatcher:
         )
         default_profile = config.get("active_video_profile")
         if default_profile:
-            return modalities, [default_profile], GROUNDING_TENANT_DEFAULT_PROFILE
-        return modalities, [], GROUNDING_NO_SERVABLE_PROFILE
+            return GroundingPlan(
+                modalities, (default_profile,), GROUNDING_TENANT_DEFAULT_PROFILE
+            )
+        return GroundingPlan(modalities, (), GROUNDING_NO_SERVABLE_PROFILE)
 
     async def _resolve_answer_search_results(
         self,
@@ -2579,9 +2653,7 @@ class AgentDispatcher:
                 if context.get(k)
             }
         try:
-            modalities, profiles, state = await self._grounding_plan(
-                query, tenant_id, enrichment, context
-            )
+            plan = await self._grounding_plan(query, tenant_id, enrichment, context)
         except Exception as exc:
             logger.warning(
                 "Grounding profile resolution failed for tenant %s; proceeding "
@@ -2590,8 +2662,14 @@ class AgentDispatcher:
                 exc,
             )
             return AnswerGrounding(hits=[], state=GROUNDING_SEARCH_UNAVAILABLE)
+        modalities, profiles, state = plan.modalities, list(plan.profiles), plan.state
         if not profiles:
-            return AnswerGrounding(hits=[], state=state, modalities=tuple(modalities))
+            return AnswerGrounding(
+                hits=[],
+                state=state,
+                modalities=modalities,
+                undeployed_profiles=plan.undeployed_profiles,
+            )
         try:
             budget_s = await self._grounding_search_budget_s(tenant_id)
         except ValueError:
@@ -2606,8 +2684,9 @@ class AgentDispatcher:
             return AnswerGrounding(
                 hits=[],
                 state=GROUNDING_SEARCH_UNAVAILABLE,
-                modalities=tuple(modalities),
+                modalities=modalities,
                 profiles=tuple(profiles),
+                undeployed_profiles=plan.undeployed_profiles,
             )
         try:
             search = await asyncio.wait_for(
@@ -2634,8 +2713,9 @@ class AgentDispatcher:
             return AnswerGrounding(
                 hits=[],
                 state=GROUNDING_SEARCH_UNAVAILABLE,
-                modalities=tuple(modalities),
+                modalities=modalities,
                 profiles=tuple(profiles),
+                undeployed_profiles=plan.undeployed_profiles,
             )
         except Exception as exc:
             logger.warning(
@@ -2647,8 +2727,9 @@ class AgentDispatcher:
             return AnswerGrounding(
                 hits=[],
                 state=GROUNDING_SEARCH_UNAVAILABLE,
-                modalities=tuple(modalities),
+                modalities=modalities,
                 profiles=tuple(profiles),
+                undeployed_profiles=plan.undeployed_profiles,
             )
         degraded = tuple(
             (str(entry["profile"]), str(entry["reason"]))
@@ -2670,10 +2751,11 @@ class AgentDispatcher:
             state=(
                 GROUNDING_SEARCHED_DEGRADED if degraded or rewrite_degraded else state
             ),
-            modalities=tuple(modalities),
+            modalities=modalities,
             profiles=tuple(searched),
             degraded_profiles=degraded,
             degraded_query_rewrite=rewrite_degraded,
+            undeployed_profiles=plan.undeployed_profiles,
         )
 
     async def _grounding_search_budget_s(self, tenant_id: str) -> float:

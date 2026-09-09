@@ -671,6 +671,15 @@ outside the cache.
 cached backend and then raise `ProfileFanoutError` carrying the per-backend
 failures, so a partial fanout is never reported as a success count.
 
+### Undeployed Tenant Schemas
+
+Schemas are deployed per tenant, so a search whose profile has no schema for
+the requesting tenant has nothing to read. `VespaSearchBackend.search` raises
+`SchemaNotDeployedError` (`cogniverse_sdk.interfaces.backend`) naming the
+tenant, the tenant-scoped schema, the base schema and the profile, before any
+query is issued. Returning an empty result made a never-deployed schema
+indistinguishable from a corpus with no match.
+
 ### Query Encoder Faults
 
 When a strategy needs query embeddings and the caller supplies none, the

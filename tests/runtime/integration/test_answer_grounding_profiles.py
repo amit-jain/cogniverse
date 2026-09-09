@@ -47,8 +47,10 @@ from cogniverse_runtime.agent_dispatcher import (
     GROUNDING_SEARCHED,
     GROUNDING_SEARCHED_DEGRADED,
     AgentDispatcher,
+    GroundingPlan,
 )
 from cogniverse_vespa.config.config_store import VespaConfigStore
+from tests.utils.memory_store import register_deployed_schema
 from tests.utils.vespa_docker import VespaDockerManager
 from tests.utils.vespa_test_helpers import feed_text_documents
 
@@ -161,13 +163,20 @@ def _build_config_manager(http_port: int, manager_cls=ConfigManager) -> ConfigMa
 
 
 def _seed_tenants(config_manager: ConfigManager) -> None:
+    """Each tenant's profiles, with the schema registry rows their deploy writes.
+
+    Servability requires both halves; these tenants pin WHICH profiles a
+    request grounds on, so every one of their schemas is registered.
+    """
     for tenant_id, names in (
         (TENANT_DOCUMENTS, DOCUMENT_PROFILES),
         (TENANT_VIDEO, VIDEO_PROFILES),
         (TENANT_BOTH, DOCUMENT_PROFILES + VIDEO_PROFILES),
     ):
         for name in names:
-            config_manager.add_backend_profile(_profile(name), tenant_id=tenant_id)
+            profile = _profile(name)
+            config_manager.add_backend_profile(profile, tenant_id=tenant_id)
+            register_deployed_schema(config_manager, tenant_id, profile.schema_name)
 
 
 @pytest.fixture(scope="module")
@@ -220,57 +229,58 @@ class TestGroundingProfilesComeFromTheTenant:
     async def test_persisted_document_profiles_are_what_a_document_query_grounds_on(
         self, dispatcher
     ):
-        modalities, profiles, state = await dispatcher._grounding_plan(
+        plan = await dispatcher._grounding_plan(
             DOCUMENT_QUERY, TENANT_DOCUMENTS, {}, None
         )
 
-        assert state == GROUNDING_SEARCHED
-        assert modalities == ["document"]
-        assert profiles == DOCUMENT_PROFILES
+        assert plan.state == GROUNDING_SEARCHED
+        assert plan.modalities == ("document",)
+        assert plan.profiles == tuple(DOCUMENT_PROFILES)
+        assert plan.undeployed_profiles == ()
 
     async def test_document_tenant_has_no_profile_for_a_video_query(self, dispatcher):
-        modalities, profiles, state = await dispatcher._grounding_plan(
-            VIDEO_QUERY, TENANT_DOCUMENTS, {}, None
-        )
+        plan = await dispatcher._grounding_plan(VIDEO_QUERY, TENANT_DOCUMENTS, {}, None)
 
-        assert state == GROUNDING_NO_PROFILE_FOR_MODALITY
-        assert modalities == ["video"]
-        assert profiles == []
+        assert plan.state == GROUNDING_NO_PROFILE_FOR_MODALITY
+        assert plan.modalities == ("video",)
+        assert plan.profiles == ()
+        assert plan.undeployed_profiles == ()
 
     async def test_video_tenant_grounds_on_its_video_profiles(self, dispatcher):
-        modalities, profiles, state = await dispatcher._grounding_plan(
-            VIDEO_QUERY, TENANT_VIDEO, {}, None
-        )
+        plan = await dispatcher._grounding_plan(VIDEO_QUERY, TENANT_VIDEO, {}, None)
 
-        assert state == GROUNDING_SEARCHED
-        assert modalities == ["video"]
-        assert profiles == VIDEO_PROFILES
+        assert plan.state == GROUNDING_SEARCHED
+        assert plan.modalities == ("video",)
+        assert plan.profiles == tuple(VIDEO_PROFILES)
+        assert plan.undeployed_profiles == ()
 
     async def test_tenant_serving_both_picks_the_queried_modality(self, dispatcher):
-        _, document_profiles, document_state = await dispatcher._grounding_plan(
+        document_plan = await dispatcher._grounding_plan(
             DOCUMENT_QUERY, TENANT_BOTH, {}, None
         )
-        _, video_profiles, video_state = await dispatcher._grounding_plan(
+        video_plan = await dispatcher._grounding_plan(
             VIDEO_QUERY, TENANT_BOTH, {}, None
         )
 
-        assert (document_state, document_profiles) == (
-            GROUNDING_SEARCHED,
-            DOCUMENT_PROFILES,
-        )
-        assert (video_state, video_profiles) == (GROUNDING_SEARCHED, VIDEO_PROFILES)
+        assert document_plan.state == GROUNDING_SEARCHED
+        assert document_plan.profiles == tuple(DOCUMENT_PROFILES)
+        assert document_plan.undeployed_profiles == ()
+        assert video_plan.state == GROUNDING_SEARCHED
+        assert video_plan.profiles == tuple(VIDEO_PROFILES)
+        assert video_plan.undeployed_profiles == ()
 
     async def test_router_modality_decision_selects_the_profiles(self, dispatcher):
-        modalities, profiles, state = await dispatcher._grounding_plan(
+        plan = await dispatcher._grounding_plan(
             VIDEO_QUERY,
             TENANT_BOTH,
             {},
             {"detected_modalities": ["document"]},
         )
 
-        assert state == GROUNDING_SEARCHED
-        assert modalities == ["document"]
-        assert profiles == DOCUMENT_PROFILES
+        assert plan.state == GROUNDING_SEARCHED
+        assert plan.modalities == ("document",)
+        assert plan.profiles == tuple(DOCUMENT_PROFILES)
+        assert plan.undeployed_profiles == ()
 
 
 @pytest.mark.asyncio
@@ -297,6 +307,7 @@ class TestAnswerEnvelopeStatesItsGrounding:
             "profiles": [],
             "degraded_profiles": [],
             "degraded_query_rewrite": None,
+            "undeployed_profiles": [],
             "result_count": 0,
         }
 
@@ -328,7 +339,10 @@ class TestPausedBackendKeepsTheOutageDistinguishable:
         recovered = await _dispatcher(config_manager)._grounding_plan(
             DOCUMENT_QUERY, TENANT_DOCUMENTS, {}, None
         )
-        assert recovered == (["document"], DOCUMENT_PROFILES, GROUNDING_SEARCHED)
+        assert recovered.state == GROUNDING_SEARCHED
+        assert recovered.modalities == ("document",)
+        assert recovered.profiles == tuple(DOCUMENT_PROFILES)
+        assert recovered.undeployed_profiles == ()
 
 
 @pytest.mark.asyncio
@@ -378,7 +392,15 @@ class TestGroundingResolutionLeavesTheLoopFree:
             tick.cancel()
             await asyncio.gather(tick, return_exceptions=True)
 
-        assert plans == [(["document"], DOCUMENT_PROFILES, GROUNDING_SEARCHED)] * 20
+        assert (
+            plans
+            == [
+                GroundingPlan(
+                    ("document",), tuple(DOCUMENT_PROFILES), GROUNDING_SEARCHED
+                )
+            ]
+            * 20
+        )
         # Run on the loop these 20 reads would serialize into 20 x 30ms of dead
         # loop and the ticker would not tick at all; offloaded they overlap.
         assert gaps and max(gaps) < 0.05, (
@@ -410,6 +432,7 @@ UNSERVED_ENCODER_PROFILE = next(
     if (_SHIPPED_PROFILE_DATA[name].get("inference_services") or {}).get("embedding")
     != "colbert_pylate"
 )
+UNSERVED_ENCODER_SCHEMA = _SHIPPED_PROFILE_DATA[UNSERVED_ENCODER_PROFILE]["schema_name"]
 COLBERT_MODEL = _SHIPPED_PROFILE_DATA[RETRIEVAL_PROFILES[0]]["embedding_model"]
 
 # Two documents with no vocabulary in common, so every profile's ranking of
@@ -535,9 +558,12 @@ def seeded_corpus(retrieval_config_manager, pylate_server):
     the search reads what ingestion wrote. Document ids are the corpus's own,
     so a re-run overwrites in place instead of accumulating.
     """
-    for tenant_id in (TENANT_RETRIEVAL, TENANT_FANOUT):
+    for tenant_id, schemas in (
+        (TENANT_RETRIEVAL, CORPUS_SCHEMAS),
+        (TENANT_FANOUT, CORPUS_SCHEMAS + (UNSERVED_ENCODER_SCHEMA,)),
+    ):
         backend = _tenant_backend(retrieval_config_manager, tenant_id)
-        backend.schema_registry.deploy_schemas(tenant_id, list(CORPUS_SCHEMAS))
+        backend.schema_registry.deploy_schemas(tenant_id, list(schemas))
         for schema in CORPUS_SCHEMAS:
             result = feed_text_documents(
                 backend_client=backend,
@@ -602,6 +628,7 @@ class TestGroundingSearchReturnsTheTenantsDocuments:
             "profiles": RETRIEVAL_PROFILES,
             "degraded_profiles": [],
             "degraded_query_rewrite": None,
+            "undeployed_profiles": [],
             "result_count": len(CORPUS),
         }
 
@@ -696,6 +723,7 @@ class TestOneProfilesEncoderDownDegradesTheGrounding:
                 {"profile": UNSERVED_ENCODER_PROFILE, "reason": "encode_failed"}
             ],
             "degraded_query_rewrite": None,
+            "undeployed_profiles": [],
             "result_count": len(CORPUS),
         }
 
@@ -790,11 +818,12 @@ class TestConcurrentDispatchesDeriveProfilesPerRequest:
             TENANT_RETRIEVAL: per_tenant,
             TENANT_FANOUT: per_tenant,
         }
-        assert [profiles for _modalities, profiles, _state in plans] == [
+        assert [list(plan.profiles) for plan in plans] == [
             RETRIEVAL_PROFILES if tenant_id == TENANT_RETRIEVAL else FANOUT_PROFILES
             for tenant_id in tenants
         ]
-        assert {state for _m, _p, state in plans} == {GROUNDING_SEARCHED}
+        assert {plan.state for plan in plans} == {GROUNDING_SEARCHED}
+        assert {plan.undeployed_profiles for plan in plans} == {()}
 
 
 @pytest.mark.asyncio
@@ -833,7 +862,9 @@ class TestEnsembleFanOutCost:
                 HARBOUR_QUERY, TENANT_RETRIEVAL, {}, None
             )
             plan_durations.append(time.perf_counter() - started)
-            assert plan == ([], RETRIEVAL_PROFILES, GROUNDING_SEARCHED)
+            assert plan.state == GROUNDING_SEARCHED
+            assert plan.profiles == tuple(RETRIEVAL_PROFILES)
+            assert plan.undeployed_profiles == ()
 
         # Cold: no cached SearchAgent and no cached encoder, the state a pod
         # is in for its first grounded answer.
@@ -1120,6 +1151,7 @@ class TestAFailedRewriteStillSearches:
             "profiles": RETRIEVAL_PROFILES,
             "degraded_profiles": [],
             "degraded_query_rewrite": QUERY_REWRITE_FAILED,
+            "undeployed_profiles": [],
             "result_count": len(CORPUS),
         }
         assert elapsed < SHIPPED_GROUNDING_BUDGET_S, (

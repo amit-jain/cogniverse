@@ -21,6 +21,15 @@ class BackendClosedError(RuntimeError):
     """
 
 
+class SchemaNotDeployedError(RuntimeError):
+    """A search targeted a schema the tenant has not deployed.
+
+    Schemas are deployed per tenant, so a profile whose schema is absent from
+    the application answers nothing. Returning no results made that
+    indistinguishable from a tenant whose corpus holds no match.
+    """
+
+
 class IngestionBackend(ABC):
     """Abstract base class for ingestion backends."""
 

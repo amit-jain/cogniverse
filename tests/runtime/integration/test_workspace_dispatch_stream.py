@@ -198,9 +198,7 @@ async def test_generic_stream_builder_wires_search_and_context(
         return {"results": [{"id": "evidence-a"}]}
 
     monkeypatch.setattr(stream_dispatcher, "_execute_search_task", search)
-    _modalities, profiles, _state = await stream_dispatcher._grounding_plan(
-        "subquestion", "test:unit", {}, None
-    )
+    plan = await stream_dispatcher._grounding_plan("subquestion", "test:unit", {}, None)
     agent, request = stream_dispatcher._build_generic_streaming_agent(
         "deep_research_agent",
         "question",
@@ -219,7 +217,7 @@ async def test_generic_stream_builder_wires_search_and_context(
             "test:unit",
             10,
             {
-                "enrichment": {"profiles": profiles},
+                "enrichment": {"profiles": list(plan.profiles)},
                 "context": None,
                 "query_rewrite_timeout_s": _SHIPPED_REWRITE_BUDGET_S,
             },

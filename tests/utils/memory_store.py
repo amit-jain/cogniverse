@@ -343,3 +343,32 @@ class InMemoryConfigStore(ImmutableConfigStore):
     def health_check(self) -> bool:
         """Check if storage is healthy."""
         return self._initialized
+
+
+def register_deployed_schema(config_manager, tenant_id: str, base_schema_name: str):
+    """Record a deployed tenant schema through the production registry write.
+
+    Servability reads deployment from the schema registry rows, so a test that
+    needs a profile to be servable writes the row the deploy path writes.
+    ``register_schema`` never touches the backend, so the registry is built
+    with placeholders for the two dependencies it does not use here.
+    """
+    from types import SimpleNamespace
+
+    from cogniverse_core.common.tenant_utils import canonical_tenant_id
+    from cogniverse_core.registries.schema_registry import SchemaRegistry
+
+    full_schema_name = (
+        f"{base_schema_name}_{canonical_tenant_id(tenant_id).replace(':', '_')}"
+    )
+    SchemaRegistry(
+        config_manager=config_manager,
+        backend=SimpleNamespace(),
+        schema_loader=SimpleNamespace(),
+    ).register_schema(
+        tenant_id=tenant_id,
+        base_schema_name=base_schema_name,
+        full_schema_name=full_schema_name,
+        schema_definition='{"name": "%s"}' % full_schema_name,
+        config={"profile": base_schema_name},
+    )

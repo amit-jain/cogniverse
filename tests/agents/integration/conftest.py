@@ -601,17 +601,19 @@ def vespa_with_schema(shared_memory_vespa, tomoro_inference_url):
     with _sb._CACHE_LOCK:
         _sb._RANKING_STRATEGIES_CACHE = None
 
-    # Deploy the video schema for tenant_id="test_tenant" via the
-    # canonical SchemaRegistry pathway (handles merge-with-existing
-    # schemas, tenant-name normalization, ConfigStore registration).
+    # Deploy the video schema for both tenants these tests dispatch as, via
+    # the canonical SchemaRegistry pathway (handles merge-with-existing
+    # schemas, tenant-name normalization, ConfigStore registration). A tenant
+    # without the schema serves none of its profiles.
     from tests.utils.vespa_test_helpers import deploy_tenant_schema
 
-    deploy_tenant_schema(
-        shared_memory_vespa,
-        tenant_id="test_tenant",
-        base_schema_name="video_colpali_smol500_mv_frame",
-        config_manager=shared_memory_vespa["config_manager"],
-    )
+    for tenant_id in ("test_tenant", "test:unit"):
+        deploy_tenant_schema(
+            shared_memory_vespa,
+            tenant_id=tenant_id,
+            base_schema_name="video_colpali_smol500_mv_frame",
+            config_manager=shared_memory_vespa["config_manager"],
+        )
 
     # Reset singletons again so consumer tests don't inherit stale
     # state from the deploy above (the deploy populates registries that

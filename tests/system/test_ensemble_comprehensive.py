@@ -123,9 +123,6 @@ def comprehensive_ensemble_setup():
             profiles=REAL_PROFILES,
         )
         manager.config_manager.set_backend_config(backend_config)
-        assert tenant_usable_profile_names(
-            manager.config_manager, "test_tenant"
-        ) == sorted(REAL_PROFILES)
         schema_loader = FilesystemSchemaLoader(base_path=Path("configs/schemas"))
         app_config = {
             "backend": {**backend_config.to_dict(), "config_port": config_port},
@@ -170,6 +167,11 @@ def comprehensive_ensemble_setup():
             delay=5.0,
             description="Vespa document indexing for every ensemble profile",
         )
+        # Ingestion deployed each profile's tenant schema, which is the second
+        # half of servability; every configured profile is now usable.
+        assert tenant_usable_profile_names(
+            manager.config_manager, "test_tenant"
+        ) == sorted(REAL_PROFILES)
 
         yield {
             "http_port": http_port,

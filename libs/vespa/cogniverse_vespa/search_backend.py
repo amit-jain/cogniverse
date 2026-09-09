@@ -39,7 +39,11 @@ from cogniverse_sdk.document import (
     SearchResultBatch,
     resolve_result_granularity,
 )
-from cogniverse_sdk.interfaces.backend import BackendClosedError, SearchBackend
+from cogniverse_sdk.interfaces.backend import (
+    BackendClosedError,
+    SchemaNotDeployedError,
+    SearchBackend,
+)
 from cogniverse_vespa._vespa_factory import apply_failfast_timeouts, make_vespa_app
 from cogniverse_vespa._yql import yql_quote
 
@@ -1300,18 +1304,6 @@ class VespaSearchBackend(SearchBackend):
                 f"Profile '{profile_name}' cannot be used without tenant isolation."
             )
 
-        if not self._tenant_schema_exists(base_schema_name, tenant_id):
-            logger.info(
-                f"[{correlation_id}] No deployed schema for tenant '{tenant_id}' "
-                f"and base schema '{base_schema_name}'"
-            )
-            return SearchResultBatch(
-                [],
-                result_granularity=result_granularity,
-                num_collapsed_documents=0,
-                total_count=0,
-            )
-
         # Canonicalize tenant_id (e.g. "test_tenant" → "test_tenant:test_tenant") so the
         # schema name matches the double-suffix form written by the ingestion/deploy path.
         # Without this, "test_tenant" maps to "..._test_tenant" but the deployed schema
@@ -1320,6 +1312,13 @@ class VespaSearchBackend(SearchBackend):
 
         safe_tenant_id = canonical_tenant_id(tenant_id).replace(":", "_")
         schema_name = f"{base_schema_name}_{safe_tenant_id}"
+
+        if not self._tenant_schema_exists(base_schema_name, tenant_id):
+            raise SchemaNotDeployedError(
+                f"Tenant '{tenant_id}' has no deployed schema '{schema_name}' "
+                f"(base schema '{base_schema_name}', profile '{profile_name}'); "
+                "deploy it before searching this profile"
+            )
         logger.info(
             f"[{correlation_id}] Applied tenant scoping: {base_schema_name} → {schema_name}"
         )

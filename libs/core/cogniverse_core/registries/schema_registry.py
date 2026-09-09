@@ -23,6 +23,9 @@ logger = logging.getLogger(__name__)
 
 _SCHEMA_INTENT_GRACE_S = 90
 
+# ConfigStore service the registry rows and the deployment journal live under.
+SCHEMA_REGISTRY_SERVICE = "schema_registry"
+
 
 @dataclass
 class SchemaInfo:
@@ -34,6 +37,44 @@ class SchemaInfo:
     schema_definition: str
     config: Dict[str, Any]
     deployment_time: str
+
+
+def tenant_deployed_schema_names(config_manager, tenant_id: str) -> frozenset[str]:
+    """Base schema names the tenant has deployed, activations in flight included.
+
+    A registry row records a completed deployment; a pending deployment intent
+    is a full schema name whose activation this tenant owns right now, seconds
+    before its row lands. A storage read failure raises rather than answering
+    with a smaller set: one outage would otherwise report every one of the
+    tenant's schemas as undeployed.
+    """
+    from cogniverse_core.common.tenant_utils import canonical_tenant_id
+    from cogniverse_sdk.interfaces.config_store import ConfigScope
+
+    tenant_id = canonical_tenant_id(tenant_id)
+    store = config_manager.store
+    try:
+        rows = store.list_all_configs(
+            scope=ConfigScope.SCHEMA, service=SCHEMA_REGISTRY_SERVICE
+        )
+    except Exception as exc:
+        raise RegistryStorageError(
+            f"Cannot read deployed schemas for tenant {tenant_id!r}: "
+            f"{type(exc).__name__}: {exc}"
+        ) from exc
+
+    names = {
+        row.config_value["base_schema_name"]
+        for row in rows
+        if row.config_value.get("tenant_id") == tenant_id
+        and not row.config_value.get("deleted", False)
+    }
+    names.update(
+        record["registration"]["base_schema_name"]
+        for record in SchemaDeploymentIntents(store).pending()
+        if record["registration"]["tenant_id"] == tenant_id
+    )
+    return frozenset(names)
 
 
 class SchemaRegistry:
@@ -131,7 +172,7 @@ class SchemaRegistry:
 
                 all_schema_data = self._config_manager.store.list_all_configs(
                     scope=ConfigScope.SCHEMA,
-                    service="schema_registry",
+                    service=SCHEMA_REGISTRY_SERVICE,
                 )
             except Exception as exc:
                 message = (
@@ -230,7 +271,7 @@ class SchemaRegistry:
         coordinates = {
             "tenant_id": tenant_id,
             "scope": ConfigScope.SCHEMA,
-            "service": "schema_registry",
+            "service": SCHEMA_REGISTRY_SERVICE,
             "config_key": config_key,
         }
         if expected_version is None:
@@ -456,7 +497,7 @@ class SchemaRegistry:
                 stored = self._config_manager.store.get_config(
                     tenant_id=tenant_id,
                     scope=ConfigScope.SCHEMA,
-                    service="schema_registry",
+                    service=SCHEMA_REGISTRY_SERVICE,
                     config_key=f"schema_{base}",
                 )
                 if stored is None or stored.config_value.get("deleted", False):
@@ -715,7 +756,7 @@ class SchemaRegistry:
         entry = self._config_manager.store.get_config(
             tenant_id=tenant_id,
             scope=ConfigScope.SCHEMA,
-            service="schema_registry",
+            service=SCHEMA_REGISTRY_SERVICE,
             config_key=config_key,
         )
 
@@ -733,7 +774,7 @@ class SchemaRegistry:
         self._config_manager.store.set_config(
             tenant_id=tenant_id,
             scope=ConfigScope.SCHEMA,
-            service="schema_registry",
+            service=SCHEMA_REGISTRY_SERVICE,
             config_key=config_key,
             config_value=schema_info,
         )

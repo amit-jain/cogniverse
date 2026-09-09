@@ -16,6 +16,7 @@ from unittest.mock import MagicMock, patch
 
 import pytest
 
+from cogniverse_sdk.interfaces.backend import SchemaNotDeployedError
 from cogniverse_vespa import search_backend as search_module
 from cogniverse_vespa.backend import VespaBackend
 from cogniverse_vespa.search_backend import ConnectionPool, VespaSearchBackend
@@ -185,7 +186,7 @@ def test_tenant_profiles_and_defaults_override_same_named_global_entries(
     assert body["ranking"] == "tenant_rank"
 
 
-def test_search_returns_empty_when_tenant_schema_is_missing(monkeypatch):
+def test_search_raises_when_the_tenant_schema_is_not_deployed(monkeypatch):
     backend = VespaSearchBackend(
         config={
             "url": "http://localhost",
@@ -231,7 +232,7 @@ def test_search_returns_empty_when_tenant_schema_is_missing(monkeypatch):
         },
     )
 
-    assert (
+    with pytest.raises(SchemaNotDeployedError) as failure:
         backend.search(
             {
                 "query": "tenant-local article",
@@ -239,7 +240,11 @@ def test_search_returns_empty_when_tenant_schema_is_missing(monkeypatch):
                 "tenant_id": "acme",
             }
         )
-        == []
+
+    assert str(failure.value) == (
+        "Tenant 'acme' has no deployed schema 'tenant_wiki_acme_acme' "
+        "(base schema 'tenant_wiki', profile 'shared'); deploy it before "
+        "searching this profile"
     )
     backend.vespa.query.assert_not_called()
     backend._tenant_schema_exists.assert_called_once_with("tenant_wiki", "acme")

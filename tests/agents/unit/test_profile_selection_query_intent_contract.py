@@ -44,7 +44,10 @@ def _profile_selection_example_profiles() -> dict[str, str]:
         SystemConfig,
         profile_embedding_service,
     )
-    from tests.utils.memory_store import InMemoryConfigStore
+    from tests.utils.memory_store import (
+        InMemoryConfigStore,
+        register_deployed_schema,
+    )
 
     frame_profile = shipped_profile(
         profile_type="video", embedding_type="multi_vector", extract_keyframes=True
@@ -67,6 +70,9 @@ def _profile_selection_example_profiles() -> dict[str, str]:
     )
     for profile in (frame_profile, chunk_profile, unavailable_profile):
         config_manager.add_backend_profile(profile, tenant_id="acme:docs")
+        # Servable also requires the tenant's schema; deploy all three so the
+        # unavailable profile is held back by its embedding service alone.
+        register_deployed_schema(config_manager, "acme:docs", profile.schema_name)
 
     usable = tenant_usable_profile_names(config_manager, "acme:docs")
     assert usable == [frame_profile.profile_name, chunk_profile.profile_name]
