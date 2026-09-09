@@ -14,6 +14,7 @@ from unittest.mock import MagicMock, patch
 
 import pytest
 
+from cogniverse_core.agents.base import ConfigManagerAware
 from cogniverse_foundation.caching import (
     TenantLRUCache,
     evict_tenant_from_registered_caches,
@@ -101,7 +102,7 @@ class _StubGenericDeps:
         self.kwargs = kwargs
 
 
-class _StubGenericAgent:
+class _StubGenericAgent(ConfigManagerAware):
     def __init__(self, deps=None, **kwargs):
         self.deps = deps
         self.telemetry_manager = None
