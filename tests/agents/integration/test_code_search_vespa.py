@@ -172,11 +172,9 @@ class TestCodeSearchVespaEndToEnd:
     """
 
     @pytest.fixture(scope="class")
-    def colbert_model(self):
-        """Load LateOn-Code-edge once per test class."""
-        from pylate import models as pylate_models
-
-        return pylate_models.ColBERT("lightonai/LateOn-Code-edge", device="cpu")
+    def colbert_model(self, served_code_colbert):
+        """Use the pinned code encoder served by the module's CPU sidecar."""
+        return served_code_colbert
 
     @pytest.fixture
     def strategy(self):

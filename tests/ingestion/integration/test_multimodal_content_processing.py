@@ -43,7 +43,7 @@ from tests.utils.docker_utils import generate_unique_ports
 
 MULTIMODAL_HTTP_PORT, MULTIMODAL_CONFIG_PORT = generate_unique_ports(__name__)
 
-COLBERT_MODEL_NAME = "lightonai/Reason-ModernColBERT"
+COLBERT_MODEL_NAME = "lightonai/LateOn"
 
 CLAP_MODEL_NAME = "laion/clap-htsat-unfused"
 
@@ -130,34 +130,17 @@ class _BackendAdapter:
 
 
 @pytest.fixture(scope="module")
-def colbert_vllm_url(vllm_sidecar):
-    """Multi-vector ColBERT served by a real vLLM container (chart
-    ``vllm_token_embed`` engine). The ``ColBERTModernBertModel``
-    hf-override forces the per-token architecture; without it vLLM serves
-    a plain dense ModernBert and the multi-vector outputs vanish."""
-    return vllm_sidecar.spawn(
-        COLBERT_MODEL_NAME,
-        extra_args=[
-            "--runner",
-            "pooling",
-            "--convert",
-            "embed",
-            "--hf-overrides",
-            '{"architectures": ["ColBERTModernBertModel"]}',
-        ],
-    )
-
-
-@pytest.fixture(scope="module")
-def colbert_model(colbert_vllm_url):
-    """Real ColBERT served by vLLM; routed through RemoteColBERTLoader so
-    tests exercise the production code path."""
+def colbert_model(pylate_server):
+    """Encode queries with the same served LateOn model used for ingestion."""
     loader = RemoteColBERTLoader(
         model_name=COLBERT_MODEL_NAME,
-        config={"remote_inference_url": colbert_vllm_url},
+        config={"remote_inference_url": pylate_server},
     )
     model, _ = loader.load_model()
-    return model
+    try:
+        yield model
+    finally:
+        model._close()
 
 
 @pytest.fixture(scope="module")
@@ -231,7 +214,7 @@ def vespa_with_schemas():
 
 
 @pytest.fixture(scope="module")
-def fed_documents(vespa_with_schemas, audio_wav_files):
+def fed_documents(vespa_with_schemas, audio_wav_files, pylate_server):
     """Feed all content through the production EmbeddingGeneratorImpl → VespaPyClient pipeline.
 
     Document path:
@@ -260,9 +243,14 @@ def fed_documents(vespa_with_schemas, audio_wav_files):
             "embedding_type": "multi_vector",
             "model_loader": "colbert",
             "schema_name": "document_text",
+            "inference_services": {"embedding": "colbert_pylate"},
+            "remote_inference_url": pylate_server,
         },
         backend_client=_BackendAdapter(doc_client),
     )
+
+    assert doc_generator.colbert_model.endpoint_url == pylate_server
+    assert doc_generator.colbert_model.model_name == COLBERT_MODEL_NAME
 
     doc_segments = [
         {
@@ -291,9 +279,13 @@ def fed_documents(vespa_with_schemas, audio_wav_files):
                 "embedding_type": "multi_vector",
                 "model_loader": "colbert",
                 "schema_name": "audio_content",
+                "inference_services": {"embedding": "colbert_pylate"},
+                "remote_inference_url": pylate_server,
             },
             backend_client=_BackendAdapter(audio_client),
         )
+        assert audio_generator.colbert_model.endpoint_url == pylate_server
+        assert audio_generator.colbert_model.model_name == COLBERT_MODEL_NAME
         audio_data = {
             "video_id": f"audio_{audio_id}",
             "audio_files": [

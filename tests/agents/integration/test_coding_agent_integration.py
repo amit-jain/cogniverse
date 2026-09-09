@@ -196,7 +196,7 @@ def coding_test_gateway(tmp_path_factory):
 
 
 @pytest.fixture(scope="module")
-def code_search_infra(coding_test_gateway, vespa_with_schema):
+def code_search_infra(served_code_colbert, coding_test_gateway, vespa_with_schema):
     """Deploy code_lateon_mv into the test Vespa, ingest real code, connect the
     sandbox manager to this module's gateway.
 
@@ -243,11 +243,9 @@ def code_search_infra(coding_test_gateway, vespa_with_schema):
         time.sleep(2)
 
     # --- 2. Ingest real code with LateOn-Code-edge ---
-    from pylate import models as pylate_models
-
     from cogniverse_runtime.ingestion.strategies import CodeSegmentationStrategy
 
-    colbert_model = pylate_models.ColBERT("lightonai/LateOn-Code-edge", device="cpu")
+    colbert_model = served_code_colbert
     strategy = CodeSegmentationStrategy(languages=["python"])
 
     repo_root = Path(__file__).resolve().parents[3]
