@@ -18,15 +18,19 @@ _REMOTE_ONLY_SUBSTRINGS = (
     "transformers>=4.57",
 )
 
+_MISSING_PYLATE_MESSAGE = (
+    "Local ColBERT loading requires the optional 'pylate' "
+    "dependency (install the project's [test] extra). For "
+    "production, serve ColBERT via the PyLate service by setting "
+    "inference_services.embedding on the profile (routes to "
+    "RemoteColBERTLoader)."
+)
+
 
 @pytest.mark.unit
 @pytest.mark.ci_fast
 class TestColBERTModelLoaderMissingPylate:
-    """pylate is a [test]-only optional dependency. Production ColBERT is
-    served via vLLM (RemoteColBERTLoader). A future local-colbert config
-    would hit ColBERTModelLoader.load_model; if pylate is absent the user
-    must get an actionable message, not a bare ModuleNotFoundError.
-    """
+    """Missing local PyLate directs callers to the served PyLate loader."""
 
     def test_loader_still_registered(self):
         # Never-delete rule: the loader stays in the factory registry.
@@ -59,6 +63,54 @@ class TestColBERTModelLoaderMissingPylate:
         assert "Local ColBERT loading requires the optional 'pylate'" in msg
         assert "inference_services.embedding" in msg
         assert "RemoteColBERTLoader" in msg
+        assert msg == _MISSING_PYLATE_MESSAGE
+        assert type(excinfo.value.__cause__) is ImportError
+        assert str(excinfo.value.__cause__) == "No module named 'pylate'"
+
+    def test_concurrent_missing_pylate_preserves_errors(self, monkeypatch):
+        from concurrent.futures import ThreadPoolExecutor
+        from threading import Barrier, Lock, local
+
+        monkeypatch.setattr(
+            "cogniverse_core.common.utils.retry.time.sleep", lambda *a, **k: None
+        )
+        barrier = Barrier(2)
+        lock = Lock()
+        caller = local()
+        attempts = {}
+        real_import = builtins.__import__
+
+        def missing_import(name, *args, **kwargs):
+            if name == "pylate" or name.startswith("pylate."):
+                with lock:
+                    attempts[caller.model_name] = attempts.get(caller.model_name, 0) + 1
+                barrier.wait(timeout=5)
+                raise ImportError(f"No module named 'pylate' for {caller.model_name}")
+            return real_import(name, *args, **kwargs)
+
+        monkeypatch.setattr(builtins, "__import__", missing_import)
+
+        def load_missing(model_name):
+            caller.model_name = model_name
+            loader = ColBERTModelLoader(model_name, config={"device": "cpu"})
+            with pytest.raises(ImportError) as excinfo:
+                loader.load_model()
+            return excinfo.value
+
+        model_names = ("lightonai/GTE-ModernColBERT-v1", "lightonai/LateOn")
+        with ThreadPoolExecutor(max_workers=2) as pool:
+            errors = list(pool.map(load_missing, model_names))
+
+        assert attempts == {
+            "lightonai/GTE-ModernColBERT-v1": 3,
+            "lightonai/LateOn": 3,
+        }
+        assert [str(error) for error in errors] == [_MISSING_PYLATE_MESSAGE] * 2
+        assert [type(error.__cause__) for error in errors] == [ImportError] * 2
+        assert [str(error.__cause__) for error in errors] == [
+            "No module named 'pylate' for lightonai/GTE-ModernColBERT-v1",
+            "No module named 'pylate' for lightonai/LateOn",
+        ]
 
 
 @pytest.mark.unit

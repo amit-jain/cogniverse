@@ -1191,7 +1191,7 @@ class ColBERTModelLoader(ModelLoader):
                 raise ImportError(
                     "Local ColBERT loading requires the optional 'pylate' "
                     "dependency (install the project's [test] extra). For "
-                    "production, serve ColBERT via vLLM by setting "
+                    "production, serve ColBERT via the PyLate service by setting "
                     "inference_services.embedding on the profile (routes to "
                     "RemoteColBERTLoader)."
                 ) from e
