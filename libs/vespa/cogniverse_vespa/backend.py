@@ -10,6 +10,7 @@ import re
 import threading
 from typing import Any, Dict, Iterator, List, Optional, Tuple
 
+from cogniverse_core.registries.backend_registry import BackendRegistry
 from cogniverse_sdk.document import Document
 from cogniverse_sdk.interfaces.backend import Backend, BackendClosedError
 
@@ -679,6 +680,17 @@ class VespaBackend(Backend):
 
         Returns:
             Search results (List[SearchResult] from VespaSearchBackend)
+        """
+        with BackendRegistry.lease_instance(self):
+            return self._search_while_leased(query_dict)
+
+    def _search_while_leased(self, query_dict: Dict[str, Any]) -> Any:
+        """Body of :meth:`search`, run with this instance checked out.
+
+        A search resolves the tenant's schema through the registry, which
+        inserts into the same bounded cache this instance lives in; without
+        the checkout a wide enough burst of tenants evicts and closes the
+        instance running the query.
         """
         self._require_open()
 

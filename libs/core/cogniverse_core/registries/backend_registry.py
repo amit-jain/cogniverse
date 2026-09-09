@@ -8,7 +8,8 @@ modifying core code.
 
 import importlib
 import logging
-from typing import Any, Dict, Optional, Type
+from contextlib import contextmanager
+from typing import Any, Dict, Iterator, Optional, Type
 
 from cogniverse_core.common.tenant_utils import SYSTEM_TENANT_ID
 from cogniverse_foundation.caching import TenantLRUCache
@@ -503,6 +504,21 @@ class BackendRegistry:
         logger.info(f"Created and cached shared search backend: {instance_key}")
 
         return instance
+
+    @classmethod
+    @contextmanager
+    def lease_instance(cls, instance: Any) -> Iterator[None]:
+        """Hold a cached backend against eviction while it serves.
+
+        Capacity eviction closes what it drops, and a backend closed while
+        it is mid-request loses the connection pool that request is using.
+        A backend checked out here is skipped by eviction — the cache takes
+        the least-recently-used free entry instead — and any close aimed at
+        it waits for the request to finish. A backend the cache does not
+        hold, built directly or already evicted, checks out nothing.
+        """
+        with cls._backend_instances.lease_value(instance):
+            yield
 
     @classmethod
     def _try_import_backend(cls, name: str) -> None:

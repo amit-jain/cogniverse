@@ -1,5 +1,6 @@
 """Unit tests for TenantLRUCache."""
 
+import logging
 import threading
 
 import pytest
@@ -289,3 +290,240 @@ class TestTenantCacheRegistry:
 
         assert ref() is None
         assert evict_tenant_from_registered_caches("lrureg4:one") == 0
+
+
+class TestCheckoutLease:
+    """A checked-out entry is never closed under it.
+
+    Backend instances are handed out of this cache and then used for the
+    length of a request; capacity eviction closing one mid-use kills the
+    request that is holding it.
+    """
+
+    def test_capacity_eviction_skips_the_checked_out_entry(self):
+        closed: list[tuple[str, int]] = []
+        cache: TenantLRUCache[int] = TenantLRUCache(
+            capacity=2, on_evict=lambda k, v: closed.append((k, v))
+        )
+        cache.set("held", 1)
+        cache.set("a", 2)
+
+        assert cache.acquire("held") == 1
+        assert cache.lease_count("held") == 1
+
+        cache.set("b", 3)
+        cache.set("c", 4)
+
+        assert closed == [("a", 2), ("b", 3)]
+        assert cache.keys() == ["held", "c"]
+
+        cache.release("held")
+
+        assert cache.lease_count("held") == 0
+        assert closed == [("a", 2), ("b", 3)]
+        assert cache.keys() == ["held", "c"]
+
+    def test_release_lets_the_formerly_held_entry_evict_again(self):
+        closed: list[tuple[str, int]] = []
+        cache: TenantLRUCache[int] = TenantLRUCache(
+            capacity=2, on_evict=lambda k, v: closed.append((k, v))
+        )
+        cache.set("held", 1)
+        cache.set("a", 2)
+        cache.acquire("held")
+        cache.set("b", 3)
+        cache.release("held")
+
+        cache.set("c", 4)
+
+        assert closed == [("a", 2), ("held", 1)]
+        assert cache.keys() == ["b", "c"]
+
+    def test_concurrent_inserts_never_close_the_checked_out_entry(self):
+        closed: list[str] = []
+        closed_lock = threading.Lock()
+
+        def record(key: str, value: int) -> None:
+            with closed_lock:
+                closed.append(key)
+
+        cache: TenantLRUCache[int] = TenantLRUCache(capacity=2, on_evict=record)
+        cache.set("held", 100)
+        assert cache.acquire("held") == 100
+
+        inserters = ["a", "b", "c"]
+        start = threading.Barrier(len(inserters) + 1)
+        inserted: list[str] = []
+        inserted_lock = threading.Lock()
+
+        def insert(key: str) -> None:
+            start.wait(timeout=30)
+            cache.set(key, ord(key))
+            with inserted_lock:
+                inserted.append(key)
+
+        threads = [
+            threading.Thread(target=insert, args=(key,), name=key) for key in inserters
+        ]
+        for thread in threads:
+            thread.start()
+        start.wait(timeout=30)
+        for thread in threads:
+            thread.join(timeout=30)
+
+        assert [thread.is_alive() for thread in threads] == [False, False, False]
+        assert sorted(inserted) == ["a", "b", "c"]
+        assert cache.lease_count("held") == 1
+        assert "held" not in closed
+        assert len(closed) == 2
+        assert sorted(closed) == sorted(set(closed))
+        assert len(cache) == 2
+        assert "held" in cache
+        assert set(cache.keys()) | set(closed) == {"held", "a", "b", "c"}
+        assert set(cache.keys()) & set(closed) == set()
+
+        cache.release("held")
+
+        assert cache.lease_count("held") == 0
+        assert len(cache) == 2
+        assert "held" in cache
+
+    def test_all_entries_checked_out_overflows_capacity_and_warns_once(self, caplog):
+        closed: list[tuple[str, int]] = []
+        cache: TenantLRUCache[int] = TenantLRUCache(
+            capacity=2, on_evict=lambda k, v: closed.append((k, v))
+        )
+        cache.set("a", 1)
+        cache.set("b", 2)
+        assert cache.acquire("a") == 1
+        assert cache.acquire("b") == 2
+
+        with caplog.at_level(
+            logging.WARNING, logger="cogniverse_foundation.caching.tenant_lru"
+        ):
+            cache.set("c", 3)
+
+        warnings = [
+            record.getMessage()
+            for record in caplog.records
+            if record.levelno == logging.WARNING
+        ]
+        assert warnings == [
+            "TenantLRUCache exceeds its capacity of 2 by 1: "
+            "2 checked-out entries cannot be evicted"
+        ]
+        assert closed == []
+        assert len(cache) == 3
+        assert cache.keys() == ["a", "b", "c"]
+
+        cache.release("a")
+
+        assert closed == [("a", 1)]
+        assert cache.keys() == ["b", "c"]
+        assert len(cache) == 2
+
+    def test_lease_releases_on_an_exception_and_the_entry_evicts_after(self):
+        closed: list[tuple[str, int]] = []
+        cache: TenantLRUCache[int] = TenantLRUCache(
+            capacity=1, on_evict=lambda k, v: closed.append((k, v))
+        )
+        cache.set("held", 1)
+
+        with pytest.raises(ValueError, match="request failed"):
+            with cache.lease("held") as value:
+                assert value == 1
+                assert cache.lease_count("held") == 1
+                raise ValueError("request failed")
+
+        assert cache.lease_count("held") == 0
+        assert closed == []
+
+        cache.set("next", 2)
+
+        assert closed == [("held", 1)]
+        assert cache.keys() == ["next"]
+
+    def test_lease_of_an_uncached_key_yields_none_and_takes_no_lease(self):
+        cache: TenantLRUCache[int] = TenantLRUCache(capacity=2)
+
+        with cache.lease("absent") as value:
+            assert value is None
+            assert cache.lease_count("absent") == 0
+
+        assert cache.lease_count("absent") == 0
+        assert cache.keys() == []
+
+    def test_release_without_acquire_is_refused(self):
+        cache: TenantLRUCache[int] = TenantLRUCache(capacity=2)
+        cache.set("a", 1)
+
+        with pytest.raises(RuntimeError) as excinfo:
+            cache.release("a")
+
+        assert str(excinfo.value) == (
+            "TenantLRUCache.release('a') has no matching acquire()"
+        )
+
+    def test_lease_value_holds_the_entry_that_holds_that_object(self):
+        closed: list[str] = []
+        cache: TenantLRUCache[object] = TenantLRUCache(
+            capacity=1, on_evict=lambda k, v: closed.append(k)
+        )
+        held = object()
+        cache.set("held", held)
+
+        with cache.lease_value(held):
+            assert cache.lease_count("held") == 1
+            cache.set("other", object())
+            assert cache.keys() == ["held", "other"]
+            assert closed == []
+
+        assert cache.lease_count("held") == 0
+        assert cache.keys() == ["other"]
+        assert closed == ["held"]
+
+    def test_lease_value_of_an_uncached_object_leases_nothing(self):
+        cache: TenantLRUCache[object] = TenantLRUCache(capacity=2)
+        cache.set("a", object())
+        stranger = object()
+
+        with cache.lease_value(stranger):
+            assert cache.keys() == ["a"]
+
+        assert cache.lease_count("a") == 0
+
+    def test_overwriting_a_checked_out_key_defers_the_close_until_release(self):
+        closed: list[tuple[str, int]] = []
+        cache: TenantLRUCache[int] = TenantLRUCache(
+            capacity=2, on_evict=lambda k, v: closed.append((k, v))
+        )
+        cache.set("a", 1)
+        assert cache.acquire("a") == 1
+
+        cache.set("a", 2)
+
+        assert closed == []
+        assert cache.get("a") == 2
+
+        cache.release("a")
+
+        assert closed == [("a", 1)]
+        assert cache.get("a") == 2
+
+    def test_clear_defers_the_close_of_a_checked_out_entry(self):
+        closed: list[tuple[str, int]] = []
+        cache: TenantLRUCache[int] = TenantLRUCache(
+            capacity=2, on_evict=lambda k, v: closed.append((k, v))
+        )
+        cache.set("held", 1)
+        cache.set("free", 2)
+        assert cache.acquire("held") == 1
+
+        cache.clear()
+
+        assert closed == [("free", 2)]
+        assert cache.keys() == []
+
+        cache.release("held")
+
+        assert closed == [("free", 2), ("held", 1)]

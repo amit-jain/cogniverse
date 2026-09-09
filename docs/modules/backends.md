@@ -651,6 +651,14 @@ Concurrent cold starts of one key build in parallel and resolve through
 carries different ones raises `BackendBindingConflictError` rather than
 serving a backend wired to another config source.
 
+`BackendRegistry.lease_instance(instance)` checks a cached backend out for
+the length of a request: eviction skips it and takes the least-recently-used
+free entry instead, and a close aimed at it waits for the request to finish.
+`VespaBackend.search()` holds a checkout for the whole query, because
+resolving the query tenant's deployed schema inserts into the same cache the
+backend running the query lives in. A backend the cache does not hold —
+built directly, or already evicted — checks out nothing.
+
 Eviction closes the instance. `VespaBackend.close()` releases the search
 backend, the ingestion clients and the metadata client, all of which are
 otherwise rebuilt lazily on next use, so a closed instance refuses work:
