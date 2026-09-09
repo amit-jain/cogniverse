@@ -301,7 +301,11 @@ def _seed_org_and_tenant() -> str:
         )
         assert r.status_code == 200, r.text
     tenant_row = register_tenant_and_wait(tenant_id, created_by="e2e")
-    assert (tenant_row["tenant_full_id"], tenant_row["status"], tenant_row["created_by"]) == (
+    assert (
+        tenant_row["tenant_full_id"],
+        tenant_row["status"],
+        tenant_row["created_by"],
+    ) == (
         canonical_tenant_id(tenant_id),
         "active",
         "e2e",
