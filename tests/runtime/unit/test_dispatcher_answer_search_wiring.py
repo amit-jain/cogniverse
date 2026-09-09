@@ -26,6 +26,7 @@ from cogniverse_foundation.config.unified_config import (
 from cogniverse_runtime.agent_dispatcher import (
     GROUNDING_NO_PROFILE_FOR_MODALITY,
     GROUNDING_NO_SERVABLE_PROFILE,
+    GROUNDING_SEARCH_TIMEOUT_KEY,
     GROUNDING_SEARCH_UNAVAILABLE,
     GROUNDING_SEARCHED,
     GROUNDING_TENANT_DEFAULT_PROFILE,
@@ -40,6 +41,26 @@ _SHIPPED_CONFIG = json.loads(
 )
 _SHIPPED_PROFILE_DATA = _SHIPPED_CONFIG["backend"]["profiles"]
 _SHIPPED_ACTIVE_PROFILE = _SHIPPED_CONFIG["active_video_profile"]
+_SHIPPED_GROUNDING_BUDGET_S = _SHIPPED_CONFIG[GROUNDING_SEARCH_TIMEOUT_KEY]
+
+
+def _fake_config_get(active_video_profile=None):
+    """``ConfigUtils.get`` for a fake config.
+
+    The shipped grounding budget always resolves, so the bound the answer path
+    reads is exercised rather than bypassed by a fake that answers None.
+    """
+
+    def get(key, default=None):
+        if key == "active_video_profile":
+            return active_video_profile if active_video_profile else default
+        if key == GROUNDING_SEARCH_TIMEOUT_KEY:
+            return _SHIPPED_GROUNDING_BUDGET_S
+        return default
+
+    return get
+
+
 _SHIPPED_PROFILES = {
     name: BackendProfileConfig.from_dict(name, data)
     for name, data in _SHIPPED_PROFILE_DATA.items()
@@ -154,10 +175,11 @@ class _SearchAgentStub(RealSearchAgent):
         self._output_rails = None
         self._profile = profile
 
-    async def _process_impl(self, _inp):
-        return SimpleNamespace(
-            results=[],
-            enhanced_query=None,
+    async def _process_impl(self, inp):
+        from cogniverse_agents.search_agent import SearchOutput
+
+        return SearchOutput(
+            query=inp.query,
             profile=self._profile,
             search_mode="single_profile",
         )
@@ -261,9 +283,7 @@ class TestSearchUsesActiveVideoProfile:
         self, dispatcher, monkeypatch
     ):
         fake_config = MagicMock()
-        fake_config.get = lambda key, default=None: (
-            "video_custom_mv_frame" if key == "active_video_profile" else default
-        )
+        fake_config.get = _fake_config_get("video_custom_mv_frame")
         monkeypatch.setattr(
             "cogniverse_foundation.config.utils.get_config",
             lambda **kwargs: fake_config,
@@ -774,9 +794,7 @@ class TestDownstreamDispatchThreadsRequestContext:
         self, dispatcher, monkeypatch
     ):
         fake_config = MagicMock()
-        fake_config.get = lambda key, default=None: (
-            _SHIPPED_ACTIVE_PROFILE if key == "active_video_profile" else default
-        )
+        fake_config.get = _fake_config_get(_SHIPPED_ACTIVE_PROFILE)
         monkeypatch.setattr(
             "cogniverse_foundation.config.utils.get_config",
             lambda **kwargs: fake_config,
@@ -1007,9 +1025,7 @@ class TestRlmThreadsIntoTypedInputs:
 
     async def test_search_task_threads_rlm_into_input(self, dispatcher, monkeypatch):
         fake_config = MagicMock()
-        fake_config.get = lambda key, default=None: (
-            _SHIPPED_ACTIVE_PROFILE if key == "active_video_profile" else default
-        )
+        fake_config.get = _fake_config_get(_SHIPPED_ACTIVE_PROFILE)
         monkeypatch.setattr(
             "cogniverse_foundation.config.utils.get_config",
             lambda **kwargs: fake_config,
@@ -1519,9 +1535,7 @@ class TestGroundingFollowsTenantServableProfiles:
     ):
         dispatcher = self._dispatcher(profiles={})
         fake_config = MagicMock()
-        fake_config.get = lambda key, default=None: (
-            _SHIPPED_ACTIVE_PROFILE if key == "active_video_profile" else default
-        )
+        fake_config.get = _fake_config_get(_SHIPPED_ACTIVE_PROFILE)
         monkeypatch.setattr(
             "cogniverse_foundation.config.utils.get_config",
             lambda **kwargs: fake_config,
@@ -1542,7 +1556,7 @@ class TestGroundingFollowsTenantServableProfiles:
     ):
         dispatcher = self._dispatcher(profiles={})
         fake_config = MagicMock()
-        fake_config.get = lambda key, default=None: default
+        fake_config.get = _fake_config_get()
         monkeypatch.setattr(
             "cogniverse_foundation.config.utils.get_config",
             lambda **kwargs: fake_config,
@@ -1581,9 +1595,7 @@ class TestGroundingFollowsTenantServableProfiles:
         """The searched profile is the SearchAgent's own active_profile, so a
         resolved grounding profile has to reach _get_search_agent."""
         fake_config = MagicMock()
-        fake_config.get = lambda key, default=None: (
-            _SHIPPED_ACTIVE_PROFILE if key == "active_video_profile" else default
-        )
+        fake_config.get = _fake_config_get(_SHIPPED_ACTIVE_PROFILE)
         monkeypatch.setattr(
             "cogniverse_foundation.config.utils.get_config",
             lambda **kwargs: fake_config,
@@ -1645,6 +1657,7 @@ class TestAnswerEnvelopeCarriesGroundingState:
             "state": GROUNDING_SEARCHED,
             "modalities": ["document"],
             "profiles": _profile_names_of_type("document"),
+            "degraded_profiles": [],
             "result_count": 1,
         }
         assert _CaptureAgent.captured["request"].search_results == [
@@ -1684,6 +1697,7 @@ class TestAnswerEnvelopeCarriesGroundingState:
             "state": GROUNDING_NO_PROFILE_FOR_MODALITY,
             "modalities": ["video"],
             "profiles": [],
+            "degraded_profiles": [],
             "result_count": 0,
         }
         assert result["result"]["metadata"]["grounding"] == result["grounding"]
@@ -1719,6 +1733,7 @@ class TestAnswerEnvelopeCarriesGroundingState:
             "state": GROUNDING_NO_PROFILE_FOR_MODALITY,
             "modalities": ["video"],
             "profiles": [],
+            "degraded_profiles": [],
             "result_count": 0,
         }
 
@@ -1744,6 +1759,7 @@ class TestAnswerEnvelopeCarriesGroundingState:
             "state": GROUNDING_SEARCH_UNAVAILABLE,
             "modalities": ["document"],
             "profiles": _profile_names_of_type("document"),
+            "degraded_profiles": [],
             "result_count": 0,
         }
         assert _CaptureAgent.captured["request"].search_results == []

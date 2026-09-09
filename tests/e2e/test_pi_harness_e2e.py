@@ -323,6 +323,7 @@ def test_the_summarizer_grounds_in_this_tenants_document_profile(harness_tenant)
         "state": "searched_servable_profiles",
         "modalities": ["document"],
         "profiles": [DOCUMENT_PROFILE],
+        "degraded_profiles": [],
         "result_count": len(EXPECTED_TITLE_ORDER),
     }
     assert body["result"]["metadata"]["results_analyzed"] == len(EXPECTED_TITLE_ORDER)
