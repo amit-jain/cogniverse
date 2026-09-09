@@ -879,14 +879,34 @@ client = cache.get_or_set("acme", lambda: MyClient(tenant_id="acme"))
 | `set(key, value)` | Insert/replace, evicting the least-recently-used entry if over capacity; a replaced value (different object, same key) also gets `on_evict` so held resources are released |
 | `get_or_set(key, factory)` | Return cached value, or build + cache one atomically (lock held through the factory) |
 | `set_if_absent(key, value)` | Insert unless the key is cached; return the winner. For expensive instances built outside the lock: concurrent builders converge on one shared instance, and the loser stays the caller's to release (no `on_evict`) |
+| `acquire(key)` / `release(key)` | Check a value out against eviction, and give the checkout back. `acquire` returns `None` and takes no checkout for an uncached key |
+| `lease(key)` / `lease_value(value)` | Context managers over `acquire`/`release`, by key or by the held object; the checkout ends on every exit path including exceptions |
+| `lease_count(key)` | Outstanding checkouts on a key |
+| `key_of(value)` | The key holding a value by identity, or `None` |
 | `pop(key, default=None)` | Remove and return a value without triggering `on_evict` |
-| `clear()` | Evict every entry (triggers `on_evict` for each) |
+| `clear()` | Evict every entry (triggers `on_evict` for each; a checked-out entry's `on_evict` is deferred to its release) |
 | `keys()` / `values()` | Snapshot of current keys / values (LRU order) |
 | `copy()` | Shallow copy preserving capacity, `on_evict`, and LRU order |
 | `len(cache)` / `key in cache` | Current size / membership check |
 
 `COGNIVERSE_TENANT_CACHE_CAPACITY` (env var, default `16`) sizes the
 per-registry instance cache inside `EntryPointRegistry`.
+
+### Checkouts
+
+A value in use is checked out for the length of that use. Capacity eviction
+skips checked-out entries and takes the least-recently-used free entry
+instead, so a cached value serving a request is never closed under it. When
+every entry is checked out the cache holds more than its capacity and logs
+one warning naming the overflow and the number of checkouts blocking it;
+eviction resumes as checkouts end. A close aimed at a checked-out entry — an
+overwriting `set`, a `clear` — is deferred to the release rather than
+dropped, so its `on_evict` still runs exactly once.
+
+```python
+with cache.lease("acme") as client:   # None when "acme" is not cached
+    client.query(...)                 # "acme" cannot be evicted here
+```
 
 ### Tenant-delete eviction
 

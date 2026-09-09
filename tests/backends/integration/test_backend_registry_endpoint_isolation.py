@@ -18,6 +18,7 @@ import numpy as np
 import pytest
 import requests
 
+from cogniverse_core.common.tenant_utils import SYSTEM_TENANT_ID
 from cogniverse_core.registries.backend_registry import (
     BackendRegistry,
     configure_tenant_cache_capacity,
@@ -350,3 +351,208 @@ class TestEvictionRefusesTheHolder:
             f"VespaBackend for {alpha_endpoint} is closed; its clients were "
             f"released. Obtain a fresh instance from the backend registry."
         )
+
+
+class _PausingSchemaLoader(FilesystemSchemaLoader):
+    """The real loader, with a rendezvous on one thread's first load.
+
+    ``VespaSearchBackend.get_search_results`` loads the profile's schema
+    before it resolves the tenant's deployed schema, so blocking here
+    parks a real search mid-flight — the backend checked out, the query
+    not yet sent — which is the window the other tenants' traffic has to
+    survive.
+    """
+
+    def __init__(self, base_path, thread_name, reached, resume):
+        super().__init__(base_path)
+        self._thread_name = thread_name
+        self._reached = reached
+        self._resume = resume
+        self._paused_once = False
+
+    def load_schema(self, schema_name):
+        loaded = super().load_schema(schema_name)
+        if threading.current_thread().name == self._thread_name and (
+            not self._paused_once
+        ):
+            self._paused_once = True
+            self._reached.wait(timeout=120)
+            self._resume.wait(timeout=240)
+        return loaded
+
+
+@pytest.mark.integration
+class TestCheckedOutBackendOutlivesOtherTenants:
+    def test_a_search_in_flight_survives_a_burst_of_other_tenants(self, two_clusters):
+        """A query holds the backend it runs on against eviction.
+
+        The search path resolves the tenant's schema through the same
+        bounded cache the search backend lives in, so enough distinct
+        tenants inserted during one query used to evict and close the
+        instance running it, and the query died on a released connection
+        pool. The instance serving a query is checked out: eviction takes
+        the least-recently-used free entry instead.
+        """
+        from cogniverse_vespa.backend import VespaBackend
+
+        env = two_clusters
+        alpha = env["clusters"]["alpha"]
+        alpha_endpoint = f"http://localhost:{alpha['instance']['http_port']}"
+        tenant_id = env["tenant_id"]
+        search_key = f"search_vespa@{alpha_endpoint}"
+        registry = BackendRegistry.get_instance()
+        capacity_before = BackendRegistry._backend_instances.capacity
+        registry.clear_instances()
+        configure_tenant_cache_capacity(2)
+
+        holder_name = "lease-holder"
+        reached_search = threading.Barrier(2)
+        may_finish = threading.Event()
+        loader = _PausingSchemaLoader(
+            Path("configs/schemas"), holder_name, reached_search, may_finish
+        )
+        burst_tenants = [f"{tenant_id}_burst{index}" for index in (1, 2, 3)]
+
+        closed: list[str] = []
+        closed_lock = threading.Lock()
+        original_close = VespaBackend.close
+
+        def counting_close(backend):
+            with closed_lock:
+                closed.append(f"{backend._tenant_id}@{backend._url}:{backend._port}")
+            original_close(backend)
+
+        outcome: dict = {}
+
+        def holder():
+            backend = registry.get_search_backend(
+                name="vespa",
+                config=_backend_config(alpha["instance"]),
+                config_manager=alpha["config_manager"],
+                schema_loader=loader,
+            )
+            try:
+                outcome["returned"] = _hit_ids(env, backend)
+            except BaseException as exc:  # noqa: BLE001 - recorded, asserted below
+                outcome["error"] = exc
+
+        VespaBackend.close = counting_close
+        try:
+            thread = threading.Thread(target=holder, name=holder_name)
+            thread.start()
+            reached_search.wait(timeout=120)
+
+            checkouts_mid_search = BackendRegistry._backend_instances.lease_count(
+                search_key
+            )
+            keys_mid_search = sorted(BackendRegistry._backend_instances.keys())
+
+            for burst_tenant in burst_tenants:
+                registry.get_ingestion_backend(
+                    name="vespa",
+                    tenant_id=burst_tenant,
+                    config=_backend_config(alpha["instance"]),
+                    config_manager=alpha["config_manager"],
+                    schema_loader=loader,
+                )
+            with closed_lock:
+                closed_during_burst = list(closed)
+            keys_after_burst = sorted(BackendRegistry._backend_instances.keys())
+
+            may_finish.set()
+            thread.join(timeout=300)
+        finally:
+            VespaBackend.close = original_close
+            may_finish.set()
+            registry.clear_instances()
+            configure_tenant_cache_capacity(capacity_before)
+
+        assert thread.is_alive() is False
+        assert set(outcome) == {"returned"}
+        assert outcome["returned"] == [alpha["doc_id"]]
+        assert checkouts_mid_search == 1
+        assert keys_mid_search == [search_key]
+        assert closed_during_burst == [
+            f"{burst_tenants[0]}@{alpha_endpoint}",
+            f"{burst_tenants[1]}@{alpha_endpoint}",
+        ]
+        assert keys_after_burst == [
+            f"backend_vespa_{burst_tenants[2]}@{alpha_endpoint}",
+            search_key,
+        ]
+
+    def test_a_failed_search_gives_its_checkout_back(self, two_clusters):
+        """A search that raises releases the backend it checked out.
+
+        A checkout leaked on the error path pins the instance forever: it
+        is never evicted, the cache stays one entry over capacity for the
+        life of the process, and its connection pool is never released.
+        """
+        from cogniverse_vespa.backend import VespaBackend
+
+        env = two_clusters
+        alpha = env["clusters"]["alpha"]
+        alpha_endpoint = f"http://localhost:{alpha['instance']['http_port']}"
+        dead_endpoint = f"http://127.0.0.1:{DEAD_VESPA_PORT}"
+        dead_key = f"search_vespa@{dead_endpoint}"
+        registry = BackendRegistry.get_instance()
+        capacity_before = BackendRegistry._backend_instances.capacity
+        registry.clear_instances()
+        configure_tenant_cache_capacity(2)
+
+        closed: list[str] = []
+        original_close = VespaBackend.close
+
+        def counting_close(backend):
+            closed.append(f"{backend._tenant_id}@{backend._url}:{backend._port}")
+            original_close(backend)
+
+        VespaBackend.close = counting_close
+        try:
+            dead = registry.get_search_backend(
+                name="vespa",
+                config={
+                    "backend": {
+                        "url": "http://127.0.0.1",
+                        "config_port": DEAD_VESPA_PORT,
+                        "port": DEAD_VESPA_PORT,
+                    }
+                },
+                config_manager=alpha["config_manager"],
+                schema_loader=env["schema_loader"],
+            )
+            with pytest.raises(Exception) as excinfo:
+                _hit_ids(env, dead)
+
+            checkouts_after_failure = BackendRegistry._backend_instances.lease_count(
+                dead_key
+            )
+            keys_after_failure = sorted(BackendRegistry._backend_instances.keys())
+            closed_after_failure = list(closed)
+
+            served = _hit_ids(env, _search_backend(env, "alpha"))
+            keys_after_pressure = sorted(BackendRegistry._backend_instances.keys())
+            closed_after_pressure = list(closed)
+        finally:
+            VespaBackend.close = original_close
+            registry.clear_instances()
+            configure_tenant_cache_capacity(capacity_before)
+
+        assert str(DEAD_VESPA_PORT) in str(excinfo.value)
+        assert checkouts_after_failure == 0
+        assert closed_after_failure == []
+        # The failed search resolved the tenant's schema first, so the dead
+        # endpoint holds both a search and an ingestion instance.
+        assert keys_after_failure == [
+            f"backend_vespa_{env['tenant_id']}@{dead_endpoint}",
+            dead_key,
+        ]
+        assert served == [alpha["doc_id"]]
+        assert closed_after_pressure == [
+            f"{SYSTEM_TENANT_ID}@{dead_endpoint}",
+            f"{env['tenant_id']}@{dead_endpoint}",
+        ]
+        assert keys_after_pressure == [
+            f"backend_vespa_{env['tenant_id']}@{alpha_endpoint}",
+            f"search_vespa@{alpha_endpoint}",
+        ]
