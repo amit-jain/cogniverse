@@ -164,8 +164,6 @@ _REPO_ROOT = Path(__file__).resolve().parents[3]
 _HYBRID_SCHEMAS = [
     "configs/schemas/video_colpali_smol500_mv_frame_schema.json",
     "configs/schemas/video_colqwen_omni_mv_chunk_30s_schema.json",
-    "tests/system/resources/schemas/video_colpali_smol500_mv_frame_schema.json",
-    "tests/system/resources/schemas/video_colqwen_omni_mv_chunk_30s_schema.json",
 ]
 
 

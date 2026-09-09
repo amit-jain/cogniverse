@@ -8,13 +8,14 @@ round-trip tests for the annotation queue endpoints.
 import time
 from contextlib import contextmanager
 from datetime import datetime
-from unittest.mock import AsyncMock, MagicMock, Mock, call, patch
+from unittest.mock import AsyncMock, MagicMock, call, patch
 
 import pytest
 from fastapi import FastAPI
 from fastapi.testclient import TestClient
 
 from cogniverse_agents.gateway_agent import GatewayAgent as RealGatewayAgent
+from cogniverse_agents.gateway_agent import GatewayOutput
 from cogniverse_agents.routing.annotation_agent import (
     AnnotationPriority,
     AnnotationRequest,
@@ -71,6 +72,7 @@ def dispatcher():
 
 def _make_gateway_output(
     *,
+    query="test query",
     complexity="simple",
     modality="video",
     generation_type="raw_results",
@@ -79,17 +81,23 @@ def _make_gateway_output(
     fast_path_confidence_threshold=0.4,
     gliner_threshold=0.3,
 ):
-    """Build a mock GatewayOutput for tests."""
-    output = Mock()
-    output.complexity = complexity
-    output.modality = modality
-    output.generation_type = generation_type
-    output.routed_to = routed_to
-    output.confidence = confidence
-    output.fast_path_confidence_threshold = fast_path_confidence_threshold
-    output.gliner_threshold = gliner_threshold
-    output.reasoning = "test reasoning"
-    return output
+    """Build the real GatewayOutput the gateway returns.
+
+    A Mock auto-creates any attribute the dispatcher reads, so a field added
+    to the gateway contract would be serialized into the response as a Mock
+    repr instead of failing here.
+    """
+    return GatewayOutput(
+        query=query,
+        complexity=complexity,
+        modality=modality,
+        generation_type=generation_type,
+        routed_to=routed_to,
+        confidence=confidence,
+        fast_path_confidence_threshold=fast_path_confidence_threshold,
+        gliner_threshold=gliner_threshold,
+        reasoning="test reasoning",
+    )
 
 
 def _gateway_init(self, deps=None, **kwargs):

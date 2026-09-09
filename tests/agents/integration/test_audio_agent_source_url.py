@@ -15,15 +15,24 @@ hits an undeployed doc type, so Vespa 400s and every search silently returns
 from __future__ import annotations
 
 import time
+from pathlib import Path
 from types import SimpleNamespace
 
 import numpy as np
 import pytest
 import requests
 
-from cogniverse_agents.audio_analysis_agent import AudioAnalysisAgent
-from cogniverse_core.common.media import MediaConfig, MediaLocator
-from tests.utils.vespa_test_helpers import deploy_tenant_schema, schema_full_name
+from cogniverse_agents.audio_analysis_agent import (
+    AudioAnalysisAgent,
+    AudioAnalysisDeps,
+)
+from cogniverse_core.schemas.filesystem_loader import FilesystemSchemaLoader
+from cogniverse_foundation.config.utils import get_config
+from tests.utils.vespa_test_helpers import (
+    deploy_tenant_schema,
+    make_config_manager,
+    schema_full_name,
+)
 
 pytestmark = [pytest.mark.integration, pytest.mark.requires_docker]
 
@@ -38,8 +47,12 @@ _OTHER_VEC = [0.0] * 511 + [1.0]
 
 @pytest.fixture(scope="module")
 def audio_schema(shared_vespa):
+    config_manager = make_config_manager(shared_vespa)
     full = deploy_tenant_schema(
-        shared_vespa, tenant_id=TENANT, base_schema_name=BASE_SCHEMA
+        shared_vespa,
+        tenant_id=TENANT,
+        base_schema_name=BASE_SCHEMA,
+        config_manager=config_manager,
     )
     http_port = shared_vespa["http_port"]
 
@@ -94,6 +107,8 @@ def audio_schema(shared_vespa):
     yield {
         "full": full,
         "http_port": http_port,
+        "config_port": shared_vespa["config_port"],
+        "config_manager": config_manager,
         "transcript_docs": transcript_docs,
         "acoustic_docs": acoustic_docs,
     }
@@ -109,29 +124,38 @@ def audio_schema(shared_vespa):
 
 
 @pytest.fixture
-def audio_agent(audio_schema, tmp_path):
-    """Bare AudioAnalysisAgent with just the attributes the search path reads."""
-    agent = AudioAnalysisAgent.__new__(AudioAnalysisAgent)
-    agent._tenant_id = TENANT
-    agent._vespa_endpoint = f"http://localhost:{audio_schema['http_port']}"
-    agent._whisper_model_size = "base"
-    agent._audio_transcriber = None
-    agent._embedding_generator = None
-    agent._locator = MediaLocator(
-        tenant_id=TENANT,
-        config=MediaConfig(),
-        cache_root=tmp_path / "audio-cache",
+def audio_agent(audio_schema):
+    """The AudioAnalysisAgent production builds, wired to the test's own Vespa.
+
+    Driven through the real constructor so every attribute the search path
+    reads (``_deployed_audio_schema``, ``_shared_backend`` and its lock,
+    ``_locator``) is the one ``__init__`` sets.
+    """
+    config_manager = audio_schema["config_manager"]
+    return AudioAnalysisAgent(
+        deps=AudioAnalysisDeps(
+            tenant_id=TENANT,
+            vespa_endpoint=f"http://localhost:{audio_schema['http_port']}",
+            whisper_model_size="base",
+            deployed_audio_schema=True,
+            config_manager=config_manager,
+            schema_loader=FilesystemSchemaLoader(Path("configs/schemas")),
+            backend_config={
+                "url": "http://localhost",
+                "port": audio_schema["http_port"],
+                "config_port": audio_schema["config_port"],
+                "schema_name": BASE_SCHEMA,
+                "backend": get_config(TENANT, config_manager).get("backend"),
+            },
+        )
     )
-    return agent
 
 
-def test_schema_name_matches_agent_query_target(audio_schema):
+def test_schema_name_matches_agent_query_target(audio_schema, audio_agent):
     # The agent builds audio_content_<canonical_tenant>; the deployed schema
     # must carry the same name or every audio query 404s and returns [].
     assert audio_schema["full"] == schema_full_name(BASE_SCHEMA, TENANT)
-    agent = AudioAnalysisAgent.__new__(AudioAnalysisAgent)
-    agent._tenant_id = TENANT
-    assert agent._schema_name == audio_schema["full"]
+    assert audio_agent._schema_name == audio_schema["full"]
 
 
 @pytest.mark.requires_docker

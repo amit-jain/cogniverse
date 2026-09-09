@@ -51,9 +51,7 @@ def search_agent_with_vespa_rlm(vespa_with_schema, tomoro_inference_url):
     inject_tomoro_url(config_manager, tomoro_inference_url)
 
     # Create schema loader pointing to test schemas
-    schema_loader = FilesystemSchemaLoader(
-        base_path=Path("tests/system/resources/schemas")
-    )
+    schema_loader = FilesystemSchemaLoader(base_path=Path("configs/schemas"))
 
     # Create SearchAgent with test Vespa parameters
     deps = SearchAgentDeps(

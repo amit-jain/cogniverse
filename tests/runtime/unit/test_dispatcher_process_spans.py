@@ -22,7 +22,7 @@ from opentelemetry.sdk.trace.export.in_memory_span_exporter import (
 )
 
 from cogniverse_agents.gateway_agent import GatewayAgent as RealGatewayAgent
-from cogniverse_agents.gateway_agent import GatewayInput
+from cogniverse_agents.gateway_agent import GatewayInput, GatewayOutput
 from cogniverse_agents.orchestrator_agent import (
     OrchestratorAgent as RealOrchestratorAgent,
 )
@@ -121,7 +121,8 @@ class GatewayAgent(RealGatewayAgent):
         ) as span:
             span.set_attribute("operation", "gateway")
             span.set_attribute("query", input_data.query)
-        return SimpleNamespace(
+        return GatewayOutput(
+            query=input_data.query,
             complexity="simple",
             modality="video",
             generation_type="raw_results",

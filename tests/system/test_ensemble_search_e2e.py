@@ -177,9 +177,7 @@ def ensemble_search_agent(ensemble_system_setup):
     config_manager = ensemble_system_setup["config_manager"]
     profiles = ensemble_system_setup["profiles"]
 
-    schema_loader = FilesystemSchemaLoader(
-        base_path=Path("tests/system/resources/schemas")
-    )
+    schema_loader = FilesystemSchemaLoader(base_path=Path("configs/schemas"))
 
     search_deps = SearchAgentDeps(
         backend_url=vespa_url,

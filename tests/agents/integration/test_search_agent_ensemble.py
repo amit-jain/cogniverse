@@ -206,9 +206,7 @@ def search_agent_ensemble(multi_profile_vespa, tomoro_inference_url):
     # profile through the spawned sidecar before the SearchAgent reads config.
     inject_tomoro_url(config_manager, tomoro_inference_url)
 
-    schema_loader = FilesystemSchemaLoader(
-        base_path=Path("tests/system/resources/schemas")
-    )
+    schema_loader = FilesystemSchemaLoader(base_path=Path("configs/schemas"))
 
     # Each profile maps to its OWN deployed tenant-scoped schema. All three
     # are 320-dim ColPali-family schemas served by the same Tomoro sidecar,
@@ -282,9 +280,7 @@ def search_agent_single_profile(multi_profile_vespa, tomoro_inference_url):
     # Tomoro is remote-only; route the query encoder through the sidecar.
     inject_tomoro_url(config_manager, tomoro_inference_url)
 
-    schema_loader = FilesystemSchemaLoader(
-        base_path=Path("tests/system/resources/schemas")
-    )
+    schema_loader = FilesystemSchemaLoader(base_path=Path("configs/schemas"))
 
     # Match the tenant ``multi_profile_vespa`` deploys the schema for, so the
     # tenant-scoped source ref (``..._ensemble_test_tenant_ensemble_test_tenant``)
