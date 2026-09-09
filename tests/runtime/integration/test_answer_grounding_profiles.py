@@ -35,6 +35,7 @@ from cogniverse_foundation.config.unified_config import (
 )
 from cogniverse_runtime.agent_dispatcher import (
     GROUNDING_NO_PROFILE_FOR_MODALITY,
+    GROUNDING_SEARCH_TIMEOUT_KEY,
     GROUNDING_SEARCH_UNAVAILABLE,
     GROUNDING_SEARCHED,
     GROUNDING_SEARCHED_DEGRADED,
@@ -412,10 +413,9 @@ HARBOUR_ID, BEEKEEPING_ID = (f"{CORPUS_ID}_{entry['id']}" for entry in CORPUS)
 HARBOUR_QUERY = "silt accumulation across the tidal basin"
 BEEKEEPING_QUERY = "candy board feeding for overwintering colonies"
 
-GROUNDING_SEARCH_BUDGET_KEY = "answer_grounding_search_timeout_seconds"
 SHIPPED_GROUNDING_BUDGET_S = json.loads(
     (_REPO_ROOT / "configs" / "config.json").read_text()
-)[GROUNDING_SEARCH_BUDGET_KEY]
+)[GROUNDING_SEARCH_TIMEOUT_KEY]
 
 
 @pytest.fixture(scope="module")

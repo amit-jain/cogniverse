@@ -21,6 +21,7 @@ from cogniverse_agents.optimizer.golden_set_ground_truth import (
     canonicalize_golden_set_ground_truth_rows,
 )
 from cogniverse_core.common.tenant_utils import SYSTEM_TENANT_ID
+from cogniverse_runtime.agent_dispatcher import GROUNDING_SEARCH_TIMEOUT_KEY
 from cogniverse_runtime.synthetic_config import parse_synthetic_runtime_config
 
 REPO_ROOT = Path(__file__).resolve().parents[2]
@@ -224,6 +225,16 @@ def test_shipped_configs_declare_identical_teacher_request_bounds():
         == bounds(_rendered(CHART))
         == {"temperature": 0.7, "max_tokens": 2048, "context_window": 4096}
     )
+
+
+@pytest.mark.unit
+def test_shipped_configs_declare_identical_answer_grounding_budget():
+    """The dispatcher raises when this key is absent rather than searching
+    unbounded, so a budget carried by one copy alone fails every grounded
+    answer in the deployment that renders the other."""
+    budgets = [_rendered(path).get(GROUNDING_SEARCH_TIMEOUT_KEY) for path in CONFIGS]
+
+    assert budgets == [12.0, 12.0]
 
 
 @pytest.mark.unit
