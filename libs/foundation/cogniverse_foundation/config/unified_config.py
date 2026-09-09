@@ -622,6 +622,14 @@ class AgentConfigUnified:
         return cls(tenant_id=tenant_id, agent_config=agent_config)
 
 
+# Named servability states a tenant's profile is in, so a caller can tell a
+# profile nothing serves the embeddings for from one whose tenant schema was
+# never deployed.
+PROFILE_SERVABLE = "servable"
+PROFILE_EMBEDDING_SERVICE_UNCONFIGURED = "embedding_service_unconfigured"
+PROFILE_SCHEMA_NOT_DEPLOYED = "schema_not_deployed"
+
+
 def profile_embedding_service(profile: Dict[str, Any]) -> str:
     """The embedding inference service a profile declares, or ``""`` if none."""
     inference_services = profile.get("inference_services") or {}
@@ -631,10 +639,46 @@ def profile_embedding_service(profile: Dict[str, Any]) -> str:
     return service.strip() if isinstance(service, str) else ""
 
 
-def profile_is_servable(profile: Dict[str, Any], service_urls: Any) -> bool:
-    """True when the profile needs no embedding service or names a configured one."""
+def profile_base_schema_name(profile_name: str, profile: Dict[str, Any]) -> str:
+    """The base schema a profile reads, defaulting to the profile's own name."""
+    schema_name = profile.get("schema_name")
+    if isinstance(schema_name, str) and schema_name.strip():
+        return schema_name.strip()
+    return profile_name
+
+
+def profile_servability(
+    profile_name: str,
+    profile: Dict[str, Any],
+    service_urls: Any,
+    deployed_schemas: Any,
+) -> str:
+    """Why a profile can or cannot be served for a tenant.
+
+    Both halves are required: an embedding service the system config resolves
+    to a URL, and a deployed tenant schema to read. A profile missing the
+    second half answers every query with no hits from an application that does
+    not carry its document type, which reads as an empty corpus.
+    """
     service = profile_embedding_service(profile)
-    return not service or service in service_urls
+    if service and service not in service_urls:
+        return PROFILE_EMBEDDING_SERVICE_UNCONFIGURED
+    if profile_base_schema_name(profile_name, profile) not in deployed_schemas:
+        return PROFILE_SCHEMA_NOT_DEPLOYED
+    return PROFILE_SERVABLE
+
+
+def profile_is_servable(
+    profile_name: str,
+    profile: Dict[str, Any],
+    service_urls: Any,
+    deployed_schemas: Any,
+) -> bool:
+    """True when the profile's embedding service resolves and its schema is deployed."""
+    return (
+        profile_servability(profile_name, profile, service_urls, deployed_schemas)
+        == PROFILE_SERVABLE
+    )
 
 
 @dataclass

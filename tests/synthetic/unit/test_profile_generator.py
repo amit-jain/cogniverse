@@ -20,7 +20,10 @@ from cogniverse_foundation.config.unified_config import (
 from cogniverse_synthetic.generators import ProfileGenerator
 from cogniverse_synthetic.registry import get_optimizer_config
 from tests.agents.unit._recording_telemetry import RecordingTelemetryManager
-from tests.utils.memory_store import InMemoryConfigStore
+from tests.utils.memory_store import (
+    InMemoryConfigStore,
+    register_deployed_schema,
+)
 
 PROFILE_CONFIGS = {
     "audio_semantic": {
@@ -102,9 +105,11 @@ def _profile_generation_config_manager(
             embedding_service = inference_services.get("embedding")
             if isinstance(embedding_service, str) and embedding_service.strip():
                 service_urls[embedding_service] = f"http://{embedding_service}.invalid"
-        config_manager.add_backend_profile(
-            BackendProfileConfig.from_dict(profile_name, profile_config),
-            tenant_id=tenant_id,
+        profile = BackendProfileConfig.from_dict(profile_name, profile_config)
+        config_manager.add_backend_profile(profile, tenant_id=tenant_id)
+        # A profile is servable only once the tenant's schema for it exists.
+        register_deployed_schema(
+            config_manager, tenant_id, profile.schema_name or profile_name
         )
     config_manager.set_system_config(SystemConfig(inference_service_urls=service_urls))
     return config_manager
@@ -439,12 +444,7 @@ class TestProfileGenerator:
 
     @pytest.mark.asyncio
     async def test_labels_through_profile_selection_agent_process(self):
-        config_manager = ConfigManager(store=InMemoryConfigStore())
-        for profile_name, profile_config in PROFILE_CONFIGS.items():
-            config_manager.add_backend_profile(
-                BackendProfileConfig.from_dict(profile_name, profile_config),
-                tenant_id="test:unit",
-            )
+        config_manager = _profile_generation_config_manager(PROFILE_CONFIGS)
         agent = ProfileSelectionAgent(
             deps=ProfileSelectionDeps(
                 available_profiles=["audio_semantic", "document_semantic"]

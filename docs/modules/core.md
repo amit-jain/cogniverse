@@ -602,6 +602,20 @@ exists = registry.schema_exists("acme", "video_content")
 schemas = registry.get_tenant_schemas("acme")
 ```
 
+`tenant_deployed_schema_names(config_manager, tenant_id)` is the module-level
+read serving-time servability uses: the base schema names the tenant has
+deployed, taken from the registry rows plus the pending deployment intents (a
+name an activation owns before its row lands). It needs no backend, and a
+storage read failure raises `RegistryStorageError` naming the tenant rather
+than answering with a smaller set — an outage must never read as "nothing is
+deployed".
+
+```python
+from cogniverse_core.registries.schema_registry import tenant_deployed_schema_names
+
+deployed = tenant_deployed_schema_names(config_manager, "acme:prod")
+```
+
 SchemaRegistry reads persisted schemas on construction, leaves retry and
 backoff to its `ConfigStore` implementation, and wraps storage read failures
 once with registry context. Empty storage and store-normalized HTTP 404 results both

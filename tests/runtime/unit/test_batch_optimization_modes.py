@@ -1376,7 +1376,10 @@ class TestProfileSelectionTrainingExamples:
             profile_embedding_service,
         )
         from cogniverse_runtime.optimization_cli import _profile_selection_pairs
-        from tests.utils.memory_store import InMemoryConfigStore
+        from tests.utils.memory_store import (
+            InMemoryConfigStore,
+            register_deployed_schema,
+        )
 
         frame_profile = shipped_profile(
             profile_type="video", embedding_type="multi_vector", extract_keyframes=True
@@ -1405,6 +1408,9 @@ class TestProfileSelectionTrainingExamples:
         )
         for profile in (frame_profile, chunk_profile, unavailable_profile):
             config_manager.add_backend_profile(profile, tenant_id="acme:docs")
+            # All three schemas are deployed, so the embedding service is the
+            # only thing that holds the unavailable profile back.
+            register_deployed_schema(config_manager, "acme:docs", profile.schema_name)
 
         expected_live = [frame_profile.profile_name, chunk_profile.profile_name]
         recorded_pool = ", ".join(reversed(expected_live))

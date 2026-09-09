@@ -28,6 +28,7 @@ from cogniverse_foundation.config.unified_config import (
     SystemConfig,
 )
 from cogniverse_runtime.agent_dispatcher import (
+    GROUNDING_NO_DEPLOYED_SCHEMA_FOR_PROFILE,
     GROUNDING_NO_PROFILE_FOR_MODALITY,
     GROUNDING_NO_SERVABLE_PROFILE,
     GROUNDING_SEARCH_RESERVE_S,
@@ -40,6 +41,10 @@ from cogniverse_runtime.agent_dispatcher import (
     AgentDispatcher,
     AnswerGrounding,
     _flatten_search_hit,
+)
+from tests.utils.memory_store import (
+    InMemoryConfigStore,
+    register_deployed_schema,
 )
 
 _SHIPPED_CONFIG = json.loads(
@@ -98,12 +103,17 @@ def _profile_names_of_type(*types: str) -> list[str]:
     ]
 
 
-def _config_manager(profiles=None, service_urls=None, active_profile=None):
+def _config_manager(
+    profiles=None, service_urls=None, active_profile=None, deployed=None
+):
     """ConfigManager double shaped like the real one the dispatcher reads.
 
-    ``list_backend_profiles`` returns BackendProfileConfig values and
-    ``get_system_config`` a real SystemConfig, so servable-profile derivation
-    runs the production code path instead of a MagicMock that answers anything.
+    ``list_backend_profiles`` returns BackendProfileConfig values,
+    ``get_system_config`` a real SystemConfig, and ``store`` a real in-memory
+    ConfigStore carrying the tenant's schema-registry rows, so servable-profile
+    derivation runs the production code path — including the deployed-schema
+    half — instead of a MagicMock that answers anything. ``deployed`` names the
+    base schemas registered for the tenant; None registers every profile's own.
     """
     config_manager = MagicMock()
     config_manager.get_system_config.return_value = SystemConfig(
@@ -113,10 +123,18 @@ def _config_manager(profiles=None, service_urls=None, active_profile=None):
             _SHIPPED_SERVICE_URLS if service_urls is None else service_urls
         ),
     )
-    config_manager.list_backend_profiles.return_value = dict(
-        _SHIPPED_PROFILES if profiles is None else profiles
-    )
+    tenant_profiles = dict(_SHIPPED_PROFILES if profiles is None else profiles)
+    config_manager.list_backend_profiles.return_value = tenant_profiles
     config_manager.active_profile = active_profile
+    store = InMemoryConfigStore()
+    store.initialize()
+    config_manager.store = store
+    if deployed is None:
+        deployed = [
+            profile.schema_name or name for name, profile in tenant_profiles.items()
+        ]
+    for base_schema_name in deployed:
+        register_deployed_schema(config_manager, "acme:acme", base_schema_name)
     return config_manager
 
 
@@ -1438,11 +1456,11 @@ class TestGroundingFollowsTenantServableProfiles:
     zero hits and the answer LLM replied that no content was provided."""
 
     @staticmethod
-    def _dispatcher(profiles=None, service_urls=None):
+    def _dispatcher(profiles=None, service_urls=None, deployed=None):
         return AgentDispatcher(
             agent_registry=MagicMock(),
             config_manager=_config_manager(
-                profiles=profiles, service_urls=service_urls
+                profiles=profiles, service_urls=service_urls, deployed=deployed
             ),
             schema_loader=MagicMock(),
         )
@@ -1535,6 +1553,58 @@ class TestGroundingFollowsTenantServableProfiles:
         ]
         assert captured["profiles"] == servable_without_service
         assert out.profiles == tuple(servable_without_service)
+
+    async def test_a_profile_without_a_deployed_schema_is_named_not_searched(self):
+        """A configured profile whose tenant schema is absent is reported.
+
+        Searching it reads an application that does not carry its documents, so
+        the answer would be grounded in an empty result that reads as no match.
+        """
+        document_profiles = _document_profiles()
+        deployed_name = _profile_names_of_type("document")[0]
+        dispatcher = self._dispatcher(
+            profiles=document_profiles,
+            deployed=[document_profiles[deployed_name].schema_name],
+        )
+        captured = self._record_search(dispatcher, [_s3_hit(1)])
+
+        out = await dispatcher._resolve_answer_search_results(
+            "summarize the documents about robotics", "acme:acme", None, top_k=10
+        )
+
+        undeployed = [
+            name for name in _profile_names_of_type("document") if name != deployed_name
+        ]
+        assert captured["profiles"] == [deployed_name]
+        assert out.state == GROUNDING_SEARCHED
+        assert out.profiles == (deployed_name,)
+        assert out.undeployed_profiles == tuple(undeployed)
+        assert out.nothing_to_search is False
+        assert out.envelope() == {
+            "state": GROUNDING_SEARCHED,
+            "modalities": ["document"],
+            "profiles": [deployed_name],
+            "degraded_profiles": [],
+            "degraded_query_rewrite": None,
+            "undeployed_profiles": undeployed,
+            "result_count": 1,
+        }
+
+    async def test_no_deployed_schema_at_all_is_its_own_named_state(self):
+        """Distinct from "no servable profile": the profiles ARE configured."""
+        dispatcher = self._dispatcher(profiles=_document_profiles(), deployed=[])
+        captured = self._record_search(dispatcher, [])
+
+        out = await dispatcher._resolve_answer_search_results(
+            "summarize the documents about robotics", "acme:acme", None, top_k=10
+        )
+
+        assert captured == {}
+        assert out.state == GROUNDING_NO_DEPLOYED_SCHEMA_FOR_PROFILE
+        assert out.nothing_to_search is True
+        assert out.profiles == ()
+        assert out.undeployed_profiles == tuple(_profile_names_of_type("document"))
+        assert out.hits == []
 
     async def test_tenant_with_no_servable_profile_uses_the_configured_default(
         self, monkeypatch
@@ -1665,6 +1735,7 @@ class TestAnswerEnvelopeCarriesGroundingState:
             "profiles": _profile_names_of_type("document"),
             "degraded_profiles": [],
             "degraded_query_rewrite": None,
+            "undeployed_profiles": [],
             "result_count": 1,
         }
         assert _CaptureAgent.captured["request"].search_results == [
@@ -1706,6 +1777,7 @@ class TestAnswerEnvelopeCarriesGroundingState:
             "profiles": [],
             "degraded_profiles": [],
             "degraded_query_rewrite": None,
+            "undeployed_profiles": [],
             "result_count": 0,
         }
         assert result["result"]["metadata"]["grounding"] == result["grounding"]
@@ -1743,6 +1815,7 @@ class TestAnswerEnvelopeCarriesGroundingState:
             "profiles": [],
             "degraded_profiles": [],
             "degraded_query_rewrite": None,
+            "undeployed_profiles": [],
             "result_count": 0,
         }
 
@@ -1770,6 +1843,7 @@ class TestAnswerEnvelopeCarriesGroundingState:
             "profiles": _profile_names_of_type("document"),
             "degraded_profiles": [],
             "degraded_query_rewrite": None,
+            "undeployed_profiles": [],
             "result_count": 0,
         }
         assert _CaptureAgent.captured["request"].search_results == []
@@ -1859,10 +1933,12 @@ class TestGroundingBoundsAndNamesTheQueryRewrite:
     """
 
     @staticmethod
-    def _dispatcher():
+    def _dispatcher(deployed=None):
         dispatcher = AgentDispatcher(
             agent_registry=MagicMock(),
-            config_manager=_config_manager(profiles=_document_profiles()),
+            config_manager=_config_manager(
+                profiles=_document_profiles(), deployed=deployed
+            ),
             schema_loader=MagicMock(),
         )
         dispatcher._init_agent_memory = lambda *a, **k: None
@@ -1915,6 +1991,7 @@ class TestGroundingBoundsAndNamesTheQueryRewrite:
             "profiles": _profile_names_of_type("document"),
             "degraded_profiles": [],
             "degraded_query_rewrite": QUERY_REWRITE_TIMED_OUT,
+            "undeployed_profiles": [],
             "result_count": 1,
         }
 
@@ -1943,8 +2020,54 @@ class TestGroundingBoundsAndNamesTheQueryRewrite:
             "profiles": _profile_names_of_type("document"),
             "degraded_profiles": [],
             "degraded_query_rewrite": QUERY_REWRITE_FAILED,
+            "undeployed_profiles": [],
             "result_count": 1,
         }
         assert _CaptureAgent.captured["request"].search_results == [
             _flatten_search_hit(_s3_hit(3))
         ]
+
+    async def test_a_degraded_rewrite_and_an_undeployed_profile_both_reported(self):
+        """A rewrite that fails while a profile awaits its schema.
+
+        The two are independent: one profile was not searched because the
+        tenant never deployed its schema, and the query the other was searched
+        with is not the rewritten one. ``degraded_query_rewrite`` takes the
+        state because a search did happen; ``undeployed_profiles`` still names
+        what that search left out, so neither cause is hidden by the other.
+        """
+        document_profiles = _document_profiles()
+        deployed_name = _profile_names_of_type("document")[0]
+        dispatcher = self._dispatcher(
+            deployed=[document_profiles[deployed_name].schema_name]
+        )
+        searched_profiles: list[list[str]] = []
+
+        async def _search(query, tenant_id, top_k, **kwargs):
+            searched_profiles.append(list(kwargs["enrichment"]["profiles"]))
+            return {
+                "results": [_s3_hit(4)],
+                "degraded_query_rewrite": QUERY_REWRITE_FAILED,
+            }
+
+        dispatcher._execute_search_task = _search
+
+        out = await dispatcher._resolve_answer_search_results(
+            "summarize the documents about robotics", "acme:acme", None, top_k=10
+        )
+
+        undeployed = [
+            name for name in _profile_names_of_type("document") if name != deployed_name
+        ]
+        assert searched_profiles == [[deployed_name]]
+        assert out.hits == [_flatten_search_hit(_s3_hit(4))]
+        assert out.nothing_to_search is False
+        assert out.envelope() == {
+            "state": GROUNDING_SEARCHED_DEGRADED,
+            "modalities": ["document"],
+            "profiles": [deployed_name],
+            "degraded_profiles": [],
+            "degraded_query_rewrite": QUERY_REWRITE_FAILED,
+            "undeployed_profiles": undeployed,
+            "result_count": 1,
+        }

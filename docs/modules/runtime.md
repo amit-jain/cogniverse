@@ -739,10 +739,14 @@ Strategies are per-profile (derived from the profile's schema), so `tenant_id`
 is required and an optional `profile` defaults to the tenant's active profile.
 The returned names can be passed straight to the `strategy` field of `POST /search`.
 
-**GET /search/profiles** - List available profiles
+**GET /search/profiles** - List the profiles this tenant can be served
 ```bash
-curl http://localhost:8000/search/profiles
+curl "http://localhost:8000/search/profiles?tenant_id=acme:acme"
 ```
+`tenant_id` is required. A profile is advertised only when its embedding
+inference service resolves to a URL AND this tenant's schema for it is
+deployed; one without a deployed schema is left out rather than advertised into
+a search that answers nothing.
 
 **POST /search/rerank** - Rerank existing results
 ```bash
@@ -897,8 +901,9 @@ A summary, detailed report or deep-research answer is grounded in search hits.
 The dispatcher uses the hits a caller threaded through
 `context["search_results"]` when present; otherwise it runs a grounding search
 over the tenant's own servable profiles — the set `GET /search/profiles`
-advertises — restricted to the profiles whose declared type carries the routed
-modality (`MODALITY_PROFILE_TYPES` in `gateway_agent.py`; `document` and `wiki`
+advertises, each of which resolves an embedding service AND has this tenant's
+schema deployed — restricted to the profiles whose declared type carries the
+routed modality (`MODALITY_PROFILE_TYPES` in `gateway_agent.py`; `document` and `wiki`
 profiles both carry the document and text modalities). The modality is the
 router's own decision, read from `context["detected_modalities"]` when the
 request came through the gateway, otherwise the model-independent branch of
@@ -906,8 +911,8 @@ that same classifier. Several matching profiles are searched together and
 merged by the SearchAgent's RRF ensemble.
 
 Every answer envelope carries a `grounding` block — `state`, `modalities`,
-`profiles`, `degraded_profiles`, `degraded_query_rewrite`, `result_count` —
-with one of these states:
+`profiles`, `degraded_profiles`, `degraded_query_rewrite`,
+`undeployed_profiles`, `result_count` — with one of these states:
 
 | state | meaning |
 |---|---|
@@ -916,8 +921,22 @@ with one of these states:
 | `searched_servable_profiles_degraded` | some legs were searched and the rest are named under `degraded_profiles`, or the query rewrite degraded and is named under `degraded_query_rewrite` |
 | `tenant_default_profile` | the tenant has no servable profile; the configured `active_video_profile` was searched as a last resort |
 | `no_servable_profile_for_modality` | the tenant serves nothing for this modality |
+| `no_deployed_schema_for_profile` | the tenant configures profiles for this request but has deployed no schema for them; they are named under `undeployed_profiles` |
 | `no_servable_profile` | the tenant has no servable profile and no configured default |
 | `search_unavailable` | a search dependency failed or the search exceeded its budget; the answer is ungrounded |
+
+`undeployed_profiles` names the profiles this request would have searched had
+their schema been deployed for this tenant. They are reported rather than
+searched: a search against an undeployed schema reads an application that does
+not carry those documents, and its empty answer is indistinguishable from a
+corpus with no match. A direct search against one raises `SchemaNotDeployedError`
+naming the tenant and the schema. `undeployed_profiles` is independent of the
+state and is carried on every outcome: when some profiles awaited a schema and
+a search still ran, the state reports that search
+(`searched_servable_profiles`, or `searched_servable_profiles_degraded` when a
+leg or the query rewrite also degraded) and `undeployed_profiles` names what it
+left out. `no_deployed_schema_for_profile` is the state only when no profile
+was left to search.
 
 `profiles` names the profiles whose search ran. A fan-out leg that could not
 encode its query or whose search raised is listed in `degraded_profiles` as
@@ -927,10 +946,11 @@ reported as partial rather than as a complete one. The same per-leg outcome is
 on `SearchOutput.degraded_profiles`, and `SearchOutput.profiles` likewise names
 only the legs that ran. Every leg failing is an outage and raises.
 
-The two nothing-to-search states short-circuit: the envelope states that the
-tenant serves no content of that modality and the answer model is not invoked,
-so an empty corpus never reads as a confident summary of nothing. A dependency
-outage stays distinct under `search_unavailable`.
+The three nothing-to-search states short-circuit: the envelope states that the
+tenant serves no content of that modality, has no servable profile, or has no
+deployed schema for the profiles it configures, and the answer model is not
+invoked, so an empty corpus never reads as a confident summary of nothing. A
+dependency outage stays distinct under `search_unavailable`.
 
 The grounding search is bounded by `answer_grounding_search_timeout_seconds`
 (seconds, `configs/config.json` and the chart's copy). Exceeding it yields
@@ -942,9 +962,9 @@ encode, and every profile's query runs concurrently, so a stalled leg costs its
 own stall rather than the stall plus the healthy legs' work.
 
 The grounding search rewrites the query once, through the tenant's LM, inside
-that same budget: `GROUNDING_REWRITE_BUDGET_SHARE` (half) of the ceiling bounds
-the rewrite and leaves the retrieval it feeds the rest, so the rewrite runs for
-one profile and for a fan-out alike and a rewrite that never answers cannot
+that same budget: the ceiling less `GROUNDING_SEARCH_RESERVE_S` (2.0s) bounds
+the rewrite and leaves the retrieval it feeds that reserve, so the rewrite runs
+for one profile and for a fan-out alike and a rewrite that never answers cannot
 consume the search's time. A rewrite that fails or overruns its share searches
 the original query; `degraded_query_rewrite` then names it
 (`query_rewrite_failed` / `query_rewrite_timed_out`) and the state becomes

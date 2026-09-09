@@ -329,14 +329,19 @@ async def list_profiles(
 ) -> Dict[str, Any]:
     """List the search profiles a tenant can actually use.
 
-    A profile whose embedding inference service is not configured is not
-    servable, so it is not advertised. Returns profile name, type, and model —
-    safe for user-facing display. Detailed config (pipeline, strategies, schema
+    A profile is advertised only when its embedding inference service is
+    configured AND this tenant's schema for it is deployed — a profile with no
+    deployed schema answers every search from an application that does not
+    carry its documents. Returns profile name, type, and model — safe for
+    user-facing display. Detailed config (pipeline, strategies, schema
     internals) is admin-only via GET /admin/profiles.
     """
     from cogniverse_agents.profile_selection_agent import servable_tenant_profiles
 
-    servable = servable_tenant_profiles(config_manager, tenant_id)
+    # Config store + schema registry reads; keep both off the event loop.
+    servable = await asyncio.to_thread(
+        servable_tenant_profiles, config_manager, tenant_id
+    )
 
     return {
         "tenant_id": tenant_id,

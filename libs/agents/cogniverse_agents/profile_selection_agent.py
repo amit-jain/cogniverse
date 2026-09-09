@@ -6,6 +6,7 @@ backend profile based on query characteristics, modality, and complexity.
 """
 
 import asyncio
+import dataclasses
 import json
 import logging
 from pathlib import Path
@@ -25,9 +26,13 @@ from cogniverse_core.approval.training_schema import (
 )
 from cogniverse_core.common.tenant_utils import require_tenant_id
 from cogniverse_foundation.config.unified_config import (
+    PROFILE_EMBEDDING_SERVICE_UNCONFIGURED,
+    PROFILE_SCHEMA_NOT_DEPLOYED,
+    PROFILE_SERVABLE,
     BackendProfileConfig,
+    profile_base_schema_name,
     profile_embedding_service,
-    profile_is_servable,
+    profile_servability,
 )
 from cogniverse_foundation.telemetry.span_contract import (
     OP_PROFILE_SELECTION,
@@ -73,10 +78,30 @@ def _default_available_profiles() -> List[str]:
     return [name for name, _profile in sorted(profiles.items(), key=_sort_key)]
 
 
-def servable_tenant_profiles(
+@dataclasses.dataclass(frozen=True)
+class ProfileServability:
+    """A tenant's profile and whether the runtime can serve it."""
+
+    name: str
+    profile: BackendProfileConfig
+    state: str
+
+
+def tenant_profile_servability(
     config_manager: Any, tenant_id: str
-) -> List[tuple[str, BackendProfileConfig]]:
-    """The tenant's servable profiles as ``(name, profile)``, in selection order."""
+) -> List[ProfileServability]:
+    """Every configured profile with its servability state, in selection order.
+
+    A profile is servable only when its embedding service resolves to a URL AND
+    the tenant's schema for it is deployed; the two failures are separate
+    states so a caller reports which one it hit. Deployment is read from the
+    schema registry, so a registry outage raises rather than reporting the
+    tenant's schemas as undeployed.
+    """
+    from cogniverse_core.registries.schema_registry import (
+        tenant_deployed_schema_names,
+    )
+
     tenant_id = require_tenant_id(tenant_id, source="ProfileSelectionInput")
     tenant_profiles = config_manager.list_backend_profiles(tenant_id)
     system_config = config_manager.get_system_config()
@@ -86,58 +111,69 @@ def servable_tenant_profiles(
             "ConfigManager must expose dict backend profiles and dict "
             "inference_service_urls"
         )
+    deployed = tenant_deployed_schema_names(config_manager, tenant_id)
 
-    usable = [
-        (profile_name, profile)
+    rows = [
+        ProfileServability(
+            name=profile_name,
+            profile=profile,
+            state=profile_servability(
+                profile_name, profile.to_dict(), service_urls, deployed
+            ),
+        )
         for profile_name, profile in tenant_profiles.items()
         if isinstance(profile, BackendProfileConfig)
-        and profile_is_servable(profile.to_dict(), service_urls)
     ]
 
-    def _sort_key(item: tuple[str, BackendProfileConfig]) -> tuple[int, str]:
-        profile_name, profile = item
-        profile_type = (profile.type or "").lower()
+    def _sort_key(row: ProfileServability) -> tuple[int, str]:
+        profile_type = (row.profile.type or "").lower()
         return (
             _PROFILE_TYPE_ORDER.get(profile_type, len(_PROFILE_TYPE_ORDER)),
-            profile_name,
+            row.name,
         )
 
-    return sorted(usable, key=_sort_key)
+    return sorted(rows, key=_sort_key)
+
+
+def servable_tenant_profiles(
+    config_manager: Any, tenant_id: str
+) -> List[tuple[str, BackendProfileConfig]]:
+    """The tenant's servable profiles as ``(name, profile)``, in selection order."""
+    return [
+        (row.name, row.profile)
+        for row in tenant_profile_servability(config_manager, tenant_id)
+        if row.state == PROFILE_SERVABLE
+    ]
 
 
 def tenant_usable_profile_names(config_manager: Any, tenant_id: str) -> List[str]:
     """Return the tenant-scoped profiles the runtime can actually serve."""
-    usable = servable_tenant_profiles(config_manager, tenant_id)
+    rows = tenant_profile_servability(config_manager, tenant_id)
+    usable = [row.name for row in rows if row.state == PROFILE_SERVABLE]
     if usable:
-        return [name for name, _profile in usable]
+        return usable
 
     tenant_id = require_tenant_id(tenant_id, source="ProfileSelectionInput")
-    tenant_profiles = config_manager.list_backend_profiles(tenant_id)
-    service_urls = (
-        getattr(config_manager.get_system_config(), "inference_service_urls", None)
-        or {}
-    )
-    missing_services = sorted(
-        (profile_name, profile_embedding_service(profile.to_dict()))
-        for profile_name, profile in tenant_profiles.items()
-        if isinstance(profile, BackendProfileConfig)
-        and not profile_is_servable(profile.to_dict(), service_urls)
-    )
-    configured = ", ".join(sorted(tenant_profiles)) or "<none>"
-    if missing_services:
-        missing = ", ".join(
-            f"{profile_name}:{service_name}"
-            for profile_name, service_name in missing_services
-        )
-        raise ValueError(
-            f"No usable backend profiles are configured for tenant "
-            f"{tenant_id!r}; configured profiles={configured}; "
-            f"missing inference services={missing}"
-        )
-    raise ValueError(
+    configured = ", ".join(sorted(row.name for row in rows)) or "<none>"
+    message = (
         f"No usable backend profiles are configured for tenant "
         f"{tenant_id!r}; configured profiles={configured}"
     )
+    missing_services = [
+        f"{row.name}:{profile_embedding_service(row.profile.to_dict())}"
+        for row in sorted(rows, key=lambda row: row.name)
+        if row.state == PROFILE_EMBEDDING_SERVICE_UNCONFIGURED
+    ]
+    if missing_services:
+        message += f"; missing inference services={', '.join(missing_services)}"
+    undeployed = [
+        f"{row.name}:{profile_base_schema_name(row.name, row.profile.to_dict())}"
+        for row in sorted(rows, key=lambda row: row.name)
+        if row.state == PROFILE_SCHEMA_NOT_DEPLOYED
+    ]
+    if undeployed:
+        message += f"; undeployed schemas={', '.join(undeployed)}"
+    raise ValueError(message)
 
 
 class ProfileCandidate(BaseModel):

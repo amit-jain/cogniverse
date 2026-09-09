@@ -25,7 +25,10 @@ from cogniverse_sdk.document import (
     SearchResultBatch,
 )
 from cogniverse_sdk.interfaces.schema_loader import SchemaLoader
-from tests.utils.memory_store import InMemoryConfigStore
+from tests.utils.memory_store import (
+    InMemoryConfigStore,
+    register_deployed_schema,
+)
 
 
 def _make_config_manager() -> ConfigManager:
@@ -234,6 +237,7 @@ class TestListProfiles:
                 ),
                 tenant_id=tenant_id,
             )
+            register_deployed_schema(config_manager, tenant_id, profile_name)
 
         with _search_app_context(config_manager=config_manager) as test_app:
             with TestClient(test_app) as client:
@@ -274,6 +278,9 @@ class TestListProfilesAdvertisesOnlyServable:
                 ),
                 tenant_id=tenant_id,
             )
+            # Both schemas are deployed, so the embedding service is the only
+            # thing separating the advertised profile from the unadvertised one.
+            register_deployed_schema(config_manager, tenant_id, profile_name)
 
         with _search_app_context(config_manager=config_manager) as test_app:
             with TestClient(test_app) as client:
@@ -314,6 +321,126 @@ class TestListProfilesAdvertisesOnlyServable:
                     "model": "missing/model",
                     "type": "video",
                 },
+            ],
+        }
+
+
+@pytest.mark.unit
+@pytest.mark.ci_fast
+class TestListProfilesRequiresADeployedSchema:
+    def test_profile_without_a_deployed_tenant_schema_is_not_advertised(self):
+        """A configured embedding service is not enough to serve a profile.
+
+        Advertising a profile whose tenant schema was never deployed made every
+        search against it answer from an application that does not carry its
+        documents — an empty result that reads as a clean "no matches".
+        """
+        tenant_id = "acme:deployment"
+        config_manager = _make_config_manager()
+        system_config = config_manager.get_system_config()
+        system_config.inference_service_urls = {"live_embedding": "http://live:8000"}
+        config_manager.set_system_config(system_config)
+
+        for profile_name, schema_name, model in (
+            ("deployed_video", "video_colpali_smol500_mv_frame", "deployed/model"),
+            ("undeployed_video", "video_xclip_sv_chunk_6s", "undeployed/model"),
+        ):
+            config_manager.add_backend_profile(
+                BackendProfileConfig(
+                    profile_name=profile_name,
+                    type="video",
+                    schema_name=schema_name,
+                    embedding_model=model,
+                    extra_config={
+                        "inference_services": {"embedding": "live_embedding"}
+                    },
+                ),
+                tenant_id=tenant_id,
+            )
+        register_deployed_schema(
+            config_manager, tenant_id, "video_colpali_smol500_mv_frame"
+        )
+
+        with _search_app_context(config_manager=config_manager) as test_app:
+            with TestClient(test_app) as client:
+                resp = client.get("/search/profiles", params={"tenant_id": tenant_id})
+
+                assert resp.status_code == 200
+                assert resp.json() == {
+                    "tenant_id": tenant_id,
+                    "count": 1,
+                    "profiles": [
+                        {
+                            "name": "deployed_video",
+                            "model": "deployed/model",
+                            "type": "video",
+                        }
+                    ],
+                }
+
+                # Deploying the second schema is the only change; it is then
+                # advertised, so the filter tracks deployment, not the name.
+                register_deployed_schema(
+                    config_manager, tenant_id, "video_xclip_sv_chunk_6s"
+                )
+
+                resp = client.get("/search/profiles", params={"tenant_id": tenant_id})
+
+        assert resp.status_code == 200
+        assert resp.json() == {
+            "tenant_id": tenant_id,
+            "count": 2,
+            "profiles": [
+                {
+                    "name": "deployed_video",
+                    "model": "deployed/model",
+                    "type": "video",
+                },
+                {
+                    "name": "undeployed_video",
+                    "model": "undeployed/model",
+                    "type": "video",
+                },
+            ],
+        }
+
+    def test_another_tenants_deployment_does_not_advertise_this_tenants_profile(self):
+        """Deployment is per tenant: a peer's row must not advertise ours."""
+        config_manager = _make_config_manager()
+        system_config = config_manager.get_system_config()
+        system_config.inference_service_urls = {"live_embedding": "http://live:8000"}
+        config_manager.set_system_config(system_config)
+
+        for tenant_id in ("acme:one", "rival:two"):
+            config_manager.add_backend_profile(
+                BackendProfileConfig(
+                    profile_name="shared_video",
+                    type="video",
+                    schema_name="video_colpali_smol500_mv_frame",
+                    embedding_model="shared/model",
+                    extra_config={
+                        "inference_services": {"embedding": "live_embedding"}
+                    },
+                ),
+                tenant_id=tenant_id,
+            )
+        register_deployed_schema(
+            config_manager, "rival:two", "video_colpali_smol500_mv_frame"
+        )
+
+        with _search_app_context(config_manager=config_manager) as test_app:
+            with TestClient(test_app) as client:
+                mine = client.get("/search/profiles", params={"tenant_id": "acme:one"})
+                theirs = client.get(
+                    "/search/profiles", params={"tenant_id": "rival:two"}
+                )
+
+        assert mine.json() == {"tenant_id": "acme:one", "count": 0, "profiles": []}
+        assert theirs.json() == {
+            "tenant_id": "rival:two",
+            "count": 1,
+            "profiles": [
+                {"name": "shared_video", "model": "shared/model", "type": "video"}
             ],
         }
 

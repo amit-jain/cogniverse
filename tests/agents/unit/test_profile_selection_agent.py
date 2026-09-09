@@ -29,6 +29,10 @@ from tests.agents.unit._recording_telemetry import (
     FailingTelemetryManager,
     RecordingTelemetryManager,
 )
+from tests.utils.memory_store import (
+    InMemoryConfigStore,
+    register_deployed_schema,
+)
 from tests.utils.vespa_test_helpers import shipped_profile
 
 
@@ -65,6 +69,12 @@ def profile_agent():
         )
         agent = ProfileSelectionAgent(deps=deps, port=8011)
         agent._config_manager = Mock()
+        # Servability reads the tenant's deployed schemas from the config
+        # store, so the double carries a real one; tests register the rows
+        # for the profiles they mean to be servable.
+        store = InMemoryConfigStore()
+        store.initialize()
+        agent._config_manager.store = store
         agent._config_manager.get_backend_profile.return_value = SimpleNamespace(
             type="video"
         )
@@ -423,6 +433,10 @@ class TestProfileSelectionAgent:
         profile_agent._config_manager.get_backend_profile.side_effect = (
             lambda profile_name, tenant_id: tenant_profiles.get(profile_name)
         )
+        for profile in tenant_profiles.values():
+            register_deployed_schema(
+                profile_agent._config_manager, "test_tenant", profile.schema_name
+            )
 
         captured = {}
 

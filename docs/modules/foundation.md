@@ -303,6 +303,37 @@ backend_config = BackendConfig(
 )
 ```
 
+**Profile servability** - whether a tenant can be served a profile:
+
+```python
+from cogniverse_foundation.config.unified_config import (
+    PROFILE_EMBEDDING_SERVICE_UNCONFIGURED,
+    PROFILE_SCHEMA_NOT_DEPLOYED,
+    PROFILE_SERVABLE,
+    profile_base_schema_name,
+    profile_is_servable,
+    profile_servability,
+)
+
+state = profile_servability(
+    "document_text_semantic",
+    profile.to_dict(),
+    system_config.inference_service_urls,
+    deployed_schemas={"document_text"},
+)
+assert state == PROFILE_SERVABLE
+```
+
+`profile_servability` names why a profile can or cannot be served: its
+embedding service must resolve to a URL in `inference_service_urls`
+(`PROFILE_EMBEDDING_SERVICE_UNCONFIGURED` otherwise) and its base schema —
+`profile_base_schema_name`, the profile's `schema_name` or its own name — must
+be in `deployed_schemas` (`PROFILE_SCHEMA_NOT_DEPLOYED` otherwise).
+`profile_is_servable` is the boolean form. The deployed set is per tenant and
+comes from `cogniverse_core.registries.schema_registry.tenant_deployed_schema_names`;
+callers in `cogniverse_agents.profile_selection_agent` compose the two, so this
+module keeps no dependency on core.
+
 **FieldMappingConfig** - Canonical content fields used by synthetic generation:
 
 ```python

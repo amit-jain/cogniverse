@@ -867,11 +867,19 @@ async def _process_impl(
 #### Configuration
 
 When the runtime handles `profile_selection_agent`, it derives the candidate
-set with `tenant_usable_profile_names(ConfigManager, tenant_id)`, which filters
-out profiles whose embedding service is not deployed in
-`SystemConfig.inference_service_urls`. `ProfileSelectionDeps.available_profiles`
-is only a standalone fallback for local construction or tests without tenant
-state.
+set with `tenant_usable_profile_names(ConfigManager, tenant_id)`. A profile is
+usable only when both halves hold: its embedding service resolves to a URL in
+`SystemConfig.inference_service_urls`, and this tenant's schema for it is
+deployed (read from the schema registry). Neither half alone can serve a
+search. When nothing is usable the raised error names each held-back profile
+under `missing inference services=` or `undeployed schemas=`.
+`tenant_profile_servability(ConfigManager, tenant_id)` returns every configured
+profile as a `ProfileServability(name, profile, state)` row in selection order,
+and `servable_tenant_profiles` is its servable subset — the set
+`GET /search/profiles` advertises. A schema-registry outage raises rather than
+reporting the tenant's schemas as undeployed.
+`ProfileSelectionDeps.available_profiles` is only a standalone fallback for
+local construction or tests without tenant state.
 
 ```python
 # Standalone fallback; the runtime injects tenant-usable profiles instead.
