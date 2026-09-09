@@ -20,6 +20,17 @@ from cogniverse_agents.temporal_reasoning_agent import (
     _parse_iso,
 )
 
+
+def _memory_config_manager():
+    """The injected ConfigManager every agent constructor requires."""
+    from cogniverse_foundation.config.manager import ConfigManager
+    from tests.utils.memory_store import InMemoryConfigStore
+
+    store = InMemoryConfigStore()
+    store.initialize()
+    return ConfigManager(store=store)
+
+
 pytestmark = [pytest.mark.unit, pytest.mark.ci_fast]
 
 
@@ -66,6 +77,7 @@ def _build(rows: List[Dict[str, Any]]):
     return TemporalReasoningAgent(
         deps=TemporalReasoningDeps(tenant_id="acme"),
         memory_manager_factory=_factory_for(rows),
+        config_manager=_memory_config_manager(),
     )
 
 
@@ -327,7 +339,10 @@ class TestEdgeCases:
 
 
 def test_agent_capabilities_advertised():
-    agent = TemporalReasoningAgent(deps=TemporalReasoningDeps(tenant_id="acme"))
+    agent = TemporalReasoningAgent(
+        deps=TemporalReasoningDeps(tenant_id="acme"),
+        config_manager=_memory_config_manager(),
+    )
     assert agent.agent_name == "temporal_reasoning_agent"
     assert "temporal_reasoning" in agent.capabilities
     assert agent.port == 8025
@@ -352,6 +367,7 @@ class TestMemoryOutage:
         agent = TemporalReasoningAgent(
             deps=TemporalReasoningDeps(tenant_id="acme"),
             memory_manager_factory=_factory,
+            config_manager=_memory_config_manager(),
         )
         with pytest.raises(ConnectionError, match="vespa down"):
             await agent._process_impl(
@@ -380,6 +396,7 @@ class TestMemoryOutage:
         agent = TemporalReasoningAgent(
             deps=TemporalReasoningDeps(tenant_id="acme"),
             memory_manager_factory=_factory,
+            config_manager=_memory_config_manager(),
         )
         with pytest.raises(ConnectionError, match="mem0 init failed"):
             await agent._process_impl(
@@ -423,6 +440,7 @@ async def test_subject_memory_read_does_not_block_the_event_loop():
     agent = TemporalReasoningAgent(
         deps=TemporalReasoningDeps(tenant_id="acme"),
         memory_manager_factory=factory,
+        config_manager=_memory_config_manager(),
     )
     unblock_timer = threading.Timer(1, release.set)
     unblock_timer.start()

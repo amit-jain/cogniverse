@@ -57,6 +57,16 @@ from cogniverse_foundation.telemetry.span_contract import (
 )
 
 
+def _memory_config_manager():
+    """The injected ConfigManager every agent constructor requires."""
+    from cogniverse_foundation.config.manager import ConfigManager
+    from tests.utils.memory_store import InMemoryConfigStore
+
+    store = InMemoryConfigStore()
+    store.initialize()
+    return ConfigManager(store=store)
+
+
 class _TelemetryTestInput(AgentInput):
     query: str
     tenant_id: str = "telemetry_real_test"
@@ -281,7 +291,9 @@ class TestAgentTelemetrySpansRealPhoenix:
         the real Phoenix HTTP API. Before fix #10, this would fail because
         AgentBase didn't wrap _process_impl in a span at all."""
         tenant_id = _tenant_id("agentbase-process-span")
-        agent = SearchAgent(deps=_TelemetryTestDeps())
+        agent = SearchAgent(
+            deps=_TelemetryTestDeps(), config_manager=_memory_config_manager()
+        )
         agent.set_telemetry_manager(real_telemetry)
 
         await agent.process(

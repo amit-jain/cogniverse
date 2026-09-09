@@ -20,6 +20,17 @@ from cogniverse_agents.knowledge_summarization_agent import (
 from cogniverse_agents.temporal_reasoning_agent import _parse_iso
 from cogniverse_core.memory.schema import build_default_registry
 
+
+def _memory_config_manager():
+    """The injected ConfigManager every agent constructor requires."""
+    from cogniverse_foundation.config.manager import ConfigManager
+    from tests.utils.memory_store import InMemoryConfigStore
+
+    store = InMemoryConfigStore()
+    store.initialize()
+    return ConfigManager(store=store)
+
+
 pytestmark = [pytest.mark.unit, pytest.mark.ci_fast]
 
 
@@ -74,6 +85,7 @@ def _build(rows_by_tenant: Dict[str, List[Dict[str, Any]]]):
         deps=KnowledgeSummarizationDeps(tenant_id="acme:production"),
         memory_manager_factory=factory,
         registry=build_default_registry(),
+        config_manager=_memory_config_manager(),
     )
     # Stub the DSPy module so tests don't make LLM calls.
     agent._dspy_module = MagicMock(return_value=MagicMock(summary="STUB_SUMMARY"))
@@ -344,6 +356,7 @@ class TestPromotion:
             deps=KnowledgeSummarizationDeps(tenant_id="acme:production"),
             memory_manager_factory=_factory,
             registry=build_default_registry(),
+            config_manager=_memory_config_manager(),
         )
         agent._dspy_module = MagicMock(
             return_value=MagicMock(summary="Exact refund summary")
@@ -394,6 +407,7 @@ class TestPromotion:
             deps=KnowledgeSummarizationDeps(tenant_id="acme:production"),
             memory_manager_factory=_factory,
             registry=build_default_registry(),
+            config_manager=_memory_config_manager(),
         )
         agent._dspy_module = MagicMock(
             return_value=MagicMock(summary="Exact refund summary")
@@ -413,7 +427,8 @@ class TestPromotion:
 
 def test_summary_kind_auto_registered():
     agent = KnowledgeSummarizationAgent(
-        deps=KnowledgeSummarizationDeps(tenant_id="acme")
+        deps=KnowledgeSummarizationDeps(tenant_id="acme"),
+        config_manager=_memory_config_manager(),
     )
     # If the agent didn't auto-register, .get() raises SchemaViolationError.
     schema = agent._registry.get(SUMMARY_KIND)
@@ -468,7 +483,8 @@ def test_time_filter_requires_timezone_aware_bounds():
 
 def test_agent_capabilities_advertised():
     agent = KnowledgeSummarizationAgent(
-        deps=KnowledgeSummarizationDeps(tenant_id="acme")
+        deps=KnowledgeSummarizationDeps(tenant_id="acme"),
+        config_manager=_memory_config_manager(),
     )
     assert agent.agent_name == "knowledge_summarization_agent"
     assert "knowledge_summarization" in agent.capabilities
@@ -495,6 +511,7 @@ class TestMemoryOutage:
             deps=KnowledgeSummarizationDeps(tenant_id="acme:production"),
             memory_manager_factory=_factory,
             registry=build_default_registry(),
+            config_manager=_memory_config_manager(),
         )
         agent._dspy_module = MagicMock(return_value=MagicMock(summary="STUB"))
         with pytest.raises(ConnectionError, match="vespa down"):
@@ -516,6 +533,7 @@ class TestMemoryOutage:
             deps=KnowledgeSummarizationDeps(tenant_id="acme:production"),
             memory_manager_factory=_factory,
             registry=build_default_registry(),
+            config_manager=_memory_config_manager(),
         )
         agent._dspy_module = MagicMock(return_value=MagicMock(summary="STUB"))
         with pytest.raises(ConnectionError, match="mem0 init failed"):

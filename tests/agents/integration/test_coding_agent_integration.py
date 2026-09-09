@@ -17,6 +17,17 @@ import pytest
 from cogniverse_runtime.sandbox_manager import SandboxManager, SandboxPolicy
 from tests.agents.integration.conftest import skip_if_no_lm
 
+
+def _memory_config_manager():
+    """The injected ConfigManager every agent constructor requires."""
+    from cogniverse_foundation.config.manager import ConfigManager
+    from tests.utils.memory_store import InMemoryConfigStore
+
+    store = InMemoryConfigStore()
+    store.initialize()
+    return ConfigManager(store=store)
+
+
 pytestmark = pytest.mark.integration
 
 logger = logging.getLogger(__name__)
@@ -33,7 +44,7 @@ class TestCodingAgentUnit:
         )
 
         deps = CodingDeps(tenant_id="test")
-        agent = CodingAgent(deps=deps)
+        agent = CodingAgent(deps=deps, config_manager=_memory_config_manager())
 
         assert agent.agent_name == "coding_agent"
         assert "coding" in agent.capabilities
@@ -451,7 +462,12 @@ class TestCodingAgentWithRealLM:
         )
 
         deps = CodingDeps(tenant_id="test", sandbox_manager=sandbox)
-        agent = CodingAgent(deps=deps, search_fn=search_fn, sandbox_manager=sandbox)
+        agent = CodingAgent(
+            deps=deps,
+            search_fn=search_fn,
+            sandbox_manager=sandbox,
+            config_manager=_memory_config_manager(),
+        )
 
         input_data = CodingInput(
             task=(
@@ -518,7 +534,10 @@ class TestCodingAgentWithRealLM:
 
         deps = CodingDeps(tenant_id="test", sandbox_manager=sandbox)
         agent = CodingAgent(
-            deps=deps, search_fn=tracked_search_fn, sandbox_manager=sandbox
+            deps=deps,
+            search_fn=tracked_search_fn,
+            sandbox_manager=sandbox,
+            config_manager=_memory_config_manager(),
         )
 
         input_data = CodingInput(

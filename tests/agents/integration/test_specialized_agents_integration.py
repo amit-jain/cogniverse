@@ -21,6 +21,16 @@ from tests.fixtures.llm import (
 )
 
 
+def _memory_config_manager():
+    """The injected ConfigManager every agent constructor requires."""
+    from cogniverse_foundation.config.manager import ConfigManager
+    from tests.utils.memory_store import InMemoryConfigStore
+
+    store = InMemoryConfigStore()
+    store.initialize()
+    return ConfigManager(store=store)
+
+
 @pytest.fixture
 def real_dspy_lm(gemma_inference_endpoint):
     """Real DSPy.LM against the endpoint provisioned by the session fixture.
@@ -389,7 +399,9 @@ class TestDSPyLMConfigurationIntegration:
         """Test agent error handling when DSPy.LM configuration fails"""
         # Without config_manager, agent should raise ValueError
         with pytest.raises(ValueError, match="config_manager is required"):
-            SummarizerAgent(deps=SummarizerDeps())
+            SummarizerAgent(
+                deps=SummarizerDeps(), config_manager=_memory_config_manager()
+            )
 
 
 # Integration test configuration

@@ -1340,7 +1340,11 @@ class TestVideoSearchAgent:
             from cogniverse_agents.search_agent import SearchAgentDeps as SearchDeps1
 
             deps = SearchDeps1(tenant_id="test_tenant")
-            agent = SearchAgent(deps=deps, schema_loader=mock_schema_loader)
+            agent = SearchAgent(
+                deps=deps,
+                schema_loader=mock_schema_loader,
+                config_manager=_memory_config_manager(),
+            )
 
             # Test result with entity matches
             result = {
@@ -1407,7 +1411,11 @@ class TestVideoSearchAgent:
             mock_schema_loader = Mock()
 
             deps = SearchAgentDeps()
-            agent = SearchAgent(deps=deps, schema_loader=mock_schema_loader)
+            agent = SearchAgent(
+                deps=deps,
+                schema_loader=mock_schema_loader,
+                config_manager=_memory_config_manager(),
+            )
 
             # Real method matches entities whose text appears in the result's
             # title/description/content (case-insensitive). Signature takes a
@@ -1436,6 +1444,16 @@ from cogniverse_agents.query_enhancement_agent import (
     QueryEnhancementInput,
     QueryEnhancementOutput,
 )
+
+
+def _memory_config_manager():
+    """The injected ConfigManager every agent constructor requires."""
+    from cogniverse_foundation.config.manager import ConfigManager
+    from tests.utils.memory_store import InMemoryConfigStore
+
+    store = InMemoryConfigStore()
+    store.initialize()
+    return ConfigManager(store=store)
 
 
 @pytest.fixture

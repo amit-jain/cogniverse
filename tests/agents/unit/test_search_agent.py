@@ -17,6 +17,17 @@ from cogniverse_agents.search_agent import (
     SearchInput,
 )
 
+
+def _memory_config_manager():
+    """The injected ConfigManager every agent constructor requires."""
+    from cogniverse_foundation.config.manager import ConfigManager
+    from tests.utils.memory_store import InMemoryConfigStore
+
+    store = InMemoryConfigStore()
+    store.initialize()
+    return ConfigManager(store=store)
+
+
 # Create a mock schema_loader for all tests
 mock_schema_loader = Mock()
 
@@ -184,6 +195,7 @@ class TestSearchAgent:
                 backend_port=8080,
             ),
             schema_loader=mock_schema_loader,
+            config_manager=_memory_config_manager(),
         )
 
         # Verify agent initialized with correct dependencies
@@ -222,6 +234,7 @@ class TestSearchAgent:
                 backend_port=8080,
             ),
             schema_loader=mock_schema_loader,
+            config_manager=_memory_config_manager(),
         )
 
         results = agent._search_by_text(
@@ -275,6 +288,7 @@ class TestSearchAgent:
                 backend_port=8080,
             ),
             schema_loader=mock_schema_loader,
+            config_manager=_memory_config_manager(),
         )
 
         # Mock video processor
@@ -335,6 +349,7 @@ class TestSearchAgent:
                 backend_port=8080,
             ),
             schema_loader=mock_schema_loader,
+            config_manager=_memory_config_manager(),
         )
 
         # Mock video processor
@@ -395,6 +410,7 @@ class TestSearchAgent:
                 backend_port=8080,
             ),
             schema_loader=mock_schema_loader,
+            config_manager=_memory_config_manager(),
         )
 
         # Create task dict with text data part
@@ -445,6 +461,7 @@ class TestSearchAgent:
                 backend_port=8080,
             ),
             schema_loader=mock_schema_loader,
+            config_manager=_memory_config_manager(),
         )
 
         # Mock video processor
@@ -504,6 +521,7 @@ class TestSearchAgent:
                 backend_port=8080,
             ),
             schema_loader=mock_schema_loader,
+            config_manager=_memory_config_manager(),
         )
 
         # Mock video processor
@@ -563,6 +581,7 @@ class TestSearchAgent:
                 backend_port=8080,
             ),
             schema_loader=mock_schema_loader,
+            config_manager=_memory_config_manager(),
         )
 
         # Mock video processor
@@ -630,6 +649,7 @@ class TestSearchAgent:
                 backend_port=8080,
             ),
             schema_loader=mock_schema_loader,
+            config_manager=_memory_config_manager(),
         )
 
         task = {"id": "test_task", "messages": []}
@@ -663,6 +683,7 @@ class TestSearchAgent:
                 backend_port=8080,
             ),
             schema_loader=mock_schema_loader,
+            config_manager=_memory_config_manager(),
         )
 
         # Create task with data part but no query field
@@ -711,6 +732,7 @@ class TestSearchAgentEdgeCases:
                 backend_port=8080,
             ),
             schema_loader=mock_schema_loader,
+            config_manager=_memory_config_manager(),
         )
 
         # Now make the registry fail for the next backend creation
@@ -748,6 +770,7 @@ class TestSearchAgentEdgeCases:
                     backend_port=8080,
                 ),
                 schema_loader=mock_schema_loader,
+                config_manager=_memory_config_manager(),
             )
 
     @patch("cogniverse_agents.search_agent.QueryEncoderFactory")
@@ -773,6 +796,7 @@ class TestSearchAgentEdgeCases:
                 backend_port=8080,
             ),
             schema_loader=mock_schema_loader,
+            config_manager=_memory_config_manager(),
         )
 
         with pytest.raises(Exception, match="Search failed"):
@@ -807,6 +831,7 @@ class TestSearchAgentEdgeCases:
                 backend_port=8080,
             ),
             schema_loader=mock_schema_loader,
+            config_manager=_memory_config_manager(),
         )
 
         agent._search_by_text("test query", tenant_id="test_tenant")
@@ -860,6 +885,7 @@ class TestSearchAgentAdvancedFeatures:
                     backend_port=8080,
                 ),
                 schema_loader=mock_schema_loader,
+                config_manager=_memory_config_manager(),
             )
             agent._shared_backend = mock_search_backend
             return agent
@@ -1076,6 +1102,7 @@ class TestSearchAgentEnsembleSearch:
         agent = SearchAgent(
             deps=SearchAgentDeps(),
             schema_loader=mock_schema_loader,
+            config_manager=_memory_config_manager(),
         )
 
         # Create mock results from two profiles
@@ -1124,6 +1151,7 @@ class TestSearchAgentEnsembleSearch:
         agent = SearchAgent(
             deps=SearchAgentDeps(),
             schema_loader=mock_schema_loader,
+            config_manager=_memory_config_manager(),
         )
 
         # Single profile result
@@ -1176,6 +1204,7 @@ class TestSearchAgentEnsembleSearch:
         agent = SearchAgent(
             deps=SearchAgentDeps(),
             schema_loader=mock_schema_loader,
+            config_manager=_memory_config_manager(),
         )
 
         # Create results where doc2 appears in both (should rank #1)
@@ -1222,6 +1251,7 @@ class TestSearchAgentEnsembleSearch:
         agent = SearchAgent(
             deps=SearchAgentDeps(),
             schema_loader=mock_schema_loader,
+            config_manager=_memory_config_manager(),
         )
 
         # Mock _search_ensemble to avoid actual search (must be AsyncMock)
@@ -1272,6 +1302,7 @@ class TestSearchAgentEnsembleSearch:
         agent = SearchAgent(
             deps=SearchAgentDeps(),
             schema_loader=mock_schema_loader,
+            config_manager=_memory_config_manager(),
         )
 
         # Call without profiles parameter
@@ -1307,6 +1338,7 @@ class TestSearchAgentEnsembleSearch:
         agent = SearchAgent(
             deps=SearchAgentDeps(),
             schema_loader=mock_schema_loader,
+            config_manager=_memory_config_manager(),
         )
 
         # Create many results
@@ -1345,6 +1377,7 @@ class TestSearchAgentEnsembleSearch:
         agent = SearchAgent(
             deps=SearchAgentDeps(),
             schema_loader=mock_schema_loader,
+            config_manager=_memory_config_manager(),
         )
 
         # Empty results from all profiles
@@ -1403,6 +1436,7 @@ class TestMultiQueryFusion:
                     backend_port=8080,
                 ),
                 schema_loader=mock_schema_loader,
+                config_manager=_memory_config_manager(),
             )
             agent._shared_backend = mock_search_backend
             return agent
@@ -1831,6 +1865,7 @@ class TestEnsembleVsFusionPaths:
                     backend_port=8080,
                 ),
                 schema_loader=mock_schema_loader,
+                config_manager=_memory_config_manager(),
             )
             agent._shared_backend = mock_search_backend
             return agent
@@ -2114,6 +2149,7 @@ class TestDspyConfidenceGate:
         agent = SearchAgent(
             deps=SearchAgentDeps(backend_url="http://localhost", backend_port=8080),
             schema_loader=mock_schema_loader,
+            config_manager=_memory_config_manager(),
         )
 
         agent.call_dspy = AsyncMock(
@@ -2229,6 +2265,7 @@ class TestProcessImplEventLoopOffload:
         agent = SearchAgent(
             deps=SearchAgentDeps(),
             schema_loader=mock_schema_loader,
+            config_manager=_memory_config_manager(),
         )
 
         seen = {}
@@ -2407,7 +2444,11 @@ def _capturing_agent(monkeypatch, captured):
 
     from cogniverse_core.query import encoders as enc_mod
 
-    agent = SearchAgent(deps=SearchAgentDeps(), schema_loader=mock_schema_loader)
+    agent = SearchAgent(
+        deps=SearchAgentDeps(),
+        schema_loader=mock_schema_loader,
+        config_manager=_memory_config_manager(),
+    )
     agent.search_config = _ensemble_search_config()
 
     def _encode(_query):

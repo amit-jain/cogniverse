@@ -24,6 +24,17 @@ from tests.fixtures.llm import (
     resolve_prefixed_model,
 )
 
+
+def _memory_config_manager():
+    """The injected ConfigManager every agent constructor requires."""
+    from cogniverse_foundation.config.manager import ConfigManager
+    from tests.utils.memory_store import InMemoryConfigStore
+
+    store = InMemoryConfigStore()
+    store.initialize()
+    return ConfigManager(store=store)
+
+
 pytestmark = [pytest.mark.integration, pytest.mark.requires_lm]
 
 
@@ -78,6 +89,7 @@ class TestMultiDocSynthesisRLMMode:
         agent = MultiDocumentSynthesisAgent(
             deps=MultiDocSynthesisDeps(tenant_id="acme"),
             llm_config=_llm_config(),
+            config_manager=_memory_config_manager(),
         )
         agent.memory_manager = fake_mm
         agent._memory_initialized = True
@@ -143,6 +155,7 @@ class TestKnowledgeSummarizationRLMMode:
             memory_manager_factory=factory,
             registry=build_default_registry(),
             llm_config=_llm_config(),
+            config_manager=_memory_config_manager(),
         )
 
         out = await agent._process_impl(

@@ -20,6 +20,17 @@ from cogniverse_agents.kg_traversal_agent import (
 )
 from cogniverse_core.agents.rlm_options import RLMOptions
 
+
+def _memory_config_manager():
+    """The injected ConfigManager every agent constructor requires."""
+    from cogniverse_foundation.config.manager import ConfigManager
+    from tests.utils.memory_store import InMemoryConfigStore
+
+    store = InMemoryConfigStore()
+    store.initialize()
+    return ConfigManager(store=store)
+
+
 pytestmark = [pytest.mark.unit, pytest.mark.ci_fast]
 
 
@@ -60,7 +71,9 @@ def _edge(mid: str, from_key: str, to_key: str, relation: str) -> Dict[str, Any]
 
 def _build_agent(snapshot: List[Dict[str, Any]]):
     """Wire a KGTraversalAgent against a fake memory manager that yields ``snapshot``."""
-    agent = KnowledgeGraphTraversalAgent(deps=KGTraversalDeps(tenant_id="acme"))
+    agent = KnowledgeGraphTraversalAgent(
+        deps=KGTraversalDeps(tenant_id="acme"), config_manager=_memory_config_manager()
+    )
     fake_mm = MagicMock()
     fake_mm.memory = MagicMock()
     fake_mm.memory.get.side_effect = lambda mid: next(
@@ -251,7 +264,10 @@ class TestRLMSummary:
 @pytest.mark.asyncio
 class TestNoMemoryManager:
     async def test_returns_empty_when_disabled(self):
-        agent = KnowledgeGraphTraversalAgent(deps=KGTraversalDeps(tenant_id="acme"))
+        agent = KnowledgeGraphTraversalAgent(
+            deps=KGTraversalDeps(tenant_id="acme"),
+            config_manager=_memory_config_manager(),
+        )
         out = await agent._process_impl(
             KGTraversalInput(tenant_id="acme", start_subject_key="a")
         )
@@ -268,7 +284,9 @@ def test_input_validation_bounds():
 
 
 def test_agent_capabilities_advertised():
-    agent = KnowledgeGraphTraversalAgent(deps=KGTraversalDeps(tenant_id="acme"))
+    agent = KnowledgeGraphTraversalAgent(
+        deps=KGTraversalDeps(tenant_id="acme"), config_manager=_memory_config_manager()
+    )
     assert agent.agent_name == "kg_traversal_agent"
     assert "kg_traversal" in agent.capabilities
     assert agent.port == 8022
@@ -303,7 +321,10 @@ class TestEdgeFilterCrashSafety:
     dict. A non-numeric value must degrade to 0.0, not crash traverse()."""
 
     def test_non_numeric_edge_timestamp_does_not_crash(self):
-        agent = KnowledgeGraphTraversalAgent(deps=KGTraversalDeps(tenant_id="acme"))
+        agent = KnowledgeGraphTraversalAgent(
+            deps=KGTraversalDeps(tenant_id="acme"),
+            config_manager=_memory_config_manager(),
+        )
         fake_gm = SimpleNamespace(
             _visit_edges=lambda source_node_id: [
                 {
@@ -331,7 +352,10 @@ class TestGraphSoleSourceFaultContract:
 
     @pytest.mark.asyncio
     async def test_kg_outage_propagates_when_graph_is_sole_source(self):
-        agent = KnowledgeGraphTraversalAgent(deps=KGTraversalDeps(tenant_id="acme"))
+        agent = KnowledgeGraphTraversalAgent(
+            deps=KGTraversalDeps(tenant_id="acme"),
+            config_manager=_memory_config_manager(),
+        )
         agent.is_memory_enabled = lambda: False  # type: ignore[assignment]
         agent.memory_manager = None
         agent._graph_manager = MagicMock()  # graph bound = sole source

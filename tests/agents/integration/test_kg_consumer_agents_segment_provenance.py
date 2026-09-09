@@ -92,6 +92,17 @@ from tests.agents.integration.test_graph_vespa_integration import (
     graph_vespa as _reexport_graph_vespa,
 )
 
+
+def _memory_config_manager():
+    """The injected ConfigManager every agent constructor requires."""
+    from cogniverse_foundation.config.manager import ConfigManager
+    from tests.utils.memory_store import InMemoryConfigStore
+
+    store = InMemoryConfigStore()
+    store.initialize()
+    return ConfigManager(store=store)
+
+
 graph_manager = _reexport_graph_manager
 graph_vespa = _reexport_graph_vespa
 
@@ -464,7 +475,9 @@ class TestKGConsumerAgentsSegmentProvenance:
 
     def test_kg_traversal_temporal_filter(self, ingested_curie_graph):
         """KGTraversalAgent.traverse with video_id + ts_range filter."""
-        agent = KnowledgeGraphTraversalAgent(deps=KGTraversalDeps())
+        agent = KnowledgeGraphTraversalAgent(
+            deps=KGTraversalDeps(), config_manager=_memory_config_manager()
+        )
         agent.set_graph_manager(ingested_curie_graph)
         result = agent.traverse(
             SUBJECT,
@@ -477,7 +490,9 @@ class TestKGConsumerAgentsSegmentProvenance:
 
     def test_kg_traversal_no_filter(self, ingested_curie_graph):
         """KGTraversalAgent.traverse without filters covers all four clips."""
-        agent = KnowledgeGraphTraversalAgent(deps=KGTraversalDeps())
+        agent = KnowledgeGraphTraversalAgent(
+            deps=KGTraversalDeps(), config_manager=_memory_config_manager()
+        )
         agent.set_graph_manager(ingested_curie_graph)
         result = agent.traverse(SUBJECT)
         assert_golden_json(result, "kg_traversal_curie_all.json")
@@ -491,7 +506,9 @@ class TestKGConsumerAgentsSegmentProvenance:
         dispatch, so an agent with a graph but no mem0 returned an empty graph.
         Every edge the Vespa KG yields for the seed must surface in the output.
         """
-        agent = KnowledgeGraphTraversalAgent(deps=KGTraversalDeps())
+        agent = KnowledgeGraphTraversalAgent(
+            deps=KGTraversalDeps(), config_manager=_memory_config_manager()
+        )
         agent.set_graph_manager(ingested_curie_graph)
 
         kg_edges = {
@@ -512,7 +529,9 @@ class TestKGConsumerAgentsSegmentProvenance:
 
     def test_temporal_reasoning_compare_over_time(self, ingested_curie_graph):
         """TemporalReasoningAgent.compare_over_time yields ordered timeline."""
-        agent = TemporalReasoningAgent(deps=TemporalReasoningDeps())
+        agent = TemporalReasoningAgent(
+            deps=TemporalReasoningDeps(), config_manager=_memory_config_manager()
+        )
         agent.set_graph_manager(ingested_curie_graph)
         result = agent.compare_over_time(
             node_name=SUBJECT,
@@ -527,7 +546,9 @@ class TestKGConsumerAgentsSegmentProvenance:
         mem0 bound, window_views is empty but kg_timeline must carry every
         grounded claim the all-videos compare_over_time yields for the subject.
         """
-        agent = TemporalReasoningAgent(deps=TemporalReasoningDeps())
+        agent = TemporalReasoningAgent(
+            deps=TemporalReasoningDeps(), config_manager=_memory_config_manager()
+        )
         agent.set_graph_manager(ingested_curie_graph)
 
         direct = {
@@ -570,7 +591,9 @@ class TestKGConsumerAgentsSegmentProvenance:
             "get_graph_manager",
             lambda tid, deploy=False: ingested_curie_graph,
         )
-        agent = TemporalReasoningAgent(deps=TemporalReasoningDeps())
+        agent = TemporalReasoningAgent(
+            deps=TemporalReasoningDeps(), config_manager=_memory_config_manager()
+        )
         assert agent._graph_manager is None
         _bind_graph(agent, "test:unit")
         assert agent._graph_manager is ingested_curie_graph
@@ -696,7 +719,9 @@ class TestKGConsumerAgentsSegmentProvenance:
 
     def test_multi_document_synthesis_synthesize(self, ingested_curie_graph):
         """MultiDocumentSynthesisAgent.synthesize groups claims by video."""
-        agent = MultiDocumentSynthesisAgent(deps=MultiDocSynthesisDeps())
+        agent = MultiDocumentSynthesisAgent(
+            deps=MultiDocSynthesisDeps(), config_manager=_memory_config_manager()
+        )
         agent.set_graph_manager(ingested_curie_graph)
         result = agent.synthesize(query="Marie Curie biography")
         assert_golden_json(result, "multidoc_synthesis_curie.json")
@@ -708,7 +733,9 @@ class TestKGConsumerAgentsSegmentProvenance:
         synthesis. With no mem0 the input doc is unresolvable, but the KG groups
         must still equal what synthesize() yields directly.
         """
-        agent = MultiDocumentSynthesisAgent(deps=MultiDocSynthesisDeps())
+        agent = MultiDocumentSynthesisAgent(
+            deps=MultiDocSynthesisDeps(), config_manager=_memory_config_manager()
+        )
         agent.set_graph_manager(ingested_curie_graph)
 
         direct = {
@@ -745,7 +772,9 @@ class TestKGConsumerAgentsSegmentProvenance:
 
     def test_knowledge_summarization_summarize(self, ingested_curie_graph):
         """KnowledgeSummarizationAgent.summarize emits per-segment lines."""
-        agent = KnowledgeSummarizationAgent(deps=KnowledgeSummarizationDeps())
+        agent = KnowledgeSummarizationAgent(
+            deps=KnowledgeSummarizationDeps(), config_manager=_memory_config_manager()
+        )
         agent.set_graph_manager(ingested_curie_graph)
         result = agent.summarize(video_id=CURIE_30S)
         assert_golden_text(result["text"], "knowledge_summary_curie.txt")
@@ -762,7 +791,9 @@ class TestKGConsumerAgentsSegmentProvenance:
         """
         from cogniverse_agents.graph.graph_schema import normalize_name
 
-        agent = KnowledgeSummarizationAgent(deps=KnowledgeSummarizationDeps())
+        agent = KnowledgeSummarizationAgent(
+            deps=KnowledgeSummarizationDeps(), config_manager=_memory_config_manager()
+        )
         agent.set_graph_manager(ingested_curie_graph)
 
         videos = sorted(
@@ -794,7 +825,9 @@ class TestKGConsumerAgentsSegmentProvenance:
 
     def test_federated_query_query(self, ingested_curie_graph):
         """FederatedQueryAgent.query merges nodes across overlays."""
-        agent = FederatedQueryAgent(deps=FederatedQueryDeps())
+        agent = FederatedQueryAgent(
+            deps=FederatedQueryDeps(), config_manager=_memory_config_manager()
+        )
         # Bind the same GraphManager under two logical names so the
         # federated path exercises the cross-source merge (the dedupe is
         # what's under test here, not the multi-Vespa fan-out).
