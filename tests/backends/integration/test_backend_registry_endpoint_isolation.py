@@ -9,6 +9,7 @@ wrong documents rather than an error.
 from __future__ import annotations
 
 import json
+import threading
 import time
 import uuid
 from pathlib import Path
@@ -17,7 +18,10 @@ import numpy as np
 import pytest
 import requests
 
-from cogniverse_core.registries.backend_registry import BackendRegistry
+from cogniverse_core.registries.backend_registry import (
+    BackendRegistry,
+    configure_tenant_cache_capacity,
+)
 from cogniverse_core.schemas.filesystem_loader import FilesystemSchemaLoader
 
 DEAD_VESPA_PORT = 29074
@@ -235,3 +239,114 @@ class TestDeadEndpointDoesNotPoisonTheLiveOne:
             is alpha
         )
         assert _hit_ids(env, alpha) == alpha_before
+
+
+@pytest.mark.integration
+class TestEvictionRefusesTheHolder:
+    def test_holder_of_an_evicted_backend_is_refused_naming_its_endpoint(
+        self, two_clusters
+    ):
+        """An agent keeps the backend the registry handed it. Another tenant's
+        traffic fills the cache, the agent's instance is evicted and closed,
+        and its next search must be refused naming the endpoint it can no
+        longer reach — not rebuild its clients unnoticed and serve from
+        outside the cache.
+
+        The holder reads its own document first, so the refusal can only come
+        from the eviction the evictor thread caused.
+
+        Capacity is 3 because one search occupies two entries: the search
+        backend, and the per-tenant ingestion backend
+        ``VespaSearchBackend._tenant_schema_exists`` resolves the tenant's
+        schema through. The evictor's own search adds the third and fourth,
+        evicting the holder's search backend as the least recently used.
+        """
+        from cogniverse_sdk.interfaces.backend import BackendClosedError
+        from cogniverse_vespa.backend import VespaBackend
+
+        env = two_clusters
+        alpha_port = env["clusters"]["alpha"]["instance"]["http_port"]
+        bravo_port = env["clusters"]["bravo"]["instance"]["http_port"]
+        alpha_endpoint = f"http://localhost:{alpha_port}"
+        tenant_id = env["tenant_id"]
+        registry = BackendRegistry.get_instance()
+        capacity_before = BackendRegistry._backend_instances.capacity
+        registry.clear_instances()
+        configure_tenant_cache_capacity(3)
+
+        closed_endpoints: list[str] = []
+        original_close = VespaBackend.close
+
+        def counting_close(backend):
+            closed_endpoints.append(f"{backend._url}:{backend._port}")
+            original_close(backend)
+
+        holder_holds = threading.Barrier(2)
+        eviction_done = threading.Event()
+        outcome: dict = {}
+
+        def holder():
+            backend = _search_backend(env, "alpha")
+            outcome["served_before_eviction"] = _hit_ids(env, backend)
+            outcome["keys_while_warm"] = sorted(
+                BackendRegistry._backend_instances.keys()
+            )
+            holder_holds.wait(timeout=120)
+            eviction_done.wait(timeout=180)
+            try:
+                outcome["returned"] = _hit_ids(env, backend)
+            except BaseException as exc:  # noqa: BLE001 - recorded, asserted below
+                outcome["error"] = exc
+
+        def evictor():
+            holder_holds.wait(timeout=120)
+            outcome["evictor_served"] = _hit_ids(env, _search_backend(env, "bravo"))
+            outcome["keys_after_eviction"] = sorted(
+                BackendRegistry._backend_instances.keys()
+            )
+            eviction_done.set()
+
+        VespaBackend.close = counting_close
+        try:
+            threads = [
+                threading.Thread(target=holder),
+                threading.Thread(target=evictor),
+            ]
+            for thread in threads:
+                thread.start()
+            for thread in threads:
+                thread.join(timeout=300)
+        finally:
+            VespaBackend.close = original_close
+            registry.clear_instances()
+            configure_tenant_cache_capacity(capacity_before)
+
+        assert [thread.is_alive() for thread in threads] == [False, False]
+        assert outcome["served_before_eviction"] == [env["clusters"]["alpha"]["doc_id"]]
+        assert outcome["evictor_served"] == [env["clusters"]["bravo"]["doc_id"]]
+        assert outcome["keys_while_warm"] == [
+            f"backend_vespa_{tenant_id}@{alpha_endpoint}",
+            f"search_vespa@{alpha_endpoint}",
+        ]
+        # Sorted, because the two clusters' ports are assigned per run and
+        # decide the order of the two ingestion keys.
+        assert outcome["keys_after_eviction"] == sorted(
+            [
+                f"backend_vespa_{tenant_id}@{alpha_endpoint}",
+                f"backend_vespa_{tenant_id}@http://localhost:{bravo_port}",
+                f"search_vespa@http://localhost:{bravo_port}",
+            ]
+        )
+        assert closed_endpoints == [alpha_endpoint]
+        assert set(outcome) == {
+            "served_before_eviction",
+            "keys_while_warm",
+            "evictor_served",
+            "keys_after_eviction",
+            "error",
+        }
+        assert type(outcome["error"]) is BackendClosedError
+        assert str(outcome["error"]) == (
+            f"VespaBackend for {alpha_endpoint} is closed; its clients were "
+            f"released. Obtain a fresh instance from the backend registry."
+        )

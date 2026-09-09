@@ -651,9 +651,13 @@ Concurrent cold starts of one key build in parallel and resolve through
 carries different ones raises `BackendBindingConflictError` rather than
 serving a backend wired to another config source.
 
-Eviction closes the instance. A caller holding an evicted search backend
-gets `BackendClosedError` (naming the endpoint) from `search()` instead of
-a failure inside a released connection pool.
+Eviction closes the instance. `VespaBackend.close()` releases the search
+backend, the ingestion clients and the metadata client, all of which are
+otherwise rebuilt lazily on next use, so a closed instance refuses work:
+`search()`, the ingestion-client accessor and the metadata accessor raise
+`BackendClosedError` naming the endpoint. A caller holding an evicted
+backend is refused rather than quietly building a second set of connections
+outside the cache.
 
 `add_profile_to_backends` / `remove_profile_from_backends` attempt every
 cached backend and then raise `ProfileFanoutError` carrying the per-backend

@@ -391,6 +391,48 @@ class TestEvictionReleasesTheBackend:
             "search_recording@http://charlie.invalid:41003",
         ]
 
+    def test_the_handed_out_backend_refuses_use_after_close(
+        self, config_manager, schema_loader
+    ):
+        """The registry hands out VespaBackend, and close() drops its search
+        backend, ingestion clients and metadata app — each of which is rebuilt
+        lazily on next use. Without a closed guard an evicted instance a caller
+        still holds silently builds a second set of connections and keeps
+        serving from outside the cache.
+        """
+        from cogniverse_core.common.tenant_utils import SYSTEM_TENANT_ID
+        from cogniverse_foundation.config.unified_config import BackendConfig
+        from cogniverse_sdk.interfaces.backend import BackendClosedError
+        from cogniverse_vespa.backend import VespaBackend
+
+        backend = VespaBackend(
+            BackendConfig(
+                tenant_id=SYSTEM_TENANT_ID,
+                backend_type="vespa",
+                url="http://127.0.0.1",
+                port=41005,
+            ),
+            schema_loader=schema_loader,
+            config_manager=config_manager,
+        )
+        backend.close()
+
+        expected = (
+            "VespaBackend for http://127.0.0.1:41005 is closed; its clients "
+            "were released. Obtain a fresh instance from the backend registry."
+        )
+        with pytest.raises(BackendClosedError) as searched:
+            backend.search({"query": "anything", "type": "video"})
+        assert str(searched.value) == expected
+
+        with pytest.raises(BackendClosedError) as ingested:
+            backend._get_or_create_ingestion_client("agent_memories")
+        assert str(ingested.value) == expected
+
+        with pytest.raises(BackendClosedError) as metadata:
+            backend._metadata_vespa_app()
+        assert str(metadata.value) == expected
+
     def test_real_search_backend_refuses_use_after_close(self):
         from cogniverse_sdk.interfaces.backend import BackendClosedError
         from cogniverse_vespa.search_backend import VespaSearchBackend

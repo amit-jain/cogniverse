@@ -11,7 +11,7 @@ import threading
 from typing import Any, Dict, Iterator, List, Optional, Tuple
 
 from cogniverse_sdk.document import Document
-from cogniverse_sdk.interfaces.backend import Backend
+from cogniverse_sdk.interfaces.backend import Backend, BackendClosedError
 
 from ._vespa_factory import make_persistent_vespa_ops
 from .config_utils import calculate_config_port
@@ -66,6 +66,10 @@ class VespaBackend(Backend):
     This class wraps the existing Vespa implementations and provides
     a unified interface compatible with the backend registry.
     """
+
+    # Set at class level so every construction path has it, including callers
+    # that build an instance without running __init__.
+    _closed = False
 
     # Class-level fallbacks keep partially-constructed instances (test slices
     # via object.__new__) safe. __init__ replaces both with per-instance locks
@@ -248,6 +252,21 @@ class VespaBackend(Backend):
             f"Initialized Vespa backend for tenant '{self._tenant_id}' with {len(self.config.get('profiles', {}))} profiles"
         )
 
+    def _require_open(self) -> None:
+        """Refuse work on a released instance.
+
+        close() drops the search backend, the ingestion clients and the
+        metadata app, and every one of them is rebuilt lazily on next use.
+        Without this guard an evicted instance a caller still holds silently
+        builds itself a second set of connections outside the registry.
+        """
+        if self._closed:
+            raise BackendClosedError(
+                f"VespaBackend for {self._url}:{self._port} is closed; its "
+                f"clients were released. Obtain a fresh instance from the "
+                f"backend registry."
+            )
+
     # Ingestion methods
 
     def _get_or_create_ingestion_client(self, schema_name: str) -> VespaPyClient:
@@ -266,6 +285,8 @@ class VespaBackend(Backend):
             2. Ensure the tenant-scoped schema exists in Vespa (auto-deploy if needed)
             3. Create a client that ingests to the tenant-scoped schema
         """
+        self._require_open()
+
         # Transform base schema name to tenant-scoped name if tenant_id is set
         target_schema_name = schema_name
         if self._tenant_id:
@@ -659,6 +680,8 @@ class VespaBackend(Backend):
         Returns:
             Search results (List[SearchResult] from VespaSearchBackend)
         """
+        self._require_open()
+
         # Lazy initialization: create search backend if not already initialized
         if not self._vespa_search_backend:
             with self._search_backend_lock:
@@ -1423,6 +1446,7 @@ class VespaBackend(Backend):
     def _metadata_vespa_app(self):
         """Cached pyvespa app for metadata ops; rebuilt only when url/port
         change so repeated metadata calls reuse one connection pool."""
+        self._require_open()
         key = (self._url, self._port)
         # Guard the lazy (re)build: two concurrent first-touches would each
         # construct a PersistentVespaOps and leak the loser's session pool.
@@ -1932,6 +1956,7 @@ class VespaBackend(Backend):
         Close connections to Vespa.
         """
         with self._close_lock:
+            self._closed = True
             search_backend = getattr(self, "_vespa_search_backend", None)
             self._vespa_search_backend = None
 
