@@ -8,7 +8,7 @@ import socket
 import subprocess
 from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
-from unittest.mock import MagicMock, patch
+from unittest.mock import MagicMock, call, patch
 
 import pytest
 from click.testing import CliRunner
@@ -428,7 +428,8 @@ class TestUpCommand:
         mock_prereq.assert_called_once_with(require_k3d=False)
         mock_values.assert_called_once_with(prod=True)
 
-    def test_up_uses_dev_values_for_discovered_cluster(self) -> None:
+    def _up_with_discovered_cluster(self, serving_mode: str | None):
+        """Run `up` against a discovered e2e cluster, owning COGNIVERSE_LLM_SERVING."""
         import contextlib
 
         def _cluster_run(cmd, **kwargs):
@@ -441,6 +442,10 @@ class TestUpCommand:
             return subprocess.CompletedProcess(args=cmd, returncode=0, stdout="")
 
         with contextlib.ExitStack() as stack:
+            stack.enter_context(patch.dict(os.environ))
+            os.environ.pop("COGNIVERSE_LLM_SERVING", None)
+            if serving_mode is not None:
+                os.environ["COGNIVERSE_LLM_SERVING"] = serving_mode
             stack.enter_context(
                 patch(
                     "cogniverse_cli.cluster.subprocess.run",
@@ -504,17 +509,43 @@ class TestUpCommand:
 
             result = CliRunner().invoke(cli, ["up"])
 
+        return result, {
+            "prereq": mock_prereq,
+            "values": mock_values,
+            "pull": mock_pull,
+            "helm": mock_helm,
+            "wait": mock_wait,
+            "status": mock_status,
+            "argo": mock_argo,
+            "deploy_wf": mock_deploy_wf,
+        }
+
+    def test_up_uses_dev_values_for_discovered_cluster(self) -> None:
+        result, m = self._up_with_discovered_cluster(serving_mode=None)
+
         assert result.exit_code == 0, result.output
-        mock_prereq.assert_called_once_with(require_k3d=True)
-        mock_values.assert_called_once_with(prod=False)
-        mock_pull.assert_called_once_with(
-            f"{CLUSTER_NAME}-e2e", Path("/v.yaml"), skip_llm=False
-        )
-        mock_helm.assert_called_once()
-        mock_wait.assert_called()
-        mock_status.assert_called_once()
-        mock_argo.assert_called_once()
-        mock_deploy_wf.assert_called_once()
+        m["prereq"].assert_called_once_with(require_k3d=True)
+        m["values"].assert_called_once_with(prod=False)
+        assert m["pull"].call_args_list == [
+            call(f"{CLUSTER_NAME}-e2e", Path("/v.yaml"), skip_llm=False)
+        ]
+        m["helm"].assert_called_once()
+        m["wait"].assert_called()
+        m["status"].assert_called_once()
+        m["argo"].assert_called_once()
+        m["deploy_wf"].assert_called_once()
+
+    def test_up_composes_the_modal_overlay_when_serving_is_modal(self) -> None:
+        from cogniverse_cli.main import get_llm_serving_values_file
+
+        result, m = self._up_with_discovered_cluster(serving_mode="modal")
+
+        assert result.exit_code == 0, result.output
+        overlay = get_llm_serving_values_file("modal")
+        assert m["pull"].call_args_list == [
+            call(f"{CLUSTER_NAME}-e2e", Path("/v.yaml"), skip_llm=False),
+            call(f"{CLUSTER_NAME}-e2e", overlay, skip_llm=False),
+        ]
 
     @patch("cogniverse_cli.main.has_workspace_source", return_value=False)
     @patch("cogniverse_cli.main.resolve_project_root", return_value=Path("/root"))
