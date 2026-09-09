@@ -89,6 +89,7 @@ def _resolved_llm_config() -> tuple[str, str]:
     return _explicit_llm_config() or _config_llm_defaults()
 
 
+_PROBE_PATHS = ("/api/tags", "/v1/models")
 _DEFAULT_LOCAL_PROVIDER = "openai"
 _LITELLM_PROVIDERS = (
     "openai",
@@ -108,6 +109,31 @@ _LITELLM_PROVIDERS = (
 def resolve_base_url() -> str:
     api_base, _ = _resolved_llm_config()
     return api_base
+
+
+def lm_endpoint_source() -> str:
+    """Name where the resolved endpoint came from."""
+    if _explicit_llm_config() is not None:
+        return "TEST_LLM_API_BASE"
+    env_path = os.environ.get("COGNIVERSE_CONFIG")
+    if env_path:
+        return env_path
+    return str(
+        Path(__file__).resolve().parent.parent.parent / "configs" / "config.json"
+    )
+
+
+def _probe_root() -> str:
+    base = resolve_base_url().rstrip("/")
+    if base.endswith("/v1"):
+        base = base[: -len("/v1")]
+    return base
+
+
+def lm_probe_targets() -> tuple[str, ...]:
+    """Return the exact URLs ``is_test_lm_available`` requests, in order."""
+    root = _probe_root()
+    return tuple(f"{root}{path}" for path in _PROBE_PATHS)
 
 
 def resolve_bare_model() -> str:
@@ -159,9 +185,7 @@ def is_test_lm_available() -> bool:
     the OAI probe still resolves to ``/v1/models`` rather than the
     nonsensical ``/v1/v1/models``.
     """
-    base = resolve_base_url().rstrip("/")
-    if base.endswith("/v1"):
-        base = base[: -len("/v1")]
+    base = _probe_root()
     from tests.utils.vllm_sidecar import _probe_timeout
 
     api_key = resolve_api_key()
@@ -169,9 +193,9 @@ def is_test_lm_available() -> bool:
         {"Authorization": f"Bearer {api_key}"} if api_key != "not-required" else None
     )
     timeout = _probe_timeout(base)
-    for path in ("/api/tags", "/v1/models"):
+    for url in lm_probe_targets():
         try:
-            r = httpx.get(f"{base}{path}", timeout=timeout, headers=headers)
+            r = httpx.get(url, timeout=timeout, headers=headers)
             if r.status_code == 200:
                 return True
         except httpx.HTTPError:

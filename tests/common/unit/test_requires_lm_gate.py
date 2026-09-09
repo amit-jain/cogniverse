@@ -9,13 +9,63 @@ import pytest
 
 from tests import conftest as root_conftest
 from tests.fixtures import llm as llm_fixtures
+from tests.fixtures.markers import enforce_lm_gate
 from tests.utils import hermetic_llm
+
+pytest_plugins = ["pytester"]
+
+_CHAIN_FLAGS = ("--tb=long", "-q", "-p", "no:cacheprovider")
+DEAD_ROOT = "http://127.0.0.1:29071"
+
+_GATE_CONFTEST = """
+import pytest
+
+from tests.fixtures.markers import enforce_lm_gate
+
+
+def pytest_configure(config):
+    config.addinivalue_line("markers", "requires_lm: needs the configured test LM")
+
+
+@pytest.hookimpl(trylast=True)
+def pytest_runtest_setup(item):
+    enforce_lm_gate(item)
+"""
+
+_GATED_MODULE = """
+import pytest
+
+pytestmark = pytest.mark.requires_lm
+
+
+def test_gated():
+    assert 1 == 1
+"""
+
+
+def unreachable_message(root: str, source: str) -> str:
+    """The exact gate failure line for a probe root and endpoint source."""
+    return (
+        "Exact configured LLM endpoint not reachable. Probed "
+        f"{root}/api/tags, {root}/v1/models (endpoint from {source})"
+    )
+
+
+class _GateConfig:
+    def __init__(self, setupplan: bool):
+        self._setupplan = setupplan
+
+    def getoption(self, name, default=None):
+        return self._setupplan if name == "setupplan" else default
 
 
 class _MarkedItem:
-    @staticmethod
-    def get_closest_marker(name):
-        return object() if name == "requires_lm" else None
+    def __init__(self, marked: bool = True, setupplan: bool = False):
+        self._marked = marked
+        self.config = _GateConfig(setupplan)
+
+    def get_closest_marker(self, name):
+        return object() if self._marked and name == "requires_lm" else None
 
 
 def test_lm_fixture_rejects_missing_config_without_legacy_default(
@@ -96,21 +146,60 @@ def test_gate_runs_after_session_fixture_setup(monkeypatch):
 
 def test_gate_fails_with_exact_endpoint_after_unsuccessful_provision(monkeypatch):
     """Unreachable endpoint on a ``requires_lm`` test FAILS — never skips."""
-    monkeypatch.setattr(llm_fixtures, "is_test_lm_available", lambda: False)
-    monkeypatch.setattr(
-        llm_fixtures,
-        "resolve_base_url",
-        lambda: "http://127.0.0.1:29999/v1",
+    monkeypatch.setenv("TEST_LLM_API_BASE", "http://127.0.0.1:29999/v1")
+    monkeypatch.setenv("TEST_LLM_MODEL", "m")
+    monkeypatch.delenv("TEST_LLM_API_KEY", raising=False)
+    monkeypatch.delenv("COGNIVERSE_INFERENCE_API_KEY", raising=False)
+
+    with pytest.raises(pytest.fail.Exception) as error:
+        root_conftest.pytest_runtest_setup(_MarkedItem())
+
+    assert str(error.value) == unreachable_message(
+        "http://127.0.0.1:29999", "TEST_LLM_API_BASE"
     )
 
-    with pytest.raises(
-        pytest.fail.Exception,
-        match=(
-            r"Exact configured LLM endpoint not reachable "
-            r"\(http://127\.0\.0\.1:29999/v1\)"
-        ),
+
+def test_unmarked_test_is_never_gated(monkeypatch):
+    monkeypatch.setenv("TEST_LLM_API_BASE", f"{DEAD_ROOT}/v1")
+    monkeypatch.setenv("TEST_LLM_MODEL", "m")
+
+    assert root_conftest.pytest_runtest_setup(_MarkedItem(marked=False)) is None
+
+
+class TestSetupPlanIsNotGated:
+    """``--setup-plan`` executes no fixture, so there is no endpoint to gate."""
+
+    def test_plan_only_run_reports_no_gate_error(self, pytester, monkeypatch):
+        monkeypatch.setenv("TEST_LLM_API_BASE", f"{DEAD_ROOT}/v1")
+        monkeypatch.setenv("TEST_LLM_MODEL", "m")
+        pytester.makeconftest(_GATE_CONFTEST)
+        pytester.makepyfile(test_gated=_GATED_MODULE)
+
+        result = pytester.runpytest("--setup-plan", *_CHAIN_FLAGS)
+
+        assert result.ret == 0
+        assert [line for line in result.outlines if "not reachable" in line] == []
+
+    def test_executing_run_still_fails_naming_both_probe_urls(
+        self, pytester, monkeypatch
     ):
-        root_conftest.pytest_runtest_setup(_MarkedItem())
+        monkeypatch.setenv("TEST_LLM_API_BASE", f"{DEAD_ROOT}/v1")
+        monkeypatch.setenv("TEST_LLM_MODEL", "m")
+        monkeypatch.delenv("TEST_LLM_API_KEY", raising=False)
+        monkeypatch.delenv("COGNIVERSE_INFERENCE_API_KEY", raising=False)
+        pytester.makeconftest(_GATE_CONFTEST)
+        pytester.makepyfile(test_gated=_GATED_MODULE)
+
+        result = pytester.runpytest(*_CHAIN_FLAGS)
+
+        result.assert_outcomes(errors=1, passed=0, failed=0, skipped=0)
+        assert unreachable_message(DEAD_ROOT, "TEST_LLM_API_BASE") in result.outlines
+
+    def test_the_direct_gate_call_short_circuits_under_setup_plan(self, monkeypatch):
+        monkeypatch.setenv("TEST_LLM_API_BASE", f"{DEAD_ROOT}/v1")
+        monkeypatch.setenv("TEST_LLM_MODEL", "m")
+
+        assert enforce_lm_gate(_MarkedItem(setupplan=True)) is None
 
 
 @contextmanager
@@ -200,3 +289,95 @@ class TestReachabilityProbeAuthenticates:
             monkeypatch.setenv("TEST_LLM_API_BASE", f"{base_url}/v1")
             monkeypatch.setenv("TEST_LLM_MODEL", "m")
             assert llm_fixtures.is_test_lm_available() is True
+
+
+@contextmanager
+def _failing_lm_server(status: int):
+    """A real endpoint that answers every probe with ``status``."""
+    requested: list[str] = []
+    record_lock = threading.Lock()
+
+    class Handler(BaseHTTPRequestHandler):
+        def do_GET(self):
+            with record_lock:
+                requested.append(self.path)
+            self.send_response(status)
+            self.send_header("Content-Length", "0")
+            self.end_headers()
+
+        def log_message(self, *args):
+            pass
+
+    server = ThreadingHTTPServer(("127.0.0.1", 0), Handler)
+    thread = threading.Thread(target=server.serve_forever, daemon=True)
+    thread.start()
+    try:
+        yield f"http://127.0.0.1:{server.server_port}", requested
+    finally:
+        server.shutdown()
+        server.server_close()
+        thread.join(timeout=5)
+
+
+def _point_at(monkeypatch, root: str) -> None:
+    monkeypatch.setenv("TEST_LLM_API_BASE", f"{root}/v1")
+    monkeypatch.setenv("TEST_LLM_MODEL", "m")
+    monkeypatch.delenv("TEST_LLM_API_KEY", raising=False)
+    monkeypatch.delenv("COGNIVERSE_INFERENCE_API_KEY", raising=False)
+
+
+class TestDegradedEndpointFaultContract:
+    """A discovered-but-degraded endpoint fails naming what was probed."""
+
+    def test_503_endpoint_fails_with_both_probed_urls(self, monkeypatch):
+        with _failing_lm_server(503) as (root, requested):
+            _point_at(monkeypatch, root)
+
+            with pytest.raises(pytest.fail.Exception) as error:
+                enforce_lm_gate(_MarkedItem())
+
+        assert str(error.value) == unreachable_message(root, "TEST_LLM_API_BASE")
+        assert requested == ["/api/tags", "/v1/models"]
+
+    def test_probe_targets_match_the_urls_the_endpoint_receives(self, monkeypatch):
+        with _failing_lm_server(503) as (root, requested):
+            _point_at(monkeypatch, root)
+            targets = llm_fixtures.lm_probe_targets()
+
+            assert llm_fixtures.is_test_lm_available() is False
+
+        assert targets == (f"{root}/api/tags", f"{root}/v1/models")
+        assert [f"{root}{path}" for path in requested] == list(targets)
+
+
+class TestConcurrentGateEvaluations:
+    """Concurrent gate evaluations reach one verdict and share no state."""
+
+    def test_eight_threads_agree_and_each_probes_the_endpoint(self, monkeypatch):
+        thread_count = 8
+        messages: list[str] = []
+        collect_lock = threading.Lock()
+        barrier = threading.Barrier(thread_count)
+
+        with _failing_lm_server(503) as (root, requested):
+            _point_at(monkeypatch, root)
+
+            def evaluate():
+                barrier.wait(timeout=30)
+                try:
+                    enforce_lm_gate(_MarkedItem())
+                except pytest.fail.Exception as exc:
+                    with collect_lock:
+                        messages.append(str(exc))
+
+            threads = [threading.Thread(target=evaluate) for _ in range(thread_count)]
+            for thread in threads:
+                thread.start()
+            for thread in threads:
+                thread.join(timeout=60)
+
+        assert [thread.is_alive() for thread in threads] == [False] * thread_count
+        assert (
+            messages == [unreachable_message(root, "TEST_LLM_API_BASE")] * thread_count
+        )
+        assert sorted(requested) == sorted(["/api/tags", "/v1/models"] * thread_count)

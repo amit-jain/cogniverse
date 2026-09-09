@@ -44,13 +44,28 @@ def enforce_lm_gate(item) -> None:
     """Fail (never skip) a ``requires_lm`` test whose endpoint is unreachable.
 
     Runs after fixture setup (register with ``trylast=True``) so the session
-    provisioner has already exported the endpoint this probes.
-    """
-    if item.get_closest_marker("requires_lm") is not None:
-        from tests.fixtures.llm import is_test_lm_available, resolve_base_url
+    provisioner has already exported the endpoint this probes. ``--setup-plan``
+    prints the fixture plan without executing a single fixture, so no
+    provisioner has run and there is no provisioned endpoint to gate.
 
-        if not is_test_lm_available():
-            pytest.fail(
-                f"Exact configured LLM endpoint not reachable ({resolve_base_url()})",
-                pytrace=False,
-            )
+    The failure names the URLs actually requested and where the endpoint came
+    from, so an unprovisioned session is distinguishable from a dead server.
+    """
+    if item.get_closest_marker("requires_lm") is None:
+        return
+    if item.config.getoption("setupplan", default=False):
+        return
+
+    from tests.fixtures.llm import (
+        is_test_lm_available,
+        lm_endpoint_source,
+        lm_probe_targets,
+    )
+
+    if not is_test_lm_available():
+        pytest.fail(
+            "Exact configured LLM endpoint not reachable. Probed "
+            f"{', '.join(lm_probe_targets())} "
+            f"(endpoint from {lm_endpoint_source()})",
+            pytrace=False,
+        )
