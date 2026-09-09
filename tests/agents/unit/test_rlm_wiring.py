@@ -13,6 +13,7 @@ import pytest
 
 from cogniverse_agents.inference import deno_check
 from cogniverse_agents.mixins.rlm_aware_mixin import RLMAwareMixin
+from cogniverse_core.agents.base import AgentConfigurationError
 from cogniverse_core.agents.rlm_options import RLMOptions
 from cogniverse_foundation.config.unified_config import (
     LLMEndpointConfig,
@@ -89,7 +90,7 @@ class _MixinHost(RLMAwareMixin):
 
     def __init__(self, tenant_id, config_manager):
         self.tenant_id = tenant_id
-        self._config_manager = config_manager
+        self.bind_config_manager(config_manager)
 
 
 class TestRLMAwareMixinRouting:
@@ -127,13 +128,20 @@ class TestRLMAwareMixinRouting:
         assert rlm.llm_config.api_base == _DIRECT
         assert rlm.llm_config.extra_headers is None
 
-    def test_no_config_manager_keeps_direct_endpoint(self, monkeypatch):
+    def test_no_config_manager_is_a_construction_error(self, monkeypatch):
+        """Routing without a manager used to degrade to the direct endpoint,
+        which is indistinguishable from routing being disabled. A host with no
+        manager is a construction bug now."""
         monkeypatch.setattr(deno_check, "_skip_deno_check", True)
-        host = _MixinHost("acme:prod", None)
 
-        rlm = host.get_rlm(self._endpoint())
+        with pytest.raises(AgentConfigurationError) as excinfo:
+            _MixinHost("acme:prod", None)
 
-        assert rlm.llm_config.api_base == _DIRECT
+        assert str(excinfo.value) == (
+            "_MixinHost requires a config_manager; got None. Pass "
+            "config_manager=<ConfigManager> to the constructor; the runtime "
+            "injects its own manager."
+        )
 
     def test_cache_invalidates_on_tenant_change(self, monkeypatch):
         monkeypatch.setattr(deno_check, "_skip_deno_check", True)

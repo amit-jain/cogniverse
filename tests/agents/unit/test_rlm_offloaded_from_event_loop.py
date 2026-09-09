@@ -28,6 +28,17 @@ from cogniverse_agents.temporal_reasoning_agent import TemporalReasoningAgent
 
 pytestmark = [pytest.mark.unit, pytest.mark.ci_fast]
 
+
+def _memory_config_manager():
+    """The injected ConfigManager the agent reads, over an in-memory store."""
+    from cogniverse_foundation.config.manager import ConfigManager
+    from tests.utils.memory_store import InMemoryConfigStore
+
+    store = InMemoryConfigStore()
+    store.initialize()
+    return ConfigManager(store=store)
+
+
 # (agent class, method name, positional args for the 3-arg signature)
 _CASES = [
     (FederatedQueryAgent, "_summarise_with_rlm", ("q", "block")),
@@ -56,6 +67,7 @@ async def test_with_rlm_offloads_blocking_process(cls, method_name, args, monkey
 
     agent = cls.__new__(cls)
     agent._llm_config = None
+    agent.bind_config_manager(_memory_config_manager())
     method = getattr(agent, method_name)
     rlm_options = SimpleNamespace(include_trajectory=False, trajectory_max_entries=0)
 
