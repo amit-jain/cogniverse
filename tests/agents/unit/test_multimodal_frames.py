@@ -41,6 +41,16 @@ from cogniverse_agents.summarizer_agent import (
 )
 
 
+def _memory_config_manager():
+    """The injected ConfigManager every agent constructor requires."""
+    from cogniverse_foundation.config.manager import ConfigManager
+    from tests.utils.memory_store import InMemoryConfigStore
+
+    store = InMemoryConfigStore()
+    store.initialize()
+    return ConfigManager(store=store)
+
+
 @pytest.fixture
 def jpg_path(tmp_path):
     p = tmp_path / "frame.jpg"
@@ -539,7 +549,8 @@ def deep_research_agent(jpg_path):
             tenant_id="acme:acme",
             multimodal_generation_enabled=True,
             max_keyframes_to_llm=4,
-        )
+        ),
+        config_manager=_memory_config_manager(),
     )
     agent._keyframe_resolver = KeyframeImageResolver(FakeLocator(jpg_path))
     return agent

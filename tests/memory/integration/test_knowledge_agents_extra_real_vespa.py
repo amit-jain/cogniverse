@@ -46,6 +46,17 @@ from cogniverse_foundation.config.unified_config import SystemConfig
 from cogniverse_vespa.config.config_store import VespaConfigStore
 from tests.utils.llm_config import get_llm_base_url, get_llm_model
 
+
+def _memory_config_manager():
+    """The injected ConfigManager every agent constructor requires."""
+    from cogniverse_foundation.config.manager import ConfigManager
+    from tests.utils.memory_store import InMemoryConfigStore
+
+    store = InMemoryConfigStore()
+    store.initialize()
+    return ConfigManager(store=store)
+
+
 logger = logging.getLogger(__name__)
 pytestmark = pytest.mark.integration
 
@@ -163,7 +174,10 @@ async def test_multi_doc_synthesis_real_vespa(primary_mm, dspy_lm):
         assert mid
         doc_ids.append(mid)
 
-    agent = MultiDocumentSynthesisAgent(deps=MultiDocSynthesisDeps(tenant_id=TENANT))
+    agent = MultiDocumentSynthesisAgent(
+        deps=MultiDocSynthesisDeps(tenant_id=TENANT),
+        config_manager=_memory_config_manager(),
+    )
     _inject_memory(agent, mm, "multi_document_synthesis_agent")
     out = await agent._process_impl(
         MultiDocSynthesisInput(
@@ -311,7 +325,9 @@ async def test_kg_traversal_real_vespa(primary_mm):
     _seed_edge("entity:a", "entity:b", "relates_to")
     _seed_edge("entity:b", "entity:c", "depends_on")
 
-    agent = KnowledgeGraphTraversalAgent(deps=KGTraversalDeps(tenant_id=TENANT))
+    agent = KnowledgeGraphTraversalAgent(
+        deps=KGTraversalDeps(tenant_id=TENANT), config_manager=_memory_config_manager()
+    )
     _inject_memory(agent, mm, KG_AGENT)
 
     out = await agent._process_impl(
@@ -376,6 +392,7 @@ async def test_temporal_reasoning_real_vespa(primary_mm):
     agent = TemporalReasoningAgent(
         deps=TemporalReasoningDeps(tenant_id=TENANT),
         memory_manager_factory=lambda _tid: mm,
+        config_manager=_memory_config_manager(),
     )
 
     out = await agent._process_impl(
@@ -541,6 +558,7 @@ async def test_federated_query_real_vespa(multitenant_setup):
         deps=FederatedQueryDeps(tenant_id=mm_a.tenant_id),
         memory_manager_factory=lambda tid: Mem0MemoryManager(tid),
         registry=build_default_registry(),
+        config_manager=_memory_config_manager(),
     )
 
     out = await agent._process_impl(

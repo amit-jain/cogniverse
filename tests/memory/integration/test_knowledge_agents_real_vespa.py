@@ -59,6 +59,17 @@ from cogniverse_foundation.config.unified_config import SystemConfig
 from cogniverse_vespa.config.config_store import VespaConfigStore
 from tests.utils.llm_config import get_llm_base_url, get_llm_model
 
+
+def _memory_config_manager():
+    """The injected ConfigManager every agent constructor requires."""
+    from cogniverse_foundation.config.manager import ConfigManager
+    from tests.utils.memory_store import InMemoryConfigStore
+
+    store = InMemoryConfigStore()
+    store.initialize()
+    return ConfigManager(store=store)
+
+
 logger = logging.getLogger(__name__)
 pytestmark = pytest.mark.integration
 
@@ -223,6 +234,7 @@ async def test_knowledge_summarises_real_subject_slice(
         deps=KnowledgeSummarizationDeps(tenant_id=TENANT),
         memory_manager_factory=lambda _t: real_mm,
         registry=build_default_registry(),
+        config_manager=_memory_config_manager(),
     )
     # The time window must MATCH the seeded rows: attach_to_metadata nests
     # written_at under metadata["provenance"], and the filter reads that

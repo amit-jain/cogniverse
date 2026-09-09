@@ -18,6 +18,17 @@ from cogniverse_agents.federated_query_agent import (
 from cogniverse_core.memory.federation import ACLRejected
 from cogniverse_core.memory.schema import build_default_registry
 
+
+def _memory_config_manager():
+    """The injected ConfigManager every agent constructor requires."""
+    from cogniverse_foundation.config.manager import ConfigManager
+    from tests.utils.memory_store import InMemoryConfigStore
+
+    store = InMemoryConfigStore()
+    store.initialize()
+    return ConfigManager(store=store)
+
+
 pytestmark = [pytest.mark.unit, pytest.mark.ci_fast]
 
 
@@ -47,6 +58,7 @@ def _build(per_tenant: Dict[str, List[Dict[str, Any]]]):
         deps=FederatedQueryDeps(tenant_id="acme:production"),
         memory_manager_factory=factory,
         registry=build_default_registry(),
+        config_manager=_memory_config_manager(),
     )
 
 
@@ -260,6 +272,7 @@ class TestAgentNameFilter:
             deps=FederatedQueryDeps(tenant_id="acme:production"),
             memory_manager_factory=_factory,
             registry=build_default_registry(),
+            config_manager=_memory_config_manager(),
         )
         await agent._process_impl(
             FederatedQueryInput(
@@ -291,6 +304,7 @@ class TestAgentNameFilter:
             deps=FederatedQueryDeps(tenant_id="acme:production"),
             memory_manager_factory=_factory,
             registry=build_default_registry(),
+            config_manager=_memory_config_manager(),
         )
         await agent._process_impl(
             FederatedQueryInput(
@@ -336,7 +350,10 @@ def test_top_k_bounds_enforced():
 
 
 def test_agent_capabilities_advertised():
-    agent = FederatedQueryAgent(deps=FederatedQueryDeps(tenant_id="acme:production"))
+    agent = FederatedQueryAgent(
+        deps=FederatedQueryDeps(tenant_id="acme:production"),
+        config_manager=_memory_config_manager(),
+    )
     assert agent.agent_name == "federated_query_agent"
     assert "federated_query" in agent.capabilities
     assert agent.port == 8024
@@ -374,6 +391,7 @@ async def test_federated_read_does_not_block_the_event_loop():
         deps=FederatedQueryDeps(tenant_id="acme:production"),
         memory_manager_factory=factory,
         registry=build_default_registry(),
+        config_manager=_memory_config_manager(),
     )
     unblock_timer = threading.Timer(1, release.set)
     unblock_timer.start()
@@ -415,6 +433,7 @@ async def test_federated_read_failure_propagates():
         deps=FederatedQueryDeps(tenant_id="acme:production"),
         memory_manager_factory=factory,
         registry=build_default_registry(),
+        config_manager=_memory_config_manager(),
     )
 
     with pytest.raises(ConnectionError, match="mem0 unavailable for acme:alpha"):

@@ -18,12 +18,26 @@ from cogniverse_agents.multi_document_synthesis_agent import (
 )
 from cogniverse_core.agents.rlm_options import RLMOptions
 
+
+def _memory_config_manager():
+    """The injected ConfigManager every agent constructor requires."""
+    from cogniverse_foundation.config.manager import ConfigManager
+    from tests.utils.memory_store import InMemoryConfigStore
+
+    store = InMemoryConfigStore()
+    store.initialize()
+    return ConfigManager(store=store)
+
+
 pytestmark = [pytest.mark.unit, pytest.mark.ci_fast]
 
 
 def _build_agent_with_stub_synth(answer: str = "synthesised answer"):
     """Construct an agent and stub the LLM path to return ``answer``."""
-    agent = MultiDocumentSynthesisAgent(deps=MultiDocSynthesisDeps(tenant_id="acme"))
+    agent = MultiDocumentSynthesisAgent(
+        deps=MultiDocSynthesisDeps(tenant_id="acme"),
+        config_manager=_memory_config_manager(),
+    )
     agent._synthesise_without_rlm = lambda query, documents_block: answer  # type: ignore[assignment]
 
     async def fake_rlm(query, documents_block, options):
@@ -336,7 +350,10 @@ def test_input_validation_requires_at_least_one_document():
 
 
 def test_agent_capabilities_advertised():
-    agent = MultiDocumentSynthesisAgent(deps=MultiDocSynthesisDeps(tenant_id="acme"))
+    agent = MultiDocumentSynthesisAgent(
+        deps=MultiDocSynthesisDeps(tenant_id="acme"),
+        config_manager=_memory_config_manager(),
+    )
     assert agent.agent_name == "multi_document_synthesis_agent"
     assert "multi_document_synthesis" in agent.capabilities
     assert agent.port == 8021

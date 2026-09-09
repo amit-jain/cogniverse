@@ -27,6 +27,17 @@ from tests.fixtures.llm import (
     resolve_prefixed_model,
 )
 
+
+def _memory_config_manager():
+    """The injected ConfigManager every agent constructor requires."""
+    from cogniverse_foundation.config.manager import ConfigManager
+    from tests.utils.memory_store import InMemoryConfigStore
+
+    store = InMemoryConfigStore()
+    store.initialize()
+    return ConfigManager(store=store)
+
+
 logger = logging.getLogger(__name__)
 
 
@@ -194,7 +205,9 @@ class TestDeepResearchWithRealServices:
     async def test_full_research_cycle(self, real_search_fn, seeded_outdoor_corpus):
         """Decompose → search Vespa → evaluate → synthesize against the configured LM."""
         deps = DeepResearchDeps(tenant_id="test:unit")
-        agent = DeepResearchAgent(deps=deps, search_fn=real_search_fn)
+        agent = DeepResearchAgent(
+            deps=deps, search_fn=real_search_fn, config_manager=_memory_config_manager()
+        )
 
         result = await agent.process(
             DeepResearchInput(
@@ -282,7 +295,9 @@ class TestDeepResearchWithRealServices:
         content of both domains to surface in the retrieved evidence.
         """
         deps = DeepResearchDeps(tenant_id="test:unit")
-        agent = DeepResearchAgent(deps=deps, search_fn=real_search_fn)
+        agent = DeepResearchAgent(
+            deps=deps, search_fn=real_search_fn, config_manager=_memory_config_manager()
+        )
 
         query = "How do cooking tutorials differ from nature documentaries?"
         sub_qs = await agent._decompose(query)

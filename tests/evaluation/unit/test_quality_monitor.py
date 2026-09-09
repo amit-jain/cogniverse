@@ -22,6 +22,17 @@ from tests.evaluation.fakes import (
     StubTelemetryProvider,
 )
 
+
+def _memory_config_manager():
+    """The injected ConfigManager every agent constructor requires."""
+    from cogniverse_foundation.config.manager import ConfigManager
+    from tests.utils.memory_store import InMemoryConfigStore
+
+    store = InMemoryConfigStore()
+    store.initialize()
+    return ConfigManager(store=store)
+
+
 pytestmark = pytest.mark.unit
 
 # canonical_tenant_id("test_tenant") — the form every derived name uses
@@ -1446,7 +1457,7 @@ class TestSpanNameByAgent:
                 captured.append(name)
                 yield None
 
-        agent = SearchAgent(deps=_PinDeps())
+        agent = SearchAgent(deps=_PinDeps(), config_manager=_memory_config_manager())
         agent.set_telemetry_manager(_Spy())
         asyncio.run(agent.process(_PinInput(query="hi", tenant_id="acme")))
 

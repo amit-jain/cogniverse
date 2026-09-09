@@ -29,6 +29,17 @@ import pytest
 
 from cogniverse_core.memory.schema import build_default_registry
 
+
+def _memory_config_manager():
+    """The injected ConfigManager every agent constructor requires."""
+    from cogniverse_foundation.config.manager import ConfigManager
+    from tests.utils.memory_store import InMemoryConfigStore
+
+    store = InMemoryConfigStore()
+    store.initialize()
+    return ConfigManager(store=store)
+
+
 pytestmark = pytest.mark.unit
 
 TENANT = "knowledge_agents_factory_test"
@@ -81,6 +92,7 @@ async def test_multi_doc_citation_refs_assembled_from_input_doc_ids():
 
     agent = MultiDocumentSynthesisAgent(
         deps=MultiDocSynthesisDeps(tenant_id=TENANT),
+        config_manager=_memory_config_manager(),
     )
     # LM is stubbed because this fixture has no real LM wired; the test
     # asserts citation assembly, not synthesis quality.
@@ -150,6 +162,7 @@ async def test_memories_bucketed_by_window():
     agent = TemporalReasoningAgent(
         deps=TemporalReasoningDeps(tenant_id=TENANT),
         memory_manager_factory=factory,
+        config_manager=_memory_config_manager(),
     )
     out = await agent._process_impl(
         TemporalReasoningInput(
@@ -196,6 +209,7 @@ async def test_aggregates_across_two_tenants():
         deps=FederatedQueryDeps(tenant_id="acme:caller"),
         memory_manager_factory=_factory_returning(rows_by_tenant),
         registry=build_default_registry(),
+        config_manager=_memory_config_manager(),
     )
     out = await agent._process_impl(
         FederatedQueryInput(
@@ -358,6 +372,7 @@ async def test_summarisation_subject_slice_filters_and_counts():
         deps=KnowledgeSummarizationDeps(tenant_id=TENANT),
         memory_manager_factory=factory,
         registry=build_default_registry(),
+        config_manager=_memory_config_manager(),
     )
     # LM stubbed because no LM is wired in this fixture.
     agent._dspy_module = MagicMock(return_value=MagicMock(summary="x"))
@@ -435,7 +450,9 @@ async def test_walks_real_graph():
         if (filters or {}).get("subject_key") is None
         or (r.get("metadata") or {}).get("subject_key") == filters["subject_key"]
     ]
-    agent = KnowledgeGraphTraversalAgent(deps=KGTraversalDeps(tenant_id=TENANT))
+    agent = KnowledgeGraphTraversalAgent(
+        deps=KGTraversalDeps(tenant_id=TENANT), config_manager=_memory_config_manager()
+    )
     # KGTraversal pulls its memory manager from MemoryAwareMixin slots.
     agent.memory_manager = fake_mm
     agent._memory_initialized = True
