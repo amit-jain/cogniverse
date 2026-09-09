@@ -4345,6 +4345,38 @@ rlm = InstrumentedRLM(
 result = rlm(context=large_context, query="Summarize this")
 ```
 
+Events require a queue and a task id, so `_emit_sync` takes a builder and calls
+it only when both are present.
+
+#### rlm_run_span
+
+Every promoted recursive-LM call is wrapped in `rlm_run_span`, the one seam that
+emits the `InstrumentedRLM.run` span (`RLM_RUN_SPAN_NAME`). The orchestrator's
+sufficiency gate and the ingest path's claim extraction both use it, so both
+produce the same span name and the same `max_iterations` / `rlm_iterations`
+attributes (`RLM_RUN_SPAN_ATTRIBUTES`); each call site adds its own on top.
+
+```text
+from cogniverse_agents.inference import rlm_run_span
+
+with rlm_run_span(
+    telemetry_manager,
+    tenant_id=tenant_id,
+    max_iterations=module.max_iterations,
+    attributes={"segment_id": segment_id},
+) as run_span:
+    prediction = module(**inputs)
+    run_span.record(prediction)
+```
+
+The span opens in the tenant's project and nests under whatever span is current,
+so it hangs off the caller's trace rather than starting a new one. `record`
+stamps `rlm_iterations` from `Prediction.trajectory`; the attribute is written at
+open time too, so its presence does not depend on the call reaching that point.
+Telemetry never gates the call: with no manager, or when the span cannot be
+opened or closed, the body still runs and only the recorder's writes are
+dropped. Exceptions from the body propagate.
+
 #### Cancellation Support
 
 Users can cancel RLM operations mid-execution via the CancellationToken:

@@ -668,13 +668,21 @@ Key product knobs:
 | `RLM_TRANSCRIPT_CHARS_PER_TOKEN = 2` | `graph/claim_extractor.py` | Characters per token for REPL output when sizing `max_output_chars` from a token allowance. |
 | `PROMPT_TOKENIZER_MARGIN_SHARE = 0.10` | `graph/claim_extractor.py` | Share of the input allowance held back for the server tokenizer counting more than the client's estimate. |
 
-`ClaimExtractor` sizes the promoted `dspy.RLM` from the window its endpoint
-serves: `_serving_token_budget()` reads the `TokenBudget` off the serving
-`BudgetedLM` and `_rlm_output_chars()` turns the input allowance, less the
-harness and the tokenizer margin, into per-turn `max_output_chars`. One module
-is cached per distinct cap. A window that leaves no transcript allowance raises
-`RecursiveClaimBudgetError` naming the window and the reservation; a prompt that
-cannot fit raises `PromptBudgetExceededError` before any request is sent.
+`ClaimExtractor` sizes the promoted `InstrumentedRLM` from the window its
+endpoint serves: `_serving_token_budget()` reads the `TokenBudget` off the
+serving `BudgetedLM` and `_rlm_output_chars()` turns the input allowance, less
+the harness and the tokenizer margin, into per-turn `max_output_chars`. One
+module is cached per distinct cap. A window that leaves no transcript allowance
+raises `RecursiveClaimBudgetError` naming the window and the reservation; a
+prompt that cannot fit raises `PromptBudgetExceededError` before any request is
+sent.
+
+Every promoted call runs under `rlm_run_span`, so it appears in the tenant's
+Phoenix project as an `InstrumentedRLM.run` span nested under
+`KG_EXTRACT_SPAN_NAME` (`pipeline.kg.extract_per_segment`). Alongside the seam's
+`max_iterations` / `rlm_iterations`, the claim path adds `max_output_chars`,
+`context_window`, `input_chars`, `segment_id` and `source_doc_id`. The
+single-prompt `ChainOfThought` path emits no run span.
 
 User-facing detail with diagrams: [`docs/user/knowledge-graph.md`](../user/knowledge-graph.md).
 

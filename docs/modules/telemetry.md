@@ -949,6 +949,10 @@ Context manager for creating tenant-specific spans.
 
 - `environment`: Environment (development, production)
 
+The three are exported together as `SPAN_ENVELOPE_ATTRIBUTES` in
+`cogniverse_foundation.telemetry.manager`, so a consumer that pins a span's
+attribute set names the envelope by import instead of restating it.
+
 **Graceful Degradation:**
 
 - If telemetry disabled or fails, yields no-op span

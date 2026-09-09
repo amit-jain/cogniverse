@@ -12,3 +12,9 @@ the source document and segment ID in the error text.
 `DocExtractor.extract_claims_from_text(...)` counts failed segments in
 `claim_segments_failed`. The ingest path raises when every segment fails
 instead of returning an empty graph.
+
+Segments long enough to promote run through `InstrumentedRLM` under
+`rlm_run_span`, which emits one `InstrumentedRLM.run` span per call into the
+tenant's project, nested under the KG pass's span. Export is asynchronous: a
+collector that refuses connections changes neither the edges nor the call's
+latency.

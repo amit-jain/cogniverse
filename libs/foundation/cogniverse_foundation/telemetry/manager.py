@@ -24,6 +24,14 @@ from .config import TelemetryConfig
 
 logger = logging.getLogger(__name__)
 
+# The attributes every span carries regardless of what emitted it.
+TENANT_ID_ATTRIBUTE = "tenant.id"
+SERVICE_NAME_ATTRIBUTE = "service.name"
+ENVIRONMENT_ATTRIBUTE = "environment"
+SPAN_ENVELOPE_ATTRIBUTES = frozenset(
+    {TENANT_ID_ATTRIBUTE, SERVICE_NAME_ATTRIBUTE, ENVIRONMENT_ATTRIBUTE}
+)
+
 
 class TelemetryManager:
     """
@@ -329,9 +337,9 @@ class TelemetryManager:
                                 f"endpoint={endpoint}"
                             )
 
-                    span.set_attribute("tenant.id", tenant_id)
-                    span.set_attribute("service.name", self.config.service_name)
-                    span.set_attribute("environment", self.config.environment)
+                    span.set_attribute(TENANT_ID_ATTRIBUTE, tenant_id)
+                    span.set_attribute(SERVICE_NAME_ATTRIBUTE, self.config.service_name)
+                    span.set_attribute(ENVIRONMENT_ATTRIBUTE, self.config.environment)
 
                     if attributes:
                         for key, value in attributes.items():

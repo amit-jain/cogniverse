@@ -134,13 +134,19 @@ class TestInstrumentedRLMEventEmission:
     """Tests for event emission logic."""
 
     def test_emit_sync_no_queue(self):
-        """_emit_sync does nothing without event_queue."""
+        """Without an event_queue the event is never even built.
+
+        Every event type requires a task id and a tenant id, which exist only
+        alongside a queue; building one anyway raises and takes the whole RLM
+        call down with it.
+        """
         rlm = InstrumentedRLM("context, query -> answer")
-        # Should not raise
-        rlm._emit_sync(MagicMock())
+        built = []
+        rlm._emit_sync(lambda: built.append("event"))
+        assert built == []
 
     def test_emit_sync_no_task_id(self):
-        """_emit_sync does nothing without task_id."""
+        """Without a task_id the event is never even built."""
         mock_queue = MagicMock()
         rlm = InstrumentedRLM(
             "context, query -> answer",
@@ -148,8 +154,10 @@ class TestInstrumentedRLMEventEmission:
             task_id=None,
             tenant_id="test:unit",
         )
-        # Should not raise
-        rlm._emit_sync(MagicMock())
+        built = []
+        rlm._emit_sync(lambda: built.append("event"))
+        assert built == []
+        assert mock_queue.enqueue.call_count == 0
 
     @pytest.mark.asyncio
     async def test_emit_sync_enqueues_event(self):
@@ -165,7 +173,7 @@ class TestInstrumentedRLMEventEmission:
         )
 
         # Call _emit_sync in an async context
-        rlm._emit_sync(mock_event)
+        rlm._emit_sync(lambda: mock_event)
 
         # Allow the task to complete
         await asyncio.sleep(0.01)
@@ -383,7 +391,7 @@ class TestEmitSyncRetainsTask:
             tenant_id="tenant_1",
         )
 
-        rlm._emit_sync({"e": 1})
+        rlm._emit_sync(lambda: {"e": 1})
 
         # Retained while in flight.
         assert len(rlm._background_tasks) == 1

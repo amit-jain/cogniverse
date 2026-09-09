@@ -23,7 +23,8 @@ Usage:
 
 import asyncio
 import logging
-from typing import TYPE_CHECKING, Optional
+from contextlib import contextmanager
+from typing import TYPE_CHECKING, Any, Callable, Iterator, Mapping, Optional
 
 from dspy.primitives.prediction import Prediction
 from dspy.primitives.repl_types import REPLHistory
@@ -39,6 +40,105 @@ from cogniverse_core.events.types import (
 )
 
 logger = logging.getLogger(__name__)
+
+# The span every promoted recursive-LM call emits, whatever promoted it: the
+# orchestrator's sufficiency gate and the ingest path's claim extraction.
+RLM_RUN_SPAN_NAME = "InstrumentedRLM.run"
+MAX_ITERATIONS_ATTRIBUTE = "max_iterations"
+RLM_ITERATIONS_ATTRIBUTE = "rlm_iterations"
+# The attributes the seam itself writes. Call sites add their own on top.
+RLM_RUN_SPAN_ATTRIBUTES = frozenset(
+    {MAX_ITERATIONS_ATTRIBUTE, RLM_ITERATIONS_ATTRIBUTE}
+)
+
+
+def reported_rlm_iterations(prediction: Any) -> int:
+    """REPL turns the RLM reports for one call.
+
+    ``dspy.RLM`` fills ``Prediction.trajectory`` with one entry per REPL step.
+    A call that produced no prediction reports zero.
+    """
+    trajectory = getattr(prediction, "trajectory", None)
+    return len(trajectory) if isinstance(trajectory, list) else 0
+
+
+class RLMRunSpanRecorder:
+    """Stamps the RLM's reported iteration count onto its run span."""
+
+    def __init__(self, span: Any) -> None:
+        self._span = span
+
+    def record(self, prediction: Any) -> None:
+        if self._span is None:
+            return
+        try:
+            self._span.set_attribute(
+                RLM_ITERATIONS_ATTRIBUTE, reported_rlm_iterations(prediction)
+            )
+        except Exception as exc:
+            logger.debug("%s iteration count not recorded: %s", RLM_RUN_SPAN_NAME, exc)
+
+
+@contextmanager
+def rlm_run_span(
+    telemetry_manager: Any,
+    *,
+    tenant_id: str,
+    max_iterations: int,
+    attributes: Optional[Mapping[str, Any]] = None,
+) -> Iterator[RLMRunSpanRecorder]:
+    """Emit ``InstrumentedRLM.run`` around one recursive-LM call.
+
+    Yields a recorder whose ``record`` writes the iteration count the returned
+    prediction reports; ``rlm_iterations`` is on the span from the start so the
+    attribute set does not depend on whether the call reached that point.
+
+    Telemetry never gates the call: with no manager, or when the span cannot be
+    opened, the recorder drops its writes and the body still runs. Exceptions
+    raised by the body propagate.
+    """
+    scope = None
+    span = None
+    if telemetry_manager is not None:
+        span_attributes = dict(attributes or {})
+        span_attributes[MAX_ITERATIONS_ATTRIBUTE] = int(max_iterations)
+        span_attributes[RLM_ITERATIONS_ATTRIBUTE] = 0
+        try:
+            scope = telemetry_manager.span(
+                name=RLM_RUN_SPAN_NAME,
+                tenant_id=tenant_id,
+                attributes=span_attributes,
+            )
+            span = scope.__enter__()
+        except Exception as exc:
+            logger.debug("%s span not opened: %s", RLM_RUN_SPAN_NAME, exc)
+            scope = None
+            span = None
+    try:
+        yield RLMRunSpanRecorder(span)
+    except BaseException as exc:
+        _close_run_span(scope, exc)
+        raise
+    _close_run_span(scope, None)
+
+
+def _close_run_span(scope: Any, exc: Optional[BaseException]) -> None:
+    """End the run span, letting nothing telemetry raises reach the caller.
+
+    The scope re-raises whatever the body raised; that one propagates from
+    ``rlm_run_span`` itself and is not a close failure.
+    """
+    if scope is None:
+        return
+    try:
+        if exc is None:
+            scope.__exit__(None, None, None)
+        else:
+            scope.__exit__(type(exc), exc, exc.__traceback__)
+    except BaseException as close_exc:
+        if close_exc is exc:
+            return
+        logger.debug("%s span not closed: %s", RLM_RUN_SPAN_NAME, close_exc)
 
 
 class RLMCancelledError(Exception):
@@ -117,15 +217,21 @@ class InstrumentedRLM(TolerantRLM):
         # reference CPython may GC the task and drop the event before it runs.
         self._background_tasks: set[asyncio.Task] = set()
 
-    def _emit_sync(self, event) -> None:
-        """Emit event synchronously (fire-and-forget in background).
+    def _emit_sync(self, build_event: Callable[[], Any]) -> None:
+        """Emit an event synchronously (fire-and-forget in background).
 
-        Attempts to enqueue the event in the current async loop.
-        Silently skips if no loop is running.
+        The event is BUILT only once there is somewhere to send it: every event
+        type requires a task id and a tenant id, and those exist only alongside
+        a queue, so building one unconditionally raises and takes the RLM call
+        down with it.
+
+        Attempts to enqueue the event in the current async loop. Silently skips
+        if no loop is running.
         """
         if not self._event_queue or not self._task_id:
             return
 
+        event = build_event()
         try:
             loop = asyncio.get_running_loop()
             task = loop.create_task(self._event_queue.enqueue(event))
@@ -175,7 +281,7 @@ class InstrumentedRLM(TolerantRLM):
         self._validate_inputs(input_args)
 
         self._emit_sync(
-            create_status_event(
+            lambda: create_status_event(
                 self._task_id,
                 self._tenant_id,
                 TaskState.WORKING,
@@ -195,7 +301,7 @@ class InstrumentedRLM(TolerantRLM):
                 self._check_cancelled()
 
                 self._emit_sync(
-                    create_progress_event(
+                    lambda iteration=iteration: create_progress_event(
                         self._task_id,
                         self._tenant_id,
                         current=iteration,
@@ -214,7 +320,7 @@ class InstrumentedRLM(TolerantRLM):
 
                 if isinstance(result, Prediction):
                     self._emit_sync(
-                        create_status_event(
+                        lambda iteration=iteration: create_status_event(
                             self._task_id,
                             self._tenant_id,
                             TaskState.COMPLETED,
@@ -227,7 +333,7 @@ class InstrumentedRLM(TolerantRLM):
                 history = result
 
             self._emit_sync(
-                create_status_event(
+                lambda: create_status_event(
                     self._task_id,
                     self._tenant_id,
                     TaskState.WORKING,
@@ -240,7 +346,7 @@ class InstrumentedRLM(TolerantRLM):
             _mark_fallback(result)
 
             self._emit_sync(
-                create_status_event(
+                lambda: create_status_event(
                     self._task_id,
                     self._tenant_id,
                     TaskState.COMPLETED,

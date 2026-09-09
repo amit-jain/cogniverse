@@ -101,16 +101,23 @@ class GatewayAgent(
         return _TelemetryTestOutput(result=f"routed: {input.query}")
 
 
-def _query_phoenix_for_span(
+# Seconds a span query gives Phoenix before it is treated as unanswered.
+PHOENIX_QUERY_TIMEOUT_S = 30
+
+
+def phoenix_span_rows(
     span_name: str,
     project_name: str,
     phoenix_http_url: str,
-    max_wait: int = 30,
+    *,
+    attribute_filters=None,
+    query_timeout: int = PHOENIX_QUERY_TIMEOUT_S,
 ):
-    """Query the real Phoenix instance for spans with the given name.
+    """Every row Phoenix holds for one span identity.
 
-    Returns the matched span row (or None) by polling for up to max_wait
-    seconds — Phoenix has a small ingestion delay even with sync export.
+    The name predicate runs server-side. ``attribute_filters`` then narrows the
+    frame by exact attribute equality, so a caller waits for THE span it
+    emitted — its segment, its tenant — rather than any span sharing the name.
 
     phoenix_http_url comes from real_telemetry.config.provider_config["http_endpoint"]
     so it's never hardcoded here.
@@ -119,22 +126,114 @@ def _query_phoenix_for_span(
     from phoenix.client.types.spans import SpanQuery
 
     client = Client(base_url=phoenix_http_url)
-    query = SpanQuery().where(f"name == '{span_name}'")
+    spans_df = client.spans.get_spans_dataframe(
+        query=SpanQuery().where(f"name == '{span_name}'"),
+        project_identifier=project_name,
+        timeout=query_timeout,
+    )
+    if spans_df is None or spans_df.empty:
+        return []
+    rows = [row for _, row in spans_df.iterrows()]
+    for key, value in (attribute_filters or {}).items():
+        column = f"attributes.{key}"
+        rows = [
+            row
+            for row in rows
+            if column in row.index and str(row[column]) == str(value)
+        ]
+    return rows
 
+
+def await_phoenix_span_rows(
+    span_name: str,
+    project_name: str,
+    phoenix_http_url: str,
+    *,
+    expected: int,
+    attribute_filters=None,
+    max_wait: int = PHOENIX_QUERY_TIMEOUT_S,
+    settle: float = 3.0,
+):
+    """Wait for exactly ``expected`` rows of one span identity, then hold.
+
+    A positive expectation returns as soon as the count matches, and the
+    re-read after ``settle`` seconds must still find exactly that many — a
+    duplicate arriving late fails here instead of passing on a lucky read.
+    ``expected == 0`` polls the whole window and every read must be empty, so
+    absence is proven over the window a positive match would have had, and a
+    query that cannot be answered fails rather than reading as absence.
+    """
+    deadline = time.time() + max_wait
+    last_error = None
+    rows = []
+    while True:
+        try:
+            rows = phoenix_span_rows(
+                span_name,
+                project_name,
+                phoenix_http_url,
+                attribute_filters=attribute_filters,
+            )
+            last_error = None
+        except Exception as exc:
+            if expected == 0:
+                raise AssertionError(
+                    f"Phoenix could not be queried for {span_name!r} in project "
+                    f"{project_name!r}, so absence is unproven: {exc}"
+                ) from exc
+            last_error = exc
+            rows = []
+        if expected == 0 and rows:
+            raise AssertionError(
+                f"Phoenix holds {len(rows)} {span_name!r} span(s) in project "
+                f"{project_name!r} matching {attribute_filters!r}; expected none"
+            )
+        if expected and len(rows) == expected:
+            break
+        if time.time() >= deadline:
+            if expected == 0:
+                return rows
+            raise AssertionError(
+                f"Phoenix held {len(rows)} {span_name!r} span(s) in project "
+                f"{project_name!r} matching {attribute_filters!r} within "
+                f"{max_wait}s at {phoenix_http_url!r}; expected {expected}"
+                + (f" (last query error: {last_error})" if last_error else "")
+            )
+        time.sleep(1)
+    time.sleep(settle)
+    settled = phoenix_span_rows(
+        span_name,
+        project_name,
+        phoenix_http_url,
+        attribute_filters=attribute_filters,
+    )
+    assert len(settled) == expected, (
+        f"Phoenix held {len(settled)} {span_name!r} span(s) in project "
+        f"{project_name!r} matching {attribute_filters!r} after settling "
+        f"{settle}s; expected {expected}"
+    )
+    return settled
+
+
+def _query_phoenix_for_span(
+    span_name: str,
+    project_name: str,
+    phoenix_http_url: str,
+    max_wait: int = 30,
+):
+    """The first Phoenix row carrying the given span name.
+
+    Polls for up to max_wait seconds — Phoenix has a small ingestion delay even
+    with sync export — and raises when the name never appears.
+    """
     deadline = time.time() + max_wait
     while time.time() < deadline:
         try:
-            spans_df = client.spans.get_spans_dataframe(
-                query=query,
-                project_identifier=project_name,
-                timeout=30,
-            )
-            if spans_df is not None and not spans_df.empty:
-                matches = spans_df
-                if not matches.empty:
-                    return matches.iloc[0]
+            rows = phoenix_span_rows(span_name, project_name, phoenix_http_url)
         except Exception:
-            pass
+            rows = []
+        if rows:
+            return rows[0]
         time.sleep(1)
     raise AssertionError(
         f"Phoenix span {span_name!r} was not found in project {project_name!r} "
