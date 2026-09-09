@@ -15,6 +15,7 @@ from unittest.mock import MagicMock, patch
 import pytest
 
 from cogniverse_core.common.utils.retry import RetryConfig
+from cogniverse_core.query.encoders import EncoderNotConfiguredError
 from cogniverse_vespa.search_backend import (
     VespaSearchBackend,
     _source_collapse_fetch_limit,
@@ -290,11 +291,11 @@ def test_search_still_rejects_missing_text_and_embeddings():
         )
 
 
-def test_search_raises_when_embeddings_needed_but_no_encoder():
+def test_search_raises_naming_the_missing_model_when_embeddings_are_needed():
     """A strategy that declares it needs float/binary embeddings must fail
-    loudly when neither query_embeddings nor an encoder is available — the
-    old behavior warned and queried Vespa without the embedding tensor,
-    silently returning wrong (or 0) results. Uses the real ranking-strategy
+    loudly when neither query_embeddings nor an encoder is available, naming
+    what the profile is missing. Querying Vespa without the embedding tensor
+    silently returns wrong (or 0) results. Uses the real ranking-strategy
     definitions via FilesystemSchemaLoader; the raise fires before any Vespa
     call, so no live backend is needed.
     """
@@ -321,7 +322,7 @@ def test_search_raises_when_embeddings_needed_but_no_encoder():
         )
         backend._tenant_schema_exists = MagicMock(return_value=True)
 
-    with pytest.raises(ValueError, match="needs query embeddings"):
+    with pytest.raises(EncoderNotConfiguredError) as excinfo:
         backend.search(
             query_dict={
                 "query": "ocean waves",
@@ -331,6 +332,12 @@ def test_search_raises_when_embeddings_needed_but_no_encoder():
                 "tenant_id": "acme",
             }
         )
+
+    assert str(excinfo.value) == (
+        "Profile 'vcolpali' declares neither 'semantic_model' nor "
+        "'embedding_model', so no query encoder can be built. Add one to the "
+        "profile or pass 'query_embeddings'."
+    )
 
 
 @pytest.mark.parametrize(

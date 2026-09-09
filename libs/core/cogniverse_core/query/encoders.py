@@ -253,6 +253,32 @@ class XClipQueryEncoder(QueryEncoder):
         return self.embedding_dim
 
 
+class EncoderNotConfiguredError(ValueError):
+    """A profile declares no usable query encoder, or an incomplete one.
+
+    A deployment/config gap: the profile names no model, names an inference
+    service with no URL, or omits a dimension the encoder needs. Distinct
+    from :class:`EncoderUnavailableError`, which means the encoder is
+    configured but its service cannot be reached.
+    """
+
+
+class EncoderUnavailableError(RuntimeError):
+    """A configured query encoder could not reach its inference service."""
+
+    def __init__(self, *, profile: str, service, endpoint, detail: str = ""):
+        self.profile = profile
+        self.service = service
+        self.endpoint = endpoint
+        where = f"inference service {service!r}" if service else "local encoder"
+        at = f" at {endpoint}" if endpoint else ""
+        suffix = f": {detail}" if detail else ""
+        super().__init__(
+            f"Query encoder for profile {profile!r} is unavailable — "
+            f"{where}{at} did not serve the request{suffix}"
+        )
+
+
 def _resolve_inference_url(
     profile: str,
     profile_config: dict,

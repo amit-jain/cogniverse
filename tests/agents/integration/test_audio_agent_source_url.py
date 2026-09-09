@@ -31,6 +31,7 @@ from cogniverse_agents.audio_analysis_agent import (
     AudioAnalysisAgent,
     AudioAnalysisDeps,
 )
+from cogniverse_core.query.encoders import EncoderUnavailableError
 from cogniverse_core.registries.backend_registry import BackendRegistry
 from cogniverse_core.schemas.filesystem_loader import FilesystemSchemaLoader
 from cogniverse_foundation.config.inference_service import (
@@ -456,13 +457,18 @@ class TestAudioSearchEncoderOutage:
         an empty result the caller reads as 'no matching audio'."""
         agent, dead_url = unreachable_encoder_agent
 
-        with pytest.raises(InferenceServiceUnavailableError) as excinfo:
+        with pytest.raises(EncoderUnavailableError) as excinfo:
             await agent._search_hybrid("kestrel telemetry", limit=5)
 
-        assert excinfo.value.service == "colbert_pooling"
-        message = str(excinfo.value)
+        error = excinfo.value
+        assert error.service == EMBEDDING_SERVICE
+        assert error.endpoint == dead_url
+        assert error.profile == AUDIO_PROFILE.profile_name
+        message = str(error)
         assert dead_url in message
         assert SEMANTIC_MODEL in message
+        assert isinstance(error.__cause__, InferenceServiceUnavailableError)
+        assert error.__cause__.service == "colbert_pooling"
 
     @pytest.mark.asyncio
     async def test_transcript_search_survives_the_encoder_outage(

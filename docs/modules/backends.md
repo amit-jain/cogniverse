@@ -659,6 +659,19 @@ a failure inside a released connection pool.
 cached backend and then raise `ProfileFanoutError` carrying the per-backend
 failures, so a partial fanout is never reported as a success count.
 
+### Query Encoder Faults
+
+When a strategy needs query embeddings and the caller supplies none, the
+search backend builds the encoder the profile declares. Two distinct
+failures surface as distinct types (`cogniverse_core.query.encoders`):
+
+- `EncoderNotConfiguredError` (a `ValueError`) — the profile names no model,
+  names an inference service with no configured URL, or omits a dimension
+  the encoder needs.
+- `EncoderUnavailableError` (a `RuntimeError`) — the encoder is configured
+  but its inference service did not serve the request. Carries `profile`,
+  `service`, `endpoint`, and chains the underlying error.
+
 ## Profile-Based Architecture
 
 ### What is a Profile?
