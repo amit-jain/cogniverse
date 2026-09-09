@@ -16,7 +16,10 @@ from unittest.mock import MagicMock
 
 import pytest
 
-from cogniverse_core.registries.backend_registry import BackendRegistry
+from cogniverse_core.registries.backend_registry import (
+    BackendRegistry,
+    ProfileFanoutError,
+)
 from cogniverse_foundation.config.manager import ConfigManager
 from cogniverse_foundation.config.unified_config import BackendProfileConfig
 
@@ -143,10 +146,14 @@ def test_listener_exception_does_not_break_add_backend_profile(
     assert result.profile_name == "safe"
 
 
-def test_backend_registry_add_profile_swallows_backend_exceptions(
+def test_backend_registry_add_profile_reports_the_backend_that_rejected_it(
     clean_backend_registry,
 ):
-    """If one backend's add_profile raises, others must still be updated."""
+    """One backend's failure must not stop the others, and must not be lost.
+
+    A backend that missed the profile cannot serve it, so a partial fanout
+    is surfaced rather than reported as a success count.
+    """
     good = MagicMock()
     good.add_profile = MagicMock()
     bad = MagicMock()
@@ -155,10 +162,11 @@ def test_backend_registry_add_profile_swallows_backend_exceptions(
     BackendRegistry._backend_instances.set("search_good", good)
     BackendRegistry._backend_instances.set("search_bad", bad)
 
-    updated = BackendRegistry.add_profile_to_backends("p", {"type": "m"})
+    with pytest.raises(ProfileFanoutError) as excinfo:
+        BackendRegistry.add_profile_to_backends("p", {"type": "m"})
 
-    # Bad backend raised so counts as not updated, good counts as 1.
-    assert updated == 1
+    assert excinfo.value.failures == {"search_bad": "RuntimeError: boom"}
+    assert excinfo.value.action == "add_profile"
     good.add_profile.assert_called_once()
     bad.add_profile.assert_called_once()
 

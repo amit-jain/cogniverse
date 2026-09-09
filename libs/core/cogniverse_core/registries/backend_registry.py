@@ -17,6 +17,37 @@ from cogniverse_sdk.interfaces.backend import Backend, IngestionBackend, SearchB
 logger = logging.getLogger(__name__)
 
 
+class ProfileFanoutError(RuntimeError):
+    """One or more cached backends rejected a profile add/remove.
+
+    Carries the per-backend failures so a partial fanout is never reported
+    as success: a backend that missed the profile cannot serve it, and a
+    backend that missed a removal keeps serving a profile config says is
+    gone.
+    """
+
+    def __init__(self, action: str, profile_name: str, failures: Dict[str, str]):
+        self.action = action
+        self.profile_name = profile_name
+        self.failures = dict(failures)
+        detail = "; ".join(f"{key}: {message}" for key, message in failures.items())
+        super().__init__(
+            f"{action} of profile {profile_name!r} failed on "
+            f"{len(failures)} backend(s): {detail}"
+        )
+
+
+class BackendBindingConflictError(RuntimeError):
+    """A cached backend was requested with different construction dependencies.
+
+    The cache key covers the endpoint a backend binds at initialize(); the
+    injected ``config_manager`` and ``schema_loader`` are not part of it
+    because production resolves both from one process-wide seam. A requester
+    carrying different ones would silently receive a backend wired to the
+    first requester's config, so the mismatch is refused instead.
+    """
+
+
 _DEFAULT_TENANT_CACHE_CAPACITY = 16
 _CONFIGURED_TENANT_CACHE_CAPACITY: Optional[int] = None
 
@@ -158,6 +189,52 @@ class BackendRegistry:
         return None
 
     @classmethod
+    def _resolve_endpoint(cls, config, config_manager):
+        """Return the (url, port) a backend built from this config will bind.
+
+        ``initialize()`` pins the backend's connection pool to ``url:port``,
+        so this pair is the backend's identity: two requesters naming
+        different endpoints need different instances.
+        """
+        system_config = config_manager.get_system_config()
+        backend_url = system_config.backend_url
+        backend_port = system_config.backend_port
+        if config:
+            backend_section = config.get("backend") or {}
+            backend_url = backend_section.get("url", backend_url)
+            backend_port = backend_section.get("port", backend_port)
+            backend_url = config.get("url", backend_url)
+            backend_port = config.get("port", backend_port)
+        return backend_url, backend_port
+
+    @classmethod
+    def _binding_suffix(cls, backend_url, backend_port) -> str:
+        return f"@{backend_url}:{backend_port}"
+
+    @classmethod
+    def _require_same_dependencies(
+        cls, instance_key, cached, config_manager, schema_loader
+    ) -> None:
+        """Refuse a cache hit wired to different construction dependencies.
+
+        The key covers the endpoint, not the injected ``config_manager`` /
+        ``schema_loader``: production resolves both from one process-wide
+        seam, so a divergence means the requester would silently get a
+        backend reading another config source.
+        """
+        for label, requested, bound in (
+            ("config_manager", config_manager, getattr(cached, "config_manager", None)),
+            ("schema_loader", schema_loader, getattr(cached, "schema_loader", None)),
+        ):
+            if bound is not None and bound is not requested:
+                raise BackendBindingConflictError(
+                    f"Cached backend {instance_key} is bound to a different "
+                    f"{label} ({bound!r}) than the requester's ({requested!r}). "
+                    f"Backends are shared per endpoint; requesters at one "
+                    f"endpoint must share one {label}."
+                )
+
+    @classmethod
     def get_ingestion_backend(
         cls,
         name: str,
@@ -196,15 +273,22 @@ class BackendRegistry:
         if schema_loader is None:
             raise ValueError("schema_loader is required for backend initialization")
 
-        # Cache key includes tenant_id for isolation
+        # Cache key includes tenant_id for isolation and the endpoint the
+        # instance binds, so a requester naming a different Vespa is never
+        # handed a backend pooled against the first requester's cluster.
+        backend_url, backend_port = cls._resolve_endpoint(config, config_manager)
+        binding = cls._binding_suffix(backend_url, backend_port)
         if name in cls._full_backends:
-            instance_key = f"backend_{name}_{tenant_id}"
+            instance_key = f"backend_{name}_{tenant_id}{binding}"
         else:
-            instance_key = f"ingestion_{name}_{tenant_id}"
+            instance_key = f"ingestion_{name}_{tenant_id}{binding}"
 
         # Check if instance already exists
         cached = cls._backend_instances.get(instance_key)
         if cached is not None:
+            cls._require_same_dependencies(
+                instance_key, cached, config_manager, schema_loader
+            )
             logger.debug(f"Returning cached backend: {instance_key}")
             return cached
 
@@ -222,18 +306,11 @@ class BackendRegistry:
         from cogniverse_core.factories.backend_factory import BackendFactory
         from cogniverse_foundation.config.unified_config import BackendConfig
 
-        system_config = config_manager.get_system_config()
-
-        backend_url = system_config.backend_url
-        backend_port = system_config.backend_port
         backend_profiles = {}
         backend_metadata = {}
 
         if config and "backend" in config:
             backend_section = config["backend"]
-            # Override any BackendConfig field if provided in config["backend"]
-            backend_url = backend_section.get("url", backend_url)
-            backend_port = backend_section.get("port", backend_port)
             backend_profiles = backend_section.get("profiles", backend_profiles)
             backend_metadata = backend_section.get("metadata", backend_metadata)
 
@@ -330,12 +407,17 @@ class BackendRegistry:
         if schema_loader is None:
             raise ValueError("schema_loader is required for backend initialization")
 
-        # Search backends are shared — cache key has no tenant suffix
-        instance_key = f"search_{name}"
+        # Search backends are shared across tenants — the key carries no
+        # tenant, only the endpoint the instance binds at initialize().
+        backend_url, backend_port = cls._resolve_endpoint(config, config_manager)
+        instance_key = f"search_{name}{cls._binding_suffix(backend_url, backend_port)}"
 
         # Check if instance already exists
         cached = cls._backend_instances.get(instance_key)
         if cached is not None:
+            cls._require_same_dependencies(
+                instance_key, cached, config_manager, schema_loader
+            )
             logger.debug(f"Returning cached backend: {instance_key}")
             return cached
 
@@ -353,27 +435,18 @@ class BackendRegistry:
         from cogniverse_core.factories.backend_factory import BackendFactory
         from cogniverse_foundation.config.unified_config import BackendConfig
 
-        # Get system config for defaults (URL, port) using the default tenant
-        system_config = config_manager.get_system_config()
-
-        # Generic merge: Start with system config defaults, override with config["backend"] if provided
-        backend_url = system_config.backend_url
-        backend_port = system_config.backend_port
+        # Profiles/metadata are merged per request at query time, so they are
+        # not part of the instance's identity — only url/port are.
         backend_profiles = {}
         backend_metadata = {}
 
         if config and "backend" in config:
             backend_section = config["backend"]
-            # Override any BackendConfig field if provided in config["backend"]
-            backend_url = backend_section.get("url", backend_url)
-            backend_port = backend_section.get("port", backend_port)
             backend_profiles = backend_section.get("profiles", backend_profiles)
             backend_metadata = backend_section.get("metadata", backend_metadata)
 
-        # Also check top-level config for direct overrides (takes precedence over backend section)
+        # Top-level config takes precedence over the backend section.
         if config:
-            backend_url = config.get("url", backend_url)
-            backend_port = config.get("port", backend_port)
             if "profiles" in config:
                 backend_profiles = config["profiles"]
             if "metadata" in config:
@@ -477,6 +550,34 @@ class BackendRegistry:
         logger.info("Cleared all backend instances")
 
     @classmethod
+    def _fan_out(cls, method: str, profile_name: str, **kwargs):
+        """Apply ``method`` to every cached search/ingestion backend.
+
+        Every backend is attempted before any failure surfaces, so one
+        broken instance cannot stop the others from converging.
+        """
+        updated = 0
+        failures: Dict[str, str] = {}
+        for key in cls._backend_instances.keys():
+            if not key.startswith("search_") and not key.startswith("backend_"):
+                continue
+            instance = cls._backend_instances.get(key)
+            if instance is None:
+                continue
+            try:
+                if kwargs:
+                    getattr(instance, method)(profile_name, kwargs["profile_config"])
+                else:
+                    getattr(instance, method)(profile_name)
+                updated += 1
+            except Exception as exc:
+                logger.error(
+                    "%s(%s) failed on backend %s: %s", method, profile_name, key, exc
+                )
+                failures[key] = f"{type(exc).__name__}: {exc}"
+        return updated, failures
+
+    @classmethod
     def add_profile_to_backends(
         cls, profile_name: str, profile_config: Dict[str, Any]
     ) -> int:
@@ -489,25 +590,16 @@ class BackendRegistry:
         detection is needed here.
 
         Returns:
-            Number of backends updated. Useful for logging / tests.
+            Number of backends updated.
+
+        Raises:
+            ProfileFanoutError: One or more backends rejected the profile.
         """
-        updated = 0
-        for key in cls._backend_instances.keys():
-            if not key.startswith("search_") and not key.startswith("backend_"):
-                continue
-            instance = cls._backend_instances.get(key)
-            if instance is None:
-                continue
-            try:
-                instance.add_profile(profile_name, profile_config)
-                updated += 1
-            except Exception as exc:
-                logger.warning(
-                    "add_profile(%s) failed on backend %s: %s",
-                    profile_name,
-                    key,
-                    exc,
-                )
+        updated, failures = cls._fan_out(
+            "add_profile", profile_name, profile_config=profile_config
+        )
+        if failures:
+            raise ProfileFanoutError("add_profile", profile_name, failures)
         if updated:
             logger.info(
                 "Propagated profile '%s' to %d cached backend(s)",
@@ -518,24 +610,14 @@ class BackendRegistry:
 
     @classmethod
     def remove_profile_from_backends(cls, profile_name: str) -> int:
-        """Remove a profile from every cached search/ingestion backend."""
-        updated = 0
-        for key in cls._backend_instances.keys():
-            if not key.startswith("search_") and not key.startswith("backend_"):
-                continue
-            instance = cls._backend_instances.get(key)
-            if instance is None:
-                continue
-            try:
-                instance.remove_profile(profile_name)
-                updated += 1
-            except Exception as exc:
-                logger.warning(
-                    "remove_profile(%s) failed on backend %s: %s",
-                    profile_name,
-                    key,
-                    exc,
-                )
+        """Remove a profile from every cached search/ingestion backend.
+
+        Raises:
+            ProfileFanoutError: One or more backends rejected the removal.
+        """
+        updated, failures = cls._fan_out("remove_profile", profile_name)
+        if failures:
+            raise ProfileFanoutError("remove_profile", profile_name, failures)
         return updated
 
     @classmethod

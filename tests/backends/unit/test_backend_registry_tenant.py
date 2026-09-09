@@ -184,10 +184,13 @@ class TestBackendRegistrySearchShared:
             schema_loader=schema_loader,
         )
 
-        cache_keys = list(registry._backend_instances.keys())
-        assert "search_mock" in cache_keys
-        # No tenant suffix in any search key
-        assert not any("tenant" in key for key in cache_keys)
+        system_config = config_manager.get_system_config()
+        expected = (
+            f"search_mock@{system_config.backend_url}:{system_config.backend_port}"
+        )
+        assert registry._backend_instances.keys() == [expected]
+        # The key carries the endpoint, never the tenant.
+        assert not any("tenant" in key for key in registry._backend_instances.keys())
 
     def test_multiple_search_backend_types(self, config_manager, schema_loader):
         """Test that different backend types get separate shared instances"""
@@ -582,7 +585,11 @@ class TestSharedSchemaRegistryEndpointScoping:
         assert errors == []
         assert len(results) == 2
         assert results[0] is results[1]
-        assert registry._backend_instances.get("search_mockrace") is results[0]
+        system_config = config_manager.get_system_config()
+        endpoint = f"{system_config.backend_url}:{system_config.backend_port}"
+        assert (
+            registry._backend_instances.get(f"search_mockrace@{endpoint}") is results[0]
+        )
         assert len(closed) == 1
         assert closed[0] is not results[0]
 
@@ -633,8 +640,12 @@ class TestSharedSchemaRegistryEndpointScoping:
         assert errors == []
         assert len(results) == 2
         assert results[0] is results[1]
+        system_config = config_manager.get_system_config()
+        endpoint = f"{system_config.backend_url}:{system_config.backend_port}"
         assert (
-            registry._backend_instances.get("ingestion_mockrace_ingest_acme")
+            registry._backend_instances.get(
+                f"ingestion_mockrace_ingest_acme@{endpoint}"
+            )
             is results[0]
         )
         assert len(closed) == 1

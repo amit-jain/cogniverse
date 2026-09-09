@@ -561,8 +561,8 @@ ingestion_backend.ingest_documents(documents, schema_name="video_colpali_smol500
 
 - **Unified Interface**: Single class for search + ingestion
 - **Profile-Aware**: Automatically uses profile config from BackendConfig
-- **Shared Search Backend**: One search backend instance serves all tenants; tenant_id passed in query_dict
-- **Tenant-Isolated Ingestion**: Ingestion backends are per-tenant for schema isolation
+- **Shared Search Backend**: One search backend instance per backend endpoint serves all tenants; tenant_id passed in query_dict
+- **Tenant-Isolated Ingestion**: Ingestion backends are per (tenant, endpoint) for schema isolation
 - **Lazy Initialization**: Components created on-demand per operation
 
 ### Architecture Diagram
@@ -627,6 +627,37 @@ operations:
 | `health_check()` / `close()` | Lifecycle management |
 
 ---
+
+### Instance Identity and Caching
+
+`BackendRegistry` caches instances in a bounded LRU (`TenantLRUCache`,
+capacity 16, `configure_tenant_cache_capacity` to change it). Keys carry the
+endpoint the instance binds at `initialize()`:
+
+| Backend kind | Cache key |
+|---|---|
+| search | `search_<name>@<url>:<port>` |
+| ingestion | `ingestion_<name>_<tenant_id>@<url>:<port>` |
+| full (search + ingestion) | `backend_<name>_<tenant_id>@<url>:<port>` |
+
+`url`/`port` come from `SystemConfig`, overridden by `config["backend"]` and
+then by top-level `config`. Profiles and `default_profiles` are not part of
+the key: `search()` merges the query tenant's profiles per request, and
+`add_profile` / `remove_profile` mutate them in place.
+
+Concurrent cold starts of one key build in parallel and resolve through
+`set_if_absent`; the losing builds are closed. `config_manager` and
+`schema_loader` are not part of the key — a cache hit whose bound instance
+carries different ones raises `BackendBindingConflictError` rather than
+serving a backend wired to another config source.
+
+Eviction closes the instance. A caller holding an evicted search backend
+gets `BackendClosedError` (naming the endpoint) from `search()` instead of
+a failure inside a released connection pool.
+
+`add_profile_to_backends` / `remove_profile_from_backends` attempt every
+cached backend and then raise `ProfileFanoutError` carrying the per-backend
+failures, so a partial fanout is never reported as a success count.
 
 ## Profile-Based Architecture
 

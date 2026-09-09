@@ -39,7 +39,7 @@ from cogniverse_sdk.document import (
     SearchResultBatch,
     resolve_result_granularity,
 )
-from cogniverse_sdk.interfaces.backend import SearchBackend
+from cogniverse_sdk.interfaces.backend import BackendClosedError, SearchBackend
 from cogniverse_vespa._vespa_factory import apply_failfast_timeouts, make_vespa_app
 from cogniverse_vespa._yql import yql_quote
 
@@ -653,6 +653,10 @@ class _DenseQueryEncoder:
 class VespaSearchBackend(SearchBackend):
     """Production-ready Vespa search backend"""
 
+    # Set at class level so every construction path has it, including
+    # callers that build an instance without running __init__.
+    _closed = False
+
     def __init__(
         self,
         backend_url: str = None,
@@ -944,6 +948,12 @@ class VespaSearchBackend(SearchBackend):
         Vespa is load-bearing, so an open breaker propagates ``CircuitOpenError``
         (the caller surfaces it) rather than degrading to empty results.
         """
+        if self._closed:
+            raise BackendClosedError(
+                f"VespaSearchBackend for {self.backend_url}:{self.backend_port} "
+                f"is closed; its connection pool was released. Obtain a fresh "
+                f"instance from BackendRegistry.get_search_backend()."
+            )
         return self._search_breaker.call(self._search_retried, query_dict)
 
     def _load_tenant_profiles(self, tenant_id):
@@ -2104,7 +2114,8 @@ class VespaSearchBackend(SearchBackend):
         return documents[:max_documents] if max_documents else documents
 
     def close(self):
-        """Clean up resources"""
+        """Release the connection pool and refuse further searches."""
+        self._closed = True
         if self.pool:
             self.pool.close()
 
