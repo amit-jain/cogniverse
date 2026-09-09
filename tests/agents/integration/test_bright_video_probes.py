@@ -59,6 +59,19 @@ RECORD_GOLDEN = os.environ.get("RECORD_GOLDEN") == "1"
 # of the bare tenant id before delimiter replacement. The base schema already
 # ships a ``bm25_only`` rank profile, so no schema fork is needed.
 BRIGHT_TENANT_ID = "bright_probe_test"
+
+# The recall contract the engineered corpus is built to hold, and the number
+# of loop iterations each sentinel trajectory records. The golden pins in
+# tests/agents/unit/test_integration_goldens.py read them from here.
+BRIGHT_RECALL_AT_1 = 24
+BRIGHT_RECALL_BY_TYPE = {
+    "causal": 5,
+    "contradiction": 3,
+    "counterfactual": 4,
+    "lateral": 5,
+    "temporal": 7,
+}
+BRIGHT_TRAJECTORY_ITERATIONS = 2
 BRIGHT_BASE_SCHEMA = "video_colpali_smol500_mv_frame"
 BRIGHT_FULL_SCHEMA = schema_full_name(BRIGHT_BASE_SCHEMA, BRIGHT_TENANT_ID)
 
@@ -1038,8 +1051,9 @@ class TestBrightVideoProbesOrchestrator:
             ):
                 correct_ids.append(row["query_id"])
         correct_ids.sort()
-        assert len(correct_ids) == 24, (
-            f"Expected recall@1 == 24, got {len(correct_ids)}: {correct_ids}"
+        assert len(correct_ids) == BRIGHT_RECALL_AT_1, (
+            f"Expected recall@1 == {BRIGHT_RECALL_AT_1}, got "
+            f"{len(correct_ids)}: {correct_ids}"
         )
         assert_golden_json(correct_ids, "bright_probes_correct_ids.json")
 
@@ -1061,14 +1075,9 @@ class TestBrightVideoProbesOrchestrator:
         for cat in ("causal", "contradiction", "counterfactual", "lateral", "temporal"):
             per_type.setdefault(cat, 0)
         per_type = {k: int(v) for k, v in sorted(per_type.items())}
-        expected = {
-            "causal": 5,
-            "contradiction": 3,
-            "counterfactual": 4,
-            "lateral": 5,
-            "temporal": 7,
-        }
-        assert per_type == expected, f"Per-type recall mismatch: {per_type}"
+        assert per_type == BRIGHT_RECALL_BY_TYPE, (
+            f"Per-type recall mismatch: {per_type}"
+        )
 
     def test_baseline_lock(self, probe_rows, loop_runs):
         """Delta against the pinned baseline equals the locked delta.
@@ -1123,9 +1132,15 @@ class TestBrightVideoProbesOrchestrator:
         )
 
     @pytest.mark.parametrize(
-        "query_id", ["bright_q1", "bright_q5", "bright_q12", "bright_q24"]
+        "query_id,golden",
+        [
+            pytest.param("bright_q1", "bright_q1.json", id="bright_q1"),
+            pytest.param("bright_q5", "bright_q5.json", id="bright_q5"),
+            pytest.param("bright_q12", "bright_q12.json", id="bright_q12"),
+            pytest.param("bright_q24", "bright_q24.json", id="bright_q24"),
+        ],
     )
-    def test_per_query_trajectory(self, query_id, probe_rows, loop_runs):
+    def test_per_query_trajectory(self, query_id, golden, probe_rows, loop_runs):
         """Trajectory dict byte-equal to per-query goldens for the 4 sentinels."""
         if query_id not in loop_runs:
             pytest.fail(
@@ -1133,6 +1148,7 @@ class TestBrightVideoProbesOrchestrator:
                 f"sort/filter changed unexpectedly."
             )
         res = loop_runs[query_id]
+        assert res["iterations_executed"] == BRIGHT_TRAJECTORY_ITERATIONS, res
         trajectory = {
             "query_id": query_id,
             "iterations_executed": res["iterations_executed"],
@@ -1141,7 +1157,4 @@ class TestBrightVideoProbesOrchestrator:
             "top1_video_id": res["top1_video_id"],
             "top1_segment_id": res["top1_segment_id"],
         }
-        # Golden filename matches the per-query trajectory contract in
-        # the spec: ``goldens/bright_qN.json`` (the query_id already
-        # starts with ``bright_``).
-        assert_golden_json(trajectory, f"{query_id}.json")
+        assert_golden_json(trajectory, golden)

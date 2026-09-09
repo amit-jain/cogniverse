@@ -151,6 +151,18 @@ def assert_golden_text(actual: str, name: str) -> None:
 _TENANT = "test_tenant"
 _PINNED_TS = "2026-05-19T00:00:00+00:00"
 
+# The inputs every agent call below is driven with. The golden pins in
+# tests/agents/unit/test_integration_goldens.py read them from here so a
+# fixture rename shows up as a failure instead of being absorbed.
+SUBJECT = "Marie Curie"
+CURIE_30S = "marie_curie_30s"
+TRAVERSAL_TS_RANGE = (10.0, 20.0)
+TIMELINE_VIDEOS = [CURIE_30S, "curie_sorbonne_60s", "curie_birth_v1"]
+CONTRADICTION_PREDICATE = "born_in"
+AUDIT_CLAIM = (SUBJECT, "discovered", "radium")
+FEDERATED_SOURCES = ["acme", "acme_corp"]
+CROSS_TENANT_TENANTS = ("acme", "globex")
+
 
 def _mention(
     source_doc_id: str,
@@ -455,10 +467,10 @@ class TestKGConsumerAgentsSegmentProvenance:
         agent = KnowledgeGraphTraversalAgent(deps=KGTraversalDeps())
         agent.set_graph_manager(ingested_curie_graph)
         result = agent.traverse(
-            "Marie Curie",
+            SUBJECT,
             filters={
-                "video_id": "marie_curie_30s",
-                "ts_range": (10.0, 20.0),
+                "video_id": CURIE_30S,
+                "ts_range": TRAVERSAL_TS_RANGE,
             },
         )
         assert_golden_json(result, "kg_traversal_curie_temporal.json")
@@ -467,7 +479,7 @@ class TestKGConsumerAgentsSegmentProvenance:
         """KGTraversalAgent.traverse without filters covers all four clips."""
         agent = KnowledgeGraphTraversalAgent(deps=KGTraversalDeps())
         agent.set_graph_manager(ingested_curie_graph)
-        result = agent.traverse("Marie Curie")
+        result = agent.traverse(SUBJECT)
         assert_golden_json(result, "kg_traversal_curie_all.json")
 
     @pytest.mark.asyncio
@@ -503,8 +515,8 @@ class TestKGConsumerAgentsSegmentProvenance:
         agent = TemporalReasoningAgent(deps=TemporalReasoningDeps())
         agent.set_graph_manager(ingested_curie_graph)
         result = agent.compare_over_time(
-            node_name="Marie Curie",
-            videos=["marie_curie_30s", "curie_sorbonne_60s", "curie_birth_v1"],
+            node_name=SUBJECT,
+            videos=TIMELINE_VIDEOS,
         )
         assert_golden_json(result, "temporal_reasoning_curie.json")
 
@@ -566,7 +578,7 @@ class TestKGConsumerAgentsSegmentProvenance:
     def test_citation_tracing_trace(self, ingested_curie_graph):
         """CitationTracingAgent.trace(edge_id) returns one grounded step."""
         extraction = _build_curie_extraction()
-        edge_id = _edge_id_of(extraction, "Marie Curie", "discovered", "radium")
+        edge_id = _edge_id_of(extraction, *AUDIT_CLAIM)
         agent = CitationTracingAgent(deps=CitationTracingDeps())
         agent.set_graph_manager(ingested_curie_graph)
         result = agent.trace(claim_id=edge_id)
@@ -643,7 +655,7 @@ class TestKGConsumerAgentsSegmentProvenance:
         """ContradictionReconciliationAgent.detect groups conflicting Edges."""
         agent = ContradictionReconciliationAgent(deps=ContradictionReconciliationDeps())
         agent.set_graph_manager(ingested_curie_graph)
-        result = agent.detect(node_name="Marie Curie", predicate="born_in")
+        result = agent.detect(node_name=SUBJECT, predicate=CONTRADICTION_PREDICATE)
         assert_golden_json(result, "contradiction_curie_birth.json")
 
     @pytest.mark.asyncio
@@ -725,7 +737,7 @@ class TestKGConsumerAgentsSegmentProvenance:
     def test_audit_explanation_explain(self, ingested_curie_graph):
         """AuditExplanationAgent.explain renders the canonical claim block."""
         extraction = _build_curie_extraction()
-        edge_id = _edge_id_of(extraction, "Marie Curie", "discovered", "radium")
+        edge_id = _edge_id_of(extraction, *AUDIT_CLAIM)
         agent = AuditExplanationAgent(deps=AuditExplanationDeps())
         agent.set_graph_manager(ingested_curie_graph)
         result = agent.explain(answer_id=edge_id)
@@ -735,7 +747,7 @@ class TestKGConsumerAgentsSegmentProvenance:
         """KnowledgeSummarizationAgent.summarize emits per-segment lines."""
         agent = KnowledgeSummarizationAgent(deps=KnowledgeSummarizationDeps())
         agent.set_graph_manager(ingested_curie_graph)
-        result = agent.summarize(video_id="marie_curie_30s")
+        result = agent.summarize(video_id=CURIE_30S)
         assert_golden_text(result["text"], "knowledge_summary_curie.txt")
 
     @pytest.mark.asyncio
@@ -787,9 +799,9 @@ class TestKGConsumerAgentsSegmentProvenance:
         # federated path exercises the cross-source merge (the dedupe is
         # what's under test here, not the multi-Vespa fan-out).
         agent.set_graph_managers(
-            {"acme": ingested_curie_graph, "acme_corp": ingested_curie_graph}
+            {name: ingested_curie_graph for name in FEDERATED_SOURCES}
         )
-        result = agent.query("Marie Curie", ["acme", "acme_corp"])
+        result = agent.query(SUBJECT, FEDERATED_SOURCES)
         assert_golden_json(result, "federated_curie.json")
 
     def test_cross_tenant_comparison_compare(self, ingested_curie_graph):
@@ -801,7 +813,7 @@ class TestKGConsumerAgentsSegmentProvenance:
         # serves as the regression marker for any future symmetric-overlay
         # change).
         agent.set_graph_managers(
-            {"acme": ingested_curie_graph, "globex": ingested_curie_graph}
+            {name: ingested_curie_graph for name in CROSS_TENANT_TENANTS}
         )
-        result = agent.compare(tenant_a="acme", tenant_b="globex")
+        result = agent.compare(*CROSS_TENANT_TENANTS)
         assert_golden_json(result, "cross_tenant_curie.json")

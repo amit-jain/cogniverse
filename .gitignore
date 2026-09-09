@@ -86,24 +86,12 @@ check_*.py
 *.npy
 *.npz
 
-# Integration-test goldens are produced by RECORD_GOLDEN=1 pytest runs
-# (see scripts/record_test_goldens.sh). Don't track them in git —
-# regenerate locally before running the byte-equal replay suites.
-tests/**/goldens/
-
-# ...except the joint-trace ColBERT goldens: they are the pinned contract the
-# suite compares against with a tolerance, and must be present so the suite
-# runs on a fresh checkout (a missing golden errors, not skips).
-!tests/core/integration/goldens/
-!tests/core/integration/goldens/*.npy
-!tests/core/integration/goldens/*.json
-
-# ...and the per-segment KG provenance recording, pinned by
-# tests/agents/unit/test_per_segment_kg_goldens.py so a fresh checkout replays
-# it and a fixture or schema change goes red without any service.
-!tests/agents/integration/goldens/
-tests/agents/integration/goldens/*
-!tests/agents/integration/goldens/per_segment_kg/
+# Integration-test goldens are the recording the byte-equal replay suites
+# compare against. They are tracked so a fresh checkout runs those suites,
+# and they are shape-pinned by tests/agents/unit/*_goldens.py. RECORD_GOLDEN=1
+# rewrites them in place, which shows up as a diff to review.
+# The array goldens need re-including against the *.npy rule above.
+!tests/**/goldens/*.npy
 
 # Temporary files
 *.tmp
