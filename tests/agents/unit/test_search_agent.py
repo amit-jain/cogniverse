@@ -2350,3 +2350,281 @@ def test_build_date_filter_rejects_bool():
     # Sane epoch-seconds value still coerces to milliseconds.
     out = SearchAgent._build_date_filter(1_700_000_000, None)
     assert out == {"creation_timestamp": {"gte": 1_700_000_000_000}}
+
+
+# --- One query rewrite per search, on every path -----------------------------
+
+_ENSEMBLE_PROFILES = ["profile1", "profile2", "profile3"]
+_ORIGINAL_QUERY = "robot arm drift"
+_REWRITTEN_QUERY = "industrial robot arm calibration drift compensation"
+_REWRITE_FIELDS = {
+    "reasoning": "The query names a mechanism; name it in full.",
+    "search_strategy": "hybrid",
+    "enhanced_query": _REWRITTEN_QUERY,
+    "confidence": "0.95",
+}
+
+
+class _CountingRewriteLM:
+    """A real ``dspy.LM`` that answers the rewrite once and counts its calls."""
+
+    def __new__(cls, *args, **kwargs):
+        from dspy.utils.dummies import DummyLM
+
+        class _Counting(DummyLM):
+            def __init__(self, answers, delay_s=0.0):
+                super().__init__(answers)
+                self.calls = 0
+                self.delay_s = delay_s
+
+            def __call__(self, *call_args, **call_kwargs):
+                self.calls += 1
+                if self.delay_s:
+                    import time as _time
+
+                    _time.sleep(self.delay_s)
+                return super().__call__(*call_args, **call_kwargs)
+
+        return _Counting(*args, **kwargs)
+
+
+def _ensemble_search_config():
+    return {
+        "active_video_profile": "video_colpali_smol500_mv_frame",
+        "backend": {
+            "profiles": {
+                "profile1": {"embedding_model": "model_one"},
+                "profile2": {"embedding_model": "model_two"},
+                "profile3": {"embedding_model": "model_three"},
+            }
+        },
+    }
+
+
+def _capturing_agent(monkeypatch, captured):
+    """A real SearchAgent whose legs record the query they were handed."""
+    from types import SimpleNamespace
+
+    from cogniverse_core.query import encoders as enc_mod
+
+    agent = SearchAgent(deps=SearchAgentDeps(), schema_loader=mock_schema_loader)
+    agent.search_config = _ensemble_search_config()
+
+    def _encode(_query):
+        return np.zeros((2, 128), dtype=np.float32)
+
+    agent.query_encoder = SimpleNamespace(encode=_encode)
+    monkeypatch.setattr(
+        enc_mod.QueryEncoderFactory,
+        "create_encoder",
+        lambda *a, **k: SimpleNamespace(encode=_encode),
+    )
+
+    def _search(query_dict):
+        captured[query_dict["profile"]] = query_dict["query"]
+        return []
+
+    agent._get_backend = lambda: SimpleNamespace(search=_search)
+
+    def _search_by_text(query, **kwargs):
+        captured["single_profile"] = query
+        return []
+
+    agent._search_by_text = _search_by_text
+    return agent
+
+
+@pytest.mark.unit
+@pytest.mark.asyncio
+class TestQueryRewriteRunsOnceForEveryLeg:
+    """The rewrite is one LM round trip per search, shared by every leg.
+
+    The ensemble path used to skip the rewrite the single-profile path ran, so
+    the same question was answered against a different query depending only on
+    how many profiles the tenant serves.
+    """
+
+    @patch("cogniverse_agents.search_agent.QueryEncoderFactory")
+    @patch("cogniverse_agents.search_agent.get_backend_registry")
+    @patch("cogniverse_foundation.config.utils.get_config")
+    async def test_three_legs_all_search_the_one_rewritten_query(
+        self,
+        mock_get_config,
+        mock_registry,
+        mock_encoder_factory,
+        monkeypatch,
+    ):
+        mock_get_config.return_value = _ensemble_search_config()
+        mock_registry.return_value.get_search_backend.return_value = Mock()
+        mock_encoder_factory.create_encoder.return_value = Mock()
+        captured: dict = {}
+        agent = _capturing_agent(monkeypatch, captured)
+        lm = _CountingRewriteLM([dict(_REWRITE_FIELDS)])
+
+        with dspy.context(lm=lm):
+            output = await agent._process_impl(
+                SearchInput(
+                    query=_ORIGINAL_QUERY,
+                    tenant_id="acme:acme",
+                    profiles=list(_ENSEMBLE_PROFILES),
+                    top_k=10,
+                )
+            )
+
+        assert captured == {name: _REWRITTEN_QUERY for name in _ENSEMBLE_PROFILES}
+        assert lm.calls == 1, (
+            "one rewrite per search — the rewritten query fans out to the legs"
+        )
+        assert output.search_mode == "ensemble"
+        assert output.enhanced_query == _REWRITTEN_QUERY
+        assert output.degraded_query_rewrite is None
+
+    @patch("cogniverse_agents.search_agent.QueryEncoderFactory")
+    @patch("cogniverse_agents.search_agent.get_backend_registry")
+    @patch("cogniverse_foundation.config.utils.get_config")
+    async def test_single_profile_searches_the_same_rewritten_query(
+        self,
+        mock_get_config,
+        mock_registry,
+        mock_encoder_factory,
+        monkeypatch,
+    ):
+        mock_get_config.return_value = _ensemble_search_config()
+        mock_registry.return_value.get_search_backend.return_value = Mock()
+        mock_encoder_factory.create_encoder.return_value = Mock()
+        captured: dict = {}
+        agent = _capturing_agent(monkeypatch, captured)
+        lm = _CountingRewriteLM([dict(_REWRITE_FIELDS)])
+
+        with dspy.context(lm=lm):
+            output = await agent._process_impl(
+                SearchInput(
+                    query=_ORIGINAL_QUERY,
+                    tenant_id="acme:acme",
+                    profiles=["profile1"],
+                    top_k=10,
+                )
+            )
+
+        assert captured == {"single_profile": _REWRITTEN_QUERY}
+        assert lm.calls == 1
+        assert output.search_mode == "single_profile"
+        assert output.enhanced_query == _REWRITTEN_QUERY
+        assert output.degraded_query_rewrite is None
+
+    @patch("cogniverse_agents.search_agent.QueryEncoderFactory")
+    @patch("cogniverse_agents.search_agent.get_backend_registry")
+    @patch("cogniverse_foundation.config.utils.get_config")
+    async def test_an_upstream_rewrite_is_used_without_a_second_round_trip(
+        self,
+        mock_get_config,
+        mock_registry,
+        mock_encoder_factory,
+        monkeypatch,
+    ):
+        mock_get_config.return_value = _ensemble_search_config()
+        mock_registry.return_value.get_search_backend.return_value = Mock()
+        mock_encoder_factory.create_encoder.return_value = Mock()
+        captured: dict = {}
+        agent = _capturing_agent(monkeypatch, captured)
+        lm = _CountingRewriteLM([dict(_REWRITE_FIELDS)])
+
+        with dspy.context(lm=lm):
+            output = await agent._process_impl(
+                SearchInput(
+                    query=_ORIGINAL_QUERY,
+                    tenant_id="acme:acme",
+                    profiles=list(_ENSEMBLE_PROFILES),
+                    enhanced_query="orchestrator rewrite",
+                    top_k=10,
+                )
+            )
+
+        assert captured == {name: "orchestrator rewrite" for name in _ENSEMBLE_PROFILES}
+        assert lm.calls == 0
+        assert output.enhanced_query == "orchestrator rewrite"
+        assert output.degraded_query_rewrite is None
+
+
+@pytest.mark.unit
+@pytest.mark.asyncio
+class TestQueryRewriteDegradesToTheOriginalQuery:
+    """A rewrite that fails or overruns its budget still searches, and says so."""
+
+    @patch("cogniverse_agents.search_agent.QueryEncoderFactory")
+    @patch("cogniverse_agents.search_agent.get_backend_registry")
+    @patch("cogniverse_foundation.config.utils.get_config")
+    async def test_a_failing_lm_searches_the_original_query_and_names_it(
+        self,
+        mock_get_config,
+        mock_registry,
+        mock_encoder_factory,
+        monkeypatch,
+    ):
+        from cogniverse_agents.search_agent import QUERY_REWRITE_FAILED
+
+        mock_get_config.return_value = _ensemble_search_config()
+        mock_registry.return_value.get_search_backend.return_value = Mock()
+        mock_encoder_factory.create_encoder.return_value = Mock()
+        captured: dict = {}
+        agent = _capturing_agent(monkeypatch, captured)
+
+        class _FailingLM(dspy.LM):
+            def __call__(self, *args, **kwargs):
+                raise ConnectionError("rewrite LM unreachable")
+
+        with dspy.context(lm=_FailingLM("openai/unreachable", api_key="x")):
+            output = await agent._process_impl(
+                SearchInput(
+                    query=_ORIGINAL_QUERY,
+                    tenant_id="acme:acme",
+                    profiles=list(_ENSEMBLE_PROFILES),
+                    top_k=10,
+                )
+            )
+
+        assert captured == {name: _ORIGINAL_QUERY for name in _ENSEMBLE_PROFILES}
+        assert output.degraded_query_rewrite == QUERY_REWRITE_FAILED
+        assert output.enhanced_query is None
+        assert output.search_mode == "ensemble"
+
+    @patch("cogniverse_agents.search_agent.QueryEncoderFactory")
+    @patch("cogniverse_agents.search_agent.get_backend_registry")
+    @patch("cogniverse_foundation.config.utils.get_config")
+    async def test_a_rewrite_past_its_budget_searches_the_original_query(
+        self,
+        mock_get_config,
+        mock_registry,
+        mock_encoder_factory,
+        monkeypatch,
+    ):
+        import time
+
+        from cogniverse_agents.search_agent import QUERY_REWRITE_TIMED_OUT
+
+        mock_get_config.return_value = _ensemble_search_config()
+        mock_registry.return_value.get_search_backend.return_value = Mock()
+        mock_encoder_factory.create_encoder.return_value = Mock()
+        captured: dict = {}
+        agent = _capturing_agent(monkeypatch, captured)
+        lm = _CountingRewriteLM([dict(_REWRITE_FIELDS)], delay_s=5.0)
+
+        started = time.perf_counter()
+        with dspy.context(lm=lm):
+            output = await agent._process_impl(
+                SearchInput(
+                    query=_ORIGINAL_QUERY,
+                    tenant_id="acme:acme",
+                    profiles=list(_ENSEMBLE_PROFILES),
+                    top_k=10,
+                    query_rewrite_timeout_s=0.5,
+                )
+            )
+        elapsed = time.perf_counter() - started
+
+        assert captured == {name: _ORIGINAL_QUERY for name in _ENSEMBLE_PROFILES}
+        assert output.degraded_query_rewrite == QUERY_REWRITE_TIMED_OUT
+        assert output.enhanced_query is None
+        assert 0.5 <= elapsed < 2.0, (
+            f"a 0.5s rewrite budget against a 5s LM returned in {elapsed:.2f}s"
+        )

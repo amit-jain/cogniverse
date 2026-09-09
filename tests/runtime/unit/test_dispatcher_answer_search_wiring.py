@@ -18,6 +18,10 @@ from unittest.mock import MagicMock
 import pytest
 
 from cogniverse_agents.gateway_agent import GatewayAgent as RealGatewayAgent
+from cogniverse_agents.search_agent import (
+    QUERY_REWRITE_FAILED,
+    QUERY_REWRITE_TIMED_OUT,
+)
 from cogniverse_agents.search_agent import SearchAgent as RealSearchAgent
 from cogniverse_foundation.config.unified_config import (
     BackendProfileConfig,
@@ -26,9 +30,11 @@ from cogniverse_foundation.config.unified_config import (
 from cogniverse_runtime.agent_dispatcher import (
     GROUNDING_NO_PROFILE_FOR_MODALITY,
     GROUNDING_NO_SERVABLE_PROFILE,
+    GROUNDING_SEARCH_RESERVE_S,
     GROUNDING_SEARCH_TIMEOUT_KEY,
     GROUNDING_SEARCH_UNAVAILABLE,
     GROUNDING_SEARCHED,
+    GROUNDING_SEARCHED_DEGRADED,
     GROUNDING_TENANT_DEFAULT_PROFILE,
     GROUNDING_THREADED,
     AgentDispatcher,
@@ -1658,6 +1664,7 @@ class TestAnswerEnvelopeCarriesGroundingState:
             "modalities": ["document"],
             "profiles": _profile_names_of_type("document"),
             "degraded_profiles": [],
+            "degraded_query_rewrite": None,
             "result_count": 1,
         }
         assert _CaptureAgent.captured["request"].search_results == [
@@ -1698,6 +1705,7 @@ class TestAnswerEnvelopeCarriesGroundingState:
             "modalities": ["video"],
             "profiles": [],
             "degraded_profiles": [],
+            "degraded_query_rewrite": None,
             "result_count": 0,
         }
         assert result["result"]["metadata"]["grounding"] == result["grounding"]
@@ -1734,6 +1742,7 @@ class TestAnswerEnvelopeCarriesGroundingState:
             "modalities": ["video"],
             "profiles": [],
             "degraded_profiles": [],
+            "degraded_query_rewrite": None,
             "result_count": 0,
         }
 
@@ -1760,6 +1769,7 @@ class TestAnswerEnvelopeCarriesGroundingState:
             "modalities": ["document"],
             "profiles": _profile_names_of_type("document"),
             "degraded_profiles": [],
+            "degraded_query_rewrite": None,
             "result_count": 0,
         }
         assert _CaptureAgent.captured["request"].search_results == []
@@ -1836,3 +1846,105 @@ class TestGroundingSearchBudgetFaultContract:
 
         assert GROUNDING_SEARCH_TIMEOUT_KEY in str(excinfo.value)
         assert searched == []
+
+
+@pytest.mark.unit
+@pytest.mark.asyncio
+class TestGroundingBoundsAndNamesTheQueryRewrite:
+    """The rewrite is bounded by the grounding budget and named when it fails.
+
+    A rewrite that does not answer must not consume the whole search budget,
+    and the answer it degrades must say so rather than report a clean search
+    of a query the caller never asked about.
+    """
+
+    @staticmethod
+    def _dispatcher():
+        dispatcher = AgentDispatcher(
+            agent_registry=MagicMock(),
+            config_manager=_config_manager(profiles=_document_profiles()),
+            schema_loader=MagicMock(),
+        )
+        dispatcher._init_agent_memory = lambda *a, **k: None
+        dispatcher.consult_egress_policy = lambda *a, **k: None
+        dispatcher._verify_egress = lambda *a, **k: None
+        dispatcher._apply_artefact_overlay = lambda *a, **k: None
+        return dispatcher
+
+    async def test_the_rewrite_budget_is_the_budget_less_the_search_reserve(self):
+        dispatcher = self._dispatcher()
+        budgets: list[float] = []
+
+        async def _search(query, tenant_id, top_k, **kwargs):
+            budgets.append(kwargs["query_rewrite_timeout_s"])
+            return {"results": [_s3_hit(1)]}
+
+        dispatcher._execute_search_task = _search
+
+        out = await dispatcher._resolve_answer_search_results(
+            "summarize the documents about robotics", "acme:acme", None, top_k=10
+        )
+
+        assert budgets == [_SHIPPED_GROUNDING_BUDGET_S - GROUNDING_SEARCH_RESERVE_S]
+        assert out.state == GROUNDING_SEARCHED
+        assert out.degraded_query_rewrite is None
+
+    async def test_a_degraded_rewrite_is_named_and_the_hits_are_kept(self):
+        dispatcher = self._dispatcher()
+
+        async def _search(query, tenant_id, top_k, **kwargs):
+            return {
+                "results": [_s3_hit(2)],
+                "degraded_query_rewrite": QUERY_REWRITE_TIMED_OUT,
+            }
+
+        dispatcher._execute_search_task = _search
+
+        out = await dispatcher._resolve_answer_search_results(
+            "summarize the documents about robotics", "acme:acme", None, top_k=10
+        )
+
+        assert out.hits == [_flatten_search_hit(_s3_hit(2))]
+        assert out.degraded_query_rewrite == QUERY_REWRITE_TIMED_OUT
+        assert out.state == GROUNDING_SEARCHED_DEGRADED
+        assert out.state != GROUNDING_SEARCH_UNAVAILABLE
+        assert out.degraded_profiles == ()
+        assert out.envelope() == {
+            "state": GROUNDING_SEARCHED_DEGRADED,
+            "modalities": ["document"],
+            "profiles": _profile_names_of_type("document"),
+            "degraded_profiles": [],
+            "degraded_query_rewrite": QUERY_REWRITE_TIMED_OUT,
+            "result_count": 1,
+        }
+
+    async def test_a_failed_rewrite_reaches_the_summary_envelope(self, monkeypatch):
+        dispatcher = self._dispatcher()
+
+        async def _search(query, tenant_id, top_k, **kwargs):
+            return {
+                "results": [_s3_hit(3)],
+                "degraded_query_rewrite": QUERY_REWRITE_FAILED,
+            }
+
+        dispatcher._execute_search_task = _search
+        _CaptureAgent.captured = {}
+        monkeypatch.setattr(
+            "cogniverse_agents.summarizer_agent.SummarizerAgent", _CaptureAgent
+        )
+
+        result = await dispatcher._execute_summarization_task(
+            "summarize the documents about robotics", "acme:acme"
+        )
+
+        assert result["grounding"] == {
+            "state": GROUNDING_SEARCHED_DEGRADED,
+            "modalities": ["document"],
+            "profiles": _profile_names_of_type("document"),
+            "degraded_profiles": [],
+            "degraded_query_rewrite": QUERY_REWRITE_FAILED,
+            "result_count": 1,
+        }
+        assert _CaptureAgent.captured["request"].search_results == [
+            _flatten_search_hit(_s3_hit(3))
+        ]

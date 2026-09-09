@@ -1701,6 +1701,17 @@ one encode. `SearchOutput.profiles` names the legs that ran and
 `SearchOutput.degraded_profiles` the ones that did not, so a caller reports a
 partial ensemble as partial. Every leg failing raises.
 
+Both search paths rewrite the query once. `_rewrite_query_for_search` runs the
+DSPy rewrite (`SearchOptimizationSignature`) before the mode branch, so a
+one-profile search and an ensemble of the same question reach the backend with
+the same query, and an ensemble fans that single rewrite out to every leg
+instead of rewriting per leg. A rewrite the orchestrator already made
+(`SearchInput.enhanced_query`) is used as it stands.
+`SearchInput.query_rewrite_timeout_s` bounds the LM round trip; a rewrite that
+fails or overruns it searches the original query and names itself on
+`SearchOutput.degraded_query_rewrite` as `query_rewrite_failed` or
+`query_rewrite_timed_out` rather than raising.
+
 #### Ensemble Architecture
 
 ```mermaid

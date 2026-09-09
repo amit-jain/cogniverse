@@ -172,6 +172,13 @@ class SearchInput(AgentInput):
         ),
     )
     rrf_k: int = Field(60, description="RRF constant for fusion")
+    query_rewrite_timeout_s: Optional[float] = Field(
+        None,
+        description=(
+            "Seconds the query rewrite may take before the search proceeds "
+            "with the original query. None: no per-call bound."
+        ),
+    )
 
     # Enrichment fields forwarded by the orchestrator from preprocessing
     # agents. When present, SearchAgent skips its internal DSPy rewrite and
@@ -289,6 +296,10 @@ class SearchOutput(AgentOutput):
         default_factory=list,
         description="Ensemble legs that did not run, as {profile, reason}",
     )
+    degraded_query_rewrite: Optional[str] = Field(
+        None,
+        description="Why the query rewrite did not apply, when it did not",
+    )
     results: List[Dict[str, Any]] = Field(
         default_factory=list, description="Search results"
     )
@@ -337,6 +348,12 @@ class SearchAgentDeps(AgentDeps):
     auto_create_memory_schema: bool = Field(
         True, description="Auto-create memory schema"
     )
+
+
+# Named reasons a search reports when its query rewrite did not apply. The
+# search still runs, on the original query.
+QUERY_REWRITE_FAILED = "query_rewrite_failed"
+QUERY_REWRITE_TIMED_OUT = "query_rewrite_timed_out"
 
 
 class SearchOptimizationSignature(dspy.Signature):
@@ -879,6 +896,60 @@ class SearchAgent(
         )
 
         return fused_results[:top_k]
+
+    async def _rewrite_query_for_search(
+        self, input: SearchInput, query: str, modality: str, top_k: int
+    ) -> Tuple[str, Optional[str], Optional[str]]:
+        """``(query to search, rewrite to report, how the rewrite degraded)``.
+
+        One rewrite per search, whatever the search mode: an ensemble fans the
+        same rewritten query out to every leg rather than rewriting per leg. A
+        rewrite the orchestrator already made (``input.enhanced_query``) is
+        used as it stands. A rewrite that fails, or overruns
+        ``input.query_rewrite_timeout_s`` — which bounds the whole step, its
+        context injection as well as the LM round trip — searches the original
+        query and names the degradation instead of raising.
+        """
+        if input.enhanced_query:
+            return input.enhanced_query, input.enhanced_query, None
+
+        self.emit_progress("query_optimization", "Optimizing query with DSPy...")
+
+        async def rewrite():
+            enriched_query = await self.inject_context_into_prompt_async(query, query)
+            return await self.call_dspy(
+                self.search_module,
+                output_field="enhanced_query",
+                query=enriched_query,
+                modality=modality,
+                top_k=top_k,
+            )
+
+        try:
+            if input.query_rewrite_timeout_s is None:
+                dspy_result = await rewrite()
+            else:
+                dspy_result = await asyncio.wait_for(
+                    rewrite(), timeout=input.query_rewrite_timeout_s
+                )
+        except asyncio.TimeoutError:
+            logger.warning(
+                "Query rewrite exceeded its %.1fs budget; searching %r",
+                input.query_rewrite_timeout_s,
+                query,
+            )
+            return query, None, QUERY_REWRITE_TIMED_OUT
+        except Exception as e:
+            logger.warning("Query rewrite failed: %r; searching %r", e, query)
+            return query, None, QUERY_REWRITE_FAILED
+
+        if hasattr(dspy_result, "enhanced_query") and hasattr(
+            dspy_result, "confidence"
+        ):
+            if parse_confidence(dspy_result.confidence) > 0.7:
+                logger.info(f"Using DSPy-enhanced query: {dspy_result.enhanced_query}")
+                return dspy_result.enhanced_query, dspy_result.enhanced_query, None
+        return query, None, None
 
     async def _search_ensemble(
         self,
@@ -1984,6 +2055,7 @@ class SearchAgent(
         degraded_profiles: List[Dict[str, str]] = []
         rrf_k_used = None
         enhanced_query = input.enhanced_query
+        degraded_query_rewrite = None
 
         # Check for ensemble mode (multiple profiles)
         self.emit_progress("retrieval", "Preparing search...")
@@ -2012,8 +2084,13 @@ class SearchAgent(
             profile = None
             rrf_k_used = input.rrf_k
 
+            (
+                search_query,
+                enhanced_query,
+                degraded_query_rewrite,
+            ) = await self._rewrite_query_for_search(input, query, modality, top_k)
             outcome = await self._search_ensemble(
-                query=input.enhanced_query or query,
+                query=search_query,
                 tenant_id=tenant_id,
                 profiles=input.profiles,
                 modality=modality,
@@ -2052,44 +2129,14 @@ class SearchAgent(
                 top_k=top_k,
             )
         else:
-            # Text-based search. SearchAgent's internal DSPy
-            # (SearchOptimizationSignature) is a query rewriter used as a
-            # fallback on the simple path (gateway → search direct). On the
-            # complex path the orchestrator invokes QueryEnhancementAgent
-            # first, which does the same rewrite with more context
-            # (entities + relationships). When that has populated
-            # `input.enhanced_query`, re-running the internal DSPy on an
-            # already-rewritten query adds an LLM hop without information
-            # gain, so skip it.
-            if input.enhanced_query:
-                search_query = input.enhanced_query
-            else:
-                self.emit_progress(
-                    "query_optimization", "Optimizing query with DSPy..."
-                )
-                search_query = query
-                enriched_query = await self.inject_context_into_prompt_async(
-                    query, query
-                )
-                try:
-                    dspy_result = await self.call_dspy(
-                        self.search_module,
-                        output_field="enhanced_query",
-                        query=enriched_query,
-                        modality=modality,
-                        top_k=top_k,
-                    )
-                    if hasattr(dspy_result, "enhanced_query") and hasattr(
-                        dspy_result, "confidence"
-                    ):
-                        if parse_confidence(dspy_result.confidence) > 0.7:
-                            search_query = dspy_result.enhanced_query
-                            enhanced_query = search_query
-                            logger.info(f"Using DSPy-enhanced query: {search_query}")
-                except Exception as e:
-                    logger.warning(
-                        f"DSPy optimization failed: {e}, using original query"
-                    )
+            # Text-based search. The rewrite is the same one the ensemble runs,
+            # so a tenant serving one profile and a tenant serving several
+            # search the same query for the same question.
+            (
+                search_query,
+                enhanced_query,
+                degraded_query_rewrite,
+            ) = await self._rewrite_query_for_search(input, query, modality, top_k)
 
             self.emit_progress("retrieval", "Searching by text...")
             results = await asyncio.to_thread(
@@ -2148,6 +2195,7 @@ class SearchAgent(
             profiles=profiles_used,
             rrf_k=rrf_k_used,
             degraded_profiles=degraded_profiles,
+            degraded_query_rewrite=degraded_query_rewrite,
             results=[_format_public_result(r) for r in results],
             total_results=len(results),
             rlm_synthesis=rlm_synthesis,
