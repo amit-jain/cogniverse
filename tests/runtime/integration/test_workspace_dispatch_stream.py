@@ -1,7 +1,9 @@
 """Workspace and token dispatch preserve request state through real runtime wiring."""
 
 import asyncio
+import json
 import threading
+from pathlib import Path
 from types import ModuleType
 
 import dspy
@@ -11,11 +13,20 @@ from cogniverse_core.agents.base import AgentBase, AgentDeps, AgentInput, AgentO
 from cogniverse_core.common.agent_models import AgentEndpoint
 from cogniverse_core.registries.agent_registry import AgentRegistry
 from cogniverse_runtime.agent_dispatcher import (
+    GROUNDING_SEARCH_RESERVE_S,
+    GROUNDING_SEARCH_TIMEOUT_KEY,
     AgentDispatcher,
     _scan_module_for_generic_classes,
 )
 
 pytestmark = [pytest.mark.integration, pytest.mark.ci_fast]
+
+_SHIPPED_REWRITE_BUDGET_S = (
+    json.loads(
+        (Path(__file__).resolve().parents[3] / "configs" / "config.json").read_text()
+    )[GROUNDING_SEARCH_TIMEOUT_KEY]
+    - GROUNDING_SEARCH_RESERVE_S
+)
 
 
 @pytest.fixture
@@ -182,11 +193,14 @@ async def test_generic_stream_builder_wires_search_and_context(
 ):
     seen = []
 
-    async def search(query, tenant_id, top_k):
-        seen.append((query, tenant_id, top_k))
+    async def search(query, tenant_id, top_k, **kwargs):
+        seen.append((query, tenant_id, top_k, kwargs))
         return {"results": [{"id": "evidence-a"}]}
 
     monkeypatch.setattr(stream_dispatcher, "_execute_search_task", search)
+    _modalities, profiles, _state = await stream_dispatcher._grounding_plan(
+        "subquestion", "test:unit", {}, None
+    )
     agent, request = stream_dispatcher._build_generic_streaming_agent(
         "deep_research_agent",
         "question",
@@ -199,7 +213,18 @@ async def test_generic_stream_builder_wires_search_and_context(
     )
     assert agent._config_manager is stream_dispatcher._config_manager
     assert await agent._search_fn("subquestion", "test:unit") == [{"id": "evidence-a"}]
-    assert seen == [("subquestion", "test:unit", 10)]
+    assert seen == [
+        (
+            "subquestion",
+            "test:unit",
+            10,
+            {
+                "enrichment": {"profiles": profiles},
+                "context": None,
+                "query_rewrite_timeout_s": _SHIPPED_REWRITE_BUDGET_S,
+            },
+        )
+    ]
     assert (
         request.max_iterations,
         request.attachments,
