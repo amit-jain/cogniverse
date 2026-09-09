@@ -1,0 +1,18 @@
+{
+  "diff": {
+    "shared": [
+      "1898",
+      "marie_curie",
+      "nobel_prize",
+      "paris",
+      "radium",
+      "sorbonne",
+      "warsaw"
+    ],
+    "tenant_only": {
+      "acme": [],
+      "globex": []
+    },
+    "trunk_only": []
+  }
+}

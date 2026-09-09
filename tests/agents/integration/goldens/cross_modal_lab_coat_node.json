@@ -1,0 +1,14 @@
+{
+  "kind": "concept",
+  "mentions": [
+    {
+      "evidence_span": "woman in lab coat with glassware in laboratory",
+      "modality": "vlm",
+      "segment_id": "frame_14_0",
+      "source_doc_id": "marie_curie_30s",
+      "ts_end": 14.0,
+      "ts_start": 14.0
+    }
+  ],
+  "name": "woman in lab coat"
+}

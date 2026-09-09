@@ -1,0 +1,26 @@
+[
+  {
+    "score": 0.87,
+    "segment_id": "seg_2",
+    "source_doc_id": "curie_sorbonne_60s",
+    "text": "Marie Curie was a professor at the Sorbonne in Paris.",
+    "ts_end": 20.0,
+    "ts_start": 10.0
+  },
+  {
+    "score": 0.94,
+    "segment_id": "seg_3",
+    "source_doc_id": "marie_curie_30s",
+    "text": "Marie Curie discovered radium in 1898 at the Sorbonne.",
+    "ts_end": 18.5,
+    "ts_start": 12.0
+  },
+  {
+    "score": 0.88,
+    "segment_id": "seg_4",
+    "source_doc_id": "marie_curie_30s",
+    "text": "She later won the Nobel Prize in Physics.",
+    "ts_end": 25.0,
+    "ts_start": 18.5
+  }
+]

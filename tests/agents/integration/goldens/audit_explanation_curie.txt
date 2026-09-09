@@ -1,0 +1,4 @@
+Claim: marie_curie discovered radium.
+Source: marie_curie_30s [12.0s-18.5s] (transcript)
+Evidence: "Marie Curie discovered radium in 1898 at the Sorbonne."
+Confidence: 0.92

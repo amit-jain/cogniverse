@@ -1,0 +1,30 @@
+{
+  "edges": [
+    {
+      "relation": "discovered",
+      "source": "marie_curie",
+      "target": "radium"
+    },
+    {
+      "relation": "discovered_in",
+      "source": "marie_curie",
+      "target": "1898"
+    },
+    {
+      "relation": "won",
+      "source": "marie_curie",
+      "target": "nobel_prize"
+    },
+    {
+      "relation": "worked_at",
+      "source": "marie_curie",
+      "target": "sorbonne"
+    }
+  ],
+  "nodes": [
+    "1898",
+    "nobel_prize",
+    "radium",
+    "sorbonne"
+  ]
+}

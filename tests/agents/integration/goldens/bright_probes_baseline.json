@@ -1,0 +1,5 @@
+{
+  "correct_at_1": 24,
+  "delta_to_target": 0,
+  "note": "Auto-recorded baseline from a full BRIGHT-corpus run. delta_to_target=0 means subsequent runs must reproduce this exact recall@1 value byte-equal."
+}
