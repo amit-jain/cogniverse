@@ -1,39 +1,15 @@
 # System Test Resources
 
-**Last Updated:** 2025-11-13
+Fixed inputs for system and integration tests. Vespa schemas are not
+mirrored here — tests load them from `configs/schemas/` through the
+production `FilesystemSchemaLoader`, and `tests/common/unit/test_schema_corpus_single_source.py`
+refuses a restated copy.
 
-This directory contains resources for system integration tests across the 10-package layered architecture, organized like Java's test resources folder. Resources support multi-modal testing (video, audio, images, documents, text, dataframes) and multi-tenant schema validation:
+## videos/
 
-## Structure
+- `v_-6dz6tBH77I.mp4`: small test video (1.3 MB)
+- `v_-D1gdv_gQyw.mp4`: medium test video (5.5 MB)
 
-- **videos/**: Small test video files for ingestion testing
-- **configs/**: Test-specific configuration files  
-- **schemas/**: Vespa schema definitions used in tests
+## configs/
 
-## Usage
-
-System tests use these resources for:
-- Testing real video ingestion pipelines
-- Validating search functionality with known data
-- Integration testing with isolated Vespa instances
-
-## Videos
-
-- `v_-6dz6tBH77I.mp4`: Small test video (1.3MB)  
-- `v_-D1gdv_gQyw.mp4`: Medium test video (5.5MB)
-
-## Configuration
-
-- `system_test_config.json`: Configuration for isolated test Vespa instance (port 8081)
-
-## Schemas
-
-All Vespa schema definitions for video processing profiles:
-
-- `video_colpali_smol500_mv_frame_schema.json`: ColPali multi-vector frame-based schema
-- `video_colqwen_omni_mv_chunk_30s_schema.json`: ColQwen multi-vector 30s chunk schema
-- `video_xclip_base_mv_chunk_30s_schema.json`: X-CLIP base 30s chunk schema  
-- `video_xclip_large_mv_chunk_30s_schema.json`: X-CLIP large 30s chunk schema
-- `video_xclip_lvt_base_sv_chunk_6s_schema.json`: X-CLIP LVT base 6s chunk schema
-- `video_xclip_lvt_large_sv_chunk_6s_schema.json`: X-CLIP LVT large 6s chunk schema
-- `ranking_strategies.json`: Ranking strategy definitions for all schemas
+Test-specific configuration files for isolated Vespa instances.
