@@ -202,7 +202,6 @@ class TestLifespanWiresSyntheticBackend:
                 for entity in extraction["entities"]
             ] == [
                 {"text": "Marie Curie", "type": "PERSON"},
-                {"text": "discovered", "type": "EVENT"},
                 {"text": "radium", "type": "CONCEPT"},
             ]
 

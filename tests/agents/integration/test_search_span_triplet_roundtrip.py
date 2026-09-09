@@ -84,9 +84,7 @@ def _build_search_agent(tenant_id: str) -> SearchAgent:
                 backend_port=8080,
                 auto_create_memory_schema=False,
             ),
-            schema_loader=FilesystemSchemaLoader(
-                base_path=Path("tests/system/resources/schemas")
-            ),
+            schema_loader=FilesystemSchemaLoader(base_path=Path("configs/schemas")),
             config_manager=None,
             port=8033,
         )

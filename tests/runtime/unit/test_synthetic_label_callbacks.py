@@ -1,9 +1,8 @@
 """Runtime synthetic callbacks expose production agent decisions directly."""
 
-from types import SimpleNamespace
-
 import pytest
 
+from cogniverse_agents.gateway_agent import GatewayOutput
 from cogniverse_runtime.main import (
     _dispatcher_profile_labeler,
     _dispatcher_routing_decider,
@@ -14,11 +13,16 @@ pytestmark = [pytest.mark.unit, pytest.mark.ci_fast]
 
 @pytest.mark.asyncio
 async def test_routing_callback_returns_gateway_decision_without_downstream_dispatch():
-    decision = SimpleNamespace(
+    decision = GatewayOutput(
         query="find Marie Curie",
         routed_to="search_agent",
         modality="video",
         complexity="simple",
+        generation_type="raw_results",
+        confidence=0.9,
+        fast_path_confidence_threshold=0.4,
+        gliner_threshold=0.3,
+        reasoning="keyword-routed person lookup",
     )
 
     class GatewayAgent:

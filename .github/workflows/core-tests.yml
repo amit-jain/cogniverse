@@ -9,12 +9,9 @@ on:
       - 'libs/foundation/**'
       - 'configs/schemas/**'
       - 'data/testset/**'
-      - 'tests/common/**'
-      - 'tests/core/**'
-      - 'tests/memory/**'
-      - 'tests/conftest.py'
-      - 'tests/fixtures/**'
-      - 'tests/utils/**'
+      # test_schema_corpus_single_source.py scans the whole tests/ tree for a
+      # restated shipped schema and for a loader over a private schema dir.
+      - 'tests/**'
       - 'pytest.ini'
       - 'pyproject.toml'
       - '.github/workflows/core-tests.yml'
@@ -25,7 +22,6 @@ on:
       - 'configs/config.json'
       - 'charts/cogniverse/templates/all-resources.yaml'
       - 'charts/cogniverse/values.yaml'
-      - 'tests/e2e/test_dashboard_e2e.py'
       - 'deploy/face_embed/Dockerfile'
   pull_request:
     branches: [ main, develop ]
@@ -35,12 +31,9 @@ on:
       - 'libs/foundation/**'
       - 'configs/schemas/**'
       - 'data/testset/**'
-      - 'tests/common/**'
-      - 'tests/core/**'
-      - 'tests/memory/**'
-      - 'tests/conftest.py'
-      - 'tests/fixtures/**'
-      - 'tests/utils/**'
+      # test_schema_corpus_single_source.py scans the whole tests/ tree for a
+      # restated shipped schema and for a loader over a private schema dir.
+      - 'tests/**'
       - 'pytest.ini'
       - 'pyproject.toml'
       # test_profile_validator.py reads the shipped config;
@@ -50,7 +43,6 @@ on:
       - 'configs/config.json'
       - 'charts/cogniverse/templates/all-resources.yaml'
       - 'charts/cogniverse/values.yaml'
-      - 'tests/e2e/test_dashboard_e2e.py'
       - 'deploy/face_embed/Dockerfile'
 
 env:

@@ -253,6 +253,7 @@ async def test_gateway_simple_persists_downstream_answer_to_real_mem0(
     from types import SimpleNamespace
     from unittest.mock import AsyncMock, MagicMock
 
+    from cogniverse_agents.gateway_agent import GatewayOutput
     from cogniverse_runtime.agent_dispatcher import _GatewayAgentEntry
 
     mm = _build_manager(
@@ -282,12 +283,18 @@ async def test_gateway_simple_persists_downstream_answer_to_real_mem0(
     }.get(name)
 
     # Force a 'simple' classification without building the real GatewayAgent.
-    gwout = SimpleNamespace(
+    # The real GatewayOutput, so the dispatcher reads every field the gateway
+    # contract declares instead of whichever subset a stand-in happened to set.
+    gwout = GatewayOutput(
+        query="show kubernetes storage",
         complexity="simple",
         modality="video",
         generation_type="raw_results",
         routed_to="search_agent",
         confidence=0.9,
+        fast_path_confidence_threshold=0.4,
+        gliner_threshold=0.3,
+        reasoning="keyword-routed video retrieval",
     )
     d._gateway_agents.set(
         TENANT,

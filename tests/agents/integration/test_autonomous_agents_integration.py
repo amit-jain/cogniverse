@@ -104,9 +104,7 @@ def orchestrator_with_real_agents(vespa_with_schema, dspy_lm, real_telemetry):
     from cogniverse_runtime.routers import agents as agents_router
 
     config_manager = vespa_with_schema["manager"].config_manager
-    schema_loader = FilesystemSchemaLoader(
-        base_path=Path("tests/system/resources/schemas")
-    )
+    schema_loader = FilesystemSchemaLoader(base_path=Path("configs/schemas"))
     registry = AgentRegistry(tenant_id="test:unit", config_manager=config_manager)
 
     asgi_base = "http://asgi.test"
@@ -912,12 +910,14 @@ class TestOrchestratorComplexPatterns:
 
         import dspy
 
-        # Workflow: [0,1] parallel → 2 sequential → [3,4] parallel
+        # Workflow: [0,1] parallel → 2 sequential → [3,4] parallel. Five
+        # distinct registered agents, so plan normalization keeps every step
+        # and the parallel-group indices stay in the raw sequence space.
         orchestrator_with_real_agents.dspy_module.forward = Mock(
             return_value=dspy.Prediction(
-                agent_sequence="entity_extraction,query_enhancement,profile_selection,search,entity_extraction",
+                agent_sequence="entity_extraction,query_enhancement,profile_selection,search,summarizer",
                 parallel_steps="0,1|3,4",  # First and last parallel
-                reasoning="Parallel extract+enhance, then profile, then parallel search+extract",
+                reasoning="Parallel extract+enhance, then profile, then parallel search+summarize",
             )
         )
 
@@ -940,6 +940,50 @@ class TestOrchestratorComplexPatterns:
         # VALIDATE: Second parallel group depends on sequential step
         assert result.plan_steps[3]["depends_on"] == [2]
         assert result.plan_steps[4]["depends_on"] == [2]
+
+    @pytest.mark.asyncio
+    async def test_repeated_agent_collapses_plan_and_remaps_groups(
+        self, orchestrator_with_real_agents
+    ):
+        """A repeated agent name keeps the first step and remaps group indices.
+
+        Agent results are keyed by name, so a second step for an agent already
+        planned could only overwrite the first. Normalization drops it and
+        rewrites the parallel-group / dependency indices into the surviving
+        step space, so no group points at a dropped step.
+        """
+        from unittest.mock import Mock
+
+        import dspy
+
+        orchestrator_with_real_agents.dspy_module.forward = Mock(
+            return_value=dspy.Prediction(
+                agent_sequence=(
+                    "entity_extraction,query_enhancement,profile_selection,"
+                    "search,entity_extraction"
+                ),
+                parallel_steps="0,1|3,4",
+                reasoning="Repeat of entity_extraction at raw index 4",
+            )
+        )
+
+        result = await orchestrator_with_real_agents._process_impl(
+            OrchestratorInput(query="Machine learning tutorials", tenant_id="test:unit")
+        )
+
+        assert [step["agent_name"] for step in result.plan_steps] == [
+            "entity_extraction",
+            "query_enhancement",
+            "profile_selection",
+            "search",
+        ]
+        assert result.parallel_groups == [[0, 1], [3]]
+        assert [step["depends_on"] for step in result.plan_steps] == [
+            [],
+            [],
+            [0, 1],
+            [2],
+        ]
 
     @pytest.mark.asyncio
     async def test_cascading_failure_validates_degradation(
