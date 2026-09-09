@@ -460,6 +460,11 @@ class TestAnnotationFeedbackCycleRealServices:
     persisted in the real Vespa config store — only Argo is a capture client
     (it is an external cluster API)."""
 
+    # The submit path refuses a Workflow with no template
+    # (quality_monitor.py:199); the cycle's caller supplies the one the
+    # deployment installs.
+    OPTIMIZATION_TEMPLATE = "cogniverse-optimization-runner"
+
     @pytest.mark.asyncio
     async def test_annotations_produce_trigger_dataset_and_cooldown(
         self,
@@ -555,15 +560,22 @@ class TestAnnotationFeedbackCycleRealServices:
             config_manager=config_manager,
             http_client=argo,
             dataset_store=real_provider.datasets,
+            workflow_template=self.OPTIMIZATION_TEMPLATE,
         )
 
-        assert result["agents"]["search"]["action"] == "recompile"
+        assert result["agents"]["search"]["action"] == "recompile", result["agents"][
+            "search"
+        ]
         assert result["agents"]["search"]["annotations"] == 3
         assert len(argo.posts) == 1
         params = {
             p["name"]: p["value"]
             for p in argo.posts[0][1]["workflow"]["spec"]["arguments"]["parameters"]
         }
+        assert (
+            argo.posts[0][1]["workflow"]["spec"]["workflowTemplateRef"]["name"]
+            == self.OPTIMIZATION_TEMPLATE
+        )
         assert params["agents"] == "search"
         dataset_name = params["trigger-dataset"]
 
@@ -600,6 +612,7 @@ class TestAnnotationFeedbackCycleRealServices:
             config_manager=create_default_config_manager(),  # fresh manager, same store
             http_client=argo,
             dataset_store=real_provider.datasets,
+            workflow_template=self.OPTIMIZATION_TEMPLATE,
             force=True,
         )
         assert rerun["agents"]["search"]["action"] == "cooldown"
