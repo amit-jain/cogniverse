@@ -24,6 +24,7 @@ from cogniverse_synthetic.topics import (
     topic_source_text,
 )
 from tests.agents.unit._recording_telemetry import RecordingTelemetryManager
+from tests.utils.memory_store import InMemoryConfigStore
 
 CORPUS_DIR = Path(__file__).resolve().parent / "data" / "human_captions"
 BIG_BUCK_BUNNY_CORPUS = (
@@ -92,6 +93,15 @@ GOLDEN_TOPICS = {
     "v_0BtHd6dvm78.txt": "kitchen implements like a coffee machine",
     "v_0DFz3sgfda0.txt": "various food items including things like",
 }
+
+
+def _memory_config_manager():
+    """The ConfigManager the runtime binds into this agent, over an in-memory store."""
+    from cogniverse_foundation.config.manager import ConfigManager
+
+    store = InMemoryConfigStore()
+    store.initialize()
+    return ConfigManager(store=store)
 
 
 def _records() -> list[dict[str, str]]:
@@ -224,6 +234,7 @@ async def test_big_buck_bunny_corpus_pins_zero_and_rich_entity_outputs():
 
     agent = EntityExtractionAgent(deps=EntityExtractionDeps())
     agent.telemetry_manager = RecordingTelemetryManager()
+    agent.bind_config_manager(_memory_config_manager())
 
     zero_result = await agent._process_impl(
         EntityExtractionInput(query=zero_topic, tenant_id="acme")
