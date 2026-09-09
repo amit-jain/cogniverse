@@ -1,4 +1,4 @@
-"""Schema-deploy helpers for the consolidated shared_vespa.
+"""Schema-deploy and content-feed helpers for the consolidated shared_vespa.
 
 Tests that need a data schema (video_colpali, code_lateon, agent_memories,
 etc.) tenant-scoped to themselves call into one of these helpers from a
@@ -21,7 +21,7 @@ from __future__ import annotations
 import json
 import re
 from pathlib import Path
-from typing import TYPE_CHECKING, Any, Dict
+from typing import TYPE_CHECKING, Any, Dict, Iterable, List
 
 from cogniverse_core.registries.backend_registry import BackendRegistry
 from cogniverse_core.schemas.filesystem_loader import FilesystemSchemaLoader
@@ -161,6 +161,55 @@ class IngestionBackendAdapter:
             "failed_documents": failed,
             "total_documents": len(documents),
         }
+
+
+def feed_text_documents(
+    *,
+    backend_client,
+    schema_name: str,
+    inference_url: str,
+    model_name: str,
+    documents: Iterable[Dict[str, str]],
+    corpus_id: str,
+) -> Any:
+    """Feed ``documents`` into ``schema_name`` with real served embeddings.
+
+    Runs the production ``EmbeddingGeneratorImpl`` against the served model at
+    ``inference_url`` and hands the Documents to ``backend_client``, which is
+    either a ``VespaBackend`` or an ``IngestionBackendAdapter``. Each entry
+    supplies ``id``, ``title`` and ``text``; the document id is the caller's,
+    so re-feeding the same corpus overwrites in place rather than accumulating.
+    """
+    from cogniverse_runtime.ingestion.processors.embedding_generator.embedding_generator_impl import (  # noqa: E501
+        EmbeddingGeneratorImpl,
+    )
+
+    generator = EmbeddingGeneratorImpl(
+        config={
+            "embedding_model": model_name,
+            "embedding_type": "multi_vector",
+            "model_loader": "colbert",
+            "schema_name": schema_name,
+            "inference_services": {"embedding": "colbert_pylate"},
+            "remote_inference_url": inference_url,
+        },
+        backend_client=backend_client,
+    )
+    segments: List[Dict[str, Any]] = [
+        {
+            "document_id": entry["id"],
+            "extracted_text": f"{entry['title']}. {entry['text']}",
+            "filename": entry["title"],
+            "document_type": "txt",
+            "path": f"/{corpus_id}/{entry['id']}.txt",
+            "page_count": 1,
+        }
+        for entry in documents
+    ]
+    return generator.generate_embeddings(
+        {"video_id": corpus_id, "document_files": segments},
+        output_dir=Path("/tmp"),
+    )
 
 
 def deploy_tenant_schema(
