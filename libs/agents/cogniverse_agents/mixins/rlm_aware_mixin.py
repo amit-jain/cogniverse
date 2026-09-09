@@ -17,6 +17,7 @@ from cogniverse_agents.inference.rlm_inference import (
     RLMResult,
     route_rlm_endpoint,
 )
+from cogniverse_core.agents.base import ConfigManagerAware
 from cogniverse_core.agents.rlm_options import RLMOptions
 from cogniverse_foundation.config.unified_config import LLMEndpointConfig
 
@@ -26,7 +27,7 @@ if TYPE_CHECKING:
 logger = logging.getLogger(__name__)
 
 
-class RLMAwareMixin:
+class RLMAwareMixin(ConfigManagerAware):
     """
     Mixin providing RLM inference capabilities to agents.
 

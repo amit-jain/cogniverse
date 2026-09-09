@@ -51,7 +51,7 @@ async def test_concurrent_get_backend_builds_once(monkeypatch):
     agent._shared_backend_lock = threading.Lock()
     agent._backend_type = "vespa"
     agent._backend_config = {}
-    agent.config_manager = SimpleNamespace()
+    agent.bind_config_manager(SimpleNamespace())
     agent.schema_loader = SimpleNamespace()
 
     barrier = threading.Barrier(_N)

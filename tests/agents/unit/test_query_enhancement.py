@@ -1461,6 +1461,7 @@ def qe_agent():
     """Create a QueryEnhancementAgent with mocked DSPy for unit testing."""
     deps = QueryEnhancementDeps()
     agent = QueryEnhancementAgent(deps=deps)
+    agent.bind_config_manager(_memory_config_manager())
     agent.telemetry_manager = RecordingTelemetryManager()
     return agent
 
@@ -1976,7 +1977,9 @@ class TestQueryEnhancementSpanContract:
             QueryEnhancementDeps,
         )
 
-        return QueryEnhancementAgent(deps=QueryEnhancementDeps(), port=19112)
+        agent = QueryEnhancementAgent(deps=QueryEnhancementDeps(), port=19112)
+        agent.bind_config_manager(_memory_config_manager())
+        return agent
 
     @pytest.mark.asyncio
     @pytest.mark.parametrize(
