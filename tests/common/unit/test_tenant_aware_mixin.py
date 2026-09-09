@@ -10,11 +10,25 @@ from cogniverse_core.agents.tenant_aware_mixin import TenantAwareAgentMixin
 from cogniverse_foundation.config.unified_config import SystemConfig
 
 
+def _memory_config_manager():
+    """The injected ConfigManager the mixin requires, over an in-memory store."""
+    from cogniverse_foundation.config.manager import ConfigManager
+    from tests.utils.memory_store import InMemoryConfigStore
+
+    store = InMemoryConfigStore()
+    store.initialize()
+    return ConfigManager(store=store)
+
+
 class MockAgentWithTenant(TenantAwareAgentMixin):
     """Mock agent class using tenant mixin for testing"""
 
-    def __init__(self, tenant_id: str, config=None):
-        super().__init__(tenant_id=tenant_id, config=config)
+    def __init__(self, tenant_id: str, config=None, config_manager=None):
+        super().__init__(
+            tenant_id=tenant_id,
+            config=config,
+            config_manager=config_manager or _memory_config_manager(),
+        )
         self.agent_name = "mock_agent"
 
 
@@ -29,7 +43,9 @@ class MockAgentMultipleInheritance(MockDSPyAgent, TenantAwareAgentMixin):
     """Mock agent with multiple inheritance for MRO testing"""
 
     def __init__(self, tenant_id: str, agent_name: str = "multi_agent"):
-        TenantAwareAgentMixin.__init__(self, tenant_id=tenant_id)
+        TenantAwareAgentMixin.__init__(
+            self, tenant_id=tenant_id, config_manager=_memory_config_manager()
+        )
         MockDSPyAgent.__init__(self, agent_name=agent_name)
 
 
