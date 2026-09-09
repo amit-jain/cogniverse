@@ -124,8 +124,6 @@ class TestVespaBackendIngestion:
         Note: This fixture ONLY starts the container. Schema deployment happens
         automatically when VideoIngestionPipeline creates backends via BackendRegistry.
         """
-        import os
-
         manager = VespaTestManager(app_name="test-ingestion", http_port=8082)
 
         try:
@@ -153,31 +151,37 @@ class TestVespaBackendIngestion:
                     materialise_test_pipeline_config(manager.http_port),
                 )
 
-                # Seed SystemConfig in the freshly-started Vespa so the pipeline's
-                # ``create_default_config_manager`` resolves to a config that
-                # carries the conftest-spawned inference URLs.
-                import json
-
-                from cogniverse_foundation.config.unified_config import SystemConfig
-                from cogniverse_foundation.config.utils import (
-                    create_default_config_manager,
-                )
-
-                raw_urls = os.environ.get("INFERENCE_SERVICE_URLS", "")
-                inference_service_urls = json.loads(raw_urls) if raw_urls else {}
-
-                cm = create_default_config_manager()
-                cm.set_system_config(
-                    SystemConfig(
-                        backend_url="http://localhost",
-                        backend_port=manager.http_port,
-                        inference_service_urls=inference_service_urls,
-                    )
-                )
-
                 yield manager
         finally:
             manager.cleanup()
+
+    @pytest.fixture(autouse=True)
+    def configured_inference_services(self, vespa_backend, inference_endpoints):
+        """Persist the services resolved for this test in its Vespa configuration."""
+        import json
+        import os
+
+        from cogniverse_foundation.config.manager import ConfigManager
+        from cogniverse_foundation.config.unified_config import SystemConfig
+
+        service_urls = json.loads(os.environ.get("INFERENCE_SERVICE_URLS", "{}"))
+        config_manager = create_default_config_manager()
+        config_manager.set_system_config(
+            SystemConfig(
+                backend_url="http://localhost",
+                backend_port=vespa_backend.http_port,
+                inference_service_urls=service_urls,
+            )
+        )
+        stored = ConfigManager(store=config_manager.store).get_system_config()
+        assert stored.inference_service_urls == service_urls
+        assert {
+            service: stored.inference_service_urls.get(service)
+            for service in inference_endpoints
+        } == {
+            service: endpoint.base_url
+            for service, endpoint in inference_endpoints.items()
+        }
 
     @pytest.fixture
     def vespa_test_videos(self, vespa_backend):
