@@ -30,20 +30,13 @@ def _default_telemetry_singleton():
 
 
 @pytest.fixture
-def harness_key_config_store(request, monkeypatch):
-    """Bind tenant retirement to the test-owned credential store."""
-    import subprocess
-
+def harness_key_config_store(monkeypatch):
+    """Bind tenant retirement to an in-memory credential store."""
     from cogniverse_foundation.config.manager import ConfigManager
     from cogniverse_runtime.admin import tenant_manager
-    from cogniverse_vespa.config.config_store import VespaConfigStore
+    from tests.utils.memory_store import InMemoryConfigStore
 
-    available = int(
-        subprocess.check_output(["free", "-g"], text=True).splitlines()[1].split()[-1]
-    )
-    assert available >= 30
-    vespa = request.getfixturevalue("shared_vespa")
-    store = VespaConfigStore(backend_port=vespa["http_port"])
+    store = InMemoryConfigStore()
     monkeypatch.setattr(tenant_manager, "_config_manager", ConfigManager(store=store))
-    yield
-    store.close()
+    assert tenant_manager._config_manager.store is store
+    return store
