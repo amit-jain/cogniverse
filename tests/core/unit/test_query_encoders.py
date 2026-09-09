@@ -331,3 +331,106 @@ def test_concurrent_cold_start_builds_one_encoder_per_key():
     assert build_count == 1, f"built {build_count} encoders, expected exactly 1"
     assert len(results) == 8
     assert all(r is results[0] for r in results), "threads got different instances"
+
+
+@patch("cogniverse_core.query.encoders.get_or_load_model")
+def test_cache_key_separates_same_service_pointed_at_different_endpoints(
+    mock_get_model,
+):
+    """One service name can resolve to different endpoints across configs (a
+    test sidecar vs the deployed one, a dead port during an outage drill). The
+    first caller's endpoint must not be handed to the second."""
+    mock_get_model.return_value = (MagicMock(), None)
+    profile_body = {
+        "embedding_model": "lightonai/LateOn",
+        "model_loader": "colbert",
+        "inference_services": {"embedding": "colbert_pylate"},
+        "schema_config": {"embedding_dim": 128},
+    }
+    live = _build_system_config(
+        "audio_clap_semantic",
+        profile_body,
+        inference_service_urls={"colbert_pylate": "http://127.0.0.1:8111"},
+    )
+    dead = _build_system_config(
+        "audio_clap_semantic",
+        profile_body,
+        inference_service_urls={"colbert_pylate": "http://127.0.0.1:29071"},
+    )
+
+    encoder_live = QueryEncoderFactory.create_encoder(
+        profile="audio_clap_semantic", config=live
+    )
+    encoder_dead = QueryEncoderFactory.create_encoder(
+        profile="audio_clap_semantic", config=dead
+    )
+
+    assert encoder_live is not encoder_dead
+    urls = [
+        call[0][1]["remote_inference_url"] for call in mock_get_model.call_args_list
+    ]
+    assert urls == ["http://127.0.0.1:8111", "http://127.0.0.1:29071"]
+
+
+def test_concurrent_cold_start_keeps_endpoints_apart():
+    """Two endpoints requested concurrently under the same model+service must
+    build exactly one encoder each, bound to its own URL."""
+    import threading
+    import time
+
+    profile_body = {
+        "embedding_model": "lightonai/LateOn",
+        "model_loader": "colbert",
+        "inference_services": {"embedding": "colbert_pylate"},
+        "schema_config": {"embedding_dim": 128},
+    }
+    urls = ["http://127.0.0.1:8111", "http://127.0.0.1:29071"]
+    configs = {
+        url: _build_system_config(
+            "audio_clap_semantic",
+            profile_body,
+            inference_service_urls={"colbert_pylate": url},
+        )
+        for url in urls
+    }
+
+    builds: list[str] = []
+    builds_lock = threading.Lock()
+    start = threading.Barrier(8)
+
+    def _slow_build(model_name, profile, profile_config, system_config):
+        url = system_config.inference_service_urls["colbert_pylate"]
+        with builds_lock:
+            builds.append(url)
+        time.sleep(0.3)
+        encoder = MagicMock()
+        encoder.url = url
+        return encoder
+
+    results: dict[str, list] = {url: [] for url in urls}
+    with patch.object(
+        QueryEncoderFactory, "_create_encoder_instance", staticmethod(_slow_build)
+    ):
+
+        def _worker(url):
+            start.wait()
+            results[url].append(
+                QueryEncoderFactory.create_encoder(
+                    profile="audio_clap_semantic", config=configs[url]
+                )
+            )
+
+        threads = [
+            threading.Thread(target=_worker, args=(urls[i % 2],)) for i in range(8)
+        ]
+        for t in threads:
+            t.start()
+        for t in threads:
+            t.join()
+
+    assert sorted(builds) == sorted(urls), f"built {builds}"
+    for url in urls:
+        assert len(results[url]) == 4
+        assert all(r is results[url][0] for r in results[url])
+        assert results[url][0].url == url
+    assert results[urls[0]][0] is not results[urls[1]][0]

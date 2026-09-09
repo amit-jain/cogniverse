@@ -35,11 +35,14 @@ from cogniverse_runtime.ingestion.processors.embedding_generator.embedding_gener
     EmbeddingGeneratorImpl,
 )
 from cogniverse_vespa.embedding_processor import VespaEmbeddingProcessor
-from cogniverse_vespa.ingestion_client import VespaPyClient
 from cogniverse_vespa.json_schema_parser import JsonSchemaParser
 from cogniverse_vespa.vespa_schema_manager import VespaSchemaManager
 from tests.system.vespa_test_manager import VespaTestManager
 from tests.utils.docker_utils import generate_unique_ports
+from tests.utils.vespa_test_helpers import (
+    IngestionBackendAdapter,
+    make_ingestion_client,
+)
 
 MULTIMODAL_HTTP_PORT, MULTIMODAL_CONFIG_PORT = generate_unique_ports(__name__)
 
@@ -85,48 +88,6 @@ AUDIO_TRANSCRIPTS = {
         "transcript": "Our cloud infrastructure handles millions of requests using Kubernetes and auto-scaling.",
     },
 }
-
-
-def _create_vespa_client(schema_name, http_port, schema_loader):
-    """Create a VespaPyClient connected to the test Vespa instance.
-
-    This is the same VespaPyClient used in production by VespaBackend.ingest_documents().
-    We create it directly here to avoid the heavyweight VespaBackend setup (which requires
-    ConfigManager, SchemaRegistry, tenant management) while exercising the exact same
-    process() + _feed_prepared_batch() code path.
-    """
-    config = {
-        "schema_name": schema_name,
-        "base_schema_name": schema_name,
-        "url": "http://localhost",
-        "port": http_port,
-        "schema_loader": schema_loader,
-    }
-    client = VespaPyClient(config=config)
-    client.connect()
-    return client
-
-
-class _BackendAdapter:
-    """Adapts VespaPyClient to the ingest_documents() interface expected by EmbeddingGeneratorImpl.
-
-    Production uses VespaBackend.ingest_documents() which internally does the exact same thing:
-    client.process(doc) + client._feed_prepared_batch(). This adapter strips the tenant
-    management and lazy init, exercising the same Document→Vespa conversion pipeline.
-    """
-
-    def __init__(self, vespa_client):
-        self._client = vespa_client
-
-    def ingest_documents(self, documents, schema_name):
-        prepared = [self._client.process(doc) for doc in documents]
-        success, failed = self._client._feed_prepared_batch(prepared)
-        return {
-            "success_count": success,
-            "failed_count": len(failed),
-            "failed_documents": failed,
-            "total_documents": len(documents),
-        }
 
 
 @pytest.fixture(scope="module")
@@ -236,7 +197,9 @@ def fed_documents(vespa_with_schemas, audio_wav_files, pylate_server):
     schema_loader = FilesystemSchemaLoader(SCHEMAS_DIR)
 
     # --- Feed documents through production pipeline ---
-    doc_client = _create_vespa_client("document_text", http_port, schema_loader)
+    doc_client = make_ingestion_client(
+        schema_name="document_text", http_port=http_port, schema_loader=schema_loader
+    )
     doc_generator = EmbeddingGeneratorImpl(
         config={
             "embedding_model": COLBERT_MODEL_NAME,
@@ -246,7 +209,7 @@ def fed_documents(vespa_with_schemas, audio_wav_files, pylate_server):
             "inference_services": {"embedding": "colbert_pylate"},
             "remote_inference_url": pylate_server,
         },
-        backend_client=_BackendAdapter(doc_client),
+        backend_client=IngestionBackendAdapter(doc_client),
     )
 
     assert doc_generator.colbert_model.endpoint_url == pylate_server
@@ -271,7 +234,11 @@ def fed_documents(vespa_with_schemas, audio_wav_files, pylate_server):
     # --- Feed audio through production pipeline (one call per item, each has own transcript) ---
     audio_results = {}
     for audio_id, audio_info in AUDIO_TRANSCRIPTS.items():
-        audio_client = _create_vespa_client("audio_content", http_port, schema_loader)
+        audio_client = make_ingestion_client(
+            schema_name="audio_content",
+            http_port=http_port,
+            schema_loader=schema_loader,
+        )
         audio_generator = EmbeddingGeneratorImpl(
             config={
                 "embedding_model": CLAP_MODEL_NAME,
@@ -282,7 +249,7 @@ def fed_documents(vespa_with_schemas, audio_wav_files, pylate_server):
                 "inference_services": {"embedding": "colbert_pylate"},
                 "remote_inference_url": pylate_server,
             },
-            backend_client=_BackendAdapter(audio_client),
+            backend_client=IngestionBackendAdapter(audio_client),
         )
         assert audio_generator.colbert_model.endpoint_url == pylate_server
         assert audio_generator.colbert_model.model_name == COLBERT_MODEL_NAME

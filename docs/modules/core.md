@@ -703,8 +703,10 @@ caching factory that picks the right encoder from `configs/config.json`.
 ```python
 from cogniverse_core.query.encoders import QueryEncoderFactory
 
-# Cached by (model_name, inference_service, embedding_dim) — a repeat
-# call for the same profile reuses the already-loaded encoder.
+# Cached by (model_name, inference_service, resolved service URL,
+# embedding_dim) — a repeat call for the same profile reuses the
+# already-loaded encoder, and two configs pointing the same service name at
+# different endpoints get one encoder each.
 encoder = QueryEncoderFactory.create_encoder(
     profile="frame_based_colpali",
     config=system_config,  # SystemConfig instance, required

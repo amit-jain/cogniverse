@@ -872,6 +872,12 @@ class EmbeddingGeneratorImpl(BaseEmbeddingGenerator):
                 )
                 doc.add_metadata("audio_path", str(audio_path))
                 doc.add_metadata("audio_transcript", transcript_text)
+                language = transcript_data.get("language")
+                if language:
+                    doc.add_metadata("audio_language", str(language))
+                duration = transcript_data.get("duration")
+                if duration is not None:
+                    doc.add_metadata("audio_duration", float(duration))
                 if video_data.get("source_url"):
                     doc.add_metadata("source_url", video_data["source_url"])
 
