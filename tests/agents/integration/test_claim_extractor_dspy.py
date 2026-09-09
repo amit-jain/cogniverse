@@ -626,6 +626,45 @@ class TestClaimExtractorRLMPromotion:
         assert recursive_error.reserved_output == reserved
         assert extractor._rlm_modules == {}
 
+    def test_second_lm_on_the_same_endpoint_reuses_the_read_window(
+        self, hermetic_test_lm
+    ):
+        """Ingestion builds one LM per segment; the window behind them is read
+        from the endpoint once."""
+        import cogniverse_foundation.config.token_budget as token_budget
+        from cogniverse_foundation.config.llm_factory import create_budgeted_dspy_lm
+        from cogniverse_foundation.config.unified_config import LLMEndpointConfig
+        from tests.utils.hermetic_llm import MODEL as SIDECAR_MODEL
+
+        token_budget.clear_context_window_memo()
+        real_fetch = token_budget.fetch_context_window
+        fetch_calls: List[str] = []
+
+        def counting_fetch(api_base, **kwargs):
+            fetch_calls.append(api_base)
+            return real_fetch(api_base, **kwargs)
+
+        def _lm():
+            return create_budgeted_dspy_lm(
+                LLMEndpointConfig(
+                    model=f"openai/{SIDECAR_MODEL}",
+                    api_base=hermetic_test_lm,
+                    api_key=resolve_api_key(),
+                    temperature=0.0,
+                    max_tokens=800,
+                )
+            )
+
+        with patch.object(token_budget, "fetch_context_window", counting_fetch):
+            first, second = _lm().budget, _lm().budget
+
+        assert len(fetch_calls) == 1, fetch_calls
+        assert (first.context_window, first.reserved_output) == (
+            second.context_window,
+            second.reserved_output,
+        )
+        assert first.context_window == real_fetch(hermetic_test_lm)
+
     def test_concurrent_promotion_resolves_the_window_once(self, configured_dspy_lm):
         """Eight threads promoting at once read the served window one time and
         share one module sized from it."""
