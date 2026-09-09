@@ -22,7 +22,7 @@ import threading
 from contextlib import asynccontextmanager
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Any, Dict, List, Literal, Optional, Union
+from typing import Any, Dict, List, Literal, Optional, Tuple, Union
 
 import dspy
 import numpy as np
@@ -285,6 +285,10 @@ class SearchOutput(AgentOutput):
         None, description="Profiles used (for ensemble mode)"
     )
     rrf_k: Optional[int] = Field(None, description="RRF constant (for ensemble mode)")
+    degraded_profiles: List[Dict[str, str]] = Field(
+        default_factory=list,
+        description="Ensemble legs that did not run, as {profile, reason}",
+    )
     results: List[Dict[str, Any]] = Field(
         default_factory=list, description="Search results"
     )
@@ -303,6 +307,20 @@ class SearchOutput(AgentOutput):
     span_id: Optional[str] = Field(
         None, description="Telemetry span id (16-hex) for this search"
     )
+
+
+@dataclass(frozen=True)
+class EnsembleOutcome:
+    """Fused ensemble hits and the fate of every leg that was planned.
+
+    ``searched`` are the profiles whose search ran; ``degraded`` pairs each
+    profile that did not with the reason, so a caller reports a partial
+    grounding as partial instead of as a complete one.
+    """
+
+    results: List[Dict[str, Any]]
+    searched: Tuple[str, ...]
+    degraded: Tuple[Tuple[str, str], ...]
 
 
 class SearchAgentDeps(AgentDeps):
@@ -872,7 +890,7 @@ class SearchAgent(
         top_k: int = 10,
         rrf_k: int = 60,
         **kwargs,
-    ) -> List[Dict[str, Any]]:
+    ) -> EnsembleOutcome:
         """
         Execute parallel search across multiple profiles and fuse with RRF.
 
@@ -885,7 +903,7 @@ class SearchAgent(
             **kwargs: Additional search parameters
 
         Returns:
-            Fused results from all profiles
+            The fused results and which profiles produced them.
         """
         logger.info(f"Ensemble search with {len(profiles)} profiles: {profiles}")
 
@@ -956,6 +974,11 @@ class SearchAgent(
         if not valid_embeddings:
             raise ValueError("Failed to encode query for any profile")
 
+        degraded = tuple(
+            (profile, "encode_failed")
+            for profile in profiles
+            if profile not in valid_embeddings
+        )
         logger.info(
             f"Encoded query for {len(valid_embeddings)}/{len(profiles)} profiles"
         )
@@ -1022,12 +1045,19 @@ class SearchAgent(
         if not ok:
             raise profile_results_list[0][1]
 
+        searched = tuple(profile for profile, _results in ok)
+        degraded += tuple(
+            (profile, "search_failed")
+            for profile, result in profile_results_list
+            if isinstance(result, Exception)
+        )
+
         # Convert to dict (only legs that returned actual hits)
         profile_results = {profile: results for profile, results in ok if results}
 
         if not profile_results:
             logger.warning("No results from any profile")
-            return []
+            return EnsembleOutcome(results=[], searched=searched, degraded=degraded)
 
         # Fuse results using RRF
         fused_results = self._fuse_results_rrf(profile_results, k=rrf_k, top_k=top_k)
@@ -1056,7 +1086,9 @@ class SearchAgent(
             )
             logger.debug("💾 Stored successful ensemble search in memory")
 
-        return fused_results
+        return EnsembleOutcome(
+            results=fused_results, searched=searched, degraded=degraded
+        )
 
     @staticmethod
     def _build_date_filter(
@@ -1949,6 +1981,7 @@ class SearchAgent(
             else self.active_profile
         )
         profiles_used = None
+        degraded_profiles: List[Dict[str, str]] = []
         rrf_k_used = None
         enhanced_query = input.enhanced_query
 
@@ -1977,10 +2010,9 @@ class SearchAgent(
             logger.info(f"Ensemble mode detected: {len(input.profiles)} profiles")
             search_mode = "ensemble"
             profile = None
-            profiles_used = input.profiles
             rrf_k_used = input.rrf_k
 
-            results = await self._search_ensemble(
+            outcome = await self._search_ensemble(
                 query=input.enhanced_query or query,
                 tenant_id=tenant_id,
                 profiles=input.profiles,
@@ -1990,6 +2022,15 @@ class SearchAgent(
                 start_date=input.start_date,
                 end_date=input.end_date,
             )
+            results = outcome.results
+            # The profiles reported are the ones whose search ran; a leg that
+            # could not encode or failed is named under degraded_profiles
+            # rather than counted as searched.
+            profiles_used = list(outcome.searched)
+            degraded_profiles = [
+                {"profile": profile, "reason": reason}
+                for profile, reason in outcome.degraded
+            ]
         elif input.video_data:
             # Video-based search
             results = await asyncio.to_thread(
@@ -2106,6 +2147,7 @@ class SearchAgent(
             profile=profile,
             profiles=profiles_used,
             rrf_k=rrf_k_used,
+            degraded_profiles=degraded_profiles,
             results=[_format_public_result(r) for r in results],
             total_results=len(results),
             rlm_synthesis=rlm_synthesis,
