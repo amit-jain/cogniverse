@@ -38,16 +38,6 @@ from cogniverse_foundation.telemetry.manager import TelemetryManager
 from cogniverse_runtime.agent_dispatcher import AgentDispatcher, _GatewayAgentEntry
 
 
-def _memory_config_manager():
-    """The injected ConfigManager every agent constructor requires."""
-    from cogniverse_foundation.config.manager import ConfigManager
-    from tests.utils.memory_store import InMemoryConfigStore
-
-    store = InMemoryConfigStore()
-    store.initialize()
-    return ConfigManager(store=store)
-
-
 @pytest.fixture(autouse=True)
 def _reset_telemetry():
     TelemetryManager.reset()
@@ -181,7 +171,7 @@ async def test_orchestrator_dispatch_roots_process_and_children(monkeypatch):
         lambda: manager,
     )
 
-    agent = OrchestratorAgent(config_manager=_memory_config_manager())
+    agent = OrchestratorAgent()
     agent.set_telemetry_manager(manager)
 
     async def _build_orchestrator(tenant_id):
@@ -222,7 +212,7 @@ async def test_search_dispatch_roots_process_and_children(monkeypatch):
         lambda **kwargs: fake_config,
     )
 
-    agent = SearchAgent(config_manager=_memory_config_manager())
+    agent = SearchAgent()
     agent.set_telemetry_manager(manager)
 
     def _build_search_agent(profile):
@@ -288,7 +278,7 @@ async def test_orchestrator_session_id_reaches_root_and_child(monkeypatch):
         lambda: manager,
     )
 
-    agent = OrchestratorAgent(config_manager=_memory_config_manager())
+    agent = OrchestratorAgent()
     agent.set_telemetry_manager(manager)
 
     async def _build_orchestrator(tenant_id):
@@ -324,7 +314,7 @@ async def test_orchestrator_without_session_id_sets_none_nowhere(monkeypatch):
         lambda: manager,
     )
 
-    agent = OrchestratorAgent(config_manager=_memory_config_manager())
+    agent = OrchestratorAgent()
     agent.set_telemetry_manager(manager)
 
     async def _build_orchestrator(tenant_id):

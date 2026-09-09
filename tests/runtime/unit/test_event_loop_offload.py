@@ -17,6 +17,7 @@ import pytest
 
 from cogniverse_agents.graph.doc_extractor import ClaimExtractionResult
 from cogniverse_agents.graph.graph_schema import ExtractionResult
+from cogniverse_core.agents.base import ConfigManagerAware
 
 pytestmark = [pytest.mark.unit, pytest.mark.ci_fast]
 
@@ -413,9 +414,18 @@ async def test_knowledge_bind_graph_and_inject_offloaded(monkeypatch):
     blocking config read / schema deploy on a cold tenant) run off the loop."""
     from types import SimpleNamespace
 
+    from cogniverse_foundation.config.manager import ConfigManager
     from cogniverse_runtime.routers import knowledge
+    from cogniverse_runtime.routers import tenant as tenant_router
+    from tests.utils.memory_store import InMemoryConfigStore
 
-    class _StubAgent:
+    # The route binds the runtime's manager onto the agent it builds; main.py
+    # installs it at startup via routers.tenant.set_config_manager.
+    store = InMemoryConfigStore()
+    store.initialize()
+    monkeypatch.setattr(tenant_router, "_config_manager", ConfigManager(store=store))
+
+    class _StubAgent(ConfigManagerAware):
         async def _process_impl(self, inp):
             return SimpleNamespace(model_dump=lambda: {"ok": True})
 
