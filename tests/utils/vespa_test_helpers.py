@@ -21,7 +21,7 @@ from __future__ import annotations
 import json
 import re
 from pathlib import Path
-from typing import Any, Dict
+from typing import TYPE_CHECKING, Any, Dict
 
 from cogniverse_core.registries.backend_registry import BackendRegistry
 from cogniverse_core.schemas.filesystem_loader import FilesystemSchemaLoader
@@ -31,6 +31,9 @@ from cogniverse_foundation.config.unified_config import (
     SystemConfig,
 )
 from cogniverse_vespa.config.config_store import VespaConfigStore
+
+if TYPE_CHECKING:
+    from cogniverse_vespa.ingestion_client import VespaPyClient
 
 _PROFILES_PATH = Path(__file__).resolve().parents[2] / "configs" / "config.json"
 _SCHEMAS_DIR = _PROFILES_PATH.parent / "schemas"
@@ -81,12 +84,18 @@ def shipped_profile(
     return profile
 
 
-def make_config_manager(shared_vespa: Dict[str, Any]) -> ConfigManager:
+def make_config_manager(
+    shared_vespa: Dict[str, Any],
+    *,
+    inference_service_urls: Dict[str, str] | None = None,
+) -> ConfigManager:
     """Build a ConfigManager bound to the shared_vespa container.
 
     Sets ``SystemConfig.backend_url/backend_port`` so any code path that
     later resolves a Vespa endpoint via the manager points at the shared
-    container, not at production defaults.
+    container, not at production defaults. ``inference_service_urls`` maps
+    a profile's ``inference_services.embedding`` name onto the test-owned
+    sidecar serving it, which is what search-side encoder resolution reads.
     """
     store = VespaConfigStore(
         backend_url="http://localhost",
@@ -97,9 +106,61 @@ def make_config_manager(shared_vespa: Dict[str, Any]) -> ConfigManager:
         SystemConfig(
             backend_url="http://localhost",
             backend_port=shared_vespa["http_port"],
+            inference_service_urls=dict(inference_service_urls or {}),
         )
     )
     return cm
+
+
+def make_ingestion_client(
+    *,
+    schema_name: str,
+    http_port: int,
+    schema_loader: FilesystemSchemaLoader,
+    base_schema_name: str | None = None,
+) -> "VespaPyClient":
+    """A connected ``VespaPyClient`` for ``schema_name`` on the test Vespa.
+
+    This is the client production's ``VespaBackend.ingest_documents()`` drives;
+    building it directly skips the tenant-management wrapper while keeping the
+    same ``process()`` + ``_feed_prepared_batch()`` path. ``base_schema_name``
+    names the ``configs/schemas`` file behind a tenant-scoped ``schema_name``.
+    """
+    from cogniverse_vespa.ingestion_client import VespaPyClient
+
+    client = VespaPyClient(
+        config={
+            "schema_name": schema_name,
+            "base_schema_name": base_schema_name or schema_name,
+            "url": "http://localhost",
+            "port": http_port,
+            "schema_loader": schema_loader,
+        }
+    )
+    client.connect()
+    return client
+
+
+class IngestionBackendAdapter:
+    """Adapts ``VespaPyClient`` to the ``ingest_documents()`` interface
+    ``EmbeddingGeneratorImpl`` calls.
+
+    ``VespaBackend.ingest_documents()`` does the same two steps internally:
+    ``client.process(doc)`` then ``client._feed_prepared_batch()``.
+    """
+
+    def __init__(self, vespa_client):
+        self._client = vespa_client
+
+    def ingest_documents(self, documents, schema_name):
+        prepared = [self._client.process(doc) for doc in documents]
+        success, failed = self._client._feed_prepared_batch(prepared)
+        return {
+            "success_count": success,
+            "failed_count": len(failed),
+            "failed_documents": failed,
+            "total_documents": len(documents),
+        }
 
 
 def deploy_tenant_schema(

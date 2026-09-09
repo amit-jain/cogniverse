@@ -253,6 +253,32 @@ class XClipQueryEncoder(QueryEncoder):
         return self.embedding_dim
 
 
+def _resolve_inference_url(
+    profile: str,
+    profile_config: dict,
+    system_config: "SystemConfig",
+) -> Optional[str]:
+    """The sidecar URL a profile's ``inference_services.embedding`` names.
+
+    ``None`` when the profile names no service (local loading). A named
+    service with no configured URL is a deployment error, not a fallback.
+    """
+    service_name = (profile_config.get("inference_services") or {}).get("embedding")
+    if not service_name:
+        return None
+    service_urls = getattr(system_config, "inference_service_urls", {}) or {}
+    inference_url = service_urls.get(service_name)
+    if not inference_url:
+        raise ValueError(
+            f"Profile {profile!r} specifies inference_services.embedding="
+            f"{service_name!r} but no URL is configured. Deployed services: "
+            f"{sorted(service_urls)}. Enable inference.{service_name} in the "
+            f"Helm values or remove the inference_services.embedding field "
+            f"to fall back to local loading."
+        )
+    return inference_url
+
+
 def _build_colbert_encoder(
     model_name: str,
     profile: str,
@@ -268,24 +294,12 @@ def _build_colbert_encoder(
             f"schema_config.embedding_dim. Add it to configs/config.json."
         )
 
-    service_name = (profile_config.get("inference_services") or {}).get("embedding")
-    inference_url: Optional[str] = None
-    if service_name:
-        service_urls = getattr(system_config, "inference_service_urls", {}) or {}
-        inference_url = service_urls.get(service_name)
-        if not inference_url:
-            available = sorted(service_urls)
-            raise ValueError(
-                f"Profile {profile!r} specifies inference_services.embedding="
-                f"{service_name!r} but no URL is configured. Deployed services: "
-                f"{available}. Enable inference.{service_name} in the Helm values "
-                f"or remove the inference_services.embedding field to fall back "
-                f"to local loading."
-            )
     return ColBERTQueryEncoder(
         model_name,
         embedding_dim=embedding_dim,
-        inference_service_url=inference_url,
+        inference_service_url=_resolve_inference_url(
+            profile, profile_config, system_config
+        ),
     )
 
 
@@ -295,7 +309,7 @@ class QueryEncoderFactory:
     Caches encoders by model_name so each model is loaded exactly once.
     """
 
-    # (model_name, inference_service, embedding_dim) → QueryEncoder instance
+    # (model_name, inference_service, service_url, embedding_dim) -> QueryEncoder
     _encoder_cache: dict = {}
     # Short-held guard for the two dicts; per-key locks so concurrent cold
     # starts of the SAME key don't each build a duplicate (multi-GB) encoder,
@@ -353,12 +367,16 @@ class QueryEncoderFactory:
                 raise ValueError(f"No embedding_model specified for profile: {profile}")
 
         # Cache key includes per-profile routing knobs so profiles sharing a
-        # model but declaring different inference services or embedding dims
-        # do not collapse onto the first-constructed encoder.
+        # model but declaring different inference services, endpoints or
+        # embedding dims do not collapse onto the first-constructed encoder.
+        # The resolved URL is part of the key: one service name can point at
+        # different endpoints across configs, and the first caller's endpoint
+        # would otherwise be handed to every later one.
         schema_config = profile_config.get("schema_config", {}) or {}
         cache_key = (
             model_name,
             (profile_config.get("inference_services") or {}).get("embedding"),
+            _resolve_inference_url(profile, profile_config, config),
             schema_config.get("embedding_dim"),
         )
 
@@ -400,23 +418,9 @@ class QueryEncoderFactory:
           3. Profile-name substring match.
         """
         model_loader = profile_config.get("model_loader")
-        # Resolve the configured sidecar URL for this profile so the
-        # encoders can route through the deployed vLLM service instead
-        # of importing colpali_engine in-process. _build_colbert_encoder
-        # already does this; mirror it for ColPali / ColQwen.
-        service_name = (profile_config.get("inference_services") or {}).get("embedding")
-        inference_url: Optional[str] = None
-        if service_name:
-            service_urls = getattr(system_config, "inference_service_urls", {}) or {}
-            inference_url = service_urls.get(service_name)
-            if not inference_url:
-                raise ValueError(
-                    f"Profile {profile!r} specifies inference_services.embedding="
-                    f"{service_name!r} but no URL is configured. Deployed services: "
-                    f"{sorted(service_urls)}. Enable inference.{service_name} in the "
-                    f"Helm values or remove the inference_services.embedding field "
-                    f"to fall back to local loading."
-                )
+        # Route through the deployed sidecar rather than importing the heavy
+        # local engine in-process.
+        inference_url = _resolve_inference_url(profile, profile_config, system_config)
 
         if model_loader == "colbert":
             return _build_colbert_encoder(
