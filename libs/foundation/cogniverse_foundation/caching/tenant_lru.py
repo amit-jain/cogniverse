@@ -87,7 +87,7 @@ class TenantLRUCache(Generic[T]):
         # Release the displaced value — cached instances hold native
         # resources (connection pools), and a silent overwrite leaks them.
         if displaced is not None and displaced is not value:
-            self._dispose(key, displaced)
+            self._dispose(key, displaced, reason="overwritten")
 
     def get_or_set(self, key: str, factory: Callable[[], T]) -> T:
         """Return cached value or build + cache one atomically."""
@@ -151,7 +151,7 @@ class TenantLRUCache(Generic[T]):
                 deferred = []
             self._evict_over_capacity()
         for value in deferred:
-            self._invoke_on_evict(key, value)
+            self._invoke_on_evict(key, value, "deferred close on last release")
 
     @contextmanager
     def lease(self, key: str) -> Iterator[Optional[T]]:
@@ -178,21 +178,23 @@ class TenantLRUCache(Generic[T]):
         return None
 
     @contextmanager
-    def lease_value(self, value: T) -> Iterator[None]:
+    def lease_value(self, value: T) -> Iterator[bool]:
         """Hold ``value`` against eviction for the block.
 
-        For callers that hold the object rather than its key. A value the
-        cache does not hold — built outside it, or already evicted — is
-        the caller's to manage and checks out nothing.
+        Yields True when a checkout was taken. For callers that hold the
+        object rather than its key. A value the cache does not hold — built
+        outside it, or already evicted — is the caller's to manage, checks
+        out nothing, and yields False so the caller can re-resolve instead
+        of working on a released instance.
         """
         with self._lock:
             key = self.key_of(value)
             held = self.acquire(key) if key is not None else None
         if held is None:
-            yield
+            yield False
             return
         try:
-            yield
+            yield True
         finally:
             self.release(key)
 
@@ -205,7 +207,7 @@ class TenantLRUCache(Generic[T]):
             entries = list(self._data.items())
             self._data.clear()
         for key, value in entries:
-            self._dispose(key, value)
+            self._dispose(key, value, reason="cache cleared")
 
     def keys(self) -> list[str]:
         with self._lock:
@@ -257,19 +259,29 @@ class TenantLRUCache(Generic[T]):
                 break
             evicted.append((victim, self._data.pop(victim)))
         for key, value in evicted:
-            self._invoke_on_evict(key, value)
+            self._invoke_on_evict(key, value, "capacity eviction")
 
-    def _dispose(self, key: str, value: T) -> None:
+    def _dispose(self, key: str, value: T, reason: str) -> None:
         """Close ``value`` now, or once the checkouts on ``key`` end."""
         with self._lock:
             if key in self._leases:
                 self._deferred.setdefault(key, []).append(value)
                 return
-        self._invoke_on_evict(key, value)
+        self._invoke_on_evict(key, value, reason)
 
-    def _invoke_on_evict(self, key: str, value: T) -> None:
+    def _invoke_on_evict(self, key: str, value: T, reason: str) -> None:
         if self._on_evict is None:
             return
+        # A cached value carries native resources (connection pools) and
+        # on_evict releases them. Anything still holding this value stops
+        # working here, so the close is logged with the key and the reason
+        # that triggered it.
+        logger.warning(
+            "TenantLRUCache closing %s (%s): %s",
+            key,
+            reason,
+            type(value).__name__,
+        )
         try:
             self._on_evict(key, value)
         except Exception as exc:
