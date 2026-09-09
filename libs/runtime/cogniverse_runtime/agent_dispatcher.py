@@ -2301,6 +2301,8 @@ class AgentDispatcher:
         # declares it or accepts extras.
         if "vespa_endpoint" in deps_cls.model_fields:
             deps_kwargs["vespa_endpoint"] = self._get_vespa_endpoint(tenant_id)
+        if "config_manager" in deps_cls.model_fields:
+            deps_kwargs["config_manager"] = self._config_manager
         if (
             "tenant_id" in deps_cls.model_fields
             or deps_cls.model_config.get("extra") == "allow"
@@ -2331,6 +2333,8 @@ class AgentDispatcher:
         if "config_manager" in constructor:
             collaborators["config_manager"] = self._config_manager
         agent = agent_cls(deps=deps_cls(**deps_kwargs), **collaborators)
+        if agent._config_manager is None:
+            agent.bind_config_manager(self._config_manager)
         return agent, typed_input_from_context(
             input_cls, query=query, tenant_id=tenant_id, context=context
         )
