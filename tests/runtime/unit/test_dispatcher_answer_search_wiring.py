@@ -1763,3 +1763,76 @@ class TestAnswerEnvelopeCarriesGroundingState:
             "result_count": 0,
         }
         assert _CaptureAgent.captured["request"].search_results == []
+
+
+class TestGroundingSearchBudgetFaultContract:
+    """How the grounding budget's own config read fails.
+
+    The budget is resolved after the profiles are planned, so a config store
+    that goes down between the two reads fails the budget read alone. That is
+    the same dependency outage the plan degrades on and it degrades the same
+    way; a budget the config never declares is a misconfiguration and raises.
+    """
+
+    @staticmethod
+    def _dispatcher():
+        return AgentDispatcher(
+            agent_registry=MagicMock(),
+            config_manager=_config_manager(profiles=_document_profiles()),
+            schema_loader=MagicMock(),
+        )
+
+    async def test_config_outage_on_the_budget_read_degrades_the_grounding(
+        self, monkeypatch
+    ):
+        dispatcher = self._dispatcher()
+        searched: list[str] = []
+
+        async def _search(query, tenant_id, top_k, **kwargs):
+            searched.append(query)
+            return {"results": [_s3_hit(1)]}
+
+        dispatcher._execute_search_task = _search
+
+        def _down(**kwargs):
+            raise ConnectionError("config store unreachable")
+
+        monkeypatch.setattr("cogniverse_foundation.config.utils.get_config", _down)
+
+        out = await dispatcher._resolve_answer_search_results(
+            "summarize the documents about robotics", "acme:acme", None, top_k=10
+        )
+
+        assert searched == []
+        assert out.state == GROUNDING_SEARCH_UNAVAILABLE
+        assert out.hits == []
+        assert out.modalities == ("document",)
+        assert out.profiles == tuple(_profile_names_of_type("document"))
+        assert out.degraded_profiles == ()
+        assert out.nothing_to_search is False
+
+    async def test_an_undeclared_budget_raises_instead_of_searching_unbounded(
+        self, monkeypatch
+    ):
+        dispatcher = self._dispatcher()
+        searched: list[str] = []
+
+        async def _search(query, tenant_id, top_k, **kwargs):
+            searched.append(query)
+            return {"results": []}
+
+        dispatcher._execute_search_task = _search
+        fake_config = MagicMock()
+        fake_config.get = lambda key, default=None: default
+        monkeypatch.setattr(
+            "cogniverse_foundation.config.utils.get_config",
+            lambda **kwargs: fake_config,
+        )
+
+        with pytest.raises(ValueError) as excinfo:
+            await dispatcher._resolve_answer_search_results(
+                "summarize the documents about robotics", "acme:acme", None, top_k=10
+            )
+
+        assert GROUNDING_SEARCH_TIMEOUT_KEY in str(excinfo.value)
+        assert searched == []
