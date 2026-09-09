@@ -218,6 +218,7 @@ BATCH2=(
   tests/e2e/test_orchestrator_inbound_e2e.py
   tests/e2e/test_quality_monitor_e2e.py
   tests/e2e/test_coding_cli_e2e.py
+  tests/e2e/test_pi_harness_e2e.py
   tests/e2e/test_deep_research_and_annotation_queue_e2e.py
   tests/e2e/test_graph_cli_e2e.py
   tests/e2e/test_messaging_e2e.py
