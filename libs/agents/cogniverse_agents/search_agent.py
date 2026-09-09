@@ -625,38 +625,21 @@ class SearchAgent(
         Args:
             deps: Typed dependencies with tenant_id and configuration
             schema_loader: SchemaLoader instance (REQUIRED for dependency injection)
-            config_manager: ConfigManager instance (optional, will create default if None)
+            config_manager: ConfigManager instance (REQUIRED for dependency injection)
             port: A2A server port
 
         Raises:
             TypeError: If deps is not SearchAgentDeps
             ValidationError: If deps fails Pydantic validation
             ValueError: If schema_loader is None
+            AgentConfigurationError: If config_manager is None
         """
         if schema_loader is None:
             raise ValueError(
                 "schema_loader is required for SearchAgent. "
                 "Dependency injection is mandatory - pass SchemaLoader instance explicitly."
             )
-
-        # Debug: Log config_manager state
-        logger_temp = logging.getLogger(__name__)
-        if config_manager is None:
-            logger_temp.warning(
-                "⚠️  SearchAgent received config_manager=None, creating default"
-            )
-            from cogniverse_foundation.config.utils import create_default_config_manager
-
-            config_manager = create_default_config_manager()
-        else:
-            db_path = (
-                getattr(config_manager.store, "db_path", "unknown")
-                if hasattr(config_manager, "store")
-                else "no store"
-            )
-            logger_temp.warning(
-                f"✅ SearchAgent received config_manager with DB: {db_path}"
-            )
+        self.bind_config_manager(config_manager)
 
         # Store dependencies for use in initialization
         self.schema_loader = schema_loader
@@ -700,11 +683,7 @@ class SearchAgent(
             version="4.0.0",
         )
 
-        # Initialize A2A base - this also sets up config_manager
         super().__init__(deps=deps, config=a2a_config, dspy_module=self.search_module)
-
-        # Override config_manager with the injected one
-        self.config_manager = config_manager
 
         # Load system-level infrastructure config (profiles, models, backend URLs).
         # Tenant-scoped operations (backend creation, schema routing) happen per-request.

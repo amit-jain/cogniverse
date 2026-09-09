@@ -193,6 +193,56 @@ class AgentValidationError(Exception):
         self.validation_error = validation_error
 
 
+class AgentConfigurationError(Exception):
+    """Raised when an agent is constructed without a dependency it requires."""
+
+
+class ConfigManagerAware:
+    """Holds the injected ConfigManager for an agent.
+
+    ``AgentBase`` and ``MemoryAwareMixin`` both derive from this, so every
+    agent — typed A2A agents and the mixin-composed ones alike — reads the
+    manager under the single name ``config_manager`` and writes it through
+    ``bind_config_manager``.
+    """
+
+    # The one storage slot for the injected ConfigManager on any agent.
+    _config_manager: Optional[Any] = None
+
+    def bind_config_manager(self, config_manager: Any) -> None:
+        """Bind the injected ConfigManager for this agent.
+
+        Called from the agent constructor, and by the runtime for agents it
+        builds from ``deps`` alone. ``None`` is a construction bug, not a
+        degraded mode: without a manager the agent reads tenant config from the
+        process singleton, which points at a different config store than the
+        one the caller injected.
+        """
+        if config_manager is None:
+            raise AgentConfigurationError(
+                f"{type(self).__name__} requires a config_manager; got None. "
+                "Pass config_manager=<ConfigManager> to the constructor; the "
+                "runtime injects its own manager."
+            )
+        self._config_manager = config_manager
+
+    @property
+    def config_manager(self) -> Any:
+        """The injected ConfigManager.
+
+        Raises:
+            AgentConfigurationError: if construction never bound one.
+        """
+        if self._config_manager is None:
+            raise AgentConfigurationError(
+                f"{type(self).__name__} has no config_manager bound: it was "
+                "constructed without one. Pass config_manager=<ConfigManager> "
+                "to the constructor, or call bind_config_manager() at build "
+                "time."
+            )
+        return self._config_manager
+
+
 def _signature_predictor(attr: Any) -> Any:
     """Return the signature-bearing predictor for a module attribute.
 
@@ -308,7 +358,7 @@ def _dispatched_prompt_overlay(agent: Any, module: Any):
     return _DispatchedPromptOverlayContext(agent, module)
 
 
-class AgentBase(ABC, Generic[InputT, OutputT, DepsT]):
+class AgentBase(ConfigManagerAware, ABC, Generic[InputT, OutputT, DepsT]):
     """
     Generic type-safe agent base class with streaming support.
 

@@ -640,11 +640,17 @@ def test_real_whisper_agent_returns_the_exact_normalized_transcript(
         timeout=30,
     )
     endpoint = agents_conftest._resolve_whisper_inference_endpoint(vllm_sidecar)
+    from cogniverse_foundation.config.manager import ConfigManager
+    from tests.utils.memory_store import InMemoryConfigStore
+
+    store = InMemoryConfigStore()
+    store.initialize()
     deps = AudioAnalysisDeps(
         tenant_id="modal:whisper-test",
         whisper_endpoint=endpoint.base_url,
         whisper_headers=dict(endpoint.headers),
         whisper_model=endpoint.model_id,
+        config_manager=ConfigManager(store=store),
     )
     agent = AudioAnalysisAgent(deps=deps)
 

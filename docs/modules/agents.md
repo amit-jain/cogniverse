@@ -2678,6 +2678,19 @@ storage yet) is silently skipped.
 
 ## Agent Architecture
 
+### ConfigManager Injection
+
+`ConfigManagerAware` (`libs/core/cogniverse_core/agents/base.py`) is the base of
+both `AgentBase` and `MemoryAwareMixin`, so every agent holds the injected
+`ConfigManager` in one slot: `bind_config_manager(cm)` writes it, the
+`config_manager` property reads it. Agents whose constructor takes
+`config_manager` bind it there; agents the runtime builds from `deps` alone are
+bound by the dispatcher and the knowledge router right after construction.
+`bind_config_manager(None)` and a read before any bind both raise
+`AgentConfigurationError` naming the agent — a missing manager is a construction
+bug, never a fall back to the process singleton, which would serve tenant
+instructions and per-tenant LM routing from a different config store.
+
 ### Type-Safe A2AAgent Base Class with Generics
 
 All agents extend `A2AAgent[InputT, OutputT, DepsT]` from `cogniverse_core`, providing compile-time type safety:
@@ -2937,7 +2950,8 @@ class TenantAwareAgentMixin:
     - REQUIRED tenant_id: No defaults, explicit tenant identification
     - Fail-fast validation: Raises ValueError immediately on invalid tenant_id
     - Context helpers: Provides utilities for tenant-scoped operations
-    - Config integration: Optionally loads tenant-specific configuration
+    - Config integration: loads tenant-specific configuration through the
+      injected ConfigManager
 
     Key Benefits:
     - Eliminates ~10 lines of duplicated validation code per agent
@@ -2950,6 +2964,7 @@ class TenantAwareAgentMixin:
         self,
         tenant_id: str,
         config: Optional[SystemConfig] = None,
+        config_manager: Optional["ConfigManager"] = None,
         **kwargs
     ):
         """
@@ -2958,10 +2973,13 @@ class TenantAwareAgentMixin:
         Args:
             tenant_id: Tenant identifier (REQUIRED - no default)
             config: Optional system configuration
+            config_manager: Injected ConfigManager (REQUIRED - bound via
+                bind_config_manager)
             **kwargs: Passed to other base classes in MRO chain
 
         Raises:
             ValueError: If tenant_id is empty, None, or invalid format
+            AgentConfigurationError: If config_manager is None
         """
         # Validate tenant_id (fail fast)
         if not tenant_id:

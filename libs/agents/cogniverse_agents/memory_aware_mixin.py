@@ -12,6 +12,7 @@ from typing import Any, Dict, List, Optional
 
 from opentelemetry import trace as _otel_trace
 
+from cogniverse_core.agents.base import ConfigManagerAware
 from cogniverse_core.memory.manager import Mem0MemoryManager
 
 logger = logging.getLogger(__name__)
@@ -52,7 +53,7 @@ def clear_request_tenant() -> None:
     _MEMORY_TENANT_ID.set(None)
 
 
-class MemoryAwareMixin:
+class MemoryAwareMixin(ConfigManagerAware):
     """
     Mixin class that adds memory capabilities to agents.
 
@@ -646,22 +647,12 @@ class MemoryAwareMixin:
         tenant_id = self._current_memory_tenant_id()
         if not tenant_id:
             return None, TENANT_INSTRUCTIONS_NONE
+        # Outside the try: an unbound manager is a construction bug and must
+        # surface as one, not as a degraded read.
+        cm = self.config_manager
         try:
             import json
 
-            from cogniverse_foundation.config.utils import (
-                get_config_manager_singleton,
-            )
-
-            # Reuse the dispatcher-injected manager (or the process singleton)
-            # instead of building a fresh VespaConfigStore + TCP session on every
-            # dispatch — this runs per request on the enrichment path. The
-            # manager accessor serves the read from its scoped TTL cache; a
-            # direct cm.store.get_config here cost one synchronous store query
-            # per enriching dispatch.
-            cm = (
-                getattr(self, "_config_manager", None) or get_config_manager_singleton()
-            )
             value = cm.get_tenant_instructions_config(tenant_id)
             text: Optional[str] = None
             if isinstance(value, dict):

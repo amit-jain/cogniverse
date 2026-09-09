@@ -8,6 +8,7 @@ Handles tenant ID validation, storage, and context management.
 import logging
 from typing import TYPE_CHECKING, Any, Dict, Optional
 
+from cogniverse_core.agents.base import ConfigManagerAware
 from cogniverse_foundation.config.unified_config import SystemConfig
 from cogniverse_foundation.config.utils import get_config
 
@@ -17,7 +18,7 @@ if TYPE_CHECKING:
 logger = logging.getLogger(__name__)
 
 
-class TenantAwareAgentMixin:
+class TenantAwareAgentMixin(ConfigManagerAware):
     """
     Mixin class that adds multi-tenant capabilities to agents.
 
@@ -96,21 +97,7 @@ class TenantAwareAgentMixin:
         # Store tenant_id
         self.tenant_id = tenant_id
 
-        # Initialize or get config manager
-        # Use provided config_manager if available (for dependency injection)
-        # Otherwise reuse the process singleton — every agent constructed
-        # without an explicit override would otherwise re-bootstrap the
-        # backend store. In CI unit tests where the backend isn't
-        # reachable that bootstrap costs ~20s per call (Vespa query
-        # timeout). Singleton keeps it to one-per-process.
-        if config_manager is not None:
-            self.config_manager = config_manager
-        else:
-            from cogniverse_foundation.config.utils import (
-                get_config_manager_singleton,
-            )
-
-            self.config_manager = get_config_manager_singleton()
+        self.bind_config_manager(config_manager)
 
         # Store or load configuration
         self.config = config

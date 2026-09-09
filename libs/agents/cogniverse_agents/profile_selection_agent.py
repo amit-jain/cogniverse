@@ -395,7 +395,7 @@ class ProfileSelectionAgent(
         return adapter_lm_context(
             tenant_id,
             "profile_selection",
-            config_manager=getattr(self, "_config_manager", None),
+            config_manager=self._config_manager,
         )
 
     def _load_artifact(self) -> None:
@@ -419,7 +419,7 @@ class ProfileSelectionAgent(
 
     def _tenant_usable_profiles(self, tenant_id: str) -> List[str]:
         """Return the tenant-scoped profiles that can actually run here."""
-        config_manager = getattr(self, "_config_manager", None)
+        config_manager = self._config_manager
         if config_manager is None:
             return list(self.deps.available_profiles)
         try:
@@ -432,7 +432,7 @@ class ProfileSelectionAgent(
         if input.available_profiles:
             return list(input.available_profiles)
 
-        if getattr(self, "_config_manager", None) is not None:
+        if self._config_manager is not None:
             return self._tenant_usable_profiles(input.tenant_id)
 
         return list(self.deps.available_profiles)
@@ -467,7 +467,7 @@ class ProfileSelectionAgent(
         if not query:
             if input.available_profiles:
                 profiles = list(input.available_profiles)
-            elif getattr(self, "_config_manager", None) is not None and input.tenant_id:
+            elif self._config_manager is not None and input.tenant_id:
                 profiles = self._resolve_candidate_profiles(input)
             else:
                 profiles = list(self.deps.available_profiles)
@@ -579,7 +579,7 @@ class ProfileSelectionAgent(
     ) -> str:
         """Return the canonical type declared by the selected live profile."""
         tenant_id = require_tenant_id(tenant_id, source="ProfileSelectionInput")
-        config_manager = getattr(self, "_config_manager", None)
+        config_manager = self._config_manager
         if config_manager is None:
             return self._infer_profile_modality_from_name(selected_profile)
 
@@ -653,7 +653,7 @@ class ProfileSelectionAgent(
         manager) infers it from the profile-name prefix. Candidates that are
         neither configured nor prefix-encoded are left out.
         """
-        config_manager = getattr(self, "_config_manager", None)
+        config_manager = self._config_manager
         types: Dict[str, str] = {}
         for profile_name in profiles:
             if config_manager is not None and tenant_id:

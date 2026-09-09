@@ -679,13 +679,8 @@ class OrchestratorAgent(
             TypeError: If deps is not OrchestratorDeps
             ValueError: If registry or config_manager is not provided
         """
-        if config_manager is None:
-            raise ValueError(
-                "config_manager is required for OrchestratorAgent. "
-                "Dependency injection is mandatory - pass ConfigManager instance explicitly."
-            )
+        self.bind_config_manager(config_manager)
         self.registry = registry
-        self._config_manager = config_manager
         self._http_client_override = http_client
 
         # Event queue for external consumers

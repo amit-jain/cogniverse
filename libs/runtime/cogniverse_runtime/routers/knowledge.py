@@ -117,6 +117,13 @@ def _inject_memory(agent, tenant_id: str, agent_name: str):
     return mm
 
 
+def _runtime_config_manager() -> ConfigManager:
+    """The runtime's injected ConfigManager, for agents this router builds."""
+    from cogniverse_runtime.routers.tenant import _require_config_manager
+
+    return _require_config_manager()
+
+
 def _bind_graph(agent, tenant_id: str) -> None:
     """Bind the tenant's shared Vespa knowledge-graph manager onto a
     graph-aware agent so its ``_process_impl`` can complement the mem0 answer
@@ -163,6 +170,7 @@ async def audit_explain(tenant_id: str, body: AuditExplainRequest) -> Dict[str, 
         deps=AuditExplanationDeps(tenant_id=tenant_id),
         memory_manager_factory=_build_factory,
     )
+    agent.bind_config_manager(_runtime_config_manager())
     out = await agent._process_impl(
         AuditExplanationInput(tenant_id=tenant_id, **body.model_dump())
     )
@@ -196,6 +204,7 @@ async def citation_trace(tenant_id: str, body: CitationTraceRequest) -> Dict[str
     )
 
     agent = CitationTracingAgent(deps=CitationTracingDeps(tenant_id=tenant_id))
+    agent.bind_config_manager(_runtime_config_manager())
     await asyncio.to_thread(_inject_memory, agent, tenant_id, "citation_tracing_agent")
     await asyncio.to_thread(_bind_graph, agent, tenant_id)
     out = await agent._process_impl(
@@ -280,6 +289,7 @@ async def contradiction_reconcile(
         deps=ContradictionReconciliationDeps(tenant_id=tenant_id),
         registry=_build_default_registry(),
     )
+    agent.bind_config_manager(_runtime_config_manager())
     # Inject the per-tenant manager via the mixin attribute path; this
     # agent's constructor doesn't take a factory.
     mm = await asyncio.to_thread(_build_factory, tenant_id)
@@ -330,6 +340,7 @@ async def multi_doc_synthesize(
     agent = MultiDocumentSynthesisAgent(
         deps=MultiDocSynthesisDeps(tenant_id=tenant_id),
         llm_config=_runtime_primary_llm_config(config_manager),
+        config_manager=config_manager,
     )
     await asyncio.to_thread(
         _inject_memory, agent, tenant_id, "multi_document_synthesis_agent"
@@ -361,7 +372,10 @@ async def kg_traverse(tenant_id: str, body: KGTraverseRequest) -> Dict[str, Any]
         KnowledgeGraphTraversalAgent,
     )
 
-    agent = KnowledgeGraphTraversalAgent(deps=KGTraversalDeps(tenant_id=tenant_id))
+    agent = KnowledgeGraphTraversalAgent(
+        deps=KGTraversalDeps(tenant_id=tenant_id),
+        config_manager=_runtime_config_manager(),
+    )
     await asyncio.to_thread(_inject_memory, agent, tenant_id, "kg_traversal_agent")
     await asyncio.to_thread(_bind_graph, agent, tenant_id)
     # KGTraversalInput uses ``relation_allowlist`` / ``max_edges``; the
@@ -418,6 +432,7 @@ async def cross_tenant_compare(
         memory_manager_factory=_build_factory,
         registry=_build_default_registry(),
     )
+    agent.bind_config_manager(_runtime_config_manager())
     payload = body.model_dump()
     payload["tenant_ids"] = [canonical_tenant_id(t) for t in payload["tenant_ids"]]
     try:
@@ -462,6 +477,7 @@ async def federated_query(
         deps=FederatedQueryDeps(tenant_id=tenant_id),
         memory_manager_factory=_build_factory,
         registry=_build_default_registry(),
+        config_manager=_runtime_config_manager(),
     )
     try:
         out = await agent._process_impl(
@@ -508,6 +524,7 @@ async def temporal_reason(
     agent = TemporalReasoningAgent(
         deps=TemporalReasoningDeps(tenant_id=tenant_id),
         memory_manager_factory=_build_factory,
+        config_manager=_runtime_config_manager(),
     )
     await asyncio.to_thread(_bind_graph, agent, tenant_id)
     out = await agent._process_impl(

@@ -11,6 +11,7 @@ This module provides the foundation for all agents in the Cogniverse framework:
 from cogniverse_core.agents.a2a_agent import A2AAgent, A2AAgentConfig
 from cogniverse_core.agents.base import (
     AgentBase,
+    AgentConfigurationError,
     AgentDeps,
     AgentInput,
     AgentOutput,
@@ -27,6 +28,7 @@ __all__ = [
     "AgentInput",
     "AgentOutput",
     "AgentDeps",
+    "AgentConfigurationError",
     "AgentValidationError",
     # Type variables
     "InputT",

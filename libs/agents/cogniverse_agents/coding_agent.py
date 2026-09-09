@@ -276,7 +276,7 @@ class CodingAgent(
         self._sandbox_manager = sandbox_manager or deps.sandbox_manager
         # Enables the RLM path (RLMAwareMixin) to route its LM through the
         # gateway for this tenant.
-        self._config_manager = config_manager
+        self.bind_config_manager(config_manager)
         self._planner = dspy.ChainOfThought(TaskPlanningSignature)
         self._generator = dspy.ChainOfThought(CodeGenerationSignature)
         self._evaluator = dspy.ChainOfThought(OutputEvaluationSignature)

@@ -284,13 +284,7 @@ class DetailedReportAgent(
         # Initialize A2A base
         super().__init__(deps=deps, config=config, dspy_module=self.report_module)
 
-        # Config manager — required from caller, no silent fallback
-        if config_manager is None:
-            raise ValueError(
-                "config_manager is required. "
-                "Pass create_default_config_manager() from startup boundary."
-            )
-        self._config_manager = config_manager
+        self.bind_config_manager(config_manager)
 
         # Initialize DSPy components
         self._initialize_vlm_client()

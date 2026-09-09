@@ -273,27 +273,44 @@ async def test_generic_dispatch_injects_config_manager(monkeypatch):
     import types
     from typing import Optional
 
-    from pydantic import BaseModel
-
+    from cogniverse_core.agents import (
+        A2AAgent,
+        A2AAgentConfig,
+        AgentDeps,
+        AgentInput,
+        AgentOutput,
+    )
     from cogniverse_runtime.agent_dispatcher import AgentDispatcher
     from cogniverse_runtime.config_loader import ConfigLoader
 
     built = {}
 
-    class FakeGenericDeps(BaseModel):
+    class FakeGenericDeps(AgentDeps):
         pass
 
-    class FakeGenericInput(BaseModel):
+    class FakeGenericInput(AgentInput):
         query: str
         tenant_id: Optional[str] = None
 
-    class FakeGenericAgent:
+    class FakeGenericOutput(AgentOutput):
+        pass
+
+    class FakeGenericAgent(
+        A2AAgent[FakeGenericInput, FakeGenericOutput, FakeGenericDeps]
+    ):
         def __init__(self, deps):
-            self.deps = deps
+            super().__init__(
+                deps=deps,
+                config=A2AAgentConfig(
+                    agent_name="fake_generic",
+                    agent_description="config-manager injection probe",
+                    capabilities=[],
+                ),
+            )
             built["agent"] = self
 
-        async def process(self, typed_input):
-            return types.SimpleNamespace()
+        async def _process_impl(self, input: FakeGenericInput) -> FakeGenericOutput:
+            return FakeGenericOutput()
 
     mod = types.ModuleType("fake_generic_mod")
     mod.FakeGenericDeps = FakeGenericDeps
@@ -331,25 +348,40 @@ async def test_generic_dispatch_memoizes_class_resolution(monkeypatch):
     import types
     from typing import Optional
 
-    from pydantic import BaseModel
-
+    from cogniverse_core.agents import (
+        A2AAgent,
+        A2AAgentConfig,
+        AgentDeps,
+        AgentInput,
+        AgentOutput,
+    )
     from cogniverse_runtime import agent_dispatcher as ad
     from cogniverse_runtime.agent_dispatcher import AgentDispatcher
     from cogniverse_runtime.config_loader import ConfigLoader
 
-    class MemoDeps(BaseModel):
+    class MemoDeps(AgentDeps):
         pass
 
-    class MemoInput(BaseModel):
+    class MemoInput(AgentInput):
         query: str
         tenant_id: Optional[str] = None
 
-    class MemoAgent:
-        def __init__(self, deps):
-            self.deps = deps
+    class MemoOutput(AgentOutput):
+        pass
 
-        async def process(self, typed_input):
-            return types.SimpleNamespace()
+    class MemoAgent(A2AAgent[MemoInput, MemoOutput, MemoDeps]):
+        def __init__(self, deps):
+            super().__init__(
+                deps=deps,
+                config=A2AAgentConfig(
+                    agent_name="memo_generic",
+                    agent_description="memoization probe",
+                    capabilities=[],
+                ),
+            )
+
+        async def _process_impl(self, input: MemoInput) -> MemoOutput:
+            return MemoOutput()
 
     mod = types.ModuleType("memo_generic_mod")
     mod.MemoDeps = MemoDeps

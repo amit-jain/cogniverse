@@ -82,18 +82,6 @@ class RLMAwareMixin:
             )
         return tid
 
-    def _config_manager_for_rlm(self):
-        """Best-effort ``config_manager`` for gateway routing.
-
-        Host agents store the manager under different names — SearchAgent
-        exposes ``config_manager`` (set by the tenant-aware base), the others
-        ``_config_manager`` — so read whichever is present. When neither is,
-        ``route_rlm_endpoint`` degrades to the direct endpoint.
-        """
-        return getattr(self, "_config_manager", None) or getattr(
-            self, "config_manager", None
-        )
-
     def get_rlm(
         self,
         llm_config: LLMEndpointConfig,
@@ -123,9 +111,7 @@ class RLMAwareMixin:
         # tenant, no config_manager, or routing disabled the endpoint is
         # returned unchanged — the direct-to-backend path.
         routing_tenant = tenant_id or getattr(self, "tenant_id", "") or ""
-        routed = route_rlm_endpoint(
-            llm_config, self._config_manager_for_rlm(), routing_tenant
-        )
+        routed = route_rlm_endpoint(llm_config, self.config_manager, routing_tenant)
 
         # Always create new instance when event_queue is provided
         # (event_queue/task_id may change per request)
