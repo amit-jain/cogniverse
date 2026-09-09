@@ -358,6 +358,7 @@ def _build_vespa_search_fn(vespa_url, schema_name, colbert_model):
                 "yql": f"select * from {schema_name} where true",
                 "hits": SEARCH_HITS,
                 "ranking.profile": "float_float",
+                "model.restrict": schema_name,
                 "input.query(qt)": {"cells": qt_cells},
             },
             timeout=10,
