@@ -31,7 +31,8 @@ Example Usage:
 import asyncio
 import logging
 import time
-from typing import Dict, List, Optional
+from contextlib import contextmanager
+from typing import Dict, Iterator, List, Optional
 
 import uvicorn
 from fastapi import APIRouter, FastAPI, HTTPException, Query
@@ -65,10 +66,12 @@ app = FastAPI(
     version="1.0.0",
 )
 
-# Backend for metadata storage and schema management
-backend: Optional[Backend] = None
 _config_manager = None  # For test injection
 _schema_loader: SchemaLoader = None  # For dependency injection
+
+# One retry covers the instance being evicted between the resolve and the
+# checkout; the retry's resolve rebuilds it.
+_METADATA_BACKEND_ATTEMPTS = 2
 
 
 def set_config_manager(config_manager):
@@ -91,55 +94,69 @@ def set_schema_loader(schema_loader: SchemaLoader) -> None:
 
 
 def get_backend() -> Backend:
-    """Get or create backend for metadata operations"""
-    global backend
-    if backend is None:
-        # Use injected ConfigManager (from tests) or create new one
-        from cogniverse_foundation.config.utils import create_default_config_manager
+    """Resolve the metadata backend from the registry.
 
-        config_manager = (
-            _config_manager
-            if _config_manager is not None
-            else create_default_config_manager()
+    Resolved on every call. The registry owns the instance's lifetime and
+    closes it on eviction, overwrite or clear, so a handle kept across
+    requests goes dead and every tenant read then fails until the process
+    restarts. The registry's own LRU is the cache: a hit is a dict lookup.
+
+    Callers that use the backend for a whole operation take
+    ``metadata_backend()`` instead, which also holds it against eviction.
+    """
+    from cogniverse_foundation.config.utils import create_default_config_manager
+
+    config_manager = (
+        _config_manager
+        if _config_manager is not None
+        else create_default_config_manager()
+    )
+
+    config = get_config(tenant_id="system", config_manager=config_manager)
+    backend_type = config.get("backend_type", "vespa")
+
+    from cogniverse_core.registries.backend_registry import BackendRegistry
+
+    if _schema_loader is None:
+        raise RuntimeError(
+            "SchemaLoader not initialized. Call set_schema_loader() during app startup."
         )
 
-        config = get_config(tenant_id="system", config_manager=config_manager)
-        backend_type = config.get("backend_type", "vespa")
-
-        from cogniverse_core.registries.backend_registry import BackendRegistry
-
-        registry = BackendRegistry.get_instance()
-
-        # Get backend instance with configuration
-        backend_config = {
+    # No tenant_id in the backend config: metadata operations span every
+    # tenant, and tenant_id is passed explicitly to the schema operations
+    # that need it.
+    return BackendRegistry.get_instance().get_ingestion_backend(
+        backend_type,
+        tenant_id="system",
+        config={
             "url": config.get("backend_url"),
             "port": config.get("backend_port"),
-        }
+        },
+        config_manager=config_manager,
+        schema_loader=_schema_loader,
+    )
 
-        # Get backend WITHOUT tenant_id (this is for metadata operations across all tenants)
-        # We'll pass tenant_id explicitly when needed for schema operations
-        try:
-            # Require injected SchemaLoader
-            if _schema_loader is None:
-                raise RuntimeError(
-                    "SchemaLoader not initialized. Call set_schema_loader() during app startup."
-                )
-            schema_loader = _schema_loader
 
-            backend = registry.get_ingestion_backend(
-                backend_type,
-                tenant_id="system",
-                config=backend_config,
-                config_manager=config_manager,
-                schema_loader=schema_loader,
-            )
-        except Exception as e:
-            logger.error(f"Failed to get backend: {e}")
-            raise
+@contextmanager
+def metadata_backend() -> Iterator[Backend]:
+    """Yield the metadata backend, held against eviction for the block.
 
-        logger.info(f"Initialized {backend_type} backend for tenant management")
+    Eviction, an overwriting ``set`` and ``clear`` all close what they drop,
+    and a backend closed mid-operation loses the connection pool the
+    operation is running on. A checkout blocks that close until the block
+    exits, so a multi-step write cannot tear on a released instance.
 
-    return backend
+    A backend the registry does not hold (injected in tests, built directly)
+    checks out nothing and is yielded as-is: it belongs to whoever built it.
+    """
+    from cogniverse_core.registries.backend_registry import BackendRegistry
+
+    for attempt in range(_METADATA_BACKEND_ATTEMPTS):
+        instance = get_backend()
+        with BackendRegistry.lease_instance(instance) as held:
+            if held or attempt == _METADATA_BACKEND_ATTEMPTS - 1:
+                yield instance
+                return
 
 
 def validate_org_id(org_id: str) -> None:
@@ -268,48 +285,47 @@ async def create_organization(request: CreateOrganizationRequest) -> Organizatio
     try:
         validate_org_id(request.org_id)
 
-        backend = get_backend()
+        with metadata_backend() as backend:
+            # Check if org already exists
+            existing = await get_organization_internal(request.org_id)
+            if existing:
+                raise HTTPException(
+                    status_code=409,
+                    detail=f"Organization {request.org_id} already exists",
+                )
 
-        # Check if org already exists
-        existing = await get_organization_internal(request.org_id)
-        if existing:
-            raise HTTPException(
-                status_code=409,
-                detail=f"Organization {request.org_id} already exists",
+            # Create organization
+            org = Organization(
+                org_id=request.org_id,
+                org_name=request.org_name,
+                created_at=int(time.time() * 1000),
+                created_by=request.created_by,
+                status="active",
+                tenant_count=0,
             )
 
-        # Create organization
-        org = Organization(
-            org_id=request.org_id,
-            org_name=request.org_name,
-            created_at=int(time.time() * 1000),
-            created_by=request.created_by,
-            status="active",
-            tenant_count=0,
-        )
-
-        # Store via Backend
-        success = backend.create_metadata_document(
-            schema="organization_metadata",
-            doc_id=org.org_id,
-            fields={
-                "org_id": org.org_id,
-                "org_name": org.org_name,
-                "created_at": org.created_at,
-                "created_by": org.created_by,
-                "status": org.status,
-                "tenant_count": org.tenant_count,
-            },
-        )
-
-        if not success:
-            raise HTTPException(
-                status_code=500,
-                detail=f"Failed to create organization {org.org_id} in backend",
+            # Store via Backend
+            success = backend.create_metadata_document(
+                schema="organization_metadata",
+                doc_id=org.org_id,
+                fields={
+                    "org_id": org.org_id,
+                    "org_name": org.org_name,
+                    "created_at": org.created_at,
+                    "created_by": org.created_by,
+                    "status": org.status,
+                    "tenant_count": org.tenant_count,
+                },
             )
 
-        logger.info(f"Created organization: {org.org_id}")
-        return org
+            if not success:
+                raise HTTPException(
+                    status_code=500,
+                    detail=f"Failed to create organization {org.org_id} in backend",
+                )
+
+            logger.info(f"Created organization: {org.org_id}")
+            return org
 
     except HTTPException:
         raise
@@ -329,35 +345,34 @@ async def list_organizations() -> OrganizationListResponse:
         List of all organizations with count
     """
     try:
-        backend = get_backend()
-
-        # Query all organizations
-        documents = backend.query_metadata_documents(
-            schema="organization_metadata",
-            yql="select * from organization_metadata where true",
-            hits=400,
-        )
-
-        organizations = []
-        for fields in documents:
-            org_id = fields.get("org_id")
-
-            # Compute tenant_count dynamically
-            tenants = await list_tenants_for_org_internal(org_id)
-
-            org = Organization(
-                org_id=org_id,
-                org_name=fields.get("org_name"),
-                created_at=fields.get("created_at"),
-                created_by=fields.get("created_by"),
-                status=fields.get("status", "active"),
-                tenant_count=len(tenants),
+        with metadata_backend() as backend:
+            # Query all organizations
+            documents = backend.query_metadata_documents(
+                schema="organization_metadata",
+                yql="select * from organization_metadata where true",
+                hits=400,
             )
-            organizations.append(org)
 
-        return OrganizationListResponse(
-            organizations=organizations, total_count=len(organizations)
-        )
+            organizations = []
+            for fields in documents:
+                org_id = fields.get("org_id")
+
+                # Compute tenant_count dynamically
+                tenants = await list_tenants_for_org_internal(org_id)
+
+                org = Organization(
+                    org_id=org_id,
+                    org_name=fields.get("org_name"),
+                    created_at=fields.get("created_at"),
+                    created_by=fields.get("created_by"),
+                    status=fields.get("status", "active"),
+                    tenant_count=len(tenants),
+                )
+                organizations.append(org)
+
+            return OrganizationListResponse(
+                organizations=organizations, total_count=len(organizations)
+            )
 
     except Exception as e:
         logger.error(f"Failed to list organizations: {e}")
@@ -386,38 +401,37 @@ async def get_organization(org_id: str) -> Organization:
 
 async def get_organization_internal(org_id: str) -> Optional[Organization]:
     """Internal helper to get organization"""
-    backend = get_backend()
+    with metadata_backend() as backend:
+        try:
+            # Blocking Vespa GET — off the event loop.
+            fields = await asyncio.to_thread(
+                backend.get_metadata_document,
+                schema="organization_metadata",
+                doc_id=org_id,
+            )
+        except Exception as e:
+            # Outage is not "org not found" — surface 503 so a create/read during a
+            # backend blip doesn't 404 (or, for create, clobber a live org read as
+            # missing).
+            logger.error(f"Organization registry read failed for {org_id}: {e}")
+            raise HTTPException(
+                status_code=503, detail="Organization registry temporarily unavailable"
+            )
 
-    try:
-        # Blocking Vespa GET — off the event loop.
-        fields = await asyncio.to_thread(
-            backend.get_metadata_document,
-            schema="organization_metadata",
-            doc_id=org_id,
+        if not fields:
+            return None
+
+        # Compute tenant_count dynamically by querying tenants
+        tenants = await list_tenants_for_org_internal(org_id)
+
+        return Organization(
+            org_id=fields.get("org_id"),
+            org_name=fields.get("org_name"),
+            created_at=fields.get("created_at"),
+            created_by=fields.get("created_by"),
+            status=fields.get("status", "active"),
+            tenant_count=len(tenants),
         )
-    except Exception as e:
-        # Outage is not "org not found" — surface 503 so a create/read during a
-        # backend blip doesn't 404 (or, for create, clobber a live org read as
-        # missing).
-        logger.error(f"Organization registry read failed for {org_id}: {e}")
-        raise HTTPException(
-            status_code=503, detail="Organization registry temporarily unavailable"
-        )
-
-    if not fields:
-        return None
-
-    # Compute tenant_count dynamically by querying tenants
-    tenants = await list_tenants_for_org_internal(org_id)
-
-    return Organization(
-        org_id=fields.get("org_id"),
-        org_name=fields.get("org_name"),
-        created_at=fields.get("created_at"),
-        created_by=fields.get("created_by"),
-        status=fields.get("status", "active"),
-        tenant_count=len(tenants),
-    )
 
 
 @router.delete("/organizations/{org_id}")
@@ -447,32 +461,35 @@ async def delete_organization(org_id: str) -> Dict:
                 status_code=404, detail=f"Organization {org_id} not found"
             )
 
-        backend = get_backend()
+        with metadata_backend() as backend:
+            # Delete all tenants for this org
+            tenants = await list_tenants_for_org_internal(org_id)
+            deleted_tenants = []
 
-        # Delete all tenants for this org
-        tenants = await list_tenants_for_org_internal(org_id)
-        deleted_tenants = []
+            for tenant in tenants:
+                try:
+                    await delete_tenant_internal(tenant.tenant_full_id)
+                    deleted_tenants.append(tenant.tenant_full_id)
+                except Exception as e:
+                    logger.error(
+                        f"Failed to delete tenant {tenant.tenant_full_id}: {e}"
+                    )
 
-        for tenant in tenants:
-            try:
-                await delete_tenant_internal(tenant.tenant_full_id)
-                deleted_tenants.append(tenant.tenant_full_id)
-            except Exception as e:
-                logger.error(f"Failed to delete tenant {tenant.tenant_full_id}: {e}")
+            # Delete organization
+            backend.delete_metadata_document(
+                schema="organization_metadata", doc_id=org_id
+            )
 
-        # Delete organization
-        backend.delete_metadata_document(schema="organization_metadata", doc_id=org_id)
+            logger.info(
+                f"Deleted organization {org_id} with {len(deleted_tenants)} tenants"
+            )
 
-        logger.info(
-            f"Deleted organization {org_id} with {len(deleted_tenants)} tenants"
-        )
-
-        return {
-            "status": "deleted",
-            "org_id": org_id,
-            "tenants_deleted": len(deleted_tenants),
-            "deleted_tenant_ids": deleted_tenants,
-        }
+            return {
+                "status": "deleted",
+                "org_id": org_id,
+                "tenants_deleted": len(deleted_tenants),
+                "deleted_tenant_ids": deleted_tenants,
+            }
 
     except HTTPException:
         raise
@@ -523,134 +540,133 @@ async def create_tenant(request: CreateTenantRequest) -> Tenant:
 
         tenant_full_id = f"{org_id}:{tenant_name}"
 
-        backend = get_backend()
-
-        # Check if tenant already exists
-        existing = await get_tenant_internal(tenant_full_id)
-        if existing:
-            raise HTTPException(
-                status_code=409, detail=f"Tenant {tenant_full_id} already exists"
-            )
-
-        # Auto-create org if doesn't exist
-        org_created = False
-        org = await get_organization_internal(org_id)
-        if not org:
-            logger.info(
-                f"Auto-creating organization {org_id} for tenant {tenant_full_id}"
-            )
-            org = Organization(
-                org_id=org_id,
-                org_name=org_id.title(),  # Use org_id as name
-                created_at=int(time.time() * 1000),
-                created_by=request.created_by,
-                status="active",
-                tenant_count=0,  # Not used, computed dynamically
-            )
-
-            success = backend.create_metadata_document(
-                schema="organization_metadata",
-                doc_id=org.org_id,
-                fields={
-                    "org_id": org.org_id,
-                    "org_name": org.org_name,
-                    "created_at": org.created_at,
-                    "created_by": org.created_by,
-                    "status": org.status,
-                    "tenant_count": org.tenant_count,
-                },
-            )
-            if not success:
+        with metadata_backend() as backend:
+            # Check if tenant already exists
+            existing = await get_tenant_internal(tenant_full_id)
+            if existing:
                 raise HTTPException(
-                    status_code=500,
-                    detail=f"Failed to auto-create organization {org.org_id} in backend",
-                )
-            org_created = True
-
-        # Deploy schemas for tenant via Backend.
-        base_schemas = request.base_schemas or [
-            "video_colpali_smol500_mv_frame",
-        ]
-
-        deployed_schemas: list[str] = []
-        try:
-            await _deploy_tenant_schemas_with_retry(
-                backend, tenant_full_id, base_schemas
-            )
-            deployed_schemas.extend(base_schemas)
-
-            # Create tenant only after the schemas are live.
-            tenant = Tenant(
-                tenant_full_id=tenant_full_id,
-                org_id=org_id,
-                tenant_name=tenant_name,
-                created_at=int(time.time() * 1000),
-                created_by=request.created_by,
-                status="active",
-                schemas_deployed=deployed_schemas,
-            )
-
-            # Store via Backend.
-            success = backend.create_metadata_document(
-                schema="tenant_metadata",
-                doc_id=tenant_full_id,
-                fields={
-                    "tenant_full_id": tenant.tenant_full_id,
-                    "org_id": tenant.org_id,
-                    "tenant_name": tenant.tenant_name,
-                    "created_at": tenant.created_at,
-                    "created_by": tenant.created_by,
-                    "status": tenant.status,
-                    "schemas_deployed": tenant.schemas_deployed,
-                },
-            )
-
-            if not success:
-                raise HTTPException(
-                    status_code=500,
-                    detail=f"Failed to create tenant {tenant_full_id} in backend",
+                    status_code=409, detail=f"Tenant {tenant_full_id} already exists"
                 )
 
-            logger.info(
-                f"Created tenant: {tenant_full_id} (org_created: {org_created}, schemas: {len(deployed_schemas)})"
-            )
-
-            return tenant
-        except Exception:
-            # Best-effort rollback keeps the create path from leaving a tenant
-            # with schemas but no metadata, or an auto-created org with no tenant.
-            schema_manager = backend.schema_manager
-            if deployed_schemas and schema_manager is None:
-                logger.error(
-                    "Cannot roll back tenant schemas for %s: backend.schema_manager "
-                    "is unavailable after deploying %d schema(s)",
-                    tenant_full_id,
-                    len(deployed_schemas),
+            # Auto-create org if doesn't exist
+            org_created = False
+            org = await get_organization_internal(org_id)
+            if not org:
+                logger.info(
+                    f"Auto-creating organization {org_id} for tenant {tenant_full_id}"
                 )
-            elif deployed_schemas:
-                try:
-                    await asyncio.to_thread(
-                        schema_manager.delete_tenant_schemas, tenant_full_id
+                org = Organization(
+                    org_id=org_id,
+                    org_name=org_id.title(),  # Use org_id as name
+                    created_at=int(time.time() * 1000),
+                    created_by=request.created_by,
+                    status="active",
+                    tenant_count=0,  # Not used, computed dynamically
+                )
+
+                success = backend.create_metadata_document(
+                    schema="organization_metadata",
+                    doc_id=org.org_id,
+                    fields={
+                        "org_id": org.org_id,
+                        "org_name": org.org_name,
+                        "created_at": org.created_at,
+                        "created_by": org.created_by,
+                        "status": org.status,
+                        "tenant_count": org.tenant_count,
+                    },
+                )
+                if not success:
+                    raise HTTPException(
+                        status_code=500,
+                        detail=f"Failed to auto-create organization {org.org_id} in backend",
                     )
-                except Exception as rollback_exc:
+                org_created = True
+
+            # Deploy schemas for tenant via Backend.
+            base_schemas = request.base_schemas or [
+                "video_colpali_smol500_mv_frame",
+            ]
+
+            deployed_schemas: list[str] = []
+            try:
+                await _deploy_tenant_schemas_with_retry(
+                    backend, tenant_full_id, base_schemas
+                )
+                deployed_schemas.extend(base_schemas)
+
+                # Create tenant only after the schemas are live.
+                tenant = Tenant(
+                    tenant_full_id=tenant_full_id,
+                    org_id=org_id,
+                    tenant_name=tenant_name,
+                    created_at=int(time.time() * 1000),
+                    created_by=request.created_by,
+                    status="active",
+                    schemas_deployed=deployed_schemas,
+                )
+
+                # Store via Backend.
+                success = backend.create_metadata_document(
+                    schema="tenant_metadata",
+                    doc_id=tenant_full_id,
+                    fields={
+                        "tenant_full_id": tenant.tenant_full_id,
+                        "org_id": tenant.org_id,
+                        "tenant_name": tenant.tenant_name,
+                        "created_at": tenant.created_at,
+                        "created_by": tenant.created_by,
+                        "status": tenant.status,
+                        "schemas_deployed": tenant.schemas_deployed,
+                    },
+                )
+
+                if not success:
+                    raise HTTPException(
+                        status_code=500,
+                        detail=f"Failed to create tenant {tenant_full_id} in backend",
+                    )
+
+                logger.info(
+                    f"Created tenant: {tenant_full_id} (org_created: {org_created}, schemas: {len(deployed_schemas)})"
+                )
+
+                return tenant
+            except Exception:
+                # Best-effort rollback keeps the create path from leaving a tenant
+                # with schemas but no metadata, or an auto-created org with no tenant.
+                schema_manager = backend.schema_manager
+                if deployed_schemas and schema_manager is None:
                     logger.error(
-                        f"Failed to roll back tenant schemas for {tenant_full_id}: "
-                        f"{rollback_exc}"
+                        "Cannot roll back tenant schemas for %s: backend.schema_manager "
+                        "is unavailable after deploying %d schema(s)",
+                        tenant_full_id,
+                        len(deployed_schemas),
                     )
+                elif deployed_schemas:
+                    try:
+                        await asyncio.to_thread(
+                            schema_manager.delete_tenant_schemas, tenant_full_id
+                        )
+                    except Exception as rollback_exc:
+                        logger.error(
+                            f"Failed to roll back tenant schemas for {tenant_full_id}: "
+                            f"{rollback_exc}"
+                        )
 
-            if org_created:
-                try:
-                    await asyncio.to_thread(
-                        backend.delete_metadata_document,
-                        schema="organization_metadata",
-                        doc_id=org_id,
-                    )
-                except Exception as rollback_exc:
-                    logger.error(
-                        f"Failed to roll back organization {org_id} for "
-                        f"{tenant_full_id}: {rollback_exc}"
-                    )
-            raise
+                if org_created:
+                    try:
+                        await asyncio.to_thread(
+                            backend.delete_metadata_document,
+                            schema="organization_metadata",
+                            doc_id=org_id,
+                        )
+                    except Exception as rollback_exc:
+                        logger.error(
+                            f"Failed to roll back organization {org_id} for "
+                            f"{tenant_full_id}: {rollback_exc}"
+                        )
+                raise
 
     except HTTPException:
         raise
@@ -711,19 +727,19 @@ async def list_organizations_internal() -> List[str]:
     doing nothing (memories never expire). A malformed org document is
     skipped by the ``org_id`` filter, not swallowed as a whole-sweep empty.
     """
-    backend = get_backend()
-    try:
-        documents = backend.query_metadata_documents(
-            schema="organization_metadata",
-            yql="select * from organization_metadata where true",
-            hits=400,
-        )
-    except Exception as e:
-        logger.error(f"Failed to list organizations: {e}")
-        raise HTTPException(
-            status_code=503, detail="Organization registry temporarily unavailable"
-        )
-    return [fields["org_id"] for fields in documents if fields.get("org_id")]
+    with metadata_backend() as backend:
+        try:
+            documents = backend.query_metadata_documents(
+                schema="organization_metadata",
+                yql="select * from organization_metadata where true",
+                hits=400,
+            )
+        except Exception as e:
+            logger.error(f"Failed to list organizations: {e}")
+            raise HTTPException(
+                status_code=503, detail="Organization registry temporarily unavailable"
+            )
+        return [fields["org_id"] for fields in documents if fields.get("org_id")]
 
 
 async def list_tenants_for_org_internal(org_id: str) -> List[Tenant]:
@@ -733,37 +749,36 @@ async def list_tenants_for_org_internal(org_id: str) -> List[Tenant]:
     read as "no tenants" let the per-org cleanup cron report success while
     processing nothing.
     """
-    backend = get_backend()
-
-    try:
-        # Query tenants for this org using term matching in userQuery
-        documents = backend.query_metadata_documents(
-            schema="tenant_metadata",
-            yql="select * from tenant_metadata where userQuery()",
-            query=f"org_id:{org_id}",
-            hits=400,
-        )
-    except Exception as e:
-        logger.error(f"Failed to list tenants for {org_id}: {e}")
-        raise HTTPException(
-            status_code=503, detail="Tenant registry temporarily unavailable"
-        )
-
-    tenants = []
-    for fields in documents:
-        tenants.append(
-            Tenant(
-                tenant_full_id=fields.get("tenant_full_id"),
-                org_id=fields.get("org_id"),
-                tenant_name=fields.get("tenant_name"),
-                created_at=fields.get("created_at"),
-                created_by=fields.get("created_by"),
-                status=fields.get("status", "active"),
-                schemas_deployed=fields.get("schemas_deployed", []),
+    with metadata_backend() as backend:
+        try:
+            # Query tenants for this org using term matching in userQuery
+            documents = backend.query_metadata_documents(
+                schema="tenant_metadata",
+                yql="select * from tenant_metadata where userQuery()",
+                query=f"org_id:{org_id}",
+                hits=400,
             )
-        )
+        except Exception as e:
+            logger.error(f"Failed to list tenants for {org_id}: {e}")
+            raise HTTPException(
+                status_code=503, detail="Tenant registry temporarily unavailable"
+            )
 
-    return tenants
+        tenants = []
+        for fields in documents:
+            tenants.append(
+                Tenant(
+                    tenant_full_id=fields.get("tenant_full_id"),
+                    org_id=fields.get("org_id"),
+                    tenant_name=fields.get("tenant_name"),
+                    created_at=fields.get("created_at"),
+                    created_by=fields.get("created_by"),
+                    status=fields.get("status", "active"),
+                    schemas_deployed=fields.get("schemas_deployed", []),
+                )
+            )
+
+        return tenants
 
 
 @router.get("/tenants/{tenant_full_id}", response_model=Tenant)
@@ -798,35 +813,37 @@ async def get_tenant_internal(tenant_full_id: str) -> Optional[Tenant]:
     """
     from cogniverse_core.common.tenant_utils import canonical_tenant_id
 
-    backend = get_backend()
-    canonical = canonical_tenant_id(tenant_full_id)
+    with metadata_backend() as backend:
+        canonical = canonical_tenant_id(tenant_full_id)
 
-    try:
-        # Blocking Vespa GET — run off the event loop; this sits under
-        # assert_tenant_exists on every search/ingestion/graph request.
-        fields = await asyncio.to_thread(
-            backend.get_metadata_document, schema="tenant_metadata", doc_id=canonical
-        )
-    except Exception as e:
-        # A backend outage is NOT "tenant not found". Surface 503 so callers
-        # retry, instead of a permanent-looking 404 on every tenant-scoped
-        # request during a Vespa blip (which reads as "the tenant was deleted").
-        logger.error(f"Tenant registry read failed for {tenant_full_id}: {e}")
-        raise HTTPException(
-            status_code=503, detail="Tenant registry temporarily unavailable"
-        )
+        try:
+            # Blocking Vespa GET — run off the event loop; this sits under
+            # assert_tenant_exists on every search/ingestion/graph request.
+            fields = await asyncio.to_thread(
+                backend.get_metadata_document,
+                schema="tenant_metadata",
+                doc_id=canonical,
+            )
+        except Exception as e:
+            # A backend outage is NOT "tenant not found". Surface 503 so callers
+            # retry, instead of a permanent-looking 404 on every tenant-scoped
+            # request during a Vespa blip (which reads as "the tenant was deleted").
+            logger.error(f"Tenant registry read failed for {tenant_full_id}: {e}")
+            raise HTTPException(
+                status_code=503, detail="Tenant registry temporarily unavailable"
+            )
 
-    if not fields:
-        return None
-    return Tenant(
-        tenant_full_id=fields.get("tenant_full_id"),
-        org_id=fields.get("org_id"),
-        tenant_name=fields.get("tenant_name"),
-        created_at=fields.get("created_at"),
-        created_by=fields.get("created_by"),
-        status=fields.get("status", "active"),
-        schemas_deployed=fields.get("schemas_deployed", []),
-    )
+        if not fields:
+            return None
+        return Tenant(
+            tenant_full_id=fields.get("tenant_full_id"),
+            org_id=fields.get("org_id"),
+            tenant_name=fields.get("tenant_name"),
+            created_at=fields.get("created_at"),
+            created_by=fields.get("created_by"),
+            status=fields.get("status", "active"),
+            schemas_deployed=fields.get("schemas_deployed", []),
+        )
 
 
 @router.delete("/tenants/{tenant_full_id}")
@@ -876,104 +893,110 @@ async def delete_tenant_internal(tenant_full_id: str) -> Dict:
     canonical_tid = canonical_tenant_id(tenant_full_id)
     tenant = await get_tenant_internal(canonical_tid)
 
-    backend = get_backend()
-    schema_manager = backend.schema_manager
+    with metadata_backend() as backend:
+        schema_manager = backend.schema_manager
 
-    # One atomic redeploy drops every schema the tenant has —
-    # delete_tenant_schemas unions registry-known names with canonical-suffix
-    # Vespa orphans itself. The per-schema loop this replaces did one
-    # multi-minute redeploy per schema. Off the loop: run inline it blocks
-    # every other request, /health included. Peer-orphan refusals and
-    # listing failures propagate — the tenant record stays and the delete
-    # is retryable.
-    deleted_schemas: list = list(
-        await asyncio.to_thread(schema_manager.delete_tenant_schemas, canonical_tid)
-    )
-
-    # Allow schema-only orphans (no tenant_metadata record) to be cleaned
-    # up — they're created by /ingestion/upload auto-deploy bypassing
-    # tenant create, and accumulate every test run without this branch.
-    if not tenant and not deleted_schemas:
-        raise HTTPException(status_code=404, detail=f"Tenant {canonical_tid} not found")
-
-    try:
-        await asyncio.to_thread(
-            HarnessKeyStore(config_manager.store).revoke_tenant, canonical_tid
+        # One atomic redeploy drops every schema the tenant has —
+        # delete_tenant_schemas unions registry-known names with canonical-suffix
+        # Vespa orphans itself. The per-schema loop this replaces did one
+        # multi-minute redeploy per schema. Off the loop: run inline it blocks
+        # every other request, /health included. Peer-orphan refusals and
+        # listing failures propagate — the tenant record stays and the delete
+        # is retryable.
+        deleted_schemas: list = list(
+            await asyncio.to_thread(schema_manager.delete_tenant_schemas, canonical_tid)
         )
-    except ConfigStoreUnavailableError as exc:
-        raise HTTPException(status_code=503, detail=str(exc)) from exc
 
-    if tenant:
-        # delete_metadata_document reports a non-200 as False without raising.
-        # Claiming "deleted" anyway leaves a routable ghost tenant with zero
-        # schemas that is never retried — fail loud instead; the surviving
-        # metadata record makes a retry proceed (schema drop is a no-op then).
-        metadata_deleted = bool(
-            await asyncio.to_thread(
-                backend.delete_metadata_document,
-                schema="tenant_metadata",
-                doc_id=canonical_tid,
-            )
-        )
-        if not metadata_deleted:
+        # Allow schema-only orphans (no tenant_metadata record) to be cleaned
+        # up — they're created by /ingestion/upload auto-deploy bypassing
+        # tenant create, and accumulate every test run without this branch.
+        if not tenant and not deleted_schemas:
             raise HTTPException(
-                status_code=502,
-                detail=(
-                    f"tenant_metadata delete for {canonical_tid} did not "
-                    "confirm — tenant record retained, retry the delete"
-                ),
+                status_code=404, detail=f"Tenant {canonical_tid} not found"
             )
 
-    from cogniverse_core.common.tenant_utils import invalidate_tenant_exists
-    from cogniverse_foundation.caching import evict_tenant_from_registered_caches
-
-    invalidate_tenant_exists(canonical_tid)
-    # Drop the tenant's cached per-tenant state (gateway agents, graph
-    # managers, artifact managers) so a deleted tenant releases its memory
-    # now instead of lingering until LRU pressure evicts it.
-    evict_tenant_from_registered_caches(canonical_tid)
-    tenant_full_id = canonical_tid  # for the logger.info + return below
-
-    # Tenant create auto-creates the org; deleting the org's last tenant
-    # removes it again so provision/teardown cycles don't accumulate orgs.
-    # The tenant itself is already gone here, so a cleanup failure warns and
-    # reports organization_deleted false instead of failing the delete.
-    organization_deleted = False
-    if tenant:
-        org_id = canonical_tid.split(":", 1)[0]
         try:
-            remaining = await list_tenants_for_org_internal(org_id)
-            if not remaining and await get_organization_internal(org_id):
-                # delete_metadata_document reports a non-200 as False without
-                # raising — only claim the deletion when it actually happened.
-                organization_deleted = bool(
-                    await asyncio.to_thread(
-                        backend.delete_metadata_document,
-                        schema="organization_metadata",
-                        doc_id=org_id,
-                    )
-                )
-                if organization_deleted:
-                    logger.info(f"Deleted organization {org_id} (no tenants remain)")
-                else:
-                    logger.warning(
-                        f"Organization {org_id} delete reported failure; it may remain"
-                    )
-        except Exception as e:
-            logger.warning(
-                f"Organization cleanup after deleting tenant {canonical_tid} "
-                f"failed (organization {org_id} may remain): {e}"
+            await asyncio.to_thread(
+                HarnessKeyStore(config_manager.store).revoke_tenant, canonical_tid
             )
+        except ConfigStoreUnavailableError as exc:
+            raise HTTPException(status_code=503, detail=str(exc)) from exc
 
-    logger.info(f"Deleted tenant {tenant_full_id} with {len(deleted_schemas)} schemas")
+        if tenant:
+            # delete_metadata_document reports a non-200 as False without raising.
+            # Claiming "deleted" anyway leaves a routable ghost tenant with zero
+            # schemas that is never retried — fail loud instead; the surviving
+            # metadata record makes a retry proceed (schema drop is a no-op then).
+            metadata_deleted = bool(
+                await asyncio.to_thread(
+                    backend.delete_metadata_document,
+                    schema="tenant_metadata",
+                    doc_id=canonical_tid,
+                )
+            )
+            if not metadata_deleted:
+                raise HTTPException(
+                    status_code=502,
+                    detail=(
+                        f"tenant_metadata delete for {canonical_tid} did not "
+                        "confirm — tenant record retained, retry the delete"
+                    ),
+                )
 
-    return {
-        "status": "deleted",
-        "tenant_full_id": tenant_full_id,
-        "schemas_deleted": len(deleted_schemas),
-        "deleted_schemas": deleted_schemas,
-        "organization_deleted": organization_deleted,
-    }
+        from cogniverse_core.common.tenant_utils import invalidate_tenant_exists
+        from cogniverse_foundation.caching import evict_tenant_from_registered_caches
+
+        invalidate_tenant_exists(canonical_tid)
+        # Drop the tenant's cached per-tenant state (gateway agents, graph
+        # managers, artifact managers) so a deleted tenant releases its memory
+        # now instead of lingering until LRU pressure evicts it.
+        evict_tenant_from_registered_caches(canonical_tid)
+        tenant_full_id = canonical_tid  # for the logger.info + return below
+
+        # Tenant create auto-creates the org; deleting the org's last tenant
+        # removes it again so provision/teardown cycles don't accumulate orgs.
+        # The tenant itself is already gone here, so a cleanup failure warns and
+        # reports organization_deleted false instead of failing the delete.
+        organization_deleted = False
+        if tenant:
+            org_id = canonical_tid.split(":", 1)[0]
+            try:
+                remaining = await list_tenants_for_org_internal(org_id)
+                if not remaining and await get_organization_internal(org_id):
+                    # delete_metadata_document reports a non-200 as False without
+                    # raising — only claim the deletion when it actually happened.
+                    organization_deleted = bool(
+                        await asyncio.to_thread(
+                            backend.delete_metadata_document,
+                            schema="organization_metadata",
+                            doc_id=org_id,
+                        )
+                    )
+                    if organization_deleted:
+                        logger.info(
+                            f"Deleted organization {org_id} (no tenants remain)"
+                        )
+                    else:
+                        logger.warning(
+                            f"Organization {org_id} delete reported failure; it may remain"
+                        )
+            except Exception as e:
+                logger.warning(
+                    f"Organization cleanup after deleting tenant {canonical_tid} "
+                    f"failed (organization {org_id} may remain): {e}"
+                )
+
+        logger.info(
+            f"Deleted tenant {tenant_full_id} with {len(deleted_schemas)} schemas"
+        )
+
+        return {
+            "status": "deleted",
+            "tenant_full_id": tenant_full_id,
+            "schemas_deleted": len(deleted_schemas),
+            "deleted_schemas": deleted_schemas,
+            "organization_deleted": organization_deleted,
+        }
 
 
 # ============================================================================
@@ -1021,68 +1044,68 @@ def _list_orphan_schemas() -> Dict[str, list]:
     is live-but-unregistered for the whole convergence wait and is never an
     orphan.
     """
-    backend = get_backend()
-    schema_manager = backend.schema_manager
-    schema_registry = schema_manager._schema_registry
+    with metadata_backend() as backend:
+        schema_manager = backend.schema_manager
+        schema_registry = schema_manager._schema_registry
 
-    deployed = set(schema_manager.list_deployed_document_types())
-    registered = {
-        info.full_schema_name for info in (schema_registry._get_all_schemas() or [])
-    }
+        deployed = set(schema_manager.list_deployed_document_types())
+        registered = {
+            info.full_schema_name for info in (schema_registry._get_all_schemas() or [])
+        }
 
-    # Safety guard: if the registry loaded EMPTY while Vespa has non-protected
-    # schemas deployed, the registry almost certainly failed to load from
-    # storage (a cold pod whose data-plane read failed while the config server
-    # answered). Reconciling here would report EVERY tenant's schema as an
-    # orphan and the dry_run=false path would bulk-delete them all. Refuse
-    # loudly instead of mass-deleting on an unconfirmed registry.
-    non_protected_deployed = deployed - schema_manager._PROTECTED_SCHEMAS
-    if not registered and non_protected_deployed:
-        raise HTTPException(
-            status_code=503,
-            detail=(
-                "Schema registry is empty while Vespa has deployed schemas — "
-                "refusing to reconcile orphans (this would delete every tenant's "
-                "schema). The registry likely failed to load from storage; retry "
-                "once it is reachable."
-            ),
+        # Safety guard: if the registry loaded EMPTY while Vespa has non-protected
+        # schemas deployed, the registry almost certainly failed to load from
+        # storage (a cold pod whose data-plane read failed while the config server
+        # answered). Reconciling here would report EVERY tenant's schema as an
+        # orphan and the dry_run=false path would bulk-delete them all. Refuse
+        # loudly instead of mass-deleting on an unconfirmed registry.
+        non_protected_deployed = deployed - schema_manager._PROTECTED_SCHEMAS
+        if not registered and non_protected_deployed:
+            raise HTTPException(
+                status_code=503,
+                detail=(
+                    "Schema registry is empty while Vespa has deployed schemas — "
+                    "refusing to reconcile orphans (this would delete every tenant's "
+                    "schema). The registry likely failed to load from storage; retry "
+                    "once it is reachable."
+                ),
+            )
+
+        try:
+            reserved = set(schema_registry.reserved_schemas(deployed))
+        except RegistryStorageError as exc:
+            raise HTTPException(
+                status_code=503,
+                detail=(
+                    "Cannot read schema deployment intents; refusing to reconcile "
+                    "orphans because a mid-deploy schema would be indistinguishable "
+                    f"from an orphan: {exc}"
+                ),
+            ) from exc
+
+        orphans = sorted(
+            deployed - registered - reserved - schema_manager._PROTECTED_SCHEMAS
         )
 
-    try:
-        reserved = set(schema_registry.reserved_schemas(deployed))
-    except RegistryStorageError as exc:
-        raise HTTPException(
-            status_code=503,
-            detail=(
-                "Cannot read schema deployment intents; refusing to reconcile "
-                "orphans because a mid-deploy schema would be indistinguishable "
-                f"from an orphan: {exc}"
-            ),
-        ) from exc
-
-    orphans = sorted(
-        deployed - registered - reserved - schema_manager._PROTECTED_SCHEMAS
-    )
-
-    orphan_tenants: set = set()
-    unrecovered: list = []
-    # Longest base first: with first-match-wins, "document_text" would strip a
-    # "document_text_semantic_<tid>" orphan to "semantic_<tid>" — a bogus
-    # tenant token.
-    bases_longest_first = sorted(_known_base_schemas(), key=len, reverse=True)
-    for orphan in orphans:
-        for base in bases_longest_first:
-            prefix = f"{base}_"
-            if orphan.startswith(prefix):
-                orphan_tenants.add(orphan[len(prefix) :])
-                break
-        else:
-            unrecovered.append(orphan)
-    return {
-        "orphan_schemas": orphans,
-        "orphan_tenants": sorted(orphan_tenants),
-        "unrecovered_schemas": unrecovered,
-    }
+        orphan_tenants: set = set()
+        unrecovered: list = []
+        # Longest base first: with first-match-wins, "document_text" would strip a
+        # "document_text_semantic_<tid>" orphan to "semantic_<tid>" — a bogus
+        # tenant token.
+        bases_longest_first = sorted(_known_base_schemas(), key=len, reverse=True)
+        for orphan in orphans:
+            for base in bases_longest_first:
+                prefix = f"{base}_"
+                if orphan.startswith(prefix):
+                    orphan_tenants.add(orphan[len(prefix) :])
+                    break
+            else:
+                unrecovered.append(orphan)
+        return {
+            "orphan_schemas": orphans,
+            "orphan_tenants": sorted(orphan_tenants),
+            "unrecovered_schemas": unrecovered,
+        }
 
 
 @router.post("/reconcile-orphans")
@@ -1116,15 +1139,15 @@ async def reconcile_orphans(
             **diff,
         }
 
-    backend = get_backend()
-    deleted = await asyncio.to_thread(
-        backend.schema_manager.delete_orphan_schemas, diff["orphan_schemas"]
-    )
-    return {
-        "dry_run": False,
-        "deleted": deleted,
-        **diff,
-    }
+    with metadata_backend() as backend:
+        deleted = await asyncio.to_thread(
+            backend.schema_manager.delete_orphan_schemas, diff["orphan_schemas"]
+        )
+        return {
+            "dry_run": False,
+            "deleted": deleted,
+            **diff,
+        }
 
 
 # ============================================================================

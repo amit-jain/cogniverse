@@ -958,7 +958,7 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
         updated = True
     if updated:
         config_manager.set_system_config(system_config)
-        BackendRegistry.get_instance()._backend_instances.clear()
+        BackendRegistry.get_instance().clear_instances()
         logger.info("SystemConfig stored with deployment env var overrides")
 
     # Wire Phoenix endpoints after config resolution so the admin router
@@ -1007,10 +1007,11 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
                 "Skipping inference-service validation: no config.json found"
             )
 
-    # 8. Wire tenant manager dependencies
+    # 8. Wire tenant manager dependencies. The backend itself is NOT handed
+    # over: the registry owns its lifetime and closes it on eviction or
+    # clear, so tenant_manager resolves one per call.
     tenant_manager.set_config_manager(config_manager)
     tenant_manager.set_schema_loader(schema_loader)
-    tenant_manager.backend = system_backend
     logger.info("Tenant manager wired to Runtime")
 
     # 8b. Install per-tenant WikiManager factory.

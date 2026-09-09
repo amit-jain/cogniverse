@@ -507,18 +507,20 @@ class BackendRegistry:
 
     @classmethod
     @contextmanager
-    def lease_instance(cls, instance: Any) -> Iterator[None]:
+    def lease_instance(cls, instance: Any) -> Iterator[bool]:
         """Hold a cached backend against eviction while it serves.
 
-        Capacity eviction closes what it drops, and a backend closed while
-        it is mid-request loses the connection pool that request is using.
-        A backend checked out here is skipped by eviction — the cache takes
-        the least-recently-used free entry instead — and any close aimed at
-        it waits for the request to finish. A backend the cache does not
-        hold, built directly or already evicted, checks out nothing.
+        Yields True when the checkout was taken. Capacity eviction closes
+        what it drops, and a backend closed while it is mid-request loses
+        the connection pool that request is using. A backend checked out
+        here is skipped by eviction — the cache takes the least-recently-used
+        free entry instead — and any close aimed at it waits for the request
+        to finish. A backend the cache does not hold, built directly or
+        already evicted, checks out nothing and yields False: the caller must
+        re-resolve rather than work on a released instance.
         """
-        with cls._backend_instances.lease_value(instance):
-            yield
+        with cls._backend_instances.lease_value(instance) as held:
+            yield held
 
     @classmethod
     def _try_import_backend(cls, name: str) -> None:
@@ -561,8 +563,12 @@ class BackendRegistry:
 
     @classmethod
     def clear_instances(cls) -> None:
-        """Clear all cached backend instances."""
+        """Close and drop every cached backend instance."""
         cls._backend_instances.clear()
+        # The process-wide SchemaRegistry was built around one of the
+        # instances just closed and holds it for every later deploy. Drop it
+        # so the next backend build binds a live one.
+        cls._shared_schema_registry = None
         logger.info("Cleared all backend instances")
 
     @classmethod
