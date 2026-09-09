@@ -25,6 +25,10 @@ from cogniverse_core.common.tenant_utils import (
     canonical_tenant_id,
     require_tenant_id,
 )
+from cogniverse_core.conversation import (
+    ConversationStore,
+    is_transient_turn_write_error,
+)
 from cogniverse_core.registries.agent_registry import AgentRegistry
 from cogniverse_runtime.harness_turn import NoAnswerError, extract_answer_text
 
@@ -62,6 +66,23 @@ CONVERSATION_LOAD_TIMEOUT_S = 5.0
 # writes, the first of which warms the embedder); every later save costs
 # ~0.1s. The budget carries ~2.8x the measured cold cost.
 CONVERSATION_SAVE_TIMEOUT_S = 20.0
+
+# Attempts one turn append gets before the turn is given up on, retries
+# included. The budget must still hold the worst save with the margin it was
+# sized for (>=2x, so 10s of the 20s): a cold save costs ~7.2s and the marker
+# write a permanent failure adds ~0.1s, leaving ~2.7s for retries. Four
+# attempts spend 0.25 + 0.5 + 1.0s of backoff plus four failed writes
+# (<=0.11s each) = ~2.2s; a fifth would add 2.0s more and spend the margin.
+CONVERSATION_SAVE_ATTEMPTS = 4
+
+# First backoff, doubled per retry — about twice a measured steady-state write
+# (0.03-0.11s), so a blip that clears within one write cycle is caught without
+# idling the chain.
+CONVERSATION_SAVE_RETRY_BACKOFF_S = 0.25
+
+# Budget held back from the retry schedule for the attempt it is about to make
+# and the marker write that follows a permanent failure (~0.22s measured).
+CONVERSATION_SAVE_STEP_RESERVE_S = 0.5
 
 # Unrecovered persistence failures are kept per context so a consumer can read
 # which turns were lost. Contexts are unbounded (one per chat), so the newest
@@ -1460,7 +1481,6 @@ class AgentDispatcher:
         """
         if self._conversation_store_factory is not None:
             return self._conversation_store_factory(tenant_id)
-        from cogniverse_core.conversation import ConversationStore
         from cogniverse_core.memory.manager import Mem0MemoryManager
 
         mgr = Mem0MemoryManager(tenant_id)
@@ -1623,8 +1643,15 @@ class AgentDispatcher:
         """Append the user + assistant turns off the event loop, time-bounded.
 
         Runs on the context's save chain: ``after`` is that context's previous
-        save, awaited first so turns land in dispatch order. A save that fails
-        or exceeds CONVERSATION_SAVE_TIMEOUT_S records a
+        save, awaited first so turns land in dispatch order. Each append is
+        retried on its own within the budget (see
+        :meth:`_append_conversation_turn`), so an
+        append that already landed is never repeated. When the assistant
+        append is given up on, the user turn stays and a durable
+        ``assistant_missing`` marker takes the reply's place — the next turn
+        reads an unanswered user message rather than prose no agent produced.
+
+        A save that fails or exceeds CONVERSATION_SAVE_TIMEOUT_S records a
         ConversationPersistFailed for the context and logs the exception type
         — the turn is lost, and the loss is readable through
         :meth:`conversation_persist_status`, never a silent drop. The
@@ -1641,15 +1668,26 @@ class AgentDispatcher:
             candidate = result.get("result")
             assistant_text = candidate if isinstance(candidate, str) else ""
 
+        deadline = time.monotonic() + CONVERSATION_SAVE_TIMEOUT_S
+
         async def _save() -> None:
+            # The store build is not an append: a build that fails leaves
+            # nothing half-written, so it is not retried here.
             store = await asyncio.to_thread(self._build_conversation_store, tenant_id)
             if store is None:
                 return
-            await asyncio.to_thread(store.store_turn, context_id, "user", query)
-            if assistant_text:
-                await asyncio.to_thread(
-                    store.store_turn, context_id, "assistant", assistant_text
+            await self._append_conversation_turn(
+                store, context_id, "user", query, deadline
+            )
+            if not assistant_text:
+                return
+            try:
+                await self._append_conversation_turn(
+                    store, context_id, "assistant", assistant_text, deadline
                 )
+            except Exception as exc:  # noqa: BLE001 — marked, then re-raised
+                await self._mark_conversation_reply_missing(store, context_id, exc)
+                raise
 
         key = (tenant_id, context_id)
         try:
@@ -1668,6 +1706,67 @@ class AgentDispatcher:
             )
             return
         self._conversation_persist_failures.pop(key, None)
+
+    async def _append_conversation_turn(
+        self,
+        store: ConversationStore,
+        context_id: str,
+        role: str,
+        content: str,
+        deadline: float,
+    ) -> None:
+        """Append one turn, retrying a write that never reached a verdict.
+
+        Retrying stops at CONVERSATION_SAVE_ATTEMPTS, on a failure typed as
+        permanent (a document the backend refused, a programming error), and
+        when the remaining budget cannot hold the next attempt — leaving the
+        save time to mark the turn instead of being cancelled mid-retry.
+        """
+        attempt = 1
+        while True:
+            try:
+                await asyncio.to_thread(store.store_turn, context_id, role, content)
+                return
+            except Exception as exc:  # noqa: BLE001 — classified, then re-raised
+                backoff = CONVERSATION_SAVE_RETRY_BACKOFF_S * 2 ** (attempt - 1)
+                if (
+                    attempt >= CONVERSATION_SAVE_ATTEMPTS
+                    or not is_transient_turn_write_error(exc)
+                    or time.monotonic() + backoff + CONVERSATION_SAVE_STEP_RESERVE_S
+                    > deadline
+                ):
+                    raise
+                logger.info(
+                    "Retrying the %s turn for context %s after %s (attempt %d of %d)",
+                    role,
+                    context_id,
+                    type(exc).__name__,
+                    attempt,
+                    CONVERSATION_SAVE_ATTEMPTS,
+                )
+                await asyncio.sleep(backoff)
+                attempt += 1
+
+    async def _mark_conversation_reply_missing(
+        self, store: ConversationStore, context_id: str, cause: BaseException
+    ) -> None:
+        """Persist the marker that names a turn whose reply was not stored.
+
+        One attempt inside the same budget: the caller re-raises the append's
+        own failure either way, so a marker that cannot land is logged and
+        never substituted for the failure it describes.
+        """
+        try:
+            await asyncio.to_thread(
+                store.store_missing_assistant_marker, context_id, cause
+            )
+        except Exception as exc:  # noqa: BLE001 — the caller re-raises the cause
+            logger.warning(
+                "Missing-assistant marker for context %s was NOT persisted: %s: %r",
+                context_id,
+                type(exc).__name__,
+                exc,
+            )
 
     def _spawn_background(self, coro) -> asyncio.Task:
         """Schedule a fire-and-forget coroutine while keeping a strong
