@@ -97,7 +97,7 @@ def _profile_selection_generator_setup(tenant_id: str):
         BackendProfileConfig,
         SystemConfig,
     )
-    from tests.utils.memory_store import InMemoryConfigStore
+    from tests.utils.memory_store import InMemoryConfigStore, register_deployed_schema
 
     profile_name = "video_colpali_smol500_mv_frame"
     profile_config = {
@@ -117,6 +117,8 @@ def _profile_selection_generator_setup(tenant_id: str):
             inference_service_urls={"video_embedding": "http://video_embedding.invalid"}
         )
     )
+    # A profile is servable only once the tenant's schema for it is deployed.
+    register_deployed_schema(config_manager, tenant_id, profile_name)
     return profile_name, profile_config, config_manager
 
 

@@ -26,7 +26,10 @@ from cogniverse_synthetic.schemas import (
     RoutingExperienceSchema,
     WorkflowExecutionSchema,
 )
-from tests.utils.memory_store import InMemoryConfigStore
+from tests.utils.memory_store import (
+    InMemoryConfigStore,
+    register_deployed_schema,
+)
 
 pytestmark = pytest.mark.unit
 
@@ -169,6 +172,8 @@ async def test_pattern_generators_emit_unobserved_targets_requiring_review(
         ),
         tenant_id="acme:synthetic",
     )
+    # A profile is servable only once the tenant's schema for it is deployed.
+    register_deployed_schema(profile_config_manager, "acme:synthetic", "document_pages")
     profile_examples = await ProfileGenerator(profile_labeler=label_profile).generate(
         sampled_content=[
             {
