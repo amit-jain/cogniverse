@@ -16,12 +16,23 @@ import pytest
 from cogniverse_agents.memory_aware_mixin import MemoryAwareMixin
 
 
+def _memory_config_manager():
+    """The injected ConfigManager the mixin reads."""
+    from cogniverse_foundation.config.manager import ConfigManager
+    from tests.utils.memory_store import InMemoryConfigStore
+
+    store = InMemoryConfigStore()
+    store.initialize()
+    return ConfigManager(store=store)
+
+
 class MockAgent(MemoryAwareMixin):
     """Test agent combining MemoryAwareMixin with a simple base."""
 
     def __init__(self, agent_name: str = "test_agent"):
         super().__init__()
         self.agent_name = agent_name
+        self.bind_config_manager(_memory_config_manager())
 
     def initialize_memory(
         self,

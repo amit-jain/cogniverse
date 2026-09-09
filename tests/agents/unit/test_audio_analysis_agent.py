@@ -173,6 +173,7 @@ class TestAudioAnalysisAgent:
                 tenant_id="test_tenant",
                 whisper_endpoint="https://whisper.internal.example.com",
                 whisper_headers={"Modal-Key": "wrong-auth-scheme"},
+                config_manager=_in_memory_config_manager(),
             )
 
     def test_whisper_headers_require_endpoint(self):
@@ -182,6 +183,7 @@ class TestAudioAnalysisAgent:
             AudioAnalysisDeps(
                 tenant_id="test_tenant",
                 whisper_headers={"Authorization": "Bearer custom-whisper-key"},
+                config_manager=_in_memory_config_manager(),
             )
 
     def test_custom_whisper_endpoint_accepts_one_canonical_mapping(self):
@@ -190,6 +192,7 @@ class TestAudioAnalysisAgent:
                 tenant_id="test_tenant",
                 whisper_endpoint="https://whisper.internal.example.com",
                 whisper_headers={"Authorization": "Bearer custom-whisper-key"},
+                config_manager=_in_memory_config_manager(),
             )
         )
 
@@ -205,6 +208,7 @@ class TestAudioAnalysisAgent:
         deps = AudioAnalysisDeps(
             tenant_id="test_tenant",
             whisper_endpoint="https://whisper.modal.run",
+            config_manager=_in_memory_config_manager(),
         )
 
         monkeypatch.setenv("COGNIVERSE_INFERENCE_API_KEY", "rotated-modal-whisper-key")
@@ -229,6 +233,7 @@ class TestAudioAnalysisAgent:
                 tenant_id="test_tenant",
                 whisper_endpoint="https://whisper.modal.run",
                 whisper_headers=headers,
+                config_manager=_in_memory_config_manager(),
             )
 
     @patch("requests.post")
@@ -241,6 +246,7 @@ class TestAudioAnalysisAgent:
             AudioAnalysisDeps(
                 tenant_id="test_tenant",
                 whisper_endpoint="http://whisper.modal.run",
+                config_manager=_in_memory_config_manager(),
             )
 
         mock_post.assert_not_called()
@@ -258,6 +264,7 @@ class TestAudioAnalysisAgent:
             AudioAnalysisDeps(
                 tenant_id="test_tenant",
                 whisper_endpoint="https://whisper.modal.run",
+                config_manager=_in_memory_config_manager(),
             )
 
         mock_post.assert_not_called()
@@ -275,6 +282,7 @@ class TestAudioAnalysisAgent:
             AudioAnalysisDeps(
                 tenant_id="test_tenant",
                 whisper_endpoint="https://whisper.modal.run",
+                config_manager=_in_memory_config_manager(),
             )
 
         mock_post.assert_not_called()
@@ -285,6 +293,7 @@ class TestAudioAnalysisAgent:
                 tenant_id="test_tenant",
                 clap_endpoint="https://clap.modal.run",
                 clap_headers={"Modal-Key": "wrong-auth-scheme"},
+                config_manager=_in_memory_config_manager(),
             )
 
     def test_clap_headers_require_endpoint(self):
@@ -292,6 +301,7 @@ class TestAudioAnalysisAgent:
             AudioAnalysisDeps(
                 tenant_id="test_tenant",
                 clap_headers={"Authorization": "Bearer modal-clap-secret"},
+                config_manager=_in_memory_config_manager(),
             )
 
     def test_embedding_generator_receives_environment_clap_credentials(
@@ -302,6 +312,7 @@ class TestAudioAnalysisAgent:
         deps = AudioAnalysisDeps(
             tenant_id="test_tenant",
             clap_endpoint="https://clap.modal.run",
+            config_manager=_in_memory_config_manager(),
         )
         monkeypatch.delenv("COGNIVERSE_INFERENCE_API_KEY")
 
@@ -330,6 +341,7 @@ class TestAudioAnalysisAgent:
                 tenant_id="test_tenant",
                 clap_endpoint="https://clap.modal.run",
                 clap_headers=headers,
+                config_manager=_in_memory_config_manager(),
             )
 
     def test_modal_clap_endpoint_requires_environment_credential(self, monkeypatch):
@@ -342,6 +354,7 @@ class TestAudioAnalysisAgent:
             AudioAnalysisDeps(
                 tenant_id="test_tenant",
                 clap_endpoint="https://clap.modal.run",
+                config_manager=_in_memory_config_manager(),
             )
 
     @patch("cogniverse_agents.audio_analysis_agent.AudioTranscriber")
@@ -717,6 +730,7 @@ class TestAudioAnalysisAgent:
             deps=AudioAnalysisDeps(
                 tenant_id="test_tenant",
                 whisper_endpoint="https://whisper.modal.run",
+                config_manager=_in_memory_config_manager(),
             )
         )
         monkeypatch.setenv("COGNIVERSE_INFERENCE_API_KEY", "rotated-after-startup")
