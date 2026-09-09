@@ -25,6 +25,8 @@ from tests.e2e.conftest import (
 
 logger = logging.getLogger(__name__)
 
+from cogniverse_runtime.harness_turn import extract_answer_text
+
 pytestmark = [pytest.mark.e2e]
 
 RUNTIME_URL = "http://localhost:33000"
@@ -33,6 +35,7 @@ SEARCH_RESPONSE_FIELDS = {
     "status",
     "agent",
     "message",
+    "answer",
     "results_count",
     "results",
     "profile",
@@ -51,6 +54,8 @@ def _assert_search_response(response: dict, query: str) -> None:
         assert response["original_query"] == query, response
     assert response["status"] == "success", response
     assert response["agent"] == "search_agent", response
+    without_answer = {k: v for k, v in response.items() if k != "answer"}
+    assert response["answer"] == extract_answer_text(without_answer), response
     assert response["results_count"] == len(response["results"]), response
     if response["results_count"]:
         assert re.fullmatch(
