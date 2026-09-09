@@ -47,11 +47,31 @@ logger = logging.getLogger(__name__)
 # artifact read on the per-request path.
 GATEWAY_ARTIFACT_TTL_S = 300.0
 
-# Conversation history is enrichment on the dispatch critical path — each Mem0
-# load/save is bounded so a hung backend can never stall a user's reply. On
-# timeout the load degrades to no history and the save drops its turns (both
-# logged); memory I/O never delays the reply past this budget.
-CONVERSATION_IO_TIMEOUT_S = 5.0
+# Conversation history load is enrichment on the dispatch critical path: the
+# agent needs the prior turns before it runs, so the read stays on the reply
+# path and is bounded — a hung Mem0 degrades to no history (logged) instead of
+# stalling the reply. A real Mem0 read of a context costs ~0.02s cold and warm
+# (the read builds no embedding), so this is the reply-path allowance for a
+# contended backend, not the expected cost.
+CONVERSATION_LOAD_TIMEOUT_S = 5.0
+
+# Conversation persistence runs OFF the reply path on a per-context chain, so
+# this budget bounds how long one context's chain stays occupied by a hung
+# backend — it never delays a reply. A tenant's first save in a fresh process
+# costs ~7.2s against real Mem0 (building the store, then two verbatim turn
+# writes, the first of which warms the embedder); every later save costs
+# ~0.1s. The budget carries ~2.8x the measured cold cost.
+CONVERSATION_SAVE_TIMEOUT_S = 20.0
+
+# Unrecovered persistence failures are kept per context so a consumer can read
+# which turns were lost. Contexts are unbounded (one per chat), so the newest
+# failure displaces the oldest instead of growing for the pod's lifetime.
+CONVERSATION_PERSIST_FAILURE_CAPACITY = 256
+
+# Shutdown waits longer than one save budget: the in-flight save settles at its
+# own bound, and a save queued behind it needs a second one. A shorter budget
+# would abandon a turn that was about to land.
+CONVERSATION_SHUTDOWN_DRAIN_TIMEOUT_S = 2 * CONVERSATION_SAVE_TIMEOUT_S
 
 # Bound on cached per-tenant GatewayAgents. Least-recently-dispatched tenants
 # rebuild on their next request; tenant delete evicts eagerly via the
@@ -83,6 +103,26 @@ ORCHESTRATOR_AGENT_CACHE_CAPACITY = 64
 # short enough to recover quickly, long enough not to hammer a down store on
 # every subsequent request.
 RELOAD_RETRY_COOLDOWN_S = 10.0
+
+
+class ConversationPersistFailed(Exception):
+    """A dispatched turn's conversation history was not persisted.
+
+    Carries the tenant, the context and the originating error so a consumer
+    can tell a hung backend from a rejected write; the dispatcher keeps the
+    latest one per context and serves it through
+    :meth:`AgentDispatcher.conversation_persist_failure`.
+    """
+
+    def __init__(self, tenant_id: str, context_id: str, cause: BaseException):
+        super().__init__(
+            f"conversation turns for context {context_id} (tenant {tenant_id}) "
+            f"were not persisted: {type(cause).__name__}: {cause}"
+        )
+        self.tenant_id = tenant_id
+        self.context_id = context_id
+        self.__cause__ = cause
+
 
 # Capabilities whose execution path reaches Vespa (retrieval, code context).
 # Every dispatch path reaches the LM, so "llm" needs no capability test.
@@ -436,6 +476,17 @@ class AgentDispatcher:
         # discarded is documented to allow that — keep the handles, discard
         # them on completion via add_done_callback.
         self._background_tasks: set[asyncio.Task[Any]] = set()
+        # Conversation persistence runs off the reply path, one chain per
+        # (tenant_id, context_id): the head is that context's most recently
+        # scheduled save, and a load waits on it so a turn reads its own
+        # writes. Entries are dropped as each chain settles.
+        self._conversation_save_chains: Dict[Tuple[str, str], "asyncio.Task[None]"] = {}
+        # Latest unrecovered persistence failure per context, cleared by the
+        # next save that lands, so a dropped turn stays readable. Insertion
+        # order is the eviction order once the capacity is reached.
+        self._conversation_persist_failures: Dict[
+            Tuple[str, str], ConversationPersistFailed
+        ] = {}
 
     def _resolve_gliner_url(self) -> Optional[str]:
         """Look up the deployed GLiNER sidecar URL from system config.
@@ -1361,13 +1412,11 @@ class AgentDispatcher:
         if result.get("pending_tool_calls"):
             return result
 
-        if manage_history:
-            await self._save_conversation_turns(
-                tenant_id, str(context_id), query, result
-            )
-
         if isinstance(result, dict):
             self._stamp_answer(result)
+
+        if manage_history:
+            self._schedule_conversation_save(tenant_id, str(context_id), query, result)
 
         entities = result.get("entities", [])
         turn_count = len(conversation_history or []) // 2 + 1
@@ -1420,13 +1469,18 @@ class AgentDispatcher:
     ) -> List[Dict[str, str]]:
         """Load a context's recent turns off the event loop, time-bounded.
 
+        Waits for this context's pending saves first, so a turn reads its own
+        writes even though the previous reply did not wait for them; other
+        contexts' saves are never waited on.
+
         History is enrichment, not a hard dependency: a Mem0 outage, an
-        unconfigured backend, or a load that exceeds CONVERSATION_IO_TIMEOUT_S
-        degrades to no history (logged), so the agent still answers — it just
-        loses prior-turn context, never the reply. A hung backend cannot stall
-        the reply past the budget (the offloaded thread may run on, but the
-        dispatch stops waiting).
+        unconfigured backend, or a read that exceeds
+        CONVERSATION_LOAD_TIMEOUT_S degrades to no history (logged), so the
+        agent still answers — it just loses prior-turn context, never the
+        reply. A hung backend cannot stall the reply past the budget (the
+        offloaded thread may run on, but the dispatch stops waiting).
         """
+        await self._await_conversation_saves(tenant_id, context_id)
 
         async def _load() -> List[Dict[str, str]]:
             store = await asyncio.to_thread(self._build_conversation_store, tenant_id)
@@ -1435,27 +1489,143 @@ class AgentDispatcher:
             return await asyncio.to_thread(store.get_history, context_id)
 
         try:
-            return await asyncio.wait_for(_load(), timeout=CONVERSATION_IO_TIMEOUT_S)
+            return await asyncio.wait_for(_load(), timeout=CONVERSATION_LOAD_TIMEOUT_S)
         except Exception as exc:  # noqa: BLE001 — enrichment degrade, logged
             logger.warning(
-                "Conversation history unavailable for context %s: %s",
+                "Conversation history unavailable for context %s: %s: %r",
                 context_id,
+                type(exc).__name__,
                 exc,
             )
             return []
 
-    async def _save_conversation_turns(
+    def _schedule_conversation_save(
         self, tenant_id: str, context_id: str, query: str, result: Dict[str, Any]
+    ) -> "asyncio.Task[None]":
+        """Queue this turn's persistence behind the context's pending saves.
+
+        The reply returns without waiting: the answer is already produced, and
+        a Mem0 write measured in seconds must not be added to every turn's
+        latency. Chaining per ``(tenant_id, context_id)`` keeps one context's
+        turns in dispatch order; separate contexts run concurrently.
+        """
+        key = (tenant_id, context_id)
+        previous = self._conversation_save_chains.get(key)
+        task = self._spawn_background(
+            self._save_conversation_turns(
+                tenant_id, context_id, query, result, after=previous
+            )
+        )
+        self._conversation_save_chains[key] = task
+        task.add_done_callback(
+            lambda finished, _key=key: self._release_conversation_chain(_key, finished)
+        )
+        return task
+
+    def _release_conversation_chain(
+        self, key: Tuple[str, str], task: "asyncio.Task[None]"
+    ) -> None:
+        """Drop a settled chain head, unless a newer save already replaced it."""
+        if self._conversation_save_chains.get(key) is task:
+            del self._conversation_save_chains[key]
+
+    async def _await_conversation_saves(self, tenant_id: str, context_id: str) -> bool:
+        """Wait for one context's chained saves to settle.
+
+        Returns True when nothing is pending for the context. One save budget
+        bounds the wait — the in-flight save's own bound — so a stuck save
+        costs the next turn its history (logged) rather than holding the reply
+        open. Other contexts' saves are never waited on.
+        """
+        key = (tenant_id, context_id)
+        deadline = time.monotonic() + CONVERSATION_SAVE_TIMEOUT_S
+        while True:
+            task = self._conversation_save_chains.get(key)
+            if task is None:
+                return True
+            remaining = deadline - time.monotonic()
+            if remaining <= 0:
+                logger.warning(
+                    "Conversation saves for context %s did not settle within "
+                    "%.1fs; reading history without them",
+                    context_id,
+                    CONVERSATION_SAVE_TIMEOUT_S,
+                )
+                return False
+            await asyncio.wait([task], timeout=remaining)
+
+    async def drain_conversation_saves(
+        self, timeout_s: float = CONVERSATION_SHUTDOWN_DRAIN_TIMEOUT_S
+    ) -> bool:
+        """Land every pending conversation save before the process exits.
+
+        Returns False when the budget elapsed with saves still in flight —
+        those turns are lost, and the count is logged.
+        """
+        deadline = time.monotonic() + timeout_s
+        while True:
+            pending = [
+                task
+                for task in list(self._conversation_save_chains.values())
+                if not task.done()
+            ]
+            if not pending:
+                return True
+            remaining = deadline - time.monotonic()
+            if remaining <= 0:
+                logger.warning(
+                    "Shutdown left %d conversation save(s) unfinished after "
+                    "%.1fs; their turns were NOT persisted",
+                    len(pending),
+                    timeout_s,
+                )
+                return False
+            await asyncio.wait(pending, timeout=remaining)
+
+    def conversation_persist_status(self) -> Dict[str, Any]:
+        """Conversation saves accepted but not yet landed, and those lost.
+
+        ``{"pending": N, "failed": [(tenant_id, context_id), ...]}``. A turn
+        whose save failed stays in ``failed`` until a later save for the same
+        context succeeds, so a lost turn is readable rather than silent.
+        """
+        return {
+            "pending": sum(
+                1 for task in self._conversation_save_chains.values() if not task.done()
+            ),
+            "failed": list(self._conversation_persist_failures),
+        }
+
+    def conversation_persist_failure(
+        self, tenant_id: str, context_id: str
+    ) -> Optional[ConversationPersistFailed]:
+        """The last unrecovered persistence failure for a context, if any."""
+        return self._conversation_persist_failures.get((tenant_id, str(context_id)))
+
+    async def _save_conversation_turns(
+        self,
+        tenant_id: str,
+        context_id: str,
+        query: str,
+        result: Dict[str, Any],
+        after: "Optional[asyncio.Task[None]]" = None,
     ) -> None:
         """Append the user + assistant turns off the event loop, time-bounded.
 
-        Awaited so the next turn reads its own writes, but bounded by
-        CONVERSATION_IO_TIMEOUT_S: a save that fails or exceeds the budget is
-        logged and dropped — the answer was already produced, so persisting a
-        turn must never turn a successful reply into an error or a stall. The
+        Runs on the context's save chain: ``after`` is that context's previous
+        save, awaited first so turns land in dispatch order. A save that fails
+        or exceeds CONVERSATION_SAVE_TIMEOUT_S records a
+        ConversationPersistFailed for the context and logs the exception type
+        — the turn is lost, and the loss is readable through
+        :meth:`conversation_persist_status`, never a silent drop. The
         assistant turn is skipped when the agent produced no human-readable
         message.
         """
+        if after is not None:
+            # The predecessor records its own failure; this save proceeds
+            # either way so one bad write cannot stall a context forever.
+            await asyncio.wait([after])
+
         assistant_text = result.get("message")
         if not isinstance(assistant_text, str) or not assistant_text:
             candidate = result.get("result")
@@ -1471,14 +1641,23 @@ class AgentDispatcher:
                     store.store_turn, context_id, "assistant", assistant_text
                 )
 
+        key = (tenant_id, context_id)
         try:
-            await asyncio.wait_for(_save(), timeout=CONVERSATION_IO_TIMEOUT_S)
-        except Exception as exc:  # noqa: BLE001 — best-effort, answer already sent
+            await asyncio.wait_for(_save(), timeout=CONVERSATION_SAVE_TIMEOUT_S)
+        except Exception as exc:  # noqa: BLE001 — recorded below, answer already sent
+            failures = self._conversation_persist_failures
+            failures.pop(key, None)
+            failures[key] = ConversationPersistFailed(tenant_id, context_id, exc)
+            while len(failures) > CONVERSATION_PERSIST_FAILURE_CAPACITY:
+                failures.pop(next(iter(failures)))
             logger.warning(
-                "Failed to persist conversation turns for context %s: %s",
+                "Conversation turns for context %s were NOT persisted: %s: %r",
                 context_id,
+                type(exc).__name__,
                 exc,
             )
+            return
+        self._conversation_persist_failures.pop(key, None)
 
     def _spawn_background(self, coro) -> asyncio.Task:
         """Schedule a fire-and-forget coroutine while keeping a strong

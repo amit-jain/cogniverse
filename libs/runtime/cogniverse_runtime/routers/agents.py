@@ -172,6 +172,18 @@ def get_dispatcher() -> AgentDispatcher:
     return _ensure_dispatcher()
 
 
+async def drain_conversation_saves() -> bool:
+    """Land conversation turns still persisting in the background.
+
+    Called from the runtime's shutdown so a turn answered moments before
+    SIGTERM is not lost. True when nothing was pending or everything landed;
+    a process that never built a dispatcher has nothing to drain.
+    """
+    if _dispatcher is None:
+        return True
+    return await _dispatcher.drain_conversation_saves()
+
+
 class AgentTask(BaseModel):
     """Task request for agent processing.
 

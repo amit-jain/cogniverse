@@ -145,7 +145,7 @@ For a photo, `MessagingGateway._handle_message` downloads the file through the b
 
 ## Conversation History
 
-Conversation history is **server-side**: the gateway sends only `context_id` (the Telegram chat id) with each dispatch, and the runtime's agent dispatcher loads that context's recent turns before the agent runs and appends the two new turns after (`cogniverse_core.conversation.ConversationStore`, keyed by `(tenant_id, context_id)`). The gateway therefore holds no Mem0 connection and multi-turn memory works in the deployed chart. History is enrichment: a Mem0 outage degrades to no-history (the agent still answers) rather than failing the reply. See [Core → ConversationStore](core.md) and the dispatcher.
+Conversation history is **server-side**: the gateway sends only `context_id` (the Telegram chat id) with each dispatch, and the runtime's agent dispatcher loads that context's recent turns before the agent runs and appends the two new turns after (`cogniverse_core.conversation.ConversationStore`, keyed by `(tenant_id, context_id)`). The gateway therefore holds no Mem0 connection and multi-turn memory works in the deployed chart. History is enrichment: a Mem0 outage degrades to no-history (the agent still answers) rather than failing the reply. The two new turns persist after the reply is sent, ordered per context, so the write's cost never lands on the user's latency; a save the runtime could not complete is reported through the dispatcher's `conversation_persist_status()`. See [Core → ConversationStore](core.md) and the dispatcher.
 
 ---
 
