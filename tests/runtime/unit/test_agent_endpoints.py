@@ -272,10 +272,13 @@ class TestGatewayOrchestrationHandoff:
             context={"tenant_id": "acme:acme", "context_id": "chat-1"},
         )
 
+        # Persistence runs off the reply path; drain it, then check what landed.
         # The persisted assistant turn is the answer, not the breadcrumb.
-        assert ("user", "find videos of cats") in stored
-        assistant_turns = [c for (r, c) in stored if r == "assistant"]
-        assert assistant_turns == ["Found 3 results for 'find videos of cats'"]
+        assert await dispatcher.drain_conversation_saves() is True
+        assert stored == [
+            ("user", "find videos of cats"),
+            ("assistant", "Found 3 results for 'find videos of cats'"),
+        ]
 
         # The response the caller/display consumes carries the answer as
         # `message` and surfaces the hits at top level, gateway triage kept.
