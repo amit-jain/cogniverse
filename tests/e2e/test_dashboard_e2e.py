@@ -2152,7 +2152,11 @@ def optimization_tenant():
     """
     tenant_id = unique_id("opt")
     tenant_row = register_tenant_and_wait(tenant_id, created_by="e2e-test")
-    assert (tenant_row["tenant_full_id"], tenant_row["status"], tenant_row["created_by"]) == (
+    assert (
+        tenant_row["tenant_full_id"],
+        tenant_row["status"],
+        tenant_row["created_by"],
+    ) == (
         canonical_tenant_id(tenant_id),
         "active",
         "e2e-test",
