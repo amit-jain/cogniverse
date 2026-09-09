@@ -12,9 +12,14 @@ is nothing to search, and that a backend outage stays distinguishable from it.
 from __future__ import annotations
 
 import asyncio
+import collections
+import contextlib
+import dataclasses
+import http.server
 import json
 import os
 import subprocess
+import threading
 import time
 import uuid
 from pathlib import Path
@@ -32,10 +37,12 @@ from cogniverse_runtime.agent_dispatcher import (
     GROUNDING_NO_PROFILE_FOR_MODALITY,
     GROUNDING_SEARCH_UNAVAILABLE,
     GROUNDING_SEARCHED,
+    GROUNDING_SEARCHED_DEGRADED,
     AgentDispatcher,
 )
 from cogniverse_vespa.config.config_store import VespaConfigStore
 from tests.utils.vespa_docker import VespaDockerManager
+from tests.utils.vespa_test_helpers import feed_text_documents
 
 pytestmark = [pytest.mark.integration, pytest.mark.no_shared_vespa]
 
@@ -162,8 +169,10 @@ def config_manager(grounding_vespa):
     return config_manager
 
 
-def _dispatcher(config_manager: ConfigManager) -> AgentDispatcher:
-    return AgentDispatcher(
+def _dispatcher(
+    config_manager: ConfigManager, dispatcher_cls=AgentDispatcher
+) -> AgentDispatcher:
+    return dispatcher_cls(
         agent_registry=AgentRegistry(
             tenant_id=TENANT_DOCUMENTS, config_manager=config_manager
         ),
@@ -257,6 +266,7 @@ class TestAnswerEnvelopeStatesItsGrounding:
             "state": GROUNDING_NO_PROFILE_FOR_MODALITY,
             "modalities": ["video"],
             "profiles": [],
+            "degraded_profiles": [],
             "result_count": 0,
         }
 
@@ -346,3 +356,509 @@ class TestGroundingResolutionLeavesTheLoopFree:
             f"{max(gaps, default=float('inf')):.4f}s"
         )
         assert elapsed < 0.3, f"20 concurrent resolutions took {elapsed:.3f}s"
+
+
+# --- Grounding against a real corpus -----------------------------------------
+#
+# The tests above pin WHICH profiles a tenant grounds on. These pin what the
+# search returns: a second Vespa this module owns, carrying the document
+# content schemas as well as the config store, with the tenant's LateOn
+# profiles encoding through the served PyLate sidecar.
+
+TENANT_RETRIEVAL = "grounding_retrieval"
+TENANT_FANOUT = "grounding_fanout"
+
+RETRIEVAL_PROFILES = [
+    name
+    for name in DOCUMENT_PROFILES
+    if _SHIPPED_PROFILE_DATA[name]["schema_name"] in ("document_text", "lateon_mv")
+]
+FANOUT_PROFILES = DOCUMENT_PROFILES
+UNSERVED_ENCODER_PROFILE = next(
+    name
+    for name in DOCUMENT_PROFILES
+    if (_SHIPPED_PROFILE_DATA[name].get("inference_services") or {}).get("embedding")
+    != "colbert_pylate"
+)
+COLBERT_MODEL = _SHIPPED_PROFILE_DATA[RETRIEVAL_PROFILES[0]]["embedding_model"]
+
+# Two documents with no vocabulary in common, so every profile's ranking of
+# them agrees and an order pin fails when the query changes rather than
+# resolving a near-tie by fusion tie-break.
+CORPUS = (
+    {
+        "id": "grounding_harbour_dredging",
+        "title": "Harbour Dredging Survey",
+        "text": (
+            "The dredging survey recorded silt accumulation across the tidal "
+            "basin and recommends removing sediment from the northern berth "
+            "before the winter shipping season begins."
+        ),
+    },
+    {
+        "id": "grounding_beekeeping_winter",
+        "title": "Winter Beekeeping Manual",
+        "text": (
+            "Overwintering colonies need ventilated hives and candy board "
+            "feeding, because the cluster warms itself and opening a hive "
+            "during frost chills the brood."
+        ),
+    },
+)
+CORPUS_ID = "grounding_corpus"
+# The pipeline ids a fed segment "<corpus>_<document id>"; the search returns
+# that id, so the pins name what ingestion actually wrote.
+HARBOUR_ID, BEEKEEPING_ID = (f"{CORPUS_ID}_{entry['id']}" for entry in CORPUS)
+HARBOUR_QUERY = "silt accumulation across the tidal basin"
+BEEKEEPING_QUERY = "candy board feeding for overwintering colonies"
+
+GROUNDING_SEARCH_BUDGET_KEY = "answer_grounding_search_timeout_seconds"
+SHIPPED_GROUNDING_BUDGET_S = json.loads(
+    (_REPO_ROOT / "configs" / "config.json").read_text()
+)[GROUNDING_SEARCH_BUDGET_KEY]
+
+
+@pytest.fixture(scope="module")
+def retrieval_vespa():
+    """A Vespa carrying this module's config store AND document content."""
+    from cogniverse_vespa.metadata_schemas import (
+        create_config_metadata_schema,
+        create_organization_metadata_schema,
+        create_tenant_metadata_schema,
+    )
+    from cogniverse_vespa.vespa_schema_manager import VespaSchemaManager
+    from tests.conftest import _shared_vespa_application_package
+
+    manager = VespaDockerManager()
+    info = manager.start_container(f"grounding-corpus-{uuid.uuid4().hex}")
+    try:
+        manager.wait_for_config_ready(info)
+        package = _shared_vespa_application_package(
+            [
+                create_config_metadata_schema(),
+                create_organization_metadata_schema(),
+                create_tenant_metadata_schema(),
+            ]
+        )
+        VespaSchemaManager(
+            backend_endpoint="http://localhost", backend_port=info["config_port"]
+        )._deploy_package(package)
+        manager.wait_for_application_ready(info)
+        yield info
+    finally:
+        manager.stop_container(info)
+
+
+def _retrieval_config_manager(info, pylate_url: str) -> ConfigManager:
+    """Config store on the corpus Vespa, LateOn served, everything else not."""
+    config_manager = ConfigManager(
+        store=VespaConfigStore(
+            backend_url="http://localhost", backend_port=info["http_port"]
+        )
+    )
+    service_urls = dict(ALL_EMBEDDING_SERVICES)
+    service_urls["colbert_pylate"] = pylate_url
+    config_manager.set_system_config(
+        SystemConfig(
+            backend_url="http://localhost",
+            backend_port=info["http_port"],
+            inference_service_urls=service_urls,
+        )
+    )
+    for tenant_id, names in (
+        (TENANT_RETRIEVAL, RETRIEVAL_PROFILES),
+        (TENANT_FANOUT, FANOUT_PROFILES),
+    ):
+        for name in names:
+            config_manager.add_backend_profile(_profile(name), tenant_id=tenant_id)
+    return config_manager
+
+
+CORPUS_SCHEMAS = ("document_text", "lateon_mv")
+
+
+def _tenant_backend(config_manager: ConfigManager, tenant_id: str):
+    """The ingestion backend the worker builds for a tenant."""
+    from cogniverse_runtime.ingestion.processors.embedding_generator.backend_factory import (  # noqa: E501
+        BackendFactory,
+    )
+
+    return BackendFactory.create(
+        "vespa",
+        tenant_id,
+        {},
+        config_manager=config_manager,
+        schema_loader=FilesystemSchemaLoader(_REPO_ROOT / "configs" / "schemas"),
+    )
+
+
+@pytest.fixture(scope="module")
+def retrieval_config_manager(retrieval_vespa, pylate_server):
+    return _retrieval_config_manager(retrieval_vespa, pylate_server)
+
+
+@pytest.fixture(scope="module")
+def seeded_corpus(retrieval_config_manager, pylate_server):
+    """The two documents, in every schema this module's tenants search.
+
+    Fed through the tenant's own ingestion backend, so the tenant-scoped
+    schemas are deployed by the same path first ingest uses in production and
+    the search reads what ingestion wrote. Document ids are the corpus's own,
+    so a re-run overwrites in place instead of accumulating.
+    """
+    for tenant_id in (TENANT_RETRIEVAL, TENANT_FANOUT):
+        backend = _tenant_backend(retrieval_config_manager, tenant_id)
+        backend.schema_registry.deploy_schemas(tenant_id, list(CORPUS_SCHEMAS))
+        for schema in CORPUS_SCHEMAS:
+            result = feed_text_documents(
+                backend_client=backend,
+                schema_name=schema,
+                inference_url=pylate_server,
+                model_name=COLBERT_MODEL,
+                documents=CORPUS,
+                corpus_id=CORPUS_ID,
+            )
+            assert (
+                result.documents_fed,
+                result.documents_processed,
+                result.errors,
+            ) == (len(CORPUS), len(CORPUS), [])
+    time.sleep(3)
+    return CORPUS
+
+
+@pytest.fixture(scope="module")
+def retrieval_dispatcher(retrieval_config_manager, seeded_corpus):
+    return _dispatcher(retrieval_config_manager)
+
+
+def _hit_ids(grounding) -> list[str]:
+    return [hit["id"] for hit in grounding.hits]
+
+
+@pytest.mark.asyncio
+class TestGroundingSearchReturnsTheTenantsDocuments:
+    """The grounding search returns THIS tenant's documents, ranked."""
+
+    async def test_the_queried_document_ranks_first(self, retrieval_dispatcher):
+        grounding = await retrieval_dispatcher._resolve_answer_search_results(
+            HARBOUR_QUERY, TENANT_RETRIEVAL, None, top_k=10
+        )
+
+        assert grounding.state == GROUNDING_SEARCHED
+        assert list(grounding.profiles) == RETRIEVAL_PROFILES
+        assert _hit_ids(grounding) == [HARBOUR_ID, BEEKEEPING_ID]
+
+    async def test_querying_the_other_document_flips_the_order(
+        self, retrieval_dispatcher
+    ):
+        """The order pin has teeth: the same corpus, the other query."""
+        grounding = await retrieval_dispatcher._resolve_answer_search_results(
+            BEEKEEPING_QUERY, TENANT_RETRIEVAL, None, top_k=10
+        )
+
+        assert grounding.state == GROUNDING_SEARCHED
+        assert _hit_ids(grounding) == [BEEKEEPING_ID, HARBOUR_ID]
+
+    async def test_summarizer_envelope_reports_the_grounding_it_searched(
+        self, retrieval_dispatcher, ensure_host_ollama
+    ):
+        result = await retrieval_dispatcher._execute_summarization_task(
+            HARBOUR_QUERY, TENANT_RETRIEVAL
+        )
+
+        assert result["grounding"] == {
+            "state": GROUNDING_SEARCHED,
+            "modalities": [],
+            "profiles": RETRIEVAL_PROFILES,
+            "degraded_profiles": [],
+            "result_count": len(CORPUS),
+        }
+
+
+def _reset_query_encoder_cache() -> None:
+    """Drop the process-wide encoder cache.
+
+    ``QueryEncoderFactory`` keys encoders by (model, service name, dim) and not
+    by the resolved URL, so a service pointed at a different endpoint between
+    tests would otherwise reuse the first endpoint's client.
+    """
+    from cogniverse_core.query.encoders import QueryEncoderFactory
+
+    QueryEncoderFactory._encoder_cache.clear()
+    QueryEncoderFactory._encoder_key_locks.clear()
+
+
+class _StubEncoderService(http.server.BaseHTTPRequestHandler):
+    """Answers every encode request with ``delay_s`` then a 503."""
+
+    delay_s = 0.0
+
+    def do_POST(self):  # noqa: N802 - BaseHTTPRequestHandler API
+        time.sleep(type(self).delay_s)
+        self.send_response(503)
+        self.end_headers()
+        self.wfile.write(b"encoder unavailable")
+
+    def do_GET(self):  # noqa: N802 - BaseHTTPRequestHandler API
+        self.do_POST()
+
+    def log_message(self, *args):
+        return
+
+
+@contextlib.contextmanager
+def _stub_encoder_service(delay_s: float):
+    """A served endpoint that stalls ``delay_s`` and then fails."""
+    handler = type("_Stub", (_StubEncoderService,), {"delay_s": delay_s})
+    server = http.server.ThreadingHTTPServer(("127.0.0.1", 0), handler)
+    thread = threading.Thread(target=server.serve_forever, daemon=True)
+    thread.start()
+    try:
+        yield f"http://127.0.0.1:{server.server_address[1]}"
+    finally:
+        server.shutdown()
+        server.server_close()
+        thread.join(timeout=5)
+
+
+def _dispatcher_with_colpali_at(retrieval_vespa, pylate_url: str, colpali_url: str):
+    """A dispatcher whose visual document profile encodes at ``colpali_url``."""
+    config_manager = _retrieval_config_manager(retrieval_vespa, pylate_url)
+    system_config = config_manager.get_system_config()
+    service_urls = dict(system_config.inference_service_urls)
+    service_urls[
+        (_SHIPPED_PROFILE_DATA[UNSERVED_ENCODER_PROFILE]["inference_services"])[
+            "embedding"
+        ]
+    ] = colpali_url
+    config_manager.set_system_config(
+        dataclasses.replace(system_config, inference_service_urls=service_urls)
+    )
+    _reset_query_encoder_cache()
+    return _dispatcher(config_manager)
+
+
+@pytest.mark.asyncio
+class TestOneProfilesEncoderDownDegradesTheGrounding:
+    """A fan-out leg whose encoder is unreachable is named, not erased."""
+
+    async def test_healthy_profiles_still_rank_and_the_failed_one_is_named(
+        self, retrieval_config_manager, seeded_corpus
+    ):
+        dispatcher = _dispatcher(retrieval_config_manager)
+
+        grounding = await dispatcher._resolve_answer_search_results(
+            HARBOUR_QUERY, TENANT_FANOUT, None, top_k=10
+        )
+
+        assert grounding.state == GROUNDING_SEARCHED_DEGRADED
+        assert list(grounding.profiles) == RETRIEVAL_PROFILES
+        assert grounding.degraded_profiles == (
+            (UNSERVED_ENCODER_PROFILE, "encode_failed"),
+        )
+        assert _hit_ids(grounding) == [HARBOUR_ID, BEEKEEPING_ID]
+        assert grounding.envelope() == {
+            "state": GROUNDING_SEARCHED_DEGRADED,
+            "modalities": [],
+            "profiles": RETRIEVAL_PROFILES,
+            "degraded_profiles": [
+                {"profile": UNSERVED_ENCODER_PROFILE, "reason": "encode_failed"}
+            ],
+            "result_count": len(CORPUS),
+        }
+
+
+@pytest.mark.asyncio
+class TestGroundingSearchIsBounded:
+    """A leg that never answers must not hold the answer open."""
+
+    async def test_a_hung_leg_returns_at_the_configured_budget(
+        self, retrieval_vespa, pylate_server, seeded_corpus
+    ):
+        with _stub_encoder_service(delay_s=SHIPPED_GROUNDING_BUDGET_S * 20) as stub:
+            dispatcher = _dispatcher_with_colpali_at(
+                retrieval_vespa, pylate_server, stub
+            )
+            started = time.perf_counter()
+            grounding = await dispatcher._resolve_answer_search_results(
+                HARBOUR_QUERY, TENANT_FANOUT, None, top_k=10
+            )
+            elapsed = time.perf_counter() - started
+        _reset_query_encoder_cache()
+
+        assert grounding.state == GROUNDING_SEARCH_UNAVAILABLE
+        assert grounding.hits == []
+        assert list(grounding.profiles) == FANOUT_PROFILES
+        assert SHIPPED_GROUNDING_BUDGET_S <= elapsed < SHIPPED_GROUNDING_BUDGET_S + 5, (
+            f"budget {SHIPPED_GROUNDING_BUDGET_S}s, returned in {elapsed:.2f}s"
+        )
+
+    async def test_concurrent_dispatches_all_return_at_the_budget(
+        self, retrieval_vespa, pylate_server, seeded_corpus
+    ):
+        concurrency = 4
+        with _stub_encoder_service(delay_s=SHIPPED_GROUNDING_BUDGET_S * 20) as stub:
+            dispatcher = _dispatcher_with_colpali_at(
+                retrieval_vespa, pylate_server, stub
+            )
+            started = time.perf_counter()
+            groundings = await asyncio.gather(
+                *(
+                    dispatcher._resolve_answer_search_results(
+                        HARBOUR_QUERY, TENANT_FANOUT, None, top_k=10
+                    )
+                    for _ in range(concurrency)
+                )
+            )
+            elapsed = time.perf_counter() - started
+        _reset_query_encoder_cache()
+
+        assert [g.state for g in groundings] == [
+            GROUNDING_SEARCH_UNAVAILABLE
+        ] * concurrency
+        assert [g.hits for g in groundings] == [[]] * concurrency
+        assert SHIPPED_GROUNDING_BUDGET_S <= elapsed < SHIPPED_GROUNDING_BUDGET_S + 5, (
+            f"{concurrency} concurrent dispatches took {elapsed:.2f}s against a "
+            f"{SHIPPED_GROUNDING_BUDGET_S}s budget"
+        )
+
+
+@pytest.mark.asyncio
+class TestConcurrentDispatchesDeriveProfilesPerRequest:
+    """Concurrent grounding derives each request's own tenant's profiles."""
+
+    async def test_every_in_flight_request_derives_its_own_tenants_profiles(
+        self, retrieval_config_manager, seeded_corpus
+    ):
+        per_tenant = 6
+        tenants = [TENANT_RETRIEVAL, TENANT_FANOUT] * per_tenant
+        # Every derivation blocks until all of them are in flight, so a
+        # serialized implementation breaks the barrier instead of passing.
+        barrier = threading.Barrier(len(tenants), timeout=60)
+        counts: collections.Counter = collections.Counter()
+        counts_lock = threading.Lock()
+
+        class CountingDispatcher(AgentDispatcher):
+            def _servable_grounding_profiles(self, tenant_id, modalities):
+                with counts_lock:
+                    counts[tenant_id] += 1
+                barrier.wait()
+                return super()._servable_grounding_profiles(tenant_id, modalities)
+
+        dispatcher = _dispatcher(retrieval_config_manager, CountingDispatcher)
+
+        plans = await asyncio.gather(
+            *(
+                dispatcher._grounding_plan(HARBOUR_QUERY, tenant_id, {}, None)
+                for tenant_id in tenants
+            )
+        )
+
+        assert dict(counts) == {
+            TENANT_RETRIEVAL: per_tenant,
+            TENANT_FANOUT: per_tenant,
+        }
+        assert [profiles for _modalities, profiles, _state in plans] == [
+            RETRIEVAL_PROFILES if tenant_id == TENANT_RETRIEVAL else FANOUT_PROFILES
+            for tenant_id in tenants
+        ]
+        assert {state for _m, _p, state in plans} == {GROUNDING_SEARCHED}
+
+
+@pytest.mark.asyncio
+class TestEnsembleFanOutCost:
+    """What the fan-out costs, and that it is paid in parallel."""
+
+    RUNS = 5
+    THIRD_LEG_DELAY_S = 4.0
+
+    async def _time_search(self, dispatcher, profiles, runs):
+        durations = []
+        for _ in range(runs):
+            started = time.perf_counter()
+            search = await dispatcher._execute_search_task(
+                HARBOUR_QUERY,
+                TENANT_RETRIEVAL,
+                top_k=10,
+                enrichment={"profiles": list(profiles)},
+            )
+            durations.append(time.perf_counter() - started)
+            assert [hit["id"] for hit in search["results"]] == [
+                HARBOUR_ID,
+                BEEKEEPING_ID,
+            ]
+        return durations
+
+    async def test_fan_out_cost_is_paid_in_parallel_and_fits_the_budget(
+        self, retrieval_vespa, retrieval_config_manager, pylate_server, seeded_corpus
+    ):
+        dispatcher = _dispatcher(retrieval_config_manager)
+
+        plan_durations = []
+        for _ in range(self.RUNS):
+            started = time.perf_counter()
+            plan = await dispatcher._grounding_plan(
+                HARBOUR_QUERY, TENANT_RETRIEVAL, {}, None
+            )
+            plan_durations.append(time.perf_counter() - started)
+            assert plan == ([], RETRIEVAL_PROFILES, GROUNDING_SEARCHED)
+
+        # Cold: no cached SearchAgent and no cached encoder, the state a pod
+        # is in for its first grounded answer.
+        dispatcher._search_agent_cache.clear()
+        _reset_query_encoder_cache()
+        cold_two_legs = await self._time_search(dispatcher, RETRIEVAL_PROFILES, 1)
+        dispatcher._search_agent_cache.clear()
+        _reset_query_encoder_cache()
+        cold_one_leg = await self._time_search(dispatcher, RETRIEVAL_PROFILES[:1], 1)
+
+        one_leg = await self._time_search(dispatcher, RETRIEVAL_PROFILES[:1], self.RUNS)
+        two_legs = await self._time_search(dispatcher, RETRIEVAL_PROFILES, self.RUNS)
+
+        with _stub_encoder_service(delay_s=self.THIRD_LEG_DELAY_S) as stub:
+            delayed = _dispatcher_with_colpali_at(retrieval_vespa, pylate_server, stub)
+            started = time.perf_counter()
+            grounding = await delayed._resolve_answer_search_results(
+                HARBOUR_QUERY, TENANT_FANOUT, None, top_k=10
+            )
+            three_legs = time.perf_counter() - started
+        _reset_query_encoder_cache()
+
+        print(
+            "\ngrounding fan-out latency (seconds)\n"
+            f"  _grounding_plan            n={self.RUNS} "
+            f"min={min(plan_durations):.3f} max={max(plan_durations):.3f}\n"
+            f"  1 profile  warm            n={self.RUNS} "
+            f"min={min(one_leg):.3f} max={max(one_leg):.3f}\n"
+            f"  1 profile  cold            {cold_one_leg[0]:.3f}\n"
+            f"  2 profiles warm (ensemble) n={self.RUNS} "
+            f"min={min(two_legs):.3f} max={max(two_legs):.3f}\n"
+            f"  2 profiles cold (ensemble) {cold_two_legs[0]:.3f}\n"
+            f"  3 profiles, third leg stalled {self.THIRD_LEG_DELAY_S}s: "
+            f"{three_legs:.3f}\n"
+            f"  profiles: {', '.join(FANOUT_PROFILES)}\n"
+            f"  shipped budget: {SHIPPED_GROUNDING_BUDGET_S}s"
+        )
+
+        # A leg stalled for THIRD_LEG_DELAY_S delays the ensemble by that
+        # stall and not by the stall plus the healthy legs' work: the fan-out
+        # is paid in parallel. The lower bound proves the stalled leg was
+        # awaited rather than skipped.
+        assert (
+            self.THIRD_LEG_DELAY_S
+            <= three_legs
+            < self.THIRD_LEG_DELAY_S + 2 * max(two_legs)
+        ), (
+            f"three legs {three_legs:.3f}s with a "
+            f"{self.THIRD_LEG_DELAY_S}s stall and two legs at {max(two_legs):.3f}s"
+        )
+        assert grounding.degraded_profiles == (
+            (UNSERVED_ENCODER_PROFILE, "encode_failed"),
+        )
+        assert _hit_ids(grounding) == [HARBOUR_ID, BEEKEEPING_ID]
+        # Every measured path, cold included, fits the shipped budget.
+        assert (
+            max([*one_leg, *two_legs, cold_one_leg[0], cold_two_legs[0]])
+            < SHIPPED_GROUNDING_BUDGET_S
+        )
