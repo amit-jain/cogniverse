@@ -2125,6 +2125,18 @@ skipped — generation degrades to the text-only path, never errors. Encoded
 frames are cached in the agent by `s3://` key so repeated reports over the same
 clips reuse the encoding.
 
+`max_keyframes_to_llm` caps the count; `fit_answer_images` caps the bytes. One
+768 px frame is a few hundred KB of base64, and the semantic-router Envoy in
+front of every agent LM call buffers the whole request body for its ext_proc
+routing decision, answering 413 above `per_connection_buffer_limit_bytes`. The
+agents keep frames in rank order while they fit
+`multimodal.MAX_IMAGE_PAYLOAD_BYTES` (`LLM_REQUEST_BODY_LIMIT_BYTES` less the
+non-image reserve) and shed whole frames from the tail; `keyframes_attached`
+and `keyframes_shed` report the outcome in the answer metadata. The chart
+renders the same number into the Envoy listener
+(`semanticRouter.envoy.maxRequestBytes`), so raising one without the other only
+moves where the request is refused.
+
 ---
 
 ### 8. DocumentAgent
@@ -2347,13 +2359,15 @@ keyframes to its answer LLM via the shared `KeyframeImageResolver` and a
 keyframe-key contract). Gated behind `SummarizerDeps.multimodal_generation_enabled`
 (bool, default `True`) with `max_keyframes_to_llm` (int, default `4`); a
 keyframe not yet in object storage is silently skipped (text-only fallback).
+Frames over the request-body allowance are shed and counted in
+`metadata.keyframes_shed`, alongside `metadata.keyframes_attached`.
 
 ---
 
 Summary, detailed-report, and deep-research inputs accept `attachments` as image
 URIs. Worker threads prepare them with `attachments_to_images`, retaining input
-order before retrieved keyframes and applying `max_keyframes_to_llm` to the
-combined list. `validate_attachments(input)` rejects disabled visual input before streaming
+order before retrieved keyframes and applying `max_keyframes_to_llm` and the
+request-body allowance to the combined list via `fit_answer_images`. `validate_attachments(input)` rejects disabled visual input before streaming
 with `attachments_disabled: visual inputs are disabled for this request`.
 Summaries answer supplied text or images even when retrieval returns no hits.
 Attachment failures appear in summary/research degradation metadata and in the

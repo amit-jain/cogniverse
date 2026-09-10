@@ -19,7 +19,11 @@ from cogniverse_agents.memory_aware_mixin import MemoryAwareMixin
 
 # Enhanced routing support
 from cogniverse_agents.mixins.rlm_aware_mixin import RLMAwareMixin
-from cogniverse_agents.multimodal import KeyframeImageResolver, attachments_to_images
+from cogniverse_agents.multimodal import (
+    KeyframeImageResolver,
+    attachments_to_images,
+    fit_answer_images,
+)
 from cogniverse_core.agents.a2a_agent import A2AAgent, A2AAgentConfig
 from cogniverse_core.agents.base import AgentDeps, AgentInput, AgentOutput
 from cogniverse_core.agents.rlm_options import RLMOptions
@@ -807,6 +811,7 @@ technical accuracy, and actionable insights. Visual analysis {"included" if requ
 
         self.validate_attachments(request)
         keyframe_images = []
+        keyframes_shed = 0
         attachment_failures: List[str] = []
         if (
             self.multimodal_generation_enabled
@@ -821,18 +826,23 @@ technical accuracy, and actionable insights. Visual analysis {"included" if requ
                     max_images=self.max_keyframes_to_llm,
                 )
                 return (
-                    (prepared.images + retrieved)[: self.max_keyframes_to_llm],
+                    fit_answer_images(
+                        prepared.images,
+                        retrieved,
+                        max_images=self.max_keyframes_to_llm,
+                    ),
                     prepared.failures,
                 )
 
-            keyframe_images, attachment_failures = await asyncio.to_thread(
-                collect_images
-            )
+            fitted, attachment_failures = await asyncio.to_thread(collect_images)
+            keyframe_images = fitted.images
+            keyframes_shed = fitted.shed
         # Observable count of frames actually attached to the LLM call — surfaced
         # in the report metadata so callers (and e2e tests) can confirm the
         # retrieved keyframes reached the answer model.
         call_state = {
             "keyframes_attached": len(keyframe_images),
+            "keyframes_shed": keyframes_shed,
             "report_degraded": bool(attachment_failures),
             "report_degraded_reason": "; ".join(attachment_failures),
         }

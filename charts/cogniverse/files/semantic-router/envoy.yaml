@@ -10,6 +10,12 @@ static_resources:
     - name: main
       address:
         socket_address: { address: 0.0.0.0, port_value: {{ int .Values.semanticRouter.envoy.service.port }} }
+      # ext_proc below buffers the whole request body for its routing decision,
+      # so a body over this limit is answered 413 "Payload Too Large" and never
+      # reaches the model. The answer agents bound what they assemble against
+      # the same number (LLM_REQUEST_BODY_LIMIT_BYTES in
+      # libs/agents/cogniverse_agents/multimodal.py).
+      per_connection_buffer_limit_bytes: {{ int .Values.semanticRouter.envoy.maxRequestBytes }}
       filter_chains:
         - filters:
             - name: envoy.filters.network.http_connection_manager
