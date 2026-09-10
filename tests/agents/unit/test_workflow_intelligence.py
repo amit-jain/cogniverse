@@ -633,6 +633,9 @@ class TestWorkflowIntelligence:
         intelligence = _make_intelligence()
         agents_config = {"search_agent": {"description": "Searches indexed content"}}
 
+        def resolve_backend():
+            return "backend-instance"
+
         with pytest.raises(
             RuntimeError,
             match="Synthetic workflow response must contain exactly 7 plans",
@@ -640,12 +643,14 @@ class TestWorkflowIntelligence:
             await intelligence.generate_synthetic_training_data(
                 agents_config=agents_config,
                 count=7,
-                backend="backend-instance",
+                backend_resolver=resolve_backend,
                 backend_config="backend-config",
                 generator_config="generator-config",
             )
+        # The resolver is forwarded by identity, not a resolved instance: the
+        # service must re-resolve per query, not hold what this caller had.
         assert captured["service_kwargs"] == {
-            "backend": "backend-instance",
+            "backend_resolver": resolve_backend,
             "backend_config": "backend-config",
             "generator_config": "generator-config",
             "agents_config": agents_config,
