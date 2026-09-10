@@ -615,12 +615,13 @@ class WikiManager:
                 "update_count": 1,
             },
         )
-        self._backend.put_document(
-            index_doc,
-            schema_name=self._schema_name,
-            base_schema_name="wiki_pages",
-            namespace=_WIKI_NAMESPACE,
-        )
+        with leased_backend(self._resolve_backend) as backend:
+            backend.put_document(
+                index_doc,
+                schema_name=self._schema_name,
+                base_schema_name="wiki_pages",
+                namespace=_WIKI_NAMESPACE,
+            )
 
     def _get_document_http(self, doc_id: str) -> Optional["Document"]:
         """Fetch a wiki document from Vespa via HTTP GET.
@@ -668,12 +669,13 @@ class WikiManager:
         fully-formed page that was never persisted.
         """
         doc = self._page_to_fed_document(page, embedding)
-        self._backend.put_document(
-            doc,
-            schema_name=self._schema_name,
-            base_schema_name="wiki_pages",
-            namespace=_WIKI_NAMESPACE,
-        )
+        with leased_backend(self._resolve_backend) as backend:
+            backend.put_document(
+                doc,
+                schema_name=self._schema_name,
+                base_schema_name="wiki_pages",
+                namespace=_WIKI_NAMESPACE,
+            )
 
     def _generate_embedding(self, text: str, is_query: bool = False) -> List[float]:
         """Return a 768-dim text embedding via the shared SemanticEmbedder.
