@@ -185,7 +185,7 @@ def wiki_manager(wiki_vespa):
     )
 
     manager = WikiManager(
-        backend=backend,
+        backend_resolver=lambda: backend,
         tenant_id=TENANT_ID,
         schema_name=WIKI_SCHEMA,
     )

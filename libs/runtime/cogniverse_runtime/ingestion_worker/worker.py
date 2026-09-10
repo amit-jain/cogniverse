@@ -236,7 +236,9 @@ def _wait_for_startup_config(
 _GRAPH_FACTORY_INSTALLED = False
 
 
-def _build_worker_graph_factory(graph_backend, config_manager):
+def _build_worker_graph_factory(resolve_graph_backend, config_manager):
+    from cogniverse_core.registries.backend_registry import leased_backend
+
     """Build the worker's per-tenant GraphManager factory.
 
     Same single-cold-build contract as ``main._build_graph_manager_factory``:
@@ -259,9 +261,10 @@ def _build_worker_graph_factory(graph_backend, config_manager):
         def _build() -> GraphManager:
             if deploy:
                 try:
-                    graph_backend.schema_registry.deploy_schema(
-                        tenant_id=tenant_id, base_schema_name="knowledge_graph"
-                    )
+                    with leased_backend(resolve_graph_backend) as graph_backend:
+                        graph_backend.schema_registry.deploy_schema(
+                            tenant_id=tenant_id, base_schema_name="knowledge_graph"
+                        )
                 except Exception as exc:  # noqa: BLE001 — log + degrade
                     # The common case is "schema already deployed"; the deploy
                     # call is idempotent at the Vespa convergence layer but the
@@ -290,12 +293,14 @@ def _build_worker_graph_factory(graph_backend, config_manager):
                     "knowledge_graph requires gliner in INFERENCE_SERVICE_URLS. "
                     f"Available: {sorted(sys_cfg.inference_service_urls)}"
                 )
-            return GraphManager(
-                backend=graph_backend,
-                tenant_id=tenant_id,
-                schema_name=graph_backend.get_tenant_schema_name(
+            with leased_backend(resolve_graph_backend) as graph_backend:
+                schema_name = graph_backend.get_tenant_schema_name(
                     tenant_id, "knowledge_graph"
-                ),
+                )
+            return GraphManager(
+                backend_resolver=resolve_graph_backend,
+                tenant_id=tenant_id,
+                schema_name=schema_name,
                 colbert_endpoint_url=colbert_url,
                 gliner_inference_url=gliner_url,
             )
@@ -332,21 +337,23 @@ def _ensure_graph_manager_factory(config_manager, schema_loader) -> None:
     from cogniverse_runtime.routers import graph as graph_router
 
     bootstrap = BootstrapConfig.from_environment()
-    graph_backend = BackendRegistry.get_instance().get_ingestion_backend(
-        name=bootstrap.backend_type,
-        tenant_id=SYSTEM_TENANT_ID,
-        config={
-            "backend": {
-                "url": bootstrap.backend_url,
-                "port": bootstrap.backend_port,
-            }
-        },
-        config_manager=config_manager,
-        schema_loader=schema_loader,
-    )
+
+    def resolve_graph_backend():
+        return BackendRegistry.get_instance().get_ingestion_backend(
+            name=bootstrap.backend_type,
+            tenant_id=SYSTEM_TENANT_ID,
+            config={
+                "backend": {
+                    "url": bootstrap.backend_url,
+                    "port": bootstrap.backend_port,
+                }
+            },
+            config_manager=config_manager,
+            schema_loader=schema_loader,
+        )
 
     graph_router.set_graph_manager_factory(
-        _build_worker_graph_factory(graph_backend, config_manager)
+        _build_worker_graph_factory(resolve_graph_backend, config_manager)
     )
     _GRAPH_FACTORY_INSTALLED = True
 

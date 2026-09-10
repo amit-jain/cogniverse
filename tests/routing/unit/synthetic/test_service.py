@@ -477,7 +477,7 @@ def create_test_service(
 ) -> SyntheticDataService:
     backend_config = create_test_backend_config()
     return SyntheticDataService(
-        backend=_attach_profile_config_manager(
+        backend_resolver=lambda: _attach_profile_config_manager(
             _GroundedBackend(),
             backend_config.profiles,
             tenant_id=backend_config.tenant_id,
@@ -614,7 +614,7 @@ class TestSyntheticDataService:
         )
         agents_config = create_test_agents_config()
         service = SyntheticDataService(
-            backend=_GroundedBackend(),
+            backend_resolver=lambda: _GroundedBackend(),
             backend_config=create_test_backend_config(),
             generator_config=generator_config,
             agents_config=agents_config,
@@ -646,7 +646,7 @@ class TestSyntheticDataService:
     def test_service_requires_backend(self):
         with pytest.raises(ValueError, match="^backend is required$"):
             SyntheticDataService(
-                backend=None,
+                backend_resolver=lambda: None,
                 backend_config=create_test_backend_config(),
                 generator_config=create_test_generator_config(),
                 agents_config=create_test_agents_config(),
@@ -658,7 +658,7 @@ class TestSyntheticDataService:
             match="^backend_config with at least one profile is required$",
         ):
             SyntheticDataService(
-                backend=_GroundedBackend(),
+                backend_resolver=lambda: _GroundedBackend(),
                 backend_config=BackendConfig(profiles={}, tenant_id="test:unit"),
                 generator_config=create_test_generator_config(),
                 agents_config=create_test_agents_config(),
@@ -667,7 +667,7 @@ class TestSyntheticDataService:
     def test_service_requires_generator_configuration(self):
         with pytest.raises(ValueError) as exc_info:
             SyntheticDataService(
-                backend=_GroundedBackend(),
+                backend_resolver=lambda: _GroundedBackend(),
                 backend_config=create_test_backend_config(),
                 generator_config=None,
                 agents_config=create_test_agents_config(),
@@ -678,7 +678,7 @@ class TestSyntheticDataService:
     def test_service_requires_agent_configuration(self):
         with pytest.raises(ValueError) as exc_info:
             SyntheticDataService(
-                backend=_GroundedBackend(),
+                backend_resolver=lambda: _GroundedBackend(),
                 backend_config=create_test_backend_config(),
                 generator_config=create_test_generator_config(),
                 agents_config=None,
@@ -692,7 +692,7 @@ class TestSyntheticDataService:
         generator_config = SyntheticGeneratorConfig.from_dict(synthetic_data)
         backend = _BackendAccessRecorder()
         service = SyntheticDataService(
-            backend=backend,
+            backend_resolver=lambda: backend,
             backend_config=BackendConfig(
                 tenant_id="test:unit",
                 profiles={
@@ -788,7 +788,7 @@ class TestSyntheticDataService:
 
         with pytest.raises(ValueError, match=message):
             SyntheticDataService(
-                backend=backend,
+                backend_resolver=lambda: backend,
                 backend_config=BackendConfig(
                     tenant_id="test:unit",
                     profiles={
@@ -816,7 +816,7 @@ class TestSyntheticDataService:
             match="agent_mappings missing required modalities: AUDIO",
         ):
             SyntheticDataService(
-                backend=backend,
+                backend_resolver=lambda: backend,
                 backend_config=BackendConfig(
                     tenant_id="test:unit",
                     profiles={
@@ -842,7 +842,7 @@ class TestSyntheticDataService:
 
         def create_service(agent_name: str) -> SyntheticDataService:
             return SyntheticDataService(
-                backend=_BackendAccessRecorder(),
+                backend_resolver=lambda: _BackendAccessRecorder(),
                 backend_config=BackendConfig(
                     tenant_id="test:unit",
                     profiles={
@@ -890,19 +890,19 @@ class TestSyntheticDataService:
             "MockBackend", (), {"query_metadata_documents": lambda *args, **kwargs: []}
         )()
         service = SyntheticDataService(
-            backend=mock_backend,
+            backend_resolver=lambda: mock_backend,
             backend_config=create_test_backend_config(),
             generator_config=create_test_generator_config(),
             agents_config=create_test_agents_config(),
         )
-        assert service.backend == mock_backend
+        assert service.resolve_backend() == mock_backend
 
     @pytest.mark.asyncio
     async def test_service_with_backend_config(self):
         """Test service with backend configuration"""
         config = create_test_backend_config()
         service = SyntheticDataService(
-            backend=_GroundedBackend(),
+            backend_resolver=lambda: _GroundedBackend(),
             backend_config=config,
             generator_config=create_test_generator_config(),
             agents_config=create_test_agents_config(),
@@ -1164,7 +1164,7 @@ class TestSyntheticDataService:
             }
 
         service = SyntheticDataService(
-            backend=_GroundedBackend(),
+            backend_resolver=lambda: _GroundedBackend(),
             backend_config=create_test_backend_config(),
             generator_config=create_test_generator_config(),
             agents_config=create_test_agents_config(),
@@ -1225,7 +1225,7 @@ class TestSyntheticDataService:
             }
 
         service = SyntheticDataService(
-            backend=_GroundedBackend(),
+            backend_resolver=lambda: _GroundedBackend(),
             backend_config=create_test_backend_config(),
             generator_config=create_test_generator_config(),
             agents_config=create_test_agents_config(),
@@ -1453,7 +1453,7 @@ class TestServiceWithBackendConfig:
             match="^backend_config with at least one profile is required$",
         ):
             SyntheticDataService(
-                backend=_GroundedBackend(),
+                backend_resolver=lambda: _GroundedBackend(),
                 backend_config=BackendConfig(profiles={}, tenant_id="test:unit"),
                 generator_config=create_test_generator_config(),
                 agents_config=create_test_agents_config(),
@@ -1466,7 +1466,7 @@ class TestServiceWithBackendConfig:
             match="^backend_config with at least one profile is required$",
         ):
             SyntheticDataService(
-                backend=_GroundedBackend(),
+                backend_resolver=lambda: _GroundedBackend(),
                 backend_config=None,
                 generator_config=create_test_generator_config(),
                 agents_config=create_test_agents_config(),
@@ -1479,7 +1479,7 @@ class TestServiceWithBackendConfig:
             for name in ("document_visual_colpali", "document_text_semantic")
         }
         service = SyntheticDataService(
-            backend=_attach_profile_config_manager(
+            backend_resolver=lambda: _attach_profile_config_manager(
                 _GroundedBackend(),
                 configured_profiles,
                 tenant_id="test:unit",
@@ -1526,7 +1526,7 @@ class TestServiceWithBackendConfig:
             for name in ("document_visual_colpali", "document_text_semantic")
         }
         service = SyntheticDataService(
-            backend=backend,
+            backend_resolver=lambda: backend,
             backend_config=BackendConfig(profiles=profiles, tenant_id="test:unit"),
             generator_config=create_test_generator_config(),
             agents_config=create_test_agents_config(),
@@ -1598,7 +1598,7 @@ class TestServiceWithBackendConfig:
             )
         }
         service = SyntheticDataService(
-            backend=backend,
+            backend_resolver=lambda: backend,
             backend_config=BackendConfig(profiles=profiles, tenant_id="test:unit"),
             generator_config=create_test_generator_config(),
             agents_config=create_test_agents_config(),
@@ -1632,7 +1632,7 @@ class TestServiceWithBackendConfig:
             pipeline_config={"transcribe_audio": True},
         )
         service = SyntheticDataService(
-            backend=_attach_profile_config_manager(
+            backend_resolver=lambda: _attach_profile_config_manager(
                 _GroundedBackend(),
                 {"audio_semantic": audio_profile},
                 tenant_id="test:unit",
@@ -1690,7 +1690,7 @@ class TestServiceWithBackendConfig:
             ),
         }
         service = SyntheticDataService(
-            backend=_attach_profile_config_manager(
+            backend_resolver=lambda: _attach_profile_config_manager(
                 _GroundedBackend(),
                 profiles,
                 tenant_id="test:unit",
@@ -1751,7 +1751,7 @@ class TestServiceWithBackendConfig:
             ),
         }
         service = SyntheticDataService(
-            backend=_attach_profile_config_manager(
+            backend_resolver=lambda: _attach_profile_config_manager(
                 _GroundedBackend(),
                 profiles,
                 tenant_id="test:unit",
@@ -1830,7 +1830,7 @@ class TestServiceWithBackendConfig:
             ),
         }
         service = SyntheticDataService(
-            backend=_attach_profile_config_manager(
+            backend_resolver=lambda: _attach_profile_config_manager(
                 _GroundedBackend(),
                 profiles,
                 tenant_id="test:unit",
@@ -1913,7 +1913,7 @@ def _tenant_profile_service(backend) -> SyntheticDataService:
         tenant_ids=tenant_ids,
     )
     return SyntheticDataService(
-        backend=backend,
+        backend_resolver=lambda: backend,
         config_manager=backend.config_manager,
         backend_config=BackendConfig(profiles=profiles, tenant_id="test:unit"),
         generator_config=create_test_generator_config(),
@@ -1939,7 +1939,7 @@ async def test_live_backend_samples_a_deployed_configured_profile_schema():
     }
     _attach_profile_config_manager(backend, profiles, tenant_id=tenant_id)
     service = SyntheticDataService(
-        backend=backend,
+        backend_resolver=lambda: backend,
         config_manager=backend.config_manager,
         backend_config=BackendConfig(
             tenant_id="test:unit",
@@ -2164,7 +2164,7 @@ async def test_profile_requires_canonical_schema_name_before_backend_access(
         ),
     ):
         SyntheticDataService(
-            backend=backend,
+            backend_resolver=lambda: backend,
             backend_config=BackendConfig(
                 profiles={
                     "legacy_profile": BackendProfileConfig(

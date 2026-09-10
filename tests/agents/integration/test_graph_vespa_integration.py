@@ -225,7 +225,7 @@ def graph_manager(graph_vespa, pylate_server):
     )
 
     manager = GraphManager(
-        backend=backend,
+        backend_resolver=lambda: backend,
         tenant_id=TENANT_ID,
         schema_name=GRAPH_SCHEMA,
         colbert_endpoint_url=pylate_server,
@@ -699,7 +699,7 @@ class TestSearchNodesRealVespa:
         mgr = GraphManager.__new__(GraphManager)
         mgr._schema_name = GRAPH_SCHEMA
         mgr._tenant_id = TENANT_ID
-        mgr._backend = graph_query_backend
+        mgr._resolve_backend = lambda: graph_query_backend
         # __new__ skips __init__; the /search/ query path needs the session.
         mgr._http = requests.Session()
 
@@ -773,7 +773,7 @@ class TestSearchNodesRealVespa:
         mgr = GraphManager.__new__(GraphManager)
         mgr._schema_name = GRAPH_SCHEMA
         mgr._tenant_id = TENANT_ID
-        mgr._backend = graph_query_backend
+        mgr._resolve_backend = lambda: graph_query_backend
         # __new__ skips __init__; the /search/ query path needs the session.
         mgr._http = requests.Session()
         monkeypatch.setattr(

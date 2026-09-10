@@ -144,7 +144,7 @@ def _make_manager(port: int) -> GraphManager:
         config_manager=create_default_config_manager(),
     )
     return GraphManager(
-        backend=backend,
+        backend_resolver=lambda: backend,
         tenant_id="test_tenant",
         schema_name="knowledge_graph_test_tenant",
         colbert_endpoint_url=f"http://127.0.0.1:{port}",
@@ -158,7 +158,7 @@ def graph_manager(stub):
     try:
         yield manager, capture
     finally:
-        manager._backend.close()
+        manager._resolve_backend().close()
 
 
 def test_node_upsert_writes_both_tensor_fields_in_vespa_wire_format(graph_manager):

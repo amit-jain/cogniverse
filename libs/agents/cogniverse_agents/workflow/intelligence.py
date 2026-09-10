@@ -874,7 +874,7 @@ class WorkflowIntelligence:
         self,
         agents_config: Dict[str, Any],
         count: int = 100,
-        backend: Optional[Any] = None,
+        backend_resolver: Optional[Any] = None,
         backend_config: Optional[Dict[str, Any]] = None,
         generator_config: Optional[Any] = None,
     ) -> int:
@@ -884,7 +884,8 @@ class WorkflowIntelligence:
         Args:
             agents_config: Explicit agents section from the active configuration
             count: Number of synthetic examples to generate
-            backend: Optional Backend instance for content sampling
+            backend_resolver: Zero-arg callable resolving the backend for
+                content sampling, leased per query
             backend_config: Backend configuration with profiles
             generator_config: Optional SyntheticGeneratorConfig for DSPy modules
 
@@ -899,7 +900,7 @@ class WorkflowIntelligence:
         self.logger.info(f"Generating {count} synthetic workflow examples...")
 
         service = SyntheticDataService(
-            backend=backend,
+            backend_resolver=backend_resolver,
             backend_config=backend_config,
             generator_config=generator_config,
             agents_config=agents_config,

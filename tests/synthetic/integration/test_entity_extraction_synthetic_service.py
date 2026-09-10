@@ -131,7 +131,7 @@ def ee_service(shared_vespa):
     generator_config = dict(raw_config["synthetic"])
     generator_config["tenant_id"] = tenant_id
     service = SyntheticDataService(
-        backend=backend,
+        backend_resolver=lambda: backend,
         generator_config=SyntheticGeneratorConfig.from_dict(generator_config),
         backend_config=backend_config,
         agents_config=raw_config["agents"],

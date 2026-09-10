@@ -148,7 +148,7 @@ async def test_query_profile_returns_real_vespa_content(
     )
 
     querier = BackendQuerier(
-        backend=backend,
+        backend_resolver=lambda: backend,
         backend_config=backend_config,
         field_mappings=FieldMappingConfig(),
     )
@@ -247,7 +247,7 @@ async def test_diverse_sampling_with_overfetch_past_default_limit(
     assert len(visible_documents) == corpus_count
 
     querier = BackendQuerier(
-        backend=backend,
+        backend_resolver=lambda: backend,
         backend_config=backend_config,
         field_mappings=FieldMappingConfig(),
     )
@@ -407,7 +407,7 @@ async def test_service_samples_deployed_configured_profile_from_real_vespa(
         )
 
     service = SyntheticDataService(
-        backend=backend,
+        backend_resolver=lambda: backend,
         backend_config=backend_config,
         generator_config=video_synthetic_generator_config(tenant),
         agents_config=json.loads(Path("configs/config.json").read_text())["agents"],
@@ -628,7 +628,7 @@ async def test_routing_service_keeps_real_vespa_sources_and_agents_aligned(
         raise AssertionError(f"route query lost its source entity: {query!r}")
 
     service = SyntheticDataService(
-        backend=backend,
+        backend_resolver=lambda: backend,
         backend_config=backend_config,
         generator_config=generator_config,
         agents_config={
@@ -985,7 +985,7 @@ async def test_default_field_mappings_read_real_non_video_content(
         },
     )
     querier = BackendQuerier(
-        backend=backend,
+        backend_resolver=lambda: backend,
         backend_config=backend_config,
         field_mappings=FieldMappingConfig(),
     )
@@ -1165,7 +1165,7 @@ async def test_entity_rich_audio_query_uses_real_schema_fields(
     backend.query_calls.clear()
 
     querier = BackendQuerier(
-        backend=backend,
+        backend_resolver=lambda: backend,
         backend_config=backend_config,
         field_mappings=FieldMappingConfig(),
     )
@@ -1261,7 +1261,7 @@ async def test_entity_rich_rejects_profile_without_text_pipeline_before_real_que
     )
     backend.initialize({"tenant_id": tenant})
     querier = BackendQuerier(
-        backend=backend,
+        backend_resolver=lambda: backend,
         backend_config=backend_config,
         field_mappings=FieldMappingConfig(
             topic_fields=["audio_title"],
@@ -1373,7 +1373,7 @@ async def test_temporal_recent_returns_newest_real_vespa_documents_first(
     assert visible_documents == expected_documents
 
     querier = BackendQuerier(
-        backend=backend,
+        backend_resolver=lambda: backend,
         backend_config=backend_config,
         field_mappings=FieldMappingConfig(
             topic_fields=["audio_title"],

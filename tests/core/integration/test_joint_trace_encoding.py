@@ -258,7 +258,7 @@ def seeded_graph_manager(pylate_server, shared_vespa):
         schema_loader=schema_loader,
     )
     mgr = GraphManager(
-        backend=search_backend,
+        backend_resolver=lambda: search_backend,
         tenant_id=tenant_id,
         schema_name=schema_name,
         colbert_endpoint_url=pylate_server,

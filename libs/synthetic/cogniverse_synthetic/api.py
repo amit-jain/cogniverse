@@ -7,7 +7,7 @@ Provides REST API endpoints for generating synthetic training data for all optim
 import json
 import logging
 import threading
-from typing import Annotated, Any, Optional
+from typing import Annotated, Any, Callable, Optional
 
 from fastapi import APIRouter, HTTPException, Query, Request
 from fastapi.exceptions import RequestValidationError
@@ -106,7 +106,7 @@ def get_service() -> SyntheticDataService:
 
 
 def configure_service(
-    backend: Backend,
+    backend_resolver: Callable[[], Backend],
     backend_config: BackendConfig,
     generator_config: SyntheticGeneratorConfig,
     agents_config: dict[str, Any],
@@ -121,7 +121,7 @@ def configure_service(
     Configure the global service instance
 
     Args:
-        backend: Backend interface instance
+        backend_resolver: Zero-arg callable resolving the backend
         backend_config: Backend configuration with profiles
         generator_config: Synthetic generator configuration
         agents_config: Explicit agents section from the active configuration
@@ -134,7 +134,7 @@ def configure_service(
     global _service
     with _service_lock:
         _service = SyntheticDataService(
-            backend=backend,
+            backend_resolver=backend_resolver,
             config_manager=config_manager,
             backend_config=backend_config,
             generator_config=generator_config,

@@ -360,7 +360,7 @@ def graph_manager(graph_vespa, pylate_server):
     )
 
     manager = GraphManager(
-        backend=backend,
+        backend_resolver=lambda: backend,
         tenant_id=TENANT_ID,
         schema_name=GRAPH_SCHEMA,
         colbert_endpoint_url=pylate_server,

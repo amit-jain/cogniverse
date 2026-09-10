@@ -90,7 +90,9 @@ def wiki_manager(vespa_instance, monkeypatch):
     else:
         pytest.fail(f"Vespa never activated {tenant_schema}")
 
-    mgr = WikiManager(backend=backend, tenant_id=tenant_id, schema_name=tenant_schema)
+    mgr = WikiManager(
+        backend_resolver=lambda: backend, tenant_id=tenant_id, schema_name=tenant_schema
+    )
     yield mgr, wm_mod
     BackendRegistry._backend_instances.clear()
 

@@ -24,7 +24,7 @@ def _bare_manager(session=None) -> GraphManager:
     import requests
 
     mgr = object.__new__(GraphManager)
-    mgr._backend = SimpleNamespace(
+    mgr._resolve_backend = lambda: SimpleNamespace(
         _url="http://vespa",
         _port=8080,
         schema_exists=lambda schema, tenant_id: True,

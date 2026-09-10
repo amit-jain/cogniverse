@@ -166,7 +166,7 @@ def profile_service(shared_vespa):
 
     agents_config = json.loads(Path("configs/config.json").read_text())["agents"]
     service = SyntheticDataService(
-        backend=backend,
+        backend_resolver=lambda: backend,
         generator_config=video_synthetic_generator_config(tenant_id),
         backend_config=backend_config,
         agents_config=agents_config,
@@ -296,7 +296,7 @@ async def test_real_lm_profile_agent_labels_indexed_source_without_module_patch(
         )
 
     service = SyntheticDataService(
-        backend=profile_service.service.backend,
+        backend_resolver=lambda: profile_service.service.resolve_backend(),
         generator_config=profile_service.service.generator_config,
         backend_config=profile_service.service.backend_config,
         agents_config=profile_service.agents_config,

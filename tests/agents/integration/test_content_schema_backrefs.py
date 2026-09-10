@@ -411,7 +411,7 @@ def content_backref_env(shared_memory_vespa, colbert_endpoint):
             schema_loader=schema_loader,
         )
         return GraphManager(
-            backend=backend,
+            backend_resolver=lambda: backend,
             tenant_id=tenant_id,
             schema_name=schema_full_name(GRAPH_BASE_SCHEMA, tenant_id),
             colbert_endpoint_url=colbert_endpoint,

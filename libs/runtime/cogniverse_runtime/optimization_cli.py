@@ -5671,13 +5671,16 @@ async def run_synthetic_generation(
             schemas_dir = Path(
                 os.environ.get("COGNIVERSE_SCHEMAS_DIR", "configs/schemas")
             )
-            try:
-                registry = BackendRegistry()
-                backend = registry.get_search_backend(
+
+            def resolve_synthetic_backend():
+                return BackendRegistry().get_search_backend(
                     name=synthetic_runtime_config.backend_config.backend_type,
                     config_manager=config_manager,
                     schema_loader=FilesystemSchemaLoader(schemas_dir),
                 )
+
+            try:
+                resolve_synthetic_backend()
             except Exception as exc:
                 raise RuntimeError(
                     "Synthetic backend access failed for "
@@ -5687,7 +5690,7 @@ async def run_synthetic_generation(
                 ) from exc
 
             service = SyntheticDataService(
-                backend=backend,
+                backend_resolver=resolve_synthetic_backend,
                 config_manager=config_manager,
                 backend_config=synthetic_runtime_config.backend_config,
                 generator_config=synthetic_runtime_config.generator_config,

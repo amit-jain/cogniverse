@@ -10,8 +10,9 @@ import asyncio
 import json
 import logging
 import time
-from typing import Any, Dict, List
+from typing import Any, Callable, Dict, List
 
+from cogniverse_core.registries.backend_registry import leased_backend
 from cogniverse_foundation.common.tenant_utils import (
     require_tenant_id,
     validate_tenant_id,
@@ -58,7 +59,7 @@ class BackendQuerier:
 
     def __init__(
         self,
-        backend: Backend,
+        backend_resolver: Callable[[], Backend],
         backend_config: BackendConfig,
         field_mappings: FieldMappingConfig,
     ):
@@ -66,19 +67,27 @@ class BackendQuerier:
         Initialize backend querier
 
         Args:
-            backend: Backend interface instance
+            backend_resolver: Zero-arg callable resolving the backend
+                through BackendRegistry, leased per query.
             backend_config: Backend configuration with profiles
             field_mappings: Field mapping configuration for schema-agnostic queries
         """
-        if backend is None:
-            raise ValueError("backend is required")
-        self.backend = backend
+        if backend_resolver is None:
+            raise ValueError("backend_resolver is required")
+        self.resolve_backend = backend_resolver
         self.backend_config = backend_config
         self.field_mappings = field_mappings
         logger.info(
             f"Initialized BackendQuerier (backend: {backend_config.backend_type}, "
             f"profiles: {len(backend_config.profiles)})"
         )
+
+    def _query_leased(self, schema_name, yql, query_kwargs):
+        """One metadata query on a backend resolved and held for the call."""
+        with leased_backend(self.resolve_backend) as backend:
+            return backend.query_metadata_documents(
+                schema=schema_name, yql=yql, **query_kwargs
+            )
 
     async def query_profiles(
         self,
@@ -219,10 +228,10 @@ class BackendQuerier:
                 if offset:
                     query_kwargs["offset"] = offset
                 page = await asyncio.to_thread(
-                    self.backend.query_metadata_documents,
-                    schema=schema_name,
-                    yql=yql,
-                    **query_kwargs,
+                    self._query_leased,
+                    schema_name,
+                    yql,
+                    query_kwargs,
                 )
                 if entity_fields is None:
                     results = page
