@@ -171,6 +171,17 @@ raises — no silent bypass). `DynamicDSPyMixin` uses these at LM-construction
 time, and the per-request paths (the orchestrator and the direct-build
 execution agents) build their LM the same way with the request's `tenant_id`.
 
+Choosing a model means the router rebuilds the request body from its own
+parsed struct before forwarding it, so every field an agent sends has to
+survive that round trip. `response_format` is the one with teeth: agents bind
+their DSPy signature to a server-enforced `json_schema`
+(`StructuredJSONAdapter`), and a router build that keeps only
+`{"type": "json_schema"}` makes vLLM reject the request with 400 — the agent
+then serves its non-LM fallback on every structured call. `semanticRouter.router.image.digest`
+therefore pins a build that rebuilds `response_format` from the client bytes,
+and `test_json_schema_response_format_survives_the_router` asserts the schema
+the stub upstream receives is the payload production built, field for field.
+
 The `SemanticRouterConfig` dataclass defaults to disabled, so unconfigured
 library use is a no-op — but `cogniverse up` turns routing on by default
 (`semanticRouter.enabled: true`). Opt out with
@@ -179,7 +190,8 @@ its classifier bundle on first boot into a model-cache PVC. Its startup probe
 allows 30 minutes for that cold download because model pulls can be serialized
 on a shared development host; warm starts reuse the PVC. Coverage:
 `tests/foundation/integration/test_semantic_router_e2e.py` self-launches the
-real router+Envoy+stub via `docker run` and asserts the tier/content decisions;
+real router+Envoy+stub via `docker run` (on the image digests
+`charts/cogniverse/values.yaml` deploys) and asserts the tier/content decisions;
 `tests/e2e/deployment/test_semantic_router_deploy_e2e.py` rides the
 `deployed_stack` fixture (its own isolated k3d cluster running the full chart)
 and asserts the routing *decision* per tenant tier + content against the

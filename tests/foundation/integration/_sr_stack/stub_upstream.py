@@ -13,6 +13,9 @@ router decided and forwarded:
                          ``.thinking`` / a top-level ``reasoning_effort``
   - ``routing_headers``— the ``x-vsr-*`` / tier headers that reached the
                          backend (proves the router forwarded them)
+  - ``response_format``— the ``response_format`` object verbatim (proves a
+                         ``json_schema`` payload survived the router's
+                         request re-serialization)
   - ``echo``           — the last user message (proves the round trip)
 
 When reasoning is requested it also fills ``message.reasoning_content`` and
@@ -100,6 +103,7 @@ class _Handler(BaseHTTPRequestHandler):
             "served_model": body.get("model"),
             "reasoning": reasoning,
             "routing_headers": routing_headers,
+            "response_format": body.get("response_format"),
             "echo": _last_user_message(body),
         }
         message = {"role": "assistant", "content": json.dumps(reflection)}

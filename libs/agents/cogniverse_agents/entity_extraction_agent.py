@@ -29,6 +29,7 @@ from cogniverse_foundation.telemetry.span_contract import (
     ENTITY_EXTRACTION_FALLBACK_LM_UNAVAILABLE,
     ENTITY_EXTRACTION_FALLBACK_SCHEMA_REFUSED,
     OP_ENTITY_EXTRACTION,
+    entity_extraction_request_rejected,
     record_span_io,
 )
 
@@ -255,13 +256,29 @@ EntityExtractionSignature = EntityExtractionSignature.with_instructions(
 )
 
 
+def _rejection_status(exc: BaseException) -> Optional[int]:
+    """The 4xx status an LM answered with, or ``None`` for anything else.
+
+    Read off the exception TYPE's own status field (litellm's errors subclass
+    ``openai.APIStatusError``), never off the message: the message embeds the
+    request URL and the server body, so matching text there misreads an outage
+    whose URL happens to carry the phrase.
+    """
+    status = getattr(exc, "status_code", None)
+    if isinstance(status, bool) or not isinstance(status, int):
+        return None
+    return status if 400 <= status < 500 else None
+
+
 def _fallback_reason(exc: BaseException) -> str:
     """Why the DSPy path lost this query, as a queryable span value.
 
     ``schema_refused`` means the engine answered outside the signature's
-    enforced output schema; anything else is the LM being unreachable or
-    failing outright. The two demand different operator action, so the fast
-    path records which one it served instead of the DSPy result.
+    enforced output schema. ``request_rejected:<status>`` means it refused the
+    request without generating anything — a body it would not accept, a
+    credential, a quota. Anything else is the LM being unreachable or failing
+    outright. The three demand different operator action, so the fast path
+    records which one it served instead of the DSPy result.
     """
     seen: set[int] = set()
     current: BaseException | None = exc
@@ -269,6 +286,9 @@ def _fallback_reason(exc: BaseException) -> str:
         seen.add(id(current))
         if isinstance(current, AdapterParseError):
             return ENTITY_EXTRACTION_FALLBACK_SCHEMA_REFUSED
+        status = _rejection_status(current)
+        if status is not None:
+            return entity_extraction_request_rejected(status)
         current = current.__cause__ or current.__context__
     return ENTITY_EXTRACTION_FALLBACK_LM_UNAVAILABLE
 

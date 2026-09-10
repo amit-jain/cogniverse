@@ -57,12 +57,26 @@ ENTITY_EXTRACTION_FALLBACK_ATTRIBUTE = "entity_extraction.fallback_reason"
 ENTITY_EXTRACTION_FALLBACK_ERROR_ATTRIBUTE = "entity_extraction.fallback_error"
 ENTITY_EXTRACTION_FALLBACK_SCHEMA_REFUSED = "schema_refused"
 ENTITY_EXTRACTION_FALLBACK_LM_UNAVAILABLE = "lm_unavailable"
+# The engine was reachable and REFUSED the request (4xx). Distinct from both of
+# the above: nothing was generated, so it is not a schema refusal, and the
+# provider answered, so it is not an outage. The status is carried because it
+# names the operator action — 400 is a malformed request cogniverse (or a hop
+# on the way) built, 401/403 a credential, 429 a quota.
+ENTITY_EXTRACTION_FALLBACK_REQUEST_REJECTED = "request_rejected"
+# The base reasons; ``request_rejected`` is served with its status appended.
 ENTITY_EXTRACTION_FALLBACK_VALUES = frozenset(
     {
         ENTITY_EXTRACTION_FALLBACK_SCHEMA_REFUSED,
         ENTITY_EXTRACTION_FALLBACK_LM_UNAVAILABLE,
+        ENTITY_EXTRACTION_FALLBACK_REQUEST_REJECTED,
     }
 )
+
+
+def entity_extraction_request_rejected(status_code: int) -> str:
+    """The fallback reason for an LM that refused the request: ``<reason>:<status>``."""
+    return f"{ENTITY_EXTRACTION_FALLBACK_REQUEST_REJECTED}:{int(status_code)}"
+
 
 # Annotation contract — one home for the names, metadata key, and thresholds
 # every consumer of result_click / result_relevance / preference pairs shares.

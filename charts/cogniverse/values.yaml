@@ -1897,12 +1897,14 @@ semanticRouter:
   router:
     image:
       repository: ghcr.io/vllm-project/semantic-router/vllm-sr
-      tag: "latest"
-      # Pinned by digest: the tag `latest` moves, and an older cached `latest`
-      # left the embedding runtime unready so semantic_cache was silently
-      # bypassed. This amd64 digest marks the cache-only embedding runtime ready.
+      tag: "nightly-20260907"
+      # Pinned by digest: upstream tags move. This multi-arch index digest is a
+      # build that marks the cache-only embedding runtime ready AND rebuilds
+      # `response_format` from the client bytes, so a `json_schema` survives the
+      # router's request re-serialization instead of reaching the backend as a
+      # type-only `{"type": "json_schema"}` the engine rejects with 400.
       # Clear `digest` to fall back to `tag`.
-      digest: "sha256:80f0363345669042482eae2325cccbc6c1e9de5f70a2c26c614721d88fe7dfb5"
+      digest: "sha256:75df17439367894b378d972839746bcf10399e8d16c211887ded44098997ed8f"
       pullPolicy: IfNotPresent
     grpcPort: 50051
     metricsPort: 9190

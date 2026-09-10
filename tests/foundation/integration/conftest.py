@@ -29,11 +29,33 @@ from pathlib import Path
 
 import pytest
 import requests
+import yaml
 
 _STACK_DIR = Path(__file__).resolve().parent / "_sr_stack"
-_ENVOY_IMAGE = "envoyproxy/envoy:v1.31-latest"
-_SR_IMAGE = "ghcr.io/vllm-project/semantic-router/vllm-sr:latest"
+_CHART_VALUES = (
+    Path(__file__).resolve().parents[3] / "charts" / "cogniverse" / "values.yaml"
+)
 _STUB_IMAGE = "python:3.12-slim"
+
+
+def _shipped_image(*path: str) -> str:
+    """The image ref the chart deploys, read from ``charts/cogniverse/values.yaml``.
+
+    The stack runs the SAME build production runs: a router whose request
+    re-serialization drops ``response_format.json_schema`` passes a stack
+    pinned to some other tag while every served structured call 400s.
+    """
+    node = yaml.safe_load(_CHART_VALUES.read_text())
+    for key in path:
+        node = node[key]
+    digest = node.get("digest")
+    if digest:
+        return f"{node['repository']}@{digest}"
+    return f"{node['repository']}:{node['tag']}"
+
+
+_ENVOY_IMAGE = _shipped_image("semanticRouter", "envoy", "image")
+_SR_IMAGE = _shipped_image("semanticRouter", "router", "image")
 
 # Persistent caches so the router's classifier bundle (/app/models) and any
 # HuggingFace-hosted embedding model download ONCE per host instead of every

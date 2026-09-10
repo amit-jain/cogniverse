@@ -25,6 +25,7 @@ from cogniverse_foundation.telemetry.span_contract import (
     ENTITY_EXTRACTION_FALLBACK_ERROR_ATTRIBUTE,
     ENTITY_EXTRACTION_FALLBACK_LM_UNAVAILABLE,
     ENTITY_EXTRACTION_FALLBACK_SCHEMA_REFUSED,
+    entity_extraction_request_rejected,
 )
 from tests.agents.unit._recording_telemetry import (
     FailingTelemetryManager,
@@ -179,6 +180,24 @@ class _RaisingDummyLM(DummyLM):
         del prompt, messages, kwargs
         self.calls += 1
         raise RuntimeError(self.message)
+
+
+class _StatusRaisingDummyLM(DummyLM):
+    """An engine that answered with an HTTP error instead of a completion.
+
+    Raises the litellm exception type the served path actually receives, so
+    the classification is read off the same attribute production reads.
+    """
+
+    def __init__(self, error: Exception):
+        super().__init__([{"reasoning": "unused", "entities": ""}])
+        self.calls = 0
+        self.error = error
+
+    def __call__(self, prompt=None, messages=None, **kwargs):
+        del prompt, messages, kwargs
+        self.calls += 1
+        raise self.error
 
 
 class _FakeToken:
@@ -663,6 +682,99 @@ class TestEntityExtractionAgent:
                 caplog, "cogniverse_agents.entity_extraction_agent"
             )
         ] == ["DSPy entity extraction failed (schema_refused)"]
+
+    @pytest.mark.asyncio
+    async def test_engine_refusing_the_request_names_the_status_on_the_span(
+        self, entity_agent, caplog
+    ):
+        """A 400 from the LM is a rejected request, not an outage.
+
+        A hop that rewrites the body (the semantic router) can strip a field
+        the engine requires; that lands as a 400 on every structured call while
+        the fast path keeps answering. Filed under ``lm_unavailable`` it reads
+        as the provider being down and nobody looks at the request.
+        """
+        import litellm
+
+        caplog.set_level(
+            logging.WARNING, logger="cogniverse_agents.entity_extraction_agent"
+        )
+        entity_agent.dspy_module = EntityExtractionModule()
+        entity_agent._gliner_extractor = _CountingExtractor(
+            result=[{"text": "Barack Obama", "label": "PERSON", "score": 0.9}]
+        )
+        entity_agent._spacy_analyzer = None
+        lm = _StatusRaisingDummyLM(
+            litellm.BadRequestError(
+                message=(
+                    "When response_format type is 'json_schema', the "
+                    "'json_schema' field must be provided."
+                ),
+                model="auto",
+                llm_provider="openai",
+            )
+        )
+
+        with dspy.context(lm=lm):
+            result = await entity_agent._process_impl(
+                EntityExtractionInput(
+                    query="Barack Obama in Chicago", tenant_id=TEST_TENANT_ID
+                )
+            )
+
+        assert result.path_used == "fast"
+        ((span,),) = (entity_agent.telemetry_manager.spans,)
+        assert span.attributes[ENTITY_EXTRACTION_FALLBACK_ATTRIBUTE] == (
+            "request_rejected:400"
+        )
+        assert span.attributes[
+            ENTITY_EXTRACTION_FALLBACK_ATTRIBUTE
+        ] == entity_extraction_request_rejected(400)
+        assert span.attributes[ENTITY_EXTRACTION_FALLBACK_ERROR_ATTRIBUTE].startswith(
+            "litellm.BadRequestError: "
+        )
+        assert [
+            message.split(";")[0]
+            for message in _messages(
+                caplog, "cogniverse_agents.entity_extraction_agent"
+            )
+        ] == ["DSPy entity extraction failed (request_rejected:400)"]
+
+    @pytest.mark.asyncio
+    async def test_engine_5xx_is_still_an_outage_not_a_rejection(
+        self, entity_agent, caplog
+    ):
+        """Control for the 4xx branch: a 500 keeps the outage reason."""
+        import litellm
+
+        caplog.set_level(
+            logging.WARNING, logger="cogniverse_agents.entity_extraction_agent"
+        )
+        entity_agent.dspy_module = EntityExtractionModule()
+        entity_agent._gliner_extractor = _CountingExtractor(
+            result=[{"text": "Barack Obama", "label": "PERSON", "score": 0.9}]
+        )
+        entity_agent._spacy_analyzer = None
+        lm = _StatusRaisingDummyLM(
+            litellm.InternalServerError(
+                message="upstream connect error",
+                model="auto",
+                llm_provider="openai",
+            )
+        )
+
+        with dspy.context(lm=lm):
+            result = await entity_agent._process_impl(
+                EntityExtractionInput(
+                    query="Barack Obama in Chicago", tenant_id=TEST_TENANT_ID
+                )
+            )
+
+        assert result.path_used == "fast"
+        ((span,),) = (entity_agent.telemetry_manager.spans,)
+        assert span.attributes[ENTITY_EXTRACTION_FALLBACK_ATTRIBUTE] == (
+            ENTITY_EXTRACTION_FALLBACK_LM_UNAVAILABLE
+        )
 
     @pytest.mark.asyncio
     async def test_relationships_match_between_dspy_and_fast_path(self):
