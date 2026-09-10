@@ -982,6 +982,13 @@ fields (`reasoning`, `entities`), both required, `additionalProperties: false`,
 with an object that omits `entities`, and an engine that ignored the schema
 raises `AdapterParseError` instead of yielding a silently empty extraction.
 
+Because any DSPy failure falls through to the GLiNER path, the
+`cogniverse.entity_extraction` span names which failure it was:
+`entity_extraction.fallback_reason` is `schema_refused` when an
+`AdapterParseError` appears anywhere in the cause chain and `lm_unavailable`
+otherwise, with the exception in `entity_extraction.fallback_error`. A span
+that served the DSPy answer carries neither attribute.
+
 **Key Capabilities**:
 
 - Primary path: DSPy ChainOfThought entity extraction

@@ -1009,6 +1009,13 @@ back to `{"type": "json_object"}`, which a bare `{}` satisfies; this adapter
 always sends the schema and raises `AdapterParseError` rather than reprompting
 under a second adapter when a server ignores it.
 
+The schema's `name` is the signature's class name, except for the placeholder
+names dspy gives a signature built from a string, rebuilt by
+`with_instructions()` or wrapped by `ChainOfThought` (`Signature`,
+`StringSignature`). Those fall back to the signature's own output field names
+plus a digest of its field declaration, so two different declarations never
+share a schema name and rewriting instructions does not rename the schema.
+
 ```python
 from cogniverse_foundation.dspy import StructuredJSONAdapter
 import dspy
