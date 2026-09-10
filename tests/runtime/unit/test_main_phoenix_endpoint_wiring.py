@@ -37,12 +37,17 @@ class _FakeBackend:
 class _FakeBackendRegistry:
     def __init__(self) -> None:
         self._backend_instances = {}
+        self.cleared = False
 
     def list_backends(self):
         return []
 
     def get_ingestion_backend(self, *args, **kwargs):
         return _FakeBackend()
+
+    def clear_instances(self) -> None:
+        self._backend_instances.clear()
+        self.cleared = True
 
 
 class _FakeConfigLoader:
