@@ -75,7 +75,7 @@ def test_tenant_scoped_metadata_queries_scope_once():
 
     store = BackendVectorStore(
         collection_name=memory_schema,
-        backend_client=backend,
+        backend_resolver=lambda: backend,
         embedding_model_dims=8,
         tenant_id=TENANT,
         profile="agent_memories",

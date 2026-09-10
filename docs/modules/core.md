@@ -943,7 +943,9 @@ from cogniverse_core.memory.manager import Mem0MemoryManager
 # Get memory manager (singleton per tenant via __new__)
 memory = Mem0MemoryManager(tenant_id="acme")
 # The manager keeps no backend handle: `_resolve_backend` re-resolves through
-# BackendRegistry per operation, leased for the operation's duration.
+# BackendRegistry per operation, leased for the operation's duration. The same
+# resolver goes into Mem0's vector_store config as `backend_resolver`, so
+# BackendVectorStore resolves and leases per insert/search/get/update/list.
 
 # Initialize with required parameters
 from cogniverse_core.memory.schema import build_default_registry

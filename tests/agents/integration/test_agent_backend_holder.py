@@ -23,6 +23,7 @@ import numpy as np
 import pytest
 
 from cogniverse_agents.search_agent import SearchAgent, SearchAgentDeps
+from cogniverse_core.memory.backend_vector_store import BackendVectorStore
 from cogniverse_core.registries.backend_registry import BackendRegistry
 from cogniverse_core.schemas.filesystem_loader import FilesystemSchemaLoader
 from cogniverse_sdk.document import ContentType, Document
@@ -260,3 +261,139 @@ def test_the_agent_keeps_no_backend_attribute_between_searches(search_agent):
     """The removed holder: no attribute survives a search to go stale."""
     assert hasattr(search_agent, "_shared_backend") is False
     assert hasattr(search_agent, "_shared_backend_lock") is False
+
+
+# --------------------------------------------------------------------------
+# Mem0's vector store: the backend instance lived inside the vector_store
+# config dict, so a Memory built once served a closed client for its life.
+# --------------------------------------------------------------------------
+
+MEMORY_DIM = 768
+
+
+@pytest.fixture(scope="module")
+def memory_store(shared_vespa):
+    """A real BackendVectorStore wired the way Mem0MemoryManager wires it."""
+    tenant_id = f"holdmem{uuid.uuid4().hex[:8]}"
+    config_manager = make_config_manager(shared_vespa)
+    schema_loader = FilesystemSchemaLoader(Path("configs/schemas"))
+    collection = deploy_tenant_schema(
+        shared_vespa,
+        tenant_id=tenant_id,
+        base_schema_name="agent_memories",
+        config_manager=config_manager,
+    )
+
+    def resolve():
+        return BackendRegistry.get_instance().get_ingestion_backend(
+            name="vespa",
+            tenant_id=tenant_id,
+            config={
+                "backend": {
+                    "url": "http://localhost",
+                    "port": shared_vespa["http_port"],
+                    "config_port": shared_vespa["config_port"],
+                }
+            },
+            config_manager=config_manager,
+            schema_loader=schema_loader,
+        )
+
+    yield {
+        "store": BackendVectorStore(
+            collection_name=collection,
+            backend_resolver=resolve,
+            embedding_model_dims=MEMORY_DIM,
+            tenant_id=tenant_id,
+            profile="agent_memories",
+        ),
+        "resolve": resolve,
+    }
+    BackendRegistry.get_instance().clear_instances()
+
+
+def test_memory_store_serves_after_the_registry_closes_that_instance(memory_store):
+    """Insert, registry clear (which closes), read the same row back."""
+    store = memory_store["store"]
+    resolved = memory_store["resolve"]()
+    memory_id = f"mem-{uuid.uuid4().hex[:8]}"
+
+    assert store.insert(
+        vectors=[[0.25] * MEMORY_DIM],
+        payloads=[{"data": "holder memory", "user_id": "u_hold", "agent_id": "a"}],
+        ids=[memory_id],
+    ) == [memory_id]
+
+    BackendRegistry.get_instance().clear_instances()
+
+    # The instance the store resolved is genuinely dead now.
+    with pytest.raises(BackendClosedError) as closed:
+        resolved.get_document(memory_id, schema_name="agent_memories")
+    assert "is closed" in str(closed.value)
+
+    stored = store.get(memory_id)
+    assert (stored.id, stored.payload["data"], stored.payload["user_id"]) == (
+        memory_id,
+        "holder memory",
+        "u_hold",
+    )
+    assert stored.vector == pytest.approx([0.25] * MEMORY_DIM)
+
+
+def test_a_memory_read_in_flight_is_closed_only_after_it_releases(
+    memory_store, monkeypatch
+):
+    """Barrier-executed interleaving: clear() lands mid-read."""
+    store = memory_store["store"]
+    backend = memory_store["resolve"]()
+    memory_id = f"mem-{uuid.uuid4().hex[:8]}"
+    store.insert(
+        vectors=[[0.5] * MEMORY_DIM],
+        payloads=[{"data": "lease memory", "user_id": "u_lease", "agent_id": "a"}],
+        ids=[memory_id],
+    )
+
+    closed_instances: list[int] = []
+    real_close = type(backend).close
+
+    def counting_close(self):
+        closed_instances.append(id(self))
+        return real_close(self)
+
+    monkeypatch.setattr(type(backend), "close", counting_close, raising=True)
+
+    read_entered = threading.Event()
+    clear_returned = threading.Event()
+    real_get = backend.get_document
+    closes_seen_during_read: list[int] = []
+
+    def barrier_get(*args, **kwargs):
+        read_entered.set()
+        assert clear_returned.wait(30), "the evictor never ran"
+        return real_get(*args, **kwargs)
+
+    monkeypatch.setattr(backend, "get_document", barrier_get, raising=True)
+
+    def evict():
+        assert read_entered.wait(30), "the read never reached the backend"
+        BackendRegistry.get_instance().clear_instances()
+        closes_seen_during_read.extend(closed_instances)
+        clear_returned.set()
+
+    evictor = threading.Thread(target=evict, name="evictor")
+    evictor.start()
+    try:
+        stored = store.get(memory_id)
+    finally:
+        evictor.join(30)
+        assert evictor.is_alive() is False
+
+    assert (stored.id, stored.payload["data"]) == (memory_id, "lease memory")
+    assert closes_seen_during_read == []
+    assert closed_instances == [id(backend)]
+
+
+def test_the_vector_store_keeps_no_backend_attribute(memory_store):
+    """The removed holder: Mem0's config carries the resolver, not a client."""
+    assert hasattr(memory_store["store"], "backend") is False
+    assert callable(memory_store["store"]._resolve_backend) is True

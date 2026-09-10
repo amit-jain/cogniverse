@@ -57,7 +57,7 @@ def memory_store(shared_vespa):
     )
     return BackendVectorStore(
         collection_name=full,
-        backend_client=backend,
+        backend_resolver=lambda: backend,
         embedding_model_dims=DIM,
         tenant_id=TENANT,
         profile="agent_memories",
@@ -74,7 +74,7 @@ def test_insert_raises_when_feed_drops_documents(memory_store):
     # dropped write as a stored memory.
     mismatched_store = BackendVectorStore(
         collection_name=store.collection_name,
-        backend_client=store.backend,
+        backend_resolver=store._resolve_backend,
         embedding_model_dims=DIM + 256,
         tenant_id=store.tenant_id,
         profile=store.profile,

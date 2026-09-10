@@ -518,7 +518,7 @@ class Mem0MemoryManager:
                 "provider": "backend",  # Backend-agnostic (not vespa-specific)
                 "config": {
                     "collection_name": tenant_schema_name,  # Tenant-specific schema
-                    "backend_client": backend,  # Pre-configured backend instance
+                    "backend_resolver": self._resolve_backend,
                     "embedding_model_dims": embedding_dims,  # embedder output dim
                     "tenant_id": storage_tenant_id,  # storage tenant id
                     "profile": base_schema_name,  # Pass base schema/profile name

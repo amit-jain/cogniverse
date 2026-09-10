@@ -12,6 +12,7 @@ from typing import Any, Dict, List, Optional
 from mem0.vector_stores.base import VectorStoreBase
 
 from cogniverse_core.memory._timestamps import epoch_to_iso_utc, to_epoch_seconds
+from cogniverse_core.registries.backend_registry import leased_backend
 
 
 def _created_at_iso(value):
@@ -159,7 +160,7 @@ class BackendVectorStore(VectorStoreBase):
     def __init__(
         self,
         collection_name: str,
-        backend_client,
+        backend_resolver,
         embedding_model_dims: int = 768,
         tenant_id: str = None,
         profile: str = None,
@@ -170,7 +171,7 @@ class BackendVectorStore(VectorStoreBase):
 
         Args:
             collection_name: Schema/collection name (tenant-specific)
-            backend_client: Pre-configured backend from BackendRegistry
+            backend_resolver: Zero-arg callable resolving the backend
             embedding_model_dims: Vector dimensions
             tenant_id: Tenant ID for multi-tenant isolation
             profile: Base schema/profile name (without tenant suffix)
@@ -189,7 +190,11 @@ class BackendVectorStore(VectorStoreBase):
             )
 
         self.collection_name = collection_name
-        self.backend = backend_client
+        # Resolved per operation, never held: BackendRegistry closes what it
+        # evicts, overwrites and clears, and a Mem0 Memory outlives any single
+        # instance, so a handle kept here goes dead and every later memory
+        # read/write raises BackendClosedError until the process restarts.
+        self._resolve_backend = backend_resolver
         self.vector_size = embedding_model_dims
         # mem0 reads getattr(vector_store, "embedding_model_dims", 1536) —
         # expose the true value under the name it looks for.
@@ -303,9 +308,10 @@ class BackendVectorStore(VectorStoreBase):
         base_schema_name = self.profile if self.profile else self.collection_name
 
         try:
-            result = self.backend.ingest_documents(
-                documents, schema_name=base_schema_name
-            )
+            with leased_backend(self._resolve_backend) as backend:
+                result = backend.ingest_documents(
+                    documents, schema_name=base_schema_name
+                )
         except Exception as e:
             logger.error(f"Failed to insert documents: {e}")
             raise
@@ -377,7 +383,8 @@ class BackendVectorStore(VectorStoreBase):
             )
 
             # Call backend.search() - embeddings provided, no encoder needed
-            search_results = self.backend.search(query_dict)
+            with leased_backend(self._resolve_backend) as backend:
+                search_results = backend.search(query_dict)
             logger.debug(
                 f"BackendVectorStore search returned {len(search_results)} results"
             )
@@ -414,9 +421,10 @@ class BackendVectorStore(VectorStoreBase):
     def delete(self, vector_id: str) -> None:
         """Delete via backend"""
         try:
-            self.backend.delete_document(
-                vector_id, schema_name=(self.profile or self.collection_name)
-            )
+            with leased_backend(self._resolve_backend) as backend:
+                backend.delete_document(
+                    vector_id, schema_name=(self.profile or self.collection_name)
+                )
             logger.debug(f"Deleted memory {vector_id}")
         except Exception as e:
             logger.error(f"Failed to delete {vector_id}: {e}")
@@ -485,9 +493,10 @@ class BackendVectorStore(VectorStoreBase):
 
         try:
             doc = self._build_update_document(vector_id, vector, payload)
-            self.backend.update_document(
-                vector_id, doc, schema_name=(self.profile or self.collection_name)
-            )
+            with leased_backend(self._resolve_backend) as backend:
+                backend.update_document(
+                    vector_id, doc, schema_name=(self.profile or self.collection_name)
+                )
             logger.debug(f"Updated memory {vector_id}")
         except Exception as e:
             logger.error(f"Failed to update {vector_id}: {e}")
@@ -513,11 +522,12 @@ class BackendVectorStore(VectorStoreBase):
             return
 
         try:
-            result = self.backend.ingest_documents(
-                documents,
-                schema_name=(self.profile or self.collection_name),
-                operation_type="update",
-            )
+            with leased_backend(self._resolve_backend) as backend:
+                result = backend.ingest_documents(
+                    documents,
+                    schema_name=(self.profile or self.collection_name),
+                    operation_type="update",
+                )
             success = (result or {}).get("success_count", 0)
             if success < len(documents):
                 raise RuntimeError(
@@ -535,9 +545,10 @@ class BackendVectorStore(VectorStoreBase):
             return None
 
         try:
-            doc = self.backend.get_document(
-                vector_id, schema_name=(self.profile or self.collection_name)
-            )
+            with leased_backend(self._resolve_backend) as backend:
+                doc = backend.get_document(
+                    vector_id, schema_name=(self.profile or self.collection_name)
+                )
             if doc is None:
                 return None
 
@@ -681,13 +692,14 @@ class BackendVectorStore(VectorStoreBase):
         # skips or duplicates a row across.
         schema_name = self.profile if self.profile else self.collection_name
         yql = f"select * from {schema_name} where {where_clause} order by {order_by}"
-        results = self.backend.query_metadata_documents(
-            schema=schema_name,
-            yql=yql,
-            hits=limit,
-            offset=offset,
-            tenant_id=self.tenant_id,
-        )
+        with leased_backend(self._resolve_backend) as backend:
+            results = backend.query_metadata_documents(
+                schema=schema_name,
+                yql=yql,
+                hits=limit,
+                offset=offset,
+                tenant_id=self.tenant_id,
+            )
 
         mem0_results: List[BackendSearchResult] = []
         for result in results:
