@@ -17,6 +17,7 @@ from PIL import Image
 
 from cogniverse_core.common.models.model_loaders import RemoteColPaliLoader
 from cogniverse_core.query.encoders import QueryEncoderFactory
+from tests.runtime.integration.conftest import TENANT_B, TENANT_B_PROFILE
 
 logger = logging.getLogger(__name__)
 
@@ -218,25 +219,29 @@ class TestListProfilesIntegration:
         assert profiles_by_name["test_xclip"]["type"] == "video"
 
     def test_list_profiles_tenant_scoping(self, search_client):
-        """GET /search/profiles?tenant_id=tenant_b returns that tenant's profiles.
+        """GET /search/profiles?tenant_id=tenant_b advertises what tenant_b seeded.
 
-        tenant_b has its own seeded profile plus system profiles from config.json.
-        The key assertion is that default-only profiles (test_colpali, test_xclip)
-        are NOT present for tenant_b.
+        The tenant is seeded with one profile and that profile's schema, so the
+        whole advertised set is that one profile: nothing the default tenant
+        was seeded with crosses over.
         """
-        resp = search_client.get("/search/profiles?tenant_id=tenant_b")
+        resp = search_client.get(f"/search/profiles?tenant_id={TENANT_B}")
 
         assert resp.status_code == 200
         data = resp.json()
-        assert data["tenant_id"] == "tenant_b"
-        assert data["count"] >= 1
+        assert data["tenant_id"] == TENANT_B
+        assert data["count"] == 1
+        assert data["profiles"] == [
+            {
+                "name": TENANT_B_PROFILE.profile_name,
+                "model": TENANT_B_PROFILE.embedding_model,
+                "type": TENANT_B_PROFILE.type,
+            }
+        ]
 
         profile_names = {p["name"] for p in data["profiles"]}
-        assert "tenant_b_profile" in profile_names
-
-        # Profiles seeded exclusively for default tenant should not appear
-        assert "test_colpali" not in profile_names
-        assert "test_xclip" not in profile_names
+        assert profile_names == {TENANT_B_PROFILE.profile_name}
+        assert profile_names.isdisjoint({"test_colpali", "test_xclip"})
 
 
 @pytest.mark.integration
