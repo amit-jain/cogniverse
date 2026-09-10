@@ -758,10 +758,6 @@ def eval_search_client(
 
     tenant_manager.set_schema_loader(schema_loader)
     tenant_manager.set_config_manager(cm)
-    # Reset the cached backend singleton so the next get_backend() call
-    # picks up the freshly-set schema_loader + config_manager rather than
-    # whatever was cached from a previous module-scoped fixture run.
-    tenant_manager.backend = None
 
     # Seed the tenant_metadata schema with a ``test:unit`` doc so
     # ``assert_tenant_exists`` finds it. Without this the search router

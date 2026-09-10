@@ -438,3 +438,31 @@ async def test_delete_tenant_reports_deleted_when_metadata_delete_confirms(
     result = await tm.delete_tenant_internal("acme:acme")
     assert result["status"] == "deleted"
     assert result["schemas_deleted"] == 1
+
+
+def test_injected_backend_is_returned_without_registry_or_schema_loader(monkeypatch):
+    from cogniverse_core.registries.backend_registry import BackendRegistry
+    from cogniverse_foundation.config.manager import ConfigManager
+    from cogniverse_runtime.admin import tenant_manager as tm
+    from tests.utils.memory_store import InMemoryConfigStore
+
+    injected = MagicMock(name="injected")
+    monkeypatch.setattr(tm, "_backend", None)
+    monkeypatch.setattr(tm, "_schema_loader", None)
+    monkeypatch.setattr(
+        tm, "_config_manager", ConfigManager(store=InMemoryConfigStore())
+    )
+    monkeypatch.setattr(
+        BackendRegistry,
+        "get_instance",
+        classmethod(lambda cls: (_ for _ in ()).throw(AssertionError("registry"))),
+    )
+
+    tm.set_backend(injected)
+    assert tm.get_backend() is injected
+    with tm.metadata_backend() as held:
+        assert held is injected
+
+    tm.set_backend(None)
+    with pytest.raises(RuntimeError, match="SchemaLoader not initialized"):
+        tm.get_backend()

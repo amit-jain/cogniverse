@@ -1664,6 +1664,7 @@ DELETE /admin/tenants/acme:production
 | `get_backend()` | Resolve the metadata backend from the registry (per call) |
 | `metadata_backend()` | Context manager: resolve + hold the backend for one operation |
 | `set_schema_loader(schema_loader)` | Inject SchemaLoader during app startup |
+| `set_backend(backend)` | Inject the metadata backend; `None` restores registry resolution |
 
 **Backend resolution.** `BackendRegistry` owns the lifetime of every backend
 it hands out and closes the instance on eviction, on an overwriting `set` and
@@ -1672,8 +1673,9 @@ resolves through the registry on every call — a warm resolve is a SystemConfig
 read plus a lookup in the registry's LRU, measured at ~415us median — and each
 operation runs inside `metadata_backend()`, which holds a checkout so eviction
 cannot close the instance mid-operation. The checkout also covers the multi-step
-tenant create, whose rollback path uses the same backend. A backend the registry
-does not hold (injected in a test, built directly) is yielded as-is.
+tenant create, whose rollback path uses the same backend. A backend injected
+with `set_backend()` is returned as-is: the registry does not hold it, so
+nothing checks it out or closes it.
 
 ### Admin Models
 

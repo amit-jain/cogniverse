@@ -313,12 +313,11 @@ async def monitor_with_real_search(
     monitor._http_client = httpx.AsyncClient(
         transport=httpx.ASGITransport(app=app), base_url="http://testserver"
     )
-    previous_backend = tenant_manager.backend
-    tenant_manager.backend = seeded_vespa
+    tenant_manager.set_backend(seeded_vespa)
     try:
         yield monitor
     finally:
-        tenant_manager.backend = previous_backend
+        tenant_manager.set_backend(None)
         await monitor.close()
 
 
