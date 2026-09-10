@@ -394,7 +394,7 @@ async def test_delete_tenant_internal_evicts_registered_tenant_caches(monkeypatc
 
 class TestGraphManagerSingleColdBuild:
     def _race_factory(self, build_factory):
-        """Drive ``build_factory(backend, config_manager) -> factory`` with 4
+        """Drive ``build_factory(resolver, config_manager) -> factory`` with 4
         concurrent first-touches for one fresh tenant; return (deploys, builds,
         results). The cold build must funnel through a single deploy + a single
         GraphManager construction, with every caller sharing that instance."""
@@ -429,7 +429,7 @@ class TestGraphManagerSingleColdBuild:
                 super().__init__(**kwargs)
 
         with patch("cogniverse_agents.graph.graph_manager.GraphManager", _CountingStub):
-            factory = build_factory(backend, config_manager)
+            factory = build_factory(lambda: backend, config_manager)
 
         start = threading.Barrier(4)
         results: list = []
