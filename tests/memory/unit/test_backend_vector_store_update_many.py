@@ -42,7 +42,7 @@ class _CapturingBackend:
 def _store() -> tuple[BackendVectorStore, _CapturingBackend]:
     backend = _CapturingBackend()
     store = object.__new__(BackendVectorStore)
-    store.backend = backend
+    store._resolve_backend = lambda: backend
     store.collection_name = "agent_memories_acme_acme"
     store.profile = "agent_memories"
     store.is_telemetry = False
@@ -135,7 +135,7 @@ def test_memory_search_requests_exact_nearest_neighbor():
     backend = _CapturingBackend()
     store = BackendVectorStore(
         collection_name="agent_memories_acme_acme",
-        backend_client=backend,
+        backend_resolver=lambda: backend,
         embedding_model_dims=3,
         tenant_id="acme:acme",
         profile="agent_memories",
@@ -196,9 +196,10 @@ class TestDimensionValidation:
 
         from cogniverse_core.memory.backend_vector_store import BackendVectorStore
 
+        backend = MagicMock()
         return BackendVectorStore(
             collection_name="agent_memories_t",
-            backend_client=MagicMock(),
+            backend_resolver=lambda: backend,
             embedding_model_dims=dims,
             tenant_id="t",
             profile="agent_memories",
@@ -228,7 +229,7 @@ class TestDimensionValidation:
         store = self._store(dims=768)
         with _pytest.raises(ValueError, match="512.*768|768.*512"):
             store.insert(vectors=[[0.1] * 512], payloads=[{"data": "x"}], ids=["m1"])
-        store.backend.ingest_documents.assert_not_called()
+        store._resolve_backend().ingest_documents.assert_not_called()
 
     def test_search_rejects_wrong_dimension_query(self):
         import pytest as _pytest
@@ -239,9 +240,9 @@ class TestDimensionValidation:
 
     def test_correct_dimension_flows_through(self):
         store = self._store(dims=8)
-        store.backend.ingest_documents.return_value = {"success_count": 1}
+        store._resolve_backend().ingest_documents.return_value = {"success_count": 1}
         store.insert(vectors=[[0.1] * 8], payloads=[{"data": "x"}], ids=["m1"])
-        store.backend.ingest_documents.assert_called_once()
+        store._resolve_backend().ingest_documents.assert_called_once()
 
 
 class TestCreatedAtNormalization:
@@ -279,9 +280,10 @@ class TestReadFaultContract:
     def _store(self):
         from unittest.mock import MagicMock
 
+        backend = MagicMock()
         return BackendVectorStore(
             collection_name="agent_memories_t",
-            backend_client=MagicMock(),
+            backend_resolver=lambda: backend,
             embedding_model_dims=768,
             tenant_id="t",
             profile="agent_memories",
@@ -290,7 +292,7 @@ class TestReadFaultContract:
     @pytest.mark.unit
     def test_search_raises_on_backend_failure(self):
         store = self._store()
-        store.backend.search.side_effect = ConnectionError("backend down")
+        store._resolve_backend().search.side_effect = ConnectionError("backend down")
 
         with pytest.raises(ConnectionError):
             store.search("q", vectors=[0.1] * 768, limit=3)
@@ -298,7 +300,9 @@ class TestReadFaultContract:
     @pytest.mark.unit
     def test_get_raises_on_backend_failure(self):
         store = self._store()
-        store.backend.get_document.side_effect = ConnectionError("backend down")
+        store._resolve_backend().get_document.side_effect = ConnectionError(
+            "backend down"
+        )
 
         with pytest.raises(ConnectionError):
             store.get("mem-1")
@@ -306,7 +310,7 @@ class TestReadFaultContract:
     @pytest.mark.unit
     def test_get_returns_none_for_genuine_not_found(self):
         store = self._store()
-        store.backend.get_document.return_value = None
+        store._resolve_backend().get_document.return_value = None
 
         assert store.get("missing-id") is None
 
@@ -329,7 +333,7 @@ class TestReadFaultContract:
             [0.125, -0.25, 0.5],
             metadata={"model": "exact-test-model"},
         )
-        store.backend.get_document.return_value = document
+        store._resolve_backend().get_document.return_value = document
 
         record = store.get("mem-embedded")
 
@@ -337,7 +341,7 @@ class TestReadFaultContract:
         assert record.vector == [0.125, -0.25, 0.5]
         assert record.payload["data"] == "exact memory text"
         assert record.payload["created_at"] == "2023-11-14T22:13:20+00:00"
-        store.backend.get_document.assert_called_once_with(
+        store._resolve_backend().get_document.assert_called_once_with(
             "mem-embedded", schema_name="agent_memories"
         )
 
@@ -346,7 +350,7 @@ class TestReadFaultContract:
         """A swallowed list() outage reads as an empty partition, so every
         enumerate-and-filter caller mistakes it for no-data and truncates."""
         store = self._store()
-        store.backend.query_metadata_documents.side_effect = ConnectionError(
+        store._resolve_backend().query_metadata_documents.side_effect = ConnectionError(
             "backend down"
         )
 
@@ -398,7 +402,7 @@ class _PagingBackend:
 
 def _paging_store(backend: _PagingBackend) -> BackendVectorStore:
     store = object.__new__(BackendVectorStore)
-    store.backend = backend
+    store._resolve_backend = lambda: backend
     store.collection_name = "agent_memories_acme_acme"
     store.profile = "agent_memories"
     store.tenant_id = "acme:acme"
