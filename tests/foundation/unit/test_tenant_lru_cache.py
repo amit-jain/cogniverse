@@ -527,3 +527,71 @@ class TestCheckoutLease:
         cache.release("held")
 
         assert closed == [("free", 2), ("held", 1)]
+
+
+class TestEveryCloseIsAttributable:
+    """A close releases native resources out from under whoever holds the
+    value, so each one names the key, the reason and the value type. A
+    runtime pod served 503 on every tenant-scoped request for 44 seconds
+    before the first log line that could have explained it."""
+
+    def _closes(self, caplog):
+        return [
+            record.getMessage()
+            for record in caplog.records
+            if record.levelno == logging.WARNING
+            and record.getMessage().startswith("TenantLRUCache closing ")
+        ]
+
+    def test_capacity_eviction_names_its_key_and_reason(self, caplog):
+        cache: TenantLRUCache[str] = TenantLRUCache(
+            capacity=1, on_evict=lambda k, v: None
+        )
+        cache.set("first", "alpha")
+        with caplog.at_level(logging.WARNING):
+            cache.set("second", "beta")
+
+        assert self._closes(caplog) == [
+            "TenantLRUCache closing first (capacity eviction): str"
+        ]
+
+    def test_an_overwriting_set_names_its_key_and_reason(self, caplog):
+        cache: TenantLRUCache[str] = TenantLRUCache(
+            capacity=2, on_evict=lambda k, v: None
+        )
+        cache.set("acme", "alpha")
+        with caplog.at_level(logging.WARNING):
+            cache.set("acme", "beta")
+
+        assert self._closes(caplog) == [
+            "TenantLRUCache closing acme (overwritten): str"
+        ]
+
+    def test_clear_names_every_key_and_its_reason(self, caplog):
+        cache: TenantLRUCache[str] = TenantLRUCache(
+            capacity=2, on_evict=lambda k, v: None
+        )
+        cache.set("acme", "alpha")
+        cache.set("globex", "beta")
+        with caplog.at_level(logging.WARNING):
+            cache.clear()
+
+        assert self._closes(caplog) == [
+            "TenantLRUCache closing acme (cache cleared): str",
+            "TenantLRUCache closing globex (cache cleared): str",
+        ]
+
+    def test_a_deferred_close_names_the_release_that_ran_it(self, caplog):
+        cache: TenantLRUCache[str] = TenantLRUCache(
+            capacity=2, on_evict=lambda k, v: None
+        )
+        cache.set("acme", "alpha")
+        assert cache.acquire("acme") == "alpha"
+        with caplog.at_level(logging.WARNING):
+            cache.clear()
+            assert self._closes(caplog) == []
+            cache.release("acme")
+
+        assert self._closes(caplog) == [
+            "TenantLRUCache closing acme (deferred close on last release): str"
+        ]
