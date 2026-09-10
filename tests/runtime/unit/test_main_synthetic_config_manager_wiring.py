@@ -144,7 +144,7 @@ def test_runtime_and_cli_wire_the_same_synthetic_arguments():
 
     assert runtime_args == cli_args
     assert runtime_args == {
-        "backend",
+        "backend_resolver",
         "config_manager",
         "backend_config",
         "generator_config",

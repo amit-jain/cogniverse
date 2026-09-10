@@ -8822,7 +8822,9 @@ class TestSyntheticGeneration:
 
         class RecordingSyntheticService:
             def __init__(self, **kwargs):
-                assert kwargs["backend"] is backend
+                # The resolver is handed down, not a resolved instance; it must
+                # still resolve to the backend the CLI wired.
+                assert kwargs["backend_resolver"]() is backend
                 assert kwargs["entity_extractor"] is extract_entities
                 self.entity_extractor = kwargs["entity_extractor"]
 
@@ -8915,7 +8917,7 @@ class TestSyntheticGeneration:
 
         class RecordingSyntheticService:
             def __init__(self, **kwargs):
-                assert kwargs["backend"] is backend
+                assert kwargs["backend_resolver"]() is backend
                 assert kwargs["entity_extractor"] is None
 
             async def generate(self, request):
@@ -9114,7 +9116,12 @@ class TestSyntheticGeneration:
 
         class RecordingSyntheticService:
             def __init__(self, **kwargs):
-                service_inits.append(kwargs)
+                # Resolve here, while the patched registry is still in scope:
+                # this is the moment the wiring hands the resolver over, and
+                # what it resolves to is the contract under test.
+                service_inits.append(
+                    {**kwargs, "resolved_backend": kwargs["backend_resolver"]()}
+                )
 
             async def generate(self, request):
                 assert request.tenant_id == "acme:production"
@@ -9195,7 +9202,8 @@ class TestSyntheticGeneration:
         ]
         assert len(service_inits) == 1
         service_init = service_inits[0]
-        assert service_init["backend"] is backend
+        assert service_init["resolved_backend"] is backend
+        assert callable(service_init["backend_resolver"]) is True
         assert isinstance(service_init["backend_config"], BackendConfig)
         assert (
             service_init["backend_config"].tenant_id,
