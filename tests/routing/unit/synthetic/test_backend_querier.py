@@ -81,8 +81,12 @@ def _querier(backend, *, profiles=None) -> BackendQuerier:
 
 
 def test_backend_querier_requires_a_real_backend() -> None:
-    with pytest.raises(ValueError, match="^backend is required$"):
-        _querier(None)
+    with pytest.raises(ValueError, match="^backend_resolver is required$"):
+        BackendQuerier(
+            backend_resolver=None,
+            backend_config=BackendConfig(profiles={}, tenant_id="test:unit"),
+            field_mappings=FieldMappingConfig(),
+        )
 
 
 def test_empty_field_mapping_config_hydrates_canonical_defaults() -> None:

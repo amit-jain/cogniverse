@@ -644,9 +644,9 @@ class TestSyntheticDataService:
         assert isinstance(raised.value.__cause__, TimeoutError)
 
     def test_service_requires_backend(self):
-        with pytest.raises(ValueError, match="^backend is required$"):
+        with pytest.raises(ValueError, match="^backend_resolver is required$"):
             SyntheticDataService(
-                backend_resolver=lambda: None,
+                backend_resolver=None,
                 backend_config=create_test_backend_config(),
                 generator_config=create_test_generator_config(),
                 agents_config=create_test_agents_config(),

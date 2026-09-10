@@ -224,8 +224,9 @@ class _StrategyProbeService(SyntheticDataService):
     """Real SyntheticDataService whose only override is example generation."""
 
     def __init__(self, recorder: _StrategyRecorder) -> None:
+        probe_backend = _ProbeBackend()
         super().__init__(
-            backend=_ProbeBackend(),
+            backend_resolver=lambda: probe_backend,
             backend_config=BackendConfig(
                 tenant_id="test:unit",
                 backend_type="vespa",
