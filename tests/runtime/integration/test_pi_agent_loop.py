@@ -30,6 +30,7 @@ import uvicorn
 from fastapi import FastAPI
 from pydantic import BaseModel
 
+from cogniverse_core.agents.base import ConfigManagerAware
 from cogniverse_core.common.agent_models import AgentEndpoint
 from cogniverse_core.registries.agent_registry import AgentRegistry
 from cogniverse_foundation.config.manager import ConfigManager
@@ -177,7 +178,7 @@ class PiEchoOutput(BaseModel):
     continuation_state: dict = {}
 
 
-class PiEchoAgent:
+class PiEchoAgent(ConfigManagerAware):
     """Suspends on the client's first advertised tool, then answers from the
     result the client replayed."""
 
