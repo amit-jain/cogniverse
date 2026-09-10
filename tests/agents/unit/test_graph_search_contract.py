@@ -52,11 +52,12 @@ class _Session:
 
 def _bare_manager(session) -> GraphManager:
     mgr = object.__new__(GraphManager)
-    mgr._resolve_backend = lambda: SimpleNamespace(
+    _backend = SimpleNamespace(
         _url="http://vespa",
         _port=8080,
         schema_exists=MagicMock(return_value=True),
     )
+    mgr._resolve_backend = lambda: _backend
     mgr._tenant_id = TENANT
     mgr._schema_name = SCHEMA
     mgr._http = session
@@ -167,13 +168,14 @@ def test_search_nodes_raises_when_schema_lookup_fails():
 
 def test_get_edge_by_id_outage_raises_not_none():
     mgr = _bare_manager(_Session())
-    mgr._resolve_backend = lambda: SimpleNamespace(
+    _backend = SimpleNamespace(
         _url="http://vespa",
         _port=8080,
         get_document_fields=lambda *a, **k: (_ for _ in ()).throw(
             ConnectionError("refused")
         ),
     )
+    mgr._resolve_backend = lambda: _backend
     with pytest.raises(ConnectionError):
         mgr.get_edge_by_id("e1")
 

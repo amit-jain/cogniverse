@@ -24,11 +24,12 @@ def _bare_manager(session=None) -> GraphManager:
     import requests
 
     mgr = object.__new__(GraphManager)
-    mgr._resolve_backend = lambda: SimpleNamespace(
+    _backend = SimpleNamespace(
         _url="http://vespa",
         _port=8080,
         schema_exists=lambda schema, tenant_id: True,
     )
+    mgr._resolve_backend = lambda: _backend
     mgr._tenant_id = TENANT
     mgr._schema_name = SCHEMA
     mgr._http = session if session is not None else requests.Session()
