@@ -312,7 +312,11 @@ def test_the_summarizer_grounds_in_this_tenants_document_profile(harness_tenant)
     with httpx.Client(base_url=RUNTIME, timeout=300.0) as client:
         response = client.post(
             "/agents/summarizer_agent/process",
-            json={"query": DOCUMENT_QUERY, "tenant_id": tenant_id},
+            json={
+                "agent_name": "summarizer_agent",
+                "query": DOCUMENT_QUERY,
+                "context": {"tenant_id": tenant_id},
+            },
         )
 
     assert response.status_code == 200, response.text
