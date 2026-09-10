@@ -1,6 +1,7 @@
 """Workspace and token dispatch preserve request state through real runtime wiring."""
 
 import asyncio
+import functools
 import json
 import threading
 from pathlib import Path
@@ -684,13 +685,19 @@ async def test_research_config_read_yields_serving_loop(
 
     monkeypatch.setattr(cm, "get_agent_config", blocked_read)
     original_init = DeepResearchAgent.__init__
+    built = []
 
+    # wraps keeps __wrapped__ pointing at the real __init__, so the signature
+    # the streaming builder introspects (agent_dispatcher.py:2323) still
+    # declares search_fn and config_manager and both collaborators are passed.
+    @functools.wraps(original_init)
     def initialize(self, *args, **kwargs):
         original_init(self, *args, **kwargs)
         decision = ContentDecision()
         self._decomposer = decision
         self._evaluator = decision
         self._synthesizer = decision
+        built.append(self)
 
     monkeypatch.setattr(DeepResearchAgent, "__init__", initialize)
 
@@ -714,3 +721,6 @@ async def test_research_config_read_yields_serving_loop(
     released.set()
     await asyncio.wait_for(turn, 10)
     assert seen == [(False, True)]
+    assert len(built) == 1
+    assert built[0]._config_manager is cm
+    assert callable(built[0]._search_fn)
