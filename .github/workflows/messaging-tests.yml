@@ -63,12 +63,14 @@ jobs:
 
     # Unit + integration in one job: the integration tests bind ephemeral
     # localhost ports and drive the admin router over ASGITransport — no
-    # external infrastructure. No -m marker filter: a file lacking the
-    # marker would silently stop running in CI.
+    # external infrastructure. Selected by directory, not by location
+    # marker, so a file lacking the marker cannot silently stop running;
+    # only local_only (human-driven boundary tests) opts out.
     - name: Run tests
       run: |
         JAX_PLATFORM_NAME=cpu uv run python -m pytest \
           tests/messaging/unit/ tests/messaging/integration/ \
+          -m "not local_only" \
           -v --tb=short
 
   lint:
