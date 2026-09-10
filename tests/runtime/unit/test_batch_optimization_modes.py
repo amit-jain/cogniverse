@@ -6673,6 +6673,7 @@ class TestEntityExtractionOptimization:
         from dspy.utils.dummies import DummyLM
 
         import cogniverse_runtime.optimization_cli as optimization_cli
+        from cogniverse_agents.entity_extraction_agent import EntityExtractionModule
         from cogniverse_foundation.config.unified_config import LLMEndpointConfig
         from cogniverse_runtime.optimization_cli import (
             run_entity_extraction_optimization,
@@ -6763,10 +6764,14 @@ class TestEntityExtractionOptimization:
                 state["compiled_state"] = compiled.dump_state()
                 return compiled
 
+        # Answer in the shape a schema-constrained engine returns: format
+        # through the adapter EntityExtractionModule binds for its own call.
+        stub_adapter = EntityExtractionModule().dspy_adapter
+
         def fake_create_dspy_lm(endpoint):
             if getattr(endpoint, "api_base", "") == "http://teacher:8000/v1":
-                return DummyLM(list(teacher_answers))
-            return DummyLM(list(student_answers))
+                return DummyLM(list(teacher_answers), adapter=stub_adapter)
+            return DummyLM(list(student_answers), adapter=stub_adapter)
 
         def wrapped_create_teleprompter(*args, **kwargs):
             return RecordingTeleprompter(real_create_teleprompter(*args, **kwargs))
@@ -7774,7 +7779,13 @@ class TestEntityBootstrapThreshold:
             tenant="test:unit",
             threshold=threshold,
         )
-        with dspy.context(lm=DummyLM(list(self._ANSWERS))):
+        # The teacher answers in the shape the enforced schema produces, so
+        # the stub matches what EntityExtractionModule binds on the wire.
+        with dspy.context(
+            lm=DummyLM(
+                list(self._ANSWERS), adapter=EntityExtractionModule().dspy_adapter
+            )
+        ):
             teleprompter = _create_teleprompter(
                 len(trainset), metric=recorder, metric_threshold=threshold
             )
