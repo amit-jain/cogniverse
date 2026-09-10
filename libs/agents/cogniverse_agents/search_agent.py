@@ -18,7 +18,6 @@ Enhanced with:
 import asyncio
 import logging
 import tempfile
-import threading
 from contextlib import asynccontextmanager
 from dataclasses import dataclass
 from pathlib import Path
@@ -37,7 +36,10 @@ from cogniverse_core.agents.a2a_agent import A2AAgent, A2AAgentConfig
 from cogniverse_core.agents.base import AgentDeps, AgentInput, AgentOutput
 from cogniverse_core.agents.rlm_options import RLMOptions
 from cogniverse_core.query.encoders import QueryEncoderFactory
-from cogniverse_core.registries.backend_registry import get_backend_registry
+from cogniverse_core.registries.backend_registry import (
+    get_backend_registry,
+    leased_backend,
+)
 from cogniverse_foundation.telemetry.context import request_trace_context
 
 logger = logging.getLogger(__name__)
@@ -766,12 +768,6 @@ class SearchAgent(
             "profile": active_profile,
             "backend": backend_config_data,
         }
-        self._shared_backend: Any = None
-        # SearchAgent is cross-tenant shared and _get_backend is reached from
-        # asyncio.to_thread OS threads; without this lock N concurrent
-        # first-touches each build a backend candidate via the registry and
-        # N-1 lose set_if_absent and are dropped with their Vespa session open.
-        self._shared_backend_lock = threading.Lock()
 
         logger.info(
             f"Search backend configured at {backend_url}:{backend_port} "
@@ -794,22 +790,29 @@ class SearchAgent(
         logger.info("SearchAgent initialized (tenant-agnostic)")
 
     def _get_backend(self):
-        """Get or create the shared search backend (lazy initialization)."""
-        if self._shared_backend is not None:
-            return self._shared_backend
-        with self._shared_backend_lock:
-            # Double-check: a concurrent thread may have built it while we
-            # waited, so only one registry build runs per instance.
-            if self._shared_backend is None:
-                registry = get_backend_registry()
-                self._shared_backend = registry.get_search_backend(
-                    self._backend_type,
-                    self._backend_config,
-                    config_manager=self.config_manager,
-                    schema_loader=self.schema_loader,
-                )
-                logger.info("Shared search backend initialized")
-            return self._shared_backend
+        """Resolve the shared search backend from the registry.
+
+        Resolved on every call: the registry owns the instance's lifetime
+        and closes it on capacity eviction, an overwriting set and clear, so
+        a handle held on the agent across requests goes dead and every later
+        search raises ``BackendClosedError``. The registry's own LRU is the
+        cache and its ``set_if_absent`` resolves concurrent cold starts to
+        one instance, so a hit here is a dict lookup.
+
+        This is the seam tests bind a backend at. Callers that run a search
+        take :meth:`_search_backend`, which also holds it against eviction.
+        """
+        return get_backend_registry().get_search_backend(
+            self._backend_type,
+            self._backend_config,
+            config_manager=self.config_manager,
+            schema_loader=self.schema_loader,
+        )
+
+    def _search_backend(self, query_dict: Dict[str, Any]):
+        """Run one search on a backend resolved and held for the call."""
+        with leased_backend(self._get_backend) as backend:
+            return backend.search(query_dict)
 
     def _fuse_results_rrf(
         self,
@@ -1056,9 +1059,8 @@ class SearchAgent(
                 }
 
                 # Execute synchronous search in shared thread pool
-                backend = self._get_backend()
                 search_results = await loop.run_in_executor(
-                    executor, backend.search, query_dict
+                    executor, self._search_backend, query_dict
                 )
 
                 # Convert SearchResult objects to dict
@@ -1229,7 +1231,7 @@ class SearchAgent(
                 "tenant_id": tenant_id,
             }
 
-            search_results = self._get_backend().search(query_dict)
+            search_results = self._search_backend(query_dict)
 
             # Convert SearchResult objects to dict format
             results = []
@@ -1355,7 +1357,7 @@ class SearchAgent(
                 "tenant_id": tenant_id,
             }
 
-            search_results = self._get_backend().search(query_dict)
+            search_results = self._search_backend(query_dict)
 
             # Convert SearchResult objects to dict format
             results = []
@@ -1457,7 +1459,7 @@ class SearchAgent(
                 "tenant_id": tenant_id,
             }
 
-            search_results = self._get_backend().search(query_dict)
+            search_results = self._search_backend(query_dict)
 
             # Convert SearchResult objects to dict format
             results = []
@@ -1665,7 +1667,7 @@ class SearchAgent(
                     "tenant_id": tenant_id,
                 }
 
-                search_results = self._get_backend().search(query_dict)
+                search_results = self._search_backend(query_dict)
 
                 # Convert SearchResult objects to dict format
                 raw_results = []
@@ -1754,7 +1756,7 @@ class SearchAgent(
                     "profile": self.active_profile,
                     "tenant_id": tenant_id,
                 }
-                search_results = self._get_backend().search(query_dict)
+                search_results = self._search_backend(query_dict)
                 results = []
                 for sr in search_results:
                     result_dict = {

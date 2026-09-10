@@ -200,7 +200,10 @@ class TestSearchAgent:
 
         # Verify agent initialized with correct dependencies
         assert agent.config is not None
-        assert agent._shared_backend is None  # No backend created yet (lazy)
+        # Construction resolves nothing: the backend comes from the registry
+        # per search, so the agent holds no instance to go stale.
+        assert mock_registry.return_value.get_search_backend.call_args_list == []
+        assert hasattr(agent, "_shared_backend") is False
         assert agent._backend_type is not None
         assert agent._backend_config is not None
         assert agent.query_encoder == mock_query_encoder
@@ -887,7 +890,7 @@ class TestSearchAgentAdvancedFeatures:
                 schema_loader=mock_schema_loader,
                 config_manager=_memory_config_manager(),
             )
-            agent._shared_backend = mock_search_backend
+            agent._get_backend = lambda: mock_search_backend
             return agent
 
     @pytest.mark.ci_fast
@@ -932,7 +935,7 @@ class TestSearchAgentAdvancedFeatures:
 
         assert isinstance(results, list)
         # Search backend should be called
-        configured_agent._shared_backend.search.assert_called()
+        configured_agent._get_backend().search.assert_called()
         # Note: Date parameters are not currently passed to backend (feature not implemented yet)
         # The method logs a warning instead
 
@@ -1438,7 +1441,7 @@ class TestMultiQueryFusion:
                 schema_loader=mock_schema_loader,
                 config_manager=_memory_config_manager(),
             )
-            agent._shared_backend = mock_search_backend
+            agent._get_backend = lambda: mock_search_backend
             return agent
 
     @pytest.mark.ci_fast
@@ -1462,7 +1465,7 @@ class TestMultiQueryFusion:
 
         mock_backend = Mock()
         mock_backend.search = mock_search
-        agent._shared_backend = mock_backend
+        agent._get_backend = lambda: mock_backend
 
         variants = [
             {"name": "original", "query": "robots playing soccer"},
@@ -1502,7 +1505,7 @@ class TestMultiQueryFusion:
         agent = agent_with_mock_backend
         mock_backend = Mock()
         mock_backend.search = lambda q: []
-        agent._shared_backend = mock_backend
+        agent._get_backend = lambda: mock_backend
 
         results = agent._search_multi_query_fusion(
             query_variants=[
@@ -1533,7 +1536,7 @@ class TestMultiQueryFusion:
 
         mock_backend = Mock()
         mock_backend.search = _dead
-        agent._shared_backend = mock_backend
+        agent._get_backend = lambda: mock_backend
 
         with pytest.raises(RuntimeError, match="connection refused"):
             agent._search_multi_query_fusion(
@@ -1567,7 +1570,7 @@ class TestMultiQueryFusion:
 
         mock_backend = Mock()
         mock_backend.search = _flaky
-        agent._shared_backend = mock_backend
+        agent._get_backend = lambda: mock_backend
 
         results = agent._search_multi_query_fusion(
             query_variants=[
@@ -1596,7 +1599,7 @@ class TestMultiQueryFusion:
 
         mock_backend = Mock()
         mock_backend.search = _dead
-        agent._shared_backend = mock_backend
+        agent._get_backend = lambda: mock_backend
 
         with pytest.raises(RuntimeError, match="connection refused"):
             await agent._search_ensemble(
@@ -1633,7 +1636,7 @@ class TestMultiQueryFusion:
 
         mock_backend = Mock()
         mock_backend.search = mock_search
-        agent._shared_backend = mock_backend
+        agent._get_backend = lambda: mock_backend
 
         variants = [
             {"name": "original", "query": "robots playing soccer"},
@@ -1674,7 +1677,7 @@ class TestMultiQueryFusion:
 
         mock_backend = Mock()
         mock_backend.search = mock_search
-        agent._shared_backend = mock_backend
+        agent._get_backend = lambda: mock_backend
 
         # With variants → multi-query fusion path
         context_with_variants = SearchContext(
@@ -1738,7 +1741,7 @@ class TestMultiQueryFusion:
 
         mock_backend = Mock()
         mock_backend.search = mock_search
-        agent._shared_backend = mock_backend
+        agent._get_backend = lambda: mock_backend
 
         input_data = SearchInput(
             query="robots playing soccer",
@@ -1778,7 +1781,7 @@ class TestMultiQueryFusion:
 
         mock_backend = Mock()
         mock_backend.search = mock_search
-        agent._shared_backend = mock_backend
+        agent._get_backend = lambda: mock_backend
 
         captured_k = []
         original_fuse = agent._fuse_results_rrf
@@ -1867,7 +1870,7 @@ class TestEnsembleVsFusionPaths:
                 schema_loader=mock_schema_loader,
                 config_manager=_memory_config_manager(),
             )
-            agent._shared_backend = mock_search_backend
+            agent._get_backend = lambda: mock_search_backend
             return agent
 
     @pytest.mark.ci_fast
@@ -1942,7 +1945,7 @@ class TestEnsembleVsFusionPaths:
 
         mock_backend = Mock()
         mock_backend.search = mock_search
-        agent._shared_backend = mock_backend
+        agent._get_backend = lambda: mock_backend
 
         input_data = SearchInput(
             query="robots playing soccer",

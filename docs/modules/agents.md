@@ -221,6 +221,11 @@ subpackage; `wiki_manager.py` owns page persistence and lint reporting.
 **Purpose**: Text-to-video search with ColPali and X-CLIP embeddings
 **Constructor**: `SearchAgent(deps: SearchAgentDeps, schema_loader=None, config_manager=None, port: int = 8002)`
 
+**Backend resolution**: the agent holds no backend. `_get_backend()` is the
+resolver seam — it resolves through `BackendRegistry` on every call — and
+`_search_backend(query_dict)` runs one search with that instance leased for
+the call. `AudioAnalysisAgent` and `SearchService` use the same two methods.
+
 #### Multi-Modal Support
 
 ```mermaid

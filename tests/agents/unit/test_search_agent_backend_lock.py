@@ -1,10 +1,12 @@
-"""_get_backend builds the shared backend once under concurrent thread touches.
+"""Concurrent first-touches of _get_backend resolve to one built instance.
 
 SearchAgent is cross-tenant shared and _get_backend is reached from
-asyncio.to_thread OS threads. Without the lock, N concurrent first-touches each
-call registry.get_search_backend — each builds a backend candidate and N-1 lose
-set_if_absent and are dropped with their Vespa session still open. The lock must
-funnel them into a single registry build.
+asyncio.to_thread OS threads. The agent keeps no handle — the registry owns
+the instance's lifetime and closes what it evicts — so every touch resolves
+through ``get_search_backend``. The registry's ``set_if_absent`` is what
+funnels N concurrent cold starts into one build and closes the losers, so N
+threads arriving together must still leave exactly one built instance with
+its Vespa session open, and every thread must get that one.
 """
 
 from __future__ import annotations
@@ -18,57 +20,88 @@ from types import SimpleNamespace
 import pytest
 
 from cogniverse_agents.search_agent import SearchAgent
+from cogniverse_core.registries.backend_registry import BackendRegistry
 
 pytestmark = [pytest.mark.unit, pytest.mark.ci_fast]
 
 _N = 12
 
 
-@pytest.mark.asyncio
-async def test_concurrent_get_backend_builds_once(monkeypatch):
-    import cogniverse_agents.search_agent as sa_mod
-
-    builds = {"n": 0}
-    count_lock = threading.Lock()
-    winner = SimpleNamespace(name="shared-backend")
-
-    def _get_search_backend(
-        backend_type, backend_config, *, config_manager, schema_loader
-    ):
-        with count_lock:
-            builds["n"] += 1
-        time.sleep(0.03)  # widen the build window
-        return winner
-
-    monkeypatch.setattr(
-        sa_mod,
-        "get_backend_registry",
-        lambda: SimpleNamespace(get_search_backend=_get_search_backend),
-    )
-
+def _bare_agent():
     agent = object.__new__(SearchAgent)
-    agent._shared_backend = None
-    agent._shared_backend_lock = threading.Lock()
     agent._backend_type = "vespa"
     agent._backend_config = {}
     agent.bind_config_manager(SimpleNamespace())
     agent.schema_loader = SimpleNamespace()
+    return agent
+
+
+@pytest.mark.asyncio
+async def test_concurrent_get_backend_resolves_to_one_instance(monkeypatch):
+    """N threads through the real registry: one build, one instance, no leak."""
+    builds: list[object] = []
+    count_lock = threading.Lock()
+
+    def _build(*args, **kwargs):
+        instance = SimpleNamespace(name="shared-backend", closed=False)
+        instance.close = lambda inst=instance: setattr(inst, "closed", True)
+        with count_lock:
+            builds.append(instance)
+        time.sleep(0.03)  # widen the build window
+        return instance
+
+    monkeypatch.setattr(
+        "cogniverse_core.factories.backend_factory.BackendFactory."
+        "create_backend_with_dependencies",
+        staticmethod(_build),
+    )
+    monkeypatch.setitem(BackendRegistry._search_backends, "vespa", SimpleNamespace)
+    BackendRegistry.clear_instances()
+
+    agent = _bare_agent()
+    monkeypatch.setattr(
+        SearchAgent,
+        "_get_backend",
+        lambda self: BackendRegistry.get_search_backend(
+            "vespa",
+            {"url": "http://localhost", "port": 8080},
+            config_manager=SimpleNamespace(),
+            schema_loader=SimpleNamespace(),
+        ),
+    )
 
     barrier = threading.Barrier(_N)
 
     def _call():
-        # All N threads arrive together, THEN hit the None check at once.
+        # All N threads arrive together, THEN hit the cache miss at once.
         barrier.wait(timeout=5)
         return agent._get_backend()
 
     # asyncio.to_thread shares the default executor, whose worker ceiling
     # (cpu_count + 4) is below _N on small CI hosts and starves the barrier.
     loop = asyncio.get_running_loop()
-    with ThreadPoolExecutor(max_workers=_N) as pool:
-        results = await asyncio.gather(
-            *(loop.run_in_executor(pool, _call) for _ in range(_N))
-        )
+    try:
+        with ThreadPoolExecutor(max_workers=_N) as pool:
+            results = await asyncio.gather(
+                *(loop.run_in_executor(pool, _call) for _ in range(_N))
+            )
 
-    assert builds["n"] == 1
-    assert all(r is winner for r in results)
-    assert agent._shared_backend is winner
+        winner = BackendRegistry._backend_instances.get(
+            "search_vespa@http://localhost:8080"
+        )
+        # Every thread got the one cached instance...
+        assert results == [winner] * _N
+        # ...and every candidate the race built but did not cache was closed,
+        # so no losing Vespa session leaks.
+        assert [b.closed for b in builds] == [b is not winner for b in builds]
+        assert builds.count(winner) == 1
+    finally:
+        BackendRegistry.clear_instances()
+
+
+@pytest.mark.asyncio
+async def test_get_backend_holds_no_instance_between_calls():
+    """The removed holder: no attribute survives a call to go stale."""
+    agent = _bare_agent()
+    assert hasattr(agent, "_shared_backend") is False
+    assert hasattr(agent, "_shared_backend_lock") is False

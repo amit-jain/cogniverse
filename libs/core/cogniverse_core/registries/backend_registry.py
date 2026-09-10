@@ -9,13 +9,42 @@ modifying core code.
 import importlib
 import logging
 from contextlib import contextmanager
-from typing import Any, Dict, Iterator, Optional, Type
+from typing import Any, Callable, Dict, Iterator, Optional, Type
 
 from cogniverse_core.common.tenant_utils import SYSTEM_TENANT_ID
 from cogniverse_foundation.caching import TenantLRUCache
 from cogniverse_sdk.interfaces.backend import Backend, IngestionBackend, SearchBackend
 
 logger = logging.getLogger(__name__)
+
+# One retry covers the instance being evicted between the resolve and the
+# checkout; the retry's resolve rebuilds it.
+_LEASE_ATTEMPTS = 2
+
+
+@contextmanager
+def leased_backend(resolve: Callable[[], Any]) -> Iterator[Any]:
+    """Resolve a backend through ``resolve`` and hold it for the block.
+
+    The registry owns the lifetime of what it hands out and closes it on
+    capacity eviction, an overwriting set and clear, so an instance kept
+    across operations goes dead and every later call raises
+    ``BackendClosedError``. Resolving inside the block and holding a
+    checkout for its duration means nothing closes the instance the
+    operation is running on.
+
+    An instance the registry does not hold — injected in a test, built
+    directly — is yielded as-is: nobody else will close it.
+    """
+    for attempt in range(_LEASE_ATTEMPTS):
+        instance = resolve()
+        if not BackendRegistry.holds(instance):
+            yield instance
+            return
+        with BackendRegistry.lease_instance(instance) as held:
+            if held or attempt == _LEASE_ATTEMPTS - 1:
+                yield instance
+                return
 
 
 class ProfileFanoutError(RuntimeError):
@@ -521,6 +550,15 @@ class BackendRegistry:
         """
         with cls._backend_instances.lease_value(instance) as held:
             yield held
+
+    @classmethod
+    def holds(cls, instance: Any) -> bool:
+        """Whether the cache holds ``instance`` by identity.
+
+        False for an instance built outside the registry or already
+        evicted — nobody else will close it, so it needs no checkout.
+        """
+        return cls._backend_instances.key_of(instance) is not None
 
     @classmethod
     def _try_import_backend(cls, name: str) -> None:

@@ -25,7 +25,10 @@ from cogniverse_agents.search.vespa_query import (
 )
 from cogniverse_core.agents.a2a_agent import A2AAgent, A2AAgentConfig
 from cogniverse_core.agents.base import AgentDeps, AgentInput, AgentOutput
-from cogniverse_core.registries.backend_registry import get_backend_registry
+from cogniverse_core.registries.backend_registry import (
+    get_backend_registry,
+    leased_backend,
+)
 from cogniverse_foundation.config.inference_auth import inference_headers
 from cogniverse_runtime.ingestion.processors.audio_embedding_generator import (
     AudioEmbeddingGenerator,
@@ -425,10 +428,8 @@ class AudioAnalysisAgent(
         # Initialize components (lazy loading)
         self._audio_transcriber = None
         self._embedding_generator = None
-        self._shared_backend = None
         self._audio_transcriber_lock = Lock()
         self._embedding_generator_lock = Lock()
-        self._shared_backend_lock = Lock()
 
         from cogniverse_core.common.media import MediaConfig, MediaLocator
 
@@ -609,20 +610,29 @@ class AudioAnalysisAgent(
         return _parse_remote_transcription(body, url)
 
     def _get_backend(self):
-        """Get or create the shared search backend (lazy initialization)."""
-        if self._shared_backend is not None:
-            return self._shared_backend
-        with self._shared_backend_lock:
-            if self._shared_backend is None:
-                registry = get_backend_registry()
-                self._shared_backend = registry.get_search_backend(
-                    self._backend_type,
-                    self._backend_config,
-                    config_manager=self.config_manager,
-                    schema_loader=self.schema_loader,
-                )
-                logger.info("Shared audio search backend initialized")
-            return self._shared_backend
+        """Resolve the shared audio search backend from the registry.
+
+        Resolved on every call: the registry owns the instance's lifetime
+        and closes it on capacity eviction, an overwriting set and clear, so
+        a handle held on the agent across requests goes dead and every later
+        search raises ``BackendClosedError``. The registry's own LRU is the
+        cache and its ``set_if_absent`` resolves concurrent cold starts to
+        one instance.
+
+        This is the seam tests bind a backend at. Callers that run a search
+        take :meth:`_search_backend`, which also holds it against eviction.
+        """
+        return get_backend_registry().get_search_backend(
+            self._backend_type,
+            self._backend_config,
+            config_manager=self.config_manager,
+            schema_loader=self.schema_loader,
+        )
+
+    def _search_backend(self, query_dict: Dict[str, Any]):
+        """Run one search on a backend resolved and held for the call."""
+        with leased_backend(self._get_backend) as backend:
+            return backend.search(query_dict)
 
     def _audio_schema_exists(self) -> bool:
         """Return True when the tenant has deployed the audio schema."""
@@ -665,10 +675,9 @@ class AudioAnalysisAgent(
     async def _search_backend_mode(
         self, query: str, strategy: str, limit: int
     ) -> List[AudioResult]:
-        backend = self._get_backend()
         query_dict = self._build_backend_query(query, strategy, limit)
         # backend.search is synchronous; keep the async audio API responsive.
-        search_results = await asyncio.to_thread(backend.search, query_dict)
+        search_results = await asyncio.to_thread(self._search_backend, query_dict)
         return [self._search_result_to_audio_result(hit) for hit in search_results]
 
     async def _search_transcript(self, query: str, limit: int) -> List[AudioResult]:

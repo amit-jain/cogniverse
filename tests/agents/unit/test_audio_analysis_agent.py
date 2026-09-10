@@ -1226,8 +1226,6 @@ class TestAudioSearchEventLoop:
         agent._tenant_id = "acme:acme"
         agent._vespa_endpoint = "http://vespa:8080"
         agent._deployed_audio_schema = None
-        agent._shared_backend = None
-        agent._shared_backend_lock = threading.Lock()
         agent._backend_type = "vespa"
         agent._backend_config = {}
         agent.bind_config_manager(_in_memory_config_manager())
