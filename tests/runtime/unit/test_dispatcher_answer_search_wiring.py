@@ -1971,7 +1971,7 @@ class TestGroundingBoundsAndNamesTheQueryRewrite:
         async def _search(query, tenant_id, top_k, **kwargs):
             return {
                 "results": [_s3_hit(2)],
-                "degraded_query_rewrite": QUERY_REWRITE_TIMED_OUT,
+                "query_rewrite": {"degraded": QUERY_REWRITE_TIMED_OUT},
             }
 
         dispatcher._execute_search_task = _search
@@ -2001,7 +2001,7 @@ class TestGroundingBoundsAndNamesTheQueryRewrite:
         async def _search(query, tenant_id, top_k, **kwargs):
             return {
                 "results": [_s3_hit(3)],
-                "degraded_query_rewrite": QUERY_REWRITE_FAILED,
+                "query_rewrite": {"degraded": QUERY_REWRITE_FAILED},
             }
 
         dispatcher._execute_search_task = _search
@@ -2047,7 +2047,7 @@ class TestGroundingBoundsAndNamesTheQueryRewrite:
             searched_profiles.append(list(kwargs["enrichment"]["profiles"]))
             return {
                 "results": [_s3_hit(4)],
-                "degraded_query_rewrite": QUERY_REWRITE_FAILED,
+                "query_rewrite": {"degraded": QUERY_REWRITE_FAILED},
             }
 
         dispatcher._execute_search_task = _search

@@ -2447,8 +2447,12 @@ class AgentDispatcher:
             "profile": output.profile or profile,
             "profiles": list(output.profiles or []),
             "degraded_profiles": list(output.degraded_profiles),
-            "degraded_query_rewrite": output.degraded_query_rewrite,
-            "enhanced_query": output.enhanced_query,
+            # The rewrite is search metadata, reported under its own key
+            # rather than as a top-level field of the gateway's response.
+            "query_rewrite": {
+                "enhanced_query": output.enhanced_query,
+                "degraded": output.degraded_query_rewrite,
+            },
             "search_mode": output.search_mode,
         }
 
@@ -2745,7 +2749,7 @@ class AgentDispatcher:
             for name in (search.get("profiles") or profiles)
             if isinstance(name, str)
         ]
-        rewrite_degraded = search.get("degraded_query_rewrite") or None
+        rewrite_degraded = (search.get("query_rewrite") or {}).get("degraded") or None
         return AnswerGrounding(
             hits=[
                 _flatten_search_hit(h)

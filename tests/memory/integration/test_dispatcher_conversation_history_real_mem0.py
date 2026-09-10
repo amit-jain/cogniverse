@@ -375,6 +375,9 @@ async def test_gateway_simple_persists_downstream_answer_to_real_mem0(
             "results_count": 2,
             "results": [{"document_id": "v1"}, {"document_id": "v2"}],
             "profile": "p",
+            "profiles": [],
+            "degraded_profiles": [],
+            "query_rewrite": {"enhanced_query": None, "degraded": None},
             "search_mode": "hybrid",
         }
 
