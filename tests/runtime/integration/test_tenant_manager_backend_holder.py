@@ -302,3 +302,39 @@ async def test_the_shared_schema_registry_rebinds_after_a_registry_clear(
         ]
         == tenant_id
     )
+
+
+def test_resolving_without_an_injected_config_manager_is_not_a_binding_conflict(
+    schema_loader,
+):
+    """A standalone process injects no ConfigManager (optimization_cli.py:3040).
+
+    It then gets the module's own, built once: a fresh ConfigManager per
+    resolve would build a VespaConfigStore per tenant read, and it is the
+    binding the registry compares a cache hit against
+    (backend_registry.py:226).
+    """
+    import cogniverse_runtime.admin.tenant_manager as tm_module
+
+    previous_config_manager = tm_module._config_manager
+    previous_schema_loader = tm_module._schema_loader
+    previous_fallback = tm_module._fallback_config_manager
+    tm.set_config_manager(None)
+    tm.set_schema_loader(schema_loader)
+    tm_module._fallback_config_manager = None
+    BackendRegistry.get_instance().clear_instances()
+    try:
+        first = tm.get_backend()
+        built_once = tm_module._fallback_config_manager
+        second = tm.get_backend()
+
+        assert second is first
+        assert tm_module._fallback_config_manager is built_once
+        assert tm._default_config_manager() is built_once
+        with tm.metadata_backend() as leased:
+            assert leased is first
+    finally:
+        tm_module._fallback_config_manager = previous_fallback
+        tm.set_config_manager(previous_config_manager)
+        tm.set_schema_loader(previous_schema_loader)
+        BackendRegistry.get_instance().clear_instances()
