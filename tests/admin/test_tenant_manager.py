@@ -154,7 +154,7 @@ class TestTenantManagerAPI:
         )
 
         # Set up tenant_manager with fresh backend
-        tenant_manager.backend = backend
+        tenant_manager.set_backend(backend)
         tenant_manager.set_config_manager(config_manager)
         tenant_manager.set_schema_loader(schema_loader)
 
@@ -163,7 +163,7 @@ class TestTenantManagerAPI:
 
         # Cleanup after each test to prevent state leakage
         logger.info("Cleaning up test_client fixture")
-        tenant_manager.backend = None
+        tenant_manager.set_backend(None)
         tenant_manager._config_manager = None
         tenant_manager._schema_loader = None
 
@@ -405,7 +405,7 @@ class TestTenantManagerAPI:
         """
         from cogniverse_runtime.admin import tenant_manager
 
-        backend = tenant_manager.backend
+        backend = tenant_manager.get_backend()
         assert backend is not None, "test_client fixture must wire backend"
 
         tid = "schemaonly:test"
@@ -442,7 +442,7 @@ class TestTenantManagerAPI:
         and leave the tenant intact — never silently destroy peer data."""
         from cogniverse_runtime.admin import tenant_manager
 
-        backend = tenant_manager.backend
+        backend = tenant_manager.get_backend()
         victim = "orphanvictim:test"
         target = "orphandeltgt:test"
 
@@ -488,7 +488,7 @@ class TestTenantManagerAPI:
         key form."""
         from cogniverse_runtime.admin import tenant_manager
 
-        backend = tenant_manager.backend
+        backend = tenant_manager.get_backend()
         raw = "rawdel"
         base = "video_colpali_smol500_mv_frame"
 

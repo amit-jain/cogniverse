@@ -695,23 +695,19 @@ def _tenant_registration_cleanup(vespa_backend):
     """Delete the org/tenant registration docs ``create_tenant`` wrote.
 
     ``http_client`` registers the ``test_upload_queue`` tenant (which
-    auto-creates its org) in the tenant-manager's metadata store. When that
-    store outlives this module — the tenant-manager backend is a cached
-    module-global that can resolve to a longer-lived shared Vespa — the
-    registration lingers and shows up in any later suite that enumerates all
-    registered tenants. Deleting the two metadata docs after the module's
-    tests keeps the registration module-local. Depends on ``vespa_backend``
-    so this teardown runs while that container is still up, and drops the
-    tenant-manager module globals so later suites build their own backend.
+    auto-creates its org) in the tenant-manager's metadata store, which the
+    registry resolves against this module's Vespa. The registration would
+    show up in any later suite that enumerates all registered tenants, so
+    the two metadata docs are deleted after the module's tests. Depends on
+    ``vespa_backend`` so this teardown runs while that container is still
+    up, and drops the tenant-manager config manager so later suites resolve
+    their own backend.
     """
     yield
     from cogniverse_runtime.admin import tenant_manager
 
-    backend = tenant_manager.backend
-    tenant_manager.backend = None
+    backend = tenant_manager.get_backend()
     tenant_manager.set_config_manager(None)
-    if backend is None:
-        return
     canonical_tenant = f"{TENANT_ID}:{TENANT_ID}"
     for schema, doc_id in (
         ("tenant_metadata", canonical_tenant),
@@ -757,11 +753,6 @@ async def http_client(real_stack, _tenant_registration_cleanup):
 
     tenant_manager.set_config_manager(config_manager)
     tenant_manager.set_schema_loader(schema_loader)
-    # get_backend() caches a module-global backend; an instance cached by an
-    # earlier suite would ignore the config manager set above and register
-    # the tenant in that suite's (shared) Vespa. Drop it so create_tenant
-    # rebuilds against this module's Vespa.
-    tenant_manager.backend = None
     try:
         await tenant_manager.create_tenant(
             CreateTenantRequest(tenant_id=TENANT_ID, created_by="test")

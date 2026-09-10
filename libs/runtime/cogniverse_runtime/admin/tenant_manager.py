@@ -69,6 +69,7 @@ app = FastAPI(
 
 _config_manager = None  # For test injection
 _schema_loader: SchemaLoader = None  # For dependency injection
+_backend: Backend | None = None  # Injected metadata backend; bypasses the registry
 
 # Built once for processes that never inject one (standalone CLIs). The
 # registry refuses a cached backend to a requester carrying a different
@@ -96,6 +97,16 @@ def set_schema_loader(schema_loader: SchemaLoader) -> None:
     _schema_loader = schema_loader
 
 
+def set_backend(backend: Backend | None) -> None:
+    """Inject the metadata backend, or ``None`` to resolve it from the registry.
+
+    An injected backend belongs to its owner: it is never checked out of
+    the registry and never closed by this module.
+    """
+    global _backend
+    _backend = backend
+
+
 def _default_config_manager():
     """The process's own ConfigManager, for callers that injected none."""
     global _fallback_config_manager
@@ -119,6 +130,8 @@ def get_backend() -> Backend:
     Callers that use the backend for a whole operation take
     ``metadata_backend()`` instead, which also holds it against eviction.
     """
+    if _backend is not None:
+        return _backend
     config_manager = _config_manager
     if config_manager is None:
         config_manager = _default_config_manager()

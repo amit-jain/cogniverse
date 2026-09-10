@@ -355,7 +355,7 @@ def test_intent_storage_down_prevents_activation_with_context(
 
 def _create_in_process(port, config_port, tenant, connection, pause):
     backend = _connect(port, config_port)
-    tenant_manager.backend = backend
+    tenant_manager.set_backend(backend)
     registry = backend.schema_registry
     register = registry.register_schema
     if pause:

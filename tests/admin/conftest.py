@@ -72,7 +72,7 @@ def _admin_singleton_reset_between_tests():
         from cogniverse_runtime.routers import admin as admin_router
 
         admin_router.reset_dependencies()
-        tenant_manager.backend = None
+        tenant_manager.set_backend(None)
         tenant_manager._config_manager = None
         tenant_manager._schema_loader = None
     except Exception:
@@ -89,7 +89,7 @@ def _admin_singleton_reset_between_tests():
         from cogniverse_runtime.routers import admin as admin_router
 
         admin_router.reset_dependencies()
-        tenant_manager.backend = None
+        tenant_manager.set_backend(None)
         tenant_manager._config_manager = None
         tenant_manager._schema_loader = None
     except Exception:
