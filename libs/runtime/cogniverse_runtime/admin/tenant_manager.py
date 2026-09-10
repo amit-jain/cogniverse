@@ -30,6 +30,7 @@ Example Usage:
 
 import asyncio
 import logging
+import threading
 import time
 from contextlib import contextmanager
 from typing import Dict, Iterator, List, Optional
@@ -69,6 +70,12 @@ app = FastAPI(
 _config_manager = None  # For test injection
 _schema_loader: SchemaLoader = None  # For dependency injection
 
+# Built once for processes that never inject one (standalone CLIs). The
+# registry refuses a cached backend to a requester carrying a different
+# ConfigManager, so resolving per call must not build a new one per call.
+_fallback_config_manager = None
+_fallback_config_manager_lock = threading.Lock()
+
 # One retry covers the instance being evicted between the resolve and the
 # checkout; the retry's resolve rebuilds it.
 _METADATA_BACKEND_ATTEMPTS = 2
@@ -93,6 +100,18 @@ def set_schema_loader(schema_loader: SchemaLoader) -> None:
     _schema_loader = schema_loader
 
 
+def _default_config_manager():
+    """The process's own ConfigManager, for callers that injected none."""
+    global _fallback_config_manager
+
+    from cogniverse_foundation.config.utils import create_default_config_manager
+
+    with _fallback_config_manager_lock:
+        if _fallback_config_manager is None:
+            _fallback_config_manager = create_default_config_manager()
+        return _fallback_config_manager
+
+
 def get_backend() -> Backend:
     """Resolve the metadata backend from the registry.
 
@@ -104,13 +123,9 @@ def get_backend() -> Backend:
     Callers that use the backend for a whole operation take
     ``metadata_backend()`` instead, which also holds it against eviction.
     """
-    from cogniverse_foundation.config.utils import create_default_config_manager
-
-    config_manager = (
-        _config_manager
-        if _config_manager is not None
-        else create_default_config_manager()
-    )
+    config_manager = _config_manager
+    if config_manager is None:
+        config_manager = _default_config_manager()
 
     config = get_config(tenant_id="system", config_manager=config_manager)
     backend_type = config.get("backend_type", "vespa")
