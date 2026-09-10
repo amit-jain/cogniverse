@@ -21,17 +21,27 @@ import pytest
 
 from cogniverse_agents.search_agent import SearchAgent
 from cogniverse_core.registries.backend_registry import BackendRegistry
+from cogniverse_foundation.config.unified_config import SystemConfig
 
 pytestmark = [pytest.mark.unit, pytest.mark.ci_fast]
 
 _N = 12
 
 
+def _config_manager():
+    """A config manager bound to the endpoint the registry keys instances on."""
+    return SimpleNamespace(
+        get_system_config=lambda: SystemConfig(
+            backend_url="http://localhost", backend_port=8080
+        )
+    )
+
+
 def _bare_agent():
     agent = object.__new__(SearchAgent)
     agent._backend_type = "vespa"
     agent._backend_config = {}
-    agent.bind_config_manager(SimpleNamespace())
+    agent.bind_config_manager(_config_manager())
     agent.schema_loader = SimpleNamespace()
     return agent
 
@@ -43,7 +53,9 @@ async def test_concurrent_get_backend_resolves_to_one_instance(monkeypatch):
     count_lock = threading.Lock()
 
     def _build(*args, **kwargs):
-        instance = SimpleNamespace(name="shared-backend", closed=False)
+        instance = SimpleNamespace(
+            name="shared-backend", closed=False, schema_registry=None
+        )
         instance.close = lambda inst=instance: setattr(inst, "closed", True)
         with count_lock:
             builds.append(instance)
@@ -65,8 +77,8 @@ async def test_concurrent_get_backend_resolves_to_one_instance(monkeypatch):
         lambda self: BackendRegistry.get_search_backend(
             "vespa",
             {"url": "http://localhost", "port": 8080},
-            config_manager=SimpleNamespace(),
-            schema_loader=SimpleNamespace(),
+            config_manager=self.config_manager,
+            schema_loader=self.schema_loader,
         ),
     )
 
