@@ -21,6 +21,7 @@ from cogniverse_agents.memory_aware_mixin import MemoryAwareMixin
 from cogniverse_core.agents.a2a_agent import A2AAgent, A2AAgentConfig
 from cogniverse_core.agents.base import AgentDeps, AgentInput, AgentOutput
 from cogniverse_core.common.tenant_utils import require_tenant_id
+from cogniverse_foundation.dspy import StructuredJSONAdapter
 from cogniverse_foundation.telemetry.span_contract import (
     OP_ENTITY_EXTRACTION,
     record_span_io,
@@ -250,10 +251,16 @@ EntityExtractionSignature = EntityExtractionSignature.with_instructions(
 
 
 class EntityExtractionModule(dspy.Module):
-    """DSPy module for entity extraction"""
+    """DSPy module for entity extraction.
+
+    Runs under ``StructuredJSONAdapter`` whichever path calls it — the served
+    agent or the optimizer's bootstrap — so both send one prompt and the
+    engine can only return an object carrying every output field.
+    """
 
     def __init__(self):
         super().__init__()
+        self.dspy_adapter = StructuredJSONAdapter()
         self.extractor = dspy.ChainOfThought(
             EntityExtractionSignature,
             rationale_field=dspy.OutputField(
@@ -269,7 +276,8 @@ class EntityExtractionModule(dspy.Module):
 
     def forward(self, query: str) -> dspy.Prediction:
         """Extract entities from query"""
-        return self.extractor(query=query)
+        with dspy.context(adapter=self.dspy_adapter):
+            return self.extractor(query=query)
 
 
 class EntityExtractionAgent(

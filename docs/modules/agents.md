@@ -973,6 +973,15 @@ deps = ProfileSelectionDeps()
 
 EntityExtractionAgent extracts named and unnamed entities and relationships from user queries with DSPy as the primary path. Its current signature asks for `text|type|confidence` lines, requires `text` to be a verbatim span of the query, and limits `type` to `PERSON`, `ORGANIZATION`, `CONCEPT`, `PLACE`, `EVENT`, or `TECHNOLOGY`; role nouns like man, woman, people, and biker map to PERSON, physical things map to CONCEPT, settings map to PLACE, camera and screen map to TECHNOLOGY, and crash maps to EVENT. Teaching sessions map to EVENT and informational resources to CONCEPT as complete noun phrases, typed by their head noun (lecture notes are a CONCEPT resource), retaining descriptive adjectives and compound-noun modifiers while excluding leading articles and following prepositional phrases; an unmodified session or resource noun is emitted bare. Named programming languages, libraries, frameworks, and tools map to TECHNOLOGY by their bare name, extracted separately from any session or resource phrase that mentions them; activity words such as programming or training never join the span and never make a subject of study an EVENT. Fields of study and topics map to CONCEPT. A query with no session or resource noun yields no EVENT or resource entity. The prompt scans left to right and emits entities once in source order, without prioritizing proper names or grouping by type. The reasoning field forms complete spans before classification. Signature examples cover session-first, resource-first, subject-only, mixed session-and-subject, and bare-resource queries, retaining modifiers and keeping a repeated software subject at its first occurrence. When the LM call fails, it falls back to GLiNER NER + SpaCy dependency analysis. If the fallback is unavailable or also fails, the request raises.
 
+`EntityExtractionModule` binds `StructuredJSONAdapter`
+(`cogniverse_foundation.dspy`) in its own `forward`, so every caller — the
+served agent and the optimizer's bootstrap teacher — sends the same prompt and
+the same `response_format`: a `json_schema` derived from the signature's output
+fields (`reasoning`, `entities`), both required, `additionalProperties: false`,
+`strict: true`. The serving engine's guided decoding therefore cannot answer
+with an object that omits `entities`, and an engine that ignored the schema
+raises `AdapterParseError` instead of yielding a silently empty extraction.
+
 **Key Capabilities**:
 
 - Primary path: DSPy ChainOfThought entity extraction
