@@ -14,6 +14,7 @@ import logging
 from typing import Any, Dict, List, Optional
 
 import dspy
+from dspy.utils.exceptions import AdapterParseError
 from pydantic import BaseModel, Field
 
 from cogniverse_agents._confidence import parse_confidence
@@ -23,6 +24,10 @@ from cogniverse_core.agents.base import AgentDeps, AgentInput, AgentOutput
 from cogniverse_core.common.tenant_utils import require_tenant_id
 from cogniverse_foundation.dspy import StructuredJSONAdapter
 from cogniverse_foundation.telemetry.span_contract import (
+    ENTITY_EXTRACTION_FALLBACK_ATTRIBUTE,
+    ENTITY_EXTRACTION_FALLBACK_ERROR_ATTRIBUTE,
+    ENTITY_EXTRACTION_FALLBACK_LM_UNAVAILABLE,
+    ENTITY_EXTRACTION_FALLBACK_SCHEMA_REFUSED,
     OP_ENTITY_EXTRACTION,
     record_span_io,
 )
@@ -250,6 +255,24 @@ EntityExtractionSignature = EntityExtractionSignature.with_instructions(
 )
 
 
+def _fallback_reason(exc: BaseException) -> str:
+    """Why the DSPy path lost this query, as a queryable span value.
+
+    ``schema_refused`` means the engine answered outside the signature's
+    enforced output schema; anything else is the LM being unreachable or
+    failing outright. The two demand different operator action, so the fast
+    path records which one it served instead of the DSPy result.
+    """
+    seen: set[int] = set()
+    current: BaseException | None = exc
+    while current is not None and id(current) not in seen:
+        seen.add(id(current))
+        if isinstance(current, AdapterParseError):
+            return ENTITY_EXTRACTION_FALLBACK_SCHEMA_REFUSED
+        current = current.__cause__ or current.__context__
+    return ENTITY_EXTRACTION_FALLBACK_LM_UNAVAILABLE
+
+
 class EntityExtractionModule(dspy.Module):
     """DSPy module for entity extraction.
 
@@ -412,6 +435,8 @@ class EntityExtractionAgent(
         entities: List[Entity] = []
         relationships: List[Relationship] = []
         path_used = "dspy"
+        fallback_reason: Optional[str] = None
+        fallback_error: Optional[str] = None
 
         try:
             entities = await self._extract_dspy_path(prompt_query)
@@ -419,8 +444,11 @@ class EntityExtractionAgent(
                 query=query, entities=entities
             )
         except Exception as dspy_exc:
+            fallback_reason = _fallback_reason(dspy_exc)
+            fallback_error = repr(dspy_exc)
             logger.warning(
-                "DSPy entity extraction failed; falling back to fast path: %s",
+                "DSPy entity extraction failed (%s); falling back to fast path: %s",
+                fallback_reason,
                 dspy_exc,
             )
             if self._gliner_extractor is None:
@@ -470,6 +498,8 @@ class EntityExtractionAgent(
             entities=entities,
             relationships=relationships,
             path_used=path_used,
+            fallback_reason=fallback_reason,
+            fallback_error=fallback_error,
         )
 
         return output
@@ -746,6 +776,8 @@ class EntityExtractionAgent(
         entities: List[Entity],
         relationships: List[Relationship],
         path_used: str,
+        fallback_reason: Optional[str] = None,
+        fallback_error: Optional[str] = None,
     ) -> None:
         """Emit a cogniverse.entity_extraction telemetry span."""
         if not self.telemetry_manager:
@@ -773,6 +805,13 @@ class EntityExtractionAgent(
                     },
                     operation=OP_ENTITY_EXTRACTION,
                 )
+                if fallback_reason is not None:
+                    span.set_attribute(
+                        ENTITY_EXTRACTION_FALLBACK_ATTRIBUTE, fallback_reason
+                    )
+                    span.set_attribute(
+                        ENTITY_EXTRACTION_FALLBACK_ERROR_ATTRIBUTE, fallback_error
+                    )
         except Exception as exc:
             logger.warning(
                 "Failed to emit entity_extraction telemetry: tenant=%s error=%s",

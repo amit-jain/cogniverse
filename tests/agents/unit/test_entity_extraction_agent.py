@@ -20,6 +20,12 @@ from cogniverse_agents.entity_extraction_agent import (
     Relationship,
 )
 from cogniverse_core.common.tenant_utils import TEST_TENANT_ID
+from cogniverse_foundation.telemetry.span_contract import (
+    ENTITY_EXTRACTION_FALLBACK_ATTRIBUTE,
+    ENTITY_EXTRACTION_FALLBACK_ERROR_ATTRIBUTE,
+    ENTITY_EXTRACTION_FALLBACK_LM_UNAVAILABLE,
+    ENTITY_EXTRACTION_FALLBACK_SCHEMA_REFUSED,
+)
 from tests.agents.unit._recording_telemetry import (
     FailingTelemetryManager,
     RecordingTelemetryManager,
@@ -136,12 +142,31 @@ class _CountingExtractor:
 
 class _CountingDummyLM(DummyLM):
     def __init__(self, answers):
-        super().__init__(answers)
+        # Answer in the shape a schema-constrained engine returns: format
+        # through the adapter EntityExtractionModule binds for its own call,
+        # read from production rather than restated as a JSON literal.
+        super().__init__(answers, adapter=EntityExtractionModule().dspy_adapter)
         self.calls = 0
 
     def __call__(self, prompt=None, messages=None, **kwargs):
         self.calls += 1
         return super().__call__(prompt=prompt, messages=messages, **kwargs)
+
+
+class _EmptyObjectLM(dspy.BaseLM):
+    """An engine that answered `{}` — valid JSON, no output fields.
+
+    What the teacher returned on the run that motivated the enforced schema.
+    """
+
+    def __init__(self):
+        super().__init__(model="openai/Qwen/Qwen3-14B-AWQ")
+        self.calls = 0
+
+    def __call__(self, prompt=None, messages=None, **kwargs):
+        del prompt, messages, kwargs
+        self.calls += 1
+        return ["{}"]
 
 
 class _RaisingDummyLM(DummyLM):
@@ -498,10 +523,22 @@ class TestEntityExtractionAgent:
         assert result.path_used == "dspy"
         assert gliner.calls == 0
         assert lm.calls == 1
+        ((span,),) = (entity_agent.telemetry_manager.spans,)
+        # Control for the fallback marker: a served DSPy answer carries none.
+        assert [
+            key
+            for key in span.attributes
+            if key.startswith("entity_extraction.fallback")
+        ] == []
 
     @pytest.mark.asyncio
-    async def test_process_falls_back_to_fast_path_when_dspy_raises(self, entity_agent):
+    async def test_process_falls_back_to_fast_path_when_dspy_raises(
+        self, entity_agent, caplog
+    ):
         """DSPy failure falls through to the real GLiNER + SpaCy path."""
+        caplog.set_level(
+            logging.WARNING, logger="cogniverse_agents.entity_extraction_agent"
+        )
         from cogniverse_agents.routing.relationship_extraction_tools import (
             GLiNERRelationshipExtractor,
             SpaCyDependencyAnalyzer,
@@ -566,7 +603,66 @@ class TestEntityExtractionAgent:
         assert result.relationships[0].subject == "Barack Obama"
         assert result.relationships[0].object == "Chicago"
         assert result.path_used == "fast"
-        assert lm.calls == 2
+        # One LM attempt, not two: EntityExtractionModule binds a JSONAdapter
+        # subclass and ChatAdapter.__call__ skips its reformat fallback for
+        # those, which is what main.py's LenientJSONAdapter already gave the
+        # served agent. The second call only ever happened under pytest's
+        # default ChatAdapter.
+        assert lm.calls == 1
+        # The fall-through says why, so a schema-refusing engine is not read
+        # as an LM outage.
+        assert _messages(caplog, "cogniverse_agents.entity_extraction_agent") == [
+            "DSPy entity extraction failed (lm_unavailable); falling back to "
+            "fast path: planned LM failure"
+        ]
+        ((span,),) = (entity_agent.telemetry_manager.spans,)
+        assert span.attributes[ENTITY_EXTRACTION_FALLBACK_ATTRIBUTE] == (
+            ENTITY_EXTRACTION_FALLBACK_LM_UNAVAILABLE
+        )
+        assert span.attributes[ENTITY_EXTRACTION_FALLBACK_ERROR_ATTRIBUTE] == (
+            "RuntimeError('planned LM failure')"
+        )
+
+    @pytest.mark.asyncio
+    async def test_engine_ignoring_the_schema_is_named_on_the_span(
+        self, entity_agent, caplog
+    ):
+        """A bare {} is not an LM outage; the span says which one happened.
+
+        The served path falls through to GLiNER either way, so without this
+        marker an engine answering outside the signature's enforced schema is
+        one warning line indistinguishable from the LM being down.
+        """
+        caplog.set_level(
+            logging.WARNING, logger="cogniverse_agents.entity_extraction_agent"
+        )
+        entity_agent.dspy_module = EntityExtractionModule()
+        entity_agent._gliner_extractor = _CountingExtractor(
+            result=[{"text": "Barack Obama", "label": "PERSON", "score": 0.9}]
+        )
+        entity_agent._spacy_analyzer = None
+
+        with dspy.context(lm=_EmptyObjectLM()):
+            result = await entity_agent._process_impl(
+                EntityExtractionInput(
+                    query="Barack Obama in Chicago", tenant_id=TEST_TENANT_ID
+                )
+            )
+
+        assert result.path_used == "fast"
+        ((span,),) = (entity_agent.telemetry_manager.spans,)
+        assert span.attributes[ENTITY_EXTRACTION_FALLBACK_ATTRIBUTE] == (
+            ENTITY_EXTRACTION_FALLBACK_SCHEMA_REFUSED
+        )
+        assert span.attributes[ENTITY_EXTRACTION_FALLBACK_ERROR_ATTRIBUTE].startswith(
+            "AdapterParseError("
+        )
+        assert [
+            message.split(";")[0]
+            for message in _messages(
+                caplog, "cogniverse_agents.entity_extraction_agent"
+            )
+        ] == ["DSPy entity extraction failed (schema_refused)"]
 
     @pytest.mark.asyncio
     async def test_relationships_match_between_dspy_and_fast_path(self):
@@ -596,7 +692,8 @@ class TestEntityExtractionAgent:
                         "reasoning": "extract the exact query entities",
                         "entities": "Barack Obama|PERSON|0.95\nChicago|PLACE|0.9",
                     }
-                ]
+                ],
+                adapter=EntityExtractionModule().dspy_adapter,
             )
         ):
             dspy_result = await agent._process_impl(
@@ -643,7 +740,7 @@ class TestEntityExtractionAgent:
                 )
             )
 
-        assert lm.calls == 2
+        assert lm.calls == 1
         assert entity_agent._gliner_extractor.calls == 1
 
     def test_parse_entities_valid(self, entity_agent):
