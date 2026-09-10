@@ -52,11 +52,12 @@ def admin_client():
             "adapter_registry",
         }
     )
-    tenant_manager.backend = backend
+    previous_get_backend = tenant_manager.get_backend
+    tenant_manager.get_backend = lambda: backend
 
     yield TestClient(app), backend, schema_manager, schema_registry
 
-    tenant_manager.backend = None
+    tenant_manager.get_backend = previous_get_backend
     tenant_manager.set_schema_loader(previous_loader)
 
 
