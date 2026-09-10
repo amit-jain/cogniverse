@@ -49,6 +49,21 @@ QUERY_ENHANCEMENT_SPAN_ATTRIBUTE_KEYS = frozenset(
     }
 )
 
+# Entity extraction fallback marker — an entity_extraction span that served the
+# fast path names why in an attribute, so an engine answering outside the
+# signature's enforced output schema is queryable rather than one warning line
+# indistinguishable from an LM outage.
+ENTITY_EXTRACTION_FALLBACK_ATTRIBUTE = "entity_extraction.fallback_reason"
+ENTITY_EXTRACTION_FALLBACK_ERROR_ATTRIBUTE = "entity_extraction.fallback_error"
+ENTITY_EXTRACTION_FALLBACK_SCHEMA_REFUSED = "schema_refused"
+ENTITY_EXTRACTION_FALLBACK_LM_UNAVAILABLE = "lm_unavailable"
+ENTITY_EXTRACTION_FALLBACK_VALUES = frozenset(
+    {
+        ENTITY_EXTRACTION_FALLBACK_SCHEMA_REFUSED,
+        ENTITY_EXTRACTION_FALLBACK_LM_UNAVAILABLE,
+    }
+)
+
 # Annotation contract — one home for the names, metadata key, and thresholds
 # every consumer of result_click / result_relevance / preference pairs shares.
 RESULT_RELEVANCE = "result_relevance"
