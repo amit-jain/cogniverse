@@ -27,6 +27,7 @@ import uvicorn
 from fastapi import FastAPI
 from pydantic import BaseModel
 
+from cogniverse_core.agents.base import ConfigManagerAware
 from cogniverse_core.common.agent_models import AgentEndpoint
 from cogniverse_core.registries.agent_registry import AgentRegistry
 from cogniverse_foundation.config.manager import ConfigManager
@@ -115,7 +116,7 @@ class ContextEchoOutput(BaseModel):
     answer: str = ""
 
 
-class ContextEchoAgent:
+class ContextEchoAgent(ConfigManagerAware):
     """Answers with the dispatch context it was handed, as sorted JSON.
 
     Everything the router is supposed to place on the context is therefore
@@ -152,7 +153,7 @@ class ToolEchoOutput(BaseModel):
     continuation_state: dict = {}
 
 
-class ToolEchoAgent:
+class ToolEchoAgent(ConfigManagerAware):
     """Deterministic dual-loop agent with a fixed call id.
 
     The fixed id lets a second tenant replay the first tenant's exact
@@ -195,7 +196,7 @@ class SlowEchoOutput(BaseModel):
     answer: str = ""
 
 
-class SlowEchoAgent:
+class SlowEchoAgent(ConfigManagerAware):
     """A 20 s turn that records whether it was cancelled."""
 
     def __init__(self, deps: HarnessEchoDeps):
@@ -216,7 +217,7 @@ class FailingEchoOutput(BaseModel):
     answer: str = ""
 
 
-class FailingEchoAgent:
+class FailingEchoAgent(ConfigManagerAware):
     def __init__(self, deps: HarnessEchoDeps):
         self.deps = deps
 

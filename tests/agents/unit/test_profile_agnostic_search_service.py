@@ -300,12 +300,18 @@ class TestBackendCaching:
 
             search_service._get_backend(
                 "frame_based_colpali",
-                {"embedding_model": "a", "schema_name": "video_frames"},
+                {
+                    "embedding_model": "a",
+                    "schema_name": "video_colpali_smol500_mv_frame",
+                },
                 first_encoder,
             )
             search_service._get_backend(
                 "direct_video_colqwen",
-                {"embedding_model": "b", "schema_name": "video_segments"},
+                {
+                    "embedding_model": "b",
+                    "schema_name": "video_colqwen_omni_mv_chunk_30s",
+                },
                 second_encoder,
             )
 
@@ -318,8 +324,8 @@ class TestBackendCaching:
             for call in mock_reg.return_value.get_search_backend.call_args_list
         ]
         assert bound == [
-            ("frame_based_colpali", "video_frames", first_encoder),
-            ("direct_video_colqwen", "video_segments", second_encoder),
+            ("frame_based_colpali", "video_colpali_smol500_mv_frame", first_encoder),
+            ("direct_video_colqwen", "video_colqwen_omni_mv_chunk_30s", second_encoder),
         ]
 
     def test_tenant_id_injected_in_query_dict(self, search_service):
