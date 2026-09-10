@@ -16,7 +16,12 @@ from fastapi import FastAPI, HTTPException, Request
 from pydantic import Field
 
 from cogniverse_agents.memory_aware_mixin import MemoryAwareMixin
-from cogniverse_agents.multimodal import KeyframeImageResolver, attachments_to_images
+from cogniverse_agents.multimodal import (
+    FittedImages,
+    KeyframeImageResolver,
+    attachments_to_images,
+    fit_answer_images,
+)
 from cogniverse_core.agents.a2a_agent import A2AAgent, A2AAgentConfig
 from cogniverse_core.agents.base import AgentDeps, AgentInput, AgentOutput
 from cogniverse_core.common.media import MediaConfig, MediaLocator
@@ -328,6 +333,7 @@ class SummarizerAgent(
         _summarize_start = time.monotonic()
         self.validate_attachments(request)
         attachment_failures: List[str] = []
+        image_state: Dict[str, int] = {"keyframes_attached": 0, "keyframes_shed": 0}
 
         with routed_lm_context_for(
             self._config_manager,
@@ -366,7 +372,11 @@ class SummarizerAgent(
 
                 self.emit_progress("summarization", "Generating summary...")
                 summary, lm_key_points = await self._generate_summary(
-                    request, thinking_phase, visual_insights, attachment_failures
+                    request,
+                    thinking_phase,
+                    visual_insights,
+                    attachment_failures,
+                    image_state,
                 )
                 summary = self._enforce_max_length(summary, self.max_summary_length)
                 self.emit_progress(
@@ -391,6 +401,8 @@ class SummarizerAgent(
                     metadata={
                         "attachments_degraded": bool(attachment_failures),
                         "attachment_failures": attachment_failures,
+                        "keyframes_attached": image_state["keyframes_attached"],
+                        "keyframes_shed": image_state["keyframes_shed"],
                         "results_analyzed": len(request.search_results),
                         "summary_type": request.summary_type,
                         "visual_analysis_enabled": request.include_visual_analysis,
@@ -664,22 +676,25 @@ and structure summary based on identified themes and content categories.
         request: SummaryRequest,
         results: List[Dict[str, Any]],
         attachment_failures: Optional[List[str]] = None,
-    ) -> List[dspy.Image]:
-        """Prepare attachments before retrieved frames, under one image cap."""
+    ) -> FittedImages:
+        """Prepare attachments before retrieved frames, under one image cap and
+        the request-body allowance the LM's transport accepts."""
         self.validate_attachments(request)
         if not (
             self.multimodal_generation_enabled
             and self.visual_analysis_enabled
             and request.include_visual_analysis
         ):
-            return []
+            return FittedImages()
         prepared = attachments_to_images(request.attachments)
         if attachment_failures is not None:
             attachment_failures.extend(prepared.failures)
         retrieved = self._keyframe_resolver.collect(
             results, max_images=self.max_keyframes_to_llm
         )
-        return (prepared.images + retrieved)[: self.max_keyframes_to_llm]
+        return fit_answer_images(
+            prepared.images, retrieved, max_images=self.max_keyframes_to_llm
+        )
 
     async def _run_summarization(
         self,
@@ -729,9 +744,14 @@ and structure summary based on identified themes and content categories.
         thinking_phase: ThinkingPhase,
         visual_insights: List[str],
         attachment_failures: Optional[List[str]] = None,
+        image_state: Optional[Dict[str, int]] = None,
     ) -> tuple[str, List[str]]:
         """Generate the main summary text and the LM's key points (empty for the
-        deterministic bullet/no-result paths, which have no LM key points)."""
+        deterministic bullet/no-result paths, which have no LM key points).
+
+        ``image_state`` receives the frames actually attached and the frames
+        shed to fit the request-body allowance, so the result reports a
+        degraded answer instead of losing frames silently."""
         logger.info("Generating summary...")
 
         # Sort results by relevance
@@ -746,9 +766,13 @@ and structure summary based on identified themes and content categories.
         # Take top results for summary
         top_results = sorted_results[: request.max_results_to_analyze]
         # Frame collection downloads from object storage — off the loop.
-        keyframe_images = await asyncio.to_thread(
+        fitted = await asyncio.to_thread(
             self._collect_keyframes, request, top_results, attachment_failures
         )
+        keyframe_images = fitted.images
+        if image_state is not None:
+            image_state["keyframes_attached"] = len(keyframe_images)
+            image_state["keyframes_shed"] = fitted.shed
 
         if not top_results and (request.query.strip() or keyframe_images):
             return await self._run_summarization(

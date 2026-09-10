@@ -18,7 +18,11 @@ from pydantic import Field
 from cogniverse_agents._confidence import parse_confidence
 from cogniverse_agents.memory_aware_mixin import MemoryAwareMixin
 from cogniverse_agents.mixins.rlm_aware_mixin import RLMAwareMixin
-from cogniverse_agents.multimodal import KeyframeImageResolver, attachments_to_images
+from cogniverse_agents.multimodal import (
+    KeyframeImageResolver,
+    attachments_to_images,
+    fit_answer_images,
+)
 from cogniverse_core.agents.a2a_agent import A2AAgent, A2AAgentConfig
 from cogniverse_core.agents.base import AgentDeps, AgentInput, AgentOutput
 from cogniverse_core.agents.rlm_options import RLMOptions
@@ -452,11 +456,16 @@ class DeepResearchAgent(
                     hits, max_images=self.max_keyframes_to_llm
                 )
                 return (
-                    (prepared.images + retrieved)[: self.max_keyframes_to_llm],
+                    fit_answer_images(
+                        prepared.images,
+                        retrieved,
+                        max_images=self.max_keyframes_to_llm,
+                    ),
                     prepared.failures,
                 )
 
-            keyframe_images, failures = await asyncio.to_thread(collect_images)
+            fitted, failures = await asyncio.to_thread(collect_images)
+            keyframe_images = fitted.images
             if attachment_failures is not None:
                 attachment_failures.extend(failures)
 

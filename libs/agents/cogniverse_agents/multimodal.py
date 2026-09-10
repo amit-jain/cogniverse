@@ -116,6 +116,74 @@ def hit_keyframe_uri(hit: dict[str, Any]) -> Optional[str]:
 _ATTACHMENT_FETCH_TIMEOUT_S = 10.0
 _MAX_ATTACHMENT_BYTES = 8 * 1024 * 1024
 
+# An answer agent's LM call reaches the model through the semantic-router
+# Envoy, whose ext_proc filter buffers the whole request body
+# (``request_body_mode: BUFFERED``) and answers 413 "Payload Too Large" above
+# its ``per_connection_buffer_limit_bytes``. The chart pins the listener to
+# this same value: charts/cogniverse/files/semantic-router/envoy.yaml.
+LLM_REQUEST_BODY_LIMIT_BYTES = 1024 * 1024
+
+# The non-image half of an answer request: the adapter preamble, the signature
+# instructions and the grounding content block. A 10-hit grounding over the
+# production corpus assembles 18 KB of those.
+LLM_TEXT_RESERVE_BYTES = 64 * 1024
+
+# What every image attached to one answer request may cost together.
+MAX_IMAGE_PAYLOAD_BYTES = LLM_REQUEST_BODY_LIMIT_BYTES - LLM_TEXT_RESERVE_BYTES
+
+
+def image_payload_bytes(image: dspy.Image) -> int:
+    """Bytes ``image`` contributes to the assembled chat request body."""
+    return len(str(image.url).encode("utf-8"))
+
+
+@dataclass(frozen=True)
+class FittedImages:
+    """Images that fit one answer request, and how many were shed to get there."""
+
+    images: list[dspy.Image] = field(default_factory=list)
+    shed: int = 0
+
+
+def fit_answer_images(
+    attachments: Iterable[dspy.Image],
+    retrieved: Iterable[dspy.Image],
+    *,
+    max_images: int,
+    max_total_bytes: int = MAX_IMAGE_PAYLOAD_BYTES,
+) -> FittedImages:
+    """Attachments before retrieved frames, under one image cap AND one
+    request-body allowance.
+
+    Counting frames does not bound the request: one 768 px JPEG frame is a few
+    hundred KB of base64, so ``max_images`` of them overflow the body limit the
+    LM's transport buffers and the call comes back 413 with no answer at all.
+    Images are kept in order while they fit and whole images are shed from the
+    tail -- never truncated, because half a data URL is not an image -- and the
+    shed count is reported so the answer records itself degraded.
+    """
+    ordered = [*attachments, *retrieved][:max_images]
+    kept: list[dspy.Image] = []
+    spent = 0
+    for image in ordered:
+        cost = image_payload_bytes(image)
+        if spent + cost > max_total_bytes:
+            break
+        kept.append(image)
+        spent += cost
+    shed = len(ordered) - len(kept)
+    if shed:
+        logger.warning(
+            "shed %d of %d answer image(s) to fit the %d-byte request-body "
+            "allowance; %d kept costing %d bytes",
+            shed,
+            len(ordered),
+            max_total_bytes,
+            len(kept),
+            spent,
+        )
+    return FittedImages(images=kept, shed=shed)
+
 
 @dataclass(frozen=True)
 class PreparedAttachments:

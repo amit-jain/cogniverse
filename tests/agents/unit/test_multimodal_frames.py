@@ -32,7 +32,11 @@ from cogniverse_agents.detailed_report_agent import (
     ReportRequest,
     ThinkingPhase,
 )
-from cogniverse_agents.multimodal import KeyframeImageResolver, hit_keyframe_uri
+from cogniverse_agents.multimodal import (
+    FittedImages,
+    KeyframeImageResolver,
+    hit_keyframe_uri,
+)
 from cogniverse_agents.summarizer_agent import (
     SummarizationModule,
     SummarizerAgent,
@@ -480,9 +484,10 @@ class TestSummarizerFrameGate:
             search_results=[_video_hit(1), _video_hit(2)],
             include_visual_analysis=True,
         )
-        frames = summarizer_agent._collect_keyframes(req, req.search_results)
-        assert len(frames) == 2
-        assert all(isinstance(f, dspy.Image) for f in frames)
+        fitted = summarizer_agent._collect_keyframes(req, req.search_results)
+        assert len(fitted.images) == 2
+        assert fitted.shed == 0
+        assert all(isinstance(f, dspy.Image) for f in fitted.images)
 
     def test_capped_at_max_keyframes(self, summarizer_agent):
         summarizer_agent.max_keyframes_to_llm = 1
@@ -491,20 +496,26 @@ class TestSummarizerFrameGate:
             search_results=[_video_hit(1), _video_hit(2), _video_hit(3)],
             include_visual_analysis=True,
         )
-        assert len(summarizer_agent._collect_keyframes(req, req.search_results)) == 1
+        fitted = summarizer_agent._collect_keyframes(req, req.search_results)
+        assert len(fitted.images) == 1
+        assert fitted.shed == 0
 
     def test_disabled_flag_yields_no_frames(self, summarizer_agent):
         summarizer_agent.multimodal_generation_enabled = False
         req = SummaryRequest(
             query="q", search_results=[_video_hit(1)], include_visual_analysis=True
         )
-        assert summarizer_agent._collect_keyframes(req, req.search_results) == []
+        assert summarizer_agent._collect_keyframes(
+            req, req.search_results
+        ) == FittedImages(images=[], shed=0)
 
     def test_request_visual_off_yields_no_frames(self, summarizer_agent):
         req = SummaryRequest(
             query="q", search_results=[_video_hit(1)], include_visual_analysis=False
         )
-        assert summarizer_agent._collect_keyframes(req, req.search_results) == []
+        assert summarizer_agent._collect_keyframes(
+            req, req.search_results
+        ) == FittedImages(images=[], shed=0)
 
 
 @pytest.mark.unit
