@@ -554,6 +554,14 @@ backend = BackendRegistry.get_search_backend(
 )
 ```
 
+**Resolver seam.** The registry owns the lifetime of what it hands out and
+closes the instance on capacity eviction, on an overwriting `set` and on
+`clear_instances()`, so nothing may keep a handle across operations. Callers
+hold a zero-arg resolver instead and run each operation inside
+`leased_backend(resolve)`, which resolves through the registry and holds a
+checkout for the block; `BackendRegistry.holds(instance)` reports whether the
+cache owns a given instance.
+
 ### DSPyModuleRegistry
 
 ```python
@@ -934,6 +942,8 @@ from cogniverse_core.memory.manager import Mem0MemoryManager
 
 # Get memory manager (singleton per tenant via __new__)
 memory = Mem0MemoryManager(tenant_id="acme")
+# The manager keeps no backend handle: `_resolve_backend` re-resolves through
+# BackendRegistry per operation, leased for the operation's duration.
 
 # Initialize with required parameters
 from cogniverse_core.memory.schema import build_default_registry
@@ -1135,7 +1145,8 @@ reconciliation both plug into this scoring loop.
 
 Every memory write carries a `Provenance` record describing where the
 content came from. The schema's `provenance_required` flag gates
-writes that omit it.
+writes that omit it. `ProvenanceStore(backend_resolver=..., tenant_id=...)`
+takes the resolver, not a backend instance, and leases per read/write.
 
 ```python
 from cogniverse_core.memory.provenance import (

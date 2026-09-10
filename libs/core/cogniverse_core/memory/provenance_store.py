@@ -19,13 +19,14 @@ import json
 import logging
 import time
 from dataclasses import dataclass
-from typing import TYPE_CHECKING, Any, Dict, List, Optional, Set, Tuple
+from typing import TYPE_CHECKING, Any, Callable, Dict, List, Optional, Set, Tuple
 
 from cogniverse_core.memory.provenance import (
     CitationRef,
     DerivationKind,
     Provenance,
 )
+from cogniverse_core.registries.backend_registry import leased_backend
 
 if TYPE_CHECKING:
     from cogniverse_sdk.interfaces.backend import IngestionBackend
@@ -122,20 +123,23 @@ class ProvenanceStore:
 
     def __init__(
         self,
-        backend: "IngestionBackend",
+        backend_resolver: Callable[[], "IngestionBackend"],
         tenant_id: str,
         base_schema_name: str = PROVENANCE_BASE_SCHEMA,
     ) -> None:
         if not tenant_id:
             raise ValueError("tenant_id is required")
-        self._backend = backend
+        # Resolved per operation: the registry owns the instance's lifetime
+        # and closes what it evicts, so a handle held here goes dead and
+        # every later provenance read raises BackendClosedError.
+        self._resolve_backend = backend_resolver
         self._tenant_id = tenant_id
         self._base_schema = base_schema_name
 
     @property
     def schema_name(self) -> str:
         """Resolve the per-tenant Vespa schema name."""
-        get_name = getattr(self._backend, "get_tenant_schema_name", None)
+        get_name = getattr(self._resolve_backend(), "get_tenant_schema_name", None)
         if callable(get_name):
             return get_name(self._tenant_id, self._base_schema)
         return f"{self._base_schema}_{self._tenant_id}"
@@ -169,7 +173,8 @@ class ProvenanceStore:
                 "trace_id": record.trace_id or "",
             },
         )
-        self._backend.ingest_documents([doc], schema_name=self._base_schema)
+        with leased_backend(self._resolve_backend) as backend:
+            backend.ingest_documents([doc], schema_name=self._base_schema)
         return row_id
 
     def fetch(self, memory_ids: List[str]) -> Dict[str, ProvenanceRecord]:
@@ -195,12 +200,13 @@ class ProvenanceStore:
             f"limit {max(len(memory_ids), 100)}"
         )
         try:
-            rows = self._backend.query_metadata_documents(
-                schema=schema_name,
-                yql=yql,
-                hits=max(len(memory_ids), 100),
-                tenant_id=self._tenant_id,
-            )
+            with leased_backend(self._resolve_backend) as backend:
+                rows = backend.query_metadata_documents(
+                    schema=schema_name,
+                    yql=yql,
+                    hits=max(len(memory_ids), 100),
+                    tenant_id=self._tenant_id,
+                )
         except Exception as exc:
             raise RuntimeError(
                 f"provenance fetch failed for schema {schema_name!r} "

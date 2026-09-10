@@ -249,7 +249,7 @@ class TestMem0MemoryManager:
         manager.config = {"vector_store": {"config": {"profile": "agent_memories"}}}
         backend = MagicMock()
         backend.schema_exists.return_value = True
-        manager._backend = backend
+        manager._resolve_backend = lambda: backend
         return backend
 
     @patch("cogniverse_core.memory.manager.Memory")
@@ -322,7 +322,7 @@ class TestMem0MemoryManager:
 
         mock_backend = MagicMock()
         mock_backend.schema_exists.return_value = False
-        manager._backend = mock_backend
+        manager._resolve_backend = lambda: mock_backend
 
         memories = manager.get_all_memories(
             tenant_id="tenant1",
@@ -345,7 +345,7 @@ class TestMem0MemoryManager:
 
         mock_backend = MagicMock()
         mock_backend.schema_exists.return_value = True
-        manager._backend = mock_backend
+        manager._resolve_backend = lambda: mock_backend
 
         assert (
             manager.tenant_partition_schema_exists(canonical_tenant_id("tenant1"))
@@ -372,7 +372,7 @@ class TestMem0MemoryManager:
         mock_backend.schema_exists.side_effect = ConnectionError(
             "schema registry unavailable"
         )
-        manager._backend = mock_backend
+        manager._resolve_backend = lambda: mock_backend
 
         with pytest.raises(ConnectionError, match="schema registry unavailable"):
             manager.get_all_memories(tenant_id="tenant1", agent_name="test_agent")

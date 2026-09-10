@@ -26,6 +26,7 @@ from cogniverse_core.common.tenant_utils import (
     canonical_tenant_id,
 )
 from cogniverse_core.memory._timestamps import to_epoch_seconds
+from cogniverse_core.registries.backend_registry import leased_backend
 from cogniverse_foundation.caching import TenantLRUCache
 from cogniverse_foundation.config.llm_factory import resolve_inference_api_key
 
@@ -418,19 +419,23 @@ class Mem0MemoryManager:
             "default_profiles": config.get("default_profiles", {}),
         }
 
-        # Create tenant-specific backend for memory operations
-        # Each tenant gets their own memory schema (agent_memories_{tenant_id})
-        backend = registry.get_ingestion_backend(
-            backend_type,
-            tenant_id=storage_tenant_id,
-            config=backend_config_dict,
-            config_manager=config_manager,
-            schema_loader=schema_loader,
-        )
-        # Keep a handle so the provenance store + future side-stores can
-        # talk to Vespa directly without going through Mem0's vector
-        # store wrapper.
-        self._backend = backend
+        # Resolve the tenant's backend through the registry on every use.
+        # The registry owns the instance's lifetime and closes it on capacity
+        # eviction, an overwriting set and clear; a MemoryManager lives in its
+        # own per-tenant LRU and outlives any single instance, so a handle
+        # kept here goes dead and every later memory call raises
+        # BackendClosedError until the process restarts.
+        def _resolve_backend():
+            return registry.get_ingestion_backend(
+                backend_type,
+                tenant_id=storage_tenant_id,
+                config=backend_config_dict,
+                config_manager=config_manager,
+                schema_loader=schema_loader,
+            )
+
+        self._resolve_backend = _resolve_backend
+        backend = _resolve_backend()
 
         # Get tenant-specific schema name
         tenant_schema_name = backend.get_tenant_schema_name(
@@ -544,12 +549,13 @@ class Mem0MemoryManager:
         """Lazy per-tenant ProvenanceStore wrapping the Vespa backend."""
         if (
             self._provenance_store is None
-            and getattr(self, "_backend", None) is not None
+            and getattr(self, "_resolve_backend", None) is not None
         ):
             from cogniverse_core.memory.provenance_store import ProvenanceStore
 
             self._provenance_store = ProvenanceStore(
-                backend=self._backend, tenant_id=self._storage_tenant_id
+                backend_resolver=self._resolve_backend,
+                tenant_id=self._storage_tenant_id,
             )
         return self._provenance_store
 
@@ -969,7 +975,8 @@ class Mem0MemoryManager:
         Raises when the backend / registry lookup itself fails.
         """
         base_schema_name = self.config["vector_store"]["config"]["profile"]
-        return self._backend.schema_exists(base_schema_name, tenant_id=tenant_id)
+        with leased_backend(self._resolve_backend) as backend:
+            return backend.schema_exists(base_schema_name, tenant_id=tenant_id)
 
     # Re-stamps within this window are skipped — the lifecycle scheduler
     # reads recency at day scale, so per-request writes buy nothing.

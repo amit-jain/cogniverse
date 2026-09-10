@@ -87,7 +87,7 @@ def test_tenant_scoped_metadata_queries_scope_once():
         == []
     )
 
-    provenance = ProvenanceStore(backend=backend, tenant_id=TENANT)
+    provenance = ProvenanceStore(backend_resolver=lambda: backend, tenant_id=TENANT)
     assert provenance.get("m1") is None
 
     assert registry.calls == [

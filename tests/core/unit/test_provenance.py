@@ -453,7 +453,7 @@ class TestProvenanceStoreFaultContract:
         from cogniverse_core.memory.provenance_store import ProvenanceStore
 
         backend = _FailingQueryBackend()
-        store = ProvenanceStore(backend=backend, tenant_id="t1")
+        store = ProvenanceStore(backend_resolver=lambda: backend, tenant_id="t1")
         with pytest.raises(RuntimeError) as excinfo:
             store.fetch(["m_child"])
         assert "provenance_t1" in str(excinfo.value)
@@ -475,7 +475,7 @@ class TestProvenanceStoreFaultContract:
         from cogniverse_core.memory.provenance_store import ProvenanceStore
 
         backend = _FailingQueryBackend()
-        store = ProvenanceStore(backend=backend, tenant_id="t1")
+        store = ProvenanceStore(backend_resolver=lambda: backend, tenant_id="t1")
         with pytest.raises(RuntimeError):
             store.get("m_child")
         assert backend.queries[0]["schema"] == "provenance"
@@ -484,7 +484,9 @@ class TestProvenanceStoreFaultContract:
     def test_walk_propagates_query_failure_instead_of_single_node_graph(self):
         from cogniverse_core.memory.provenance_store import ProvenanceStore
 
-        store = ProvenanceStore(backend=_FailingQueryBackend(), tenant_id="t1")
+        store = ProvenanceStore(
+            backend_resolver=lambda: _FailingQueryBackend(), tenant_id="t1"
+        )
         with pytest.raises(RuntimeError):
             store.walk("m_child", max_depth=5, max_nodes=10)
 
@@ -492,7 +494,7 @@ class TestProvenanceStoreFaultContract:
         from cogniverse_core.memory.provenance_store import ProvenanceStore
 
         backend = _EmptyQueryBackend()
-        store = ProvenanceStore(backend=backend, tenant_id="t1")
+        store = ProvenanceStore(backend_resolver=lambda: backend, tenant_id="t1")
         assert store.fetch(["m_child"]) == {}
         ordered, primary, truncated, records = store.walk(
             "m_child", max_depth=5, max_nodes=10
