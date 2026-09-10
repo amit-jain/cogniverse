@@ -76,10 +76,6 @@ _schema_loader: SchemaLoader = None  # For dependency injection
 _fallback_config_manager = None
 _fallback_config_manager_lock = threading.Lock()
 
-# One retry covers the instance being evicted between the resolve and the
-# checkout; the retry's resolve rebuilds it.
-_METADATA_BACKEND_ATTEMPTS = 2
-
 
 def set_config_manager(config_manager):
     """Set ConfigManager for this module (for tests)"""
@@ -164,14 +160,10 @@ def metadata_backend() -> Iterator[Backend]:
     A backend the registry does not hold (injected in tests, built directly)
     checks out nothing and is yielded as-is: it belongs to whoever built it.
     """
-    from cogniverse_core.registries.backend_registry import BackendRegistry
+    from cogniverse_core.registries.backend_registry import leased_backend
 
-    for attempt in range(_METADATA_BACKEND_ATTEMPTS):
-        instance = get_backend()
-        with BackendRegistry.lease_instance(instance) as held:
-            if held or attempt == _METADATA_BACKEND_ATTEMPTS - 1:
-                yield instance
-                return
+    with leased_backend(get_backend) as instance:
+        yield instance
 
 
 def validate_org_id(org_id: str) -> None:

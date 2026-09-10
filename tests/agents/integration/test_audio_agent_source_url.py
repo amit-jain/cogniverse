@@ -271,8 +271,8 @@ def audio_agent(audio_schema):
     """The AudioAnalysisAgent production builds, wired to the test's own Vespa.
 
     Driven through the real constructor so every attribute the search path
-    reads (``_deployed_audio_schema``, ``_shared_backend`` and its lock,
-    ``_locator``) is the one ``__init__`` sets.
+    reads (``_deployed_audio_schema``, ``_locator``) is the one
+    ``__init__`` sets.
     """
     return _build_agent(audio_schema, audio_schema["config_manager"])
 

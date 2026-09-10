@@ -103,7 +103,7 @@ class TestSearchServiceConstruction:
 
     def test_init_no_profile_no_tenant(self, search_service):
         """SearchService initializes without profile or tenant_id."""
-        assert search_service._backend is None
+        assert hasattr(search_service, "_backend") is False
         assert search_service.config_manager is not None
         assert search_service.schema_loader is not None
 
@@ -255,12 +255,17 @@ class TestEncoderCaching:
 class TestBackendCaching:
     """Test lazy backend creation per tenant_id."""
 
-    def test_backend_starts_none(self, search_service):
-        """No backend until first search() call."""
-        assert search_service._backend is None
+    def test_the_service_holds_no_backend_instance(self, search_service):
+        """The registry owns the instance; the service keeps no handle.
 
-    def test_get_backend_caches_single_instance(self, search_service):
-        """_get_backend caches a single shared backend."""
+        A handle kept across requests is closed under the service by
+        eviction, an overwriting set or clear, and every later search then
+        raises BackendClosedError until the process restarts.
+        """
+        assert hasattr(search_service, "_backend") is False
+
+    def test_get_backend_resolves_through_the_registry_per_call(self, search_service):
+        """Every call resolves; the registry's LRU is the cache."""
         mock_encoder = MagicMock()
         profile_config = {"embedding_model": "test", "schema_name": "test_schema"}
 
@@ -268,19 +273,50 @@ class TestBackendCaching:
         with patch("cogniverse_agents.search.service.get_backend_registry") as mock_reg:
             mock_reg.return_value.get_search_backend.return_value = mock_backend
 
-            # First call — creates backend
             b1 = search_service._get_backend(
                 "frame_based_colpali", profile_config, mock_encoder
             )
-            # Second call — returns cached
             b2 = search_service._get_backend(
                 "frame_based_colpali", profile_config, mock_encoder
             )
 
-            assert b1 is b2
-            assert search_service._backend is mock_backend
-            # Registry only called once (cached for second call)
-            assert mock_reg.return_value.get_search_backend.call_count == 1
+            assert (b1, b2) == (mock_backend, mock_backend)
+            assert mock_reg.return_value.get_search_backend.call_count == 2
+
+    def test_each_profile_resolves_with_its_own_schema_and_encoder(
+        self, search_service
+    ):
+        """A second profile must not inherit the first profile's binding.
+
+        Holding one instance returned the first profile's backend — bound to
+        the first profile's schema_name and encoder — for every later
+        profile, so a search on the second profile queried the first
+        profile's schema.
+        """
+        first_encoder, second_encoder = MagicMock(), MagicMock()
+
+        with patch("cogniverse_agents.search.service.get_backend_registry") as mock_reg:
+            mock_reg.return_value.get_search_backend.return_value = MagicMock()
+
+            search_service._get_backend(
+                "frame_based_colpali",
+                {"embedding_model": "a", "schema_name": "video_frames"},
+                first_encoder,
+            )
+            search_service._get_backend(
+                "direct_video_colqwen",
+                {"embedding_model": "b", "schema_name": "video_segments"},
+                second_encoder,
+            )
+
+        bound = [
+            (call.args[1]["profile"], call.args[1]["schema_name"], call.args[1]["query_encoder"])
+            for call in mock_reg.return_value.get_search_backend.call_args_list
+        ]
+        assert bound == [
+            ("frame_based_colpali", "video_frames", first_encoder),
+            ("direct_video_colqwen", "video_segments", second_encoder),
+        ]
 
     def test_tenant_id_injected_in_query_dict(self, search_service):
         """Verify search() adds tenant_id to query_dict."""

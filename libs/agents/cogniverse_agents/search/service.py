@@ -6,10 +6,14 @@ with tenant_id passed in query_dict at search time for schema name derivation.
 """
 
 import logging
+from contextlib import contextmanager
 from typing import Any, Dict, Optional
 
 from cogniverse_core.query.encoders import QueryEncoderFactory
-from cogniverse_core.registries.backend_registry import get_backend_registry
+from cogniverse_core.registries.backend_registry import (
+    get_backend_registry,
+    leased_backend,
+)
 from cogniverse_sdk.document import SearchResultBatch, resolve_result_granularity
 
 logger = logging.getLogger(__name__)
@@ -52,9 +56,6 @@ class SearchService:
                 "Dependency injection is mandatory - pass SchemaLoader instance explicitly."
             )
         self.schema_loader = schema_loader
-
-        # Lazy single shared backend instance
-        self._backend: Any = None
 
         # Initialize telemetry
         from cogniverse_foundation.telemetry.manager import get_telemetry_manager
@@ -151,10 +152,19 @@ class SearchService:
         profile_config: Dict[str, Any],
         query_encoder,
     ):
-        """Get or create the shared search backend."""
-        if self._backend is not None:
-            return self._backend
+        """Resolve the search backend for ``profile`` from the registry.
 
+        Resolved on every call. The registry owns the instance's lifetime
+        and closes it on capacity eviction, an overwriting set and clear, so
+        a handle held on the service across requests goes dead and every
+        later search raises ``BackendClosedError``. Holding one also served
+        the first profile's backend for every later profile, ignoring the
+        ``schema_name`` and encoder resolved here.
+
+        This is the seam tests bind a backend at. Callers that run an
+        operation take :meth:`_leased_backend`, which also holds it against
+        eviction.
+        """
         backend_type = self.config.get("search_backend", "vespa")
         schema_name = profile_config.get("schema_name")
 
@@ -185,9 +195,15 @@ class SearchService:
             schema_loader=self.schema_loader,
         )
 
-        self._backend = backend
-        logger.info(f"Created shared {backend_type} search backend")
         return backend
+
+    @contextmanager
+    def _leased_backend(self, profile: str, profile_config, query_encoder):
+        """The profile's backend, held against eviction for the block."""
+        with leased_backend(
+            lambda: self._get_backend(profile, profile_config, query_encoder)
+        ) as backend:
+            yield backend
 
     def search(
         self,
@@ -232,7 +248,6 @@ class SearchService:
             profile_config, result_granularity
         )
         query_encoder = self._get_encoder(profile, profile_config)
-        search_backend = self._get_backend(profile, profile_config, query_encoder)
 
         logger.info(f"Searching profile={profile} tenant={tenant_id}")
 
@@ -280,7 +295,10 @@ class SearchService:
                     "query_encoder": query_encoder,
                     "result_granularity": result_granularity,
                 }
-                results = search_backend.search(query_dict)
+                with self._leased_backend(
+                    profile, profile_config, query_encoder
+                ) as search_backend:
+                    results = search_backend.search(query_dict)
 
                 # Serialize the result rows once and record the same payload on
                 # both the RETRIEVER (backend) and CHAIN (search) spans.
@@ -319,9 +337,9 @@ class SearchService:
         """
         profile_config = self._get_profile_config(profile, tenant_id)
         query_encoder = self._get_encoder(profile, profile_config)
-        backend = self._get_backend(profile, profile_config, query_encoder)
 
-        doc = backend.get_document(document_id)
+        with self._leased_backend(profile, profile_config, query_encoder) as backend:
+            doc = backend.get_document(document_id)
         if doc:
             return {
                 "document_id": doc.id,
