@@ -42,7 +42,7 @@ _WIKI_NAMESPACE = "wiki_content"
 def _embedding_dim(base_schema_name: str, field_name: str) -> int:
     """The field's declared tensor dimension, read from the shipped schema."""
     schema = load_raw_schema_json(base_schema_name)
-    field = next(f for f in schema["fields"] if f["name"] == field_name)
+    field = next(f for f in schema["document"]["fields"] if f["name"] == field_name)
     return int(re.search(r"\[(\d+)\]", field["type"]).group(1))
 
 
