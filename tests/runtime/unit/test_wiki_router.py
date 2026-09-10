@@ -307,7 +307,8 @@ class TestWikiFactoryCanonicalizesTenant:
             def get_tenant_schema_name(self, tenant_id, base):
                 return f"{base}_{tenant_id.replace(':', '_')}"
 
-        factory = build_wiki_manager_factory(_Backend(), MagicMock(), MagicMock())
+        backend = _Backend()
+        factory = build_wiki_manager_factory(lambda: backend, MagicMock(), MagicMock())
 
         m_simple = factory("acme")
         m_canonical = factory("acme:acme")

@@ -71,7 +71,7 @@ class SyntheticDataService:
         >>> backend_config = BackendConfig(...)
         >>> generator_config = SyntheticGeneratorConfig(...)
         >>> service = SyntheticDataService(
-        ...     backend=backend,
+        ...     backend_resolver=resolve_backend,
         ...     backend_config=backend_config,
         ...     generator_config=generator_config,
         ...     agents_config=agents_config,
