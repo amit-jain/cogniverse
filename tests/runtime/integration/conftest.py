@@ -43,11 +43,22 @@ from cogniverse_vespa.config.config_store import VespaConfigStore
 # Re-export the canonical session-scoped Vespa from the project root.
 from tests.conftest import shared_vespa  # noqa: F401, E402
 from tests.utils.llm_config import get_llm_base_url, get_llm_model
-from tests.utils.vespa_test_helpers import shipped_profile
+from tests.utils.vespa_test_helpers import deploy_tenant_schema, shipped_profile
 
 logger = logging.getLogger(__name__)
 
 SCHEMAS_DIR = Path(__file__).resolve().parents[3] / "configs" / "schemas"
+
+# The peer tenant seeded with one profile of its own. Named here so a
+# tenant-scoping test pins the whole advertised set from what was seeded
+# rather than restating it.
+TENANT_B = "tenant_b"
+TENANT_B_PROFILE = BackendProfileConfig(
+    profile_name="tenant_b_profile",
+    type="video",
+    schema_name="video_colpali_smol500_mv_frame",
+    embedding_model="TomoroAI/tomoro-colqwen3-embed-4b",
+)
 
 
 @pytest.fixture(scope="module")
@@ -72,8 +83,6 @@ def vespa_instance(shared_vespa):  # noqa: F811
     BackendRegistry._shared_schema_registry = None
 
     # Pre-deploy the two baseline schemas via SchemaRegistry (merge-safe).
-    from tests.utils.vespa_test_helpers import deploy_tenant_schema
-
     deploy_tenant_schema(
         shared_vespa,
         tenant_id="test:unit",
@@ -212,14 +221,16 @@ def config_manager(vespa_instance):
             tenant_id=_tenant,
         )
 
-    cm.add_backend_profile(
-        BackendProfileConfig(
-            profile_name="tenant_b_profile",
-            type="video",
-            schema_name="video_colpali_smol500_mv_frame",
-            embedding_model="TomoroAI/tomoro-colqwen3-embed-4b",
-        ),
-        tenant_id="tenant_b",
+    cm.add_backend_profile(TENANT_B_PROFILE, tenant_id=TENANT_B)
+    # A profile is servable, and so advertised, only while this tenant's schema
+    # for it is deployed. Deploying through the registry writes the row under
+    # the canonical tenant id the servability read looks up, which a row
+    # written straight to the store under the bare id never matches.
+    deploy_tenant_schema(
+        vespa_instance,
+        tenant_id=TENANT_B,
+        base_schema_name=TENANT_B_PROFILE.schema_name,
+        config_manager=cm,
     )
 
     # Seed SchemaRegistry with the baseline schemas the vespa_instance
@@ -249,7 +260,6 @@ def config_manager(vespa_instance):
             [("test:unit", video_schema), ("test:unit", "agent_memories")]
             + [("test:unit", "video_xclip_sv_chunk_6s")]
             + [(tenant, video_schema) for tenant in _per_test_tenants[1:]]
-            + [("tenant_b", video_schema)]
         )
     ]
     for seed_tenant_id, base_name, schema_filename in baseline_schemas:
