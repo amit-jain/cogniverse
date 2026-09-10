@@ -210,10 +210,15 @@ def test_router_image_pinned_by_digest():
 
 
 def test_router_image_falls_back_to_tag_when_digest_cleared():
-    image = _router_image(
+    # Derived from values.yaml, never a literal: a tag bump would otherwise
+    # have to be restated here, and the copy that drifts is the one nobody
+    # reads.
+    values = yaml.safe_load((CHART_PATH / "values.yaml").read_text())
+    image = values["semanticRouter"]["router"]["image"]
+    fallen_back = _router_image(
         _render("llm.engine=vllm", "semanticRouter.router.image.digest=")
     )
-    assert image.endswith(":latest"), f"expected tag fallback, got {image}"
+    assert fallen_back == f"{image['repository']}:{image['tag']}"
 
 
 def test_router_cold_download_has_thirty_minute_startup_budget():
