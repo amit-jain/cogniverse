@@ -17,7 +17,7 @@ import logging
 from collections import defaultdict
 from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
-from typing import Any, Dict, List, Optional, Tuple
+from typing import Any, Callable, Dict, List, Optional, Tuple
 
 import numpy as np
 import requests
@@ -39,6 +39,7 @@ from cogniverse_agents.graph.graph_schema import (
 )
 from cogniverse_agents.search.vespa_query import vespa_search_children
 from cogniverse_core.common.models.model_loaders import RemoteColBERTLoader
+from cogniverse_core.registries.backend_registry import leased_backend
 from cogniverse_vespa._yql import yql_quote
 from cogniverse_vespa.embedding_processor import VespaEmbeddingProcessor
 
@@ -54,7 +55,7 @@ class GraphManager:
 
     def __init__(
         self,
-        backend: Any,
+        backend_resolver: Callable[[], Any],
         tenant_id: str,
         schema_name: str,
         colbert_endpoint_url: str,
@@ -63,8 +64,11 @@ class GraphManager:
     ) -> None:
         """
         Args:
-            backend: VespaBackend instance (provides the document API +
-                _url/_port); node/edge upsert uses put/get_document_fields.
+            backend_resolver: Zero-arg callable resolving the tenant's
+                backend through BackendRegistry. Resolved and leased per
+                operation, never held: the registry closes what it evicts,
+                overwrites and clears, and a GraphManager built into a
+                process-lived factory closure outlives any one instance.
             tenant_id: Tenant identifier.
             schema_name: Tenant-specific schema name
                          (e.g. "knowledge_graph_acme_production").
@@ -85,7 +89,7 @@ class GraphManager:
                 "the URL explicitly."
             )
 
-        self._backend = backend
+        self._resolve_backend = backend_resolver
         self._tenant_id = tenant_id
         self._schema_name = schema_name
         # One keep-alive session for all graph HTTP — the module-level
@@ -180,10 +184,10 @@ class GraphManager:
         Chen+Ma (AgentIR, arXiv 2410.09713) that exposes signal humans never
         give the retriever. ``trace=""`` falls back to the single-query path.
         """
-        if not self._backend.schema_exists(
-            _GRAPH_BASE_SCHEMA, tenant_id=self._tenant_id
-        ):
-            return []
+        with leased_backend(self._resolve_backend) as backend:
+            if not backend.schema_exists(_GRAPH_BASE_SCHEMA, tenant_id=self._tenant_id):
+                return []
+            search_endpoint = f"{backend._url}:{backend._port}/search/"
 
         effective_query = f"{query} {trace}".strip() if trace else query
         try:
@@ -211,7 +215,7 @@ class GraphManager:
             # the conflicting declarations.
             "model.restrict": self._schema_name,
         }
-        url = f"{self._backend._url}:{self._backend._port}/search/"
+        url = search_endpoint
         # A Vespa-side failure (non-2xx, outage, soft-timeout) surfaces — the
         # YQL-visit fallback is reserved for encoder failures above; cascading
         # a failing Vespa into a second query only masked the degradation.
@@ -409,12 +413,13 @@ class GraphManager:
         backoff = 2.0
         for attempt in range(max_attempts):
             try:
-                self._backend.put_document_fields(
-                    doc_id,
-                    fields,
-                    schema_name=self._schema_name,
-                    namespace=_GRAPH_NAMESPACE,
-                )
+                with leased_backend(self._resolve_backend) as backend:
+                    backend.put_document_fields(
+                        doc_id,
+                        fields,
+                        schema_name=self._schema_name,
+                        namespace=_GRAPH_NAMESPACE,
+                    )
                 return True
             except Exception as exc:
                 body = str(exc)
@@ -461,12 +466,10 @@ class GraphManager:
         dictionary lookup — the Document-v1 visit-with-selection this
         replaces scanned the tenant's whole graph corpus per call.
         """
-        if not self._backend.schema_exists(
-            _GRAPH_BASE_SCHEMA, tenant_id=self._tenant_id
-        ):
-            return []
-
-        url = f"{self._backend._url}:{self._backend._port}"
+        with leased_backend(self._resolve_backend) as backend:
+            if not backend.schema_exists(_GRAPH_BASE_SCHEMA, tenant_id=self._tenant_id):
+                return []
+            url = f"{backend._url}:{backend._port}"
         body = {
             "yql": (
                 f"select * from {self._schema_name} where {' and '.join(conditions)}"
@@ -530,6 +533,7 @@ class GraphManager:
         never mistaken for a missing edge.
         """
         doc_id = f"kg_edge_{_safe_tenant(self._tenant_id)}_{edge_id}"
-        return self._backend.get_document_fields(
-            doc_id, schema_name=self._schema_name, namespace=_GRAPH_NAMESPACE
-        )
+        with leased_backend(self._resolve_backend) as backend:
+            return backend.get_document_fields(
+                doc_id, schema_name=self._schema_name, namespace=_GRAPH_NAMESPACE
+            )

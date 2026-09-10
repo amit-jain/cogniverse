@@ -310,7 +310,11 @@ class TestBackendCaching:
             )
 
         bound = [
-            (call.args[1]["profile"], call.args[1]["schema_name"], call.args[1]["query_encoder"])
+            (
+                call.args[1]["profile"],
+                call.args[1]["schema_name"],
+                call.args[1]["query_encoder"],
+            )
             for call in mock_reg.return_value.get_search_backend.call_args_list
         ]
         assert bound == [

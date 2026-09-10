@@ -162,7 +162,7 @@ async def test_kg_extraction_and_face_pipeline_offloaded(monkeypatch):
 
     mgr = MagicMock()
     mgr.upsert.return_value = {"nodes_upserted": 0, "edges_upserted": 0}
-    mgr._backend = MagicMock()
+    mgr._resolve_backend = lambda: MagicMock()
     graph_router = SimpleNamespace(_graph_manager_factory=lambda t: mgr)
 
     ticks = await _ticks_during(

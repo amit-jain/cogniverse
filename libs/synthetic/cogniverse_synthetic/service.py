@@ -10,10 +10,11 @@ import asyncio
 import logging
 import math
 import threading
-from typing import Any, Dict, List, Optional
+from typing import Any, Callable, Dict, List, Optional
 
 from pydantic import BaseModel
 
+from cogniverse_core.registries.backend_registry import leased_backend
 from cogniverse_foundation.config.unified_config import (
     BackendConfig,
     SyntheticGeneratorConfig,
@@ -86,7 +87,7 @@ class SyntheticDataService:
 
     def __init__(
         self,
-        backend: Backend,
+        backend_resolver: Callable[[], Backend],
         backend_config: BackendConfig,
         generator_config: SyntheticGeneratorConfig,
         agents_config: Dict[str, Any],
@@ -101,7 +102,10 @@ class SyntheticDataService:
         Initialize SyntheticDataService with configuration
 
         Args:
-            backend: Backend interface instance
+            backend_resolver: Zero-arg callable resolving the backend
+                through BackendRegistry, leased per operation. The registry
+                closes what it evicts, overwrites and clears, so a service
+                built once for a process cannot hold an instance.
             backend_config: Backend configuration with profiles
             generator_config: Synthetic generator configuration
             agents_config: Explicit agents section from the active configuration
@@ -113,15 +117,15 @@ class SyntheticDataService:
                 source-grounded labels
             profile_labeler: Production profile-selection call used for labels
         """
-        if backend is None:
-            raise ValueError("backend is required")
+        if backend_resolver is None:
+            raise ValueError("backend_resolver is required")
         if backend_config is None or not backend_config.profiles:
             raise ValueError("backend_config with at least one profile is required")
         if generator_config is None:
             raise ValueError("generator_config is required")
         if agents_config is None:
             raise ValueError("agents_config is required")
-        self.backend = backend
+        self.resolve_backend = backend_resolver
         self.backend_config = backend_config
         self.generator_config = generator_config
         self.agents_config = agents_config
@@ -175,7 +179,7 @@ class SyntheticDataService:
         )
 
         self.backend_querier = BackendQuerier(
-            backend=self.backend,
+            backend_resolver=self.resolve_backend,
             backend_config=self.backend_config,
             field_mappings=field_mappings,
         )
@@ -415,8 +419,9 @@ class SyntheticDataService:
             deployed_profiles = {}
             for profile_name, profile_config in configured_profiles.items():
                 schema_name = profile_config["schema_name"]
-                if self.backend.schema_exists(schema_name, tenant_id=tenant_id):
-                    deployed_profiles[profile_name] = profile_config
+                with leased_backend(self.resolve_backend) as backend:
+                    if backend.schema_exists(schema_name, tenant_id=tenant_id):
+                        deployed_profiles[profile_name] = profile_config
             return deployed_profiles
 
         deployed_profiles = await asyncio.to_thread(find_deployed_profiles)

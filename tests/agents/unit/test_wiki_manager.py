@@ -277,7 +277,7 @@ class TestWikiManagerSchemaValidation:
 
         with pytest.raises(ValueError, match="contains a colon"):
             WikiManager(
-                backend=MagicMock(),
+                backend_resolver=lambda: MagicMock(),
                 tenant_id="acme:production",
                 schema_name="wiki_pages_acme:production",
             )
@@ -286,7 +286,7 @@ class TestWikiManagerSchemaValidation:
         from cogniverse_agents.wiki.wiki_manager import WikiManager
 
         mgr = WikiManager(
-            backend=MagicMock(),
+            backend_resolver=lambda: MagicMock(),
             tenant_id="acme:production",
             schema_name="wiki_pages_acme_production",
         )
@@ -303,7 +303,7 @@ class TestAutoFileThreshold:
 
         backend = MagicMock()
         return WikiManager(
-            backend=backend,
+            backend_resolver=lambda: backend,
             tenant_id="acme:production",
             schema_name="wiki_pages_acme_production",
         )
@@ -339,7 +339,7 @@ class TestSaveSession:
         # every entity takes the create branch (fresh topic, update_count=1).
         backend.get_document_fields.return_value = None
         mgr = WikiManager(
-            backend=backend,
+            backend_resolver=lambda: backend,
             tenant_id="acme:production",
             schema_name="wiki_pages_acme_production",
         )
@@ -422,7 +422,7 @@ class TestSaveSession:
             "created_at": "2026-01-01T00:00:00+00:00",
         }
         mgr = WikiManager(
-            backend=backend,
+            backend_resolver=lambda: backend,
             tenant_id="acme:production",
             schema_name="wiki_pages_acme_production",
         )
@@ -474,7 +474,7 @@ class TestTopicMergeIdempotency:
         from cogniverse_agents.wiki.wiki_manager import WikiManager
 
         return WikiManager(
-            backend=MagicMock(),
+            backend_resolver=lambda: MagicMock(),
             tenant_id="acme:production",
             schema_name="wiki_pages_acme_production",
         )
@@ -545,7 +545,7 @@ class TestTopicCasRetry:
         from cogniverse_agents.wiki.wiki_manager import WikiManager
 
         return WikiManager(
-            backend=MagicMock(),
+            backend_resolver=lambda: MagicMock(),
             tenant_id="acme:production",
             schema_name="wiki_pages_acme_production",
         )
@@ -612,7 +612,7 @@ class TestEmbeddingPromptPrefix:
         backend = MagicMock()
         backend.search.return_value = []
         return WikiManager(
-            backend=backend,
+            backend_resolver=lambda: backend,
             tenant_id="acme:production",
             schema_name="wiki_pages_acme_production",
         )
@@ -719,7 +719,7 @@ class TestWikiLint:
         from cogniverse_agents.wiki.wiki_manager import WikiManager
 
         mgr = WikiManager(
-            backend=MagicMock(),
+            backend_resolver=lambda: MagicMock(),
             tenant_id="acme:production",
             schema_name="wiki_pages_acme_production",
         )
@@ -874,7 +874,7 @@ class TestWikiDelete:
         backend._port = 8080
         backend.search.return_value = []
         return WikiManager(
-            backend=backend,
+            backend_resolver=lambda: backend,
             tenant_id="acme:production",
             schema_name="wiki_pages_acme_production",
         )
@@ -884,7 +884,7 @@ class TestWikiDelete:
         with patch.object(mgr, "_rebuild_index"):
             mgr.delete_page("wiki_topic_acme_production_ml")
 
-        mgr._backend.delete_document_fields.assert_called_once_with(
+        mgr._resolve_backend().delete_document_fields.assert_called_once_with(
             "wiki_topic_acme_production_ml",
             schema_name="wiki_pages_acme_production",
             namespace="wiki_content",
@@ -903,7 +903,7 @@ class TestWikiDelete:
         import pytest
 
         mgr = self._make_manager()
-        mgr._backend.delete_document_fields.side_effect = RuntimeError(
+        mgr._resolve_backend().delete_document_fields.side_effect = RuntimeError(
             "Vespa document delete failed for 'nonexistent_doc' (HTTP 404): Not Found"
         )
         with pytest.raises(RuntimeError, match="404"):
@@ -916,7 +916,7 @@ class TestWikiDelete:
         import pytest
 
         mgr = self._make_manager()
-        mgr._backend.delete_document_fields.side_effect = ConnectionError(
+        mgr._resolve_backend().delete_document_fields.side_effect = ConnectionError(
             "vespa unreachable"
         )
         with pytest.raises(RuntimeError, match="wiki_topic_gone"):
@@ -935,7 +935,9 @@ def test_get_document_http_treats_empty_fields_as_absent():
     backend._url = "http://x"
     backend._port = 8080
     backend.search.return_value = []
-    mgr = WikiManager(backend=backend, tenant_id="t:t", schema_name="wiki_pages_t")
+    mgr = WikiManager(
+        backend_resolver=lambda: backend, tenant_id="t:t", schema_name="wiki_pages_t"
+    )
 
     backend.get_document_fields.return_value = {}
     assert mgr._get_document_http("wiki_topic_missing") is None
@@ -951,7 +953,9 @@ def _wired_manager(backend=None):
         backend = MagicMock()
     backend._url = "http://x"
     backend._port = 8080
-    return WikiManager(backend=backend, tenant_id="t:t", schema_name="wiki_pages_t")
+    return WikiManager(
+        backend_resolver=lambda: backend, tenant_id="t:t", schema_name="wiki_pages_t"
+    )
 
 
 class _PagesResponse:
@@ -1253,7 +1257,7 @@ class TestTopicMergeConcurrency:
 
         backend = _StatefulBackend()
         mgr = WikiManager(
-            backend=backend,
+            backend_resolver=lambda: backend,
             tenant_id="acme:production",
             schema_name="wiki_pages_acme_production",
         )
@@ -1296,7 +1300,7 @@ class TestTopicMergeConcurrency:
         backend = MagicMock()
         backend.schema_exists.return_value = False
         mgr = WikiManager(
-            backend=backend,
+            backend_resolver=lambda: backend,
             tenant_id="acme:production",
             schema_name="wiki_pages_acme_production",
         )
@@ -1320,7 +1324,7 @@ class TestTopicMergeConcurrency:
         backend = MagicMock()
         backend.schema_exists.side_effect = RuntimeError("schema registry offline")
         mgr = WikiManager(
-            backend=backend,
+            backend_resolver=lambda: backend,
             tenant_id="acme:production",
             schema_name="wiki_pages_acme_production",
         )
@@ -1347,7 +1351,7 @@ class TestTopicMergeConcurrency:
 
         backend = MagicMock()
         mgr = WikiManager(
-            backend=backend,
+            backend_resolver=lambda: backend,
             tenant_id="acme:production",
             schema_name="wiki_pages_acme_production",
         )
@@ -1388,7 +1392,7 @@ class TestFedDocumentTimestamps:
         from cogniverse_agents.wiki.wiki_manager import WikiManager
 
         return WikiManager(
-            backend=MagicMock(),
+            backend_resolver=lambda: MagicMock(),
             tenant_id="acme:production",
             schema_name="wiki_pages_acme_production",
         )

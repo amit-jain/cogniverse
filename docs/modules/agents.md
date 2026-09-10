@@ -2854,6 +2854,14 @@ class MemoryAwareMixin:
         ...
 ```
 
+### Wiki and graph backend resolution
+
+`WikiManager(backend_resolver=...)` and `GraphManager(backend_resolver=...)`
+take a zero-arg callable resolving the tenant's backend through
+`BackendRegistry` and lease it per operation; the runtime's factories hand
+down that resolver, so a manager cached for the process never holds an
+instance the registry may close.
+
 ### Document graph extraction
 
 **Location**: `libs/agents/cogniverse_agents/graph/doc_extractor.py`

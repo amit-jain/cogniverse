@@ -62,7 +62,7 @@ def real_runtime_app(vespa_instance, config_manager, schema_loader):
         except Exception:
             pass
         mgr = WikiManager(
-            backend=backend,
+            backend_resolver=lambda: backend,
             tenant_id=tenant_id,
             schema_name=backend.get_tenant_schema_name(tenant_id, "wiki_pages"),
         )

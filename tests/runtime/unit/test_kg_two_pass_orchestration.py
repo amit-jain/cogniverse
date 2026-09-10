@@ -452,7 +452,7 @@ async def test_claim_failure_count_surfaces_on_pipeline_result(monkeypatch):
         "edges_upserted": len(linked.edges),
         "failed_ids": [],
     }
-    mgr._backend = SimpleNamespace()
+    mgr._resolve_backend = lambda: SimpleNamespace()
     graph_router = SimpleNamespace(_graph_manager_factory=lambda t: mgr)
 
     result = await ingestion._extract_graph_per_segment_inner(
@@ -601,7 +601,7 @@ async def test_all_claim_segments_failed_raise(monkeypatch):
         "edges_upserted": 0,
         "failed_ids": [],
     }
-    mgr._backend = SimpleNamespace()
+    mgr._resolve_backend = lambda: SimpleNamespace()
     graph_router = SimpleNamespace(_graph_manager_factory=lambda t: mgr)
 
     with pytest.raises(

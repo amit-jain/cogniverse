@@ -23,6 +23,7 @@ import numpy as np
 import pytest
 
 from cogniverse_agents.search_agent import SearchAgent, SearchAgentDeps
+from cogniverse_agents.wiki.wiki_manager import WikiManager
 from cogniverse_core.memory.backend_vector_store import BackendVectorStore
 from cogniverse_core.registries.backend_registry import BackendRegistry
 from cogniverse_core.schemas.filesystem_loader import FilesystemSchemaLoader
@@ -397,3 +398,120 @@ def test_the_vector_store_keeps_no_backend_attribute(memory_store):
     """The removed holder: Mem0's config carries the resolver, not a client."""
     assert hasattr(memory_store["store"], "backend") is False
     assert callable(memory_store["store"]._resolve_backend) is True
+
+
+# --------------------------------------------------------------------------
+# WikiManager / GraphManager: the runtime resolves one cluster-wide backend at
+# startup and hands it to a factory closure held for the process's life.
+# --------------------------------------------------------------------------
+
+
+def _resolve_wiki_backend(wiki_tenant):
+    def resolve():
+        return BackendRegistry.get_instance().get_ingestion_backend(
+            "vespa",
+            tenant_id=wiki_tenant["tenant_id"],
+            config={
+                "url": "http://localhost",
+                "port": wiki_tenant["http_port"],
+                "config_port": wiki_tenant["config_port"],
+            },
+            config_manager=wiki_tenant["config_manager"],
+            schema_loader=wiki_tenant["schema_loader"],
+        )
+
+    return resolve
+
+
+@pytest.fixture
+def wiki_manager(wiki_tenant):
+    return WikiManager(
+        backend_resolver=_resolve_wiki_backend(wiki_tenant),
+        tenant_id=wiki_tenant["tenant_id"],
+        schema_name=schema_full_name("wiki_pages", wiki_tenant["tenant_id"]),
+    )
+
+
+def test_wiki_manager_serves_after_the_registry_closes_that_instance(
+    wiki_manager, wiki_tenant
+):
+    """Read a page, registry clear (which closes), read the same page back."""
+    resolve = _resolve_wiki_backend(wiki_tenant)
+    resolved = resolve()
+    doc_id = wiki_tenant["doc_id"]
+
+    first = wiki_manager._get_document_http(doc_id)
+    assert (first.id, first.text_content, first.metadata["title"]) == (
+        doc_id,
+        PAGE_TEXT,
+        PAGE_TITLE,
+    )
+
+    BackendRegistry.get_instance().clear_instances()
+
+    with pytest.raises(BackendClosedError) as closed:
+        resolved.get_document_fields(
+            doc_id, schema_name=schema_full_name("wiki_pages", wiki_tenant["tenant_id"])
+        )
+    assert "is closed" in str(closed.value)
+
+    again = wiki_manager._get_document_http(doc_id)
+    assert (again.id, again.text_content, again.metadata["title"]) == (
+        doc_id,
+        PAGE_TEXT,
+        PAGE_TITLE,
+    )
+    assert resolve() is not resolved
+
+
+def test_a_wiki_read_in_flight_is_closed_only_after_it_releases(
+    wiki_manager, wiki_tenant, monkeypatch
+):
+    """Barrier-executed interleaving: clear() lands mid-read."""
+    backend = _resolve_wiki_backend(wiki_tenant)()
+    doc_id = wiki_tenant["doc_id"]
+
+    closed_instances: list[int] = []
+    real_close = type(backend).close
+
+    def counting_close(self):
+        closed_instances.append(id(self))
+        return real_close(self)
+
+    monkeypatch.setattr(type(backend), "close", counting_close, raising=True)
+
+    read_entered = threading.Event()
+    clear_returned = threading.Event()
+    real_get = backend.get_document_fields
+    closes_seen_during_read: list[int] = []
+
+    def barrier_get(*args, **kwargs):
+        read_entered.set()
+        assert clear_returned.wait(30), "the evictor never ran"
+        return real_get(*args, **kwargs)
+
+    monkeypatch.setattr(backend, "get_document_fields", barrier_get, raising=True)
+
+    def evict():
+        assert read_entered.wait(30), "the read never reached the backend"
+        BackendRegistry.get_instance().clear_instances()
+        closes_seen_during_read.extend(closed_instances)
+        clear_returned.set()
+
+    evictor = threading.Thread(target=evict, name="evictor")
+    evictor.start()
+    try:
+        page = wiki_manager._get_document_http(doc_id)
+    finally:
+        evictor.join(30)
+        assert evictor.is_alive() is False
+
+    assert (page.id, page.text_content) == (doc_id, PAGE_TEXT)
+    assert closes_seen_during_read == []
+    assert closed_instances == [id(backend)]
+
+
+def test_the_managers_keep_no_backend_attribute(wiki_manager):
+    """The removed holder: the factory hands a resolver, not an instance."""
+    assert hasattr(wiki_manager, "_backend") is False
+    assert callable(wiki_manager._resolve_backend) is True

@@ -43,7 +43,10 @@ from cogniverse_core.common.models.semantic_embedder import (
 )
 from cogniverse_core.common.tenant_utils import SYSTEM_TENANT_ID
 from cogniverse_core.registries.agent_registry import AgentRegistry
-from cogniverse_core.registries.backend_registry import BackendRegistry
+from cogniverse_core.registries.backend_registry import (
+    BackendRegistry,
+    leased_backend,
+)
 from cogniverse_foundation.config.utils import get_config
 from cogniverse_foundation.telemetry.manager import get_telemetry_manager
 
@@ -105,7 +108,7 @@ _configure_runtime_logging()
 GRAPH_MANAGER_CACHE_CAPACITY = 64
 
 
-def _build_graph_manager_factory(graph_backend, config_manager):
+def _build_graph_manager_factory(resolve_graph_backend, config_manager):
     """Build the per-tenant GraphManager factory used by the graph router.
 
     Extracted from the lifespan so the caching/eviction behavior is
@@ -148,9 +151,10 @@ def _build_graph_manager_factory(graph_backend, config_manager):
         def _build() -> GraphManager:
             if deploy:
                 try:
-                    graph_backend.schema_registry.deploy_schema(
-                        tenant_id=tenant_id, base_schema_name="knowledge_graph"
-                    )
+                    with leased_backend(resolve_graph_backend) as graph_backend:
+                        graph_backend.schema_registry.deploy_schema(
+                            tenant_id=tenant_id, base_schema_name="knowledge_graph"
+                        )
                 except Exception as schema_err:
                     logger.warning(
                         f"Knowledge graph schema deploy for tenant {tenant_id} "
@@ -172,12 +176,14 @@ def _build_graph_manager_factory(graph_backend, config_manager):
                     "knowledge_graph requires gliner in INFERENCE_SERVICE_URLS. "
                     f"Available: {sorted(sys_cfg.inference_service_urls)}"
                 )
-            return GraphManager(
-                backend=graph_backend,
-                tenant_id=tenant_id,
-                schema_name=graph_backend.get_tenant_schema_name(
+            with leased_backend(resolve_graph_backend) as graph_backend:
+                schema_name = graph_backend.get_tenant_schema_name(
                     tenant_id, "knowledge_graph"
-                ),
+                )
+            return GraphManager(
+                backend_resolver=resolve_graph_backend,
+                tenant_id=tenant_id,
+                schema_name=schema_name,
                 colbert_endpoint_url=colbert_url,
                 gliner_inference_url=gliner_url,
             )
@@ -424,7 +430,7 @@ def _configure_library_module_defaults(
     get_telemetry_manager(config_manager, otlp_endpoint=telemetry_otlp_endpoint)
 
 
-def build_wiki_manager_factory(wiki_backend, config, config_manager):
+def build_wiki_manager_factory(resolve_wiki_backend, config, config_manager):
     """Build the per-tenant ``WikiManager`` factory the runtime installs.
 
     Each tenant gets a dedicated ``wiki_pages_<tenant>`` schema. The first
@@ -452,18 +458,21 @@ def build_wiki_manager_factory(wiki_backend, config, config_manager):
             return managers[tenant_id]
 
         try:
-            wiki_backend.schema_registry.deploy_schema(
-                tenant_id=tenant_id, base_schema_name="wiki_pages"
-            )
+            with leased_backend(resolve_wiki_backend) as wiki_backend:
+                wiki_backend.schema_registry.deploy_schema(
+                    tenant_id=tenant_id, base_schema_name="wiki_pages"
+                )
         except Exception as schema_err:
             logger.warning(
                 f"Wiki schema deploy for tenant {tenant_id} skipped: {schema_err}"
             )
 
+        with leased_backend(resolve_wiki_backend) as wiki_backend:
+            schema_name = wiki_backend.get_tenant_schema_name(tenant_id, "wiki_pages")
         mgr = WikiManager(
-            backend=wiki_backend,
+            backend_resolver=resolve_wiki_backend,
             tenant_id=tenant_id,
-            schema_name=wiki_backend.get_tenant_schema_name(tenant_id, "wiki_pages"),
+            schema_name=schema_name,
             llm_endpoint_config=config.get_llm_config().primary,
             config_manager=config_manager,
         )
@@ -1025,18 +1034,19 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
         # The backend handle itself is cluster-wide: one Vespa client used
         # by every tenant's WikiManager. Scope it under SYSTEM_TENANT_ID so
         # the registry key is semantically correct.
-        wiki_backend = BackendRegistry.get_instance().get_ingestion_backend(
-            name=bootstrap.backend_type,
-            tenant_id=SYSTEM_TENANT_ID,
-            config={
-                "backend": {
-                    "url": bootstrap.backend_url,
-                    "port": bootstrap.backend_port,
-                }
-            },
-            config_manager=config_manager,
-            schema_loader=schema_loader,
-        )
+        def resolve_wiki_backend():
+            return BackendRegistry.get_instance().get_ingestion_backend(
+                name=bootstrap.backend_type,
+                tenant_id=SYSTEM_TENANT_ID,
+                config={
+                    "backend": {
+                        "url": bootstrap.backend_url,
+                        "port": bootstrap.backend_port,
+                    }
+                },
+                config_manager=config_manager,
+                schema_loader=schema_loader,
+            )
 
         # Register the "wiki" backend profile (type="wiki") so
         # WikiManager.search can resolve via the shared profile registry.
@@ -1053,7 +1063,7 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
             logger.warning("Wiki profile register failed: %s", exc)
 
         wiki_router.set_wiki_manager_factory(
-            build_wiki_manager_factory(wiki_backend, config, config_manager)
+            build_wiki_manager_factory(resolve_wiki_backend, config, config_manager)
         )
         logger.info("WikiManager factory initialized (per-tenant)")
     except Exception as e:
@@ -1073,21 +1083,22 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
 
         # Cluster-wide backend handle (one Vespa client shared by every
         # tenant's GraphManager). Registry key lives under SYSTEM_TENANT_ID.
-        graph_backend = BackendRegistry.get_instance().get_ingestion_backend(
-            name=bootstrap.backend_type,
-            tenant_id=SYSTEM_TENANT_ID,
-            config={
-                "backend": {
-                    "url": bootstrap.backend_url,
-                    "port": bootstrap.backend_port,
-                }
-            },
-            config_manager=config_manager,
-            schema_loader=schema_loader,
-        )
+        def resolve_graph_backend():
+            return BackendRegistry.get_instance().get_ingestion_backend(
+                name=bootstrap.backend_type,
+                tenant_id=SYSTEM_TENANT_ID,
+                config={
+                    "backend": {
+                        "url": bootstrap.backend_url,
+                        "port": bootstrap.backend_port,
+                    }
+                },
+                config_manager=config_manager,
+                schema_loader=schema_loader,
+            )
 
         graph_router.set_graph_manager_factory(
-            _build_graph_manager_factory(graph_backend, config_manager)
+            _build_graph_manager_factory(resolve_graph_backend, config_manager)
         )
         logger.info("GraphManager factory initialized (per-tenant)")
     except Exception as e:
@@ -1165,15 +1176,19 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
         tenant_id=SYSTEM_TENANT_ID,
         loaded_agent_names=set(agent_registry.list_agents()),
     )
+
     # Wire the search backend and complete configured profile map required by
     # SyntheticDataService so /synthetic/generate samples tenant schemas.
     # Mirrors the optimization CLI's wiring (optimization_cli.py).
-    try:
-        synthetic_backend = BackendRegistry.get_instance().get_search_backend(
+    def resolve_synthetic_backend():
+        return BackendRegistry.get_instance().get_search_backend(
             name=synthetic_runtime_config.backend_config.backend_type,
             config_manager=config_manager,
             schema_loader=schema_loader,
         )
+
+    try:
+        resolve_synthetic_backend()
     except Exception as exc:
         raise RuntimeError(
             "Synthetic backend access failed for "
@@ -1181,7 +1196,7 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
             f"backend={synthetic_runtime_config.backend_config.backend_type!r}: {exc}"
         ) from exc
     configure_synthetic(
-        backend=synthetic_backend,
+        backend_resolver=resolve_synthetic_backend,
         config_manager=config_manager,
         backend_config=synthetic_runtime_config.backend_config,
         generator_config=synthetic_runtime_config.generator_config,

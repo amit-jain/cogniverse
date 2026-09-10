@@ -71,7 +71,7 @@ class _SchemaRecordingBackend:
 
 def _querier(backend, *, profiles=None) -> BackendQuerier:
     return BackendQuerier(
-        backend=backend,
+        backend_resolver=lambda: backend,
         backend_config=BackendConfig(
             profiles=profiles or {},
             tenant_id="test:unit",
@@ -529,7 +529,7 @@ async def test_concurrent_entity_rich_queries_keep_profile_fields_isolated() -> 
 async def test_entity_rich_rejects_missing_required_transcript_mapping() -> None:
     backend = _RecordingBackend([])
     querier = BackendQuerier(
-        backend=backend,
+        backend_resolver=lambda: backend,
         backend_config=BackendConfig(profiles={}, tenant_id="test:unit"),
         field_mappings=FieldMappingConfig(transcript_fields=[]),
     )

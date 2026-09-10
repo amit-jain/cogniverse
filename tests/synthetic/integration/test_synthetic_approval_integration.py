@@ -422,7 +422,7 @@ def synthetic_service(shared_vespa):
         }
 
     service = SyntheticDataService(
-        backend=backend,
+        backend_resolver=lambda: backend,
         generator_config=generator_config,
         backend_config=backend_config,
         agents_config=raw_config["agents"],

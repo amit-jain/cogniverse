@@ -19,7 +19,7 @@ pytestmark = [pytest.mark.unit, pytest.mark.ci_fast]
 
 def _manager(backend):
     mgr = GraphManager.__new__(GraphManager)
-    mgr._backend = backend
+    mgr._resolve_backend = lambda: backend
     mgr._schema_name = "knowledge_graph_acme_acme"
     mgr._tenant_id = "acme:acme"
     # No encoder — nodes ship without embeddings via the encoder-down fallback.

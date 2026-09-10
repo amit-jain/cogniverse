@@ -171,7 +171,7 @@ def qe_service(shared_vespa):
 
     agents_config = json.loads(Path("configs/config.json").read_text())["agents"]
     service = SyntheticDataService(
-        backend=backend,
+        backend_resolver=lambda: backend,
         generator_config=video_synthetic_generator_config(tenant_id),
         backend_config=backend_config,
         agents_config=agents_config,
@@ -270,7 +270,7 @@ async def test_service_reports_dropped_candidate_reason_in_metadata_and_logs(
         }
 
     service = SyntheticDataService(
-        backend=qe_service.service.backend,
+        backend_resolver=lambda: qe_service.service.resolve_backend(),
         generator_config=qe_service.service.generator_config,
         backend_config=qe_service.service.backend_config,
         agents_config=qe_service.agents_config,
@@ -331,7 +331,7 @@ async def test_real_lm_query_agent_labels_grounded_terms(
         )
 
     service = SyntheticDataService(
-        backend=qe_service.service.backend,
+        backend_resolver=lambda: qe_service.service.resolve_backend(),
         generator_config=qe_service.service.generator_config,
         backend_config=qe_service.service.backend_config,
         agents_config=qe_service.agents_config,

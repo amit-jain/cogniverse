@@ -12,7 +12,11 @@ The Synthetic module provides **training data generation** for DSPy optimizers:
 - **Validated Generation**: Uses production agent outputs for entity extraction,
   query enhancement, profile selection, and routing, plus source-grounded local
   workflow plans
-- **Backend-Agnostic Sampling**: Works with any backend implementing the Backend interface
+- **Backend-Agnostic Sampling**: Works with any backend implementing the Backend
+  interface. `SyntheticDataService` and `BackendQuerier` take a
+  `backend_resolver` callable, not an instance, and lease per query — the
+  registry closes what it evicts, so a service built once for a process
+  cannot hold one.
 - **Optimizer Support**: Generates data for all seven registered optimizers — `query_enhancement`, `entity_extraction`, `profile`, `routing`, `workflow`, `unified`, and `cross_modal`
 - **REST API**: FastAPI router for HTTP endpoints
 - **HITL Approval**: Confidence scoring and rejection-feedback regeneration for human-in-the-loop review

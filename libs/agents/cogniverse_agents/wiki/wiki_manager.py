@@ -7,7 +7,7 @@ import logging
 import threading
 from concurrent.futures import ThreadPoolExecutor
 from datetime import datetime, timezone
-from typing import TYPE_CHECKING, Any, Dict, List, Optional, Tuple
+from typing import TYPE_CHECKING, Any, Callable, Dict, List, Optional, Tuple
 
 from cogniverse_agents.inference.rlm_inference import RLMInference, route_rlm_endpoint
 from cogniverse_agents.wiki.wiki_schema import (
@@ -16,6 +16,7 @@ from cogniverse_agents.wiki.wiki_schema import (
     generate_slug,
     require_wiki_title,
 )
+from cogniverse_core.registries.backend_registry import leased_backend
 from cogniverse_foundation.config.unified_config import LLMEndpointConfig
 from cogniverse_vespa._yql import yql_quote
 
@@ -57,7 +58,7 @@ class WikiManager:
 
     def __init__(
         self,
-        backend: Any,
+        backend_resolver: Callable[[], Any],
         tenant_id: str,
         schema_name: str,
         llm_endpoint_config: Optional[LLMEndpointConfig] = None,
@@ -65,8 +66,11 @@ class WikiManager:
     ) -> None:
         """
         Args:
-            backend: VespaBackend instance (provides the document API +
-                search); document CRUD uses put/get/delete_document_fields.
+            backend_resolver: Zero-arg callable resolving the tenant's
+                backend through BackendRegistry. Resolved and leased per
+                operation, never held: the registry closes what it evicts,
+                overwrites and clears, and a WikiManager built into a
+                process-lived factory closure outlives any one instance.
             tenant_id: Tenant identifier (e.g. "acme:production").
             schema_name: Vespa schema name for this tenant's wiki pages
                          (e.g. "wiki_pages_acme_production"). Must NOT contain
@@ -89,7 +93,7 @@ class WikiManager:
                 "/document/v1 URL cannot parse it. Pass a sanitized schema "
                 "name (tenant_id's colon already replaced with underscore)."
             )
-        self._backend = backend
+        self._resolve_backend = backend_resolver
         self._tenant_id = tenant_id
         self._schema_name = schema_name
         self._llm_endpoint_config = llm_endpoint_config
@@ -203,16 +207,17 @@ class WikiManager:
         # ``hybrid`` combines closeness(embedding) with bm25(title/content).
         # A backend failure raises — flattening it to [] made an outage
         # indistinguishable from a wiki with no matching pages.
-        results = self._backend.search(
-            {
-                "query": query,
-                "type": "wiki",
-                "top_k": top_k,
-                "tenant_id": self._tenant_id,
-                "strategy": "hybrid",
-                "query_embeddings": query_vec,
-            }
-        )
+        with leased_backend(self._resolve_backend) as backend:
+            results = backend.search(
+                {
+                    "query": query,
+                    "type": "wiki",
+                    "top_k": top_k,
+                    "tenant_id": self._tenant_id,
+                    "strategy": "hybrid",
+                    "query_embeddings": query_vec,
+                }
+            )
 
         out = []
         for r in results:
@@ -366,9 +371,10 @@ class WikiManager:
         Raises RuntimeError if the Vespa DELETE request fails.
         """
         try:
-            self._backend.delete_document_fields(
-                doc_id, schema_name=self._schema_name, namespace=_WIKI_NAMESPACE
-            )
+            with leased_backend(self._resolve_backend) as backend:
+                backend.delete_document_fields(
+                    doc_id, schema_name=self._schema_name, namespace=_WIKI_NAMESPACE
+                )
         except RuntimeError:
             raise
         except Exception as exc:
@@ -495,14 +501,15 @@ class WikiManager:
         successful save.
         """
         doc = self._page_to_fed_document(page, embedding)
-        return self._backend.conditional_put_document(
-            doc,
-            condition=f"{self._schema_name}.update_count=={expected_update_count}",
-            schema_name=self._schema_name,
-            base_schema_name="wiki_pages",
-            namespace=_WIKI_NAMESPACE,
-            create=True,
-        )
+        with leased_backend(self._resolve_backend) as backend:
+            return backend.conditional_put_document(
+                doc,
+                condition=f"{self._schema_name}.update_count=={expected_update_count}",
+                schema_name=self._schema_name,
+                base_schema_name="wiki_pages",
+                namespace=_WIKI_NAMESPACE,
+                create=True,
+            )
 
     def _should_use_rlm_for_merge(self, old_content: str, new_content: str) -> bool:
         """Return True when combined content length exceeds 50,000 characters."""
@@ -550,12 +557,10 @@ class WikiManager:
             vespa_search_post,
         )
 
-        if not self._backend.schema_exists(
-            _WIKI_BASE_SCHEMA, tenant_id=self._tenant_id
-        ):
-            return []
-
-        endpoint = f"{self._backend._url}:{self._backend._port}"
+        with leased_backend(self._resolve_backend) as backend:
+            if not backend.schema_exists(_WIKI_BASE_SCHEMA, tenant_id=self._tenant_id):
+                return []
+            endpoint = f"{backend._url}:{backend._port}"
         body = {
             "yql": (
                 f"select * from {self._schema_name} "
@@ -629,9 +634,10 @@ class WikiManager:
 
         # A backend failure raises — masking it as None turned an outage into
         # "topic missing", which duplicated topics on the next merge.
-        fields = self._backend.get_document_fields(
-            doc_id, schema_name=self._schema_name, namespace=_WIKI_NAMESPACE
-        )
+        with leased_backend(self._resolve_backend) as backend:
+            fields = backend.get_document_fields(
+                doc_id, schema_name=self._schema_name, namespace=_WIKI_NAMESPACE
+            )
         if not fields:
             # get returns {} for a doc that exists with no readable fields —
             # treat that as absent, not a phantom empty topic to merge into.

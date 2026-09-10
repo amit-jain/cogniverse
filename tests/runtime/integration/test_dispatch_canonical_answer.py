@@ -211,7 +211,7 @@ class TestWikiAutoFileReadsTheAnswer:
 
         backend = _RecordingBackend()
         manager = WikiManager(
-            backend=backend,
+            backend_resolver=lambda: backend,
             tenant_id=TENANT,
             schema_name="wiki_pages_acme_acme",
         )
@@ -260,7 +260,7 @@ class TestWikiAutoFileReadsTheAnswer:
 
         backend = _RecordingBackend()
         manager = WikiManager(
-            backend=backend,
+            backend_resolver=lambda: backend,
             tenant_id=TENANT,
             schema_name="wiki_pages_acme_acme",
         )

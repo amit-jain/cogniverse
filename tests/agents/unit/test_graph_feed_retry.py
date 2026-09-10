@@ -20,7 +20,7 @@ pytestmark = [pytest.mark.unit, pytest.mark.ci_fast]
 
 def _manager(backend):
     mgr = GraphManager.__new__(GraphManager)
-    mgr._backend = backend
+    mgr._resolve_backend = lambda: backend
     mgr._schema_name = "knowledge_graph_acme"
     mgr._tenant_id = "acme:acme"
     return mgr

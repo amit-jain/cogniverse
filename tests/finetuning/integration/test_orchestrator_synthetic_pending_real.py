@@ -195,7 +195,7 @@ async def test_run_reports_pending_approval_not_failure(
         return result
 
     synthetic_service = SyntheticDataService(
-        backend=backend,
+        backend_resolver=lambda: backend,
         generator_config=video_synthetic_generator_config(tenant_id),
         backend_config=backend_config,
         agents_config=json.loads(Path("configs/config.json").read_text())["agents"],
