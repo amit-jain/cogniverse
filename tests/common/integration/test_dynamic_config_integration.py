@@ -36,7 +36,7 @@ class TestDynamicConfigIntegration:
         from fastapi import FastAPI
 
         fresh_app = FastAPI()
-        with patch("dspy.LM"):
+        with patch("cogniverse_foundation.config.body_bounded_lm.BodyBoundedLM"):
             agent = TextAnalysisAgent(
                 tenant_id="test_tenant", config_manager=config_manager
             )

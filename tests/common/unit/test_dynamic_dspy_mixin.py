@@ -109,7 +109,9 @@ class TestDynamicDSPyMixin:
         populates BARE. litellm needs an explicit provider, so the mixin
         prefixes it — ``gpt-4`` → ``openai/gpt-4``.
         """
-        with patch("dspy.LM") as mock_lm:
+        with patch(
+            "cogniverse_foundation.config.body_bounded_lm.BodyBoundedLM"
+        ) as mock_lm:
             _MixinAgent(agent_config)
 
             mock_lm.assert_called_once()
@@ -126,7 +128,9 @@ class TestDynamicDSPyMixin:
         # Own the no-key state: with a key in the environment the agent
         # correctly uses it, and this assertion would read that instead.
         monkeypatch.delenv("COGNIVERSE_INFERENCE_API_KEY", raising=False)
-        with patch("dspy.LM") as mock_lm:
+        with patch(
+            "cogniverse_foundation.config.body_bounded_lm.BodyBoundedLM"
+        ) as mock_lm:
             _MixinAgent(agent_config)
 
             assert mock_lm.call_args[0][0] == "openai/gemma3:4b"
@@ -154,7 +158,9 @@ class TestDynamicDSPyMixin:
         )
         agent = _MixinAgent.__new__(_MixinAgent)
         agent.system_config = sysconf
-        with patch("dspy.LM") as mock_lm:
+        with patch(
+            "cogniverse_foundation.config.body_bounded_lm.BodyBoundedLM"
+        ) as mock_lm:
             agent.initialize_dynamic_dspy(agent_config)
 
             assert mock_lm.call_args[0][0] == "openai/google/gemma-4-e4b-it"
@@ -622,7 +628,9 @@ class TestActiveAdapterRouting:
         )
 
     def test_lm_routes_to_active_adapter_model(self):
-        with patch("dspy.LM") as mock_lm:
+        with patch(
+            "cogniverse_foundation.config.body_bounded_lm.BodyBoundedLM"
+        ) as mock_lm:
             agent = _AdapterRoutingAgent(self._config(), adapter_model="entity_sft_v3")
             # LM model routed to the adapter's served name (provider-prefixed).
             assert mock_lm.call_args[0][0] == "openai/entity_sft_v3"
@@ -632,6 +640,8 @@ class TestActiveAdapterRouting:
             assert agent._dspy_lm is mock_lm.return_value
 
     def test_lm_stays_on_base_model_without_adapter(self):
-        with patch("dspy.LM") as mock_lm:
+        with patch(
+            "cogniverse_foundation.config.body_bounded_lm.BodyBoundedLM"
+        ) as mock_lm:
             _AdapterRoutingAgent(self._config(), adapter_model=None)
             assert mock_lm.call_args[0][0] == "openai/gpt-4"

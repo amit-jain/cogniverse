@@ -105,7 +105,7 @@ class TestConfigAPIMixin:
     @pytest.fixture
     def client(self, agent_config, app, config_manager):
         """Create test client with agent"""
-        with patch("dspy.LM"):
+        with patch("cogniverse_foundation.config.body_bounded_lm.BodyBoundedLM"):
             agent = ConfigurableAgent(agent_config, app, config_manager)
             agent.register_signature("test_sig", ExampleSignature)
         return TestClient(app)
@@ -165,7 +165,7 @@ class TestConfigAPIMixin:
         self, agent_config_with_optimizer, app, config_manager
     ):
         """Test GET /config/optimizer endpoint returns optimizer info"""
-        with patch("dspy.LM"):
+        with patch("cogniverse_foundation.config.body_bounded_lm.BodyBoundedLM"):
             agent = ConfigurableAgent(agent_config_with_optimizer, app, config_manager)
             agent.register_signature("test_sig", ExampleSignature)
 
@@ -217,7 +217,7 @@ class TestConfigAPIMixin:
 
     def test_post_llm_config_update_model(self, agent_config, app, config_manager):
         """Test POST /config/llm updates LLM model"""
-        with patch("dspy.LM"):
+        with patch("cogniverse_foundation.config.body_bounded_lm.BodyBoundedLM"):
             agent = ConfigurableAgent(agent_config, app, config_manager)
             agent.register_signature("test_sig", ExampleSignature)
 
@@ -240,7 +240,7 @@ class TestConfigAPIMixin:
 
     def test_post_llm_config_update_base_url(self, agent_config, app, config_manager):
         """Test POST /config/llm updates base URL"""
-        with patch("dspy.LM"):
+        with patch("cogniverse_foundation.config.body_bounded_lm.BodyBoundedLM"):
             agent = ConfigurableAgent(agent_config, app, config_manager)
             agent.register_signature("test_sig", ExampleSignature)
 
@@ -290,7 +290,7 @@ class TestConfigAPIMixin:
 
     def test_post_module_config_clears_cache(self, agent_config, app, config_manager):
         """Test updating module config clears cached modules"""
-        with patch("dspy.LM"):
+        with patch("cogniverse_foundation.config.body_bounded_lm.BodyBoundedLM"):
             agent = ConfigurableAgent(agent_config, app, config_manager)
             agent.register_signature("test_sig", ExampleSignature)
 
@@ -347,7 +347,7 @@ def _api_agent_config():
 def test_module_persistence_failure_restores_in_memory_config():
     app = FastAPI()
     manager = ConfigManager(store=_FailingSetStore())
-    with patch("dspy.LM"):
+    with patch("cogniverse_foundation.config.body_bounded_lm.BodyBoundedLM"):
         agent = ConfigurableAgent(_api_agent_config(), app, manager, tenant_id="acme")
         agent.register_signature("test_sig", ExampleSignature)
         agent.create_module("test_sig")
@@ -373,7 +373,7 @@ async def test_module_persistence_runs_off_event_loop():
     app = FastAPI()
     store = _TrackingSetStore()
     manager = ConfigManager(store=store)
-    with patch("dspy.LM"):
+    with patch("cogniverse_foundation.config.body_bounded_lm.BodyBoundedLM"):
         agent = ConfigurableAgent(_api_agent_config(), app, manager, tenant_id="acme")
         agent.register_signature("test_sig", ExampleSignature)
     event_loop_thread = threading.get_ident()

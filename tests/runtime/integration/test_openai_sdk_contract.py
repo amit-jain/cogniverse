@@ -23,6 +23,7 @@ import pytest
 from fastapi import FastAPI
 from pydantic import BaseModel
 
+from cogniverse_core.agents.base import ConfigManagerAware
 from cogniverse_core.common.agent_models import AgentEndpoint
 from cogniverse_core.registries.agent_registry import AgentRegistry
 from cogniverse_foundation.config.manager import ConfigManager
@@ -96,7 +97,7 @@ class SdkEchoOutput(BaseModel):
     continuation_state: dict = {}
 
 
-class SdkEchoAgent:
+class SdkEchoAgent(ConfigManagerAware):
     """Deterministic dual-loop agent with a fixed tool-call id.
 
     A turn carrying results answers from them; a turn that was handed tool
