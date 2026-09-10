@@ -36,10 +36,6 @@ class TestRunMonthlyReportsWritesUsageAndPerformanceFiles:
 
         tm.set_config_manager(config_manager)
         tm.set_schema_loader(FilesystemSchemaLoader(Path("configs/schemas")))
-        # get_backend() caches a module-global backend; an instance cached by
-        # an earlier suite would ignore the config manager set above, so drop
-        # it and rebuild against this test's Vespa.
-        tm.backend = None
         backend = tm.get_backend()
 
         org_id = "monthly_rep_org"
@@ -143,9 +139,6 @@ class TestRunMonthlyReportsWritesUsageAndPerformanceFiles:
                 )
             except Exception:
                 pass
-            # Drop the module-global binding this test installed so later
-            # suites build their own backend instead of inheriting this one.
-            tm.backend = None
             tm.set_config_manager(None)
 
     @pytest.mark.asyncio
@@ -165,10 +158,6 @@ class TestRunMonthlyReportsWritesUsageAndPerformanceFiles:
 
         tm.set_config_manager(config_manager)
         tm.set_schema_loader(FilesystemSchemaLoader(Path("configs/schemas")))
-        # get_backend() caches a module-global backend; an instance cached by
-        # an earlier suite would ignore the config manager set above, so drop
-        # it and rebuild against this test's Vespa.
-        tm.backend = None
         backend = tm.get_backend()
 
         org_id = "monthly_rep_fault_org"
@@ -273,7 +262,4 @@ class TestRunMonthlyReportsWritesUsageAndPerformanceFiles:
                 )
             except Exception:
                 pass
-            # Drop the module-global binding this test installed so later
-            # suites build their own backend instead of inheriting this one.
-            tm.backend = None
             tm.set_config_manager(None)

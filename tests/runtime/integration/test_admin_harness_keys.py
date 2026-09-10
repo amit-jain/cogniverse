@@ -380,7 +380,7 @@ async def test_tenant_delete_revokes_before_metadata_removal(
     )
     backend.initialize({"tenant_id": SYSTEM_TENANT_ID})
     backend.schema_manager.backend_port = key_vespa["config_port"]
-    monkeypatch.setattr(tm, "backend", backend)
+    monkeypatch.setattr(tm, "get_backend", lambda: backend)
     monkeypatch.setattr(tm, "_config_manager", cm)
     app = FastAPI()
     app.include_router(tm.router, prefix="/admin")

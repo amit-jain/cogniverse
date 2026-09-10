@@ -30,7 +30,7 @@ async def test_create_tenant_keeps_loop_responsive_during_deploy(monkeypatch):
         create_metadata_document=lambda schema, doc_id, fields: True,
         schema_registry=SimpleNamespace(deploy_schemas=deploy),
     )
-    monkeypatch.setattr(tenant_manager, "backend", fake)
+    monkeypatch.setattr(tenant_manager, "get_backend", lambda: fake)
     bases = ["agent_memories", "provenance", "wiki_pages"]
     creation = asyncio.create_task(
         tenant_manager.create_tenant(
