@@ -88,6 +88,7 @@ flowchart TB
 
     subgraph DspyFiles["<span style='color:#000'><b>dspy/ files</b></span>"]
         LenientAdapter["<span style='color:#000'>lenient_json_adapter.py<br/>LenientJSONAdapter</span>"]
+        StructuredAdapter["<span style='color:#000'>structured_json_adapter.py<br/>StructuredJSONAdapter, signature_response_format</span>"]
         ModelFormat["<span style='color:#000'>model_format.py<br/>bare_model_name, ensure_provider_prefix</span>"]
     end
 
@@ -994,6 +995,26 @@ from cogniverse_foundation.dspy.lenient_json_adapter import LenientJSONAdapter
 import dspy
 
 dspy.configure(adapter=LenientJSONAdapter())
+```
+
+**`StructuredJSONAdapter`** / **`signature_response_format(signature)`**
+(`cogniverse_foundation.dspy.structured_json_adapter`) — a `JSONAdapter`
+subclass that sends the signature's output fields to the server as an OpenAI
+`response_format` of type `json_schema`: every output field required,
+`additionalProperties: false`, `strict: true`. The schema is derived from the
+signature, so guided decoding on an OpenAI-compatible engine (vLLM) can only
+return an object carrying every field. Stock `JSONAdapter` asks for a schema
+only when litellm's registry claims the model supports one and otherwise falls
+back to `{"type": "json_object"}`, which a bare `{}` satisfies; this adapter
+always sends the schema and raises `AdapterParseError` rather than reprompting
+under a second adapter when a server ignores it.
+
+```python
+from cogniverse_foundation.dspy import StructuredJSONAdapter
+import dspy
+
+with dspy.context(adapter=StructuredJSONAdapter()):
+    prediction = module(query="...")
 ```
 
 **`bare_model_name(model)`** / **`ensure_provider_prefix(model, default_provider="openai")`**

@@ -358,6 +358,25 @@ def _dispatched_prompt_overlay(agent: Any, module: Any):
     return _DispatchedPromptOverlayContext(agent, module)
 
 
+def _register_stream_adapter(listener, adapter) -> None:
+    """Teach a StreamListener the field markers of an adapter subclass.
+
+    StreamListener keys support by exact class name and raises on any subclass,
+    so both the ambient adapter and the one a module binds for its own call are
+    registered under their nearest supported ancestor's spec.
+    """
+    if adapter is None:
+        return
+    adapter_name = type(adapter).__name__
+    if adapter_name in listener.adapter_identifiers:
+        return
+    for ancestor in type(adapter).__mro__[1:]:
+        spec = listener.adapter_identifiers.get(ancestor.__name__)
+        if spec is not None:
+            listener.adapter_identifiers[adapter_name] = spec
+            return
+
+
 class AgentBase(ConfigManagerAware, ABC, Generic[InputT, OutputT, DepsT]):
     """
     Generic type-safe agent base class with streaming support.
@@ -590,19 +609,10 @@ class AgentBase(ConfigManagerAware, ABC, Generic[InputT, OutputT, DepsT]):
                 import dspy
 
                 listener = dspy.streaming.StreamListener(output_field)
-                # StreamListener keys adapter support by exact class name and
-                # rejects subclasses (e.g. LenientJSONAdapter); register the
-                # ambient adapter under its nearest supported ancestor's
-                # field markers.
-                adapter = dspy.settings.adapter
-                if adapter is not None:
-                    adapter_name = type(adapter).__name__
-                    if adapter_name not in listener.adapter_identifiers:
-                        for ancestor in type(adapter).__mro__[1:]:
-                            spec = listener.adapter_identifiers.get(ancestor.__name__)
-                            if spec is not None:
-                                listener.adapter_identifiers[adapter_name] = spec
-                                break
+                _register_stream_adapter(listener, dspy.settings.adapter)
+                _register_stream_adapter(
+                    listener, getattr(call_module, "dspy_adapter", None)
+                )
                 streaming_fn = dspy.streamify(
                     call_module,
                     stream_listeners=[listener],
