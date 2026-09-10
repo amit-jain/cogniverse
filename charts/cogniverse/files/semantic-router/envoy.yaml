@@ -22,6 +22,26 @@ static_resources:
               typed_config:
                 "@type": type.googleapis.com/envoy.extensions.filters.network.http_connection_manager.v3.HttpConnectionManager
                 stat_prefix: ingress_http
+                # Every response, including the ones Envoy itself emits (413 on
+                # a buffered body over the limit, 504 on a routing timeout),
+                # names its reason and byte counts in the pod log.
+                access_log:
+                  - name: envoy.access_loggers.stdout
+                    typed_config:
+                      "@type": type.googleapis.com/envoy.extensions.access_loggers.stream.v3.StdoutAccessLog
+                      log_format:
+                        json_format:
+                          ts: "%START_TIME%"
+                          method: "%REQ(:METHOD)%"
+                          path: "%REQ(X-ENVOY-ORIGINAL-PATH?:PATH)%"
+                          status: "%RESPONSE_CODE%"
+                          reason: "%RESPONSE_CODE_DETAILS%"
+                          flags: "%RESPONSE_FLAGS%"
+                          bytes_received: "%BYTES_RECEIVED%"
+                          bytes_sent: "%BYTES_SENT%"
+                          duration_ms: "%DURATION%"
+                          upstream: "%UPSTREAM_HOST%"
+                          request_id: "%REQ(X-REQUEST-ID)%"
                 route_config:
                   name: local_route
                   virtual_hosts:

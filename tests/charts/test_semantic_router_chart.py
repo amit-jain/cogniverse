@@ -544,3 +544,40 @@ class TestUpstreamHostHeader:
         route = _llm_route(_render(f"runtime.primaryLLM.apiBase={self.HTTP}"))
 
         assert "auto_host_rewrite" not in route
+
+
+def _envoy_hcm(docs: list[dict]) -> dict:
+    for d in docs:
+        if (
+            d.get("kind") == "ConfigMap"
+            and d.get("metadata", {}).get("name") == "cogniverse-semantic-router-envoy"
+        ):
+            envoy = yaml.safe_load(d["data"]["envoy.yaml"])
+            listener = envoy["static_resources"]["listeners"][0]
+            return listener["filter_chains"][0]["filters"][0]["typed_config"]
+    raise AssertionError("envoy HCM not found")
+
+
+def test_envoy_access_log_names_the_reason_for_every_local_reply():
+    """A proxy-emitted status (413, 504, 503) is attributable from the pod log
+    alone: the access log carries Envoy's own reason string and both byte
+    counts, so a rejection never has to be reconstructed from the client."""
+    hcm = _envoy_hcm(_render())
+    logs = hcm["access_log"]
+    assert len(logs) == 1, logs
+    typed = logs[0]["typed_config"]
+    assert typed["@type"].endswith("StdoutAccessLog"), typed
+    fields = typed["log_format"]["json_format"]
+    assert fields == {
+        "ts": "%START_TIME%",
+        "method": "%REQ(:METHOD)%",
+        "path": "%REQ(X-ENVOY-ORIGINAL-PATH?:PATH)%",
+        "status": "%RESPONSE_CODE%",
+        "reason": "%RESPONSE_CODE_DETAILS%",
+        "flags": "%RESPONSE_FLAGS%",
+        "bytes_received": "%BYTES_RECEIVED%",
+        "bytes_sent": "%BYTES_SENT%",
+        "duration_ms": "%DURATION%",
+        "upstream": "%UPSTREAM_HOST%",
+        "request_id": "%REQ(X-REQUEST-ID)%",
+    }, fields
