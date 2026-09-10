@@ -193,6 +193,63 @@ class TestSignatureResponseFormat:
             signature_response_format(_NoOutputs)
 
 
+class TestSchemaNameIdentifiesTheSignature:
+    """dspy names a signature built from a string, rebuilt by
+    ``with_instructions()`` or wrapped by ``ChainOfThought``, ``StringSignature``
+    — every one of them. A schema named by that class name identifies nothing,
+    so two signatures in flight are indistinguishable in the engine's log.
+    """
+
+    class _Alpha(dspy.Signature):
+        query: str = dspy.InputField()
+        alpha: str = dspy.OutputField()
+
+    class _Beta(dspy.Signature):
+        query: str = dspy.InputField()
+        beta: str = dspy.OutputField()
+
+    @staticmethod
+    def _name(signature) -> str:
+        return signature_response_format(signature)["json_schema"]["name"]
+
+    def test_two_generic_signatures_get_two_names(self):
+        """Both carry dspy's placeholder class name; the schemas must not."""
+        alpha = dspy.ChainOfThought(self._Alpha).predict.signature
+        beta = dspy.ChainOfThought(self._Beta).predict.signature
+
+        assert alpha.__name__ == beta.__name__ == "StringSignature"
+        assert self._name(alpha) != self._name(beta)
+        assert (self._name(alpha), self._name(beta)) == (
+            "reasoning_alpha_7e6b5bd8",
+            "reasoning_beta_1dff36e1",
+        )
+
+    def test_the_entity_schema_is_named_for_its_own_fields(self):
+        module = EntityExtractionModule()
+
+        name = self._name(module.extractor.predict.signature)
+
+        assert module.extractor.predict.signature.__name__ == "StringSignature"
+        assert name == "reasoning_entities_ef1ba6cf"
+        assert name == self._name(module.extractor.predict.signature)
+
+    def test_a_named_signature_keeps_its_own_name(self):
+        class NamedOutputs(dspy.Signature):
+            query: str = dspy.InputField()
+            answer: str = dspy.OutputField()
+
+        assert self._name(NamedOutputs) == "NamedOutputs"
+
+    def test_the_name_tracks_the_declaration_not_the_instructions(self):
+        """An optimizer rewriting instructions must not rename the schema."""
+        rewritten = self._Alpha.with_instructions("a rewritten instruction")
+
+        assert rewritten.instructions != self._Alpha.instructions
+        assert self._name(rewritten) == self._name(
+            self._Alpha.with_instructions(self._Alpha.instructions)
+        )
+
+
 class TestAdapterName:
     def test_module_binds_the_structured_adapter(self):
         assert isinstance(EntityExtractionModule().dspy_adapter, StructuredJSONAdapter)

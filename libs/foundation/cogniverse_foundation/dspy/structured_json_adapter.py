@@ -14,6 +14,7 @@ field.
 
 from __future__ import annotations
 
+import hashlib
 import re
 from typing import Any
 
@@ -25,9 +26,42 @@ from dspy.signatures.signature import Signature
 
 _NON_SCHEMA_NAME = re.compile(r"[^A-Za-z0-9_-]")
 
+# dspy builds a signature from a string, and rebuilds one under
+# `with_instructions()` or `ChainOfThought`, under these placeholder class
+# names. They identify nothing: every such signature in the process shares
+# one, so the class name cannot name the schema.
+_GENERIC_SIGNATURE_NAMES = frozenset({"Signature", "StringSignature"})
+_SCHEMA_NAME_MAX = 64
+_DIGEST_CHARS = 8
+
+
+def _field_declaration(signature: type[Signature]) -> tuple[str, ...]:
+    """The signature's fields as the schema sees them: name, kind, type."""
+    return tuple(
+        f"{kind}:{name}:{getattr(info.annotation, '__name__', info.annotation)}"
+        for kind, fields in (
+            ("in", signature.input_fields),
+            ("out", signature.output_fields),
+        )
+        for name, info in fields.items()
+    )
+
 
 def _schema_name(signature: type[Signature]) -> str:
-    return _NON_SCHEMA_NAME.sub("_", signature.__name__) or "Output"
+    """A name that identifies THIS signature's schema, never a placeholder.
+
+    Two signatures declaring different fields get different names, so a
+    server-side log of enforced schemas stays readable when several
+    signatures are in flight.
+    """
+    declared = _NON_SCHEMA_NAME.sub("_", signature.__name__)
+    if declared and declared not in _GENERIC_SIGNATURE_NAMES:
+        return declared[:_SCHEMA_NAME_MAX]
+
+    declaration = _field_declaration(signature)
+    digest = hashlib.sha256("|".join(declaration).encode()).hexdigest()[:_DIGEST_CHARS]
+    stem = _NON_SCHEMA_NAME.sub("_", "_".join(signature.output_fields)) or "Output"
+    return f"{stem[: _SCHEMA_NAME_MAX - _DIGEST_CHARS - 1]}_{digest}"
 
 
 def _close_objects(schema: dict[str, Any]) -> dict[str, Any]:
