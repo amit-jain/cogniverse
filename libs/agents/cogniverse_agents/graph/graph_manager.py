@@ -119,6 +119,14 @@ class GraphManager:
     # Public API                                                         #
     # ------------------------------------------------------------------ #
 
+    @property
+    def backend_resolver(self) -> Callable[[], Any]:
+        """The zero-arg resolver this manager leases its backend from.
+
+        Callers that write alongside the graph (content back-refs) lease
+        through the same resolver rather than holding a backend."""
+        return self._resolve_backend
+
     def extract_file(
         self, file_path: Path, source_doc_id: str
     ) -> Optional[ExtractionResult]:
