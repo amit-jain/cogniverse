@@ -815,6 +815,54 @@ async def test_entity_extraction_types_subject_of_study_as_technology(
     ] == expected_entities
 
 
+@pytest.mark.requires_lm
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    "adapter",
+    [dspy.ChatAdapter(), LenientJSONAdapter()],
+    ids=["chat-adapter", "served-json-adapter"],
+)
+@pytest.mark.parametrize(
+    ("query", "expected_entities"),
+    [
+        (
+            "pipes running near it",
+            [{"text": "pipes", "type": "CONCEPT"}],
+        ),
+        (
+            "a tall metal fence surrounding the yard",
+            [
+                {"text": "tall metal fence", "type": "CONCEPT"},
+                {"text": "yard", "type": "PLACE"},
+            ],
+        ),
+        (
+            "a wooden crate sitting on the loading dock",
+            [
+                {"text": "wooden crate", "type": "CONCEPT"},
+                {"text": "loading dock", "type": "PLACE"},
+            ],
+        ),
+    ],
+    ids=["participle-only", "pre-modifiers-kept", "participle-with-object"],
+)
+async def test_entity_extraction_stops_spans_at_the_head_noun(
+    query, expected_entities, adapter, dspy_test_lm, real_telemetry
+):
+    agent = EntityExtractionAgent(deps=EntityExtractionDeps())
+    agent.set_telemetry_manager(real_telemetry)
+
+    with dspy.context(adapter=adapter):
+        response = await agent.process(
+            EntityExtractionInput(query=query, tenant_id="test:unit")
+        )
+
+    assert response.path_used == "dspy"
+    assert [
+        {"text": entity.text, "type": entity.type} for entity in response.entities
+    ] == expected_entities
+
+
 @pytest.mark.parametrize(
     (
         "base_schema",

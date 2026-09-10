@@ -41,6 +41,8 @@ Allowed types: CONCEPT, EVENT, ORGANIZATION, PERSON, PLACE, TECHNOLOGY. Only emi
 
 Rules:
 - text must be a verbatim span copied from the query.
+- An entity span is its head noun together with the modifiers that come BEFORE it: adjectives, compound-noun modifiers, and numbers. Copy those with the head noun and drop a leading article.
+- The span ends at the head noun. What follows the head noun is never part of the entity: participial phrases, relative clauses, and prepositional phrases. Extract a noun inside one of those as its own entity instead of extending the preceding span.
 - Use PERSON for role nouns and people such as man, woman, people, biker.
 - Use ORGANIZATION for named organizations or teams.
 - Use CONCEPT for physical things such as barbell, car, disk, pipes, and knife.
@@ -54,7 +56,7 @@ Rules:
 - Always include informational resources such as guides, manuals, and reference material as CONCEPT, even when unnamed.
 - Type each session or resource phrase by its head noun: notes, guide, manual, and handbook are CONCEPT resources even when lecture or workshop modifies them.
 - A query with no session noun and no resource noun has no EVENT entity and no resource entity.
-- Copy the complete noun phrase for each teaching session or informational resource, including all descriptive adjectives and compound-noun modifiers. Exclude leading articles and following prepositional phrases; never shorten a modified phrase to its head noun.
+- Copy the complete noun phrase for each teaching session or informational resource, including all descriptive adjectives and compound-noun modifiers. Exclude leading articles and everything after the head noun; never drop a preceding modifier and emit the bare head noun.
 - A session or resource noun with no modifiers is the entity by itself: copy the bare noun without its article or the phrase after it.
 - Extract named languages, libraries, and frameworks separately as TECHNOLOGY, even when a session or resource phrase mentions them. When the name modifies such a phrase, emit the whole phrase first and the name separately after it.
 - Emit each entity once at its first occurrence in the left-to-right scan. Never group entities by type or put proper names before earlier unnamed entities.
@@ -64,6 +66,12 @@ Rules:
 - Keep each entity on its own line in text|type|confidence format.
 
 Examples:
+
+Query: a cracked stone bench facing the courtyard
+Reasoning: cracked and stone come before the head noun bench, so the span is cracked stone bench, a CONCEPT. facing the courtyard follows the head noun and is not part of it. courtyard is a setting, PLACE.
+Entities:
+cracked stone bench|CONCEPT|0.9
+courtyard|PLACE|0.9
 
 Query: Find a recorded lecture on Matplotlib and a concise manual for Matplotlib
 Reasoning: The first entity is the whole phrase recorded lecture, an EVENT. Matplotlib first appears next and is TECHNOLOGY. The final new entity is the whole phrase concise manual, a CONCEPT. The later Matplotlib mention is a repeat.
@@ -371,11 +379,13 @@ class TestEntityExtractionModule:
         assert module.extractor.predict.signature.output_fields[
             "reasoning"
         ].json_schema_extra["desc"] == (
-            "Identify complete entity spans before assigning types. Keep each "
-            "noun phrase's modifiers attached to its head, never as separate "
-            "entities. Walk these spans in order of first appearance and copy "
-            "that sequence into entities. Ignore later occurrences of an already "
-            "listed entity."
+            "Identify complete entity spans before assigning types. Keep the "
+            "modifiers that precede a head noun attached to it, never as "
+            "separate entities, and end the span at the head noun: a "
+            "participial phrase, relative clause or prepositional phrase after "
+            "it belongs to no entity. Walk these spans in order of first "
+            "appearance and copy that sequence into entities. Ignore later "
+            "occurrences of an already listed entity."
         )
 
     def test_module_initialization(self):
