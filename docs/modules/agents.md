@@ -983,11 +983,14 @@ with an object that omits `entities`, and an engine that ignored the schema
 raises `AdapterParseError` instead of yielding a silently empty extraction.
 
 Because any DSPy failure falls through to the GLiNER path, the
-`cogniverse.entity_extraction` span names which failure it was:
+`cogniverse.entity_extraction` span names which failure it was.
 `entity_extraction.fallback_reason` is `schema_refused` when an
-`AdapterParseError` appears anywhere in the cause chain and `lm_unavailable`
-otherwise, with the exception in `entity_extraction.fallback_error`. A span
-that served the DSPy answer carries neither attribute.
+`AdapterParseError` appears anywhere in the cause chain,
+`request_rejected:<status>` when an exception in that chain carries a 4xx
+`status_code` (the engine refused the request — a body it would not accept, a
+credential, a quota), and `lm_unavailable` otherwise. The exception is in
+`entity_extraction.fallback_error`. A span that served the DSPy answer carries
+neither attribute.
 
 **Key Capabilities**:
 
