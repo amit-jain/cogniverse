@@ -1365,7 +1365,7 @@ class TestWorkflowGeneratorIntegration:
 
         added = await intelligence.generate_synthetic_training_data(
             count=1,
-            backend=object(),
+            backend_resolver=object,
             backend_config={"profiles": {"video_xclip_sv_chunk_6s": {}}},
             generator_config=object(),
             agents_config=CONFIGURED_AGENTS,
@@ -1447,7 +1447,7 @@ class TestWorkflowGeneratorIntegration:
         ):
             await intelligence.generate_synthetic_training_data(
                 count=4,
-                backend=object(),
+                backend_resolver=object,
                 backend_config={"profiles": {"video_xclip_sv_chunk_6s": {}}},
                 generator_config=object(),
                 agents_config=CONFIGURED_AGENTS,
@@ -1520,7 +1520,7 @@ class TestWorkflowGeneratorIntegration:
         with pytest.raises(TimeoutError, match="template blob store timed out"):
             await intelligence.generate_synthetic_training_data(
                 count=2,
-                backend=object(),
+                backend_resolver=object,
                 backend_config={"profiles": {"video_xclip_sv_chunk_6s": {}}},
                 generator_config=object(),
                 agents_config=CONFIGURED_AGENTS,
@@ -1592,7 +1592,7 @@ class TestWorkflowGeneratorIntegration:
         intelligence._store = store
         call = {
             "count": 2,
-            "backend": object(),
+            "backend_resolver": object,
             "backend_config": {"profiles": {"video_xclip_sv_chunk_6s": {}}},
             "generator_config": object(),
             "agents_config": CONFIGURED_AGENTS,
