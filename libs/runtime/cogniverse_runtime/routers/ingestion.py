@@ -4,7 +4,7 @@ import asyncio
 import logging
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Any, Dict, Iterator, List, Optional
+from typing import Any, Callable, Dict, Iterator, List, Optional
 
 from fastapi import (
     APIRouter,
@@ -29,7 +29,7 @@ from cogniverse_agents.graph.graph_schema import (
     Mention,
 )
 from cogniverse_core.common.tenant_utils import assert_tenant_exists, require_tenant_id
-from cogniverse_core.registries.backend_registry import BackendRegistry
+from cogniverse_core.registries.backend_registry import BackendRegistry, leased_backend
 from cogniverse_foundation.config.manager import ConfigManager
 from cogniverse_sdk.interfaces.schema_loader import SchemaLoader
 
@@ -995,7 +995,7 @@ async def _extract_graph_per_segment_inner(
         source_doc_id=source_doc_id,
         tenant_id=tenant_id,
         config_manager=config_manager,
-        backend=mgr._backend,
+        backend_resolver=mgr.backend_resolver,
     )
 
     return {
@@ -1156,7 +1156,7 @@ async def _write_backrefs_to_content(
     source_doc_id: str,
     tenant_id: str,
     config_manager: ConfigManager,
-    backend: Any,
+    backend_resolver: Callable[[], Any],
 ) -> None:
     """PATCH ``entity_ids`` / ``relation_ids`` / ``claim_ids`` onto content docs.
 
@@ -1242,79 +1242,80 @@ async def _write_backrefs_to_content(
 
     # Prime the backend's persistent session once (single-threaded) so the
     # concurrent to_thread updates below reuse it without racing its lazy init.
-    backend._metadata_vespa_app()
-    semaphore = asyncio.Semaphore(8)
+    with leased_backend(backend_resolver) as backend:
+        backend._metadata_vespa_app()
+        semaphore = asyncio.Semaphore(8)
 
-    async def _patch(segment_id: str, schema: str, doc_id: str) -> bool:
-        """Patch one content doc's back-refs. Returns True on a BACKEND failure
-        (so the caller can detect a total outage), False otherwise (patched, or
-        a legitimately-missing target)."""
-        backrefs = backrefs_by_segment[segment_id]
-        # Content schemas live under the ``content`` namespace (the embedding
-        # feed writes ``id:content:<schema>::<id>``), not the schema name.
-        # pyvespa's update auto-wraps these plain field values as assigns.
-        fields = {
-            "entity_ids": list(backrefs.get("entity_ids", [])),
-            "relation_ids": list(backrefs.get("relation_ids", [])),
-            "claim_ids": list(backrefs.get("claim_ids", [])),
-        }
-        async with semaphore:
-            try:
-                # Vespa answers an update with create=false on an ABSENT doc
-                # with a plain 200 no-op — a drifted video_id/segment
-                # derivation would silently drop every back-ref. Check the
-                # target exists so drift surfaces in the logs.
-                exists = await asyncio.to_thread(
-                    backend.get_document_fields,
-                    doc_id,
-                    schema_name=schema,
-                    namespace="content",
-                )
-                if exists is None:
-                    logger.warning(
-                        "Content back-ref target missing: %s/%s — "
-                        "entity/relation/claim ids dropped for segment %s",
-                        schema,
+        async def _patch(segment_id: str, schema: str, doc_id: str) -> bool:
+            """Patch one content doc's back-refs. Returns True on a BACKEND failure
+            (so the caller can detect a total outage), False otherwise (patched, or
+            a legitimately-missing target)."""
+            backrefs = backrefs_by_segment[segment_id]
+            # Content schemas live under the ``content`` namespace (the embedding
+            # feed writes ``id:content:<schema>::<id>``), not the schema name.
+            # pyvespa's update auto-wraps these plain field values as assigns.
+            fields = {
+                "entity_ids": list(backrefs.get("entity_ids", [])),
+                "relation_ids": list(backrefs.get("relation_ids", [])),
+                "claim_ids": list(backrefs.get("claim_ids", [])),
+            }
+            async with semaphore:
+                try:
+                    # Vespa answers an update with create=false on an ABSENT doc
+                    # with a plain 200 no-op — a drifted video_id/segment
+                    # derivation would silently drop every back-ref. Check the
+                    # target exists so drift surfaces in the logs.
+                    exists = await asyncio.to_thread(
+                        backend.get_document_fields,
                         doc_id,
-                        segment_id,
+                        schema_name=schema,
+                        namespace="content",
+                    )
+                    if exists is None:
+                        logger.warning(
+                            "Content back-ref target missing: %s/%s — "
+                            "entity/relation/claim ids dropped for segment %s",
+                            schema,
+                            doc_id,
+                            segment_id,
+                        )
+                        return False
+                    await asyncio.to_thread(
+                        backend.update_document_fields,
+                        doc_id,
+                        fields,
+                        schema_name=schema,
+                        namespace="content",
+                        create=False,
                     )
                     return False
-                await asyncio.to_thread(
-                    backend.update_document_fields,
-                    doc_id,
-                    fields,
-                    schema_name=schema,
-                    namespace="content",
-                    create=False,
-                )
-                return False
-            except Exception as exc:  # noqa: BLE001 — one doc's failure must
-                # not abort the rest of the ingest's back-refs.
-                logger.warning(
-                    "Content back-ref update failed for %s/%s: %s",
-                    schema,
-                    doc_id,
-                    exc,
-                )
-                return True
+                except Exception as exc:  # noqa: BLE001 — one doc's failure must
+                    # not abort the rest of the ingest's back-refs.
+                    logger.warning(
+                        "Content back-ref update failed for %s/%s: %s",
+                        schema,
+                        doc_id,
+                        exc,
+                    )
+                    return True
 
-    results = await asyncio.gather(
-        *(
-            _patch(segment_id, schema, doc_id)
-            for segment_id in backrefs_by_segment
-            for schema, doc_id in targets.get(segment_id, [])
+        results = await asyncio.gather(
+            *(
+                _patch(segment_id, schema, doc_id)
+                for segment_id in backrefs_by_segment
+                for schema, doc_id in targets.get(segment_id, [])
+            )
         )
-    )
-    # A single doc's failure is tolerated (partial back-refs), but a total
-    # outage — every patch failing — must surface: otherwise the KG nodes/edges
-    # persist while NO content doc receives its entity/relation/claim ids, and
-    # the ingest is recorded successful, indistinguishable from a clean run.
-    if results and all(results):
-        raise RuntimeError(
-            f"all {len(results)} content back-ref updates failed — the KG "
-            "nodes/edges were persisted but no segment received its "
-            "entity/relation/claim ids (backend outage during back-ref phase)"
-        )
+        # A single doc's failure is tolerated (partial back-refs), but a total
+        # outage — every patch failing — must surface: otherwise the KG nodes/edges
+        # persist while NO content doc receives its entity/relation/claim ids, and
+        # the ingest is recorded successful, indistinguishable from a clean run.
+        if results and all(results):
+            raise RuntimeError(
+                f"all {len(results)} content back-ref updates failed — the KG "
+                "nodes/edges were persisted but no segment received its "
+                "entity/relation/claim ids (backend outage during back-ref phase)"
+            )
 
 
 async def run_ingestion(

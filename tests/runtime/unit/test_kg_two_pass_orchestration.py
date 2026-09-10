@@ -20,6 +20,7 @@ import pytest
 
 from cogniverse_agents.graph.claim_extractor import ClaimExtractor
 from cogniverse_agents.graph.doc_extractor import ClaimExtractionResult, DocExtractor
+from cogniverse_agents.graph.graph_manager import GraphManager
 from cogniverse_agents.graph.graph_schema import (
     CLAIM_SEGMENT_MODALITIES,
     OCR_MODALITY,
@@ -97,6 +98,16 @@ def _record(i: int):
             source_doc_id="doc1",
         ),
     )
+
+
+def _graph_manager_stand_in(backend_resolver):
+    """A stand-in carrying exactly GraphManager's attribute set.
+
+    ``spec`` makes a reach into an attribute the real class lacks raise
+    AttributeError here, as it does in the ingestor."""
+    mgr = MagicMock(spec=GraphManager)
+    type(mgr).backend_resolver = property(lambda self: backend_resolver)
+    return mgr
 
 
 @pytest.mark.asyncio
@@ -244,14 +255,12 @@ async def test_claims_skip_non_transcript_segments_and_keep_entities(
     monkeypatch.setattr(ingestion, "_lookup_face_embed_endpoint", lambda cm: None)
     monkeypatch.setattr(ingestion, "_write_backrefs_to_content", _no_backrefs)
 
-    mgr = SimpleNamespace(
-        upsert=lambda linked: {
-            "nodes_upserted": len(linked.nodes),
-            "edges_upserted": len(linked.edges),
-            "failed_ids": [],
-        },
-        _backend=SimpleNamespace(),
-    )
+    mgr = _graph_manager_stand_in(backend_resolver=lambda: SimpleNamespace())
+    mgr.upsert.side_effect = lambda linked: {
+        "nodes_upserted": len(linked.nodes),
+        "edges_upserted": len(linked.edges),
+        "failed_ids": [],
+    }
     graph_router = SimpleNamespace(_graph_manager_factory=lambda t: mgr)
 
     result = await ingestion._extract_graph_per_segment_inner(
@@ -338,14 +347,12 @@ async def test_claim_pass_prior_pool_is_earlier_segments_entities(monkeypatch):
 
     StubResult = ExtractionResult
 
-    mgr = SimpleNamespace(
-        upsert=lambda linked: {
-            "nodes_upserted": len(linked.nodes),
-            "edges_upserted": 0,
-            "failed_ids": [],
-        },
-        _backend=SimpleNamespace(),
-    )
+    mgr = _graph_manager_stand_in(backend_resolver=lambda: SimpleNamespace())
+    mgr.upsert.side_effect = lambda linked: {
+        "nodes_upserted": len(linked.nodes),
+        "edges_upserted": 0,
+        "failed_ids": [],
+    }
     graph_router = SimpleNamespace(_graph_manager_factory=lambda t: mgr)
 
     result = await ingestion._extract_graph_per_segment_inner(
@@ -446,14 +453,14 @@ async def test_claim_failure_count_surfaces_on_pipeline_result(monkeypatch):
 
     StubResult = ExtractionResult
 
-    mgr = MagicMock()
+    mgr = MagicMock(spec=GraphManager)
     mgr.upsert.side_effect = lambda linked: {
         "nodes_upserted": len(linked.nodes),
         "edges_upserted": len(linked.edges),
         "failed_ids": [],
     }
     _backend = SimpleNamespace()
-    mgr._resolve_backend = lambda: _backend
+    type(mgr).backend_resolver = property(lambda self: lambda: _backend)
     graph_router = SimpleNamespace(_graph_manager_factory=lambda t: mgr)
 
     result = await ingestion._extract_graph_per_segment_inner(
@@ -525,14 +532,12 @@ async def test_entity_pass_failure_settles_siblings(monkeypatch):
 
     StubResult = ExtractionResult
 
-    mgr = SimpleNamespace(
-        upsert=lambda linked: {
-            "nodes_upserted": 0,
-            "edges_upserted": 0,
-            "failed_ids": [],
-        },
-        _backend=SimpleNamespace(),
-    )
+    mgr = _graph_manager_stand_in(backend_resolver=lambda: SimpleNamespace())
+    mgr.upsert.side_effect = lambda linked: {
+        "nodes_upserted": 0,
+        "edges_upserted": 0,
+        "failed_ids": [],
+    }
     graph_router = SimpleNamespace(_graph_manager_factory=lambda t: mgr)
 
     with pytest.raises(RuntimeError, match="total GLiNER outage"):
@@ -596,14 +601,14 @@ async def test_all_claim_segments_failed_raise(monkeypatch):
 
     StubResult = ExtractionResult
 
-    mgr = MagicMock()
+    mgr = MagicMock(spec=GraphManager)
     mgr.upsert.return_value = {
         "nodes_upserted": 0,
         "edges_upserted": 0,
         "failed_ids": [],
     }
     _backend = SimpleNamespace()
-    mgr._resolve_backend = lambda: _backend
+    type(mgr).backend_resolver = property(lambda self: lambda: _backend)
     graph_router = SimpleNamespace(_graph_manager_factory=lambda t: mgr)
 
     with pytest.raises(

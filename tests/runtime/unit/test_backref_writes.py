@@ -54,7 +54,7 @@ async def test_missing_target_warns_and_others_still_write(caplog):
             source_doc_id="vid",
             tenant_id="acme:acme",
             config_manager=_config_manager(),
-            backend=backend,
+            backend_resolver=lambda: backend,
         )
 
     # The existing doc got its back-refs...
@@ -90,7 +90,7 @@ async def test_all_targets_present_writes_all_without_warnings(caplog):
             source_doc_id="vid",
             tenant_id="acme:acme",
             config_manager=_config_manager(),
-            backend=backend,
+            backend_resolver=lambda: backend,
         )
 
     backend.update_document_fields.assert_called_once()
@@ -131,7 +131,7 @@ async def test_total_backend_outage_raises_not_silent_success():
             source_doc_id="vid",
             tenant_id="acme:acme",
             config_manager=_config_manager(),
-            backend=backend,
+            backend_resolver=lambda: backend,
         )
 
 
@@ -156,7 +156,7 @@ async def test_partial_backend_failure_is_tolerated():
         source_doc_id="vid",
         tenant_id="acme:acme",
         config_manager=_config_manager(),
-        backend=backend,
+        backend_resolver=lambda: backend,
     )
     updated = [c.args[0] for c in backend.update_document_fields.call_args_list]
     assert "vid_seg_0" in updated, "the healthy doc must still get its back-refs"
