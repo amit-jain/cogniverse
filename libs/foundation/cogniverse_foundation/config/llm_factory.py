@@ -153,9 +153,9 @@ def dspy_lm_kwargs(config: LLMEndpointConfig) -> dict:
 def create_dspy_lm(config: LLMEndpointConfig) -> dspy.LM:
     """Create a dspy.LM instance from an LLMEndpointConfig."""
 
-    import dspy
+    from cogniverse_foundation.config.body_bounded_lm import BodyBoundedLM
 
-    return dspy.LM(config.model, **dspy_lm_kwargs(config))
+    return BodyBoundedLM(config.model, **dspy_lm_kwargs(config))
 
 
 def create_budgeted_dspy_lm(config: LLMEndpointConfig) -> dspy.LM:

@@ -6,8 +6,7 @@ import logging
 import threading
 from typing import Any
 
-import dspy
-
+from cogniverse_foundation.config.body_bounded_lm import BodyBoundedLM
 from cogniverse_foundation.config.token_budget import (
     ContextWindowUnavailableError,
     FittedPrompt,
@@ -26,7 +25,7 @@ logger = logging.getLogger(__name__)
 _BUDGET_LOCK = threading.Lock()
 
 
-class BudgetedLM(dspy.LM):
+class BudgetedLM(BodyBoundedLM):
     """Fit the assembled prompt to ``context_window - max_tokens`` before sending.
 
     The window is read from the endpoint's ``/v1/models`` on first use and
