@@ -1040,15 +1040,15 @@ class TestBothSearchPathsRewriteTheQueryOnce:
         assert (after_single, lm.calls - after_single) == (1, 1), (
             "one rewrite per search — never one per ensemble leg"
         )
-        rewritten = single["enhanced_query"]
+        rewritten = single["query_rewrite"]["enhanced_query"]
         assert rewritten != REWRITE_QUERY, "the rewrite left the query unchanged"
         assert rewritten == rewritten.strip() != ""
-        assert ensemble["enhanced_query"] == rewritten, (
+        assert ensemble["query_rewrite"]["enhanced_query"] == rewritten, (
             "the profile count must not change which query is searched"
         )
         assert (
-            single["degraded_query_rewrite"],
-            ensemble["degraded_query_rewrite"],
+            single["query_rewrite"]["degraded"],
+            ensemble["query_rewrite"]["degraded"],
         ) == (None, None)
         assert [hit["id"] for hit in single["results"]] == [HARBOUR_ID, BEEKEEPING_ID]
         assert [hit["id"] for hit in ensemble["results"]] == [
@@ -1113,8 +1113,10 @@ class TestBothSearchPathsRewriteTheQueryOnce:
             f"{SHIPPED_GROUNDING_BUDGET_S}s grounding budget"
         )
 
-        assert single["enhanced_query"] != REWRITE_QUERY_SINGLE_COST
-        assert ensemble["enhanced_query"] != REWRITE_QUERY_ENSEMBLE_COST
+        assert single["query_rewrite"]["enhanced_query"] != REWRITE_QUERY_SINGLE_COST
+        assert (
+            ensemble["query_rewrite"]["enhanced_query"] != REWRITE_QUERY_ENSEMBLE_COST
+        )
         assert max(timings.values()) < SHIPPED_GROUNDING_BUDGET_S, (
             f"every path fits the shipped budget: {timings}"
         )

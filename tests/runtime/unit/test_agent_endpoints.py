@@ -250,6 +250,12 @@ class TestGatewayOrchestrationHandoff:
                 {"document_id": "v3"},
             ],
             "profile": "video_colpali_smol500_mv_frame",
+            "profiles": [],
+            "degraded_profiles": [],
+            "query_rewrite": {
+                "enhanced_query": "find videos of cats",
+                "degraded": None,
+            },
             "search_mode": "hybrid",
         }
         dispatcher._execute_downstream_agent = AsyncMock(return_value=downstream_answer)

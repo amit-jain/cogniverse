@@ -39,6 +39,9 @@ SEARCH_RESPONSE_FIELDS = {
     "results_count",
     "results",
     "profile",
+    "profiles",
+    "degraded_profiles",
+    "query_rewrite",
     "search_mode",
 }
 
@@ -46,7 +49,7 @@ SEARCH_RESPONSE_FIELDS = {
 def _assert_search_response(response: dict, query: str) -> None:
     """The dispatcher's search_agent payload: fixed keys (plus the multi-turn
     pair when a conversation history was resolved), count == len(results), and
-    the message templated on the count (the query in it is LM-enhanced)."""
+    the message naming that count and the query the search actually ran."""
     multi_turn = {"original_query", "rewritten_query"}
     assert set(response) - multi_turn == SEARCH_RESPONSE_FIELDS, response
     assert set(response) & multi_turn in (set(), multi_turn), response
@@ -54,19 +57,22 @@ def _assert_search_response(response: dict, query: str) -> None:
         assert response["original_query"] == query, response
     assert response["status"] == "success", response
     assert response["agent"] == "search_agent", response
+    # The rewrite reports here and nowhere else: a top-level enhanced_query is
+    # the inline-routing shape the A2A response does not carry.
+    assert set(response["query_rewrite"]) == {"enhanced_query", "degraded"}, response
     without_answer = {k: v for k, v in response.items() if k != "answer"}
     assert response["answer"] == extract_answer_text(without_answer), response
     assert response["results_count"] == len(response["results"]), response
-    if response["results_count"]:
-        assert re.fullmatch(
-            rf"Found {response['results_count']} results for '.*'",
-            response["message"],
-            flags=re.DOTALL,
-        ), response["message"]
-    else:
-        assert re.fullmatch(
-            r"No results found for '.*'", response["message"], flags=re.DOTALL
-        ), response["message"]
+    # The searched query is the rewrite when one applied, else the query the
+    # history rewriter resolved, else the query as asked.
+    searched = response["query_rewrite"]["enhanced_query"] or response.get(
+        "rewritten_query", query
+    )
+    assert response["message"] == (
+        f"Found {response['results_count']} results for '{searched}'"
+        if response["results_count"]
+        else f"No results found for '{searched}'"
+    ), response
 
 
 def _assert_gateway_response(response: dict, query: str) -> None:
