@@ -123,7 +123,7 @@ class TestFederationReadPath:
         missing_trunk_tenant = org_trunk_tenant_id("lazy_guard")
 
         assert (
-            tenant_mm._backend.schema_exists(
+            tenant_mm._resolve_backend().schema_exists(
                 "agent_memories", tenant_id=missing_trunk_tenant
             )
             is False
