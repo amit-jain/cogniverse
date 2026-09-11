@@ -916,8 +916,7 @@ inferenceStartup:
 # instead. The teacher keeps its key in INFERENCE_SERVICE_URLS and can point at
 # Modal through externalUrl.
 inference:
-  # vLLM-served visual multi-vector retrieval (ColPali family). Replaces
-  # the legacy custom FastAPI sidecar (deploy/colpali). Uses vLLM's
+  # vLLM-served visual multi-vector retrieval (ColPali family). Uses vLLM's
   # token-embed pooling runner to serve TomoroAI/tomoro-colqwen3-embed-4b
   # — a 4B ColQwen3 model with 320-dim per-token output. Profiles route
   # here via ``inference_service: "vllm_colpali"``.

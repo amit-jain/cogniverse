@@ -1734,7 +1734,7 @@ spec:
               {{ . | squote }} \
               {{- end }}
       {{- else if eq $engine "colpali_native" }}
-      # Custom FastAPI sidecar (deploy/colpali) wrapping colpali-engine.
+      # FastAPI sidecar wrapping colpali-engine, from an externally built image.
       # Serves /v1/embeddings with per-token multi-vector arrays — the
       # contract RemoteColPaliLoader requires.
       - name: colpali
