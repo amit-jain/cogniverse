@@ -220,10 +220,11 @@ class TestEntityExtractionAgentIntegration:
             "All entities must have non-empty types"
         )
 
-        # VALIDATE: Confidence scores are valid
+        # The DSPy path served this query, and its output schema carries no score.
+        assert result.path_used == "dspy"
         for entity in result.entities:
-            assert 0.0 <= entity.confidence <= 1.0, (
-                f"Invalid confidence for {entity.text}: {entity.confidence}"
+            assert entity.confidence is None, (
+                f"DSPy-path mention {entity.text!r} carries a score: {entity.confidence}"
             )
 
         # VALIDATE: Context extraction works
