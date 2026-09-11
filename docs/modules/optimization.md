@@ -415,9 +415,12 @@ holdout the run returns `no_eval_material` and persists nothing. The artifact ke
 holdout: `_split_holdout(truth_records, scoreable_predicate=_entity_extraction_is_scoreable,
 holdout_eligible_predicate=_ground_truth_is_holdout_eligible)` splits the tenant's ground-truth rows by
 distinct casefold query, approved synthetic rows stay in train only, unknown `example_id` families
-raise, and `distinct_queries` / `holdout_queries` report the truth rows only. The metric is F1 over
-`(casefold text, type)` pairs parsed from `text|type|confidence` lines; an empty recorded label set
-raises. Bootstrap uses `BootstrapMetricRecorder` with
+raise, and `distinct_queries` / `holdout_queries` report the truth rows only. Each truth or approved
+row becomes `dspy.Example(query, entities=[EntityMention(text, type), ...])` via
+`_entity_extraction_example`, which raises `ValueError` naming the record when an entity's type is
+outside `EntityType`. The metric (`entity_extraction.pair_set_f1.v1`) is F1 over the
+`(casefold stripped text, type)` pairs of the typed mentions (`_entity_extraction_pair_set`); an
+empty recorded label set raises. Bootstrap uses `BootstrapMetricRecorder` with
 `_entity_bootstrap_threshold(...)`, which keeps the bar at `ENTITY_BOOTSTRAP_METRIC_THRESHOLD`
 (1.0) and never below the served module's holdout score. The recorder appends each attempt as a
 JSONL row under `~/.cache/cogniverse/bootstrap_attempts.jsonl`. The entity floor is

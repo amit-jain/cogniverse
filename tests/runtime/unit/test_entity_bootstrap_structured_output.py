@@ -16,7 +16,10 @@ from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 import dspy
 import pytest
 
-from cogniverse_agents.entity_extraction_agent import EntityExtractionModule
+from cogniverse_agents.entity_extraction_agent import (
+    EntityExtractionModule,
+    EntityMention,
+)
 from cogniverse_foundation.config.llm_factory import create_budgeted_dspy_lm
 from cogniverse_foundation.config.unified_config import LLMEndpointConfig
 from cogniverse_foundation.dspy import signature_response_format
@@ -35,13 +38,16 @@ pytestmark = [pytest.mark.unit, pytest.mark.ci_fast]
 TEACHER_MODEL = "Qwen/Qwen3-14B-AWQ"
 QUERY = "What are the people doing behind the car at the beginning of the video?"
 RECORDED_ENTITIES = [
-    {"text": "people", "type": "PERSON", "confidence": 1.0},
-    {"text": "car", "type": "CONCEPT", "confidence": 1.0},
+    {"text": "people", "type": "PERSON"},
+    {"text": "car", "type": "CONCEPT"},
 ]
 SCHEMA_HONOURING_CONTENT = json.dumps(
     {
         "reasoning": "people appears first and is a PERSON; car follows and is a CONCEPT.",
-        "entities": "people|PERSON|1.0\ncar|CONCEPT|1.0",
+        "entities": [
+            {"text": "people", "type": "PERSON"},
+            {"text": "car", "type": "CONCEPT"},
+        ],
     }
 )
 UNCONSTRAINED_CONTENT = "{}"
@@ -247,7 +253,16 @@ class TestEntityBootstrapAgainstAnEmptyObjectTeacher:
         ]
         assert len(demos) == 1
         assert demos[0]["query"] == QUERY
-        assert demos[0]["entities"] == "people|PERSON|1.0\ncar|CONCEPT|1.0"
+        assert demos[0]["entities"] == [
+            EntityMention(text="people", type="PERSON"),
+            EntityMention(text="car", type="CONCEPT"),
+        ]
+        persisted = json.loads(json.dumps(compiled.dump_state(), default=str))
+        assert [
+            demo["entities"]
+            for demo in persisted["extractor.predict"]["demos"]
+            if demo.get("augmented", False)
+        ] == [RECORDED_ENTITIES]
         assert demos[0]["reasoning"] == (
             "people appears first and is a PERSON; car follows and is a CONCEPT."
         )

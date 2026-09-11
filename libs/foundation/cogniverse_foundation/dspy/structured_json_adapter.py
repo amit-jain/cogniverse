@@ -23,6 +23,7 @@ from dspy.adapters.chat_adapter import ChatAdapter
 from dspy.adapters.json_adapter import JSONAdapter
 from dspy.clients.lm import LM
 from dspy.signatures.signature import Signature
+from dspy.utils.exceptions import AdapterParseError
 
 _NON_SCHEMA_NAME = re.compile(r"[^A-Za-z0-9_-]")
 
@@ -118,8 +119,21 @@ class StructuredJSONAdapter(JSONAdapter):
     `JSONAdapter.__call__` rewrites it to `{"type": "json_object"}` for any
     model litellm does not recognise. A parse failure raises rather than
     retrying under a second adapter, so a server that ignored the schema is
-    visible instead of silently reprompted.
+    visible instead of silently reprompted. A value that does not validate
+    against its output field's type raises ``AdapterParseError`` too, the same
+    error as a missing field: both mean the engine answered outside the schema.
     """
+
+    def parse(self, signature: type[Signature], completion: str) -> dict[str, Any]:
+        try:
+            return super().parse(signature, completion)
+        except ValueError as exc:
+            raise AdapterParseError(
+                adapter_name=type(self).__name__,
+                signature=signature,
+                lm_response=completion,
+                message=f"LM response violates the output schema: {exc}",
+            ) from exc
 
     def _schema_kwargs(
         self, lm_kwargs: dict[str, Any], signature: type[Signature]

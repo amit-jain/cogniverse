@@ -10,14 +10,15 @@ Tiered extraction:
 """
 
 import asyncio
+import json
 import logging
-from typing import Any, Dict, List, Optional
+import re
+from typing import Any, Dict, List, Literal, Optional, get_args
 
 import dspy
 from dspy.utils.exceptions import AdapterParseError
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, ConfigDict, Field
 
-from cogniverse_agents._confidence import parse_confidence
 from cogniverse_agents.memory_aware_mixin import MemoryAwareMixin
 from cogniverse_core.agents.a2a_agent import A2AAgent, A2AAgentConfig
 from cogniverse_core.agents.base import AgentDeps, AgentInput, AgentOutput
@@ -45,7 +46,13 @@ class Entity(BaseModel):
             "Entity type: PERSON, ORGANIZATION, CONCEPT, PLACE, EVENT, or TECHNOLOGY"
         )
     )
-    confidence: float = Field(description="Confidence score 0-1")
+    confidence: Optional[float] = Field(
+        default=None,
+        description=(
+            "GLiNER score 0-1 on the fast path; None on the DSPy path, whose "
+            "schema carries no score"
+        ),
+    )
     context: str = Field(default="", description="Surrounding context")
 
 
@@ -108,10 +115,107 @@ class EntityExtractionDeps(AgentDeps):
     )
 
 
-ENTITY_TYPES = frozenset(
-    {"PERSON", "ORGANIZATION", "CONCEPT", "PLACE", "EVENT", "TECHNOLOGY"}
-)
+EntityType = Literal[
+    "CONCEPT", "EVENT", "ORGANIZATION", "PERSON", "PLACE", "TECHNOLOGY"
+]
+
+ENTITY_TYPES = frozenset(get_args(EntityType))
 """The entity types the agent emits; every GLiNER label maps into this set."""
+
+
+class EntityMention(BaseModel):
+    """One entity as the extraction signature's output schema carries it."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    text: str = Field(description="Verbatim span of the query")
+    type: EntityType
+
+
+# (query, reasoning, entities) worked examples rendered into the instructions
+# in the exact shape the schema returns.
+_INSTRUCTION_EXAMPLES: tuple[tuple[str, str, tuple[tuple[str, str], ...]], ...] = (
+    (
+        "a cracked stone bench facing the courtyard",
+        "cracked and stone come before the head noun bench, so the span is "
+        "cracked stone bench, a CONCEPT. facing the courtyard follows the head "
+        "noun and is not part of it. courtyard is a setting, PLACE.",
+        (("cracked stone bench", "CONCEPT"), ("courtyard", "PLACE")),
+    ),
+    (
+        "Find a recorded lecture on Matplotlib and a concise manual for Matplotlib",
+        "The first entity is the whole phrase recorded lecture, an EVENT. "
+        "Matplotlib first appears next and is TECHNOLOGY. The final new entity "
+        "is the whole phrase concise manual, a CONCEPT. The later Matplotlib "
+        "mention is a repeat.",
+        (
+            ("recorded lecture", "EVENT"),
+            ("Matplotlib", "TECHNOLOGY"),
+            ("concise manual", "CONCEPT"),
+        ),
+    ),
+    (
+        "Find a detailed guide to FastAPI and an evening workshop on FastAPI",
+        "The first entity is the whole phrase detailed guide, a CONCEPT. "
+        "FastAPI first appears next and is TECHNOLOGY. The final new entity is "
+        "the whole phrase evening workshop, an EVENT. The later FastAPI mention "
+        "is a repeat.",
+        (
+            ("detailed guide", "CONCEPT"),
+            ("FastAPI", "TECHNOLOGY"),
+            ("evening workshop", "EVENT"),
+        ),
+    ),
+    (
+        "Rust programming with Tokio for async networking",
+        "There is no session noun and no resource noun, so there is no EVENT "
+        "and no resource. Rust is a programming language, TECHNOLOGY; "
+        "programming is an activity word and not part of the entity. Tokio is a "
+        "library, TECHNOLOGY. async networking is a topic, CONCEPT.",
+        (
+            ("Rust", "TECHNOLOGY"),
+            ("Tokio", "TECHNOLOGY"),
+            ("async networking", "CONCEPT"),
+        ),
+    ),
+    (
+        "Find a hands-on workshop on Rust programming and a setup manual for Tokio",
+        "The first entity is the whole phrase hands-on workshop, an EVENT. Rust "
+        "first appears next and is TECHNOLOGY; programming is an activity word "
+        "and not part of the entity. The next new entity is the whole phrase "
+        "setup manual, a CONCEPT. Tokio appears last and is TECHNOLOGY.",
+        (
+            ("hands-on workshop", "EVENT"),
+            ("Rust", "TECHNOLOGY"),
+            ("setup manual", "CONCEPT"),
+            ("Tokio", "TECHNOLOGY"),
+        ),
+    ),
+    (
+        "a manual for Tokio and Rust lecture notes",
+        "manual has no modifiers, so the entity is the bare noun manual, a "
+        "CONCEPT, without its article or the phrase after it. Tokio is "
+        "TECHNOLOGY. Rust lecture notes is a resource phrase whose head noun is "
+        "notes, so it is a CONCEPT even though lecture modifies it; the whole "
+        "phrase comes first and Rust follows separately as TECHNOLOGY.",
+        (
+            ("manual", "CONCEPT"),
+            ("Tokio", "TECHNOLOGY"),
+            ("Rust lecture notes", "CONCEPT"),
+            ("Rust", "TECHNOLOGY"),
+        ),
+    ),
+)
+
+
+def _render_instruction_example(
+    query: str, reasoning: str, entities: tuple[tuple[str, str], ...]
+) -> str:
+    rendered = json.dumps(
+        [{"text": text, "type": entity_type} for text, entity_type in entities],
+        ensure_ascii=False,
+    )
+    return f"Query: {query}\nReasoning: {reasoning}\nEntities: {rendered}"
 
 
 def _build_entity_extraction_signature_instructions() -> str:
@@ -170,74 +274,12 @@ def _build_entity_extraction_signature_instructions() -> str:
         "all its modifiers and that no later source span precedes an earlier one.\n"
         "- Action verbs are never entities.\n"
         '- "the video" is never an entity.\n'
-        "- Keep each entity on its own line in text|type|confidence format.\n"
         "\n"
         "Examples:\n"
         "\n"
-        "Query: a cracked stone bench facing the courtyard\n"
-        "Reasoning: cracked and stone come before the head noun bench, so the "
-        "span is cracked stone bench, a CONCEPT. facing the courtyard follows "
-        "the head noun and is not part of it. courtyard is a setting, PLACE.\n"
-        "Entities:\n"
-        "cracked stone bench|CONCEPT|0.9\n"
-        "courtyard|PLACE|0.9\n"
-        "\n"
-        "Query: Find a recorded lecture on Matplotlib and a concise manual for "
-        "Matplotlib\n"
-        "Reasoning: The first entity is the whole phrase recorded lecture, an "
-        "EVENT. Matplotlib first appears next and is TECHNOLOGY. The final new "
-        "entity is the whole phrase concise manual, a CONCEPT. The later "
-        "Matplotlib mention is a repeat.\n"
-        "Entities:\n"
-        "recorded lecture|EVENT|0.9\n"
-        "Matplotlib|TECHNOLOGY|0.9\n"
-        "concise manual|CONCEPT|0.9\n"
-        "\n"
-        "Query: Find a detailed guide to FastAPI and an evening workshop on "
-        "FastAPI\n"
-        "Reasoning: The first entity is the whole phrase detailed guide, a "
-        "CONCEPT. FastAPI first appears next and is TECHNOLOGY. The final new "
-        "entity is the whole phrase evening workshop, an EVENT. The later "
-        "FastAPI mention is a repeat.\n"
-        "Entities:\n"
-        "detailed guide|CONCEPT|0.9\n"
-        "FastAPI|TECHNOLOGY|0.9\n"
-        "evening workshop|EVENT|0.9\n"
-        "\n"
-        "Query: Rust programming with Tokio for async networking\n"
-        "Reasoning: There is no session noun and no resource noun, so there is "
-        "no EVENT and no resource. Rust is a programming language, TECHNOLOGY; "
-        "programming is an activity word and not part of the entity. Tokio is a "
-        "library, TECHNOLOGY. async networking is a topic, CONCEPT.\n"
-        "Entities:\n"
-        "Rust|TECHNOLOGY|0.9\n"
-        "Tokio|TECHNOLOGY|0.9\n"
-        "async networking|CONCEPT|0.9\n"
-        "\n"
-        "Query: Find a hands-on workshop on Rust programming and a setup manual "
-        "for Tokio\n"
-        "Reasoning: The first entity is the whole phrase hands-on workshop, an "
-        "EVENT. Rust first appears next and is TECHNOLOGY; programming is an "
-        "activity word and not part of the entity. The next new entity is the "
-        "whole phrase setup manual, a CONCEPT. Tokio appears last and is "
-        "TECHNOLOGY.\n"
-        "Entities:\n"
-        "hands-on workshop|EVENT|0.9\n"
-        "Rust|TECHNOLOGY|0.9\n"
-        "setup manual|CONCEPT|0.9\n"
-        "Tokio|TECHNOLOGY|0.9\n"
-        "\n"
-        "Query: a manual for Tokio and Rust lecture notes\n"
-        "Reasoning: manual has no modifiers, so the entity is the bare noun "
-        "manual, a CONCEPT, without its article or the phrase after it. Tokio "
-        "is TECHNOLOGY. Rust lecture notes is a resource phrase whose head noun "
-        "is notes, so it is a CONCEPT even though lecture modifies it; the whole "
-        "phrase comes first and Rust follows separately as TECHNOLOGY.\n"
-        "Entities:\n"
-        "manual|CONCEPT|0.9\n"
-        "Tokio|TECHNOLOGY|0.9\n"
-        "Rust lecture notes|CONCEPT|0.9\n"
-        "Rust|TECHNOLOGY|0.9"
+        + "\n\n".join(
+            _render_instruction_example(*example) for example in _INSTRUCTION_EXAMPLES
+        )
     )
 
 
@@ -258,10 +300,10 @@ class EntityExtractionSignature(dspy.Signature):
     """DSPy signature for entity extraction."""
 
     query: str = dspy.InputField(desc="User query to analyze")
-    entities: str = dspy.OutputField(
+    entities: list[EntityMention] = dspy.OutputField(
         desc=(
-            "Extracted entities in format: text|type|confidence, one per line; "
-            "text must be a verbatim span of the query"
+            "Entities in order of first appearance, each a verbatim query span "
+            "with its type"
         )
     )
 
@@ -802,8 +844,8 @@ class EntityExtractionAgent(
             self.dspy_module, output_field="entities", query=query
         )
 
-        self.emit_progress("parsing", "Parsing extracted entities...")
-        return self._parse_entities(result.entities, query)
+        self.emit_progress("validating", "Validating extracted entities...")
+        return self._validated_entities(result.entities, query)
 
     async def _emit_extraction_span(
         self,
@@ -856,80 +898,50 @@ class EntityExtractionAgent(
                 exc,
             )
 
-    def _parse_entities(self, entities_str: str, query: str) -> List[Entity]:
-        """Parse entities from DSPy output format"""
-        entities: List[Entity] = []
-        seen: set[tuple[str, str]] = set()
-        invalid_count = 0
-        duplicate_count = 0
+    def _validated_entities(
+        self, mentions: List[EntityMention], query: str
+    ) -> List[Entity]:
+        """Served entities from the schema-typed mentions.
 
-        if not entities_str:
-            return entities
-
-        for line in entities_str.strip().split("\n"):
-            line = line.strip()
-            if not line:
+        The schema fixes each mention's keys and type; what it cannot enforce
+        is checked here. A mention whose text is not a span of the query is
+        dropped, the query's own characters stand in for the mention's text,
+        a repeated (text, type) pair keeps its first mention, and the result
+        is ordered by where each span starts, an enclosing span before a
+        shorter one starting at the same place.
+        """
+        spans: Dict[tuple[str, str], tuple[int, int, str, str]] = {}
+        invalid: List[tuple[str, str]] = []
+        for mention in mentions:
+            text = mention.text.strip()
+            match = (
+                re.search(re.escape(text), query, flags=re.IGNORECASE)
+                if entity_is_valid_for_query(text, mention.type, query)
+                else None
+            )
+            if match is None:
+                invalid.append((mention.text, mention.type))
                 continue
+            key = (text.casefold(), mention.type)
+            if key not in spans:
+                spans[key] = (match.start(), -len(text), match.group(0), mention.type)
 
-            parts = line.split("|")
-            if len(parts) >= 2:
-                text = parts[0].strip()
-                entity_type = parts[1].strip()
-                if not entity_is_valid_for_query(text, entity_type, query):
-                    invalid_count += 1
-                    logger.warning(
-                        "Dropping invalid entity text=%r type=%r for query %r",
-                        text,
-                        entity_type,
-                        query,
-                    )
-                    continue
-
-                key = (text.casefold(), entity_type)
-                if key in seen:
-                    duplicate_count += 1
-                    continue
-                seen.add(key)
-
-                # Parse confidence with robust handling of different formats
-                confidence = 0.7  # Default
-                if len(parts) > 2:
-                    confidence_str = parts[2].strip()
-                    # Handle "confidence: 0.95" format
-                    if ":" in confidence_str:
-                        confidence_str = confidence_str.split(":")[-1].strip()
-                    # Handle "(text)" format
-                    if "(" in confidence_str:
-                        confidence_str = confidence_str.split("(")[0].strip()
-                    # Handles floats, "85%", and label words; clamps to [0, 1]
-                    confidence = parse_confidence(confidence_str, default=0.7)
-
-                # Extract context (5 words before/after)
-                context = self._extract_context(text, query)
-
-                entities.append(
-                    Entity(
-                        text=text,
-                        type=entity_type,
-                        confidence=confidence,
-                        context=context,
-                    )
-                )
-
-        if invalid_count:
+        if invalid:
             logger.warning(
-                "Dropped %d invalid entity candidates for query %r",
-                invalid_count,
+                "Dropped %d entity mentions that are not spans of query %r: %r",
+                len(invalid),
                 query,
-            )
-        if duplicate_count:
-            logger.warning(
-                "Dropped %d duplicate entity candidates for query %r",
-                duplicate_count,
-                query,
+                invalid,
             )
 
-        return entities
+        return [
+            Entity(
+                text=text,
+                type=entity_type,
+                context=self._extract_context(text, query),
+            )
+            for _, _, text, entity_type in sorted(spans.values())
+        ]
 
     def _extract_context(self, entity_text: str, query: str) -> str:
         """Extract surrounding context for entity"""

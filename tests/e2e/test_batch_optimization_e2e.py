@@ -31,7 +31,10 @@ from pathlib import Path
 import httpx
 import pytest
 
-from cogniverse_agents.entity_extraction_agent import EntityExtractionModule
+from cogniverse_agents.entity_extraction_agent import (
+    ENTITY_TYPES,
+    EntityExtractionModule,
+)
 from cogniverse_agents.optimizer.artifact_manager import BLOB_VERSION_DECISIONS
 from cogniverse_agents.profile_selection_agent import ProfileSelectionModule
 from cogniverse_agents.query_enhancement_agent import QueryEnhancementModule
@@ -5035,11 +5038,14 @@ class TestEntityExtractionOptimization:
         assert [sorted(demo) for demo in labeled] == [["entities", "query"]] * len(
             labeled
         ), labeled
-        # Demos teach the signature's text|type|confidence lines, the only
-        # form EntityExtractionAgent._parse_entities reads.
+        # Demos carry the signature's typed mentions: exactly text and type,
+        # the type drawn from the vocabulary the output schema enforces.
         assert [
-            all("|" in line for line in demo["entities"].splitlines()) for demo in demos
-        ] == [True] * len(demos), demos
+            [(sorted(item), item["type"] in ENTITY_TYPES) for item in demo["entities"]]
+            for demo in demos
+        ] == [[(["text", "type"], True)] * len(demo["entities"]) for demo in demos], (
+            demos
+        )
         # Every demo is drawn from the population the job trained on: the
         # seeded ground truth plus approved rows. Labeled demos carry that
         # row's entities exactly as production serializes them; bootstrapped
@@ -5054,9 +5060,12 @@ class TestEntityExtractionOptimization:
             demo["query"] for demo in demos
         ]
         assert [demo["entities"] for demo in labeled] == [
-            _entity_extraction_example(
-                {"query": demo["query"], "entities": population[demo["query"]]}
-            ).entities
+            [
+                mention.model_dump()
+                for mention in _entity_extraction_example(
+                    {"query": demo["query"], "entities": population[demo["query"]]}
+                ).entities
+            ]
             for demo in labeled
         ], labeled
 

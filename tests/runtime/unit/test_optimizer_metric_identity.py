@@ -22,6 +22,7 @@ from cogniverse_runtime.optimization_cli import (
     QUERY_ENHANCEMENT_METRIC_ID,
     SHIPPED_CONFIG_PATH,
     _apply_training_selection,
+    _entity_extraction_pair_set,
     _entity_extraction_quality,
     _profile_selection_quality,
     _query_enhancement_quality,
@@ -40,7 +41,10 @@ METRIC_SOURCE_PINS = {
         "a45c42fabb56ba26080a42b257760d91bb1b141861a44ca9f405382fa6ad7a8d"
     ),
     "_entity_extraction_quality": (
-        "5f8a053101ab2c55acbf934c97cb8577a0c171aa00658b73ba1ac0b6b468c55c"
+        "6dbbc464098384b51e3af9bb412b4a6211a94ca2856b92a06a35995fd90e1b12"
+    ),
+    "_entity_extraction_pair_set": (
+        "52480c2f65d72ef05fb54f7db20769f8d1b82a1b5e37e3bab97062df2e40bf6d"
     ),
 }
 
@@ -107,6 +111,7 @@ def test_metric_bodies_are_pinned_to_their_ids():
             _query_enhancement_quality,
             _profile_selection_quality,
             _entity_extraction_quality,
+            _entity_extraction_pair_set,
         )
     }
 

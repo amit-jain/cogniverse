@@ -180,8 +180,8 @@ async def test_real_phoenix_approved_examples_compile_into_actual_dspy_modules(
             {
                 "query": "PyTorch was created by Meta AI in Menlo Park",
                 "entities": [
-                    {"text": "PyTorch", "type": "PRODUCT"},
-                    {"text": "Meta AI", "type": "ORG"},
+                    {"text": "PyTorch", "type": "TECHNOLOGY"},
+                    {"text": "Meta AI", "type": "ORGANIZATION"},
                     {"text": "Menlo Park", "type": "PLACE"},
                 ],
                 "relationships": [
@@ -356,8 +356,8 @@ async def test_generator_output_survives_validation_and_persists(
         return {
             "query": text,
             "entities": [
-                {"text": "PyTorch", "type": "PRODUCT"},
-                {"text": "Meta AI", "type": "ORG"},
+                {"text": "PyTorch", "type": "TECHNOLOGY"},
+                {"text": "Meta AI", "type": "ORGANIZATION"},
                 {"text": "Menlo Park", "type": "PLACE"},
             ],
             "relationships": [

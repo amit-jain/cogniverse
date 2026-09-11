@@ -104,17 +104,24 @@ async def test_entity_extraction_span_yields_training_pair(real_telemetry):
         EntityExtractionAgent,
         EntityExtractionDeps,
         EntityExtractionInput,
+        EntityMention,
     )
 
     tenant_id = "ee-opt-real"
     with patch.object(EntityExtractionAgent, "_initialize_extractors"):
         agent = EntityExtractionAgent(deps=EntityExtractionDeps(), port=19110)
+    from cogniverse_foundation.config.manager import ConfigManager
+    from tests.utils.memory_store import InMemoryConfigStore
+
+    store = InMemoryConfigStore()
+    store.initialize()
+    agent.bind_config_manager(ConfigManager(store=store))
     agent._gliner_extractor = None
     agent._spacy_analyzer = None
     agent.set_telemetry_manager(real_telemetry)
 
     mock_prediction = MagicMock()
-    mock_prediction.entities = "machine learning|CONCEPT|0.9"
+    mock_prediction.entities = [EntityMention(text="machine learning", type="CONCEPT")]
 
     with patch.object(agent, "call_dspy", return_value=mock_prediction):
         await agent.process(
@@ -132,7 +139,14 @@ async def test_entity_extraction_span_yields_training_pair(real_telemetry):
     assert len(pairs) == 1
     assert pairs[0]["query"] == "machine learning tutorials"
     entities = pairs[0]["entities"]
-    assert isinstance(entities, list) and len(entities) >= 1
+    assert entities == [
+        {
+            "text": "machine learning",
+            "type": "CONCEPT",
+            "confidence": None,
+            "context": "machine learning tutorials",
+        }
+    ]
     assert entities[0]["text"] == "machine learning"
     assert entities[0]["type"] == "CONCEPT"
 
