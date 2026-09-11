@@ -48,6 +48,7 @@ from tests.e2e.conftest import (
     RUNTIME,
     TENANT_ID,
     _ensure_sample_content_ingested,
+    optimization_cli_document,
 )
 from tests.e2e.test_api_e2e import DOCUMENT_PROFILE
 
@@ -288,17 +289,8 @@ class TestWorkflowOptimizationPersistence:
         # WorkflowIntelligence builds non-empty per-query-type
         # patterns from many similar queries; from a small test traffic
         # mix we typically get demos but no patterns.
-        json_start = result.stdout.rfind("{")
-        cli_status = None
-        if json_start != -1:
-            try:
-                cli_status = json.loads(result.stdout[json_start:])
-            except json.JSONDecodeError:
-                pass
-        assert cli_status is not None, (
-            f"could not parse JSON status from workflow CLI stdout — "
-            f"the run_workflow_optimization contract is broken or no "
-            f"status was emitted.\n--- stdout (tail) ---\n{result.stdout[-2000:]}"
+        cli_status = optimization_cli_document(
+            result.stdout, operation="workflow optimization"
         )
         if cli_status.get("status") == "no_data":
             pytest.fail(
@@ -312,6 +304,14 @@ class TestWorkflowOptimizationPersistence:
         assert cli_status.get("status") == "success", (
             f"workflow optimizer status != success: {cli_status}"
         )
+        assert sorted(cli_status) == [
+            "agent_profiles_saved",
+            "execution_demos_saved",
+            "spans_found",
+            "status",
+            "workflow_templates_saved",
+            "workflows_extracted",
+        ], cli_status
         assert cli_status.get("spans_found", 0) > 0, (
             f"workflow optimizer reports spans_found=0: {cli_status}"
         )
