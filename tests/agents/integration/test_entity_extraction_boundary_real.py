@@ -266,10 +266,10 @@ async def test_dead_port_lm_falls_back_to_fast_path_and_emits_span(
 
 
 @pytest.mark.asyncio
-async def test_concurrent_requests_stay_on_their_own_queries(entity_agent):
+async def test_concurrent_requests_stay_on_their_own_queries(entity_agent, monkeypatch):
     capture = _telemetry_capture()
     entity_agent.set_telemetry_manager(capture.manager)
-    entity_agent._spacy_analyzer = None
+    monkeypatch.setattr(entity_agent, "_spacy_analyzer", None)
 
     queries = [
         "Barack Obama in Chicago",
