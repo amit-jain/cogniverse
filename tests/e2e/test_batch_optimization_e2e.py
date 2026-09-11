@@ -58,6 +58,7 @@ from tests.e2e.conftest import (
     _evaluation_query_rows,
     expected_gateway_calibration,
     expected_gateway_routing,
+    optimization_cli_document,
     register_tenant_and_wait,
     unique_id,
 )
@@ -2474,31 +2475,9 @@ def _run_batch_job(
             )
         )
 
-    # The CLI prints JSON as the last output via json.dumps().
-    # Log lines may precede it. Find the outermost JSON object.
-    stdout = result.stdout.strip()
-
-    # Try parsing from the last '{' that starts a top-level JSON object.
-    # The CLI outputs a single json.dumps() call at the end.
-    brace_depth = 0
-    json_start = None
-    for i in range(len(stdout) - 1, -1, -1):
-        if stdout[i] == "}":
-            if brace_depth == 0:
-                json_end = i + 1
-            brace_depth += 1
-        elif stdout[i] == "{":
-            brace_depth -= 1
-            if brace_depth == 0:
-                json_start = i
-                break
-
-    if json_start is not None:
-        return json.loads(stdout[json_start:json_end])
-
-    raise ValueError(
-        f"No JSON found in batch job '{mode}' output.\n"
-        f"stdout (last 500 chars): {stdout[-500:]}"
+    return optimization_cli_document(
+        result.stdout,
+        operation=f"batch job mode={mode!r}, tenant_id={tenant_id!r}",
     )
 
 

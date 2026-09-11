@@ -457,6 +457,30 @@ def unique_id(prefix: str = "e2e") -> str:
     return own_tenant(f"{prefix}_{uuid.uuid4().hex[:8]}")
 
 
+def optimization_cli_document(stdout: str, *, operation: str) -> dict:
+    """The one JSON object ``optimization_cli`` prints on stdout.
+
+    The CLI sends every other write to stderr while it runs
+    (``optimization_cli._redirect_stdout_to_stderr``), so stdout is exactly
+    ``json.dumps(result)``. Anything else on it breaks that contract and is
+    raised with the text around the point where the parse stopped.
+    """
+    try:
+        document = json.loads(stdout)
+    except json.JSONDecodeError as exc:
+        raise AssertionError(
+            f"{operation}: stdout is not one JSON document ({exc}); "
+            f"around char {exc.pos}: "
+            f"{stdout[max(0, exc.pos - 200) : exc.pos + 200]!r}"
+        ) from exc
+    if not isinstance(document, dict):
+        raise AssertionError(
+            f"{operation}: stdout is JSON {type(document).__name__}, not an "
+            f"object: {stdout[:400]!r}"
+        )
+    return document
+
+
 # Vespa config-server URL. The e2e suite ASSUMES a k3d cluster with the
 # config-server NodePort-mapped at localhost:33071 (see
 # charts/cogniverse/values.k3s.yaml). Override via VESPA_CONFIG_URL
