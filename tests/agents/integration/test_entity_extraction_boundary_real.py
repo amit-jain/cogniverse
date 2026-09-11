@@ -700,3 +700,87 @@ def test_bootstrap_teacher_answers_inside_the_typed_schema(ensure_host_ollama):
     assert mention_classes == {EntityMention}
     assert len(teacher.history) == CONTRACT_CALLS
     _assert_schema_shaped(_raw_responses(teacher))
+
+
+# Held out of the signature prompt: a university named by a bare acronym
+# after "at". The prompt without the organization rule typed UCLA as PLACE on
+# every one of 10 calls.
+ORGANIZATION_QUERY = "athletes training at UCLA"
+ORGANIZATION_CALLS = 10
+
+
+@pytest.mark.asyncio
+@pytest.mark.requires_teacher_model
+async def test_served_student_types_an_organization_it_happens_at_as_organization(
+    ensure_host_ollama,
+):
+    """The served path on the deployed student: a named organization the
+    action happens at is an ORGANIZATION, never the setting, on every call."""
+    from unittest.mock import patch
+
+    from cogniverse_foundation.config.manager import ConfigManager
+    from tests.utils.memory_store import InMemoryConfigStore
+
+    student, _ = _production_lms()
+    store = InMemoryConfigStore()
+    store.initialize()
+    with patch.object(EntityExtractionAgent, "_initialize_extractors"):
+        agent = EntityExtractionAgent(deps=EntityExtractionDeps(), port=19152)
+    agent.bind_config_manager(ConfigManager(store=store))
+    agent._gliner_extractor = None
+    agent._spacy_analyzer = None
+    agent.set_telemetry_manager(_telemetry_capture().manager)
+
+    async def _one(index: int):
+        try:
+            return await agent._process_impl(
+                EntityExtractionInput(
+                    query=ORGANIZATION_QUERY, tenant_id=f"entity-organization-{index}"
+                )
+            )
+        except Exception as exc:  # recorded, so every call is counted
+            return exc
+
+    with dspy.context(lm=student):
+        results = await asyncio.gather(*(_one(i) for i in range(ORGANIZATION_CALLS)))
+
+    assert [
+        type(result).__name__ for result in results if isinstance(result, Exception)
+    ] == []
+    assert [
+        (result.path_used, [(e.text, e.type) for e in result.entities])
+        for result in results
+    ] == [
+        ("dspy", [("athletes", "PERSON"), ("UCLA", "ORGANIZATION")])
+    ] * ORGANIZATION_CALLS
+    assert len(student.history) == ORGANIZATION_CALLS
+
+
+@pytest.mark.requires_teacher_model
+def test_bootstrap_teacher_types_an_organization_it_happens_at_as_organization(
+    ensure_host_ollama,
+):
+    """The optimizer's teacher, at its production temperature, types the
+    university in the fixed gateway query as ORGANIZATION on every call, so
+    a bootstrapped demo cannot carry it as a PLACE."""
+    _, teacher = _production_lms()
+    query = "Obama speaking at MIT about climate change"
+
+    mit_types = []
+    with dspy.context(lm=teacher):
+        for _ in range(ORGANIZATION_CALLS):
+            try:
+                prediction = EntityExtractionModule()(query=query)
+            except Exception as exc:  # recorded, so every call is counted
+                mit_types.append(type(exc).__name__)
+                continue
+            mit_types.append(
+                [
+                    mention.type
+                    for mention in prediction.entities
+                    if mention.text == "MIT"
+                ]
+            )
+
+    assert mit_types == [["ORGANIZATION"]] * ORGANIZATION_CALLS
+    assert len(teacher.history) == ORGANIZATION_CALLS
