@@ -46,9 +46,9 @@ Rules:
 - An entity span is its head noun together with the modifiers that come BEFORE it: adjectives, compound-noun modifiers, and numbers. Copy those with the head noun and drop a leading article.
 - The span ends at the head noun. What follows the head noun is never part of the entity: participial phrases, relative clauses, and prepositional phrases. Extract a noun inside one of those as its own entity instead of extending the preceding span.
 - Use PERSON for role nouns and people such as man, woman, people, biker.
-- Use ORGANIZATION for named organizations or teams.
+- Use ORGANIZATION for named universities, companies, institutions, teams, and agencies, even when the name is also a place name or follows at, in, or outside.
 - Use CONCEPT for physical things such as barbell, car, disk, pipes, and knife.
-- Use PLACE for settings such as dirt field, kitchen, and pool area.
+- Use PLACE for settings such as dirt field, kitchen, and pool area, and for cities, venues, and a campus or building named as the setting; a named organization is never a setting.
 - Use TECHNOLOGY for camera and screen.
 - Use EVENT for crash.
 - Use TECHNOLOGY for named programming languages, software libraries, frameworks, and tools such as Rust and Matplotlib. Emit the bare name: activity words such as programming, coding, development, and training that follow a name are never part of the entity.
@@ -70,27 +70,31 @@ Examples:
 
 Query: a cracked stone bench facing the courtyard
 Reasoning: cracked and stone come before the head noun bench, so the span is cracked stone bench, a CONCEPT. facing the courtyard follows the head noun and is not part of it. courtyard is a setting, PLACE.
-Entities: [{"text": "cracked stone bench", "type": "CONCEPT"}, {"text": "courtyard", "type": "PLACE"}]
+Entities: [{"text":"cracked stone bench","type":"CONCEPT"},{"text":"courtyard","type":"PLACE"}]
 
 Query: Find a recorded lecture on Matplotlib and a concise manual for Matplotlib
 Reasoning: The first entity is the whole phrase recorded lecture, an EVENT. Matplotlib first appears next and is TECHNOLOGY. The final new entity is the whole phrase concise manual, a CONCEPT. The later Matplotlib mention is a repeat.
-Entities: [{"text": "recorded lecture", "type": "EVENT"}, {"text": "Matplotlib", "type": "TECHNOLOGY"}, {"text": "concise manual", "type": "CONCEPT"}]
+Entities: [{"text":"recorded lecture","type":"EVENT"},{"text":"Matplotlib","type":"TECHNOLOGY"},{"text":"concise manual","type":"CONCEPT"}]
 
 Query: Find a detailed guide to FastAPI and an evening workshop on FastAPI
 Reasoning: The first entity is the whole phrase detailed guide, a CONCEPT. FastAPI first appears next and is TECHNOLOGY. The final new entity is the whole phrase evening workshop, an EVENT. The later FastAPI mention is a repeat.
-Entities: [{"text": "detailed guide", "type": "CONCEPT"}, {"text": "FastAPI", "type": "TECHNOLOGY"}, {"text": "evening workshop", "type": "EVENT"}]
+Entities: [{"text":"detailed guide","type":"CONCEPT"},{"text":"FastAPI","type":"TECHNOLOGY"},{"text":"evening workshop","type":"EVENT"}]
 
 Query: Rust programming with Tokio for async networking
 Reasoning: There is no session noun and no resource noun, so there is no EVENT and no resource. Rust is a programming language, TECHNOLOGY; programming is an activity word and not part of the entity. Tokio is a library, TECHNOLOGY. async networking is a topic, CONCEPT.
-Entities: [{"text": "Rust", "type": "TECHNOLOGY"}, {"text": "Tokio", "type": "TECHNOLOGY"}, {"text": "async networking", "type": "CONCEPT"}]
+Entities: [{"text":"Rust","type":"TECHNOLOGY"},{"text":"Tokio","type":"TECHNOLOGY"},{"text":"async networking","type":"CONCEPT"}]
 
 Query: Find a hands-on workshop on Rust programming and a setup manual for Tokio
 Reasoning: The first entity is the whole phrase hands-on workshop, an EVENT. Rust first appears next and is TECHNOLOGY; programming is an activity word and not part of the entity. The next new entity is the whole phrase setup manual, a CONCEPT. Tokio appears last and is TECHNOLOGY.
-Entities: [{"text": "hands-on workshop", "type": "EVENT"}, {"text": "Rust", "type": "TECHNOLOGY"}, {"text": "setup manual", "type": "CONCEPT"}, {"text": "Tokio", "type": "TECHNOLOGY"}]
+Entities: [{"text":"hands-on workshop","type":"EVENT"},{"text":"Rust","type":"TECHNOLOGY"},{"text":"setup manual","type":"CONCEPT"},{"text":"Tokio","type":"TECHNOLOGY"}]
 
 Query: a manual for Tokio and Rust lecture notes
 Reasoning: manual has no modifiers, so the entity is the bare noun manual, a CONCEPT, without its article or the phrase after it. Tokio is TECHNOLOGY. Rust lecture notes is a resource phrase whose head noun is notes, so it is a CONCEPT even though lecture modifies it; the whole phrase comes first and Rust follows separately as TECHNOLOGY.
-Entities: [{"text": "manual", "type": "CONCEPT"}, {"text": "Tokio", "type": "TECHNOLOGY"}, {"text": "Rust lecture notes", "type": "CONCEPT"}, {"text": "Rust", "type": "TECHNOLOGY"}]"""
+Entities: [{"text":"manual","type":"CONCEPT"},{"text":"Tokio","type":"TECHNOLOGY"},{"text":"Rust lecture notes","type":"CONCEPT"},{"text":"Rust","type":"TECHNOLOGY"}]
+
+Query: interns working at Nokia in Helsinki
+Reasoning: interns is a role noun, PERSON. Nokia is a company, ORGANIZATION, not a setting. Helsinki is a city, PLACE.
+Entities: [{"text":"interns","type":"PERSON"},{"text":"Nokia","type":"ORGANIZATION"},{"text":"Helsinki","type":"PLACE"}]"""
 
 
 PIPE_SIGNATURE_STATE = (
@@ -99,6 +103,12 @@ PIPE_SIGNATURE_STATE = (
     / "entity_extraction_pipe_signature_state.json"
 )
 """The dump_state() the optimizer persisted before entities was typed."""
+
+REPO = pathlib.Path(__file__).resolve().parents[3]
+SHIPPED_CONFIG = REPO / "configs" / "config.json"
+ENTITY_GROUND_TRUTH = (
+    REPO / "tests" / "e2e" / "data" / "entity_extraction_ground_truth.json"
+)
 
 
 def _mention_dicts(*pairs: tuple[str, str]) -> list[dict[str, str]]:
@@ -387,6 +397,45 @@ class TestEntityExtractionModule:
             "appearance and copy that sequence into entities. Ignore later "
             "occurrences of an already listed entity."
         )
+
+    def test_prompt_fits_the_teacher_budget_on_every_committed_truth_row(self):
+        """The optimizer's teacher fits each request into its window minus the
+        completion it reserves, shedding demos first and raising when the
+        signature alone overflows. The demo-less prompt for the longest
+        committed truth query is pinned at its exact cost and must fit."""
+        from cogniverse_foundation.config.token_budget import (
+            TokenBudget,
+            fit_messages,
+            litellm_message_counter,
+        )
+        from cogniverse_foundation.dspy import StructuredJSONAdapter
+
+        teacher = json.loads(SHIPPED_CONFIG.read_text())["llm_config"]["teacher"]
+        budget = TokenBudget(
+            model=teacher["model"],
+            context_window=teacher["context_window"],
+            reserved_output=teacher["max_tokens"],
+        )
+        count = litellm_message_counter(teacher["model"])
+        signature = EntityExtractionModule().extractor.predict.signature
+        adapter = StructuredJSONAdapter()
+        prompts = {
+            row["query"]: adapter.format(
+                signature, demos=[], inputs={"query": row["query"]}
+            )
+            for row in json.loads(ENTITY_GROUND_TRUTH.read_text())
+        }
+        costs = {query: count(messages) for query, messages in prompts.items()}
+        longest = max(costs, key=costs.get)
+
+        assert budget.input_budget == 2048
+        assert (longest, costs[longest]) == (
+            "Can you describe Michal Navratil’s diving maneuvers in detail "
+            "from the provided video description?",
+            1946,
+        )
+        fitted = fit_messages(prompts[longest], budget=budget, count_tokens=count)
+        assert (fitted.input_tokens, fitted.dropped_demos) == (1946, 0)
 
     def test_module_initialization(self):
         """Test EntityExtractionModule initializes correctly"""

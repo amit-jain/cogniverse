@@ -206,6 +206,16 @@ _INSTRUCTION_EXAMPLES: tuple[tuple[str, str, tuple[tuple[str, str], ...]], ...] 
             ("Rust", "TECHNOLOGY"),
         ),
     ),
+    (
+        "interns working at Nokia in Helsinki",
+        "interns is a role noun, PERSON. Nokia is a company, ORGANIZATION, not a "
+        "setting. Helsinki is a city, PLACE.",
+        (
+            ("interns", "PERSON"),
+            ("Nokia", "ORGANIZATION"),
+            ("Helsinki", "PLACE"),
+        ),
+    ),
 )
 
 
@@ -215,6 +225,7 @@ def _render_instruction_example(
     rendered = json.dumps(
         [{"text": text, "type": entity_type} for text, entity_type in entities],
         ensure_ascii=False,
+        separators=(",", ":"),
     )
     return f"Query: {query}\nReasoning: {reasoning}\nEntities: {rendered}"
 
@@ -234,9 +245,13 @@ def _build_entity_extraction_signature_instructions() -> str:
         "prepositional phrases. Extract a noun inside one of those as its own "
         "entity instead of extending the preceding span.\n"
         "- Use PERSON for role nouns and people such as man, woman, people, biker.\n"
-        "- Use ORGANIZATION for named organizations or teams.\n"
+        "- Use ORGANIZATION for named universities, companies, institutions, teams, "
+        "and agencies, even when the name is also a place name or follows at, in, "
+        "or outside.\n"
         "- Use CONCEPT for physical things such as barbell, car, disk, pipes, and knife.\n"
-        "- Use PLACE for settings such as dirt field, kitchen, and pool area.\n"
+        "- Use PLACE for settings such as dirt field, kitchen, and pool area, and for "
+        "cities, venues, and a campus or building named as the setting; a named "
+        "organization is never a setting.\n"
         "- Use TECHNOLOGY for camera and screen.\n"
         "- Use EVENT for crash.\n"
         "- Use TECHNOLOGY for named programming languages, software libraries, "
