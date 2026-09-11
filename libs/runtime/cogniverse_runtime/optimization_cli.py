@@ -1106,92 +1106,13 @@ def _entity_extraction_is_scoreable(record: dict) -> bool:
     return bool(record.get("entities"))
 
 
-def _entity_extraction_texts(raw: Any) -> list[str]:
-    """Extract entity texts from JSON records or pipe-delimited output lines."""
-    if raw is None:
-        return []
-    if isinstance(raw, str):
-        text = raw.strip()
-        if not text:
-            return []
-        try:
-            parsed = json.loads(text)
-        except Exception:
-            parsed = None
-        else:
-            raw = parsed
-
-        if parsed is None:
-            texts = []
-            for line in text.splitlines():
-                line = line.strip()
-                if not line:
-                    continue
-                head = line.split("|", 1)[0].strip()
-                if head:
-                    texts.append(head)
-            return texts
-
-    if isinstance(raw, dict):
-        raw = [raw]
-
-    if isinstance(raw, (list, tuple, set)):
-        texts = []
-        for entity in raw:
-            if isinstance(entity, dict):
-                value = entity.get("text", "")
-            elif isinstance(entity, str):
-                value = entity.split("|", 1)[0]
-            else:
-                value = getattr(entity, "text", "")
-            text = str(value or "").strip()
-            if text:
-                texts.append(text)
-        return texts
-
-    text = str(raw or "").strip()
-    return [text] if text else []
-
-
-def _entity_extraction_pair_set(raw: Any) -> set[tuple[str, str]]:
-    """Extract ``(text, type)`` pairs from pipe-delimited entity lines."""
-    if raw is None:
-        return set()
-
-    if isinstance(raw, dict):
-        raw = [raw]
-
-    if isinstance(raw, (list, tuple, set)):
-        lines: list[str] = []
-        for item in raw:
-            if isinstance(item, dict):
-                text = str(item.get("text") or "").strip()
-                entity_type = str(item.get("type") or "").strip()
-                if text and entity_type:
-                    lines.append(f"{text}|{entity_type}|0.0")
-                continue
-            if isinstance(item, str):
-                lines.append(item)
-                continue
-            text = str(item or "").strip()
-            if text:
-                lines.append(text)
-        raw = "\n".join(lines)
-
-    lines = []
-    for line in str(raw or "").splitlines():
-        line = line.strip()
-        if not line:
-            continue
-        parts = line.split("|")
-        if len(parts) < 2:
-            continue
-        text = parts[0].strip()
-        entity_type = parts[1].strip().upper()
-        if not text or not entity_type:
-            continue
-        lines.append((text.casefold(), entity_type))
-    return set(lines)
+def _entity_extraction_pair_set(entities) -> set[tuple[str, str]]:
+    """``(casefold text, type)`` pairs of typed entity mentions."""
+    return {
+        (mention.text.strip().casefold(), mention.type)
+        for mention in entities
+        if mention.text.strip()
+    }
 
 
 ENTITY_EXTRACTION_METRIC_ID = "entity_extraction.pair_set_f1.v1"
@@ -1199,8 +1120,8 @@ ENTITY_EXTRACTION_METRIC_ID = "entity_extraction.pair_set_f1.v1"
 
 def _entity_extraction_quality(prediction, example) -> float:
     """Pair-set F1 over ``(casefold text, type)`` entity labels."""
-    predicted_pairs = _entity_extraction_pair_set(getattr(prediction, "entities", ""))
-    recorded_pairs = _entity_extraction_pair_set(getattr(example, "entities", ""))
+    predicted_pairs = _entity_extraction_pair_set(prediction.entities)
+    recorded_pairs = _entity_extraction_pair_set(example.entities)
     query = str(getattr(example, "query", "") or "").strip()
     if not recorded_pairs:
         raise ValueError(
@@ -1244,30 +1165,29 @@ def _entity_bootstrap_threshold(
     return max(bar, served)
 
 
-def _entity_pipe_lines(entities) -> str:
-    """Recorded entity dicts as the signature's ``text|type|confidence`` lines."""
-    lines = []
-    for entity in entities:
-        text = str(entity.get("text") or "").strip()
-        if not text:
-            continue
-        confidence = entity.get("confidence")
-        confidence = 1.0 if confidence is None else round(float(confidence), 2)
-        lines.append(f"{text}|{entity.get('type') or 'CONCEPT'}|{confidence}")
-    return "\n".join(lines)
-
-
 def _entity_extraction_example(record: Dict[str, Any]):
-    """A served or approved entity record as the module's training example."""
-    import dspy
+    """A ground-truth or approved entity record as the module's training example.
 
-    entities = record["entities"]
-    return dspy.Example(
-        query=record["query"],
-        entities=entities
-        if isinstance(entities, str)
-        else _entity_pipe_lines(entities),
-    ).with_inputs("query")
+    Raises ``ValueError`` naming the record when an entity carries a type the
+    signature's schema cannot hold.
+    """
+    import dspy
+    from pydantic import ValidationError
+
+    from cogniverse_agents.entity_extraction_agent import EntityMention
+
+    try:
+        entities = [
+            EntityMention(text=entity["text"], type=entity["type"])
+            for entity in record["entities"]
+        ]
+    except ValidationError as exc:
+        raise ValueError(
+            f"entity extraction record {record.get('example_id')!r} for query "
+            f"{record['query']!r} carries an entity the signature cannot hold: "
+            f"{exc.errors(include_url=False)}"
+        ) from exc
+    return dspy.Example(query=record["query"], entities=entities).with_inputs("query")
 
 
 class BootstrapMetricRecorder:
@@ -3246,12 +3166,12 @@ def _project_approved_optimizer_example(
             "complexity": example["complexity"],
         }
     if optimizer_type == "entity_extraction":
-        entities = "\n".join(
-            f"{entity['text']}|{entity['type']}|1.0" for entity in example["entities"]
-        )
         return {
             "query": example["query"],
-            "entities": entities,
+            "entities": [
+                {"text": entity["text"], "type": entity["type"]}
+                for entity in example["entities"]
+            ],
         }
     raise ValueError(
         f"optimizer {optimizer_type!r} has no approved DSPy example projection"

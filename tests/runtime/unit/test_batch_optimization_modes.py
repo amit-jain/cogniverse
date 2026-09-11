@@ -1933,19 +1933,25 @@ class _ProfileSelectionByQuery:
         return _sel(self.labels.get(query, self.default))
 
 
-def _entity_example(*, query: str = "find entities", entities: str = "[]"):
+def _mentions(*pairs: tuple[str, str]) -> list:
+    from cogniverse_agents.entity_extraction_agent import EntityMention
+
+    return [EntityMention(text=text, type=entity_type) for text, entity_type in pairs]
+
+
+def _entity_example(*, query: str = "find entities", entities=()):
     import dspy
 
     return dspy.Example(
         query=query,
-        entities=entities,
+        entities=_mentions(*entities),
     ).with_inputs("query")
 
 
-def _ents(entities: str):
+def _ents(*pairs: tuple[str, str]):
     import dspy
 
-    return dspy.Prediction(entities=entities)
+    return dspy.Prediction(entities=_mentions(*pairs))
 
 
 def _example(**kwargs):
@@ -6413,7 +6419,7 @@ class TestEntityExtractionOptimization:
         state["extractor.predict"]["demos"] = [
             {
                 "query": "find PyTorch tutorials",
-                "entities": "PyTorch|TECHNOLOGY|1.0",
+                "entities": [{"text": "PyTorch", "type": "TECHNOLOGY"}],
             }
         ]
         return json.dumps(state, default=str)
@@ -6739,7 +6745,7 @@ class TestEntityExtractionOptimization:
         teacher_answers = [
             {
                 "reasoning": f"truth reasoning {i}",
-                "entities": f"truth{i}|CONCEPT|1.0",
+                "entities": [{"text": f"truth{i}", "type": "CONCEPT"}],
             }
             for i in range(8)
         ]
@@ -6974,45 +6980,69 @@ class TestEntityExtractionOptimization:
     def test_entity_quality_pair_f1_table(self):
         from cogniverse_runtime.optimization_cli import _entity_extraction_quality
 
-        ex = _entity_example(entities=("Marie Curie|PERSON|1.0\nradium|CONCEPT|1.0"))
+        ex = _entity_example(
+            entities=(("Marie Curie", "PERSON"), ("radium", "CONCEPT"))
+        )
         assert {
             "exact": _entity_extraction_quality(
-                _ents("Marie Curie|PERSON|0.9\nradium|CONCEPT|0.8"), ex
+                _ents(("Marie Curie", "PERSON"), ("radium", "CONCEPT")), ex
             ),
             "wrong_type": _entity_extraction_quality(
-                _ents("Marie Curie|CONCEPT|0.9"), ex
+                _ents(("Marie Curie", "CONCEPT")), ex
             ),
             "partial": _entity_extraction_quality(
-                _ents("Marie Curie|PERSON|0.9\nwrong|CONCEPT|0.5"), ex
+                _ents(("Marie Curie", "PERSON"), ("wrong", "CONCEPT")), ex
             ),
             "extra": _entity_extraction_quality(
-                _ents("Marie Curie|PERSON|0.9\nwrong1|CONCEPT|0.5\nwrong2|PERSON|0.5"),
+                _ents(
+                    ("Marie Curie", "PERSON"),
+                    ("wrong1", "CONCEPT"),
+                    ("wrong2", "PERSON"),
+                ),
                 ex,
             ),
             "case": _entity_extraction_quality(
-                _ents("marie curie|person|0.9\nRADIUM|concept|0.8"), ex
+                _ents(("marie curie", "PERSON"), ("RADIUM", "CONCEPT")), ex
             ),
-            "empty": _entity_extraction_quality(_ents(""), ex),
+            "padded": _entity_extraction_quality(
+                _ents((" Marie Curie ", "PERSON"), ("radium", "CONCEPT")), ex
+            ),
+            "blank_text_ignored": _entity_extraction_quality(
+                _ents(
+                    ("  ", "PERSON"), ("Marie Curie", "PERSON"), ("radium", "CONCEPT")
+                ),
+                ex,
+            ),
+            "repeat": _entity_extraction_quality(
+                _ents(
+                    ("Marie Curie", "PERSON"),
+                    ("MARIE CURIE", "PERSON"),
+                    ("radium", "CONCEPT"),
+                ),
+                ex,
+            ),
+            "empty": _entity_extraction_quality(_ents(), ex),
         } == {
             "exact": 1.0,
             "wrong_type": 0.0,
             "partial": 0.5,
             "extra": 0.4,
             "case": 1.0,
+            "padded": 1.0,
+            "blank_text_ignored": 1.0,
+            "repeat": 1.0,
             "empty": 0.0,
         }
         with pytest.raises(ValueError, match="carries no recorded entities"):
-            _entity_extraction_quality(_ents("x|T|1.0"), _entity_example(entities=""))
+            _entity_extraction_quality(
+                _ents(("x", "CONCEPT")), _entity_example(entities=())
+            )
 
-    def test_served_entities_become_pipe_lines_that_serving_parses(self):
-        """A served GLiNER record trains in the signature's pipe format, and
-        the demo text parses through the agent's own parser to the same
-        entities. A JSON-array demo would parse to nothing at serve time."""
-        from cogniverse_agents.entity_extraction_agent import (
-            Entity,
-            EntityExtractionAgent,
-            EntityExtractionDeps,
-        )
+    def test_records_become_typed_examples_the_adapter_round_trips(self):
+        """A record trains as the signature's typed mentions, keeping only text
+        and type, and the demo the adapter formats from it parses back to the
+        same mentions under the adapter serving binds."""
+        from cogniverse_agents.entity_extraction_agent import EntityExtractionModule
         from cogniverse_runtime.optimization_cli import _entity_extraction_example
 
         query = "The video begins with a man riding a dirt bike in a dirt field"
@@ -7041,33 +7071,42 @@ class TestEntityExtractionOptimization:
         assert list(example.toDict()) == ["query", "entities"]
         assert example.toDict() == {
             "query": query,
-            "entities": "man|PERSON|0.95\ndirt bike|CONCEPT|0.98\nhouses|PLACE|1.0",
+            "entities": [
+                {"text": "man", "type": "PERSON"},
+                {"text": "dirt bike", "type": "CONCEPT"},
+                {"text": "houses", "type": "PLACE"},
+            ],
         }
+        assert example.entities == _mentions(
+            ("man", "PERSON"), ("dirt bike", "CONCEPT"), ("houses", "PLACE")
+        )
         assert list(example.inputs().toDict()) == ["query"]
 
-        agent = EntityExtractionAgent(deps=EntityExtractionDeps(), port=8010)
-        assert agent._parse_entities(example.entities, query) == [
-            Entity(
-                text="man",
-                type="PERSON",
-                confidence=0.95,
-                context="The video begins with a man riding a dirt bike in a dirt",
-            ),
-            Entity(
-                text="dirt bike",
-                type="CONCEPT",
-                confidence=0.98,
-                context="eo begins with a man riding a dirt bike in a dirt field",
-            ),
-        ]
+        module = EntityExtractionModule()
+        signature = module.extractor.predict.signature
+        demo_content = module.dspy_adapter.format_assistant_message_content(
+            signature, {"reasoning": "r", "entities": example.entities}
+        )
+        assert json.loads(demo_content) == {
+            "reasoning": "r",
+            "entities": [
+                {"text": "man", "type": "PERSON"},
+                {"text": "dirt bike", "type": "CONCEPT"},
+                {"text": "houses", "type": "PLACE"},
+            ],
+        }
+        assert module.dspy_adapter.parse(signature, demo_content) == {
+            "reasoning": "r",
+            "entities": example.entities,
+        }
 
-    def test_approved_pipe_lines_pass_through_unchanged(self):
+    def test_approved_record_becomes_a_typed_example(self):
         from cogniverse_runtime.optimization_cli import _entity_extraction_example
 
         example = _entity_extraction_example(
             {
                 "query": "find PyTorch tutorials",
-                "entities": "PyTorch|TECHNOLOGY|1.0",
+                "entities": [{"text": "PyTorch", "type": "TECHNOLOGY"}],
                 "example_id": "approved:1",
             }
         )
@@ -7075,8 +7114,32 @@ class TestEntityExtractionOptimization:
         assert list(example.toDict()) == ["query", "entities"]
         assert example.toDict() == {
             "query": "find PyTorch tutorials",
-            "entities": "PyTorch|TECHNOLOGY|1.0",
+            "entities": [{"text": "PyTorch", "type": "TECHNOLOGY"}],
         }
+        assert example.entities == _mentions(("PyTorch", "TECHNOLOGY"))
+
+    def test_record_with_a_type_outside_the_vocabulary_is_refused_by_name(self):
+        """A reviewer's free-text type cannot become a demo the schema forbids;
+        the refusal names the record so the approval can be corrected."""
+        from cogniverse_runtime.optimization_cli import _entity_extraction_example
+
+        with pytest.raises(ValueError) as excinfo:
+            _entity_extraction_example(
+                {
+                    "query": "find PyTorch tutorials",
+                    "entities": [{"text": "PyTorch", "type": "Technology"}],
+                    "example_id": "approved:2",
+                }
+            )
+
+        message = str(excinfo.value)
+        assert message.startswith(
+            "entity extraction record 'approved:2' for query 'find PyTorch "
+            "tutorials' carries an entity the signature cannot hold: "
+        )
+        assert [error["type"] for error in excinfo.value.__cause__.errors()] == [
+            "literal_error"
+        ]
 
     def test_entity_extraction_pairs_carry_span_ids(self):
         """Every entity record names the served span it came from."""
@@ -7735,15 +7798,15 @@ class TestEntityBootstrapThreshold:
     _ANSWERS = [
         {
             "reasoning": "r1",
-            "entities": "Marie Curie|PERSON|0.9",
+            "entities": [{"text": "Marie Curie", "type": "PERSON"}],
         },
         {
             "reasoning": "r2",
-            "entities": "Alan Turing|PERSON|0.9",
+            "entities": [{"text": "Alan Turing", "type": "PERSON"}],
         },
         {
             "reasoning": "r3",
-            "entities": "Ada Lovelace|PERSON|0.9",
+            "entities": [{"text": "Ada Lovelace", "type": "PERSON"}],
         },
     ]
 
@@ -7752,9 +7815,12 @@ class TestEntityBootstrapThreshold:
         import dspy
 
         rows = [
-            (f"{tag} curie", "Marie Curie|PERSON|1.0"),
-            (f"{tag} turing", "Alan Turing|PERSON|1.0\nEnigma|CONCEPT|1.0"),
-            (f"{tag} lovelace", "Ada Lovelace|PERSON|1.0"),
+            (f"{tag} curie", _mentions(("Marie Curie", "PERSON"))),
+            (
+                f"{tag} turing",
+                _mentions(("Alan Turing", "PERSON"), ("Enigma", "CONCEPT")),
+            ),
+            (f"{tag} lovelace", _mentions(("Ada Lovelace", "PERSON"))),
         ]
         return [
             dspy.Example(query=query, entities=entities).with_inputs("query")
@@ -7875,9 +7941,9 @@ class TestEntityBootstrapThreshold:
             "metric_values": [0.6666666666666666, 1.0, 1.0],
         }
         assert demos == [
-            (True, "Marie Curie|PERSON|0.9"),
-            (True, "Ada Lovelace|PERSON|0.9"),
-            (False, "Alan Turing|PERSON|1.0\nEnigma|CONCEPT|1.0"),
+            (True, _mentions(("Marie Curie", "PERSON"))),
+            (True, _mentions(("Ada Lovelace", "PERSON"))),
+            (False, _mentions(("Alan Turing", "PERSON"), ("Enigma", "CONCEPT"))),
         ]
         assert [
             record.getMessage()
@@ -7904,9 +7970,9 @@ class TestEntityBootstrapThreshold:
             report["metric_threshold"],
         ) == (2, 2, 1, 0.75)
         assert demos == [
-            (True, "Marie Curie|PERSON|0.9"),
-            (True, "Ada Lovelace|PERSON|0.9"),
-            (False, "Alan Turing|PERSON|1.0\nEnigma|CONCEPT|1.0"),
+            (True, _mentions(("Marie Curie", "PERSON"))),
+            (True, _mentions(("Ada Lovelace", "PERSON"))),
+            (False, _mentions(("Alan Turing", "PERSON"), ("Enigma", "CONCEPT"))),
         ]
 
     def test_bar_never_drops_below_the_served_score(self):

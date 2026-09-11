@@ -17,8 +17,10 @@ import pytest
 from dspy.utils.exceptions import AdapterParseError
 
 from cogniverse_agents.entity_extraction_agent import (
+    ENTITY_TYPES,
     EntityExtractionModule,
     EntityExtractionSignature,
+    EntityMention,
 )
 from cogniverse_core.agents.base import _register_stream_adapter
 from cogniverse_foundation.dspy import (
@@ -35,9 +37,33 @@ QUERY = "What are the people doing behind the car at the beginning of the video?
 CONFORMING_COMPLETION = json.dumps(
     {
         "reasoning": "people and car are the spans, in first-appearance order.",
-        "entities": "people|PERSON|1.0\ncar|CONCEPT|1.0",
+        "entities": [
+            {"text": "people", "type": "PERSON"},
+            {"text": "car", "type": "CONCEPT"},
+        ],
     }
 )
+
+# Completions a server that ignored the schema could return: a type outside
+# the vocabulary, an item missing a key, an item with an extra key, and the
+# free-text form entities had before it was typed.
+SCHEMA_VIOLATING_COMPLETIONS = {
+    "type_outside_vocabulary": json.dumps(
+        {"reasoning": "r", "entities": [{"text": "people", "type": "Person"}]}
+    ),
+    "item_missing_type": json.dumps(
+        {"reasoning": "r", "entities": [{"text": "people"}]}
+    ),
+    "item_with_extra_key": json.dumps(
+        {
+            "reasoning": "r",
+            "entities": [{"text": "people", "type": "PERSON", "confidence": 0.9}],
+        }
+    ),
+    "entities_as_text": json.dumps(
+        {"reasoning": "r", "entities": "people|PERSON|1.0\ncar|CONCEPT|1.0"}
+    ),
+}
 
 # What the teacher returned on the run that motivated the schema: valid JSON,
 # no output fields. json_object mode accepts it; a json_schema cannot emit it.
@@ -85,10 +111,47 @@ class TestEntitySignatureSchemaOnTheWire:
         assert tuple(schema["properties"]) == ("reasoning", "entities")
         assert {
             name: field["type"] for name, field in schema["properties"].items()
-        } == {"reasoning": "string", "entities": "string"}
+        } == {"reasoning": "string", "entities": "array"}
+        assert schema["properties"]["entities"]["items"] == {
+            "$ref": "#/$defs/EntityMention"
+        }
         assert schema["required"] == ["reasoning", "entities"]
         assert schema["type"] == "object"
         assert schema["additionalProperties"] is False
+        assert schema["$defs"] == {
+            "EntityMention": {
+                "additionalProperties": False,
+                "description": (
+                    "One entity as the extraction signature's output schema carries it."
+                ),
+                "properties": {
+                    "text": {
+                        "description": "Verbatim span of the query",
+                        "title": "Text",
+                        "type": "string",
+                    },
+                    "type": {
+                        "enum": [
+                            "CONCEPT",
+                            "EVENT",
+                            "ORGANIZATION",
+                            "PERSON",
+                            "PLACE",
+                            "TECHNOLOGY",
+                        ],
+                        "title": "Type",
+                        "type": "string",
+                    },
+                },
+                "required": ["text", "type"],
+                "title": "EntityMention",
+                "type": "object",
+            }
+        }
+        assert (
+            set(schema["$defs"]["EntityMention"]["properties"]["type"]["enum"])
+            == ENTITY_TYPES
+        )
 
     def test_schema_properties_track_the_production_signature(self):
         """A rename of the signature's output field moves the enforced schema."""
@@ -147,11 +210,32 @@ class TestEntitySignatureSchemaOnTheWire:
 
         prediction = _run(EntityExtractionModule(), lm)
 
-        assert prediction.entities == "people|PERSON|1.0\ncar|CONCEPT|1.0"
+        assert prediction.entities == [
+            EntityMention(text="people", type="PERSON"),
+            EntityMention(text="car", type="CONCEPT"),
+        ]
         assert (
             prediction.reasoning
             == "people and car are the spans, in first-appearance order."
         )
+
+    @pytest.mark.parametrize("shape", sorted(SCHEMA_VIOLATING_COMPLETIONS))
+    def test_schema_violating_item_raises_adapter_parse_error(self, shape):
+        """An item the schema forbids is the same failure as a missing field:
+        AdapterParseError carrying the response, after exactly one call."""
+        completion = SCHEMA_VIOLATING_COMPLETIONS[shape]
+        lm = _RecordingLM(completion=completion)
+
+        with pytest.raises(AdapterParseError) as excinfo:
+            _run(EntityExtractionModule(), lm, adapter=LenientJSONAdapter())
+
+        assert excinfo.value.lm_response == completion
+        assert excinfo.value.adapter_name == "StructuredJSONAdapter"
+        assert str(excinfo.value).splitlines()[0] == (
+            "LM response violates the output schema: 1 validation error for "
+            "list[EntityMention]"
+        )
+        assert len(lm.calls) == 1
 
 
 class TestSignatureResponseFormat:
@@ -230,7 +314,7 @@ class TestSchemaNameIdentifiesTheSignature:
         name = self._name(module.extractor.predict.signature)
 
         assert module.extractor.predict.signature.__name__ == "StringSignature"
-        assert name == "reasoning_entities_ef1ba6cf"
+        assert name == "reasoning_entities_23b2f964"
         assert name == self._name(module.extractor.predict.signature)
 
     def test_a_named_signature_keeps_its_own_name(self):
@@ -302,14 +386,17 @@ class TestStreamListenerKnowsTheBoundAdapter:
         with dspy.context(adapter=module.dspy_adapter):
             for piece in (
                 '{"reasoning": "x", ',
-                '"entities": "peo',
-                "ple|PERSON",
-                '|1.0"}',
+                '"entities": [{"text": "peo',
+                'ple", "type": "PERSON"}',
+                "]}",
             ):
                 response = listener.receive(self._chunk(piece))
                 received.append(None if response is None else response.chunk)
 
-        assert received == [None, '"peo', "ple|PERSON", '|1.0"']
+        assert received == [None, '[{"text": "peo', None, 'ple", "type": "PERSON"}]']
+        assert json.loads("".join(chunk for chunk in received if chunk)) == [
+            {"text": "people", "type": "PERSON"}
+        ]
         assert listener.stream_end is True
 
     def test_an_adapter_with_no_supported_ancestor_is_left_unregistered(self):

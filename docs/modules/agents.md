@@ -971,16 +971,26 @@ deps = ProfileSelectionDeps()
 
 #### Overview
 
-EntityExtractionAgent extracts named and unnamed entities and relationships from user queries with DSPy as the primary path. Its current signature asks for `text|type|confidence` lines, requires `text` to be a verbatim span of the query, and limits `type` to `PERSON`, `ORGANIZATION`, `CONCEPT`, `PLACE`, `EVENT`, or `TECHNOLOGY`. An entity span is its head noun with the modifiers that precede it — adjectives, compound-noun modifiers and numbers, without a leading article — and ends at that head noun: a participial phrase, relative clause or prepositional phrase after it belongs to no entity, and a noun inside one is extracted as its own entity. Role nouns like man, woman, people, and biker map to PERSON, physical things map to CONCEPT, settings map to PLACE, camera and screen map to TECHNOLOGY, and crash maps to EVENT. Teaching sessions map to EVENT and informational resources to CONCEPT as complete noun phrases, typed by their head noun (lecture notes are a CONCEPT resource), retaining descriptive adjectives and compound-noun modifiers while excluding leading articles and everything after the head noun; an unmodified session or resource noun is emitted bare. Named programming languages, libraries, frameworks, and tools map to TECHNOLOGY by their bare name, extracted separately from any session or resource phrase that mentions them; activity words such as programming or training never join the span and never make a subject of study an EVENT. Fields of study and topics map to CONCEPT. A query with no session or resource noun yields no EVENT or resource entity. The prompt scans left to right and emits entities once in source order, without prioritizing proper names or grouping by type. The reasoning field forms complete spans before classification. Signature examples cover span boundaries, session-first, resource-first, subject-only, mixed session-and-subject, and bare-resource queries, retaining modifiers and keeping a repeated software subject at its first occurrence. When the LM call fails, it falls back to GLiNER NER + SpaCy dependency analysis. If the fallback is unavailable or also fails, the request raises.
+EntityExtractionAgent extracts named and unnamed entities and relationships from user queries with DSPy as the primary path. Its signature's `entities` output is a `list[EntityMention]`: each item is exactly `{text, type}`, `text` a verbatim span of the query and `type` the `EntityType` literal — `PERSON`, `ORGANIZATION`, `CONCEPT`, `PLACE`, `EVENT`, or `TECHNOLOGY` (`ENTITY_TYPES` is the same set). An entity span is its head noun with the modifiers that precede it — adjectives, compound-noun modifiers and numbers, without a leading article — and ends at that head noun: a participial phrase, relative clause or prepositional phrase after it belongs to no entity, and a noun inside one is extracted as its own entity. Role nouns like man, woman, people, and biker map to PERSON, physical things map to CONCEPT, settings map to PLACE, camera and screen map to TECHNOLOGY, and crash maps to EVENT. Teaching sessions map to EVENT and informational resources to CONCEPT as complete noun phrases, typed by their head noun (lecture notes are a CONCEPT resource), retaining descriptive adjectives and compound-noun modifiers while excluding leading articles and everything after the head noun; an unmodified session or resource noun is emitted bare. Named programming languages, libraries, frameworks, and tools map to TECHNOLOGY by their bare name, extracted separately from any session or resource phrase that mentions them; activity words such as programming or training never join the span and never make a subject of study an EVENT. Fields of study and topics map to CONCEPT. A query with no session or resource noun yields no EVENT or resource entity. The prompt scans left to right and emits entities once in source order, without prioritizing proper names or grouping by type. The reasoning field forms complete spans before classification. Signature examples cover span boundaries, session-first, resource-first, subject-only, mixed session-and-subject, and bare-resource queries, retaining modifiers and keeping a repeated software subject at its first occurrence. When the LM call fails, it falls back to GLiNER NER + SpaCy dependency analysis. If the fallback is unavailable or also fails, the request raises.
 
 `EntityExtractionModule` binds `StructuredJSONAdapter`
 (`cogniverse_foundation.dspy`) in its own `forward`, so every caller — the
 served agent and the optimizer's bootstrap teacher — sends the same prompt and
 the same `response_format`: a `json_schema` derived from the signature's output
-fields (`reasoning`, `entities`), both required, `additionalProperties: false`,
-`strict: true`. The serving engine's guided decoding therefore cannot answer
-with an object that omits `entities`, and an engine that ignored the schema
-raises `AdapterParseError` instead of yielding a silently empty extraction.
+fields — `reasoning` a string, `entities` an array of `EntityMention` objects
+whose `text` (string) and `type` (enum of the six types) are both required —
+every object `additionalProperties: false`, `strict: true`. The serving
+engine's guided decoding therefore cannot answer with an object that omits
+`entities`, an item without both keys, an extra key, or a type outside the
+vocabulary; an engine that ignored the schema raises `AdapterParseError`
+instead of yielding a silently wrong extraction.
+
+The optimizer persists the compiled module under `("model", "entity_extraction")`;
+its demos carry `entities` as lists of `{text, type}` objects. The agent loads
+an artifact only when its saved instructions and field prefixes/descriptions
+match the live signature (`signature_contract_mismatch`); any other artifact is
+refused with `artifact_load_status = "signature_mismatch"` and the agent serves
+the base module until the optimizer compiles one against the live signature.
 
 Because any DSPy failure falls through to the GLiNER path, the
 `cogniverse.entity_extraction` span names which failure it was.
@@ -998,9 +1008,10 @@ neither attribute.
 - Fallback path: GLiNER entity extraction + SpaCy relationship extraction
 - Entity type classification using PERSON, ORGANIZATION, CONCEPT, PLACE, EVENT, and TECHNOLOGY
 - Relationship extraction between entities (subject-relation-object triples)
-- Confidence scoring per entity and relationship
+- Per-entity GLiNER confidence on the fallback path; DSPy-path entities carry `confidence: None`
+- Confidence per relationship
 - Dominant entity type detection
-- Structural validity via `entity_is_valid_for_query(text, entity_type, query)`
+- Typed output enforced by the engine's schema; span validity via `entity_is_valid_for_query(text, entity_type, query)`
 - Telemetry span emission (`cogniverse.entity_extraction`)
 
 #### Architecture
@@ -1014,8 +1025,8 @@ flowchart LR
 
     FastPath --> Entities["<span style='color:#000'>List[Entity]</span>"]
     FastPath --> Rels["<span style='color:#000'>List[Relationship]</span>"]
-    DSPy --> ParseEntities["<span style='color:#000'>_parse_entities()</span>"]
-    ParseEntities --> Entities
+    DSPy --> ValidateEntities["<span style='color:#000'>_validated_entities()</span>"]
+    ValidateEntities --> Entities
 
     Entities --> Output["<span style='color:#000'>EntityExtractionOutput</span>"]
     Rels --> Output
@@ -1026,7 +1037,7 @@ flowchart LR
     style EntityAgent fill:#ce93d8,stroke:#7b1fa2,color:#000
     style FastPath fill:#a5d6a7,stroke:#388e3c,color:#000
     style DSPy fill:#81d4fa,stroke:#0288d1,color:#000
-    style ParseEntities fill:#ffcc80,stroke:#ef6c00,color:#000
+    style ValidateEntities fill:#ffcc80,stroke:#ef6c00,color:#000
     style Entities fill:#a5d6a7,stroke:#388e3c,color:#000
     style Rels fill:#a5d6a7,stroke:#388e3c,color:#000
     style Output fill:#a5d6a7,stroke:#388e3c,color:#000
@@ -1051,8 +1062,29 @@ class Entity(BaseModel):
     type: str = Field(
         description="Entity type: PERSON, ORGANIZATION, CONCEPT, PLACE, EVENT, or TECHNOLOGY"
     )
-    confidence: float = Field(description="Confidence score 0-1")
+    confidence: Optional[float] = Field(
+        default=None,
+        description=(
+            "GLiNER score 0-1 on the fast path; None on the DSPy path, whose "
+            "schema carries no score"
+        ),
+    )
     context: str = Field(default="", description="Surrounding context")
+
+EntityType = Literal["CONCEPT", "EVENT", "ORGANIZATION", "PERSON", "PLACE", "TECHNOLOGY"]
+ENTITY_TYPES = frozenset(get_args(EntityType))
+
+class EntityMention(BaseModel):
+    """One entity as the extraction signature's output schema carries it."""
+    model_config = ConfigDict(extra="forbid")
+    text: str = Field(description="Verbatim span of the query")
+    type: EntityType
+
+class EntityExtractionSignature(dspy.Signature):
+    query: str = dspy.InputField(desc="User query to analyze")
+    entities: list[EntityMention] = dspy.OutputField(
+        desc="Entities in order of first appearance, each a verbatim query span with its type"
+    )
 
 class Relationship(BaseModel):
     """Extracted relationship between entities."""
@@ -1127,7 +1159,7 @@ class EntityExtractionAgent(
 
 Main processing method (required by AgentBase). Uses DSPy primary routing:
 
-1. **DSPy primary path**: `_extract_dspy_path(prompt_query)` runs first and parses pipe-delimited output.
+1. **DSPy primary path**: `_extract_dspy_path(prompt_query)` runs first and validates the typed mentions the adapter parsed.
 2. **GLiNER + SpaCy fallback**: `_extract_fast_path(query)` runs only when the LM call raises. It extracts entities with GLiNER and relationships with SpaCy.
 
 If the fallback is unavailable or also raises, the request fails with an error that names both failures. The `path_used` output is `"dspy"` for the primary path and `"fast"` for the fallback path.
@@ -1139,15 +1171,19 @@ relationship_count, path_used}`, and `operation` is `entity_extraction`. The
 entity-extraction optimizer reads the (query -> entities) training pair back via
 `read_span_io`.
 
-**`_parse_entities(entities_str: str, query: str) -> List[Entity]`**
+**`_validated_entities(mentions: List[EntityMention], query: str) -> List[Entity]`**
 
-Helper method to parse entities from DSPy output. Validity is enforced by
-`entity_is_valid_for_query(text, entity_type, query)` in the agent module:
+Turns the schema-typed mentions into served entities. The schema already fixes
+each mention's keys and type; this checks what it cannot:
 
-- `text` must be non-empty and appear verbatim in the query, case-insensitively
-- `entity_type` must be a member of `ENTITY_TYPES`
-- duplicate `(text.casefold(), entity_type)` pairs are collapsed
-- invalid candidates are dropped and logged with the offending text
+- `text` (stripped) must be non-empty and appear in the query, case-insensitively
+  (`entity_is_valid_for_query`); the served `text` is the query's own characters
+  for that span
+- a repeated `(text.casefold(), type)` pair keeps its first mention
+- entities are ordered by where their span starts in the query, an enclosing
+  span before a shorter one starting at the same place
+- dropped mentions are logged with the offending text and type
+- `confidence` is `None`: the DSPy path produces no score
 
 The agent never fabricates a replacement span for invalid output.
 

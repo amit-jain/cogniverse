@@ -3,6 +3,7 @@
 import asyncio
 import json
 import logging
+import pathlib
 from unittest.mock import MagicMock, Mock, patch
 
 import dspy
@@ -17,6 +18,7 @@ from cogniverse_agents.entity_extraction_agent import (
     EntityExtractionInput,
     EntityExtractionModule,
     EntityExtractionOutput,
+    EntityMention,
     Relationship,
 )
 from cogniverse_core.common.tenant_utils import TEST_TENANT_ID
@@ -63,52 +65,50 @@ Rules:
 - Before responding, verify that every session/resource phrase retains all its modifiers and that no later source span precedes an earlier one.
 - Action verbs are never entities.
 - "the video" is never an entity.
-- Keep each entity on its own line in text|type|confidence format.
 
 Examples:
 
 Query: a cracked stone bench facing the courtyard
 Reasoning: cracked and stone come before the head noun bench, so the span is cracked stone bench, a CONCEPT. facing the courtyard follows the head noun and is not part of it. courtyard is a setting, PLACE.
-Entities:
-cracked stone bench|CONCEPT|0.9
-courtyard|PLACE|0.9
+Entities: [{"text": "cracked stone bench", "type": "CONCEPT"}, {"text": "courtyard", "type": "PLACE"}]
 
 Query: Find a recorded lecture on Matplotlib and a concise manual for Matplotlib
 Reasoning: The first entity is the whole phrase recorded lecture, an EVENT. Matplotlib first appears next and is TECHNOLOGY. The final new entity is the whole phrase concise manual, a CONCEPT. The later Matplotlib mention is a repeat.
-Entities:
-recorded lecture|EVENT|0.9
-Matplotlib|TECHNOLOGY|0.9
-concise manual|CONCEPT|0.9
+Entities: [{"text": "recorded lecture", "type": "EVENT"}, {"text": "Matplotlib", "type": "TECHNOLOGY"}, {"text": "concise manual", "type": "CONCEPT"}]
 
 Query: Find a detailed guide to FastAPI and an evening workshop on FastAPI
 Reasoning: The first entity is the whole phrase detailed guide, a CONCEPT. FastAPI first appears next and is TECHNOLOGY. The final new entity is the whole phrase evening workshop, an EVENT. The later FastAPI mention is a repeat.
-Entities:
-detailed guide|CONCEPT|0.9
-FastAPI|TECHNOLOGY|0.9
-evening workshop|EVENT|0.9
+Entities: [{"text": "detailed guide", "type": "CONCEPT"}, {"text": "FastAPI", "type": "TECHNOLOGY"}, {"text": "evening workshop", "type": "EVENT"}]
 
 Query: Rust programming with Tokio for async networking
 Reasoning: There is no session noun and no resource noun, so there is no EVENT and no resource. Rust is a programming language, TECHNOLOGY; programming is an activity word and not part of the entity. Tokio is a library, TECHNOLOGY. async networking is a topic, CONCEPT.
-Entities:
-Rust|TECHNOLOGY|0.9
-Tokio|TECHNOLOGY|0.9
-async networking|CONCEPT|0.9
+Entities: [{"text": "Rust", "type": "TECHNOLOGY"}, {"text": "Tokio", "type": "TECHNOLOGY"}, {"text": "async networking", "type": "CONCEPT"}]
 
 Query: Find a hands-on workshop on Rust programming and a setup manual for Tokio
 Reasoning: The first entity is the whole phrase hands-on workshop, an EVENT. Rust first appears next and is TECHNOLOGY; programming is an activity word and not part of the entity. The next new entity is the whole phrase setup manual, a CONCEPT. Tokio appears last and is TECHNOLOGY.
-Entities:
-hands-on workshop|EVENT|0.9
-Rust|TECHNOLOGY|0.9
-setup manual|CONCEPT|0.9
-Tokio|TECHNOLOGY|0.9
+Entities: [{"text": "hands-on workshop", "type": "EVENT"}, {"text": "Rust", "type": "TECHNOLOGY"}, {"text": "setup manual", "type": "CONCEPT"}, {"text": "Tokio", "type": "TECHNOLOGY"}]
 
 Query: a manual for Tokio and Rust lecture notes
 Reasoning: manual has no modifiers, so the entity is the bare noun manual, a CONCEPT, without its article or the phrase after it. Tokio is TECHNOLOGY. Rust lecture notes is a resource phrase whose head noun is notes, so it is a CONCEPT even though lecture modifies it; the whole phrase comes first and Rust follows separately as TECHNOLOGY.
-Entities:
-manual|CONCEPT|0.9
-Tokio|TECHNOLOGY|0.9
-Rust lecture notes|CONCEPT|0.9
-Rust|TECHNOLOGY|0.9"""
+Entities: [{"text": "manual", "type": "CONCEPT"}, {"text": "Tokio", "type": "TECHNOLOGY"}, {"text": "Rust lecture notes", "type": "CONCEPT"}, {"text": "Rust", "type": "TECHNOLOGY"}]"""
+
+
+PIPE_SIGNATURE_STATE = (
+    pathlib.Path(__file__).parent
+    / "data"
+    / "entity_extraction_pipe_signature_state.json"
+)
+"""The dump_state() the optimizer persisted before entities was typed."""
+
+
+def _mention_dicts(*pairs: tuple[str, str]) -> list[dict[str, str]]:
+    """Entities as the enforced schema's JSON carries them."""
+    return [{"text": text, "type": entity_type} for text, entity_type in pairs]
+
+
+def _mentions(*pairs: tuple[str, str]) -> list[EntityMention]:
+    """Entities as the adapter hands them to the agent."""
+    return [EntityMention(text=text, type=entity_type) for text, entity_type in pairs]
 
 
 def _memory_config_manager():
@@ -180,7 +180,7 @@ class _EmptyObjectLM(dspy.BaseLM):
 
 class _RaisingDummyLM(DummyLM):
     def __init__(self, message: str):
-        super().__init__([{"reasoning": "unused", "entities": ""}])
+        super().__init__([{"reasoning": "unused", "entities": []}])
         self.calls = 0
         self.message = message
 
@@ -198,7 +198,7 @@ class _StatusRaisingDummyLM(DummyLM):
     """
 
     def __init__(self, error: Exception):
-        super().__init__([{"reasoning": "unused", "entities": ""}])
+        super().__init__([{"reasoning": "unused", "entities": []}])
         self.calls = 0
         self.error = error
 
@@ -334,7 +334,7 @@ def mock_dspy_lm():
     """Mock DSPy language model"""
     lm = Mock()
     lm.return_value = dspy.Prediction(
-        entities="Barack Obama|PERSON|0.95\nChicago|PLACE|0.9",
+        entities=_mentions(("Barack Obama", "PERSON"), ("Chicago", "PLACE")),
     )
     return lm
 
@@ -402,7 +402,9 @@ class TestEntityExtractionModule:
 
         result = module.forward(query="Show me Barack Obama in Chicago")
 
-        assert result.entities == "Barack Obama|PERSON|0.95\nChicago|PLACE|0.9"
+        assert result.entities == _mentions(
+            ("Barack Obama", "PERSON"), ("Chicago", "PLACE")
+        )
 
     def test_forward_raises_when_dspy_fails(self):
         """DSPy failures propagate out of the module."""
@@ -427,7 +429,7 @@ class TestEntityExtractionAgent:
         # Mock DSPy module
         entity_agent.dspy_module.forward = Mock(
             return_value=dspy.Prediction(
-                entities="Barack Obama|PERSON|0.95\nChicago|PLACE|0.9",
+                entities=_mentions(("Barack Obama", "PERSON"), ("Chicago", "PLACE")),
             )
         )
 
@@ -445,13 +447,13 @@ class TestEntityExtractionAgent:
             Entity(
                 text="Barack Obama",
                 type="PERSON",
-                confidence=0.95,
+                confidence=None,
                 context="Show me Barack Obama in Chicago",
             ),
             Entity(
                 text="Chicago",
                 type="PLACE",
-                confidence=0.9,
+                confidence=None,
                 context="Show me Barack Obama in Chicago",
             ),
         ]
@@ -462,7 +464,7 @@ class TestEntityExtractionAgent:
     async def test_process_no_entities(self, entity_agent):
         """Test processing query with no entities"""
         entity_agent.dspy_module.forward = Mock(
-            return_value=dspy.Prediction(entities="")
+            return_value=dspy.Prediction(entities=[])
         )
 
         result = await entity_agent._process_impl(
@@ -514,7 +516,9 @@ class TestEntityExtractionAgent:
             [
                 {
                     "reasoning": "extract the exact query entities",
-                    "entities": "Barack Obama|PERSON|0.95\nChicago|PLACE|0.9",
+                    "entities": _mention_dicts(
+                        ("Barack Obama", "PERSON"), ("Chicago", "PLACE")
+                    ),
                 }
             ]
         )
@@ -532,13 +536,13 @@ class TestEntityExtractionAgent:
                 {
                     "text": "Barack Obama",
                     "type": "PERSON",
-                    "confidence": 0.95,
+                    "confidence": None,
                     "context": "Barack Obama in Chicago",
                 },
                 {
                     "text": "Chicago",
                     "type": "PLACE",
-                    "confidence": 0.9,
+                    "confidence": None,
                     "context": "Barack Obama in Chicago",
                 },
             ],
@@ -812,7 +816,9 @@ class TestEntityExtractionAgent:
                 [
                     {
                         "reasoning": "extract the exact query entities",
-                        "entities": "Barack Obama|PERSON|0.95\nChicago|PLACE|0.9",
+                        "entities": _mention_dicts(
+                            ("Barack Obama", "PERSON"), ("Chicago", "PLACE")
+                        ),
                     }
                 ],
                 adapter=EntityExtractionModule().dspy_adapter,
@@ -865,106 +871,128 @@ class TestEntityExtractionAgent:
         assert lm.calls == 1
         assert entity_agent._gliner_extractor.calls == 1
 
-    def test_parse_entities_valid(self, entity_agent):
-        """Test parsing valid entity string"""
-        entities_str = "Barack Obama|PERSON|0.95\nChicago|PLACE|0.9"
+    def test_validated_entities_serve_typed_mentions_as_query_spans(self, entity_agent):
+        """Each mention becomes a served Entity; the DSPy path carries no score."""
         query = "Barack Obama in Chicago"
 
-        entities = entity_agent._parse_entities(entities_str, query)
+        entities = entity_agent._validated_entities(
+            _mentions(("Barack Obama", "PERSON"), ("Chicago", "PLACE")), query
+        )
 
         assert entities == [
             Entity(
                 text="Barack Obama",
                 type="PERSON",
-                confidence=0.95,
+                confidence=None,
                 context="Barack Obama in Chicago",
             ),
             Entity(
                 text="Chicago",
                 type="PLACE",
-                confidence=0.9,
+                confidence=None,
                 context="Barack Obama in Chicago",
             ),
         ]
 
-    def test_parse_entities_no_confidence(self, entity_agent):
-        """Test parsing entities without confidence scores"""
-        entities_str = "Apple|ORGANIZATION\nCalifornia|PLACE"
-        query = "Apple in California"
+    def test_validated_entities_take_the_query_characters(self, entity_agent):
+        """A mention in another case or padded with spaces is served as the
+        exact span of the query, so relationship grounding finds it."""
+        query = "Barack Obama in Chicago"
 
-        entities = entity_agent._parse_entities(entities_str, query)
-
-        assert entities == [
-            Entity(
-                text="Apple",
-                type="ORGANIZATION",
-                confidence=0.7,
-                context="Apple in California",
-            ),
-            Entity(
-                text="California",
-                type="PLACE",
-                confidence=0.7,
-                context="Apple in California",
-            ),
-        ]
-
-    def test_parse_entities_label_and_percent_confidence(self, entity_agent):
-        """LM may emit confidence as a label or percent string. parse_confidence
-        maps "high"->0.9 and "85%"->0.85 instead of defaulting to 0.7."""
-        entities_str = "Obama|PERSON|high\nChicago|PLACE|85%"
-        entities = entity_agent._parse_entities(entities_str, "Obama in Chicago")
-
-        assert entities == [
-            Entity(
-                text="Obama",
-                type="PERSON",
-                confidence=0.9,
-                context="Obama in Chicago",
-            ),
-            Entity(
-                text="Chicago",
-                type="PLACE",
-                confidence=0.85,
-                context="Obama in Chicago",
-            ),
-        ]
-
-    def test_parse_entities_empty(self, entity_agent):
-        """Test parsing empty entity string"""
-        entities = entity_agent._parse_entities("", "test query")
-        assert entities == []
-
-    def test_parse_entities_drops_invalid_and_duplicate_entities(
-        self, entity_agent, caplog
-    ):
-        """Invalid entities are dropped; duplicates collapse on casefold/type."""
-        entities_str = (
-            "Barack Obama|PERSON|0.95\nNotInQuery|CONCEPT|0.7\nBARACK OBAMA|PERSON|0.8"
+        entities = entity_agent._validated_entities(
+            _mentions(("barack OBAMA", "PERSON"), (" Chicago ", "PLACE")), query
         )
+
+        assert [(entity.text, entity.type) for entity in entities] == [
+            ("Barack Obama", "PERSON"),
+            ("Chicago", "PLACE"),
+        ]
+        assert [
+            query[
+                query.index(entity.text) : query.index(entity.text) + len(entity.text)
+            ]
+            for entity in entities
+        ] == ["Barack Obama", "Chicago"]
+
+    def test_validated_entities_follow_first_occurrence_order(self, entity_agent):
+        """Served order is where each span starts in the query, whatever order
+        the engine emitted; an enclosing span precedes a shorter one that
+        starts at the same place."""
+        assert [
+            (entity.text, entity.type)
+            for entity in entity_agent._validated_entities(
+                _mentions(("Chicago", "PLACE"), ("Barack Obama", "PERSON")),
+                "Barack Obama in Chicago",
+            )
+        ] == [("Barack Obama", "PERSON"), ("Chicago", "PLACE")]
+        assert [
+            (entity.text, entity.type)
+            for entity in entity_agent._validated_entities(
+                _mentions(
+                    ("Rust", "TECHNOLOGY"),
+                    ("Tokio", "TECHNOLOGY"),
+                    ("Rust lecture notes", "CONCEPT"),
+                    ("manual", "CONCEPT"),
+                ),
+                "Rust lecture notes and a manual for Tokio",
+            )
+        ] == [
+            ("Rust lecture notes", "CONCEPT"),
+            ("Rust", "TECHNOLOGY"),
+            ("manual", "CONCEPT"),
+            ("Tokio", "TECHNOLOGY"),
+        ]
+
+    def test_validated_entities_empty(self, entity_agent):
+        """No mentions serve no entities."""
+        assert entity_agent._validated_entities([], "test query") == []
+
+    def test_mention_outside_the_schema_cannot_be_built(self):
+        """The item model is the schema: a type outside the vocabulary or an
+        extra key is refused before it can reach the agent."""
+        from pydantic import ValidationError
+
+        with pytest.raises(ValidationError) as wrong_type:
+            EntityMention(text="Barack Obama", type="Person")
+        with pytest.raises(ValidationError) as extra_key:
+            EntityMention(text="Barack Obama", type="PERSON", confidence=0.9)
+
+        assert [error["type"] for error in wrong_type.value.errors()] == [
+            "literal_error"
+        ]
+        assert [
+            (error["type"], error["loc"]) for error in extra_key.value.errors()
+        ] == [("extra_forbidden", ("confidence",))]
+
+    def test_validated_entities_drop_non_spans_and_repeats(self, entity_agent, caplog):
+        """A mention that is not a query span is dropped and logged; a repeated
+        text/type pair keeps its first mention."""
         query = "Barack Obama visited Chicago and spoke at the conference"
 
         with caplog.at_level(
             logging.WARNING, logger="cogniverse_agents.entity_extraction_agent"
         ):
-            entities = entity_agent._parse_entities(entities_str, query)
+            entities = entity_agent._validated_entities(
+                _mentions(
+                    ("Barack Obama", "PERSON"),
+                    ("NotInQuery", "CONCEPT"),
+                    ("BARACK OBAMA", "PERSON"),
+                ),
+                query,
+            )
 
         assert entities == [
             Entity(
                 text="Barack Obama",
                 type="PERSON",
-                confidence=0.95,
+                confidence=None,
                 context=entity_agent._extract_context("Barack Obama", query),
             )
         ]
-        assert query[:50] not in {entity.text for entity in entities}
         assert _messages(caplog, "cogniverse_agents.entity_extraction_agent") == [
-            "Dropping invalid entity text='NotInQuery' type='CONCEPT' for query "
-            "'Barack Obama visited Chicago and spoke at the conference'",
-            "Dropped 1 invalid entity candidates for query "
-            "'Barack Obama visited Chicago and spoke at the conference'",
-            "Dropped 1 duplicate entity candidates for query "
-            "'Barack Obama visited Chicago and spoke at the conference'",
+            "Dropped 1 entity mentions that are not spans of query "
+            "'Barack Obama visited Chicago and spoke at the conference': "
+            "[('NotInQuery', 'CONCEPT')]"
         ]
 
     def test_extract_context(self, entity_agent):
@@ -992,7 +1020,9 @@ class TestEntityExtractionAgent:
         """Test dominant entity types calculation"""
         entity_agent.dspy_module.forward = Mock(
             return_value=dspy.Prediction(
-                entities="Obama|PERSON|0.9\nTrump|PERSON|0.9\nWhite House|PLACE|0.8",
+                entities=_mentions(
+                    ("Obama", "PERSON"), ("Trump", "PERSON"), ("White House", "PLACE")
+                ),
             )
         )
 
@@ -1051,7 +1081,7 @@ class TestEntityExtractionAgent:
     async def test_dspy_fallback_sets_path_used(self, entity_agent):
         """DSPy fallback path sets path_used='dspy' in output."""
         entity_agent.dspy_module.forward = Mock(
-            return_value=dspy.Prediction(entities="Obama|PERSON|0.9")
+            return_value=dspy.Prediction(entities=_mentions(("Obama", "PERSON")))
         )
 
         result = await entity_agent._process_impl(
@@ -1062,7 +1092,7 @@ class TestEntityExtractionAgent:
             Entity(
                 text="Obama",
                 type="PERSON",
-                confidence=0.9,
+                confidence=None,
                 context="Obama speech",
             )
         ]
@@ -1073,7 +1103,7 @@ class TestEntityExtractionAgent:
     async def test_dspy_fallback_output_has_new_fields(self, entity_agent):
         """DSPy fallback output includes relationships (empty) and path_used."""
         entity_agent.dspy_module.forward = Mock(
-            return_value=dspy.Prediction(entities="")
+            return_value=dspy.Prediction(entities=[])
         )
 
         result = await entity_agent._process_impl(
@@ -1327,7 +1357,7 @@ class TestGLiNERFastPath:
         """When GLiNER is None, DSPy fallback is used."""
         fast_agent._gliner_extractor = None
         fast_agent.dspy_module.forward = Mock(
-            return_value=dspy.Prediction(entities="Obama|PERSON|0.9")
+            return_value=dspy.Prediction(entities=_mentions(("Obama", "PERSON")))
         )
 
         result = await fast_agent._process_impl(
@@ -1350,7 +1380,7 @@ class TestGLiNERFastPath:
 
         # Mock DSPy fallback
         mock_result = MagicMock()
-        mock_result.entities = "Python|TECHNOLOGY|0.8"
+        mock_result.entities = _mentions(("Python", "TECHNOLOGY"))
         # call_dspy invokes module(**kwargs) (__call__), not .forward —
         # forward bypasses DSPy's instrumentation.
         agent.dspy_module = MagicMock(return_value=mock_result)
@@ -1364,7 +1394,7 @@ class TestGLiNERFastPath:
             Entity(
                 text="Python",
                 type="TECHNOLOGY",
-                confidence=0.8,
+                confidence=None,
                 context="Python programming",
             )
         ]
@@ -1415,7 +1445,7 @@ class TestTelemetrySpanEmission:
         agent = agent_with_telemetry
         agent.dspy_module.forward = Mock(
             return_value=dspy.Prediction(
-                entities="Obama|PERSON|0.9\nChicago|PLACE|0.8",
+                entities=_mentions(("Obama", "PERSON"), ("Chicago", "PLACE")),
             )
         )
 
@@ -1438,13 +1468,13 @@ class TestTelemetrySpanEmission:
                 {
                     "text": "Obama",
                     "type": "PERSON",
-                    "confidence": 0.9,
+                    "confidence": None,
                     "context": "Obama in Chicago",
                 },
                 {
                     "text": "Chicago",
                     "type": "PLACE",
-                    "confidence": 0.8,
+                    "confidence": None,
                     "context": "Obama in Chicago",
                 },
             ],
@@ -1579,7 +1609,9 @@ class TestEntityExtractionArtifactLoading:
         artifact_state["extractor.predict"]["demos"] = [
             {
                 "query": "Barack Obama in Chicago",
-                "entities": "Barack Obama|PERSON|0.95\nChicago|PLACE|0.9",
+                "entities": _mention_dicts(
+                    ("Barack Obama", "PERSON"), ("Chicago", "PLACE")
+                ),
             }
         ]
 
@@ -1616,7 +1648,7 @@ class TestEntityExtractionArtifactLoading:
             "Extract named entities only from the saved artifact."
         )
         artifact_state["extractor.predict"]["demos"] = [
-            {"query": "sentinel", "entities": "sentinel|CONCEPT|1.0"}
+            {"query": "sentinel", "entities": _mention_dicts(("sentinel", "CONCEPT"))}
         ]
 
         with patch(
@@ -1662,7 +1694,7 @@ class TestEntityExtractionArtifactLoading:
             "User query for artifact compatibility testing"
         )
         artifact_state["extractor.predict"]["demos"] = [
-            {"query": "sentinel", "entities": "sentinel|CONCEPT|1.0"}
+            {"query": "sentinel", "entities": _mention_dicts(("sentinel", "CONCEPT"))}
         ]
 
         with patch(
@@ -1697,6 +1729,83 @@ class TestEntityExtractionArtifactLoading:
             and "extractor.predict" in rec.getMessage()
             for rec in caplog.records
         )
+
+    @pytest.mark.asyncio
+    async def test_artifact_compiled_against_the_pipe_signature_serves_base(
+        self, entity_agent, caplog
+    ):
+        """An artifact persisted while entities was a text|type|confidence string
+        is refused by the signature guard, so the agent serves the base module
+        until the optimizer recompiles against the typed signature."""
+        from unittest.mock import AsyncMock
+
+        from cogniverse_agents.optimizer.artifact_manager import (
+            signature_contract_mismatch,
+        )
+
+        artifact_state = json.loads(PIPE_SIGNATURE_STATE.read_text())
+        assert list(artifact_state) == ["extractor.predict"]
+        assert artifact_state["extractor.predict"]["signature"]["fields"] == [
+            {"prefix": "Query:", "description": "User query to analyze"},
+            {
+                "prefix": "Reasoning:",
+                "description": EntityExtractionModule()
+                .extractor.predict.signature.output_fields["reasoning"]
+                .json_schema_extra["desc"],
+            },
+            {
+                "prefix": "Entities:",
+                "description": (
+                    "Extracted entities in format: text|type|confidence, one per "
+                    "line; text must be a verbatim span of the query"
+                ),
+            },
+        ]
+        assert [
+            demo["entities"] for demo in artifact_state["extractor.predict"]["demos"]
+        ] == ["people|PERSON|0.9\ncar|CONCEPT|0.9"]
+
+        live_state = EntityExtractionModule().dump_state()
+        assert signature_contract_mismatch(live_state, artifact_state) == (
+            "extractor.predict",
+            "instructions",
+        )
+        same_instructions = json.loads(json.dumps(artifact_state))
+        same_instructions["extractor.predict"]["signature"]["instructions"] = (
+            live_state["extractor.predict"]["signature"]["instructions"]
+        )
+        assert signature_contract_mismatch(live_state, same_instructions) == (
+            "extractor.predict",
+            "field[2] description",
+        )
+
+        mock_tm = MagicMock()
+        mock_tm.get_provider.return_value = MagicMock()
+        with patch(
+            "cogniverse_agents.optimizer.artifact_manager.ArtifactManager"
+        ) as MockAM:
+            mock_am = MockAM.return_value
+            mock_am.load_blob = AsyncMock(return_value=json.dumps(artifact_state))
+            mock_am.active_blob_version = AsyncMock(return_value=9)
+
+            entity_agent.telemetry_manager = mock_tm
+            entity_agent._artifact_tenant_id = "test:unit"
+            entity_agent.dspy_module = EntityExtractionModule()
+            with caplog.at_level(
+                logging.WARNING,
+                logger="cogniverse_agents.optimizer.artifact_manager",
+            ):
+                entity_agent._load_artifact()
+
+        assert entity_agent.artifact_load_status == "signature_mismatch"
+        assert entity_agent.dspy_module.dump_state()["extractor.predict"] == {
+            **live_state["extractor.predict"],
+            "demos": [],
+        }
+        assert _messages(caplog, "cogniverse_agents.optimizer.artifact_manager") == [
+            "EntityExtractionAgent artifact entity_extraction v9 signature mismatch "
+            "for predictor extractor.predict (instructions); using defaults"
+        ]
 
     def test_defaults_without_artifact(self, entity_agent):
         """Agent uses default module when no artifact exists."""

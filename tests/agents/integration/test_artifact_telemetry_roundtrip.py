@@ -444,11 +444,17 @@ class TestDSPyAgentArtifactRoundTrip:
         optimized_state["extractor.predict"]["demos"] = [
             {
                 "query": "find ML transformer papers",
-                "entities": "ML|CONCEPT|0.9\ntransformer|CONCEPT|0.85",
+                "entities": [
+                    {"text": "ML", "type": "CONCEPT"},
+                    {"text": "transformer", "type": "CONCEPT"},
+                ],
             },
             {
                 "query": "latest NVIDIA GPU benchmarks",
-                "entities": "NVIDIA|ORGANIZATION|0.95\nGPU|TECHNOLOGY|0.8",
+                "entities": [
+                    {"text": "NVIDIA", "type": "ORGANIZATION"},
+                    {"text": "GPU", "type": "TECHNOLOGY"},
+                ],
             },
         ]
 
@@ -467,7 +473,10 @@ class TestDSPyAgentArtifactRoundTrip:
             loaded_state["extractor.predict"]["demos"][0]["query"]
             == "find ML transformer papers"
         )
-        assert "NVIDIA" in loaded_state["extractor.predict"]["demos"][1]["entities"]
+        assert loaded_state["extractor.predict"]["demos"][1]["entities"] == [
+            {"text": "NVIDIA", "type": "ORGANIZATION"},
+            {"text": "GPU", "type": "TECHNOLOGY"},
+        ]
 
         # Verify signature survived the round-trip
         sig_fields = loaded_state["extractor.predict"]["signature"]["fields"]
@@ -498,11 +507,15 @@ class TestDSPyAgentArtifactRoundTrip:
             f"Agent should have loaded 2 demos from artifact, got {len(demos_after)}"
         )
         assert demos_after[0]["query"] == "find ML transformer papers"
-        assert demos_after[0]["entities"] == "ML|CONCEPT|0.9\ntransformer|CONCEPT|0.85"
+        assert demos_after[0]["entities"] == [
+            {"text": "ML", "type": "CONCEPT"},
+            {"text": "transformer", "type": "CONCEPT"},
+        ]
         assert demos_after[1]["query"] == "latest NVIDIA GPU benchmarks"
-        assert (
-            demos_after[1]["entities"] == "NVIDIA|ORGANIZATION|0.95\nGPU|TECHNOLOGY|0.8"
-        )
+        assert demos_after[1]["entities"] == [
+            {"text": "NVIDIA", "type": "ORGANIZATION"},
+            {"text": "GPU", "type": "TECHNOLOGY"},
+        ]
         assert set(demos_after[1]) == {"query", "entities"}
 
     @pytest.mark.asyncio
@@ -1267,7 +1280,7 @@ class TestDispatcherArtifactWiring:
         demos = [
             {
                 "query": "dispatcher wiring test query",
-                "entities": "WIRING_TEST|CONCEPT|1.0",
+                "entities": [{"text": "WIRING_TEST", "type": "CONCEPT"}],
             },
         ]
         state["extractor.predict"]["demos"] = demos
@@ -1464,6 +1477,7 @@ class TestArtifactAffectsBehavior:
     """
 
     @pytest.mark.asyncio
+    @pytest.mark.requires_lm
     async def test_query_enhancement_output_reflects_loaded_demos(self, real_provider):
         """Enhancement agent with demos should produce a different (enhanced) query."""
         import json
@@ -1507,7 +1521,13 @@ class TestArtifactAffectsBehavior:
         )
 
         # Create real agent and load artifact
+        from cogniverse_foundation.config.manager import ConfigManager
+        from tests.utils.memory_store import InMemoryConfigStore
+
+        store = InMemoryConfigStore()
+        store.initialize()
         agent = QueryEnhancementAgent(deps=QueryEnhancementDeps())
+        agent.bind_config_manager(ConfigManager(store=store))
         tm = get_telemetry_manager()
         agent.telemetry_manager = tm
         agent._artifact_tenant_id = tenant_id
@@ -1560,6 +1580,7 @@ class TestArtifactAffectsBehavior:
         )
 
     @pytest.mark.asyncio
+    @pytest.mark.requires_lm
     async def test_entity_extraction_output_with_loaded_demos(self, real_provider):
         """Entity extraction via DSPy fallback with demos should produce entities."""
         import json
@@ -1583,15 +1604,18 @@ class TestArtifactAffectsBehavior:
         state["extractor.predict"]["demos"] = [
             {
                 "query": "Netflix producing AI documentaries",
-                "entities": "Netflix|ORGANIZATION|0.95\nAI|CONCEPT|0.8",
+                "entities": [
+                    {"text": "Netflix", "type": "ORGANIZATION"},
+                    {"text": "AI", "type": "CONCEPT"},
+                ],
             },
             {
                 "query": "Google acquiring DeepMind in London",
-                "entities": (
-                    "Google|ORGANIZATION|0.95\n"
-                    "DeepMind|ORGANIZATION|0.9\n"
-                    "London|PLACE|0.85"
-                ),
+                "entities": [
+                    {"text": "Google", "type": "ORGANIZATION"},
+                    {"text": "DeepMind", "type": "ORGANIZATION"},
+                    {"text": "London", "type": "PLACE"},
+                ],
             },
         ]
         await mgr.save_blob(
@@ -1599,7 +1623,13 @@ class TestArtifactAffectsBehavior:
         )
 
         # Create agent, disable fast path to force DSPy fallback
+        from cogniverse_foundation.config.manager import ConfigManager
+        from tests.utils.memory_store import InMemoryConfigStore
+
+        store = InMemoryConfigStore()
+        store.initialize()
         agent = EntityExtractionAgent(deps=EntityExtractionDeps())
+        agent.bind_config_manager(ConfigManager(store=store))
         agent._gliner_extractor = None
         agent._spacy_analyzer = None
 

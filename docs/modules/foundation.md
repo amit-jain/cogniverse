@@ -998,7 +998,7 @@ dspy.configure(adapter=LenientJSONAdapter())
 ```
 
 **`StructuredJSONAdapter`** / **`signature_response_format(signature)`**
-(`cogniverse_foundation.dspy.structured_json_adapter`) — a `JSONAdapter`
+(`cogniverse_foundation/dspy/structured_json_adapter.py`) — a `JSONAdapter`
 subclass that sends the signature's output fields to the server as an OpenAI
 `response_format` of type `json_schema`: every output field required,
 `additionalProperties: false`, `strict: true`. The schema is derived from the
@@ -1007,7 +1007,10 @@ return an object carrying every field. Stock `JSONAdapter` asks for a schema
 only when litellm's registry claims the model supports one and otherwise falls
 back to `{"type": "json_object"}`, which a bare `{}` satisfies; this adapter
 always sends the schema and raises `AdapterParseError` rather than reprompting
-under a second adapter when a server ignores it.
+under a second adapter when a server ignores it. A field value that fails its
+declared type — a list item outside a `Literal`, a missing or extra key on a
+nested model — raises `AdapterParseError` too, carrying the response, so every
+answer outside the schema is one error type.
 
 The schema's `name` is the signature's class name, except for the placeholder
 names dspy gives a signature built from a string, rebuilt by
