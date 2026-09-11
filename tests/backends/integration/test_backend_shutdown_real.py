@@ -19,7 +19,7 @@ def test_backend_close_stops_real_search_pool_before_service_teardown(shared_ves
             max_connections=1,
             health_check_interval=0.05,
         ),
-        deployed_schema_names=lambda _tenant_id: frozenset(),
+        is_schema_deployed=lambda _tenant_id, _base: False,
     )
     backend = object.__new__(VespaBackend)
     backend._vespa_search_backend = search

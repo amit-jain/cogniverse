@@ -71,6 +71,10 @@ class SchemaDeploymentIntents:
         )
 
     def _save(self, record: dict[str, Any]) -> dict[str, Any] | None:
+        from cogniverse_core.registries.schema_registry import (
+            invalidate_deployed_schema_names,
+        )
+
         value = {key: item for key, item in record.items() if key != "_revision"}
         name = value["registration"]["full_schema_name"]
         try:
@@ -87,6 +91,8 @@ class SchemaDeploymentIntents:
             raise RegistryStorageError(
                 f"Cannot persist deployment intent for {name!r}: {exc}"
             ) from exc
+        finally:
+            invalidate_deployed_schema_names(value["registration"]["tenant_id"])
 
     def prepare(
         self, registration: dict[str, Any], *, grace_s: float, registry_version: int = 0

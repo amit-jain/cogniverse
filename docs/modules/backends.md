@@ -654,7 +654,13 @@ read — `config_manager.store.source` and `schema_loader.source` — not by
 object: a fresh `ConfigManager` over the same store and a fresh
 `FilesystemSchemaLoader` over the same directory share the cached instance,
 while a requester reading another store or schema directory gets
-`BackendBindingConflictError` naming both sources.
+`BackendBindingConflictError` naming both sources. Sources are canonical:
+`VespaConfigStore.source` spells its endpoint through `canonical_endpoint`
+in `cogniverse_vespa/_vespa_factory.py` (scheme and host
+lowercased, explicit port, every loopback spelling written `localhost`, no
+name resolution), and `FilesystemSchemaLoader.source` is the resolved
+directory, so `http://127.0.0.1:8080` and `http://localhost:8080` are one
+store.
 
 `BackendRegistry.lease_instance(instance)` checks a cached backend out for
 the length of a request: eviction skips it and takes the least-recently-used
@@ -1373,7 +1379,7 @@ backend = VespaSearchBackend(
     pool_config=pool_config,
     config_manager=config_manager,
     schema_loader=schema_loader,
-    deployed_schema_names=partial(tenant_deployed_schema_names, config_manager),
+    is_schema_deployed=DeployedSchemaNames(config_manager),
 )
 ```
 
@@ -1545,9 +1551,7 @@ correct tenant schema and its `strategy` is validated against that
 schema's rank profiles.
 
 ```python
-from functools import partial
-
-from cogniverse_core.registries.schema_registry import tenant_deployed_schema_names
+from cogniverse_core.registries.schema_registry import DeployedSchemaNames
 from cogniverse_vespa.search_backend import VespaSearchBackend
 
 backend = VespaSearchBackend(
@@ -1559,21 +1563,24 @@ backend = VespaSearchBackend(
     },
     config_manager=config_manager,
     schema_loader=schema_loader,
-    deployed_schema_names=partial(tenant_deployed_schema_names, config_manager),
+    is_schema_deployed=DeployedSchemaNames(config_manager),
 )
 ```
 
-`deployed_schema_names` is required: it maps a tenant id to the base schema
-names that tenant has deployed, and every search consults it before querying.
-A base schema outside the set raises `SchemaNotDeployedError`; a read failure
-propagates (`tenant_deployed_schema_names` raises `RegistryStorageError`
-chained from the store's error), so an outage never reads as "not deployed".
-`VespaBackend` binds `tenant_deployed_schema_names` to its own
-`config_manager` — the same schema-registry rows plus pending deployment
-intents that decide whether a profile is servable — so a search through the
-registry builds no other backend to answer it.
+`is_schema_deployed` is required: `(tenant_id, base_schema_name) -> bool`,
+asked before every query. False raises `SchemaNotDeployedError`; a read
+failure propagates (`RegistryStorageError` chained from the store's error), so
+an outage never reads as "not deployed". `VespaBackend` passes a
+`DeployedSchemaNames` over its own `config_manager` — the same schema-registry
+rows plus pending deployment intents that decide whether a profile is
+servable — so a search through the registry builds no other backend to answer
+it. The reader caches deployed names only: a warm search of a deployed schema
+reads nothing, a schema missing from the cache is re-read before the search is
+refused (a deployment by any process is visible to the next search), and a
+deletion by another process is seen within `DEPLOYED_SCHEMAS_TTL_S` (see the
+core module).
 
-A lower-level `create_vespa_search_backend(schema_name, backend_url="http://localhost:8080", *, deployed_schema_names, **kwargs)`
+A lower-level `create_vespa_search_backend(schema_name, backend_url="http://localhost:8080", *, is_schema_deployed, **kwargs)`
 factory function is also available; it builds a `VespaSearchBackend` from the
 non-`config` (single fixed `schema_name`/`profile`) constructor path rather
 than the multi-profile `config` dict shown above.
@@ -2582,9 +2589,8 @@ reported ids against Document v1 state.
 
 ```python
 import pytest
-from functools import partial
 
-from cogniverse_core.registries.schema_registry import tenant_deployed_schema_names
+from cogniverse_core.registries.schema_registry import DeployedSchemaNames
 from cogniverse_vespa.search_backend import VespaSearchBackend
 
 @pytest.mark.integration
@@ -2601,9 +2607,7 @@ class TestTenantScopedSearch:
             },
             config_manager=config_manager,
             schema_loader=schema_loader,
-            deployed_schema_names=partial(
-                tenant_deployed_schema_names, config_manager
-            ),
+            is_schema_deployed=DeployedSchemaNames(config_manager),
         )
 
     def test_search_with_tenant_schema(self, backend):
@@ -2695,9 +2699,7 @@ results = backend.search({
 ### 2. Construct the Backend with Injected Dependencies
 
 ```python
-from functools import partial
-
-from cogniverse_core.registries.schema_registry import tenant_deployed_schema_names
+from cogniverse_core.registries.schema_registry import DeployedSchemaNames
 from cogniverse_vespa.search_backend import VespaSearchBackend
 
 # config_manager and schema_loader are injected once at construction;
@@ -2711,7 +2713,7 @@ backend = VespaSearchBackend(
     },
     config_manager=config_manager,
     schema_loader=schema_loader,
-    deployed_schema_names=partial(tenant_deployed_schema_names, config_manager),
+    is_schema_deployed=DeployedSchemaNames(config_manager),
 )
 ```
 
@@ -3017,9 +3019,7 @@ query.
 ### Usage
 
 ```python
-from functools import partial
-
-from cogniverse_core.registries.schema_registry import tenant_deployed_schema_names
+from cogniverse_core.registries.schema_registry import DeployedSchemaNames
 from cogniverse_vespa.search_backend import VespaSearchBackend
 
 backend = VespaSearchBackend(
@@ -3027,7 +3027,7 @@ backend = VespaSearchBackend(
     query_encoder=query_encoder,
     config_manager=config_manager,
     schema_loader=schema_loader,
-    deployed_schema_names=partial(tenant_deployed_schema_names, config_manager),
+    is_schema_deployed=DeployedSchemaNames(config_manager),
 )
 
 # tenant_id is REQUIRED in query_dict; search() raises if it is missing

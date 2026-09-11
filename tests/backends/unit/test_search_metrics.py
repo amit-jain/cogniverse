@@ -131,7 +131,7 @@ def test_get_metrics_exports_failed_search_count():
     with patch("cogniverse_vespa.search_backend.ConnectionPool"):
         backend = VespaSearchBackend(
             config={"url": "http://localhost", "port": 8080, "profiles": {}},
-            deployed_schema_names=lambda _tenant_id: frozenset(),
+            is_schema_deployed=lambda _tenant_id, _base: False,
         )
     backend.metrics.record_search(success=True, latency_ms=5.0, strategy="binary")
     backend.metrics.record_search(

@@ -17,7 +17,7 @@ import threading
 import time
 import uuid
 from collections import defaultdict, deque
-from collections.abc import Callable, Mapping, Set
+from collections.abc import Callable, Mapping
 from contextlib import contextmanager
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
@@ -693,7 +693,7 @@ class VespaSearchBackend(SearchBackend):
         config_manager=None,
         schema_loader=None,
         *,
-        deployed_schema_names: Callable[[str], Set[str]],
+        is_schema_deployed: Callable[[str, str], bool],
     ):
         """
         Initialize Vespa search backend.
@@ -713,15 +713,15 @@ class VespaSearchBackend(SearchBackend):
             config: Backend configuration dict (preferred; takes precedence)
             config_manager: ConfigManager for dependency injection
             schema_loader: SchemaLoader for dependency injection
-            deployed_schema_names: Maps a tenant id to the base schema names
-                that tenant has deployed. Every search consults it before
-                querying and raises ``SchemaNotDeployedError`` on a miss;
-                production binds ``tenant_deployed_schema_names`` to the
-                config manager. A read failure propagates.
+            is_schema_deployed: ``(tenant_id, base_schema_name)`` to whether
+                the tenant has that base schema deployed. Every search asks it
+                before querying and raises ``SchemaNotDeployedError`` on False;
+                production passes a ``DeployedSchemaNames`` over the config
+                manager. A read failure propagates.
         """
         self._schema_loader = schema_loader
         self._config_manager = config_manager
-        self._deployed_schema_names = deployed_schema_names
+        self._is_schema_deployed = is_schema_deployed
 
         # Lock guards runtime mutation of self.profiles / self.default_profiles
         # via add_profile / remove_profile. Reads in get_search_results take the
@@ -784,7 +784,7 @@ class VespaSearchBackend(SearchBackend):
 
     def _tenant_schema_exists(self, base_schema_name: str, tenant_id: str) -> bool:
         """Return True when the tenant has deployed the requested base schema."""
-        return base_schema_name in self._deployed_schema_names(tenant_id)
+        return self._is_schema_deployed(tenant_id, base_schema_name)
 
     def initialize(self, config: Dict[str, Any]) -> None:
         """
@@ -2371,7 +2371,7 @@ def create_vespa_search_backend(
     schema_name: str,
     backend_url: str = "http://localhost:8080",
     *,
-    deployed_schema_names: Callable[[str], Set[str]],
+    is_schema_deployed: Callable[[str, str], bool],
     **kwargs,
 ) -> VespaSearchBackend:
     """
@@ -2380,7 +2380,7 @@ def create_vespa_search_backend(
     Args:
         schema_name: Vespa schema name
         backend_url: Backend URL
-        deployed_schema_names: Tenant id to deployed base schema names
+        is_schema_deployed: (tenant id, base schema name) to deployed
         **kwargs: Additional configuration
 
     Returns:
@@ -2389,6 +2389,6 @@ def create_vespa_search_backend(
     return VespaSearchBackend(
         backend_url=backend_url,
         schema_name=schema_name,
-        deployed_schema_names=deployed_schema_names,
+        is_schema_deployed=is_schema_deployed,
         **kwargs,
     )

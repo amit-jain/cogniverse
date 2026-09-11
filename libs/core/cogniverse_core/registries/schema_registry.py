@@ -7,9 +7,13 @@ Ensures all schemas are tracked and can be redeployed together.
 
 import logging
 import threading
+import time
+import weakref
+from concurrent.futures import Future
 from dataclasses import dataclass
-from typing import Any, Dict, List, Optional
+from typing import Any, ClassVar, Dict, List, Optional
 
+from cogniverse_core.common.tenant_utils import canonical_tenant_id
 from cogniverse_core.registries.exceptions import (
     BackendDeploymentError,
     RegistryStorageError,
@@ -25,6 +29,10 @@ _SCHEMA_INTENT_GRACE_S = 90
 
 # ConfigStore service the registry rows and the deployment journal live under.
 SCHEMA_REGISTRY_SERVICE = "schema_registry"
+
+# Longest a DeployedSchemaNames entry answers True without re-reading the
+# store: how long another process's deletion can go unseen here.
+DEPLOYED_SCHEMAS_TTL_S = 30.0
 
 
 @dataclass
@@ -48,7 +56,6 @@ def tenant_deployed_schema_names(config_manager, tenant_id: str) -> frozenset[st
     with a smaller set: one outage would otherwise report every one of the
     tenant's schemas as undeployed.
     """
-    from cogniverse_core.common.tenant_utils import canonical_tenant_id
     from cogniverse_sdk.interfaces.config_store import ConfigScope
 
     tenant_id = canonical_tenant_id(tenant_id)
@@ -75,6 +82,107 @@ def tenant_deployed_schema_names(config_manager, tenant_id: str) -> frozenset[st
         if record["registration"]["tenant_id"] == tenant_id
     )
     return frozenset(names)
+
+
+class DeployedSchemaNames:
+    """Whether a tenant has a base schema deployed, cached per tenant.
+
+    ``reader(tenant_id, base_schema_name)``. A tenant's entry holds only
+    deployed names: a name in it answers True with no read until ``ttl_s``
+    after the read that produced it began. A name missing from it re-reads
+    the store before answering False, so a deployment by any process is
+    visible to the next call and a refusal is never served from memory.
+    Every schema-registry row or deployment-intent write in this process
+    drops the written tenant's entry from every reader
+    (``invalidate_deployed_schema_names``), so ``ttl_s`` bounds only how long
+    another process's deletion keeps answering True. Concurrent reads for one
+    tenant share one store read; a failed read raises to each caller and
+    caches nothing.
+    """
+
+    _live: ClassVar["weakref.WeakSet[DeployedSchemaNames]"] = weakref.WeakSet()
+    _live_lock: ClassVar[threading.Lock] = threading.Lock()
+
+    def __init__(self, config_manager, ttl_s: float = DEPLOYED_SCHEMAS_TTL_S) -> None:
+        if ttl_s <= 0:
+            raise ValueError(f"ttl_s must be positive, got {ttl_s}")
+        self._config_manager = config_manager
+        self._ttl_s = ttl_s
+        self._lock = threading.Lock()
+        self._entries: Dict[str, tuple[frozenset[str], float]] = {}
+        self._reads: Dict[str, Future] = {}
+        with DeployedSchemaNames._live_lock:
+            DeployedSchemaNames._live.add(self)
+
+    @property
+    def config_manager(self):
+        return self._config_manager
+
+    @property
+    def ttl_s(self) -> float:
+        return self._ttl_s
+
+    def __call__(self, tenant_id: str, base_schema_name: str) -> bool:
+        tenant_id = canonical_tenant_id(tenant_id)
+        with self._lock:
+            cached = self._entries.get(tenant_id)
+            if (
+                cached is not None
+                and time.monotonic() < cached[1]
+                and base_schema_name in cached[0]
+            ):
+                return True
+        return base_schema_name in self._read(tenant_id)
+
+    def _read(self, tenant_id: str) -> frozenset[str]:
+        with self._lock:
+            started = time.monotonic()
+            read = self._reads.get(tenant_id)
+            if read is not None:
+                owner = False
+            else:
+                owner = True
+                read = self._reads[tenant_id] = Future()
+        if not owner:
+            return read.result()
+        try:
+            names = tenant_deployed_schema_names(self._config_manager, tenant_id)
+        except BaseException as exc:
+            with self._lock:
+                if self._reads.get(tenant_id) is read:
+                    del self._reads[tenant_id]
+            read.set_exception(exc)
+            raise
+        with self._lock:
+            # An invalidation during the read removed it from _reads: the
+            # answer may predate that write, so it is returned, never cached.
+            if self._reads.get(tenant_id) is read:
+                del self._reads[tenant_id]
+                for expired in [
+                    key for key, (_, until) in self._entries.items() if until <= started
+                ]:
+                    del self._entries[expired]
+                if names:
+                    self._entries[tenant_id] = (names, started + self._ttl_s)
+                else:
+                    self._entries.pop(tenant_id, None)
+        read.set_result(names)
+        return names
+
+    def invalidate(self, tenant_id: str) -> None:
+        """Drop the tenant's entry and detach any read in flight for it."""
+        tenant_id = canonical_tenant_id(tenant_id)
+        with self._lock:
+            self._entries.pop(tenant_id, None)
+            self._reads.pop(tenant_id, None)
+
+
+def invalidate_deployed_schema_names(tenant_id: str) -> None:
+    """Drop the tenant's entry from every DeployedSchemaNames in this process."""
+    with DeployedSchemaNames._live_lock:
+        readers = list(DeployedSchemaNames._live)
+    for reader in readers:
+        reader.invalidate(tenant_id)
 
 
 class SchemaRegistry:
@@ -274,18 +382,21 @@ class SchemaRegistry:
             "service": SCHEMA_REGISTRY_SERVICE,
             "config_key": config_key,
         }
-        if expected_version is None:
-            self._config_manager.store.set_config(**coordinates, config_value=value)
-        else:
-            saved = self._config_manager.store.compare_and_set_config(
-                **coordinates, config_value=value, expected_version=expected_version
-            )
-            if saved is None:
-                current = self._config_manager.store.get_config(**coordinates)
-                if current is None or current.config_value != value:
-                    raise RegistryStorageError(
-                        f"Registration of {full_schema_name!r} conflicted with a newer registry revision"
-                    )
+        try:
+            if expected_version is None:
+                self._config_manager.store.set_config(**coordinates, config_value=value)
+            else:
+                saved = self._config_manager.store.compare_and_set_config(
+                    **coordinates, config_value=value, expected_version=expected_version
+                )
+                if saved is None:
+                    current = self._config_manager.store.get_config(**coordinates)
+                    if current is None or current.config_value != value:
+                        raise RegistryStorageError(
+                            f"Registration of {full_schema_name!r} conflicted with a newer registry revision"
+                        )
+        finally:
+            invalidate_deployed_schema_names(tenant_id)
 
         # Add to in-memory registry
         key = (tenant_id, base_schema_name)
@@ -771,13 +882,16 @@ class SchemaRegistry:
         )
         schema_info["deleted"] = True
         schema_info["deleted_at"] = datetime.now(timezone.utc).isoformat()
-        self._config_manager.store.set_config(
-            tenant_id=tenant_id,
-            scope=ConfigScope.SCHEMA,
-            service=SCHEMA_REGISTRY_SERVICE,
-            config_key=config_key,
-            config_value=schema_info,
-        )
+        try:
+            self._config_manager.store.set_config(
+                tenant_id=tenant_id,
+                scope=ConfigScope.SCHEMA,
+                service=SCHEMA_REGISTRY_SERVICE,
+                config_key=config_key,
+                config_value=schema_info,
+            )
+        finally:
+            invalidate_deployed_schema_names(tenant_id)
 
         # Remove from in-memory registry
         key = (tenant_id, base_schema_name)

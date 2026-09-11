@@ -4,7 +4,6 @@
 import argparse
 import logging
 import sys
-from functools import partial
 from pathlib import Path
 from typing import Any, Dict, Optional
 from urllib.parse import urlsplit
@@ -18,7 +17,7 @@ import pyarrow.parquet as pq
 project_root = Path(__file__).parent.parent
 sys.path.insert(0, str(project_root))
 
-from cogniverse_core.registries.schema_registry import tenant_deployed_schema_names
+from cogniverse_core.registries.schema_registry import DeployedSchemaNames
 from cogniverse_foundation.config.manager import ConfigManager
 from cogniverse_sdk.interfaces.backend import SearchBackend
 from cogniverse_vespa.config.config_store import VespaConfigStore
@@ -349,7 +348,7 @@ def get_backend(backend_type: str, **kwargs) -> SearchBackend:
             enable_metrics=False,
             enable_connection_pool=False,
             config_manager=config_manager,
-            deployed_schema_names=partial(tenant_deployed_schema_names, config_manager),
+            is_schema_deployed=DeployedSchemaNames(config_manager),
         )
     # Add more backends here as needed
     # elif backend_type.lower() == "elasticsearch":

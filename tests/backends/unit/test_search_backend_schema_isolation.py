@@ -126,7 +126,7 @@ def test_tenant_profiles_and_defaults_override_same_named_global_entries(
         },
         config_manager=MagicMock(),
         enable_connection_pool=False,
-        deployed_schema_names=lambda _tenant_id: frozenset({"tenant_wiki"}),
+        is_schema_deployed=lambda _tenant_id, base: base in {"tenant_wiki"},
     )
     backend.vespa = MagicMock()
     backend.vespa.query.return_value = SimpleNamespace(
@@ -187,11 +187,11 @@ def test_tenant_profiles_and_defaults_override_same_named_global_entries(
 
 
 def test_search_raises_when_the_tenant_schema_is_not_deployed(monkeypatch):
-    lookups: list[str] = []
+    lookups: list[tuple[str, str]] = []
 
-    def deployed_schema_names(tenant_id):
-        lookups.append(tenant_id)
-        return frozenset({"global_wiki"})
+    def is_schema_deployed(tenant_id, base_schema_name):
+        lookups.append((tenant_id, base_schema_name))
+        return base_schema_name == "global_wiki"
 
     backend = VespaSearchBackend(
         config={
@@ -209,7 +209,7 @@ def test_search_raises_when_the_tenant_schema_is_not_deployed(monkeypatch):
         },
         config_manager=MagicMock(),
         enable_connection_pool=False,
-        deployed_schema_names=deployed_schema_names,
+        is_schema_deployed=is_schema_deployed,
     )
     backend.vespa = MagicMock()
     monkeypatch.setattr(
@@ -253,13 +253,13 @@ def test_search_raises_when_the_tenant_schema_is_not_deployed(monkeypatch):
         "searching this profile"
     )
     backend.vespa.query.assert_not_called()
-    assert lookups == ["acme"]
+    assert lookups == [("acme", "tenant_wiki")]
 
 
 def test_search_raises_when_tenant_schema_lookup_fails(monkeypatch):
     from cogniverse_core.registries.exceptions import RegistryStorageError
 
-    def deployed_schema_names(tenant_id):
+    def is_schema_deployed(tenant_id, base_schema_name):
         raise RegistryStorageError("schema registry unavailable")
 
     backend = VespaSearchBackend(
@@ -278,7 +278,7 @@ def test_search_raises_when_tenant_schema_lookup_fails(monkeypatch):
         },
         config_manager=MagicMock(),
         enable_connection_pool=False,
-        deployed_schema_names=deployed_schema_names,
+        is_schema_deployed=is_schema_deployed,
     )
     backend.vespa = MagicMock()
     monkeypatch.setattr(

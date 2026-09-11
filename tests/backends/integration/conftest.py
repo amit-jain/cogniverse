@@ -47,6 +47,38 @@ def vespa_instance(shared_vespa):
     # No teardown here — shared_vespa owns the container lifecycle.
 
 
+@pytest.fixture(autouse=True)
+def _test_owned_telemetry():
+    """Own the process-wide telemetry singleton a search touches.
+
+    ``VespaSearchBackend.search`` opens encode spans through
+    ``get_telemetry_manager()``, which first-builds the singleton from
+    ``create_default_config_manager()``. Whether that reads a live store
+    depends on what ``BACKEND_PORT`` an earlier module left behind (the
+    root default is the dead 29071). Pre-build it disabled when unset and
+    drop it afterwards, as ``tests/runtime/integration/conftest.py`` does.
+    """
+    import os
+
+    import cogniverse_foundation.telemetry.manager as telemetry_manager_module
+    from cogniverse_foundation.telemetry.config import TelemetryConfig
+    from cogniverse_foundation.telemetry.manager import TelemetryManager
+
+    if os.environ.get("TELEMETRY_OTLP_ENDPOINT"):
+        yield
+        return
+    installed = None
+    if telemetry_manager_module._telemetry_manager is None:
+        installed = TelemetryManager(TelemetryConfig(enabled=False))
+        telemetry_manager_module._telemetry_manager = installed
+    yield
+    if (
+        installed is not None
+        and telemetry_manager_module._telemetry_manager is installed
+    ):
+        telemetry_manager_module._telemetry_manager = None
+
+
 @pytest.fixture(scope="module")
 def temp_config_manager(vespa_instance, tmp_path_factory):
     """

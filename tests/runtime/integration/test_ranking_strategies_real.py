@@ -22,7 +22,6 @@ from __future__ import annotations
 
 import logging
 import time
-from functools import partial
 
 import numpy as np
 import pytest
@@ -30,7 +29,7 @@ import requests
 from PIL import Image
 
 from cogniverse_core.common.models.model_loaders import RemoteColPaliLoader
-from cogniverse_core.registries.schema_registry import tenant_deployed_schema_names
+from cogniverse_core.registries.schema_registry import DeployedSchemaNames
 from cogniverse_foundation.config.unified_config import BackendProfileConfig
 from cogniverse_foundation.config.utils import get_config
 from cogniverse_vespa.search_backend import VespaSearchBackend
@@ -385,7 +384,7 @@ def search_backend(vespa_instance, config_manager, schema_loader):
         config=config,
         config_manager=config_manager,
         schema_loader=schema_loader,
-        deployed_schema_names=partial(tenant_deployed_schema_names, config_manager),
+        is_schema_deployed=DeployedSchemaNames(config_manager),
     )
 
 
@@ -406,7 +405,7 @@ def source_collapse_search_backend(
         config=config,
         config_manager=config_manager,
         schema_loader=schema_loader,
-        deployed_schema_names=partial(tenant_deployed_schema_names, config_manager),
+        is_schema_deployed=DeployedSchemaNames(config_manager),
     )
 
 

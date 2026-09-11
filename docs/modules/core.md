@@ -626,8 +626,24 @@ deployed, taken from the registry rows plus the pending deployment intents (a
 name an activation owns before its row lands). It needs no backend, and a
 storage read failure raises `RegistryStorageError` naming the tenant rather
 than answering with a smaller set — an outage must never read as "nothing is
-deployed". `VespaSearchBackend` consults it, bound to the backend's config
-manager, before every query (see the backends module).
+deployed".
+
+`DeployedSchemaNames(config_manager, ttl_s=DEPLOYED_SCHEMAS_TTL_S)` answers
+`reader(tenant_id, base_schema_name) -> bool` from that read, caching each
+canonical tenant's deployed names; `VespaBackend` hands one to its
+`VespaSearchBackend`, which asks it before every query (see the backends
+module). A name in the tenant's entry answers True with no read until `ttl_s`
+after the read that produced it began. A name missing from it re-reads the
+store before answering False, so a deployment by any process is visible to the
+next call and a refusal is never served from memory; the fresh deployed names
+replace the entry, and a tenant with none keeps no entry. Every schema-registry
+row write (`register_schema`, `unregister_schema`, so deploy and delete) and
+every deployment-intent transition (`prepare`, `retire`, `complete`, recovery)
+calls `invalidate_deployed_schema_names(tenant_id)`, which drops that tenant's
+entry from every reader in the process, so `DEPLOYED_SCHEMAS_TTL_S` (30 s)
+bounds only how long another process's deletion keeps answering True.
+Concurrent reads for one tenant share one store read; a failed read raises
+`RegistryStorageError` to each caller and caches nothing.
 
 ```python
 from cogniverse_core.registries.schema_registry import tenant_deployed_schema_names

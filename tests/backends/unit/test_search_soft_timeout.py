@@ -294,7 +294,7 @@ def test_search_retries_soft_timeout_and_records_failures(monkeypatch):
         },
         enable_connection_pool=False,
         schema_loader=FilesystemSchemaLoader(Path("configs/schemas")),
-        deployed_schema_names=lambda _tenant_id: frozenset({_RETRY_SCHEMA_NAME}),
+        is_schema_deployed=lambda _tenant_id, base: base in {_RETRY_SCHEMA_NAME},
     )
     backend.vespa = MagicMock()
     backend.vespa.query.return_value = _response(_soft_timeout_body())
@@ -340,7 +340,7 @@ def test_search_honors_constructor_retry_configuration(monkeypatch):
             exceptions=(VespaError,),
         ),
         enable_connection_pool=False,
-        deployed_schema_names=lambda _tenant_id: frozenset({_RETRY_SCHEMA_NAME}),
+        is_schema_deployed=lambda _tenant_id, base: base in {_RETRY_SCHEMA_NAME},
     )
     backend.vespa = MagicMock()
     backend.vespa.query.return_value = _response(_soft_timeout_body())

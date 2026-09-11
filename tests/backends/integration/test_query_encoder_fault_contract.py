@@ -118,6 +118,10 @@ def encoder_fault_env(vespa_instance, hung_encoder_service):
     tenant_id = f"enc_fault_{uuid.uuid4().hex[:8]}"
     schema_loader = FilesystemSchemaLoader(Path("configs/schemas"))
     registry = BackendRegistry.get_instance()
+    # A backend another module left cached for this endpoint reads system
+    # config through that module's ConfigManager, which never sees the
+    # inference URLs written above; this module searches its own.
+    registry.clear_instances()
     backend_config = {
         "backend": {
             "url": "http://localhost",
@@ -244,6 +248,7 @@ def encoder_fault_env(vespa_instance, hung_encoder_service):
         "vector": vector,
         "hung_url": hung_encoder_service,
     }
+    registry.clear_instances()
 
 
 def _query(env, profile_label, **extra):
