@@ -12,9 +12,13 @@ from __future__ import annotations
 
 import importlib.util
 import logging
+import os
+import signal
+import socket
 import subprocess
 import sys
 import types
+import uuid
 from contextlib import contextmanager
 from pathlib import Path
 from unittest.mock import MagicMock
@@ -636,48 +640,150 @@ class TestGenerateTabbedHtmlReport:
         assert mod.format_metric_badge(mrr) == expected
 
 
+_OWNER_PID_LABEL = "cogniverse-test-owner-pid"
+_TINY_IMAGE = "busybox:1.36"
+
+
+def _docker(*args: str) -> str:
+    done = subprocess.run(["docker", *args], capture_output=True, text=True, check=True)
+    return done.stdout.strip()
+
+
+def _free_port() -> int:
+    with socket.socket() as sock:
+        sock.bind(("127.0.0.1", 0))
+        return sock.getsockname()[1]
+
+
+def _sleeping_container(*name: str) -> str:
+    return _docker(
+        "run",
+        "-d",
+        *name,
+        "--label",
+        f"cogniverse-test-owner-pid={os.getpid()}",
+        _TINY_IMAGE,
+        "sleep",
+        "300",
+    )
+
+
 @pytest.mark.requires_docker
 class TestStartPhoenix:
-    def test_start_docker_does_not_raise_on_container_cleanup(
+    """start_phoenix.py stops only the container its own start launched,
+    identified by the id recorded at launch, never by name."""
+
+    @staticmethod
+    def _server(mod, tmp_path, name: str):
+        return mod.PhoenixServer(
+            data_dir=str(tmp_path),
+            port=_free_port(),
+            container_name=name,
+            image=_TINY_IMAGE,
+            labels={_OWNER_PID_LABEL: str(os.getpid())},
+        )
+
+    def test_a_same_named_container_it_did_not_start_is_never_touched(self, tmp_path):
+        mod = _load("start_phoenix")
+        name = f"phoenix-server-{uuid.uuid4().hex[:8]}"
+        foreign_id = _sleeping_container("--name", name)
+        try:
+            server = self._server(mod, tmp_path, name)
+            server.stop()
+            after_stop = _docker(
+                "inspect", "--format", "{{.Id}} {{.State.Running}}", name
+            )
+            with pytest.raises(SystemExit) as exited:
+                server.start(background=True)
+            after_start = _docker(
+                "inspect", "--format", "{{.Id}} {{.State.Running}}", name
+            )
+        finally:
+            subprocess.run(
+                ["docker", "rm", "-f", foreign_id, name], capture_output=True
+            )
+
+        assert after_stop == f"{foreign_id} true"
+        assert exited.value.code == 1
+        assert after_start == f"{foreign_id} true"
+        assert server.pid_file.exists() is False
+
+    def test_stop_removes_the_container_its_foreground_start_launched(
         self, tmp_path, monkeypatch
     ):
-        """_start_docker's `docker rm -f` must not raise — capture_output and
-        stderr=DEVNULL together are a ValueError. Only the downstream launch is
-        stubbed; the real `docker rm` call is exercised."""
         mod = _load("start_phoenix")
+        registered: dict[str, list] = {"atexit": [], "signal": []}
+        monkeypatch.setattr(mod.atexit, "register", registered["atexit"].append)
+        monkeypatch.setattr(
+            mod.signal,
+            "signal",
+            lambda signum, handler: registered["signal"].append((signum, handler)),
+        )
+        name = f"phoenix-server-{uuid.uuid4().hex[:8]}"
+        server = self._server(mod, tmp_path, name)
 
-        calls = []
-        real_popen = mod.subprocess.Popen
+        try:
+            server.start(background=False)
+            recorded = server.pid_file.read_text().strip()
+            launched = _docker(
+                "ps",
+                "-a",
+                "--no-trunc",
+                "--filter",
+                f"id={recorded}",
+                "--format",
+                '{{.ID}} {{.Names}} {{.Label "cogniverse-test-owner-pid"}}',
+            )
+            server.stop()
+            remaining = _docker(
+                "ps", "-a", "-q", "--no-trunc", "--filter", f"id={recorded}"
+            )
+        finally:
+            subprocess.run(["docker", "rm", "-f", name], capture_output=True)
 
-        class _FakeProc:
-            def __init__(self, cmd):
-                calls.append(cmd)
+        assert launched == f"{recorded} {server.container_name} {os.getpid()}"
+        assert registered == {
+            "atexit": [server.stop],
+            "signal": [
+                (signal.SIGINT, server._signal_handler),
+                (signal.SIGTERM, server._signal_handler),
+            ],
+        }
+        assert remaining == ""
+        assert server.pid_file.exists() is False
 
-            def wait(self, *a, **k):
-                return 0
+    def test_a_failed_stop_of_its_own_container_is_raised_and_the_record_kept(
+        self, tmp_path, monkeypatch
+    ):
+        mod = _load("start_phoenix")
+        own_id = _sleeping_container()
+        server = self._server(mod, tmp_path, f"phoenix-server-{uuid.uuid4().hex[:8]}")
+        dead_daemon = f"unix://{tmp_path / 'no-docker.sock'}"
+        try:
+            monkeypatch.setenv("DOCKER_HOST", dead_daemon)
+            unrecorded_stop = server.stop()
+            server.pid_file.write_text(own_id)
+            with pytest.raises(RuntimeError) as raised:
+                server.stop()
+            listing = ("ps", "-a", "-q", "--no-trunc", "--filter", f"id={own_id}")
+            refused = subprocess.run(
+                ["docker", *listing], capture_output=True, text=True
+            )
+            monkeypatch.delenv("DOCKER_HOST")
+            running = _docker("inspect", "--format", "{{.State.Running}}", own_id)
+        finally:
+            monkeypatch.delenv("DOCKER_HOST", raising=False)
+            _docker("rm", "-f", own_id)
 
-            def __enter__(self):
-                return self
-
-            def __exit__(self, *a):
-                return False
-
-        def _fake_popen(cmd, *a, **k):
-            # Fake only the `docker run` launch; the real `docker rm` (via
-            # subprocess.run, which uses Popen internally) stays real.
-            if list(cmd[:2]) == ["docker", "run"]:
-                return _FakeProc(cmd)
-            return real_popen(cmd, *a, **k)
-
-        monkeypatch.setattr(mod.subprocess, "Popen", _fake_popen)
-
-        server = mod.PhoenixServer(data_dir=str(tmp_path), port=46006, use_docker=True)
-        # The real `docker rm -f phoenix-server` (line 90) runs here; the bug
-        # made it raise ValueError before ever reaching the launch step.
-        server._start_docker(background=False)
-
-        assert calls, "never reached the `docker run` launch (rm raised first?)"
-        assert calls[0][0] == "docker" and "run" in calls[0]
+        assert unrecorded_stop is None
+        assert refused.returncode == 1
+        assert str(raised.value) == (
+            f"docker {' '.join(listing)} failed (exit 1) for the Phoenix "
+            f"container recorded in {server.pid_file}: {refused.stderr.strip()}"
+        )
+        assert dead_daemon in refused.stderr
+        assert server.pid_file.read_text() == own_id
+        assert running == "true"
 
 
 class TestSetupEvaluationScriptContract:

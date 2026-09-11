@@ -675,11 +675,15 @@ uv run python scripts/start_phoenix.py
 uv run python scripts/start_phoenix.py --port 6007 --host 0.0.0.0
 
 # With persistence
-uv run python scripts/start_phoenix.py --storage-dir data/phoenix
+uv run python scripts/start_phoenix.py --data-dir data/phoenix
+
+# Stop the container this data directory's start launched
+uv run python scripts/start_phoenix.py --data-dir data/phoenix stop
 ```
 
-**Imports:**
-- `cogniverse_telemetry_phoenix.server` - Phoenix server launcher
+`start` records the launched container's id in `<data-dir>/phoenix.pid`;
+`stop` stops and removes only that container and never touches another
+container holding the same name.
 
 ---
 

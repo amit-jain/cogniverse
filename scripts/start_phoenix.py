@@ -12,17 +12,21 @@ import atexit
 import json
 import logging
 import os
+import re
 import signal
 import subprocess
 import sys
 import time
 from pathlib import Path
+from typing import Dict, Optional
 
 # Configure logging
 logging.basicConfig(
     level=logging.INFO, format="%(asctime)s - %(name)s - %(levelname)s - %(message)s"
 )
 logger = logging.getLogger(__name__)
+
+_CONTAINER_ID = re.compile(r"[0-9a-f]{64}")
 
 
 class PhoenixServer:
@@ -34,12 +38,17 @@ class PhoenixServer:
         port: int = 6006,
         host: str = "0.0.0.0",
         use_docker: bool = True,
+        container_name: str = "phoenix-server",
+        image: str = "arizephoenix/phoenix:latest",
+        labels: Optional[Dict[str, str]] = None,
     ):
         self.data_dir = Path(data_dir).absolute()
         self.port = port
         self.host = host
         self.use_docker = use_docker
-        self.container_name = "phoenix-server"
+        self.container_name = container_name
+        self.image = image
+        self.labels = dict(labels or {})
         self.process = None
         self.pid_file = self.data_dir / "phoenix.pid"
 
@@ -85,19 +94,21 @@ class PhoenixServer:
             self._start_python(background)
 
     def _start_docker(self, background: bool = False):
-        """Start Phoenix using Docker"""
-        # Remove existing container if it exists
-        subprocess.run(
-            ["docker", "rm", "-f", self.container_name],
-            capture_output=True,
-        )
+        """Start Phoenix using Docker.
 
-        # Build Docker command
+        A container this data directory recorded from an earlier start is
+        stopped and removed first; a container it did not start is never
+        touched, so a name already taken by one fails the launch.
+        """
+        self._stop_docker()
+
         cmd = [
             "docker",
             "run",
             "--name",
             self.container_name,
+            "--cidfile",
+            str(self.pid_file),
             "-p",
             f"{self.port}:6006",
             "-v",
@@ -115,11 +126,13 @@ class PhoenixServer:
             "-e",
             "PHOENIX_LOG_LEVEL=INFO",
         ]
+        for key, value in self.labels.items():
+            cmd.extend(["--label", f"{key}={value}"])
 
         if background:
             cmd.append("-d")
 
-        cmd.append("arizephoenix/phoenix:latest")
+        cmd.append(self.image)
 
         logger.info(f"Starting Phoenix Docker container on port {self.port}")
         logger.info(f"Data directory: {self.data_dir}")
@@ -130,10 +143,6 @@ class PhoenixServer:
                 result = subprocess.run(cmd, capture_output=True, text=True, check=True)
                 container_id = result.stdout.strip()
                 logger.info(f"Phoenix container started: {container_id[:12]}")
-
-                # Save container ID
-                with open(self.pid_file, "w") as f:
-                    f.write(container_id)
 
                 # Wait for server to be ready
                 self._wait_for_server()
@@ -252,29 +261,60 @@ class PhoenixServer:
         else:
             self._stop_python()
 
+    def _recorded_container_id(self) -> Optional[str]:
+        """The id of the container this data directory's start launched."""
+        if not self.pid_file.exists():
+            return None
+        record = self.pid_file.read_text().strip()
+        if not _CONTAINER_ID.fullmatch(record):
+            logger.warning(
+                f"{self.pid_file} holds {record!r}, not a container id; "
+                "no container is recorded"
+            )
+            return None
+        return record
+
+    def _docker(self, *args: str) -> str:
+        done = subprocess.run(["docker", *args], capture_output=True, text=True)
+        if done.returncode != 0:
+            raise RuntimeError(
+                f"docker {' '.join(args)} failed (exit {done.returncode}) for the "
+                f"Phoenix container recorded in {self.pid_file}: "
+                f"{done.stderr.strip()}"
+            )
+        return done.stdout.strip()
+
     def _stop_docker(self):
-        """Stop Phoenix Docker container"""
-        logger.info("Stopping Phoenix Docker container...")
+        """Stop and remove the container this data directory's start launched.
 
-        try:
-            # Stop container
-            subprocess.run(
-                ["docker", "stop", self.container_name], capture_output=True, check=True
+        Only the container id recorded at launch is touched; with no record
+        this is a no-op, whatever runs under ``container_name``.
+
+        Raises:
+            RuntimeError: Docker could not list, stop or remove the recorded
+                container; the record is kept.
+        """
+        container_id = self._recorded_container_id()
+        if container_id is None:
+            logger.info(f"No Phoenix container recorded in {self.pid_file}")
+            return
+
+        listed = self._docker(
+            "ps", "-a", "-q", "--no-trunc", "--filter", f"id={container_id}"
+        )
+        if listed != container_id:
+            logger.warning(
+                f"Phoenix container {container_id[:12]} recorded in "
+                f"{self.pid_file} no longer exists"
             )
+            self.pid_file.unlink()
+            return
 
-            # Remove container
-            subprocess.run(
-                ["docker", "rm", self.container_name], capture_output=True, check=True
-            )
-
-            logger.info("Phoenix Docker container stopped")
-
-            # Remove PID file
-            if self.pid_file.exists():
-                self.pid_file.unlink()
-
-        except subprocess.CalledProcessError as e:
-            logger.warning(f"Failed to stop container: {e}")
+        logger.info(f"Stopping Phoenix Docker container {container_id[:12]}...")
+        self._docker("stop", container_id)
+        self._docker("rm", container_id)
+        self.pid_file.unlink()
+        logger.info("Phoenix Docker container stopped")
 
     def _stop_python(self):
         """Stop Phoenix Python process"""
