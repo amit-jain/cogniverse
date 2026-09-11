@@ -147,6 +147,7 @@ def qe_service(shared_vespa):
     config_manager.set_backend_config(backend_config)
 
     enhancement_agent = QueryEnhancementAgent(deps=QueryEnhancementDeps())
+    enhancement_agent.bind_config_manager(config_manager)
     enhancement_agent.telemetry_manager = RecordingTelemetryManager()
     enhancement_agent.dspy_module.enhancer = (
         lambda query, source_text, grounding_context="": dspy.Prediction(
@@ -319,6 +320,7 @@ async def test_real_lm_query_agent_labels_grounded_terms(
 ):
     _ = ensure_host_ollama
     agent = QueryEnhancementAgent(deps=QueryEnhancementDeps())
+    agent.bind_config_manager(qe_service.service.config_manager)
     agent.telemetry_manager = RecordingTelemetryManager()
 
     async def enhance_query(query, tenant_id, source_text):

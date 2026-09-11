@@ -113,6 +113,7 @@ def ee_service(shared_vespa):
         pytest.fail("PyTorch source document was not indexed by Vespa")
 
     entity_agent = EntityExtractionAgent(deps=EntityExtractionDeps())
+    entity_agent.bind_config_manager(config_manager)
     entity_agent.telemetry_manager = RecordingTelemetryManager()
     extraction_paths = []
 

@@ -55,7 +55,9 @@ async def _fetch_named_spans(real_telemetry, tenant_id, span_name):
 
 
 @pytest.mark.asyncio
-async def test_query_enhancement_span_yields_simba_training_pair(real_telemetry):
+async def test_query_enhancement_span_yields_simba_training_pair(
+    real_telemetry, config_manager_memory
+):
     from cogniverse_agents.query_enhancement_agent import (
         QueryEnhancementAgent,
         QueryEnhancementDeps,
@@ -64,6 +66,7 @@ async def test_query_enhancement_span_yields_simba_training_pair(real_telemetry)
 
     tenant_id = "qe-opt-real"
     agent = QueryEnhancementAgent(deps=QueryEnhancementDeps(), port=19112)
+    agent.bind_config_manager(config_manager_memory)
     agent.set_telemetry_manager(real_telemetry)
 
     mock_result = MagicMock()
@@ -152,15 +155,28 @@ async def test_entity_extraction_span_yields_training_pair(real_telemetry):
 
 
 @pytest.mark.asyncio
-async def test_profile_selection_span_yields_training_pair(real_telemetry):
+async def test_profile_selection_span_yields_training_pair(
+    real_telemetry, config_manager_memory
+):
     from cogniverse_agents.profile_selection_agent import (
         ProfileSelectionAgent,
         ProfileSelectionDeps,
         ProfileSelectionInput,
     )
+    from cogniverse_foundation.config.unified_config import BackendProfileConfig
+    from tests.utils.memory_store import register_deployed_schema
 
     tenant_id = "ps-opt-real"
+    profile_name = "video_colpali_smol500_mv_frame"
+    config_manager_memory.add_backend_profile(
+        BackendProfileConfig(
+            profile_name=profile_name, type="video", schema_name=profile_name
+        ),
+        tenant_id=tenant_id,
+    )
+    register_deployed_schema(config_manager_memory, tenant_id, profile_name)
     agent = ProfileSelectionAgent(deps=ProfileSelectionDeps(), port=19111)
+    agent.bind_config_manager(config_manager_memory)
     agent.set_telemetry_manager(real_telemetry)
 
     mock_result = MagicMock()

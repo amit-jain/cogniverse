@@ -395,6 +395,7 @@ def synthetic_service(shared_vespa):
     synthetic_config["tenant_id"] = tenant_id
     generator_config = SyntheticGeneratorConfig.from_dict(synthetic_config)
     entity_agent = EntityExtractionAgent(deps=EntityExtractionDeps())
+    entity_agent.bind_config_manager(config_manager)
     entity_agent.telemetry_manager = RecordingTelemetryManager()
     expected_entities = [
         ("Marie Curie", "PERSON"),
