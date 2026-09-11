@@ -126,6 +126,7 @@ def test_tenant_profiles_and_defaults_override_same_named_global_entries(
         },
         config_manager=MagicMock(),
         enable_connection_pool=False,
+        deployed_schema_names=lambda _tenant_id: frozenset({"tenant_wiki"}),
     )
     backend.vespa = MagicMock()
     backend.vespa.query.return_value = SimpleNamespace(
@@ -138,7 +139,6 @@ def test_tenant_profiles_and_defaults_override_same_named_global_entries(
             }
         },
     )
-    backend._tenant_schema_exists = MagicMock(return_value=True)
     monkeypatch.setattr(
         backend,
         "_load_tenant_profiles",
@@ -187,6 +187,12 @@ def test_tenant_profiles_and_defaults_override_same_named_global_entries(
 
 
 def test_search_raises_when_the_tenant_schema_is_not_deployed(monkeypatch):
+    lookups: list[str] = []
+
+    def deployed_schema_names(tenant_id):
+        lookups.append(tenant_id)
+        return frozenset({"global_wiki"})
+
     backend = VespaSearchBackend(
         config={
             "url": "http://localhost",
@@ -203,9 +209,9 @@ def test_search_raises_when_the_tenant_schema_is_not_deployed(monkeypatch):
         },
         config_manager=MagicMock(),
         enable_connection_pool=False,
+        deployed_schema_names=deployed_schema_names,
     )
     backend.vespa = MagicMock()
-    backend._tenant_schema_exists = MagicMock(return_value=False)
     monkeypatch.setattr(
         backend,
         "_load_tenant_profiles",
@@ -247,10 +253,15 @@ def test_search_raises_when_the_tenant_schema_is_not_deployed(monkeypatch):
         "searching this profile"
     )
     backend.vespa.query.assert_not_called()
-    backend._tenant_schema_exists.assert_called_once_with("tenant_wiki", "acme")
+    assert lookups == ["acme"]
 
 
 def test_search_raises_when_tenant_schema_lookup_fails(monkeypatch):
+    from cogniverse_core.registries.exceptions import RegistryStorageError
+
+    def deployed_schema_names(tenant_id):
+        raise RegistryStorageError("schema registry unavailable")
+
     backend = VespaSearchBackend(
         config={
             "url": "http://localhost",
@@ -267,11 +278,9 @@ def test_search_raises_when_tenant_schema_lookup_fails(monkeypatch):
         },
         config_manager=MagicMock(),
         enable_connection_pool=False,
+        deployed_schema_names=deployed_schema_names,
     )
     backend.vespa = MagicMock()
-    backend._tenant_schema_exists = MagicMock(
-        side_effect=RuntimeError("schema registry unavailable")
-    )
     monkeypatch.setattr(
         backend,
         "_load_tenant_profiles",
@@ -298,7 +307,7 @@ def test_search_raises_when_tenant_schema_lookup_fails(monkeypatch):
         },
     )
 
-    with pytest.raises(RuntimeError, match="schema registry unavailable"):
+    with pytest.raises(RegistryStorageError, match="^schema registry unavailable$"):
         backend.search(
             {
                 "query": "tenant-local article",

@@ -6,7 +6,7 @@ for loading schema templates and ranking strategies from various sources.
 """
 
 from abc import ABC, abstractmethod
-from typing import Any, Dict, List
+from typing import Any, Dict, Hashable, List
 
 
 class SchemaNotFoundException(Exception):
@@ -37,6 +37,15 @@ class SchemaLoader(ABC):
     - Checking schema existence
     - Loading ranking strategies
     """
+
+    @property
+    @abstractmethod
+    def source(self) -> Hashable:
+        """Where this loader reads schemas from.
+
+        Two loaders with equal sources load the same definitions, so either
+        can stand in for the other.
+        """
 
     @abstractmethod
     def load_schema(self, schema_name: str) -> Dict[str, Any]:

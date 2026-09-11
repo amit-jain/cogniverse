@@ -9,7 +9,7 @@ from abc import ABC, abstractmethod
 from dataclasses import dataclass, fields
 from datetime import datetime, timezone
 from enum import Enum
-from typing import Any, Dict, List, Optional
+from typing import Any, Dict, Hashable, List, Optional
 
 
 class ConfigScope(Enum):
@@ -170,6 +170,15 @@ class ConfigStore(ABC):
     Implementations:
     - VespaConfigStore: Vespa backend storage (default)
     """
+
+    @property
+    @abstractmethod
+    def source(self) -> Hashable:
+        """Where this store keeps its entries.
+
+        Two stores with equal sources read and write the same configuration,
+        so either can stand in for the other.
+        """
 
     @abstractmethod
     def initialize(self) -> None:

@@ -5,12 +5,14 @@ This module provides a Vespa backend that implements both IngestionBackend
 and SearchBackend interfaces, with self-registration to the backend registry.
 """
 
+import functools
 import logging
 import re
 import threading
 from typing import Any, Dict, Iterator, List, Optional, Tuple
 
 from cogniverse_core.registries.backend_registry import BackendRegistry
+from cogniverse_core.registries.schema_registry import tenant_deployed_schema_names
 from cogniverse_sdk.document import Document
 from cogniverse_sdk.interfaces.backend import Backend, BackendClosedError
 
@@ -135,6 +137,16 @@ class VespaBackend(Backend):
 
         # SchemaRegistry will be injected later (no circular dependency)
         self.schema_registry = None
+
+    @property
+    def config_manager(self):
+        """The ConfigManager this backend was constructed with."""
+        return self._config_manager_instance
+
+    @property
+    def schema_loader(self):
+        """The SchemaLoader this backend was constructed with."""
+        return self._schema_loader_instance
 
     def _initialize_backend(self, config: Dict[str, Any]) -> None:
         """
@@ -687,55 +699,60 @@ class VespaBackend(Backend):
     def _search_while_leased(self, query_dict: Dict[str, Any]) -> Any:
         """Body of :meth:`search`, run with this instance checked out.
 
-        A search resolves the tenant's schema through the registry, which
-        inserts into the same bounded cache this instance lives in; without
-        the checkout a wide enough burst of tenants evicts and closes the
-        instance running the query.
+        Other requesters insert into the bounded cache this instance lives
+        in; without the checkout a wide enough burst of tenants evicts and
+        closes the instance running the query.
         """
         self._require_open()
-
-        # Lazy initialization: create search backend if not already initialized
-        if not self._vespa_search_backend:
-            with self._search_backend_lock:
-                if not self._vespa_search_backend:
-                    logger.debug("Creating VespaSearchBackend on-demand with config")
-
-                    # Ensure profiles are loaded (may be missing if ingestion
-                    # created the cached backend instance without profiles).
-                    if (
-                        not self.config.get("profiles")
-                        and self._config_manager_instance
-                    ):
-                        from cogniverse_foundation.config.utils import get_config
-
-                        config_utils = get_config(
-                            tenant_id=self._tenant_id,
-                            config_manager=self._config_manager_instance,
-                        )
-                        backend_section = config_utils.get("backend", {})
-                        if backend_section.get("profiles"):
-                            self.config["profiles"] = backend_section["profiles"]
-                            self.config["default_profiles"] = backend_section.get(
-                                "default_profiles", {}
-                            )
-                            logger.info(
-                                f"Loaded {len(self.config['profiles'])} profiles "
-                                f"from config for tenant {self._tenant_id}"
-                            )
-
-                    search_backend = VespaSearchBackend(
-                        config=self.config,
-                        config_manager=self._config_manager_instance,
-                        schema_loader=self._schema_loader_instance,
-                    )
-                    self._vespa_search_backend = search_backend
-                    self._initialized_as_search = True
-                    logger.info("VespaSearchBackend initialized with all profiles")
-
-        # Delegate directly to VespaSearchBackend.
         # Caller MUST set tenant_id in query_dict — VespaSearchBackend raises
         # ValueError if missing.
-        return self._vespa_search_backend.search(query_dict)
+        return self._initialize_search_backend().search(query_dict)
+
+    def _initialize_search_backend(self) -> VespaSearchBackend:
+        """Return the owned VespaSearchBackend, building it on first use.
+
+        Deployment is answered by the schema registry rows and pending
+        deployment intents read through this backend's config manager — the
+        same read that decides which profiles are servable.
+        """
+        if self._vespa_search_backend:
+            return self._vespa_search_backend
+        with self._search_backend_lock:
+            if self._vespa_search_backend:
+                return self._vespa_search_backend
+            logger.debug("Creating VespaSearchBackend on-demand with config")
+
+            # Ensure profiles are loaded (may be missing if ingestion
+            # created the cached backend instance without profiles).
+            if not self.config.get("profiles") and self._config_manager_instance:
+                from cogniverse_foundation.config.utils import get_config
+
+                config_utils = get_config(
+                    tenant_id=self._tenant_id,
+                    config_manager=self._config_manager_instance,
+                )
+                backend_section = config_utils.get("backend", {})
+                if backend_section.get("profiles"):
+                    self.config["profiles"] = backend_section["profiles"]
+                    self.config["default_profiles"] = backend_section.get(
+                        "default_profiles", {}
+                    )
+                    logger.info(
+                        f"Loaded {len(self.config['profiles'])} profiles "
+                        f"from config for tenant {self._tenant_id}"
+                    )
+
+            self._vespa_search_backend = VespaSearchBackend(
+                config=self.config,
+                config_manager=self._config_manager_instance,
+                schema_loader=self._schema_loader_instance,
+                deployed_schema_names=functools.partial(
+                    tenant_deployed_schema_names, self._config_manager_instance
+                ),
+            )
+            self._initialized_as_search = True
+            logger.info("VespaSearchBackend initialized with all profiles")
+            return self._vespa_search_backend
 
     def get_document(
         self, document_id: str, schema_name: Optional[str] = None
@@ -2076,12 +2093,7 @@ class VespaBackend(Backend):
         Returns:
             Dict containing embedding requirements (needs_float, needs_binary, field names)
         """
-        # Ensure search backend is initialized
-        if not self._vespa_search_backend:
-            self._initialize_search_backend()
-
-        # Delegate to VespaSearchBackend which has the full implementation
-        return self._vespa_search_backend.get_embedding_requirements(schema_name)
+        return self._initialize_search_backend().get_embedding_requirements(schema_name)
 
 
 # Self-registration when module is imported

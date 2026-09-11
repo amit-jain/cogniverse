@@ -647,17 +647,22 @@ the key: `search()` merges the query tenant's profiles per request, and
 
 Concurrent cold starts of one key build in parallel and resolve through
 `set_if_absent`; the losing builds are closed. `config_manager` and
-`schema_loader` are not part of the key — a cache hit whose bound instance
-carries different ones raises `BackendBindingConflictError` rather than
-serving a backend wired to another config source.
+`schema_loader` are not part of the key. Every registry-built backend exposes
+the ones it was constructed with (`VespaBackend.config_manager`,
+`VespaBackend.schema_loader`), and a cache hit compares them by the source they
+read — `config_manager.store.source` and `schema_loader.source` — not by
+object: a fresh `ConfigManager` over the same store and a fresh
+`FilesystemSchemaLoader` over the same directory share the cached instance,
+while a requester reading another store or schema directory gets
+`BackendBindingConflictError` naming both sources.
 
 `BackendRegistry.lease_instance(instance)` checks a cached backend out for
 the length of a request: eviction skips it and takes the least-recently-used
 free entry instead, and a close aimed at it waits for the request to finish.
-`VespaBackend.search()` holds a checkout for the whole query, because
-resolving the query tenant's deployed schema inserts into the same cache the
-backend running the query lives in. A backend the cache does not hold —
-built directly, or already evicted — checks out nothing.
+`VespaBackend.search()` holds a checkout for the whole query, because other
+requesters insert into the same cache the backend running the query lives in.
+A backend the cache does not hold — built directly, or already evicted —
+checks out nothing.
 
 Eviction closes the instance. `VespaBackend.close()` releases the search
 backend, the ingestion clients and the metadata client, all of which are
@@ -1368,6 +1373,7 @@ backend = VespaSearchBackend(
     pool_config=pool_config,
     config_manager=config_manager,
     schema_loader=schema_loader,
+    deployed_schema_names=partial(tenant_deployed_schema_names, config_manager),
 )
 ```
 
@@ -1539,6 +1545,9 @@ correct tenant schema and its `strategy` is validated against that
 schema's rank profiles.
 
 ```python
+from functools import partial
+
+from cogniverse_core.registries.schema_registry import tenant_deployed_schema_names
 from cogniverse_vespa.search_backend import VespaSearchBackend
 
 backend = VespaSearchBackend(
@@ -1550,10 +1559,21 @@ backend = VespaSearchBackend(
     },
     config_manager=config_manager,
     schema_loader=schema_loader,
+    deployed_schema_names=partial(tenant_deployed_schema_names, config_manager),
 )
 ```
 
-A lower-level `create_vespa_search_backend(schema_name, backend_url="http://localhost:8080", **kwargs)`
+`deployed_schema_names` is required: it maps a tenant id to the base schema
+names that tenant has deployed, and every search consults it before querying.
+A base schema outside the set raises `SchemaNotDeployedError`; a read failure
+propagates (`tenant_deployed_schema_names` raises `RegistryStorageError`
+chained from the store's error), so an outage never reads as "not deployed".
+`VespaBackend` binds `tenant_deployed_schema_names` to its own
+`config_manager` — the same schema-registry rows plus pending deployment
+intents that decide whether a profile is servable — so a search through the
+registry builds no other backend to answer it.
+
+A lower-level `create_vespa_search_backend(schema_name, backend_url="http://localhost:8080", *, deployed_schema_names, **kwargs)`
 factory function is also available; it builds a `VespaSearchBackend` from the
 non-`config` (single fixed `schema_name`/`profile`) constructor path rather
 than the multi-profile `config` dict shown above.
@@ -2562,6 +2582,9 @@ reported ids against Document v1 state.
 
 ```python
 import pytest
+from functools import partial
+
+from cogniverse_core.registries.schema_registry import tenant_deployed_schema_names
 from cogniverse_vespa.search_backend import VespaSearchBackend
 
 @pytest.mark.integration
@@ -2578,6 +2601,9 @@ class TestTenantScopedSearch:
             },
             config_manager=config_manager,
             schema_loader=schema_loader,
+            deployed_schema_names=partial(
+                tenant_deployed_schema_names, config_manager
+            ),
         )
 
     def test_search_with_tenant_schema(self, backend):
@@ -2669,6 +2695,9 @@ results = backend.search({
 ### 2. Construct the Backend with Injected Dependencies
 
 ```python
+from functools import partial
+
+from cogniverse_core.registries.schema_registry import tenant_deployed_schema_names
 from cogniverse_vespa.search_backend import VespaSearchBackend
 
 # config_manager and schema_loader are injected once at construction;
@@ -2682,6 +2711,7 @@ backend = VespaSearchBackend(
     },
     config_manager=config_manager,
     schema_loader=schema_loader,
+    deployed_schema_names=partial(tenant_deployed_schema_names, config_manager),
 )
 ```
 
@@ -2987,6 +3017,9 @@ query.
 ### Usage
 
 ```python
+from functools import partial
+
+from cogniverse_core.registries.schema_registry import tenant_deployed_schema_names
 from cogniverse_vespa.search_backend import VespaSearchBackend
 
 backend = VespaSearchBackend(
@@ -2994,6 +3027,7 @@ backend = VespaSearchBackend(
     query_encoder=query_encoder,
     config_manager=config_manager,
     schema_loader=schema_loader,
+    deployed_schema_names=partial(tenant_deployed_schema_names, config_manager),
 )
 
 # tenant_id is REQUIRED in query_dict; search() raises if it is missing

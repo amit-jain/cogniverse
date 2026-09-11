@@ -5,10 +5,12 @@ from __future__ import annotations
 import time
 import uuid
 from concurrent.futures import ThreadPoolExecutor
+from functools import partial
 from threading import Barrier
 
 import pytest
 
+from cogniverse_core.registries.schema_registry import tenant_deployed_schema_names
 from cogniverse_foundation.config.utils import get_config
 from cogniverse_vespa._vespa_factory import make_vespa_app
 from cogniverse_vespa.search_backend import VespaSearchBackend
@@ -58,6 +60,7 @@ def test_export_embeddings_filter_is_applied_and_escaped(
         },
         config_manager=config_manager,
         schema_loader=schema_loader,
+        deployed_schema_names=partial(tenant_deployed_schema_names, config_manager),
     )
 
     # Poll until the visit returns the filtered doc.
@@ -109,6 +112,7 @@ def configured_export_backend(shared_vespa, config_manager, schema_loader):
         schema_name=schemas["default"],
         config_manager=config_manager,
         schema_loader=schema_loader,
+        deployed_schema_names=partial(tenant_deployed_schema_names, config_manager),
     )
     try:
         for label, schema in schemas.items():
@@ -164,6 +168,7 @@ def test_export_embeddings_configured_missing_schema_raises_with_visit_route(
         backend_url="http://localhost",
         backend_port=shared_vespa["http_port"],
         schema_name=missing_schema,
+        deployed_schema_names=lambda _tenant_id: frozenset(),
     )
     try:
         with pytest.raises(RuntimeError) as raised:

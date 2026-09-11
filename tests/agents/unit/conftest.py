@@ -42,3 +42,18 @@ def _default_telemetry_singleton():
     telemetry_manager_module._telemetry_manager = TelemetryManager(TelemetryConfig())
     yield
     TelemetryManager.reset()
+
+
+@pytest.fixture(autouse=True)
+def _isolated_backend_registry():
+    """Start and end every test with an empty backend cache.
+
+    Unit tests build their own in-memory config stores, and the registry
+    refuses a cache hit wired to another store, so a backend an earlier test
+    left cached at the same endpoint is never handed to the next one.
+    """
+    from cogniverse_core.registries.backend_registry import BackendRegistry
+
+    BackendRegistry.clear_instances()
+    yield
+    BackendRegistry.clear_instances()

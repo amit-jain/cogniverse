@@ -4,8 +4,10 @@
 import argparse
 import logging
 import sys
+from functools import partial
 from pathlib import Path
 from typing import Any, Dict, Optional
+from urllib.parse import urlsplit
 
 import numpy as np
 import pandas as pd
@@ -16,7 +18,10 @@ import pyarrow.parquet as pq
 project_root = Path(__file__).parent.parent
 sys.path.insert(0, str(project_root))
 
+from cogniverse_core.registries.schema_registry import tenant_deployed_schema_names
+from cogniverse_foundation.config.manager import ConfigManager
 from cogniverse_sdk.interfaces.backend import SearchBackend
+from cogniverse_vespa.config.config_store import VespaConfigStore
 from cogniverse_vespa.search_backend import VespaSearchBackend
 
 # Configure logging
@@ -329,20 +334,22 @@ def get_backend(backend_type: str, **kwargs) -> SearchBackend:
         SearchBackend instance
     """
     if backend_type.lower() == "vespa":
-        # Simple parsing - just use localhost for now
-        base_url = "http://localhost"
-        port = 8080
-
-        schema = kwargs.get("schema", "video_frame")
+        endpoint = urlsplit(kwargs.get("url", "http://localhost:8080"))
+        base_url = f"{endpoint.scheme}://{endpoint.hostname}"
+        port = endpoint.port or 8080
+        config_manager = ConfigManager(
+            store=VespaConfigStore(backend_url=base_url, backend_port=port)
+        )
 
         return VespaSearchBackend(
-            backend_url=base_url if "://" in base_url else f"http://{base_url}",
+            backend_url=base_url,
             backend_port=port,
-            schema_name=schema,
-            profile=None,  # No profile needed for export
-            query_encoder=None,  # No encoder needed for export
-            enable_metrics=False,  # Disable for export
-            enable_connection_pool=False,  # Disable for export
+            schema_name=kwargs.get("schema", "video_frame"),
+            query_encoder=None,
+            enable_metrics=False,
+            enable_connection_pool=False,
+            config_manager=config_manager,
+            deployed_schema_names=partial(tenant_deployed_schema_names, config_manager),
         )
     # Add more backends here as needed
     # elif backend_type.lower() == "elasticsearch":

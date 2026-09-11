@@ -68,13 +68,15 @@ class ProfileFanoutError(RuntimeError):
 
 
 class BackendBindingConflictError(RuntimeError):
-    """A cached backend was requested with different construction dependencies.
+    """A cached backend was requested with dependencies reading another source.
 
-    The cache key covers the endpoint a backend binds at initialize(); the
-    injected ``config_manager`` and ``schema_loader`` are not part of it
-    because production resolves both from one process-wide seam. A requester
-    carrying different ones would silently receive a backend wired to the
-    first requester's config, so the mismatch is refused instead.
+    The cache key covers the endpoint a backend binds at initialize(). The
+    injected ``config_manager`` and ``schema_loader`` are compared by the
+    source they read — the config store and the schema directory — not by
+    object: requesters routinely build their own over the same source, and
+    those are interchangeable. A requester whose config store or schema
+    source differs would silently receive a backend wired to the first
+    requester's, so the mismatch is refused instead.
     """
 
 
@@ -245,23 +247,26 @@ class BackendRegistry:
     def _require_same_dependencies(
         cls, instance_key, cached, config_manager, schema_loader
     ) -> None:
-        """Refuse a cache hit wired to different construction dependencies.
+        """Refuse a cache hit whose dependencies read another source.
 
-        The key covers the endpoint, not the injected ``config_manager`` /
-        ``schema_loader``: production resolves both from one process-wide
-        seam, so a divergence means the requester would silently get a
-        backend reading another config source.
+        Every registry-built backend exposes the ``config_manager`` and
+        ``schema_loader`` it was constructed with; the hit is refused unless
+        the requester's read the same config store and schema source.
         """
         for label, requested, bound in (
-            ("config_manager", config_manager, getattr(cached, "config_manager", None)),
-            ("schema_loader", schema_loader, getattr(cached, "schema_loader", None)),
+            (
+                "config_manager",
+                config_manager.store.source,
+                cached.config_manager.store.source,
+            ),
+            ("schema_loader", schema_loader.source, cached.schema_loader.source),
         ):
-            if bound is not None and bound is not requested:
+            if bound != requested:
                 raise BackendBindingConflictError(
-                    f"Cached backend {instance_key} is bound to a different "
-                    f"{label} ({bound!r}) than the requester's ({requested!r}). "
+                    f"Cached backend {instance_key} is bound to a {label} "
+                    f"reading {bound!r}; the requester's reads {requested!r}. "
                     f"Backends are shared per endpoint; requesters at one "
-                    f"endpoint must share one {label}."
+                    f"endpoint must read one {label} source."
                 )
 
     @classmethod

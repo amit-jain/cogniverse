@@ -23,7 +23,19 @@ from cogniverse_vespa.search_backend import (
 
 
 def _make_backend(profiles: dict | None = None) -> VespaSearchBackend:
-    """Build a backend without touching real Vespa / pool / metrics."""
+    """Build a backend without touching real Vespa / pool / metrics.
+
+    Every schema its live profiles name — including ones added later through
+    ``add_profile`` — reads as deployed.
+    """
+    built: list[VespaSearchBackend] = []
+
+    def deployed_schema_names(_tenant_id):
+        return frozenset(
+            config.get("schema_name", name)
+            for name, config in built[0].profiles.items()
+        )
+
     with (
         patch("cogniverse_vespa.search_backend.ConnectionPool"),
         patch("cogniverse_vespa.search_backend.SearchMetrics"),
@@ -33,9 +45,10 @@ def _make_backend(profiles: dict | None = None) -> VespaSearchBackend:
                 "url": "http://localhost",
                 "port": 8080,
                 "profiles": profiles or {},
-            }
+            },
+            deployed_schema_names=deployed_schema_names,
         )
-    backend._tenant_schema_exists = MagicMock(return_value=True)
+    built.append(backend)
     return backend
 
 
@@ -113,6 +126,7 @@ def test_initialize_preserves_constructor_retry_configuration():
         backend = VespaSearchBackend(
             config={"url": "http://localhost", "port": 8080},
             retry_config=retry_config,
+            deployed_schema_names=lambda _tenant_id: frozenset(),
         )
         backend.initialize({"url": "http://localhost", "port": 8080})
 
@@ -149,6 +163,7 @@ def test_hybrid_audio_encoder_uses_semantic_model():
                 "port": 8080,
             },
             config_manager=config_manager,
+            deployed_schema_names=lambda _tenant_id: frozenset(),
         )
     profile = {
         "embedding_model": "laion/clap-htsat-unfused",
@@ -319,8 +334,10 @@ def test_search_raises_naming_the_missing_model_when_embeddings_are_needed():
                 },
             },
             schema_loader=FilesystemSchemaLoader(Path("configs/schemas")),
+            deployed_schema_names=lambda _tenant_id: frozenset(
+                {"video_colpali_smol500_mv_frame"}
+            ),
         )
-        backend._tenant_schema_exists = MagicMock(return_value=True)
 
     with pytest.raises(EncoderNotConfiguredError) as excinfo:
         backend.search(
@@ -601,14 +618,18 @@ def test_initialize_honors_enable_metrics_false():
         patch("cogniverse_vespa.search_backend.ConnectionPool"),
         patch("cogniverse_vespa.search_backend.SearchMetrics") as metrics_cls,
     ):
-        backend = VespaSearchBackend(enable_metrics=False)
+        backend = VespaSearchBackend(
+            enable_metrics=False, deployed_schema_names=lambda _tenant_id: frozenset()
+        )
         assert backend.metrics is None  # __init__ respected the knob
         backend.initialize(
             {"url": "http://localhost", "port": 8080, "schema_name": "s"}
         )
         assert backend.metrics is None  # initialize() still respects it
 
-        default_backend = VespaSearchBackend(enable_metrics=True)
+        default_backend = VespaSearchBackend(
+            enable_metrics=True, deployed_schema_names=lambda _tenant_id: frozenset()
+        )
         default_backend.initialize(
             {"url": "http://localhost", "port": 8080, "schema_name": "s"}
         )
@@ -646,8 +667,8 @@ def test_search_types_hits_by_resolved_profile_not_by_query_type():
                 },
             },
             schema_loader=FilesystemSchemaLoader(Path("configs/schemas")),
+            deployed_schema_names=lambda _tenant_id: frozenset({"audio_content"}),
         )
-    backend._tenant_schema_exists = MagicMock(return_value=True)
     backend.pool = None
     backend.vespa = MagicMock()
     backend.vespa.query.return_value = VespaQueryResponse(

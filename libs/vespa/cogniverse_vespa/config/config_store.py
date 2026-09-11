@@ -205,6 +205,11 @@ class VespaConfigStore(ImmutableConfigStore):
             f"at {backend_url}:{backend_port} (keep_versions={self.keep_versions})"
         )
 
+    @property
+    def source(self) -> tuple[str, str, str]:
+        """The Vespa application URL and the config schema it stores under."""
+        return ("vespa", self.vespa_app.url, self.schema_name)
+
     def close(self) -> None:
         """Release the persistent HTTP session (no-op for injected apps)."""
         close = getattr(self.vespa_app, "close", None)

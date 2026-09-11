@@ -32,6 +32,11 @@ class InMemoryConfigStore(ImmutableConfigStore):
         self._immutable: Dict[tuple, ConfigEntry] = {}
         self._immutable_order: List[tuple] = []
 
+    @property
+    def source(self) -> tuple[str, int]:
+        """This instance: two in-memory stores never share entries."""
+        return ("memory", id(self))
+
     def put_immutable_config(
         self,
         tenant_id: str,

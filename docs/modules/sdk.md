@@ -270,6 +270,12 @@ from cogniverse_sdk.interfaces.config_store import ConfigStore, ConfigScope, Con
 class ConfigStore(ABC):
     """Interface for configuration storage with versioning"""
 
+    @property
+    @abstractmethod
+    def source(self) -> Hashable:
+        """Where this store keeps its entries; equal sources read and write
+        the same configuration."""
+
     @abstractmethod
     def initialize(self) -> None:
         """Initialize the configuration store."""
@@ -416,6 +422,12 @@ from pathlib import Path
 
 class SchemaLoader(ABC):
     """Interface for loading backend schema definitions"""
+
+    @property
+    @abstractmethod
+    def source(self) -> Hashable:
+        """Where this loader reads schemas from; equal sources load the
+        same definitions."""
 
     @abstractmethod
     def load_schema(self, schema_name: str) -> Dict[str, Any]:
@@ -1404,6 +1416,11 @@ from typing import Optional, List, Dict, Any
 
 class ConfigStore(ABC):
     """Abstract interface for configuration storage."""
+
+    @property
+    @abstractmethod
+    def source(self) -> Hashable:
+        """Where this store keeps its entries."""
 
     @abstractmethod
     def initialize(self) -> None:

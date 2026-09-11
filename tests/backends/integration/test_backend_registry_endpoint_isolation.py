@@ -256,11 +256,9 @@ class TestEvictionRefusesTheHolder:
         The holder reads its own document first, so the refusal can only come
         from the eviction the evictor thread caused.
 
-        Capacity is 3 because one search occupies two entries: the search
-        backend, and the per-tenant ingestion backend
-        ``VespaSearchBackend._tenant_schema_exists`` resolves the tenant's
-        schema through. The evictor's own search adds the third and fourth,
-        evicting the holder's search backend as the least recently used.
+        Capacity is 1: a search occupies only its search backend's entry
+        (the tenant's schema is read from the schema registry, not through a
+        cached backend), so the evictor's backend displaces the holder's.
         """
         from cogniverse_sdk.interfaces.backend import BackendClosedError
         from cogniverse_vespa.backend import VespaBackend
@@ -269,11 +267,10 @@ class TestEvictionRefusesTheHolder:
         alpha_port = env["clusters"]["alpha"]["instance"]["http_port"]
         bravo_port = env["clusters"]["bravo"]["instance"]["http_port"]
         alpha_endpoint = f"http://localhost:{alpha_port}"
-        tenant_id = env["tenant_id"]
         registry = BackendRegistry.get_instance()
         capacity_before = BackendRegistry._backend_instances.capacity
         registry.clear_instances()
-        configure_tenant_cache_capacity(3)
+        configure_tenant_cache_capacity(1)
 
         closed_endpoints: list[str] = []
         original_close = VespaBackend.close
@@ -325,19 +322,10 @@ class TestEvictionRefusesTheHolder:
         assert [thread.is_alive() for thread in threads] == [False, False]
         assert outcome["served_before_eviction"] == [env["clusters"]["alpha"]["doc_id"]]
         assert outcome["evictor_served"] == [env["clusters"]["bravo"]["doc_id"]]
-        assert outcome["keys_while_warm"] == [
-            f"backend_vespa_{tenant_id}@{alpha_endpoint}",
-            f"search_vespa@{alpha_endpoint}",
+        assert outcome["keys_while_warm"] == [f"search_vespa@{alpha_endpoint}"]
+        assert outcome["keys_after_eviction"] == [
+            f"search_vespa@http://localhost:{bravo_port}"
         ]
-        # Sorted, because the two clusters' ports are assigned per run and
-        # decide the order of the two ingestion keys.
-        assert outcome["keys_after_eviction"] == sorted(
-            [
-                f"backend_vespa_{tenant_id}@{alpha_endpoint}",
-                f"backend_vespa_{tenant_id}@http://localhost:{bravo_port}",
-                f"search_vespa@http://localhost:{bravo_port}",
-            ]
-        )
         assert closed_endpoints == [alpha_endpoint]
         assert set(outcome) == {
             "served_before_eviction",
@@ -386,12 +374,11 @@ class TestCheckedOutBackendOutlivesOtherTenants:
     def test_a_search_in_flight_survives_a_burst_of_other_tenants(self, two_clusters):
         """A query holds the backend it runs on against eviction.
 
-        The search path resolves the tenant's schema through the same
-        bounded cache the search backend lives in, so enough distinct
-        tenants inserted during one query used to evict and close the
-        instance running it, and the query died on a released connection
-        pool. The instance serving a query is checked out: eviction takes
-        the least-recently-used free entry instead.
+        Other tenants' traffic inserts into the bounded cache the search
+        backend lives in; enough of it during one query would evict and close
+        the instance running it, and the query would die on a released
+        connection pool. The instance serving a query is checked out:
+        eviction takes the least-recently-used free entry instead.
         """
         from cogniverse_vespa.backend import VespaBackend
 
@@ -498,7 +485,7 @@ class TestCheckedOutBackendOutlivesOtherTenants:
         registry = BackendRegistry.get_instance()
         capacity_before = BackendRegistry._backend_instances.capacity
         registry.clear_instances()
-        configure_tenant_cache_capacity(2)
+        configure_tenant_cache_capacity(1)
 
         closed: list[str] = []
         original_close = VespaBackend.close
@@ -541,18 +528,9 @@ class TestCheckedOutBackendOutlivesOtherTenants:
         assert str(DEAD_VESPA_PORT) in str(excinfo.value)
         assert checkouts_after_failure == 0
         assert closed_after_failure == []
-        # The failed search resolved the tenant's schema first, so the dead
-        # endpoint holds both a search and an ingestion instance.
-        assert keys_after_failure == [
-            f"backend_vespa_{env['tenant_id']}@{dead_endpoint}",
-            dead_key,
-        ]
+        assert keys_after_failure == [dead_key]
         assert served == [alpha["doc_id"]]
-        assert closed_after_pressure == [
-            f"{SYSTEM_TENANT_ID}@{dead_endpoint}",
-            f"{env['tenant_id']}@{dead_endpoint}",
-        ]
-        assert keys_after_pressure == [
-            f"backend_vespa_{env['tenant_id']}@{alpha_endpoint}",
-            f"search_vespa@{alpha_endpoint}",
-        ]
+        # Alpha's backend could only displace the dead one if the failed
+        # search released its checkout.
+        assert closed_after_pressure == [f"{SYSTEM_TENANT_ID}@{dead_endpoint}"]
+        assert keys_after_pressure == [f"search_vespa@{alpha_endpoint}"]
