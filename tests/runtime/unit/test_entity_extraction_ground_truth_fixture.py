@@ -2,7 +2,8 @@
 
 The fixture is hand-labelled truth, not agent output. These pins fail when a
 row stops being a verbatim span of its query, uses a type the agent cannot
-emit, duplicates a pair or a query, or drifts from the evaluation corpus.
+emit, duplicates a pair or a query, leaves a type the agent emits without a
+row, or drifts from the evaluation corpus.
 """
 
 from __future__ import annotations
@@ -29,20 +30,48 @@ FIXTURE = REPO / "tests" / "e2e" / "data" / "entity_extraction_ground_truth.json
 CORPUS = (
     REPO / "data" / "testset" / "evaluation" / "sample_videos_retrieval_queries.json"
 )
+PROCESSED = REPO / "data" / "testset" / "evaluation" / "processed"
 
-EXPECTED_ROWS = 39
-EXPECTED_ENTITIES = 84
+# Rows whose query is a verbatim span of a committed transcript segment or
+# frame description, in fixture order: query -> (file under PROCESSED, entry).
+CAPTION_QUERIES = {
+    "an emergency room doctor at Cleveland Clinic": (
+        "transcripts/v_-IMXSEIabMM.json",
+        3,
+    ),
+    "the New York City Fire Department": ("descriptions/v_-IMXSEIabMM.json", "184"),
+    "a logo that appears to beassociated with Blender Institute": (
+        "descriptions/big_buck_bunny_clip.json",
+        "2142",
+    ),
+    "released by Coca-Cola": ("descriptions/elephant_dream_clip.json", "1913"),
+}
+
+EXPECTED_ROWS = 43
+EXPECTED_ENTITIES = 90
 EXPECTED_TYPE_COUNTS = {
-    "PERSON": 33,
-    "CONCEPT": 39,
+    "PERSON": 34,
+    "CONCEPT": 40,
     "PLACE": 8,
     "EVENT": 1,
     "TECHNOLOGY": 3,
+    "ORGANIZATION": 4,
 }
 
 
 def _rows() -> list[dict]:
     return json.loads(FIXTURE.read_text())
+
+
+def _uncovered_types(rows: list[dict]) -> set[str]:
+    return set(ENTITY_TYPES) - {
+        entity["type"] for row in rows for entity in row["entities"]
+    }
+
+
+def _caption_text(relative: str, entry: int | str) -> str:
+    value = json.loads((PROCESSED / relative).read_text())[entry]
+    return value["text"] if isinstance(value, dict) else value
 
 
 def test_every_gliner_label_maps_into_the_declared_type_set():
@@ -102,8 +131,29 @@ def test_no_row_repeats_a_pair_and_no_query_repeats():
     assert [row for row in rows if not row["entities"]] == []
 
 
+def test_every_type_the_agent_emits_has_a_truth_row():
+    assert _uncovered_types(_rows()) == set()
+
+
+def test_type_coverage_pin_fires_when_a_type_loses_its_rows():
+    rows = [
+        row
+        for row in _rows()
+        if all(entity["type"] != "ORGANIZATION" for entity in row["entities"])
+    ]
+    assert len(rows) == EXPECTED_ROWS - EXPECTED_TYPE_COUNTS["ORGANIZATION"]
+    assert _uncovered_types(rows) == {"ORGANIZATION"}
+
+
 def test_every_query_comes_from_the_evaluation_corpus():
     corpus = {
         (record.get("query") or "").strip() for record in json.loads(CORPUS.read_text())
     }
-    assert [row["query"] for row in _rows() if row["query"] not in corpus] == []
+    assert [row["query"] for row in _rows() if row["query"] not in corpus] == list(
+        CAPTION_QUERIES
+    )
+    assert [
+        query
+        for query, (relative, entry) in CAPTION_QUERIES.items()
+        if query not in _caption_text(relative, entry)
+    ] == []
