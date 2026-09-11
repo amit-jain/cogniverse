@@ -194,6 +194,35 @@ async def sdk(compat_app):
     await client.close()
 
 
+async def _content_stream(client: openai.AsyncOpenAI, **options) -> list:
+    stream = await client.chat.completions.create(
+        model=MODEL,
+        messages=[{"role": "user", "content": CONTENT_QUERY}],
+        stream=True,
+        **options,
+    )
+    return [chunk async for chunk in stream]
+
+
+def _frames(chunks: list) -> list[tuple]:
+    """Each chunk as its choices' (role, content, finish_reason) and its
+    usage restricted to the three pinned counts."""
+    return [
+        (
+            [(c.delta.role, c.delta.content, c.finish_reason) for c in chunk.choices],
+            chunk.usage and chunk.usage.model_dump(include=set(CONTENT_USAGE)),
+        )
+        for chunk in chunks
+    ]
+
+
+CONTENT_FRAMES = [
+    ([("assistant", None, None)], None),
+    ([(None, CONTENT_ANSWER, None)], None),
+    ([(None, None, "stop")], None),
+]
+
+
 class TestContentTurns:
     async def test_non_stream_completion_object(self, sdk):
         completion = await sdk.chat.completions.create(
@@ -212,30 +241,23 @@ class TestContentTurns:
         assert completion.usage.model_dump(include=set(CONTENT_USAGE)) == CONTENT_USAGE
 
     async def test_stream_accumulates_to_the_same_answer(self, sdk):
-        stream = await sdk.chat.completions.create(
-            model=MODEL,
-            messages=[{"role": "user", "content": CONTENT_QUERY}],
-            stream=True,
-        )
-        roles: list[str] = []
-        content_parts: list[str] = []
-        finish_reasons: list[str] = []
-        terminal_usage = None
-        async for chunk in stream:
-            assert chunk.object == "chat.completion.chunk"
-            choice = chunk.choices[0]
-            if choice.delta.role:
-                roles.append(choice.delta.role)
-            if choice.delta.content:
-                content_parts.append(choice.delta.content)
-            if choice.finish_reason:
-                finish_reasons.append(choice.finish_reason)
-                terminal_usage = chunk.usage
+        chunks = await _content_stream(sdk, stream_options={"include_usage": True})
 
-        assert roles == ["assistant"]
-        assert "".join(content_parts) == CONTENT_ANSWER
-        assert finish_reasons == ["stop"]
-        assert terminal_usage.model_dump(include=set(CONTENT_USAGE)) == CONTENT_USAGE
+        objects = {chunk.object for chunk in chunks}
+        completion_ids = {chunk.id for chunk in chunks}
+        frames = _frames(chunks)
+        assert objects == {"chat.completion.chunk"}
+        (completion_id,) = completion_ids
+        assert COMPLETION_ID.fullmatch(completion_id)
+        assert frames == [*CONTENT_FRAMES, ([], CONTENT_USAGE)]
+
+    async def test_stream_without_include_usage_carries_no_usage(self, sdk):
+        chunks = await _content_stream(sdk)
+
+        frames = _frames(chunks)
+        usage_keys_on_wire = [chunk.model_fields_set & {"usage"} for chunk in chunks]
+        assert frames == CONTENT_FRAMES
+        assert usage_keys_on_wire == [set(), set(), set()]
 
 
 class TestToolCallTurns:
