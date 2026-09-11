@@ -1,10 +1,12 @@
 """Self-provisioned exact LLMs for integration tests.
 
-``ensure_llm()`` first reuses a configured endpoint only when its OpenAI
-model-list contract names the requested production model exactly.
-Otherwise it provisions that identical model in a local vLLM sidecar.
-``activate_llms()`` then writes the selected exact production roles into
-the session config.
+``ensure_llm()`` reuses a discovered endpoint only when its OpenAI
+model-list contract names the requested production model exactly. When
+endpoints were discovered and none serves it, that is an outage and it
+raises. Only a host with no discovered endpoint provisions the identical
+model in a local vLLM sidecar. Every decision is recorded for the terminal
+summary (``resolution_log``). ``activate_llms()`` then writes the selected
+exact production roles into the session config.
 
 Each model has a fixed container name and is reused across pytest
 sessions, until it passes the reuse window that
@@ -21,16 +23,19 @@ import subprocess
 import threading
 import time
 from contextlib import contextmanager
+from dataclasses import dataclass
 from pathlib import Path
 
 from tests.utils.vllm_sidecar import (
     EXACT_MODEL_LABEL,
+    ModelEndpointDiscoveryError,
+    ModelListProbe,
     _configured_model_urls,
     _server_base,
     exact_model_provisioning_lock,
-    find_exact_model_endpoint,
     lease_exact_model_container,
     listed_model_ids,
+    probe_exact_model_endpoints,
     serves_exact_model,
 )
 
@@ -74,6 +79,59 @@ class LocalModelWontFitError(LocalSpawnRefused):
     """Raised instead of spawning a model the host cannot hold."""
 
 
+class RemoteModelUnavailableError(LocalSpawnRefused):
+    """Raised when endpoints were discovered and none of them serves the model."""
+
+    def __init__(self, model: str, probes: tuple[ModelListProbe, ...]) -> None:
+        self.model = model
+        self.outcomes = tuple((probe.base_url, probe.outcome()) for probe in probes)
+        described = "; ".join(f"{url}: {outcome}" for url, outcome in self.outcomes)
+        super().__init__(
+            f"Refusing to start a local sidecar for {model!r}: remote endpoints "
+            f"were discovered and none of them serves it. {described}"
+        )
+
+
+@dataclass(frozen=True)
+class LmResolution:
+    """One ``ensure_llm`` decision, as the terminal summary reports it."""
+
+    model: str
+    decision: str
+    endpoint: str | None
+    candidates: tuple[str, ...]
+    reason: str = ""
+
+    def summary_line(self) -> str:
+        line = f"LM {self.model}: {self.decision}"
+        if self.endpoint is not None:
+            line += f" {self.endpoint}"
+        if self.reason:
+            line += f" ({self.reason})"
+        return f"{line} [candidates: {'; '.join(self.candidates) or 'none'}]"
+
+
+_RESOLUTIONS: dict[LmResolution, int] = {}
+_RESOLUTIONS_LOCK = threading.Lock()
+
+
+def _record(resolution: LmResolution) -> None:
+    with _RESOLUTIONS_LOCK:
+        calls = _RESOLUTIONS.pop(resolution, 0)
+        _RESOLUTIONS[resolution] = calls + 1
+
+
+def resolution_counts() -> tuple[tuple[LmResolution, int], ...]:
+    """Each distinct decision this process made and how often, latest last."""
+    with _RESOLUTIONS_LOCK:
+        return tuple(_RESOLUTIONS.items())
+
+
+def resolution_log() -> tuple[LmResolution, ...]:
+    """Each distinct decision this process made, latest last."""
+    return tuple(resolution for resolution, _ in resolution_counts())
+
+
 def available_ram_gb() -> float:
     """Return the kernel's MemAvailable in GiB."""
     with open("/proc/meminfo", encoding="utf-8") as handle:
@@ -90,12 +148,18 @@ def _report_resolution(
     if resolved is not None:
         logger.info("LM role model %r resolved to %s", model, resolved)
         return
-    where = "; ".join(tried) if tried else "no candidate endpoint was configured"
+    if tried:
+        logger.warning(
+            "No discovered endpoint serves %r exactly, so no local sidecar will "
+            "be built. Candidates tried: %s",
+            model,
+            "; ".join(tried),
+        )
+        return
     logger.warning(
-        "No endpoint serves %r exactly, so a local sidecar will be built. "
-        "Candidates tried: %s",
+        "LM role model %r: no candidate endpoint was configured, so a local "
+        "sidecar will be built.",
         model,
-        where,
     )
 
 
@@ -402,18 +466,43 @@ def activate_llms(
 
 
 def ensure_llm(model: str = MODEL, deadline_s: float = 900.0) -> str:
-    """Resolve or provision ``model`` exactly and return its OpenAI base URL."""
+    """Resolve or provision ``model`` exactly and return its OpenAI base URL.
+
+    Raises ``RemoteModelUnavailableError`` when endpoints were discovered and
+    none serves ``model``, and ``ModelEndpointDiscoveryError`` when discovery
+    itself failed: a local sidecar is built only when nothing was discovered.
+    """
     try:
         container, host_port = _SIDECARS[model]
     except KeyError as exc:
         raise ValueError(f"No exact local sidecar is configured for {model!r}") from exc
 
     with _ensure_lock():
-        candidate_urls = _configured_model_urls(model)
-        configured = find_exact_model_endpoint(model, candidate_urls)
+        try:
+            candidate_urls = _configured_model_urls(model)
+        except ModelEndpointDiscoveryError as exc:
+            _record(LmResolution(model, "refused", None, (), str(exc).splitlines()[0]))
+            raise
+        probes = probe_exact_model_endpoints(model, candidate_urls)
+        configured = (
+            probes[-1].base_url if probes and probes[-1].serves(model) else None
+        )
         _report_resolution(model, configured, candidate_urls)
         if configured is not None:
+            _record(LmResolution(model, "resolved-remote", configured, candidate_urls))
             return f"{configured}/v1"
+        if candidate_urls:
+            refusal = RemoteModelUnavailableError(model, probes)
+            _record(
+                LmResolution(
+                    model,
+                    "refused",
+                    None,
+                    tuple(f"{url}: {outcome}" for url, outcome in refusal.outcomes),
+                    "no discovered endpoint serves it",
+                )
+            )
+            raise refusal
 
         local_base = f"http://127.0.0.1:{host_port}"
         provisioning_deadline = time.monotonic() + deadline_s
@@ -423,12 +512,14 @@ def ensure_llm(model: str = MODEL, deadline_s: float = 900.0) -> str:
         # must stay available for replacing it with a fresh spawn.
         preexisting_wait_s = min(180.0, deadline_s / 3)
 
-        def _local_endpoint() -> str:
+        def _local_endpoint(decision: str, how: str = "container") -> str:
             # Hold the sidecar against the age reclaim for as long as this
             # process lives: the reclaim only takes containers that no live
             # pytest process has leased.
             lease_exact_model_container(container)
-            return f"{local_base}/v1"
+            endpoint = f"{local_base}/v1"
+            _record(LmResolution(model, decision, endpoint, (), f"{how} {container}"))
+            return endpoint
 
         def _await_ready(until: float | None = None) -> bool:
             wait_deadline = provisioning_deadline if until is None else until
@@ -457,10 +548,10 @@ def ensure_llm(model: str = MODEL, deadline_s: float = 900.0) -> str:
                     _remove_container(container)
                     state = None
                 elif _healthy(local_base, model):
-                    return _local_endpoint()
+                    return _local_endpoint("reused-local")
             if state == "running":
                 if _await_ready(time.monotonic() + preexisting_wait_s):
-                    return _local_endpoint()
+                    return _local_endpoint("reused-local")
                 _remove_container(container)
                 state = None
             if state is not None:
@@ -473,7 +564,7 @@ def ensure_llm(model: str = MODEL, deadline_s: float = 900.0) -> str:
                     text=True,
                 )
                 if _await_ready(time.monotonic() + preexisting_wait_s):
-                    return _local_endpoint()
+                    return _local_endpoint("spawned-local", "restarted container")
                 _remove_container(container)
 
             _guard_local_spawn(model)
@@ -500,7 +591,7 @@ def ensure_llm(model: str = MODEL, deadline_s: float = 900.0) -> str:
                         gpu_utilization=util,
                     )
                     if _await_ready():
-                        return _local_endpoint()
+                        return _local_endpoint("spawned-local")
                     errors.append(
                         f"{dev} sidecar did not serve {model!r}; "
                         f"container logs:\n{_container_logs(container)}"
@@ -521,7 +612,8 @@ def ensure_llm(model: str = MODEL, deadline_s: float = 900.0) -> str:
                 f"No configured endpoint or local vLLM sidecar served exact model "
                 f"{model!r}: {detail}"
             )
-        except LocalSpawnRefused:
+        except LocalSpawnRefused as exc:
+            _record(LmResolution(model, "refused", None, (), str(exc).splitlines()[0]))
             raise
         except Exception as exc:
             logs = _container_logs(container)

@@ -3577,19 +3577,114 @@ class TestExternallyServedEndpointsAreDiscovered:
 class TestClusterQueryFailureIsNotSilentlyNoEndpoints:
     """A failed cluster query must not read as 'nothing is served remotely'."""
 
-    def test_unreachable_context_is_reported_rather_than_returning_quietly(
-        self, caplog
+    def test_context_the_kubeconfig_lacks_publishes_nothing_without_a_query_failure(
+        self, caplog, monkeypatch, tmp_path
     ):
         import tests.utils.vllm_sidecar as sidecar_module
 
+        monkeypatch.setenv("KUBECONFIG", str(tmp_path / "no-clusters.kubeconfig"))
         with caplog.at_level("WARNING", logger="tests.utils.vllm_sidecar"):
             result = sidecar_module._discover_external_model_urls(
                 context="cogniverse-no-such-kube-context"
             )
         assert result == ()
-        message = caplog.records[-1].getMessage()
-        assert "cogniverse-no-such-kube-context" in message
-        assert "failed" in message.lower()
+        assert (
+            sidecar_module._kube_context_exists("cogniverse-no-such-kube-context")
+            is False
+        )
+        assert [r.getMessage() for r in caplog.records] == []
+
+    def test_defined_context_whose_query_fails_raises_with_kubectl_detail(
+        self, monkeypatch, tmp_path
+    ):
+        import tests.utils.vllm_sidecar as sidecar_module
+
+        dead_port = sidecar_module._free_port()
+        kubeconfig = tmp_path / "unreachable.kubeconfig"
+        kubeconfig.write_text(
+            "apiVersion: v1\n"
+            "kind: Config\n"
+            "clusters:\n"
+            "- name: unreachable\n"
+            f"  cluster: {{server: 'http://127.0.0.1:{dead_port}'}}\n"
+            "users:\n"
+            "- name: nobody\n"
+            "  user: {token: none}\n"
+            "contexts:\n"
+            "- name: cogniverse-dead-kube-context\n"
+            "  context: {cluster: unreachable, user: nobody}\n"
+        )
+        monkeypatch.setenv("KUBECONFIG", str(kubeconfig))
+
+        with pytest.raises(sidecar_module.ModelEndpointDiscoveryError) as excinfo:
+            sidecar_module._discover_external_model_urls(
+                context="cogniverse-dead-kube-context"
+            )
+        assert excinfo.value.context == "cogniverse-dead-kube-context"
+        assert f"127.0.0.1:{dead_port}" in excinfo.value.detail
+        assert str(excinfo.value) == (
+            "Could not discover the endpoints kube context "
+            "'cogniverse-dead-kube-context' publishes, so whether it serves the "
+            f"model remotely is unknown: {excinfo.value.detail}"
+        )
+
+    def test_defined_dev_context_whose_workload_query_fails_raises(
+        self, monkeypatch, tmp_path
+    ):
+        import tests.utils.vllm_sidecar as sidecar_module
+
+        dead_port = sidecar_module._free_port()
+        kubeconfig = tmp_path / "unreachable.kubeconfig"
+        kubeconfig.write_text(
+            "apiVersion: v1\n"
+            "kind: Config\n"
+            "clusters:\n"
+            "- name: unreachable\n"
+            f"  cluster: {{server: 'http://127.0.0.1:{dead_port}'}}\n"
+            "users:\n"
+            "- name: nobody\n"
+            "  user: {token: none}\n"
+            "contexts:\n"
+            f"- name: {sidecar_module.DEV_CONTEXT}\n"
+            "  context: {cluster: unreachable, user: nobody}\n"
+        )
+        monkeypatch.setenv("KUBECONFIG", str(kubeconfig))
+
+        with pytest.raises(sidecar_module.ModelEndpointDiscoveryError) as excinfo:
+            sidecar_module._discover_dev_model_urls(DENSEON)
+
+        assert excinfo.value.context == sidecar_module.DEV_CONTEXT
+        assert excinfo.value.detail.startswith("kubectl: ")
+        assert f"127.0.0.1:{dead_port}" in excinfo.value.detail
+
+    def test_serving_workload_behind_an_unreadable_load_balancer_raises(
+        self, monkeypatch, tmp_path
+    ):
+        import tests.utils.vllm_sidecar as sidecar_module
+
+        resources = tmp_path / "resources.json"
+        resources.write_text(json.dumps(_e2e_resources(DENSEON, 31006)))
+        shim_dir = tmp_path / "kubectl-shim"
+        shim_dir.mkdir()
+        kubectl = shim_dir / "kubectl"
+        kubectl.write_text(
+            "#!/bin/sh\n"
+            'case "$*" in\n'
+            f"  'config get-contexts -o name') echo {sidecar_module.E2E_CONTEXT} ;;\n"
+            f"  *) cat '{resources}' ;;\n"
+            "esac\n"
+        )
+        kubectl.chmod(0o755)
+        monkeypatch.setenv("PATH", f"{shim_dir}{os.pathsep}{os.environ['PATH']}")
+        socket_path = tmp_path / "no-daemon.sock"
+        monkeypatch.setenv("DOCKER_HOST", f"unix://{socket_path}")
+
+        with pytest.raises(sidecar_module.ModelEndpointDiscoveryError) as excinfo:
+            sidecar_module._discover_e2e_model_urls(DENSEON)
+
+        assert excinfo.value.context == sidecar_module.E2E_CONTEXT
+        assert excinfo.value.detail.startswith("docker ps: ")
+        assert str(socket_path) in excinfo.value.detail
 
     def test_a_reachable_cluster_with_no_external_endpoints_is_silent(
         self, caplog, monkeypatch

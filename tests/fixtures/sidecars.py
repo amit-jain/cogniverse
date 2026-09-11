@@ -1,13 +1,68 @@
-"""Session-scoped sidecar fixtures shared across all test subsuites.
+"""Sidecar fixtures and the session's sidecar report, shared by every subsuite.
 
-Registered as ``pytest_plugins`` from each subsuite's conftest so the
-fixtures are discoverable regardless of whether ``tests/ingestion/`` /
-``tests/agents/`` etc. set their own pytest rootdir.
+``tests/conftest.py`` registers this plugin through ``pytest_plugins``.
+``tests/ingestion/pytest.ini`` makes ``tests/ingestion`` the rootdir, which
+leaves ``tests/conftest.py`` out of such a session, so
+``tests/ingestion/conftest.py`` registers it from ``pytest_configure``.
+Either way it is registered once and its hooks run once per session:
+
+- ``pytest_sessionstart`` removes containers whose owning pytest process died
+  without teardown, before collection, so a session that never provisions a
+  sidecar still clears what a killed session left holding host RAM.
+- ``pytest_terminal_summary`` prints that reap and every LM endpoint decision
+  ``ensure_llm`` made, whatever the capture mode and whether tests passed.
 """
 
 from __future__ import annotations
 
+import subprocess
+import sys
+
 import pytest
+
+_REAP_REPORT = pytest.StashKey[str | None]()
+
+
+def reap_at_session_start() -> str | None:
+    """Reap dead-owner containers and return the summary line, if there is one.
+
+    Without a docker CLI no test container can exist, so there is nothing to
+    reap. A docker that cannot list or remove is reported, not raised: the
+    session's own tests decide whether they need docker.
+    """
+    from tests.utils.vllm_sidecar import reap_dead_owner_containers
+
+    try:
+        removed = reap_dead_owner_containers()
+    except FileNotFoundError:
+        return None
+    except (OSError, subprocess.SubprocessError, RuntimeError) as exc:
+        return f"dead-owner container reap failed: {exc}"
+    if not removed:
+        return None
+    return "reaped dead-owner containers: " + ", ".join(removed)
+
+
+def pytest_sessionstart(session: pytest.Session) -> None:
+    session.config.stash[_REAP_REPORT] = reap_at_session_start()
+
+
+def pytest_terminal_summary(terminalreporter, exitstatus, config) -> None:
+    lines = []
+    reap = config.stash.get(_REAP_REPORT, None)
+    if reap is not None:
+        lines.append(reap)
+    # A process that never imported the resolver made no LM decision.
+    resolver = sys.modules.get("tests.utils.hermetic_llm")
+    if resolver is not None:
+        for resolution, calls in resolver.resolution_counts():
+            line = resolution.summary_line()
+            lines.append(line if calls == 1 else f"{line} x{calls}")
+    if not lines:
+        return
+    terminalreporter.section("test sidecars")
+    for line in lines:
+        terminalreporter.write_line(line)
 
 
 @pytest.fixture(scope="session")
