@@ -113,12 +113,32 @@ DEV_CLUSTER = "cogniverse"
 OWNER_LABEL = "cogniverse-test-owner-pid"
 
 
-def reap_dead_owner_containers(label: str = OWNER_LABEL) -> None:
+def _wait_until_container_gone(container_id: str, timeout: float = 30.0) -> bool:
+    """Whether ``container_id`` stops existing within ``timeout`` seconds."""
+    deadline = time.monotonic() + timeout
+    while True:
+        listed = subprocess.run(
+            ["docker", "ps", "-aq", "--filter", f"id={container_id}"],
+            capture_output=True,
+            text=True,
+            timeout=30,
+            check=False,
+        )
+        if listed.returncode == 0 and not listed.stdout.strip():
+            return True
+        if time.monotonic() >= deadline:
+            return False
+        time.sleep(0.25)
+
+
+def reap_dead_owner_containers(label: str = OWNER_LABEL) -> list[str]:
     """Remove containers labelled with an owner pid that no longer exists.
 
     Also removes already-Exited labelled containers (they only hold disk,
     but they accumulate forever otherwise). Containers belonging to LIVE
-    pids — concurrent pytest sessions — are never touched.
+    pids — concurrent pytest sessions — are never touched. Returns the ids
+    this call removed; a container another reaper removed first is not one of
+    them. Raises when docker cannot list the containers or remove one.
     """
     listing = subprocess.run(
         [
@@ -135,6 +155,16 @@ def reap_dead_owner_containers(label: str = OWNER_LABEL) -> None:
         timeout=30,
         check=False,
     )
+    if listing.returncode != 0:
+        detail = "\n".join(
+            part for part in (listing.stdout, listing.stderr) if part
+        ).strip()
+        raise RuntimeError(
+            f"docker could not list containers labelled {label}: "
+            f"{detail or f'exit {listing.returncode}'}"
+        )
+    removed: list[str] = []
+    failures: list[str] = []
     for line in listing.stdout.splitlines():
         parts = line.split("\t")
         if len(parts) != 3:
@@ -143,12 +173,25 @@ def reap_dead_owner_containers(label: str = OWNER_LABEL) -> None:
         owner_alive = owner_pid.isdigit() and os.path.exists(f"/proc/{owner_pid}")
         if owner_alive and state not in {"exited", "dead"}:
             continue
-        subprocess.run(
+        result = subprocess.run(
             ["docker", "rm", "-f", container_id],
             capture_output=True,
+            text=True,
             timeout=30,
             check=False,
         )
+        if result.returncode == 0:
+            removed.append(container_id)
+        elif not _wait_until_container_gone(container_id):
+            detail = "\n".join(
+                part for part in (result.stdout, result.stderr) if part
+            ).strip()
+            failures.append(f"{container_id}: {detail or f'exit {result.returncode}'}")
+    if failures:
+        raise RuntimeError(
+            "docker could not remove dead-owner containers: " + "; ".join(failures)
+        )
+    return removed
 
 
 # Exact-model sidecars (see tests/utils/hermetic_llm.py) are reused across
@@ -376,14 +419,33 @@ def _server_base(url: str) -> str:
     return base
 
 
-def listed_model_ids(base_url: str, timeout: float | None = None) -> set[str] | None:
-    """Return exact model IDs from a valid OpenAI model-list response."""
+@dataclass(frozen=True, slots=True)
+class ModelListProbe:
+    """What one model-list probe of an endpoint established."""
+
+    base_url: str
+    model_ids: frozenset[str] | None
+    failure: str | None = None
+
+    def serves(self, model: str) -> bool:
+        return self.model_ids is not None and model in self.model_ids
+
+    def outcome(self) -> str:
+        if self.model_ids is not None:
+            return f"lists {sorted(self.model_ids)}"
+        return self.failure or "no model list"
+
+
+def probe_model_list(base_url: str, timeout: float | None = None) -> ModelListProbe:
+    """Probe an OpenAI model-list endpoint and record why it failed, if it did."""
     if timeout is None:
         timeout = _probe_timeout(base_url)
     api_key = os.environ.get("COGNIVERSE_INFERENCE_API_KEY")
     headers = {"Authorization": f"Bearer {api_key}"} if api_key else None
-    url = f"{_server_base(base_url)}/v1/models"
+    server = _server_base(base_url)
+    url = f"{server}/v1/models"
     payload = None
+    failure = "no probe attempted"
     for attempt in range(1, _PROBE_ATTEMPTS + 1):
         transient = False
         try:
@@ -392,6 +454,7 @@ def listed_model_ids(base_url: str, timeout: float | None = None) -> set[str] | 
                 payload = response.json()
                 break
             transient = response.status_code >= 500
+            failure = f"HTTP {response.status_code}"
             logger.warning(
                 "Model listing at %s refused the probe: HTTP %s (attempt %s/%s, "
                 "timeout=%ss, api key %s)",
@@ -404,6 +467,7 @@ def listed_model_ids(base_url: str, timeout: float | None = None) -> set[str] | 
             )
         except (requests.RequestException, ValueError) as exc:
             transient = True
+            failure = f"{type(exc).__name__}: {exc}"
             logger.warning(
                 "Model listing at %s failed after %ss (attempt %s/%s): %s: %s",
                 base_url,
@@ -414,13 +478,20 @@ def listed_model_ids(base_url: str, timeout: float | None = None) -> set[str] | 
                 exc,
             )
         if not transient:
-            return None
+            return ModelListProbe(server, None, f"{failure} (not retried)")
         if attempt < _PROBE_ATTEMPTS:
             time.sleep(_PROBE_RETRY_PAUSE_S)
     if payload is None:
-        return None
+        return ModelListProbe(
+            server,
+            None,
+            f"{failure} on {_PROBE_ATTEMPTS} of {_PROBE_ATTEMPTS} attempts",
+        )
+    invalid = ModelListProbe(
+        server, None, "answered HTTP 200 without a valid OpenAI model list"
+    )
     if not isinstance(payload, dict) or payload.get("object") != "list":
-        return None
+        return invalid
     rows = payload.get("data")
     if not isinstance(rows, list) or not all(
         isinstance(row, dict)
@@ -428,8 +499,14 @@ def listed_model_ids(base_url: str, timeout: float | None = None) -> set[str] | 
         and row.get("object") == "model"
         for row in rows
     ):
-        return None
-    return {row["id"] for row in rows}
+        return invalid
+    return ModelListProbe(server, frozenset(row["id"] for row in rows))
+
+
+def listed_model_ids(base_url: str, timeout: float | None = None) -> set[str] | None:
+    """Return exact model IDs from a valid OpenAI model-list response."""
+    probe = probe_model_list(base_url, timeout)
+    return None if probe.model_ids is None else set(probe.model_ids)
 
 
 def serves_exact_model(base_url: str, model: str, timeout: float | None = None) -> bool:
@@ -444,7 +521,20 @@ def _bare_model(model: object) -> str | None:
     return model[len("openai/") :] if model.startswith("openai/") else model
 
 
-def _command_json(command: list[str]) -> object | None:
+class ModelEndpointDiscoveryError(RuntimeError):
+    """A kube context that exists could not say which endpoints it publishes."""
+
+    def __init__(self, context: str, detail: str) -> None:
+        self.context = context
+        self.detail = detail
+        super().__init__(
+            f"Could not discover the endpoints kube context {context!r} publishes, "
+            f"so whether it serves the model remotely is unknown: {detail}"
+        )
+
+
+def _run_json(command: list[str]) -> tuple[object | None, str]:
+    """Run ``command``; return its parsed JSON output or why there is none."""
     try:
         result = subprocess.run(
             command,
@@ -453,14 +543,71 @@ def _command_json(command: list[str]) -> object | None:
             timeout=30,
             check=False,
         )
-    except (OSError, subprocess.SubprocessError):
-        return None
+    except (OSError, subprocess.SubprocessError) as exc:
+        return None, f"{type(exc).__name__}: {exc}"
     if result.returncode != 0:
-        return None
+        detail = "\n".join(part for part in (result.stdout, result.stderr) if part)
+        return None, detail.strip() or f"exit {result.returncode}"
     try:
-        return json.loads(result.stdout)
-    except (TypeError, ValueError):
-        return None
+        return json.loads(result.stdout), ""
+    except (TypeError, ValueError) as exc:
+        return None, f"unparseable output: {exc}"
+
+
+def _command_json(command: list[str]) -> object | None:
+    return _run_json(command)[0]
+
+
+def _kube_context_exists(context: str) -> bool:
+    """Whether the active kubeconfig defines ``context``.
+
+    Without kubectl no context exists. A kubeconfig kubectl cannot read raises:
+    it may define the context being asked about.
+    """
+    try:
+        listed = subprocess.run(
+            ["kubectl", "config", "get-contexts", "-o", "name"],
+            capture_output=True,
+            text=True,
+            timeout=30,
+            check=False,
+        )
+    except FileNotFoundError:
+        return False
+    except (OSError, subprocess.SubprocessError) as exc:
+        raise ModelEndpointDiscoveryError(
+            context, f"kubectl config get-contexts: {type(exc).__name__}: {exc}"
+        ) from exc
+    if listed.returncode != 0:
+        detail = "\n".join(part for part in (listed.stdout, listed.stderr) if part)
+        raise ModelEndpointDiscoveryError(
+            context,
+            f"kubectl config get-contexts: "
+            f"{detail.strip() or f'exit {listed.returncode}'}",
+        )
+    return context in listed.stdout.split()
+
+
+def _kubectl_items(context: str, command: list[str]) -> list | None:
+    """Run a kubectl list query against ``context`` and return its items.
+
+    ``None`` when the kubeconfig does not define ``context``. A defined context
+    whose query fails twice raises: its workloads may publish the endpoint
+    being resolved.
+    """
+    resources = _command_json(command)
+    if resources is None:
+        if not _kube_context_exists(context):
+            return None
+        time.sleep(2)
+        resources, detail = _run_json(command)
+        if resources is None:
+            raise ModelEndpointDiscoveryError(context, f"kubectl: {detail}")
+    if not isinstance(resources, dict) or not isinstance(resources.get("items"), list):
+        raise ModelEndpointDiscoveryError(
+            context, f"kubectl returned no resource list: {str(resources)[:200]}"
+        )
+    return resources["items"]
 
 
 @dataclass(frozen=True, slots=True)
@@ -520,8 +667,13 @@ def _discover_cluster_model_urls(
     context: str,
     cluster: str,
 ) -> tuple[_DiscoveredClusterEndpoint, ...]:
-    """Map an exact cluster workload to its dynamically published host port."""
-    resources = _command_json(
+    """Map an exact cluster workload to its dynamically published host port.
+
+    A context the kubeconfig does not define publishes nothing. A defined one
+    whose workloads or load balancer cannot be read raises.
+    """
+    items = _kubectl_items(
+        context,
         [
             "kubectl",
             "--context",
@@ -531,13 +683,13 @@ def _discover_cluster_model_urls(
             "--all-namespaces",
             "-o",
             "json",
-        ]
+        ],
     )
-    if not isinstance(resources, dict) or not isinstance(resources.get("items"), list):
+    if items is None:
         return ()
 
     workload_labels: list[tuple[str, dict[str, str], str | None]] = []
-    for item in resources["items"]:
+    for item in items:
         if not isinstance(item, dict) or item.get("kind") not in {
             "Deployment",
             "StatefulSet",
@@ -587,7 +739,7 @@ def _discover_cluster_model_urls(
         )
 
     node_ports: list[tuple[int, str | None]] = []
-    for item in resources["items"]:
+    for item in items:
         if not isinstance(item, dict) or item.get("kind") != "Service":
             continue
         metadata = item.get("metadata")
@@ -644,14 +796,21 @@ def _discover_cluster_model_urls(
             timeout=30,
             check=False,
         )
-    except (OSError, subprocess.SubprocessError):
-        return ()
+    except (OSError, subprocess.SubprocessError) as exc:
+        raise ModelEndpointDiscoveryError(
+            context, f"docker ps: {type(exc).__name__}: {exc}"
+        ) from exc
     if load_balancers.returncode != 0:
-        return ()
+        detail = "\n".join(
+            part for part in (load_balancers.stdout, load_balancers.stderr) if part
+        ).strip()
+        raise ModelEndpointDiscoveryError(
+            context, f"docker ps: {detail or f'exit {load_balancers.returncode}'}"
+        )
 
     candidates: dict[str, _DiscoveredClusterEndpoint] = {}
     for container in load_balancers.stdout.splitlines():
-        published = _command_json(
+        published, detail = _run_json(
             [
                 "docker",
                 "inspect",
@@ -661,7 +820,9 @@ def _discover_cluster_model_urls(
             ]
         )
         if not isinstance(published, dict):
-            continue
+            raise ModelEndpointDiscoveryError(
+                context, f"docker inspect {container}: {detail or 'no port map'}"
+            )
         for node_port, revision in node_ports:
             bindings = published.get(f"{node_port}/tcp")
             if not isinstance(bindings, list):
@@ -728,31 +889,29 @@ def _external_endpoints_from_workload(workload: object) -> tuple[str, ...]:
 
 
 def _discover_external_model_urls(*, context: str) -> tuple[str, ...]:
-    """Collect externally served endpoints published by cluster workloads."""
-    command = [
-        "kubectl",
-        "--context",
+    """Collect externally served endpoints published by cluster workloads.
+
+    A context the kubeconfig does not define publishes nothing. One it defines
+    but kubectl cannot query raises, because its workloads may publish the
+    endpoint being resolved.
+    """
+    items = _kubectl_items(
         context,
-        "get",
-        "deployments",
-        "--all-namespaces",
-        "-o",
-        "json",
-    ]
-    resources = _command_json(command)
-    if resources is None:
-        time.sleep(2)
-        resources = _command_json(command)
-    if not isinstance(resources, dict) or not isinstance(resources.get("items"), list):
-        logger.warning(
-            "Cluster query for externally served endpoints failed (context=%s). "
-            "Treating the deployment as serving nothing remotely, which builds a "
-            "local sidecar instead of using the remote model.",
+        [
+            "kubectl",
+            "--context",
             context,
-        )
+            "get",
+            "deployments",
+            "--all-namespaces",
+            "-o",
+            "json",
+        ],
+    )
+    if items is None:
         return ()
     urls: list[str] = []
-    for item in resources["items"]:
+    for item in items:
         urls.extend(_external_endpoints_from_workload(item))
     return tuple(dict.fromkeys(urls))
 
@@ -779,12 +938,24 @@ def _configured_model_urls(model: str) -> tuple[str, ...]:
     return tuple(dict.fromkeys(_server_base(url) for url in candidates if url))
 
 
+def probe_exact_model_endpoints(
+    model: str, urls: tuple[str, ...]
+) -> tuple[ModelListProbe, ...]:
+    """Probe ``urls`` in order, stopping at the first that serves ``model``."""
+    probes: list[ModelListProbe] = []
+    for url in urls:
+        probe = probe_model_list(_server_base(url))
+        probes.append(probe)
+        if probe.serves(model):
+            break
+    return tuple(probes)
+
+
 def find_exact_model_endpoint(model: str, urls: tuple[str, ...]) -> str | None:
     """Return the first reachable URL with a valid exact-model API response."""
-    for url in urls:
-        base_url = _server_base(url)
-        if serves_exact_model(base_url, model):
-            return base_url
+    probes = probe_exact_model_endpoints(model, urls)
+    if probes and probes[-1].serves(model):
+        return probes[-1].base_url
     return None
 
 

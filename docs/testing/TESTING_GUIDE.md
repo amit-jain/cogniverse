@@ -760,17 +760,26 @@ Real optimizer integration tests that reach ``resolve_teacher()`` carry this
 marker so collection records the teacher role before the session config is
 materialized.
 
-When ``ensure_host_ollama`` must launch a local exact-model fallback, it labels
-the container with a unique pytest-session owner, allocates a session-specific
-container name and loopback port, and records the immutable Docker container ID.
-Parallel worktrees therefore never share a local model process or port. Session
-teardown is serialized with provisioning and removes that ID only while the
-current name still resolves to the same ID and owner label. A configured
-endpoint, an unlabelled existing container, or a container owned by another live
-session is never removed. A stopped, unowned container using either retired
-fixed name is rejected without starting or deleting it. The same guarded cleanup
-runs when startup fails, including after the primary starts but the teacher does
-not, so fixture failures do not leave session-owned model containers behind.
+``ensure_host_ollama`` resolves each role through ``ensure_llm``, which probes
+the endpoints it discovers: ``TEST_LLM_API_BASE`` when ``TEST_LLM_MODEL`` names
+the role's model, ``INFERENCE_SERVICE_URLS``, exact-model workloads in the
+``cogniverse-e2e`` and ``cogniverse`` k3d clusters, and the external endpoints
+(``LLM_ENDPOINT``, ``INFERENCE_SERVICE_URLS``) the e2e cluster's deployments
+publish. The first endpoint whose ``GET /v1/models`` lists the exact model is
+used. When endpoints were discovered and none serves the model, it raises
+``RemoteModelUnavailableError`` naming each candidate and its probe outcome;
+when a kube context that exists cannot be queried, it raises
+``ModelEndpointDiscoveryError``. Only a host where nothing is discovered starts
+the local sidecar (``cogniverse-test-llm`` on port 29110,
+``cogniverse-test-llm-teacher`` on 29111), and only after the host-memory guard
+passes. That sidecar carries the ``cogniverse-test-exact-model`` label instead of
+an owner pid: sessions reuse it, each live session that resolved to it holds a
+lease, and it is reclaimed once it is unleased and older than six hours.
+
+Every pytest session prints a ``test sidecars`` section in its terminal summary,
+captured output or not: each ``ensure_llm`` decision (``resolved-remote``,
+``reused-local``, ``spawned-local``, ``refused``) with its candidates, and the
+dead-owner containers the session reaped when it started.
 
 Examples:
 

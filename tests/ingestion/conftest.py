@@ -5,15 +5,6 @@ Provides common test utilities, mock objects, and fixtures
 for testing the video processing pipeline.
 """
 
-# Import sidecar fixtures explicitly. Two reasons we can't use
-# ``pytest_plugins = [...]`` here:
-#  1. pytest 9 hard-rejects ``pytest_plugins`` in non-rootdir conftests.
-#     When the full sweep runs from project root, this conftest is
-#     non-rootdir and pytest aborts collection.
-#  2. ``tests/ingestion/pytest.ini`` sets rootdir to ``tests/ingestion``
-#     when ingestion tests run in isolation, so ``tests/conftest.py``'s
-#     pytest_plugins line is silently ignored too.
-# Direct imports work in both contexts.
 import importlib.util
 import logging
 import shutil
@@ -26,13 +17,24 @@ import cv2
 import numpy as np
 import pytest
 
-from tests.fixtures.sidecars import pylate_server, vllm_sidecar  # noqa: F401
-
 # Test data constants
 TEST_VIDEO_WIDTH = 640
 TEST_VIDEO_HEIGHT = 480
 TEST_VIDEO_FPS = 30
 TEST_VIDEO_DURATION = 5  # seconds
+
+
+def pytest_configure(config):
+    """Register the sidecar plugin in sessions ``tests/conftest.py`` is not part of.
+
+    ``tests/ingestion/pytest.ini`` makes this directory the rootdir when
+    ingestion tests run on their own, and pytest rejects ``pytest_plugins``
+    in a conftest below the rootdir of a whole-tree run.
+    """
+    from tests.fixtures import sidecars
+
+    if not config.pluginmanager.is_registered(sidecars):
+        config.pluginmanager.register(sidecars, "tests.fixtures.sidecars")
 
 
 def pytest_collection_modifyitems(items):

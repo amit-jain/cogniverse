@@ -4,15 +4,26 @@ Session fixtures tear sidecars down in a ``finally``, but SIGKILL on the
 pytest process skips it — orphaned vLLM/Vespa/router containers then hold
 model weights and JVM heap in host RAM indefinitely (a day of orphans once
 starved the whole host into a freeze). ``reap_dead_owner_containers`` runs
-at every spawn and removes containers whose labelled owner pid is gone,
-while never touching a live session's containers.
+when every pytest session starts and at every spawn, and removes containers
+whose labelled owner pid is gone, while never touching a live session's
+containers.
 """
 
+import os
+import re
 import subprocess
+import sys
+import threading
+import uuid
+from concurrent.futures import ThreadPoolExecutor
+from pathlib import Path
 
 import pytest
 
+from tests.fixtures.sidecars import reap_at_session_start
 from tests.utils.vllm_sidecar import OWNER_LABEL, reap_dead_owner_containers
+
+REPO_ROOT = Path(__file__).resolve().parents[3]
 
 pytestmark = pytest.mark.integration
 
@@ -177,3 +188,157 @@ def test_phoenix_container_carries_owner_label(phoenix_container):
         timeout=30,
     ).stdout
     assert cid in listed, "container not discoverable by the reaper label filter"
+
+
+def _dead_owner_pid() -> int:
+    exited = subprocess.Popen(["true"])
+    exited.wait(timeout=30)
+    if os.path.exists(f"/proc/{exited.pid}"):
+        pytest.fail(f"pid {exited.pid} of an exited process is still in use")
+    return exited.pid
+
+
+def _start_owned(name: str, owner_pid: int) -> str:
+    """Start a labelled container and return the id ``docker ps`` lists it by."""
+    _run_probe(name, str(owner_pid))
+    return subprocess.run(
+        ["docker", "inspect", "--format", "{{.Id}}", name],
+        capture_output=True,
+        text=True,
+        timeout=30,
+        check=True,
+    ).stdout.strip()[:12]
+
+
+def _state(name: str) -> str:
+    return subprocess.run(
+        ["docker", "inspect", "--format", "{{.State.Status}}", name],
+        capture_output=True,
+        text=True,
+        timeout=30,
+        check=True,
+    ).stdout.strip()
+
+
+def _sidecar_section(output: str) -> list[str]:
+    """The lines of the nested session's ``test sidecars`` summary section."""
+    lines = output.splitlines()
+    starts = [
+        i for i, line in enumerate(lines) if re.fullmatch(r"=+ test sidecars =+", line)
+    ]
+    if len(starts) != 1:
+        pytest.fail(
+            f"expected one 'test sidecars' section, found {len(starts)}:\n{output}"
+        )
+    section = []
+    for line in lines[starts[0] + 1 :]:
+        if line.startswith("="):
+            break
+        section.append(line)
+    return section
+
+
+@pytest.mark.parametrize(
+    ("selection", "rootdir"),
+    [
+        (
+            "tests/common/unit/test_shared_vespa_config.py"
+            "::test_shared_vespa_container_uses_bounded_session_storage",
+            REPO_ROOT,
+        ),
+        (
+            "tests/ingestion/unit/test_queue_int_env.py::test_defaults_when_unset",
+            REPO_ROOT / "tests" / "ingestion",
+        ),
+    ],
+    ids=["repo-rootdir", "ingestion-rootdir"],
+)
+def test_a_session_that_provisions_nothing_still_reaps_at_start(selection, rootdir):
+    """One trivial test file, nothing provisioned, and the dead owner's
+    container is gone when the session ends; a live owner's is untouched."""
+    suffix = uuid.uuid4().hex[:8]
+    dead = f"cogniverse-reaper-test-session-dead-{suffix}"
+    live = f"cogniverse-reaper-test-session-live-{suffix}"
+    try:
+        dead_id = _start_owned(dead, _dead_owner_pid())
+        live_id = _start_owned(live, os.getpid())
+
+        result = subprocess.run(
+            [sys.executable, "-m", "pytest", selection, "-p", "no:cacheprovider"],
+            cwd=REPO_ROOT,
+            capture_output=True,
+            text=True,
+            timeout=300,
+        )
+        output = result.stdout + result.stderr
+
+        assert result.returncode == 0, output
+        assert f"rootdir: {rootdir}" in output.splitlines()
+        assert not _exists(dead), "the dead owner's container must be reaped"
+        assert _state(live) == "running", "a live owner's container must survive"
+        reap_lines = [
+            line
+            for line in _sidecar_section(output)
+            if line.startswith("reaped dead-owner containers: ")
+        ]
+        assert len(reap_lines) == 1, output
+        reaped = (
+            reap_lines[0].removeprefix("reaped dead-owner containers: ").split(", ")
+        )
+        # Other sessions' dead owners on this host are reaped by the same pass,
+        # so the line is checked for this test's two containers, not for size.
+        assert (dead_id in reaped, live_id in reaped) == (True, False)
+    finally:
+        subprocess.run(["docker", "rm", "-f", dead], capture_output=True, timeout=30)
+        subprocess.run(["docker", "rm", "-f", live], capture_output=True, timeout=30)
+
+
+def test_session_reap_is_a_no_op_without_a_docker_cli(monkeypatch, tmp_path):
+    monkeypatch.setenv("PATH", str(tmp_path))
+    assert reap_at_session_start() is None
+
+
+def test_unreachable_docker_daemon_raises_with_context_and_is_reported(
+    monkeypatch, tmp_path
+):
+    monkeypatch.setenv("DOCKER_HOST", f"unix://{tmp_path / 'no-daemon.sock'}")
+    listing = subprocess.run(
+        ["docker", "ps", "-a", "--filter", f"label={OWNER_LABEL}"],
+        capture_output=True,
+        text=True,
+        timeout=30,
+    )
+    detail = "\n".join(part for part in (listing.stdout, listing.stderr) if part)
+    assert listing.returncode == 1
+    assert str(tmp_path / "no-daemon.sock") in detail
+    expected = (
+        f"docker could not list containers labelled {OWNER_LABEL}: {detail.strip()}"
+    )
+
+    with pytest.raises(RuntimeError) as excinfo:
+        reap_dead_owner_containers()
+
+    assert str(excinfo.value) == expected
+    assert reap_at_session_start() == f"dead-owner container reap failed: {expected}"
+
+
+def test_concurrent_reapers_remove_a_dead_owner_container_exactly_once():
+    name = f"cogniverse-reaper-test-race-{uuid.uuid4().hex[:8]}"
+    workers = 4
+    try:
+        container_id = _start_owned(name, _dead_owner_pid())
+        start = threading.Barrier(workers, timeout=30)
+
+        def reap(_):
+            start.wait()
+            return reap_dead_owner_containers()
+
+        with ThreadPoolExecutor(max_workers=workers) as pool:
+            results = list(pool.map(reap, range(workers)))
+
+        assert sorted(result.count(container_id) for result in results) == [0] * (
+            workers - 1
+        ) + [1]
+        assert not _exists(name)
+    finally:
+        subprocess.run(["docker", "rm", "-f", name], capture_output=True, timeout=30)

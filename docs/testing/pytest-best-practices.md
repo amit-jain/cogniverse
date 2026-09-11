@@ -982,12 +982,14 @@ Key details:
   containers from a prior crashed run — never touches another concurrent sweep's containers
 - **Scope**: Module-scoped — one Phoenix instance per test module
 
-Test containers carry `cogniverse-test-owner-pid=<pytest pid>`. Before a
-sidecar spawn, the shared reaper removes containers whose owner process is gone
-and already-exited containers. A live owner's `created`, `restarting`, `paused`,
-or `running` container is preserved: `docker create` and `docker start` are
-separate operations, so treating the short `created` interval as abandoned can
-kill another concurrent test's service before it starts.
+Test containers carry `cogniverse-test-owner-pid=<pytest pid>`. When every
+pytest session starts, and again before a sidecar spawn, the shared reaper
+removes containers whose owner process is gone and already-exited containers;
+the session's `test sidecars` summary lists what it removed, or why docker could
+not be asked. A live owner's `created`, `restarting`, `paused`, or `running`
+container is preserved: `docker create` and `docker start` are separate
+operations, so treating the short `created` interval as abandoned can kill
+another concurrent test's service before it starts.
 
 Companion fixtures also defined in `tests/conftest.py`:
 
