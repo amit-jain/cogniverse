@@ -21,6 +21,7 @@ from cogniverse_sdk.interfaces.config_store import (
     ImmutableConfigStore,
 )
 from cogniverse_vespa._vespa_factory import (
+    canonical_endpoint,
     make_persistent_vespa_ops,
     raise_if_degraded,
 )
@@ -207,8 +208,8 @@ class VespaConfigStore(ImmutableConfigStore):
 
     @property
     def source(self) -> tuple[str, str, str]:
-        """The Vespa application URL and the config schema it stores under."""
-        return ("vespa", self.vespa_app.url, self.schema_name)
+        """The canonical Vespa endpoint and the config schema it stores under."""
+        return ("vespa", canonical_endpoint(self.vespa_app.url), self.schema_name)
 
     def close(self) -> None:
         """Release the persistent HTTP session (no-op for injected apps)."""

@@ -229,18 +229,18 @@ def test_factory_builds_configured_search_backend():
         create_vespa_search_backend,
     )
 
-    def deployed_schema_names(_tenant_id):
-        return frozenset({"video_colpali_smol500_mv_frame"})
+    def is_schema_deployed(_tenant_id, base_schema_name):
+        return base_schema_name == "video_colpali_smol500_mv_frame"
 
     backend = create_vespa_search_backend(
         "video_colpali_smol500_mv_frame",
         backend_url="http://localhost:9",
         enable_connection_pool=False,
-        deployed_schema_names=deployed_schema_names,
+        is_schema_deployed=is_schema_deployed,
     )
     assert isinstance(backend, VespaSearchBackend)
     assert backend.schema_name == "video_colpali_smol500_mv_frame"
-    assert backend._deployed_schema_names is deployed_schema_names
+    assert backend._is_schema_deployed is is_schema_deployed
 
 
 def test_metadata_app_lazy_init_is_thread_safe():
@@ -587,7 +587,8 @@ def test_failed_ingestion_first_touch_is_not_cached(monkeypatch):
 
 def test_concurrent_search_first_touch_builds_one_backend(monkeypatch):
     from cogniverse_core.registries.schema_registry import (
-        tenant_deployed_schema_names,
+        DEPLOYED_SCHEMAS_TTL_S,
+        DeployedSchemaNames,
     )
     from cogniverse_vespa import backend as backend_module
 
@@ -628,11 +629,11 @@ def test_concurrent_search_first_touch_builds_one_backend(monkeypatch):
     assert len(built) == 1
     assert backend._vespa_search_backend is search_backend
     assert search_backend.search.call_count == 12
-    lookup = built[0].pop("deployed_schema_names")
-    assert (lookup.func, lookup.args, lookup.keywords) == (
-        tenant_deployed_schema_names,
-        (config_manager,),
-        {},
+    lookup = built[0].pop("is_schema_deployed")
+    assert (type(lookup), lookup.config_manager, lookup.ttl_s) == (
+        DeployedSchemaNames,
+        config_manager,
+        DEPLOYED_SCHEMAS_TTL_S,
     )
     assert built == [
         {
@@ -691,5 +692,5 @@ def test_embedding_requirements_build_the_search_backend_on_first_use(monkeypatc
     assert first == {"needs_float": True, "needs_binary": False, "schema": "wiki_pages"}
     assert second == first
     assert built == [
-        ["config", "config_manager", "deployed_schema_names", "schema_loader"]
+        ["config", "config_manager", "is_schema_deployed", "schema_loader"]
     ]

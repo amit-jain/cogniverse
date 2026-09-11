@@ -134,7 +134,7 @@ async def test_audio_transcript_search_raises_on_4xx(monkeypatch):
         config=backend.config,
         config_manager=config_manager,
         schema_loader=schema_loader,
-        deployed_schema_names=lambda _tenant_id: frozenset({"audio_content"}),
+        is_schema_deployed=lambda _tenant_id, base: base in {"audio_content"},
     )
 
     class _Conn:

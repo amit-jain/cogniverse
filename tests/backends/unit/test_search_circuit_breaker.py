@@ -75,7 +75,7 @@ def test_breaker_counts_vespa_error():
     ):
         backend = VespaSearchBackend(
             config={"url": "http://localhost", "port": 1},
-            deployed_schema_names=lambda _tenant_id: frozenset(),
+            is_schema_deployed=lambda _tenant_id, _base: False,
         )
 
     calls = {"n": 0}

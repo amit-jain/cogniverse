@@ -9,12 +9,42 @@ mTLS, retries, …) we want every Vespa caller to inherit.
 
 from __future__ import annotations
 
+import ipaddress
 import logging
 from typing import Optional
+from urllib.parse import urlsplit
 
 from vespa.application import Vespa
 
 logger = logging.getLogger(__name__)
+
+_DEFAULT_PORTS = {"http": 80, "https": 443}
+
+
+def canonical_endpoint(url: str) -> str:
+    """One spelling per endpoint: ``scheme://host:port[path]``.
+
+    Scheme and host are lowercased, the port is explicit, a trailing ``/``
+    is dropped, and every loopback spelling (``localhost``, ``127.0.0.0/8``,
+    ``::1``) becomes ``localhost``. Host names are not resolved.
+    """
+    parts = urlsplit(url)
+    scheme = parts.scheme.lower()
+    if scheme not in _DEFAULT_PORTS or not parts.hostname:
+        raise ValueError(f"Not an http(s) endpoint URL: {url!r}")
+    host = parts.hostname.lower()
+    try:
+        address = ipaddress.ip_address(host)
+    except ValueError:
+        loopback = host == "localhost"
+    else:
+        loopback = address.is_loopback
+        if address.version == 6 and not loopback:
+            host = f"[{host}]"
+    if loopback:
+        host = "localhost"
+    port = parts.port or _DEFAULT_PORTS[scheme]
+    return f"{scheme}://{host}:{port}{parts.path.rstrip('/')}"
 
 
 def make_vespa_app(*, url: str, port: Optional[int] = None) -> Vespa:

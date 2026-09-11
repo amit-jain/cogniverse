@@ -5,14 +5,13 @@ This module provides a Vespa backend that implements both IngestionBackend
 and SearchBackend interfaces, with self-registration to the backend registry.
 """
 
-import functools
 import logging
 import re
 import threading
 from typing import Any, Dict, Iterator, List, Optional, Tuple
 
 from cogniverse_core.registries.backend_registry import BackendRegistry
-from cogniverse_core.registries.schema_registry import tenant_deployed_schema_names
+from cogniverse_core.registries.schema_registry import DeployedSchemaNames
 from cogniverse_sdk.document import Document
 from cogniverse_sdk.interfaces.backend import Backend, BackendClosedError
 
@@ -713,7 +712,8 @@ class VespaBackend(Backend):
 
         Deployment is answered by the schema registry rows and pending
         deployment intents read through this backend's config manager — the
-        same read that decides which profiles are servable.
+        same read that decides which profiles are servable — cached per
+        tenant by the DeployedSchemaNames this backend owns.
         """
         if self._vespa_search_backend:
             return self._vespa_search_backend
@@ -746,9 +746,7 @@ class VespaBackend(Backend):
                 config=self.config,
                 config_manager=self._config_manager_instance,
                 schema_loader=self._schema_loader_instance,
-                deployed_schema_names=functools.partial(
-                    tenant_deployed_schema_names, self._config_manager_instance
-                ),
+                is_schema_deployed=DeployedSchemaNames(self._config_manager_instance),
             )
             self._initialized_as_search = True
             logger.info("VespaSearchBackend initialized with all profiles")

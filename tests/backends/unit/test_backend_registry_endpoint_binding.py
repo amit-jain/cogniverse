@@ -478,7 +478,7 @@ class TestEvictionReleasesTheBackend:
             schema_name=None,
             enable_connection_pool=True,
             enable_metrics=False,
-            deployed_schema_names=lambda _tenant_id: frozenset(),
+            is_schema_deployed=lambda _tenant_id, _base: False,
         )
         backend.initialize({"url": "http://127.0.0.1", "port": 41004})
         backend.close()
@@ -533,3 +533,77 @@ class TestProfileFanoutReportsEveryFailure:
 
         assert excinfo.value.failures == {"search_bad@http://b:2": "KeyError: 'locked'"}
         assert good.profiles == {}
+
+
+class TestVespaStoreSourceIsCanonical:
+    """The cache-hit comparison reads ``ConfigStore.source``: one endpoint
+    has one spelling, and distinct endpoints stay distinct."""
+
+    def test_every_spelling_of_one_endpoint_maps_to_one_form(self):
+        from cogniverse_vespa._vespa_factory import canonical_endpoint
+
+        spellings = [
+            "http://localhost:8080",
+            "http://127.0.0.1:8080",
+            "http://127.0.0.2:8080/",
+            "http://[::1]:8080",
+            "HTTP://LocalHost:8080/",
+            "https://Vespa.Example",
+            "https://vespa.example:443/",
+            "http://10.0.0.5:8080",
+            "http://[fe80::1]:19071",
+            "http://vespa:8080/document",
+        ]
+
+        assert {url: canonical_endpoint(url) for url in spellings} == {
+            "http://localhost:8080": "http://localhost:8080",
+            "http://127.0.0.1:8080": "http://localhost:8080",
+            "http://127.0.0.2:8080/": "http://localhost:8080",
+            "http://[::1]:8080": "http://localhost:8080",
+            "HTTP://LocalHost:8080/": "http://localhost:8080",
+            "https://Vespa.Example": "https://vespa.example:443",
+            "https://vespa.example:443/": "https://vespa.example:443",
+            "http://10.0.0.5:8080": "http://10.0.0.5:8080",
+            "http://[fe80::1]:19071": "http://[fe80::1]:19071",
+            "http://vespa:8080/document": "http://vespa:8080/document",
+        }
+
+    def test_a_non_http_endpoint_is_refused(self):
+        from cogniverse_vespa._vespa_factory import canonical_endpoint
+
+        refused = {}
+        for url in ("localhost:8080", "ftp://vespa:21", "http://"):
+            with pytest.raises(ValueError) as failure:
+                canonical_endpoint(url)
+            refused[url] = str(failure.value)
+
+        assert refused == {
+            "localhost:8080": "Not an http(s) endpoint URL: 'localhost:8080'",
+            "ftp://vespa:21": "Not an http(s) endpoint URL: 'ftp://vespa:21'",
+            "http://": "Not an http(s) endpoint URL: 'http://'",
+        }
+
+    def test_loopback_spellings_share_a_source_and_other_ports_do_not(self):
+        from cogniverse_vespa.config.config_store import VespaConfigStore
+
+        stores = [
+            VespaConfigStore(backend_url=url, backend_port=port)
+            for url, port in (
+                ("http://localhost", 8080),
+                ("http://127.0.0.1/", 8080),
+                ("http://[::1]", 8080),
+                ("http://127.0.0.1", 8081),
+            )
+        ]
+        try:
+            sources = [store.source for store in stores]
+        finally:
+            for store in stores:
+                store.close()
+
+        assert sources == [
+            ("vespa", "http://localhost:8080", "config_metadata"),
+            ("vespa", "http://localhost:8080", "config_metadata"),
+            ("vespa", "http://localhost:8080", "config_metadata"),
+            ("vespa", "http://localhost:8081", "config_metadata"),
+        ]
