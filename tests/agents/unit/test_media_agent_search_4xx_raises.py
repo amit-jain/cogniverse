@@ -134,9 +134,7 @@ async def test_audio_transcript_search_raises_on_4xx(monkeypatch):
         config=backend.config,
         config_manager=config_manager,
         schema_loader=schema_loader,
-    )
-    monkeypatch.setattr(
-        search_backend, "_tenant_schema_exists", lambda base, tenant_id: True
+        deployed_schema_names=lambda _tenant_id: frozenset({"audio_content"}),
     )
 
     class _Conn:

@@ -124,15 +124,15 @@ def test_p95_stable_while_another_thread_records():
 
 def test_get_metrics_exports_failed_search_count():
     """A failure is countable in the exported stats, not only via the rate."""
-    from unittest.mock import MagicMock, patch
+    from unittest.mock import patch
 
     from cogniverse_vespa.search_backend import VespaSearchBackend
 
     with patch("cogniverse_vespa.search_backend.ConnectionPool"):
         backend = VespaSearchBackend(
-            config={"url": "http://localhost", "port": 8080, "profiles": {}}
+            config={"url": "http://localhost", "port": 8080, "profiles": {}},
+            deployed_schema_names=lambda _tenant_id: frozenset(),
         )
-    backend._tenant_schema_exists = MagicMock(return_value=True)
     backend.metrics.record_search(success=True, latency_ms=5.0, strategy="binary")
     backend.metrics.record_search(
         success=False, latency_ms=7.0, strategy="binary", error=ValueError("boom")

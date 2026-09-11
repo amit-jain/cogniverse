@@ -17,7 +17,7 @@ import threading
 import time
 import uuid
 from collections import defaultdict, deque
-from collections.abc import Mapping
+from collections.abc import Callable, Mapping, Set
 from contextlib import contextmanager
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
@@ -28,7 +28,6 @@ import requests
 from vespa.exceptions import VespaError
 
 from cogniverse_core.common.utils.retry import RetryConfig, retry_with_backoff
-from cogniverse_core.registries.backend_registry import get_backend_registry
 from cogniverse_sdk.document import (
     ALLOWED_RESULT_GRANULARITIES,
     ContentType,
@@ -693,6 +692,8 @@ class VespaSearchBackend(SearchBackend):
         config: Optional[Dict[str, Any]] = None,
         config_manager=None,
         schema_loader=None,
+        *,
+        deployed_schema_names: Callable[[str], Set[str]],
     ):
         """
         Initialize Vespa search backend.
@@ -712,9 +713,15 @@ class VespaSearchBackend(SearchBackend):
             config: Backend configuration dict (preferred; takes precedence)
             config_manager: ConfigManager for dependency injection
             schema_loader: SchemaLoader for dependency injection
+            deployed_schema_names: Maps a tenant id to the base schema names
+                that tenant has deployed. Every search consults it before
+                querying and raises ``SchemaNotDeployedError`` on a miss;
+                production binds ``tenant_deployed_schema_names`` to the
+                config manager. A read failure propagates.
         """
         self._schema_loader = schema_loader
         self._config_manager = config_manager
+        self._deployed_schema_names = deployed_schema_names
 
         # Lock guards runtime mutation of self.profiles / self.default_profiles
         # via add_profile / remove_profile. Reads in get_search_results take the
@@ -777,20 +784,7 @@ class VespaSearchBackend(SearchBackend):
 
     def _tenant_schema_exists(self, base_schema_name: str, tenant_id: str) -> bool:
         """Return True when the tenant has deployed the requested base schema."""
-        if self._config_manager is None or self._schema_loader is None:
-            raise RuntimeError(
-                "Search backend schema lookup requires config_manager and schema_loader"
-            )
-
-        backend_registry = get_backend_registry()
-        ingestion_backend = backend_registry.get_ingestion_backend(
-            "vespa",
-            tenant_id=tenant_id,
-            config={"url": self.backend_url, "port": self.backend_port},
-            config_manager=self._config_manager,
-            schema_loader=self._schema_loader,
-        )
-        return ingestion_backend.schema_exists(base_schema_name, tenant_id=tenant_id)
+        return base_schema_name in self._deployed_schema_names(tenant_id)
 
     def initialize(self, config: Dict[str, Any]) -> None:
         """
@@ -2374,7 +2368,11 @@ class VespaSearchBackend(SearchBackend):
 
 # Factory function for creating search backend
 def create_vespa_search_backend(
-    schema_name: str, backend_url: str = "http://localhost:8080", **kwargs
+    schema_name: str,
+    backend_url: str = "http://localhost:8080",
+    *,
+    deployed_schema_names: Callable[[str], Set[str]],
+    **kwargs,
 ) -> VespaSearchBackend:
     """
     Create a production-ready Vespa search backend
@@ -2382,11 +2380,15 @@ def create_vespa_search_backend(
     Args:
         schema_name: Vespa schema name
         backend_url: Backend URL
+        deployed_schema_names: Tenant id to deployed base schema names
         **kwargs: Additional configuration
 
     Returns:
         VespaSearchBackend instance
     """
     return VespaSearchBackend(
-        backend_url=backend_url, schema_name=schema_name, **kwargs
+        backend_url=backend_url,
+        schema_name=schema_name,
+        deployed_schema_names=deployed_schema_names,
+        **kwargs,
     )

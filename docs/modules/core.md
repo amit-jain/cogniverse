@@ -626,7 +626,8 @@ deployed, taken from the registry rows plus the pending deployment intents (a
 name an activation owns before its row lands). It needs no backend, and a
 storage read failure raises `RegistryStorageError` naming the tenant rather
 than answering with a smaller set — an outage must never read as "nothing is
-deployed".
+deployed". `VespaSearchBackend` consults it, bound to the backend's config
+manager, before every query (see the backends module).
 
 ```python
 from cogniverse_core.registries.schema_registry import tenant_deployed_schema_names
@@ -1998,7 +1999,9 @@ Source: [cogniverse_core/schemas/filesystem_loader.py](../../libs/core/cognivers
 
 Loads Vespa schema template files (`.sd` content + JSON metadata) from disk
 for `SchemaRegistry` and `BackendFactory` to deploy; implements the
-`SchemaLoader` interface from `cogniverse_sdk`.
+`SchemaLoader` interface from `cogniverse_sdk`. Its `source` is
+`("filesystem", <resolved directory>)`, so two loaders over one directory are
+interchangeable to the backend registry's cache-hit check.
 
 ---
 

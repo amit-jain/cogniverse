@@ -53,6 +53,11 @@ class FilesystemSchemaLoader(SchemaLoader):
         if not self.base_path.is_dir():
             raise ValueError(f"Schema path is not a directory: {base_path}")
 
+    @property
+    def source(self) -> tuple[str, str]:
+        """The resolved schema directory."""
+        return ("filesystem", str(self.base_path.resolve()))
+
     def load_schema(self, schema_name: str) -> Dict[str, Any]:
         """
         Load a schema definition by name.

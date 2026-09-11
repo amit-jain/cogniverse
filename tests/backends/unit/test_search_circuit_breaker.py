@@ -73,7 +73,10 @@ def test_breaker_counts_vespa_error():
         patch("cogniverse_vespa.search_backend.ConnectionPool"),
         patch("cogniverse_vespa.search_backend.SearchMetrics"),
     ):
-        backend = VespaSearchBackend(config={"url": "http://localhost", "port": 1})
+        backend = VespaSearchBackend(
+            config={"url": "http://localhost", "port": 1},
+            deployed_schema_names=lambda _tenant_id: frozenset(),
+        )
 
     calls = {"n": 0}
 

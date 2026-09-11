@@ -21,6 +21,7 @@ from cogniverse_sdk.interfaces.backend import IngestionBackend, SearchBackend
 
 ENDPOINT_A = {"url": "http://alpha.invalid", "port": 41001}
 ENDPOINT_B = {"url": "http://bravo.invalid", "port": 41002}
+ENDPOINT_A_SYSTEM = {"backend_url": "http://alpha.invalid", "backend_port": 41001}
 
 
 class RecordingSearchBackend(SearchBackend):
@@ -204,11 +205,17 @@ class TestSearchBackendEndpointIdentity:
             "search_recording@http://alpha.invalid:41001"
         ]
 
-    def test_cache_hit_with_a_different_config_manager_raises(
+    def test_cache_hit_with_a_config_manager_on_another_store_raises(
         self, registry, config_manager, schema_loader
     ):
+        from cogniverse_foundation.config.manager import ConfigManager
+        from cogniverse_foundation.config.unified_config import SystemConfig
+        from tests.utils.memory_store import InMemoryConfigStore
+
         _search(registry, config_manager, schema_loader, ENDPOINT_A)
-        other_manager = create_default_config_manager()
+        other_store = InMemoryConfigStore()
+        other_manager = ConfigManager(store=other_store)
+        other_manager.set_system_config(SystemConfig(**ENDPOINT_A_SYSTEM))
 
         with pytest.raises(BackendBindingConflictError) as excinfo:
             registry.get_search_backend(
@@ -218,15 +225,17 @@ class TestSearchBackendEndpointIdentity:
                 schema_loader=schema_loader,
             )
 
-        message = str(excinfo.value)
-        assert "search_recording@http://alpha.invalid:41001" in message
-        assert "config_manager" in message
+        assert str(excinfo.value) == (
+            "Cached backend search_recording@http://alpha.invalid:41001 is bound "
+            f"to a config_manager reading {config_manager.store.source!r}; the "
+            f"requester's reads ('memory', {id(other_store)}). Backends are "
+            "shared per endpoint; requesters at one endpoint must read one "
+            "config_manager source."
+        )
 
-    def test_cache_hit_with_a_different_schema_loader_raises(
-        self, registry, config_manager, schema_loader
+    def test_cache_hit_with_a_schema_loader_on_another_directory_raises(
+        self, registry, config_manager, schema_loader, tmp_path
     ):
-        from pathlib import Path
-
         from cogniverse_core.schemas.filesystem_loader import FilesystemSchemaLoader
 
         _search(registry, config_manager, schema_loader, ENDPOINT_A)
@@ -236,10 +245,38 @@ class TestSearchBackendEndpointIdentity:
                 "recording",
                 config=dict(ENDPOINT_A),
                 config_manager=config_manager,
-                schema_loader=FilesystemSchemaLoader(Path("configs/schemas")),
+                schema_loader=FilesystemSchemaLoader(tmp_path),
             )
 
-        assert "schema_loader" in str(excinfo.value)
+        assert str(excinfo.value) == (
+            "Cached backend search_recording@http://alpha.invalid:41001 is bound "
+            f"to a schema_loader reading {schema_loader.source!r}; the "
+            f"requester's reads ('filesystem', {str(tmp_path.resolve())!r}). "
+            "Backends are shared per endpoint; requesters at one endpoint must "
+            "read one schema_loader source."
+        )
+
+    def test_cache_hit_with_fresh_dependencies_on_the_same_sources_is_shared(
+        self, registry, config_manager, schema_loader
+    ):
+        """Requesters build their own config manager and loader; the same
+        store and schema directory are one binding."""
+        from pathlib import Path
+
+        from cogniverse_core.schemas.filesystem_loader import FilesystemSchemaLoader
+
+        first = _search(registry, config_manager, schema_loader, ENDPOINT_A)
+        second = _search(
+            registry,
+            create_default_config_manager(),
+            FilesystemSchemaLoader(Path("configs/schemas").resolve()),
+            ENDPOINT_A,
+        )
+
+        assert second is first
+        assert registry._backend_instances.keys() == [
+            "search_recording@http://alpha.invalid:41001"
+        ]
 
 
 class TestIngestionBackendEndpointIdentity:
@@ -438,7 +475,10 @@ class TestEvictionReleasesTheBackend:
         from cogniverse_vespa.search_backend import VespaSearchBackend
 
         backend = VespaSearchBackend(
-            schema_name=None, enable_connection_pool=True, enable_metrics=False
+            schema_name=None,
+            enable_connection_pool=True,
+            enable_metrics=False,
+            deployed_schema_names=lambda _tenant_id: frozenset(),
         )
         backend.initialize({"url": "http://127.0.0.1", "port": 41004})
         backend.close()
