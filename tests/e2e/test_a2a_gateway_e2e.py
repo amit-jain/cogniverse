@@ -14,6 +14,7 @@ Requires live k3d-deployed runtime at http://localhost:33000.
 """
 
 import hashlib
+import json
 
 import httpx
 import pytest
@@ -947,6 +948,29 @@ class TestGatewayAgentThin:
 # ---------------------------------------------------------------------------
 
 
+_ENTITY_EXTRACTION_ENVELOPE_KEYS = {
+    "status",
+    "agent",
+    "answer",
+    "query",
+    "entities",
+    "relationships",
+    "entity_count",
+    "has_entities",
+    "dominant_types",
+    "path_used",
+}
+
+
+def _entity_extraction_payload(envelope: dict) -> dict:
+    """The agent's output fields: what the dispatcher renders as ``answer``."""
+    return {
+        key: value
+        for key, value in envelope.items()
+        if key not in {"status", "agent", "answer"}
+    }
+
+
 @pytest.mark.e2e
 class TestEntityExtractionAgent:
     """Entity extraction agent is an internal orchestration agent.
@@ -954,19 +978,20 @@ class TestEntityExtractionAgent:
     internally by the OrchestratorAgent via A2A HTTP."""
 
     def test_entity_extraction_agent_returns_entities(self):
-        """POST to entity_extraction_agent/process extracts real named entities.
+        """POST to entity_extraction_agent/process serves the DSPy path's typed
+        entities for "Obama speaking at MIT about climate change".
 
-        "Obama speaking at MIT about climate change" should produce:
-        - Obama (PERSON, confidence >0.9)
-        - MIT (ORGANIZATION, confidence >0.8)
-        - climate change (CONCEPT, confidence >0.8)
+        Entities come in first-occurrence order. Only the GLiNER fallback
+        (``path_used == "fast"``) scores an entity; the DSPy path's schema has
+        no score, so its entities carry no ``confidence`` key.
         """
+        query = "Obama speaking at MIT about climate change"
         with httpx.Client(base_url=RUNTIME, timeout=900.0) as client:
             resp = client.post(
                 "/agents/entity_extraction_agent/process",
                 json={
                     "agent_name": "entity_extraction_agent",
-                    "query": "Obama speaking at MIT about climate change",
+                    "query": query,
                     "context": {"tenant_id": TENANT_ID},
                 },
             )
@@ -978,94 +1003,82 @@ class TestEntityExtractionAgent:
         assert data["status"] == "success"
         assert data["agent"] == "entity_extraction_agent"
 
-        # Must extract real entities, not empty list
-        entities = data["entities"]
-        assert len(entities) >= 2, (
-            f"Expected at least 2 entities from 'Obama speaking at MIT about climate change', "
-            f"got {len(entities)}: {entities}"
-        )
-
-        entity_texts = {e["text"].lower() for e in entities}
-        assert "obama" in entity_texts, (
-            f"Expected 'Obama' in entities, got: {entity_texts}"
-        )
-        assert "mit" in entity_texts or any("mit" in t for t in entity_texts), (
-            f"Expected 'MIT' in entities, got: {entity_texts}"
-        )
-
-        # All entities should have meaningful confidence
-        for e in entities:
-            assert e["confidence"] > 0.5, (
-                f"Entity '{e['text']}' confidence {e['confidence']} too low"
-            )
-            assert e["type"] in (
-                "PERSON",
-                "ORGANIZATION",
-                "CONCEPT",
-                "PLACE",
-                "EVENT",
-                "TECHNOLOGY",
-            ), f"Entity '{e['text']}' has unexpected type '{e['type']}'"
-
         # DSPy is the primary extraction path; GLiNER + SpaCy is the fallback
-        # taken only when the LM call fails (entity_extraction_agent.py:270,302).
+        # taken only when the LM call fails.
         assert data.get("path_used") == "dspy", (
             f"Expected the DSPy primary path, got: {data.get('path_used')}"
         )
+        assert set(data) == _ENTITY_EXTRACTION_ENVELOPE_KEYS, data
 
-        # Relationships should be populated when 2+ entities exist
-        assert len(data.get("relationships", [])) >= 1, (
-            f"Expected relationships with {len(entities)} entities, got: {data.get('relationships')}"
-        )
+        entities = data["entities"]
+        assert [sorted(entity) for entity in entities] == [
+            ["context", "text", "type"]
+        ] * 3, f"DSPy-path entity keys are context, text, type (no score): {entities}"
+        assert [(e["text"], e["type"]) for e in entities] == [
+            ("Obama", "PERSON"),
+            ("MIT", "ORGANIZATION"),
+            ("climate change", "CONCEPT"),
+        ], entities
+        assert [e["context"] for e in entities] == [
+            "Obama speaking at MIT about climate",
+            query,
+            query,
+        ]
+        assert data["relationships"] == [
+            {"subject": "Obama", "relation": "at", "object": "MIT", "confidence": 0.7},
+            {
+                "subject": "MIT",
+                "relation": "about",
+                "object": "climate change",
+                "confidence": 0.7,
+            },
+        ]
+        assert data["query"] == query
+        assert data["entity_count"] == 3
+        assert data["has_entities"] is True
+        assert data["dominant_types"] == ["PERSON", "ORGANIZATION", "CONCEPT"]
+        assert json.loads(data["answer"]) == _entity_extraction_payload(data)
 
     def test_entity_extraction_tech_entities(self):
-        """Extract technology entities: Python, TensorFlow from tech query.
-
-        Must detect SPECIFIC entities by name, not just "at least one tech entity".
+        """Technology entities for "Python programming with TensorFlow for deep
+        learning": each technology is its own TECHNOLOGY span, and the activity
+        word "programming" belongs to no entity.
         """
+        query = "Python programming with TensorFlow for deep learning"
         with httpx.Client(base_url=RUNTIME, timeout=900.0) as client:
             resp = client.post(
                 "/agents/entity_extraction_agent/process",
                 json={
                     "agent_name": "entity_extraction_agent",
-                    "query": "Python programming with TensorFlow for deep learning",
+                    "query": query,
                     "context": {"tenant_id": TENANT_ID},
                 },
             )
 
         assert resp.status_code == 200
         data = resp.json()
+        assert data["path_used"] == "dspy", data
+        assert set(data) == _ENTITY_EXTRACTION_ENVELOPE_KEYS, data
+
         entities = data["entities"]
-        entity_texts = {e["text"].lower() for e in entities}
-
-        # Assert the named tech terms appear. GLiNER returns whole spans
-        # ("Python programming"), so match by substring, not exact token.
-        assert "python" in entity_texts or any("python" in t for t in entity_texts), (
-            f"Must detect 'Python' as entity, got: {entity_texts}"
-        )
-        assert "tensorflow" in entity_texts or any(
-            "tensorflow" in t for t in entity_texts
-        ), f"Must detect 'TensorFlow' as entity, got: {entity_texts}"
-
-        # Verify types for each detected entity
-        for e in entities:
-            if "python" in e["text"].lower():
-                assert e["type"] in ("TECHNOLOGY", "CONCEPT", "SOFTWARE"), (
-                    f"'Python' should be TECHNOLOGY/CONCEPT, got '{e['type']}'"
-                )
-                assert e["confidence"] > 0.5, (
-                    f"'Python' confidence {e['confidence']} too low"
-                )
-            if "tensorflow" in e["text"].lower():
-                assert e["type"] in (
-                    "TECHNOLOGY",
-                    "CONCEPT",
-                    "SOFTWARE",
-                    "FRAMEWORK",
-                ), f"'TensorFlow' should be TECHNOLOGY, got '{e['type']}'"
-                assert e["confidence"] > 0.5, (
-                    f"'TensorFlow' confidence {e['confidence']} too low"
-                )
+        assert [sorted(entity) for entity in entities] == [
+            ["context", "text", "type"]
+        ] * 3, f"DSPy-path entity keys are context, text, type (no score): {entities}"
+        assert [(e["text"], e["type"]) for e in entities] == [
+            ("Python", "TECHNOLOGY"),
+            ("TensorFlow", "TECHNOLOGY"),
+            ("deep learning", "CONCEPT"),
+        ], entities
+        assert [e["context"] for e in entities] == [
+            "Python programming with TensorFlow f",
+            query,
+            "ogramming with TensorFlow for deep learning",
+        ]
+        assert data["relationships"] == []
+        assert data["entity_count"] == 3
+        assert data["has_entities"] is True
+        assert data["dominant_types"] == ["TECHNOLOGY", "CONCEPT"]
+        assert json.loads(data["answer"]) == _entity_extraction_payload(data)
 
     def test_entity_extraction_agent_is_registered(self):
         """The agent should be registered in the registry."""

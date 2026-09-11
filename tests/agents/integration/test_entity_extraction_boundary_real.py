@@ -18,6 +18,7 @@ from cogniverse_agents.entity_extraction_agent import (
     EntityExtractionDeps,
     EntityExtractionInput,
     EntityExtractionModule,
+    EntityExtractionOutput,
     EntityMention,
 )
 from cogniverse_foundation.dspy import signature_response_format
@@ -266,6 +267,76 @@ async def test_dead_port_lm_falls_back_to_fast_path_and_emits_span(
 
 
 @pytest.mark.asyncio
+async def test_confidence_is_served_only_by_the_path_that_scores(entity_agent):
+    """One agent and one query down both paths. The GLiNER fallback (LM on a
+    dead port) serves each entity's GLiNER score; the DSPy path, whose schema
+    carries no score, serves its entities without a ``confidence`` key. The
+    A2A envelope, the dispatcher's dump, the span and the published output
+    schema say the same thing, and ``path_used`` names the path.
+    """
+    capture = _telemetry_capture()
+    entity_agent.set_telemetry_manager(capture.manager)
+    query = "Barack Obama in Chicago"
+    request = EntityExtractionInput(query=query, tenant_id="entity-boundary-confidence")
+    dspy_lm = DummyLM(
+        {
+            query: {
+                "reasoning": "Return the exact person and place spans.",
+                "entities": _entity_output(
+                    ("Barack Obama", "PERSON"), ("Chicago", "PLACE")
+                ),
+            }
+        },
+        adapter=EntityExtractionModule().dspy_adapter,
+    )
+
+    with dspy.context(lm=dspy_lm):
+        dspy_result = await entity_agent._process_impl(request)
+    with dspy.context(lm=_dead_port_lm()):
+        fast_result = await entity_agent._process_impl(request)
+
+    unscored = [
+        {"text": "Barack Obama", "type": "PERSON", "context": query},
+        {"text": "Chicago", "type": "PLACE", "context": query},
+    ]
+    scored = [
+        {
+            "text": "Barack Obama",
+            "type": "PERSON",
+            "confidence": 0.9916797280311584,
+            "context": query,
+        },
+        {
+            "text": "Chicago",
+            "type": "PLACE",
+            "confidence": 0.9902434945106506,
+            "context": query,
+        },
+    ]
+    results = (dspy_result, fast_result)
+    assert {
+        result.path_used: entity_agent._dspy_to_a2a_output(result)["entities"]
+        for result in results
+    } == {"dspy": unscored, "fast": scored}
+    assert {
+        result.path_used: json.loads(result.model_dump_json())["entities"]
+        for result in results
+    } == {"dspy": unscored, "fast": scored}
+
+    span_outputs = [
+        read_span_io(dict(span.attributes))["output"]
+        for span in capture.exporter.get_finished_spans()
+    ]
+    assert [(output["path_used"], output["entities"]) for output in span_outputs] == [
+        ("dspy", unscored),
+        ("fast", scored),
+    ]
+
+    entity_schema = EntityExtractionOutput.model_json_schema()["$defs"]["Entity"]
+    assert entity_schema["required"] == ["text", "type"]
+
+
+@pytest.mark.asyncio
 async def test_concurrent_requests_stay_on_their_own_queries(entity_agent, monkeypatch):
     capture = _telemetry_capture()
     entity_agent.set_telemetry_manager(capture.manager)
@@ -288,13 +359,11 @@ async def test_concurrent_requests_stay_on_their_own_queries(entity_agent, monke
                 {
                     "text": "Barack Obama",
                     "type": "PERSON",
-                    "confidence": None,
                     "context": "Barack Obama in Chicago",
                 },
                 {
                     "text": "Chicago",
                     "type": "PLACE",
-                    "confidence": None,
                     "context": "Barack Obama in Chicago",
                 },
             ],
@@ -310,13 +379,11 @@ async def test_concurrent_requests_stay_on_their_own_queries(entity_agent, monke
                 {
                     "text": "Apple",
                     "type": "ORGANIZATION",
-                    "confidence": None,
                     "context": "Apple in California",
                 },
                 {
                     "text": "California",
                     "type": "PLACE",
-                    "confidence": None,
                     "context": "Apple in California",
                 },
             ],
@@ -332,13 +399,11 @@ async def test_concurrent_requests_stay_on_their_own_queries(entity_agent, monke
                 {
                     "text": "PyTorch",
                     "type": "TECHNOLOGY",
-                    "confidence": None,
                     "context": "PyTorch in Menlo Park",
                 },
                 {
                     "text": "Menlo Park",
                     "type": "PLACE",
-                    "confidence": None,
                     "context": "PyTorch in Menlo Park",
                 },
             ],
@@ -354,13 +419,11 @@ async def test_concurrent_requests_stay_on_their_own_queries(entity_agent, monke
                 {
                     "text": "Marie Curie",
                     "type": "PERSON",
-                    "confidence": None,
                     "context": "Marie Curie in Paris",
                 },
                 {
                     "text": "Paris",
                     "type": "PLACE",
-                    "confidence": None,
                     "context": "Marie Curie in Paris",
                 },
             ],
@@ -376,13 +439,11 @@ async def test_concurrent_requests_stay_on_their_own_queries(entity_agent, monke
                 {
                     "text": "Google",
                     "type": "ORGANIZATION",
-                    "confidence": None,
                     "context": "Google in London",
                 },
                 {
                     "text": "London",
                     "type": "PLACE",
-                    "confidence": None,
                     "context": "Google in London",
                 },
             ],
@@ -398,13 +459,11 @@ async def test_concurrent_requests_stay_on_their_own_queries(entity_agent, monke
                 {
                     "text": "NASA",
                     "type": "ORGANIZATION",
-                    "confidence": None,
                     "context": "NASA in Florida",
                 },
                 {
                     "text": "Florida",
                     "type": "PLACE",
-                    "confidence": None,
                     "context": "NASA in Florida",
                 },
             ],
@@ -420,13 +479,11 @@ async def test_concurrent_requests_stay_on_their_own_queries(entity_agent, monke
                 {
                     "text": "Tesla Model 3",
                     "type": "TECHNOLOGY",
-                    "confidence": None,
                     "context": "Tesla Model 3 in California",
                 },
                 {
                     "text": "California",
                     "type": "PLACE",
-                    "confidence": None,
                     "context": "Tesla Model 3 in California",
                 },
             ],
@@ -442,13 +499,11 @@ async def test_concurrent_requests_stay_on_their_own_queries(entity_agent, monke
                 {
                     "text": "OpenAI",
                     "type": "ORGANIZATION",
-                    "confidence": None,
                     "context": "OpenAI in San Francisco",
                 },
                 {
                     "text": "San Francisco",
                     "type": "PLACE",
-                    "confidence": None,
                     "context": "OpenAI in San Francisco",
                 },
             ],
@@ -594,19 +649,16 @@ async def test_served_student_returns_the_exact_typed_entities(ensure_host_ollam
             {
                 "text": "biker",
                 "type": "PERSON",
-                "confidence": None,
                 "context": "When does the biker ride the dirt bike in the fie",
             },
             {
                 "text": "dirt bike",
                 "type": "CONCEPT",
-                "confidence": None,
                 "context": "When does the biker ride the dirt bike in the field?",
             },
             {
                 "text": "field",
                 "type": "PLACE",
-                "confidence": None,
                 "context": "ker ride the dirt bike in the field?",
             },
         ],

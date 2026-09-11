@@ -146,7 +146,6 @@ async def test_entity_extraction_span_yields_training_pair(real_telemetry):
         {
             "text": "machine learning",
             "type": "CONCEPT",
-            "confidence": None,
             "context": "machine learning tutorials",
         }
     ]

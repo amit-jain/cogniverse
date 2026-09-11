@@ -220,12 +220,12 @@ class TestEntityExtractionAgentIntegration:
             "All entities must have non-empty types"
         )
 
-        # The DSPy path served this query, and its output schema carries no score.
+        # The DSPy path served this query; its schema carries no score, so no
+        # mention serializes a confidence key.
         assert result.path_used == "dspy"
         for entity in result.entities:
-            assert entity.confidence is None, (
-                f"DSPy-path mention {entity.text!r} carries a score: {entity.confidence}"
-            )
+            record = entity.model_dump()
+            assert sorted(record) == ["context", "text", "type"], record
 
         # VALIDATE: Context extraction works
         for entity in result.entities:
