@@ -2115,11 +2115,13 @@ class AgentDispatcher:
                 DetailedReportInput,
             )
 
-            deps = DetailedReportDeps(
-                tenant_id=tenant_id,
-                **self._agent_behavior_kwargs(tenant_id, "detailed_report_agent"),
+            agent = await asyncio.to_thread(
+                self._build_answer_agent,
+                DetailedReportAgent,
+                DetailedReportDeps,
+                "detailed_report_agent",
+                tenant_id,
             )
-            agent = DetailedReportAgent(deps=deps, config_manager=self._config_manager)
             typed_input = typed_input_from_context(
                 DetailedReportInput,
                 query=query,
@@ -2140,11 +2142,13 @@ class AgentDispatcher:
                 SummarizerInput,
             )
 
-            deps = SummarizerDeps(
-                tenant_id=tenant_id,
-                **self._agent_behavior_kwargs(tenant_id, "summarizer_agent"),
+            agent = await asyncio.to_thread(
+                self._build_answer_agent,
+                SummarizerAgent,
+                SummarizerDeps,
+                "summarizer_agent",
+                tenant_id,
             )
-            agent = SummarizerAgent(deps=deps, config_manager=self._config_manager)
             typed_input = typed_input_from_context(
                 SummarizerInput,
                 query=query,
@@ -2465,6 +2469,20 @@ class AgentDispatcher:
             response["rewritten_query"] = resolved_query
 
         return response
+
+    def _build_answer_agent(
+        self, agent_cls: Any, deps_cls: Any, agent_name: str, tenant_id: str
+    ) -> Any:
+        """Construct an answer agent for ``tenant_id``.
+
+        Blocking: it reads the tenant's agent config from the config store, and
+        the agent resolves its LM endpoint and builds its DSPy modules. Callers
+        on the event loop run it in a worker thread.
+        """
+        deps = deps_cls(
+            tenant_id=tenant_id, **self._agent_behavior_kwargs(tenant_id, agent_name)
+        )
+        return agent_cls(deps=deps, config_manager=self._config_manager)
 
     def _agent_behavior_kwargs(self, tenant_id: str, agent_name: str) -> Dict[str, Any]:
         """Per-tenant thinking/visual toggles for an answer agent's Deps.
@@ -3241,11 +3259,13 @@ class AgentDispatcher:
         if grounding.nothing_to_search and not request_kwargs["attachments"]:
             return self._nothing_to_search_summary(tenant_id, grounding)
 
-        deps = SummarizerDeps(
-            tenant_id=tenant_id,
-            **self._agent_behavior_kwargs(tenant_id, "summarizer_agent"),
+        agent = await asyncio.to_thread(
+            self._build_answer_agent,
+            SummarizerAgent,
+            SummarizerDeps,
+            "summarizer_agent",
+            tenant_id,
         )
-        agent = SummarizerAgent(deps=deps, config_manager=self._config_manager)
         await asyncio.to_thread(
             self._init_agent_memory, agent, "summarizer_agent", tenant_id
         )
@@ -3339,11 +3359,13 @@ class AgentDispatcher:
         if grounding.nothing_to_search and not (context or {}).get("attachments"):
             return self._nothing_to_search_report(tenant_id, grounding)
 
-        deps = DetailedReportDeps(
-            tenant_id=tenant_id,
-            **self._agent_behavior_kwargs(tenant_id, "detailed_report_agent"),
+        agent = await asyncio.to_thread(
+            self._build_answer_agent,
+            DetailedReportAgent,
+            DetailedReportDeps,
+            "detailed_report_agent",
+            tenant_id,
         )
-        agent = DetailedReportAgent(deps=deps, config_manager=self._config_manager)
         await asyncio.to_thread(
             self._init_agent_memory, agent, "detailed_report_agent", tenant_id
         )

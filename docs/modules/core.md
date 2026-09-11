@@ -195,10 +195,20 @@ class MySearchAgent(AgentBase[MySearchInput, MySearchOutput, MySearchDeps]):
 | `get_output_schema() -> Dict` | Get JSON schema for output type |
 | `get_stats() -> Dict` | Get processing statistics |
 
-`call_dspy(..., output_field=...)` emits token events with the exact chunk in
-`message` and `data={"accumulated": ..., "output_field": ...}`. Token streaming
-belongs to the agent that owns the active stream; nested agents do not emit
-answer tokens into their caller's stream.
+`call_dspy(..., output_field=..., stream_view=...)` emits token events with the
+new text in `message` and `data={"accumulated": ..., "output_field": ...}`.
+`accumulated` is always a prefix of the stripped value the module returns for
+that field: under a JSON adapter the listener's raw JSON is decoded (quotes and
+escapes resolved, nothing after the closing quote), trailing whitespace waits
+for the text that follows it, and `stream_view` narrows the text to what the
+agent's own post-processing of the field keeps. The streamed LM call runs on a
+dedicated LM stream loop, so its chunk handling never occupies the serving
+loop. Token streaming belongs to the agent that owns the active stream; nested
+agents do not emit answer tokens into their caller's stream.
+
+A failed stream ends in one `{"type": "error", "agent", "error_type",
+"message"}` event; when the LM answered with a 4xx the event also carries
+`status` and the message names it (`... (LM HTTP 413) ...`).
 
 ### AgentInput / AgentOutput / AgentDeps
 

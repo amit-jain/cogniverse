@@ -234,3 +234,219 @@ async def _drain_answer(agent) -> list:
     async for event in stream:
         events.append(event)
     return events
+
+
+class TestStreamedFieldText:
+    """What a token event carries: the field value as the adapter parses it."""
+
+    @pytest.mark.parametrize(
+        "raw, decoded",
+        [
+            ("", ""),
+            ('"', ""),
+            ('"Ice', "Ice"),
+            ('"Ice \\"floats\\"', 'Ice "floats"'),
+            ('"one\\n\\ntwo', "one\n\ntwo"),
+            ('"cut at a lone \\', "cut at a lone "),
+            ('"partial \\u00', "partial "),
+            ('"caf\\u00e9', "café"),
+            ('"pair \\ud83d', "pair "),
+            ('"pair \\ud83d\\ude00', "pair \U0001f600"),
+            ('"done",\n  "key_points": "x', "done"),
+            ('  "leading space kept inside"', "leading space kept inside"),
+            ("[1, 2]", ""),
+        ],
+    )
+    def test_json_field_prefix_decodes_exactly(self, raw, decoded):
+        from cogniverse_core.agents.base import _json_string_prefix
+
+        assert _json_string_prefix(raw) == decoded
+
+    def test_every_json_prefix_begins_the_parsed_value(self):
+        import json
+
+        from cogniverse_core.agents.base import _json_string_prefix
+
+        value = 'Say "less dense".\n\nThen café \U0001f600 and a \\ backslash.'
+        raw = json.dumps(value) + ',\n  "key_points": "a, b"}'
+        views = [_json_string_prefix(raw[:end]) for end in range(len(raw) + 1)]
+        assert [view for view in views if not value.startswith(view)] == []
+        assert views[-1] == value
+
+    def test_adapter_selects_the_decoding(self):
+        import dspy
+
+        from cogniverse_core.agents.base import _field_text
+        from cogniverse_foundation.dspy import LenientJSONAdapter
+
+        raw = '\n"Ice \\"floats\\"",'
+        assert _field_text(raw, LenientJSONAdapter()) == 'Ice "floats"'
+        assert _field_text(raw, dspy.ChatAdapter()) == '"Ice \\"floats\\"",'
+        assert _field_text("\n\nIce floats\n", None) == "Ice floats\n"
+
+
+class TestRejectedStatus:
+    """Only a status the LM actually answered with reaches the client."""
+
+    def test_a_4xx_leaf_names_its_status(self):
+        from cogniverse_core.agents.base import _rejected_status
+
+        class Rejected(Exception):
+            status_code = 413
+
+        assert _rejected_status([ValueError("x"), Rejected("too large")]) == 413
+
+    def test_a_synthesized_5xx_names_none(self):
+        from cogniverse_core.agents.base import _rejected_status
+
+        class Unreachable(Exception):
+            status_code = 500
+
+        assert _rejected_status([Unreachable("connection refused")]) is None
+
+
+def test_concurrent_first_touches_build_one_lm_stream_loop(monkeypatch):
+    import threading
+
+    from cogniverse_core.agents import base
+
+    def loop_threads() -> set:
+        return {t for t in threading.enumerate() if t.name == "lm-stream-loop"}
+
+    monkeypatch.setattr(base, "_LM_STREAM_LOOP", None)
+    before = loop_threads()
+    built: list = []
+    real_new_loop = base.asyncio.new_event_loop
+
+    def recording_new_loop():
+        loop = real_new_loop()
+        built.append(loop)
+        return loop
+
+    monkeypatch.setattr(base.asyncio, "new_event_loop", recording_new_loop)
+    barrier = threading.Barrier(16)
+    returned: list = []
+
+    def first_touch() -> None:
+        barrier.wait()
+        returned.append(base._lm_stream_loop())
+
+    threads = [threading.Thread(target=first_touch) for _ in range(16)]
+    for thread in threads:
+        thread.start()
+    for thread in threads:
+        thread.join(timeout=10)
+    started = loop_threads() - before
+
+    for loop in built:
+        loop.call_soon_threadsafe(loop.stop)
+    assert len(returned) == 16
+    assert len(built) == 1
+    assert {id(loop) for loop in returned} == {id(built[0])}
+    assert len(started) == 1
+
+
+class _SseChatServer:
+    """A real OpenAI-compatible endpoint that streams one fixed completion."""
+
+    def __init__(self, content: str, piece: int = 3) -> None:
+        import json
+        import threading
+        from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
+
+        self.requests: list = []
+        server = self
+
+        class Handler(BaseHTTPRequestHandler):
+            def log_message(self, *args) -> None:
+                return
+
+            def do_POST(self) -> None:
+                body = json.loads(self.rfile.read(int(self.headers["Content-Length"])))
+                server.requests.append(body)
+                self.send_response(200)
+                self.send_header("Content-Type", "text/event-stream")
+                self.end_headers()
+                pieces = [content[i : i + piece] for i in range(0, len(content), piece)]
+                for index, text in enumerate(pieces + [""]):
+                    chunk = {
+                        "id": "chatcmpl-stub",
+                        "object": "chat.completion.chunk",
+                        "created": 0,
+                        "model": "stub-model",
+                        "choices": [
+                            {
+                                "index": 0,
+                                "delta": {"content": text} if text else {},
+                                "finish_reason": None if text else "stop",
+                            }
+                        ],
+                    }
+                    self.wfile.write(f"data: {json.dumps(chunk)}\n\n".encode())
+                    self.wfile.flush()
+                self.wfile.write(b"data: [DONE]\n\n")
+                self.wfile.flush()
+
+        self._server = ThreadingHTTPServer(("127.0.0.1", 0), Handler)
+        self.api_base = f"http://127.0.0.1:{self._server.server_address[1]}/v1"
+        threading.Thread(target=self._server.serve_forever, daemon=True).start()
+
+    def close(self) -> None:
+        self._server.shutdown()
+        self._server.server_close()
+
+
+class _AnswerOnlyOutput(AgentOutput):
+    answer: str = ""
+
+
+class _ChatStreamingAgent(AgentBase[_Input, _AnswerOnlyOutput, _Deps]):
+    async def _process_impl(self, input: _Input) -> _AnswerOnlyOutput:
+        import dspy
+
+        prediction = await self.call_dspy(
+            dspy.Predict("question -> answer"),
+            output_field="answer",
+            question=input.tag,
+        )
+        return _AnswerOnlyOutput(answer=prediction.answer)
+
+
+async def test_chat_format_tokens_are_the_stripped_answer_over_a_real_stream():
+    import uuid
+
+    import dspy
+
+    server = _SseChatServer(
+        "[[ ## answer ## ]]\n\n  Ice floats because its lattice is open.\n\n"
+        "[[ ## completed ## ]]\n"
+    )
+    agent = _ChatStreamingAgent(_Deps())
+    agent.bind_config_manager(_memory_config_manager())
+    lm = dspy.LM(
+        "openai/stub-model", api_base=server.api_base, api_key="stub", cache=False
+    )
+    try:
+        with dspy.context(lm=lm, adapter=dspy.ChatAdapter()):
+            events = [
+                event
+                async for event in await agent.process(
+                    _Input(tag=f"why does ice float {uuid.uuid4().hex}"), stream=True
+                )
+            ]
+    finally:
+        server.close()
+
+    tokens = [event for event in events if event.get("phase") == "token"]
+    assert "".join(event["message"] for event in tokens) == (
+        "Ice floats because its lattice is open."
+    )
+    assert tokens[-1]["data"] == {
+        "accumulated": "Ice floats because its lattice is open.",
+        "output_field": "answer",
+    }
+    assert events[-1] == {
+        "type": "final",
+        "data": {"answer": "Ice floats because its lattice is open."},
+    }
+    assert [request.get("stream") for request in server.requests] == [True]

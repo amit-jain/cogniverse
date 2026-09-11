@@ -599,6 +599,28 @@ class ChatCompletionRequest(BaseModel):
     max_tokens: Optional[int] = None
     max_completion_tokens: Optional[int] = None
     tool_choice: Optional[Any] = None
+    stream_options: Optional[Dict[str, Any]] = None
+
+
+def usage_requested(request: ChatCompletionRequest) -> bool:
+    """Whether a streamed turn ends with a usage chunk.
+
+    The dialect sends usage on a stream only when the client asks with
+    ``stream_options: {"include_usage": true}``, as a last chunk whose
+    ``choices`` is empty.
+
+    Raises:
+        RequestShapeError: ``include_usage`` is set to something other than a
+            boolean.
+    """
+    include = (request.stream_options or {}).get("include_usage")
+    if include is None:
+        return False
+    if not isinstance(include, bool):
+        raise RequestShapeError(
+            f"stream_options.include_usage must be a boolean, got {include!r}"
+        )
+    return include
 
 
 def sampling_context(request: ChatCompletionRequest) -> Dict[str, Any]:
@@ -822,6 +844,7 @@ async def _stream_turn(
     external_tools: Optional[List[Dict[str, Any]]] = None,
     sampling: Optional[Dict[str, Any]] = None,
     tools_forbidden: bool = False,
+    include_usage: bool = False,
 ) -> AsyncIterator[str]:
     """Stream one turn as SSE by chunking the finished answer."""
     task = asyncio.create_task(
@@ -867,8 +890,9 @@ async def _stream_turn(
                 created,
                 model,
                 [{"index": 0, "delta": {}, "finish_reason": "tool_calls"}],
-                usage=outcome["usage"],
             )
+            if include_usage:
+                yield _chunk(completion_id, created, model, [], usage=outcome["usage"])
             yield "data: [DONE]\n\n"
             return
         for part in split_answer_chunks(outcome["answer"]):
@@ -883,8 +907,9 @@ async def _stream_turn(
             created,
             model,
             [{"index": 0, "delta": {}, "finish_reason": "stop"}],
-            usage=outcome["usage"],
         )
+        if include_usage:
+            yield _chunk(completion_id, created, model, [], usage=outcome["usage"])
         yield "data: [DONE]\n\n"
     except asyncio.CancelledError:
         for frame in _terminal_frames_on_cancel(agent_name):
@@ -930,6 +955,7 @@ async def _stream_tokens(
     external_tools: Optional[List[Dict[str, Any]]] = None,
     sampling: Optional[Dict[str, Any]] = None,
     tools_forbidden: bool = False,
+    include_usage: bool = False,
 ) -> AsyncIterator[str]:
     """Stream the agent's answer tokens as they are produced.
 
@@ -1040,10 +1066,17 @@ async def _stream_tokens(
                         created,
                         model,
                         [{"index": 0, "delta": {}, "finish_reason": "tool_calls"}],
-                        usage=_finalize_usage(
-                            None, query, history, json.dumps(tool_calls)
-                        ),
                     )
+                    if include_usage:
+                        yield _chunk(
+                            completion_id,
+                            created,
+                            model,
+                            [],
+                            usage=_finalize_usage(
+                                None, query, history, json.dumps(tool_calls)
+                            ),
+                        )
                     yield "data: [DONE]\n\n"
                     return
 
@@ -1068,8 +1101,15 @@ async def _stream_tokens(
             created,
             model,
             [{"index": 0, "delta": {}, "finish_reason": "stop"}],
-            usage=_finalize_usage(None, query, history, streamed),
         )
+        if include_usage:
+            yield _chunk(
+                completion_id,
+                created,
+                model,
+                [],
+                usage=_finalize_usage(None, query, history, streamed),
+            )
         yield "data: [DONE]\n\n"
     except asyncio.CancelledError:
         for frame in _terminal_frames_on_cancel(agent_name):
@@ -1193,6 +1233,7 @@ async def chat_completions(
         dispatch_args = build_dispatch_args(request.messages)
         sampling = sampling_context(request)
         external_tools, tools_forbidden = resolve_tool_policy(request)
+        include_usage = usage_requested(request)
     except RequestShapeError as exc:
         return _error_response(400, str(exc), "invalid_request")
 
@@ -1229,6 +1270,7 @@ async def chat_completions(
                 external_tools,
                 sampling,
                 tools_forbidden,
+                include_usage=include_usage,
             ),
             media_type="text/event-stream",
         )

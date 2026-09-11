@@ -452,10 +452,18 @@ class TestSummarizerAgentCoreFunctionality:
         captured = {}
 
         async def _fake_call_dspy(
-            module, *, output_field, content, query, summary_type, keyframes
+            module,
+            *,
+            output_field,
+            stream_view,
+            content,
+            query,
+            summary_type,
+            keyframes,
         ):
             captured.update(
                 output_field=output_field,
+                stream_view=stream_view,
                 content=content,
                 query=query,
                 summary_type=summary_type,
@@ -480,6 +488,12 @@ class TestSummarizerAgentCoreFunctionality:
         # and hands DSPy a "- {title}: {content_type}" block for the top results.
         assert captured["output_field"] == "summary"
         assert captured["summary_type"] == "brief"
+        long_summary = "lattice " * 200
+        assert captured["stream_view"](long_summary) == (
+            SummarizerAgent._stream_within_max_length(
+                long_summary, agent.max_summary_length
+            )
+        )
         assert captured["query"] == "AI technology overview"
         assert captured["content"] == (
             "- AI Technology Demo: video\n"
@@ -509,10 +523,18 @@ class TestSummarizerAgentCoreFunctionality:
         captured = {}
 
         async def _fake_call_dspy(
-            module, *, output_field, content, query, summary_type, keyframes
+            module,
+            *,
+            output_field,
+            stream_view,
+            content,
+            query,
+            summary_type,
+            keyframes,
         ):
             captured.update(
                 output_field=output_field,
+                stream_view=stream_view,
                 content=content,
                 query=query,
                 summary_type=summary_type,
@@ -537,6 +559,12 @@ class TestSummarizerAgentCoreFunctionality:
         assert key_points == ["synthesis point one", "synthesis point two"]
         assert captured["output_field"] == "summary"
         assert captured["summary_type"] == "comprehensive"
+        long_summary = "lattice " * 200
+        assert captured["stream_view"](long_summary) == (
+            SummarizerAgent._stream_within_max_length(
+                long_summary, agent.max_summary_length
+            )
+        )
         assert captured["query"] == "AI technology overview"
         assert captured["content"] == (
             "- AI Technology Demo (video, relevance 0.90): Comprehensive AI demo\n"
@@ -604,7 +632,14 @@ class TestSummarizerAgentCoreFunctionality:
         )
 
         async def _fake_call_dspy(
-            module, *, output_field, content, query, summary_type, keyframes
+            module,
+            *,
+            output_field,
+            stream_view,
+            content,
+            query,
+            summary_type,
+            keyframes,
         ):
             assert summary_type == "comprehensive"
             return Mock(
@@ -650,7 +685,14 @@ class TestSummarizerAgentCoreFunctionality:
         )
 
         async def _fake_call_dspy(
-            module, *, output_field, content, query, summary_type, keyframes
+            module,
+            *,
+            output_field,
+            stream_view,
+            content,
+            query,
+            summary_type,
+            keyframes,
         ):
             return Mock(summary="Enhanced summary with routing context")
 
@@ -779,6 +821,48 @@ class TestSummarizerDepsConfiguration:
     def test_enforce_max_length_negative_raises(self):
         with pytest.raises(ValueError, match=r"max_length must be positive, got -5"):
             SummarizerAgent._enforce_max_length("some text", -5)
+
+    @pytest.mark.ci_fast
+    def test_streamed_prefix_is_whole_words_inside_the_limit(self):
+        text = "Ice floats because  its lattice is open."
+        views = [
+            SummarizerAgent._stream_within_max_length(text[:end], 20)
+            for end in (3, 4, 11, 12, 19, 20, 21, len(text))
+        ]
+        assert views == [
+            "",
+            "Ice",
+            "Ice floats",
+            "Ice floats",
+            "Ice floats because",
+            "Ice floats because",
+            "Ice floats because",
+            "Ice floats because",
+        ]
+        assert SummarizerAgent._enforce_max_length(text, 20) == "Ice floats because…"
+
+    @pytest.mark.ci_fast
+    @pytest.mark.parametrize(
+        "text",
+        [
+            "Ice floats because  its lattice is open.",
+            "word " * 40,
+            "unbrokenrunofcharacterswithoutanyspaceatallforalongwhile then words",
+            "short answer",
+            "  leading spaces then a line\n\nand a second paragraph of words",
+        ],
+    )
+    @pytest.mark.parametrize("limit", [1, 7, 20, 64])
+    def test_every_streamed_prefix_begins_the_final_summary(self, text, limit):
+        final = SummarizerAgent._enforce_max_length(text, limit)
+        broken = [
+            end
+            for end in range(len(text) + 1)
+            if not final.startswith(
+                SummarizerAgent._stream_within_max_length(text[:end], limit)
+            )
+        ]
+        assert broken == []
 
 
 @pytest.mark.unit

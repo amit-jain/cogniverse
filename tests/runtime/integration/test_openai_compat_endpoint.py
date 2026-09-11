@@ -1152,7 +1152,9 @@ class TestStreamedChunking:
         expected = plain.json()["choices"][0]["message"]["content"]
 
         streamed = await client.post(
-            "/v1/chat/completions", json=_body(stream=True), headers=_auth(KEY_A)
+            "/v1/chat/completions",
+            json=_body(stream=True, stream_options={"include_usage": True}),
+            headers=_auth(KEY_A),
         )
 
         assert streamed.status_code == 200
@@ -1166,15 +1168,58 @@ class TestStreamedChunking:
         chunks = [json.loads(line) for line in lines[:-1]]
         assert chunks[0]["choices"][0]["delta"] == {"role": "assistant"}
         assert (
-            "".join(chunk["choices"][0]["delta"].get("content", "") for chunk in chunks)
+            "".join(
+                chunk["choices"][0]["delta"].get("content", "") for chunk in chunks[:-1]
+            )
             == expected
         )
-        assert chunks[-1]["choices"][0]["finish_reason"] == "stop"
+        assert chunks[-2]["choices"][0]["finish_reason"] == "stop"
+        assert chunks[-1]["choices"] == []
+        assert set(chunks[-1]["usage"]) == {
+            "prompt_tokens",
+            "completion_tokens",
+            "total_tokens",
+        }
         assert chunks[-1]["usage"]["total_tokens"] == (
             chunks[-1]["usage"]["prompt_tokens"]
             + chunks[-1]["usage"]["completion_tokens"]
         )
+        assert [chunk for chunk in chunks[:-1] if "usage" in chunk] == []
         assert {chunk["object"] for chunk in chunks} == {"chat.completion.chunk"}
+
+    async def test_a_stream_carries_no_usage_unless_asked(self, client):
+        streamed = await client.post(
+            "/v1/chat/completions", json=_body(stream=True), headers=_auth(KEY_A)
+        )
+
+        assert streamed.status_code == 200
+        chunks = [
+            json.loads(line[len("data: ") :])
+            for line in streamed.text.splitlines()
+            if line.startswith("data: ") and line != "data: [DONE]"
+        ]
+        assert [chunk for chunk in chunks if "usage" in chunk] == []
+        assert chunks[-1]["choices"][0]["finish_reason"] == "stop"
+
+    @pytest.mark.parametrize("include_usage", ["yes", 1, [True]])
+    async def test_a_non_boolean_include_usage_is_400(self, client, include_usage):
+        response = await client.post(
+            "/v1/chat/completions",
+            json=_body(stream=True, stream_options={"include_usage": include_usage}),
+            headers=_auth(KEY_A),
+        )
+
+        assert response.status_code == 400
+        assert response.json() == {
+            "error": {
+                "message": (
+                    "stream_options.include_usage must be a boolean, got "
+                    f"{include_usage!r}"
+                ),
+                "type": "invalid_request_error",
+                "code": "invalid_request",
+            }
+        }
 
 
 class TestEventLoopIsNotStalled:
