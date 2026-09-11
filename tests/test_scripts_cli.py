@@ -786,6 +786,138 @@ class TestStartPhoenix:
         assert running == "true"
 
 
+_GREEN, _YELLOW, _NC = "\x1b[0;32m", "\x1b[1;33m", "\x1b[0m"
+
+
+@pytest.mark.requires_docker
+class TestStartPhoenixShell:
+    """start_phoenix.sh acts only on the container its own start recorded in
+    $PHOENIX_DATA_DIR/phoenix.cid, never on a name."""
+
+    @staticmethod
+    def _env(tmp_path, name: str, **extra: str) -> dict[str, str]:
+        return {
+            **os.environ,
+            "PHOENIX_DATA_DIR": str(tmp_path),
+            "PHOENIX_CONTAINER_NAME": name,
+            "PHOENIX_IMAGE": _TINY_IMAGE,
+            "PHOENIX_PORT": str(_free_port()),
+            "PHOENIX_OTLP_PORT": str(_free_port()),
+            "PHOENIX_LABELS": f"{_OWNER_PID_LABEL}={os.getpid()}",
+            **extra,
+        }
+
+    @staticmethod
+    def _run(command: str, env: dict[str, str]) -> subprocess.CompletedProcess:
+        return subprocess.run(
+            ["bash", str(_SCRIPTS / "start_phoenix.sh"), command],
+            env=env,
+            capture_output=True,
+            text=True,
+            timeout=120,
+        )
+
+    def test_a_same_named_container_it_did_not_start_is_never_touched(self, tmp_path):
+        name = f"phoenix-server-{uuid.uuid4().hex[:8]}"
+        env = self._env(tmp_path, name)
+        cid_file = tmp_path / "phoenix.cid"
+        foreign_id = _sleeping_container("--name", name)
+        try:
+            stopped = self._run("stop", env)
+            after_stop = _docker(
+                "inspect", "--format", "{{.Id}} {{.State.Running}}", name
+            )
+            started = self._run("start", env)
+            after_start = _docker(
+                "inspect", "--format", "{{.Id}} {{.State.Running}}", name
+            )
+        finally:
+            subprocess.run(
+                ["docker", "rm", "-f", foreign_id, name], capture_output=True
+            )
+
+        no_record = f"{_YELLOW}No Phoenix container recorded in {cid_file}{_NC}\n"
+        assert (stopped.returncode, stopped.stdout) == (0, no_record)
+        assert after_stop == f"{foreign_id} true"
+        assert (started.returncode, started.stdout) == (
+            125,
+            f"{_GREEN}Starting Phoenix server...{_NC}\n{no_record}",
+        )
+        assert f'"{foreign_id}"' in started.stderr
+        assert after_start == f"{foreign_id} true"
+        assert cid_file.exists() is False
+
+    def test_stop_removes_the_container_its_start_launched(self, tmp_path):
+        name = f"phoenix-server-{uuid.uuid4().hex[:8]}"
+        env = self._env(tmp_path, name)
+        cid_file = tmp_path / "phoenix.cid"
+        try:
+            started = self._run("start", env)
+            recorded = cid_file.read_text().strip()
+            launched = _docker(
+                "ps",
+                "-a",
+                "--no-trunc",
+                "--filter",
+                f"id={recorded}",
+                "--format",
+                '{{.ID}} {{.Names}} {{.Label "cogniverse-test-owner-pid"}}',
+            )
+            stopped = self._run("stop", env)
+            remaining = _docker(
+                "ps", "-a", "-q", "--no-trunc", "--filter", f"id={recorded}"
+            )
+        finally:
+            subprocess.run(["docker", "rm", "-f", name], capture_output=True)
+
+        assert (started.returncode, started.stdout) == (
+            0,
+            f"{_GREEN}Starting Phoenix server...{_NC}\n"
+            f"{_YELLOW}No Phoenix container recorded in {cid_file}{_NC}\n"
+            f"{_GREEN}Phoenix started on http://localhost:{env['PHOENIX_PORT']}{_NC}\n"
+            f"{_GREEN}Data directory: {tmp_path}{_NC}\n",
+        )
+        assert launched == f"{recorded} {name} {os.getpid()}"
+        assert (stopped.returncode, stopped.stdout) == (
+            0,
+            f"{_GREEN}Stopping Phoenix server...{_NC}\n{_GREEN}Phoenix stopped{_NC}\n",
+        )
+        assert remaining == ""
+        assert cid_file.exists() is False
+
+    def test_a_failed_stop_of_its_own_container_exits_non_zero_keeping_the_record(
+        self, tmp_path
+    ):
+        cid_file = tmp_path / "phoenix.cid"
+        dead_daemon = f"unix://{tmp_path / 'no-docker.sock'}"
+        env = self._env(
+            tmp_path, f"phoenix-server-{uuid.uuid4().hex[:8]}", DOCKER_HOST=dead_daemon
+        )
+        own_id = _sleeping_container()
+        try:
+            cid_file.write_text(own_id)
+            stopped = self._run("stop", env)
+            refused = subprocess.run(
+                ["docker", "ps", "-a", "-q", "--no-trunc", "-f", f"id={own_id}"],
+                env=env,
+                capture_output=True,
+                text=True,
+            )
+            running = _docker("inspect", "--format", "{{.State.Running}}", own_id)
+        finally:
+            _docker("rm", "-f", own_id)
+
+        assert refused.returncode == 1
+        assert (stopped.returncode, stopped.stdout, stopped.stderr) == (
+            1,
+            "",
+            refused.stderr,
+        )
+        assert dead_daemon in refused.stderr
+        assert cid_file.read_text() == own_id
+        assert running == "true"
+
+
 class TestSetupEvaluationScriptContract:
     """setup_evaluation.sh's Step 6 command must satisfy the real argparse
     contract of run_experiments_with_visualization.py and name a profile that
