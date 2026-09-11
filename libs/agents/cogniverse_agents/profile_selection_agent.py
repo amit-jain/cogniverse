@@ -419,37 +419,13 @@ class ProfileSelectionAgent(
 
     def _tenant_usable_profiles(self, tenant_id: str) -> List[str]:
         """Return the tenant-scoped profiles that can actually run here."""
-        config_manager = self._config_manager
-        if config_manager is None:
-            return list(self.deps.available_profiles)
-        try:
-            return tenant_usable_profile_names(config_manager, tenant_id)
-        except (AttributeError, TypeError):
-            return list(self.deps.available_profiles)
+        return tenant_usable_profile_names(self.config_manager, tenant_id)
 
     def _resolve_candidate_profiles(self, input: ProfileSelectionInput) -> List[str]:
         """Choose the candidate pool for the LM."""
         if input.available_profiles:
             return list(input.available_profiles)
-
-        if self._config_manager is not None:
-            return self._tenant_usable_profiles(input.tenant_id)
-
-        return list(self.deps.available_profiles)
-
-    @staticmethod
-    def _infer_profile_modality_from_name(selected_profile: str) -> str:
-        """Best-effort fallback for bare agents without a config manager."""
-        normalized = selected_profile.lower()
-        for modality in sorted(PROFILE_TRAINING_MODALITIES, key=len, reverse=True):
-            if normalized == modality:
-                return modality
-            if normalized.startswith(f"{modality}_"):
-                return modality
-        raise ValueError(
-            f"Selected profile {selected_profile!r} does not encode a supported "
-            "modality and no config manager is available"
-        )
+        return self._tenant_usable_profiles(input.tenant_id)
 
     async def _process_impl(
         self, input: ProfileSelectionInput
@@ -465,12 +441,7 @@ class ProfileSelectionAgent(
         """
         query = input.query
         if not query:
-            if input.available_profiles:
-                profiles = list(input.available_profiles)
-            elif self._config_manager is not None and input.tenant_id:
-                profiles = self._resolve_candidate_profiles(input)
-            else:
-                profiles = list(self.deps.available_profiles)
+            profiles = self._resolve_candidate_profiles(input)
 
             return ProfileSelectionOutput(
                 query="",
@@ -579,11 +550,7 @@ class ProfileSelectionAgent(
     ) -> str:
         """Return the canonical type declared by the selected live profile."""
         tenant_id = require_tenant_id(tenant_id, source="ProfileSelectionInput")
-        config_manager = self._config_manager
-        if config_manager is None:
-            return self._infer_profile_modality_from_name(selected_profile)
-
-        profile = config_manager.get_backend_profile(selected_profile, tenant_id)
+        profile = self.config_manager.get_backend_profile(selected_profile, tenant_id)
         if profile is None:
             raise ValueError(
                 f"Selected profile {selected_profile!r} is not configured for "
@@ -647,26 +614,17 @@ class ProfileSelectionAgent(
     def _candidate_profile_types(
         self, profiles: List[str], tenant_id: str | None
     ) -> Dict[str, str]:
-        """Map each candidate to its declared type.
+        """Map each candidate to the type its tenant configuration declares.
 
-        The tenant's configured type is authoritative; a bare agent (no config
-        manager) infers it from the profile-name prefix. Candidates that are
-        neither configured nor prefix-encoded are left out.
+        Candidates the tenant has not configured are left out.
         """
-        config_manager = self._config_manager
+        tenant_id = require_tenant_id(tenant_id, source="ProfileSelectionInput")
+        config_manager = self.config_manager
         types: Dict[str, str] = {}
         for profile_name in profiles:
-            if config_manager is not None and tenant_id:
-                profile = config_manager.get_backend_profile(profile_name, tenant_id)
-                if profile is not None and profile.type:
-                    types[profile_name] = profile.type
-                continue
-            try:
-                types[profile_name] = self._infer_profile_modality_from_name(
-                    profile_name
-                )
-            except ValueError:
-                continue
+            profile = config_manager.get_backend_profile(profile_name, tenant_id)
+            if profile is not None and profile.type:
+                types[profile_name] = profile.type
         return types
 
     def _generate_alternatives(

@@ -70,14 +70,42 @@ def profile_agent():
         agent = ProfileSelectionAgent(deps=deps, port=8011)
         agent._config_manager = Mock()
         # Servability reads the tenant's deployed schemas from the config
-        # store, so the double carries a real one; tests register the rows
-        # for the profiles they mean to be servable.
+        # store, so the double carries a real one; the three deps profiles are
+        # configured, served and deployed so the candidate pool derives to the
+        # same names the deps list carries.
         store = InMemoryConfigStore()
         store.initialize()
         agent._config_manager.store = store
-        agent._config_manager.get_backend_profile.return_value = SimpleNamespace(
-            type="video"
+        tenant_profiles = {
+            name: BackendProfileConfig.from_dict(
+                name, shipped_profile(embedding_type="multi_vector", **shape).to_dict()
+            )
+            for name, shape in (
+                (
+                    "video_colpali_base",
+                    {"profile_type": "video", "extract_keyframes": True},
+                ),
+                (
+                    "video_colpali_large",
+                    {"profile_type": "video", "process_type": "video_chunks"},
+                ),
+                ("image_colpali_base", {"profile_type": "image"}),
+            )
+        }
+        agent._config_manager.list_backend_profiles.return_value = tenant_profiles
+        agent._config_manager.get_system_config.return_value = SystemConfig(
+            inference_service_urls={
+                profile_embedding_service(profile.to_dict()): "http://localhost:8000"
+                for profile in tenant_profiles.values()
+            }
         )
+        agent._config_manager.get_backend_profile.side_effect = (
+            lambda profile_name, tenant_id: tenant_profiles.get(profile_name)
+        )
+        for profile in tenant_profiles.values():
+            register_deployed_schema(
+                agent._config_manager, "test_tenant", profile.schema_name
+            )
         agent.telemetry_manager = RecordingTelemetryManager()
         return agent
 
@@ -209,9 +237,8 @@ class TestProfileSelectionAgent:
     async def test_process_uses_selected_live_profile_type(
         self, profile_agent, configured_modality
     ):
-        profile_agent._config_manager = Mock()
-        profile_agent._config_manager.get_backend_profile.return_value = (
-            SimpleNamespace(type=configured_modality)
+        profile_agent._config_manager.get_backend_profile.side_effect = (
+            lambda profile_name, tenant_id: SimpleNamespace(type=configured_modality)
         )
         profile_agent.dspy_module.forward = Mock(
             return_value=dspy.Prediction(
@@ -225,7 +252,7 @@ class TestProfileSelectionAgent:
         )
 
         result = await profile_agent._process_impl(
-            ProfileSelectionInput(query="Find the Curie notes", tenant_id="acme:docs")
+            ProfileSelectionInput(query="Find the Curie notes", tenant_id="test_tenant")
         )
 
         assert result.modality == configured_modality
@@ -237,10 +264,10 @@ class TestProfileSelectionAgent:
         # The selected profile's configured type first, then each candidate's
         # for the alternatives ranking.
         assert profile_agent._config_manager.get_backend_profile.call_args_list == [
-            call("video_colpali_base", "acme:docs"),
-            call("video_colpali_base", "acme:docs"),
-            call("video_colpali_large", "acme:docs"),
-            call("image_colpali_base", "acme:docs"),
+            call("video_colpali_base", "test_tenant:test_tenant"),
+            call("video_colpali_base", "test_tenant:test_tenant"),
+            call("video_colpali_large", "test_tenant:test_tenant"),
+            call("image_colpali_base", "test_tenant:test_tenant"),
         ]
 
     @pytest.mark.asyncio
@@ -355,7 +382,9 @@ class TestProfileSelectionAgent:
     @pytest.mark.asyncio
     async def test_process_empty_query(self, profile_agent):
         """Test processing empty query"""
-        result = await profile_agent._process_impl(ProfileSelectionInput(query=""))
+        result = await profile_agent._process_impl(
+            ProfileSelectionInput(query="", tenant_id="test_tenant")
+        )
 
         assert result.query == ""
         assert result.confidence == 0.0
@@ -378,6 +407,13 @@ class TestProfileSelectionAgent:
             )
         )
 
+        profile_agent._config_manager.get_backend_profile.side_effect = (
+            lambda profile_name, tenant_id: (
+                SimpleNamespace(type="video")
+                if profile_name.startswith("custom_profile_")
+                else None
+            )
+        )
         result = await profile_agent._process_impl(
             ProfileSelectionInput(
                 query="test query",
@@ -590,21 +626,35 @@ class TestProfileSelectionAgent:
             "video_transcripts_text": "text",
         }
         assert profile_agent._config_manager.get_backend_profile.call_args_list == [
-            call("video_colpali_base", "test_tenant"),
-            call("video_transcripts_text", "test_tenant"),
-            call("unregistered_mv", "test_tenant"),
+            call("video_colpali_base", "test_tenant:test_tenant"),
+            call("video_transcripts_text", "test_tenant:test_tenant"),
+            call("unregistered_mv", "test_tenant:test_tenant"),
         ]
 
-    def test_candidate_profile_types_without_config_manager_infer_from_name(
+    def test_a_failing_config_manager_read_propagates_instead_of_serving_deps(
         self, profile_agent
     ):
-        profile_agent._config_manager = None
-
-        types = profile_agent._candidate_profile_types(
-            ["video_colpali_base", "image_colpali_base", "profile_9"], None
+        profile_agent._config_manager.list_backend_profiles.side_effect = (
+            AttributeError("store handle released")
         )
 
-        assert types == {"video_colpali_base": "video", "image_colpali_base": "image"}
+        with pytest.raises(AttributeError, match="store handle released"):
+            profile_agent._tenant_usable_profiles("test_tenant")
+
+    def test_candidate_profile_types_come_only_from_the_tenant_config(
+        self, profile_agent
+    ):
+        profile_agent._config_manager.get_backend_profile.side_effect = (
+            lambda name, tenant: (
+                SimpleNamespace(type="video") if name == "video_colpali_base" else None
+            )
+        )
+
+        types = profile_agent._candidate_profile_types(
+            ["video_colpali_base", "image_colpali_base", "profile_9"], "test_tenant"
+        )
+
+        assert types == {"video_colpali_base": "video"}
 
     def test_dspy_to_a2a_output(self, profile_agent):
         """Test conversion to A2A output format"""
@@ -765,15 +815,19 @@ class TestProfileSelectionAgent:
             logging.WARNING, logger="cogniverse_agents.profile_selection_agent"
         ):
             result = await profile_agent._process_impl(
-                ProfileSelectionInput(query="cat videos", tenant_id="t1")
+                ProfileSelectionInput(query="cat videos", tenant_id="test_tenant")
             )
 
         assert result.selected_profile == "video_colpali_base"
         assert telemetry.calls == [
-            {"name": "cogniverse.profile_selection", "tenant_id": "t1:t1"}
+            {
+                "name": "cogniverse.profile_selection",
+                "tenant_id": "test_tenant:test_tenant",
+            }
         ]
         assert _messages(caplog, "cogniverse_agents.profile_selection_agent") == [
-            "Failed to emit profile_selection telemetry: tenant=t1:t1 error=telemetry down"
+            "Failed to emit profile_selection telemetry: tenant=test_tenant:test_tenant "
+            "error=telemetry down"
         ]
 
 
