@@ -13,6 +13,7 @@ workflow files, so it can't drift) before a push.
 Usage:
     uv run python scripts/ci_local.py                # all modules' unit selections
     uv run python scripts/ci_local.py -m evaluation  # one workflow
+    uv run python scripts/ci_local.py -m agents -m runtime  # several
     uv run python scripts/ci_local.py --list         # show the commands, run nothing
 
 Exit code is non-zero if any selection has a failing/erroring test.
@@ -105,7 +106,12 @@ def build_argv(sel: dict) -> list[str]:
 def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument(
-        "-m", "--module", help="only this workflow module (e.g. evaluation)"
+        "-m",
+        "--module",
+        action="append",
+        dest="modules",
+        metavar="MODULE",
+        help="only this workflow module (e.g. evaluation); repeat for several",
     )
     parser.add_argument(
         "--list", action="store_true", help="print the commands without running"
@@ -113,12 +119,15 @@ def main() -> int:
     args = parser.parse_args()
 
     selections = discover()
-    if args.module:
-        selections = [s for s in selections if s["module"] == args.module]
+    if args.modules:
+        known = {s["module"] for s in selections}
+        unknown = [m for m in args.modules if m not in known]
+        if unknown:
+            print(f"No unit selections found for {', '.join(unknown)}.")
+            return 1
+        selections = [s for s in selections if s["module"] in args.modules]
     if not selections:
-        print(
-            f"No unit selections found{f' for {args.module}' if args.module else ''}."
-        )
+        print("No unit selections found.")
         return 1
 
     # Force the dead-port default: strip any ambient BACKEND override so the

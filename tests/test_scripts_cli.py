@@ -53,6 +53,32 @@ def test_ci_local_builds_verbose_long_traceback_command():
     ]
 
 
+def test_ci_local_runs_every_module_named_on_the_command_line(monkeypatch, capsys):
+    ci_local = _load("ci_local")
+    wanted = [s for s in ci_local.discover() if s["module"] in {"agents", "runtime"}]
+    assert sorted({s["module"] for s in wanted}) == ["agents", "runtime"]
+
+    monkeypatch.setattr(
+        sys, "argv", ["ci_local", "-m", "agents", "-m", "runtime", "--list"]
+    )
+    assert ci_local.main() == 0
+
+    printed = capsys.readouterr().out.strip().splitlines()
+    assert printed == [ci_local.shlex.join(ci_local.build_argv(s)) for s in wanted]
+
+
+def test_ci_local_names_every_unknown_module_it_refuses(monkeypatch, capsys):
+    ci_local = _load("ci_local")
+    monkeypatch.setattr(
+        sys, "argv", ["ci_local", "-m", "agents", "-m", "no_such_module", "--list"]
+    )
+    assert ci_local.main() == 1
+    assert (
+        capsys.readouterr().out.strip()
+        == "No unit selections found for no_such_module."
+    )
+
+
 def test_test_runner_commands_never_request_short_tracebacks():
     offenders = []
     for path in sorted(_SCRIPTS.iterdir()):
