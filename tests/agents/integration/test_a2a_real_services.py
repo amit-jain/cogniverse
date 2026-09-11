@@ -18,19 +18,16 @@ Test classes:
 """
 
 import asyncio
-import json
 import logging
 import time
-from pathlib import Path
 from typing import Any, Dict, Optional
 
 import dspy
 import pytest
 
 from cogniverse_core.common.tenant_utils import canonical_tenant_id
-from cogniverse_foundation.config.llm_factory import create_dspy_lm
-from cogniverse_foundation.config.unified_config import LLMEndpointConfig
 from cogniverse_foundation.telemetry.span_contract import read_span_io
+from tests.fixtures.llm import make_dspy_lm
 
 from .conftest import skip_if_no_lm
 
@@ -45,30 +42,13 @@ pytestmark = [pytest.mark.integration]
 
 
 @pytest.fixture(scope="module")
-def _configure_dspy_lm():
-    """Module-scoped: configure DSPy with the configured LM.
+def _configure_dspy_lm(gemma_inference_endpoint):
+    """Module-scoped: DSPy on the LM the session resolved.
 
-    Reads model from config.json, disables qwen3 thinking mode.
+    ``gemma_inference_endpoint`` resolves the Modal Gemma service or the exact
+    local LM and exports the ``TEST_LLM_*`` env ``make_dspy_lm`` reads.
     """
-    config_path = Path(__file__).resolve().parents[3] / "configs" / "config.json"
-    with open(config_path) as f:
-        config = json.load(f)
-    primary = config.get("llm_config", {}).get("primary", {})
-    model = primary.get("model")
-    api_base = primary.get("api_base")
-
-    extra_body = None
-    if model and ("qwen3" in model or "qwen-3" in model):
-        extra_body = {"think": False}
-
-    endpoint = LLMEndpointConfig(
-        model=model,
-        api_base=api_base,
-        temperature=0.1,
-        max_tokens=300,
-        extra_body=extra_body,
-    )
-    lm = create_dspy_lm(endpoint)
+    lm = make_dspy_lm()
     dspy.configure(lm=lm)
     yield lm
     dspy.configure(lm=None)
@@ -199,13 +179,14 @@ class TestEntityExtractionRealGLiNERSpaCy:
     """
 
     @pytest.fixture
-    def entity_agent(self, real_telemetry):
+    def entity_agent(self, configure_dspy, real_telemetry, config_manager_memory):
         from cogniverse_agents.entity_extraction_agent import (
             EntityExtractionAgent,
             EntityExtractionDeps,
         )
 
         agent = EntityExtractionAgent(deps=EntityExtractionDeps())
+        agent.bind_config_manager(config_manager_memory)
         agent.set_telemetry_manager(real_telemetry)
         return agent
 
@@ -354,13 +335,14 @@ class TestQueryEnhancementRealDSPy:
     """
 
     @pytest.fixture
-    def enhancement_agent(self, configure_dspy, real_telemetry):
+    def enhancement_agent(self, configure_dspy, real_telemetry, config_manager_memory):
         from cogniverse_agents.query_enhancement_agent import (
             QueryEnhancementAgent,
             QueryEnhancementDeps,
         )
 
         agent = QueryEnhancementAgent(deps=QueryEnhancementDeps())
+        agent.bind_config_manager(config_manager_memory)
         agent.set_telemetry_manager(real_telemetry)
         return agent
 
