@@ -37,5 +37,9 @@
   {"query": "What does the man do after he starts speaking to the camera in the snowy weather?", "entities": [{"text": "man", "type": "PERSON"}, {"text": "camera", "type": "TECHNOLOGY"}, {"text": "snowy weather", "type": "CONCEPT"}]},
   {"query": "What event occurs after the screen fades out to text on a black screen in the video?", "entities": [{"text": "screen", "type": "TECHNOLOGY"}, {"text": "black screen", "type": "TECHNOLOGY"}]},
   {"query": "When does the biker ride the dirt bike in the field?", "entities": [{"text": "biker", "type": "PERSON"}, {"text": "dirt bike", "type": "CONCEPT"}, {"text": "field", "type": "PLACE"}]},
-  {"query": "What does the man do after holding a knife in his right hand?", "entities": [{"text": "man", "type": "PERSON"}, {"text": "knife", "type": "CONCEPT"}]}
+  {"query": "What does the man do after holding a knife in his right hand?", "entities": [{"text": "man", "type": "PERSON"}, {"text": "knife", "type": "CONCEPT"}]},
+  {"query": "an emergency room doctor at Cleveland Clinic", "entities": [{"text": "emergency room doctor", "type": "PERSON"}, {"text": "Cleveland Clinic", "type": "ORGANIZATION"}]},
+  {"query": "the New York City Fire Department", "entities": [{"text": "New York City Fire Department", "type": "ORGANIZATION"}]},
+  {"query": "a logo that appears to beassociated with Blender Institute", "entities": [{"text": "logo", "type": "CONCEPT"}, {"text": "Blender Institute", "type": "ORGANIZATION"}]},
+  {"query": "released by Coca-Cola", "entities": [{"text": "Coca-Cola", "type": "ORGANIZATION"}]}
 ]
