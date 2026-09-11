@@ -17,6 +17,7 @@ import base64
 import json
 import random
 import threading
+import uuid
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 from typing import Any, Optional
@@ -325,9 +326,11 @@ def _summarizer(endpoint: "_BodyLimitedChatEndpoint", locator) -> SummarizerAgen
             config_manager=ConfigManager(store=store),
         )
     agent._llm_config = LLMEndpointConfig(
-        # One model name per endpoint: DSPy caches by model + prompt, and every
-        # case here sends the same prompt to a differently-behaving endpoint.
-        model=f"openai/stub-{endpoint.port}",
+        # One model name per endpoint instance: DSPy's disk cache keys by
+        # model + prompt and outlives the process, and every case here sends
+        # the same prompt, so a port-derived name can replay another run's
+        # answer without reaching this endpoint.
+        model=f"openai/stub-{uuid.uuid4().hex}",
         api_base=endpoint.api_base,
         api_key="stub-key",
         temperature=0.0,
