@@ -71,8 +71,8 @@ def _dockerfiles_on_disk() -> list[str]:
     )
 
 
-def test_every_dockerfile_the_tooling_builds_exists() -> None:
-    assert sorted(set(_built_dockerfiles()) - set(_dockerfiles_on_disk())) == []
+def test_the_tooling_builds_exactly_the_dockerfiles_on_disk() -> None:
+    assert _built_dockerfiles() == _dockerfiles_on_disk()
 
 
 @pytest.mark.parametrize("dockerfile", _dockerfiles_on_disk())
