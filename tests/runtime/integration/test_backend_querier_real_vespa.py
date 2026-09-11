@@ -385,6 +385,7 @@ async def test_service_samples_deployed_configured_profile_from_real_vespa(
     profile_agent = ProfileSelectionAgent(
         deps=ProfileSelectionDeps(available_profiles=[base_schema])
     )
+    profile_agent.bind_config_manager(config_manager)
     profile_agent.set_telemetry_manager(real_telemetry)
     profile_agent.dspy_module.selector = lambda **_: dspy.Prediction(
         selected_profile=base_schema,
@@ -606,6 +607,7 @@ async def test_routing_service_keeps_real_vespa_sources_and_agents_aligned(
         "query_generator"
     ].metadata = {"max_retries": 3}
     entity_agent = EntityExtractionAgent(deps=EntityExtractionDeps())
+    entity_agent.bind_config_manager(config_manager)
     entity_agent.set_telemetry_manager(real_telemetry)
 
     async def extract_entities(text: str, tenant_id: str):
@@ -756,9 +758,10 @@ async def test_routing_service_keeps_real_vespa_sources_and_agents_aligned(
     ids=["teaching-session", "informational-resource", "repeated-subject"],
 )
 async def test_entity_extraction_retains_unnamed_learning_sources(
-    query, expected_entities, dspy_test_lm, real_telemetry
+    query, expected_entities, dspy_test_lm, real_telemetry, config_manager
 ):
     agent = EntityExtractionAgent(deps=EntityExtractionDeps())
+    agent.bind_config_manager(config_manager)
     agent.set_telemetry_manager(real_telemetry)
 
     response = await agent.process(
@@ -799,9 +802,10 @@ async def test_entity_extraction_retains_unnamed_learning_sources(
     ids=["subject-without-session", "session-on-subject"],
 )
 async def test_entity_extraction_types_subject_of_study_as_technology(
-    query, expected_entities, adapter, dspy_test_lm, real_telemetry
+    query, expected_entities, adapter, dspy_test_lm, real_telemetry, config_manager
 ):
     agent = EntityExtractionAgent(deps=EntityExtractionDeps())
+    agent.bind_config_manager(config_manager)
     agent.set_telemetry_manager(real_telemetry)
 
     with dspy.context(adapter=adapter):
@@ -847,9 +851,10 @@ async def test_entity_extraction_types_subject_of_study_as_technology(
     ids=["participle-only", "pre-modifiers-kept", "participle-with-object"],
 )
 async def test_entity_extraction_stops_spans_at_the_head_noun(
-    query, expected_entities, adapter, dspy_test_lm, real_telemetry
+    query, expected_entities, adapter, dspy_test_lm, real_telemetry, config_manager
 ):
     agent = EntityExtractionAgent(deps=EntityExtractionDeps())
+    agent.bind_config_manager(config_manager)
     agent.set_telemetry_manager(real_telemetry)
 
     with dspy.context(adapter=adapter):

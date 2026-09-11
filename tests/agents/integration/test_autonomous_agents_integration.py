@@ -30,9 +30,20 @@ from cogniverse_agents.query_enhancement_agent import (
     QueryEnhancementDeps,
     QueryEnhancementInput,
 )
+from cogniverse_foundation.config.unified_config import BackendProfileConfig
 from tests.fixtures.llm import make_dspy_lm
+from tests.utils.memory_store import register_deployed_schema
 
 pytestmark = [pytest.mark.integration, pytest.mark.requires_lm]
+
+PROFILE_TENANT = "test:unit"
+PROFILE_TYPES = {
+    "video_colpali_base": "video",
+    "video_colpali_large": "video",
+    "video_xclip_base": "video",
+    "image_colpali_base": "image",
+    "text_bge_base": "text",
+}
 
 
 @pytest.fixture
@@ -51,36 +62,41 @@ def real_dspy_lm(gemma_inference_endpoint):
 
 
 @pytest.fixture
-def entity_agent_with_real_lm(real_dspy_lm, real_telemetry):
+def entity_agent_with_real_lm(real_dspy_lm, real_telemetry, config_manager_memory):
     """EntityExtractionAgent with real LLM"""
     deps = EntityExtractionDeps()
     agent = EntityExtractionAgent(deps=deps, port=8010)
+    agent.bind_config_manager(config_manager_memory)
     agent.set_telemetry_manager(real_telemetry)
     return agent
 
 
 @pytest.fixture
-def profile_agent_with_real_lm(real_dspy_lm, real_telemetry):
-    """ProfileSelectionAgent with real LLM"""
-    deps = ProfileSelectionDeps(
-        available_profiles=[
-            "video_colpali_base",
-            "video_colpali_large",
-            "video_xclip_base",
-            "image_colpali_base",
-            "text_bge_base",
-        ],
-    )
+def profile_agent_with_real_lm(real_dspy_lm, real_telemetry, config_manager_memory):
+    """ProfileSelectionAgent with real LLM, serving the tenant's deployed profiles"""
+    for profile_name, profile_type in PROFILE_TYPES.items():
+        config_manager_memory.add_backend_profile(
+            BackendProfileConfig(
+                profile_name=profile_name,
+                type=profile_type,
+                schema_name=profile_name,
+            ),
+            tenant_id=PROFILE_TENANT,
+        )
+        register_deployed_schema(config_manager_memory, PROFILE_TENANT, profile_name)
+    deps = ProfileSelectionDeps(available_profiles=list(PROFILE_TYPES))
     agent = ProfileSelectionAgent(deps=deps, port=8011)
+    agent.bind_config_manager(config_manager_memory)
     agent.set_telemetry_manager(real_telemetry)
     return agent
 
 
 @pytest.fixture
-def query_agent_with_real_lm(real_dspy_lm, real_telemetry):
+def query_agent_with_real_lm(real_dspy_lm, real_telemetry, config_manager_memory):
     """QueryEnhancementAgent with real LLM"""
     deps = QueryEnhancementDeps()
     agent = QueryEnhancementAgent(deps=deps, port=8012)
+    agent.bind_config_manager(config_manager_memory)
     agent.set_telemetry_manager(real_telemetry)
     return agent
 

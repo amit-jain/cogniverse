@@ -570,7 +570,9 @@ class TestOrchestratorAgentStreaming:
 class TestQueryEnhancementAgentStreaming:
     """QueryEnhancementAgent streaming against the configured LM."""
 
-    def test_stream_phases_and_enhanced_query(self, dspy_lm, real_telemetry):
+    def test_stream_phases_and_enhanced_query(
+        self, dspy_lm, real_telemetry, config_manager
+    ):
         from cogniverse_agents.query_enhancement_agent import (
             QueryEnhancementAgent,
             QueryEnhancementDeps,
@@ -578,6 +580,7 @@ class TestQueryEnhancementAgentStreaming:
         )
 
         agent = QueryEnhancementAgent(deps=QueryEnhancementDeps())
+        agent.bind_config_manager(config_manager)
         agent.set_telemetry_manager(real_telemetry)
 
         events = _collect_stream_events(
@@ -621,7 +624,7 @@ class TestQueryEnhancementAgentStreaming:
 class TestEntityExtractionAgentStreaming:
     """EntityExtractionAgent streaming against the configured LM."""
 
-    def test_stream_phases_and_extracted_entities(self, dspy_lm):
+    def test_stream_phases_and_extracted_entities(self, dspy_lm, config_manager):
         from cogniverse_agents.entity_extraction_agent import (
             EntityExtractionAgent,
             EntityExtractionDeps,
@@ -629,6 +632,7 @@ class TestEntityExtractionAgentStreaming:
         )
 
         agent = EntityExtractionAgent(deps=EntityExtractionDeps())
+        agent.bind_config_manager(config_manager)
         agent.telemetry_manager = RecordingTelemetryManager()
 
         events = _collect_stream_events(
