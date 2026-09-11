@@ -32,7 +32,7 @@ import json
 import logging
 import os
 from contextlib import asynccontextmanager
-from typing import AsyncIterator, Callable, Mapping
+from typing import Any, AsyncIterator, Callable, Mapping
 
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
@@ -611,6 +611,21 @@ def _dispatcher_profile_labeler(dispatcher):
 _DSPY_AMBIENT_CONFIGURED = False
 
 
+def configure_ambient_dspy(primary_lm: Any) -> None:
+    """Bind the process-wide DSPy LM and adapter every served agent inherits.
+
+    LenientJSONAdapter normalizes LM field-name variants (e.g. gemma4 emits
+    ``reason`` instead of ``reasoning``) before DSPy's strict output
+    validation; without it ChainOfThought calls fail with AdapterParseError
+    on small local models.
+    """
+    import dspy
+
+    from cogniverse_foundation.dspy import LenientJSONAdapter
+
+    dspy.configure(lm=primary_lm, adapter=LenientJSONAdapter())
+
+
 @asynccontextmanager
 async def lifespan(app: FastAPI) -> AsyncIterator[None]:
     """Lifecycle manager for FastAPI app - handles startup and shutdown."""
@@ -1105,23 +1120,16 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
         logger.warning(f"GraphManager init failed (non-fatal): {e}")
 
     # 9. Configure DSPy LM and synthetic data service
-    import dspy
-
     from cogniverse_foundation.config.llm_factory import create_dspy_lm
     from cogniverse_synthetic.api import configure_service as configure_synthetic
 
     llm_config = config.get_llm_config()
     primary_lm = create_dspy_lm(llm_config.primary)
-    # LenientJSONAdapter normalizes LM field-name variants (e.g. gemma4
-    # emits `reason` instead of `reasoning`) before DSPy's strict output
-    # validation. Without this, ChainOfThought calls fail with
-    # AdapterParseError on small local models.
-    from cogniverse_foundation.dspy import LenientJSONAdapter
 
     global _DSPY_AMBIENT_CONFIGURED
     if not _DSPY_AMBIENT_CONFIGURED:
         try:
-            dspy.configure(lm=primary_lm, adapter=LenientJSONAdapter())
+            configure_ambient_dspy(primary_lm)
             _DSPY_AMBIENT_CONFIGURED = True
             logger.info(f"DSPy configured with LM: {llm_config.primary.model}")
         except RuntimeError as exc:

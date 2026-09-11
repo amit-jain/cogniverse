@@ -497,6 +497,14 @@ class SummarizerAgent(
         cut = cut[:boundary] if boundary > 0 else cut[: max_length - 1]
         return cut.rstrip() + "…"
 
+    @staticmethod
+    def _stream_within_max_length(text: str, max_length: int) -> str:
+        """The part of a summary still being generated that ``_enforce_max_length``
+        keeps however the summary ends: its whole words inside ``max_length``."""
+        head = text[:max_length]
+        boundary = head.rfind(" ")
+        return head[:boundary].rstrip() if boundary > 0 else ""
+
     def _extract_themes(self, search_results: List[Dict[str, Any]]) -> List[str]:
         """Extract key themes from search results in first-seen order."""
         themes: List[str] = []
@@ -708,6 +716,9 @@ and structure summary based on identified themes and content categories.
         result = await self.call_dspy(
             self.summarization_module,
             output_field="summary",
+            stream_view=lambda text: self._stream_within_max_length(
+                text, self.max_summary_length
+            ),
             content=content,
             query=query,
             summary_type=summary_type,

@@ -35,6 +35,7 @@ Usage:
 import asyncio
 import contextvars
 import copy
+import json
 import logging
 import threading
 from abc import ABC, abstractmethod
@@ -44,6 +45,7 @@ from typing import (
     TYPE_CHECKING,
     Any,
     AsyncGenerator,
+    Callable,
     ClassVar,
     ContextManager,
     Dict,
@@ -80,6 +82,30 @@ def _lm_executor() -> ThreadPoolExecutor:
                     max_workers=_LM_EXECUTOR_WORKERS, thread_name_prefix="lm-call"
                 )
     return _LM_EXECUTOR
+
+
+_LM_STREAM_LOOP: Optional[asyncio.AbstractEventLoop] = None
+
+
+def _lm_stream_loop() -> asyncio.AbstractEventLoop:
+    """The event loop DSPy token streams run on.
+
+    DSPy runs a streamed LM call's chunk loop -- the HTTP stream, the
+    listener's parsing, the final response assembly -- as coroutines on the
+    loop that called ``streamify``. On the serving loop that work stalls every
+    other request; here it shares a loop only with other LM streams. One
+    long-lived loop keeps the provider's cached async clients on one loop.
+    """
+    global _LM_STREAM_LOOP
+    if _LM_STREAM_LOOP is None:
+        with _LM_EXECUTOR_LOCK:
+            if _LM_STREAM_LOOP is None:
+                loop = asyncio.new_event_loop()
+                threading.Thread(
+                    target=loop.run_forever, name="lm-stream-loop", daemon=True
+                ).start()
+                _LM_STREAM_LOOP = loop
+    return _LM_STREAM_LOOP
 
 
 async def _call_in_lm_executor(fn, /, *args, **kwargs):
@@ -377,6 +403,65 @@ def _register_stream_adapter(listener, adapter) -> None:
             return
 
 
+def _json_string_prefix(raw: str) -> str:
+    """Decoded text of the JSON string literal ``raw`` opens, up to the last
+    character the stream has completed; empty when ``raw`` opens no string.
+
+    A JSON-adapter StreamListener hands over the field's raw JSON: the opening
+    quote, escape sequences, and whatever follows the closing quote. Decoding
+    it is what makes the streamed text the value the adapter parses.
+    """
+    text = raw.lstrip()
+    if not text.startswith('"'):
+        return ""
+    index = 1
+    while index < len(text):
+        char = text[index]
+        if char == "\\":
+            width = 6 if text[index + 1 : index + 2] == "u" else 2
+            if index + width > len(text):
+                break
+            index += width
+            continue
+        if char == '"':
+            try:
+                return json.loads(text[: index + 1])
+            except ValueError:
+                return ""
+        index += 1
+    try:
+        decoded = json.loads(text[:index] + '"')
+    except ValueError:
+        return ""
+    if decoded and "\ud800" <= decoded[-1] <= "\udbff":
+        decoded = decoded[:-1]
+    return decoded
+
+
+def _rejected_status(leaves: list[BaseException]) -> Optional[int]:
+    """The 4xx an LM answered with, when a leaf failure carries one.
+
+    Only a 4xx is a status the LM sent; a connection failure surfaces as a
+    synthesized 5xx that no server returned.
+    """
+    from cogniverse_foundation.config.request_body import http_status_of
+
+    for leaf in leaves:
+        status = http_status_of(leaf)
+        if status is not None and 400 <= status < 500:
+            return status
+    return None
+
+
+def _field_text(raw: str, adapter: Any) -> str:
+    """The streamed field's text as ``adapter`` parses it, as far as it goes."""
+    import dspy
+
+    if isinstance(adapter, dspy.JSONAdapter):
+        return _json_string_prefix(raw)
+    return raw.lstrip()
+
+
 class AgentBase(ConfigManagerAware, ABC, Generic[InputT, OutputT, DepsT]):
     """
     Generic type-safe agent base class with streaming support.
@@ -577,6 +662,8 @@ class AgentBase(ConfigManagerAware, ABC, Generic[InputT, OutputT, DepsT]):
         self,
         module,
         output_field: str = "summary",
+        *,
+        stream_view: Optional[Callable[[str], str]] = None,
         **kwargs,
     ):
         """Call a DSPy module, streaming tokens via emit_progress when active.
@@ -592,9 +679,17 @@ class AgentBase(ConfigManagerAware, ABC, Generic[InputT, OutputT, DepsT]):
         makes per-tenant canary + variant selection actually shape agent
         behavior end-to-end.
 
+        Streamed tokens concatenate to a prefix of the stripped field value
+        the module returns: the listener's raw text is decoded as the bound
+        adapter parses it, ``stream_view`` narrows that to the part the
+        agent's own post-processing of the field keeps, and whitespace at the
+        end waits for the text that follows it.
+
         Args:
             module: DSPy module (must have forward() method)
             output_field: Name of the output field to stream tokens for
+            stream_view: Maps the field text streamed so far to the part that
+                is a prefix of the agent's final value for that field
             **kwargs: Arguments to pass to the module call
 
         Returns:
@@ -613,26 +708,76 @@ class AgentBase(ConfigManagerAware, ABC, Generic[InputT, OutputT, DepsT]):
                 _register_stream_adapter(
                     listener, getattr(call_module, "dspy_adapter", None)
                 )
-                streaming_fn = dspy.streamify(
-                    call_module,
-                    stream_listeners=[listener],
-                    include_final_prediction_in_output_stream=True,
+                adapter = (
+                    getattr(call_module, "dspy_adapter", None) or dspy.settings.adapter
                 )
+                serving_loop = asyncio.get_running_loop()
+                pieces: asyncio.Queue = asyncio.Queue()
+
+                async def stream_on_lm_loop():
+                    streaming_fn = dspy.streamify(
+                        call_module,
+                        stream_listeners=[listener],
+                        include_final_prediction_in_output_stream=True,
+                    )
+                    final = None
+                    async for chunk in streaming_fn(**kwargs):
+                        if isinstance(chunk, dspy.Prediction):
+                            final = chunk
+                        elif isinstance(chunk, dspy.streaming.StreamResponse):
+                            serving_loop.call_soon_threadsafe(
+                                pieces.put_nowait, chunk.chunk
+                            )
+                    return final
+
+                raw = ""
                 accumulated = ""
-                prediction = None
-                async for chunk in streaming_fn(**kwargs):
-                    if isinstance(chunk, dspy.Prediction):
-                        prediction = chunk
-                    elif isinstance(chunk, dspy.streaming.StreamResponse):
-                        accumulated += chunk.chunk
-                        self.emit_progress(
-                            "token",
-                            chunk.chunk,
-                            data={
-                                "accumulated": accumulated,
-                                "output_field": output_field,
-                            },
+
+                def receive(piece: str) -> None:
+                    nonlocal raw, accumulated
+                    raw += piece
+                    visible = _field_text(raw, adapter)
+                    if stream_view is not None:
+                        visible = stream_view(visible)
+                    # Answers are served stripped: trailing whitespace waits
+                    # for the text that follows it.
+                    visible = visible.strip()
+                    if len(visible) <= len(accumulated) or not visible.startswith(
+                        accumulated
+                    ):
+                        return
+                    delta = visible[len(accumulated) :]
+                    accumulated = visible
+                    self.emit_progress(
+                        "token",
+                        delta,
+                        data={"accumulated": accumulated, "output_field": output_field},
+                    )
+
+                # run_coroutine_threadsafe schedules from this task's context,
+                # so the dspy.context LM binding travels with the stream.
+                streaming = asyncio.wrap_future(
+                    asyncio.run_coroutine_threadsafe(
+                        stream_on_lm_loop(), _lm_stream_loop()
+                    )
+                )
+                try:
+                    while True:
+                        next_piece = asyncio.ensure_future(pieces.get())
+                        await asyncio.wait(
+                            {next_piece, streaming},
+                            return_when=asyncio.FIRST_COMPLETED,
                         )
+                        if not next_piece.done():
+                            next_piece.cancel()
+                            break
+                        receive(next_piece.result())
+                    while not pieces.empty():
+                        receive(pieces.get_nowait())
+                    prediction = streaming.result()
+                finally:
+                    if not streaming.done():
+                        streaming.cancel()
                 if prediction is None:
                     prediction = await _call_in_lm_executor(call_module, **kwargs)
                 return prediction
@@ -805,16 +950,23 @@ class AgentBase(ConfigManagerAware, ABC, Generic[InputT, OutputT, DepsT]):
                     exc_info=exc,
                 )
                 # Exception text stays server-side: it can carry credentialed
-                # backend URLs. The client gets the leaf type(s) and agent.
-                yield {
+                # backend URLs. The client gets the leaf type(s), the agent,
+                # and the status of a request the LM rejected.
+                event = {
                     "type": "error",
                     "agent": agent_cls,
                     "error_type": type(leaves[0]).__name__,
-                    "message": (
-                        f"{agent_cls} streaming failed with "
-                        f"{'; '.join(leaf_names)}. See server logs for detail."
-                    ),
                 }
+                rejected = _rejected_status(leaves)
+                status_note = ""
+                if rejected is not None:
+                    event["status"] = rejected
+                    status_note = f" (LM HTTP {rejected})"
+                event["message"] = (
+                    f"{agent_cls} streaming failed with "
+                    f"{'; '.join(leaf_names)}{status_note}. See server logs for detail."
+                )
+                yield event
             elif result_holder:
                 payload = result_holder[0].model_dump()
                 rail_error = None

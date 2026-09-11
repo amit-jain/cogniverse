@@ -563,6 +563,38 @@ class TestTokenStreamSelection:
         assert _data_lines(response.text)[-1] == "[DONE]"
         assert openai_compat.continuation_count() == 1
 
+    async def test_a_suspended_turn_reports_usage_only_when_asked(self, client):
+        asked = await client.post(
+            "/v1/chat/completions",
+            json=_body(
+                "cogniverse/tools",
+                tools=TOOL_DEFS,
+                stream_options={"include_usage": True},
+            ),
+            headers=_auth(KEY_A),
+        )
+        plain = await client.post(
+            "/v1/chat/completions",
+            json=_body("cogniverse/tools", tools=TOOL_DEFS),
+            headers=_auth(KEY_A),
+        )
+
+        frames = _frames(asked.text)
+        assert frames[-2]["choices"][0]["finish_reason"] == "tool_calls"
+        assert frames[-1]["choices"] == []
+        assert set(frames[-1]["usage"]) == {
+            "prompt_tokens",
+            "completion_tokens",
+            "total_tokens",
+        }
+        assert frames[-1]["usage"]["total_tokens"] == (
+            frames[-1]["usage"]["prompt_tokens"]
+            + frames[-1]["usage"]["completion_tokens"]
+        )
+        assert [frame for frame in frames[:-1] if "usage" in frame] == []
+        assert [frame for frame in _frames(plain.text) if "usage" in frame] == []
+        assert _frames(plain.text)[-1]["choices"][0]["finish_reason"] == "tool_calls"
+
 
 class TestToolChoice:
     """A client that forbids tools is never answered with a tool call."""

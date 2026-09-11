@@ -1229,6 +1229,10 @@ deltas whose concatenation is the answer.
 
 **GET /v1/models** — the configured model map in OpenAI list form.
 
+A streamed turn carries `usage` only when the request sends
+`stream_options: {"include_usage": true}`: one last chunk before `[DONE]`
+whose `choices` is empty. `include_usage` must be a boolean (400 otherwise).
+
 `stream: true` on an agent whose endpoint declares `streams_answer_tokens`
 streams live tokens through `dispatch_stream`. Agents emit one token event per
 output field; the router forwards only the field that carries answer text
@@ -1238,7 +1242,11 @@ final event the streamed text is reconciled against `extract_answer_text` of
 the finished payload: a supporting field (a report's findings) arrives as one
 closing delta, and a stream the final answer does not begin with ends in an
 error frame rather than a mangled reply. The deltas of a streamed turn
-therefore concatenate to the body of the same turn served non-streamed. Every
+therefore concatenate to the body of the same turn served non-streamed. A
+summarizer stream stops at the last whole word inside `max_summary_length`, and
+the closing delta carries the `…` the finished summary ends with. An LM
+failure mid-turn ends in one error frame naming the agent and the failure
+type, plus the LM's status for a 4xx, then `[DONE]`. Every
 other agent, and any turn resuming a tool exchange, streams the finished
 answer in 256-character deltas.
 
