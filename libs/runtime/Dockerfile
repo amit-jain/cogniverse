@@ -60,12 +60,17 @@ RUN apt-get update && apt-get install -y \
     unzip \
     && rm -rf /var/lib/apt/lists/*
 
-# Install Deno for DSPy RLM sandboxed code execution.
-# Install to /usr/local so the non-root cogniverse user (set further down) can
-# execute it; the previous ~/.deno install landed under /root which is mode 700
-# and unreachable from uid 1000. DENO_DIR is the runtime cache and points at
-# /app (chown'd to cogniverse below).
-RUN curl -fsSL https://deno.land/install.sh | DENO_INSTALL=/usr/local sh
+# Deno for DSPy RLM sandboxed code execution: a pinned release fetched with
+# retries (the upstream install script downloads unpinned and unretried), into
+# /usr/local/bin so the non-root cogniverse user can execute it. DENO_DIR is the
+# runtime cache and points at /app (chown'd to cogniverse below).
+ARG DENO_VERSION=2.9.6
+RUN curl -fsSL --retry 5 --retry-delay 3 --retry-all-errors \
+        "https://github.com/denoland/deno/releases/download/v${DENO_VERSION}/deno-x86_64-unknown-linux-gnu.zip" \
+        -o /tmp/deno.zip \
+    && unzip -q /tmp/deno.zip -d /usr/local/bin \
+    && rm /tmp/deno.zip \
+    && deno --version
 ENV DENO_DIR=/app/.deno
 
 # Create non-root user

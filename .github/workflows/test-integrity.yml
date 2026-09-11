@@ -87,6 +87,7 @@ jobs:
         JAX_PLATFORM_NAME=cpu uv run --no-sync python -m pytest \
           tests/backends/unit/test_docv1_confined_to_vespa.py \
           tests/backends/unit/test_ranking_strategy_extractor.py \
+          tests/cli/unit/test_dockerfile_network_fetches.py \
           tests/cli/unit/test_e2e_contracts.py \
           tests/common/unit/test_ci_coverage_guard.py \
           tests/common/unit/test_ci_fast_excludes_model_spawners.py \
