@@ -536,13 +536,11 @@ class TestEntityExtractionAgent:
                 {
                     "text": "Barack Obama",
                     "type": "PERSON",
-                    "confidence": None,
                     "context": "Barack Obama in Chicago",
                 },
                 {
                     "text": "Chicago",
                     "type": "PLACE",
-                    "confidence": None,
                     "context": "Barack Obama in Chicago",
                 },
             ],
@@ -671,7 +669,7 @@ class TestEntityExtractionAgent:
         )
         entity_agent.dspy_module = EntityExtractionModule()
         entity_agent._gliner_extractor = _CountingExtractor(
-            result=[{"text": "Barack Obama", "label": "PERSON", "score": 0.9}]
+            result=[{"text": "Barack Obama", "label": "PERSON", "confidence": 0.9}]
         )
         entity_agent._spacy_analyzer = None
 
@@ -715,7 +713,7 @@ class TestEntityExtractionAgent:
         )
         entity_agent.dspy_module = EntityExtractionModule()
         entity_agent._gliner_extractor = _CountingExtractor(
-            result=[{"text": "Barack Obama", "label": "PERSON", "score": 0.9}]
+            result=[{"text": "Barack Obama", "label": "PERSON", "confidence": 0.9}]
         )
         entity_agent._spacy_analyzer = None
         lm = _StatusRaisingDummyLM(
@@ -766,7 +764,7 @@ class TestEntityExtractionAgent:
         )
         entity_agent.dspy_module = EntityExtractionModule()
         entity_agent._gliner_extractor = _CountingExtractor(
-            result=[{"text": "Barack Obama", "label": "PERSON", "score": 0.9}]
+            result=[{"text": "Barack Obama", "label": "PERSON", "confidence": 0.9}]
         )
         entity_agent._spacy_analyzer = None
         lm = _StatusRaisingDummyLM(
@@ -789,6 +787,32 @@ class TestEntityExtractionAgent:
         assert span.attributes[ENTITY_EXTRACTION_FALLBACK_ATTRIBUTE] == (
             ENTITY_EXTRACTION_FALLBACK_LM_UNAVAILABLE
         )
+
+    @pytest.mark.asyncio
+    async def test_fast_path_refuses_an_unscored_gliner_entity(self, entity_agent):
+        """The fast path serves GLiNER's own score. A GLiNER record without one
+        fails the request, naming both failures, instead of being served with
+        a made-up confidence."""
+        entity_agent.dspy_module = EntityExtractionModule()
+        entity_agent._gliner_extractor = _CountingExtractor(
+            result=[{"text": "Barack Obama", "label": "PERSON"}]
+        )
+        entity_agent._spacy_analyzer = None
+
+        with dspy.context(lm=_RaisingDummyLM("engine down")):
+            with pytest.raises(RuntimeError) as excinfo:
+                await entity_agent._process_impl(
+                    EntityExtractionInput(
+                        query="Barack Obama in Chicago", tenant_id=TEST_TENANT_ID
+                    )
+                )
+
+        assert str(excinfo.value).endswith(
+            "; fast path failed with KeyError('confidence')"
+        )
+        assert type(excinfo.value.__cause__) is KeyError
+        assert entity_agent._gliner_extractor.calls == 1
+        assert entity_agent.telemetry_manager.spans == []
 
     @pytest.mark.asyncio
     async def test_relationships_match_between_dspy_and_fast_path(self):
@@ -1468,13 +1492,11 @@ class TestTelemetrySpanEmission:
                 {
                     "text": "Obama",
                     "type": "PERSON",
-                    "confidence": None,
                     "context": "Obama in Chicago",
                 },
                 {
                     "text": "Chicago",
                     "type": "PLACE",
-                    "confidence": None,
                     "context": "Obama in Chicago",
                 },
             ],

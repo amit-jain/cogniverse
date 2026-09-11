@@ -257,11 +257,11 @@ class TestEntityExtractionRealGLiNERSpaCy:
             f"Expected the DSPy primary path, got: {result.path_used}"
         )
 
-        # All entities should have positive confidence
-        for entity in result.entities:
-            assert entity.confidence > 0.0, (
-                f"Entity '{entity.text}' has zero confidence"
-            )
+        # The DSPy path's schema carries no score, so its entities serialize
+        # without a confidence key; only the GLiNER fallback scores them.
+        assert [sorted(entity.model_dump()) for entity in result.entities] == [
+            ["context", "text", "type"]
+        ] * result.entity_count, [entity.model_dump() for entity in result.entities]
 
     @pytest.mark.asyncio
     async def test_technology_entities(self, entity_agent):

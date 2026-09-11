@@ -48,9 +48,10 @@ class Entity(BaseModel):
     )
     confidence: Optional[float] = Field(
         default=None,
+        exclude_if=lambda value: value is None,
         description=(
-            "GLiNER score 0-1 on the fast path; None on the DSPy path, whose "
-            "schema carries no score"
+            "GLiNER score 0-1, set on the fast path only. The DSPy path's "
+            "schema carries no score, so its entities serialize without this key"
         ),
     )
     context: str = Field(default="", description="Surrounding context")
@@ -392,7 +393,7 @@ class EntityExtractionAgent(
     Capabilities:
     - Extract named entities as verbatim query spans
     - Classify entity types (PERSON, ORGANIZATION, CONCEPT, PLACE, EVENT, TECHNOLOGY)
-    - Provide confidence scores
+    - Score entities with GLiNER confidence on the fast path
     - Support multi-entity queries
     """
 
@@ -647,7 +648,7 @@ class EntityExtractionAgent(
                 type=self._GLINER_TYPE_MAP.get(
                     raw_entity["label"], raw_entity["label"]
                 ),
-                confidence=raw_entity.get("confidence", raw_entity.get("score", 0.5)),
+                confidence=raw_entity["confidence"],
                 context=self._extract_context(entity_text, query),
             )
 

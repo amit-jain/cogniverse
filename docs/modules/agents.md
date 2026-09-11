@@ -1008,7 +1008,7 @@ neither attribute.
 - Fallback path: GLiNER entity extraction + SpaCy relationship extraction
 - Entity type classification using PERSON, ORGANIZATION, CONCEPT, PLACE, EVENT, and TECHNOLOGY
 - Relationship extraction between entities (subject-relation-object triples)
-- Per-entity GLiNER confidence on the fallback path; DSPy-path entities carry `confidence: None`
+- Per-entity GLiNER `confidence` on the fallback path (`path_used: "fast"`) only; DSPy-path entities (`path_used: "dspy"`) have no `confidence` key
 - Confidence per relationship
 - Dominant entity type detection
 - Typed output enforced by the engine's schema; span validity via `entity_is_valid_for_query(text, entity_type, query)`
@@ -1064,9 +1064,10 @@ class Entity(BaseModel):
     )
     confidence: Optional[float] = Field(
         default=None,
+        exclude_if=lambda value: value is None,
         description=(
-            "GLiNER score 0-1 on the fast path; None on the DSPy path, whose "
-            "schema carries no score"
+            "GLiNER score 0-1, set on the fast path only. The DSPy path's "
+            "schema carries no score, so its entities serialize without this key"
         ),
     )
     context: str = Field(default="", description="Surrounding context")
@@ -1183,7 +1184,8 @@ each mention's keys and type; this checks what it cannot:
 - entities are ordered by where their span starts in the query, an enclosing
   span before a shorter one starting at the same place
 - dropped mentions are logged with the offending text and type
-- `confidence` is `None`: the DSPy path produces no score
+- `confidence` is unset, so the served entity has no `confidence` key: the DSPy
+  path produces no score
 
 The agent never fabricates a replacement span for invalid output.
 
@@ -1226,7 +1228,7 @@ with dspy.context(lm=lm):
       "parts": [
         {
           "type": "text",
-          "text": "show me robots playing soccer in tournaments"
+          "text": "Python programming with TensorFlow for deep learning"
         }
       ]
     }
@@ -1248,15 +1250,17 @@ with dspy.context(lm=lm):
           "data": {
             "status": "success",
             "agent": "entity_extraction_agent",
-            "query": "show me robots playing soccer in tournaments",
+            "query": "Python programming with TensorFlow for deep learning",
             "entities": [
-              {"text": "robots", "type": "CONCEPT", "confidence": 0.95, "context": "show me robots playing"},
-              {"text": "soccer", "type": "CONCEPT", "confidence": 0.89, "context": "robots playing soccer in"},
-              {"text": "tournaments", "type": "CONCEPT", "confidence": 0.92, "context": "soccer in tournaments"}
+              {"text": "Python", "type": "TECHNOLOGY", "context": "Python programming with TensorFlow f"},
+              {"text": "TensorFlow", "type": "TECHNOLOGY", "context": "Python programming with TensorFlow for deep learning"},
+              {"text": "deep learning", "type": "CONCEPT", "context": "ogramming with TensorFlow for deep learning"}
             ],
+            "relationships": [],
             "entity_count": 3,
             "has_entities": true,
-            "dominant_types": ["CONCEPT"]
+            "dominant_types": ["TECHNOLOGY", "CONCEPT"],
+            "path_used": "dspy"
           }
         }
       ]
@@ -1264,6 +1268,9 @@ with dspy.context(lm=lm):
   ]
 }
 ```
+
+Only the GLiNER fallback scores entities: with `"path_used": "fast"` every
+entity also carries its GLiNER `confidence` (0-1).
 
 ---
 
