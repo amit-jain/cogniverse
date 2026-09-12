@@ -24,6 +24,8 @@ from vespa.application import Vespa
 
 from cogniverse_agents.optimizer.artifact_manager import ArtifactManager
 from cogniverse_agents.optimizer.golden_set_ground_truth import (
+    GOLDEN_SET_GROUND_TRUTH_BLOB_KEY,
+    GOLDEN_SET_GROUND_TRUTH_BLOB_KIND,
     GoldenSetGroundTruthStoreUnavailableError,
 )
 from cogniverse_core.common.models.model_loaders import RemoteColPaliLoader
@@ -36,6 +38,9 @@ from cogniverse_evaluation.quality_monitor import (
     OptimizationTrigger,
     QualityMonitor,
     Verdict,
+)
+from cogniverse_foundation.telemetry.providers.base import (
+    DatasetStoreUnavailableError,
 )
 from tests.utils.llm_config import get_llm_base_url, get_llm_model
 
@@ -669,15 +674,25 @@ class TestQualityMonitorTenantOwnership:
             try:
                 with pytest.raises(GoldenSetGroundTruthStoreUnavailableError) as caught:
                     await monitor.force_optimization_cycle()
-                assert type(caught.value.__cause__) is httpx.ConnectError
-                assert str(caught.value.__cause__) == "[Errno 111] Connection refused"
+                store_error = caught.value.__cause__
+                assert type(store_error) is DatasetStoreUnavailableError
+                assert store_error.endpoint == unavailable_url
+                assert (
+                    store_error.dataset
+                    == monitor._get_artifact_manager()._blob_dataset_name(
+                        GOLDEN_SET_GROUND_TRUTH_BLOB_KIND,
+                        GOLDEN_SET_GROUND_TRUTH_BLOB_KEY,
+                    )
+                )
+                assert type(store_error.__cause__) is httpx.ConnectError
+                assert str(store_error.__cause__) == "[Errno 111] Connection refused"
                 assert caught.value.to_result() == {
                     "status": "golden_set_store_unavailable",
                     "retryable": True,
                     "error": "golden_set_ground_truth store unavailable",
                     "cause": {
-                        "type": "ConnectError",
-                        "message": str(caught.value.__cause__),
+                        "type": DatasetStoreUnavailableError.__name__,
+                        "message": str(store_error),
                     },
                 }
                 with pytest.raises(httpx.ConnectError) as write_error:
