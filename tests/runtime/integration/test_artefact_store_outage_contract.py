@@ -249,9 +249,13 @@ def _reset_telemetry_singletons():
 
 @pytest.fixture(autouse=True)
 def _clean_admin_overrides():
+    """Own the admin module state these tests read and write."""
+    endpoints = dict(admin_router._phoenix_endpoints)
     admin_router._reset_admin_overrides_for_tests()
     yield
     admin_router._reset_admin_overrides_for_tests()
+    admin_router._phoenix_endpoints.clear()
+    admin_router._phoenix_endpoints.update(endpoints)
 
 
 class TestDispatchOverlayNamesTheOutage:
