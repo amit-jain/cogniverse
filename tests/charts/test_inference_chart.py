@@ -1223,3 +1223,172 @@ class TestLlmServingOverlay:
             "vllm_llm_teacher",
         ]
         assert sorted(set(composed) - set(local)) == []
+
+
+# Every engine ``inference.<svc>.engine`` accepts, mapped to the container
+# name its branch renders. ``fastapi`` names the container after the service
+# key; the rest name it after the engine. Anything outside this map is
+# refused at render time rather than served as a plain vLLM pod.
+_ENGINE_CONTAINER_NAMES = {
+    "fastapi": "denseon",
+    "gliner": "gliner",
+    "pylate": "pylate",
+    "vllm": "vllm",
+    "vllm_chat": "vllm-chat",
+    "vllm_embed": "vllm-embed",
+    "vllm_token_embed": "vllm-token-embed",
+    "vllm_transcription": "vllm-transcription",
+}
+
+# The service whose engine the refusal and branch tests override. Enabled by
+# every profile, and its key kebabcases to a name no engine branch produces,
+# so the ``fastapi`` container name cannot be confused with an engine's.
+_ENGINE_CARRIER = "denseon"
+
+
+def _render_failure(*set_args: str) -> str:
+    """Stderr of a render the chart must refuse."""
+    cmd = [
+        "helm",
+        "template",
+        "cogniverse",
+        str(CHART_PATH),
+        "--set",
+        "runtime.qualityMonitor.tenantId=test-tenant",
+    ]
+    for arg in set_args:
+        cmd.extend(["--set", arg])
+    result = subprocess.run(cmd, capture_output=True, text=True, check=False)
+    assert result.returncode != 0, (
+        "chart rendered instead of refusing:\n" + result.stdout[:2000]
+    )
+    return result.stderr
+
+
+def _shipped_inference_engines() -> dict[str, str]:
+    """``{service key: engine}`` over every values file the chart ships."""
+    engines: dict[str, str] = {}
+    for values_file in sorted(CHART_PATH.glob("values*.yaml")):
+        inference = yaml.safe_load(values_file.read_text()).get("inference") or {}
+        for key, cfg in inference.items():
+            if isinstance(cfg, dict) and "engine" in cfg:
+                engines[key] = cfg["engine"]
+    return engines
+
+
+def test_each_engine_renders_the_container_its_branch_names():
+    for engine, container_name in _ENGINE_CONTAINER_NAMES.items():
+        deps = _inference_deployments(
+            _render(f"inference.{_ENGINE_CARRIER}.engine={engine}")
+        )
+        containers = deps[_ENGINE_CARRIER]["spec"]["template"]["spec"]["containers"]
+        assert [c["name"] for c in containers] == [container_name], (
+            f"engine {engine!r} rendered the wrong container"
+        )
+
+
+def test_every_engine_the_shipped_values_select_is_one_the_chart_implements():
+    """A shipped profile may only name an engine that has a branch.
+
+    ``vllm`` is the default and the one implemented engine no shipped service
+    selects by name, so it is the only member of the map that is absent here.
+    """
+    shipped = _shipped_inference_engines()
+
+    assert shipped == {
+        "clap_embed": "fastapi",
+        "code_colbert_pylate": "pylate",
+        "colbert_pylate": "pylate",
+        "denseon": "vllm_embed",
+        "face_embed": "fastapi",
+        "gliner": "gliner",
+        "video_embed": "fastapi",
+        "vllm_asr": "vllm_transcription",
+        "vllm_colpali": "vllm_token_embed",
+        "vllm_llm_student": "vllm_chat",
+        "vllm_llm_teacher": "vllm_chat",
+    }
+    assert set(shipped.values()) == set(_ENGINE_CONTAINER_NAMES) - {"vllm"}
+
+
+def test_the_colpali_native_engine_is_refused():
+    """ColPali is served by ``vllm_colpali`` on the ``vllm_token_embed``
+    engine. Nothing in the image tooling produces a standalone ColPali sidecar
+    image, so the name must fail the render rather than schedule a pod that can
+    only ImagePullBackOff."""
+    stderr = _render_failure(f"inference.{_ENGINE_CARRIER}.engine=colpali_native")
+
+    assert "colpali_native" in stderr
+    assert f"inference.{_ENGINE_CARRIER}.engine" in stderr
+
+
+def test_an_unrecognised_engine_is_refused_rather_than_served_as_plain_vllm():
+    """Generic over the engine name: a typo must fail the render rather than
+    quietly serve a plain vLLM pod from whatever image the service names."""
+    stderr = _render_failure(f"inference.{_ENGINE_CARRIER}.engine=vllm_token_embeb")
+
+    assert "vllm_token_embeb" in stderr
+    assert f"inference.{_ENGINE_CARRIER}.engine" in stderr
+
+
+def test_shipped_profiles_render_exactly_these_inference_containers():
+    """The engine each shipped profile selects, read off the rendered pods."""
+    per_profile = {
+        profile: {
+            key: dep["spec"]["template"]["spec"]["containers"][0]["name"]
+            for key, dep in _inference_deployments(_render(values=values)).items()
+        }
+        for profile, values in {
+            "default": (),
+            "k3s": ("values.k3s.yaml",),
+            "rocm": ("values.rocm.yaml",),
+            "modal-llm": ("values.rocm.yaml", "values.modal-llm.yaml"),
+        }.items()
+    }
+    per_profile["devMode"] = {
+        key: dep["spec"]["template"]["spec"]["containers"][0]["name"]
+        for key, dep in _inference_deployments(
+            _render("devMode.enabled=true", "devMode.hostPath=/cogniverse-src")
+        ).items()
+    }
+
+    assert per_profile == {
+        "default": {
+            "colbert_pylate": "pylate",
+            "denseon": "vllm-embed",
+            "gliner": "gliner",
+            "vllm_asr": "vllm-transcription",
+        },
+        "devMode": {
+            "colbert_pylate": "pylate",
+            "denseon": "vllm-embed",
+            "gliner": "gliner",
+            "vllm_asr": "vllm-transcription",
+        },
+        "k3s": {
+            "clap_embed": "clap-embed",
+            "colbert_pylate": "pylate",
+            "denseon": "vllm-embed",
+            "gliner": "gliner",
+            "video_embed": "video-embed",
+            "vllm_asr": "vllm-transcription",
+        },
+        "modal-llm": {
+            "code_colbert_pylate": "pylate",
+            "colbert_pylate": "pylate",
+            "denseon": "vllm-embed",
+            "gliner": "gliner",
+            "vllm_asr": "vllm-transcription",
+            "vllm_colpali": "vllm-token-embed",
+        },
+        "rocm": {
+            "code_colbert_pylate": "pylate",
+            "colbert_pylate": "pylate",
+            "denseon": "vllm-embed",
+            "gliner": "gliner",
+            "vllm_asr": "vllm-transcription",
+            "vllm_colpali": "vllm-token-embed",
+            "vllm_llm_student": "vllm-chat",
+            "vllm_llm_teacher": "vllm-chat",
+        },
+    }

@@ -1733,36 +1733,6 @@ spec:
               {{- range $cfg.extraArgs }}
               {{ . | squote }} \
               {{- end }}
-      {{- else if eq $engine "colpali_native" }}
-      # FastAPI sidecar wrapping colpali-engine, from an externally built image.
-      # Serves /v1/embeddings with per-token multi-vector arrays — the
-      # contract RemoteColPaliLoader requires.
-      - name: colpali
-        image: "{{ $resolvedImage.repository }}:{{ $resolvedImage.tag }}"
-        imagePullPolicy: {{ $resolvedImage.pullPolicy }}
-        ports:
-        - name: http
-          containerPort: {{ default 8000 $cfg.service.port }}
-        env:
-        - name: MODEL_NAME
-          value: {{ $cfg.model | quote }}
-        - name: DEVICE
-          # PyTorch reuses the cuda:N namespace for ROCm; passing "rocm"
-          # to torch.device fails parsing.
-          value: {{ ternary "cuda" $device (eq $device "rocm") | quote }}
-        - name: HOST
-          value: "0.0.0.0"
-        - name: PORT
-          value: {{ default 8000 $cfg.service.port | quote }}
-        - name: HF_HOME
-          value: /root/.cache/huggingface
-        {{- if $cfg.hfTokenSecret }}
-        - name: HF_TOKEN
-          valueFrom:
-            secretKeyRef:
-              name: {{ $cfg.hfTokenSecret | quote }}
-              key: HF_TOKEN
-        {{- end }}
       {{- else if eq $engine "vllm_token_embed" }}
       # vLLM serving an OpenAI-compatible /v1/embeddings endpoint with
       # per-token (multi-vector) outputs. Used by vllm_colpali for
@@ -1955,9 +1925,7 @@ spec:
       # pooling runner; unlike vllm_token_embed there is no per-token
       # reshape — the model pools to one vector per input. ``command:
       # ["vllm"]`` overrides the image ENTRYPOINT so ``args[0] = "serve"``
-      # isn't duplicated (see vllm_transcription comment above). A
-      # first-class named engine so dense embedding services don't rely on
-      # the catch-all.
+      # isn't duplicated (see vllm_transcription comment above).
       - name: vllm-embed
         image: "{{ $resolvedImage.repository }}:{{ $resolvedImage.tag }}"
         imagePullPolicy: {{ $resolvedImage.pullPolicy }}
@@ -2011,7 +1979,9 @@ spec:
           {{- range $cfg.extraArgs }}
           - {{ . | quote }}
           {{- end }}
-      {{- else }}
+      {{- else if eq $engine "vllm" }}
+      # Stock vLLM on the image's own ENTRYPOINT, serving dense embeddings.
+      # The engine a service gets when it names none.
       - name: vllm
         image: "{{ $resolvedImage.repository }}:{{ $resolvedImage.tag }}"
         imagePullPolicy: {{ $resolvedImage.pullPolicy }}
@@ -2044,6 +2014,8 @@ spec:
           {{- range $cfg.extraArgs }}
           - {{ . | quote }}
           {{- end }}
+      {{- else }}
+      {{- fail (printf "inference.%s.engine=%s: no such engine. Supported: fastapi, gliner, pylate, vllm, vllm_chat, vllm_embed, vllm_token_embed, vllm_transcription" $name $engine) }}
       {{- end }}
         livenessProbe:
           {{- toYaml $cfg.livenessProbe | nindent 10 }}
