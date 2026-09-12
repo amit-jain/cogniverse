@@ -288,7 +288,11 @@ def semantic_router_stack(tmp_path_factory):
                 f"\nrouter log:\n{_docker('logs', '--tail', '20', router).stdout}"
             )
 
-        yield {"base_url": base_url, "host_port": host_port}
+        yield {
+            "base_url": base_url,
+            "host_port": host_port,
+            "router_container": router,
+        }
     finally:
         for kind, name in reversed(created):
             if kind == "container":
