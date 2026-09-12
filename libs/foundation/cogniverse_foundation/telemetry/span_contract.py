@@ -78,6 +78,13 @@ ENTITY_EXTRACTION_GROUNDING_DROPPED_COUNT_ATTRIBUTE = (
 ENTITY_EXTRACTION_GROUNDING_DROPPED_ATTRIBUTE = "entity_extraction.grounding_dropped"
 
 
+# The entity extractor itself could not answer -- an unprovisioned sidecar, a
+# missing dependency, an unreachable inference service. Distinct from the LM
+# reasons above: no extraction was attempted, so whether the text holds
+# entities is unknown rather than known to be nothing.
+ENTITY_EXTRACTION_FALLBACK_EXTRACTOR_UNAVAILABLE = "extractor_unavailable"
+
+
 # The base reasons; ``request_rejected`` is served with its status appended.
 ENTITY_EXTRACTION_FALLBACK_VALUES = frozenset(
     {
@@ -85,6 +92,7 @@ ENTITY_EXTRACTION_FALLBACK_VALUES = frozenset(
         ENTITY_EXTRACTION_FALLBACK_LM_UNAVAILABLE,
         ENTITY_EXTRACTION_FALLBACK_REQUEST_REJECTED,
         ENTITY_EXTRACTION_FALLBACK_GROUNDING_FAILED,
+        ENTITY_EXTRACTION_FALLBACK_EXTRACTOR_UNAVAILABLE,
     }
 )
 

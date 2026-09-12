@@ -20,6 +20,10 @@ logger = logging.getLogger(__name__)
 # instead of relying on this; nothing hardcodes a divergent model id.
 DEFAULT_GLINER_MODEL = "urchade/gliner_large-v2.1"
 
+from cogniverse_foundation.telemetry.span_contract import (
+    ENTITY_EXTRACTION_FALLBACK_EXTRACTOR_UNAVAILABLE,
+)
+
 
 class GLiNEREntityExtractionUnavailableError(RuntimeError):
     """GLiNER could not answer, so whether the text holds entities is unknown.
@@ -667,17 +671,49 @@ class RelationshipExtractorTool:
                 ),
             }
 
+        except GLiNEREntityExtractionUnavailableError as exc:
+            logger.error(
+                "Relationship extraction degraded: GLiNER unavailable "
+                "(model=%s inference_url=%s): %s",
+                exc.model_name,
+                exc.inference_url,
+                exc,
+            )
+            return self._degraded_result(
+                fallback_reason=ENTITY_EXTRACTION_FALLBACK_EXTRACTOR_UNAVAILABLE,
+                fallback_model=exc.model_name,
+                fallback_inference_url=exc.inference_url,
+            )
         except Exception as e:
             logger.error(f"Comprehensive relationship extraction failed: {e}")
-            return {
-                "entities": [],
-                "relationships": [],
-                "relationship_types": [],
-                "semantic_connections": [],
-                "query_structure": "error",
-                "complexity_indicators": [],
-                "confidence": 0.0,
-            }
+            return self._degraded_result()
+
+    @staticmethod
+    def _degraded_result(
+        *,
+        fallback_reason: Optional[str] = None,
+        fallback_model: Optional[str] = None,
+        fallback_inference_url: Optional[str] = None,
+    ) -> Dict[str, Any]:
+        """An extraction that did not happen, saying why.
+
+        ``fallback_reason`` carries the entity-extraction reason vocabulary, so
+        an extractor outage is told apart from a text that genuinely holds no
+        relationships. ``query_structure`` reports the parse, never the
+        failure.
+        """
+        return {
+            "entities": [],
+            "relationships": [],
+            "relationship_types": [],
+            "semantic_connections": [],
+            "query_structure": "unknown",
+            "complexity_indicators": [],
+            "confidence": 0.0,
+            "fallback_reason": fallback_reason,
+            "fallback_model": fallback_model,
+            "fallback_inference_url": fallback_inference_url,
+        }
 
     def _deduplicate_relationships(
         self, relationships: List[Dict[str, Any]]
