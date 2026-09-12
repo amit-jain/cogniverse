@@ -11,7 +11,7 @@ import logging
 import math
 from dataclasses import dataclass, field, fields
 from datetime import datetime
-from typing import Any, Dict, List, Optional
+from typing import Any, Dict, List, Literal, Optional, get_args
 
 from cogniverse_foundation.config.agent_config import (
     AgentConfig,
@@ -240,6 +240,15 @@ class TenantConfig:
     metadata: Dict[str, Any] = field(default_factory=dict)
 
 
+# The tier vocabulary the runtime may emit on the router's group header. Each
+# value must name a Group the router's role bindings bind, or the request
+# matches no decision and falls through to the default model:
+# tests/charts/test_semantic_router_tier_vocabulary.py pins that containment
+# against the shipped chart.
+RouterTier = Literal["default", "free", "pro"]
+ROUTER_TIERS: frozenset[str] = frozenset(get_args(RouterTier))
+
+
 @dataclass
 class SemanticRouterConfig:
     """Opt-in routing of LLM calls through the vLLM Semantic Router.
@@ -262,8 +271,8 @@ class SemanticRouterConfig:
 
     enabled: bool = False
     semantic_router_url: str = ""
-    tenant_tiers: Dict[str, str] = field(default_factory=dict)
-    default_tier: str = "default"
+    tenant_tiers: Dict[str, RouterTier] = field(default_factory=dict)
+    default_tier: RouterTier = "default"
     tier_header: str = "x-authz-user-groups"
     user_id_header: str = "x-authz-user-id"
     # Model name sent on routed requests (litellm provider prefix + the
