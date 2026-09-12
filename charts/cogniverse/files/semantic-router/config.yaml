@@ -1,10 +1,13 @@
 # Semantic Router config for the in-cluster gateway (rendered via `tpl`).
 #
 # The router gates the tenant's allowed model set by tier (the authz signal
-# reads x-authz-user-id + x-authz-user-groups that cogniverse sends), then
-# classifies request content itself (domain classifier) to pick the model +
-# reasoning mode. Both catalog models resolve to the chart's in-cluster LLM
-# backend by default — add distinct backend_refs when you deploy more models.
+# reads x-authz-user-id + x-authz-user-groups that cogniverse sends). Requests
+# on the `auto` alias are additionally classified by content (domain
+# classifier) to pick the model + reasoning mode. Requests naming the
+# `cogniverse-classification` entrypoint take the recipe at the bottom of this
+# file, whose decisions test the tier only, so no classifier runs. Both catalog
+# models resolve to the chart's in-cluster LLM backend by default — add
+# distinct backend_refs when you deploy more models.
 version: v0.3
 
 listeners:
@@ -52,7 +55,7 @@ routing:
       capabilities: [chat, reasoning]
       modality: ar
   signals:
-    role_bindings:
+    role_bindings: &role_bindings
       - name: pro-users
         role: pro_tier
         subjects:
@@ -100,7 +103,7 @@ routing:
       modelRefs:
         - model: pro-reasoning
           use_reasoning: true
-      plugins:
+      plugins: &exact_cache
         - type: response_cache
           configuration:
             enabled: true
@@ -122,16 +125,7 @@ routing:
       modelRefs:
         - model: pro-reasoning
           use_reasoning: true
-      plugins:
-        - type: response_cache
-          configuration:
-            enabled: true
-            mode: exact
-            scope: user
-            request_controls:
-              enabled: true
-              header: x-vsr-cache-control
-              allowed: [max-age]
+      plugins: *exact_cache
     - name: pro-default
       priority: 200
       rules:
@@ -142,16 +136,7 @@ routing:
       modelRefs:
         - model: pro-reasoning
           use_reasoning: false
-      plugins:
-        - type: response_cache
-          configuration:
-            enabled: true
-            mode: exact
-            scope: user
-            request_controls:
-              enabled: true
-              header: x-vsr-cache-control
-              allowed: [max-age]
+      plugins: *exact_cache
     - name: free-default
       priority: 100
       rules:
@@ -162,17 +147,7 @@ routing:
       modelRefs:
         - model: basic-chat
           use_reasoning: false
-      plugins:
-        - type: response_cache
-          configuration:
-            enabled: true
-            mode: exact
-            scope: user
-            request_controls:
-              enabled: true
-              header: x-vsr-cache-control
-              allowed: [max-age]
-
+      plugins: *exact_cache
     - name: base-default
       priority: 50
       rules:
@@ -183,16 +158,58 @@ routing:
       modelRefs:
         - model: basic-chat
           use_reasoning: false
-      plugins:
-        - type: response_cache
-          configuration:
-            enabled: true
-            mode: exact
-            scope: user
-            request_controls:
-              enabled: true
-              header: x-vsr-cache-control
-              allowed: [max-age]
+      plugins: *exact_cache
+
+# Bounded-output agent calls (query rewrite, profile/modality selection,
+# routing intent, entity extraction) enter on this virtual model name. It
+# selects the ``classification`` recipe, whose decisions test the tenant tier
+# only: no domain or keyword signal, so the domain classifier never runs and
+# the routing decision costs no measurable time, while the tier still picks
+# the model and the response cache still applies.
+entrypoints:
+  - model_names: [cogniverse-classification]
+    recipe: classification
+
+recipes:
+  - name: classification
+    description: Tier-gated routing for bounded-output agent calls.
+    routing:
+      signals:
+        role_bindings: *role_bindings
+      decisions:
+        - name: classification-pro
+          priority: 200
+          rules:
+            operator: AND
+            conditions:
+              - type: authz
+                name: pro_tier
+          modelRefs:
+            - model: pro-reasoning
+              use_reasoning: false
+          plugins: *exact_cache
+        - name: classification-free
+          priority: 100
+          rules:
+            operator: AND
+            conditions:
+              - type: authz
+                name: free_tier
+          modelRefs:
+            - model: basic-chat
+              use_reasoning: false
+          plugins: *exact_cache
+        - name: classification-base
+          priority: 50
+          rules:
+            operator: AND
+            conditions:
+              - type: authz
+                name: base_tier
+          modelRefs:
+            - model: basic-chat
+              use_reasoning: false
+          plugins: *exact_cache
 global:
   services:
     authz:
@@ -212,8 +229,11 @@ global:
     # over the whole normalized request - messages, response_format, tools,
     # temperature, max_tokens, model - combined with the decision's policy
     # fingerprint, partitioned by the tenant identity in x-authz-user-id.
-    # Similarity matching is off on every decision (mode: exact): below 1.0 the
-    # router answers one query out of a different query's entry.
+    # Similarity matching is off on every decision (mode: exact): on the
+    # shipped embedding model the highest similarity between two requests about
+    # different content exceeds the lowest similarity between two equivalent
+    # requests, so no threshold separates them (derivation pinned in
+    # tests/foundation/integration/test_semantic_router_cache_threshold.py).
     response_cache:
       backend_type: memory
       enabled: true

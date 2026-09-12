@@ -489,7 +489,11 @@ def route_rlm_endpoint(
     if not router.enabled:
         return endpoint
     return apply_semantic_routing(
-        endpoint, router, tenant_id, resolve_tenant_tier(cfg, tenant_id)
+        endpoint,
+        router,
+        tenant_id,
+        resolve_tenant_tier(cfg, tenant_id),
+        call_site="rlm_inference",
     )
 
 

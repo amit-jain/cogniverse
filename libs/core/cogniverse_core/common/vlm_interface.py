@@ -66,6 +66,7 @@ class VLMInterface:
                 router,
                 tenant_id,
                 resolve_tenant_tier(self.config, tenant_id),
+                call_site="vlm_interface",
             )
 
         self._dspy_lm = create_dspy_lm(endpoint_config)

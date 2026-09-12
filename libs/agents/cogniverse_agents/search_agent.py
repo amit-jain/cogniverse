@@ -42,6 +42,11 @@ from cogniverse_core.registries.backend_registry import (
     leased_backend,
 )
 from cogniverse_foundation.telemetry.context import request_trace_context
+from cogniverse_foundation.telemetry.span_contract import (
+    QUERY_ENHANCEMENT_PATH_ATTRIBUTE,
+    QUERY_ENHANCEMENT_PATH_HEURISTIC_FALLBACK,
+    QUERY_ENHANCEMENT_PATH_LM,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -366,11 +371,25 @@ QUERY_REWRITE_TIMED_OUT = "query_rewrite_timed_out"
 _MEASURED_REWRITE_OUTPUT_TOKENS_MAX = 30
 QUERY_REWRITE_MAX_OUTPUT_TOKENS = 3 * _MEASURED_REWRITE_OUTPUT_TOKENS_MAX
 
-# Wall-clock the rewrite stage is held to, p90 over the same 120 samples.
-# Measured p90 0.652s; the budget carries a 2.2x margin for contention on a
-# shared cluster.
+# Wall-clock the rewrite stage is held to against the endpoint DIRECTLY, p90
+# over the same 120 samples. Measured p90 0.652s; the budget carries a 2.2x
+# margin for contention on a shared cluster.
 _MEASURED_REWRITE_P90_S = 0.652
 QUERY_REWRITE_P90_BUDGET_S = round(2.2 * _MEASURED_REWRITE_P90_S, 1)
+
+# Ceiling the served rewrite is held to when the call goes through the
+# semantic router, which is the deployed path. Measured on the deployed
+# cluster over the fixed evaluation queries, 30 cache-busting samples through
+# the router against the served endpoint: p50 1.328s, p90 1.784s, p95 1.798s,
+# max 1.807s. The second term is the routing decision the router bills before
+# it forwards: p95 of routing_latency_ms over 684 recorded decisions, 1.720s.
+# A rewrite past their sum is not slow, it is not coming, and the search is
+# better served un-rewritten than held.
+_MEASURED_ROUTED_REWRITE_P95_S = 1.798
+_MEASURED_ROUTING_DECISION_P95_S = 1.720
+QUERY_REWRITE_BUDGET_S = round(
+    _MEASURED_ROUTED_REWRITE_P95_S + _MEASURED_ROUTING_DECISION_P95_S, 1
+)
 
 # Per-stage wall-clock stamped on the SearchAgent.process span, in the order
 # the stages run. Named so this is read off a trace instead of re-measured.
@@ -396,6 +415,25 @@ def _timed_stage(key: str):
         timings = _STAGE_TIMINGS.get()
         if timings is not None:
             timings[key] = (time.perf_counter() - started) * 1000.0
+
+
+def _bound_lm_name() -> str:
+    """The model name the LM bound for this request sends to the router.
+
+    Named in the rewrite's failure log so an outage is attributable to the
+    router entry the call took rather than to "the LM".
+    """
+    lm = getattr(dspy.settings, "lm", None)
+    return str(getattr(lm, "model", "") or "unbound")
+
+
+def _stamp_rewrite_path(path: str) -> None:
+    """Record which path produced this search's rewrite on the current span."""
+    from opentelemetry import trace as _otel_trace
+
+    span = _otel_trace.get_current_span()
+    if span.get_span_context().is_valid:
+        span.set_attribute(QUERY_ENHANCEMENT_PATH_ATTRIBUTE, path)
 
 
 def _stamp_stage_timings_on_span() -> None:
@@ -971,6 +1009,7 @@ class SearchAgent(
         query and names the degradation instead of raising.
         """
         if input.enhanced_query:
+            _stamp_rewrite_path(QUERY_ENHANCEMENT_PATH_LM)
             return input.enhanced_query, input.enhanced_query, None
 
         self.emit_progress("query_optimization", "Optimizing query with DSPy...")
@@ -997,20 +1036,30 @@ class SearchAgent(
                     rewrite(), timeout=input.query_rewrite_timeout_s
                 )
         except asyncio.TimeoutError:
+            _stamp_rewrite_path(QUERY_ENHANCEMENT_PATH_HEURISTIC_FALLBACK)
             logger.warning(
-                "Query rewrite exceeded its %.1fs budget; searching %r",
+                "Query rewrite on %s exceeded its %.1fs budget; searching %r",
+                _bound_lm_name(),
                 input.query_rewrite_timeout_s,
                 query,
             )
             return query, None, QUERY_REWRITE_TIMED_OUT
         except Exception as e:
-            logger.warning("Query rewrite failed: %r; searching %r", e, query)
+            _stamp_rewrite_path(QUERY_ENHANCEMENT_PATH_HEURISTIC_FALLBACK)
+            logger.warning(
+                "Query rewrite on %s failed: %r; searching %r",
+                _bound_lm_name(),
+                e,
+                query,
+            )
             return query, None, QUERY_REWRITE_FAILED
 
         rewritten = str(getattr(dspy_result, "enhanced_query", "") or "").strip()
         if rewritten:
+            _stamp_rewrite_path(QUERY_ENHANCEMENT_PATH_LM)
             logger.info("Using DSPy-enhanced query: %s", rewritten)
             return rewritten, rewritten, None
+        _stamp_rewrite_path(QUERY_ENHANCEMENT_PATH_HEURISTIC_FALLBACK)
         return query, None, None
 
     async def _search_ensemble(

@@ -284,6 +284,100 @@ def test_decisions_declare_their_model_reasoning_and_admitting_tier_exactly():
     assert sorted(cfg["global"]["stores"]) == ["response_cache"]
 
 
+def test_the_classification_entrypoint_selects_the_tier_only_recipe():
+    """A bounded-output call names this virtual model; the recipe it selects
+    must test the tenant tier and nothing else. One ``domain`` or ``keyword``
+    condition anywhere in it puts the classifier back on the request, which is
+    the cost the entrypoint exists to remove."""
+    cfg = _sr_config(_render("llm.engine=vllm"))
+    assert cfg["entrypoints"] == [
+        {"model_names": ["cogniverse-classification"], "recipe": "classification"}
+    ]
+    assert [recipe["name"] for recipe in cfg["recipes"]] == ["classification"]
+    decisions = cfg["recipes"][0]["routing"]["decisions"]
+    assert [decision["name"] for decision in decisions] == [
+        "classification-pro",
+        "classification-free",
+        "classification-base",
+    ]
+    assert [decision["priority"] for decision in decisions] == [200, 100, 50]
+    assert [
+        [(cond["type"], cond["name"]) for cond in decision["rules"]["conditions"]]
+        for decision in decisions
+    ] == [
+        [("authz", "pro_tier")],
+        [("authz", "free_tier")],
+        [("authz", "base_tier")],
+    ]
+    assert [
+        [(ref["model"], ref["use_reasoning"]) for ref in decision["modelRefs"]]
+        for decision in decisions
+    ] == [
+        [("pro-reasoning", False)],
+        [("basic-chat", False)],
+        [("basic-chat", False)],
+    ]
+
+
+def test_the_classification_recipe_caches_on_exact_request_identity_only():
+    """The recipe's decisions are named, so their plugins run - which is what
+    naming a catalog model directly would have given up."""
+    recipe = _sr_config(_render("llm.engine=vllm"))["recipes"][0]
+    assert [decision["plugins"] for decision in recipe["routing"]["decisions"]] == [
+        [_EXACT_CACHE_PLUGIN]
+    ] * 3
+
+
+def test_no_decision_in_any_routing_profile_matches_on_similarity():
+    """Swept over both profiles, not just the default one: on the shipped
+    embedding model the highest similarity between requests about different
+    content (0.9932) exceeds the lowest between equivalent requests (0.9867),
+    so any similarity threshold answers one request out of another's entry."""
+    cfg = _sr_config(_render("llm.engine=vllm"))
+    profiles = [cfg["routing"]] + [recipe["routing"] for recipe in cfg["recipes"]]
+    modes = {
+        plugin["configuration"]["mode"]
+        for profile in profiles
+        for decision in profile["decisions"]
+        for plugin in decision["plugins"]
+        if plugin["type"] == "response_cache"
+    }
+    assert modes == {"exact"}
+    thresholds = [
+        plugin["configuration"].get("semantic")
+        for profile in profiles
+        for decision in profile["decisions"]
+        for plugin in decision["plugins"]
+    ]
+    assert thresholds == [None] * len(thresholds)
+
+
+def test_the_rewrite_budget_fires_before_the_ext_proc_message_timeout():
+    """Whichever deadline fires first owns the failure. The rewrite's own
+    budget must be the smaller one, or a slow router surfaces as Envoy
+    abandoning the ext_proc stream instead of as a degraded rewrite."""
+    from cogniverse_agents.search_agent import QUERY_REWRITE_BUDGET_S
+
+    envoys = [
+        yaml.safe_load(d["data"]["envoy.yaml"])
+        for d in _render("llm.engine=vllm")
+        if d.get("kind") == "ConfigMap"
+        and d.get("metadata", {}).get("name") == "cogniverse-semantic-router-envoy"
+    ]
+    assert len(envoys) == 1
+    message_timeouts = [
+        http_filter["typed_config"]["message_timeout"]
+        for listener in envoys[0]["static_resources"]["listeners"]
+        for chain in listener["filter_chains"]
+        for filt in chain["filters"]
+        for http_filter in filt["typed_config"]["http_filters"]
+        if "message_timeout" in http_filter.get("typed_config", {})
+    ]
+    assert message_timeouts == ["30s"]
+    assert QUERY_REWRITE_BUDGET_S == 3.5
+    assert QUERY_REWRITE_BUDGET_S < float(message_timeouts[0].rstrip("s"))
+
+
 def test_router_image_pinned_by_digest():
     # A moving `latest` left an older image cached whose embedding runtime never
     # reached ready; the digest pin makes the deployed router reproducible.

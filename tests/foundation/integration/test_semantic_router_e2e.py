@@ -99,6 +99,7 @@ def _call(base_url: str, tenant_id: str, prompt: str) -> dict:
         config=_semantic_router_config(base_url),
         tenant_id=tenant_id,
         tier=_tier_for(tenant_id),
+        call_site="summarizer_agent",
     )
     lm = create_dspy_lm(routed)
     lm.cache = False
@@ -196,6 +197,7 @@ def test_the_shipped_default_tier_matches_a_decision(sr_base_url):
         config=_base_tier_config(sr_base_url),
         tenant_id="unmapped-tenant",
         tier=DEFAULT_ROUTER_TIER,
+        call_site="summarizer_agent",
     )
     lm = create_dspy_lm(routed)
     lm.cache = False
@@ -319,6 +321,7 @@ def _call_with_response_format(
         config=_semantic_router_config(base_url),
         tenant_id=tenant_id,
         tier=_tier_for(tenant_id),
+        call_site="summarizer_agent",
     )
     lm = create_dspy_lm(routed)
     lm.cache = False
@@ -482,3 +485,144 @@ class TestTheResponseCacheReusesOnlyAnIdenticalRequest:
         assert _reflected(fresh)["call_index"] == _reflected(stored)["call_index"]
         assert _served_from(aged) == "upstream"
         assert _reflected(aged)["call_index"] != _reflected(stored)["call_index"]
+
+
+def _classification_config(base_url: str) -> SemanticRouterConfig:
+    return SemanticRouterConfig(enabled=True, semantic_router_url=base_url)
+
+
+def _call_bounded(base_url: str, tenant_id: str, prompt: str) -> dict:
+    """Route a bounded-output completion (the search agent's query rewrite is
+    the shipped example) and return the stub's reflection."""
+    endpoint = LLMEndpointConfig(model="openai/auto", api_base="http://unused:1/v1")
+    routed = apply_semantic_routing(
+        endpoint=endpoint,
+        config=_classification_config(base_url),
+        tenant_id=tenant_id,
+        tier=_tier_for(tenant_id),
+        call_site="search_agent",
+    )
+    assert routed.model == "openai/cogniverse-classification"
+    lm = create_dspy_lm(routed)
+    lm.cache = False
+    out = lm(prompt)
+    item = out[0] if isinstance(out, list) else out
+    content = (
+        item.get("text") or item.get("content") if isinstance(item, dict) else item
+    )
+    return json.loads(content)
+
+
+def _post_bounded(base_url: str, tenant_id: str, prompt: str) -> requests.Response:
+    config = _classification_config(base_url)
+    body = {
+        "model": config.classification_model.split("/")[-1],
+        "messages": [{"role": "user", "content": prompt}],
+    }
+    headers = dict(
+        resolve_semantic_router_headers(config, tenant_id, _tier_for(tenant_id)) or {}
+    )
+    response = requests.post(
+        f"{base_url.rstrip('/')}/chat/completions",
+        json=body,
+        headers=headers,
+        timeout=30,
+    )
+    assert response.status_code == 200, response.text[:400]
+    return response
+
+
+class TestTheClassificationEntrypointRoutesOnTierAlone:
+    """The bounded-output entry must reach a decision, pick the tier's model,
+    and keep the tier gate - all without the domain classifier the ``auto``
+    alias runs. A prompt the classifier would call technical is used for every
+    tier so a recipe that leaked a domain condition changes the answer."""
+
+    def test_free_tier_gets_the_basic_model(self, sr_base_url):
+        reflected = _call_bounded(sr_base_url, "free-tenant", _TECHNICAL)
+        assert reflected["served_model"] == "basic-chat"
+        assert reflected["reasoning"] is False
+
+    def test_pro_tier_gets_the_pro_model_with_reasoning_off(self, sr_base_url):
+        """The same prompt on the auto alias routes pro-reasoning WITH
+        reasoning; through the entrypoint the keyword and domain signals are
+        not evaluated, so a bounded call never pays for a reasoning trace."""
+        reflected = _call_bounded(sr_base_url, "pro-tenant", _TECHNICAL)
+        assert reflected["served_model"] == "pro-reasoning"
+        assert reflected["reasoning"] is False
+
+    def test_the_authz_headers_still_reach_the_backend(self, sr_base_url):
+        reflected = _call_bounded(sr_base_url, "pro-tenant", "rewrite: red jacket")
+        assert reflected["routing_headers"]["x-authz-user-id"] == "pro-tenant"
+        assert reflected["routing_headers"]["x-authz-user-groups"] == "pro"
+
+    def test_the_same_request_is_answered_from_the_cache(self, sr_base_url):
+        """Naming a catalog model directly would also skip classification, but
+        it matches no decision and therefore runs no plugin. The entrypoint
+        keeps the decision, so the response cache still applies."""
+        prompt = "rewrite: a person lifting weights in a gym, bounded cache probe"
+        first = _post_bounded(sr_base_url, "free-tenant", prompt)
+        second = _post_bounded(sr_base_url, "free-tenant", prompt)
+        assert _served_from(first) == "upstream"
+        assert _served_from(second) == "cache"
+        assert _reflected(first)["call_index"] == _reflected(second)["call_index"]
+
+    def test_the_cache_never_answers_one_tenant_from_another(self, sr_base_url):
+        prompt = "rewrite: quarterly outlook for the northern region, bounded"
+        first = _post_bounded(sr_base_url, "free-tenant", prompt)
+        second = _post_bounded(sr_base_url, "another-free-tenant", prompt)
+        assert _served_from(first) == "upstream"
+        assert _served_from(second) == "upstream"
+        assert _reflected(first)["routing_headers"]["x-authz-user-id"] == "free-tenant"
+        assert (
+            _reflected(second)["routing_headers"]["x-authz-user-id"]
+            == "another-free-tenant"
+        )
+        assert _reflected(first)["call_index"] != _reflected(second)["call_index"]
+
+
+def test_sixteen_concurrent_identical_bounded_calls_make_one_upstream_call(
+    sr_base_url,
+):
+    """Sixteen requests that are the same entry, byte for byte, issued at once.
+
+    The cache's read-then-write is not atomic: without a single-flight lease
+    every one of them misses, calls the backend, and writes the same entry, so
+    a cold key costs N backend calls instead of one. The stub counts calls that
+    reached it, so the invariant is countable rather than reasoned about.
+    """
+    prompt = f"rewrite: single-flight probe {time.time()}"
+    with ThreadPoolExecutor(max_workers=16) as pool:
+        responses = list(
+            pool.map(
+                lambda _: _post_bounded(sr_base_url, "free-tenant", prompt),
+                range(16),
+            )
+        )
+    reflected = [_reflected(response) for response in responses]
+    assert [item["echo"] for item in reflected] == [prompt] * 16
+    assert len({item["call_index"] for item in reflected}) == 1
+    assert [item["served_model"] for item in reflected] == ["basic-chat"] * 16
+
+
+def test_a_request_carrying_a_schema_never_shares_an_entry_with_one_that_does_not(
+    sr_base_url,
+):
+    """The second half of the cache incident: a request that sent no
+    ``response_format`` was answered out of an entry written by one that did,
+    so it came back shaped to a schema it never asked for. ``mode: exact``
+    keys on the whole normalised request, ``response_format`` included, so the
+    two are separate entries and both reach the backend.
+    """
+    prompt = f"label this text for the schema probe {time.time()}"
+    plain = _post(sr_base_url, "free-tenant", _chat_body(prompt))
+    schema = _post(
+        sr_base_url,
+        "free-tenant",
+        _chat_body(prompt, response_format=_PROBE_RESPONSE_FORMAT),
+    )
+    assert _served_from(plain) == "upstream"
+    assert _served_from(schema) == "upstream"
+    assert _reflected(plain)["response_format"] is None
+    assert _reflected(schema)["response_format"] == _PROBE_RESPONSE_FORMAT
+    assert _reflected(plain)["call_index"] != _reflected(schema)["call_index"]

@@ -90,6 +90,7 @@ class TestSemanticRouterConfigFromEnv:
             "routed_model",
             "response_cache_ttl_seconds",
             "response_cache_max_entries",
+            "classification_model",
         }
 
     def test_a_stale_tenant_tiers_env_changes_nothing(self, monkeypatch):

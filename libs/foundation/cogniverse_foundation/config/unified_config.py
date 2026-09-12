@@ -276,14 +276,19 @@ class SemanticRouterConfig:
     semantic_router_url: str = ""
     tier_header: str = "x-authz-user-groups"
     user_id_header: str = "x-authz-user-id"
-    # Model name sent on routed requests (litellm provider prefix + the
+    # Model name sent on a free-form call (litellm provider prefix + the
     # router's auto alias). The router resolves models by its own catalog
     # names and rejects raw provider model ids, so the endpoint's model is
-    # replaced, not forwarded.
+    # replaced, not forwarded. On this alias the router runs its domain
+    # classifier before it picks a decision.
     routed_model: str = "openai/auto"
     # Bounds of the tenant-scoped LM response cache in shipped config.json.
     response_cache_ttl_seconds: int = 3600
     response_cache_max_entries: int = 1024
+    # Model name sent on a bounded-output call. It names the router's
+    # `cogniverse-classification` entrypoint, whose recipe tests the tenant
+    # tier only, so the decision costs no classification.
+    classification_model: str = "openai/cogniverse-classification"
 
     def to_dict(self) -> Dict[str, Any]:
         return {
@@ -294,6 +299,7 @@ class SemanticRouterConfig:
             "routed_model": self.routed_model,
             "response_cache_ttl_seconds": self.response_cache_ttl_seconds,
             "response_cache_max_entries": self.response_cache_max_entries,
+            "classification_model": self.classification_model,
         }
 
     @classmethod
@@ -309,6 +315,9 @@ class SemanticRouterConfig:
             ),
             response_cache_max_entries=int(
                 data.get("response_cache_max_entries", cls.response_cache_max_entries)
+            ),
+            classification_model=data.get(
+                "classification_model", "openai/cogniverse-classification"
             ),
         )
 

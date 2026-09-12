@@ -190,6 +190,7 @@ class DynamicDSPyMixin:
             config=router,
             tenant_id=tenant_id,
             tier=resolve_tenant_tier(system_config, tenant_id),
+            call_site="dynamic_dspy_module",
         )
 
     def _cache_tenant_id(self) -> str:

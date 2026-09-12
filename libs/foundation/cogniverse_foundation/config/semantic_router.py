@@ -41,6 +41,61 @@ if TYPE_CHECKING:
     import dspy
 
 
+# Which router entry a call site takes. A bounded call — one whose output is a
+# selection from a fixed vocabulary, a short structured record, or a one-line
+# transformation — enters on the classification entrypoint, where the decision
+# is chosen from the tenant tier alone and no classifier runs. A free-form call
+# enters on the auto alias, where the router classifies the content and may
+# promote the request to the reasoning model.
+CLASSIFICATION_CALL_SITES: frozenset[str] = frozenset(
+    {
+        "entity_extraction_agent",
+        "gateway_agent",
+        "orchestrator_agent",
+        "profile_selection_agent",
+        "query_enhancement_agent",
+        "search_agent",
+    }
+)
+
+FREE_FORM_CALL_SITES: frozenset[str] = frozenset(
+    {
+        "audio_analysis_agent",
+        "audit_explanation_agent",
+        "citation_tracing_agent",
+        "coding_agent",
+        "contradiction_reconciliation_agent",
+        "cross_tenant_comparison_agent",
+        "deep_research_agent",
+        "detailed_report_agent",
+        "document_agent",
+        "dynamic_dspy_module",
+        "federated_query_agent",
+        "image_search_agent",
+        "kg_traversal_agent",
+        "knowledge_summarization_agent",
+        "multi_document_synthesis_agent",
+        "rlm_inference",
+        "summarizer_agent",
+        "temporal_reasoning_agent",
+        "text_analysis_agent",
+        "vlm_interface",
+    }
+)
+
+
+def routed_model_for(config: SemanticRouterConfig, call_site: str) -> str:
+    """The router model name ``call_site`` sends.
+
+    A call site outside ``CLASSIFICATION_CALL_SITES`` takes the auto alias, so
+    an agent added without a classification takes the classifying entry rather
+    than silently inheriting a bounded decision that does not fit it.
+    """
+    if call_site in CLASSIFICATION_CALL_SITES:
+        return config.classification_model
+    return config.routed_model
+
+
 def resolve_semantic_router_headers(
     config: SemanticRouterConfig, tenant_id: str, tier: RouterTier
 ) -> Optional[Dict[str, str]]:
@@ -66,15 +121,16 @@ def apply_semantic_routing(
     config: SemanticRouterConfig,
     tenant_id: str,
     tier: RouterTier,
+    call_site: str,
 ) -> LLMEndpointConfig:
     """Return an endpoint routed through the semantic router, or the original.
 
     When ``config.enabled`` is False the input ``endpoint`` is returned as-is
     (same object). When enabled, a deep copy is returned with ``api_base`` set
-    to ``config.semantic_router_url``, ``model`` set to ``config.routed_model``
-    (the router resolves models by its own catalog names / auto alias and
-    rejects raw provider model ids with a 400), and the resolved tier header
-    merged onto ``extra_headers``.
+    to ``config.semantic_router_url``, ``model`` set to the router entry
+    ``call_site`` takes (the router resolves models by its own catalog names,
+    aliases and entrypoints, and rejects raw provider model ids with a 400),
+    and the resolved tier header merged onto ``extra_headers``.
 
     Raises ``ValueError`` if routing is enabled but ``semantic_router_url`` is
     empty — a misconfiguration that would otherwise silently send LLM traffic
@@ -94,7 +150,7 @@ def apply_semantic_routing(
 
     routed = copy.deepcopy(endpoint)
     routed.api_base = config.semantic_router_url
-    routed.model = config.routed_model
+    routed.model = routed_model_for(config, call_site)
     routed.extra_headers = merged
     return routed
 
@@ -124,6 +180,7 @@ def create_routed_lm(
     config: SemanticRouterConfig,
     tenant_id: str,
     tier: RouterTier,
+    call_site: str,
 ) -> "dspy.LM":
     """Build a ``dspy.LM`` for ``tenant_id`` on ``tier``, routed through the
     router when ``config.enabled``.
@@ -142,6 +199,7 @@ def create_routed_lm(
         config=config,
         tenant_id=tenant_id,
         tier=tier,
+        call_site=call_site,
     )
     if not config.enabled:
         return create_dspy_lm(routed, tenant_id=tenant_id)
@@ -189,8 +247,9 @@ def routed_lm_context_for(
     - Enabled: the endpoint is routed through the semantic router (api_base +
       tenant-tier header) for ``tenant_id``; the tier comes from the tenant's
       stored attribute, read through the same config manager the request
-      already carries, and the model becomes the router's auto alias so the
-      router picks the concrete model itself.
+      already carries, and the model becomes the router entry ``agent_name``
+      takes — the classification entrypoint for a bounded-output agent, the
+      auto alias otherwise — so the router picks the concrete model itself.
     - Disabled: the LM is built directly from the same endpoint — the plain
       direct-to-backend path, not a fallback.
 
@@ -231,4 +290,6 @@ def routed_lm_context_for(
         return _direct()
     ep = endpoint if endpoint is not None else cfg.get_llm_config().resolve(agent_name)
     tier = resolve_tenant_tier(cfg, tenant_id)
-    return dspy.context(lm=create_routed_lm(ep, router, tenant_id, tier))
+    return dspy.context(
+        lm=create_routed_lm(ep, router, tenant_id, tier, call_site=agent_name)
+    )

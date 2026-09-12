@@ -45,7 +45,7 @@ routing:
       capabilities: [chat, reasoning]
       modality: ar
   signals:
-    role_bindings:
+    role_bindings: &role_bindings
       - name: pro-users
         role: pro_tier
         subjects:
@@ -79,6 +79,8 @@ routing:
       - name: technical
         mmlu_categories: [computer science, engineering, math, physics]
   decisions:
+    # Deterministic keyword trigger for reasoning; the domain classifier
+    # (below) catches technical prompts the keyword list misses.
     - name: pro-technical-keyword
       priority: 300
       rules:
@@ -91,7 +93,7 @@ routing:
       modelRefs:
         - model: pro-reasoning
           use_reasoning: true
-      plugins:
+      plugins: &exact_cache
         - type: response_cache
           configuration:
             enabled: true
@@ -113,16 +115,7 @@ routing:
       modelRefs:
         - model: pro-reasoning
           use_reasoning: true
-      plugins:
-        - type: response_cache
-          configuration:
-            enabled: true
-            mode: exact
-            scope: user
-            request_controls:
-              enabled: true
-              header: x-vsr-cache-control
-              allowed: [max-age]
+      plugins: *exact_cache
     - name: pro-default
       priority: 200
       rules:
@@ -133,16 +126,7 @@ routing:
       modelRefs:
         - model: pro-reasoning
           use_reasoning: false
-      plugins:
-        - type: response_cache
-          configuration:
-            enabled: true
-            mode: exact
-            scope: user
-            request_controls:
-              enabled: true
-              header: x-vsr-cache-control
-              allowed: [max-age]
+      plugins: *exact_cache
     - name: free-default
       priority: 100
       rules:
@@ -153,17 +137,7 @@ routing:
       modelRefs:
         - model: basic-chat
           use_reasoning: false
-      plugins:
-        - type: response_cache
-          configuration:
-            enabled: true
-            mode: exact
-            scope: user
-            request_controls:
-              enabled: true
-              header: x-vsr-cache-control
-              allowed: [max-age]
-
+      plugins: *exact_cache
     - name: base-default
       priority: 50
       rules:
@@ -174,16 +148,58 @@ routing:
       modelRefs:
         - model: basic-chat
           use_reasoning: false
-      plugins:
-        - type: response_cache
-          configuration:
-            enabled: true
-            mode: exact
-            scope: user
-            request_controls:
-              enabled: true
-              header: x-vsr-cache-control
-              allowed: [max-age]
+      plugins: *exact_cache
+
+# Bounded-output agent calls (query rewrite, profile/modality selection,
+# routing intent, entity extraction) enter on this virtual model name. It
+# selects the ``classification`` recipe, whose decisions test the tenant tier
+# only: no domain or keyword signal, so the domain classifier never runs and
+# the routing decision costs no measurable time, while the tier still picks
+# the model and the response cache still applies.
+entrypoints:
+  - model_names: [cogniverse-classification]
+    recipe: classification
+
+recipes:
+  - name: classification
+    description: Tier-gated routing for bounded-output agent calls.
+    routing:
+      signals:
+        role_bindings: *role_bindings
+      decisions:
+        - name: classification-pro
+          priority: 200
+          rules:
+            operator: AND
+            conditions:
+              - type: authz
+                name: pro_tier
+          modelRefs:
+            - model: pro-reasoning
+              use_reasoning: false
+          plugins: *exact_cache
+        - name: classification-free
+          priority: 100
+          rules:
+            operator: AND
+            conditions:
+              - type: authz
+                name: free_tier
+          modelRefs:
+            - model: basic-chat
+              use_reasoning: false
+          plugins: *exact_cache
+        - name: classification-base
+          priority: 50
+          rules:
+            operator: AND
+            conditions:
+              - type: authz
+                name: base_tier
+          modelRefs:
+            - model: basic-chat
+              use_reasoning: false
+          plugins: *exact_cache
 global:
   services:
     authz:

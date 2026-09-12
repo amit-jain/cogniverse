@@ -2267,6 +2267,7 @@ class AgentDispatcher:
                 resolve_semantic_router_config(config),
                 tenant_id,
                 await asyncio.to_thread(resolve_tenant_tier, config, tenant_id),
+                call_site="coding_agent",
             )
 
             deps = CodingDeps(
@@ -2423,15 +2424,20 @@ class AgentDispatcher:
         )
         from cogniverse_foundation.config.utils import get_config
 
-        # One LM round trip stands between the caller and its results. A cold
-        # serving endpoint answers it in its own time, so a search that names
-        # no ceiling waits that long: bound it at the same budget the answer
-        # path uses, less the reserve retrieval needs.
+        # One LM round trip stands between the caller and its results, and it
+        # is held to what a rewrite through the router measurably costs. The
+        # grounding remainder still caps it, so a caller with less time than
+        # that gets the smaller of the two.
         if query_rewrite_timeout_s is None:
-            query_rewrite_timeout_s = max(
-                await self._grounding_search_budget_s(tenant_id)
-                - GROUNDING_SEARCH_RESERVE_S,
-                0.0,
+            from cogniverse_agents.search_agent import QUERY_REWRITE_BUDGET_S
+
+            query_rewrite_timeout_s = min(
+                QUERY_REWRITE_BUDGET_S,
+                max(
+                    await self._grounding_search_budget_s(tenant_id)
+                    - GROUNDING_SEARCH_RESERVE_S,
+                    0.0,
+                ),
             )
 
         # Rewrite query using conversation history to resolve anaphoric references.
@@ -2768,6 +2774,8 @@ class AgentDispatcher:
                 modalities=modalities,
                 undeployed_profiles=plan.undeployed_profiles,
             )
+        from cogniverse_agents.search_agent import QUERY_REWRITE_BUDGET_S
+
         try:
             budget_s = await self._grounding_search_budget_s(tenant_id)
         except ValueError:
@@ -2794,8 +2802,9 @@ class AgentDispatcher:
                     top_k=top_k,
                     enrichment={**enrichment, "profiles": profiles},
                     context=context,
-                    query_rewrite_timeout_s=max(
-                        budget_s - GROUNDING_SEARCH_RESERVE_S, 0.0
+                    query_rewrite_timeout_s=min(
+                        QUERY_REWRITE_BUDGET_S,
+                        max(budget_s - GROUNDING_SEARCH_RESERVE_S, 0.0),
                     ),
                 ),
                 timeout=budget_s,
@@ -3752,6 +3761,7 @@ class AgentDispatcher:
             resolve_semantic_router_config(config),
             tenant_id,
             await asyncio.to_thread(resolve_tenant_tier, config, tenant_id),
+            call_site="coding_agent",
         )
 
         deps = CodingDeps(

@@ -24,9 +24,16 @@ import pytest
 from dspy.utils.dummies import DummyLM
 
 from cogniverse_agents.search_agent import (
+    QUERY_REWRITE_BUDGET_S,
+    QUERY_REWRITE_FAILED,
     QUERY_REWRITE_TIMED_OUT,
     SearchAgent,
     SearchAgentDeps,
+)
+from cogniverse_foundation.telemetry.span_contract import (
+    QUERY_ENHANCEMENT_PATH_ATTRIBUTE,
+    QUERY_ENHANCEMENT_PATH_HEURISTIC_FALLBACK,
+    QUERY_ENHANCEMENT_PATH_LM,
 )
 from cogniverse_runtime.agent_dispatcher import (
     GROUNDING_SEARCH_RESERVE_S,
@@ -219,3 +226,175 @@ class TestAnOverrunningRewriteDegradesInsteadOfHanging:
             f"four bounded rewrites took {elapsed:.2f}s; they serialized on one "
             f"another instead of each bounding at {_EXPECTED_BOUND_S}s"
         )
+
+
+class TestTheMeasuredBudgetCapsTheGroundingRemainder:
+    """The remainder of the answer budget is what the caller can afford, not
+    what a rewrite costs. Held to the remainder alone the rewrite waits ten
+    seconds on a deployment whose measured p95 is under two, and every one of
+    those seconds is spent before the search the caller asked for starts."""
+
+    async def test_the_budget_is_the_sum_of_its_two_measurements(self):
+        from cogniverse_agents.search_agent import (
+            _MEASURED_ROUTED_REWRITE_P95_S,
+            _MEASURED_ROUTING_DECISION_P95_S,
+        )
+
+        assert _MEASURED_ROUTED_REWRITE_P95_S == 1.798
+        assert _MEASURED_ROUTING_DECISION_P95_S == 1.720
+        assert QUERY_REWRITE_BUDGET_S == 3.5
+
+    async def test_a_generous_remainder_is_capped_at_the_measured_budget(self):
+        dispatcher, captured, _, config_get = _dispatcher(
+            GROUNDING_SEARCH_RESERVE_S + 60.0
+        )
+
+        with (
+            patch("cogniverse_foundation.config.utils.get_config") as get_config,
+            dspy.context(lm=DummyLM([{"enhanced_query": _REWRITTEN}])),
+        ):
+            get_config.return_value = SimpleNamespace(get=config_get)
+            await dispatcher._execute_search_task(_QUERY, _TENANT, top_k=3)
+
+        assert captured == [QUERY_REWRITE_BUDGET_S]
+
+    async def test_a_remainder_smaller_than_the_budget_still_wins(self):
+        """The caller's ceiling is never exceeded to fit the rewrite in."""
+        dispatcher, captured, _, config_get = _dispatcher(
+            GROUNDING_SEARCH_RESERVE_S + 1.0
+        )
+
+        with (
+            patch("cogniverse_foundation.config.utils.get_config") as get_config,
+            dspy.context(lm=DummyLM([{"enhanced_query": _REWRITTEN}])),
+        ):
+            get_config.return_value = SimpleNamespace(get=config_get)
+            await dispatcher._execute_search_task(_QUERY, _TENANT, top_k=3)
+
+        assert captured == [1.0]
+
+
+def _span_recorder(name: str):
+    from opentelemetry.sdk.trace import TracerProvider
+    from opentelemetry.sdk.trace.export import SimpleSpanProcessor
+    from opentelemetry.sdk.trace.export.in_memory_span_exporter import (
+        InMemorySpanExporter,
+    )
+
+    exporter = InMemorySpanExporter()
+    provider = TracerProvider()
+    provider.add_span_processor(SimpleSpanProcessor(exporter))
+    return provider.get_tracer(name), exporter
+
+
+def _rewrite_path(exporter) -> list[str]:
+    return [
+        span.attributes[QUERY_ENHANCEMENT_PATH_ATTRIBUTE]
+        for span in exporter.get_finished_spans()
+        if QUERY_ENHANCEMENT_PATH_ATTRIBUTE in (span.attributes or {})
+    ]
+
+
+class TestTheServedRewritePathIsOnTheSpan:
+    """Which path served the rewrite has to be readable off a trace. A search
+    that fell back logs one warning line and returns results either way, so
+    without the marker a rewrite that is degraded for every request on the
+    cluster is indistinguishable from one that is working."""
+
+    async def test_a_completed_rewrite_marks_the_lm_path(self):
+        dispatcher, _, _, config_get = _dispatcher()
+        tracer, exporter = _span_recorder("rewrite-lm")
+
+        with (
+            patch("cogniverse_foundation.config.utils.get_config") as get_config,
+            dspy.context(lm=DummyLM([{"enhanced_query": _REWRITTEN}])),
+        ):
+            get_config.return_value = SimpleNamespace(get=config_get)
+            with tracer.start_as_current_span("dispatch"):
+                await dispatcher._execute_search_task(_QUERY, _TENANT, top_k=3)
+
+        assert _rewrite_path(exporter) == [QUERY_ENHANCEMENT_PATH_LM]
+
+    async def test_an_overrunning_rewrite_marks_the_heuristic_fallback(self):
+        dispatcher, _, searched, config_get = _dispatcher()
+        tracer, exporter = _span_recorder("rewrite-timeout")
+
+        with (
+            patch("cogniverse_foundation.config.utils.get_config") as get_config,
+            dspy.context(lm=_HangingLM([{"enhanced_query": _REWRITTEN}])),
+        ):
+            get_config.return_value = SimpleNamespace(get=config_get)
+            with tracer.start_as_current_span("dispatch"):
+                await dispatcher._execute_search_task(_QUERY, _TENANT, top_k=3)
+
+        assert _rewrite_path(exporter) == [QUERY_ENHANCEMENT_PATH_HEURISTIC_FALLBACK]
+        assert searched == [_QUERY]
+
+
+class TestAnUnreachableRouterDegradesTheRewrite:
+    """The fault contract for the router itself. The rewrite's LM is the router
+    when semantic routing is on, so the router being down is an LM that refuses
+    the connection - and the search must still answer, on the original query,
+    naming the router entry it could not reach."""
+
+    async def test_a_refused_router_falls_back_and_names_the_entry(self, caplog):
+        import socket
+
+        from cogniverse_foundation.config.semantic_router import create_routed_lm
+        from cogniverse_foundation.config.unified_config import (
+            LLMEndpointConfig,
+            SemanticRouterConfig,
+        )
+
+        with socket.socket() as probe:
+            probe.bind(("127.0.0.1", 0))
+            dead_port = probe.getsockname()[1]
+
+        routed_lm = create_routed_lm(
+            LLMEndpointConfig(
+                model="openai/google/gemma-4-e4b-it",
+                api_base="http://127.0.0.1:1/v1",
+                request_timeout=2.0,
+                num_retries=0,
+            ),
+            SemanticRouterConfig(
+                enabled=True,
+                semantic_router_url=f"http://127.0.0.1:{dead_port}/v1",
+            ),
+            _TENANT,
+            "default",
+            call_site="search_agent",
+        )
+        routed_lm.cache = False
+        assert routed_lm.model == "openai/cogniverse-classification"
+
+        dispatcher, _, searched, config_get = _dispatcher()
+        tracer, exporter = _span_recorder("rewrite-router-down")
+
+        with (
+            patch("cogniverse_foundation.config.utils.get_config") as get_config,
+            dspy.context(lm=routed_lm),
+            caplog.at_level("WARNING", logger="cogniverse_agents.search_agent"),
+        ):
+            get_config.return_value = SimpleNamespace(get=config_get)
+            with tracer.start_as_current_span("dispatch"):
+                response = await dispatcher._execute_search_task(
+                    _QUERY, _TENANT, top_k=3
+                )
+
+        assert _rewrite_path(exporter) == [QUERY_ENHANCEMENT_PATH_HEURISTIC_FALLBACK]
+        assert searched == [_QUERY]
+        assert response["results"] == [_HIT]
+        assert response["query_rewrite"]["enhanced_query"] is None
+        assert response["query_rewrite"]["degraded"] in {
+            QUERY_REWRITE_FAILED,
+            QUERY_REWRITE_TIMED_OUT,
+        }
+        rewrite_warnings = [
+            record.getMessage()
+            for record in caplog.records
+            if record.name == "cogniverse_agents.search_agent"
+            and "Query rewrite on" in record.getMessage()
+        ]
+        assert len(rewrite_warnings) == 1
+        assert "openai/cogniverse-classification" in rewrite_warnings[0]
