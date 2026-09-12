@@ -25,6 +25,7 @@ import httpx
 import pytest
 import yaml
 
+from cogniverse_foundation.common.tenant_utils import canonical_tenant_id
 from cogniverse_foundation.config.unified_config import ROUTER_TIERS
 from tests.e2e.conftest import (
     KUBECTL_CONTEXT,
@@ -49,6 +50,7 @@ CHART_ROUTER_CONFIG = (
     / "config.yaml"
 )
 QUERY = "summarise what this tenant has ingested"
+AGENT = "summarizer_agent"
 
 
 def _free_port() -> int:
@@ -152,11 +154,19 @@ def _set_tier(tenant_id: str, tier: str) -> dict:
 
 
 def _dispatch_one_query(tenant_id: str) -> None:
-    """One real query through the production dispatch route."""
+    """One real query through the production dispatch route.
+
+    Body shape is the route's ``AgentTask``: agent_name + query, tenant inside
+    ``context``.
+    """
     with httpx.Client(timeout=300.0) as client:
         response = client.post(
-            f"{RUNTIME}/agents/summarizer_agent/process",
-            json={"text": QUERY, "tenant_id": tenant_id},
+            f"{RUNTIME}/agents/{AGENT}/process",
+            json={
+                "agent_name": AGENT,
+                "query": QUERY,
+                "context": {"tenant_id": tenant_id},
+            },
         )
     assert response.status_code == 200, response.text[:600]
 
@@ -177,7 +187,10 @@ def test_the_stored_tier_steers_the_deployed_router(router_metrics_url):
     for tier in walk:
         decision = decision_by_tier[tier]
         before = _decision_count(router_metrics_url, decision)
-        assert _set_tier(tenant_id, tier) == {"tenant_id": tenant_id, "tier": tier}
+        assert _set_tier(tenant_id, tier) == {
+            "tenant_id": canonical_tenant_id(tenant_id),
+            "tier": tier,
+        }
         _dispatch_one_query(tenant_id)
         observed.append(_decision_count(router_metrics_url, decision) - before)
 
