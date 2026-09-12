@@ -9,7 +9,9 @@ whole request trace when one is present.
 
 from __future__ import annotations
 
+import json
 from contextlib import contextmanager
+from pathlib import Path
 from types import SimpleNamespace
 from unittest.mock import MagicMock
 
@@ -35,7 +37,15 @@ from cogniverse_foundation.telemetry.config import (
     TelemetryLevel,
 )
 from cogniverse_foundation.telemetry.manager import TelemetryManager
-from cogniverse_runtime.agent_dispatcher import AgentDispatcher, _GatewayAgentEntry
+from cogniverse_runtime.agent_dispatcher import (
+    GROUNDING_SEARCH_TIMEOUT_KEY,
+    AgentDispatcher,
+    _GatewayAgentEntry,
+)
+
+_SHIPPED_GROUNDING_BUDGET_S = json.loads(
+    (Path(__file__).resolve().parents[3] / "configs" / "config.json").read_text()
+)[GROUNDING_SEARCH_TIMEOUT_KEY]
 
 
 @pytest.fixture(autouse=True)
@@ -204,9 +214,15 @@ async def test_search_dispatch_roots_process_and_children(monkeypatch):
     )
 
     fake_config = MagicMock()
-    fake_config.get = lambda key, default=None: (
-        "video_colpali_smol500_mv_frame" if key == "active_video_profile" else default
-    )
+
+    def _get(key, default=None):
+        if key == "active_video_profile":
+            return "video_colpali_smol500_mv_frame"
+        if key == GROUNDING_SEARCH_TIMEOUT_KEY:
+            return _SHIPPED_GROUNDING_BUDGET_S
+        return default
+
+    fake_config.get = _get
     monkeypatch.setattr(
         "cogniverse_foundation.config.utils.get_config",
         lambda **kwargs: fake_config,

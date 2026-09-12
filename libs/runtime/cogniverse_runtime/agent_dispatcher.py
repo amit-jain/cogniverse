@@ -2362,6 +2362,17 @@ class AgentDispatcher:
         )
         from cogniverse_foundation.config.utils import get_config
 
+        # One LM round trip stands between the caller and its results. A cold
+        # serving endpoint answers it in its own time, so a search that names
+        # no ceiling waits that long: bound it at the same budget the answer
+        # path uses, less the reserve retrieval needs.
+        if query_rewrite_timeout_s is None:
+            query_rewrite_timeout_s = max(
+                await self._grounding_search_budget_s(tenant_id)
+                - GROUNDING_SEARCH_RESERVE_S,
+                0.0,
+            )
+
         # Rewrite query using conversation history to resolve anaphoric references.
         # If the DSPy rewriter fails (e.g., no LM configured), propagate with
         # a clear error rather than silently searching with the unresolved query.
