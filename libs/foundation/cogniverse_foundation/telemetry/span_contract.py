@@ -63,12 +63,18 @@ ENTITY_EXTRACTION_FALLBACK_LM_UNAVAILABLE = "lm_unavailable"
 # names the operator action — 400 is a malformed request cogniverse (or a hop
 # on the way) built, 401/403 a credential, 429 a quota.
 ENTITY_EXTRACTION_FALLBACK_REQUEST_REJECTED = "request_rejected"
+# The LM answered and the answer was dropped locally: an entity it returned is
+# not a span of the query the spans are grounded against. Distinct from the
+# three above, which are all the engine's doing, and it points at cogniverse's
+# own grounding rather than at the provider.
+ENTITY_EXTRACTION_FALLBACK_GROUNDING_FAILED = "grounding_failed"
 # The base reasons; ``request_rejected`` is served with its status appended.
 ENTITY_EXTRACTION_FALLBACK_VALUES = frozenset(
     {
         ENTITY_EXTRACTION_FALLBACK_SCHEMA_REFUSED,
         ENTITY_EXTRACTION_FALLBACK_LM_UNAVAILABLE,
         ENTITY_EXTRACTION_FALLBACK_REQUEST_REJECTED,
+        ENTITY_EXTRACTION_FALLBACK_GROUNDING_FAILED,
     }
 )
 
