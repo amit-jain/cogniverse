@@ -588,15 +588,36 @@ class TestProgressFlushCadence:
 
 
 class _VLMServer(ThreadingHTTPServer):
-    """Real vLLM /v1 stand-in that records peak in-flight concurrency."""
+    """Real vLLM /v1 stand-in that records peak in-flight concurrency and holds
+    each request until a full wave is in flight, so overlap is forced rather
+    than left to scheduling."""
 
-    def __init__(self, *a, **k):
+    def __init__(self, *a, hold_until: int, expected_total: int, **k):
         super().__init__(*a, **k)
         self.lock = threading.Lock()
+        self.arrived = threading.Condition(self.lock)
+        self.hold_until = hold_until
+        self.expected_total = expected_total
         self.current = 0
         self.max_concurrency = 0
         self.chat_request_count = 0
         self.models_request_count = 0
+
+    def wait_for_wave(self) -> bool:
+        """Hold a request until ``hold_until`` are in flight together or every
+        expected request has arrived; False when neither happens in time."""
+        deadline = time.monotonic() + 10.0
+        with self.arrived:
+            self.arrived.notify_all()
+            while (
+                self.current < self.hold_until
+                and self.chat_request_count < self.expected_total
+            ):
+                remaining = deadline - time.monotonic()
+                if remaining <= 0:
+                    return False
+                self.arrived.wait(remaining)
+        return True
 
 
 class _VLMHandler(BaseHTTPRequestHandler):
@@ -632,7 +653,9 @@ class _VLMHandler(BaseHTTPRequestHandler):
             parts = payload["messages"][0]["content"]
             url = next(p["image_url"]["url"] for p in parts if p["type"] == "image_url")
             text = base64.b64decode(url.split("base64,", 1)[1]).decode("utf-8")
-            time.sleep(0.3)  # keep every request in flight long enough to overlap
+            if not self.server.wait_for_wave():
+                self.send_error(503, "wave never formed")
+                return
             self._json({"choices": [{"message": {"content": f"desc for {text}"}}]})
         finally:
             with self.server.lock:
@@ -645,7 +668,9 @@ class TestVLMOpenAIConcurrency:
     vLLM continuous batching is fed, not one blocking POST at a time."""
 
     def test_frames_described_concurrently(self, tmp_path):
-        server = _VLMServer(("127.0.0.1", 0), _VLMHandler)
+        server = _VLMServer(
+            ("127.0.0.1", 0), _VLMHandler, hold_until=8, expected_total=8
+        )
         port = server.server_address[1]
         threading.Thread(target=server.serve_forever, daemon=True).start()
         try:
@@ -679,7 +704,9 @@ class TestVLMOpenAIConcurrency:
     def test_vlm_concurrency_bounds_in_flight_requests(self, tmp_path):
         """A configured vlm_concurrency caps how many describe-POSTs the vLLM
         endpoint sees at once — the throughput lever operators tune per GPU."""
-        server = _VLMServer(("127.0.0.1", 0), _VLMHandler)
+        server = _VLMServer(
+            ("127.0.0.1", 0), _VLMHandler, hold_until=3, expected_total=12
+        )
         port = server.server_address[1]
         threading.Thread(target=server.serve_forever, daemon=True).start()
         try:
