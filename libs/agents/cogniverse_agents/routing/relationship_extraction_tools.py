@@ -21,6 +21,21 @@ logger = logging.getLogger(__name__)
 DEFAULT_GLINER_MODEL = "urchade/gliner_large-v2.1"
 
 
+class GLiNEREntityExtractionUnavailableError(RuntimeError):
+    """GLiNER could not answer, so whether the text holds entities is unknown.
+
+    Carries the model and the inference URL the call targeted, so a caller
+    names the outage instead of reading it as "this text has no entities".
+    """
+
+    def __init__(
+        self, message: str, *, model_name: str, inference_url: Optional[str]
+    ) -> None:
+        super().__init__(message)
+        self.model_name = model_name
+        self.inference_url = inference_url
+
+
 class GLiNERRelationshipExtractor:
     """
     GLiNER-based relationship extractor for entity recognition and relationship inference.
@@ -73,12 +88,30 @@ class GLiNERRelationshipExtractor:
 
         Returns:
             List of entity dictionaries with text, label, score, start, end
+
+        Raises:
+            GLiNEREntityExtractionUnavailableError: If the model is not loaded
+                or the prediction failed, so an outage is never returned as an
+                empty extraction.
         """
         if self.gliner_model is None:
-            self._load_gliner_model()
+            try:
+                self._load_gliner_model()
+            except Exception as e:
+                raise GLiNEREntityExtractionUnavailableError(
+                    f"GLiNER model {self.model_name!r} could not be loaded "
+                    f"(inference_url={self.inference_url!r}): "
+                    f"{type(e).__name__}: {e}",
+                    model_name=self.model_name,
+                    inference_url=self.inference_url,
+                ) from e
         if not self.gliner_model:
-            logger.warning("GLiNER model not available, returning empty entities")
-            return []
+            raise GLiNEREntityExtractionUnavailableError(
+                f"GLiNER model {self.model_name!r} is not loaded "
+                f"(inference_url={self.inference_url!r})",
+                model_name=self.model_name,
+                inference_url=self.inference_url,
+            )
 
         if labels is None:
             # Default entity types relevant for video/content queries
@@ -120,8 +153,13 @@ class GLiNERRelationshipExtractor:
             return extracted_entities
 
         except Exception as e:
-            logger.error(f"GLiNER entity extraction failed: {e}")
-            return []
+            raise GLiNEREntityExtractionUnavailableError(
+                f"GLiNER model {self.model_name!r} failed on a "
+                f"{len(text)}-character text "
+                f"(inference_url={self.inference_url!r}): {type(e).__name__}: {e}",
+                model_name=self.model_name,
+                inference_url=self.inference_url,
+            ) from e
 
     def infer_relationships_from_entities(
         self, text: str, entities: List[Dict[str, Any]]

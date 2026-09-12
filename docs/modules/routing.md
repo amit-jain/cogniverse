@@ -647,7 +647,13 @@ Used by `libs/dashboard/cogniverse_dashboard/tabs/optimization.py`.
 `ComposableQueryAnalysisModule` and by `entity_extraction_agent`'s fast path.
 
 - **`GLiNERRelationshipExtractor`**: `extract_entities(query)` (GLiNER zero-shot NER),
-  `infer_relationships_from_entities(query, entities)` (heuristic relation inference)
+  `infer_relationships_from_entities(query, entities)` (heuristic relation inference).
+  `extract_entities` raises `GLiNEREntityExtractionUnavailableError` (naming the model and the
+  inference URL) when the model cannot be loaded or the prediction fails, so a GLiNER outage is
+  never returned as an empty entity list. `EntityExtractionAgent` then reports the failed fast
+  path instead of an empty extraction; `ComposableQueryAnalysisModule` takes its fallback
+  prediction and `RelationshipExtractorTool.extract_relationships` its `query_structure: "error"`
+  result.
 - **`SpaCyDependencyAnalyzer`**: `analyze_dependencies(text)`, `extract_semantic_relationships(text)`
   (dependency-parse-based relationship extraction, enriches the GLiNER fast path)
 - **`RelationshipExtractorTool`**: combines both extractors, deduplicates relationships, and computes an

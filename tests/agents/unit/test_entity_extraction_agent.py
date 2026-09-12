@@ -1638,6 +1638,125 @@ class TestTelemetrySpanEmission:
         assert recorded["input.value"] == long_query
 
 
+class TestUngroundedEntityIsNotAnLMOutage:
+    """An entity the LM returned that is not in the query names its own reason."""
+
+    @pytest.mark.asyncio
+    async def test_span_records_grounding_failed_not_lm_unavailable(self):
+        from cogniverse_agents.entity_extraction_agent import (
+            EntitySpanNotInQueryError,
+        )
+        from cogniverse_foundation.telemetry.span_contract import (
+            ENTITY_EXTRACTION_FALLBACK_ATTRIBUTE,
+            ENTITY_EXTRACTION_FALLBACK_GROUNDING_FAILED,
+        )
+
+        agent = _make_extraction_agent()
+        agent._spacy_analyzer = MagicMock()
+        agent._gliner_extractor = _CountingExtractor(
+            result=[
+                {
+                    "text": "Obama",
+                    "label": "PERSON",
+                    "confidence": 0.9,
+                    "start_pos": 0,
+                    "end_pos": 5,
+                }
+            ]
+        )
+        # The memory-injected prompt can carry entities the raw query does not,
+        # and the DSPy path grounds its spans against the raw query.
+        remembered = [
+            Entity(text="Obama", type="PERSON", context="Obama in Chicago"),
+            Entity(text="Berlin", type="PLACE", context="Obama in Chicago"),
+        ]
+
+        with patch.object(agent, "_extract_dspy_path", return_value=remembered):
+            result = await agent._process_impl(
+                EntityExtractionInput(
+                    query="Obama in Chicago", tenant_id=TEST_TENANT_ID
+                )
+            )
+
+        assert result.path_used == "fast"
+        ((span,),) = (agent.telemetry_manager.spans,)
+        assert (
+            span.attributes[ENTITY_EXTRACTION_FALLBACK_ATTRIBUTE]
+            == ENTITY_EXTRACTION_FALLBACK_GROUNDING_FAILED
+        )
+        assert (
+            EntitySpanNotInQueryError.__name__
+            in span.attributes["entity_extraction.fallback_error"]
+        )
+
+
+class TestGLiNEROutageIsNotAnEmptyExtraction:
+    """A GLiNER that cannot answer raises; it never reports "no entities"."""
+
+    # A model id no registry serves, so the real loader fails the way an
+    # unprovisioned or unreachable GLiNER does.
+    UNLOADABLE_MODEL = "cogniverse-test/gliner-does-not-exist"
+
+    def _extractor(self):
+        from cogniverse_agents.routing.relationship_extraction_tools import (
+            GLiNERRelationshipExtractor,
+        )
+
+        return GLiNERRelationshipExtractor(model_name=self.UNLOADABLE_MODEL)
+
+    def test_unloadable_model_raises_naming_the_model(self):
+        from cogniverse_agents.routing.relationship_extraction_tools import (
+            GLiNEREntityExtractionUnavailableError,
+        )
+
+        with pytest.raises(GLiNEREntityExtractionUnavailableError) as excinfo:
+            self._extractor().extract_entities("Barack Obama in Chicago")
+
+        assert excinfo.value.model_name == self.UNLOADABLE_MODEL
+        assert excinfo.value.inference_url is None
+        assert self.UNLOADABLE_MODEL in str(excinfo.value)
+
+    def test_absent_gliner_dependency_raises(self, monkeypatch):
+        """The slim runtime image ships without gliner; that is not "no entities"."""
+        import cogniverse_core.common.models as models
+        from cogniverse_agents.routing.relationship_extraction_tools import (
+            GLiNEREntityExtractionUnavailableError,
+        )
+
+        def _absent(*args, **kwargs):
+            raise ImportError("No module named 'gliner'")
+
+        monkeypatch.setattr(models, "get_or_load_gliner", _absent)
+
+        with pytest.raises(GLiNEREntityExtractionUnavailableError) as excinfo:
+            self._extractor().extract_entities("Barack Obama in Chicago")
+
+        assert str(excinfo.value) == (
+            f"GLiNER model {self.UNLOADABLE_MODEL!r} is not loaded (inference_url=None)"
+        )
+
+    @pytest.mark.asyncio
+    async def test_agent_surfaces_the_outage_instead_of_zero_entities(self):
+        agent = _make_extraction_agent()
+        agent._gliner_extractor = self._extractor()
+        agent._spacy_analyzer = MagicMock()
+
+        with patch.object(
+            agent, "_extract_dspy_path", side_effect=RuntimeError("LM failed")
+        ):
+            with pytest.raises(RuntimeError) as excinfo:
+                await agent._process_impl(
+                    EntityExtractionInput(
+                        query="Barack Obama in Chicago", tenant_id=TEST_TENANT_ID
+                    )
+                )
+
+        message = str(excinfo.value)
+        assert message.startswith("Entity extraction failed: DSPy path failed with")
+        assert "GLiNEREntityExtractionUnavailableError" in message
+        assert self.UNLOADABLE_MODEL in message
+
+
 class TestRelationshipConfidenceIsTheExtractorScore:
     """A relationship's score is the one its extractor measured, or no row."""
 

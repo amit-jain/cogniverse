@@ -28,6 +28,7 @@ from cogniverse_foundation.dspy import StructuredJSONAdapter
 from cogniverse_foundation.telemetry.span_contract import (
     ENTITY_EXTRACTION_FALLBACK_ATTRIBUTE,
     ENTITY_EXTRACTION_FALLBACK_ERROR_ATTRIBUTE,
+    ENTITY_EXTRACTION_FALLBACK_GROUNDING_FAILED,
     ENTITY_EXTRACTION_FALLBACK_LM_UNAVAILABLE,
     ENTITY_EXTRACTION_FALLBACK_SCHEMA_REFUSED,
     OP_ENTITY_EXTRACTION,
@@ -338,20 +339,39 @@ def _rejection_status(exc: BaseException) -> Optional[int]:
     return status if 400 <= status < 500 else None
 
 
+class EntitySpanNotInQueryError(RuntimeError):
+    """A validated entity is not a span of the query it is grounded against.
+
+    The LM answered; the answer is dropped here, not by the engine. Carries the
+    entity text and the query so the span names which one failed.
+    """
+
+    def __init__(self, entity_text: str, query: str) -> None:
+        super().__init__(
+            f"Validated entity {entity_text!r} was not found in query {query!r}"
+        )
+        self.entity_text = entity_text
+        self.query = query
+
+
 def _fallback_reason(exc: BaseException) -> str:
     """Why the DSPy path lost this query, as a queryable span value.
 
     ``schema_refused`` means the engine answered outside the signature's
     enforced output schema. ``request_rejected:<status>`` means it refused the
     request without generating anything — a body it would not accept, a
-    credential, a quota. Anything else is the LM being unreachable or failing
-    outright. The three demand different operator action, so the fast path
-    records which one it served instead of the DSPy result.
+    credential, a quota. ``grounding_failed`` means the LM answered and the
+    answer was dropped here, because an entity it returned is not a span of the
+    query. Anything else is the LM being unreachable or failing outright. Each
+    demands different operator action, so the fast path records which one it
+    served instead of the DSPy result.
     """
     seen: set[int] = set()
     current: BaseException | None = exc
     while current is not None and id(current) not in seen:
         seen.add(id(current))
+        if isinstance(current, EntitySpanNotInQueryError):
+            return ENTITY_EXTRACTION_FALLBACK_GROUNDING_FAILED
         if isinstance(current, AdapterParseError):
             return ENTITY_EXTRACTION_FALLBACK_SCHEMA_REFUSED
         status = _rejection_status(current)
@@ -687,9 +707,7 @@ class EntityExtractionAgent(
         for entity in entities:
             start = query.find(entity.text)
             if start < 0:
-                raise RuntimeError(
-                    f"Validated entity {entity.text!r} was not found in query {query!r}"
-                )
+                raise EntitySpanNotInQueryError(entity.text, query)
             end = start + len(entity.text)
             entity_records.append(
                 {
