@@ -63,3 +63,21 @@ def tenant_id_for_test(request: pytest.FixtureRequest) -> str:
     func_part = _normalize(request.node.name)
     combined = f"{module_part}__{func_part}"
     return combined[:_MAX_TENANT_LEN]
+
+
+def config_manager_with_tiers(tiers: dict[str, str]):
+    """A ConfigManager over an in-memory store holding these tenants' tiers.
+
+    The router tier is a stored tenant attribute, so a test that asserts the
+    tier header has to seed it where the seam reads it from.
+    """
+    from cogniverse_foundation.config.manager import ConfigManager
+    from cogniverse_foundation.config.tenant_tiers import set_tenant_tier
+    from tests.utils.memory_store import InMemoryConfigStore
+
+    store = InMemoryConfigStore()
+    store.initialize()
+    manager = ConfigManager(store=store)
+    for tenant_id, tier in tiers.items():
+        set_tenant_tier(manager, tenant_id, tier)
+    return manager

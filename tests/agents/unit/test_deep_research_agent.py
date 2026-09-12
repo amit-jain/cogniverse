@@ -15,6 +15,7 @@ import dspy
 import pytest
 
 from cogniverse_agents.deep_research_agent import DeepResearchAgent, DeepResearchInput
+from tests.utils.tenant_helpers import config_manager_with_tiers
 
 pytestmark = [pytest.mark.unit, pytest.mark.ci_fast]
 
@@ -106,14 +107,16 @@ async def test_research_runs_under_request_tenant_routed_lm(monkeypatch):
 
     cfg = MagicMock()
     cfg.get_semantic_router.return_value = SemanticRouterConfig(enabled=True)
+    cfg.config_manager = config_manager_with_tiers({"acme:acme": "pro"})
     endpoint = MagicMock(name="deep_research_endpoint")
     cfg.get_llm_config.return_value.resolve.return_value = endpoint
 
     captured: dict = {}
 
-    def fake_create_routed_lm(ep, router, tenant_id):
+    def fake_create_routed_lm(ep, router, tenant_id, tier):
         captured["endpoint"] = ep
         captured["tenant_id"] = tenant_id
+        captured["tier"] = tier
         return sentinel_lm
 
     monkeypatch.setattr(
@@ -134,6 +137,7 @@ async def test_research_runs_under_request_tenant_routed_lm(monkeypatch):
     assert seen["lm"] is sentinel_lm, (
         f"research ran on {seen['lm']!r}, not the tenant-routed LM"
     )
+    assert captured["tier"] == "pro"
     assert captured["tenant_id"] == "acme:acme"
     assert captured["endpoint"] is endpoint
     assert cfg.get_llm_config.return_value.resolve.call_args[0][0] == (

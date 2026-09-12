@@ -247,6 +247,8 @@ class TenantConfig:
 # against the shipped chart.
 RouterTier = Literal["default", "free", "pro"]
 ROUTER_TIERS: frozenset[str] = frozenset(get_args(RouterTier))
+# The tier a tenant carries when it has none stored.
+DEFAULT_ROUTER_TIER: RouterTier = "default"
 
 
 @dataclass
@@ -257,8 +259,9 @@ class SemanticRouterConfig:
     ``semantic_router_url`` (the Envoy front-end for the semantic router)
     instead of the model backend, and two authz headers are attached per
     request: the tenant identity (``user_id_header``, the ``tenant_id``) and
-    the tenant tier (``tier_header``, resolved from ``tenant_tiers`` with
-    ``default_tier`` as fallback). The router's authz signal requires the
+    the tenant tier (``tier_header``), which the caller resolves per request
+    from the tenant's stored attribute
+    (``cogniverse_foundation.config.tenant_tiers``). The router's authz signal requires the
     identity header and refuses to evaluate role bindings without it (no silent
     bypass), then gates the tenant's allowed model set by tier and classifies
     the request content itself (domain/complexity) to pick the model +
@@ -271,8 +274,6 @@ class SemanticRouterConfig:
 
     enabled: bool = False
     semantic_router_url: str = ""
-    tenant_tiers: Dict[str, RouterTier] = field(default_factory=dict)
-    default_tier: RouterTier = "default"
     tier_header: str = "x-authz-user-groups"
     user_id_header: str = "x-authz-user-id"
     # Model name sent on routed requests (litellm provider prefix + the
@@ -285,8 +286,6 @@ class SemanticRouterConfig:
         return {
             "enabled": self.enabled,
             "semantic_router_url": self.semantic_router_url,
-            "tenant_tiers": dict(self.tenant_tiers),
-            "default_tier": self.default_tier,
             "tier_header": self.tier_header,
             "user_id_header": self.user_id_header,
             "routed_model": self.routed_model,
@@ -297,8 +296,6 @@ class SemanticRouterConfig:
         return cls(
             enabled=bool(data.get("enabled", False)),
             semantic_router_url=data.get("semantic_router_url", ""),
-            tenant_tiers=dict(data.get("tenant_tiers") or {}),
-            default_tier=data.get("default_tier", "default"),
             tier_header=data.get("tier_header", "x-authz-user-groups"),
             user_id_header=data.get("user_id_header", "x-authz-user-id"),
             routed_model=data.get("routed_model", "openai/auto"),

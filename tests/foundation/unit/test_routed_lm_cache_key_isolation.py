@@ -33,16 +33,18 @@ _ENDPOINT = LLMEndpointConfig(
 _ROUTER = SemanticRouterConfig(
     enabled=True,
     semantic_router_url="http://router.example/v1",
-    tenant_tiers={"acme:prod": "pro", "globex:prod": "free"},
-    default_tier="default",
 )
+_TIERS = {"acme:prod": "pro", "globex:prod": "free"}
 _MESSAGES = [{"role": "user", "content": "rewrite: people exercising"}]
 
 
-def _cache_key(tenant_id: str, router: SemanticRouterConfig = _ROUTER) -> str:
+def _cache_key(tenant_id: str, tier: str | None = None) -> str:
     """The key DSPy would store this tenant's rewrite under."""
     routed = apply_semantic_routing(
-        endpoint=_ENDPOINT, config=router, tenant_id=tenant_id
+        endpoint=_ENDPOINT,
+        config=_ROUTER,
+        tenant_id=tenant_id,
+        tier=tier or _TIERS.get(tenant_id, "default"),
     )
     request = {
         "model": routed.model,
@@ -69,30 +71,18 @@ class TestTheCacheKeySeparatesTenants:
     def test_two_tenants_on_the_same_tier_still_get_different_keys(self):
         """Identity, not only tier, is in the key: two free-tier tenants must
         not share a rewrite either."""
-        router = SemanticRouterConfig(
-            enabled=True,
-            semantic_router_url="http://router.example/v1",
-            tenant_tiers={"a:prod": "free", "b:prod": "free"},
-            default_tier="default",
-        )
-        assert _cache_key("a:prod", router) != _cache_key("b:prod", router)
+        assert _cache_key("a:prod", "free") != _cache_key("b:prod", "free")
 
     def test_the_tier_is_part_of_the_key(self):
         """Tier selects the model, so one tenant's tier change must not be
         answered out of the entry written under its old tier."""
-        promoted = SemanticRouterConfig(
-            enabled=True,
-            semantic_router_url="http://router.example/v1",
-            tenant_tiers={"acme:prod": "free"},
-            default_tier="default",
-        )
-        assert _cache_key("acme:prod") != _cache_key("acme:prod", promoted)
+        assert _cache_key("acme:prod", "pro") != _cache_key("acme:prod", "free")
 
     def test_the_headers_that_carry_the_tenant_are_actually_on_the_endpoint(self):
         """The separation above only holds because these two headers ride on
         extra_headers, which DSPy hashes. Pin the exact pair."""
         routed = apply_semantic_routing(
-            endpoint=_ENDPOINT, config=_ROUTER, tenant_id="acme:prod"
+            endpoint=_ENDPOINT, config=_ROUTER, tenant_id="acme:prod", tier="pro"
         )
         assert routed.extra_headers == {
             _ROUTER.user_id_header: "acme:prod",

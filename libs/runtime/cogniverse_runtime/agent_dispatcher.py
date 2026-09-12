@@ -2254,6 +2254,7 @@ class AgentDispatcher:
                 create_routed_lm,
                 resolve_semantic_router_config,
             )
+            from cogniverse_foundation.config.tenant_tiers import resolve_tenant_tier
             from cogniverse_foundation.config.utils import get_config
 
             # Offload the config ensure-chain (cold-config Vespa read) so the
@@ -2265,6 +2266,7 @@ class AgentDispatcher:
                 config.get_llm_config().resolve("coding_agent"),
                 resolve_semantic_router_config(config),
                 tenant_id,
+                await asyncio.to_thread(resolve_tenant_tier, config, tenant_id),
             )
 
             deps = CodingDeps(
@@ -3737,6 +3739,7 @@ class AgentDispatcher:
             create_routed_lm,
             resolve_semantic_router_config,
         )
+        from cogniverse_foundation.config.tenant_tiers import resolve_tenant_tier
         from cogniverse_foundation.config.utils import get_config
 
         # Offload the config ensure-chain (Vespa read on a cold/expired config)
@@ -3748,6 +3751,7 @@ class AgentDispatcher:
             config.get_llm_config().resolve("coding_agent"),
             resolve_semantic_router_config(config),
             tenant_id,
+            await asyncio.to_thread(resolve_tenant_tier, config, tenant_id),
         )
 
         deps = CodingDeps(

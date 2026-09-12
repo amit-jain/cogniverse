@@ -124,7 +124,7 @@ LLM endpoint. The division of labor:
 
 - **cogniverse** sends only *who* the tenant is — the tenant identity
   (`x-authz-user-id` = `tenant_id`) and its tier (`x-authz-user-groups`,
-  resolved from `tenant_tiers`). It does **not** classify the request.
+  the tenant's stored tier). It does **not** classify the request.
 - **the router** gates the tenant's allowed model set by tier (its authz
   signal — which requires the identity header and refuses to evaluate role
   bindings without it) and classifies the request content itself
@@ -150,8 +150,6 @@ two authz headers merged onto `extra_headers`:
 |---|---|
 | `enabled` | Master switch. `False` ⇒ endpoint passes through untouched. |
 | `semantic_router_url` | The router's OpenAI-compatible endpoint. Enabled with an empty value raises. |
-| `tenant_tiers` | `tenant_id → tier` map; unknown tenants fall back to `default_tier`. |
-| `default_tier` | Tier for tenants not in `tenant_tiers`. |
 | `tier_header` / `user_id_header` | Header names for the tier / identity (default `x-authz-user-groups` / `x-authz-user-id`). |
 | `routed_model` | Model sent on routed requests (default `openai/auto`). The router resolves models by its own catalog names / auto alias and rejects raw provider model ids with a 400, so the endpoint's model is replaced, not forwarded. |
 
@@ -159,12 +157,13 @@ The resolved headers win on a key collision with any pre-existing
 `extra_headers`. The block is part of `SystemConfig`, which the runtime reads
 from the config store (Vespa) — **not** from `config.json`. A deployed runtime
 receives it from the chart via the `SEMANTIC_ROUTER_ENABLED` /
-`SEMANTIC_ROUTER_URL` / `SEMANTIC_ROUTER_TENANT_TIERS` env vars, which
-`main.py` folds into `SystemConfig.semantic_router` at boot (a malformed tier
-map raises rather than silently emptying).
+`SEMANTIC_ROUTER_URL` env vars, which `main.py` folds into
+`SystemConfig.semantic_router` at boot. A tenant's tier is not deployment
+config: it is a per-tenant attribute, read per request and set through
+`PUT /admin/tenants/{tenant_id}/tier` (see `docs/modules/runtime.md`).
 
 Agents build a router-aware LM through one shared helper,
-`semantic_router.create_routed_lm(endpoint, config, tenant_id)`
+`semantic_router.create_routed_lm(endpoint, config, tenant_id, tier)`
 (`apply_semantic_routing` + `create_dspy_lm`); `resolve_semantic_router_config(...)`
 reads the block from a `ConfigUtils`-like accessor (a broken config store
 raises — no silent bypass). `DynamicDSPyMixin` uses these at LM-construction

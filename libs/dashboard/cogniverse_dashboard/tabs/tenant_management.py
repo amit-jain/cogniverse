@@ -266,6 +266,8 @@ def _render_tenants_list():
             with col2:
                 st.text(f"Tenant name: {tenant.get('tenant_name', 'unknown')}")
 
+            _render_tenant_tier(tenant_id)
+
             if schemas:
                 st.markdown("**Deployed Schemas:**")
                 for schema in schemas:
@@ -291,6 +293,39 @@ def _render_tenants_list():
                             st.rerun()
                         else:
                             st.error(result["error"])
+
+
+def _render_tenant_tier(tenant_id: str) -> None:
+    """Show the tenant's semantic-router tier and let an operator change it.
+
+    The tier selects which routing decisions the tenant's LLM calls can match,
+    so the options are the router's own vocabulary, never a typed string.
+    """
+    from cogniverse_foundation.config.unified_config import ROUTER_TIERS
+
+    options = sorted(ROUTER_TIERS)
+    result = _api_call("get", f"/admin/tenants/{tenant_id}/tier")
+    if not result["success"]:
+        st.error(f"Could not read router tier: {result['error']}")
+        return
+    current = result["data"]["tier"]
+    st.text(f"Router tier: {current}")
+
+    chosen = st.selectbox(
+        "Router tier",
+        options=options,
+        index=options.index(current),
+        key=f"tenant_tier_{tenant_id}",
+    )
+    if st.button("Set tier", key=f"set_tenant_tier_{tenant_id}"):
+        written = _api_call(
+            "put", f"/admin/tenants/{tenant_id}/tier", json={"tier": chosen}
+        )
+        if written["success"]:
+            st.success(f"{tenant_id} is now on tier {written['data']['tier']}")
+            st.rerun()
+        else:
+            st.error(written["error"])
 
 
 def _render_create_tenant():

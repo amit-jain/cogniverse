@@ -69,34 +69,45 @@ class TestSemanticRouterConfigFromEnv:
         assert isinstance(cfg, SemanticRouterConfig)
         assert cfg.enabled is True
         assert cfg.semantic_router_url == "http://cogniverse-gateway:8801/v1"
-        assert cfg.tenant_tiers == {}
+        assert cfg == SemanticRouterConfig(
+            enabled=True, semantic_router_url="http://cogniverse-gateway:8801/v1"
+        )
 
-    def test_tenant_tiers_parsed(self, monkeypatch):
+    def test_the_config_carries_no_tenant_tier_map(self, monkeypatch):
+        """A tenant's tier is its own stored attribute, not deployment env."""
         monkeypatch.setenv("SEMANTIC_ROUTER_ENABLED", "1")
         monkeypatch.setenv("SEMANTIC_ROUTER_URL", "http://cogniverse-gateway:8801/v1")
-        monkeypatch.setenv(
-            "SEMANTIC_ROUTER_TENANT_TIERS", '{"acme:prod": "pro", "beta:dev": "free"}'
-        )
 
         cfg = _semantic_router_config_from_env()
 
-        assert cfg.tenant_tiers == {"acme:prod": "pro", "beta:dev": "free"}
+        assert not hasattr(cfg, "tenant_tiers")
+        assert not hasattr(cfg, "default_tier")
+        assert set(cfg.to_dict()) == {
+            "enabled",
+            "semantic_router_url",
+            "tier_header",
+            "user_id_header",
+            "routed_model",
+        }
 
-    def test_malformed_tier_json_raises(self, monkeypatch):
+    def test_a_stale_tenant_tiers_env_changes_nothing(self, monkeypatch):
+        """A leftover env from an older chart must not resurrect the map."""
+        monkeypatch.setenv("SEMANTIC_ROUTER_ENABLED", "yes")
+        monkeypatch.setenv("SEMANTIC_ROUTER_URL", "http://cogniverse-gateway:8801/v1")
+        monkeypatch.setenv("SEMANTIC_ROUTER_TENANT_TIERS", '{"acme:prod": "pro"}')
+
+        assert _semantic_router_config_from_env() == SemanticRouterConfig(
+            enabled=True, semantic_router_url="http://cogniverse-gateway:8801/v1"
+        )
+
+    def test_a_malformed_stale_tenant_tiers_env_does_not_raise(self, monkeypatch):
         monkeypatch.setenv("SEMANTIC_ROUTER_ENABLED", "yes")
         monkeypatch.setenv("SEMANTIC_ROUTER_URL", "http://cogniverse-gateway:8801/v1")
         monkeypatch.setenv("SEMANTIC_ROUTER_TENANT_TIERS", "not-json{")
 
-        with pytest.raises(ValueError):
-            _semantic_router_config_from_env()
-
-    def test_non_object_tier_json_raises(self, monkeypatch):
-        monkeypatch.setenv("SEMANTIC_ROUTER_ENABLED", "yes")
-        monkeypatch.setenv("SEMANTIC_ROUTER_URL", "http://cogniverse-gateway:8801/v1")
-        monkeypatch.setenv("SEMANTIC_ROUTER_TENANT_TIERS", "[1, 2, 3]")
-
-        with pytest.raises(ValueError):
-            _semantic_router_config_from_env()
+        assert _semantic_router_config_from_env() == SemanticRouterConfig(
+            enabled=True, semantic_router_url="http://cogniverse-gateway:8801/v1"
+        )
 
 
 @pytest.mark.unit

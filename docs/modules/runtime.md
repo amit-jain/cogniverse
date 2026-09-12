@@ -437,13 +437,48 @@ The server uses modular routers for different functionality:
 | `agents` | `/agents` | Agent registry and in-process execution |
 | `admin` | `/admin` | Tenant and profile management |
 | `knowledge` | `/admin` | Direct HTTP routes to knowledge-system agents (audit, citations, KG, federation, synthesis, temporal) |
-| `tenant_manager` | `/admin` | Tenant creation and management tooling |
+| `tenant_manager` | `/admin` | Tenant creation, deletion, and router-tier administration |
 | `events` | `/events` | SSE streaming for real-time notifications |
 | `synthetic` | `/synthetic` | Synthetic data generation (from `cogniverse_synthetic`) |
 | `wiki` | `/wiki` | Per-tenant wiki knowledge page storage and search |
 | `graph` | `/graph` | Knowledge graph upsert, search, neighbors, and path queries |
 | `tenant` | `/admin/tenant` | Per-tenant self-service: instructions, memories, scheduled jobs, optimization |
 | `debug` | `/admin/debug` | Runtime diagnostics (gated behind `COGNIVERSE_DEBUG_MEM`) |
+
+### Tenant administration
+
+`tenant_manager` owns the tenant registry (`tenant_metadata` documents) and the
+tenant's semantic-router tier.
+
+| Route | Effect |
+|---|---|
+| `POST /admin/tenants` | Create a tenant, auto-creating its organization and deploying its base schemas |
+| `GET /admin/tenants/{tenant_id}` | Tenant registry row |
+| `DELETE /admin/tenants/{tenant_id}` | Delete the tenant, its schemas and its data |
+| `GET /admin/tenants/{tenant_id}/tier` | The tenant's semantic-router tier |
+| `PUT /admin/tenants/{tenant_id}/tier` | Set it |
+
+**Router tier.** The tier rides on the semantic router's group header and
+selects which routing decisions a tenant's LLM calls can match. It is a
+per-tenant attribute stored in the configuration store under
+`ConfigScope.ROUTING` / service `semantic_router` / key `tenant_tier`, keyed by
+canonical tenant id. A tenant with no stored tier is `default`; nothing has to
+be written for a tenant to be routable.
+
+The vocabulary is `ROUTER_TIERS`
+(`cogniverse_foundation.config.unified_config`), currently `default`, `free`
+and `pro`, and each value names a Group the router's chart binds. `PUT`
+refuses anything outside it with 422 and the valid set in the message; an
+unknown tenant is 404; a registry or store outage is 503.
+
+Requests read the tier through `resolve_tenant_tier`, whose per-manager reader
+caches it per canonical tenant for `TENANT_TIER_TTL_S` (30 s). `PUT` drops the
+tenant from every reader in its own process immediately, so the TTL bounds only
+how long another replica keeps serving the tier it read before the write. A
+store failure at request time routes the tenant as `default` and logs a WARNING
+naming the tenant and the error: a routing downgrade serves the request where
+raising would fail it.
+
 
 ```text
 # Router registration in main.py

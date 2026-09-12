@@ -54,14 +54,19 @@ class VLMInterface:
             apply_semantic_routing,
             resolve_semantic_router_config,
         )
+        from cogniverse_foundation.config.tenant_tiers import resolve_tenant_tier
 
         llm_config = self.config.get_llm_config()
         endpoint_config = llm_config.resolve("vlm_interface")
-        endpoint_config = apply_semantic_routing(
-            endpoint_config,
-            resolve_semantic_router_config(self.config),
-            getattr(self.config, "tenant_id", "") or "",
-        )
+        router = resolve_semantic_router_config(self.config)
+        if router.enabled:
+            tenant_id = getattr(self.config, "tenant_id", "") or ""
+            endpoint_config = apply_semantic_routing(
+                endpoint_config,
+                router,
+                tenant_id,
+                resolve_tenant_tier(self.config, tenant_id),
+            )
 
         self._dspy_lm = create_dspy_lm(endpoint_config)
         logger.info(

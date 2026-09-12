@@ -1924,11 +1924,6 @@ semanticRouter:
       limits:
         cpu: "2"
         memory: "6Gi"
-  # cogniverse-side tenant -> tier map (sent as the x-authz-user-groups header).
-  # The tier -> allowed-model-set gating and the content-based model/reasoning
-  # selection live in the router's own shipped config.
-  routing:
-    tenantTiers: {}
 
 # ===========================================
 # MinIO — S3-compatible object store

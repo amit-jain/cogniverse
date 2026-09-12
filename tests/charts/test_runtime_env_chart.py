@@ -145,6 +145,16 @@ class TestIngestorMinioEnv:
             "http://cogniverse-semantic-router-envoy:8801/v1"
         )
 
+    def test_the_runtime_carries_no_static_tenant_tier_map(self):
+        """A tenant's tier is its own stored attribute, set through
+        ``PUT /admin/tenants/{t}/tier`` -- not a chart value nobody edits."""
+        runtime = _runtime_container_env(_render_chart())
+        assert [k for k in runtime if "TIER" in k] == []
+        assert sorted(k for k in runtime if k.startswith("SEMANTIC_ROUTER")) == [
+            "SEMANTIC_ROUTER_ENABLED",
+            "SEMANTIC_ROUTER_URL",
+        ]
+
 
 @pytest.mark.unit
 @pytest.mark.ci_fast

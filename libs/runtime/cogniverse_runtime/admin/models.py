@@ -70,6 +70,21 @@ class CreateTenantRequest:
 
 
 @dataclass
+class SetTenantTierRequest:
+    """Request to set a tenant's semantic-router tier"""
+
+    tier: str  # One of cogniverse_foundation.config.unified_config.ROUTER_TIERS
+
+
+@dataclass
+class TenantTier:
+    """A tenant's semantic-router tier"""
+
+    tenant_id: str  # Canonical org:tenant form
+    tier: str  # One of ROUTER_TIERS; "default" when the tenant has none stored
+
+
+@dataclass
 class TenantListResponse:
     """Response for listing tenants"""
 

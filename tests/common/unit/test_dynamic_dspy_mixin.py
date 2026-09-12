@@ -20,6 +20,7 @@ from cogniverse_foundation.config.unified_config import (
     LLMEndpointConfig,
     SemanticRouterConfig,
 )
+from tests.utils.tenant_helpers import config_manager_with_tiers
 
 
 class _MixinSignature(dspy.Signature):
@@ -183,9 +184,8 @@ class TestDynamicDSPyMixin:
         sysconf.get_semantic_router.return_value = SemanticRouterConfig(
             enabled=True,
             semantic_router_url="http://envoy:8801/v1",
-            tenant_tiers={"acme:prod": "pro"},
-            default_tier="free",
         )
+        sysconf.config_manager = config_manager_with_tiers({"acme:prod": "pro"})
         agent = _MixinAgent.__new__(_MixinAgent)
         agent.system_config = sysconf
         agent.tenant_id = "acme:prod"

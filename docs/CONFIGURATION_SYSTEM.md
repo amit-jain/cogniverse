@@ -704,8 +704,6 @@ from cogniverse_foundation.config.unified_config import SemanticRouterConfig
 router_config = SemanticRouterConfig(
     enabled=True,
     semantic_router_url="http://semantic-router:8801/v1",
-    tenant_tiers={"acme": "premium"},
-    default_tier="default",
 )
 ```
 
@@ -715,7 +713,7 @@ endpoint's `api_base` to `semantic_router_url` and `model` to
 its own catalog and rejects raw provider model ids), and attaches two
 authz headers per request: the tenant identity (`user_id_header`, default
 `x-authz-user-id`) and the tenant tier (`tier_header`, default
-`x-authz-user-groups`, resolved from `tenant_tiers` with `default_tier`
+`x-authz-user-groups`, the tenant's stored tier
 fallback). `routed_lm_context_for(config_manager, tenant_id, agent_name)`
 is the single entry point agents use to get a `dspy.context`-bound LM that
 is automatically router-aware when enabled.
