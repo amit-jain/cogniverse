@@ -1638,13 +1638,103 @@ class TestTelemetrySpanEmission:
         assert recorded["input.value"] == long_query
 
 
+class TestRelationshipConfidenceIsTheExtractorScore:
+    """A relationship's score is the one its extractor measured, or no row."""
+
+    _QUERY = "Barack Obama in Chicago"
+    _RAW_ENTITIES = [
+        {
+            "text": "Barack Obama",
+            "label": "PERSON",
+            "confidence": 0.99,
+            "start_pos": 0,
+            "end_pos": 12,
+        },
+        {
+            "text": "Chicago",
+            "label": "LOCATION",
+            "confidence": 0.98,
+            "start_pos": 16,
+            "end_pos": 23,
+        },
+    ]
+
+    def _agent_with_real_spacy(self, entity_agent):
+        from cogniverse_agents.routing.relationship_extraction_tools import (
+            SpaCyDependencyAnalyzer,
+        )
+
+        analyzer = SpaCyDependencyAnalyzer()
+        analyzer._load_spacy_model()
+        entity_agent._spacy_analyzer = analyzer
+        return entity_agent
+
+    def _reconcile(self, entity_agent, raw_relationship):
+        agent = self._agent_with_real_spacy(entity_agent)
+        return agent._reconcile_relationships(
+            query=self._QUERY,
+            entity_records=agent._build_entity_records(self._RAW_ENTITIES, self._QUERY),
+            raw_relationships=[raw_relationship],
+        )
+
+    def test_producer_score_reaches_the_relationship(self, entity_agent):
+        relationships = self._reconcile(
+            entity_agent,
+            {
+                "subject": "Obama",
+                "relation": "in",
+                "object": "Chicago",
+                "confidence": 0.7,
+            },
+        )
+
+        assert [r.model_dump() for r in relationships] == [
+            {
+                "subject": "Barack Obama",
+                "relation": "in",
+                "object": "Chicago",
+                "confidence": 0.7,
+            }
+        ]
+
+    def test_row_without_a_score_is_dropped_and_named(self, entity_agent, caplog):
+        caplog.set_level(
+            logging.WARNING, logger="cogniverse_agents.entity_extraction_agent"
+        )
+
+        relationships = self._reconcile(
+            entity_agent,
+            {"subject": "Obama", "relation": "in", "object": "Chicago"},
+        )
+
+        assert relationships == []
+        assert [
+            r.getMessage()
+            for r in caplog.records
+            if r.name == "cogniverse_agents.entity_extraction_agent"
+        ] == [
+            "Dropping relationship 'in' from SpaCyDependencyAnalyzer: "
+            "no numeric confidence (got None)"
+        ]
+
+
 class TestRelationshipModel:
     """Tests for the Relationship Pydantic model."""
 
-    def test_relationship_defaults(self):
-        """Relationship has default confidence of 0.5."""
-        r = Relationship(subject="A", relation="knows", object="B")
-        assert r.confidence == 0.5
+    def test_relationship_requires_the_extractor_score(self):
+        """A relationship carries its extractor's score or it is not built.
+
+        The previous default (0.5) was indistinguishable from a measured
+        score, and no producer ever omits the field.
+        """
+        from pydantic import ValidationError
+
+        with pytest.raises(ValidationError) as excinfo:
+            Relationship(subject="A", relation="knows", object="B")
+
+        assert [(e["loc"], e["type"]) for e in excinfo.value.errors()] == [
+            (("confidence",), "missing")
+        ]
 
     def test_relationship_custom_confidence(self):
         """Relationship accepts custom confidence."""
