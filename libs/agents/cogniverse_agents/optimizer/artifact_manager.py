@@ -28,12 +28,23 @@ from cogniverse_agents.optimizer.signature_variants import (
 )
 from cogniverse_foundation.telemetry.providers.base import (
     DatasetNotFoundError,
+    DatasetStoreUnavailableError,
     TelemetryProvider,
 )
 
 logger = logging.getLogger(__name__)
 
 _CACHE_MISS = object()
+
+# Vocabulary of ``agent.artifact_load_status``. ``STORE_UNAVAILABLE`` is the
+# one state a caller may not read as "this tenant has nothing promoted yet":
+# the store could not answer, so what is promoted is unknown.
+ARTIFACT_LOAD_NO_TELEMETRY = "no_telemetry"
+ARTIFACT_LOAD_NO_ARTIFACT = "no_artifact"
+ARTIFACT_LOAD_SIGNATURE_MISMATCH = "signature_mismatch"
+ARTIFACT_LOAD_LOADED = "loaded"
+ARTIFACT_LOAD_STORE_UNAVAILABLE = "store_unavailable"
+ARTIFACT_LOAD_ERROR = "error"
 
 
 @dataclass(frozen=True)
@@ -1873,13 +1884,13 @@ def load_optimized_module(agent: Any, blob_key: str) -> None:
 
     Shared ``_load_artifact`` body for the dispatcher-served DSPy agents.
     Records ``agent.artifact_load_status`` ∈ {``no_telemetry``,
-    ``no_artifact``, ``signature_mismatch``, ``loaded``, ``error``} so a
-    telemetry outage (silent reversion to the base module) is distinguishable
-    from "tenant never optimized" and from a saved DSPy signature contract that
-    no longer matches the live module. Failures log at WARNING and never raise
-    — the agent keeps serving on defaults.
+    ``no_artifact``, ``signature_mismatch``, ``loaded``, ``store_unavailable``,
+    ``error``} so a store outage (silent reversion to the base module) is
+    distinguishable from "tenant never optimized" and from a saved DSPy
+    signature contract that no longer matches the live module. Failures log at
+    WARNING and never raise — the agent keeps serving on defaults.
     """
-    agent.artifact_load_status = "no_telemetry"
+    agent.artifact_load_status = ARTIFACT_LOAD_NO_TELEMETRY
     if not getattr(agent, "telemetry_manager", None):
         logger.warning(
             "%s: no telemetry manager injected; skipping %s artifact load",
@@ -1904,7 +1915,7 @@ def load_optimized_module(agent: Any, blob_key: str) -> None:
 
         blob = run_coro_blocking(_load())
         if not blob:
-            agent.artifact_load_status = "no_artifact"
+            agent.artifact_load_status = ARTIFACT_LOAD_NO_ARTIFACT
             logger.info(
                 "%s: no persisted %s artifact for tenant %s; using defaults",
                 type(agent).__name__,
@@ -1936,15 +1947,23 @@ def load_optimized_module(agent: Any, blob_key: str) -> None:
                 predictor_name,
                 reason,
             )
-            agent.artifact_load_status = "signature_mismatch"
+            agent.artifact_load_status = ARTIFACT_LOAD_SIGNATURE_MISMATCH
             return
         agent.dspy_module.load_state(artifact_state)
-        agent.artifact_load_status = "loaded"
+        agent.artifact_load_status = ARTIFACT_LOAD_LOADED
         logger.info(
             "%s loaded optimized DSPy module from artifact", type(agent).__name__
         )
+    except DatasetStoreUnavailableError as e:
+        agent.artifact_load_status = ARTIFACT_LOAD_STORE_UNAVAILABLE
+        logger.warning(
+            "%s artifact store %s unreachable; using defaults: %s",
+            type(agent).__name__,
+            e.endpoint,
+            e,
+        )
     except Exception as e:
-        agent.artifact_load_status = "error"
+        agent.artifact_load_status = ARTIFACT_LOAD_ERROR
         logger.warning(
             "%s artifact load failed; using defaults: %s", type(agent).__name__, e
         )

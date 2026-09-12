@@ -26,6 +26,7 @@ from cogniverse_foundation.telemetry.providers.base import (
     AnnotationStore,
     DatasetNotFoundError,
     DatasetStore,
+    DatasetStoreUnavailableError,
     TelemetryProvider,
     TraceStore,
 )
@@ -1023,6 +1024,8 @@ class PhoenixDatasetStore(DatasetStore):
 
         Raises:
             DatasetNotFoundError: If no dataset by that name exists.
+            DatasetStoreUnavailableError: If the store could not answer, so
+                whether the dataset exists is unknown.
         """
         try:
             from phoenix.client import Client
@@ -1042,7 +1045,12 @@ class PhoenixDatasetStore(DatasetStore):
             if _is_dataset_not_found(e):
                 raise DatasetNotFoundError(f"Dataset not found: {name}") from e
             logger.error(f"Failed to retrieve dataset '{name}': {e}")
-            raise
+            raise DatasetStoreUnavailableError(
+                f"dataset store at {self.http_endpoint} could not answer for "
+                f"dataset {name!r}: {type(e).__name__}: {e}",
+                endpoint=self.http_endpoint,
+                dataset=name,
+            ) from e
 
     async def append_to_dataset(
         self,
