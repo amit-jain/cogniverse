@@ -7,8 +7,10 @@ The fast CI runner has 7 GB of RAM; a vLLM sidecar's weights do not fit, so a
 from __future__ import annotations
 
 import json
+import os
 import subprocess
 import sys
+import tempfile
 from collections import defaultdict
 from pathlib import Path
 
@@ -56,9 +58,14 @@ def collect_offenders(
     paths: list[str], marker_expr: str, rootdir: Path = REPO_ROOT
 ) -> list[list]:
     """Return ``[nodeid, reached_fixtures]`` for a selection, post-deselection."""
-    plugin = rootdir / "_ci_fast_probe_plugin.py"
-    plugin.write_text(_PLUGIN.format(roots=set(MODEL_SPAWNING_FIXTURES)))
-    try:
+    with tempfile.TemporaryDirectory(prefix="ci_fast_probe_") as plugin_dir:
+        (Path(plugin_dir) / "_ci_fast_probe_plugin.py").write_text(
+            _PLUGIN.format(roots=set(MODEL_SPAWNING_FIXTURES))
+        )
+        env = dict(os.environ)
+        env["PYTHONPATH"] = os.pathsep.join(
+            part for part in (plugin_dir, env.get("PYTHONPATH", "")) if part
+        )
         result = subprocess.run(
             [
                 sys.executable,
@@ -75,12 +82,11 @@ def collect_offenders(
                 "no:cacheprovider",
             ],
             cwd=rootdir,
+            env=env,
             capture_output=True,
             text=True,
             timeout=900,
         )
-    finally:
-        plugin.unlink(missing_ok=True)
     marker = "CI_FAST_OFFENDERS:"
     for line in result.stdout.splitlines():
         if line.startswith(marker):
@@ -133,3 +139,27 @@ def test_the_detector_reports_a_ci_fast_test_that_reaches_a_spawner(
 @pytest.mark.parametrize("marker_expr", sorted(ci_fast_selections()))
 def test_no_ci_fast_selection_provisions_a_model_server(marker_expr: str) -> None:
     assert collect_offenders(ci_fast_selections()[marker_expr], marker_expr) == []
+
+
+def test_the_probe_never_writes_into_the_tree_it_collects(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A probe file inside the checkout makes the tree dirty for the seconds it
+    exists, which the e2e fixture and the push gate refuse; the plugin must be
+    importable from outside ``rootdir``."""
+    rootdir = tmp_path / "repo"
+    rootdir.mkdir()
+    seen: dict[str, object] = {}
+
+    def observe(argv, **kwargs):
+        seen["entries"] = sorted(p.name for p in rootdir.iterdir())
+        env = kwargs["env"]
+        seen["importable"] = any(
+            (Path(part) / "_ci_fast_probe_plugin.py").is_file()
+            for part in env["PYTHONPATH"].split(os.pathsep)
+        )
+        return subprocess.CompletedProcess(argv, 0, "CI_FAST_OFFENDERS:[]\n", "")
+
+    monkeypatch.setattr(subprocess, "run", observe)
+    assert collect_offenders(["tests"], "ci_fast", rootdir=rootdir) == []
+    assert seen == {"entries": [], "importable": True}
