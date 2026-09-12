@@ -223,6 +223,21 @@ class AgentConfigurationError(Exception):
     """Raised when an agent is constructed without a dependency it requires."""
 
 
+def require_config_manager(config_manager: Any, *, owner: str) -> Any:
+    """Return ``config_manager``, refusing ``None`` at the construction site.
+
+    ``owner`` names the agent the manager is being built for, so the caller
+    reads which construction site is missing it.
+    """
+    if config_manager is None:
+        raise AgentConfigurationError(
+            f"{owner} requires a config_manager; got None. "
+            "Pass config_manager=<ConfigManager> to the constructor; the "
+            "runtime injects its own manager."
+        )
+    return config_manager
+
+
 class ConfigManagerAware:
     """Holds the injected ConfigManager for an agent.
 
@@ -244,13 +259,9 @@ class ConfigManagerAware:
         process singleton, which points at a different config store than the
         one the caller injected.
         """
-        if config_manager is None:
-            raise AgentConfigurationError(
-                f"{type(self).__name__} requires a config_manager; got None. "
-                "Pass config_manager=<ConfigManager> to the constructor; the "
-                "runtime injects its own manager."
-            )
-        self._config_manager = config_manager
+        self._config_manager = require_config_manager(
+            config_manager, owner=type(self).__name__
+        )
 
     @property
     def config_manager(self) -> Any:

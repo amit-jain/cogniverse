@@ -93,6 +93,7 @@ jobs:
           tests/common/unit/test_ci_fast_excludes_model_spawners.py \
           tests/common/unit/test_ci_job_timeout_budgets.py \
           tests/common/unit/test_config_keys_have_readers.py \
+          tests/common/unit/test_config_manager_bind_guard.py \
           tests/common/unit/test_entity_type_vocabulary_guard.py \
           tests/test_scripts_cli.py \
           tests/common/unit/test_inpod_telemetry_prelude_guard.py \

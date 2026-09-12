@@ -2808,7 +2808,10 @@ bound by the dispatcher and the knowledge router right after construction.
 `bind_config_manager(None)` and a read before any bind both raise
 `AgentConfigurationError` naming the agent — a missing manager is a construction
 bug, never a fall back to the process singleton, which would serve tenant
-instructions and per-tenant LM routing from a different config store.
+instructions and per-tenant LM routing from a different config store. A build
+site that reads config before the agent exists refuses the same way through
+`require_config_manager(config_manager, owner=<agent class name>)`, which
+`bind_config_manager` itself applies.
 
 ### Type-Safe A2AAgent Base Class with Generics
 
