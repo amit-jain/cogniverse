@@ -28,6 +28,7 @@ signature to a server-enforced ``json_schema``, and a router that keeps only
 from __future__ import annotations
 
 import json
+from concurrent.futures import ThreadPoolExecutor
 
 import dspy
 import pytest
@@ -105,6 +106,26 @@ def test_pro_tier_non_technical_keeps_reasoning_off(sr_base_url):
     reflected = _call(sr_base_url, "pro-tenant", "what's a fun weekend activity?")
     assert reflected["served_model"] == "pro-reasoning"
     assert reflected["reasoning"] is False
+
+
+def test_concurrent_completions_each_get_their_own_routing(sr_base_url):
+    """Queued routing decisions must still complete, not time out mid-decision.
+
+    The router classifies on CPU inside the ext_proc call, so concurrent
+    requests queue behind one another there. Envoy cancels the routing stream
+    at its per-message deadline and answers 504 without ever reaching the
+    backend, which is invisible to a one-request-at-a-time suite. The free
+    tier is gated by authz alone, so every one of these routes to the same
+    model whatever the classifier makes of the prompt.
+    """
+    prompts = [f"tell me something interesting about topic {i}" for i in range(8)]
+    with ThreadPoolExecutor(max_workers=len(prompts)) as pool:
+        reflected = list(
+            pool.map(lambda prompt: _call(sr_base_url, "free-tenant", prompt), prompts)
+        )
+    assert [item["echo"] for item in reflected] == prompts
+    assert [item["served_model"] for item in reflected] == ["basic-chat"] * len(prompts)
+    assert [item["reasoning"] for item in reflected] == [False] * len(prompts)
 
 
 class _SchemaProbe(dspy.Signature):
