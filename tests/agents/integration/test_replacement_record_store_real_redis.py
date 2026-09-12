@@ -222,10 +222,7 @@ async def test_selected_record_has_exact_canonical_bytes_and_digest(redis_url):
         '"status":"regenerated"}'
     )
     assert selected.json == expected_json
-    assert (
-        selected.sha256
-        == "c552afe67ce0c250d27b25499f63beb835a2ce08a6294a6f3552fc8e12fbda13"
-    )
+    assert selected.sha256 == hashlib.sha256(expected_json.encode("utf-8")).hexdigest()
 
 
 async def test_review_decision_retry_reuses_first_canonical_timestamp(redis_url):
