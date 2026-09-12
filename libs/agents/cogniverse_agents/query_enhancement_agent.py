@@ -73,6 +73,13 @@ class QueryEnhancementOutput(AgentOutput):
     )
     confidence: float = Field(0.0, ge=0.0, le=1.0, description="Enhancement confidence")
     reasoning: str = Field("", description="Explanation of enhancements")
+    path_used: str = Field(
+        "",
+        description=(
+            "Which path produced this enhancement: 'lm' or "
+            "'heuristic_fallback'. Empty when no enhancement ran."
+        ),
+    )
 
 
 class QueryEnhancementDeps(AgentDeps):
@@ -418,6 +425,7 @@ class QueryEnhancementAgent(
             query_variants=variants,
             confidence=confidence,
             reasoning=reasoning,
+            path_used=path_used,
         )
 
     def _dspy_to_a2a_output(self, result: QueryEnhancementOutput) -> Dict[str, Any]:
@@ -433,6 +441,7 @@ class QueryEnhancementAgent(
             "query_variants": result.query_variants,
             "confidence": result.confidence,
             "reasoning": result.reasoning,
+            "path_used": result.path_used,
         }
 
     def _build_entity_context(
