@@ -22,6 +22,7 @@ from cogniverse_foundation.config.semantic_router import (
     apply_semantic_routing,
     resolve_semantic_router_config,
 )
+from cogniverse_foundation.config.tenant_tiers import resolve_tenant_tier
 from cogniverse_foundation.config.unified_config import LLMEndpointConfig
 from cogniverse_foundation.dspy.model_format import ensure_provider_prefix
 
@@ -170,6 +171,8 @@ class DynamicDSPyMixin:
 
         ``resolve_semantic_router_config`` guards against a stray/mocked accessor
         (whose auto attributes look truthy) spuriously rewriting the endpoint.
+        The tier is the tenant's stored attribute, read through the same
+        accessor's config manager.
         """
         system_config = getattr(self, "system_config", None)
         router = resolve_semantic_router_config(system_config)
@@ -185,6 +188,7 @@ class DynamicDSPyMixin:
             endpoint=endpoint,
             config=router,
             tenant_id=tenant_id,
+            tier=resolve_tenant_tier(system_config, tenant_id),
         )
 
     def register_signature(self, name: str, signature: Type[dspy.Signature]):

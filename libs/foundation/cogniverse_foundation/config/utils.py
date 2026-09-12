@@ -75,6 +75,12 @@ class ConfigUtils:
         self._backend_config = None  # Merged backend config (system + tenant)
         self._json_config = None  # Cache for JSON config (auto-discovered)
 
+    @property
+    def config_manager(self) -> ConfigManager:
+        """The manager this config reads through, for callers that need the
+        store itself (the router tier is a stored tenant attribute)."""
+        return self._config_manager
+
     def _ensure_system_config(self):
         """Lazy load system config (global, not per-tenant)"""
         if self._system_config is None:

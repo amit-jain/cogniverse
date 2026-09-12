@@ -7,7 +7,8 @@ the model backend, and two authz headers are attached per request:
   - tenant identity -> ``user_id_header`` (default ``x-authz-user-id``) = the
     ``tenant_id``
   - tenant tier     -> ``tier_header`` (default ``x-authz-user-groups``),
-    resolved from ``tenant_tiers[tenant_id]`` with ``default_tier`` fallback
+    the tenant's stored tier, resolved by the caller through
+    ``cogniverse_foundation.config.tenant_tiers``
 
 The router's authz signal requires the identity header and refuses to evaluate
 role bindings without it (no silent bypass); it then gates the tenant's
@@ -31,6 +32,7 @@ from cogniverse_foundation.config.llm_factory import (
 )
 from cogniverse_foundation.config.unified_config import (
     LLMEndpointConfig,
+    RouterTier,
     SemanticRouterConfig,
 )
 
@@ -39,19 +41,19 @@ if TYPE_CHECKING:
 
 
 def resolve_semantic_router_headers(
-    config: SemanticRouterConfig, tenant_id: str
+    config: SemanticRouterConfig, tenant_id: str, tier: RouterTier
 ) -> Optional[Dict[str, str]]:
     """Resolve the authz routing headers for a request.
 
     Returns ``None`` when routing is disabled. Otherwise returns two headers:
     the tenant identity (``user_id_header`` = ``tenant_id``) and the tenant
-    tier (``tier_header``; an unknown tenant maps to ``config.default_tier``).
-    The router's authz signal requires the identity header — it refuses to
-    evaluate role bindings on the tier/group header alone.
+    tier (``tier_header`` = ``tier``, the tenant's stored attribute the caller
+    resolved for this request). The router's authz signal requires the identity
+    header — it refuses to evaluate role bindings on the tier/group header
+    alone.
     """
     if not config.enabled:
         return None
-    tier = config.tenant_tiers.get(tenant_id, config.default_tier)
     return {
         config.user_id_header: tenant_id,
         config.tier_header: tier,
@@ -62,6 +64,7 @@ def apply_semantic_routing(
     endpoint: LLMEndpointConfig,
     config: SemanticRouterConfig,
     tenant_id: str,
+    tier: RouterTier,
 ) -> LLMEndpointConfig:
     """Return an endpoint routed through the semantic router, or the original.
 
@@ -84,7 +87,7 @@ def apply_semantic_routing(
             "empty; set it to the semantic router's OpenAI-compatible endpoint"
         )
 
-    headers = resolve_semantic_router_headers(config, tenant_id)
+    headers = resolve_semantic_router_headers(config, tenant_id, tier)
     merged = dict(endpoint.extra_headers or {})
     merged.update(headers or {})
 
@@ -119,9 +122,10 @@ def create_routed_lm(
     endpoint: LLMEndpointConfig,
     config: SemanticRouterConfig,
     tenant_id: str,
+    tier: RouterTier,
 ) -> "dspy.LM":
-    """Build a ``dspy.LM`` for ``tenant_id`` routed through the router when
-    ``config.enabled``.
+    """Build a ``dspy.LM`` for ``tenant_id`` on ``tier``, routed through the
+    router when ``config.enabled``.
 
     Composes ``apply_semantic_routing`` + ``create_dspy_lm`` — the single way
     an agent builds a semantic-router-aware LM. When routing is disabled the LM
@@ -131,6 +135,7 @@ def create_routed_lm(
         endpoint=endpoint,
         config=config,
         tenant_id=tenant_id,
+        tier=tier,
     )
     return create_dspy_lm(routed)
 
@@ -165,8 +170,10 @@ def routed_lm_context_for(
     ``endpoint`` (an ``LLMEndpointConfig``):
 
     - Enabled: the endpoint is routed through the semantic router (api_base +
-      tenant-tier header) for ``tenant_id``; the model becomes the router's
-      auto alias and the router picks the concrete model itself.
+      tenant-tier header) for ``tenant_id``; the tier comes from the tenant's
+      stored attribute, read through the same config manager the request
+      already carries, and the model becomes the router's auto alias so the
+      router picks the concrete model itself.
     - Disabled: the LM is built directly from the same endpoint — the plain
       direct-to-backend path, not a fallback.
 
@@ -180,6 +187,7 @@ def routed_lm_context_for(
 
     import dspy
 
+    from cogniverse_foundation.config.tenant_tiers import resolve_tenant_tier
     from cogniverse_foundation.config.utils import get_config
 
     def _direct():
@@ -202,4 +210,5 @@ def routed_lm_context_for(
     if not router.enabled:
         return _direct()
     ep = endpoint if endpoint is not None else cfg.get_llm_config().resolve(agent_name)
-    return dspy.context(lm=create_routed_lm(ep, router, tenant_id))
+    tier = resolve_tenant_tier(cfg, tenant_id)
+    return dspy.context(lm=create_routed_lm(ep, router, tenant_id, tier))

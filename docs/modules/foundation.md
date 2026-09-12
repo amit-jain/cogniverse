@@ -508,13 +508,11 @@ from cogniverse_foundation.config.unified_config import SemanticRouterConfig
 router_config = SemanticRouterConfig(
     enabled=True,
     semantic_router_url="http://semantic-router:8801/v1",
-    tenant_tiers={"acme": "gold"},
-    default_tier="default",
     routed_model="openai/auto"
 )
 ```
 
-When `enabled`, `cogniverse_foundation.config.semantic_router` rewrites an `LLMEndpointConfig` to target `semantic_router_url` instead of the model backend, sets `model` to `routed_model` (the router resolves models by its own catalog, not raw provider ids), and attaches two authz headers per request: tenant identity (`user_id_header`, default `x-authz-user-id`) and tenant tier (`tier_header`, default `x-authz-user-groups`, resolved from `tenant_tiers` with `default_tier` as fallback). When disabled, the endpoint passes through unchanged. Claim extraction during ingestion keeps the direct primary endpoint.
+When `enabled`, `cogniverse_foundation.config.semantic_router` rewrites an `LLMEndpointConfig` to target `semantic_router_url` instead of the model backend, sets `model` to `routed_model` (the router resolves models by its own catalog, not raw provider ids), and attaches two authz headers per request: tenant identity (`user_id_header`, default `x-authz-user-id`) and tenant tier (`tier_header`, default `x-authz-user-groups`, the caller's resolved `RouterTier`). When disabled, the endpoint passes through unchanged. The tier is the tenant's stored attribute: `cogniverse_foundation.config.tenant_tiers` holds it in the config store under scope `ROUTING` / service `semantic_router` / key `tenant_tier`, `resolve_tenant_tier(config_accessor, tenant_id)` reads it through a 30 s per-tenant cache invalidated by every write in the process, an unset tenant is `DEFAULT_ROUTER_TIER`, and a store failure routes as `DEFAULT_ROUTER_TIER` with a WARNING. Claim extraction during ingestion keeps the direct primary endpoint.
 
 | Function | Description |
 |----------|-------------|

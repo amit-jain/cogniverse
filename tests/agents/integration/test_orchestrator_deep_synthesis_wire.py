@@ -284,13 +284,12 @@ class TestBuildHelper:
         rewritten to the semantic router with the tenant tier + the ``rlm_inference``
         task header — the direct backend endpoint is never used."""
         monkeypatch.setattr(deno_check, "_skip_deno_check", True)
+        from cogniverse_foundation.config.tenant_tiers import set_tenant_tier
         from cogniverse_foundation.config.unified_config import SemanticRouterConfig
 
         router = SemanticRouterConfig(
             enabled=True,
             semantic_router_url="http://semantic-router:9099/v1",
-            tenant_tiers={"b7_gw_tenant": "pro"},
-            default_tier="free",
         )
         # route_rlm_endpoint resolves the semantic router config via
         # resolve_semantic_router_config; force it enabled so the real config
@@ -300,6 +299,9 @@ class TestBuildHelper:
             lambda _cfg: router,
         )
         cm = create_default_config_manager()
+        # The tier the header carries is the tenant's stored attribute; set it
+        # through the product so the routed endpoint proves the read.
+        set_tenant_tier(cm, "b7_gw_tenant", "pro")
         registry = AgentRegistry(tenant_id="b7_gw_tenant", config_manager=cm)
         orchestrator = OrchestratorAgent(
             deps=OrchestratorDeps(tenant_id="b7_gw_tenant"),

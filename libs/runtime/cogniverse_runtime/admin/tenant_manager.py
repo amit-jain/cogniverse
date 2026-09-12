@@ -39,7 +39,11 @@ import uvicorn
 from fastapi import APIRouter, FastAPI, HTTPException, Query
 from requests import exceptions as requests_exceptions
 
-from cogniverse_core.common.tenant_utils import SYSTEM_TENANT_ID, parse_tenant_id
+from cogniverse_core.common.tenant_utils import (
+    SYSTEM_TENANT_ID,
+    canonical_tenant_id,
+    parse_tenant_id,
+)
 from cogniverse_core.registries.exceptions import RegistryStorageError
 from cogniverse_foundation.config.utils import get_config
 from cogniverse_runtime.admin.models import (
@@ -47,8 +51,10 @@ from cogniverse_runtime.admin.models import (
     CreateTenantRequest,
     Organization,
     OrganizationListResponse,
+    SetTenantTierRequest,
     Tenant,
     TenantListResponse,
+    TenantTier,
 )
 from cogniverse_runtime.harness_keys import HarnessKeyStore
 from cogniverse_sdk.interfaces.backend import Backend
@@ -833,10 +839,11 @@ async def get_tenant_internal(tenant_full_id: str) -> Optional[Tenant]:
     """
     from cogniverse_core.common.tenant_utils import canonical_tenant_id
 
-    with metadata_backend() as backend:
-        canonical = canonical_tenant_id(tenant_full_id)
-
-        try:
+    canonical = canonical_tenant_id(tenant_full_id)
+    try:
+        # Resolving the backend reads the system config, so an outage surfaces
+        # here too — inside the same contract as the read it serves.
+        with metadata_backend() as backend:
             # Blocking Vespa GET — run off the event loop; this sits under
             # assert_tenant_exists on every search/ingestion/graph request.
             fields = await asyncio.to_thread(
@@ -844,26 +851,104 @@ async def get_tenant_internal(tenant_full_id: str) -> Optional[Tenant]:
                 schema="tenant_metadata",
                 doc_id=canonical,
             )
-        except Exception as e:
-            # A backend outage is NOT "tenant not found". Surface 503 so callers
-            # retry, instead of a permanent-looking 404 on every tenant-scoped
-            # request during a Vespa blip (which reads as "the tenant was deleted").
-            logger.error(f"Tenant registry read failed for {tenant_full_id}: {e}")
-            raise HTTPException(
-                status_code=503, detail="Tenant registry temporarily unavailable"
-            )
-
-        if not fields:
-            return None
-        return Tenant(
-            tenant_full_id=fields.get("tenant_full_id"),
-            org_id=fields.get("org_id"),
-            tenant_name=fields.get("tenant_name"),
-            created_at=fields.get("created_at"),
-            created_by=fields.get("created_by"),
-            status=fields.get("status", "active"),
-            schemas_deployed=fields.get("schemas_deployed", []),
+    except HTTPException:
+        raise
+    except Exception as e:
+        # A backend outage is NOT "tenant not found". Surface 503 so callers
+        # retry, instead of a permanent-looking 404 on every tenant-scoped
+        # request during a Vespa blip (which reads as "the tenant was deleted").
+        logger.error(f"Tenant registry read failed for {tenant_full_id}: {e}")
+        raise HTTPException(
+            status_code=503, detail="Tenant registry temporarily unavailable"
         )
+
+    if not fields:
+        return None
+    return Tenant(
+        tenant_full_id=fields.get("tenant_full_id"),
+        org_id=fields.get("org_id"),
+        tenant_name=fields.get("tenant_name"),
+        created_at=fields.get("created_at"),
+        created_by=fields.get("created_by"),
+        status=fields.get("status", "active"),
+        schemas_deployed=fields.get("schemas_deployed", []),
+    )
+
+
+def _tier_config_manager():
+    """The ConfigManager the tier routes read and write through."""
+    return _config_manager if _config_manager is not None else _default_config_manager()
+
+
+async def _assert_tenant_exists(canonical: str) -> None:
+    if await get_tenant_internal(canonical) is None:
+        raise HTTPException(status_code=404, detail=f"Tenant {canonical} not found")
+
+
+@router.get("/tenants/{tenant_full_id}/tier", response_model=TenantTier)
+async def get_tenant_tier(tenant_full_id: str) -> TenantTier:
+    """The tenant's semantic-router tier.
+
+    A tenant that has never been given one reads as ``DEFAULT_ROUTER_TIER``:
+    absence is the default, not an error.
+
+    Raises:
+        HTTPException 404: Tenant not found
+        HTTPException 503: Tenant registry or config store unavailable
+    """
+    from cogniverse_foundation.config.tenant_tiers import read_tenant_tier
+
+    canonical = canonical_tenant_id(tenant_full_id)
+    await _assert_tenant_exists(canonical)
+    try:
+        tier = await asyncio.to_thread(
+            read_tenant_tier, _tier_config_manager(), canonical
+        )
+    except Exception as e:
+        logger.error(f"Tier read failed for {canonical}: {e}")
+        raise HTTPException(
+            status_code=503, detail="Tenant tier store temporarily unavailable"
+        )
+    return TenantTier(tenant_id=canonical, tier=tier)
+
+
+@router.put("/tenants/{tenant_full_id}/tier", response_model=TenantTier)
+async def set_tenant_tier_route(
+    tenant_full_id: str, request: SetTenantTierRequest
+) -> TenantTier:
+    """Set the tenant's semantic-router tier.
+
+    The tier selects which routing decisions the request can match, so a value
+    outside ``ROUTER_TIERS`` is refused rather than stored: it would match no
+    decision and fall through to the default model.
+
+    Raises:
+        HTTPException 404: Tenant not found
+        HTTPException 422: Tier outside ROUTER_TIERS
+        HTTPException 503: Tenant registry or config store unavailable
+    """
+    from cogniverse_foundation.config.tenant_tiers import (
+        set_tenant_tier,
+        validate_router_tier,
+    )
+
+    canonical = canonical_tenant_id(tenant_full_id)
+    try:
+        validate_router_tier(request.tier)
+    except ValueError as e:
+        raise HTTPException(status_code=422, detail=str(e))
+    await _assert_tenant_exists(canonical)
+    try:
+        tier = await asyncio.to_thread(
+            set_tenant_tier, _tier_config_manager(), canonical, request.tier
+        )
+    except Exception as e:
+        logger.error(f"Tier write failed for {canonical}: {e}")
+        raise HTTPException(
+            status_code=503, detail="Tenant tier store temporarily unavailable"
+        )
+    logger.info(f"Set router tier for {canonical} to {tier}")
+    return TenantTier(tenant_id=canonical, tier=tier)
 
 
 @router.delete("/tenants/{tenant_full_id}")

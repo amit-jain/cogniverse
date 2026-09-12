@@ -481,12 +481,16 @@ def route_rlm_endpoint(
         apply_semantic_routing,
         resolve_semantic_router_config,
     )
+    from cogniverse_foundation.config.tenant_tiers import resolve_tenant_tier
     from cogniverse_foundation.config.utils import get_config
 
-    router = resolve_semantic_router_config(
-        get_config(tenant_id=tenant_id, config_manager=config_manager)
+    cfg = get_config(tenant_id=tenant_id, config_manager=config_manager)
+    router = resolve_semantic_router_config(cfg)
+    if not router.enabled:
+        return endpoint
+    return apply_semantic_routing(
+        endpoint, router, tenant_id, resolve_tenant_tier(cfg, tenant_id)
     )
-    return apply_semantic_routing(endpoint, router, tenant_id)
 
 
 def build_rlm_from_options(

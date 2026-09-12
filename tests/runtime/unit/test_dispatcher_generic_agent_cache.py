@@ -404,8 +404,9 @@ async def test_generic_dispatch_binds_tenant_routed_lm(dispatcher, monkeypatch):
 
     captured: dict = {}
 
-    def _fake_create_routed_lm(ep, router, tenant_id):
+    def _fake_create_routed_lm(ep, router, tenant_id, tier):
         captured["tenant_id"] = tenant_id
+        captured["tier"] = tier
         return sentinel_lm
 
     monkeypatch.setattr(

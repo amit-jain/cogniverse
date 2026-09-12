@@ -204,16 +204,15 @@ def _build_graph_manager_factory(resolve_graph_backend, config_manager):
 def _semantic_router_config_from_env():
     """Build a ``SemanticRouterConfig`` from deployment env vars, or ``None``.
 
-    The chart sets ``SEMANTIC_ROUTER_ENABLED`` + ``SEMANTIC_ROUTER_URL`` (and
-    an optional ``SEMANTIC_ROUTER_TENANT_TIERS`` JSON-object map) so a deployed
-    runtime boots routing every agent's LLM call through the in-cluster
-    semantic router. Returns ``None`` when routing is off (flag unset/false) or
-    no URL is set — leaving the direct-to-backend path untouched. Extracted so
-    it can be unit-tested without the FastAPI lifespan.
+    The chart sets ``SEMANTIC_ROUTER_ENABLED`` + ``SEMANTIC_ROUTER_URL`` so a
+    deployed runtime boots routing every agent's LLM call through the
+    in-cluster semantic router. Returns ``None`` when routing is off (flag
+    unset/false) or no URL is set — leaving the direct-to-backend path
+    untouched. Extracted so it can be unit-tested without the FastAPI
+    lifespan.
 
-    A malformed ``SEMANTIC_ROUTER_TENANT_TIERS`` raises: a misconfigured
-    deployment must fail at boot, not silently route every tenant to the
-    default tier.
+    A tenant's tier is its own stored attribute, read per request from the
+    configuration store; no tier is configured here.
     """
     enabled = os.environ.get("SEMANTIC_ROUTER_ENABLED", "").lower() in (
         "1",
@@ -224,39 +223,9 @@ def _semantic_router_config_from_env():
     if not (enabled and url):
         return None
 
-    from cogniverse_foundation.config.unified_config import (
-        ROUTER_TIERS,
-        SemanticRouterConfig,
-    )
+    from cogniverse_foundation.config.unified_config import SemanticRouterConfig
 
-    raw_tiers = os.environ.get("SEMANTIC_ROUTER_TENANT_TIERS", "").strip()
-    if raw_tiers:
-        tenant_tiers = json.loads(raw_tiers)
-        if not isinstance(tenant_tiers, dict):
-            raise ValueError(
-                "SEMANTIC_ROUTER_TENANT_TIERS must be a JSON object mapping "
-                f"tenant_id -> tier; got {type(tenant_tiers).__name__}"
-            )
-        unknown = {
-            tenant: tier
-            for tenant, tier in tenant_tiers.items()
-            if tier not in ROUTER_TIERS
-        }
-        if unknown:
-            raise ValueError(
-                "SEMANTIC_ROUTER_TENANT_TIERS names tiers the router binds no "
-                f"group for: {unknown}. Valid tiers: {sorted(ROUTER_TIERS)}. A "
-                "tier outside that set matches no routing decision and falls "
-                "through to the default model."
-            )
-    else:
-        tenant_tiers = {}
-
-    return SemanticRouterConfig(
-        enabled=True,
-        semantic_router_url=url,
-        tenant_tiers=tenant_tiers,
-    )
+    return SemanticRouterConfig(enabled=True, semantic_router_url=url)
 
 
 def _probe_phoenix_reachability() -> None:

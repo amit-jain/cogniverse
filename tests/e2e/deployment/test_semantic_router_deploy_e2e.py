@@ -198,7 +198,6 @@ def _route_completion(envoy_url: str, tenant_id: str, tier: str, prompt: str) ->
         config=SemanticRouterConfig(
             enabled=True,
             semantic_router_url=envoy_url,
-            tenant_tiers={tenant_id: tier},
         ),
         tenant_id=tenant_id,
     )

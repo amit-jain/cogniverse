@@ -220,3 +220,65 @@ def test_deployable_base_schemas_derived_from_shipped_config() -> None:
         "video_xclip_sv_chunk_6s",
         "wiki_pages",
     ]
+
+
+def _tier_app(tmp_path: Path) -> AppTest:
+    script = textwrap.dedent(
+        """
+        import streamlit as st
+        import cogniverse_dashboard.tabs.tenant_management as tm
+
+        calls = st.session_state.setdefault("_api_calls", [])
+
+        stored = st.session_state.setdefault("_stored_tier", ["free"])
+
+        def _fake_api(method, path, json=None, **kwargs):
+            calls.append({"method": method, "path": path, "json": json})
+            if method == "put":
+                stored[0] = json["tier"]
+            return {"success": True,
+                    "data": {"tenant_id": "acme:prod", "tier": stored[0]}}
+
+        tm._api_call = _fake_api
+        tm._render_tenant_tier("acme:prod")
+        """
+    ).strip()
+    path = tmp_path / "app_tenant_tier.py"
+    path.write_text(script)
+    return AppTest.from_file(str(path), default_timeout=30)
+
+
+def test_the_tier_control_shows_the_stored_tier_and_the_whole_vocabulary(
+    tmp_path: Path,
+) -> None:
+    from cogniverse_foundation.config.unified_config import ROUTER_TIERS
+
+    at = _tier_app(tmp_path)
+    at.run()
+
+    assert [t.value for t in at.text] == ["Router tier: free"]
+    assert list(at.selectbox[0].options) == sorted(ROUTER_TIERS)
+    assert at.selectbox[0].value == "free"
+    assert at.session_state["_api_calls"] == [
+        {"method": "get", "path": "/admin/tenants/acme:prod/tier", "json": None}
+    ]
+
+
+def test_setting_the_tier_puts_the_chosen_value(tmp_path: Path) -> None:
+    at = _tier_app(tmp_path)
+    at.run()
+
+    at.selectbox[0].set_value("pro").run()
+    at.button[0].click().run()
+
+    assert [
+        call for call in at.session_state["_api_calls"] if call["method"] == "put"
+    ] == [
+        {
+            "method": "put",
+            "path": "/admin/tenants/acme:prod/tier",
+            "json": {"tier": "pro"},
+        }
+    ]
+    assert at.session_state["_stored_tier"] == ["pro"]
+    assert [t.value for t in at.text] == ["Router tier: pro"]

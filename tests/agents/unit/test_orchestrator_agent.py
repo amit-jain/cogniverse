@@ -29,6 +29,7 @@ from cogniverse_foundation.config.unified_config import (
     SemanticRouterConfig,
     SystemConfig,
 )
+from tests.utils.tenant_helpers import config_manager_with_tiers
 
 
 def _plan_executes_to_completion(plan) -> bool:
@@ -1838,12 +1839,11 @@ class TestOrchestratorSemanticRouting:
         cfg.get_semantic_router.return_value = SemanticRouterConfig(
             enabled=True,
             semantic_router_url="http://envoy:8801/v1",
-            tenant_tiers={"acme:prod": "pro"},
-            default_tier="free",
         )
         cfg.get_llm_config.return_value.resolve.return_value = LLMEndpointConfig(
             model="openai/planner", api_base="http://vllm:8101/v1"
         )
+        cfg.config_manager = config_manager_with_tiers({"acme:prod": "pro"})
         agent, patcher = self._agent_with_config(cfg)
         try:
             with agent._semantic_router_lm_context("acme:prod"):

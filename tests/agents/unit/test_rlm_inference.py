@@ -7,6 +7,7 @@ import pytest
 
 from cogniverse_core.agents.rlm_options import RLMOptions
 from cogniverse_foundation.config.unified_config import LLMEndpointConfig
+from tests.utils.tenant_helpers import config_manager_with_tiers
 
 pytestmark = [pytest.mark.unit, pytest.mark.ci_fast]
 
@@ -536,11 +537,10 @@ class TestBuildRlmFromOptions:
         router = SemanticRouterConfig(
             enabled=True,
             semantic_router_url="http://semantic-router:8080/v1",
-            tenant_tiers={"acme:prod": "pro"},
-            default_tier="free",
         )
         cfg = MagicMock()
         cfg.get_semantic_router.return_value = router
+        cfg.config_manager = config_manager_with_tiers({"acme:prod": "pro"})
         monkeypatch.setattr(
             "cogniverse_foundation.config.utils.get_config", lambda **kw: cfg
         )
@@ -621,11 +621,10 @@ class TestRouteRlmEndpoint:
         router = SemanticRouterConfig(
             enabled=True,
             semantic_router_url="http://semantic-router:8080/v1",
-            tenant_tiers={"acme:prod": "pro"},
-            default_tier="free",
         )
         cfg = MagicMock()
         cfg.get_semantic_router.return_value = router
+        cfg.config_manager = config_manager_with_tiers({"acme:prod": "pro"})
         monkeypatch.setattr(
             "cogniverse_foundation.config.utils.get_config", lambda **kw: cfg
         )

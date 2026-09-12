@@ -19,6 +19,7 @@ from cogniverse_foundation.config.unified_config import (
     LLMEndpointConfig,
     SemanticRouterConfig,
 )
+from tests.utils.tenant_helpers import config_manager_with_tiers
 
 pytestmark = [pytest.mark.unit, pytest.mark.ci_fast]
 
@@ -30,14 +31,15 @@ def _enabled_semantic_router() -> SemanticRouterConfig:
     return SemanticRouterConfig(
         enabled=True,
         semantic_router_url=_SR_URL,
-        tenant_tiers={"acme:prod": "pro", "beta:prod": "free"},
-        default_tier="free",
     )
 
 
 def _patch_enabled_get_config(monkeypatch) -> None:
     cfg = MagicMock()
     cfg.get_semantic_router.return_value = _enabled_semantic_router()
+    cfg.config_manager = config_manager_with_tiers(
+        {"acme:prod": "pro", "beta:prod": "free"}
+    )
     monkeypatch.setattr(
         "cogniverse_foundation.config.utils.get_config", lambda **kw: cfg
     )
