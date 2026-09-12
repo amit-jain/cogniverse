@@ -1402,6 +1402,15 @@ def get_or_load_model(
 _gliner_cache: OrderedDict[Tuple[str, str, str, str], Any] = OrderedDict()
 
 
+GLINER_REQUEST_TIMEOUT_S = 240.0
+"""Per-request budget for the GLiNER inference service.
+
+The first request per (service, model) cold-loads HF weights: measured
+~30-60s for medium and ~90s for large on CPU, so the budget covers a cold
+start rather than a warm call.
+"""
+
+
 class RemoteGlinerClient:
     """HTTP client for the GLiNER inference service.
 
@@ -1419,10 +1428,12 @@ class RemoteGlinerClient:
         api_key: Optional[str] = None,
         logger: Optional[logging.Logger] = None,
         *,
+        timeout: float = GLINER_REQUEST_TIMEOUT_S,
         _resolved_headers: Optional[Mapping[str, str]] = None,
     ) -> None:
         self._url = url.rstrip("/")
         self._model_name = model_name
+        self._timeout = timeout
         self._logger = logger or logging.getLogger(__name__)
         self._session = requests.Session()
         if _resolved_headers is not None:
@@ -1489,10 +1500,7 @@ class RemoteGlinerClient:
             resp = self._session.post(
                 f"{self._url}/predict_entities",
                 json=payload,
-                # First request per (inference service, model) cold-loads HF
-                # weights; on CPU that takes ~30-60s for medium and
-                # ~90s for large. Subsequent requests are sub-second.
-                timeout=240,
+                timeout=self._timeout,
             )
             resp.raise_for_status()
             data = resp.json()
