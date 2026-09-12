@@ -47,6 +47,8 @@ import pytest_asyncio
 import requests
 from fastapi import FastAPI
 
+from tests.system.minio_test_manager import chart_minio_server_image
+
 TENANT_ID = "test_upload_queue"
 PROFILE = "video_colqwen_omni_mv_chunk_30s"
 SOURCE_VIDEO_PATH = Path("tests/system/resources/videos/v_-D1gdv_gQyw.mp4")
@@ -301,7 +303,7 @@ def minio_container():
             f"MINIO_ROOT_PASSWORD={secret_key}",
             "--platform",
             _docker_platform(),
-            "minio/minio:latest",
+            chart_minio_server_image(),
             "server",
             "/data",
             "--console-address",

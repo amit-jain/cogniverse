@@ -527,7 +527,11 @@ class TestUpCommand:
         m["prereq"].assert_called_once_with(require_k3d=True)
         m["values"].assert_called_once_with(prod=False)
         assert m["pull"].call_args_list == [
-            call(f"{CLUSTER_NAME}-e2e", Path("/v.yaml"), skip_llm=False)
+            call(
+                f"{CLUSTER_NAME}-e2e",
+                [Path("/chart/values.yaml"), Path("/v.yaml")],
+                skip_llm=False,
+            )
         ]
         m["helm"].assert_called_once()
         m["wait"].assert_called()
@@ -543,8 +547,11 @@ class TestUpCommand:
         assert result.exit_code == 0, result.output
         overlay = get_llm_serving_values_file("modal")
         assert m["pull"].call_args_list == [
-            call(f"{CLUSTER_NAME}-e2e", Path("/v.yaml"), skip_llm=False),
-            call(f"{CLUSTER_NAME}-e2e", overlay, skip_llm=False),
+            call(
+                f"{CLUSTER_NAME}-e2e",
+                [Path("/chart/values.yaml"), Path("/v.yaml"), overlay],
+                skip_llm=False,
+            )
         ]
 
     @patch("cogniverse_cli.main.has_workspace_source", return_value=False)

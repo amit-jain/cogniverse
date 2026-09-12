@@ -1942,8 +1942,14 @@ semanticRouter:
 minio:
   enabled: true
   image:
-    repository: minio/minio
+    repository: quay.io/minio/minio
     tag: "RELEASE.2025-04-08T15-41-24Z"
+    pullPolicy: IfNotPresent
+  # ``mc`` runs the bucket bootstrap Job, the backup upload steps and the
+  # monthly-report upload step.
+  mcImage:
+    repository: quay.io/minio/mc
+    tag: "RELEASE.2025-08-13T08-35-41Z"
     pullPolicy: IfNotPresent
   replicaCount: 1
   service:

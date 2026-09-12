@@ -14,10 +14,25 @@ import time
 import uuid
 from contextlib import contextmanager
 from dataclasses import dataclass
+from pathlib import Path
 from typing import Any
+
+import yaml
 
 DEFAULT_ACCESS_KEY = "minioadmin"
 DEFAULT_SECRET_KEY = "minioadmin"
+CHART_VALUES = (
+    Path(__file__).resolve().parents[2] / "charts" / "cogniverse" / "values.yaml"
+)
+
+
+def chart_minio_server_image() -> str:
+    """The MinIO server image the chart deploys, pinned in its values.
+
+    Tests run the version the cluster runs, from the registry that serves it.
+    """
+    image = yaml.safe_load(CHART_VALUES.read_text())["minio"]["image"]
+    return f"{image['repository']}:{image['tag']}"
 
 
 def _free_port() -> int:
@@ -96,7 +111,7 @@ class MinIOTestManager:
                 f"MINIO_ROOT_USER={self.access_key}",
                 "-e",
                 f"MINIO_ROOT_PASSWORD={self.secret_key}",
-                "minio/minio:latest",
+                chart_minio_server_image(),
                 "server",
                 "/data",
                 "--console-address",

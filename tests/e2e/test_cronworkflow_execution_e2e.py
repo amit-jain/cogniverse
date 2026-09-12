@@ -23,9 +23,11 @@ import subprocess
 import time
 import uuid
 from datetime import datetime, timedelta, timezone
+from pathlib import Path
 
 import httpx
 import pytest
+import yaml
 
 from cogniverse_foundation.common.tenant_utils import canonical_tenant_id
 from tests.e2e.conftest import (
@@ -39,6 +41,9 @@ from tests.e2e.conftest import (
 from tests.e2e.test_api_e2e import PROFILE, _deploy_profile_for_tenant
 
 NAMESPACE = "cogniverse"
+CHART_VALUES = (
+    Path(__file__).resolve().parents[2] / "charts" / "cogniverse" / "values.yaml"
+)
 RUNTIME = (
     "http://localhost:33000"  # runtime.service.nodePort — matches tests/e2e/conftest.py
 )
@@ -378,6 +383,64 @@ def _poll_resolve(
 # ---------------------------------------------------------------------------
 
 
+def _mc_image() -> dict:
+    """The ``mc`` image block the chart's own MinIO steps run.
+
+    Same pinned reference the bucket bootstrap Job and the backup upload steps
+    use, so the probe hits the node's copy of an image the cluster already
+    needs and never depends on a registry being reachable at test time.
+    """
+    return yaml.safe_load(CHART_VALUES.read_text())["minio"]["mcImage"]
+
+
+def _mc_probe_diagnosis(pod: str) -> str:
+    """Container state and events for a probe pod that produced no output."""
+    parts = []
+    for what, args in (
+        (
+            "container_state",
+            (
+                "get",
+                "pod",
+                pod,
+                "-n",
+                NAMESPACE,
+                "-o",
+                "jsonpath={.status.containerStatuses[*].state}",
+            ),
+        ),
+        (
+            "events",
+            (
+                "get",
+                "events",
+                "-n",
+                NAMESPACE,
+                "--field-selector",
+                f"involvedObject.name={pod}",
+                "-o",
+                'jsonpath={range .items[*]}{.reason}: {.message}{"\\n"}{end}',
+            ),
+        ),
+    ):
+        probe = subprocess.run(
+            ["kubectl", "--context", KUBECTL_CONTEXT, *args],
+            capture_output=True,
+            text=True,
+            timeout=30,
+        )
+        parts.append(f"{what}={(probe.stdout or probe.stderr).strip()}")
+    return "\n".join(parts)
+
+
+def _fail_mc_probe(pod: str, image: str, command: list, detail: str) -> None:
+    pytest.fail(
+        f"MinIO prerequisite probe failed: image={image}\n"
+        f"{detail}\n{_mc_probe_diagnosis(pod)}\ncommand={shlex.join(command)}",
+        pytrace=False,
+    )
+
+
 def _mc_ls_names(prefix: str) -> list:
     """Sorted object names under cogniverse-backups/<prefix>/ via the
     in-cluster MinIO.
@@ -385,20 +448,22 @@ def _mc_ls_names(prefix: str) -> list:
     Spins a one-off mc pod that talks to the cluster's MinIO service —
     same access pattern the backup workflow uses. Snapshot names embed
     ISO timestamps, so lexical order == chronological order. A failed
-    probe reports the complete kubectl command and process output.
+    probe reports the image, the container state, the pod's events and
+    the complete kubectl command.
     """
+    mc = _mc_image()
+    image = f"{mc['repository']}:{mc['tag']}"
+    pod = f"mc-probe-{uuid.uuid4().hex[:8]}"
     command = [
         "kubectl",
         "--context",
         KUBECTL_CONTEXT,
         "run",
-        f"mc-probe-{uuid.uuid4().hex[:8]}",
+        pod,
         "-n",
         NAMESPACE,
-        "--rm",
-        "-i",
         "--restart=Never",
-        "--image=minio/mc:latest",
+        f"--image={image}",
         "--overrides",
         json.dumps(
             {
@@ -406,7 +471,8 @@ def _mc_ls_names(prefix: str) -> list:
                     "containers": [
                         {
                             "name": "mc",
-                            "image": "minio/mc:latest",
+                            "image": image,
+                            "imagePullPolicy": mc["pullPolicy"],
                             "env": [
                                 {
                                     "name": "ACCESS",
@@ -438,28 +504,63 @@ def _mc_ls_names(prefix: str) -> list:
                 }
             }
         ),
-        "--",
-        "true",
+    ]
+    wait = [
+        "kubectl",
+        "--context",
+        KUBECTL_CONTEXT,
+        "wait",
+        f"pod/{pod}",
+        "-n",
+        NAMESPACE,
+        "--for=jsonpath={.status.phase}=Succeeded",
+        "--timeout=120s",
+    ]
+    logs = [
+        "kubectl",
+        "--context",
+        KUBECTL_CONTEXT,
+        "logs",
+        pod,
+        "-n",
+        NAMESPACE,
     ]
     try:
-        result = subprocess.run(
-            command,
+        for step in (command, wait, logs):
+            try:
+                result = subprocess.run(
+                    step,
+                    capture_output=True,
+                    text=True,
+                    timeout=180,
+                )
+            except (OSError, subprocess.TimeoutExpired) as exc:
+                _fail_mc_probe(pod, image, step, f"error={type(exc).__name__}: {exc}")
+            if result.returncode != 0:
+                _fail_mc_probe(
+                    pod,
+                    image,
+                    step,
+                    f"exit_code={result.returncode}\n"
+                    f"stdout={result.stdout!r}\nstderr={result.stderr!r}",
+                )
+    finally:
+        subprocess.run(
+            [
+                "kubectl",
+                "--context",
+                KUBECTL_CONTEXT,
+                "delete",
+                "pod",
+                pod,
+                "-n",
+                NAMESPACE,
+                "--ignore-not-found",
+                "--now",
+            ],
             capture_output=True,
             text=True,
-            timeout=120,
-        )
-    except (OSError, subprocess.TimeoutExpired) as exc:
-        pytest.fail(
-            f"MinIO prerequisite command failed: {shlex.join(command)}\n"
-            f"error={type(exc).__name__}: {exc}",
-            pytrace=False,
-        )
-    if result.returncode != 0:
-        pytest.fail(
-            f"MinIO prerequisite command failed: {shlex.join(command)}\n"
-            f"exit_code={result.returncode}\nstdout={result.stdout!r}\n"
-            f"stderr={result.stderr!r}",
-            pytrace=False,
+            timeout=60,
         )
     # mc find prints full object paths (dest/bucket/prefix/name), one
     # per line — the minimal mc image has no awk/sed, so parse here.

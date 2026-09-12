@@ -462,12 +462,11 @@ def up(
     # GPU images don't blow the helm-install timeout at pod start.
     if use_k3d:
         console.print("[cyan]Pre-pulling third-party images...[/cyan]")
-        for vf in values_files:
-            pull_and_import_third_party(
-                resolved_cluster_name,
-                vf,
-                skip_llm=llm_is_external,
-            )
+        pull_and_import_third_party(
+            resolved_cluster_name,
+            [chart_path / "values.yaml", *values_files],
+            skip_llm=llm_is_external,
+        )
     # 5c. Bootstrap secrets the chart references by name. Must happen
     # BEFORE helm install so gated-model pods (e.g. the vLLM Gemma LLM
     # student/teacher pods) find hf-token at startup.

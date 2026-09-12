@@ -11,6 +11,7 @@ import shutil
 import subprocess
 import tempfile
 import tomllib
+from collections.abc import Sequence
 from contextlib import contextmanager
 from pathlib import Path
 
@@ -827,14 +828,21 @@ def prune_superseded_images(
     return removed
 
 
-def _read_third_party_images(values_file: Path, skip_llm: bool = False) -> list[str]:
-    """Read third-party image references from a Helm values file.
+def _read_third_party_images(
+    values_files: Sequence[Path], skip_llm: bool = False
+) -> list[str]:
+    """Read third-party image references from a set of Helm values files.
 
-    Walks top-level vespa/phoenix/llm.builtin and every enabled
-    ``inference.<svc>`` block including device-specific overrides.
+    The files merge in helm's own order (chart defaults first, each overlay on
+    top), so an image declared only in the chart defaults resolves the same way
+    here as it does at install. Walks top-level vespa/phoenix/minio/llm.builtin
+    and every enabled ``inference.<svc>`` block including device-specific
+    overrides.
     """
-    with open(values_file) as f:
-        values = yaml.safe_load(f) or {}
+    values: dict = {}
+    for values_file in values_files:
+        with open(values_file) as f:
+            _deep_merge(values, yaml.safe_load(f) or {})
 
     images: list[str] = []
 
@@ -852,6 +860,14 @@ def _read_third_party_images(values_file: Path, skip_llm: bool = False) -> list[
 
     _add_image(values.get("vespa", {}).get("image"))
     _add_image(values.get("phoenix", {}).get("image"))
+
+    # MinIO ships two images: the server Deployment and the ``mc`` client that
+    # runs the bucket bootstrap Job, the backup uploads and the e2e bucket
+    # probe. Both are pinned in the chart values and pulled from there.
+    minio = values.get("minio") or {}
+    if minio.get("enabled") is not False:
+        _add_image(minio.get("image"))
+        _add_image(minio.get("mcImage"))
 
     # Semantic-router gateway (Envoy + the SR image) — part of the default
     # stack, so its images must be pre-pulled or first boot ErrImagePulls.
@@ -889,17 +905,17 @@ def _read_third_party_images(values_file: Path, skip_llm: bool = False) -> list[
 
 def pull_and_import_third_party(
     cluster_name: str,
-    values_file: Path,
+    values_files: Sequence[Path],
     *,
     skip_llm: bool = False,
 ) -> None:
     """Pull third-party images locally and import into k3d.
 
-    Reads image references from the Helm values file rather than
+    Reads image references from the Helm values files rather than
     hardcoding them. This avoids slow in-cluster pulls that cause
     pod startup timeouts.
     """
-    images = _read_third_party_images(values_file, skip_llm=skip_llm)
+    images = _read_third_party_images(values_files, skip_llm=skip_llm)
     if not images:
         return
 
