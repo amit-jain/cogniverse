@@ -13,7 +13,7 @@ import asyncio
 import json
 import logging
 import re
-from typing import Any, Dict, List, Literal, Optional, get_args
+from typing import Any, Dict, List, Optional
 
 import dspy
 from dspy.utils.exceptions import AdapterParseError
@@ -23,6 +23,7 @@ from cogniverse_agents.memory_aware_mixin import MemoryAwareMixin
 from cogniverse_core.agents.a2a_agent import A2AAgent, A2AAgentConfig
 from cogniverse_core.agents.base import AgentDeps, AgentInput, AgentOutput
 from cogniverse_core.common.tenant_utils import require_tenant_id
+from cogniverse_foundation.common.entity_types import ENTITY_TYPES, EntityType
 from cogniverse_foundation.dspy import StructuredJSONAdapter
 from cogniverse_foundation.telemetry.span_contract import (
     ENTITY_EXTRACTION_FALLBACK_ATTRIBUTE,
@@ -114,14 +115,6 @@ class EntityExtractionDeps(AgentDeps):
             "loading gliner in-process — required on slim runtime images."
         ),
     )
-
-
-EntityType = Literal[
-    "CONCEPT", "EVENT", "ORGANIZATION", "PERSON", "PLACE", "TECHNOLOGY"
-]
-
-ENTITY_TYPES = frozenset(get_args(EntityType))
-"""The entity types the agent emits; every GLiNER label maps into this set."""
 
 
 class EntityMention(BaseModel):

@@ -10,7 +10,7 @@ from __future__ import annotations
 import json
 from typing import Any
 
-from cogniverse_agents.entity_extraction_agent import ENTITY_TYPES
+from cogniverse_foundation.common.entity_types import ENTITY_TYPES
 from cogniverse_foundation.telemetry.providers.base import DatasetNotFoundError
 
 ENTITY_EXTRACTION_GROUND_TRUTH_BLOB_KIND = "config"
