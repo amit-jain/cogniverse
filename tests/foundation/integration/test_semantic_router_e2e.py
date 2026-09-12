@@ -45,6 +45,7 @@ from cogniverse_foundation.config.semantic_router import (
 from cogniverse_foundation.config.unified_config import (
     DEFAULT_ROUTER_TIER,
     LLMEndpointConfig,
+    RouterTier,
     SemanticRouterConfig,
 )
 from cogniverse_foundation.dspy.structured_json_adapter import signature_response_format
@@ -59,8 +60,25 @@ def sr_base_url(semantic_router_stack) -> str:
 # The tiers these tenants are on. In production each comes from the tenant's
 # stored attribute (``cogniverse_foundation.config.tenant_tiers``); here the
 # router, not the store, is the boundary under test.
-_TIERS = {"pro-tenant": "pro", "free-tenant": "free"}
-_FALLBACK_TIER = "free"
+_TIERS = {
+    "pro-tenant": "pro",
+    "free-tenant": "free",
+    "another-free-tenant": "free",
+}
+
+
+def _tier_for(tenant_id: str) -> RouterTier:
+    """The tier this file puts on the wire for ``tenant_id``.
+
+    Every request the suite sends resolves its tier here, so the tier the
+    header seam requires is bound in one place. An unmapped tenant raises
+    rather than defaulting: a tier silently downgraded to the cheapest one
+    picks a different routing decision, and a decision-crossed request still
+    satisfies a cache assertion that only asked for ``upstream``.
+    """
+    if tenant_id not in _TIERS:
+        raise KeyError(f"no tier mapped for {tenant_id!r}; add it to _TIERS")
+    return _TIERS[tenant_id]
 
 
 def _semantic_router_config(base_url: str) -> SemanticRouterConfig:
@@ -80,7 +98,7 @@ def _call(base_url: str, tenant_id: str, prompt: str) -> dict:
         endpoint=endpoint,
         config=_semantic_router_config(base_url),
         tenant_id=tenant_id,
-        tier=_TIERS.get(tenant_id, _FALLBACK_TIER),
+        tier=_tier_for(tenant_id),
     )
     lm = create_dspy_lm(routed)
     lm.cache = False
@@ -139,7 +157,9 @@ def _post(
 ) -> requests.Response:
     """One completion through Envoy carrying the production authz headers."""
     config = _semantic_router_config(base_url)
-    headers = dict(resolve_semantic_router_headers(config, tenant_id) or {})
+    headers = dict(
+        resolve_semantic_router_headers(config, tenant_id, _tier_for(tenant_id)) or {}
+    )
     if cache_control is not None:
         headers[_response_cache_plugin()["request_controls"]["header"]] = cache_control
     response = requests.post(
@@ -298,7 +318,7 @@ def _call_with_response_format(
         endpoint=endpoint,
         config=_semantic_router_config(base_url),
         tenant_id=tenant_id,
-        tier=_TIERS.get(tenant_id, _FALLBACK_TIER),
+        tier=_tier_for(tenant_id),
     )
     lm = create_dspy_lm(routed)
     lm.cache = False
@@ -411,6 +431,17 @@ class TestTheResponseCacheReusesOnlyAnIdenticalRequest:
         assert (
             _reflected(second)["routing_headers"]["x-authz-user-id"]
             == "another-free-tenant"
+        )
+        # The tier the two share, pinned on the wire: both requests carry it,
+        # so "same decision, same cache, different partition" is read off the
+        # request rather than assumed. basic-chat is also what the base tier
+        # serves, so served_model alone cannot tell a shared tier from a
+        # dropped tier header.
+        assert (
+            _reflected(first)["routing_headers"]["x-authz-user-groups"]
+            == _reflected(second)["routing_headers"]["x-authz-user-groups"]
+            == _TIERS["free-tenant"]
+            == _TIERS["another-free-tenant"]
         )
         assert _served_from(second) == "upstream"
         assert _reflected(second)["call_index"] != _reflected(first)["call_index"]
