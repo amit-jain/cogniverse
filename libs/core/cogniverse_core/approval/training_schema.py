@@ -4,6 +4,8 @@ from __future__ import annotations
 
 from typing import Any, Literal, Mapping, get_args
 
+from cogniverse_foundation.common.entity_types import ENTITY_TYPES
+
 APPROVED_SYNTHETIC_AGENT_TYPES = frozenset(
     {
         "entity_extraction",
@@ -112,6 +114,12 @@ def _validate_entities(values: Mapping[str, Any], context: str) -> None:
         if text != entity["text"] or entity_type != entity["type"]:
             raise ValueError(
                 f"{context} entity at position {position} contains surrounding whitespace"
+            )
+        if entity_type not in ENTITY_TYPES:
+            raise ValueError(
+                f"{context} entity at position {position} has unsupported type "
+                f"{entity_type!r}; allowed types are "
+                f"{', '.join(sorted(ENTITY_TYPES))}"
             )
         if text in entity_texts:
             raise ValueError(f"{context} contains duplicate entity text {text!r}")

@@ -980,20 +980,20 @@ class TestPersistDecision:
             {
                 "query": "PyTorch was created by Meta AI",
                 "entities": [
-                    {"text": "PyTorch", "type": "PRODUCT"},
-                    {"text": "Meta AI", "type": "ORG"},
+                    {"text": "PyTorch", "type": "TECHNOLOGY"},
+                    {"text": "Meta AI", "type": "ORGANIZATION"},
                 ],
                 "relationships": [
                     {"source": "Meta AI", "target": "PyTorch", "type": "created"}
                 ],
             },
-            '{"entities":[{"text":"JAX","type":"PRODUCT"},'
-            '{"text":"Google","type":"ORG"}],"relationships":['
+            '{"entities":[{"text":"JAX","type":"TECHNOLOGY"},'
+            '{"text":"Google","type":"ORGANIZATION"}],"relationships":['
             '{"source":"Google","target":"JAX","type":"created"}]}',
             {
                 "entities": [
-                    {"text": "JAX", "type": "PRODUCT"},
-                    {"text": "Google", "type": "ORG"},
+                    {"text": "JAX", "type": "TECHNOLOGY"},
+                    {"text": "Google", "type": "ORGANIZATION"},
                 ],
                 "relationships": [
                     {"source": "Google", "target": "JAX", "type": "created"}
@@ -1080,15 +1080,29 @@ def test_schema_corrections_parse_as_exact_canonical_fields(
             {
                 "query": "PyTorch was created by Meta AI",
                 "entities": [
-                    {"text": "PyTorch", "type": "PRODUCT"},
-                    {"text": "Meta AI", "type": "ORG"},
+                    {"text": "PyTorch", "type": "TECHNOLOGY"},
+                    {"text": "Meta AI", "type": "ORGANIZATION"},
                 ],
                 "relationships": [],
             },
-            '{"entities":[{"text":"JAX","type":"PRODUCT"}],'
+            '{"entities":[{"text":"JAX","type":"TECHNOLOGY"}],'
             '"relationships":[{"source":"Meta AI","target":"JAX",'
             '"type":"created"}]}',
             "relationships[0].source 'Meta AI' is not one of the corrected entity texts ['JAX']",
+        ),
+        (
+            {
+                "query": "PyTorch was created by Meta AI",
+                "entities": [
+                    {"text": "PyTorch", "type": "TECHNOLOGY"},
+                    {"text": "Meta AI", "type": "ORGANIZATION"},
+                ],
+                "relationships": [],
+            },
+            '{"entities":[{"text":"JAX","type":"PRODUCT"}],"relationships":[]}',
+            "EntityExtractionExampleSchema corrected record entity at position 0 has "
+            "unsupported type 'PRODUCT'; allowed types are CONCEPT, EVENT, "
+            "ORGANIZATION, PERSON, PLACE, TECHNOLOGY",
         ),
         (
             {
