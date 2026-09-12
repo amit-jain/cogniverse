@@ -882,3 +882,51 @@ def test_vespa_backup_tolerates_live_file_changes_and_fails_on_tar_errors(
     )
     if expected_exit == 0:
         assert "var/payload" in listing.stdout.split()
+
+
+_MC_OVERRIDE = "example.test/mc:pinned-by-values"
+
+
+def _steps_running(docs: list[dict], image: str) -> dict:
+    """(workload, step) -> imagePullPolicy for every container on *image*."""
+    found = {}
+    for doc in docs:
+        kind = doc.get("kind")
+        name = doc.get("metadata", {}).get("name")
+        if kind in ("Deployment", "Job", "StatefulSet"):
+            spec = doc["spec"]["template"]["spec"]
+            for key in ("containers", "initContainers"):
+                for container in spec.get(key) or []:
+                    if container.get("image") == image:
+                        found[(f"{kind}/{name}", container["name"])] = container.get(
+                            "imagePullPolicy"
+                        )
+        elif kind in ("CronWorkflow", "WorkflowTemplate"):
+            workflow_spec = doc["spec"].get("workflowSpec") or doc["spec"]
+            for template in workflow_spec.get("templates") or []:
+                container = template.get("container")
+                if container and container.get("image") == image:
+                    found[(f"{kind}/{name}", template["name"])] = container.get(
+                        "imagePullPolicy"
+                    )
+    return found
+
+
+def test_every_mc_step_renders_the_values_pinned_image():
+    """Bucket bootstrap and every upload step run the image ``minio.mcImage``
+    pins. The e2e MinIO probe derives its image from the same values block, so
+    all of them resolve to the one reference the deploy imports into the node.
+    """
+    docs = _render(
+        "hostStorage.backup.enabled=true",
+        "hostStorage.backup.existingSecret=cogniverse-minio",
+        "minio.mcImage.repository=example.test/mc",
+        "minio.mcImage.tag=pinned-by-values",
+    )
+
+    assert _steps_running(docs, _MC_OVERRIDE) == {
+        ("Job/cogniverse-minio-bucket-bootstrap", "bucket-bootstrap"): "IfNotPresent",
+        ("CronWorkflow/cogniverse-backup-vespa", "upload"): "IfNotPresent",
+        ("CronWorkflow/cogniverse-backup-phoenix", "upload"): "IfNotPresent",
+        ("CronWorkflow/cogniverse-monthly-reports", "upload-reports"): "IfNotPresent",
+    }

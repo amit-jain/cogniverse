@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+import re
 import shlex
 import subprocess
 import threading
@@ -1527,7 +1528,7 @@ class TestReadThirdPartyImages:
     def test_resolves_core_device_and_skips_never_and_disabled(
         self, tmp_path: Path
     ) -> None:
-        result = _read_third_party_images(self._values_file(tmp_path), skip_llm=False)
+        result = _read_third_party_images([self._values_file(tmp_path)], skip_llm=False)
         assert result == [
             "vespaengine/vespa:8.1",
             "arizephoenix/phoenix:5.0",
@@ -1542,7 +1543,7 @@ class TestReadThirdPartyImages:
         assert "cogniverse/clap-cpu:c1" not in result
 
     def test_skip_llm_omits_builtin_llm_image(self, tmp_path: Path) -> None:
-        result = _read_third_party_images(self._values_file(tmp_path), skip_llm=True)
+        result = _read_third_party_images([self._values_file(tmp_path)], skip_llm=True)
         assert result == [
             "vespaengine/vespa:8.1",
             "arizephoenix/phoenix:5.0",
@@ -1567,7 +1568,7 @@ class TestReadThirdPartyImages:
                 }
             )
         )
-        assert _read_third_party_images(vf, skip_llm=True) == [
+        assert _read_third_party_images([vf], skip_llm=True) == [
             "envoyproxy/envoy:1.29",
             "cogniverse/sr:2.0",
         ]
@@ -1583,7 +1584,7 @@ class TestReadThirdPartyImages:
                 }
             )
         )
-        assert _read_third_party_images(vf, skip_llm=True) == ["shared/img:1"]
+        assert _read_third_party_images([vf], skip_llm=True) == ["shared/img:1"]
 
     def test_missing_tag_defaults_to_latest(self, tmp_path: Path) -> None:
         vf = tmp_path / "notag.yaml"
@@ -1595,7 +1596,7 @@ class TestReadThirdPartyImages:
                 }
             )
         )
-        assert _read_third_party_images(vf, skip_llm=True) == [
+        assert _read_third_party_images([vf], skip_llm=True) == [
             "vespaengine/vespa:latest"
         ]
 
@@ -1626,7 +1627,7 @@ class TestPullAndImportThirdParty:
             )
         )
 
-        pull_and_import_third_party("cogniverse", vf, skip_llm=True)
+        pull_and_import_third_party("cogniverse", [vf], skip_llm=True)
 
         calls = [c.args[0] for c in mock_run.call_args_list]  # type: ignore[attr-defined]
         assert calls == [
@@ -1676,7 +1677,7 @@ class TestPullAndImportThirdParty:
         )  # type: ignore[attr-defined]
 
         with pytest.raises(subprocess.CalledProcessError) as exc_info:
-            pull_and_import_third_party("cogniverse", vf, skip_llm=True)
+            pull_and_import_third_party("cogniverse", [vf], skip_llm=True)
 
         assert exc_info.value.cmd == failed_command
         assert [call.args[0] for call in mock_run.call_args_list] == [failed_command]  # type: ignore[attr-defined]
@@ -1717,7 +1718,7 @@ class TestPullAndImportThirdParty:
         ]
 
         with pytest.raises(subprocess.CalledProcessError) as exc_info:
-            pull_and_import_third_party("cogniverse", vf, skip_llm=True)
+            pull_and_import_third_party("cogniverse", [vf], skip_llm=True)
 
         assert exc_info.value.cmd == failed_command
         import_commands = [
@@ -1744,7 +1745,7 @@ class TestPullAndImportThirdParty:
         vf = tmp_path / "empty.yaml"
         vf.write_text(yaml.safe_dump({"semanticRouter": {"enabled": False}}))
 
-        pull_and_import_third_party("cogniverse", vf, skip_llm=True)
+        pull_and_import_third_party("cogniverse", [vf], skip_llm=True)
 
         mock_run.assert_not_called()  # type: ignore[attr-defined]
 
@@ -2072,3 +2073,51 @@ class TestFirstPartyImageCoverage:
                 values_files=[overlay],
                 versions=UNIFORM_DEV_VERSIONS,
             )
+
+
+class TestMinioImagesArePrePulled:
+    """Both MinIO images the chart runs are pinned in the chart values and land
+    in the set the deploy pre-pulls and imports, so no step that runs ``mc`` —
+    bucket bootstrap, backup upload, report upload, the e2e bucket probe —
+    depends on a registry being reachable when it runs."""
+
+    REPO_ROOT = Path(__file__).resolve().parents[3]
+    CHART = REPO_ROOT / "charts" / "cogniverse"
+
+    def _chart_minio(self) -> dict:
+        return yaml.safe_load((self.CHART / "values.yaml").read_text())["minio"]
+
+    def test_pre_pull_set_carries_both_pinned_minio_images(self) -> None:
+        minio = self._chart_minio()
+        images = _read_third_party_images(
+            [self.CHART / "values.yaml", self.CHART / "values.k3s.yaml"],
+            skip_llm=True,
+        )
+
+        assert [image for image in images if "minio" in image] == [
+            f"{minio['image']['repository']}:{minio['image']['tag']}",
+            f"{minio['mcImage']['repository']}:{minio['mcImage']['tag']}",
+        ]
+
+    def test_pinned_minio_tags_do_not_float(self) -> None:
+        """A floating tag defaults the kubelet to ``imagePullPolicy: Always``,
+        so the node's cached copy is ignored and every run needs the registry."""
+        minio = self._chart_minio()
+
+        assert [minio["image"]["tag"], minio["mcImage"]["tag"]] != ["latest"] * 2
+        assert [minio["image"]["pullPolicy"], minio["mcImage"]["pullPolicy"]] == [
+            "IfNotPresent",
+            "IfNotPresent",
+        ]
+
+    def test_no_template_restates_a_minio_image_reference(self) -> None:
+        """Every MinIO image in the chart resolves through ``minio.*Image``; a
+        literal in a template drifts from the reference the deploy imports."""
+        offenders = [
+            f"{path.relative_to(self.REPO_ROOT)}:{number}: {line.strip()}"
+            for path in (self.CHART / "templates").rglob("*.yaml")
+            for number, line in enumerate(path.read_text().splitlines(), 1)
+            if re.search(r'image:\s*"?[\w./-]*minio/', line)
+        ]
+
+        assert offenders == []

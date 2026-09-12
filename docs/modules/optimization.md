@@ -959,7 +959,7 @@ uv run python -m cogniverse_runtime.optimization_cli \
   --lookback-hours 720
 ```
 
-`--tenant-id` is not required (the workflow sweeps every tenant the metadata schemas know about). CronWorkflow `{fullname}-monthly-reports` (chart, schedule `0 5 1 * *`, 1st of month 5 AM UTC) runs this followed by a `minio/mc:latest` step that uploads to the configured MinIO bucket under `reports/` (`argo.optimization.monthlyReports.uploadPrefix`).
+`--tenant-id` is not required (the workflow sweeps every tenant the metadata schemas know about). CronWorkflow `{fullname}-monthly-reports` (chart, schedule `0 5 1 * *`, 1st of month 5 AM UTC) runs this followed by an `mc` step (`minio.mcImage`) that uploads to the configured MinIO bucket under `reports/` (`argo.optimization.monthlyReports.uploadPrefix`).
 
 Returns `{period, generated_at, output_dir, files_written: [usage_path, perf_path], summary: {org_count, tenant_count, perf_tenants_with_data}}`.
 
@@ -1265,7 +1265,7 @@ enabled/scheduled via `values.yaml`'s `argo.optimization.*`):
 | `{fullname}-daily-cleanup` | `0 4 * * *` (daily 4 AM UTC) | `cleanup` |
 | `{fullname}-synthetic-generation` | `0 1 * * 6` (Saturday 1 AM UTC) | `synthetic` |
 | `{fullname}-scheduled-distillation` | daily | `quality_monitor_cli --once` (forces a distillation pass even when quality is stable, so learning doesn't stall during long healthy periods) |
-| `{fullname}-monthly-reports` | `0 5 1 * *` (1st of month 5 AM UTC) | `monthly-reports`, then uploads output to MinIO via `minio/mc:latest` |
+| `{fullname}-monthly-reports` | `0 5 1 * *` (1st of month 5 AM UTC) | `monthly-reports`, then uploads output to MinIO via `mc` (`minio.mcImage`) |
 
 ```bash
 # View a schedule

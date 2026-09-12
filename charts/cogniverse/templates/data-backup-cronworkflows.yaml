@@ -236,7 +236,8 @@ spec:
       {{- end }}
     - name: upload
       container:
-        image: minio/mc:RELEASE.2025-08-13T08-35-41Z
+        image: "{{ $.Values.minio.mcImage.repository }}:{{ $.Values.minio.mcImage.tag }}"
+        imagePullPolicy: {{ $.Values.minio.mcImage.pullPolicy }}
         env:
         - name: MINIO_ENDPOINT
           value: {{ $s3Endpoint | quote }}

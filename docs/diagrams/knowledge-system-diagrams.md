@@ -378,7 +378,7 @@ executes four sequential sections per tick: schema-driven per-tenant
 Mem0 cleanup, log rotation, temp purge, and config-store version
 vacuum. `run_monthly_reports` runs as a two-step Argo pipeline sharing
 a `reports-stage` PVC: the runtime image generates the JSON, then a
-`minio/mc:latest` pod uploads it to the `cogniverse-backups` bucket
+`mc` pod (`minio.mcImage`) uploads it to the `cogniverse-backups` bucket
 using credentials from the `{fullname}-minio` Secret.
 
 ```mermaid
@@ -411,7 +411,7 @@ flowchart LR
 
     subgraph Pipeline["<span style='color:#000'>reports-pipeline (sequential steps, shared PVC reports-stage)</span>"]
         Generate["<span style='color:#000'>Step 1: generate-reports pod<br/>image=runtime<br/>python -m cogniverse_runtime.optimization_cli<br/>--mode monthly-reports<br/>--reports-output-dir /reports<br/>--lookback-hours {value}<br/>writes usage-YYYYMM.json,<br/>performance-YYYYMM.json</span>"]
-        Upload["<span style='color:#000'>Step 2: upload-reports pod<br/>image=minio/mc:latest<br/>env MINIO_ENDPOINT, MINIO_BUCKET,<br/>REPORTS_PREFIX,<br/>MINIO_ACCESS_KEY (secret rootUser),<br/>MINIO_SECRET_KEY (secret rootPassword)<br/>mc alias set dest $ENDPOINT $AK $SK<br/>mc cp /reports/*.json<br/>dest/$BUCKET/$REPORTS_PREFIX/</span>"]
+        Upload["<span style='color:#000'>Step 2: upload-reports pod<br/>image=minio.mcImage<br/>env MINIO_ENDPOINT, MINIO_BUCKET,<br/>REPORTS_PREFIX,<br/>MINIO_ACCESS_KEY (secret rootUser),<br/>MINIO_SECRET_KEY (secret rootPassword)<br/>mc alias set dest $ENDPOINT $AK $SK<br/>mc cp /reports/*.json<br/>dest/$BUCKET/$REPORTS_PREFIX/</span>"]
     end
 
     PVC["<span style='color:#000'>PVC reports-stage<br/>ReadWriteOnce, 1Gi<br/>mounted at /reports in both pods</span>"]

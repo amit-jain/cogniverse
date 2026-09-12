@@ -487,7 +487,7 @@ Chart `CronWorkflow` (`argo.optimization.monthlyReports`, schedule `0 5 1 * *`) 
 
 Step 1 (`generate-reports`): runs `optimization_cli --mode monthly-reports --reports-output-dir /reports --lookback-hours 720` against the in-cluster Phoenix and stages `usage-YYYYMM.json` + `performance-YYYYMM.json` onto a `reports-stage` PVC. Usage is per-org tenant counts + each tenant's `schemas_deployed`; performance is per-tenant span count, latency mean / p50 / p95, and `error_rate` over the lookback window.
 
-Step 2 (`upload-reports`): `minio/mc:latest` pod that `mc cp`s the staged JSON into MinIO at `cogniverse-backups/reports/` (`hostStorage.backup.bucket` + `argo.optimization.monthlyReports.uploadPrefix`).
+Step 2 (`upload-reports`): `mc` pod (`minio.mcImage`) that `mc cp`s the staged JSON into MinIO at `cogniverse-backups/reports/` (`hostStorage.backup.bucket` + `argo.optimization.monthlyReports.uploadPrefix`).
 
 ```bash
 # View workflow
