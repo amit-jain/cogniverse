@@ -190,6 +190,13 @@ class TestSemanticRouterConfigSerialization:
         assert not hasattr(rt, "default_tier")
         assert rt.tier_header == "x-authz-user-groups"
         assert rt.routed_model == "openai/auto"
+        assert rt.to_dict() == {
+            "enabled": True,
+            "semantic_router_url": SR_URL,
+            "tier_header": "x-authz-user-groups",
+            "user_id_header": "x-authz-user-id",
+            "routed_model": "openai/auto",
+        }
 
     def test_system_config_default_leaves_semantic_router_disabled(self):
         assert SystemConfig().semantic_router.enabled is False
@@ -199,6 +206,7 @@ class TestSemanticRouterConfigSerialization:
         rt = SystemConfig.from_dict(syscfg.to_dict())
         assert rt.semantic_router.enabled is True
         assert rt.semantic_router.semantic_router_url == SR_URL
+        assert not hasattr(rt.semantic_router, "tenant_tiers")
         assert rt.semantic_router.to_dict() == _enabled_config().to_dict()
 
 
