@@ -8,7 +8,7 @@ results". Each candidate below differs from the servable one in exactly one
 property, so a predicate that drops either half fails here.
 """
 
-import os
+import socket
 import time
 
 import pytest
@@ -150,6 +150,20 @@ def test_no_usable_profile_names_both_the_missing_service_and_the_missing_schema
     )
 
 
+def _unbound_port() -> int:
+    """A port this test owns and nothing listens on.
+
+    The ambient ``BACKEND_PORT`` is only dead when no fixture in the session
+    has pointed it at a running backend, so the outage under test is bound to
+    a port taken and released here instead.
+    """
+    probe = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+    probe.bind(("127.0.0.1", 0))
+    port = probe.getsockname()[1]
+    probe.close()
+    return port
+
+
 class _RegistryReadDown:
     """Every tenant config read succeeds; only the schema-registry read is down.
 
@@ -179,8 +193,8 @@ def test_registry_read_outage_raises_instead_of_reporting_nothing_deployed():
     config_manager.store = _RegistryReadDown(
         live_store,
         VespaConfigStore(
-            backend_url="http://localhost",
-            backend_port=int(os.environ["BACKEND_PORT"]),
+            backend_url="http://127.0.0.1",
+            backend_port=_unbound_port(),
         ),
     )
 
