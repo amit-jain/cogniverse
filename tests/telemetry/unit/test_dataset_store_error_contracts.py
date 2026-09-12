@@ -15,15 +15,21 @@ import httpx
 import pandas as pd
 import pytest
 
-from cogniverse_foundation.telemetry.providers.base import DatasetNotFoundError
+from cogniverse_foundation.telemetry.providers.base import (
+    DatasetNotFoundError,
+    DatasetStoreUnavailableError,
+)
 
 pytestmark = pytest.mark.unit
+
+
+_ENDPOINT = "http://phoenix:6006"
 
 
 def _store():
     from cogniverse_telemetry_phoenix.provider import PhoenixDatasetStore
 
-    return PhoenixDatasetStore(http_endpoint="http://phoenix:6006")
+    return PhoenixDatasetStore(http_endpoint=_ENDPOINT)
 
 
 def _http_error(
@@ -56,16 +62,24 @@ class TestGetDataset:
         client = MagicMock()
         client.datasets.get_dataset.side_effect = _http_error(404)
         with patch("phoenix.client.Client", return_value=client):
-            with pytest.raises(httpx.HTTPStatusError):
+            with pytest.raises(DatasetStoreUnavailableError) as excinfo:
                 await _store().get_dataset("ds1")
+        assert excinfo.value.dataset == "ds1"
+        assert excinfo.value.endpoint == _ENDPOINT
+        assert isinstance(excinfo.value.__cause__, httpx.HTTPStatusError)
+        assert excinfo.value.__cause__.response.status_code == 404
 
     @pytest.mark.asyncio
     async def test_503_outage_raises_not_missing(self):
         client = MagicMock()
         client.datasets.get_dataset.side_effect = _http_error(503)
         with patch("phoenix.client.Client", return_value=client):
-            with pytest.raises(httpx.HTTPStatusError):
+            with pytest.raises(DatasetStoreUnavailableError) as excinfo:
                 await _store().get_dataset("ds1")
+        assert excinfo.value.dataset == "ds1"
+        assert excinfo.value.endpoint == _ENDPOINT
+        assert isinstance(excinfo.value.__cause__, httpx.HTTPStatusError)
+        assert excinfo.value.__cause__.response.status_code == 503
 
     @pytest.mark.asyncio
     async def test_name_containing_404_still_raises_on_outage(self):
@@ -74,8 +88,12 @@ class TestGetDataset:
         client = MagicMock()
         client.datasets.get_dataset.side_effect = _http_error(500)
         with patch("phoenix.client.Client", return_value=client):
-            with pytest.raises(httpx.HTTPStatusError):
+            with pytest.raises(DatasetStoreUnavailableError) as excinfo:
                 await _store().get_dataset("quality-baseline-20260404")
+        assert excinfo.value.dataset == "quality-baseline-20260404"
+        assert excinfo.value.endpoint == _ENDPOINT
+        assert isinstance(excinfo.value.__cause__, httpx.HTTPStatusError)
+        assert excinfo.value.__cause__.response.status_code == 500
 
 
 class TestAppendToDataset:
