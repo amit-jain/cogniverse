@@ -116,24 +116,24 @@ def test_enhancement_uses_longest_non_overlapping_entity_match() -> None:
     generator = _routing_generator()
     entities = [
         {"text": "Marie Curie", "type": "PERSON"},
-        {"text": "Curie", "type": "SURNAME"},
+        {"text": "Curie", "type": "ORGANIZATION"},
     ]
 
     assert generator._enhance_query(
         "Marie Curie discovered radium with Curie notebooks",
         entities,
-    ) == ("Marie Curie(PERSON) discovered radium with Curie(SURNAME) notebooks")
+    ) == ("Marie Curie(PERSON) discovered radium with Curie(ORGANIZATION) notebooks")
 
 
 def test_enhancement_never_reannotates_inserted_entity_types() -> None:
     generator = _routing_generator()
     entities = [
         {"text": "Python", "type": "TECHNOLOGY"},
-        {"text": "technology", "type": "CATEGORY"},
+        {"text": "technology", "type": "CONCEPT"},
     ]
 
     assert generator._enhance_query("Python technology", entities) == (
-        "Python(TECHNOLOGY) technology(CATEGORY)"
+        "Python(TECHNOLOGY) technology(CONCEPT)"
     )
 
 
@@ -354,7 +354,7 @@ def test_validation_rejects_query_that_omits_one_multiword_entity() -> None:
         generator.forward(
             topics="radioactivity",
             entities=["Marie Curie", "radium"],
-            entity_types=["PERSON", "MATERIAL"],
+            entity_types=["PERSON", "CONCEPT"],
         )
 
 
@@ -1745,7 +1745,7 @@ def test_to_example_collapses_repeated_relationship_triples() -> None:
             "query": text,
             "entities": [
                 {"text": "Marie Curie", "type": "PERSON"},
-                {"text": "radium", "type": "SUBSTANCE"},
+                {"text": "radium", "type": "CONCEPT"},
                 {"text": "Sorbonne", "type": "ORGANIZATION"},
             ],
             "relationships": [
@@ -1772,7 +1772,7 @@ def test_to_example_collapses_repeated_relationship_triples() -> None:
     assert set(example.model_dump()) == {"query", "entities", "relationships"}
     assert example.entities == [
         {"text": "Marie Curie", "type": "PERSON"},
-        {"text": "radium", "type": "SUBSTANCE"},
+        {"text": "radium", "type": "CONCEPT"},
         {"text": "Sorbonne", "type": "ORGANIZATION"},
     ]
     assert example.relationships == [

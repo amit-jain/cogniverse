@@ -44,7 +44,7 @@ pytestmark = [pytest.mark.unit]
                 "query": "Marie Curie discovered radium",
                 "entities": [
                     {"text": "Marie Curie", "type": "PERSON"},
-                    {"text": "radium", "type": "SUBSTANCE"},
+                    {"text": "radium", "type": "CONCEPT"},
                 ],
                 "relationships": [
                     {
@@ -197,12 +197,12 @@ def _probe_example(schema_class, query: str):
         },
         EntityExtractionExampleSchema: {
             "query": query,
-            "entities": [{"text": "source", "type": "TOPIC"}],
+            "entities": [{"text": "source", "type": "CONCEPT"}],
             "relationships": [],
         },
         RoutingExperienceSchema: {
             "query": query,
-            "entities": [{"text": "source", "type": "TOPIC"}],
+            "entities": [{"text": "source", "type": "CONCEPT"}],
             "relationships": [],
             "enhanced_query": f"{query} expanded",
             "chosen_agent": "search_agent",

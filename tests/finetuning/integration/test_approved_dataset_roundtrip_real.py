@@ -719,7 +719,7 @@ async def test_approved_synthetic_dataset_roundtrip(
                 "query": "PyTorch was released by Meta AI",
                 "entities": [
                     {"text": "PyTorch", "type": "TECHNOLOGY"},
-                    {"text": "Meta AI", "type": "ORG"},
+                    {"text": "Meta AI", "type": "ORGANIZATION"},
                 ],
                 "relationships": [
                     {
@@ -733,7 +733,7 @@ async def test_approved_synthetic_dataset_roundtrip(
                 "query": "JAX was developed by Google",
                 "entities": [
                     {"text": "JAX", "type": "TECHNOLOGY"},
-                    {"text": "Google", "type": "ORG"},
+                    {"text": "Google", "type": "ORGANIZATION"},
                 ],
                 "relationships": [
                     {
@@ -749,7 +749,7 @@ async def test_approved_synthetic_dataset_roundtrip(
                 "query": "Vespa was created by Yahoo",
                 "entities": [
                     {"text": "Vespa", "type": "TECHNOLOGY"},
-                    {"text": "Yahoo", "type": "ORG"},
+                    {"text": "Yahoo", "type": "ORGANIZATION"},
                 ],
                 "relationships": [
                     {
@@ -763,7 +763,7 @@ async def test_approved_synthetic_dataset_roundtrip(
                 "query": "Phoenix is maintained by Arize",
                 "entities": [
                     {"text": "Phoenix", "type": "TECHNOLOGY"},
-                    {"text": "Arize", "type": "ORG"},
+                    {"text": "Arize", "type": "ORGANIZATION"},
                 ],
                 "relationships": [
                     {

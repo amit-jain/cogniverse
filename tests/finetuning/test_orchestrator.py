@@ -251,7 +251,7 @@ class TestApprovedSyntheticLoader:
             "query": "PyTorch was released by Meta AI",
             "entities": [
                 {"text": "PyTorch", "type": "TECHNOLOGY"},
-                {"text": "Meta AI", "type": "ORG"},
+                {"text": "Meta AI", "type": "ORGANIZATION"},
             ],
             "relationships": [
                 {

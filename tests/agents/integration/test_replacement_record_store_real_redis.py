@@ -97,7 +97,7 @@ def _candidate(index: int) -> dict:
         "item_id": "routing_17_regen_0",
         "data": {
             "query": f"find exact candidate {index}",
-            "entities": [{"text": f"candidate-{index}", "type": "TOPIC"}],
+            "entities": [{"text": f"candidate-{index}", "type": "CONCEPT"}],
         },
         "confidence": 0.61 + index / 1000,
         "status": "regenerated",
@@ -215,7 +215,7 @@ async def test_selected_record_has_exact_canonical_bytes_and_digest(redis_url):
 
     expected_json = (
         '{"confidence":0.617,"created_at":"2026-08-03T01:02:07+00:00",'
-        '"data":{"entities":[{"text":"candidate-7","type":"TOPIC"}],'
+        '"data":{"entities":[{"text":"candidate-7","type":"CONCEPT"}],'
         '"query":"find exact candidate 7"},"item_id":"routing_17_regen_0",'
         '"metadata":{"decision":{"reviewer":"reviewer-7"},'
         '"original_item_id":"routing_17"},"reviewed_at":null,'

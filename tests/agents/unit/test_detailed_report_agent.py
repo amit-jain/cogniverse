@@ -833,7 +833,7 @@ class TestDetailedReportAgentCoreFunctionality:
             query="test query",
             search_results=[{"title": "AI video", "content_type": "video"}],
             enhanced_query="test query enhanced",
-            entities=[{"text": "AI", "type": "topic"}],
+            entities=[{"text": "AI", "type": "CONCEPT"}],
             relationships=[{"type": "semantic", "entities": ["AI", "technology"]}],
             include_visual_analysis=False,
             report_type="comprehensive",
@@ -845,7 +845,7 @@ class TestDetailedReportAgentCoreFunctionality:
         req = captured["request"]
         assert req.query == "test query enhanced"
         # entities + relationships are merged into the request context verbatim.
-        assert req.context["entities"] == [{"text": "AI", "type": "topic"}]
+        assert req.context["entities"] == [{"text": "AI", "type": "CONCEPT"}]
         assert req.context["relationships"] == [
             {"type": "semantic", "entities": ["AI", "technology"]}
         ]

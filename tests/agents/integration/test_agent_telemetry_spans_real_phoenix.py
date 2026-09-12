@@ -605,7 +605,7 @@ class TestA2ACustomTelemetrySpansRealPhoenix:
             ),
             Entity(
                 text="Meta AI",
-                type="ORG",
+                type="ORGANIZATION",
                 confidence=0.87,
                 context="",
             ),
@@ -629,7 +629,7 @@ class TestA2ACustomTelemetrySpansRealPhoenix:
                 },
                 {
                     "text": "Meta AI",
-                    "type": "ORG",
+                    "type": "ORGANIZATION",
                     "confidence": 0.87,
                     "context": "",
                 },
@@ -637,7 +637,7 @@ class TestA2ACustomTelemetrySpansRealPhoenix:
             "relationships": [],
             "entity_count": 2,
             "has_entities": True,
-            "dominant_types": ["TECHNOLOGY", "ORG"],
+            "dominant_types": ["TECHNOLOGY", "ORGANIZATION"],
             "path_used": "dspy",
         }
 
@@ -663,7 +663,7 @@ class TestA2ACustomTelemetrySpansRealPhoenix:
                     },
                     {
                         "text": "Meta AI",
-                        "type": "ORG",
+                        "type": "ORGANIZATION",
                         "confidence": 0.87,
                         "context": "",
                     },

@@ -81,7 +81,7 @@ async def test_approved_synthetic_moves_recommendation_to_sft(
 
     # 50 approved synthetic examples clear the SFT threshold.
     approved_synthetic = [
-        {"query": f"text {i}", "entities": [{"text": "X", "type": "ORG"}]}
+        {"query": f"text {i}", "entities": [{"text": "X", "type": "ORGANIZATION"}]}
         for i in range(50)
     ]
     with_syn = await selector.analyze_data(

@@ -176,12 +176,12 @@ def test_approved_reader_rejects_serialized_entity_lists() -> None:
     ("example", "expected_message"),
     [
         (
-            {"query": "", "entities": [{"text": "X", "type": "ORG"}]},
+            {"query": "", "entities": [{"text": "X", "type": "ORGANIZATION"}]},
             "synthetic entity_extraction example at position 0 requires a "
             "non-empty query string",
         ),
         (
-            {"entities": [{"text": "Y", "type": "ORG"}]},
+            {"entities": [{"text": "Y", "type": "ORGANIZATION"}]},
             "synthetic entity_extraction example at position 0 requires a "
             "non-empty query string",
         ),

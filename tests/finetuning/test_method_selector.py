@@ -864,7 +864,7 @@ class TestSyntheticApprovalWiring:
             "query": "Marie Curie discovered radium",
             "entities": [
                 {"text": "Marie Curie", "type": "PERSON"},
-                {"text": "radium", "type": "MATERIAL"},
+                {"text": "radium", "type": "CONCEPT"},
             ],
             "relationships": [],
         }

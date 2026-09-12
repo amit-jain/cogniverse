@@ -182,7 +182,7 @@ class TestCheckEntityPrediction:
             "entities": [
                 {"text": "John Doe", "type": "PERSON"},
                 {"text": "Acme Corp", "type": "ORGANIZATION"},
-                {"text": "New York", "type": "LOCATION"},
+                {"text": "New York", "type": "PLACE"},
             ]
         }
 
@@ -222,8 +222,8 @@ class TestCheckEntityPrediction:
     def test_relationship_mismatch_fails_exactness_and_reduces_structured_f1(self):
         pred = {
             "entities": [
-                {"text": "PyTorch", "type": "PRODUCT"},
-                {"text": "Meta AI", "type": "ORG"},
+                {"text": "PyTorch", "type": "TECHNOLOGY"},
+                {"text": "Meta AI", "type": "ORGANIZATION"},
             ],
             "relationships": [
                 {"source": "Meta AI", "target": "PyTorch", "type": "owns"}
@@ -231,8 +231,8 @@ class TestCheckEntityPrediction:
         }
         expected = {
             "entities": [
-                {"text": "PyTorch", "type": "PRODUCT"},
-                {"text": "Meta AI", "type": "ORG"},
+                {"text": "PyTorch", "type": "TECHNOLOGY"},
+                {"text": "Meta AI", "type": "ORGANIZATION"},
             ],
             "relationships": [
                 {"source": "Meta AI", "target": "PyTorch", "type": "created"}

@@ -317,7 +317,7 @@ class TestEntityExtractionEvaluator:
         entry = get_agent_evaluator("entity_extraction")
         span = self._span(
             "show me the eiffel tower at night",
-            [{"text": "eiffel tower", "type": "landmark"}],
+            [{"text": "eiffel tower", "type": "PLACE"}],
         )
 
         results = {r.evaluator_name: r for r in entry.structural_evaluations(span)}

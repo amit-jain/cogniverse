@@ -545,8 +545,8 @@ def test_inline_rejection_persists_exact_canonical_corrections(monkeypatch) -> N
         data={
             "query": "PyTorch was created by Meta AI",
             "entities": [
-                {"text": "PyTorch", "type": "PRODUCT"},
-                {"text": "Meta AI", "type": "ORG"},
+                {"text": "PyTorch", "type": "TECHNOLOGY"},
+                {"text": "Meta AI", "type": "ORGANIZATION"},
             ],
             "relationships": [
                 {"source": "Meta AI", "target": "PyTorch", "type": "created"}
@@ -575,8 +575,8 @@ def test_inline_rejection_persists_exact_canonical_corrections(monkeypatch) -> N
     monkeypatch.setattr(optimization, "st", fake_st)
     corrections = {
         "entities": [
-            {"text": "JAX", "type": "PRODUCT"},
-            {"text": "Google", "type": "ORG"},
+            {"text": "JAX", "type": "TECHNOLOGY"},
+            {"text": "Google", "type": "ORGANIZATION"},
         ],
         "relationships": [{"source": "Google", "target": "JAX", "type": "created"}],
     }
