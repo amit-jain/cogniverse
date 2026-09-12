@@ -837,7 +837,7 @@ class TestFeedbackHandler:
                     "query": "TensorFlow was created by Google Brain",
                     "entities": [
                         {"text": "TensorFlow", "type": "TECHNOLOGY"},
-                        {"text": "Google Brain", "type": "ORG"},
+                        {"text": "Google Brain", "type": "ORGANIZATION"},
                     ],
                     "relationships": [],
                 },
@@ -845,20 +845,20 @@ class TestFeedbackHandler:
                     "query": "PyTorch was created by Meta AI",
                     "entities": [
                         {"text": "PyTorch", "type": "TECHNOLOGY"},
-                        {"text": "Meta AI", "type": "ORG"},
+                        {"text": "Meta AI", "type": "ORGANIZATION"},
                     ],
                 },
                 {
                     "entities": [
                         {"text": "PyTorch", "type": "TECHNOLOGY"},
-                        {"text": "Meta AI", "type": "ORG"},
+                        {"text": "Meta AI", "type": "ORGANIZATION"},
                     ]
                 },
                 {
                     "query": "PyTorch was created by Meta AI",
                     "entities": [
                         {"text": "PyTorch", "type": "TECHNOLOGY"},
-                        {"text": "Meta AI", "type": "ORG"},
+                        {"text": "Meta AI", "type": "ORGANIZATION"},
                     ],
                     "relationships": [],
                 },
@@ -1029,6 +1029,47 @@ class TestFeedbackHandler:
                 "reasoning": "Applied the reviewer instruction.",
             },
         }
+
+    @pytest.mark.asyncio
+    async def test_generator_following_the_handed_contract_is_accepted(self):
+        """The example handed to the generator must survive the approval gate.
+
+        ``process_rejection`` hands ``schema.model_json_schema()`` to the
+        regenerator and judges the answer with the approval gate, so an
+        advertised example the gate refuses fails every attempt.
+        """
+        handed: dict = {}
+
+        def regenerate(**kwargs):
+            handed.update(kwargs["schema_contract"]["example"])
+            return SimpleNamespace(
+                updates=copy.deepcopy(handed),
+                reasoning="Returned the advertised contract example.",
+                _retry_count=0,
+                _max_retries=3,
+            )
+
+        item = ReviewItem(
+            item_id="contract_item",
+            data={
+                "query": "Marie Curie discovered radium",
+                "entities": [{"text": "Marie Curie", "type": "PERSON"}],
+                "relationships": [],
+            },
+            confidence=0.4,
+        )
+        decision = ReviewDecision(
+            item_id=item.item_id,
+            approved=False,
+            feedback="Extract every entity the contract example shows.",
+            corrections={},
+        )
+
+        regenerated = await self._handler(regenerate).process_rejection(item, decision)
+
+        assert regenerated.data == handed
+        assert regenerated.item_id == "contract_item_regen_0"
+        assert regenerated.status is ApprovalStatus.REGENERATED
 
     @pytest.mark.parametrize(
         ("data", "schema_name"),
