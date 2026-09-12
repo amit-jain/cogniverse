@@ -1028,6 +1028,17 @@ dropped on its own and the rest of the answer still serves:
 when nothing was dropped. `grounding_failed` is the state only when nothing
 survived.
 
+`extractor_unavailable` is the same vocabulary's value for GLiNER itself not
+answering -- an unprovisioned sidecar, a missing dependency, an unreachable
+inference service. `GLiNERRelationshipExtractor.extract_entities` raises
+`GLiNEREntityExtractionUnavailableError` carrying the model and the inference
+URL, and the two routing consumers that keep serving on their own fallback
+carry that value rather than an empty result: `ComposableQueryAnalysisModule`
+sets `fallback_reason` / `fallback_model` / `fallback_inference_url` on the
+prediction it returns, and `RelationshipExtractorTool.
+extract_comprehensive_relationships` the same three keys on its result dict.
+`query_structure` reports the spaCy parse and is never a failure marker.
+
 **Key Capabilities**:
 
 - Primary path: DSPy ChainOfThought entity extraction

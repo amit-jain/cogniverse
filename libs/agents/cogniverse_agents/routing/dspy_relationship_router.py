@@ -18,12 +18,17 @@ from typing import Any, Dict, List, Optional
 
 import dspy
 
+from cogniverse_foundation.telemetry.span_contract import (
+    ENTITY_EXTRACTION_FALLBACK_EXTRACTOR_UNAVAILABLE,
+)
+
 from .dspy_routing_signatures import (
     AdvancedRoutingSignature,
     QueryReformulationSignature,
     UnifiedExtractionReformulationSignature,
 )
 from .relationship_extraction_tools import (
+    GLiNEREntityExtractionUnavailableError,
     GLiNERRelationshipExtractor,
     SpaCyDependencyAnalyzer,
 )
@@ -110,17 +115,30 @@ class ComposableQueryAnalysisModule(dspy.Module):
                 avg_confidence = sum(e["confidence"] for e in entities) / len(entities)
 
             # Step 3: Path decision
-            gliner_available = self.gliner_extractor.gliner_model is not None
             has_enough_entities = len(entities) >= self.min_entities_for_fast_path
             confidence_above_threshold = (
                 avg_confidence >= self.entity_confidence_threshold
             )
 
-            if gliner_available and has_enough_entities and confidence_above_threshold:
+            if has_enough_entities and confidence_above_threshold:
                 return self._path_a(query, entities, search_context)
             else:
                 return self._path_b(query, search_context)
 
+        except GLiNEREntityExtractionUnavailableError as exc:
+            logger.error(
+                "ComposableQueryAnalysisModule degraded: GLiNER unavailable "
+                "(model=%s inference_url=%s): %s",
+                exc.model_name,
+                exc.inference_url,
+                exc,
+            )
+            return self._fallback_prediction(
+                query,
+                fallback_reason=ENTITY_EXTRACTION_FALLBACK_EXTRACTOR_UNAVAILABLE,
+                fallback_model=exc.model_name,
+                fallback_inference_url=exc.inference_url,
+            )
         except Exception as e:
             logger.error(f"ComposableQueryAnalysisModule failed: {e}")
             return self._fallback_prediction(query)
@@ -251,8 +269,21 @@ class ComposableQueryAnalysisModule(dspy.Module):
 
         return parse_confidence(value, default=0.5)
 
-    def _fallback_prediction(self, query: str) -> dspy.Prediction:
-        """Return safe fallback prediction when all paths fail."""
+    def _fallback_prediction(
+        self,
+        query: str,
+        *,
+        fallback_reason: Optional[str] = None,
+        fallback_model: Optional[str] = None,
+        fallback_inference_url: Optional[str] = None,
+    ) -> dspy.Prediction:
+        """Return safe fallback prediction when all paths fail.
+
+        ``fallback_reason`` carries the entity-extraction reason vocabulary the
+        served agent records, so an extractor outage is queryable here under
+        the same value rather than an empty analysis that reads as a query
+        holding no entities.
+        """
         prediction = dspy.Prediction()
         prediction.entities = []
         prediction.relationships = []
@@ -262,6 +293,9 @@ class ComposableQueryAnalysisModule(dspy.Module):
         prediction.path_used = "fallback"
         prediction.domain_classification = "unknown"
         prediction.reasoning = "All analysis paths failed"
+        prediction.fallback_reason = fallback_reason
+        prediction.fallback_model = fallback_model
+        prediction.fallback_inference_url = fallback_inference_url
         return prediction
 
 
