@@ -224,6 +224,7 @@ BATCH2=(
   tests/e2e/test_messaging_e2e.py
   tests/e2e/test_multiprofile_and_isolation_e2e.py
   tests/e2e/test_tenant_extensibility_e2e.py
+  tests/e2e/test_tenant_tier_routing_e2e.py
   tests/e2e/test_tenant_schema_lifecycle_e2e.py
   tests/e2e/test_wiki_e2e.py
   tests/e2e/test_batch_optimization_e2e.py

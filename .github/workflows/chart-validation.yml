@@ -10,6 +10,7 @@ on:
       - 'charts/**'
       - 'workflows/**'
       - 'tests/charts/**'
+      - 'tests/foundation/integration/_sr_stack/**'
       - '.github/workflows/chart-validation.yml'
       - 'configs/config.json'
       - 'configs/examples/config.example.json'
@@ -19,6 +20,7 @@ on:
       - 'charts/**'
       - 'workflows/**'
       - 'tests/charts/**'
+      - 'tests/foundation/integration/_sr_stack/**'
       - '.github/workflows/chart-validation.yml'
       # test_inference_chart.py and test_shipped_config_parity.py read the
       # shipped and example configs.

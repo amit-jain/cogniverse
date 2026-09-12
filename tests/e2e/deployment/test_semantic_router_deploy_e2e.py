@@ -200,6 +200,7 @@ def _route_completion(envoy_url: str, tenant_id: str, tier: str, prompt: str) ->
             semantic_router_url=envoy_url,
         ),
         tenant_id=tenant_id,
+        tier=tier,
     )
     assert routed.extra_headers == {
         "x-authz-user-id": tenant_id,
