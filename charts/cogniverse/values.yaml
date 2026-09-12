@@ -1924,6 +1924,12 @@ semanticRouter:
       limits:
         cpu: "2"
         memory: "6Gi"
+    # Exact-match response cache (files/semantic-router/config.yaml). Entries
+    # are keyed on the whole normalized request and partitioned by tenant; no
+    # similarity matching. maxEntries bounds each partition-shared map.
+    responseCache:
+      ttlSeconds: 3600
+      maxEntries: 1024
 
 # ===========================================
 # MinIO — S3-compatible object store

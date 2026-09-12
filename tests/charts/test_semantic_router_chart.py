@@ -168,18 +168,45 @@ def _router_image(docs: list[dict]) -> str:
     raise AssertionError("semantic-router Deployment/container not rendered")
 
 
-def test_semantic_cache_disabled():
-    """The router's semantic cache matches on prompt similarity, not identity.
+# The policy every decision carries. ``mode: exact`` keys a hit on a SHA-256
+# over the whole normalized request, so two prompts differing by one character
+# are two entries; ``scope: user`` partitions by the tenant identity the
+# runtime sends. ``max-age`` is the only client directive, and it can only
+# narrow the entry age a request will accept.
+_EXACT_CACHE_PLUGIN = {
+    "type": "response_cache",
+    "configuration": {
+        "enabled": True,
+        "mode": "exact",
+        "scope": "user",
+        "request_controls": {
+            "enabled": True,
+            "header": "x-vsr-cache-control",
+            "allowed": ["max-age"],
+        },
+    },
+}
 
-    Routed through it, eight prompts differing only by a trailing digit come
-    back carrying each other's content, and a request that sent no
-    response_format is answered with an earlier request's JSON schema (both
-    reproduced in tests/foundation/integration/test_semantic_router_e2e.py
-    against the real router). A query rewrite is a per-query transformation, so
-    a near-miss hit returns the wrong rewritten query.
-    """
-    cache = _sr_config(_render("llm.engine=vllm"))["global"]["stores"]["semantic_cache"]
-    assert cache == {"enabled": False}
+
+def test_response_cache_store_is_memory_backed_with_the_configured_bounds():
+    """Bounds come from values.yaml, never restated here."""
+    bounds = yaml.safe_load((CHART_PATH / "values.yaml").read_text())["semanticRouter"][
+        "router"
+    ]["responseCache"]
+    stores = _sr_config(_render("llm.engine=vllm"))["global"]["stores"]
+    assert stores == {
+        "response_cache": {
+            "backend_type": "memory",
+            "enabled": True,
+            "max_entries": bounds["maxEntries"],
+            "ttl_seconds": bounds["ttlSeconds"],
+        }
+    }
+    # Both bounds read 0 as "unlimited" in the router: a ttl of 0 is an entry
+    # that outlives the process, a max_entries of 0 is a map that grows until
+    # the pod is OOM-killed.
+    assert bounds["ttlSeconds"] not in (0, None)
+    assert bounds["maxEntries"] not in (0, None)
 
 
 def test_semantic_cache_embedding_runtime_configured():
@@ -193,9 +220,10 @@ def test_semantic_cache_embedding_runtime_configured():
     assert semantic["embedding_config"]["preload_embeddings"] is True
 
 
-def test_no_decision_attaches_the_semantic_cache_plugin():
-    """The cache is gated per-decision, so disabling the store is not enough:
-    a plugin left on a decision is the cache back on for that route."""
+def test_every_decision_caches_on_exact_request_identity_only():
+    """The cache is gated per-decision: a decision without the plugin never
+    caches, and a decision whose plugin omits ``mode`` falls back to similarity
+    matching at 0.8 - which answers one query out of another query's entry."""
     decisions = _sr_config(_render("llm.engine=vllm"))["routing"]["decisions"]
     assert [decision["name"] for decision in decisions] == [
         "pro-technical-keyword",
@@ -204,13 +232,9 @@ def test_no_decision_attaches_the_semantic_cache_plugin():
         "free-default",
         "base-default",
     ]
-    attached = [
-        decision["name"]
-        for decision in decisions
-        for plugin in (decision.get("plugins") or [])
-        if plugin.get("type") == "semantic-cache"
-    ]
-    assert attached == []
+    assert [decision.get("plugins") for decision in decisions] == [
+        [_EXACT_CACHE_PLUGIN]
+    ] * len(decisions)
 
 
 def test_router_image_pinned_by_digest():

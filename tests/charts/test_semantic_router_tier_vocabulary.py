@@ -32,13 +32,28 @@ _STACK_ROUTER_CONFIG = (
     _REPO / "tests" / "foundation" / "integration" / "_sr_stack" / "sr-config.yaml"
 )
 
-# Helm expressions are opaque to the YAML parser; the routing section this
-# module reads carries none, so neutralising them is enough to load the file.
-_TEMPLATE = re.compile(r"\{\{-?.*?-?\}\}")
+# Helm expressions are opaque to the YAML parser. A ``.Values`` lookup is
+# resolved against values.yaml so the twin can be compared against the numbers
+# the chart really renders; anything else is neutralised to load the file.
+_TEMPLATE = re.compile(r"\{\{-?\s*(?P<body>.*?)\s*-?\}\}")
+_VALUES_LOOKUP = re.compile(r"^(?:int\s+)?\.Values\.(?P<path>[\w.]+)$")
+_CHART_VALUES = _REPO / "charts" / "cogniverse" / "values.yaml"
+
+
+def _chart_value(dotted: str) -> str:
+    node = yaml.safe_load(_CHART_VALUES.read_text())
+    for key in dotted.split("."):
+        node = node[key]
+    return str(node)
+
+
+def _resolve(match: re.Match) -> str:
+    lookup = _VALUES_LOOKUP.match(match["body"])
+    return _chart_value(lookup["path"]) if lookup else "templated"
 
 
 def _load(path: Path) -> dict:
-    return yaml.safe_load(_TEMPLATE.sub("templated", path.read_text()))
+    return yaml.safe_load(_TEMPLATE.sub(_resolve, path.read_text()))
 
 
 def _bound_groups(config: dict) -> set[str]:
@@ -87,7 +102,9 @@ class TestTheTestStackRoutesTheShippedConfiguration:
             == (_load(_CHART_ROUTER_CONFIG)["routing"])
         )
 
-    def test_the_twin_and_the_chart_agree_on_the_semantic_cache(self):
-        chart = _load(_CHART_ROUTER_CONFIG)["global"]["stores"]["semantic_cache"]
-        twin = _load(_STACK_ROUTER_CONFIG)["global"]["stores"]["semantic_cache"]
+    def test_the_twin_and_the_chart_agree_on_the_response_cache_store(self):
+        """Including the bounds: the chart reads them from values.yaml, and a
+        twin pinned only on the block's shape would absorb a changed TTL."""
+        chart = _load(_CHART_ROUTER_CONFIG)["global"]["stores"]
+        twin = _load(_STACK_ROUTER_CONFIG)["global"]["stores"]
         assert chart == twin

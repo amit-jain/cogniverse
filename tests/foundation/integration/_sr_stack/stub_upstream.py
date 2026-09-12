@@ -17,6 +17,13 @@ router decided and forwarded:
                          ``json_schema`` payload survived the router's
                          request re-serialization)
   - ``echo``           — the last user message (proves the round trip)
+  - ``temperature``    — the ``temperature`` the router forwarded
+  - ``call_index``     — a per-process counter, incremented once per request
+                         that reaches this backend. A router cache hit replays
+                         a stored body verbatim, so a repeated ``call_index``
+                         is a hit and a fresh one is an upstream call. Counting
+                         calls is what separates "the cache answered" from "the
+                         backend answered the same way twice".
 
 When reasoning is requested it also fills ``message.reasoning_content`` and
 ``usage.completion_tokens_details.reasoning_tokens`` so a client can assert
@@ -30,6 +37,7 @@ from __future__ import annotations
 
 import json
 import os
+import threading
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 
 BACKEND_TAG = os.environ.get("BACKEND_TAG", "stub")
@@ -37,6 +45,16 @@ PORT = int(os.environ.get("PORT", "8000"))
 
 # Header names the stack uses to carry routing metadata to the backend.
 _ROUTING_HEADER_PREFIXES = ("x-vsr-", "x-authz-", "x-tenant-", "x-task")
+
+_CALLS_LOCK = threading.Lock()
+_CALLS = 0
+
+
+def _next_call_index() -> int:
+    global _CALLS
+    with _CALLS_LOCK:
+        _CALLS += 1
+        return _CALLS
 
 
 def _reasoning_requested(body: dict) -> bool:
@@ -105,6 +123,8 @@ class _Handler(BaseHTTPRequestHandler):
             "routing_headers": routing_headers,
             "response_format": body.get("response_format"),
             "echo": _last_user_message(body),
+            "temperature": body.get("temperature"),
+            "call_index": _next_call_index(),
         }
         message = {"role": "assistant", "content": json.dumps(reflection)}
         if reasoning:
