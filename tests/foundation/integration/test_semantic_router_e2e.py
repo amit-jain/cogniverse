@@ -57,6 +57,15 @@ def _semantic_router_config(base_url: str) -> SemanticRouterConfig:
     )
 
 
+def _base_tier_config(base_url: str) -> SemanticRouterConfig:
+    """A deployment that maps no tenant, which is what the chart ships.
+
+    ``SemanticRouterConfig.default_tier`` is then the only tier any request
+    carries.
+    """
+    return SemanticRouterConfig(enabled=True, semantic_router_url=base_url)
+
+
 def _call(base_url: str, tenant_id: str, prompt: str) -> dict:
     """Route a real completion through the router; return the stub's reflection."""
     endpoint = LLMEndpointConfig(model="openai/auto", api_base="http://unused:1/v1")
@@ -83,6 +92,35 @@ _TECHNICAL = (
 )
 
 
+def test_the_shipped_default_tier_matches_a_decision(sr_base_url):
+    """The tier a stock deployment emits must reach a routing decision.
+
+    ``values.yaml`` ships ``semanticRouter.routing.tenantTiers: {}``, so every
+    request carries ``SemanticRouterConfig.default_tier``. Before the chart
+    bound a group for it, that tier matched no decision: the router classified
+    the request, logged ``No decision matched``, discarded the result and fell
+    through to ``providers.defaults.default_model``.
+    """
+    endpoint = LLMEndpointConfig(model="openai/auto", api_base="http://unused:1/v1")
+    routed = apply_semantic_routing(
+        endpoint=endpoint,
+        config=_base_tier_config(sr_base_url),
+        tenant_id="unmapped-tenant",
+    )
+    lm = create_dspy_lm(routed)
+    lm.cache = False
+    out = lm("summarise this paragraph")
+    item = out[0] if isinstance(out, list) else out
+    content = (
+        item.get("text") or item.get("content") if isinstance(item, dict) else item
+    )
+    reflected = json.loads(content)
+
+    assert reflected["routing_headers"]["x-authz-user-groups"] == "default"
+    assert reflected["served_model"] == "basic-chat"
+    assert reflected["reasoning"] is False
+
+
 def test_both_authz_headers_reach_the_router(sr_base_url):
     reflected = _call(sr_base_url, "pro-tenant", "hello there")
     headers = reflected["routing_headers"]
@@ -106,6 +144,33 @@ def test_pro_tier_non_technical_keeps_reasoning_off(sr_base_url):
     reflected = _call(sr_base_url, "pro-tenant", "what's a fun weekend activity?")
     assert reflected["served_model"] == "pro-reasoning"
     assert reflected["reasoning"] is False
+
+
+def test_the_semantic_cache_never_answers_one_tenant_from_another(sr_base_url):
+    """Two tenants on the SAME tier, byte-identical prompt.
+
+    Every routing decision attaches the router's semantic cache
+    (``plugins: - type: semantic-cache`` on each decision in
+    ``charts/cogniverse/files/semantic-router/config.yaml``), keyed by prompt
+    similarity at a 0.95 threshold. Same tier means the same decision, so both
+    tenants land in the same cache; identical prompts are similarity 1.0. If
+    that cache is not scoped by tenant, the second tenant is answered out of
+    the first's entry.
+
+    The stub reflects the identity header it was called with, so a crossed
+    answer shows up as the wrong tenant id coming back - which is a tenant
+    isolation failure, not a latency question.
+    """
+    prompt = "summarise the quarterly outlook for the northern region"
+
+    first = _call(sr_base_url, "free-tenant", prompt)
+    second = _call(sr_base_url, "another-free-tenant", prompt)
+
+    assert first["routing_headers"]["x-authz-user-id"] == "free-tenant"
+    assert second["routing_headers"]["x-authz-user-id"] == "another-free-tenant"
+    # Same tier, so the decision (and its model) must be identical - the point
+    # is that identity did not leak, not that routing differed.
+    assert first["served_model"] == second["served_model"] == "basic-chat"
 
 
 def test_concurrent_completions_each_get_their_own_routing(sr_base_url):

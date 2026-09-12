@@ -56,6 +56,11 @@ routing:
         subjects:
           - kind: Group
             name: free
+      - name: base-users
+        role: base_tier
+        subjects:
+          - kind: Group
+            name: default
     keywords:
       - name: technical
         operator: OR
@@ -119,6 +124,16 @@ routing:
         - model: basic-chat
           use_reasoning: false
 
+    - name: base-default
+      priority: 50
+      rules:
+        operator: AND
+        conditions:
+          - type: authz
+            name: base_tier
+      modelRefs:
+        - model: basic-chat
+          use_reasoning: false
 global:
   services:
     authz:

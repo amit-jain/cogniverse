@@ -168,15 +168,18 @@ def _router_image(docs: list[dict]) -> str:
     raise AssertionError("semantic-router Deployment/container not rendered")
 
 
-def test_semantic_cache_enabled_with_memory_backend():
+def test_semantic_cache_disabled():
+    """The router's semantic cache matches on prompt similarity, not identity.
+
+    Routed through it, eight prompts differing only by a trailing digit come
+    back carrying each other's content, and a request that sent no
+    response_format is answered with an earlier request's JSON schema (both
+    reproduced in tests/foundation/integration/test_semantic_router_e2e.py
+    against the real router). A query rewrite is a per-query transformation, so
+    a near-miss hit returns the wrong rewritten query.
+    """
     cache = _sr_config(_render("llm.engine=vllm"))["global"]["stores"]["semantic_cache"]
-    assert cache["enabled"] is True
-    assert cache["backend_type"] == "memory"
-    assert cache["similarity_threshold"] == 0.95
-    assert cache["max_entries"] == 1024
-    assert cache["ttl_seconds"] == 3600
-    assert cache["eviction_policy"] == "lru"
-    assert cache["embedding_model"] == "mmbert"
+    assert cache == {"enabled": False}
 
 
 def test_semantic_cache_embedding_runtime_configured():
@@ -190,16 +193,24 @@ def test_semantic_cache_embedding_runtime_configured():
     assert semantic["embedding_config"]["preload_embeddings"] is True
 
 
-def test_every_decision_enables_semantic_cache_plugin():
-    # The cache is gated per-decision: with decisions present but no
-    # semantic-cache plugin, every request bypasses the cache.
+def test_no_decision_attaches_the_semantic_cache_plugin():
+    """The cache is gated per-decision, so disabling the store is not enough:
+    a plugin left on a decision is the cache back on for that route."""
     decisions = _sr_config(_render("llm.engine=vllm"))["routing"]["decisions"]
-    assert decisions, "expected routing decisions"
-    for decision in decisions:
-        plugins = decision.get("plugins", [])
-        cache_plugins = [p for p in plugins if p.get("type") == "semantic-cache"]
-        assert len(cache_plugins) == 1, f"{decision['name']} missing semantic-cache"
-        assert cache_plugins[0]["configuration"]["enabled"] is True
+    assert [decision["name"] for decision in decisions] == [
+        "pro-technical-keyword",
+        "pro-technical-domain",
+        "pro-default",
+        "free-default",
+        "base-default",
+    ]
+    attached = [
+        decision["name"]
+        for decision in decisions
+        for plugin in (decision.get("plugins") or [])
+        if plugin.get("type") == "semantic-cache"
+    ]
+    assert attached == []
 
 
 def test_router_image_pinned_by_digest():

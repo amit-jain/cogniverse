@@ -224,7 +224,10 @@ def _semantic_router_config_from_env():
     if not (enabled and url):
         return None
 
-    from cogniverse_foundation.config.unified_config import SemanticRouterConfig
+    from cogniverse_foundation.config.unified_config import (
+        ROUTER_TIERS,
+        SemanticRouterConfig,
+    )
 
     raw_tiers = os.environ.get("SEMANTIC_ROUTER_TENANT_TIERS", "").strip()
     if raw_tiers:
@@ -233,6 +236,18 @@ def _semantic_router_config_from_env():
             raise ValueError(
                 "SEMANTIC_ROUTER_TENANT_TIERS must be a JSON object mapping "
                 f"tenant_id -> tier; got {type(tenant_tiers).__name__}"
+            )
+        unknown = {
+            tenant: tier
+            for tenant, tier in tenant_tiers.items()
+            if tier not in ROUTER_TIERS
+        }
+        if unknown:
+            raise ValueError(
+                "SEMANTIC_ROUTER_TENANT_TIERS names tiers the router binds no "
+                f"group for: {unknown}. Valid tiers: {sorted(ROUTER_TIERS)}. A "
+                "tier outside that set matches no routing decision and falls "
+                "through to the default model."
             )
     else:
         tenant_tiers = {}
