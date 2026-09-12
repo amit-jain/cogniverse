@@ -22,6 +22,7 @@ this test catches it.
 
 import asyncio
 import inspect
+import json
 import re
 import time
 from pathlib import Path
@@ -52,6 +53,8 @@ from cogniverse_foundation.telemetry.span_contract import (
     OP_PROFILE_SELECTION,
     OP_QUERY_ENHANCEMENT,
     OP_ROUTING,
+    QUERY_ENHANCEMENT_PATH_ATTRIBUTE,
+    QUERY_ENHANCEMENT_PATH_LM,
     read_span_attributes,
     read_span_io,
 )
@@ -65,6 +68,15 @@ def _memory_config_manager():
     store = InMemoryConfigStore()
     store.initialize()
     return ConfigManager(store=store)
+
+
+def _shipped_active_video_profile():
+    """The video profile the shipped config activates, through its own parser."""
+    from cogniverse_foundation.config.unified_config import BackendProfileConfig
+
+    shipped = json.loads(Path("configs/config.json").read_text())
+    name = shipped["active_video_profile"]
+    return BackendProfileConfig.from_dict(name, shipped["backend"]["profiles"][name])
 
 
 class _TelemetryTestInput(AgentInput):
@@ -291,9 +303,7 @@ class TestAgentTelemetrySpansRealPhoenix:
         the real Phoenix HTTP API. Before fix #10, this would fail because
         AgentBase didn't wrap _process_impl in a span at all."""
         tenant_id = _tenant_id("agentbase-process-span")
-        agent = SearchAgent(
-            deps=_TelemetryTestDeps(), config_manager=_memory_config_manager()
-        )
+        agent = SearchAgent(deps=_TelemetryTestDeps())
         agent.set_telemetry_manager(real_telemetry)
 
         await agent.process(
@@ -591,6 +601,7 @@ class TestA2ACustomTelemetrySpansRealPhoenix:
         tenant_id = _tenant_id("entity-extraction-custom-span")
         with patch.object(EntityExtractionAgent, "_initialize_extractors"):
             agent = EntityExtractionAgent(deps=EntityExtractionDeps(), port=19010)
+        agent.bind_config_manager(_memory_config_manager())
         agent._gliner_extractor = None
         agent._spacy_analyzer = None
         agent.set_telemetry_manager(real_telemetry)
@@ -692,6 +703,7 @@ class TestA2ACustomTelemetrySpansRealPhoenix:
 
         tenant_id = _tenant_id("query-enhancement-custom-span")
         agent = QueryEnhancementAgent(deps=QueryEnhancementDeps(), port=19012)
+        agent.bind_config_manager(_memory_config_manager())
         agent.set_telemetry_manager(real_telemetry)
 
         # Mock DSPy call to avoid requiring an LLM
@@ -726,6 +738,7 @@ class TestA2ACustomTelemetrySpansRealPhoenix:
             ],
             "confidence": 0.85,
             "reasoning": "Added related terms for ML",
+            "path_used": QUERY_ENHANCEMENT_PATH_LM,
         }
 
         await asyncio.sleep(2)
@@ -758,6 +771,7 @@ class TestA2ACustomTelemetrySpansRealPhoenix:
         assert attrs["operation"] == OP_QUERY_ENHANCEMENT
         assert attrs["input.source_text"] == source_text
         assert attrs["input.grounding_context"] == ""
+        assert attrs[QUERY_ENHANCEMENT_PATH_ATTRIBUTE] == QUERY_ENHANCEMENT_PATH_LM
 
     @pytest.mark.asyncio
     async def test_profile_selection_emits_custom_span(self, real_telemetry):
@@ -769,11 +783,15 @@ class TestA2ACustomTelemetrySpansRealPhoenix:
         )
 
         tenant_id = _tenant_id("profile-selection-custom-span")
-        available_profiles = ["video_colpali_smol500_mv_frame"]
+        shipped_profile = _shipped_active_video_profile()
+        available_profiles = [shipped_profile.profile_name]
         agent = ProfileSelectionAgent(
             deps=ProfileSelectionDeps(available_profiles=available_profiles),
             port=19011,
         )
+        config_manager = _memory_config_manager()
+        config_manager.add_backend_profile(shipped_profile, tenant_id=tenant_id)
+        agent.bind_config_manager(config_manager)
         agent.set_telemetry_manager(real_telemetry)
 
         # Mock DSPy call to avoid requiring an LLM
@@ -800,8 +818,8 @@ class TestA2ACustomTelemetrySpansRealPhoenix:
             "selected_profile": available_profiles[0],
             "confidence": 0.8,
             "reasoning": "Video query matched colpali profile",
-            "query_intent": "video_search",
-            "modality": "video",
+            "query_intent": f"{shipped_profile.type}_search",
+            "modality": shipped_profile.type,
             "complexity": "simple",
             "alternatives": [],
         }
@@ -820,9 +838,9 @@ class TestA2ACustomTelemetrySpansRealPhoenix:
             "input": query,
             "output": {
                 "selected_profile": available_profiles[0],
-                "modality": "video",
+                "modality": shipped_profile.type,
                 "complexity": "simple",
-                "intent": "video_search",
+                "intent": f"{shipped_profile.type}_search",
                 "confidence": 0.8,
             },
             "operation": OP_PROFILE_SELECTION,
