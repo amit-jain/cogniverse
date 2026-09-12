@@ -20,6 +20,11 @@ import time
 from contextlib import contextmanager
 from typing import TYPE_CHECKING, Any, Dict, List, Optional, Tuple, get_args
 
+from cogniverse_agents.optimizer.artifact_manager import (
+    ARTIFACT_LOAD_ERROR,
+    ARTIFACT_LOAD_LOADED,
+    ARTIFACT_LOAD_STORE_UNAVAILABLE,
+)
 from cogniverse_core.agents.base import AgentDeps, AgentInput
 from cogniverse_core.common.tenant_utils import (
     canonical_tenant_id,
@@ -36,6 +41,9 @@ if TYPE_CHECKING:
     from cogniverse_runtime.sandbox_manager import SandboxManager
 from cogniverse_foundation.caching import TenantLRUCache, register_tenant_cache
 from cogniverse_foundation.config.manager import ConfigManager
+from cogniverse_foundation.telemetry.providers.base import (
+    DatasetStoreUnavailableError,
+)
 from cogniverse_sdk.interfaces.schema_loader import SchemaLoader
 
 if TYPE_CHECKING:
@@ -1125,31 +1133,26 @@ class AgentDispatcher:
         """Per-request canary-aware artefact resolution.
 
         Returns ``{"served_from": "active|canary|default", "version": int|None,
-        "prompts": {...}|None}`` when an ``artifact_manager_factory`` was
+        "prompts": {...}|None, "variant_id": str|None,
+        "artifact_load_status": str}`` when an ``artifact_manager_factory`` was
         provided to the dispatcher; otherwise returns ``None``. The caller
         passes the result down to the agent constructor (or stashes it in
         the dispatch context) so the agent uses the chosen variant of the
         compiled prompts.
 
-        Without this method, every request hit the active artefacts and the
-        canary state machine in :class:`ArtifactManager` was unreachable
-        from the live dispatch path — a P1.4 wiring gap.
+        The request is served on defaults when the artefact store cannot
+        answer — raising would fail every request for the outage's duration —
+        but the overlay then carries
+        ``artifact_load_status == "store_unavailable"`` and the error text, so
+        "the store is down" is never read as "this tenant selected no variant
+        and promoted nothing".
         """
         if self._artifact_manager_factory is None:
             return None
         try:
             am = self._artifact_manager_factory(tenant_id)
         except Exception as exc:
-            # A telemetry/Phoenix outage here silently reverts every request to
-            # the un-optimized DEFAULT prompts. That's an acceptable degrade, but
-            # it must be VISIBLE (warning, not debug) so an operator sees that
-            # optimized prompts stopped being served.
-            logger.warning(
-                "Artefact factory failed for tenant=%s — serving default prompts: %s",
-                tenant_id,
-                exc,
-            )
-            return None
+            return self._degraded_artefact_overlay(agent_name, tenant_id, exc)
 
         # Consumer for PUT /admin/tenants/{t}/signature_variants/{agent};
         # falls back to default when no admin selection exists. Warm the
@@ -1159,28 +1162,55 @@ class AgentDispatcher:
             from cogniverse_runtime.routers.admin import load_signature_variants
 
             await load_signature_variants(tenant_id)
-        except Exception as exc:
+        except ImportError as exc:
             logger.debug("signature-variant cache warm skipped: %s", exc)
+        except Exception as exc:
+            return self._degraded_artefact_overlay(agent_name, tenant_id, exc)
         variant_id = self._resolve_signature_variant(tenant_id, agent_name)
 
         try:
-            return await am.load_for_request(
+            overlay = await am.load_for_request(
                 agent_name,
                 request_seed=request_seed,
                 variant_id=variant_id,
             )
         except Exception as exc:
-            # Same degraded-mode reversion as above — warn so the fallback to
-            # default prompts is not invisible.
-            logger.warning(
-                "load_for_request(%s, seed=%s, variant=%s) failed — serving "
-                "default prompts: %s",
-                agent_name,
-                request_seed,
-                variant_id,
-                exc,
+            return self._degraded_artefact_overlay(
+                agent_name, tenant_id, exc, variant_id=variant_id
             )
-            return None
+        overlay["artifact_load_status"] = ARTIFACT_LOAD_LOADED
+        return overlay
+
+    @staticmethod
+    def _degraded_artefact_overlay(
+        agent_name: str,
+        tenant_id: str,
+        exc: BaseException,
+        *,
+        variant_id: Optional[str] = None,
+    ) -> Dict[str, Any]:
+        """The overlay served when the artefact store could not answer."""
+        status = (
+            ARTIFACT_LOAD_STORE_UNAVAILABLE
+            if isinstance(exc, DatasetStoreUnavailableError)
+            else ARTIFACT_LOAD_ERROR
+        )
+        logger.warning(
+            "Artefact resolution for agent=%s tenant=%s failed (%s) — serving "
+            "default prompts: %s",
+            agent_name,
+            tenant_id,
+            status,
+            exc,
+        )
+        return {
+            "prompts": None,
+            "served_from": "default",
+            "version": None,
+            "variant_id": variant_id,
+            "artifact_load_status": status,
+            "error": f"{type(exc).__name__}: {exc}",
+        }
 
     @staticmethod
     def _apply_artefact_overlay(agent: Any, context: Optional[Dict[str, Any]]) -> None:

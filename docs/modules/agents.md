@@ -992,6 +992,18 @@ match the live signature (`signature_contract_mismatch`); any other artifact is
 refused with `artifact_load_status = "signature_mismatch"` and the agent serves
 the base module until the optimizer compiles one against the live signature.
 
+`artifact_load_status` is one of `no_telemetry`, `no_artifact`,
+`signature_mismatch`, `loaded`, `store_unavailable`, `error`.
+`store_unavailable` means the artefact store could not answer, so what the
+tenant has promoted is unknown — distinct from `no_artifact`, which means the
+store answered and holds nothing. The dispatcher's per-request overlay
+(`resolve_artefact_for_request`) carries the same field: on a store outage it
+returns `{"served_from": "default", "prompts": None, "version": None,
+"variant_id": None, "artifact_load_status": "store_unavailable", "error": ...}`
+so a request served on defaults during an outage is distinguishable from one
+served on defaults because nothing was promoted and no signature variant was
+selected.
+
 Because any DSPy failure falls through to the GLiNER path, the
 `cogniverse.entity_extraction` span names which failure it was.
 `entity_extraction.fallback_reason` is `schema_refused` when an

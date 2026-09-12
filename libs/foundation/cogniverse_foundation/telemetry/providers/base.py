@@ -194,6 +194,21 @@ class DatasetNotFoundError(ValueError):
     """
 
 
+class DatasetStoreUnavailableError(RuntimeError):
+    """A dataset call failed because the store itself was unreachable.
+
+    Distinct from :class:`DatasetNotFoundError`: the dataset's existence is
+    unknown, so a caller may not read the failure as "nothing stored yet".
+    Carries ``endpoint`` and ``dataset`` so a caller classifies the outage by
+    type and names it, instead of matching the message text.
+    """
+
+    def __init__(self, message: str, *, endpoint: str, dataset: str) -> None:
+        super().__init__(message)
+        self.endpoint = endpoint
+        self.dataset = dataset
+
+
 class DatasetReplaceRestoreFailedError(RuntimeError):
     """Dataset replacement lost the previous contents while restoring.
 
