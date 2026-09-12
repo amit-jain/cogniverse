@@ -72,7 +72,7 @@ def test_ci_local_runs_every_module_named_on_the_command_line(monkeypatch, capsy
     assert ci_local.main() == 0
 
     printed = capsys.readouterr().out.strip().splitlines()
-    assert printed == [ci_local.shlex.join(ci_local.build_argv(s)) for s in wanted]
+    assert printed == [ci_local.command_line(s) for s in wanted]
 
 
 def test_ci_local_names_every_unknown_module_it_refuses(monkeypatch, capsys):
@@ -82,24 +82,44 @@ def test_ci_local_names_every_unknown_module_it_refuses(monkeypatch, capsys):
     )
     assert ci_local.main() == 1
     assert (
-        capsys.readouterr().out.strip()
-        == "No unit selections found for no_such_module."
+        capsys.readouterr().out.strip() == "No CI selections found for no_such_module."
     )
 
 
-_FINETUNING_UNIT_SELECTION = {
-    "module": "finetuning",
-    "paths": ["tests/finetuning"],
-    "ignores": ["tests/finetuning/integration"],
-    "marker": "unit or not integration",
-}
+_FINETUNING_SELECTIONS = [
+    {
+        "module": "finetuning",
+        "paths": ["tests/finetuning"],
+        "ignores": ["tests/finetuning/integration"],
+        "marker": "unit or not integration",
+        "env": {
+            "CARGO_NET_RETRY": "10",
+            "CARGO_HTTP_MULTIPLEXING": "false",
+            "COVERAGE_FILE": ".coverage",
+            "JAX_PLATFORM_NAME": "cpu",
+        },
+        "unit": True,
+    },
+    {
+        "module": "finetuning",
+        "paths": ["tests/finetuning/integration"],
+        "ignores": [],
+        "marker": "integration and ci_fast and not requires_lm",
+        "env": {
+            "CARGO_NET_RETRY": "10",
+            "CARGO_HTTP_MULTIPLEXING": "false",
+            "JAX_PLATFORM_NAME": "cpu",
+        },
+        "unit": False,
+    },
+]
 
 
-def test_ci_local_selects_the_finetuning_unit_job():
+def test_ci_local_selects_both_finetuning_jobs():
     ci_local = _load("ci_local")
-    assert [s for s in ci_local.discover() if s["module"] == "finetuning"] == [
-        _FINETUNING_UNIT_SELECTION
-    ]
+    assert [
+        s for s in ci_local.discover() if s["module"] == "finetuning"
+    ] == _FINETUNING_SELECTIONS
 
 
 _ENV_PREFIXED_WORKFLOW = """\
@@ -130,62 +150,232 @@ def test_ci_local_reads_an_env_prefixed_continued_invocation(tmp_path):
             "paths": ["tests/synth/a", "tests/synth/b"],
             "ignores": ["tests/synth/integration"],
             "marker": "unit and not integration",
+            "env": {"FIRST": "1", "SECOND": "two"},
+            "unit": True,
         }
     ]
 
 
-# Every unit selection ci_local runs, in workflow-filename order. A workflow
-# whose pytest line changes shows up here as a diff a human reads once.
-_CI_UNIT_SELECTION_COMMANDS = [
-    "uv run python -m pytest tests/agents/unit -m unit -v -p no:cacheprovider"
+# The runtime unit job and the platform integration step: the two CI
+# selections naming tests/foundation.
+_RUNTIME_UNIT_COMMAND = (
+    "CARGO_NET_RETRY=10 CARGO_HTTP_MULTIPLEXING=false JAX_PLATFORM_NAME=cpu uv run"
+    " python -m pytest tests/runtime/unit tests/admin/unit tests/foundation/unit"
+    " tests/events/unit -v -p no:cacheprovider --tb=long"
+)
+_PLATFORM_INTEGRATION_COMMAND = (
+    "CARGO_NET_RETRY=10 CARGO_HTTP_MULTIPLEXING=false JAX_PLATFORM_NAME=cpu uv run"
+    " python -m pytest tests/events/integration tests/foundation/integration -v -p"
+    " no:cacheprovider --tb=long"
+)
+
+# Every CI selection ci_local runs, unit and integration jobs, in
+# workflow-filename order. A workflow whose pytest line or environment
+# changes shows up here as a diff a human reads once.
+_CI_SELECTION_COMMANDS = [
+    "CARGO_NET_RETRY=10 CARGO_HTTP_MULTIPLEXING=false COVERAGE_FILE=.coverage"
+    " JAX_PLATFORM_NAME=cpu uv run python -m pytest tests/agents/unit -m unit -v -p"
+    " no:cacheprovider --tb=long",
+    "CARGO_NET_RETRY=10 CARGO_HTTP_MULTIPLEXING=false TEST_LLM_MODEL=qwen2.5:0.5b"
+    " COVERAGE_FILE=.coverage JAX_PLATFORM_NAME=cpu uv run python -m pytest"
+    " tests/agents/integration -m ci_fast -v -p no:cacheprovider --tb=long",
+    "JAX_PLATFORM_NAME=cpu uv run python -m pytest tests/cli/unit"
+    " tests/cli/integration -v -p no:cacheprovider --tb=long",
+    "CARGO_NET_RETRY=10 CARGO_HTTP_MULTIPLEXING=false JAX_PLATFORM_NAME=cpu uv run"
+    " python -m pytest tests/common/unit -m 'unit or not integration' -v -p"
+    " no:cacheprovider --tb=long",
+    "CARGO_NET_RETRY=10 CARGO_HTTP_MULTIPLEXING=false JAX_PLATFORM_NAME=cpu uv run"
+    " python -m pytest tests/core/unit tests/memory/unit tests/utils/test_kg_lookup.py"
+    " tests/utils/test_memory_store.py -m unit -v -p no:cacheprovider --tb=long",
+    "CARGO_NET_RETRY=10 CARGO_HTTP_MULTIPLEXING=false JAX_PLATFORM_NAME=cpu uv run"
+    " python -m pytest tests/memory/unit -m 'unit and ci_fast' -v -p no:cacheprovider"
     " --tb=long",
-    "uv run python -m pytest tests/cli/unit tests/cli/integration -v"
+    "CARGO_NET_RETRY=10 CARGO_HTTP_MULTIPLEXING=false JAX_PLATFORM_NAME=cpu uv run"
+    " python -m pytest tests/common/integration"
+    " tests/core/integration/test_schema_intent_recovery.py"
+    " tests/memory/integration/test_dispatcher_conversation_history_real_mem0.py"
+    " tests/memory/integration/test_soft_delete_lifecycle.py -m 'integration and"
+    " ci_fast and not requires_lm' -v -p no:cacheprovider --tb=long",
+    "CARGO_NET_RETRY=10 CARGO_HTTP_MULTIPLEXING=false JAX_PLATFORM_NAME=cpu uv run"
+    " python -m pytest tests/dashboard/unit -v -p no:cacheprovider --tb=long",
+    "CARGO_NET_RETRY=10 CARGO_HTTP_MULTIPLEXING=false JAX_PLATFORM_NAME=cpu uv run"
+    " python -m pytest tests/dashboard -m 'integration and ci_fast and not"
+    " requires_lm' -v -p no:cacheprovider --tb=long",
+    "CARGO_NET_RETRY=10 CARGO_HTTP_MULTIPLEXING=false COVERAGE_FILE=.coverage uv run"
+    " python -m pytest tests/evaluation/unit -m unit -v -p no:cacheprovider --tb=long",
+    "CARGO_NET_RETRY=10 CARGO_HTTP_MULTIPLEXING=false COVERAGE_FILE=.coverage uv run"
+    " python -m pytest tests/evaluation/integration -m 'integration and ci_fast and"
+    " not requires_lm' -v -p no:cacheprovider --tb=long",
+    "CARGO_NET_RETRY=10 CARGO_HTTP_MULTIPLEXING=false COVERAGE_FILE=.coverage"
+    " JAX_PLATFORM_NAME=cpu uv run python -m pytest tests/finetuning"
+    " --ignore=tests/finetuning/integration -m 'unit or not integration' -v -p"
+    " no:cacheprovider --tb=long",
+    "CARGO_NET_RETRY=10 CARGO_HTTP_MULTIPLEXING=false JAX_PLATFORM_NAME=cpu uv run"
+    " python -m pytest tests/finetuning/integration -m 'integration and ci_fast and"
+    " not requires_lm' -v -p no:cacheprovider --tb=long",
+    "CARGO_NET_RETRY=10 CARGO_HTTP_MULTIPLEXING=false COVERAGE_FILE=.coverage"
+    " JAX_PLATFORM_NAME=cpu uv run python -m pytest tests/ingestion/unit -m unit -v -p"
+    " no:cacheprovider --tb=long",
+    "CARGO_NET_RETRY=10 CARGO_HTTP_MULTIPLEXING=false COVERAGE_FILE=.coverage"
+    " JAX_PLATFORM_NAME=cpu uv run python -m pytest tests/ingestion/integration -m"
+    " 'integration and ci_fast and not requires_lm' -v -p no:cacheprovider --tb=long",
+    "JAX_PLATFORM_NAME=cpu uv run python -m pytest tests/messaging/unit"
+    " tests/messaging/integration -m 'not local_only' -v -p no:cacheprovider --tb=long",
+    "CARGO_NET_RETRY=10 CARGO_HTTP_MULTIPLEXING=false COVERAGE_FILE=.coverage uv run"
+    " python -m pytest tests/routing/unit -m 'unit and not requires_ollama' -v -p"
+    " no:cacheprovider --tb=long",
+    _RUNTIME_UNIT_COMMAND,
+    "CARGO_NET_RETRY=10 CARGO_HTTP_MULTIPLEXING=false TEST_LLM_MODEL=qwen2.5:0.5b"
+    " JAX_PLATFORM_NAME=cpu uv run python -m pytest tests/runtime/integration -m"
+    " 'integration and ci_fast and not requires_lm' -v -p no:cacheprovider --tb=long",
+    "CARGO_NET_RETRY=10 CARGO_HTTP_MULTIPLEXING=false TEST_LLM_MODEL=qwen2.5:0.5b"
+    " JAX_PLATFORM_NAME=cpu uv run python -m pytest tests/admin -m integration -v -p"
+    " no:cacheprovider --tb=long",
+    _PLATFORM_INTEGRATION_COMMAND,
+    "CARGO_NET_RETRY=10 CARGO_HTTP_MULTIPLEXING=false JAX_PLATFORM_NAME=cpu uv run"
+    " python -m pytest tests/synthetic/unit -v -p no:cacheprovider --tb=long",
+    "CARGO_NET_RETRY=10 CARGO_HTTP_MULTIPLEXING=false JAX_PLATFORM_NAME=cpu uv run"
+    " python -m pytest tests/telemetry/unit -m 'unit or not integration' -v -p"
+    " no:cacheprovider --tb=long",
+    "CARGO_NET_RETRY=10 CARGO_HTTP_MULTIPLEXING=false uv run python -m pytest"
+    " tests/telemetry/integration -m 'integration and ci_fast and not requires_lm' -v"
     " -p no:cacheprovider --tb=long",
-    "uv run python -m pytest tests/common/unit -m 'unit or not integration' -v"
-    " -p no:cacheprovider --tb=long",
-    "uv run python -m pytest tests/core/unit tests/memory/unit"
-    " tests/utils/test_kg_lookup.py tests/utils/test_memory_store.py -m unit -v"
-    " -p no:cacheprovider --tb=long",
-    "uv run python -m pytest tests/memory/unit -m 'unit and ci_fast' -v"
-    " -p no:cacheprovider --tb=long",
-    "uv run python -m pytest tests/dashboard/unit -v -p no:cacheprovider --tb=long",
-    "uv run python -m pytest tests/evaluation/unit -m unit -v -p no:cacheprovider"
-    " --tb=long",
-    "uv run python -m pytest tests/finetuning"
-    " --ignore=tests/finetuning/integration -m 'unit or not integration' -v"
-    " -p no:cacheprovider --tb=long",
-    "uv run python -m pytest tests/ingestion/unit -m unit -v -p no:cacheprovider"
-    " --tb=long",
-    "uv run python -m pytest tests/messaging/unit tests/messaging/integration"
-    " -m 'not local_only' -v -p no:cacheprovider --tb=long",
-    "uv run python -m pytest tests/routing/unit -m 'unit and not requires_ollama' -v"
-    " -p no:cacheprovider --tb=long",
-    "uv run python -m pytest tests/runtime/unit tests/admin/unit"
-    " tests/foundation/unit tests/events/unit -v -p no:cacheprovider --tb=long",
-    "uv run python -m pytest tests/synthetic/unit -v -p no:cacheprovider --tb=long",
-    "uv run python -m pytest tests/telemetry/unit -m 'unit or not integration' -v"
-    " -p no:cacheprovider --tb=long",
-    "uv run python -m pytest tests/backends/unit -m 'unit or not integration' -v"
-    " -p no:cacheprovider --tb=long",
+    "CARGO_NET_RETRY=10 CARGO_HTTP_MULTIPLEXING=false JAX_PLATFORM_NAME=cpu uv run"
+    " python -m pytest tests/backends/unit -m 'unit or not integration' -v -p"
+    " no:cacheprovider --tb=long",
+    "CARGO_NET_RETRY=10 CARGO_HTTP_MULTIPLEXING=false JAX_PLATFORM_NAME=cpu uv run"
+    " python -m pytest tests/backends/integration -m 'integration and ci_fast and not"
+    " requires_lm' -v -p no:cacheprovider --tb=long",
 ]
 
 
-def test_ci_local_lists_every_workflow_unit_selection(monkeypatch, capsys):
+def test_ci_local_lists_every_workflow_selection(monkeypatch, capsys):
     ci_local = _load("ci_local")
     monkeypatch.setattr(sys, "argv", ["ci_local", "--list"])
     assert ci_local.main() == 0
-    assert capsys.readouterr().out.strip().splitlines() == _CI_UNIT_SELECTION_COMMANDS
+    assert capsys.readouterr().out.strip().splitlines() == _CI_SELECTION_COMMANDS
+
+
+def test_a_test_package_selects_its_integration_step_too(monkeypatch, capsys):
+    """``-m foundation`` names no workflow; it reaches the unit job and the
+    platform integration step that run ``tests/foundation``."""
+    ci_local = _load("ci_local")
+    monkeypatch.setattr(sys, "argv", ["ci_local", "-m", "foundation", "--list"])
+    assert ci_local.main() == 0
+    assert capsys.readouterr().out.strip().splitlines() == [
+        _RUNTIME_UNIT_COMMAND,
+        _PLATFORM_INTEGRATION_COMMAND,
+    ]
+
+
+def test_the_unit_flag_keeps_only_unit_jobs(monkeypatch, capsys):
+    ci_local = _load("ci_local")
+    monkeypatch.setattr(sys, "argv", ["ci_local", "--unit", "-m", "runtime", "--list"])
+    assert ci_local.main() == 0
+    assert capsys.readouterr().out.strip().splitlines() == [_RUNTIME_UNIT_COMMAND]
+
+
+def test_a_module_names_a_package_only_by_whole_path_segment():
+    ci_local = _load("ci_local")
+    selection = {
+        "module": "runtime",
+        "paths": ["tests/foundation_extra/unit", "tests/events"],
+    }
+    assert [
+        (module, ci_local.names_module(selection, module))
+        for module in ("runtime", "events", "foundation", "foundation_extra", "run")
+    ] == [
+        ("runtime", True),
+        ("events", True),
+        ("foundation", False),
+        ("foundation_extra", True),
+        ("run", False),
+    ]
+
+
+def test_ci_local_runs_a_selection_under_its_ci_environment(monkeypatch):
+    ci_local = _load("ci_local")
+    selection = {
+        "module": "synth",
+        "paths": ["tests/synth/integration"],
+        "ignores": [],
+        "marker": None,
+        "env": {"TEST_LLM_MODEL": "qwen2.5:0.5b"},
+        "unit": False,
+    }
+    monkeypatch.setattr(ci_local, "discover", lambda: [selection])
+    monkeypatch.setattr(sys, "argv", ["ci_local"])
+    monkeypatch.setenv("BACKEND_PORT", "8080")
+    monkeypatch.delenv("TEST_LLM_MODEL", raising=False)
+    launched = []
+
+    def record(argv, cwd, env):
+        launched.append(
+            (argv, cwd, env.get("TEST_LLM_MODEL"), env.get("BACKEND_PORT", "unset"))
+        )
+        return subprocess.CompletedProcess(argv, 0)
+
+    monkeypatch.setattr(ci_local.subprocess, "run", record)
+    assert ci_local.main() == 0
+    assert launched == [
+        (ci_local.build_argv(selection), ci_local.REPO, "qwen2.5:0.5b", "unset")
+    ]
+
+
+@pytest.mark.parametrize("child_status", [0, 1])
+def test_ci_local_runs_a_real_selection_and_reports_its_exit(
+    tmp_path, monkeypatch, capsys, child_status
+):
+    ci_local = _load("ci_local")
+    (tmp_path / ".venv").symlink_to(Path(sys.prefix), target_is_directory=True)
+    workflows = tmp_path / ".github" / "workflows"
+    workflows.mkdir(parents=True)
+    (workflows / "synth-tests.yml").write_text(
+        "on: push\n"
+        "env:\n  FROM_WORKFLOW: workflow\n"
+        "jobs:\n  integration-tests:\n"
+        "    env:\n      FROM_JOB: job\n"
+        "    steps:\n      - env:\n          FROM_STEP: step\n"
+        "        run: FROM_PREFIX=prefix uv run python -m pytest "
+        "tests/synth -m integration\n"
+    )
+    (tmp_path / "pytest.ini").write_text(
+        "[pytest]\nmarkers =\n    integration: service tests\n"
+    )
+    child_tests = tmp_path / "tests" / "synth"
+    child_tests.mkdir(parents=True)
+    (child_tests / "test_environment.py").write_text(
+        "import os, pytest\n"
+        "@pytest.mark.integration\n"
+        "def test_environment():\n"
+        "    assert [os.environ.get(name) for name in "
+        "('FROM_WORKFLOW', 'FROM_JOB', 'FROM_STEP', 'FROM_PREFIX', 'BACKEND_PORT')] "
+        "== ['workflow', 'job', 'step', 'prefix', None]\n"
+        f"    assert {child_status} == 0\n"
+        "def test_outside_selection():\n"
+        "    raise AssertionError('unselected test ran')\n"
+    )
+    discover = ci_local.discover
+    monkeypatch.setattr(ci_local, "discover", lambda: discover(workflows))
+    monkeypatch.setattr(ci_local, "REPO", tmp_path)
+    monkeypatch.setattr(sys, "argv", ["ci_local", "-m", "synth"])
+    monkeypatch.setenv("BACKEND_PORT", "8080")
+    for name in ("FROM_WORKFLOW", "FROM_JOB", "FROM_STEP", "FROM_PREFIX"):
+        monkeypatch.delenv(name, raising=False)
+
+    assert ci_local.main() == child_status
+    assert capsys.readouterr().out.splitlines()[-1] == (
+        f"{1 - child_status}/1 selections passed"
+    )
 
 
 _PYTEST_TOKEN = re.compile(r"(?<![\w-])pytest(?![\w-])")
 _TEST_PATH = re.compile(r"tests/[^\s\\'\"]+")
 
 
-def _unit_job_scripts(doc):
-    """Every ``run`` script of a job CI does not call an integration job."""
-    for job_name, job in (doc.get("jobs") or {}).items():
-        if "integration" in job_name:
-            continue
+def _job_scripts(doc):
+    """Every ``run`` script of every job."""
+    for job in (doc.get("jobs") or {}).values():
         for step in job.get("steps") or []:
             script = step.get("run")
             if isinstance(script, str):
@@ -193,8 +383,8 @@ def _unit_job_scripts(doc):
 
 
 def workflows_ci_local_cannot_read(workflows_dir: Path) -> list[str]:
-    """Workflow files whose unit jobs run pytest over a path outside an
-    ``integration`` directory yet yield no ci_local selection.
+    """Workflow files with a job that runs pytest over a test path yet yield no
+    ci_local selection.
 
     The pytest/path detection is deliberately independent of ci_local's parser:
     a parser that cannot read an invocation must not also be what decides the
@@ -206,10 +396,8 @@ def workflows_ci_local_cannot_read(workflows_dir: Path) -> list[str]:
     for path in sorted(workflows_dir.glob("*-tests.yml")):
         if path.name[: -len("-tests.yml")] in covered:
             continue
-        for script in _unit_job_scripts(yaml.safe_load(path.read_text())):
-            if _PYTEST_TOKEN.search(script) and any(
-                "/integration" not in found for found in _TEST_PATH.findall(script)
-            ):
+        for script in _job_scripts(yaml.safe_load(path.read_text())):
+            if _PYTEST_TOKEN.search(script) and _TEST_PATH.findall(script):
                 unreadable.append(path.name)
                 break
     return unreadable
@@ -233,6 +421,18 @@ jobs:
           uv run python -m pytest $PYTEST_PATHS -m unit
 """
 
+_UNREADABLE_INTEGRATION_WORKFLOW = """\
+name: Offender Integration Tests
+on:
+  push:
+jobs:
+  integration-tests:
+    steps:
+      - run: |
+          PYTEST_PATHS="tests/offender/integration"
+          uv run python -m pytest $PYTEST_PATHS -m integration
+"""
+
 _READABLE_WORKFLOW = """\
 name: Readable Tests
 on:
@@ -246,9 +446,15 @@ jobs:
 
 def test_the_guard_names_a_workflow_whose_pytest_line_ci_local_cannot_read(tmp_path):
     (tmp_path / "offender-tests.yml").write_text(_UNREADABLE_WORKFLOW)
+    (tmp_path / "offender-integration-tests.yml").write_text(
+        _UNREADABLE_INTEGRATION_WORKFLOW
+    )
     (tmp_path / "readable-tests.yml").write_text(_READABLE_WORKFLOW)
 
-    assert workflows_ci_local_cannot_read(tmp_path) == ["offender-tests.yml"]
+    assert workflows_ci_local_cannot_read(tmp_path) == [
+        "offender-integration-tests.yml",
+        "offender-tests.yml",
+    ]
 
 
 def test_test_runner_commands_never_request_short_tracebacks():

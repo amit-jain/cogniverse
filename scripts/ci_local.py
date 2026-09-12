@@ -1,19 +1,24 @@
 #!/usr/bin/env python3
-"""Run each module's exact CI unit-test selection locally, under the same
+"""Run each module's exact CI test selections locally, under the same
 dead-port backend the test suite defaults to.
 
 CI runs a *filtered* subset per module (each ``.github/workflows/*-tests.yml``
-picks its own ``-m`` marker), and a test that silently resolves config against
-an ambient Vespa passes locally against a developer's k3d while failing in CI,
-where no Vespa is reachable. ``tests/conftest.py`` now defaults the backend to a
-dead port so local and CI resolve config identically — this script closes the
-loop by running the *same test selection CI runs* (parsed live from the
-workflow files, so it can't drift) before a push.
+picks its own paths, ``-m`` marker and environment), and a test that silently
+resolves config against an ambient Vespa passes locally against a developer's
+k3d while failing in CI, where no Vespa is reachable. ``tests/conftest.py``
+defaults the backend to a dead port so local and CI resolve config identically;
+this script runs the *same selections CI runs*, unit and integration jobs alike,
+parsed live from the workflow files, before a push. Integration tests provision
+their own services through their fixtures.
+
+A module is a workflow (``runtime`` for ``runtime-tests.yml``) or a test
+package (``foundation`` selects every CI selection naming ``tests/foundation``).
 
 Usage:
-    uv run python scripts/ci_local.py                # all modules' unit selections
+    uv run python scripts/ci_local.py                # every CI selection
+    uv run python scripts/ci_local.py --unit         # unit jobs only
     uv run python scripts/ci_local.py -m evaluation  # one workflow
-    uv run python scripts/ci_local.py -m agents -m runtime  # several
+    uv run python scripts/ci_local.py -m foundation -m runtime  # several
     uv run python scripts/ci_local.py --list         # show the commands, run nothing
 
 Exit code is non-zero if any selection has a failing/erroring test.
@@ -67,9 +72,12 @@ def discover(workflows_dir: Path = WORKFLOWS) -> list[dict]:
         if not workflow.name.endswith(_SUFFIX):
             continue
         for selection in workflow.selections:
-            if _needs_real_services(selection):
-                continue
-            key = (selection.paths, selection.ignores, selection.marker_expr)
+            key = (
+                selection.paths,
+                selection.ignores,
+                selection.marker_expr,
+                selection.env,
+            )
             if key in seen:
                 continue
             seen.add(key)
@@ -79,9 +87,19 @@ def discover(workflows_dir: Path = WORKFLOWS) -> list[dict]:
                     "paths": list(selection.paths),
                     "ignores": list(selection.ignores),
                     "marker": selection.marker_expr,
+                    "env": dict(selection.env),
+                    "unit": not _needs_real_services(selection),
                 }
             )
     return selections
+
+
+def names_module(sel: dict, module: str) -> bool:
+    """Whether ``module`` names this selection's workflow or a package it runs."""
+    package = f"tests/{module}"
+    return sel["module"] == module or any(
+        path == package or path.startswith(package + "/") for path in sel["paths"]
+    )
 
 
 def build_argv(sel: dict) -> list[str]:
@@ -91,6 +109,13 @@ def build_argv(sel: dict) -> list[str]:
         argv += ["-m", sel["marker"]]
     argv += ["-v", "-p", "no:cacheprovider", "--tb=long"]
     return argv
+
+
+def command_line(sel: dict) -> str:
+    """The shell command for a selection, its CI environment as a prefix."""
+    return shlex.join(
+        [f"{name}={value}" for name, value in sel["env"].items()] + build_argv(sel)
+    )
 
 
 def main() -> int:
@@ -104,20 +129,28 @@ def main() -> int:
         help="only this workflow module (e.g. evaluation); repeat for several",
     )
     parser.add_argument(
+        "--unit", action="store_true", help="only the selections of unit jobs"
+    )
+    parser.add_argument(
         "--list", action="store_true", help="print the commands without running"
     )
     args = parser.parse_args()
 
     selections = discover()
+    if args.unit:
+        selections = [s for s in selections if s["unit"]]
     if args.modules:
-        known = {s["module"] for s in selections}
-        unknown = [m for m in args.modules if m not in known]
+        unknown = [
+            m for m in args.modules if not any(names_module(s, m) for s in selections)
+        ]
         if unknown:
-            print(f"No unit selections found for {', '.join(unknown)}.")
+            print(f"No CI selections found for {', '.join(unknown)}.")
             return 1
-        selections = [s for s in selections if s["module"] in args.modules]
+        selections = [
+            s for s in selections if any(names_module(s, m) for m in args.modules)
+        ]
     if not selections:
-        print("No unit selections found.")
+        print("No CI selections found.")
         return 1
 
     # Force the dead-port default: strip any ambient BACKEND override so the
@@ -129,13 +162,12 @@ def main() -> int:
 
     results: list[tuple[str, str, int]] = []
     for sel in selections:
-        argv = build_argv(sel)
         label = f"{sel['module']}: {' '.join(sel['paths'])} -m {sel['marker']!r}"
         if args.list:
-            print(shlex.join(argv))
+            print(command_line(sel))
             continue
         print(f"\n=== {label} ===", flush=True)
-        proc = subprocess.run(argv, cwd=REPO, env=env)
+        proc = subprocess.run(build_argv(sel), cwd=REPO, env={**env, **sel["env"]})
         results.append((sel["module"], label, proc.returncode))
 
     if args.list:
