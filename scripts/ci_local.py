@@ -23,80 +23,70 @@ from __future__ import annotations
 
 import argparse
 import os
-import re
 import shlex
 import subprocess
 import sys
 from pathlib import Path
+from typing import TYPE_CHECKING
 
-import yaml
+if TYPE_CHECKING:
+    from tests.fixtures.ci_workflows import Selection
 
 REPO = Path(__file__).resolve().parent.parent
 WORKFLOWS = REPO / ".github" / "workflows"
+_SUFFIX = "-tests.yml"
 
 
-def _iter_run_blocks(node):
-    """Yield every ``run:`` string in a parsed workflow document."""
-    if isinstance(node, dict):
-        for key, value in node.items():
-            if key == "run" and isinstance(value, str):
-                yield value
-            else:
-                yield from _iter_run_blocks(value)
-    elif isinstance(node, list):
-        for item in node:
-            yield from _iter_run_blocks(item)
+def _load_workflows(workflows_dir: Path):
+    """Parse the workflows through the same model the CI-coverage guards use,
+    so this script and those guards can never disagree about what CI runs."""
+    if str(REPO) not in sys.path:
+        sys.path.insert(0, str(REPO))
+    from tests.fixtures.ci_workflows import load_workflows
+
+    return load_workflows(workflows_dir)
 
 
-def _pytest_lines(run_block: str) -> list[str]:
-    """Reconstruct pytest command lines from a shell ``run`` block, dropping
-    comment lines and joining ``\\`` continuations."""
-    kept = [ln for ln in run_block.splitlines() if not ln.strip().startswith("#")]
-    joined = re.sub(r"\\\n", " ", "\n".join(kept))
-    return [ln.strip() for ln in joined.splitlines() if "python -m pytest" in ln]
+def _under_integration(path: str) -> bool:
+    return "/integration/" in path.rstrip("/") + "/"
 
 
-def _unit_selection(cmd: str) -> tuple[list[str], str | None] | None:
-    """Extract (test paths, marker) from a pytest command, keeping only
-    selections that target a ``/unit`` path (integration needs real services).
-
-    Search only the portion after the ``pytest`` token so the ``-m`` in
-    ``python -m pytest`` is never mistaken for the pytest ``-m`` marker."""
-    after = cmd.split("pytest", 1)[1] if "pytest" in cmd else cmd
-    paths = re.findall(r"(tests/[^\s\\]+)", after)
-    paths = [p for p in paths if not p.endswith(".xml")]
-    if not any("/unit" in p for p in paths):
-        return None
-    marker_match = (
-        re.search(r'-m\s+"([^"]+)"', after)
-        or re.search(r"-m\s+'([^']+)'", after)
-        or re.search(r"-m\s+(\S+)", after)
+def _needs_real_services(selection: Selection) -> bool:
+    """CI splits by job: the integration job provisions Vespa/Phoenix/an LM,
+    the unit job provisions nothing. A job that names only integration
+    directories is one too, whatever it is called."""
+    return "integration" in selection.job or all(
+        _under_integration(path) for path in selection.paths
     )
-    return paths, (marker_match.group(1) if marker_match else None)
 
 
-def discover() -> list[dict]:
+def discover(workflows_dir: Path = WORKFLOWS) -> list[dict]:
     selections: list[dict] = []
     seen: set[tuple] = set()
-    for wf in sorted(WORKFLOWS.glob("*-tests.yml")):
-        module = wf.name[: -len("-tests.yml")]
-        doc = yaml.safe_load(wf.read_text())
-        for block in _iter_run_blocks(doc):
-            for cmd in _pytest_lines(block):
-                sel = _unit_selection(cmd)
-                if sel is None:
-                    continue
-                paths, marker = sel
-                key = (tuple(paths), marker)
-                if key in seen:
-                    continue
-                seen.add(key)
-                selections.append({"module": module, "paths": paths, "marker": marker})
+    for workflow in _load_workflows(workflows_dir):
+        if not workflow.name.endswith(_SUFFIX):
+            continue
+        for selection in workflow.selections:
+            if _needs_real_services(selection):
+                continue
+            key = (selection.paths, selection.ignores, selection.marker_expr)
+            if key in seen:
+                continue
+            seen.add(key)
+            selections.append(
+                {
+                    "module": workflow.name[: -len(_SUFFIX)],
+                    "paths": list(selection.paths),
+                    "ignores": list(selection.ignores),
+                    "marker": selection.marker_expr,
+                }
+            )
     return selections
 
 
 def build_argv(sel: dict) -> list[str]:
     argv = ["uv", "run", "python", "-m", "pytest", *sel["paths"]]
+    argv += [f"--ignore={path}" for path in sel["ignores"]]
     if sel["marker"]:
         argv += ["-m", sel["marker"]]
     argv += ["-v", "-p", "no:cacheprovider", "--tb=long"]

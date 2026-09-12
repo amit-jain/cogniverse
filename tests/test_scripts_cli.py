@@ -13,6 +13,7 @@ from __future__ import annotations
 import importlib.util
 import logging
 import os
+import re
 import signal
 import socket
 import subprocess
@@ -24,6 +25,7 @@ from pathlib import Path
 from unittest.mock import MagicMock
 
 import pytest
+import yaml
 
 _SCRIPTS = Path(__file__).parent.parent / "scripts"
 
@@ -41,7 +43,9 @@ vb = _load("version_bump")
 def test_ci_local_builds_verbose_long_traceback_command():
     ci_local = _load("ci_local")
 
-    assert ci_local.build_argv({"paths": ["tests/runtime/unit"], "marker": "unit"}) == [
+    assert ci_local.build_argv(
+        {"paths": ["tests/runtime/unit"], "ignores": [], "marker": "unit"}
+    ) == [
         "uv",
         "run",
         "python",
@@ -81,6 +85,170 @@ def test_ci_local_names_every_unknown_module_it_refuses(monkeypatch, capsys):
         capsys.readouterr().out.strip()
         == "No unit selections found for no_such_module."
     )
+
+
+_FINETUNING_UNIT_SELECTION = {
+    "module": "finetuning",
+    "paths": ["tests/finetuning"],
+    "ignores": ["tests/finetuning/integration"],
+    "marker": "unit or not integration",
+}
+
+
+def test_ci_local_selects_the_finetuning_unit_job():
+    ci_local = _load("ci_local")
+    assert [s for s in ci_local.discover() if s["module"] == "finetuning"] == [
+        _FINETUNING_UNIT_SELECTION
+    ]
+
+
+_ENV_PREFIXED_WORKFLOW = """\
+name: Synth Tests
+on:
+  push:
+jobs:
+  unit-tests:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Run unit tests
+        run: |
+          uv pip install pytest-cov torch
+          FIRST=1 SECOND=two uv run --no-sync python -m pytest tests/synth/a/ tests/synth/b/ -m "unit and not integration" \\
+            --ignore=tests/synth/integration \\
+            -v --tb=short \\
+            --cov=libs/synth/cogniverse_synth
+"""
+
+
+def test_ci_local_reads_an_env_prefixed_continued_invocation(tmp_path):
+    ci_local = _load("ci_local")
+    (tmp_path / "synth-tests.yml").write_text(_ENV_PREFIXED_WORKFLOW)
+
+    assert ci_local.discover(tmp_path) == [
+        {
+            "module": "synth",
+            "paths": ["tests/synth/a", "tests/synth/b"],
+            "ignores": ["tests/synth/integration"],
+            "marker": "unit and not integration",
+        }
+    ]
+
+
+# Every unit selection ci_local runs, in workflow-filename order. A workflow
+# whose pytest line changes shows up here as a diff a human reads once.
+_CI_UNIT_SELECTION_COMMANDS = [
+    "uv run python -m pytest tests/agents/unit -m unit -v -p no:cacheprovider"
+    " --tb=long",
+    "uv run python -m pytest tests/cli/unit tests/cli/integration -v"
+    " -p no:cacheprovider --tb=long",
+    "uv run python -m pytest tests/common/unit -m 'unit or not integration' -v"
+    " -p no:cacheprovider --tb=long",
+    "uv run python -m pytest tests/core/unit tests/memory/unit"
+    " tests/utils/test_kg_lookup.py tests/utils/test_memory_store.py -m unit -v"
+    " -p no:cacheprovider --tb=long",
+    "uv run python -m pytest tests/memory/unit -m 'unit and ci_fast' -v"
+    " -p no:cacheprovider --tb=long",
+    "uv run python -m pytest tests/dashboard/unit -v -p no:cacheprovider --tb=long",
+    "uv run python -m pytest tests/evaluation/unit -m unit -v -p no:cacheprovider"
+    " --tb=long",
+    "uv run python -m pytest tests/finetuning"
+    " --ignore=tests/finetuning/integration -m 'unit or not integration' -v"
+    " -p no:cacheprovider --tb=long",
+    "uv run python -m pytest tests/ingestion/unit -m unit -v -p no:cacheprovider"
+    " --tb=long",
+    "uv run python -m pytest tests/messaging/unit tests/messaging/integration"
+    " -m 'not local_only' -v -p no:cacheprovider --tb=long",
+    "uv run python -m pytest tests/routing/unit -m 'unit and not requires_ollama' -v"
+    " -p no:cacheprovider --tb=long",
+    "uv run python -m pytest tests/runtime/unit tests/admin/unit"
+    " tests/foundation/unit tests/events/unit -v -p no:cacheprovider --tb=long",
+    "uv run python -m pytest tests/synthetic/unit -v -p no:cacheprovider --tb=long",
+    "uv run python -m pytest tests/telemetry/unit -m 'unit or not integration' -v"
+    " -p no:cacheprovider --tb=long",
+    "uv run python -m pytest tests/backends/unit -m 'unit or not integration' -v"
+    " -p no:cacheprovider --tb=long",
+]
+
+
+def test_ci_local_lists_every_workflow_unit_selection(monkeypatch, capsys):
+    ci_local = _load("ci_local")
+    monkeypatch.setattr(sys, "argv", ["ci_local", "--list"])
+    assert ci_local.main() == 0
+    assert capsys.readouterr().out.strip().splitlines() == _CI_UNIT_SELECTION_COMMANDS
+
+
+_PYTEST_TOKEN = re.compile(r"(?<![\w-])pytest(?![\w-])")
+_TEST_PATH = re.compile(r"tests/[^\s\\'\"]+")
+
+
+def _unit_job_scripts(doc):
+    """Every ``run`` script of a job CI does not call an integration job."""
+    for job_name, job in (doc.get("jobs") or {}).items():
+        if "integration" in job_name:
+            continue
+        for step in job.get("steps") or []:
+            script = step.get("run")
+            if isinstance(script, str):
+                yield script
+
+
+def workflows_ci_local_cannot_read(workflows_dir: Path) -> list[str]:
+    """Workflow files whose unit jobs run pytest over a path outside an
+    ``integration`` directory yet yield no ci_local selection.
+
+    The pytest/path detection is deliberately independent of ci_local's parser:
+    a parser that cannot read an invocation must not also be what decides the
+    invocation is there.
+    """
+    ci_local = _load("ci_local")
+    covered = {s["module"] for s in ci_local.discover(workflows_dir)}
+    unreadable = []
+    for path in sorted(workflows_dir.glob("*-tests.yml")):
+        if path.name[: -len("-tests.yml")] in covered:
+            continue
+        for script in _unit_job_scripts(yaml.safe_load(path.read_text())):
+            if _PYTEST_TOKEN.search(script) and any(
+                "/integration" not in found for found in _TEST_PATH.findall(script)
+            ):
+                unreadable.append(path.name)
+                break
+    return unreadable
+
+
+def test_every_workflow_that_runs_pytest_yields_a_ci_local_selection():
+    assert (
+        workflows_ci_local_cannot_read(_SCRIPTS.parent / ".github" / "workflows") == []
+    )
+
+
+_UNREADABLE_WORKFLOW = """\
+name: Offender Tests
+on:
+  push:
+jobs:
+  unit-tests:
+    steps:
+      - run: |
+          PYTEST_PATHS="tests/offender/unit"
+          uv run python -m pytest $PYTEST_PATHS -m unit
+"""
+
+_READABLE_WORKFLOW = """\
+name: Readable Tests
+on:
+  push:
+jobs:
+  unit-tests:
+    steps:
+      - run: uv run python -m pytest tests/readable/unit -m unit
+"""
+
+
+def test_the_guard_names_a_workflow_whose_pytest_line_ci_local_cannot_read(tmp_path):
+    (tmp_path / "offender-tests.yml").write_text(_UNREADABLE_WORKFLOW)
+    (tmp_path / "readable-tests.yml").write_text(_READABLE_WORKFLOW)
+
+    assert workflows_ci_local_cannot_read(tmp_path) == ["offender-tests.yml"]
 
 
 def test_test_runner_commands_never_request_short_tracebacks():

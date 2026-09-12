@@ -29,12 +29,13 @@ GATING_TRIGGERS = ("push", "pull_request")
 
 @dataclasses.dataclass(frozen=True)
 class Selection:
-    """One ``pytest <paths> [-m <expr>]`` invocation."""
+    """One ``pytest <paths> [-m <expr>] [--ignore <path>]`` invocation."""
 
     workflow: str
     job: str
     paths: tuple[str, ...]
     marker_expr: str | None
+    ignores: tuple[str, ...] = ()
 
     def names(self, test_path: str) -> bool:
         return any(test_path == p or test_path.startswith(p + "/") for p in self.paths)
@@ -114,8 +115,20 @@ def _logical_lines(script: str) -> list[str]:
     return re.sub(r"\\\s*\n\s*", " ", script).splitlines()
 
 
-def _parse_invocation(line: str) -> tuple[tuple[str, ...], str | None] | None:
-    """``(test paths, marker expression)`` for a real pytest invocation."""
+def _ignored_paths(args: Sequence[str]) -> tuple[str, ...]:
+    ignored = []
+    for index, arg in enumerate(args):
+        if arg.startswith("--ignore="):
+            ignored.append(arg.split("=", 1)[1])
+        elif arg == "--ignore" and index + 1 < len(args):
+            ignored.append(args[index + 1])
+    return tuple(path.rstrip("/") for path in ignored)
+
+
+def _parse_invocation(
+    line: str,
+) -> tuple[tuple[str, ...], str | None, tuple[str, ...]] | None:
+    """``(test paths, marker expression, ignored paths)`` for a pytest call."""
     try:
         tokens = shlex.split(line, comments=True)
     except ValueError:
@@ -134,7 +147,7 @@ def _parse_invocation(line: str) -> tuple[tuple[str, ...], str | None] | None:
             marker_index = args.index("-m")
             if marker_index + 1 < len(args):
                 marker_expr = args[marker_index + 1]
-        return paths, marker_expr
+        return paths, marker_expr, _ignored_paths(args)
     return None
 
 
@@ -168,7 +181,7 @@ def _selections(name: str, doc: dict) -> tuple[Selection, ...]:
                 parsed = _parse_invocation(line)
                 if parsed is None or not parsed[0]:
                     continue
-                found.append(Selection(name, job_name, parsed[0], parsed[1]))
+                found.append(Selection(name, job_name, parsed[0], parsed[1], parsed[2]))
     return tuple(found)
 
 
