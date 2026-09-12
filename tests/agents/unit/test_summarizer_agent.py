@@ -680,7 +680,7 @@ class TestSummarizerAgentCoreFunctionality:
                 {"title": "AI Demo", "content_type": "video", "relevance": 0.9}
             ],
             enhanced_query="comprehensive overview of AI and its applications",
-            entities=[{"text": "AI", "type": "technology"}],
+            entities=[{"text": "AI", "type": "TECHNOLOGY"}],
             relationships=[{"type": "semantic", "entities": ["AI", "technology"]}],
         )
 

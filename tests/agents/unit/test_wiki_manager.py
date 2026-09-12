@@ -1441,7 +1441,7 @@ class TestEntityTitleContract:
         ]
 
     def test_mixed_shapes_project_in_order(self):
-        assert entity_titles(["Alpha", {"text": "Beta", "type": "ORG"}]) == [
+        assert entity_titles(["Alpha", {"text": "Beta", "type": "ORGANIZATION"}]) == [
             "Alpha",
             "Beta",
         ]

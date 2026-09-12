@@ -300,7 +300,7 @@ async def test_generator_scans_later_fields_and_stops_at_grounded_target():
                 {"text": "Ada Lovelace", "type": "PERSON"}
             ],
             "This source must not be requested": [
-                {"text": "This source", "type": "DOCUMENT"}
+                {"text": "This source", "type": "CONCEPT"}
             ],
         }.get(text, [])
         return {"query": text, "entities": entities, "relationships": []}

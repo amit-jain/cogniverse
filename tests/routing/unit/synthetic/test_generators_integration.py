@@ -320,7 +320,7 @@ async def _extract_boundary_entity(text: str, tenant_id: str):
     assert tenant_id == "tenant-a"
     return {
         "query": text,
-        "entities": [{"text": text, "type": "TOPIC"}],
+        "entities": [{"text": text, "type": "CONCEPT"}],
         "relationships": [],
     }
 

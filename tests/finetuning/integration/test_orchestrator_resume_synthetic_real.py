@@ -149,7 +149,7 @@ async def test_resumed_run_trains_on_approved_synthetic(
             data={
                 "query": f"Company{i} was founded by Person{i}",
                 "entities": [
-                    {"text": f"Company{i}", "type": "ORG"},
+                    {"text": f"Company{i}", "type": "ORGANIZATION"},
                     {"text": f"Person{i}", "type": "PERSON"},
                 ],
                 "relationships": [],
@@ -205,7 +205,7 @@ async def test_resumed_run_trains_on_approved_synthetic(
                 + json.dumps(
                     {
                         "entities": [
-                            {"text": f"Company{i}", "type": "ORG"},
+                            {"text": f"Company{i}", "type": "ORGANIZATION"},
                             {"text": f"Person{i}", "type": "PERSON"},
                         ],
                         "relationships": [],

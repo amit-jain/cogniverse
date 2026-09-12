@@ -175,11 +175,11 @@ class TestAnswerGoldens:
 
         output = EntityExtractionOutput(
             query="who founded vespa",
-            entities=[Entity(text="Vespa", type="PRODUCT", confidence=0.91)],
+            entities=[Entity(text="Vespa", type="TECHNOLOGY", confidence=0.91)],
             relationships=[],
             entity_count=1,
             has_entities=True,
-            dominant_types=["PRODUCT"],
+            dominant_types=["TECHNOLOGY"],
             path_used="gliner",
         )
         envelope = {
@@ -188,9 +188,9 @@ class TestAnswerGoldens:
             **output.model_dump(),
         }
         assert extract_answer_text(envelope) == (
-            '{"dominant_types": ["PRODUCT"], '
+            '{"dominant_types": ["TECHNOLOGY"], '
             '"entities": [{"confidence": 0.91, "context": "", "text": "Vespa", '
-            '"type": "PRODUCT"}], '
+            '"type": "TECHNOLOGY"}], '
             '"entity_count": 1, "has_entities": true, "path_used": "gliner", '
             '"query": "who founded vespa", "relationships": []}'
         )

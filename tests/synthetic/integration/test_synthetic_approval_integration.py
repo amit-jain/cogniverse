@@ -1549,7 +1549,7 @@ class TestSyntheticApprovalIntegration:
                 "query": "TensorFlow was created by Google Brain",
                 "entities": [
                     {"text": "TensorFlow", "type": "TECHNOLOGY"},
-                    {"text": "Google Brain", "type": "ORG"},
+                    {"text": "Google Brain", "type": "ORGANIZATION"},
                 ],
                 "relationships": [
                     {
@@ -1601,7 +1601,7 @@ class TestSyntheticApprovalIntegration:
             corrections={
                 "entities": [
                     {"text": "PyTorch", "type": "TECHNOLOGY"},
-                    {"text": "Meta AI", "type": "ORG"},
+                    {"text": "Meta AI", "type": "ORGANIZATION"},
                 ]
             },
             reviewer="relationship-reviewer",
