@@ -26,7 +26,10 @@ import dspy
 import pytest
 
 from cogniverse_core.common.tenant_utils import canonical_tenant_id
-from cogniverse_foundation.telemetry.span_contract import read_span_io
+from cogniverse_foundation.telemetry.span_contract import (
+    QUERY_ENHANCEMENT_PATH_LM,
+    read_span_io,
+)
 from tests.fixtures.llm import make_dspy_lm
 
 from .conftest import skip_if_no_lm
@@ -361,14 +364,18 @@ class TestQueryEnhancementRealDSPy:
 
         assert result.original_query == "find ML videos"
         assert result.enhanced_query, "enhanced_query must not be empty"
+        # Without this the heuristic fallback satisfies every assertion below:
+        # it expands "ml" from the same word list.
+        assert result.path_used == QUERY_ENHANCEMENT_PATH_LM
 
-        # The enhanced query or expansion terms should reference machine learning
+        # "ml" alone is satisfied by the input query itself, so the expansion
+        # is what gets pinned.
         combined_text = (
             result.enhanced_query.lower()
             + " "
             + " ".join(result.expansion_terms).lower()
         )
-        assert "machine learning" in combined_text or "ml" in combined_text, (
+        assert "machine learning" in combined_text, (
             f"Expected 'machine learning' expansion of 'ML', "
             f"got enhanced_query={result.enhanced_query!r}, "
             f"expansion_terms={result.expansion_terms}"
@@ -394,6 +401,7 @@ class TestQueryEnhancementRealDSPy:
 
         assert result.enhanced_query, "Should produce enhanced query without entities"
         assert result.original_query == "TensorFlow tutorial"
+        assert result.path_used == QUERY_ENHANCEMENT_PATH_LM
         assert result.confidence > 0.0, (
             f"Confidence should be positive even without entities, got: {result.confidence}"
         )

@@ -2015,7 +2015,10 @@ class TestQueryEnhancementSpanContract:
         from dspy.utils.dummies import DummyLM
 
         from cogniverse_agents.query_enhancement_agent import QueryEnhancementInput
-        from cogniverse_foundation.telemetry.span_contract import read_span_io
+        from cogniverse_foundation.telemetry.span_contract import (
+            QUERY_ENHANCEMENT_PATH_HEURISTIC_FALLBACK,
+            read_span_io,
+        )
 
         capture = self._telemetry_capture()
         agent = self._agent()
@@ -2048,6 +2051,7 @@ class TestQueryEnhancementSpanContract:
             ],
             "confidence": 0.5,
             "reasoning": "Fallback enhancement with heuristic expansion",
+            "path_used": QUERY_ENHANCEMENT_PATH_HEURISTIC_FALLBACK,
         }
         assert _messages(caplog, "cogniverse_agents.query_enhancement_agent") == [
             expected_warning
@@ -2099,7 +2103,10 @@ class TestQueryEnhancementSpanContract:
         from dspy.utils.dummies import DummyLM
 
         from cogniverse_agents.query_enhancement_agent import QueryEnhancementInput
-        from cogniverse_foundation.telemetry.span_contract import read_span_io
+        from cogniverse_foundation.telemetry.span_contract import (
+            QUERY_ENHANCEMENT_PATH_LM,
+            read_span_io,
+        )
 
         capture = self._telemetry_capture()
         agent = self._agent()
@@ -2135,6 +2142,7 @@ class TestQueryEnhancementSpanContract:
             ],
             "confidence": 0.9,
             "reasoning": "Added machine learning context",
+            "path_used": QUERY_ENHANCEMENT_PATH_LM,
         }
 
         spans = capture.exporter.get_finished_spans()

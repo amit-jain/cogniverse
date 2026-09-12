@@ -334,6 +334,9 @@ single DSPy `ChainOfThought` module, with a heuristic fallback. This is a separa
   `expansion_terms`, `synonyms`, `context`, `confidence`, `reasoning`
 - Falls back to a heuristic expander when the LLM call raises, returns empty fields, or **echoes the input
   verbatim** (an echo would otherwise poison the SIMBA training set with identity pairs)
+- `QueryEnhancementOutput.path_used` (and the A2A envelope's `path_used`) names which path answered:
+  `lm` or `heuristic_fallback`, empty when the query was empty and no enhancement ran. The same value
+  is the span's `enhancement.path` attribute
 - Folds in upstream `EntityExtractionAgent` output (entities/relationships) as extra prompt context
 - Applies per-tenant memory injection (`MemoryAwareMixin`) while preserving the caller's original query in the
   response
