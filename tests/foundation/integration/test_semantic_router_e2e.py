@@ -36,6 +36,7 @@ import pytest
 from cogniverse_foundation.config.llm_factory import create_dspy_lm
 from cogniverse_foundation.config.semantic_router import apply_semantic_routing
 from cogniverse_foundation.config.unified_config import (
+    DEFAULT_ROUTER_TIER,
     LLMEndpointConfig,
     SemanticRouterConfig,
 )
@@ -48,21 +49,20 @@ def sr_base_url(semantic_router_stack) -> str:
     return semantic_router_stack["base_url"]
 
 
+# The tiers these tenants are on. In production each comes from the tenant's
+# stored attribute (``cogniverse_foundation.config.tenant_tiers``); here the
+# router, not the store, is the boundary under test.
+_TIERS = {"pro-tenant": "pro", "free-tenant": "free"}
+_FALLBACK_TIER = "free"
+
+
 def _semantic_router_config(base_url: str) -> SemanticRouterConfig:
-    return SemanticRouterConfig(
-        enabled=True,
-        semantic_router_url=base_url,
-        tenant_tiers={"pro-tenant": "pro", "free-tenant": "free"},
-        default_tier="free",
-    )
+    return SemanticRouterConfig(enabled=True, semantic_router_url=base_url)
 
 
 def _base_tier_config(base_url: str) -> SemanticRouterConfig:
-    """A deployment that maps no tenant, which is what the chart ships.
-
-    ``SemanticRouterConfig.default_tier`` is then the only tier any request
-    carries.
-    """
+    """A tenant with no stored tier, which is every tenant until an operator
+    sets one: the request then carries ``DEFAULT_ROUTER_TIER``."""
     return SemanticRouterConfig(enabled=True, semantic_router_url=base_url)
 
 
@@ -73,6 +73,7 @@ def _call(base_url: str, tenant_id: str, prompt: str) -> dict:
         endpoint=endpoint,
         config=_semantic_router_config(base_url),
         tenant_id=tenant_id,
+        tier=_TIERS.get(tenant_id, _FALLBACK_TIER),
     )
     lm = create_dspy_lm(routed)
     lm.cache = False
@@ -95,9 +96,9 @@ _TECHNICAL = (
 def test_the_shipped_default_tier_matches_a_decision(sr_base_url):
     """The tier a stock deployment emits must reach a routing decision.
 
-    ``values.yaml`` ships ``semanticRouter.routing.tenantTiers: {}``, so every
-    request carries ``SemanticRouterConfig.default_tier``. Before the chart
-    bound a group for it, that tier matched no decision: the router classified
+    A tenant with no stored tier carries ``DEFAULT_ROUTER_TIER``, which is
+    every tenant until an operator sets one. Before the chart bound a group
+    for it, that tier matched no decision: the router classified
     the request, logged ``No decision matched``, discarded the result and fell
     through to ``providers.defaults.default_model``.
     """
@@ -106,6 +107,7 @@ def test_the_shipped_default_tier_matches_a_decision(sr_base_url):
         endpoint=endpoint,
         config=_base_tier_config(sr_base_url),
         tenant_id="unmapped-tenant",
+        tier=DEFAULT_ROUTER_TIER,
     )
     lm = create_dspy_lm(routed)
     lm.cache = False
@@ -228,6 +230,7 @@ def _call_with_response_format(
         endpoint=endpoint,
         config=_semantic_router_config(base_url),
         tenant_id=tenant_id,
+        tier=_TIERS.get(tenant_id, _FALLBACK_TIER),
     )
     lm = create_dspy_lm(routed)
     lm.cache = False
