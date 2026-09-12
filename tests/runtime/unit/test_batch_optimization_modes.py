@@ -70,6 +70,26 @@ def _fake_bootstrap_block(trainset: int) -> dict:
     }
 
 
+def _self_consistency_block(examples: int) -> dict:
+    """The pass's report when every draw agreed: nothing left to queue."""
+    from cogniverse_agents.optimizer.entity_self_consistency import (
+        SELF_CONSISTENCY_SAMPLES,
+        SELF_CONSISTENCY_TEMPERATURE,
+    )
+
+    return {
+        "self_consistency": {
+            "samples": SELF_CONSISTENCY_SAMPLES,
+            "temperature": SELF_CONSISTENCY_TEMPERATURE,
+            "examples_sampled": examples,
+            "examples_requested": examples,
+            "rows_needing_review": 0,
+            "batch_id": None,
+            "rows_queued": 0,
+        }
+    }
+
+
 def _training_selection_config_manager(
     tenant_id: str,
     training_selection: dict[str, dict[str, float]],
@@ -6591,6 +6611,10 @@ class TestEntityExtractionOptimization:
             "test:unit",
             {"entity_extraction": {}},
         )
+
+        def unanimous_draws(module_factory, query, *, lm, samples):
+            return [[{"text": "PyTorch", "type": "TECHNOLOGY"}] for _ in range(samples)]
+
         p1, p2 = _patch_infra(mgr, config_manager=effective_config_manager)
         with (
             p1,
@@ -6606,6 +6630,15 @@ class TestEntityExtractionOptimization:
             patch(
                 "cogniverse_foundation.config.llm_factory.create_budgeted_dspy_lm",
                 return_value=object(),
+            ),
+            patch(
+                "cogniverse_foundation.config.llm_factory.create_sampling_dspy_lm",
+                return_value=object(),
+            ),
+            patch(
+                "cogniverse_agents.optimizer.entity_self_consistency."
+                "sample_entity_extraction",
+                side_effect=unanimous_draws,
             ),
             patch(
                 "cogniverse_runtime.optimization_cli._load_approved_synthetic_data",
@@ -6852,6 +6885,13 @@ class TestEntityExtractionOptimization:
                 side_effect=fake_create_dspy_lm,
             ),
             patch(
+                "cogniverse_agents.optimizer.entity_self_consistency."
+                "sample_entity_extraction",
+                side_effect=lambda module_factory, query, *, lm, samples: [
+                    [{"text": "PyTorch", "type": "TECHNOLOGY"}] for _ in range(samples)
+                ],
+            ),
+            patch(
                 "cogniverse_runtime.optimization_cli._create_teleprompter",
                 side_effect=wrapped_create_teleprompter,
             ),
@@ -6922,6 +6962,7 @@ class TestEntityExtractionOptimization:
                 "labeled_demos": 4,
                 "metric_values": [1.0, 1.0, 1.0, 1.0],
             },
+            **_self_consistency_block(8),
             "baseline_score": 0.0,
             "current_score": None,
             "candidate_score": 1.0,
@@ -7339,6 +7380,7 @@ class TestEntityExtractionOptimization:
             "holdout_source": "ground_truth",
             **_selection_block(1, 1),
             "bootstrap": _fake_bootstrap_block(1),
+            **_self_consistency_block(1),
             "baseline_score": 0.0,
             "current_score": None,
             "candidate_score": 1.0,
@@ -7439,6 +7481,7 @@ class TestEntityExtractionOptimization:
             "holdout_source": "ground_truth",
             **_selection_block(1, 1),
             "bootstrap": _fake_bootstrap_block(1),
+            **_self_consistency_block(1),
             "baseline_score": 1.0,
             "current_score": None,
             "candidate_score": 1.0,
@@ -7513,6 +7556,7 @@ class TestEntityExtractionOptimization:
             "holdout_source": "ground_truth",
             **_selection_block(1, 1),
             "bootstrap": _fake_bootstrap_block(1),
+            **_self_consistency_block(1),
             "baseline_score": 1.0,
             "current_score": 1.0,
             "candidate_score": 1.0,
@@ -7578,6 +7622,7 @@ class TestEntityExtractionOptimization:
             "holdout_source": "ground_truth",
             **_selection_block(1, 1),
             "bootstrap": _fake_bootstrap_block(1),
+            **_self_consistency_block(1),
             "baseline_score": 1.0,
             "current_score": 0.0,
             "candidate_score": 1.0,
@@ -7754,6 +7799,7 @@ class TestEntityExtractionOptimization:
             "holdout_source": "ground_truth",
             **_selection_block(23, 23),
             "bootstrap": _fake_bootstrap_block(23),
+            **_self_consistency_block(23),
             "baseline_score": 1.0,
             "current_score": 1.0,
             "candidate_score": 1.0,

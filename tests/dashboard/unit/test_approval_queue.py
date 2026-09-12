@@ -1347,3 +1347,85 @@ def test_approval_failure_leaves_pending_item_unchanged(monkeypatch):
     assert fake_st.session_state["approved_items"] == []
     fake_st.error.assert_called_once_with("Failed to approve item: Phoenix timed out")
     fake_st.rerun.assert_not_called()
+
+
+@pytest.mark.unit
+def test_review_item_renders_every_sampled_mention_with_its_agreement(monkeypatch):
+    from cogniverse_agents.approval import ReviewItem
+    from cogniverse_agents.optimizer.entity_self_consistency import (
+        SELF_CONSISTENCY_METADATA_KEY,
+        review_row,
+    )
+
+    row = review_row(
+        "a man riding a dirt bike",
+        [
+            [
+                {"text": "man", "type": "PERSON"},
+                {"text": "dirt bike", "type": "CONCEPT"},
+            ],
+            [{"text": "man", "type": "PERSON"}],
+            [
+                {"text": "man", "type": "PERSON"},
+                {"text": "dirt bike", "type": "CONCEPT"},
+            ],
+        ],
+    )
+    item = ReviewItem(
+        item_id="self-consistency-1",
+        data=row["data"],
+        confidence=0.83,
+        metadata={
+            "agent_type": "entity_extraction",
+            SELF_CONSISTENCY_METADATA_KEY: row["metadata"],
+        },
+    )
+    fake_st = MagicMock()
+    fake_st.session_state = _SessionState()
+    fake_st.columns.side_effect = lambda widths: [nullcontext() for _ in widths]
+    fake_st.expander.return_value = nullcontext()
+    fake_st.button.return_value = False
+    monkeypatch.setattr(approval_queue, "st", fake_st)
+
+    approval_queue._render_review_item(item, 0)
+
+    assert [call.args[0] for call in fake_st.markdown.call_args_list] == [
+        "### Generated Data",
+        "**Query:** a man riding a dirt bike",
+        "**Entities:** {'text': 'man', 'type': 'PERSON'}",
+        "**Agreement (3 samples):** man (PERSON) 1.00",
+        "**Agreement (3 samples):** dirt bike (CONCEPT) 0.67 \u2014 needs review",
+        "---",
+        "### Review Decision",
+    ]
+
+
+@pytest.mark.unit
+def test_review_item_without_sampling_metadata_renders_no_agreement_line(monkeypatch):
+    from cogniverse_agents.approval import ReviewItem
+
+    item = ReviewItem(
+        item_id="synthetic-1",
+        data={
+            "query": "find TensorFlow tutorials",
+            "entities": [{"text": "TensorFlow", "type": "TECHNOLOGY"}],
+        },
+        confidence=0.61,
+        metadata={"agent_type": "entity_extraction"},
+    )
+    fake_st = MagicMock()
+    fake_st.session_state = _SessionState()
+    fake_st.columns.side_effect = lambda widths: [nullcontext() for _ in widths]
+    fake_st.expander.return_value = nullcontext()
+    fake_st.button.return_value = False
+    monkeypatch.setattr(approval_queue, "st", fake_st)
+
+    approval_queue._render_review_item(item, 0)
+
+    assert [call.args[0] for call in fake_st.markdown.call_args_list] == [
+        "### Generated Data",
+        "**Query:** find TensorFlow tutorials",
+        "**Entities:** {'text': 'TensorFlow', 'type': 'TECHNOLOGY'}",
+        "---",
+        "### Review Decision",
+    ]

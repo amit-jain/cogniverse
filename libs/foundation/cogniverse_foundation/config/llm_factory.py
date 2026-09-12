@@ -176,3 +176,34 @@ def create_budgeted_dspy_lm(config: LLMEndpointConfig) -> dspy.LM:
         declared_context_window=config.context_window,
         **dspy_lm_kwargs(config),
     )
+
+
+def create_sampling_dspy_lm(
+    config: LLMEndpointConfig, *, temperature: float
+) -> dspy.LM:
+    """A budgeted LM whose repeated calls are independent draws.
+
+    Self-consistency needs the endpoint asked more than once. A cached call
+    replays the first response and a pinned seed regenerates it, so both are
+    dropped here and the temperature must be above zero.
+    """
+
+    from cogniverse_foundation.config.budgeted_lm import BudgetedLM
+
+    if temperature <= 0.0:
+        raise ValueError(
+            f"sampling LM for {config.model} requires a temperature above zero, "
+            f"got {temperature}"
+        )
+    kwargs = dspy_lm_kwargs(config)
+    kwargs["temperature"] = temperature
+    extra_body = dict(kwargs.pop("extra_body", None) or {})
+    extra_body.pop("seed", None)
+    if extra_body:
+        kwargs["extra_body"] = extra_body
+    return BudgetedLM(
+        config.model,
+        declared_context_window=config.context_window,
+        cache=False,
+        **kwargs,
+    )
