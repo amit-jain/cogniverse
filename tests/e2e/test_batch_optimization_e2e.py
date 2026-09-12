@@ -42,6 +42,7 @@ from cogniverse_agents.routing.orchestration_evaluator import OrchestrationEvalu
 from cogniverse_foundation.telemetry.config import SPAN_NAME_ORCHESTRATION
 from cogniverse_runtime.optimization_cli import (
     OPTIMIZER_METRIC_IDS,
+    SIMBA_ARTIFACT_KEY,
     _entity_extraction_is_scoreable,
     _entity_extraction_pairs,
     _query_enhancement_pairs,
@@ -1975,8 +1976,15 @@ def generate_spans_for_batch_jobs(_kubectl_cluster_ready):
     # The tenant's optimizer artifacts are this module's own state: seed from
     # the base modules, not from whatever an earlier optimization run left
     # persisted (and loaded into the pod). Both resets run; bounce once.
-    reset_qe = _reset_query_enhancement_artifact_in_pod()
-    reset_entity = _reset_entity_extraction_artifact_in_pod()
+    reset_qe, reset_qe_version = _reset_query_enhancement_artifact_in_pod()
+    reset_entity, reset_entity_version = _reset_entity_extraction_artifact_in_pod()
+    # The reset publishes base as a version and activates it, so the ledger's
+    # active version and the blob the pod serves name the same artifact.
+    assert _active_blob_version_in_pod("model", SIMBA_ARTIFACT_KEY) == reset_qe_version
+    assert (
+        _active_blob_version_in_pod("model", "entity_extraction")
+        == reset_entity_version
+    )
     if reset_qe or reset_entity:
         _bounce_runtime_pod()
 
@@ -2712,7 +2720,9 @@ def _active_blob_version_in_pod(kind: str, key: str, tenant_id: str = TENANT_ID)
     return active["version"] if active else None
 
 
-def _reset_query_enhancement_artifact_in_pod(tenant_id: str = TENANT_ID) -> bool:
+def _reset_query_enhancement_artifact_in_pod(
+    tenant_id: str = TENANT_ID,
+) -> tuple[bool, int]:
     return _reset_module_artifact_in_pod(
         module_import="from cogniverse_agents.query_enhancement_agent import QueryEnhancementModule",
         module_class="QueryEnhancementModule",
@@ -2723,7 +2733,9 @@ def _reset_query_enhancement_artifact_in_pod(tenant_id: str = TENANT_ID) -> bool
     )
 
 
-def _reset_entity_extraction_artifact_in_pod(tenant_id: str = TENANT_ID) -> bool:
+def _reset_entity_extraction_artifact_in_pod(
+    tenant_id: str = TENANT_ID,
+) -> tuple[bool, int]:
     return _reset_module_artifact_in_pod(
         module_import="from cogniverse_agents.entity_extraction_agent import EntityExtractionModule",
         module_class="EntityExtractionModule",
@@ -2742,14 +2754,22 @@ def _reset_module_artifact_in_pod(
     key_expr: str,
     label: str,
     tenant_id: str,
-) -> bool:
-    """Persist the base state of ``module_class`` as the tenant's active artifact.
+) -> tuple[bool, int]:
+    """Serve the base state of ``module_class`` as the tenant's active artifact.
 
     An artifact left by an earlier run carries the signature it was compiled
     under (DSPy ``load_state`` restores instructions and field descs), so the
-    pod would serve that prompt instead of the code's. Returns True when the
-    persisted artifact differed from the base state (the running pod, which
-    loaded it at start, must be bounced before it serves traffic).
+    pod would serve that prompt instead of the code's. The base state is
+    published as a new version and activated through the same
+    ``save_blob_versioned`` + ``activate_version`` pair a rollback uses, so the
+    served blob and the ledger's active version name the same thing; writing
+    the served blob alone left the ledger pointing at the last promoted
+    version while the pod served base.
+
+    Returns ``(differs, version)``: ``differs`` is True when the previously
+    served artifact was not the base state (the running pod, which loaded it
+    at start, must be bounced before it serves traffic), ``version`` is the
+    now-active version.
     """
     script = IN_POD_TELEMETRY_PRELUDE + (
         "import asyncio, json; "
@@ -2762,8 +2782,12 @@ def _reset_module_artifact_in_pod(
         f"base = json.dumps({module_class}().dump_state(), default=str); "
         f"blob = asyncio.run(am.load_blob('model', {key_expr})); "
         "differs = (json.loads(blob) != json.loads(base)) if blob else False; "
-        f"asyncio.run(am.save_blob(kind='model', key={key_expr}, content=base)); "
-        "print('__RESET__' + ('1' if differs else '0'))"
+        "version = asyncio.run(am.save_blob_versioned("
+        f"kind='model', key={key_expr}, content=base, "
+        "consumed_example_ids=['reset:base-module'], decision='rollback', "
+        "scored=False, base_score=None, candidate_score=None))[1]; "
+        f"asyncio.run(am.activate_version('model', {key_expr}, version)); "
+        "print('__RESET__' + ('1' if differs else '0') + ':' + str(version))"
     )
     result = subprocess.run(
         [
@@ -2794,8 +2818,11 @@ def _reset_module_artifact_in_pod(
             )
         )
     line = result.stdout.strip().splitlines()[-1]
-    assert line in ("__RESET__0", "__RESET__1"), result.stdout[-500:]
-    return line == "__RESET__1"
+    marker, _, version = line.partition(":")
+    assert marker in ("__RESET__0", "__RESET__1") and version.isdigit(), result.stdout[
+        -500:
+    ]
+    return marker == "__RESET__1", int(version)
 
 
 def _population_floor_in_pod(
