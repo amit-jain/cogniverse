@@ -31,6 +31,8 @@ from cogniverse_foundation.telemetry.span_contract import (
     ENTITY_EXTRACTION_FALLBACK_GROUNDING_FAILED,
     ENTITY_EXTRACTION_FALLBACK_LM_UNAVAILABLE,
     ENTITY_EXTRACTION_FALLBACK_SCHEMA_REFUSED,
+    ENTITY_EXTRACTION_GROUNDING_DROPPED_ATTRIBUTE,
+    ENTITY_EXTRACTION_GROUNDING_DROPPED_COUNT_ATTRIBUTE,
     OP_ENTITY_EXTRACTION,
     entity_extraction_request_rejected,
     record_span_io,
@@ -547,15 +549,26 @@ class EntityExtractionAgent(
         path_used = "dspy"
         fallback_reason: Optional[str] = None
         fallback_error: Optional[str] = None
+        grounding_dropped: List[tuple[str, str]] = []
 
         try:
             entities = await self._extract_dspy_path(prompt_query)
+            # Grounding runs here rather than inside the relationship pass:
+            # that pass returns early without spaCy or below two entities, and
+            # an ungrounded mention must be dropped in those cases too.
+            entity_records, grounding_dropped = (
+                self._build_entity_records_from_entities(entities, query)
+            )
+            if grounding_dropped and not entity_records:
+                raise EntitySpanNotInQueryError(grounding_dropped[0][0], query)
+            entities = [record["entity"] for record in entity_records]
             relationships = self._extract_spacy_relationships(
-                query=query, entities=entities
+                query=query, entities=entities, entity_records=entity_records
             )
         except Exception as dspy_exc:
             fallback_reason = _fallback_reason(dspy_exc)
             fallback_error = repr(dspy_exc)
+            grounding_dropped = []
             logger.warning(
                 "DSPy entity extraction failed (%s); falling back to fast path: %s",
                 fallback_reason,
@@ -610,6 +623,7 @@ class EntityExtractionAgent(
             path_used=path_used,
             fallback_reason=fallback_reason,
             fallback_error=fallback_error,
+            grounding_dropped=grounding_dropped,
         )
 
         return output
@@ -656,7 +670,11 @@ class EntityExtractionAgent(
 
         self.emit_progress("relationships", "Extracting relationships with SpaCy...")
         if entity_records is None:
-            entity_records = self._build_entity_records_from_entities(entities, query)
+            entity_records, ungrounded = self._build_entity_records_from_entities(
+                entities, query
+            )
+            if ungrounded:
+                raise EntitySpanNotInQueryError(ungrounded[0][0], query)
 
         raw_rels = self._spacy_analyzer.extract_semantic_relationships(query)
         return self._reconcile_relationships(
@@ -700,14 +718,23 @@ class EntityExtractionAgent(
 
     def _build_entity_records_from_entities(
         self, entities: List[Entity], query: str
-    ) -> List[Dict[str, Any]]:
-        """Attach span metadata to validated DSPy entities for grounding."""
+    ) -> tuple[List[Dict[str, Any]], List[tuple[str, str]]]:
+        """Ground validated DSPy entities against the query they are served for.
+
+        Returns the span records for the entities the query contains and the
+        ``(text, type)`` of the ones it does not. The DSPy path is prompted
+        with the memory-augmented query and grounded here against the raw one,
+        so a mention contributed by tenant instructions or remembered context
+        lands in the second list.
+        """
         entity_records: List[Dict[str, Any]] = []
+        dropped: List[tuple[str, str]] = []
 
         for entity in entities:
             start = query.find(entity.text)
             if start < 0:
-                raise EntitySpanNotInQueryError(entity.text, query)
+                dropped.append((entity.text, entity.type))
+                continue
             end = start + len(entity.text)
             entity_records.append(
                 {
@@ -717,7 +744,7 @@ class EntityExtractionAgent(
                 }
             )
 
-        return entity_records
+        return entity_records, dropped
 
     def _reconcile_relationships(
         self,
@@ -896,6 +923,7 @@ class EntityExtractionAgent(
         path_used: str,
         fallback_reason: Optional[str] = None,
         fallback_error: Optional[str] = None,
+        grounding_dropped: Optional[List[tuple[str, str]]] = None,
     ) -> None:
         """Emit a cogniverse.entity_extraction telemetry span."""
         if not self.telemetry_manager:
@@ -929,6 +957,18 @@ class EntityExtractionAgent(
                     )
                     span.set_attribute(
                         ENTITY_EXTRACTION_FALLBACK_ERROR_ATTRIBUTE, fallback_error
+                    )
+                if grounding_dropped:
+                    span.set_attribute(
+                        ENTITY_EXTRACTION_GROUNDING_DROPPED_COUNT_ATTRIBUTE,
+                        len(grounding_dropped),
+                    )
+                    span.set_attribute(
+                        ENTITY_EXTRACTION_GROUNDING_DROPPED_ATTRIBUTE,
+                        tuple(
+                            f"{text}:{entity_type}"
+                            for text, entity_type in grounding_dropped
+                        ),
                     )
         except Exception as exc:
             logger.warning(

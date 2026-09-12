@@ -1014,9 +1014,19 @@ Because any DSPy failure falls through to the GLiNER path, the
 `AdapterParseError` appears anywhere in the cause chain,
 `request_rejected:<status>` when an exception in that chain carries a 4xx
 `status_code` (the engine refused the request — a body it would not accept, a
-credential, a quota), and `lm_unavailable` otherwise. The exception is in
-`entity_extraction.fallback_error`. A span that served the DSPy answer carries
-neither attribute.
+credential, a quota), `grounding_failed` when the LM answered and no entity it
+returned is a span of the raw query, and `lm_unavailable` otherwise. The
+exception is in `entity_extraction.fallback_error`. A span that served the DSPy
+answer carries neither attribute.
+
+The DSPy path is prompted with the memory-augmented query and grounded against
+the raw one, so a mention contributed by tenant instructions or remembered
+context is not a span of the query the caller sent. Each such mention is
+dropped on its own and the rest of the answer still serves:
+`entity_extraction.grounding_dropped_count` holds how many were dropped and
+`entity_extraction.grounding_dropped` the `text:type` of each. Both are absent
+when nothing was dropped. `grounding_failed` is the state only when nothing
+survived.
 
 **Key Capabilities**:
 

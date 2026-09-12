@@ -27,6 +27,8 @@ from cogniverse_foundation.telemetry.span_contract import (
     ENTITY_EXTRACTION_FALLBACK_ERROR_ATTRIBUTE,
     ENTITY_EXTRACTION_FALLBACK_LM_UNAVAILABLE,
     ENTITY_EXTRACTION_FALLBACK_SCHEMA_REFUSED,
+    ENTITY_EXTRACTION_GROUNDING_DROPPED_ATTRIBUTE,
+    ENTITY_EXTRACTION_GROUNDING_DROPPED_COUNT_ATTRIBUTE,
     entity_extraction_request_rejected,
 )
 from tests.agents.unit._recording_telemetry import (
@@ -131,12 +133,35 @@ def _memory_config_manager():
     return ConfigManager(store=store)
 
 
-def _make_extraction_agent():
+def _instructions_manager(text: str):
+    """A real ConfigManager over an in-memory store holding tenant instructions."""
+    from cogniverse_foundation.config.manager import ConfigManager
+    from cogniverse_runtime.routers.tenant import (
+        _INSTRUCTIONS_KEY,
+        _INSTRUCTIONS_SERVICE,
+    )
+    from cogniverse_sdk.interfaces.config_store import ConfigScope
+    from tests.utils.memory_store import InMemoryConfigStore
+
+    store = InMemoryConfigStore()
+    store.initialize()
+    manager = ConfigManager(store=store)
+    manager.set_config_value(
+        tenant_id=TEST_TENANT_ID,
+        scope=ConfigScope.SYSTEM,
+        service=_INSTRUCTIONS_SERVICE,
+        config_key=_INSTRUCTIONS_KEY,
+        config_value={"text": text, "updated_at": "2026-01-01T00:00:00Z"},
+    )
+    return manager
+
+
+def _make_extraction_agent(config_manager=None):
     """Create EntityExtractionAgent with mocked DSPy for use in tests."""
     with patch("dspy.ChainOfThought"):
         deps = EntityExtractionDeps()
         agent = EntityExtractionAgent(deps=deps, port=8010)
-        agent.bind_config_manager(_memory_config_manager())
+        agent.bind_config_manager(config_manager or _memory_config_manager())
         agent.telemetry_manager = RecordingTelemetryManager()
         return agent
 
@@ -1638,8 +1663,136 @@ class TestTelemetrySpanEmission:
         assert recorded["input.value"] == long_query
 
 
+class TestUngroundedMemoryEntityIsDroppedIndividually:
+    """A remembered entity the raw query lacks is dropped; the rest is served.
+
+    The DSPy path is prompted with the memory-augmented query and grounded
+    against the raw one, so a mention contributed by tenant instructions is a
+    span of the prompt and not of the query. It is dropped on its own and the
+    span counts it; the answer the LM gave for the rest still serves.
+    """
+
+    QUERY = "Barack Obama in Chicago"
+    REMEMBERED = "Earlier this user asked about Berlin."
+
+    def _agent(self, *, spacy_analyzer=None):
+        agent = _make_extraction_agent(_instructions_manager(self.REMEMBERED))
+        agent.dspy_module = EntityExtractionModule()
+        agent._spacy_analyzer = spacy_analyzer
+        agent._gliner_extractor = _CountingExtractor(result=[])
+        return agent
+
+    def _lm(self, *pairs):
+        return _CountingDummyLM(
+            [{"reasoning": "grounding", "entities": _mention_dicts(*pairs)}]
+        )
+
+    async def _run(self, agent, lm):
+        with dspy.context(lm=lm):
+            return await agent._process_impl(
+                EntityExtractionInput(query=self.QUERY, tenant_id=TEST_TENANT_ID)
+            )
+
+    @pytest.mark.asyncio
+    async def test_ungrounded_mention_is_dropped_and_the_rest_is_served(self):
+        """Three mentions, one only in the prompt: two survive, the span counts one.
+
+        ``_spacy_analyzer`` is None so the drop cannot be riding on the
+        relationship pass, which returns early without one.
+        """
+        agent = self._agent()
+        lm = self._lm(
+            ("Barack Obama", "PERSON"), ("Chicago", "PLACE"), ("Berlin", "PLACE")
+        )
+
+        result = await self._run(agent, lm)
+
+        assert [e.text for e in result.entities] == ["Barack Obama", "Chicago"]
+        assert [e.type for e in result.entities] == ["PERSON", "PLACE"]
+        assert result.entity_count == 2
+        assert result.path_used == "dspy"
+        assert result.relationships == []
+        assert agent._gliner_extractor.calls == 0
+
+        ((span,),) = (agent.telemetry_manager.spans,)
+        assert span.attributes[ENTITY_EXTRACTION_GROUNDING_DROPPED_COUNT_ATTRIBUTE] == 1
+        assert span.attributes[ENTITY_EXTRACTION_GROUNDING_DROPPED_ATTRIBUTE] == (
+            "Berlin:PLACE",
+        )
+        assert set(span.attributes) == {
+            "input.value",
+            "operation",
+            "output.value",
+            ENTITY_EXTRACTION_GROUNDING_DROPPED_COUNT_ATTRIBUTE,
+            ENTITY_EXTRACTION_GROUNDING_DROPPED_ATTRIBUTE,
+        }
+
+    @pytest.mark.asyncio
+    async def test_a_single_survivor_is_still_grounded(self):
+        """Two mentions, one ungrounded: grounding cannot sit behind ``len < 2``.
+
+        ``_extract_spacy_relationships`` returns before grounding when fewer
+        than two entities remain, so a drop implemented there would serve the
+        ungrounded mention here.
+        """
+        agent = self._agent()
+        lm = self._lm(("Chicago", "PLACE"), ("Berlin", "PLACE"))
+
+        result = await self._run(agent, lm)
+
+        assert [e.text for e in result.entities] == ["Chicago"]
+        assert result.entity_count == 1
+        assert result.path_used == "dspy"
+        ((span,),) = (agent.telemetry_manager.spans,)
+        assert span.attributes[ENTITY_EXTRACTION_GROUNDING_DROPPED_COUNT_ATTRIBUTE] == 1
+        assert span.attributes[ENTITY_EXTRACTION_GROUNDING_DROPPED_ATTRIBUTE] == (
+            "Berlin:PLACE",
+        )
+
+    @pytest.mark.asyncio
+    async def test_relationships_are_grounded_on_the_survivors(self):
+        """The relationship pass runs on the kept entities, with real spaCy."""
+        from cogniverse_agents.routing.relationship_extraction_tools import (
+            SpaCyDependencyAnalyzer,
+        )
+
+        agent = self._agent(spacy_analyzer=SpaCyDependencyAnalyzer())
+        lm = self._lm(
+            ("Barack Obama", "PERSON"), ("Chicago", "PLACE"), ("Berlin", "PLACE")
+        )
+
+        result = await self._run(agent, lm)
+
+        assert [e.text for e in result.entities] == ["Barack Obama", "Chicago"]
+        assert result.relationships == [
+            Relationship(
+                subject="Barack Obama",
+                relation="in",
+                object="Chicago",
+                confidence=0.7,
+            )
+        ]
+        ((span,),) = (agent.telemetry_manager.spans,)
+        assert span.attributes[ENTITY_EXTRACTION_GROUNDING_DROPPED_COUNT_ATTRIBUTE] == 1
+
+    @pytest.mark.asyncio
+    async def test_an_entity_free_answer_is_not_a_grounding_failure(self):
+        """Nothing dropped and nothing kept is a valid empty answer, not a fallback."""
+        agent = self._agent()
+        lm = self._lm()
+
+        result = await self._run(agent, lm)
+
+        assert result.entities == []
+        assert result.entity_count == 0
+        assert result.path_used == "dspy"
+        assert agent._gliner_extractor.calls == 0
+        ((span,),) = (agent.telemetry_manager.spans,)
+        assert set(span.attributes) == {"input.value", "operation", "output.value"}
+
+
 class TestUngroundedEntityIsNotAnLMOutage:
-    """An entity the LM returned that is not in the query names its own reason."""
+    """When NOTHING survives grounding, the fast path serves and names why."""
 
     @pytest.mark.asyncio
     async def test_span_records_grounding_failed_not_lm_unavailable(self):
@@ -1664,11 +1817,11 @@ class TestUngroundedEntityIsNotAnLMOutage:
                 }
             ]
         )
-        # The memory-injected prompt can carry entities the raw query does not,
-        # and the DSPy path grounds its spans against the raw query.
+        # Every mention came from the memory-injected prompt; none is a span of
+        # the raw query, so the DSPy answer is empty after grounding.
         remembered = [
-            Entity(text="Obama", type="PERSON", context="Obama in Chicago"),
             Entity(text="Berlin", type="PLACE", context="Obama in Chicago"),
+            Entity(text="Paris", type="PLACE", context="Obama in Chicago"),
         ]
 
         with patch.object(agent, "_extract_dspy_path", return_value=remembered):
@@ -1679,6 +1832,7 @@ class TestUngroundedEntityIsNotAnLMOutage:
             )
 
         assert result.path_used == "fast"
+        assert [e.text for e in result.entities] == ["Obama"]
         ((span,),) = (agent.telemetry_manager.spans,)
         assert (
             span.attributes[ENTITY_EXTRACTION_FALLBACK_ATTRIBUTE]

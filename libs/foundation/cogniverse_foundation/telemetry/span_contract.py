@@ -68,6 +68,16 @@ ENTITY_EXTRACTION_FALLBACK_REQUEST_REJECTED = "request_rejected"
 # three above, which are all the engine's doing, and it points at cogniverse's
 # own grounding rather than at the provider.
 ENTITY_EXTRACTION_FALLBACK_GROUNDING_FAILED = "grounding_failed"
+# A DSPy answer that partly survived grounding: the mentions the raw query does
+# not contain are dropped on their own and counted here, so a served extraction
+# says how much of the LM's answer it discarded. ``grounding_failed`` above
+# remains the state only when nothing survived.
+ENTITY_EXTRACTION_GROUNDING_DROPPED_COUNT_ATTRIBUTE = (
+    "entity_extraction.grounding_dropped_count"
+)
+ENTITY_EXTRACTION_GROUNDING_DROPPED_ATTRIBUTE = "entity_extraction.grounding_dropped"
+
+
 # The base reasons; ``request_rejected`` is served with its status appended.
 ENTITY_EXTRACTION_FALLBACK_VALUES = frozenset(
     {
