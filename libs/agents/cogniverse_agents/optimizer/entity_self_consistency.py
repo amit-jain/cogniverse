@@ -37,6 +37,9 @@ SELF_CONSISTENCY_METADATA_KEY = "self_consistency"
 SELF_CONSISTENCY_METADATA_KEYS = (SAMPLES_KEY, ENTITIES_KEY)
 """Every key the review item's self-consistency metadata block carries."""
 
+NO_UNANIMOUS_KEY = "no_unanimous_examples"
+"""Report key listing the queries no mention was unanimous for."""
+
 UNANIMOUS_AGREEMENT = 1.0
 
 

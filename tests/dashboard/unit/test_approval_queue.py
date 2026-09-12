@@ -1401,6 +1401,55 @@ def test_review_item_renders_every_sampled_mention_with_its_agreement(monkeypatc
 
 
 @pytest.mark.unit
+def test_review_item_with_no_unanimous_mention_renders_every_flagged_mention(
+    monkeypatch,
+):
+    """The reviewer supplies the entities, so every draw is shown and none kept."""
+    from cogniverse_agents.approval import ReviewItem
+    from cogniverse_agents.optimizer.entity_self_consistency import (
+        SELF_CONSISTENCY_METADATA_KEY,
+        review_row,
+    )
+
+    row = review_row(
+        "a man riding a dirt bike",
+        [
+            [{"text": "man", "type": "PERSON"}],
+            [{"text": "dirt bike", "type": "CONCEPT"}],
+            [{"text": "bike", "type": "CONCEPT"}],
+        ],
+    )
+    item = ReviewItem(
+        item_id="self-consistency-2",
+        data=row["data"],
+        confidence=1 / 3,
+        metadata={
+            "agent_type": "entity_extraction",
+            SELF_CONSISTENCY_METADATA_KEY: row["metadata"],
+        },
+    )
+    fake_st = MagicMock()
+    fake_st.session_state = _SessionState()
+    fake_st.columns.side_effect = lambda widths: [nullcontext() for _ in widths]
+    fake_st.expander.return_value = nullcontext()
+    fake_st.button.return_value = False
+    monkeypatch.setattr(approval_queue, "st", fake_st)
+
+    approval_queue._render_review_item(item, 0)
+
+    assert [call.args[0] for call in fake_st.markdown.call_args_list] == [
+        "### Generated Data",
+        "**Query:** a man riding a dirt bike",
+        "**Entities:** ",
+        "**Agreement (3 samples):** man (PERSON) 0.33 \u2014 needs review",
+        "**Agreement (3 samples):** dirt bike (CONCEPT) 0.33 \u2014 needs review",
+        "**Agreement (3 samples):** bike (CONCEPT) 0.33 \u2014 needs review",
+        "---",
+        "### Review Decision",
+    ]
+
+
+@pytest.mark.unit
 def test_review_item_without_sampling_metadata_renders_no_agreement_line(monkeypatch):
     from cogniverse_agents.approval import ReviewItem
 

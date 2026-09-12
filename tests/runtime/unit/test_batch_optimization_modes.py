@@ -71,9 +71,17 @@ def _fake_bootstrap_block(trainset: int) -> dict:
     }
 
 
-def _self_consistency_block(examples: int) -> dict:
-    """The pass's report when every draw agreed: nothing left to queue."""
+def _self_consistency_block(
+    examples: int,
+    *,
+    rows_needing_review: int = 0,
+    batch_id: str | None = None,
+    rows_queued: int = 0,
+    no_unanimous: list[str] | None = None,
+) -> dict:
+    """The pass's report; the defaults are a run every draw agreed on."""
     from cogniverse_agents.optimizer.entity_self_consistency import (
+        NO_UNANIMOUS_KEY,
         SELF_CONSISTENCY_SAMPLES,
         SELF_CONSISTENCY_TEMPERATURE,
     )
@@ -84,9 +92,10 @@ def _self_consistency_block(examples: int) -> dict:
             "temperature": SELF_CONSISTENCY_TEMPERATURE,
             "examples_sampled": examples,
             "examples_requested": examples,
-            "rows_needing_review": 0,
-            "batch_id": None,
-            "rows_queued": 0,
+            "rows_needing_review": rows_needing_review,
+            "batch_id": batch_id,
+            "rows_queued": rows_queued,
+            NO_UNANIMOUS_KEY: no_unanimous or [],
         }
     }
 
@@ -6467,6 +6476,7 @@ class TestEntityExtractionOptimization:
         approved_data: list[dict[str, Any]] | None = None,
         ground_truth_missing: bool = False,
         ground_truth_error: Exception | None = None,
+        draws=None,
     ):
         from cogniverse_runtime.optimization_cli import (
             run_entity_extraction_optimization,
@@ -6479,6 +6489,7 @@ class TestEntityExtractionOptimization:
             "activate_calls": [],
             "load_blob_calls": [],
             "trainset_queries": [],
+            "saved_batches": [],
         }
 
         spans_df = provider._trace_store._spans_df.copy(deep=True)
@@ -6616,6 +6627,11 @@ class TestEntityExtractionOptimization:
         def unanimous_draws(module_factory, query, *, lm, samples):
             return [[{"text": "PyTorch", "type": "TECHNOLOGY"}] for _ in range(samples)]
 
+        class RecordingApprovalStorage:
+            async def save_batch(self, batch):
+                state["saved_batches"].append(batch)
+                return batch.batch_id
+
         p1, p2 = _patch_infra(mgr, config_manager=effective_config_manager)
         with (
             p1,
@@ -6639,7 +6655,11 @@ class TestEntityExtractionOptimization:
             patch(
                 "cogniverse_agents.optimizer.entity_self_consistency."
                 "sample_entity_extraction",
-                side_effect=unanimous_draws,
+                side_effect=draws or unanimous_draws,
+            ),
+            patch(
+                "cogniverse_runtime.optimization_cli._approval_storage",
+                return_value=RecordingApprovalStorage(),
             ),
             patch(
                 "cogniverse_runtime.optimization_cli._load_approved_synthetic_data",
@@ -7335,6 +7355,114 @@ class TestEntityExtractionOptimization:
         )
 
         assert result["selection"]["cap"] == 42, result
+
+    @pytest.mark.asyncio
+    async def test_example_with_no_unanimous_mention_is_queued_not_errored(self):
+        """No agreed mention is a sampling outcome, not a bootstrap failure."""
+        from cogniverse_agents.optimizer.entity_self_consistency import (
+            NO_UNANIMOUS_KEY,
+            SELF_CONSISTENCY_SAMPLES,
+        )
+        from cogniverse_core.approval.interfaces import ApprovalStatus
+
+        rows = [
+            {
+                "context.span_id": f"ee-{i}",
+                "attributes.input.value": f"find entity {i}",
+                "attributes.output.value": json.dumps(
+                    {"entities": [{"text": f"Entity {i}", "type": "CONCEPT"}]}
+                ),
+            }
+            for i in range(3)
+        ]
+        provider = FakeTelemetryProvider(
+            _make_spans_df("cogniverse.entity_extraction", rows)
+        )
+
+        def draws(module_factory, query, *, lm, samples):
+            if query == "find entity 0":
+                return [
+                    [{"text": f"draw{index}", "type": "CONCEPT"}]
+                    for index in range(samples)
+                ]
+            return [[{"text": "Entity 1", "type": "CONCEPT"}] for _ in range(samples)]
+
+        state, result = await self._run(
+            provider,
+            current_blob=None,
+            floor=(1, 1),
+            draws=draws,
+            score_by_module=lambda module, holdout: (
+                1.0
+                if json.loads(json.dumps(module.dump_state(), default=str)).get(
+                    "compiled"
+                )
+                == "entity_extraction"
+                else 0.0
+            ),
+        )
+
+        batch = state["saved_batches"][0]
+        assert [saved.batch_id for saved in state["saved_batches"]] == [batch.batch_id]
+        assert result == {
+            "status": "success",
+            "spans_found": 3,
+            "served_examples": 3,
+            "served_scoreable_examples": 3,
+            "distinct_queries": 3,
+            "holdout_queries": 1,
+            "label_rows": 3,
+            "truth_rows": 3,
+            "approved_rows": 0,
+            "training_examples": 2,
+            "holdout_examples": 1,
+            "holdout_source": "ground_truth",
+            **_selection_block(2, 2),
+            "bootstrap": _fake_bootstrap_block(2),
+            **_self_consistency_block(
+                2,
+                rows_needing_review=1,
+                batch_id=batch.batch_id,
+                rows_queued=1,
+                no_unanimous=["find entity 0"],
+            ),
+            "baseline_score": 0.0,
+            "current_score": None,
+            "candidate_score": 1.0,
+            "decision": "promote",
+            "version": 1,
+            "consumed_example_ids": ["truth:0", "truth:1", "truth:2"],
+        }
+        # The example the teacher disagreed on still trains the bootstrap;
+        # only its review row is empty.
+        assert state["trainset_queries"] == ["find entity 0", "find entity 1"]
+        assert batch.batch_id.startswith("self_consistency_entity_extraction_")
+        assert [item.item_id for item in batch.items] == [f"{batch.batch_id}_0"]
+        item = batch.items[0]
+        assert item.data == {
+            "query": "find entity 0",
+            "entities": [],
+            "relationships": [],
+        }
+        assert item.metadata == {
+            "agent_type": "entity_extraction",
+            "optimizer_type": "entity_extraction",
+            "self_consistency": {
+                "samples": SELF_CONSISTENCY_SAMPLES,
+                "entities": [
+                    {
+                        "text": f"draw{index}",
+                        "type": "CONCEPT",
+                        "agreement": 1 / SELF_CONSISTENCY_SAMPLES,
+                        "needs_review": True,
+                    }
+                    for index in range(SELF_CONSISTENCY_SAMPLES)
+                ],
+            },
+        }
+        assert item.confidence == 1 / SELF_CONSISTENCY_SAMPLES
+        assert item.status is ApprovalStatus.PENDING_REVIEW
+        assert result["self_consistency"][NO_UNANIMOUS_KEY] == ["find entity 0"]
 
     @pytest.mark.asyncio
     async def test_entity_extraction_promote_persists_and_activates_candidate(self):
