@@ -83,7 +83,11 @@ class TestApplySemanticRouting:
         cfg = SemanticRouterConfig(enabled=False)
         endpoint = LLMEndpointConfig(model="openai/m", api_base=DIRECT)
         routed = apply_semantic_routing(
-            endpoint=endpoint, config=cfg, tenant_id="acme:prod", tier="pro"
+            endpoint=endpoint,
+            config=cfg,
+            tenant_id="acme:prod",
+            tier="pro",
+            call_site="summarizer_agent",
         )
         assert routed is endpoint
         assert routed.api_base == DIRECT
@@ -95,7 +99,11 @@ class TestApplySemanticRouting:
             model="openai/some-provider-model", api_base=DIRECT
         )
         routed = apply_semantic_routing(
-            endpoint=endpoint, config=cfg, tenant_id="acme:prod", tier="pro"
+            endpoint=endpoint,
+            config=cfg,
+            tenant_id="acme:prod",
+            tier="pro",
+            call_site="summarizer_agent",
         )
         assert routed.api_base == SR_URL
         assert routed.extra_headers == {
@@ -112,7 +120,11 @@ class TestApplySemanticRouting:
             model="openai/google/gemma-4-e4b-it", api_base=DIRECT
         )
         routed = apply_semantic_routing(
-            endpoint=endpoint, config=cfg, tenant_id="acme:prod", tier="pro"
+            endpoint=endpoint,
+            config=cfg,
+            tenant_id="acme:prod",
+            tier="pro",
+            call_site="summarizer_agent",
         )
         assert routed.model == "openai/auto"
         assert endpoint.model == "openai/google/gemma-4-e4b-it"
@@ -125,7 +137,11 @@ class TestApplySemanticRouting:
             extra_headers={"x-trace-id": "abc123"},
         )
         routed = apply_semantic_routing(
-            endpoint=endpoint, config=cfg, tenant_id="acme:prod", tier="pro"
+            endpoint=endpoint,
+            config=cfg,
+            tenant_id="acme:prod",
+            tier="pro",
+            call_site="summarizer_agent",
         )
         assert routed.extra_headers == {
             "x-trace-id": "abc123",
@@ -141,7 +157,11 @@ class TestApplySemanticRouting:
             extra_headers={"x-authz-user-groups": "stale"},
         )
         routed = apply_semantic_routing(
-            endpoint=endpoint, config=cfg, tenant_id="acme:prod", tier="pro"
+            endpoint=endpoint,
+            config=cfg,
+            tenant_id="acme:prod",
+            tier="pro",
+            call_site="summarizer_agent",
         )
         assert routed.extra_headers["x-authz-user-groups"] == "pro"
 
@@ -149,7 +169,11 @@ class TestApplySemanticRouting:
         cfg = _enabled_config()
         endpoint = LLMEndpointConfig(model="openai/router-auto", api_base=DIRECT)
         apply_semantic_routing(
-            endpoint=endpoint, config=cfg, tenant_id="acme:prod", tier="pro"
+            endpoint=endpoint,
+            config=cfg,
+            tenant_id="acme:prod",
+            tier="pro",
+            call_site="summarizer_agent",
         )
         assert endpoint.api_base == DIRECT
         assert endpoint.extra_headers is None
@@ -159,7 +183,11 @@ class TestApplySemanticRouting:
         endpoint = LLMEndpointConfig(model="openai/m", api_base=DIRECT)
         with pytest.raises(ValueError, match="semantic_router_url is"):
             apply_semantic_routing(
-                endpoint=endpoint, config=cfg, tenant_id="acme:prod", tier="pro"
+                endpoint=endpoint,
+                config=cfg,
+                tenant_id="acme:prod",
+                tier="pro",
+                call_site="summarizer_agent",
             )
 
     def test_apply_then_factory_wires_semantic_router_onto_dspy_lm(self):
@@ -172,6 +200,7 @@ class TestApplySemanticRouting:
             config=cfg,
             tenant_id="unregistered:tenant",
             tier="default",
+            call_site="summarizer_agent",
         )
         lm = create_dspy_lm(routed)
         assert lm.kwargs["api_base"] == SR_URL
@@ -190,6 +219,7 @@ class TestSemanticRouterConfigSerialization:
         assert not hasattr(rt, "default_tier")
         assert rt.tier_header == "x-authz-user-groups"
         assert rt.routed_model == "openai/auto"
+        assert rt.classification_model == "openai/cogniverse-classification"
         assert rt.to_dict() == {
             "enabled": True,
             "semantic_router_url": SR_URL,
@@ -198,6 +228,7 @@ class TestSemanticRouterConfigSerialization:
             "routed_model": "openai/auto",
             "response_cache_ttl_seconds": 3600,
             "response_cache_max_entries": 1024,
+            "classification_model": "openai/cogniverse-classification",
         }
 
     def test_response_cache_bounds_survive_a_round_trip(self):
@@ -212,6 +243,15 @@ class TestSemanticRouterConfigSerialization:
             600,
             64,
         )
+
+    def test_a_configured_classification_model_round_trips(self):
+        cfg = SemanticRouterConfig(
+            enabled=True,
+            semantic_router_url=SR_URL,
+            classification_model="openai/another-entrypoint",
+        )
+        rt = SemanticRouterConfig.from_dict(cfg.to_dict())
+        assert rt.classification_model == "openai/another-entrypoint"
         assert rt == cfg
 
     def test_system_config_default_leaves_semantic_router_disabled(self):
@@ -282,6 +322,7 @@ class TestCreateRoutedLM:
             config=_enabled_config(),
             tenant_id="acme:prod",
             tier="pro",
+            call_site="summarizer_agent",
         )
         assert lm.kwargs["api_base"] == SR_URL
         assert lm.kwargs["extra_headers"] == {
@@ -296,6 +337,7 @@ class TestCreateRoutedLM:
             config=SemanticRouterConfig(enabled=False),
             tenant_id="acme:prod",
             tier="pro",
+            call_site="summarizer_agent",
         )
         assert lm.kwargs["api_base"] == DIRECT
         assert "extra_headers" not in lm.kwargs

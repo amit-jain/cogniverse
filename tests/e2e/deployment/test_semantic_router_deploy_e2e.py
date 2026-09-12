@@ -201,6 +201,7 @@ def _route_completion(envoy_url: str, tenant_id: str, tier: str, prompt: str) ->
         ),
         tenant_id=tenant_id,
         tier=tier,
+        call_site="summarizer_agent",
     )
     assert routed.extra_headers == {
         "x-authz-user-id": tenant_id,

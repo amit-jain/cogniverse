@@ -513,17 +513,21 @@ from cogniverse_foundation.config.unified_config import SemanticRouterConfig
 router_config = SemanticRouterConfig(
     enabled=True,
     semantic_router_url="http://semantic-router:8801/v1",
-    routed_model="openai/auto"
+    routed_model="openai/auto",
+    classification_model="openai/cogniverse-classification",
 )
 ```
 
-When `enabled`, `cogniverse_foundation.config.semantic_router` rewrites an `LLMEndpointConfig` to target `semantic_router_url` instead of the model backend, sets `model` to `routed_model` (the router resolves models by its own catalog, not raw provider ids), and attaches two authz headers per request: tenant identity (`user_id_header`, default `x-authz-user-id`) and tenant tier (`tier_header`, default `x-authz-user-groups`, the caller's resolved `RouterTier`). When disabled, the endpoint passes through unchanged. The tier is the tenant's stored attribute: `cogniverse_foundation.config.tenant_tiers` holds it in the config store under scope `ROUTING` / service `semantic_router` / key `tenant_tier`, `resolve_tenant_tier(config_accessor, tenant_id)` reads it through a 30 s per-tenant cache invalidated by every write in the process, an unset tenant is `DEFAULT_ROUTER_TIER`, and a store failure routes as `DEFAULT_ROUTER_TIER` with a WARNING. Claim extraction during ingestion keeps the direct primary endpoint.
+When `enabled`, `cogniverse_foundation.config.semantic_router` rewrites an `LLMEndpointConfig` to target `semantic_router_url` instead of the model backend, sets `model` to the router entry the call site takes (the router resolves models by its own catalog, aliases and entrypoints, not raw provider ids), and attaches two authz headers per request: tenant identity (`user_id_header`, default `x-authz-user-id`) and tenant tier (`tier_header`, default `x-authz-user-groups`, the caller's resolved `RouterTier`). When disabled, the endpoint passes through unchanged. The tier is the tenant's stored attribute: `cogniverse_foundation.config.tenant_tiers` holds it in the config store under scope `ROUTING` / service `semantic_router` / key `tenant_tier`, `resolve_tenant_tier(config_accessor, tenant_id)` reads it through a 30 s per-tenant cache invalidated by every write in the process, an unset tenant is `DEFAULT_ROUTER_TIER`, and a store failure routes as `DEFAULT_ROUTER_TIER` with a WARNING. Claim extraction during ingestion keeps the direct primary endpoint.
+
+Each call site names its router entry. `CLASSIFICATION_CALL_SITES` (entity extraction, gateway, orchestrator, profile selection, query enhancement, search) produce a bounded output and send `classification_model`, which names the chart router's `cogniverse-classification` entrypoint: its recipe chooses the decision from the tenant tier alone, so no domain classifier runs, and the decision's exact response cache still applies. `FREE_FORM_CALL_SITES` send `routed_model` (the `auto` alias), where the router classifies the content and may promote the call to the reasoning model; a call site in neither set takes `auto`. Every decision in every routing profile caches with `mode: exact`: on the router's embedding model the closest different-content pair in the evaluation corpus scores higher than the weakest equivalent pair, so no similarity threshold is admissible.
 
 | Function | Description |
 |----------|-------------|
 | `resolve_semantic_router_headers(config, tenant_id)` | Resolve the two authz headers, or `None` when disabled |
-| `apply_semantic_routing(endpoint, config, tenant_id)` | Return a routed copy of `endpoint`, or the original when disabled |
-| `create_routed_lm(endpoint, config, tenant_id, tier)` | `apply_semantic_routing` + the LM in one call; routed, the LM is a `RoutedLM` |
+| `apply_semantic_routing(endpoint, config, tenant_id, tier, call_site)` | Return a routed copy of `endpoint`, or the original when disabled |
+| `routed_model_for(config, call_site)` | `classification_model` for a call site in `CLASSIFICATION_CALL_SITES`, `routed_model` otherwise |
+| `create_routed_lm(endpoint, config, tenant_id, tier, call_site)` | `apply_semantic_routing` + the LM in one call; routed, the LM is a `RoutedLM` |
 | `ingest_lm_context_for(endpoint)` | Return a direct `dspy.context` for ingestion-time LM calls (claim extraction); never routed |
 | `routed_lm_context_for(config_manager, tenant_id, agent_name, endpoint=None)` | Return a `dspy.context` binding the routed (or direct) LM for query-time agents, tenant-bound either way — the entry point agents use |
 | `resolve_semantic_router_config(config_accessor)` | Read `SemanticRouterConfig` off an object exposing `get_semantic_router()` |

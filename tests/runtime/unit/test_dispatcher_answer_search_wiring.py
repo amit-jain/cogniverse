@@ -19,6 +19,7 @@ import pytest
 
 from cogniverse_agents.gateway_agent import GatewayAgent as RealGatewayAgent
 from cogniverse_agents.search_agent import (
+    QUERY_REWRITE_BUDGET_S,
     QUERY_REWRITE_FAILED,
     QUERY_REWRITE_TIMED_OUT,
 )
@@ -1947,7 +1948,7 @@ class TestGroundingBoundsAndNamesTheQueryRewrite:
         dispatcher._apply_artefact_overlay = lambda *a, **k: None
         return dispatcher
 
-    async def test_the_rewrite_budget_is_the_budget_less_the_search_reserve(self):
+    async def test_the_rewrite_budget_is_capped_at_the_measured_rewrite_budget(self):
         dispatcher = self._dispatcher()
         budgets: list[float] = []
 
@@ -1961,7 +1962,12 @@ class TestGroundingBoundsAndNamesTheQueryRewrite:
             "summarize the documents about robotics", "acme:acme", None, top_k=10
         )
 
-        assert budgets == [_SHIPPED_GROUNDING_BUDGET_S - GROUNDING_SEARCH_RESERVE_S]
+        # The shipped remainder (budget less reserve) is larger than what a
+        # rewrite through the router measurably costs, so the measured budget
+        # is the bound that applies.
+        assert _SHIPPED_GROUNDING_BUDGET_S - GROUNDING_SEARCH_RESERVE_S == 10.0
+        assert budgets == [QUERY_REWRITE_BUDGET_S]
+        assert budgets == [3.5]
         assert out.state == GROUNDING_SEARCHED
         assert out.degraded_query_rewrite is None
 

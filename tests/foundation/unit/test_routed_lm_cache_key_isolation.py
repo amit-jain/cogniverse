@@ -32,6 +32,7 @@ def _cache_key(tenant_id: str, tier: str | None = None) -> str:
         config=_ROUTER,
         tenant_id=tenant_id,
         tier=tier or _TIERS.get(tenant_id, "default"),
+        call_site="summarizer_agent",
     )
     request = {
         "model": routed.model,
@@ -64,7 +65,11 @@ class TestTheCacheKeySeparatesTenants:
     def test_the_headers_that_carry_the_tenant_are_actually_on_the_endpoint(self):
         """Both routing headers accompany the endpoint request."""
         routed = apply_semantic_routing(
-            endpoint=_ENDPOINT, config=_ROUTER, tenant_id="acme:prod", tier="pro"
+            endpoint=_ENDPOINT,
+            config=_ROUTER,
+            tenant_id="acme:prod",
+            tier="pro",
+            call_site="summarizer_agent",
         )
         assert routed.extra_headers == {
             _ROUTER.user_id_header: "acme:prod",

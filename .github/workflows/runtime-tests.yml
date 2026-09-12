@@ -32,6 +32,11 @@ on:
       - 'tests/e2e/test_batch_optimization_e2e.py'
       - 'tests/e2e/data/entity_extraction_ground_truth.json'
       - 'data/testset/evaluation/sample_videos_retrieval_queries.json'
+      # test_router_decision_catalog.py scans every library for routed call
+      # sites; it and test_semantic_router_cache_threshold.py read the chart's
+      # router config.
+      - 'libs/**'
+      - 'charts/cogniverse/files/semantic-router/config.yaml'
   pull_request:
     branches: [ main, develop ]
     paths:
@@ -62,6 +67,11 @@ on:
       - 'tests/e2e/test_batch_optimization_e2e.py'
       - 'tests/e2e/data/entity_extraction_ground_truth.json'
       - 'data/testset/evaluation/sample_videos_retrieval_queries.json'
+      # test_router_decision_catalog.py scans every library for routed call
+      # sites; it and test_semantic_router_cache_threshold.py read the chart's
+      # router config.
+      - 'libs/**'
+      - 'charts/cogniverse/files/semantic-router/config.yaml'
 
 env:
   CARGO_NET_RETRY: "10"

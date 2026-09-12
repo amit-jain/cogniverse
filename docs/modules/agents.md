@@ -1825,7 +1825,13 @@ instead of rewriting per leg. A rewrite the orchestrator already made
 `SearchInput.query_rewrite_timeout_s` bounds the LM round trip; a rewrite that
 fails or overruns it searches the original query and names itself on
 `SearchOutput.degraded_query_rewrite` as `query_rewrite_failed` or
-`query_rewrite_timed_out` rather than raising. A dispatched search reports both
+`query_rewrite_timed_out` rather than raising. A dispatched search sets the
+bound to the smaller of `QUERY_REWRITE_BUDGET_S` (3.5 s: the measured p95 of a
+rewrite through the semantic router plus the measured p95 of its routing
+decision) and the grounding remainder. The current span carries
+`enhancement.path`: `lm` when the rewrite served, `heuristic_fallback` when the
+search ran on the original query, and the failure log names the router model
+the call was bound to. A dispatched search reports both
 under the envelope's `query_rewrite` block (see `docs/modules/runtime.md`).
 
 #### Ensemble Architecture
