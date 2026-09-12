@@ -315,9 +315,9 @@ class TestOverlayValueFaultContract:
     active prompt for that predictor: no crash at LM-call time, no silent
     blanking of the served instructions.
 
-    Drives the REAL served ``SearchOptimizationModule`` (a ChainOfThought whose
-    signature lives on ``.predict.signature``) — the exact object the search
-    agent hands to ``call_dspy``. A non-string value fed to
+    Drives the REAL served ``SearchOptimizationModule`` (a ``dspy.Predict``
+    whose signature it exposes directly) — the exact object the search agent
+    hands to ``call_dspy``. A non-string value fed to
     ``signature.with_instructions`` produces a corrupted signature whose later
     ``.instructions`` access raises ``AttributeError`` inside the to_thread /
     streamify worker, crashing the whole dispatch; an empty/None value silently
