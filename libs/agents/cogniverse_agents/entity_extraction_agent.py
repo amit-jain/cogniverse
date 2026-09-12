@@ -64,7 +64,9 @@ class Relationship(BaseModel):
     subject: str = Field(description="Source entity")
     relation: str = Field(description="Relationship type")
     object: str = Field(description="Target entity")
-    confidence: float = Field(default=0.5, description="Confidence 0-1")
+    confidence: float = Field(
+        ge=0.0, le=1.0, description="The extractor's own score for this relationship"
+    )
 
 
 # =============================================================================
@@ -741,12 +743,22 @@ class EntityExtractionAgent(
             ):
                 continue
 
+            confidence = raw_relationship.get("confidence")
+            if not isinstance(confidence, (int, float)) or isinstance(confidence, bool):
+                logger.warning(
+                    "Dropping relationship %r from %s: no numeric confidence (got %r)",
+                    relation,
+                    type(self._spacy_analyzer).__name__,
+                    confidence,
+                )
+                continue
+
             relationships.append(
                 Relationship(
                     subject=subject_entity.text,
                     relation=relation,
                     object=object_entity.text,
-                    confidence=raw_relationship.get("confidence", 0.5),
+                    confidence=float(confidence),
                 )
             )
 
